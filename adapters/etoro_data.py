@@ -122,18 +122,21 @@ class EToroDataClient(LiveMarketDataClient):
                 instr_id = str(
                     content.get("InstrumentID") or content.get("InstrumentId")
                 )
-                # Replace the QuoteTick instantiation in adapters/etoro_data.py
-            tick = QuoteTick(
-                instrument_id=self.instrument_map[instr_id],
-                bid_price=int(float(content["Bid"]) * 1e9),  # Changed from bid
-                ask_price=int(float(content["Ask"]) * 1e9),  # Changed from ask
-                bid_size=int(1.0 * 1e9),
-                ask_size=int(1.0 * 1e9),
-                ts_event=ts,
-                ts_init=ts,
+                
+                # Timestamp von der Nautilus-Clock beziehen
+                ts = self._clock.utc_now()
+
+                tick = QuoteTick(
+                    instrument_id=self.instrument_map[instr_id],
+                    bid_price=int(float(content["Bid"]) * 1e9),
+                    ask_price=int(float(content["Ask"]) * 1e9),
+                    bid_size=int(1.0 * 1e9),
+                    ask_size=int(1.0 * 1e9),
+                    ts_event=ts,
+                    ts_init=ts,
                 )
-                    self._log.info(f"Tick received: {tick}")
-                    self.handle_quote_tick(tick)
+                self._log.info(f"Tick received: {tick}")
+                self.handle_quote_tick(tick)
             except Exception as e:
                 self._log.error(f"Error parsing message: {e}")
 
