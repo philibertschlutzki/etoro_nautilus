@@ -53,7 +53,7 @@ class EToroDataClient(LiveMarketDataClient):
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
         self.instrument_map = {"1": InstrumentId.from_str("TSLA.NASDAQ")}
-        # Cache für letzte bekannte Bid/Ask pro Instrument-ID
+        # Cache für letzte bekannte Bid/Ask pro Instrument-ID (partielle Updates)
         self._last_bid: dict[str, float] = {}
         self._last_ask: dict[str, float] = {}
 
@@ -68,7 +68,6 @@ class EToroDataClient(LiveMarketDataClient):
                 "Origin": "https://www.etoro.com",
             }
             try:
-
                 self._ws = await websockets.connect(
                     self.ws_url, extra_headers=headers, ssl=ssl_context
                 )
@@ -129,7 +128,7 @@ class EToroDataClient(LiveMarketDataClient):
                 content.get("InstrumentID") or content.get("InstrumentId")
             )
 
-            # Partielle Updates: Cache aktualisieren, fehlende Seite aus Cache ergänzen
+            # Cache aktualisieren: nur vorhandene Felder überschreiben
             if content.get("Bid") is not None:
                 self._last_bid[instr_id] = float(content["Bid"])
             if content.get("Ask") is not None:
@@ -138,11 +137,10 @@ class EToroDataClient(LiveMarketDataClient):
             bid = self._last_bid.get(instr_id)
             ask = self._last_ask.get(instr_id)
 
-            # Noch kein vollständiges Bild (vor dem ersten Snapshot)
+            # Noch kein vollständiger Snapshot empfangen
             if bid is None or ask is None:
                 self._log.debug(
-                    f"Waiting for initial Bid/Ask snapshot (instr={instr_id}, "
-                    f"bid={bid}, ask={ask})"
+                    f"Waiting for initial snapshot (instr={instr_id}, bid={bid}, ask={ask})"
                 )
                 return
 
