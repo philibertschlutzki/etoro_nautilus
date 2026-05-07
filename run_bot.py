@@ -1,11 +1,15 @@
 import os
 import time
 import asyncio
+from dotenv import load_dotenv  # <-- NEU: Import für dotenv
 from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.live.node import TradingNode
 
 # Import the custom adapter
 from adapters.etoro_data import EToroDataClient
+
+# <-- NEU: Lädt die Variablen aus der .env Datei in die Umgebung, bevor os.environ.get ausgeführt wird
+load_dotenv()
 
 # Securely load API keys
 API_KEY = os.environ.get("ETORO_API_KEY")
