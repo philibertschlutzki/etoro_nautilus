@@ -1,0 +1,15 @@
+# Python & Environments
+venv/
+__pycache__/
+*.pyc
+
+# Trading Daten & Logs
+logs/
+data/
+
+# API Keys & Secrets
+*.env
+.env
+
+# OS generated files
+.DS_Store
