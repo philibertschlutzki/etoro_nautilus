@@ -1,4 +1,3 @@
-import asyncio
 import json
 import ssl
 import uuid
@@ -61,25 +60,96 @@ class EToroDataClient(LiveMarketDataClient):
         self._last_ask: dict[str, float] = {}
 
     # -------------------------------------------------------------------------
-    # Nautilus lifecycle hooks (async, called by the framework)
+    # Nautilus lifecycle hooks
     # -------------------------------------------------------------------------
 
     async def _connect(self) -> None:
-        """Called by LiveMarketDataClient.connect() — framework sets connected after this returns."""
         ssl_context = ssl.create_default_context()
         self._ws = await websockets.connect(self.ws_url, ssl=ssl_context)
         self._log.info("WebSocket connected. Authenticating...", LogColor.GREEN)
         self._register_instruments()
         await self._authenticate()
-        # Start receive loop as background task
         self.create_task(self._message_loop(), log_msg="message_loop")
 
     async def _disconnect(self) -> None:
-        """Called by LiveMarketDataClient.disconnect() — framework sets disconnected after this returns."""
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
             self._log.info("WebSocket closed.", LogColor.BLUE)
+
+    # -------------------------------------------------------------------------
+    # Abstract subscription stubs required by LiveMarketDataClient
+    # The strategy calls subscribe_quote_ticks(); the framework dispatches to
+    # _subscribe_quote_ticks(). For eToro the WS subscription is already
+    # established in _connect(), so these are intentional no-ops.
+    # -------------------------------------------------------------------------
+
+    async def _subscribe_quote_ticks(self, command) -> None:
+        self._log.info(
+            f"QuoteTick subscription acknowledged for {command.instrument_id} "
+            f"(WS already subscribed via _connect)",
+            LogColor.BLUE,
+        )
+
+    async def _unsubscribe_quote_ticks(self, command) -> None:
+        self._log.info(f"Unsubscribe quote_ticks {command.instrument_id} (no-op)")
+
+    async def _subscribe_trade_ticks(self, command) -> None:
+        self._log.debug(f"subscribe_trade_ticks not supported: {command.instrument_id}")
+
+    async def _unsubscribe_trade_ticks(self, command) -> None:
+        pass
+
+    async def _subscribe_bars(self, command) -> None:
+        self._log.debug(f"subscribe_bars not supported: {command.bar_type}")
+
+    async def _unsubscribe_bars(self, command) -> None:
+        pass
+
+    async def _subscribe_instrument(self, command) -> None:
+        self._log.debug(f"subscribe_instrument not supported: {command.instrument_id}")
+
+    async def _unsubscribe_instrument(self, command) -> None:
+        pass
+
+    async def _subscribe_instruments(self, command) -> None:
+        pass
+
+    async def _unsubscribe_instruments(self, command) -> None:
+        pass
+
+    async def _subscribe_order_book_deltas(self, command) -> None:
+        pass
+
+    async def _unsubscribe_order_book_deltas(self, command) -> None:
+        pass
+
+    async def _subscribe_instrument_status(self, command) -> None:
+        pass
+
+    async def _unsubscribe_instrument_status(self, command) -> None:
+        pass
+
+    async def _subscribe_instrument_close(self, command) -> None:
+        pass
+
+    async def _unsubscribe_instrument_close(self, command) -> None:
+        pass
+
+    async def _request_instrument(self, request) -> None:
+        pass
+
+    async def _request_instruments(self, request) -> None:
+        pass
+
+    async def _request_quote_ticks(self, request) -> None:
+        pass
+
+    async def _request_trade_ticks(self, request) -> None:
+        pass
+
+    async def _request_bars(self, request) -> None:
+        pass
 
     # -------------------------------------------------------------------------
     # Instrument registration
@@ -115,9 +185,9 @@ class EToroDataClient(LiveMarketDataClient):
         await self._ws.send(json.dumps(auth_payload))
         resp = await self._ws.recv()
         self._log.debug(f"Auth response: {resp}")
-        await self._subscribe_instrument()
+        await self._subscribe_etoro_instrument()
 
-    async def _subscribe_instrument(self) -> None:
+    async def _subscribe_etoro_instrument(self) -> None:
         sub_payload = {
             "id": str(uuid.uuid4()),
             "operation": "Subscribe",
