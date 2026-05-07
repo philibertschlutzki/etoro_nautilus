@@ -67,10 +67,9 @@ class EToroDataClient(LiveMarketDataClient):
             currency=USD,
             price_precision=5,
             price_increment=Price(0.00001, precision=5),
-            multiplier=Quantity(1, precision=0),
             lot_size=Quantity(1, precision=0),
-            ts_event=0,
-            ts_init=0,
+            ts_event=self._clock.timestamp_ns(),
+            ts_init=self._clock.timestamp_ns(),
         )
         self._instrument_provider.add(tsla)
         self.handle_instrument(tsla)
@@ -160,7 +159,7 @@ class EToroDataClient(LiveMarketDataClient):
                 )
                 return
 
-            ts = self._clock.utc_now()
+            ts = self._clock.timestamp_ns()
 
             tick = QuoteTick(
                 instrument_id=self.instrument_map[instr_id],
