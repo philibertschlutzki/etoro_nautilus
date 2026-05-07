@@ -6,9 +6,11 @@ import websockets
 from nautilus_trader.live.data_client import LiveMarketDataClient
 from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.config import LiveDataClientConfig
-from nautilus_trader.model.identifiers import InstrumentId, Venue, ClientId
+from nautilus_trader.model.identifiers import InstrumentId, Venue, ClientId, Symbol
 from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.currencies import USD
 from nautilus_trader.common.providers import InstrumentProvider
 
 
@@ -52,10 +54,27 @@ class EToroDataClient(LiveMarketDataClient):
         self.user_key = user_key
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
-        self.instrument_map = {"1": InstrumentId.from_str("TSLA.NASDAQ")}
+        self.instrument_map = {"1": InstrumentId.from_str("TSLA.ETORO")}
         # Cache für letzte bekannte Bid/Ask pro Instrument-ID (partielle Updates)
         self._last_bid: dict[str, float] = {}
         self._last_ask: dict[str, float] = {}
+
+    def _register_instruments(self):
+        """Registriert alle bekannten Instrumente im Cache und DataEngine."""
+        tsla = Equity(
+            instrument_id=InstrumentId.from_str("TSLA.ETORO"),
+            raw_symbol=Symbol("TSLA"),
+            currency=USD,
+            price_precision=5,
+            price_increment=Price(0.00001, precision=5),
+            multiplier=Quantity(1, precision=0),
+            lot_size=Quantity(1, precision=0),
+            ts_event=0,
+            ts_init=0,
+        )
+        self._instrument_provider.add(tsla)
+        self.handle_instrument(tsla)
+        self._log.info("Instrument TSLA.ETORO registriert.")
 
     def connect(self):
         self._loop.create_task(self._run_connect())
@@ -63,19 +82,10 @@ class EToroDataClient(LiveMarketDataClient):
     async def _run_connect(self):
         try:
             ssl_context = ssl.create_default_context()
-            headers = {
-                "User-Agent": "NautilusTrader/1.226.0",
-                "Origin": "https://www.etoro.com",
-            }
-            try:
-                self._ws = await websockets.connect(
-                    self.ws_url, extra_headers=headers, ssl=ssl_context
-                )
-            except TypeError:
-                self._log.warning("Retrying connection without extra_headers...")
-                self._ws = await websockets.connect(self.ws_url, ssl=ssl_context)
-
+            # Verbinde ohne extra_headers (kompatibel mit allen websockets-Versionen)
+            self._ws = await websockets.connect(self.ws_url, ssl=ssl_context)
             self._log.info("WebSocket connected. Authenticating...")
+            self._register_instruments()
             await self._authenticate()
             # Signalisiert dem DataEngine, dass der Client bereit ist
             self._set_connected()
@@ -127,8 +137,12 @@ class EToroDataClient(LiveMarketDataClient):
                 else msg.get("content")
             )
             instr_id = str(
-                content.get("InstrumentID") or content.get("InstrumentId")
+                content.get("InstrumentID") or content.get("InstrumentId") or ""
             )
+            # Unbekannte Instrument-IDs ignorieren
+            if instr_id not in self.instrument_map:
+                self._log.debug(f"Unbekannte InstrumentID '{instr_id}', überspringe.")
+                return
 
             # Cache aktualisieren: nur vorhandene Felder überschreiben
             if content.get("Bid") is not None:
