@@ -4,8 +4,37 @@ import uuid
 import ssl
 import websockets
 from nautilus_trader.live.data_client import LiveMarketDataClient
+from nautilus_trader.live.factories import LiveDataClientFactory
+from nautilus_trader.config import LiveDataClientConfig
 from nautilus_trader.model.identifiers import InstrumentId, Venue, ClientId
 from nautilus_trader.model.data import QuoteTick
+from nautilus_trader.common.providers import InstrumentProvider
+
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+class EToroDataClientConfig(LiveDataClientConfig, frozen=True, kw_only=True):
+    api_key: str
+    user_key: str
+
+
+# ── Factory ───────────────────────────────────────────────────────────────────
+
+class EToroLiveDataClientFactory(LiveDataClientFactory):
+    @staticmethod
+    def create(loop, msgbus, cache, clock, config: EToroDataClientConfig, **kwargs):
+        return EToroDataClient(
+            loop=loop,
+            msgbus=msgbus,
+            cache=cache,
+            clock=clock,
+            instrument_provider=InstrumentProvider(),
+            api_key=config.api_key,
+            user_key=config.user_key,
+        )
+
+
+# ── Client ────────────────────────────────────────────────────────────────────
 
 class EToroDataClient(LiveMarketDataClient):
     def __init__(self, loop, msgbus, cache, clock, instrument_provider, api_key, user_key):
@@ -16,13 +45,12 @@ class EToroDataClient(LiveMarketDataClient):
             cache=cache,
             clock=clock,
             instrument_provider=instrument_provider,
-            client_id=ClientId("ETORO_WS_CLIENT")
+            client_id=ClientId("ETORO_WS_CLIENT"),
         )
         self.api_key = api_key
         self.user_key = user_key
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
-        # Mapping von eToro ID auf Nautilus InstrumentId
         self.instrument_map = {"1": InstrumentId.from_str("TSLA.NASDAQ")}
 
     def connect(self):
@@ -31,14 +59,18 @@ class EToroDataClient(LiveMarketDataClient):
     async def _run_connect(self):
         try:
             ssl_context = ssl.create_default_context()
-            headers = {"User-Agent": "NautilusTrader/1.226.0", "Origin": "https://www.etoro.com"}
+            headers = {
+                "User-Agent": "NautilusTrader/1.226.0",
+                "Origin": "https://www.etoro.com",
+            }
             try:
-                # Versuch mit extra_headers
-                self._ws = await websockets.connect(self.ws_url, extra_headers=headers, ssl=ssl_context)
+                self._ws = await websockets.connect(
+                    self.ws_url, extra_headers=headers, ssl=ssl_context
+                )
             except TypeError:
                 self._log.warning("Retrying connection without extra_headers...")
                 self._ws = await websockets.connect(self.ws_url, ssl=ssl_context)
-            
+
             self._log.info("WebSocket connected. Authenticating...")
             await self._authenticate()
         except Exception as e:
@@ -47,21 +79,20 @@ class EToroDataClient(LiveMarketDataClient):
 
     async def _authenticate(self):
         auth_payload = {
-            "id": str(uuid.uuid4()), 
-            "operation": "Authenticate", 
-            "data": {"userKey": self.user_key, "apiKey": self.api_key}
+            "id": str(uuid.uuid4()),
+            "operation": "Authenticate",
+            "data": {"userKey": self.user_key, "apiKey": self.api_key},
         }
         await self._ws.send(json.dumps(auth_payload))
-        await self._ws.recv() # Bestätigung abwarten
-        
+        await self._ws.recv()
         asyncio.create_task(self._message_loop())
         await self._subscribe_instrument()
 
     async def _subscribe_instrument(self):
         sub_payload = {
-            "id": str(uuid.uuid4()), 
-            "operation": "Subscribe", 
-            "data": {"topics": ["instrument:1"], "snapshot": True}
+            "id": str(uuid.uuid4()),
+            "operation": "Subscribe",
+            "data": {"topics": ["instrument:1"], "snapshot": True},
         }
         self._log.info("Subscribing to TSLA (ID: 1)...")
         await self._ws.send(json.dumps(sub_payload))
@@ -69,10 +100,11 @@ class EToroDataClient(LiveMarketDataClient):
     async def _message_loop(self):
         try:
             async for message_str in self._ws:
-                if not message_str or message_str == b'\x00': continue
+                if not message_str or message_str == b"\x00":
+                    continue
                 data = json.loads(message_str)
                 if "messages" in data:
-                    for msg in data["messages"]: 
+                    for msg in data["messages"]:
                         await self._process_message(msg)
         except Exception as e:
             self._log.error(f"WebSocket error: {e}")
@@ -82,19 +114,24 @@ class EToroDataClient(LiveMarketDataClient):
     async def _process_message(self, msg):
         if msg.get("type") in ("Trading.Instrument.Rate", "Snapshot"):
             try:
-                content = json.loads(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content")
-                instr_id = str(content.get("InstrumentID") or content.get("InstrumentId"))
-                
+                content = (
+                    json.loads(msg["content"])
+                    if isinstance(msg.get("content"), str)
+                    else msg.get("content")
+                )
+                instr_id = str(
+                    content.get("InstrumentID") or content.get("InstrumentId")
+                )
                 if instr_id in self.instrument_map:
                     ts = self._clock.timestamp_ns()
                     tick = QuoteTick(
                         instrument_id=self.instrument_map[instr_id],
                         bid=int(float(content["Bid"]) * 1e9),
                         ask=int(float(content["Ask"]) * 1e9),
-                        bid_size=int(1.0 * 1e9), # Standardgröße 1.0 skaliert
+                        bid_size=int(1.0 * 1e9),
                         ask_size=int(1.0 * 1e9),
                         ts_event=ts,
-                        ts_init=ts
+                        ts_init=ts,
                     )
                     self._log.info(f"Tick received: {tick}")
                     self.handle_quote_tick(tick)
