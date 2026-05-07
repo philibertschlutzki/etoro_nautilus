@@ -53,6 +53,9 @@ class EToroDataClient(LiveMarketDataClient):
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
         self.instrument_map = {"1": InstrumentId.from_str("TSLA.NASDAQ")}
+        # Cache für letzte bekannte Bid/Ask pro Instrument-ID
+        self._last_bid: dict[str, float] = {}
+        self._last_ask: dict[str, float] = {}
 
     def connect(self):
         self._loop.create_task(self._run_connect())
@@ -65,6 +68,7 @@ class EToroDataClient(LiveMarketDataClient):
                 "Origin": "https://www.etoro.com",
             }
             try:
+
                 self._ws = await websockets.connect(
                     self.ws_url, extra_headers=headers, ssl=ssl_context
                 )
@@ -113,38 +117,50 @@ class EToroDataClient(LiveMarketDataClient):
             self.disconnect()
 
     async def _process_message(self, msg):
-        if msg.get("type") in ("Trading.Instrument.Rate", "Snapshot"):
-            try:
-                content = (
-                    json.loads(msg["content"])
-                    if isinstance(msg.get("content"), str)
-                    else msg.get("content")
-                )
-                instr_id = str(
-                    content.get("InstrumentID") or content.get("InstrumentId")
-                )
+        if msg.get("type") not in ("Trading.Instrument.Rate", "Snapshot"):
+            return
+        try:
+            content = (
+                json.loads(msg["content"])
+                if isinstance(msg.get("content"), str)
+                else msg.get("content")
+            )
+            instr_id = str(
+                content.get("InstrumentID") or content.get("InstrumentId")
+            )
 
-                bid = content.get("Bid")
-                ask = content.get("Ask")
-                if bid is None or ask is None:
-                    self._log.debug(f"Skipping message without Bid/Ask (type={msg.get('type')})")
-                    return
+            # Partielle Updates: Cache aktualisieren, fehlende Seite aus Cache ergänzen
+            if content.get("Bid") is not None:
+                self._last_bid[instr_id] = float(content["Bid"])
+            if content.get("Ask") is not None:
+                self._last_ask[instr_id] = float(content["Ask"])
 
-                ts = self._clock.utc_now()
+            bid = self._last_bid.get(instr_id)
+            ask = self._last_ask.get(instr_id)
 
-                tick = QuoteTick(
-                    instrument_id=self.instrument_map[instr_id],
-                    bid_price=Price(float(bid), precision=5),
-                    ask_price=Price(float(ask), precision=5),
-                    bid_size=Quantity(1.0, precision=0),
-                    ask_size=Quantity(1.0, precision=0),
-                    ts_event=ts,
-                    ts_init=ts,
+            # Noch kein vollständiges Bild (vor dem ersten Snapshot)
+            if bid is None or ask is None:
+                self._log.debug(
+                    f"Waiting for initial Bid/Ask snapshot (instr={instr_id}, "
+                    f"bid={bid}, ask={ask})"
                 )
-                self._log.info(f"Tick received: {tick}")
-                self.handle_quote_tick(tick)
-            except Exception as e:
-                self._log.error(f"Error parsing message: {e}")
+                return
+
+            ts = self._clock.utc_now()
+
+            tick = QuoteTick(
+                instrument_id=self.instrument_map[instr_id],
+                bid_price=Price(bid, precision=5),
+                ask_price=Price(ask, precision=5),
+                bid_size=Quantity(1.0, precision=0),
+                ask_size=Quantity(1.0, precision=0),
+                ts_event=ts,
+                ts_init=ts,
+            )
+            self._log.info(f"Tick: bid={bid:.5f} ask={ask:.5f} [{tick.instrument_id}]")
+            self.handle_quote_tick(tick)
+        except Exception as e:
+            self._log.error(f"Error parsing message: {e}")
 
     def disconnect(self):
         self._log.info("Closing eToro connection...")
