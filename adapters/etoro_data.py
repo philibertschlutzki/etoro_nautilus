@@ -77,6 +77,8 @@ class EToroDataClient(LiveMarketDataClient):
 
             self._log.info("WebSocket connected. Authenticating...")
             await self._authenticate()
+            # Signalisiert dem DataEngine, dass der Client bereit ist
+            self._set_connected()
         except Exception as e:
             self._log.error(f"Connection error: {e}")
             self.disconnect()
@@ -165,3 +167,5 @@ class EToroDataClient(LiveMarketDataClient):
         if self._ws:
             self._loop.create_task(self._ws.close())
             self._ws = None
+        # Signalisiert dem DataEngine den sauberen Disconnect
+        self._set_disconnected()
