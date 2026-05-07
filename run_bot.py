@@ -15,9 +15,8 @@ def main():
     config = TradingNodeConfig(trader_id="eToro-Bot-01")
     node = TradingNode(config=config)
 
-    # 2. InstrumentProvider explizit definieren oder aus dem Node beziehen
-    # In Nautilus 1.226.0 ist der Provider oft direkt im Node registriert
-    instrument_provider = node.get_service(InstrumentProvider)
+    # 2. InstrumentProvider instanziieren (v1.226.0: keine Argumente im Konstruktor)
+    instrument_provider = InstrumentProvider()
 
     # 3. eToro Data Client instanziieren
     data_client = EToroDataClient(
@@ -30,18 +29,22 @@ def main():
         user_key=USER_KEY
     )
 
-    # 4. Client registrieren und System bauen
-    node.add_data_client(data_client)
+    # 4. Client über die DataEngine im KERNEL registrieren [FIXED]
+    # In v1.226.0 erfolgt der Zugriff über node.kernel.data_engine
+    node.kernel.data_engine.add_client(data_client)
+    
+    # 5. System bauen
     node.build()
 
-    print("✅ System wird gestartet... Drücke Ctrl+C zum Beenden.")
+    print(f"✅ System für {config.trader_id} erfolgreich konfiguriert.")
+    print("🚀 Starte eToro-Bot... (Drücke Ctrl+C zum Beenden)")
     
     try:
         node.run() 
     except KeyboardInterrupt:
-        print("\n⚠️ Abbruch durch Benutzer. Fahre System herunter...")
+        print("\n⚠️ Herunterfahren eingeleitet...")
     finally:
-        # Ressourcen sauber freigeben, verhindert blockierte Terminals
+        # Ressourcen sauber freigeben
         node.stop()
         print("🤖 Bot erfolgreich beendet.")
 
