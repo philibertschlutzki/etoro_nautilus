@@ -34,9 +34,9 @@ def main():
     # Factory registrieren – node.build() instantiiert den Client automatisch
     node.add_data_client_factory("ETORO_WS_CLIENT", EToroLiveDataClientFactory)
 
-    # Strategy registrieren
+    # Strategy über node.trader registrieren (NautilusTrader 1.226.0 API)
     strategy = EToroStrategy(config=strategy_config)
-    node.add_strategy(strategy)
+    node.trader.add_strategy(strategy)
 
     node.build()
 
