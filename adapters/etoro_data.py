@@ -4,7 +4,7 @@ import uuid
 import time
 import websockets
 from nautilus_trader.live.data_client import LiveMarketDataClient
-from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.identifiers import InstrumentId, Venue, ClientId
 from nautilus_trader.model.data import QuoteTick
 
 class EToroDataClient(LiveMarketDataClient):
@@ -18,7 +18,7 @@ class EToroDataClient(LiveMarketDataClient):
         api_key: str,
         user_key: str
     ):
-        # Nautilus strict injection requirements for 1.226.0+
+        # Initialisierung mit strikten Nautilus Typen
         super().__init__(
             loop=loop,
             venue=Venue("ETORO"),
@@ -26,22 +26,43 @@ class EToroDataClient(LiveMarketDataClient):
             cache=cache,
             clock=clock,
             instrument_provider=instrument_provider,
-            client_id="ETORO_WS_CLIENT"
+            client_id=ClientId("ETORO_WS_CLIENT")
         )
         self.api_key = api_key
         self.user_key = user_key
-        self.ws_url = "wss://public-api.etoro.com/ws"
+        
+        # URL-Korrektur: Nutze den Endpunkt aus dem erfolgreichen Tracker
+        self.ws_url = "wss://ws.etoro.com/ws" 
         self._ws = None
         
-        # Mapping from eToro IDs to Nautilus InstrumentIds (1111 = TSLA)
+        # Mapping: eToro ID -> Nautilus InstrumentId
+        # ID "1" wurde in deinem Tracker-Log für TSLA (oder EUR/USD) empfangen
         self.instrument_map = {
-            "1111": InstrumentId.from_str("TSLA.NASDAQ")
+            "1": InstrumentId.from_str("TSLA.NASDAQ") 
         }
 
-    async def connect(self):
+    def connect(self):
+        """
+        Synchrone Schnittstelle für die Nautilus Engine.
+        Delegiert den Verbindungsaufbau an den Kernel-Loop.
+        """
         self._log.info(f"Connecting to eToro WebSocket: {self.ws_url}")
+        # Zugriff auf den internen Loop der Nautilus-Basisklasse
+        self._loop.create_task(self._run_connect())
+
+    async def _run_connect(self):
+        """Interne asynchrone Methode für den Handshake."""
         try:
-            self._ws = await websockets.connect(self.ws_url)
+            # Header hinzugefügt, um HTTP 422 Fehler zu vermeiden
+            extra_headers = {
+                "User-Agent": "NautilusTrader/1.226.0",
+                "Origin": "https://www.etoro.com"
+            }
+            
+            self._ws = await websockets.connect(
+                self.ws_url,
+                extra_headers=extra_headers
+            )
             self._log.info("WebSocket connected. Authenticating...")
             await self._authenticate()
         except Exception as e:
@@ -51,101 +72,90 @@ class EToroDataClient(LiveMarketDataClient):
     async def _authenticate(self):
         auth_payload = {
             "id": str(uuid.uuid4()),
+            "operation": "Authenticate",
             "data": {
                 "userKey": self.user_key,
                 "apiKey": self.api_key
             }
         }
-
         await self._ws.send(json.dumps(auth_payload))
-
-        # Wait for auth response
+        
+        # Bestätigung vom Server abwarten
         response_str = await self._ws.recv()
-        response = json.loads(response_str)
-
-        self._log.info(f"Auth response: {response}")
-        # In a real scenario we'd check if auth was successful here.
-        # Assuming success for now.
-        self._log.info("Authenticated successfully.")
-
-        # Start reading messages
+        self._log.info(f"Auth response: {response_str}")
+        
+        # Nachrichten-Schleife und Abonnements starten
         asyncio.create_task(self._message_loop())
-
-        # Subscribe to instrument
         await self._subscribe_instrument()
 
     def disconnect(self):
-        self._log.info("Disconnecting...")
+        self._log.info("Disconnecting from eToro...")
         if self._ws:
-            asyncio.create_task(self._ws.close())
+            self._loop.create_task(self._ws.close())
             self._ws = None
 
     async def _subscribe_instrument(self):
+        # Abonniere Instrument ID 1
         sub_payload = {
             "id": str(uuid.uuid4()),
             "operation": "Subscribe",
             "data": {
-                "topics": ["instrument:1111"],
+                "topics": ["instrument:1"],
                 "snapshot": True
             }
         }
-        self._log.info(f"Subscribing to topics: instrument:1111")
+        self._log.info("Subscribing to topic 'instrument:1'")
         await self._ws.send(json.dumps(sub_payload))
 
     async def _message_loop(self):
         try:
             async for message_str in self._ws:
-                self._log.debug(f"Received raw message: {message_str}")
-                try:
-                    data = json.loads(message_str)
-                    if "messages" in data:
-                        for msg in data["messages"]:
-                            await self._process_message(msg)
-                except json.JSONDecodeError as e:
-                    self._log.error(f"Failed to parse JSON: {e} - Message: {message_str}")
-                except Exception as e:
-                    self._log.error(f"Error processing message: {e}")
-        except websockets.exceptions.ConnectionClosed:
-            self._log.warning("WebSocket connection closed.")
+                # Heartbeat-Handling (Null-Bytes ignorieren)
+                if not message_str or message_str == b'\x00':
+                    continue
+                    
+                data = json.loads(message_str)
+                if "messages" in data:
+                    for msg in data["messages"]:
+                        await self._process_message(msg)
         except Exception as e:
             self._log.error(f"WebSocket loop error: {e}")
         finally:
             self.disconnect()
 
     async def _process_message(self, msg):
-        topic = msg.get("topic", "")
-        msg_type = msg.get("type", "")
-
-        if msg_type == "Trading.Instrument.Rate" and topic.startswith("instrument:"):
-            instrument_id_str = topic.split(":")[1]
-            if instrument_id_str in self.instrument_map:
-                try:
-                    # Double JSON encoding parsing
-                    content_str = msg.get("content", "{}")
+        msg_type = msg.get("type")
+        
+        # Akzeptiert Snapshots und Live-Updates
+        if msg_type in ("Trading.Instrument.Rate", "Snapshot"):
+            try:
+                content_str = msg.get("content", "{}")
+                
+                # eToro sendet 'content' oft als String, der erneut geparst werden muss
+                if isinstance(content_str, str):
                     content = json.loads(content_str)
-
-                    ask_str = content.get("Ask")
-                    bid_str = content.get("Bid")
-
-                    if ask_str is not None and bid_str is not None:
-                        ask = float(ask_str)
-                        bid = float(bid_str)
-
+                else:
+                    content = content_str
+                
+                # ID-Extraktion (eToro nutzt verschiedene Schreibweisen)
+                instr_id = content.get("InstrumentID") or content.get("InstrumentId")
+                
+                if str(instr_id) in self.instrument_map:
+                    ask = content.get("Ask")
+                    bid = content.get("Bid")
+                    
+                    if ask is not None and bid is not None:
                         ts = time.time_ns()
-
                         tick = QuoteTick(
-                            instrument_id=self.instrument_map[instrument_id_str],
-                            bid=bid,
-                            ask=ask,
+                            instrument_id=self.instrument_map[str(instr_id)],
+                            bid=float(bid),
+                            ask=float(ask),
                             bid_size=1.0,
                             ask_size=1.0,
                             ts_event=ts,
                             ts_init=ts
                         )
-
-                        self._log.info(f"Received Tick: {tick}")
+                        self._log.info(f"Tick received: {tick}")
                         self.handle_quote_tick(tick)
-                except json.JSONDecodeError as e:
-                    self._log.error(f"Failed to parse content JSON: {e} - Content: {msg.get('content')}")
-                except ValueError as e:
-                    self._log.error(f"Failed to parse bid/ask as float: {e}")
+            except (json.JSONDecodeError, ValueError) as e:
+                self._log.error(f"Error parsing message content: {e}")
