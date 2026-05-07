@@ -1,56 +1,56 @@
 import os
 import time
-import asyncio  # <-- NEU: Wichtig für den Event-Loop!
+import asyncio
 from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.live.node import TradingNode
 
-# Deinen neuen Adapter importieren
+# Import the custom adapter
 from adapters.etoro_data import EToroDataClient
 
-# 1. Keys SICHER aus dem Ubuntu-System laden
+# Securely load API keys
 API_KEY = os.environ.get("ETORO_API_KEY")
 USER_KEY = os.environ.get("ETORO_USER_KEY")
 
 if not API_KEY or not USER_KEY:
-    raise ValueError("FEHLER: API-Keys fehlen! Bitte setze ETORO_API_KEY und ETORO_USER_KEY in deinem Terminal.")
+    raise ValueError("ERROR: Missing API keys! Please set ETORO_API_KEY and ETORO_USER_KEY in your environment.")
 
 if __name__ == "__main__":
-    print("Starte Nautilus Trader Setup...")
+    print("Starting Nautilus Trader Setup...")
 
-    # 2. Node Konfiguration
+    # Node Configuration
     config = TradingNodeConfig(
         trader_id="eToro-Bot-01"
     )
 
-    # 3. Node initialisieren
+    # Initialize Node
     node = TradingNode(config=config)
 
-# 4. Deinen eToro Data Client instanziieren
-    # Wir greifen nun direkt auf den 'kernel' der Node zu, wo Nautilus die Engines versteckt hat!
+    # Instantiate the eToro Data Client
+    # We access the 'kernel' of the Node directly for strict dependency injection
     etoro_client = EToroDataClient(
         loop=asyncio.get_event_loop(),
-        msgbus=node.kernel.msgbus,                 # <-- .kernel. hinzugefügt
-        cache=node.kernel.cache,                   # <-- .kernel. hinzugefügt
-        clock=node.kernel.clock,                   # <-- .kernel. hinzugefügt
-        instrument_provider=node.kernel.instrument_provider, # <-- .kernel. hinzugefügt
+        msgbus=node.kernel.msgbus,
+        cache=node.kernel.cache,
+        clock=node.kernel.clock,
+        instrument_provider=node.kernel.instrument_provider,
         api_key=API_KEY,
         user_key=USER_KEY
     )
     
-    # 5. Den Client in die Nautilus-Engine einklinken
+    # Add the client to the Nautilus engine
     node.add_data_client(etoro_client)
 
-    # 6. System feuern!
+    # Fire up the system!
     node.start()
-    print("✅ System läuft! Warte auf eToro Live-Daten (TSLA)...")
-    print("Drücke Strg+C zum Beenden.")
+    print("✅ System running! Waiting for eToro Live-Data (TSLA)...")
+    print("Press Ctrl+C to exit.")
 
     try:
-        # Endlosschleife, damit das Programm offen bleibt
+        # Endless loop to keep the program open
         while True:
             time.sleep(1)
             
     except KeyboardInterrupt:
-        print("\nFahre das System sicher herunter...")
+        print("\nShutting down system safely...")
         node.stop()
-        print("Bot beendet.")
+        print("Bot stopped.")
