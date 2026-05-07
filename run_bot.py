@@ -1,55 +1,49 @@
 import os
-import time
-import asyncio
 from dotenv import load_dotenv
 from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.live.node import TradingNode
+from adapters.etoro_data import EToroDataClient
 from nautilus_trader.common.providers import InstrumentProvider
 
-# Import des benutzerdefinierten eToro Adapters
-from adapters.etoro_data import EToroDataClient
-
-# 1. Lade Umgebungsvariablen
+# Umgebungsvariablen laden
 load_dotenv()
-
 API_KEY = os.getenv("ETORO_API_KEY")
 USER_KEY = os.getenv("ETORO_USER_KEY")
 
-if __name__ == "__main__":
-    print("Starting Nautilus Trader Setup...")
+def main():
+    # 1. Nautilus Node initialisieren
+    config = TradingNodeConfig(trader_id="eToro-Bot-01")
+    node = TradingNode(config=config)
 
-    # 2. Node initialisieren
-    node = TradingNode(config=TradingNodeConfig(trader_id="eToro-Bot-01"))
+    # 2. InstrumentProvider explizit definieren oder aus dem Node beziehen
+    # In Nautilus 1.226.0 ist der Provider oft direkt im Node registriert
+    instrument_provider = node.get_service(InstrumentProvider)
 
-    # 3. InstrumentProvider und Client instanziieren
-    etoro_instrument_provider = InstrumentProvider()
-
-    etoro_client = EToroDataClient(
-        loop=asyncio.get_event_loop(),
+    # 3. eToro Data Client instanziieren
+    data_client = EToroDataClient(
+        loop=node.kernel.loop,
         msgbus=node.kernel.msgbus,
         cache=node.kernel.cache,
         clock=node.kernel.clock,
-        instrument_provider=etoro_instrument_provider,
+        instrument_provider=instrument_provider,
         api_key=API_KEY,
         user_key=USER_KEY
     )
-    
-    # 4. Den Client zur Engine hinzufügen
-    node.kernel.data_engine.register_client(etoro_client)
 
-    # 5. FIX: Das System muss vor dem Start gebaut werden
-    print("Baue System-Komponenten...")
+    # 4. Client registrieren und System bauen
+    node.add_data_client(data_client)
     node.build()
 
-    # 6. System starten
-    print("✅ System wird gestartet... Warte auf eToro Live-Daten (TSLA)...")
-    node.run()
+    print("✅ System wird gestartet... Drücke Ctrl+C zum Beenden.")
     
-    print("Press Ctrl+C to exit.")
-
     try:
-        while True:
-            time.sleep(1)
+        node.run() 
     except KeyboardInterrupt:
-        print("\nFahre System sicher herunter...")
+        print("\n⚠️ Abbruch durch Benutzer. Fahre System herunter...")
+    finally:
+        # Ressourcen sauber freigeben, verhindert blockierte Terminals
         node.stop()
+        print("🤖 Bot erfolgreich beendet.")
+
+if __name__ == "__main__":
+    main()
