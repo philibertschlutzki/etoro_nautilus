@@ -1,0 +1,2 @@
+nautilus_trader>=1.226.0
+websockets
