@@ -122,17 +122,16 @@ class EToroDataClient(LiveMarketDataClient):
                 instr_id = str(
                     content.get("InstrumentID") or content.get("InstrumentId")
                 )
-                if instr_id in self.instrument_map:
-                    ts = self._clock.timestamp_ns()
-                    tick = QuoteTick(
-                        instrument_id=self.instrument_map[instr_id],
-                        bid=int(float(content["Bid"]) * 1e9),
-                        ask=int(float(content["Ask"]) * 1e9),
-                        bid_size=int(1.0 * 1e9),
-                        ask_size=int(1.0 * 1e9),
-                        ts_event=ts,
-                        ts_init=ts,
-                    )
+                # Replace the QuoteTick instantiation in adapters/etoro_data.py
+            tick = QuoteTick(
+                instrument_id=self.instrument_map[instr_id],
+                bid_price=int(float(content["Bid"]) * 1e9),  # Changed from bid
+                ask_price=int(float(content["Ask"]) * 1e9),  # Changed from ask
+                bid_size=int(1.0 * 1e9),
+                ask_size=int(1.0 * 1e9),
+                ts_event=ts,
+                ts_init=ts,
+                )
                     self._log.info(f"Tick received: {tick}")
                     self.handle_quote_tick(tick)
             except Exception as e:
