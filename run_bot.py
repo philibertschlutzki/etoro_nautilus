@@ -6,6 +6,7 @@ from adapters.etoro_data import (
     EToroDataClientConfig,
     EToroLiveDataClientFactory,
 )
+from strategies.etoro_strategy import EToroStrategy, EToroStrategyConfig
 
 load_dotenv()
 API_KEY = os.getenv("ETORO_API_KEY")
@@ -13,6 +14,11 @@ USER_KEY = os.getenv("ETORO_USER_KEY")
 
 
 def main():
+    strategy_config = EToroStrategyConfig(
+        strategy_id="EToroStrategy-001",
+        instrument_id="TSLA.ETORO",
+    )
+
     config = TradingNodeConfig(
         trader_id="eToro-Bot-01",
         data_clients={
@@ -27,6 +33,10 @@ def main():
 
     # Factory registrieren – node.build() instantiiert den Client automatisch
     node.add_data_client_factory("ETORO_WS_CLIENT", EToroLiveDataClientFactory)
+
+    # Strategy registrieren
+    strategy = EToroStrategy(config=strategy_config)
+    node.add_strategy(strategy)
 
     node.build()
 
