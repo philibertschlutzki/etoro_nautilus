@@ -8,7 +8,7 @@ from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.config import LiveDataClientConfig
 from nautilus_trader.model.identifiers import InstrumentId, Venue, ClientId
 from nautilus_trader.model.data import QuoteTick
-from nautilus_trader.model.objects import Price, Quantity          # NEU: korrekte Typen
+from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.common.providers import InstrumentProvider
 
 
@@ -124,7 +124,6 @@ class EToroDataClient(LiveMarketDataClient):
                     content.get("InstrumentID") or content.get("InstrumentId")
                 )
 
-                # FIX 2: Bid/Ask auf None prüfen (Heartbeats / Status-Messages)
                 bid = content.get("Bid")
                 ask = content.get("Ask")
                 if bid is None or ask is None:
@@ -133,7 +132,6 @@ class EToroDataClient(LiveMarketDataClient):
 
                 ts = self._clock.utc_now()
 
-                # FIX 1: Price/Quantity statt rohe int-Werte
                 tick = QuoteTick(
                     instrument_id=self.instrument_map[instr_id],
                     bid_price=Price(float(bid), precision=5),
