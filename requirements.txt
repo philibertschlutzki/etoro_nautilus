@@ -1,3 +1,4 @@
 nautilus_trader>=1.226.0
 websockets
 python-dotenv
+pip install requests
