@@ -2,7 +2,7 @@ import json
 import ssl
 import uuid
 import websockets
-from datetime import datetime
+from datetime import datetime, timezone
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.common.providers import InstrumentProvider
@@ -15,14 +15,12 @@ from nautilus_trader.model.identifiers import ClientId, InstrumentId, Symbol, Ve
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
-from adapters.instrument_map import ETORO_INSTRUMENTS
-
 # ── Config & Factory ──────────────────────────────────────────────────────────
+# (Bleibt unverändert)
 
 class EToroDataClientConfig(LiveDataClientConfig, frozen=True, kw_only=True):
     api_key: str
     user_key: str
-    instrument_ids: list[str]  # NEU: Liste der eToro-IDs (z.B. ["1111", "1001"])
 
 class EToroLiveDataClientFactory(LiveDataClientFactory):
     @staticmethod
@@ -35,13 +33,12 @@ class EToroLiveDataClientFactory(LiveDataClientFactory):
             instrument_provider=InstrumentProvider(),
             api_key=config.api_key,
             user_key=config.user_key,
-            instrument_ids=config.instrument_ids,
         )
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
 class EToroDataClient(LiveMarketDataClient):
-    def __init__(self, loop, msgbus, cache, clock, instrument_provider, api_key, user_key, instrument_ids):
+    def __init__(self, loop, msgbus, cache, clock, instrument_provider, api_key, user_key):
         super().__init__(
             loop=loop,
             venue=Venue("ETORO"),
@@ -53,17 +50,12 @@ class EToroDataClient(LiveMarketDataClient):
         )
         self.api_key = api_key
         self.user_key = user_key
-        self.instrument_ids = instrument_ids
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
         
-        # Mapping der benötigten IDs aus unserer zentralen Map
-        self.instrument_map = {}
-        for eid in self.instrument_ids:
-            if eid in ETORO_INSTRUMENTS:
-                self.instrument_map[eid] = InstrumentId.from_str(ETORO_INSTRUMENTS[eid])
-            else:
-                self._log.warning(f"eToro ID {eid} nicht in ETORO_INSTRUMENTS gefunden!")
+        # ACHTUNG: Hier musst du die echte ID für Tesla eintragen (z.B. Instrument 1000). 
+        # "1" ist EUR/USD!
+        self.instrument_map = {"1111": InstrumentId.from_str("TSLA.ETORO")} 
         
         self._last_bid: dict[str, float] = {}
         self._last_ask: dict[str, float] = {}
@@ -82,7 +74,7 @@ class EToroDataClient(LiveMarketDataClient):
             self._ws = None
             self._log.info("WebSocket geschlossen.", LogColor.BLUE)
 
-    # Nautilus Boilerplate-Methoden
+    # (Nautilus Boilerplate-Methoden _subscribe_quote_ticks etc. bleiben wie in deiner Original-Datei)
     async def _subscribe_quote_ticks(self, command) -> None: pass
     async def _unsubscribe_quote_ticks(self, command) -> None: pass
     async def _subscribe_trade_ticks(self, command) -> None: pass
@@ -107,22 +99,20 @@ class EToroDataClient(LiveMarketDataClient):
 
     def _register_instruments(self) -> None:
         ts = self._clock.timestamp_ns()
-        for eid, instr_id in self.instrument_map.items():
-            # Generische Registrierung als Equity (Aktie)
-            inst = Equity(
-                instrument_id=instr_id,
-                raw_symbol=instr_id.symbol,
-                currency=USD,
-                price_precision=5,
-                price_increment=Price(0.00001, precision=5),
-                lot_size=Quantity(1, precision=0),
-                ts_event=ts,
-                ts_init=ts,
-            )
-            self._instrument_provider.add(inst)
-            self._cache.add_instrument(inst)
-            self._msgbus.publish(topic=f"data.instrument.ETORO.{inst.id}", msg=inst)
-            self._log.info(f"Instrument {instr_id} (eToro-ID: {eid}) registriert.", LogColor.GREEN)
+        tsla = Equity(
+            instrument_id=InstrumentId.from_str("TSLA.ETORO"),
+            raw_symbol=Symbol("TSLA"),
+            currency=USD,
+            price_precision=5,
+            price_increment=Price(0.00001, precision=5),
+            lot_size=Quantity(1, precision=0),
+            ts_event=ts,
+            ts_init=ts,
+        )
+        self._instrument_provider.add(tsla)
+        self._cache.add_instrument(tsla)
+        self._msgbus.publish(topic=f"data.instrument.ETORO.{tsla.id}", msg=tsla)
+        self._log.info("Instrument TSLA.ETORO registriert.", LogColor.GREEN)
 
     async def _authenticate(self) -> None:
         auth_payload = {
@@ -133,26 +123,28 @@ class EToroDataClient(LiveMarketDataClient):
         await self._ws.send(json.dumps(auth_payload))
         resp = await self._ws.recv()
         self._log.debug(f"Auth response: {resp}")
-        await self._subscribe_etoro_instruments()
+        await self._subscribe_etoro_instrument()
 
-    async def _subscribe_etoro_instruments(self) -> None:
-        topics = [f"instrument:{eid}" for eid in self.instrument_map.keys()]
+    async def _subscribe_etoro_instrument(self) -> None:
         sub_payload = {
             "id": str(uuid.uuid4()),
             "operation": "Subscribe",
-            "data": {"topics": topics, "snapshot": True}, 
+            # Hier auch die Instrument ID anpassen, wenn du TSLA nutzt!
+            "data": {"topics": ["instrument:1111"], "snapshot": True}, 
         }
-        self._log.info(f"Abonniere eToro Topics: {topics}...")
+        self._log.info("Abonniere Instrument (ID: 1)...")
         await self._ws.send(json.dumps(sub_payload))
 
     async def _message_loop(self) -> None:
         try:
             async for raw in self._ws:
+                # Heartbeat-Ping (b'\x00') geräuschlos ignorieren!
                 if not raw or raw == b"\x00":
                     continue
                 try:
                     data = json.loads(raw)
                 except json.JSONDecodeError:
+                    self._log.debug(f"Non-JSON frame: {raw}")
                     continue
                 if "messages" in data:
                     for msg in data["messages"]:
@@ -168,22 +160,29 @@ class EToroDataClient(LiveMarketDataClient):
             return
         
         try:
+            # eToro sendet JSON als String innerhalb des 'content' Feldes
             content = json.loads(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content")
             
+            # Instrumenten-ID ermitteln
             topic = msg.get("topic", "")
             instr_id = topic.split(":")[1] if topic.startswith("instrument:") else str(content.get("InstrumentID", ""))
 
             if instr_id not in self.instrument_map:
                 return
 
+            # --- SNAPSHOT EXTRAKTION ---
             if msg_type == "Snapshot":
                 is_open = content.get("IsMarketOpen") == "true"
                 allow_buy = content.get("AllowBuy") == "true"
                 self._log.info(
-                    f"Snapshot {self.instrument_map[instr_id]}: MarketOpen={is_open}, AllowBuy={allow_buy}",
+                    f"Snapshot für {self.instrument_map[instr_id]}: "
+                    f"MarketOpen={is_open}, AllowBuy={allow_buy}, ClosePrice={content.get('OfficialClosingPrice')}",
                     LogColor.MAGENTA
                 )
+                if not is_open:
+                    self._log.warning("ACHTUNG: Markt für dieses Instrument ist derzeit geschlossen!")
 
+            # --- PREIS EXTRAKTION (Partial Updates) ---
             bid_changed = False
             ask_changed = False
 
@@ -194,6 +193,7 @@ class EToroDataClient(LiveMarketDataClient):
                 self._last_ask[instr_id] = float(content["Ask"])
                 ask_changed = True
 
+            # Wenn es nur ein Heartbeat (Date) ohne neue Preise ist, abbrechen
             if not bid_changed and not ask_changed and msg_type != "Snapshot":
                 return
 
@@ -201,12 +201,15 @@ class EToroDataClient(LiveMarketDataClient):
             ask = self._last_ask.get(instr_id)
 
             if bid is None or ask is None:
-                return
+                return # Warten bis wir sowohl Bid als auch Ask haben
 
+            # --- TIMESTAMP EXTRAKTION ---
+            # Wir nutzen die Börsen-Zeit statt der lokalen PC-Zeit für maximale Präzision
             date_str = content.get("Date")
             if date_str:
+                # Format: "2026-05-08T12:20:15.1435317Z" -> Wir entfernen das Z und parsen
                 dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                ts = int(dt.timestamp() * 1e9)
+                ts = int(dt.timestamp() * 1e9) # Nautilus erwartet Nanosekunden
             else:
                 ts = self._clock.timestamp_ns()
 
@@ -216,10 +219,11 @@ class EToroDataClient(LiveMarketDataClient):
                 ask_price=Price(ask, precision=5),
                 bid_size=Quantity(1.0, precision=0),
                 ask_size=Quantity(1.0, precision=0),
-                ts_event=ts,
-                ts_init=self._clock.timestamp_ns(),
+                ts_event=ts,  # Zeit der eToro-Schnittstelle
+                ts_init=self._clock.timestamp_ns(), # Zeit des lokalen Empfangs
             )
             
+            # Route QuoteTick in den Nautilus-Datenpfad
             self._handle_data(tick)
             
         except Exception as e:
