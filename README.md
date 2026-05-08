@@ -175,7 +175,3 @@ Wenn du eine eigene Logik entwickeln willst (z.B. einen Breakout-Bot):
 4. Trage sie in der `config/setups.py` ein (ändere den Namen unter `"strategy_class"` auf deine neue Strategie).
 
 Viel Erfolg und Happy Algorithmic Trading! 📈🤖
-
-```
-
-```
