@@ -112,7 +112,3 @@ print(stats)
 ```
 
 *(Hinweis: Erfordert eventuell `pip install nautilus_trader[analysis]`)*
-
-```
-
-```
