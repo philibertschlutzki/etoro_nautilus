@@ -47,18 +47,22 @@ class EToroStrategy(Strategy):
     def on_quote_tick(self, tick: QuoteTick):
         # Wir lassen die Tick-Verarbeitung komplett leer. 
         # Nautilus verarbeitet diese im Hintergrund für unsere Bars.
-        # So bleibt unser Log sauber.
         pass
 
     def on_bar(self, bar: Bar):
         """
         Wird exakt dann aufgerufen, wenn eine 1-Minuten-Kerze abgeschlossen ist.
         """
-        # Preis als Float für den Indikator extrahieren
+        # 1. Indikator mit dem kompletten Bar-Objekt füttern!
+        self.sma.handle_bar(bar)
+
+        # 2. Warten, bis der Indikator genug Daten hat (hier: 5 Bars)
+        if not self.sma.initialized:
+            self._log.debug("Warte auf SMA Initialisierung...")
+            return
+            
+        # 3. Preis als Float für unsere Logik extrahieren
         close_price = float(bar.close)
-        
-        # Indikator mit dem neuen Schlusskurs updaten
-        self.sma.update(close_price)
         
         # Logge die fertige Kerze
         self._log.info(
@@ -66,22 +70,15 @@ class EToroStrategy(Strategy):
             f"SMA({self.config.sma_period}): {self.sma.value:.2f}"
         )
 
-        # Signallogik erst ausführen, wenn der SMA genug Daten hat (hier: 5 Bars)
-        if not self.sma.initialized:
-            self._log.debug(f"Warte auf SMA Initialisierung... ({self.sma.count}/{self.config.sma_period})")
-            return
-
         # ─── Handelslogik (Crossover) ─────────────────────────────────────────
         
         if close_price > self.sma.value and self.current_signal != "BUY":
             self._log.info(f"🟢 BUY SIGNAL: Preis ({close_price:.2f}) kreuzt ÜBER den SMA ({self.sma.value:.2f})")
             self.current_signal = "BUY"
-            # TODO: Hier in Zukunft self.submit_order(...) aufrufen
             
         elif close_price < self.sma.value and self.current_signal != "SELL":
             self._log.info(f"🔴 SELL SIGNAL: Preis ({close_price:.2f}) kreuzt UNTER den SMA ({self.sma.value:.2f})")
             self.current_signal = "SELL"
-            # TODO: Hier in Zukunft self.submit_order(...) aufrufen
 
     def on_stop(self):
         self._log.info("🛑 Strategie gestoppt.")
