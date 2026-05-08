@@ -259,6 +259,7 @@ class EToroDataClient(LiveMarketDataClient):
                 ts_init=ts,
             )
             self._log.info(f"Tick: bid={bid:.5f} ask={ask:.5f} [{tick.instrument_id}]")
-            self._handle_quote_tick(tick)
+            # Route QuoteTick in den Nautilus-Datenpfad
+            self._handle_data(tick)
         except Exception as e:
             self._log.error(f"Error parsing message: {e}")
