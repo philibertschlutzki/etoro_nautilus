@@ -34,7 +34,7 @@ Folge dieser Schritt-für-Schritt-Anleitung, um den Bot auf deinem System zum La
 ### Schritt 1: Repository klonen
 Klone das Projekt auf deinen lokalen Rechner:
 ```bash
-git clone <URL_ZUM_REPOSITORY>
+git clone https://github.com/philibertschlutzki/etoro_nautilus.git
 cd <NAME_DES_VERZEICHNISSES>
 ```
 
