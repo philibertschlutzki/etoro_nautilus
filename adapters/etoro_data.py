@@ -55,7 +55,7 @@ class EToroDataClient(LiveMarketDataClient):
         
         # ACHTUNG: Hier musst du die echte ID für Tesla eintragen (z.B. Instrument 1000). 
         # "1" ist EUR/USD!
-        self.instrument_map = {"1": InstrumentId.from_str("TSLA.ETORO")} 
+        self.instrument_map = {"1111": InstrumentId.from_str("TSLA.ETORO")} 
         
         self._last_bid: dict[str, float] = {}
         self._last_ask: dict[str, float] = {}
@@ -130,7 +130,7 @@ class EToroDataClient(LiveMarketDataClient):
             "id": str(uuid.uuid4()),
             "operation": "Subscribe",
             # Hier auch die Instrument ID anpassen, wenn du TSLA nutzt!
-            "data": {"topics": ["instrument:1"], "snapshot": True}, 
+            "data": {"topics": ["instrument:1111"], "snapshot": True}, 
         }
         self._log.info("Abonniere Instrument (ID: 1)...")
         await self._ws.send(json.dumps(sub_payload))
