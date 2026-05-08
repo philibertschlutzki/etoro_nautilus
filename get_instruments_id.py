@@ -9,43 +9,98 @@ load_dotenv()
 API_KEY = os.getenv("ETORO_API_KEY")
 USER_KEY = os.getenv("ETORO_USER_KEY")
 
-def get_etoro_instrument_id(symbol: str):
+
+def get_etoro_instrument_id(symbol: str) -> dict | None:
+    """
+    Sucht die eToro Instrument-ID für ein einzelnes Symbol.
+    Gibt ein Dict mit 'symbol' und 'instrumentId' zurück, oder None bei Fehler.
+    """
     if not API_KEY or not USER_KEY:
-        print("Fehler: API_KEY oder USER_KEY konnten nicht aus der .env geladen werden.")
-        return
+        print("❌ Fehler: API_KEY oder USER_KEY konnten nicht aus der .env geladen werden.")
+        return None
 
     url = "https://public-api.etoro.com/api/v1/market-data/search"
-    
-    params = {
-        "internalSymbolFull": symbol
-    }
-    
+
+    params = {"internalSymbolFull": symbol}
     headers = {
         "x-api-key": API_KEY,
         "x-user-key": USER_KEY,
-        "x-request-id": str(uuid.uuid4())
+        "x-request-id": str(uuid.uuid4()),
     }
 
-    print(f"Suche nach Instrumenten-ID für: {symbol} ...")
     response = requests.get(url, headers=headers, params=params)
 
     if response.status_code == 200:
-        data = response.json()
-        
-        # Finde den exakten Match in der zurückgegebenen Liste
-        items = data.get('items', [])
-        instrument = next((item for item in items if item.get('internalSymbolFull') == symbol), None)
-        
+        items = response.json().get("items", [])
+        instrument = next(
+            (item for item in items if item.get("internalSymbolFull") == symbol), None
+        )
         if instrument:
-            instr_id = instrument['instrumentId']
-            print(f"✅ Erfolg! Die eToro Instrument ID für {symbol} ist: {instr_id}")
-            print(f"-> Trage diese ID in deine adapters/etoro_data.py und Tracker ein.")
+            return {"symbol": symbol, "instrumentId": str(instrument["instrumentId"])}
         else:
-            print(f"❌ Instrument '{symbol}' wurde in den Suchergebnissen nicht gefunden.")
+            return {"symbol": symbol, "instrumentId": None, "error": "Nicht gefunden"}
     else:
-        print(f"❌ Fehler bei der API-Anfrage: HTTP {response.status_code}")
-        print(response.text)
+        return {
+            "symbol": symbol,
+            "instrumentId": None,
+            "error": f"HTTP {response.status_code}",
+        }
+
+
+def get_multiple_instrument_ids(symbols: list[str]) -> None:
+    """
+    Sucht die eToro Instrument-IDs für eine Liste von Symbolen und gibt
+    die Ergebnisse formatiert aus – inklusive einem fertigen Code-Snippet
+    für adapters/instrument_map.py.
+    """
+    print(f"\n🔍 Starte Batch-Suche für {len(symbols)} Symbole ...\n")
+    print("-" * 50)
+
+    results = []
+    for symbol in symbols:
+        print(f"  Suche: {symbol} ...", end="", flush=True)
+        result = get_etoro_instrument_id(symbol)
+        results.append(result)
+        if result and result["instrumentId"]:
+            print(f" ✅  ID = {result['instrumentId']}")
+        else:
+            error = result.get("error", "Unbekannter Fehler") if result else "Kein Ergebnis"
+            print(f" ❌  {error}")
+
+    # ── Zusammenfassung ──────────────────────────────────────────────────────
+    successful = [r for r in results if r and r["instrumentId"]]
+    failed = [r for r in results if not r or not r["instrumentId"]]
+
+    print("\n" + "=" * 50)
+    print(f"  Ergebnis: {len(successful)}/{len(symbols)} Symbole gefunden")
+    print("=" * 50)
+
+    if failed:
+        print("\n⚠️  Nicht gefunden:")
+        for r in failed:
+            print(f"     - {r['symbol']}: {r.get('error', '?')}")
+
+    if successful:
+        print("\n📋  Fertige Einträge für adapters/instrument_map.py:")
+        print("-" * 50)
+        print("ETORO_INSTRUMENTS = {")
+        for r in successful:
+            print(f'    "{r["instrumentId"]}": "{r["symbol"]}.ETORO",')
+        print("}")
+        print("-" * 50)
+        print()
+
 
 if __name__ == "__main__":
-    # Suche speziell nach Tesla
-    get_etoro_instrument_id("TSLA")
+    # ── Symbole die abgefragt werden sollen ─────────────────────────────────
+    SYMBOLS_TO_LOOKUP = [
+        "TSLA",   # Tesla
+        "HUT",    # Hut 8 Corp
+        "BITF",   # Bitfarms
+        "RIOT",   # Riot Platforms
+        "NVDA",   # Nvidia
+        "FSLY",   # Fastly
+        "INSM",   # Insmed
+    ]
+
+    get_multiple_instrument_ids(SYMBOLS_TO_LOOKUP)
