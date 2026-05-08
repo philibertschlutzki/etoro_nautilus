@@ -81,5 +81,3 @@ Um eine neue Aktie in das System aufzunehmen:
 2. Trage die ID in `adapters/instrument_map.py` ein.
 3. Füge in `config/setups.py` einen neuen Block zum `ACTIVE_BOTS`-Array hinzu.
 4. Starte den Bot (und in der Cloud die Systemd-Dienste) neu.
-
-```
