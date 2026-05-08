@@ -1,12 +1,3 @@
-Hier ist eine vollständig überarbeitete und erweiterte Version deiner `README.md`.
-
-Sie beinhaltet nun neben dem ursprünglichen Setup auch die professionelle **Two-Service-Architektur (systemd)** für den Cloud-Betrieb sowie das **Data-Catalog-Konzept** (Parquet-Recording) für dein späteres Backtesting.
-
-Kopiere diesen Text einfach und ersetze damit den Inhalt deiner aktuellen `README.md` auf GitHub:
-
----
-
-```markdown
 # 🚀 eToro Nautilus Multi-Bot Plattform & Data Catalog
 
 Willkommen beim **eToro Nautilus** Projekt! Dies ist ein professionelles, hochskalierbares Grundgerüst für algorithmisches Trading in Python. Das Projekt nutzt das [Nautilus Trader](https://nautilustrader.io/) Framework, um eine Echtzeit-WebSocket-Verbindung zur eToro-API herzustellen.
