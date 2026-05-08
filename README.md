@@ -35,7 +35,7 @@ Folge dieser Schritt-für-Schritt-Anleitung, um den Bot auf deinem System zum La
 Klone das Projekt auf deinen lokalen Rechner:
 ```bash
 git clone https://github.com/philibertschlutzki/etoro_nautilus.git
-cd <NAME_DES_VERZEICHNISSES>
+cd etoro_nautilus/
 ```
 
 ### Schritt 2: Virtuelles Python-Environment erstellen und aktivieren
