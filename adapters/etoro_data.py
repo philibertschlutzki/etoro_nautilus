@@ -219,25 +219,45 @@ class EToroDataClient(LiveMarketDataClient):
             self._log.error(f"WebSocket error: {e}")
 
     def _process_message(self, msg: dict) -> None:
-        if msg.get("type") not in ("Trading.Instrument.Rate", "Snapshot"):
+        msg_type = msg.get("type")
+        if msg_type not in ("Trading.Instrument.Rate", "Snapshot"):
             return
+        
         try:
             content = (
                 json.loads(msg["content"])
                 if isinstance(msg.get("content"), str)
                 else msg.get("content")
             )
-            instr_id = str(
-                content.get("InstrumentID") or content.get("InstrumentId") or ""
-            )
+            
+            # --- START DER ÄNDERUNG ---
+            # Wir ziehen die ID primär aus dem 'topic' (z.B. "instrument:1")
+            topic = msg.get("topic", "")
+            if topic.startswith("instrument:"):
+                instr_id = topic.split(":")[1]
+            else:
+                # Fallback, falls das topic unerwartet formatiert ist
+                instr_id = str(content.get("InstrumentID") or content.get("InstrumentId") or "")
+            # --- ENDE DER ÄNDERUNG ---
+
             if instr_id not in self.instrument_map:
                 self._log.debug(f"Unbekannte InstrumentID '{instr_id}', überspringe.")
                 return
 
+            bid_changed = False
+            ask_changed = False
+
             if content.get("Bid") is not None:
                 self._last_bid[instr_id] = float(content["Bid"])
+                bid_changed = True
             if content.get("Ask") is not None:
                 self._last_ask[instr_id] = float(content["Ask"])
+                ask_changed = True
+
+            # Wenn sich weder Bid noch Ask geändert haben und es kein Snapshot ist, 
+            # überspringen wir dieses Update, um Ressourcen zu sparen.
+            if not bid_changed and not ask_changed and msg_type != "Snapshot":
+                return
 
             bid = self._last_bid.get(instr_id)
             ask = self._last_ask.get(instr_id)
@@ -261,5 +281,6 @@ class EToroDataClient(LiveMarketDataClient):
             self._log.info(f"Tick: bid={bid:.5f} ask={ask:.5f} [{tick.instrument_id}]")
             # Route QuoteTick in den Nautilus-Datenpfad
             self._handle_data(tick)
+            
         except Exception as e:
             self._log.error(f"Error parsing message: {e}")
