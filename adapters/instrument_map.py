@@ -7,7 +7,9 @@ und sie hier hinzuzufügen.
 
 ETORO_INSTRUMENTS = {
     "1111": "TSLA.ETORO",
-    "1": "EURUSD.ETORO",
-    "1001": "AAPL.ETORO",   # Beispiel (Bitte echte ID prüfen)
-    "1002": "AMZN.ETORO",   # Beispiel (Bitte echte ID prüfen)
+    "8671": "HUT.ETORO",
+    "6270": "RIOT.ETORO",
+    "1137": "NVDA.ETORO",
+    "5045": "FSLY.ETORO",
+    "9119": "INSM.ETORO",
 }

@@ -96,7 +96,6 @@ if __name__ == "__main__":
     SYMBOLS_TO_LOOKUP = [
         "TSLA",   # Tesla
         "HUT",    # Hut 8 Corp
-        "BITF",   # Bitfarms
         "RIOT",   # Riot Platforms
         "NVDA",   # Nvidia
         "FSLY",   # Fastly
