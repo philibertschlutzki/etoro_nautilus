@@ -82,7 +82,7 @@ sudo mkdir -p /data/nautilus         # Ziel für Parquet-Dateien
 
 # Code klonen und Rechte setzen
 cd /opt/etoro_nautilus
-sudo -u tradingbot git clone [https://github.com/philibertschlutzki/etoro_nautilus.git](https://github.com/philibertschlutzki/etoro_nautilus.git) .
+sudo -u tradingbot git clone https://github.com/philibertschlutzki/etoro_nautilus.git
 sudo -u tradingbot python3 -m venv venv
 sudo -u tradingbot ./venv/bin/pip install -r requirements.txt
 sudo chown -R tradingbot:tradingbot /data/nautilus
