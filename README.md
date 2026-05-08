@@ -1,78 +1,57 @@
-# 🚀 eToro Nautilus Multi-Bot Plattform
+Hier ist eine vollständig überarbeitete und erweiterte Version deiner `README.md`.
 
-Willkommen beim **eToro Nautilus** Projekt! Dies ist ein anfängerfreundliches, aber hochskalierbares Grundgerüst für einen Algorithmic Trading Bot in Python. Das Projekt nutzt das professionelle [Nautilus Trader](https://nautilustrader.io/) Framework, um eine Echtzeit-WebSocket-Verbindung zur eToro-API herzustellen.
+Sie beinhaltet nun neben dem ursprünglichen Setup auch die professionelle **Two-Service-Architektur (systemd)** für den Cloud-Betrieb sowie das **Data-Catalog-Konzept** (Parquet-Recording) für dein späteres Backtesting.
 
-Der Bot ist als **Multi-Asset & Multi-Strategie Orchestrator** aufgebaut. Das bedeutet: Du kannst völlig problemlos mehrere Strategien auf unterschiedlichen Aktien (z.B. Tesla, Apple, Bitcoin) **gleichzeitig** laufen lassen, ohne den eigentlichen Code der Verbindung verändern zu müssen.
+Kopiere diesen Text einfach und ersetze damit den Inhalt deiner aktuellen `README.md` auf GitHub:
+
+---
+
+```markdown
+# 🚀 eToro Nautilus Multi-Bot Plattform & Data Catalog
+
+Willkommen beim **eToro Nautilus** Projekt! Dies ist ein professionelles, hochskalierbares Grundgerüst für algorithmisches Trading in Python. Das Projekt nutzt das [Nautilus Trader](https://nautilustrader.io/) Framework, um eine Echtzeit-WebSocket-Verbindung zur eToro-API herzustellen.
+
+Neben dem **Live-Trading** (Multi-Asset & Multi-Strategie) bietet diese Plattform nun auch eine integrierte **Market Data Recording Engine**. Diese zeichnet hochfrequente Marktdaten ressourcenschonend im Parquet-Format auf, um später präzises Backtesting durchführen zu können.
 
 ---
 
 ## 📋 1. Projekt-Übersicht
 
-Dieses Projekt verbindet das professionelle Trading-Framework **Nautilus Trader** mit der **eToro-API** via WebSockets. Der Fokus liegt auf Modularität und einem schnellen Einstieg:
-- **Live-Marktdaten:** Empfängt Echtzeit-Updates von eToro für beliebig viele Aktien gleichzeitig.
-- **Konfigurationsbasiert:** Füge neue Aktien oder Strategien einfach über eine Textdatei (`setups.py`) hinzu.
-- **Strategie-Grundgerüst:** Enthält eine klassische "SMA Crossover" Beispielstrategie, die Kauf- und Verkaufssignale basierend auf gleitenden Durchschnitten (Moving Averages) generiert.
+Dieses Projekt verbindet professionelle Trading-Architektur mit der eToro-API:
+- **Live-Trading Orchestrator:** Empfängt Echtzeit-Updates und führt Strategien (z.B. SMA Crossover) für beliebig viele Aktien parallel aus.
+- **Data Catalog Recorder (NEU):** Ein passiver Zuhörer, der Ticks und Kerzen (Bars) im RAM sammelt und ressourcenschonend als komprimierte `.parquet`-Dateien abspeichert.
+- **Cloud-Ready (Systemd):** Optimiert für ressourcenarme Cloud-VMs (wie Google Cloud `e2-micro`) durch eine strikte Trennung von Trading- und Daten-Aufzeichnungs-Prozessen.
 
 ---
 
 ## 🛠️ 2. Voraussetzungen (Prerequisites)
 
-Bevor wir starten, stelle bitte sicher, dass du folgende Dinge bereit hast:
-
-- **Python-Version:** Python 3.10 oder neuer wird dringend empfohlen.
-- **Benötigte Bibliotheken** (diese werden später automatisch installiert):
-  - `nautilus_trader>=1.226.0` (Das Core-Framework)
-  - `websockets` (Für die Echtzeit-Verbindung zu eToro)
-  - `python-dotenv` (Um sichere Umgebungsvariablen wie API-Keys zu laden)
-- **eToro API-Zugangsdaten:** Du benötigst API-Zugang von eToro (einen API-Key und einen User-Key).
+- **Python-Version:** Python 3.10 oder neuer.
+- **Benötigte Bibliotheken** (siehe `requirements.txt`):
+  - `nautilus_trader>=1.226.0` (Core-Framework)
+  - `websockets` (eToro-Verbindung)
+  - `python-dotenv` (Sichere API-Keys)
+  - `pandas` & `pyarrow` (Für die Parquet-Datenspeicherung)
+- **eToro API-Zugangsdaten:** API-Key und User-Key von eToro.
 
 ---
 
-## 🚀 3. Installation & Setup
+## 💻 3. Lokales Setup (Für Entwicklung & Test)
 
-Folge dieser Schritt-für-Schritt-Anleitung, um den Bot auf deinem System zum Laufen zu bringen.
-
-### Schritt 1: Repository klonen
-Klone das Projekt auf deinen lokalen Rechner:
+### Schritt 1: Repository klonen & Environment erstellen
 ```bash
 git clone [https://github.com/philibertschlutzki/etoro_nautilus.git](https://github.com/philibertschlutzki/etoro_nautilus.git)
 cd etoro_nautilus/
 
-```
-
-### Schritt 2: Virtuelles Python-Environment erstellen und aktivieren
-
-Es ist immer eine gute Praxis, Python-Projekte in einer isolierten Umgebung ("Virtual Environment") laufen zu lassen.
-
-**Windows:**
-
-```bash
-python -m venv venv
-venv\Scripts\activate
-
-```
-
-**macOS / Linux:**
-
-```bash
 python3 -m venv venv
-source venv/bin/activate
-
-```
-
-### Schritt 3: Abhängigkeiten installieren
-
-Jetzt installieren wir alle benötigten Pakete aus der `requirements.txt`:
-
-```bash
+source venv/bin/activate  # Unter Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 ```
 
-### Schritt 4: Konfiguration der `.env`-Datei 🔐
+### Schritt 2: Konfiguration der `.env`-Datei 🔐
 
-Dein Bot benötigt Zugangsdaten, um sich mit eToro zu verbinden. Diese speichern wir sicher ab.
-Erstelle dazu eine neue Datei namens `.env` im **Hauptverzeichnis** des Projekts und füge folgenden Inhalt ein:
+Erstelle eine neue Datei namens `.env` im Hauptverzeichnis:
 
 ```env
 ETORO_API_KEY=DEIN_API_KEY_HIER
@@ -80,98 +59,134 @@ ETORO_USER_KEY=DEIN_USER_KEY_HIER
 
 ```
 
-> ⚠️ **WICHTIG:** Die Datei `.env` darf **niemals** in Git versioniert oder veröffentlicht werden! Sie enthält deine geheimen Schlüssel. In diesem Projekt ist sie bereits in der `.gitignore`-Datei geschützt.
+*(WICHTIG: Die `.env` darf niemals in Git versioniert werden!)*
 
----
+### Schritt 3: Skripte lokal ausführen
 
-## 📁 4. Wie funktioniert der Bot? (Die Architektur)
-
-Der Bot ist in drei logische Bereiche unterteilt, damit du nicht aus Versehen den Verbindungs-Code kaputt machst, wenn du eine neue Strategie baust:
-
-1. **Das Gehirn (`config/setups.py`):** Hier sagst du dem Bot, was er tun soll. Welche Strategie soll auf welcher Aktie mit welchen Parametern laufen?
-2. **Die Wörterbücher (`adapters/instrument_map.py` & `get_instruments_id.py`):**
-eToro nutzt intern kryptische Zahlen (z.B. ist Tesla die ID `1111`). Hier übersetzen wir diese Zahlen in lesbare Namen wie `TSLA.ETORO`.
-3. **Die Logik (`strategies/...`):**
-Hier liegen deine Handelsstrategien (z.B. `sma_crossover.py`). Sie sagen dem Bot, *wann* er kaufen oder verkaufen soll.
-4. **Der Motor (`run_bot.py`):**
-Dieses Skript liest deine Konfiguration aus, verbindet sich mit eToro und startet alle definierten Strategien automatisch.
-
----
-
-## 🎯 5. So fügst du neue Aktien und Strategien hinzu (Für Anfänger)
-
-Das Hinzufügen einer neuen Aktie (z.B. Apple) oder das Starten einer zweiten Strategie ist super einfach und erfordert keine tiefen Programmierkenntnisse.
-
-### Schritt A: Die eToro-ID der neuen Aktie finden
-
-eToro braucht eine spezifische ID für jede Aktie. Nutze das beiliegende Hilfs-Skript, um sie zu finden:
-
-1. Öffne die Datei `get_instruments_id.py` und ändere ganz unten den Suchbegriff (z.B. auf `"AAPL"` für Apple).
-2. Führe das Skript aus: `python get_instruments_id.py`
-3. Das Skript gibt dir die ID zurück (z.B. `1001`).
-
-### Schritt B: Die ID in die Map eintragen
-
-Damit Nautilus den Namen versteht, tragen wir die ID in unser "Wörterbuch" ein.
-
-1. Öffne `adapters/instrument_map.py`.
-2. Füge deine neue ID hinzu:
-
-```python
-ETORO_INSTRUMENTS = {
-    "1111": "TSLA.ETORO",
-    "1001": "AAPL.ETORO",  # <-- Hier ist deine neue Aktie!
-}
-
-```
-
-### Schritt C: Den Bot für die neue Aktie aktivieren
-
-Jetzt sagen wir dem Hauptprogramm, dass es für diese Aktie eine Strategie starten soll.
-
-1. Öffne `config/setups.py`.
-2. Kopiere einen bestehenden Bot-Block im `ACTIVE_BOTS`-Array oder füge einen neuen hinzu:
-
-```python
-ACTIVE_BOTS = [
-    # Dein erster Bot (Tesla)
-    {
-        "strategy_class": "SmaCrossoverStrategy",
-        "etoro_id": "1111",
-        "symbol": "TSLA.ETORO",
-        "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL",
-        "params": { "sma_period": 5 }
-    },
-    # Dein neuer Bot (Apple)
-    {
-        "strategy_class": "SmaCrossoverStrategy",
-        "etoro_id": "1001",
-        "symbol": "AAPL.ETORO",
-        "bar_type": "AAPL.ETORO-1-MINUTE-MID-INTERNAL",
-        "params": { "sma_period": 10 } # Vielleicht willst du hier einen anderen SMA nutzen?
-    }
-]
-
-```
-
-### Schritt D: Bot starten!
-
-Starte das Hauptprogramm. Der Bot wird sich automatisch mit eToro verbinden und **beide** Streams (Tesla und Apple) parallel überwachen und verarbeiten!
+Du kannst nun wahlweise den Trading-Bot oder den Data-Recorder starten:
 
 ```bash
+# Startet den Trading-Bot (führt Strategien aus)
 python run_bot.py
+
+# Startet den Daten-Rekorder (speichert Parquet-Dateien lokal)
+python run_catalog.py
 
 ```
 
 ---
 
-## 🔧 6. Eigene Strategien entwickeln
+## ☁️ 4. Produktivbetrieb auf einer Linux-VM (Cloud/VPS)
 
-Wenn du eine eigene Logik entwickeln willst (z.B. einen Breakout-Bot):
+Für den 24/7 Betrieb (z.B. auf einer Google Cloud e2-micro Instanz) nutzen wir eine **Two-Service-Architektur** via `systemd`. Dies garantiert, dass der Trading-Bot und die Datenaufzeichnung komplett isoliert voneinander laufen. Fällt ein Dienst aus, startet das System ihn automatisch neu.
 
-1. Erstelle eine neue Datei im Ordner `strategies/` (z.B. `breakout.py`).
-2. Programmiere dort deine Nautilus-Strategie.
-3. Importiere diese neue Strategie oben in der Datei `run_bot.py`.
-4. Trage sie in der `config/setups.py` ein (ändere den Namen unter `"strategy_class"` auf deine neue Strategie).
+### 4.1. Systembenutzer & Verzeichnisse anlegen
+
+Wir führen die Bots aus Sicherheitsgründen nicht als Root aus.
+
+```bash
+sudo useradd -r -s /bin/false tradingbot
+sudo mkdir -p /opt/etoro_nautilus    # App-Verzeichnis
+sudo mkdir -p /data/nautilus         # Ziel für Parquet-Dateien
+
+# Code klonen und Rechte setzen
+cd /opt/etoro_nautilus
+sudo -u tradingbot git clone [https://github.com/philibertschlutzki/etoro_nautilus.git](https://github.com/philibertschlutzki/etoro_nautilus.git) .
+sudo -u tradingbot python3 -m venv venv
+sudo -u tradingbot ./venv/bin/pip install -r requirements.txt
+sudo chown -R tradingbot:tradingbot /data/nautilus
+
+```
+
+### 4.2. Dienst 1: Der Data-Catalog-Service
+
+Dieser Dienst verbindet sich mit eToro, sammelt alle Ticks/Bars im RAM und schreibt sie alle 60 Sekunden auf die Festplatte (In-Memory Batching).
+
+Erstelle die Datei `/etc/systemd/system/nautilus-catalog.service`:
+
+```ini
+[Unit]
+Description=Nautilus eToro Data Catalog Service
+After=network-online.target
+
+[Service]
+Type=simple
+User=tradingbot
+Group=tradingbot
+WorkingDirectory=/opt/etoro_nautilus
+ExecStart=/opt/etoro_nautilus/venv/bin/python /opt/etoro_nautilus/run_catalog.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+
+```
+
+### 4.3. Dienst 2: Der Trading-Bot
+
+Dieser Dienst ist isoliert und führt ausschließlich deine Handelslogik aus.
+
+Erstelle die Datei `/etc/systemd/system/nautilus-bot.service`:
+
+```ini
+[Unit]
+Description=Nautilus eToro Trading Bot
+After=network-online.target nautilus-catalog.service
+
+[Service]
+Type=simple
+User=tradingbot
+Group=tradingbot
+WorkingDirectory=/opt/etoro_nautilus
+ExecStart=/opt/etoro_nautilus/venv/bin/python /opt/etoro_nautilus/run_bot.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+
+```
+
+### 4.4. Dienste aktivieren & verwalten
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable nautilus-catalog.service nautilus-bot.service
+sudo systemctl start nautilus-catalog.service nautilus-bot.service
+
+# Logs in Echtzeit überwachen:
+sudo journalctl -u nautilus-bot.service -f
+sudo journalctl -u nautilus-catalog.service -f
+
+```
+
+---
+
+## 📁 5. Architektur-Übersicht
+
+Das Projekt ist in logische Bereiche unterteilt:
+
+1. **Das Gehirn (`config/setups.py`):** Zentrales Array `ACTIVE_BOTS`. Hier definierst du, welche Strategie auf welcher Aktie läuft. Beide System-Dienste greifen auf diese Config zurück.
+2. **Die Wörterbücher (`adapters/instrument_map.py`):** Mapped eToro-IDs (z.B. `1111`) zu Nautilus-Namen (z.B. `TSLA.ETORO`). *Tipp: Nutze `get_instruments_id.py` um neue IDs zu finden.*
+3. **Die Logik (`strategies/...`):** Hier liegen deine Handelsstrategien (z.B. `sma_crossover.py`).
+4. **Der Bot (`run_bot.py`):** Verbindet sich mit eToro, lädt Strategien aus `setups.py` und handelt.
+5. **Der Recorder (`run_catalog.py`):** Ein passiver Listener. Nutzt den `ParquetDataCatalog`, um die Live-Daten für spätere Backtests in `/data/nautilus/` zu archivieren.
+
+---
+
+## 🎯 6. So fügst du neue Aktien/Strategien hinzu
+
+1. Finde die eToro-ID mit dem Hilfsskript:
+`python get_instruments_id.py` (Suchbegriff im Code anpassen).
+2. Trage die ID in `adapters/instrument_map.py` ein:
+`"1001": "AAPL.ETORO"`
+3. Füge in `config/setups.py` einen neuen Block zum `ACTIVE_BOTS`-Array hinzu.
+4. **Cloud-Nutzer:** Starte beide Dienste kurz neu, damit auch der Katalog die neue Aktie abhört:
+`sudo systemctl restart nautilus-catalog.service nautilus-bot.service`
 
 Viel Erfolg und Happy Algorithmic Trading! 📈🤖
+
+```
