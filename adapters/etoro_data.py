@@ -2,6 +2,7 @@ import json
 import ssl
 import uuid
 import websockets
+import os
 from datetime import datetime
 
 from nautilus_trader.common.enums import LogColor
@@ -22,7 +23,7 @@ from adapters.instrument_map import ETORO_INSTRUMENTS
 class EToroDataClientConfig(LiveDataClientConfig, frozen=True, kw_only=True):
     api_key: str
     user_key: str
-    instrument_ids: list[str]  # NEU: Liste der eToro-IDs (z.B. ["1111", "1001"])
+    instrument_ids: list[str]
 
 class EToroLiveDataClientFactory(LiveDataClientFactory):
     @staticmethod
@@ -57,7 +58,6 @@ class EToroDataClient(LiveMarketDataClient):
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
         
-        # Mapping der benötigten IDs aus unserer zentralen Map
         self.instrument_map = {}
         for eid in self.instrument_ids:
             if eid in ETORO_INSTRUMENTS:
@@ -70,7 +70,8 @@ class EToroDataClient(LiveMarketDataClient):
 
     async def _connect(self) -> None:
         ssl_context = ssl.create_default_context()
-        self._ws = await websockets.connect(self.ws_url, ssl=ssl_context)
+        # Erhöhter Ping-Intervall gegen Timeouts
+        self._ws = await websockets.connect(self.ws_url, ssl=ssl_context, ping_interval=20, ping_timeout=20)
         self._log.info("WebSocket verbunden. Authentifiziere...", LogColor.GREEN)
         self._register_instruments()
         await self._authenticate()
@@ -82,7 +83,7 @@ class EToroDataClient(LiveMarketDataClient):
             self._ws = None
             self._log.info("WebSocket geschlossen.", LogColor.BLUE)
 
-    # Nautilus Boilerplate-Methoden
+    # Boilerplate-Methoden
     async def _subscribe_quote_ticks(self, command) -> None: pass
     async def _unsubscribe_quote_ticks(self, command) -> None: pass
     async def _subscribe_trade_ticks(self, command) -> None: pass
@@ -108,7 +109,6 @@ class EToroDataClient(LiveMarketDataClient):
     def _register_instruments(self) -> None:
         ts = self._clock.timestamp_ns()
         for eid, instr_id in self.instrument_map.items():
-            # Generische Registrierung als Equity (Aktie)
             inst = Equity(
                 instrument_id=instr_id,
                 raw_symbol=instr_id.symbol,
@@ -122,7 +122,6 @@ class EToroDataClient(LiveMarketDataClient):
             self._instrument_provider.add(inst)
             self._cache.add_instrument(inst)
             self._msgbus.publish(topic=f"data.instrument.ETORO.{inst.id}", msg=inst)
-            self._log.info(f"Instrument {instr_id} (eToro-ID: {eid}) registriert.", LogColor.GREEN)
 
     async def _authenticate(self) -> None:
         auth_payload = {
@@ -132,7 +131,6 @@ class EToroDataClient(LiveMarketDataClient):
         }
         await self._ws.send(json.dumps(auth_payload))
         resp = await self._ws.recv()
-        self._log.debug(f"Auth response: {resp}")
         await self._subscribe_etoro_instruments()
 
     async def _subscribe_etoro_instruments(self) -> None:
@@ -142,7 +140,6 @@ class EToroDataClient(LiveMarketDataClient):
             "operation": "Subscribe",
             "data": {"topics": topics, "snapshot": True}, 
         }
-        self._log.info(f"Abonniere eToro Topics: {topics}...")
         await self._ws.send(json.dumps(sub_payload))
 
     async def _message_loop(self) -> None:
@@ -157,10 +154,17 @@ class EToroDataClient(LiveMarketDataClient):
                 if "messages" in data:
                     for msg in data["messages"]:
                         self._process_message(msg)
+            
+            # Falls der Loop aus irgendeinem Grund lautlos stirbt:
+            self._log.warning("WebSocket Schleife unterbrochen. Erzwinge Neustart via systemd...", LogColor.RED)
+            os._exit(1)
+            
         except websockets.exceptions.ConnectionClosed as e:
-            self._log.warning(f"WebSocket Verbindung getrennt: {e}")
+            self._log.warning(f"WebSocket Verbindung getrennt: {e}. Erzwinge Neustart via systemd...", LogColor.RED)
+            os._exit(1)
         except Exception as e:
-            self._log.error(f"WebSocket Fehler: {e}")
+            self._log.error(f"WebSocket Fehler: {e}. Erzwinge Neustart via systemd...", LogColor.RED)
+            os._exit(1)
 
     def _process_message(self, msg: dict) -> None:
         msg_type = msg.get("type")
