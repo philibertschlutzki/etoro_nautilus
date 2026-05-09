@@ -3,7 +3,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
-from nautilus_trader.indicators.bollinger_bands import BollingerBands
+from nautilus_trader.indicators import BollingerBands
 
 class VolatilityBreakoutConfig(StrategyConfig, frozen=True):
     instrument_id: str

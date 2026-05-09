@@ -30,7 +30,7 @@ def run_backtest():
     instruments_list = config_data.get("instruments", [])
     strategies_list = config_data.get("strategies", [])
 
-    catalog_path = global_settings.get("catalog_path", "/data/nautilus")
+    catalog_path = global_settings.get("catalog_path", "data/nautilus")
 
     if not os.path.exists(catalog_path):
         print(f"Warnung: Datenverzeichnis {catalog_path} nicht gefunden.")
