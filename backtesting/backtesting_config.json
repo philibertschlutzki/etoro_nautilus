@@ -6,22 +6,48 @@
     "start_capital": 10000.0
   },
   "instruments": [
-    {"id": "SHIBxM.ETORO", "bar_type": "SHIBxM.ETORO-1-MINUTE-MID-INTERNAL"},
-    {"id": "ROP.ZU.ETORO", "bar_type": "ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL"}
+    {
+      "id": "SHIBxM.ETORO",
+      "bar_type": "SHIBxM.ETORO-1-MINUTE-MID-INTERNAL"
+    },
+    {
+      "id": "ROP.ZU.ETORO",
+      "bar_type": "ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL"
+    },
+    {
+      "id": "XPEV.ETORO",
+      "bar_type": "XPEV.ETORO-1-MINUTE-MID-INTERNAL"
+    },
+    {
+      "id": "DOGE.ETORO",
+      "bar_type": "DOGE.ETORO-1-MINUTE-MID-INTERNAL"
+    }
   ],
   "_inactive_instruments": [
-    {"id": "TSLA.ETORO", "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL"},
-    {"id": "BTC.ETORO", "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL"},
-    {"id": "NATGAS.ETORO", "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL"},
-    {"id": "RHM.DE.ETORO", "bar_type": "RHM.DE.ETORO-1-MINUTE-MID-INTERNAL"}
+    {
+      "id": "TSLA.ETORO",
+      "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL"
+    },
+    {
+      "id": "BTC.ETORO",
+      "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL"
+    },
+    {
+      "id": "NATGAS.ETORO",
+      "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL"
+    },
+    {
+      "id": "RHM.DE.ETORO",
+      "bar_type": "RHM.DE.ETORO-1-MINUTE-MID-INTERNAL"
+    }
   ],
   "strategies": [
     {
       "strategy_module": "strategies.sma_crossover",
       "strategy_class": "SmaCrossoverStrategy",
       "config_class": "SmaCrossoverConfig",
-      "params": { 
-        "sma_period": 20 
+      "params": {
+        "sma_period": 20
       }
     },
     {
@@ -59,10 +85,10 @@
       "strategy_module": "strategies.flash_crash_reversal",
       "strategy_class": "FlashCrashReversalStrategy",
       "config_class": "FlashCrashReversalConfig",
-      "params": { 
-        "bb_period": 20, 
-        "bb_std_dev": 2.5, 
-        "rsi_period": 14, 
+      "params": {
+        "bb_period": 20,
+        "bb_std_dev": 2.5,
+        "rsi_period": 14,
         "rsi_oversold": 25.0,
         "rsi_overbought": 70.0
       }
@@ -71,22 +97,47 @@
       "strategy_module": "strategies.volatility_breakout",
       "strategy_class": "VolatilityBreakoutPumpStrategy",
       "config_class": "VolatilityBreakoutConfig",
-      "params": { 
-        "bb_period": 20, 
-        "bb_std_dev": 2.0 
+      "params": {
+        "bb_period": 20,
+        "bb_std_dev": 2.0
       }
     },
     {
       "strategy_module": "strategies.tesla_combo_strategy",
       "strategy_class": "ComboTrendVwapStrategy",
       "config_class": "ComboTrendVwapConfig",
-      "params": { 
+      "params": {
         "sma_period": 50,
         "macd_fast": 12,
         "macd_slow": 26,
         "bb_period": 20,
         "bb_std_dev": 2.0,
         "bb_entry_tolerance": 0.005
+      }
+    },
+    {
+      "strategy_module": "strategies.adx_atr_momentum",
+      "strategy_class": "AdxAtrMomentumStrategy",
+      "config_class": "AdxAtrMomentumConfig",
+      "params": {
+        "adx_period": 14,
+        "ema_period": 50,
+        "atr_period": 14,
+        "atr_multiplier": 2.0,
+        "instrument_id": "XPEV.ETORO",
+        "bar_type": "XPEV.ETORO-1-MINUTE-MID-INTERNAL"
+      }
+    },
+    {
+      "strategy_module": "strategies.vwap_exhaustion",
+      "strategy_class": "VwapExhaustionStrategy",
+      "config_class": "VwapExhaustionConfig",
+      "params": {
+        "volume_sma_period": 20,
+        "deviation_threshold": 0.03,
+        "volume_multiplier": 2.0,
+        "instrument_id": "DOGE.ETORO",
+        "bar_type": "DOGE.ETORO-1-MINUTE-MID-INTERNAL"
       }
     }
   ]
