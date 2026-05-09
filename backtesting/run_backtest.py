@@ -4,17 +4,35 @@ import importlib
 from typing import Dict, Any
 
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
-from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.identifiers import Venue, InstrumentId, Symbol
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import OmsType, AccountType
-from nautilus_trader.model.objects import Money
-from nautilus_trader.model.instruments.base import Instrument
+from nautilus_trader.model.objects import Money, Price, Quantity
+from nautilus_trader.model.instruments import Equity
 
 
 def load_config(filepath: str) -> Dict[str, Any]:
     with open(filepath, 'r') as f:
         return json.load(f)
+
+
+def create_mock_instrument(instrument_id_str: str) -> Equity:
+    """Generiert ein dynamisches Mock-Instrument, falls Metadaten fehlen."""
+    inst_id = InstrumentId.from_str(instrument_id_str)
+    return Equity(
+        instrument_id=inst_id,
+        raw_symbol=Symbol(inst_id.symbol.value),
+        venue=inst_id.venue,
+        base_currency=USD,
+        quote_currency=USD,
+        price_precision=5,
+        price_increment=Price(1e-5, precision=5),
+        lot_size=Quantity(1, precision=0),
+        multiplier=Quantity(1, precision=0),
+        ts_event=0,
+        ts_init=0,
+    )
 
 
 def run_backtest():
@@ -56,49 +74,26 @@ def run_backtest():
         starting_balances=[Money(start_capital, USD)]
     )
 
-    # =====================================================================
-    # 4. Historische Instrumente und Bars laden (MIT NEUEM FALLBACK)
-    # =====================================================================
-    instruments_added = 0
+    # 4. Historische Instrumente laden & Dummy-Fallback generieren
     if catalog:
-        catalog_instruments = catalog.instruments()
-        for instrument in catalog_instruments:
+        for instrument in catalog.instruments():
             engine.add_instrument(instrument)
-            instruments_added += 1
 
-    # WICHTIGER FIX: Wenn der Daten-Katalog keine Instrumente beinhaltet,
-    # laden wir sie dynamisch aus dem Quellcode des Bots (instrument_map.py)
-    if instruments_added == 0:
-        print("⚠️ Keine Instrument-Metadaten im Katalog gefunden. Lade Fallback aus adapters/instrument_map.py...")
-        try:
-            import adapters.instrument_map as imap
-            
-            # Wir durchsuchen die Datei dynamisch nach allen Nautilus-Instrumenten
-            for name, obj in vars(imap).items():
-                if isinstance(obj, Instrument):
-                    engine.add_instrument(obj)
-                    instruments_added += 1
-                elif isinstance(obj, dict):
-                    for val in obj.values():
-                        if isinstance(val, Instrument):
-                            engine.add_instrument(val)
-                            instruments_added += 1
-                elif isinstance(obj, list):
-                    for item in obj:
-                        if isinstance(item, Instrument):
-                            engine.add_instrument(item)
-                            instruments_added += 1
-            print(f"✅ {instruments_added} Instrumente erfolgreich in die Engine geladen.")
-        except Exception as e:
-            print(f"❌ Fehler beim Laden der Instrumente aus dem Projekt: {e}")
+    print("⚙️ Prüfe Instrument-Registrierung in der Engine...")
+    for inst in instruments_list:
+        inst_id_str = inst["id"]
+        inst_id = InstrumentId.from_str(inst_id_str)
+        # Wenn das Instrument nicht im Katalog war, erzeugen wir ein Dummy-Instrument
+        if not engine.cache.instrument(inst_id):
+            dummy_inst = create_mock_instrument(inst_id_str)
+            engine.add_instrument(dummy_inst)
+            print(f"   -> Mock-Instrument für {inst_id_str} erstellt und registriert.")
 
-    # =====================================================================
-    # Kerzendaten (Bars) in die Engine laden
-    # =====================================================================
+    # 5. Kerzendaten (Bars) in die Engine laden
     needed_bar_types = list(set([inst["bar_type"] for inst in instruments_list]))
     
     if catalog and needed_bar_types:
-        print(f"Lese Kerzendaten für: {needed_bar_types} ...")
+        print(f"\nLese Kerzendaten für: {needed_bar_types} ...")
         bars = catalog.bars(bar_type_strs=needed_bar_types)
         
         if bars and len(bars) > 0:
@@ -108,10 +103,10 @@ def run_backtest():
             except ValueError as e:
                 print(f"⚠️ WARNUNG: Konnte Bars nicht hinzufügen: {e}")
         else:
-            print("⚠️ WARNUNG: Die Daten-Ordner für diese Instrumente sind leer!")
-            print("Der Backtest wird daher keine Trades ausführen können (Total events: 0).")
+            print("⚠️ WARNUNG: Die Daten-Ordner für diese Instrumente enthalten noch keine Zeilen (0 Kerzen)!")
+            print("Lass deinen Daten-Katalog-Dienst laufen, bis echte Marktdaten empfangen werden.")
 
-    # 5. Matrix generieren: Jedes Instrument x Jede Strategie
+    # 6. Matrix generieren: Jedes Instrument x Jede Strategie
     for inst in instruments_list:
         for strat in strategies_list:
             module_name = strat["strategy_module"]
@@ -138,14 +133,14 @@ def run_backtest():
             except Exception as e:
                 print(f"❌ Fehler beim Laden von {strategy_class_name}_{inst['id']}: {e}")
 
-    # 6. Backtest starten
+    # 7. Backtest starten
     print(f"\n🚀 Starte Matrix-Backtest mit {len(instruments_list)} Instrumenten und {len(strategies_list)} Strategien ({len(instruments_list) * len(strategies_list)} Kombinationen)...")
     try:
         engine.run()
     except Exception as e:
         print(f"❌ Fehler während des Backtests: {e}")
 
-    # 7. Ergebnisse ausgeben
+    # 8. Ergebnisse ausgeben
     print("\n✅ Backtest beendet!")
     print("\n--- Portfolio Statistiken ---")
     try:
