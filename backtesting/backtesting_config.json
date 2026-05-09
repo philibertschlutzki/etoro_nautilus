@@ -1,6 +1,6 @@
 {
   "global_settings": {
-    "catalog_path": "/data/nautilus",
+    "catalog_path": "./data/nautilus",
     "start_time": "2023-01-01",
     "end_time": "2023-12-31",
     "start_capital": 10000.0
