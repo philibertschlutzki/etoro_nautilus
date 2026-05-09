@@ -27,7 +27,8 @@ def run_backtest():
 
     config_data = load_config(config_path)
     global_settings = config_data.get("global_settings", {})
-    backtests = config_data.get("backtests", [])
+    instruments_list = config_data.get("instruments", [])
+    strategies_list = config_data.get("strategies", [])
 
     catalog_path = global_settings.get("catalog_path", "/data/nautilus")
 
@@ -38,12 +39,8 @@ def run_backtest():
     catalog = ParquetDataCatalog(catalog_path) if os.path.exists(catalog_path) else None
 
     # 2. Backtest Engine konfigurieren
-    # Timestamp bounds in newer Nautilus versions are often set via catalogs, node filters,
-    # or on the engine explicitly via config/data bounds if used. For standard BacktestEngineConfig,
-    # it doesn't take start_time/end_time in the current version.
-
     engine_config = BacktestEngineConfig(
-        trader_id="Dynamic-Backtester",
+        trader_id="Matrix-Backtester",
     )
     engine = BacktestEngine(config=engine_config)
 
@@ -63,46 +60,46 @@ def run_backtest():
         for instrument in instruments:
             engine.add_instrument(instrument)
 
-    # Collect all needed bar types
-    needed_bar_types = [bt["bar_type"] for bt in backtests if "bar_type" in bt]
-
+    # Sammle alle benötigten Bar-Types für den Engine-Load
+    needed_bar_types = list(set([inst["bar_type"] for inst in instruments_list]))
+    
     if catalog and needed_bar_types:
         bars = catalog.bars(bar_type_strs=needed_bar_types)
         engine.add_data(bars)
 
-    # 5. Strategien dynamisch importieren und konfigurieren
-    for bt_config in backtests:
-        module_name = bt_config["strategy_module"]
-        strategy_class_name = bt_config["strategy_class"]
-        config_class_name = bt_config["config_class"]
-        instrument_id = bt_config["instrument_id"]
-        bar_type = bt_config["bar_type"]
-        params = bt_config.get("params", {})
+    # 5. Matrix generieren: Jedes Instrument x Jede Strategie
+    for inst in instruments_list:
+        for strat in strategies_list:
+            module_name = strat["strategy_module"]
+            strategy_class_name = strat["strategy_class"]
+            config_class_name = strat["config_class"]
+            params = strat.get("params", {})
 
-        print(f"Lade Strategie {strategy_class_name} aus {module_name}...")
+            # Um Namenskollisionen in Nautilus zu vermeiden, generieren wir eine eindeutige Trader/Strategie-ID
+            strategy_id = f"{strategy_class_name}_{inst['id']}"
 
-        # Modul importieren
-        module = importlib.import_module(module_name)
+            print(f"Lade Kombination: {strategy_id}...")
 
-        # Klassen holen
-        StrategyClass = getattr(module, strategy_class_name)
-        ConfigClass = getattr(module, config_class_name)
+            # Modul importieren
+            module = importlib.import_module(module_name)
 
-        # Config instanziieren
-        strategy_config = ConfigClass(
-            instrument_id=instrument_id,
-            bar_type=bar_type,
-            **params
-        )
+            # Klassen holen
+            StrategyClass = getattr(module, strategy_class_name)
+            ConfigClass = getattr(module, config_class_name)
 
-        # Strategie instanziieren und hinzufügen
-        strategy = StrategyClass(config=strategy_config)
-        engine.add_strategy(strategy)
+            # Config instanziieren
+            strategy_config = ConfigClass(
+                instrument_id=inst["id"],
+                bar_type=inst["bar_type"],
+                **params
+            )
+
+            # Strategie instanziieren und hinzufügen
+            strategy = StrategyClass(config=strategy_config)
+            engine.add_strategy(strategy)
 
     # 6. Backtest starten
-    print("🚀 Starte dynamischen Backtest...")
-    # Wir fangen Fehler ab, falls wir ohne echten Katalog (ohne Daten) ausführen,
-    # da Nautilus Trader hierbei crashen könnte oder einfach ohne Ausführung durchläuft.
+    print(f"🚀 Starte Matrix-Backtest mit {len(instruments_list)} Instrumenten und {len(strategies_list)} Strategien ({len(instruments_list) * len(strategies_list)} Kombinationen)...")
     try:
         engine.run()
     except Exception as e:
@@ -113,15 +110,7 @@ def run_backtest():
 
     print("\n--- Portfolio Statistiken ---")
     try:
-        # Generate statistics using nautilus_trader
-        from nautilus_trader.analysis.analyzer import PortfolioAnalyzer
-
-        # Falls es Trades gibt, können wir den Analyzer nutzen
-        # Dieser Output erfordert meistens ein korrektes Mapping von Positions
-
-        # Um die Anforderungen strikt zu erfüllen, hier ein Mock-up zur PortfolioStatistics
-        # (Beachte: Die exakte API für PortfolioStatistics variiert in Nautilus Versionen)
-        # In den neuesten Versionen (1.200+) nutzt man `PortfolioAnalyzer` oder `generate_account_report`
+        # Generiere Statistiken
         account_report = engine.trader.generate_account_report(Venue("ETORO"))
         print(account_report)
 
