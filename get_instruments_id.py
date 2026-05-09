@@ -113,11 +113,11 @@ if __name__ == "__main__":
         "RHM.DE",   # Rheinmetall
         "NVS",  # Novartis
         "ROP.ZU",   # Roche
-        "DOGE",   
-        "SHIBxM",   
-        "PEPExM",
-        "SOL",    
-        "AVAX",   
+        "DOGE",   #DOGE
+        "SHIBxM",  #SHIBA
+        "PEPExM", #PEPE
+        "SOL",    #SOLANA
+        "AVAX",   #Avalanche
         "NATGAS", # Erdgas 
         "PALL",   # Palladium
         "USDTRY", # USD/TRY
