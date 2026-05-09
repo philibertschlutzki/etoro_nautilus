@@ -107,14 +107,21 @@ if __name__ == "__main__":
         "AERO",  # Aeodrome Finance
         "HYPE",  # Hyperliquid
         "ONDO",  # Ondo Finance
-        # --- Neue Instrumente (Fokus: Intraday/Combo) ---
         "01211.HK",    # BYD
         "XPEV",     # XPeng
         "PLTR",     # Palantir
-        # --- Neue Instrumente (Fokus: Trendfolge/SMA) ---
         "RHM.DE",   # Rheinmetall
         "NVS",  # Novartis
         "ROP.ZU",   # Roche
+        "DOGE",   
+        "SHIBxM",   
+        "PEPExM",
+        "SOL",    
+        "AVAX",   
+        "NATGAS", # Erdgas 
+        "PALL",   # Palladium
+        "USDTRY", # USD/TRY
+        "USDZAR", # USD/ZAR
     ]
 
     get_multiple_instrument_ids(SYMBOLS_TO_LOOKUP)
