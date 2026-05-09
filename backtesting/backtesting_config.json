@@ -1,0 +1,57 @@
+{
+  "global_settings": {
+    "catalog_path": "/data/nautilus",
+    "start_time": "2023-01-01",
+    "end_time": "2023-12-31",
+    "start_capital": 10000.0
+  },
+  "backtests": [
+    {
+      "strategy_module": "strategies.sma_crossover",
+      "strategy_class": "SmaCrossoverStrategy",
+      "config_class": "SmaCrossoverConfig",
+      "instrument_id": "TSLA.ETORO",
+      "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL",
+      "params": {
+        "sma_period": 20
+      }
+    },
+    {
+      "strategy_module": "strategies.trend_pullback",
+      "strategy_class": "TrendPullbackStrategy",
+      "config_class": "TrendPullbackConfig",
+      "instrument_id": "RHM.DE.ETORO",
+      "bar_type": "RHM.DE.ETORO-1-MINUTE-MID-INTERNAL",
+      "params": {
+        "ema_period": 200,
+        "rsi_period": 14,
+        "rsi_oversold": 30.0,
+        "rsi_overbought": 70.0
+      }
+    },
+    {
+      "strategy_module": "strategies.mean_reversion",
+      "strategy_class": "MeanReversionStrategy",
+      "config_class": "MeanReversionConfig",
+      "instrument_id": "BTC.ETORO",
+      "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL",
+      "params": {
+        "keltner_period": 20,
+        "keltner_atr_period": 20,
+        "keltner_multiplier": 2.0
+      }
+    },
+    {
+      "strategy_module": "strategies.dynamic_breakout",
+      "strategy_class": "DynamicBreakoutStrategy",
+      "config_class": "DynamicBreakoutConfig",
+      "instrument_id": "NATGAS.ETORO",
+      "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL",
+      "params": {
+        "volume_sma_period": 20,
+        "volume_multiplier": 2.5,
+        "price_breakout_period": 20
+      }
+    }
+  ]
+}
