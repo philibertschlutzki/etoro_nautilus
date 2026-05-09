@@ -22,7 +22,7 @@ ACTIVE_BOTS = [
         "symbol": "HUT.ETORO",                      # Muss mit instrument_map.py übereinstimmen
         "bar_type": "HUT.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
-            "sma_period": 10                         # Eigene Strategie-Parameter
+            "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
         {
@@ -31,7 +31,7 @@ ACTIVE_BOTS = [
         "symbol": "RIOT.ETORO",                      # Muss mit instrument_map.py übereinstimmen
         "bar_type": "RIOT.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
-            "sma_period": 10                         # Eigene Strategie-Parameter
+            "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
         {
@@ -40,7 +40,7 @@ ACTIVE_BOTS = [
         "symbol": "NVDA.ETORO",                      # Muss mit instrument_map.py übereinstimmen
         "bar_type": "NVDA.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
-            "sma_period": 10                         # Eigene Strategie-Parameter
+            "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
         {
@@ -49,7 +49,7 @@ ACTIVE_BOTS = [
         "symbol": "FSLY.ETORO",                      # Muss mit instrument_map.py übereinstimmen
         "bar_type": "FSLY.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
-            "sma_period": 10                         # Eigene Strategie-Parameter
+            "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
         {
@@ -58,25 +58,43 @@ ACTIVE_BOTS = [
         "symbol": "INSM.ETORO",                      # Muss mit instrument_map.py übereinstimmen
         "bar_type": "INSM.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
-            "sma_period": 10                         # Eigene Strategie-Parameter
+            "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
-        "etoro_id": "9119",                          # Die ID aus Schritt 1
-        "symbol": "INSM.ETORO",                      # Muss mit instrument_map.py übereinstimmen
-        "bar_type": "INSM.ETORO-1-MINUTE-MID-INTERNAL",
+        "etoro_id": "100000",                          # Die ID aus Schritt 1
+        "symbol": "BTC.ETORO",                      # Muss mit instrument_map.py übereinstimmen
+        "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
-            "sma_period": 10                         # Eigene Strategie-Parameter
+            "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
-        "etoro_id": "9119",                          # Die ID aus Schritt 1
-        "symbol": "INSM.ETORO",                      # Muss mit instrument_map.py übereinstimmen
-        "bar_type": "INSM.ETORO-1-MINUTE-MID-INTERNAL",
+        "etoro_id": "100001",                          # Die ID aus Schritt 1
+        "symbol": "ETH.ETORO",                      # Muss mit instrument_map.py übereinstimmen
+        "bar_type": "ETH.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
-            "sma_period": 10                         # Eigene Strategie-Parameter
+            "sma_period": 5                         # Eigene Strategie-Parameter
+        }
+    },
+        {
+        "strategy_class": "SmaCrossoverStrategy",
+        "etoro_id": "100017",                          # Die ID aus Schritt 1
+        "symbol": "ADA.ETORO",                      # Muss mit instrument_map.py übereinstimmen
+        "bar_type": "ADA.ETORO-1-MINUTE-MID-INTERNAL",
+        "params": {
+            "sma_period": 5                         # Eigene Strategie-Parameter
+        }
+    },
+        {
+        "strategy_class": "SmaCrossoverStrategy",
+        "etoro_id": "100003",                          # Die ID aus Schritt 1
+        "symbol": "XRP.ETORO",                      # Muss mit instrument_map.py übereinstimmen
+        "bar_type": "XRP.ETORO-1-MINUTE-MID-INTERNAL",
+        "params": {
+            "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
 ]
