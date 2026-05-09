@@ -9,6 +9,7 @@ from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money
+from nautilus_trader.model.instruments.base import Instrument
 
 
 def load_config(filepath: str) -> Dict[str, Any]:
@@ -55,29 +56,60 @@ def run_backtest():
         starting_balances=[Money(start_capital, USD)]
     )
 
-    # 4. Historische Instrumente und Bars laden
+    # =====================================================================
+    # 4. Historische Instrumente und Bars laden (MIT NEUEM FALLBACK)
+    # =====================================================================
+    instruments_added = 0
     if catalog:
-        instruments = catalog.instruments()
-        for instrument in instruments:
+        catalog_instruments = catalog.instruments()
+        for instrument in catalog_instruments:
             engine.add_instrument(instrument)
+            instruments_added += 1
 
-    # Sammle alle benötigten Bar-Types für den Engine-Load
+    # WICHTIGER FIX: Wenn der Daten-Katalog keine Instrumente beinhaltet,
+    # laden wir sie dynamisch aus dem Quellcode des Bots (instrument_map.py)
+    if instruments_added == 0:
+        print("⚠️ Keine Instrument-Metadaten im Katalog gefunden. Lade Fallback aus adapters/instrument_map.py...")
+        try:
+            import adapters.instrument_map as imap
+            
+            # Wir durchsuchen die Datei dynamisch nach allen Nautilus-Instrumenten
+            for name, obj in vars(imap).items():
+                if isinstance(obj, Instrument):
+                    engine.add_instrument(obj)
+                    instruments_added += 1
+                elif isinstance(obj, dict):
+                    for val in obj.values():
+                        if isinstance(val, Instrument):
+                            engine.add_instrument(val)
+                            instruments_added += 1
+                elif isinstance(obj, list):
+                    for item in obj:
+                        if isinstance(item, Instrument):
+                            engine.add_instrument(item)
+                            instruments_added += 1
+            print(f"✅ {instruments_added} Instrumente erfolgreich in die Engine geladen.")
+        except Exception as e:
+            print(f"❌ Fehler beim Laden der Instrumente aus dem Projekt: {e}")
+
+    # =====================================================================
+    # Kerzendaten (Bars) in die Engine laden
+    # =====================================================================
     needed_bar_types = list(set([inst["bar_type"] for inst in instruments_list]))
     
     if catalog and needed_bar_types:
         print(f"Lese Kerzendaten für: {needed_bar_types} ...")
         bars = catalog.bars(bar_type_strs=needed_bar_types)
         
-        # Sicherstellen, dass die Liste nicht leer ist, bevor sie der Engine übergeben wird
         if bars and len(bars) > 0:
             try:
                 engine.add_data(bars)
-                print(f"✅ {len(bars)} Kerzen erfolgreich in die Engine geladen.")
+                print(f"✅ {len(bars)} historische Kerzen in den Arbeitsspeicher geladen.")
             except ValueError as e:
                 print(f"⚠️ WARNUNG: Konnte Bars nicht hinzufügen: {e}")
         else:
             print("⚠️ WARNUNG: Die Daten-Ordner für diese Instrumente sind leer!")
-            print("Bitte stelle sicher, dass der Katalog-Dienst läuft und echte Daten sammelt.")
+            print("Der Backtest wird daher keine Trades ausführen können (Total events: 0).")
 
     # 5. Matrix generieren: Jedes Instrument x Jede Strategie
     for inst in instruments_list:
@@ -87,10 +119,6 @@ def run_backtest():
             config_class_name = strat["config_class"]
             params = strat.get("params", {})
 
-            # Um Namenskollisionen in Nautilus zu vermeiden, generieren wir eine eindeutige Trader/Strategie-ID
-            strategy_id = f"{strategy_class_name}_{inst['id']}"
-
-            # Modul importieren
             try:
                 module = importlib.import_module(module_name)
                 StrategyClass = getattr(module, strategy_class_name)
@@ -106,10 +134,9 @@ def run_backtest():
                 # Strategie instanziieren und hinzufügen
                 strategy = StrategyClass(config=strategy_config)
                 engine.add_strategy(strategy)
-                # print(f"Lade Kombination: {strategy_id}...") # (Auskommentiert, damit die Konsole übersichtlich bleibt)
 
             except Exception as e:
-                print(f"❌ Fehler beim Laden von {strategy_id}: {e}")
+                print(f"❌ Fehler beim Laden von {strategy_class_name}_{inst['id']}: {e}")
 
     # 6. Backtest starten
     print(f"\n🚀 Starte Matrix-Backtest mit {len(instruments_list)} Instrumenten und {len(strategies_list)} Strategien ({len(instruments_list) * len(strategies_list)} Kombinationen)...")
@@ -122,7 +149,6 @@ def run_backtest():
     print("\n✅ Backtest beendet!")
     print("\n--- Portfolio Statistiken ---")
     try:
-        # Generiere Statistiken
         account_report = engine.trader.generate_account_report(Venue("ETORO"))
         print(account_report)
     except Exception as e:
@@ -130,7 +156,6 @@ def run_backtest():
 
 
 if __name__ == "__main__":
-    # Workaround für den Import, da das Skript in backtesting/ liegt aber aus dem Root-Ordner gestartet wird
     import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     run_backtest()
