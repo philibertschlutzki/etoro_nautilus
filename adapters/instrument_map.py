@@ -12,7 +12,6 @@ ETORO_INSTRUMENTS = {
     "1137": "NVDA.ETORO",
     "5045": "FSLY.ETORO",
     "9119": "INSM.ETORO",
-    "9119": "INSM.ETORO",
     "100000": "BTC.ETORO",
     "100001": "ETH.ETORO",
     "100017": "ADA.ETORO",
