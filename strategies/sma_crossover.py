@@ -43,6 +43,7 @@ class SmaCrossoverStrategy(Strategy):
             f"SMA({self.config.sma_period}): {self.sma.value:.2f}"
         )
         
+        # Best Practice ist Portfolio, aber mangels Execution nutzen wir hier den internen State
         if close_price > self.sma.value and self.current_signal != "BUY":
             self._log.info(f"🟢 [{self.instrument_id}] BUY SIGNAL (Close > SMA)")
             self.current_signal = "BUY"

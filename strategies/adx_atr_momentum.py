@@ -6,7 +6,7 @@ from nautilus_trader.trading.strategy import Strategy
 # Nautilus Indikatoren importieren
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.indicators import ExponentialMovingAverage
-from nautilus_trader.indicators import AverageDirectionalIndex
+from nautilus_trader.indicators import DirectionalMovement
 
 
 class AdxAtrMomentumConfig(StrategyConfig, frozen=True):
@@ -30,8 +30,7 @@ class AdxAtrMomentumStrategy(Strategy):
         self.bar_type = BarType.from_str(config.bar_type)
 
         # Indikatoren initialisieren
-        # DirectionalMovement liefert unter anderem den ADX als `value`
-        self.adx = AverageDirectionalIndex(config.adx_period)
+        self.adx = DirectionalMovement(config.adx_period)
         self.ema = ExponentialMovingAverage(config.ema_period)
         self.atr = AverageTrueRange(config.atr_period)
 
@@ -54,7 +53,7 @@ class AdxAtrMomentumStrategy(Strategy):
             return
 
         close_price = float(bar.close)
-        adx_value = float(self.adx.value)
+        adx_value = float(self.adx.adx)
         ema_value = float(self.ema.value)
         atr_value = float(self.atr.value)
 

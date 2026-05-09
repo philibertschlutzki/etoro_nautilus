@@ -54,6 +54,8 @@ class VwapExhaustionStrategy(Strategy):
         if volume > 0:
             self.cumulative_vp += typical_price * volume
             self.cumulative_volume += volume
+
+        if self.cumulative_volume > 0:
             self.current_vwap = self.cumulative_vp / self.cumulative_volume
 
         # 3. Warten bis Volumen-SMA initialisiert ist
