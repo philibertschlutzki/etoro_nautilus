@@ -156,12 +156,21 @@ class EToroDataClient(LiveMarketDataClient):
     def _register_instruments(self) -> None:
         ts = self._clock.timestamp_ns()
         for eid, instr_id in self.instrument_map.items():
+            # Estimate precision based on known highly volatile symbols vs standard
+            sym = str(instr_id.symbol).upper()
+            if "SHIB" in sym or "PEPE" in sym:
+                prec, incr = 8, 1e-8
+            elif "BTC" in sym or "ETH" in sym or "SPX" in sym:
+                prec, incr = 2, 0.01
+            else:
+                prec, incr = 5, 0.00001
+
             inst = Equity(
                 instrument_id=instr_id,
                 raw_symbol=instr_id.symbol,
                 currency=USD,
-                price_precision=5,
-                price_increment=Price(0.00001, precision=5),
+                price_precision=prec,
+                price_increment=Price(incr, precision=prec),
                 lot_size=Quantity(1, precision=0),
                 ts_event=ts,
                 ts_init=ts,
@@ -227,6 +236,9 @@ class EToroDataClient(LiveMarketDataClient):
         except websockets.exceptions.ConnectionClosedError as e:
             self._log.error(f"WebSocket Verbindungsfehler: {e}. Erzwinge Neustart...", LogColor.RED)
             os._exit(1)
+        except asyncio.CancelledError:
+            self._log.info("Message Loop beendet (Cancelled).", LogColor.BLUE)
+            raise
         except Exception as e:
             self._log.error(f"Unerwarteter WebSocket-Fehler: {e}. Erzwinge Neustart...", LogColor.RED)
             os._exit(1)
