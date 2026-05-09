@@ -100,6 +100,16 @@ if __name__ == "__main__":
         "NVDA",   # Nvidia
         "FSLY",   # Fastly
         "INSM",   # Insmed
+        "INSM",   # Insmed
+        "BTC",   # Bitcoin
+        "ETH",   # Ethereum
+        "ADA",   # Cardano
+        "XRP",   # Ripple
+        "AERO",  # Aeodrome Finance
+        "HYPE",  # Hyperliquid
+        "ONDO",  # Ondo Finance
+
+
     ]
 
     get_multiple_instrument_ids(SYMBOLS_TO_LOOKUP)
