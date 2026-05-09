@@ -5,23 +5,25 @@
     "end_time": "2023-12-31",
     "start_capital": 10000.0
   },
-  "backtests": [
+  "instruments": [
+    {"id": "TSLA.ETORO", "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL"},
+    {"id": "BTC.ETORO", "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL"},
+    {"id": "NATGAS.ETORO", "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL"},
+    {"id": "RHM.DE.ETORO", "bar_type": "RHM.DE.ETORO-1-MINUTE-MID-INTERNAL"}
+  ],
+  "strategies": [
     {
       "strategy_module": "strategies.sma_crossover",
       "strategy_class": "SmaCrossoverStrategy",
       "config_class": "SmaCrossoverConfig",
-      "instrument_id": "TSLA.ETORO",
-      "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL",
-      "params": {
-        "sma_period": 20
+      "params": { 
+        "sma_period": 20 
       }
     },
     {
       "strategy_module": "strategies.trend_pullback",
       "strategy_class": "TrendPullbackStrategy",
       "config_class": "TrendPullbackConfig",
-      "instrument_id": "RHM.DE.ETORO",
-      "bar_type": "RHM.DE.ETORO-1-MINUTE-MID-INTERNAL",
       "params": {
         "ema_period": 200,
         "rsi_period": 14,
@@ -33,8 +35,6 @@
       "strategy_module": "strategies.mean_reversion",
       "strategy_class": "MeanReversionStrategy",
       "config_class": "MeanReversionConfig",
-      "instrument_id": "BTC.ETORO",
-      "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL",
       "params": {
         "keltner_period": 20,
         "keltner_atr_period": 20,
@@ -45,12 +45,44 @@
       "strategy_module": "strategies.dynamic_breakout",
       "strategy_class": "DynamicBreakoutStrategy",
       "config_class": "DynamicBreakoutConfig",
-      "instrument_id": "NATGAS.ETORO",
-      "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL",
       "params": {
         "volume_sma_period": 20,
         "volume_multiplier": 2.5,
         "price_breakout_period": 20
+      }
+    },
+    {
+      "strategy_module": "strategies.flash_crash_reversal",
+      "strategy_class": "FlashCrashReversalStrategy",
+      "config_class": "FlashCrashReversalConfig",
+      "params": { 
+        "bb_period": 20, 
+        "bb_std_dev": 2.5, 
+        "rsi_period": 14, 
+        "rsi_oversold": 25.0,
+        "rsi_overbought": 70.0
+      }
+    },
+    {
+      "strategy_module": "strategies.volatility_breakout",
+      "strategy_class": "VolatilityBreakoutPumpStrategy",
+      "config_class": "VolatilityBreakoutConfig",
+      "params": { 
+        "bb_period": 20, 
+        "bb_std_dev": 2.0 
+      }
+    },
+    {
+      "strategy_module": "strategies.tesla_combo_strategy",
+      "strategy_class": "ComboTrendVwapStrategy",
+      "config_class": "ComboTrendVwapConfig",
+      "params": { 
+        "sma_period": 50,
+        "macd_fast": 12,
+        "macd_slow": 26,
+        "bb_period": 20,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 0.005
       }
     }
   ]
