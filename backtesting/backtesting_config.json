@@ -6,6 +6,10 @@
     "start_capital": 10000.0
   },
   "instruments": [
+    {"id": "SHIBxM.ETORO", "bar_type": "SHIBxM.ETORO-1-MINUTE-MID-INTERNAL"},
+    {"id": "ROP.ZU.ETORO", "bar_type": "ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL"}
+  ],
+  "_inactive_instruments": [
     {"id": "TSLA.ETORO", "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL"},
     {"id": "BTC.ETORO", "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL"},
     {"id": "NATGAS.ETORO", "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL"},
