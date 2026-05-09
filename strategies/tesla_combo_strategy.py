@@ -4,9 +4,9 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
 # Nautilus Indikatoren importieren
-from nautilus_trader.indicators.sma import SimpleMovingAverage
-from nautilus_trader.indicators.macd import MovingAverageConvergenceDivergence
-from nautilus_trader.indicators.bollinger_bands import BollingerBands
+from nautilus_trader.indicators import SimpleMovingAverage
+from nautilus_trader.indicators import MovingAverageConvergenceDivergence
+from nautilus_trader.indicators import BollingerBands
 
 
 class ComboTrendVwapConfig(StrategyConfig, frozen=True):

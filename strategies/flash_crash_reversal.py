@@ -4,8 +4,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
 # Indikatoren
-from nautilus_trader.indicators.bollinger_bands import BollingerBands
-from nautilus_trader.indicators.rsi import RelativeStrengthIndex
+from nautilus_trader.indicators import BollingerBands
+from nautilus_trader.indicators import RelativeStrengthIndex
 
 class FlashCrashReversalConfig(StrategyConfig, frozen=True):
     instrument_id: str
