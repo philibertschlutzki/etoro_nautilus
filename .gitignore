@@ -5,7 +5,6 @@ __pycache__/
 
 # Trading Daten & Logs
 logs/
-data/
 
 # API Keys & Secrets
 *.env
