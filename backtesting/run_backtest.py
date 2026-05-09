@@ -13,8 +13,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
 
 # Korrekter Import fuer das Tearsheet gemaess Manual
-from nautilus_trader.analysis import TearsheetConfig
-from nautilus_trader.analysis.visualisation import Tearsheet
+from nautilus_trader.analysis import TearsheetConfig, create_tearsheet
 
 
 def load_config(filepath: str) -> Dict[str, Any]:
@@ -27,14 +26,11 @@ def create_mock_instrument(instrument_id_str: str) -> Equity:
     inst_id = InstrumentId.from_str(instrument_id_str)
     return Equity(
         instrument_id=inst_id,
-        raw_symbol=Symbol(inst_id.symbol.value),
-        venue=inst_id.venue,
-        base_currency=USD,
-        quote_currency=USD,
+        raw_symbol=inst_id.symbol,
+        currency=USD,
         price_precision=5,
         price_increment=Price(1e-5, precision=5),
         lot_size=Quantity(1, precision=0),
-        multiplier=Quantity(1, precision=0),
         ts_event=0,
         ts_init=0,
     )
@@ -188,9 +184,7 @@ def run_backtest():
                 )
 
                 # Objekt instanziieren, bauen und speichern
-                tearsheet = Tearsheet(results=results, config=ts_config)
-                tearsheet.build()
-                tearsheet.save()
+                create_tearsheet(results=results, config=ts_config)
                 
                 print(f"   ✅ Tearsheet erfolgreich gespeichert: {report_filename}")
 
