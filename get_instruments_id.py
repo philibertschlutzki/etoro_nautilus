@@ -100,7 +100,6 @@ if __name__ == "__main__":
         "NVDA",   # Nvidia
         "FSLY",   # Fastly
         "INSM",   # Insmed
-        "INSM",   # Insmed
         "BTC",   # Bitcoin
         "ETH",   # Ethereum
         "ADA",   # Cardano
