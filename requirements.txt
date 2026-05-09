@@ -3,3 +3,4 @@ websockets
 python-dotenv
 requests
 dotenv
+nautilus_trader[analysis]

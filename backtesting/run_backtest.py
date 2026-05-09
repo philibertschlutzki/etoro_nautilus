@@ -13,7 +13,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
 
 # Korrekter Import fuer das Tearsheet gemaess Manual
-from nautilus_trader.analysis.reports import TearsheetConfig
+from nautilus_trader.analysis import TearsheetConfig
 from nautilus_trader.analysis.visualisation import Tearsheet
 
 
