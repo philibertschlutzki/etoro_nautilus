@@ -97,4 +97,31 @@ ACTIVE_BOTS = [
             "sma_period": 5                         # Eigene Strategie-Parameter
         }
     },
-]
+        {
+        "strategy_class": "SmaCrossoverStrategy",
+        "etoro_id": "100421",                          # Die ID aus Schritt 1
+        "symbol": "AERO.ETORO",                      # Muss mit instrument_map.py übereinstimmen
+        "bar_type": "AERO.ETORO-1-MINUTE-MID-INTERNAL",
+        "params": {
+            "sma_period": 5                         # Eigene Strategie-Parameter
+        }
+    },
+        {
+        "strategy_class": "SmaCrossoverStrategy",
+        "etoro_id": "100446",                          # Die ID aus Schritt 1
+        "symbol": "HYPE.ETORO",                      # Muss mit instrument_map.py übereinstimmen
+        "bar_type": "HYPE.ETORO-1-MINUTE-MID-INTERNAL",
+        "params": {
+            "sma_period": 5                         # Eigene Strategie-Parameter
+        }
+    },
+        {
+        "strategy_class": "SmaCrossoverStrategy",
+        "etoro_id": "100323",                          # Die ID aus Schritt 1
+        "symbol": "ONDO.ETORO",                      # Muss mit instrument_map.py übereinstimmen
+        "bar_type": "ONDO.ETORO-1-MINUTE-MID-INTERNAL",
+        "params": {
+            "sma_period": 5                         # Eigene Strategie-Parameter
+        }
+    },
+] 
