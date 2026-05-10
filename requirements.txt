@@ -1,6 +1,7 @@
-nautilus_trader>=1.226.0
+nautilus_trader[analysis,visualization]>=1.226.0
 websockets
 python-dotenv
 requests
-dotenv
-nautilus_trader[analysis]
+pandas
+pyarrow
+plotly
