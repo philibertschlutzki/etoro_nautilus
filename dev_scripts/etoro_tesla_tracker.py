@@ -12,7 +12,7 @@ load_dotenv()
 USER_KEY = os.getenv("ETORO_USER_KEY")
 API_KEY = os.getenv("ETORO_API_KEY")
 WS_URL = "wss://ws.etoro.com/ws"
-INSTRUMENT_ID = "1"
+INSTRUMENT_ID = "100003"
 
 async def etoro_tesla_tracker():
     if not USER_KEY or not API_KEY:

@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import importlib
 from datetime import datetime
@@ -12,17 +13,28 @@ from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
 
-# Korrekter Import fuer das Tearsheet gemaess Manual
 from nautilus_trader.analysis import TearsheetConfig, create_tearsheet
 
+class DualLogger:
+    """Fängt Konsolen-Outputs ab und schreibt sie ins Terminal UND in eine Datei."""
+    def __init__(self, filepath: str):
+        self.terminal = sys.stdout
+        self.log = open(filepath, "a", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 
 def load_config(filepath: str) -> Dict[str, Any]:
     with open(filepath, 'r') as f:
         return json.load(f)
 
-
 def create_mock_instrument(instrument_id_str: str) -> Equity:
-    """Generiert ein dynamisches Mock-Instrument, falls Metadaten fehlen."""
+    """Generiert ein dynamisches Mock-Instrument."""
     inst_id = InstrumentId.from_str(instrument_id_str)
     return Equity(
         instrument_id=inst_id,
@@ -35,8 +47,17 @@ def create_mock_instrument(instrument_id_str: str) -> Equity:
         ts_init=0,
     )
 
-
 def run_backtest():
+    # Logging Setup
+    logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = os.path.join(logs_dir, f"backtest_{timestamp}.log")
+    
+    sys.stdout = DualLogger(log_file)
+    sys.stderr = sys.stdout 
+    print(f"📝 Logging aktiv. Ausgabe wird gespeichert in: {log_file}\n" + "="*60)
+
     # 1. Konfiguration einlesen
     config_path = os.path.join(os.path.dirname(__file__), "backtesting_config.json")
     if not os.path.exists(config_path):
@@ -51,11 +72,9 @@ def run_backtest():
         print("⚠️ Keine Strategien in der Config definiert. Breche ab.")
         return
 
-    # --- ROBUSTE PFADVERWALTUNG ---
+    # Robuste Pfadverwaltung
     catalog_path = global_settings.get("catalog_path", "./data/nautilus")
-    
-    # Fallback: Pruefen, ob die Daten eine Ebene tiefer im Ordner 'nautilus_data' liegen (z.B. nach SCP-Download)
-    if not os.path.exists(os.path.join(catalog_path, "bar")) and os.path.exists(os.path.join(catalog_path, "nautilus_data", "bar")):
+    if not os.path.exists(os.path.join(catalog_path, "quote_tick")) and os.path.exists(os.path.join(catalog_path, "nautilus_data", "quote_tick")):
         catalog_path = os.path.join(catalog_path, "nautilus_data")
         print(f"🔄 Pfad korrigiert: Nutze verschachteltes Verzeichnis {catalog_path}")
 
@@ -65,30 +84,29 @@ def run_backtest():
     
     catalog = ParquetDataCatalog(catalog_path)
 
-    # --- DYNAMISCHE INSTRUMENTEN-ERKENNUNG ---
-    bar_dir = os.path.join(catalog_path, "bar")
+    # --- DYNAMISCHE INSTRUMENTEN-ERKENNUNG (JETZT VIA QUOTE_TICKS!) ---
+    # Wir suchen jetzt im quote_tick Ordner, da wir wissen, dass dort die echten Daten liegen
+    tick_dir = os.path.join(catalog_path, "quote_tick")
     dynamic_instruments = []
     
-    if os.path.exists(bar_dir):
-        for folder_name in os.listdir(bar_dir):
-            if os.path.isdir(os.path.join(bar_dir, folder_name)):
-                bar_type = folder_name
-                # Extrahiere die Instrumenten-ID (vor dem ersten Bindestrich)
-                instrument_id_str = bar_type.split('-')[0]
+    if os.path.exists(tick_dir):
+        for folder_name in os.listdir(tick_dir):
+            if os.path.isdir(os.path.join(tick_dir, folder_name)):
+                instrument_id_str = folder_name
+                # Bar-Type dynamisch zusammenbauen für die Strategien
+                bar_type = f"{instrument_id_str}-1-MINUTE-MID-INTERNAL"
                 dynamic_instruments.append({
                     "id": instrument_id_str,
                     "bar_type": bar_type
                 })
 
     if not dynamic_instruments:
-        print(f"⚠️ Keine Bar-Daten im Verzeichnis {bar_dir} gefunden. Breche ab.")
+        print(f"⚠️ Keine Tick-Daten im Verzeichnis {tick_dir} gefunden. Breche ab.")
         return
 
-    print(f"✅ {len(dynamic_instruments)} Instrumente dynamisch im Datenkatalog gefunden.")
+    print(f"✅ {len(dynamic_instruments)} Instrumente anhand von Tick-Daten gefunden.")
 
     start_capital = global_settings.get("start_capital", 10000.0)
-
-    # Output-Ordner fuer Reports erstellen
     reports_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
     os.makedirs(reports_dir, exist_ok=True)
 
@@ -104,7 +122,6 @@ def run_backtest():
 
             print(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
 
-            # Jede Kombination benoetigt eine isolierte Backtest-Engine
             engine_config = BacktestEngineConfig(
                 trader_id=f"Matrix-{inst_id_str}-{strategy_class_name}",
             )
@@ -118,39 +135,30 @@ def run_backtest():
                 starting_balances=[Money(start_capital, USD)]
             )
 
-            # Instrument hinzufuegen (Echt oder Mock)
+            # Instrument erzwingen
             inst_id = InstrumentId.from_str(inst_id_str)
-            instrument_loaded = False
-            
-            for cat_inst in catalog.instruments():
-                if cat_inst.id == inst_id:
-                    engine.add_instrument(cat_inst)
-                    instrument_loaded = True
-                    break
-                    
-            if not instrument_loaded:
-                dummy_inst = create_mock_instrument(inst_id_str)
-                engine.add_instrument(dummy_inst)
+            dummy_inst = create_mock_instrument(inst_id_str)
+            engine.add_instrument(dummy_inst)
 
-            # Daten fuer dieses spezifische Instrument laden
+            # --- ON-THE-FLY AGGREGATION: TICKS LADEN ---
             try:
-                bars = catalog.bars(bar_type_strs=[bar_type])
-                if bars and len(bars) > 0:
-                    engine.add_data(bars)
+                # Wir laden die QuoteTicks. Nautilus aggregiert daraus automatisch die MID-Bars!
+                ticks = catalog.quote_ticks(instrument_ids=[inst_id])
+                if ticks and len(ticks) > 0:
+                    engine.add_data(ticks)
+                    print(f"   ✅ {len(ticks)} rohe Ticks geladen. Bars werden live berechnet!")
                 else:
-                    print(f"   ⚠️ Keine Kerzen im Katalog fuer {bar_type}. Ueberspringe Kombination.")
+                    print(f"   ⚠️ Keine Ticks im Katalog fuer {inst_id_str}. Ueberspringe Kombination.")
                     continue
             except ValueError as e:
-                print(f"   ⚠️ Fehler beim Laden von Bars fuer {bar_type}: {e}. Ueberspringe.")
+                print(f"   ⚠️ Fehler beim Laden von Ticks fuer {inst_id_str}: {e}. Ueberspringe.")
                 continue
 
-            # --- DYNAMISCHER PARAMETER-OVERRIDE ---
             try:
                 module = importlib.import_module(module_name)
                 StrategyClass = getattr(module, strategy_class_name)
                 ConfigClass = getattr(module, config_class_name)
 
-                # Wichtig: Hardcodierte Instrumente aus der JSON ueberschreiben!
                 params = strat.get("params", {}).copy()
                 params["instrument_id"] = inst_id_str
                 params["bar_type"] = bar_type
@@ -168,11 +176,9 @@ def run_backtest():
                 engine.run()
                 results = engine.get_backtest_results()
 
-                # Generiere isoliertes Tearsheet pro Run
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 
-                # Konfiguration des Tearsheets gemaess Manual
                 ts_config = TearsheetConfig(
                     title=f"Backtest: {inst_id_str} | {strategy_class_name}",
                     output_path=report_filename,
@@ -183,20 +189,15 @@ def run_backtest():
                     include_positions=True,
                 )
 
-                # Objekt instanziieren, bauen und speichern
                 create_tearsheet(results=results, config=ts_config)
-                
-                print(f"   ✅ Tearsheet erfolgreich gespeichert: {report_filename}")
+                print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
 
             except Exception as e:
-                print(f"   ⚠️ Warnung: Backtest/Tearsheet-Generierung fuer {inst_id_str} ({strategy_class_name}) fehlgeschlagen: {e}")
-                # Schleife laeuft trotzdem fuer die naechste Kombination weiter
+                print(f"   ⚠️ Warnung: Backtest/Tearsheet-Generierung fuer {inst_id_str} fehlgeschlagen: {e}")
                 continue
 
     print("\n✅ Matrix-Backtest vollstaendig abgeschlossen!")
 
-
 if __name__ == "__main__":
-    import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     run_backtest()
