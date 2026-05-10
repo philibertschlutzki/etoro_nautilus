@@ -84,7 +84,7 @@ class ComboTrendVwapStrategy(Strategy):
             )
             self.current_signal = "BUY"
 
-        elif (close_price < self.sma.value or self.macd.macd < self.macd.signal) and self.current_signal == "BUY":
+        elif (close_price < self.sma.value or self.macd.value.macd < self.macd.value.signal) and self.current_signal == "BUY":
             self._log.info(f"🔴 [{self.instrument_id}] SELL SIGNAL ComboTrendVWAP | Trend oder Momentum gebrochen.")
             self.current_signal = "SELL"
 
