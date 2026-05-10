@@ -66,13 +66,18 @@ class ComboTrendVwapStrategy(Strategy):
 
         close_price = float(bar.close)
 
-        # Handelslogik
+        # ─── Handelslogik (Die Kombination) ───────────────────────────
+
+        # 1. Trend stimmt (Preis über SMA)
         trend_bullish = close_price > self.sma.value
-        momentum_bullish = self.macd.macd > self.macd.signal
+        # 2. Momentum ist positiv (MACD kreuzt Signallinie)
+        momentum_bullish = self.macd.value.macd > self.macd.value.signal
         
+        # 3. Einstieg: Preis nahe dem unteren Bollinger Band (dynamisch mit ATR)
         atr_tolerance = self.atr.value * self.config.atr_multiplier
-        # FIX: lower_band zu lower umbenannt
         entry_trigger = close_price <= (self.bb.lower + atr_tolerance)
+        
+        # 4. Bestätigung: Preis muss über dem VWAP liegen, und VWAP muss valide sein
         vwap_confirmed = self.cumulative_volume > 0 and close_price > self.current_vwap
 
         if trend_bullish and momentum_bullish and entry_trigger and vwap_confirmed and self.current_signal != "BUY":
@@ -84,7 +89,6 @@ class ComboTrendVwapStrategy(Strategy):
             )
             self.current_signal = "BUY"
 
-        # Auch hier beim SELL Signal muss das .value rein:
         elif (close_price < self.sma.value or self.macd.value.macd < self.macd.value.signal) and self.current_signal == "BUY":
             self._log.info(f"🔴 [{self.instrument_id}] SELL SIGNAL ComboTrendVWAP | Trend oder Momentum gebrochen.")
             self.current_signal = "SELL"
