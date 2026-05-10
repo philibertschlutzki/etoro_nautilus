@@ -13,8 +13,7 @@ from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
-
-from nautilus_trader.analysis import TearsheetConfig, create_tearsheet
+from nautilus_trader.analysis.tearsheet import Tearsheet
 
 class DualLogger:
     """Fängt Konsolen-Outputs ab und schreibt sie ins Terminal UND in eine Datei."""
@@ -198,26 +197,16 @@ def run_backtest():
                 continue
 
             # --- ENGINE STARTEN ---
-            # --- ENGINE STARTEN ---
             try:
                 engine.run()
-                
-                # DIE RESULTS-ZEILE WIRD KOMPLETT GELÖSCHT
-                
+
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 
-                ts_config = TearsheetConfig(
-                    title=f"Backtest: {inst_id_str} | {strategy_class_name}",
-                    include_equity=True,
-                    include_drawdown=True,
-                    include_returns=True,
-                    include_daily_returns=True,
-                    include_positions=True,
-                )
-
-                # NEU: Wir übergeben direkt den trader=engine.trader
-                create_tearsheet(trader=engine.trader, config=ts_config)
+                # NEUE SYNTAX FÜR NAUTILUS 1.226+
+                tearsheet = Tearsheet(engine.trader)
+                tearsheet.generate(report_filename)
+                
                 print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
 
             except Exception as e:
