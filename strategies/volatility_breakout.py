@@ -36,18 +36,18 @@ class VolatilityBreakoutPumpStrategy(Strategy):
             
         close_price = float(bar.close)
         
-        # Ausbruch nach oben (Pump/Gap)
-        breakout_up = close_price > self.bb.upper_band
-        # Momentum bricht zusammen (Rückfall auf die Mittellinie)
-        momentum_lost = close_price < self.bb.middle_band
+        # Ausbruch nach oben (Pump/Gap) (FIXED)
+        breakout_up = close_price > self.bb.upper
+        # Momentum bricht zusammen (Rückfall auf die Mittellinie) (FIXED)
+        momentum_lost = close_price < self.bb.middle
 
         if breakout_up and self.current_signal != "BUY":
             self._log.info(f"🟢 [{self.instrument_id}] VOLATILITY BREAKOUT (PUMP) | Close: {close_price:.5f}")
             self.current_signal = "BUY"
             
         elif momentum_lost and self.current_signal == "BUY":
-            self._log.info(f"🔴 [{self.instrument_id}] MOMENTUM LOST (SELL) | Close: {close_price:.5f}")
+            self._log.info(f"🔴 [{self.instrument_id}] MOMENTUM LOST. SELL SIGNAL | Close: {close_price:.5f}")
             self.current_signal = "SELL"
-
-    def on_stop(self):
-        self.unsubscribe_bars(self.bar_type)
+            
+        elif self.current_signal == "SELL":
+            self.current_signal = None

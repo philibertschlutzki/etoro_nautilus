@@ -43,12 +43,12 @@ class FlashCrashReversalStrategy(Strategy):
             
         close_price = float(bar.close)
         
-        # Logik: Preis stürzt unter das untere Band UND RSI ist im Panik-Modus
-        is_crash = close_price < self.bb.lower_band
+        # Logik: Preis stürzt unter das untere Band UND RSI ist im Panik-Modus (FIXED)
+        is_crash = close_price < self.bb.lower
         is_oversold = self.rsi.value < self.config.rsi_oversold
         
-        # Exit: Preis erreicht das obere Band oder RSI ist stark überkauft
-        is_recovery = close_price > self.bb.upper_band
+        # Exit: Preis erreicht das obere Band oder RSI ist stark überkauft (FIXED)
+        is_recovery = close_price > self.bb.upper
         is_overbought = self.rsi.value > self.config.rsi_overbought
 
         if is_crash and is_oversold and self.current_signal != "BUY":
@@ -60,10 +60,10 @@ class FlashCrashReversalStrategy(Strategy):
             
         elif (is_recovery or is_overbought) and self.current_signal == "BUY":
             self._log.info(
-                f"🔴 [{self.instrument_id}] RECOVERY SELL | "
+                f"🔴 [{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
                 f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
             )
             self.current_signal = "SELL"
-
-    def on_stop(self):
-        self.unsubscribe_bars(self.bar_type)
+            
+        elif self.current_signal == "SELL":
+            self.current_signal = None
