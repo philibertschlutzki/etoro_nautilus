@@ -8,7 +8,7 @@ In Nautilus wird die Erstellung des Reports über die TearsheetConfig gesteuert.
 ## 3. Integration in das Backtesting-Skript
 Hier ist ein Beispiel, wie du nach dem Durchlaufen der BacktestEngine das Tearsheet generierst und speicherst.
 ```python
-from nautilus_trader.analysis.reports import TearsheetConfig
+from nautilus_trader.analysis.tearsheet import create_tearsheet
 from nautilus_trader.backtest.engine import BacktestEngine
 from pathlib import Path
 
@@ -17,27 +17,18 @@ engine = BacktestEngine(config=engine_config)
 # ... Strategien hinzufügen, Daten laden, etc.
 engine.run()
 
-# 2. Ergebnisse abrufen
-results = engine.get_backtest_results()
-
-# 3. Tearsheet-Konfiguration erstellen
-config = TearsheetConfig(
-    title="eToro Strategie Backtest",
+# 2. Tearsheet generieren (Neue funktionale API für NT >= 1.226.0)
+create_tearsheet(
+    engine=engine,
     output_path=str(Path("reports/tearsheet_etoro.html")),
-    include_equity=True,
-    include_drawdown=True,
-    include_returns=True,
-    include_daily_returns=True,
-    include_positions=True,
+    title="eToro Strategie Backtest"
 )
 
-# 4. Report generieren
-from nautilus_trader.analysis.visualisation import Tearsheet
-tearsheet = Tearsheet(results=results, config=config)
-tearsheet.build()
-tearsheet.save()
+print(f"Tearsheet wurde unter reports/tearsheet_etoro.html gespeichert.")
 
-print(f"Tearsheet wurde unter {config.output_path} gespeichert.")
+# Fallback: Falls das HTML-Tearsheet instabil ist, können CSV-Berichte generiert werden:
+# positions_df = engine.trader.generate_positions_report()
+# positions_df.to_csv("reports/positions_etoro.csv")
 
 ```
 ## 4. Visualisierung von Indikatoren auf dem Chart
