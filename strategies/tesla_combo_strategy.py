@@ -19,7 +19,7 @@ class ComboTrendVwapConfig(StrategyConfig, frozen=True):
     bb_std_dev: float = 2.0
     atr_period: int = 14
     atr_multiplier: float = 0.5
-
+    bb_entry_tolerance: float = 0.001  # FIX: Dieser Parameter hat gefehlt!
 
 class ComboTrendVwapStrategy(Strategy):
     """Generische Trend+Momentum+Volatilitäts+VWAP-Strategie für ein einzelnes Instrument."""
@@ -35,70 +35,58 @@ class ComboTrendVwapStrategy(Strategy):
         self.bb = BollingerBands(config.bb_period, config.bb_std_dev)
         self.atr = AverageTrueRange(config.atr_period)
 
-        # Manueller Intraday-VWAP (benötigt Volumen-Daten aus den Bars)
-        self.cumulative_vp = 0.0
+        self.current_signal = None
+        self.cumulative_typical_volume = 0.0
         self.cumulative_volume = 0.0
         self.current_vwap = 0.0
-        self.current_day = None
-
-        self.current_signal = None
 
     def on_start(self):
-        self._log.info(f"🚀 Starte ComboTrendVWAP-Strategie auf {self.instrument_id}")
+        self._log.info(f"🔥 Starte ComboTrendVwapStrategy auf {self.instrument_id}")
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
-        # 1. Indikatoren füttern
+        # VWAP Logik
+        typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
+        volume = float(bar.volume)
+
+        self.cumulative_typical_volume += typical_price * volume
+        self.cumulative_volume += volume
+
+        if self.cumulative_volume > 0:
+            self.current_vwap = self.cumulative_typical_volume / self.cumulative_volume
+
+        # Indikatoren füttern
         self.sma.handle_bar(bar)
         self.macd.handle_bar(bar)
         self.bb.handle_bar(bar)
         self.atr.handle_bar(bar)
 
-        # 2. VWAP-Berechnung (täglich zurücksetzen)
-        bar_day = bar.ts_event // 86400000000000  # Grober Check für neuen Tag (Nano-Sekunden)
-        if self.current_day != bar_day:
-            self.cumulative_vp = 0.0
-            self.cumulative_volume = 0.0
-            self.current_day = bar_day
-
-        typical_price = float(bar.high + bar.low + bar.close) / 3.0
-        volume = float(bar.volume)
-
-        # Sicherstellen, dass Volumen vorhanden ist, Vermeidung von Zero Division
-        if volume > 0:
-            self.cumulative_vp += typical_price * volume
-            self.cumulative_volume += volume
-
-        if self.cumulative_volume > 0:
-            self.current_vwap = self.cumulative_vp / self.cumulative_volume
-
-        # 3. Warten bis alle Indikatoren berechnet sind
         if not (self.sma.initialized and self.macd.initialized and self.bb.initialized and self.atr.initialized):
             return
 
         close_price = float(bar.close)
 
-        # ─── Handelslogik (Die Kombination) ───────────────────────────
-
-        # 1. Trend stimmt (Preis über SMA)
+        # Handelslogik
         trend_bullish = close_price > self.sma.value
-        # 2. Momentum ist positiv (MACD kreuzt Signallinie)
         momentum_bullish = self.macd.macd > self.macd.signal
-        # 3. Einstieg: Preis nahe dem unteren Bollinger Band (dynamisch mit ATR)
+        
         atr_tolerance = self.atr.value * self.config.atr_multiplier
-        entry_trigger = close_price <= (self.bb.lower_band + atr_tolerance)
-        # 4. Bestätigung: Preis muss über dem VWAP liegen, und VWAP muss valide sein
+        # FIX: lower_band zu lower umbenannt
+        entry_trigger = close_price <= (self.bb.lower + atr_tolerance)
         vwap_confirmed = self.cumulative_volume > 0 and close_price > self.current_vwap
 
         if trend_bullish and momentum_bullish and entry_trigger and vwap_confirmed and self.current_signal != "BUY":
             self._log.info(
                 f"🟢 [{self.instrument_id}] BUY SIGNAL ComboTrendVWAP | "
-                f"Close: {close_price:.2f} | SMA({self.config.sma_period}): {self.sma.value:.2f} | "
-                f"MACD: {self.macd.macd:.4f} / {self.macd.signal:.4f} | "
-                f"BB lower: {self.bb.lower_band:.2f} | VWAP: {self.current_vwap:.2f}"
+                f"Close: {close_price:.2f} | SMA: {self.sma.value:.2f} | "
+                f"MACD: {self.macd.macd:.4f}/{self.macd.signal:.4f} | "
+                f"BB lower: {self.bb.lower:.2f} | VWAP: {self.current_vwap:.2f}"
             )
             self.current_signal = "BUY"
 
-    def on_stop(self):
-        self._log.info(f"🛑 Strategie auf {self.instrument_id} gestoppt.")
-        self.unsubscribe_bars(self.bar_type)
+        elif (close_price < self.sma.value or self.macd.macd < self.macd.signal) and self.current_signal == "BUY":
+            self._log.info(f"🔴 [{self.instrument_id}] SELL SIGNAL ComboTrendVWAP | Trend oder Momentum gebrochen.")
+            self.current_signal = "SELL"
+
+        elif self.current_signal == "SELL":
+            self.current_signal = None
