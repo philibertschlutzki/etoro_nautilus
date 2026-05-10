@@ -200,7 +200,7 @@ def run_backtest():
             # --- ENGINE STARTEN ---
             try:
                 engine.run()
-                results = engine.get_backtest_results()
+                results = engine.trader.generate_backtest_results()
 
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
