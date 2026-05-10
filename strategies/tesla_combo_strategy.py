@@ -6,6 +6,7 @@ from nautilus_trader.trading.strategy import Strategy
 # Nautilus Indikatoren importieren
 from nautilus_trader.indicators import SimpleMovingAverage
 from nautilus_trader.indicators import MovingAverageConvergenceDivergence
+from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import BollingerBands
 from nautilus_trader.indicators import AverageTrueRange
 
@@ -15,6 +16,7 @@ class ComboTrendVwapConfig(StrategyConfig, frozen=True):
     sma_period: int = 50
     macd_fast: int = 12
     macd_slow: int = 26
+    macd_signal_period: int = 9
     bb_period: int = 20
     bb_std_dev: float = 2.0
     atr_period: int = 14
@@ -32,6 +34,7 @@ class ComboTrendVwapStrategy(Strategy):
         # Indikatoren initialisieren
         self.sma = SimpleMovingAverage(config.sma_period)
         self.macd = MovingAverageConvergenceDivergence(config.macd_fast, config.macd_slow)
+        self.macd_signal = ExponentialMovingAverage(config.macd_signal_period)
         self.bb = BollingerBands(config.bb_period, config.bb_std_dev)
         self.atr = AverageTrueRange(config.atr_period)
 
@@ -58,10 +61,12 @@ class ComboTrendVwapStrategy(Strategy):
         # Indikatoren füttern
         self.sma.handle_bar(bar)
         self.macd.handle_bar(bar)
+        if self.macd.initialized:
+            self.macd_signal.update_raw(self.macd.value)
         self.bb.handle_bar(bar)
         self.atr.handle_bar(bar)
 
-        if not (self.sma.initialized and self.macd.initialized and self.bb.initialized and self.atr.initialized):
+        if not (self.sma.initialized and self.macd.initialized and self.macd_signal.initialized and self.bb.initialized and self.atr.initialized):
             return
 
         close_price = float(bar.close)
@@ -72,7 +77,7 @@ class ComboTrendVwapStrategy(Strategy):
         # 1. Trend stimmt (Preis über SMA)
         trend_bullish = close_price > self.sma.value
         # 2. Momentum ist positiv (MACD kreuzt Signallinie)
-        momentum_bullish = self.macd.value > self.macd.signal
+        momentum_bullish = self.macd.value > self.macd_signal.value
         
         # 3. Einstieg: Preis nahe dem unteren Bollinger Band (dynamisch mit ATR)
         atr_tolerance = self.atr.value * self.config.atr_multiplier
@@ -85,12 +90,12 @@ class ComboTrendVwapStrategy(Strategy):
             self._log.info(
                 f"🟢 [{self.instrument_id}] BUY SIGNAL ComboTrendVWAP | "
                 f"Close: {close_price:.2f} | SMA({self.config.sma_period}): {self.sma.value:.2f} | "
-                f"MACD: {self.macd.value:.4f} / {self.macd.signal:.4f} | "
+                f"MACD: {self.macd.value:.4f} / {self.macd_signal.value:.4f} | "
                 f"BB lower: {self.bb.lower:.2f} | VWAP: {self.current_vwap:.2f}"
             )
             self.current_signal = "BUY"
 
-        elif (close_price < self.sma.value or self.macd.value < self.macd.signal) and self.current_signal == "BUY":
+        elif (close_price < self.sma.value or self.macd.value < self.macd_signal.value) and self.current_signal == "BUY":
             self._log.info(f"🔴 [{self.instrument_id}] SELL SIGNAL ComboTrendVWAP | Trend oder Momentum gebrochen.")
             self.current_signal = "SELL"
 

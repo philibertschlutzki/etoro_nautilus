@@ -48,7 +48,7 @@ class AdxAtrMomentumStrategy(Strategy):
 
         close_price = float(bar.close)
         
-        # Werte korrekt abrufen (FIXED: Zugriff auf .value.adx)
+        # Werte korrekt abrufen
         adx_value = self.adx.value
         ema_value = self.ema.value
         atr_value = self.atr.value
