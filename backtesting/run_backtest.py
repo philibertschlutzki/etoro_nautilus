@@ -13,7 +13,7 @@ from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
-from nautilus_trader.analysis.tearsheet import Tearsheet
+from nautilus_trader.analysis.tearsheet import create_tearsheet
 
 class DualLogger:
     """Fängt Konsolen-Outputs ab und schreibt sie ins Terminal UND in eine Datei."""
@@ -204,13 +204,34 @@ def run_backtest():
                 report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 
                 # NEUE SYNTAX FÜR NAUTILUS 1.226+
-                tearsheet = Tearsheet(engine.trader)
-                tearsheet.generate(report_filename)
+                create_tearsheet(
+                    engine=engine,
+                    output_path=report_filename,
+                    title=f"Tearsheet {inst_id_str} - {strategy_class_name}"
+                )
                 
                 print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
 
             except Exception as e:
-                print(f"   ⚠️ Warnung: Tearsheet-Generierung fuer {inst_id_str} fehlgeschlagen: {e}")
+                print(f"   ⚠️ Warnung: HTML-Tearsheet fuer {inst_id_str} fehlgeschlagen: {e}")
+                print(f"   📉 Erstelle CSV-Fallback-Reports...")
+
+                try:
+                    positions_df = engine.trader.generate_positions_report()
+                    fills_df = engine.trader.generate_order_fills_report()
+                    account_df = engine.trader.generate_account_report(venue=Venue("ETORO"))
+
+                    if not positions_df.empty:
+                        positions_df.to_csv(os.path.join(reports_dir, f"positions_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
+                    if not fills_df.empty:
+                        fills_df.to_csv(os.path.join(reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
+                    if not account_df.empty:
+                        account_df.to_csv(os.path.join(reports_dir, f"account_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
+
+                    print(f"   ✅ CSV-Fallbacks erfolgreich gespeichert.")
+                except Exception as fallback_e:
+                    print(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}")
+
                 continue
 
     print("\n✅ Matrix-Backtest vollstaendig abgeschlossen!")
