@@ -209,7 +209,6 @@ def run_backtest():
 
                 ts_config = TearsheetConfig(
                     title=f"Backtest: {inst_id_str} | {strategy_class_name}",
-                    output_path=report_filename,
                     include_equity=True,
                     include_drawdown=True,
                     include_returns=True,
