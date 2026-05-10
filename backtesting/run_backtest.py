@@ -198,10 +198,12 @@ def run_backtest():
                 continue
 
             # --- ENGINE STARTEN ---
+            # --- ENGINE STARTEN ---
             try:
                 engine.run()
-                results = engine.trader.generate_backtest_results()
-
+                
+                # DIE RESULTS-ZEILE WIRD KOMPLETT GELÖSCHT
+                
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 
@@ -215,7 +217,8 @@ def run_backtest():
                     include_positions=True,
                 )
 
-                create_tearsheet(results=results, config=ts_config)
+                # NEU: Wir übergeben direkt den trader=engine.trader
+                create_tearsheet(trader=engine.trader, config=ts_config)
                 print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
 
             except Exception as e:
