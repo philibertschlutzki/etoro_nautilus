@@ -3,10 +3,11 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
+
 # Nautilus Indikatoren importieren
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.indicators import ExponentialMovingAverage
-from nautilus_trader.indicators import AverageDirectionalIndex # FIX
+from nautilus_trader.indicators import DirectionalMovement
 
 class AdxAtrMomentumConfig(StrategyConfig, frozen=True):
     instrument_id: str
