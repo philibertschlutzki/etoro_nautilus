@@ -78,12 +78,13 @@ class ComboTrendVwapStrategy(Strategy):
         if trend_bullish and momentum_bullish and entry_trigger and vwap_confirmed and self.current_signal != "BUY":
             self._log.info(
                 f"🟢 [{self.instrument_id}] BUY SIGNAL ComboTrendVWAP | "
-                f"Close: {close_price:.2f} | SMA: {self.sma.value:.2f} | "
-                f"MACD: {self.macd.macd:.4f}/{self.macd.signal:.4f} | "
+                f"Close: {close_price:.2f} | SMA({self.config.sma_period}): {self.sma.value:.2f} | "
+                f"MACD: {self.macd.value.macd:.4f} / {self.macd.value.signal:.4f} | "
                 f"BB lower: {self.bb.lower:.2f} | VWAP: {self.current_vwap:.2f}"
             )
             self.current_signal = "BUY"
 
+        # Auch hier beim SELL Signal muss das .value rein:
         elif (close_price < self.sma.value or self.macd.value.macd < self.macd.value.signal) and self.current_signal == "BUY":
             self._log.info(f"🔴 [{self.instrument_id}] SELL SIGNAL ComboTrendVWAP | Trend oder Momentum gebrochen.")
             self.current_signal = "SELL"
