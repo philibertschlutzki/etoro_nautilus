@@ -51,7 +51,7 @@ from nautilus_trader.model.identifiers import (
     Venue,
     AccountId,
 )
-from nautilus_trader.model.objects import Currency, Money, Price, Quantity
+from nautilus_trader.model.objects import AccountBalance, Currency, Money, Price, Quantity
 
 from adapters.instrument_map import ETORO_INSTRUMENTS
 
@@ -352,6 +352,21 @@ class EToroExecutionClient(LiveExecutionClient):
             )
 
         await self._state.load(warn_fn=self._log.warning)
+
+        # Publish a placeholder account state so the portfolio engine has a
+        # non-None account to work with before any live balance is received.
+        self.generate_account_state(
+            balances=[
+                AccountBalance(
+                    total=Money(0, USD),
+                    locked=Money(0, USD),
+                    free=Money(0, USD),
+                )
+            ],
+            margins=[],
+            reported=False,
+            ts_event=self._clock.timestamp_ns(),
+        )
 
         self._session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=_REST_TIMEOUT_S)

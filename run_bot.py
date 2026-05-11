@@ -177,7 +177,7 @@ def main():
     except KeyboardInterrupt:
         log.warning("Herunterfahren eingeleitet (KeyboardInterrupt)...")
     except Exception as e:
-        log.error(f"Laufzeitfehler: {e}")
+        log.error(f"Laufzeitfehler: {e}", exc_info=True)
     finally:
         node.stop()
         log.info("Bot erfolgreich beendet.")
