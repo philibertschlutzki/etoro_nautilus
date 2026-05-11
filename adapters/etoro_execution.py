@@ -280,6 +280,7 @@ class EToroExecutionClient(LiveExecutionClient):
             msgbus=msgbus,
             cache=cache,
             clock=clock,
+            account_id=AccountId(f"ETORO-{environment.upper()}-001"),
         )
         self._api_key = api_key
         self._user_key = user_key
@@ -361,16 +362,7 @@ class EToroExecutionClient(LiveExecutionClient):
         await self._rate_limiter.start()
         await self._connect_ws()
 
-        # eToro never sends an account-info message, so generate_account_state()
-        # cannot be used here (it reads self.account_id which is None until the
-        # engine processes the first AccountState event — a chicken-and-egg
-        # problem).  Work around it by constructing AccountState directly.
-        ts = self._clock.timestamp_ns()
-        account_state = AccountState(
-            account_id=AccountId(f"ETORO-{self._environment.upper()}-001"),
-            account_type=AccountType.MARGIN,
-            base_currency=USD,
-            reported=False,
+        self.generate_account_state(
             balances=[
                 AccountBalance(
                     total=Money(0, USD),
@@ -379,12 +371,9 @@ class EToroExecutionClient(LiveExecutionClient):
                 )
             ],
             margins=[],
-            info={},
-            event_id=UUID4(),
-            ts_event=ts,
-            ts_init=ts,
+            reported=False,
+            ts_event=self._clock.timestamp_ns(),
         )
-        self._msgbus.send(endpoint="ExecEngine.process", msg=account_state)
 
     async def _disconnect(self) -> None:
         await self._rate_limiter.stop()
