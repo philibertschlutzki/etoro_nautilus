@@ -149,7 +149,7 @@ def run_backtest():
             print(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
 
             engine_config = BacktestEngineConfig(
-                trader_id=f"Matrix-{inst_id_str}-{strategy_class_name}",
+                trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}",
             )
             engine = BacktestEngine(config=engine_config)
 
