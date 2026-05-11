@@ -49,6 +49,7 @@ from nautilus_trader.model.identifiers import (
     TradeId,
     VenueOrderId,
     Venue,
+    AccountId,
 )
 from nautilus_trader.model.objects import Currency, Money, Price, Quantity
 
