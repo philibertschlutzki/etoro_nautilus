@@ -333,6 +333,41 @@ class EToroExecutionClient(LiveExecutionClient):
 
         self._log.info("EToroExecutionClient disconnected.", LogColor.BLUE)
 
+    async def generate_order_status_reports(
+        self,
+        instrument_id=None,
+        start=None,
+        end=None,
+        open_only: bool = False,
+    ) -> list:
+        """
+        eToro bietet keinen sauberen Order-Status-Query-Endpoint.
+        Reconciliation erfolgt ausschliesslich über den WS-Stream und lokalen State.
+        """
+        self._log.warning(
+            "generate_order_status_reports: Kein Query-Endpoint verfügbar. "
+            "Gebe leere Liste zurück.",
+            LogColor.YELLOW,
+        )
+        return []
+
+    async def generate_trade_reports(
+        self,
+        instrument_id=None,
+        venue_order_id=None,
+        start=None,
+        end=None,
+    ) -> list:
+        return []
+
+    async def generate_position_status_reports(
+        self,
+        instrument_id=None,
+        start=None,
+        end=None,
+    ) -> list:
+        return []
+    
     # ── WebSocket ──────────────────────────────────────────────────────────────
 
     async def _connect_ws(self) -> None:
