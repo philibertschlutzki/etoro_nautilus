@@ -47,7 +47,7 @@ class VwapExhaustionStrategy(Strategy):
     def on_bar(self, bar: Bar):
         volume = float(bar.volume)
         close_price = float(bar.close)
-        typical_price = float(bar.high + bar.low + bar.close) / 3.0
+        typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
 
         self.volume_history.append(volume)
 
