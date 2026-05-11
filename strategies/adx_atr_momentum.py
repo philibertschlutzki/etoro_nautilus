@@ -118,8 +118,11 @@ class AdxAtrMomentumStrategy(Strategy):
 
     # ── Order helpers ──────────────────────────────────────────────────────────
 
-    def _compute_quantity(self, bar: Bar) -> Quantity:
+    def _compute_quantity(self, bar: Bar) -> Quantity | None:
         instrument = self.cache.instrument(self.instrument_id)
+        if instrument is None:
+            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache – Order übersprungen")
+            return None
         units = self.config.trade_amount_usd / float(bar.close)
         return instrument.make_qty(units)
 
@@ -133,10 +136,13 @@ class AdxAtrMomentumStrategy(Strategy):
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
+        qty = self._compute_quantity(bar)
+        if qty is None:
+            return
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
-            quantity=self._compute_quantity(bar),
+            quantity=qty,
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
@@ -151,10 +157,13 @@ class AdxAtrMomentumStrategy(Strategy):
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
+        qty = self._compute_quantity(bar)
+        if qty is None:
+            return
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
-            quantity=self._compute_quantity(bar),
+            quantity=qty,
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
