@@ -1,87 +1,99 @@
-# Nautilus Trader Backtesting Handbuch
+# 📊 Backtesting & Tearsheet Manual: Nautilus Trader
 
-Willkommen zum Backtesting-Handbuch! Dieses Dokument erklärt, wie Sie die dynamische Backtesting-Engine konfigurieren, ausführen und die Ergebnisse professionell interpretieren.
+Dieses Handbuch beschreibt den Workflow, um historische Marktdaten (gesammelt in Parquet-Dateien) für performante, risikofreie Backtests zu nutzen. Es deckt den Prozess von der Konfiguration über die Ausführung bis hin zur Auswertung mittels interaktiver HTML-Tearsheets ab.
 
-## 1. Setup & Ausführung
+---
 
-Die Backtest-Engine wird über die Datei `backtesting_config.json` gesteuert. Dadurch müssen Sie keinen Python-Code verändern, um verschiedene Setups zu testen.
+## 1. Warum lokales Backtesting?
 
-### Konfiguration (`backtesting_config.json`)
+Der `nautilus-catalog.service` auf der Cloud-VM sammelt 24/7 Tick- und Bar-Daten und speichert sie als hochkomprimierte `.parquet`-Dateien. Da Backtesting-Engines diese historischen Daten komplett in den Arbeitsspeicher (RAM) laden, würde eine kleine Cloud-VM (wie die `e2-micro` mit 1GB RAM) sofort abstürzen. Daher lagern wir den Backtesting-Prozess auf lokale PCs/Laptops aus.
 
-Die JSON-Datei besteht aus zwei Hauptbereichen:
+### 1.1 Marktdaten herunterladen (VM ➔ Lokal)
 
-**Global Settings:**
-Hier definieren Sie die Rahmenbedingungen des Backtests.
-- `catalog_path`: Der Pfad zu Ihren historischen Parquet-Daten.
-- `start_time` / `end_time`: Der Zeitraum für den Test (z. B. "2023-01-01").
-- `start_capital`: Ihr Startkapital in USD (z. B. 10000.0).
+Synchronisiere die Marktdaten von deinem Server in dein lokales Projektverzeichnis.
 
-**Backtests (Aktive Strategien):**
-Hier können Sie beliebig viele Strategien gleichzeitig definieren. Für jede Strategie legen Sie Folgendes fest:
-- `strategy_module`: Der Pfad zum Python-Modul (z. B. "strategies.sma_crossover").
-- `strategy_class`: Der Name der Strategie-Klasse.
-- `config_class`: Der Name der zugehörigen Konfigurations-Klasse.
-- `instrument_id`: Das Asset (z. B. "TSLA.ETORO").
-- `bar_type`: Die Auflösung der Daten (z. B. "TSLA.ETORO-1-MINUTE-MID-INTERNAL").
-- `params`: Ein Dictionary mit allen Indikator-Einstellungen (z. B. `sma_period`: 20). Hier können Sie experimentieren!
+**Via Terminal (SCP):**
+```bash
+scp -r <user>@<ip>:/data/nautilus ./data/
+```
 
-### Skript starten
+**Via VS Code:**
+Nutze die "Remote - SSH" Erweiterung, navigiere zu `/data/nautilus` und lade den Ordner per Rechtsklick herunter.
 
-Starten Sie den Backtest im Terminal (aus dem Hauptverzeichnis des Projekts):
+---
+
+## 2. Konfiguration des Backtests (`backtesting_config.json`)
+
+Die Backtest-Engine wird über die Datei `backtesting/backtesting_config.json` gesteuert. Sie müssen keinen Python-Code ändern, um Parameter zu optimieren.
+
+Die JSON-Datei ist wie folgt aufgebaut:
+
+*   **Global Settings (`catalog_path`, `start_time`, `end_time`, `start_capital`):** Definieren die Rahmenbedingungen. Achte darauf, dass `catalog_path` auf dein lokales Datenverzeichnis (z.B. `./data/nautilus`) zeigt.
+*   **Backtests (Aktive Strategien):** Eine Liste von Strategien, die simuliert werden sollen.
+    *   `strategy_module` / `strategy_class` / `config_class`: Pfade und Namen der Python-Klassen.
+    *   `instrument_id` / `bar_type`: Das zu testende Asset (z. B. `TSLA.ETORO`).
+    *   `params`: Ein Dictionary mit allen Indikator-Einstellungen (z. B. `sma_period`: 20). Hier wird optimiert!
+
+---
+
+## 3. Ausführung und Workflow
+
+Starten Sie den Backtest im lokalen Terminal:
+
 ```bash
 python backtesting/run_backtest.py
 ```
 
----
+### Der Optimierungs-Workflow
 
-## 2. Strategie-Katalog
+1.  Öffne `backtesting_config.json` und ändere die Parameter im `params` Block (z. B. den `sma_period`).
+2.  Führe `python backtesting/run_backtest.py` erneut aus.
+3.  Bewerte die generierten Ergebnisse (siehe Kapitel 4).
+4.  Wenn ein Setup profitabel ist, übernimm es in die Live-Konfiguration (`config/setups.py`).
 
-Folgende Strategien stehen aktuell zur Verfügung:
-
-1. **SMA Crossover (`strategies.sma_crossover`)**
-   - **Konzept:** Klassische Trendfolge. Kauft, wenn der Preis über den Simple Moving Average steigt.
-   - **Geeignet für:** Starke Trendphasen.
-
-2. **Trend & Pullback (`strategies.trend_pullback`)**
-   - **Konzept:** Bestimmt den Haupttrend (EMA 200) und sucht nach kurzfristigen Rücksetzern (RSI überverkauft).
-   - **Geeignet für:** Stabile Assets (Tech, Defense), die in einem klaren Trend verlaufen.
-
-3. **Mean Reversion / Keltner Channel (`strategies.mean_reversion`)**
-   - **Konzept:** Nutzt Range-Bound-Märkte aus. Kauft am unteren Keltner-Band und verkauft am oberen.
-   - **Geeignet für:** Krypto-Seitwärtsmärkte oder Phasen geringer Volatilität.
-
-4. **Dynamic Breakout (`strategies.dynamic_breakout`)**
-   - **Konzept:** Reagiert auf extreme Volumenspitzen gepaart mit einem Ausbruch aus einer Preisspanne.
-   - **Geeignet für:** Forex und Rohstoffe (z. B. NATGAS), die oft plötzliche Bewegungen zeigen.
+*Tipp bei RAM-Problemen (32GB+):* Nutze die `start_time` und `end_time` in der JSON-Config, um spezifische Zeitfenster (z.B. nur eine Woche) zu testen und RAM zu sparen.
 
 ---
 
-## 3. Statistik-Interpretation (Deep Dive)
+## 4. Auswertung: Nautilus Tearsheets
 
-Am Ende eines erfolgreichen Backtests generiert Nautilus Trader eine Auswertung. Hier ist, wie Sie die Metriken interpretieren:
+Am Ende eines erfolgreichen Backtests generiert Nautilus Trader automatisch einen umfassenden Performance-Bericht. In Versionen >= 1.226.0 erfolgt dies über die funktionale API, welche eine interaktive HTML-Datei (das "Tearsheet") erstellt.
 
-- **Sharpe Ratio:** Misst die Rendite im Verhältnis zum Risiko (Volatilität).
-  - < 1.0: Suboptimal, das Risiko ist im Verhältnis zur Rendite zu hoch.
-  - > 1.0: Gut, > 2.0: Exzellent.
-- **Sortino Ratio:** Ähnlich wie die Sharpe Ratio, bestraft aber nur die *Abwärts*volatilität (echtes Risiko). Meist aussagekräftiger als Sharpe.
-- **Max Drawdown:** Der größte prozentuale Wertverlust von einem Höchststand zum nächsten Tiefpunkt.
-  - Ein Max Drawdown von > 20-30% ist für die meisten Portfolios schwer zu verkraften und deutet auf eine riskante Strategie hin.
-- **Win-Rate (Trefferquote):** Der Prozentsatz der profitablen Trades.
-  - Eine hohe Win-Rate (> 60%) fühlt sich psychologisch gut an.
-  - Eine Strategie kann aber auch mit 40% Win-Rate hochprofitabel sein, wenn die Gewinner im Durchschnitt viel größer sind als die Verlierer (Risk-Reward-Ratio).
-- **Profit Factor:** Bruttogewinn geteilt durch Bruttoverlust. Werte > 1.5 gelten als robust.
+Der Code in `run_backtest.py` kümmert sich bereits darum:
+
+```python
+from nautilus_trader.analysis.tearsheet import create_tearsheet
+
+# ... (Engine Setup und Run)
+
+create_tearsheet(
+    engine=engine,
+    output_path="reports/tearsheet_etoro.html",
+    title="eToro Strategie Backtest"
+)
+```
+
+### 4.1 Interpretation des Tearsheets
+
+Öffne die erzeugte HTML-Datei im Browser. Sie enthält Plotly-Charts (inkl. Equity, Drawdown und markierten Order-Fills auf den Candlesticks). Achte auf folgende Metriken:
+
+*   **Sharpe Ratio:** Misst die Rendite im Verhältnis zur Volatilität. (> 1.0 ist gut, > 2.0 exzellent).
+*   **Sortino Ratio:** Bestraft nur Abwärtsvolatilität (echtes Risiko) und ist oft aussagekräftiger als die Sharpe Ratio.
+*   **Max Drawdown:** Der größte prozentuale Wertverlust vom Hoch zum Tief. (> 20-30% ist meist riskant).
+*   **Win-Rate & Profit Factor:** Win-Rate (> 50%) kombiniert mit einem Profit Factor (Bruttogewinn / Bruttoverlust) > 1.5 deutet auf eine robuste Strategie hin.
+
+### 4.2 Fallback (CSV Berichte)
+
+Falls die HTML-Generierung fehlschlägt, können rohe CSV-Daten exportiert werden (dies kann im Skript auskommentiert werden):
+
+```python
+positions_df = engine.trader.generate_positions_report()
+positions_df.to_csv("reports/positions_etoro.csv")
+```
 
 ---
 
-## 4. Grenzen und nächste Schritte (WICHTIG)
+## 5. Warnung: Overfitting & Slippage
 
-Backtests in isolierten Offline-Umgebungen haben naturgemäß Grenzen. Beachten Sie folgende Punkte für professionelles Trading:
-
-### Overfitting (Überanpassung)
-Wenn Sie Indikatoren (`sma_period`, `rsi_oversold`) so lange optimieren, bis die historische Rendite gigantisch ist, haben Sie die Strategie wahrscheinlich "overfittet" – sie ist maßgeschneidert auf die Vergangenheit, wird in der Zukunft aber kläglich scheitern.
-
-### Walk-Forward-Optimierung (Out-of-Sample-Testing)
-Um Overfitting zu vermeiden, nutzen Sie einen Teil der Daten (z. B. Jan-Okt) zur Optimierung (In-Sample) und prüfen die gefundenen Parameter auf "ungesehenen" Daten (Nov-Dez, Out-of-Sample). Dies ist der nächste kritische Schritt zur Professionalisierung.
-
-### Slippage und Transaktionskosten
-Offline-Tests kaufen oft zum exakten Schlusskurs ("Close"). In der Realität gibt es *Slippage* (der Preis rutscht während der Orderausführung weg) und Gebühren (Spreads). Konfigurieren Sie Nautilus Trader später so, dass Gebühren und Latenzen simuliert werden, um ein realistisches Bild zu erhalten.
+*   **Overfitting:** Wenn du Parameter extrem lange auf historischen Daten optimierst, passen sie perfekt auf die Vergangenheit, scheitern aber live. Nutze "Out-of-Sample" Tests (Optimiere auf Jan-Okt, teste auf Nov-Dez).
+*   **Slippage:** Offline-Tests gehen oft von perfekten Ausführungen aus. In der Realität schwanken Preise zwischen Ordererteilung und Ausführung. Berücksichtige dies bei deinen Erwartungen.
