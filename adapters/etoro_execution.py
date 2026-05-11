@@ -271,7 +271,7 @@ class EToroExecutionClient(LiveExecutionClient):
             loop=loop,
             client_id=ClientId("ETORO"),
             venue=Venue("ETORO"),
-            account_id=AccountId("ETORO"),
+            account_id=AccountId("ETORO-001"),
             oms_type=OmsType.NETTING,
             account_type=AccountType.MARGIN,
             base_currency=USD,
