@@ -105,7 +105,7 @@ async def run_test():
     
     # Nutzt dein bestehendes Logging-Verzeichnis (wie in den normalen Bot-Runs)
     log_config = LoggingConfig(log_level="INFO", log_directory="logs")
-    node_config = TradingNodeConfig(log_level="INFO", logging=log_config)
+    node_config = TradingNodeConfig(logging=log_config)
     node = TradingNode(config=node_config)
     
     # TODO: Binde hier den Data- und Execution-Client ein, bevor der Node startet.
