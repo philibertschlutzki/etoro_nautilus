@@ -5,6 +5,16 @@ Hier definierst du alle aktiven Handelsstrategien.
 Du kannst dieselbe Strategie mehrfach mit verschiedenen Parametern oder Instrumenten laden.
 """
 
+# --- API Test Settings --------------------------------------------------------
+# Dieser Block wird nur vom Test-Script verwendet
+ETORO_API_TEST = {
+    "environment": "real",       # Wir testen das produktive Konto
+    "dry_run": False,            # Muss False sein, damit echte Orders rausgehen
+    "symbol": "ADA.ETORO",       # Cardano eignet sich gut (kleiner Preis pro Unit)
+    "trade_amount_usd": 11.0,    # Etwas über den 10$ Mindestbetrag zur Sicherheit
+    "test_account_id": "TEST_01" # Label für das Logging
+}
+
 # --- eToro execution settings -------------------------------------------------
 ETORO_EXECUTION = {
     "environment": "demo",   # "demo" | "real"
