@@ -271,7 +271,6 @@ class EToroExecutionClient(LiveExecutionClient):
             loop=loop,
             client_id=ClientId("ETORO"),
             venue=Venue("ETORO"),
-            account_id=AccountId("ETORO-001"),
             oms_type=OmsType.NETTING,
             account_type=AccountType.MARGIN,
             base_currency=USD,
@@ -342,30 +341,6 @@ class EToroExecutionClient(LiveExecutionClient):
         end=None,
     ) -> list:
         return []
-    
-    async def generate_mass_status(self, *args, **kwargs):
-        """
-        Workaround für Nautilus 1.226.0: Das Rust-Backend crasht, 
-        wenn account_id = None ist. Wir fangen den Status ab und patchen ihn.
-        """
-        from nautilus_trader.execution.messages import ExecutionMassStatus
-        from nautilus_trader.model.identifiers import AccountId
-        
-        # 1. Originale Nautilus-Logik laufen lassen (sammelt deine leeren Listen)
-        res = await super().generate_mass_status(*args, **kwargs)
-        
-        # 2. Den Report mit einer gültigen AccountId neu zusammensetzen
-        return ExecutionMassStatus(
-            client_id=res.client_id,
-            venue=res.venue,
-            account_id=AccountId("ETORO_ACC"), # HIER fixen wir den Bug!
-            order_status_reports=res.order_status_reports,
-            trade_reports=res.trade_reports,
-            position_status_reports=res.position_status_reports,
-            fill_reports=res.fill_reports,
-            ts_event=res.ts_event,
-            ts_init=res.ts_init,
-        )
     
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 

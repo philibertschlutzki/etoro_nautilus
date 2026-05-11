@@ -111,29 +111,30 @@ async def main():
     print("Starte Trading Node (asynchron)...")
     node.build()
     
-    # 1. Starte den Node als asynchronen Task
-    # start() existiert auf der Node-Klasse (nicht auf der Node-Instanz in alten Versionen),
-    # aber node.start() oder das Laufenlassen in einer Schleife ist nötig:
-    
-    asyncio.create_task(node.run_async() if hasattr(node, 'run_async') else asyncio.to_thread(node.run))
+    # Start node in background
+    loop = asyncio.get_event_loop()
+    node_task = loop.create_task(node.run_async() if hasattr(node, 'run_async') else asyncio.to_thread(node.run))
 
-    # 2. Warte, bis der Node wirklich LIVE ist (Reconciliation beendet)
-    print("Warte auf Startup (inkl. 10s Reconciliation Delay)...")
-    await asyncio.sleep(15) 
-    
-    # 3. Warte maximal 60 weitere Sekunden auf den Abschluss des Trades
+    # Wait for node to be running (reconciliation delay)
+    print("Warte auf Startup (inkl. Reconciliation)...")
+    await asyncio.sleep(15)
+
+    # Wait for trade completion with timeout
     timeout = 60
     while timeout > 0 and not strategy.position_closed:
         await asyncio.sleep(1)
         timeout -= 1
 
     if strategy.position_closed:
-        print("Trade Ping-Pong erfolgreich. Beende Node.")
+        print("Trade Ping-Pong erfolgreich.")
     else:
-        print("Timeout! Position wurde nicht schnell genug geschlossen.")
+        print("Timeout! Position wurde nicht geschlossen.")
 
-    # 4. Sauber beenden
     node.stop()
+    try:
+        await asyncio.wait_for(node_task, timeout=10)
+    except (asyncio.TimeoutError, Exception):
+        pass
 
 if __name__ == "__main__":
     confirm = input("Achtung: LIVE eToro API-Test! Orders werden platziert. Weiter? (j/N): ")

@@ -65,6 +65,7 @@ class EToroDataClient(LiveMarketDataClient):
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
         self._tick_counter: int = 0
+        self._instrument_precision: dict[str, int] = {}
 
         self.instrument_map = {}
         for eid in self.instrument_ids:
@@ -164,6 +165,8 @@ class EToroDataClient(LiveMarketDataClient):
                 prec, incr = 2, 0.01
             else:
                 prec, incr = 5, 0.00001
+
+            self._instrument_precision[eid] = prec
 
             inst = Equity(
                 instrument_id=instr_id,
@@ -295,10 +298,11 @@ class EToroDataClient(LiveMarketDataClient):
             else:
                 ts = self._clock.timestamp_ns()
 
+            prec = self._instrument_precision.get(instr_id, 5)
             tick = QuoteTick(
                 instrument_id=self.instrument_map[instr_id],
-                bid_price=Price(bid, precision=5),
-                ask_price=Price(ask, precision=5),
+                bid_price=Price(bid, precision=prec),
+                ask_price=Price(ask, precision=prec),
                 bid_size=Quantity(1.0, precision=0),
                 ask_size=Quantity(1.0, precision=0),
                 ts_event=ts,
