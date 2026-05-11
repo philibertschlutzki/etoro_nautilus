@@ -138,4 +138,4 @@ async def main():
 if __name__ == "__main__":
     confirm = input("Achtung: LIVE eToro API-Test! Orders werden platziert. Weiter? (j/N): ")
     if confirm.lower() == 'j':
-        asyncio.run(main())
+        asyncio.run(main())c
