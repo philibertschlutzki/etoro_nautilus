@@ -1,46 +1,11 @@
 {
   "global_settings": {
     "catalog_path": "./data/nautilus",
-    "start_time": "2023-01-01",
-    "end_time": "2023-12-31",
-    "start_capital": 10000.0
+    "start_time": "2026-01-01",
+    "end_time": "2026-05-14",
+    "start_capital": 10000.0,
+    "_note_instruments": "Instrumente werden automatisch via Filesystem-Scan aus data/nautilus/data/quote_tick/ erkannt. Nicht gewünschte Instrumente einfach aus diesem Ordner entfernen oder umbenennen."
   },
-  "instruments": [
-    {
-      "id": "SHIBxM.ETORO",
-      "bar_type": "SHIBxM.ETORO-1-MINUTE-MID-INTERNAL"
-    },
-    {
-      "id": "ROP.ZU.ETORO",
-      "bar_type": "ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL"
-    },
-    {
-      "id": "XPEV.ETORO",
-      "bar_type": "XPEV.ETORO-1-MINUTE-MID-INTERNAL"
-    },
-    {
-      "id": "DOGE.ETORO",
-      "bar_type": "DOGE.ETORO-1-MINUTE-MID-INTERNAL"
-    }
-  ],
-  "_inactive_instruments": [
-    {
-      "id": "TSLA.ETORO",
-      "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL"
-    },
-    {
-      "id": "BTC.ETORO",
-      "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL"
-    },
-    {
-      "id": "NATGAS.ETORO",
-      "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL"
-    },
-    {
-      "id": "RHM.DE.ETORO",
-      "bar_type": "RHM.DE.ETORO-1-MINUTE-MID-INTERNAL"
-    }
-  ],
   "strategies": [
     {
       "strategy_module": "strategies.sma_crossover",
