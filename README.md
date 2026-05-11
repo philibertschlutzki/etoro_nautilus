@@ -1,53 +1,61 @@
 # 🚀 eToro Nautilus Multi-Bot Plattform & Data Catalog
 
-Willkommen beim **eToro Nautilus** Projekt! Dies ist ein professionelles, hochskalierbares Grundgerüst für algorithmisches Trading in Python. Das Projekt nutzt das [Nautilus Trader](https://nautilustrader.io/) Framework, um eine Echtzeit-WebSocket-Verbindung zur eToro-API herzustellen.
+Willkommen beim **eToro Nautilus** Projekt! Dies ist ein professionelles, hochskalierbares Grundgerüst für algorithmisches Trading in Python. Das Projekt nutzt das [Nautilus Trader](https://nautilustrader.io/) Framework in Kombination mit eigens geschriebenen eToro-Adaptern, um eine robuste und effiziente Ausführung von Handelsstrategien zu gewährleisten.
 
-## ✨ Kern-Features
+## 🏗️ Systemarchitektur
 
-- **Live-Trading Orchestrator:** Empfängt Echtzeit-Updates und führt parallele Strategien (z.B. SMA Crossover, MACD, VWAP) für beliebig viele Aktien aus.
-- **Data Catalog Recorder:** Ein passiver Hintergrunddienst, der hochfrequente Marktdaten (Ticks/Bars) ressourcenschonend im `.parquet`-Format archiviert.
-- **Micro-Cloud Ready:** Optimiert für ressourcenarme VMs durch strikte Service-Trennung via `systemd`.
+Das System ist modular aufgebaut und trennt die Handelslogik strikt von der Datenerfassung und der API-Kommunikation. Die Architektur läuft nativ auf Linux (z. B. auf ressourcenarmen Cloud-VMs) ohne Docker-Overhead.
 
----
+*   **Nautilus Trader Core:** Die hochperformante Engine für Backtesting und Live-Trading.
+*   **eToro Adapter (`/adapters`):**
+    *   `etoro_data.py`: Verwaltet die asynchrone WebSocket-Verbindung zur eToro-API. Sie ist verantwortlich für das Routing von Echtzeit-Kursdaten (Ticks/Bars) und das Handling von Connection Drops sowie Reconnects.
+    *   `etoro_execution.py`: Die Ausführungs-Schnittstelle, welche die Order-Logik (Kauf, Verkauf, Stop-Loss) an eToro übermittelt.
+*   **Live-Trading Orchestrator (`run_bot.py`):** Startet den Trading-Bot, verbindet die Adapter und führt parallele Strategien (z.B. SMA Crossover, MACD) basierend auf der Konfiguration in `config/setups.py` aus.
+*   **Data Catalog Recorder (`run_catalog.py`):** Ein isolierter Hintergrunddienst, der Marktdaten (Ticks/Bars) kontinuierlich und ressourcenschonend im `.parquet`-Format speichert.
 
 ## 📚 Dokumentation & Handbücher
 
-Alle detaillierten Anleitungen und operativen Prozesse sind im `Manuals/` Verzeichnis dokumentiert:
+Alle detaillierten Anleitungen, operativen Prozesse und Konfigurationsdetails sind im `manuals/` Verzeichnis konsolidiert. Bitte lies diese Dokumente für ein tiefgreifendes Verständnis des Systems:
 
-* [☁️ Cloud-VM Installation & Systemd-Setup](./Manuals/vm_install.md) - *Wie das System 24/7 auf einem Server betrieben wird.*
-* [📊 Backtesting Guide](./Manuals/backtesting.md) - *Anleitung zum Herunterladen der Marktdaten und lokalen Backtesting in VS Code.*
-* [💻 Nützliche Befehle (Cheatsheet)](./Manuals/useful_commands.md) - *Befehle für Systemd, Logs, Git und eToro-Schnittstellen.*
+1.  [**☁️ Deployment & Operations Guide (`manuals/deployment.md`)**](./manuals/deployment.md)
+    *   Einrichtung und Betrieb auf einer Cloud-VM (inkl. 1GB RAM Optimierung via Swap).
+    *   Native Prozesssteuerung mit `systemd` und Log-Analyse (`journalctl`).
+    *   **Wichtig:** Detailliertes Kapitel zum WebSocket Debugging, Connection Drops und Timeout-Handling.
+2.  [**📊 Backtesting & Tearsheet Manual (`manuals/backtesting_manual.md`)**](./manuals/backtesting_manual.md)
+    *   Konfiguration und Ausführung lokaler Backtests (`run_backtest.py` & `backtesting_config.json`).
+    *   Generierung und Interpretation von interaktiven HTML-Tearsheets.
+    *   Performance-Optimierung für Backtests auf lokalen Rechnern.
+3.  [**🎯 Neue Instrumente hinzufügen (`manuals/new_tickers.md`)**](./manuals/new_tickers.md)
+    *   Schritt-für-Schritt-Anleitung zur Integration neuer Märkte/Aktien in `adapters/instrument_map.py` und `config/setups.py`.
 
 ---
 
 ## 🚀 Lokaler Schnellstart (Entwicklung)
 
-Für die lokale Entwicklung und das Testen von Strategien auf deinem eigenen Rechner (Python 3.10+ erforderlich):
+Für die lokale Entwicklung und das Testen von Strategien (Python 3.10+ erforderlich):
 
 ### 1. Setup & Installation
 ```bash
-git clone [https://github.com/philibertschlutzki/etoro_nautilus.git](https://github.com/philibertschlutzki/etoro_nautilus.git)
+git clone https://github.com/philibertschlutzki/etoro_nautilus.git
 cd etoro_nautilus/
 
 python3 -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
 ```
 
 ### 2. API-Keys konfigurieren
 
-Erstelle eine `.env` Datei im Hauptverzeichnis (wird von Git ignoriert):
+Erstelle eine `.env` Datei im Root-Verzeichnis:
 
 ```env
 ETORO_API_KEY=DEIN_API_KEY_HIER
 ETORO_USER_KEY=DEIN_USER_KEY_HIER
-
 ```
 
 ### 3. System starten
 
-Du kannst die Kernkomponenten unabhängig voneinander ausführen:
+Starte die isolierten Hauptprozesse:
 
 ```bash
 # Startet den aktiven Trading-Bot
@@ -55,29 +63,6 @@ python run_bot.py
 
 # Startet den passiven Daten-Rekorder
 python run_catalog.py
-
 ```
 
-*(Für den dauerhaften Server-Betrieb siehe ./Manuals/vm_install.md)*
-
----
-
-## 📁 Architektur-Übersicht
-
-Das System ist in klare logische Module unterteilt:
-
-1. **`config/setups.py`:** Das "Gehirn". Hier definierst du im `ACTIVE_BOTS`-Array, welche Strategie auf welchem Instrument läuft.
-2. **`adapters/instrument_map.py`:** Mappt eToro-IDs (z.B. `1111`) zu Nautilus-Namen (z.B. `TSLA.ETORO`).
-3. **`strategies/`:** Beinhaltet deine Handelslogik (z.B. `tesla_combo_strategy.py`).
-4. **`run_bot.py` / `run_catalog.py`:** Die beiden isolierten Hauptprozesse für Trading und Datenerfassung.
-
----
-
-## 🎯 Neue Instrumente hinzufügen
-
-Um eine neue Aktie in das System aufzunehmen:
-
-1. Finde die eToro-ID mit: `python get_instruments_id.py`
-2. Trage die ID in `adapters/instrument_map.py` ein.
-3. Füge in `config/setups.py` einen neuen Block zum `ACTIVE_BOTS`-Array hinzu.
-4. Starte den Bot (und in der Cloud die Systemd-Dienste) neu.
+*(Für den dauerhaften Server-Betrieb siehe `manuals/deployment.md`)*
