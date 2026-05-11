@@ -68,7 +68,7 @@ def run_backtest():
     log_file = os.path.join(logs_dir, f"backtest_{timestamp}.log")
     
     sys.stdout = DualLogger(log_file)
-    sys.stderr = sys.stdout 
+    sys.stderr = DualLogger(log_file)
     print(f"📝 Logging aktiv. Ausgabe wird gespeichert in: {log_file}\n" + "="*60)
 
     # 2. Config einlesen
