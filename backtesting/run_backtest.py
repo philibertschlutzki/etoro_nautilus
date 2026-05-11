@@ -6,6 +6,8 @@ import importlib
 from datetime import datetime
 from typing import Dict, Any
 
+import pandas as pd
+
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.identifiers import Venue, InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -79,6 +81,11 @@ def run_backtest():
     global_settings = config_data.get("global_settings", {})
     strategies_list = config_data.get("strategies", [])
 
+    start_time_str = global_settings.get("start_time")
+    end_time_str = global_settings.get("end_time")
+    bt_start = pd.Timestamp(start_time_str, tz="UTC") if start_time_str else None
+    bt_end   = pd.Timestamp(end_time_str,   tz="UTC") if end_time_str   else None
+
     if not strategies_list:
         print("⚠️ Keine Strategien in Config definiert. Breche ab.")
         return
@@ -150,6 +157,8 @@ def run_backtest():
 
             engine_config = BacktestEngineConfig(
                 trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}",
+                **({"start": bt_start} if bt_start else {}),
+                **({"end":   bt_end}   if bt_end   else {}),
             )
             engine = BacktestEngine(config=engine_config)
 
