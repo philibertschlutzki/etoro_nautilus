@@ -1,9 +1,10 @@
+import asyncio
 import os
 import sys
-from decimal import Decimal
 import logging
+from decimal import Decimal
+from pathlib import Path
 
-# Nautilus Imports
 from nautilus_trader.config import TradingNodeConfig, LoggingConfig
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.data import QuoteTick
@@ -11,12 +12,13 @@ from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy, StrategyConfig
 
-# Pfad anpassen, damit Module gefunden werden
+# Projektpfad einbinden
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.setups import ETORO_API_TEST
 from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
 from adapters.etoro_execution import EToroExecClientConfig, EToroLiveExecClientFactory
+from adapters.instrument_map import ETORO_INSTRUMENTS
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,32 +26,25 @@ API_KEY = os.getenv("ETORO_API_KEY")
 USER_KEY = os.getenv("ETORO_USER_KEY")
 
 class ApiOrderTestStrategy(Strategy):
-    """
-    Ping-Pong Strategie: Kauft das definierte Asset und verkauft es sofort nach Fill.
-    Zweck: End-to-End Test der eToro Execution API.
-    """
-    def __init__(self, config: StrategyConfig, node: TradingNode):
+    """Kauft ADA und verkauft es sofort nach dem Fill wieder."""
+    def __init__(self, config: StrategyConfig):
         super().__init__(config)
-        self.node = node # Referenz auf den Node, um ihn am Ende stoppen zu können
         self.instrument_id = InstrumentId.from_str(ETORO_API_TEST["symbol"])
         self.usd_amount = Decimal(str(ETORO_API_TEST["trade_amount_usd"]))
         
-        # State Tracker
         self.buy_submitted = False
         self.position_closed = False
         self.buy_order_id = None
 
     def on_start(self):
-        self.log.info(f"API-Test gestartet. Warte auf ersten Preis-Tick für {self.instrument_id}...")
+        self.log.info(f"Test gestartet. Warte auf Preis-Tick für {self.instrument_id}...")
         self.subscribe_quote_ticks(self.instrument_id)
 
     def on_quote_tick(self, tick: QuoteTick):
-        # Nur einen einzigen Kauf auslösen
         if not self.buy_submitted:
-            # Berechne die Menge basierend auf dem Ask-Preis (Kaufpreis)
             quantity = (self.usd_amount / tick.ask_price).quantize(Decimal("0.0001"))
+            self.log.info(f"Sende BUY: {quantity} Units @ Ask {tick.ask_price} (~{self.usd_amount} USD)")
             
-            self.log.info(f"Sende BUY Order: {quantity} Units @ {tick.ask_price} (~{self.usd_amount} USD)")
             order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=OrderSide.BUY,
@@ -61,12 +56,10 @@ class ApiOrderTestStrategy(Strategy):
             self.buy_submitted = True
 
     def on_order_filled(self, event):
-        self.log.info(f"Fill Event empfangen: {event.quantity} Units gefüllt.")
+        self.log.info(f"Fill Event: {event.quantity} Units gekauft.")
         
-        # Prüfen, ob es der Fill für unseren initialen Kauf ist
         if event.client_order_id == self.buy_order_id and not self.position_closed:
-            self.log.info("Sende sofortige SELL Order zum Schliessen der Position...")
-            
+            self.log.info("Sende sofortige SELL Order zum Schließen...")
             close_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=OrderSide.SELL,
@@ -77,60 +70,33 @@ class ApiOrderTestStrategy(Strategy):
             self.position_closed = True
 
     def on_order_closed(self, event):
-        # Wird getriggert, wenn die SELL-Order (und damit die Position) vollständig abgeschlossen ist
         if self.position_closed and event.client_order_id != self.buy_order_id:
-            self.log.info("SELL Order erfolgreich abgeschlossen. API Ping-Pong Test beendet.")
-            # Beende den Node sauber
-            self.log.info("Initiiere Shutdown des Nodes...")
-            # Ein kleiner Hack für Nautilus Trader, um den blockierenden .run() Call zu beenden:
-            self.node.stop()
+            self.log.info("SELL abgeschlossen. Test erfolgreich!")
 
-def run_test():
+async def main():
     if not API_KEY or not USER_KEY:
         print("FEHLER: API Keys fehlen in der .env.")
         sys.exit(1)
-        
-    print(f"Starte Test auf Environment: {ETORO_API_TEST['environment']}")
-    if ETORO_API_TEST['environment'] == "real":
-        confirm = input("Achtung: Du testest auf einem ECHTEN Account. Orders werden live abgesetzt. Weiter? (j/N): ")
-        if confirm.lower() != 'j':
-            sys.exit(0)
 
-    # 1. Logging Setup
-    log_config = LoggingConfig(log_level="INFO", log_directory="logs")
-    
-    # Hier brauchen wir die eToro ID (die numerische) für das gewählte Symbol, 
-    # damit der Web-Socket Client sich verbinden kann. 
-    # Bei dir heisst es z.B. "ADA.ETORO", aber die Adapter brauchen die ID.
-    # Für ADA ist es oft "21". Im Notfall schaut der Adapter in die Map.
-    from adapters.instrument_map import ETORO_INSTRUMENTS
     etoro_id = None
     for k, v in ETORO_INSTRUMENTS.items():
         if v == ETORO_API_TEST["symbol"]:
             etoro_id = k
             break
             
-    if not etoro_id:
-        print(f"Konnte numerische ID für {ETORO_API_TEST['symbol']} nicht finden.")
-        sys.exit(1)
-
-    # 2. Node Config & Erstellung
+    log_config = LoggingConfig(log_level="INFO", log_directory="logs")
     config = TradingNodeConfig(
         logging=log_config,
         data_clients={
             "ETORO_WS_CLIENT": EToroDataClientConfig(
-                api_key=API_KEY,
-                user_key=USER_KEY,
-                instrument_ids=[etoro_id],
+                api_key=API_KEY, user_key=USER_KEY, instrument_ids=[etoro_id]
             )
         },
         exec_clients={
             "ETORO": EToroExecClientConfig(
-                api_key=API_KEY,
-                user_key=USER_KEY,
-                environment=ETORO_API_TEST["environment"],
-                dry_run=ETORO_API_TEST["dry_run"],
-                enable_trailing_stop=False,
+                api_key=API_KEY, user_key=USER_KEY, 
+                environment=ETORO_API_TEST["environment"], 
+                dry_run=ETORO_API_TEST["dry_run"], enable_trailing_stop=False
             )
         },
     )
@@ -139,19 +105,37 @@ def run_test():
     node.add_data_client_factory("ETORO_WS_CLIENT", EToroLiveDataClientFactory)
     node.add_exec_client_factory("ETORO", EToroLiveExecClientFactory)
 
-    # 3. Strategie laden
-    strategy = ApiOrderTestStrategy(config=StrategyConfig(), node=node)
+    strategy = ApiOrderTestStrategy(config=StrategyConfig())
     node.trader.add_strategy(strategy)
 
-    # 4. Start und Run
+    print("Starte Trading Node (asynchron)...")
     node.build()
     
-    try:
-        node.run()
-    except KeyboardInterrupt:
-        print("Test manuell abgebrochen.")
-    finally:
-        node.stop()
+    # 1. Starte den Node als asynchronen Task
+    # start() existiert auf der Node-Klasse (nicht auf der Node-Instanz in alten Versionen),
+    # aber node.start() oder das Laufenlassen in einer Schleife ist nötig:
+    
+    asyncio.create_task(node.run_async() if hasattr(node, 'run_async') else asyncio.to_thread(node.run))
+
+    # 2. Warte, bis der Node wirklich LIVE ist (Reconciliation beendet)
+    print("Warte auf Startup (inkl. 10s Reconciliation Delay)...")
+    await asyncio.sleep(15) 
+    
+    # 3. Warte maximal 60 weitere Sekunden auf den Abschluss des Trades
+    timeout = 60
+    while timeout > 0 and not strategy.position_closed:
+        await asyncio.sleep(1)
+        timeout -= 1
+
+    if strategy.position_closed:
+        print("Trade Ping-Pong erfolgreich. Beende Node.")
+    else:
+        print("Timeout! Position wurde nicht schnell genug geschlossen.")
+
+    # 4. Sauber beenden
+    node.stop()
 
 if __name__ == "__main__":
-    run_test()
+    confirm = input("Achtung: LIVE eToro API-Test! Orders werden platziert. Weiter? (j/N): ")
+    if confirm.lower() == 'j':
+        asyncio.run(main())
