@@ -21,6 +21,7 @@ import websockets
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.common.providers import InstrumentProvider
+from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.execution.messages import (
     BatchCancelOrders,
     CancelAllOrders,
@@ -42,6 +43,7 @@ from nautilus_trader.model.enums import (
     OrderType,
     PositionSide,
 )
+from nautilus_trader.model.events import AccountState
 from nautilus_trader.model.identifiers import (
     ClientId,
     ClientOrderId,
@@ -51,7 +53,7 @@ from nautilus_trader.model.identifiers import (
     Venue,
     AccountId,
 )
-from nautilus_trader.model.objects import Currency, Money, Price, Quantity
+from nautilus_trader.model.objects import AccountBalance, Currency, Money, Price, Quantity
 
 from adapters.instrument_map import ETORO_INSTRUMENTS
 
@@ -358,6 +360,31 @@ class EToroExecutionClient(LiveExecutionClient):
         )
         await self._rate_limiter.start()
         await self._connect_ws()
+
+        # eToro never sends an account-info message, so generate_account_state()
+        # cannot be used here (it reads self.account_id which is None until the
+        # engine processes the first AccountState event — a chicken-and-egg
+        # problem).  Work around it by constructing AccountState directly.
+        ts = self._clock.timestamp_ns()
+        account_state = AccountState(
+            account_id=AccountId(f"ETORO-{self._environment.upper()}-001"),
+            account_type=AccountType.MARGIN,
+            base_currency=USD,
+            reported=False,
+            balances=[
+                AccountBalance(
+                    total=Money(0, USD),
+                    locked=Money(0, USD),
+                    free=Money(0, USD),
+                )
+            ],
+            margins=[],
+            info={},
+            event_id=UUID4(),
+            ts_event=ts,
+            ts_init=ts,
+        )
+        self._msgbus.send(endpoint="ExecEngine.process", msg=account_state)
 
     async def _disconnect(self) -> None:
         await self._rate_limiter.stop()
