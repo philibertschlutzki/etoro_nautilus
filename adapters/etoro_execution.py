@@ -296,7 +296,7 @@ class EToroExecutionClient(LiveExecutionClient):
         self._session: aiohttp.ClientSession | None = None
         self._ws: object | None = None
         self._ws_task: asyncio.Task[None] | None = None
-        
+
     async def generate_order_status_reports(
         self,
         instrument_id=None,
@@ -327,6 +327,15 @@ class EToroExecutionClient(LiveExecutionClient):
     async def generate_position_status_reports(
         self,
         instrument_id=None,
+        start=None,
+        end=None,
+    ) -> list:
+        return []
+    
+    async def generate_fill_reports(
+        self,
+        instrument_id=None,
+        venue_order_id=None,
         start=None,
         end=None,
     ) -> list:
