@@ -191,7 +191,12 @@ class EToroDataClient(LiveMarketDataClient):
             "data": {"userKey": self.user_key, "apiKey": self.api_key},
         }
         await self._ws.send(json.dumps(auth_payload))
-        raw_resp = await self._ws.recv()
+
+        while True:
+            raw_resp = await self._ws.recv()
+            if raw_resp not in (b"", b"\x00", ""):
+                break
+
         try:
             resp = json.loads(raw_resp)
             self._log.info(f"Auth-Antwort: {resp}", LogColor.CYAN)
@@ -309,7 +314,7 @@ class EToroDataClient(LiveMarketDataClient):
                 ts_init=self._clock.timestamp_ns(),
             )
 
-            self._handle_data(tick)
+            self.handle_quote_tick(tick)
 
             # Periodic heartbeat so logs confirm the loop is alive
             self._tick_counter += 1
@@ -320,4 +325,4 @@ class EToroDataClient(LiveMarketDataClient):
                 )
 
         except Exception as e:
-            self._log.error(f"Fehler beim Verarbeiten der Nachricht: {e} | Nachricht: {msg}")
+            self._log.error(f"Fehler beim Verarbeiten der Nachricht: {e} | Nachricht: {msg}", exc_info=True)
