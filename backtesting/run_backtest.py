@@ -199,23 +199,22 @@ def run_backtest():
             # --- ENGINE STARTEN ---
             try:
                 engine.run()
+            except Exception as e:
+                print(f"   ❌ engine.run() fehlgeschlagen fuer {inst_id_str} / {strategy_class_name}: {e}")
+                continue
 
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 
-                # NEUE SYNTAX FÜR NAUTILUS 1.226+
+            try:
                 create_tearsheet(
                     engine=engine,
                     output_path=report_filename,
                     title=f"Tearsheet {inst_id_str} - {strategy_class_name}"
                 )
-                
                 print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
-
             except Exception as e:
-                print(f"   ⚠️ Warnung: HTML-Tearsheet fuer {inst_id_str} fehlgeschlagen: {e}")
-                print(f"   📉 Erstelle CSV-Fallback-Reports...")
-
+                print(f"   ⚠️ HTML-Tearsheet fehlgeschlagen: {e}. Erstelle CSV-Fallback...")
                 try:
                     positions_df = engine.trader.generate_positions_report()
                     fills_df = engine.trader.generate_order_fills_report()
@@ -227,12 +226,9 @@ def run_backtest():
                         fills_df.to_csv(os.path.join(reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
                     if not account_df.empty:
                         account_df.to_csv(os.path.join(reports_dir, f"account_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
-
-                    print(f"   ✅ CSV-Fallbacks erfolgreich gespeichert.")
+                    print(f"   ✅ CSV-Fallbacks gespeichert.")
                 except Exception as fallback_e:
                     print(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}")
-
-                continue
 
     print("\n✅ Matrix-Backtest vollstaendig abgeschlossen!")
 
