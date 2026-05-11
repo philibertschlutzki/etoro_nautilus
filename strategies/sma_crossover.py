@@ -1,6 +1,9 @@
+from nautilus_trader.common.enums import LogColor
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import QuoteTick, Bar, BarType
+from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.indicators import SimpleMovingAverage
 
@@ -9,21 +12,22 @@ class SmaCrossoverConfig(StrategyConfig, frozen=True):
     instrument_id: str
     bar_type: str
     sma_period: int = 5
+    trade_amount_usd: float = 100.0
+    max_open_positions: int = 1
 
 
 class SmaCrossoverStrategy(Strategy):
-    """
-    Klassische SMA Crossover Strategie.
-    """
+    """Klassische SMA Crossover Strategie mit echter Orderausführung."""
+
     def __init__(self, config: SmaCrossoverConfig):
         super().__init__(config)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
         self.sma = SimpleMovingAverage(config.sma_period)
-        self.current_signal = None
+        self.current_signal: str | None = None
 
     def on_start(self):
-        self._log.info(f"🚀 Starte SMA Crossover auf {self.instrument_id}")
+        self._log.info(f"Starte SMA Crossover auf {self.instrument_id}", LogColor.GREEN)
         self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
@@ -35,24 +39,109 @@ class SmaCrossoverStrategy(Strategy):
 
         if not self.sma.initialized:
             return
-            
+
         close_price = float(bar.close)
-        
+
         self._log.info(
-            f"📊 [{self.instrument_id}] BAR GESCHLOSSEN | Close: {close_price:.2f} | "
+            f"[{self.instrument_id}] BAR GESCHLOSSEN | Close: {close_price:.2f} | "
             f"SMA({self.config.sma_period}): {self.sma.value:.2f}"
         )
-        
-        # Best Practice ist Portfolio, aber mangels Execution nutzen wir hier den internen State
+
         if close_price > self.sma.value and self.current_signal != "BUY":
-            self._log.info(f"🟢 [{self.instrument_id}] BUY SIGNAL (Close > SMA)")
+            self._log.info(
+                f"[{self.instrument_id}] BUY SIGNAL (Close > SMA)", LogColor.GREEN
+            )
             self.current_signal = "BUY"
-            
+            self._on_buy_signal(bar)
+
         elif close_price < self.sma.value and self.current_signal != "SELL":
-            self._log.info(f"🔴 [{self.instrument_id}] SELL SIGNAL (Close < SMA)")
+            self._log.info(
+                f"[{self.instrument_id}] SELL SIGNAL (Close < SMA)", LogColor.RED
+            )
             self.current_signal = "SELL"
+            self._on_sell_signal(bar)
+
+    # ── Order helpers ──────────────────────────────────────────────────────────
+
+    def _has_open_position(self) -> bool:
+        return bool(self.cache.positions_open(instrument_id=self.instrument_id))
+
+    def _compute_quantity(self, bar: Bar) -> Quantity:
+        instrument = self.cache.instrument(self.instrument_id)
+        units = self.config.trade_amount_usd / float(bar.close)
+        return instrument.make_qty(units)
+
+    def _on_buy_signal(self, bar: Bar) -> None:
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if positions:
+            pos = positions[0]
+            if pos.side == PositionSide.LONG:
+                return
+            # Close short position
+            self._close_position(pos)
+            return
+        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+            return
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.BUY,
+            quantity=self._compute_quantity(bar),
+            time_in_force=TimeInForce.GTC,
+        )
+        self.submit_order(order)
+
+    def _on_sell_signal(self, bar: Bar) -> None:
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if positions:
+            pos = positions[0]
+            if pos.side == PositionSide.SHORT:
+                return
+            # Close long position
+            self._close_position(pos)
+            return
+        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+            return
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.SELL,
+            quantity=self._compute_quantity(bar),
+            time_in_force=TimeInForce.GTC,
+        )
+        self.submit_order(order)
+
+    def _close_position(self, pos) -> None:
+        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=exit_side,
+            quantity=pos.quantity,
+            time_in_force=TimeInForce.GTC,
+        )
+        self.submit_order(order)
+
+    # ── Lifecycle callbacks ────────────────────────────────────────────────────
+
+    def on_order_filled(self, event) -> None:
+        self._log.info(
+            f"[{self.instrument_id}] OrderFilled: {event}", LogColor.GREEN
+        )
+
+    def on_order_rejected(self, event) -> None:
+        self._log.warning(
+            f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
+        )
+
+    def on_position_opened(self, event) -> None:
+        self._log.info(
+            f"[{self.instrument_id}] PositionOpened: {event}", LogColor.GREEN
+        )
+
+    def on_position_closed(self, event) -> None:
+        self._log.info(
+            f"[{self.instrument_id}] PositionClosed: {event}", LogColor.RED
+        )
 
     def on_stop(self):
-        self._log.info(f"🛑 Strategie auf {self.instrument_id} gestoppt.")
+        self._log.info(f"Strategie auf {self.instrument_id} gestoppt.", LogColor.RED)
         self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)
