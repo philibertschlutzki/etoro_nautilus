@@ -1,37 +1,43 @@
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.data import QuoteTick, Bar, BarType
+from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 
-# Indikatoren
 from nautilus_trader.indicators import BollingerBands
 from nautilus_trader.indicators import RelativeStrengthIndex
+
 
 class FlashCrashReversalConfig(StrategyConfig, frozen=True):
     instrument_id: str
     bar_type: str
     bb_period: int = 20
-    bb_std_dev: float = 2.5  # Etwas weiter gefasst für volatile Werte
+    bb_std_dev: float = 2.5
     rsi_period: int = 14
-    rsi_oversold: float = 25.0 # Extremwert für Krypto-Crashes
+    rsi_oversold: float = 25.0
     rsi_overbought: float = 70.0
+    trade_amount_usd: float = 100.0
+    max_open_positions: int = 1
+
 
 class FlashCrashReversalStrategy(Strategy):
     """
-    Kauft bei extremen Abverkäufen (Flash Crashes) unterhalb der Bollinger Bänder 
+    Kauft bei extremen Abverkäufen (Flash Crashes) unterhalb der Bollinger Bänder
     mit Bestätigung durch einen stark überverkauften RSI.
     """
+
     def __init__(self, config: FlashCrashReversalConfig):
         super().__init__(config)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
-        
+
         self.bb = BollingerBands(config.bb_period, config.bb_std_dev)
         self.rsi = RelativeStrengthIndex(config.rsi_period)
         self.current_signal = None
 
     def on_start(self):
-        self._log.info(f"🌩️ Starte Flash Crash Reversal auf {self.instrument_id}")
+        self._log.info(f"Starte Flash Crash Reversal auf {self.instrument_id}")
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
@@ -40,30 +46,101 @@ class FlashCrashReversalStrategy(Strategy):
 
         if not (self.bb.initialized and self.rsi.initialized):
             return
-            
+
         close_price = float(bar.close)
-        
-        # Logik: Preis stürzt unter das untere Band UND RSI ist im Panik-Modus (FIXED)
+
         is_crash = close_price < self.bb.lower
         is_oversold = self.rsi.value < self.config.rsi_oversold
-        
-        # Exit: Preis erreicht das obere Band oder RSI ist stark überkauft (FIXED)
+
         is_recovery = close_price > self.bb.upper
         is_overbought = self.rsi.value > self.config.rsi_overbought
 
         if is_crash and is_oversold and self.current_signal != "BUY":
             self._log.info(
-                f"🟢 [{self.instrument_id}] FLASH CRASH DETECTED | "
+                f"[{self.instrument_id}] FLASH CRASH DETECTED | "
                 f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
             )
             self.current_signal = "BUY"
-            
+            self._on_buy_signal(bar)
+
         elif (is_recovery or is_overbought) and self.current_signal == "BUY":
             self._log.info(
-                f"🔴 [{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
+                f"[{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
                 f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
             )
             self.current_signal = "SELL"
-            
+            self._on_sell_signal(bar)
+
         elif self.current_signal == "SELL":
             self.current_signal = None
+
+    # ── Order helpers ──────────────────────────────────────────────────────────
+
+    def _compute_quantity(self, bar: Bar) -> Quantity:
+        instrument = self.cache.instrument(self.instrument_id)
+        units = self.config.trade_amount_usd / float(bar.close)
+        return instrument.make_qty(units)
+
+    def _on_buy_signal(self, bar: Bar) -> None:
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if positions:
+            pos = positions[0]
+            if pos.side == PositionSide.LONG:
+                return
+            self._close_position(pos)
+            return
+        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+            return
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.BUY,
+            quantity=self._compute_quantity(bar),
+            time_in_force=TimeInForce.GTC,
+        )
+        self.submit_order(order)
+
+    def _on_sell_signal(self, bar: Bar) -> None:
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if positions:
+            pos = positions[0]
+            if pos.side == PositionSide.SHORT:
+                return
+            self._close_position(pos)
+            return
+        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+            return
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.SELL,
+            quantity=self._compute_quantity(bar),
+            time_in_force=TimeInForce.GTC,
+        )
+        self.submit_order(order)
+
+    def _close_position(self, pos) -> None:
+        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=exit_side,
+            quantity=pos.quantity,
+            time_in_force=TimeInForce.GTC,
+        )
+        self.submit_order(order)
+
+    # ── Lifecycle callbacks ────────────────────────────────────────────────────
+
+    def on_order_filled(self, event) -> None:
+        self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
+
+    def on_order_rejected(self, event) -> None:
+        self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
+
+    def on_position_opened(self, event) -> None:
+        self._log.info(f"[{self.instrument_id}] PositionOpened: {event}")
+
+    def on_position_closed(self, event) -> None:
+        self._log.info(f"[{self.instrument_id}] PositionClosed: {event}")
+
+    def on_stop(self):
+        self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
+        self.unsubscribe_bars(self.bar_type)
