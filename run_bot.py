@@ -1,4 +1,5 @@
 import os
+import sys
 import importlib
 import logging
 from datetime import datetime, timedelta
@@ -7,12 +8,13 @@ from dotenv import load_dotenv
 from nautilus_trader.config import TradingNodeConfig, LoggingConfig
 from nautilus_trader.live.node import TradingNode
 
-# Adapter Importe
+# Adapter imports
 from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
+from adapters.etoro_execution import EToroExecClientConfig, EToroLiveExecClientFactory
 from adapters.instrument_map import ETORO_INSTRUMENTS
 
-# Config und Strategien Importe
-from config.setups import ACTIVE_BOTS
+# Config imports
+from config.setups import ACTIVE_BOTS, ETORO_EXECUTION
 
 load_dotenv()
 API_KEY = os.getenv("ETORO_API_KEY")
@@ -53,6 +55,21 @@ def _cleanup_old_logs(max_age_hours: int = 24) -> None:
             log_file.unlink(missing_ok=True)
 
 
+def _check_live_safety_interlock(log: logging.Logger) -> None:
+    """Refuse to start if real trading is requested without the explicit env-var confirmation."""
+    environment = ETORO_EXECUTION.get("environment", "demo")
+    dry_run = ETORO_EXECUTION.get("dry_run", True)
+    confirm_live = os.getenv("ETORO_CONFIRM_LIVE", "0").strip() == "1"
+
+    if environment == "real" and not dry_run and not confirm_live:
+        log.critical(
+            "SAFETY INTERLOCK: environment='real' and dry_run=False but "
+            "ETORO_CONFIRM_LIVE=1 is not set. "
+            "Set ETORO_CONFIRM_LIVE=1 in your .env to confirm live trading."
+        )
+        sys.exit(1)
+
+
 def main():
     log_file, log = _setup_logging()
     _cleanup_old_logs()
@@ -61,9 +78,12 @@ def main():
         log.error("FEHLER: API_KEY oder USER_KEY fehlen in der .env Datei.")
         return
 
+    # Safety interlock must run before constructing the node
+    _check_live_safety_interlock(log)
+
     log.info(f"Bot gestartet. Logfile: {log_file}")
 
-    # 1. Sammle und validiere alle einzigartigen eToro-IDs aus den Konfigurationen
+    # 1. Collect and validate all unique eToro IDs from configuration
     required_etoro_ids = []
     valid_bots = []
     for bot in ACTIVE_BOTS:
@@ -83,7 +103,7 @@ def main():
         log.error("FEHLER: Keine gueltigen Instrumente fuer den Start gefunden.")
         return
 
-    # 2. Node Config & Data Client initialisieren
+    # 2. Node config
     nautilus_log_name = f"nautilus_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
     config = TradingNodeConfig(
         trader_id="eToro-MultiBot",
@@ -101,12 +121,22 @@ def main():
                 instrument_ids=required_etoro_ids,
             )
         },
+        exec_clients={
+            "ETORO": EToroExecClientConfig(
+                api_key=API_KEY,
+                user_key=USER_KEY,
+                environment=ETORO_EXECUTION["environment"],
+                dry_run=ETORO_EXECUTION["dry_run"],
+                enable_trailing_stop=ETORO_EXECUTION["enable_trailing_stop"],
+            )
+        },
     )
 
     node = TradingNode(config=config)
     node.add_data_client_factory("ETORO_WS_CLIENT", EToroLiveDataClientFactory)
+    node.add_exec_client_factory("ETORO", EToroLiveExecClientFactory)
 
-    # 3. Strategien dynamisch aus der Config registrieren
+    # 3. Dynamically register strategies from config
     for idx, bot_spec in enumerate(valid_bots):
         strategy_class_name = bot_spec.get("strategy_class")
 
@@ -121,6 +151,8 @@ def main():
                     strategy_id=f"{strategy_class_name}_{bot_spec['symbol']}_{idx}",
                     instrument_id=bot_spec["symbol"],
                     bar_type=bot_spec["bar_type"],
+                    trade_amount_usd=bot_spec.get("trade_amount_usd", 100.0),
+                    max_open_positions=bot_spec.get("max_open_positions", 1),
                     **bot_spec["params"]
                 )
                 strategy = StrategyClass(config=strat_config)
@@ -131,7 +163,7 @@ def main():
         else:
             log.warning(f"Unbekannte Strategieklasse in setups.py ignoriert: {strategy_class_name}")
 
-    # 4. Node starten
+    # 4. Start node
     node.build()
     log.info(f"Starte Nautilus eToro-Orchestrator mit {len(required_etoro_ids)} Instrumenten...")
     log.info("Druecke Ctrl+C zum Beenden")

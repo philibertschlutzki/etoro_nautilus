@@ -5,6 +5,13 @@ Hier definierst du alle aktiven Handelsstrategien.
 Du kannst dieselbe Strategie mehrfach mit verschiedenen Parametern oder Instrumenten laden.
 """
 
+# --- eToro execution settings -------------------------------------------------
+ETORO_EXECUTION = {
+    "environment": "demo",   # "demo" | "real"
+    "dry_run": True,         # MUST be set False explicitly to send real orders
+    "enable_trailing_stop": True,
+}
+
 ACTIVE_BOTS = [
     {
         "strategy_class": "SmaCrossoverStrategy",
@@ -13,7 +20,9 @@ ACTIVE_BOTS = [
         "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
     # --- BEISPIEL FÜR EIN ZWEITES ASSET ---
     {
@@ -23,7 +32,9 @@ ACTIVE_BOTS = [
         "bar_type": "HUT.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -32,7 +43,9 @@ ACTIVE_BOTS = [
         "bar_type": "RIOT.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -41,7 +54,9 @@ ACTIVE_BOTS = [
         "bar_type": "NVDA.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -50,7 +65,9 @@ ACTIVE_BOTS = [
         "bar_type": "FSLY.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -59,7 +76,9 @@ ACTIVE_BOTS = [
         "bar_type": "INSM.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -68,7 +87,9 @@ ACTIVE_BOTS = [
         "bar_type": "BTC.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -77,7 +98,9 @@ ACTIVE_BOTS = [
         "bar_type": "ETH.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -86,7 +109,9 @@ ACTIVE_BOTS = [
         "bar_type": "ADA.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -95,7 +120,9 @@ ACTIVE_BOTS = [
         "bar_type": "XRP.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -104,7 +131,9 @@ ACTIVE_BOTS = [
         "bar_type": "AERO.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -113,7 +142,9 @@ ACTIVE_BOTS = [
         "bar_type": "HYPE.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -122,7 +153,9 @@ ACTIVE_BOTS = [
         "bar_type": "ONDO.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -131,7 +164,9 @@ ACTIVE_BOTS = [
         "bar_type": "01211.HK.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -140,7 +175,9 @@ ACTIVE_BOTS = [
         "bar_type": "XPEV.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -149,7 +186,9 @@ ACTIVE_BOTS = [
         "bar_type": "PLTR.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -158,7 +197,9 @@ ACTIVE_BOTS = [
         "bar_type": "RHM.DE.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -167,7 +208,9 @@ ACTIVE_BOTS = [
         "bar_type": "NVS.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -176,7 +219,9 @@ ACTIVE_BOTS = [
         "bar_type": "ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -185,7 +230,9 @@ ACTIVE_BOTS = [
         "bar_type": "DOGE.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -194,7 +241,9 @@ ACTIVE_BOTS = [
         "bar_type": "SHIBxM.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -203,7 +252,9 @@ ACTIVE_BOTS = [
         "bar_type": "PEPExM.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -212,7 +263,9 @@ ACTIVE_BOTS = [
         "bar_type": "SOL.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -221,7 +274,9 @@ ACTIVE_BOTS = [
         "bar_type": "AVAX.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -230,7 +285,9 @@ ACTIVE_BOTS = [
         "bar_type": "NATGAS.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -239,7 +296,9 @@ ACTIVE_BOTS = [
         "bar_type": "PALL.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -248,7 +307,9 @@ ACTIVE_BOTS = [
         "bar_type": "USDTRY.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
         {
         "strategy_class": "SmaCrossoverStrategy",
@@ -257,6 +318,8 @@ ACTIVE_BOTS = [
         "bar_type": "USDZAR.ETORO-1-MINUTE-MID-INTERNAL",
         "params": {
             "sma_period": 5                         # Eigene Strategie-Parameter
-        }
+        },
+        "trade_amount_usd": 100.0,
+        "max_open_positions": 1,
     },
 ] 
