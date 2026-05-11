@@ -153,6 +153,15 @@ class ComboTrendVwapStrategy(Strategy):
                 return
             self._close_position(pos)
             return
+        if len(self.cache.positions_open()) >= self.config.max_open_positions:
+            return
+        order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.SELL,
+            quantity=self._compute_quantity(bar),
+            time_in_force=TimeInForce.GTC,
+        )
+        self.submit_order(order)
 
     def _close_position(self, pos) -> None:
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
