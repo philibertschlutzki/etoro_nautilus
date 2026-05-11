@@ -24,11 +24,15 @@ LOG_DIR = Path(__file__).parent / "logs"
 
 # Registry for strategies
 STRATEGY_REGISTRY = {
-    "SmaCrossoverStrategy": ("strategies.sma_crossover", "SmaCrossoverStrategy", "SmaCrossoverConfig"),
-    "ComboTrendVwapStrategy": ("strategies.tesla_combo_strategy", "ComboTrendVwapStrategy", "ComboTrendVwapConfig"),
-    "VwapExhaustionStrategy": ("strategies.vwap_exhaustion", "VwapExhaustionStrategy", "VwapExhaustionConfig"),
-    "DynamicBreakoutStrategy": ("strategies.dynamic_breakout", "DynamicBreakoutStrategy", "DynamicBreakoutConfig"),
-    "AdxAtrMomentumStrategy": ("strategies.adx_atr_momentum", "AdxAtrMomentumStrategy", "AdxAtrMomentumConfig"),
+    "SmaCrossoverStrategy":           ("strategies.sma_crossover",          "SmaCrossoverStrategy",           "SmaCrossoverConfig"),
+    "ComboTrendVwapStrategy":         ("strategies.tesla_combo_strategy",    "ComboTrendVwapStrategy",         "ComboTrendVwapConfig"),
+    "VwapExhaustionStrategy":         ("strategies.vwap_exhaustion",         "VwapExhaustionStrategy",         "VwapExhaustionConfig"),
+    "DynamicBreakoutStrategy":        ("strategies.dynamic_breakout",        "DynamicBreakoutStrategy",        "DynamicBreakoutConfig"),
+    "AdxAtrMomentumStrategy":         ("strategies.adx_atr_momentum",        "AdxAtrMomentumStrategy",         "AdxAtrMomentumConfig"),
+    "TrendPullbackStrategy":          ("strategies.trend_pullback",           "TrendPullbackStrategy",          "TrendPullbackConfig"),
+    "MeanReversionStrategy":          ("strategies.mean_reversion",           "MeanReversionStrategy",          "MeanReversionConfig"),
+    "FlashCrashReversalStrategy":     ("strategies.flash_crash_reversal",     "FlashCrashReversalStrategy",     "FlashCrashReversalConfig"),
+    "VolatilityBreakoutPumpStrategy": ("strategies.volatility_breakout",      "VolatilityBreakoutPumpStrategy", "VolatilityBreakoutConfig"),
 }
 
 

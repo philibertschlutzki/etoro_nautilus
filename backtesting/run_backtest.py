@@ -6,6 +6,8 @@ import importlib
 from datetime import datetime
 from typing import Dict, Any
 
+import pandas as pd
+
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.identifiers import Venue, InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -66,7 +68,7 @@ def run_backtest():
     log_file = os.path.join(logs_dir, f"backtest_{timestamp}.log")
     
     sys.stdout = DualLogger(log_file)
-    sys.stderr = sys.stdout 
+    sys.stderr = DualLogger(log_file)
     print(f"📝 Logging aktiv. Ausgabe wird gespeichert in: {log_file}\n" + "="*60)
 
     # 2. Config einlesen
@@ -78,6 +80,11 @@ def run_backtest():
     config_data = load_config(config_path)
     global_settings = config_data.get("global_settings", {})
     strategies_list = config_data.get("strategies", [])
+
+    start_time_str = global_settings.get("start_time")
+    end_time_str = global_settings.get("end_time")
+    bt_start = pd.Timestamp(start_time_str, tz="UTC") if start_time_str else None
+    bt_end   = pd.Timestamp(end_time_str,   tz="UTC") if end_time_str   else None
 
     if not strategies_list:
         print("⚠️ Keine Strategien in Config definiert. Breche ab.")
@@ -149,7 +156,9 @@ def run_backtest():
             print(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
 
             engine_config = BacktestEngineConfig(
-                trader_id=f"Matrix-{inst_id_str}-{strategy_class_name}",
+                trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}",
+                **({"start": bt_start} if bt_start else {}),
+                **({"end":   bt_end}   if bt_end   else {}),
             )
             engine = BacktestEngine(config=engine_config)
 
@@ -199,23 +208,22 @@ def run_backtest():
             # --- ENGINE STARTEN ---
             try:
                 engine.run()
+            except Exception as e:
+                print(f"   ❌ engine.run() fehlgeschlagen fuer {inst_id_str} / {strategy_class_name}: {e}")
+                continue
 
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 
-                # NEUE SYNTAX FÜR NAUTILUS 1.226+
+            try:
                 create_tearsheet(
                     engine=engine,
                     output_path=report_filename,
                     title=f"Tearsheet {inst_id_str} - {strategy_class_name}"
                 )
-                
                 print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
-
             except Exception as e:
-                print(f"   ⚠️ Warnung: HTML-Tearsheet fuer {inst_id_str} fehlgeschlagen: {e}")
-                print(f"   📉 Erstelle CSV-Fallback-Reports...")
-
+                print(f"   ⚠️ HTML-Tearsheet fehlgeschlagen: {e}. Erstelle CSV-Fallback...")
                 try:
                     positions_df = engine.trader.generate_positions_report()
                     fills_df = engine.trader.generate_order_fills_report()
@@ -227,12 +235,9 @@ def run_backtest():
                         fills_df.to_csv(os.path.join(reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
                     if not account_df.empty:
                         account_df.to_csv(os.path.join(reports_dir, f"account_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
-
-                    print(f"   ✅ CSV-Fallbacks erfolgreich gespeichert.")
+                    print(f"   ✅ CSV-Fallbacks gespeichert.")
                 except Exception as fallback_e:
                     print(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}")
-
-                continue
 
     print("\n✅ Matrix-Backtest vollstaendig abgeschlossen!")
 
