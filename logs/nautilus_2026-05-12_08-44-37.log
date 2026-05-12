@@ -1,0 +1,967 @@
+2026-05-12T06:44:37.825383703Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825388507Z [INFO] eToro-MultiBot.TradingNode:  NAUTILUS TRADER - Automated Algorithmic Trading Platform
+2026-05-12T06:44:37.825388887Z [INFO] eToro-MultiBot.TradingNode:  by Nautech Systems Pty Ltd.
+2026-05-12T06:44:37.825389076Z [INFO] eToro-MultiBot.TradingNode:  Copyright (C) 2015-2026. All rights reserved.
+2026-05-12T06:44:37.825389435Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825389777Z [INFO] eToro-MultiBot.TradingNode: 
+2026-05-12T06:44:37.825389993Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣴⣶⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+2026-05-12T06:44:37.825390242Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣾⣿⣿⣿⠀⢸⣿⣿⣿⣿⣶⣶⣤⣀⠀⠀⠀⠀⠀
+2026-05-12T06:44:37.825390529Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⠀⠀⢀⣴⡇⢀⣾⣿⣿⣿⣿⣿⠀⣾⣿⣿⣿⣿⣿⣿⣿⠿⠓⠀⠀⠀⠀
+2026-05-12T06:44:37.825391006Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⠀⣰⣿⣿⡀⢸⣿⣿⣿⣿⣿⣿⠀⣿⣿⣿⣿⣿⣿⠟⠁⣠⣄⠀⠀⠀⠀
+2026-05-12T06:44:37.825391253Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⢠⣿⣿⣿⣇⠀⢿⣿⣿⣿⣿⣿⠀⢻⣿⣿⣿⡿⢃⣠⣾⣿⣿⣧⡀⠀⠀
+2026-05-12T06:44:37.825391502Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠠⣾⣿⣿⣿⣿⣿⣧⠈⠋⢀⣴⣧⠀⣿⡏⢠⡀⢸⣿⣿⣿⣿⣿⣿⣿⡇⠀
+2026-05-12T06:44:37.825391740Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⣀⠙⢿⣿⣿⣿⣿⣿⠇⢠⣿⣿⣿⡄⠹⠃⠼⠃⠈⠉⠛⠛⠛⠛⠛⠻⠇⠀
+2026-05-12T06:44:37.825392401Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⢸⡟⢠⣤⠉⠛⠿⢿⣿⠀⢸⣿⡿⠋⣠⣤⣄⠀⣾⣿⣿⣶⣶⣶⣦⡄⠀⠀⠀
+2026-05-12T06:44:37.825392597Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠸⠀⣾⠏⣸⣷⠂⣠⣤⠀⠘⢁⣴⣾⣿⣿⣿⡆⠘⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀
+2026-05-12T06:44:37.825392768Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⠛⠀⣿⡟⠀⢻⣿⡄⠸⣿⣿⣿⣿⣿⣿⣿⡀⠘⣿⣿⣿⣿⠟⠀⠀⠀⠀
+2026-05-12T06:44:37.825392935Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⠀⠀⣿⠇⠀⠀⢻⡿⠀⠈⠻⣿⣿⣿⣿⣿⡇⠀⢹⣿⠿⠋⠀⠀⠀⠀⠀
+2026-05-12T06:44:37.825393289Z [INFO] eToro-MultiBot.TradingNode: ⠀⠀⠀⠀⠀⠀⠋⠀⠀⠀⡘⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠀⠀⠀⠀⠀⠀
+2026-05-12T06:44:37.825393717Z [INFO] eToro-MultiBot.TradingNode: 
+2026-05-12T06:44:37.825393947Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825394224Z [INFO] eToro-MultiBot.TradingNode:  SYSTEM SPECIFICATION
+2026-05-12T06:44:37.825394405Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825395541Z [INFO] eToro-MultiBot.TradingNode: CPU architecture: Intel(R) Core(TM) i7-4810MQ CPU @ 2.80GHz
+2026-05-12T06:44:37.825396094Z [INFO] eToro-MultiBot.TradingNode: CPU(s): 8 @ 3684 MHz
+2026-05-12T06:44:37.825396941Z [INFO] eToro-MultiBot.TradingNode: OS: kernel-6.17.0-23-generic Linux (Ubuntu 24.04)
+2026-05-12T06:44:37.825453670Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825454583Z [INFO] eToro-MultiBot.TradingNode:  MEMORY USAGE
+2026-05-12T06:44:37.825454855Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825456709Z [INFO] eToro-MultiBot.TradingNode: RAM-Total: 31.22 GiB
+2026-05-12T06:44:37.825457476Z [INFO] eToro-MultiBot.TradingNode: RAM-Used: 4.63 GiB (14.82%)
+2026-05-12T06:44:37.825458044Z [INFO] eToro-MultiBot.TradingNode: RAM-Avail: 26.59 GiB (85.18%)
+2026-05-12T06:44:37.825458994Z [INFO] eToro-MultiBot.TradingNode: Swap-Total: 8.00 GiB
+2026-05-12T06:44:37.825459489Z [INFO] eToro-MultiBot.TradingNode: Swap-Used: 0.00 GiB (0.00%)
+2026-05-12T06:44:37.825461584Z [INFO] eToro-MultiBot.TradingNode: Swap-Avail: 8.00 GiB (100.00%)
+2026-05-12T06:44:37.825462249Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825462546Z [INFO] eToro-MultiBot.TradingNode:  IDENTIFIERS
+2026-05-12T06:44:37.825463187Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825464028Z [INFO] eToro-MultiBot.TradingNode: trader_id: eToro-MultiBot
+2026-05-12T06:44:37.825464612Z [INFO] eToro-MultiBot.TradingNode: machine_id: user-ThinkPad-W541
+2026-05-12T06:44:37.825465650Z [INFO] eToro-MultiBot.TradingNode: instance_id: e5df4b1f-6382-47b5-a446-ba05e4e57f60
+2026-05-12T06:44:37.825466177Z [INFO] eToro-MultiBot.TradingNode: PID: 10804
+2026-05-12T06:44:37.825466577Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825466772Z [INFO] eToro-MultiBot.TradingNode:  VERSIONING
+2026-05-12T06:44:37.825466966Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825488399Z [INFO] eToro-MultiBot.TradingNode: nautilus_trader: 1.226.0
+2026-05-12T06:44:37.825493612Z [INFO] eToro-MultiBot.TradingNode: python: 3.12.3
+2026-05-12T06:44:37.825496923Z [INFO] eToro-MultiBot.TradingNode: numpy: 2.4.4
+2026-05-12T06:44:37.825499700Z [INFO] eToro-MultiBot.TradingNode: pandas: 2.3.3
+2026-05-12T06:44:37.825502659Z [INFO] eToro-MultiBot.TradingNode: msgspec: 0.21.1
+2026-05-12T06:44:37.825505686Z [INFO] eToro-MultiBot.TradingNode: pyarrow: 24.0.0
+2026-05-12T06:44:37.825507861Z [INFO] eToro-MultiBot.TradingNode: pytz: 2026.2
+2026-05-12T06:44:37.825509998Z [INFO] eToro-MultiBot.TradingNode: uvloop: 0.22.1
+2026-05-12T06:44:37.825510214Z [INFO] eToro-MultiBot.TradingNode: =================================================================
+2026-05-12T06:44:37.825524115Z [INFO] eToro-MultiBot.TradingNode: Building system kernel
+2026-05-12T06:44:37.825702139Z [DEBUG] eToro-MultiBot.TradingNode: Event loop signal handling setup for (<Signals.SIGTERM: 15>, <Signals.SIGINT: 2>, <Signals.SIGABRT: 6>)
+2026-05-12T06:44:37.825723616Z [INFO] eToro-MultiBot.MessageBus: config.database=None
+2026-05-12T06:44:37.825724999Z [INFO] eToro-MultiBot.MessageBus: config.encoding='msgpack'
+2026-05-12T06:44:37.825725998Z [INFO] eToro-MultiBot.MessageBus: config.timestamps_as_iso8601=False
+2026-05-12T06:44:37.825727026Z [INFO] eToro-MultiBot.MessageBus: config.buffer_interval_ms=None
+2026-05-12T06:44:37.825728049Z [INFO] eToro-MultiBot.MessageBus: config.autotrim_mins=None
+2026-05-12T06:44:37.825729038Z [INFO] eToro-MultiBot.MessageBus: config.use_trader_prefix=True
+2026-05-12T06:44:37.825730334Z [INFO] eToro-MultiBot.MessageBus: config.use_trader_id=True
+2026-05-12T06:44:37.825732582Z [INFO] eToro-MultiBot.MessageBus: config.use_instance_id=False
+2026-05-12T06:44:37.825733533Z [INFO] eToro-MultiBot.MessageBus: config.streams_prefix='stream'
+2026-05-12T06:44:37.825734264Z [INFO] eToro-MultiBot.MessageBus: config.types_filter=None
+2026-05-12T06:44:37.825767091Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=commands.system.shutdown, handler=<bound method NautilusKernel._on_shutdown_system of <nautilus_trader.system.kernel.NautilusKernel object at 0x732cfb91a5a0>>, priority=0)
+2026-05-12T06:44:37.825800568Z [INFO] eToro-MultiBot.Cache: READY
+2026-05-12T06:44:37.826404011Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'Portfolio.update_account' <bound method Portfolio.update_account of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x732cb9f85240>>
+2026-05-12T06:44:37.826410494Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'Portfolio.update_order' <bound method Portfolio.update_order of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x732cb9f85240>>
+2026-05-12T06:44:37.826412792Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'Portfolio.update_position' <bound method Portfolio.update_position of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x732cb9f85240>>
+2026-05-12T06:44:37.826421526Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.*, handler=<bound method Portfolio.on_order_event of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x732cb9f85240>>, priority=10)
+2026-05-12T06:44:37.826427336Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.*, handler=<bound method Portfolio.on_position_event of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x732cb9f85240>>, priority=10)
+2026-05-12T06:44:37.826432913Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.*, handler=<bound method Portfolio.update_quote_tick of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x732cb9f85240>>, priority=10)
+2026-05-12T06:44:37.826439331Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.*EXTERNAL, handler=<bound method Portfolio.update_bar of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x732cb9f85240>>, priority=10)
+2026-05-12T06:44:37.826534190Z [INFO] eToro-MultiBot.DataEngine: READY
+2026-05-12T06:44:37.826642331Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'DataEngine.execute' <bound method LiveDataEngine.execute of LiveDataEngine(DataEngine)>
+2026-05-12T06:44:37.826647278Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'DataEngine.process' <bound method LiveDataEngine.process of LiveDataEngine(DataEngine)>
+2026-05-12T06:44:37.826658967Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'DataEngine.request' <bound method LiveDataEngine.request of LiveDataEngine(DataEngine)>
+2026-05-12T06:44:37.826660810Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'DataEngine.response' <bound method LiveDataEngine.response of LiveDataEngine(DataEngine)>
+2026-05-12T06:44:37.826663004Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'DataEngine.process_historical' <bound method DataEngine.process_historical of LiveDataEngine(DataEngine)>
+2026-05-12T06:44:37.826726293Z [INFO] eToro-MultiBot.DataEngine: config.graceful_shutdown_on_exception=False
+2026-05-12T06:44:37.826773238Z [INFO] eToro-MultiBot.RiskEngine: READY
+2026-05-12T06:44:37.827048494Z [INFO] eToro-MultiBot.RiskEngine: TradingState is ACTIVE
+2026-05-12T06:44:37.827125588Z [INFO] eToro-MultiBot.Throttler-ORDER_SUBMIT_THROTTLER: READY
+2026-05-12T06:44:37.827157277Z [INFO] eToro-MultiBot.RiskEngine: Set MAX_ORDER_SUBMIT_RATE: 100/00:00:01
+2026-05-12T06:44:37.827187406Z [INFO] eToro-MultiBot.Throttler-ORDER_MODIFY_THROTTLER: READY
+2026-05-12T06:44:37.827198542Z [INFO] eToro-MultiBot.RiskEngine: Set MAX_ORDER_MODIFY_RATE: 100/00:00:01
+2026-05-12T06:44:37.827205478Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'RiskEngine.execute' <bound method LiveRiskEngine.execute of LiveRiskEngine(RiskEngine)>
+2026-05-12T06:44:37.827207310Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'RiskEngine.process' <bound method LiveRiskEngine.process of LiveRiskEngine(RiskEngine)>
+2026-05-12T06:44:37.827215644Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.*, handler=<bound method RiskEngine._handle_event of LiveRiskEngine(RiskEngine)>, priority=10)
+2026-05-12T06:44:37.827220892Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.*, handler=<bound method RiskEngine._handle_event of LiveRiskEngine(RiskEngine)>, priority=10)
+2026-05-12T06:44:37.827242441Z [INFO] eToro-MultiBot.RiskEngine: config.graceful_shutdown_on_exception=False
+2026-05-12T06:44:37.827286495Z [INFO] eToro-MultiBot.ExecEngine: READY
+2026-05-12T06:44:37.827320577Z [INFO] eToro-MultiBot.ExecEngine: config.snapshot_orders=False
+2026-05-12T06:44:37.827323247Z [INFO] eToro-MultiBot.ExecEngine: config.snapshot_positions=False
+2026-05-12T06:44:37.827324118Z [INFO] eToro-MultiBot.ExecEngine: config.snapshot_positions_interval_secs=None
+2026-05-12T06:44:37.827324709Z [INFO] eToro-MultiBot.ExecEngine: config.allow_overfills=False
+2026-05-12T06:44:37.827328138Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'ExecEngine.execute' <bound method LiveExecutionEngine.execute of LiveExecutionEngine(ExecEngine)>
+2026-05-12T06:44:37.827329688Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'ExecEngine.process' <bound method LiveExecutionEngine.process of LiveExecutionEngine(ExecEngine)>
+2026-05-12T06:44:37.827381037Z [INFO] eToro-MultiBot.ExecEngine: config.reconciliation=True
+2026-05-12T06:44:37.827384104Z [INFO] eToro-MultiBot.ExecEngine: config.reconciliation_lookback_mins=None
+2026-05-12T06:44:37.827384824Z [INFO] eToro-MultiBot.ExecEngine: config.reconciliation_instrument_ids=None
+2026-05-12T06:44:37.827385564Z [INFO] eToro-MultiBot.ExecEngine: config.filter_unclaimed_external_orders=False
+2026-05-12T06:44:37.827386249Z [INFO] eToro-MultiBot.ExecEngine: config.filter_position_reports=False
+2026-05-12T06:44:37.827386915Z [INFO] eToro-MultiBot.ExecEngine: config.filtered_client_order_ids=None
+2026-05-12T06:44:37.827387856Z [INFO] eToro-MultiBot.ExecEngine: config.inflight_check_interval_ms=2000
+2026-05-12T06:44:37.827388543Z [INFO] eToro-MultiBot.ExecEngine: config.inflight_check_threshold_ms=5000
+2026-05-12T06:44:37.827389319Z [INFO] eToro-MultiBot.ExecEngine: config.inflight_check_retries=5
+2026-05-12T06:44:37.827390082Z [INFO] eToro-MultiBot.ExecEngine: config.own_books_audit_interval_secs=None
+2026-05-12T06:44:37.827391812Z [INFO] eToro-MultiBot.ExecEngine: config.open_check_interval_secs=None
+2026-05-12T06:44:37.827392524Z [INFO] eToro-MultiBot.ExecEngine: config.open_check_open_only=True
+2026-05-12T06:44:37.827393281Z [INFO] eToro-MultiBot.ExecEngine: config.open_check_lookback_mins=60
+2026-05-12T06:44:37.827393938Z [INFO] eToro-MultiBot.ExecEngine: config.open_check_threshold_ms=5000
+2026-05-12T06:44:37.827394533Z [INFO] eToro-MultiBot.ExecEngine: config.open_check_missing_retries=5
+2026-05-12T06:44:37.827395165Z [INFO] eToro-MultiBot.ExecEngine: config.max_single_order_queries_per_cycle=10
+2026-05-12T06:44:37.827395866Z [INFO] eToro-MultiBot.ExecEngine: config.single_order_query_delay_ms=100
+2026-05-12T06:44:37.827396464Z [INFO] eToro-MultiBot.ExecEngine: config.position_check_interval_secs=None
+2026-05-12T06:44:37.827397112Z [INFO] eToro-MultiBot.ExecEngine: config.position_check_lookback_mins=60
+2026-05-12T06:44:37.827398034Z [INFO] eToro-MultiBot.ExecEngine: config.position_check_threshold_ms=5000
+2026-05-12T06:44:37.827398691Z [INFO] eToro-MultiBot.ExecEngine: config.position_check_retries=3
+2026-05-12T06:44:37.827401855Z [INFO] eToro-MultiBot.ExecEngine: config.reconciliation_startup_delay_secs=10.0
+2026-05-12T06:44:37.827402565Z [INFO] eToro-MultiBot.ExecEngine: config.purge_closed_orders_interval_mins=None
+2026-05-12T06:44:37.827403219Z [INFO] eToro-MultiBot.ExecEngine: config.purge_closed_orders_buffer_mins=None
+2026-05-12T06:44:37.827403994Z [INFO] eToro-MultiBot.ExecEngine: config.purge_closed_positions_interval_mins=None
+2026-05-12T06:44:37.827405481Z [INFO] eToro-MultiBot.ExecEngine: config.purge_closed_positions_buffer_mins=None
+2026-05-12T06:44:37.827406298Z [INFO] eToro-MultiBot.ExecEngine: config.purge_account_events_interval_mins=None
+2026-05-12T06:44:37.827407134Z [INFO] eToro-MultiBot.ExecEngine: config.purge_account_events_lookback_mins=None
+2026-05-12T06:44:37.827407882Z [INFO] eToro-MultiBot.ExecEngine: config.purge_from_database=False
+2026-05-12T06:44:37.827408428Z [INFO] eToro-MultiBot.ExecEngine: config.graceful_shutdown_on_exception=False
+2026-05-12T06:44:37.827416673Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'ExecEngine.reconcile_execution_report' <bound method LiveExecutionEngine.reconcile_execution_report of LiveExecutionEngine(ExecEngine)>
+2026-05-12T06:44:37.827419059Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'ExecEngine.reconcile_execution_mass_status' <bound method LiveExecutionEngine.reconcile_execution_mass_status of LiveExecutionEngine(ExecEngine)>
+2026-05-12T06:44:37.827435324Z [DEBUG] eToro-MultiBot.Cache: Clearing index
+2026-05-12T06:44:37.827437051Z [DEBUG] eToro-MultiBot.Cache: Cleared index
+2026-05-12T06:44:37.827438831Z [DEBUG] eToro-MultiBot.ExecEngine: clear_index took 0ms
+2026-05-12T06:44:37.827446017Z [DEBUG] eToro-MultiBot.Cache: Loading general cache from database
+2026-05-12T06:44:37.827450731Z [INFO] eToro-MultiBot.Cache: Cached 0 general objects from database
+2026-05-12T06:44:37.827452075Z [DEBUG] eToro-MultiBot.ExecEngine: cache_general took 0ms
+2026-05-12T06:44:37.827453021Z [DEBUG] eToro-MultiBot.Cache: Loading currencies from database
+2026-05-12T06:44:37.827454512Z [INFO] eToro-MultiBot.Cache: Cached 0 currencies from database
+2026-05-12T06:44:37.827456456Z [DEBUG] eToro-MultiBot.ExecEngine: cache_currencies took 0ms
+2026-05-12T06:44:37.827457564Z [DEBUG] eToro-MultiBot.Cache: Loading instruments from database
+2026-05-12T06:44:37.827458440Z [INFO] eToro-MultiBot.Cache: Cached 0 instruments from database
+2026-05-12T06:44:37.827459335Z [DEBUG] eToro-MultiBot.ExecEngine: cache_instruments took 0ms
+2026-05-12T06:44:37.827460454Z [DEBUG] eToro-MultiBot.Cache: Loading accounts from database
+2026-05-12T06:44:37.827461728Z [INFO] eToro-MultiBot.Cache: Cached 0 accounts from database
+2026-05-12T06:44:37.827462633Z [DEBUG] eToro-MultiBot.ExecEngine: cache_accounts took 0ms
+2026-05-12T06:44:37.827463810Z [DEBUG] eToro-MultiBot.Cache: Loading orders from database
+2026-05-12T06:44:37.827464996Z [INFO] eToro-MultiBot.Cache: Cached 0 orders from database
+2026-05-12T06:44:37.827466501Z [DEBUG] eToro-MultiBot.ExecEngine: cache_orders took 0ms
+2026-05-12T06:44:37.827467421Z [DEBUG] eToro-MultiBot.Cache: Loading order lists
+2026-05-12T06:44:37.827468913Z [INFO] eToro-MultiBot.Cache: Cached 0 order lists from database
+2026-05-12T06:44:37.827469848Z [DEBUG] eToro-MultiBot.ExecEngine: cache_order_lists took 0ms
+2026-05-12T06:44:37.827470650Z [DEBUG] eToro-MultiBot.Cache: Loading positions from database
+2026-05-12T06:44:37.827471672Z [INFO] eToro-MultiBot.Cache: Cached 0 positions from database
+2026-05-12T06:44:37.827472658Z [DEBUG] eToro-MultiBot.ExecEngine: cache_positions took 0ms
+2026-05-12T06:44:37.827476834Z [DEBUG] eToro-MultiBot.Cache: Building index
+2026-05-12T06:44:37.827483438Z [DEBUG] eToro-MultiBot.Cache: Index built in 0.000s
+2026-05-12T06:44:37.827484624Z [DEBUG] eToro-MultiBot.ExecEngine: build_index took 0ms
+2026-05-12T06:44:37.827490994Z [INFO] eToro-MultiBot.Cache: Checking data integrity
+2026-05-12T06:44:37.827501020Z [INFO] eToro-MultiBot.Cache: Integrity check passed in 11μs
+2026-05-12T06:44:37.827502510Z [DEBUG] eToro-MultiBot.ExecEngine: check_integrity took 0ms
+2026-05-12T06:44:37.827511700Z [DEBUG] eToro-MultiBot.ExecEngine: _set_position_id_counts took 0ms
+2026-05-12T06:44:37.827513304Z [INFO] eToro-MultiBot.ExecEngine: Loaded cache in 0ms
+2026-05-12T06:44:37.827565967Z [INFO] eToro-MultiBot.OrderEmulator: READY
+2026-05-12T06:44:37.827617124Z [DEBUG] eToro-MultiBot.MessageBus: Added endpoint 'OrderEmulator.execute' <bound method OrderEmulator.execute of OrderEmulator(OrderEmulator)>
+2026-05-12T06:44:37.827639715Z [INFO] eToro-MultiBot.eToro-MultiBot: READY
+2026-05-12T06:44:37.827678372Z [INFO] eToro-MultiBot.TradingNode: Initialized in 4ms
+2026-05-12T06:44:37.827700751Z [INFO] eToro-MultiBot.TradingNode: has_cache_backing=False
+2026-05-12T06:44:37.827703413Z [INFO] eToro-MultiBot.TradingNode: has_msgbus_backing=False
+2026-05-12T06:44:37.830511973Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: READY
+2026-05-12T06:44:37.830630510Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_TSLA.ETORO_0-000, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_TSLA.ETORO_0-000)>, priority=0)
+2026-05-12T06:44:37.830639002Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_TSLA.ETORO_0-000, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_TSLA.ETORO_0-000)>, priority=0)
+2026-05-12T06:44:37.830653554Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_TSLA.ETORO_0-000
+2026-05-12T06:44:37.830658617Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_TSLA.ETORO_0-000
+2026-05-12T06:44:37.830946364Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: READY
+2026-05-12T06:44:37.830992749Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_HUT.ETORO_1-001, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_HUT.ETORO_1-001)>, priority=0)
+2026-05-12T06:44:37.831000395Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_HUT.ETORO_1-001, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_HUT.ETORO_1-001)>, priority=0)
+2026-05-12T06:44:37.831006041Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_HUT.ETORO_1-001
+2026-05-12T06:44:37.831010315Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_HUT.ETORO_1-001
+2026-05-12T06:44:37.831184122Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: READY
+2026-05-12T06:44:37.831225886Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_RIOT.ETORO_2-002, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_RIOT.ETORO_2-002)>, priority=0)
+2026-05-12T06:44:37.831232831Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_RIOT.ETORO_2-002, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_RIOT.ETORO_2-002)>, priority=0)
+2026-05-12T06:44:37.831237506Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_RIOT.ETORO_2-002
+2026-05-12T06:44:37.831239684Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_RIOT.ETORO_2-002
+2026-05-12T06:44:37.831393557Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: READY
+2026-05-12T06:44:37.831433997Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_NVDA.ETORO_3-003, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_NVDA.ETORO_3-003)>, priority=0)
+2026-05-12T06:44:37.831441480Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_NVDA.ETORO_3-003, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_NVDA.ETORO_3-003)>, priority=0)
+2026-05-12T06:44:37.831445402Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_NVDA.ETORO_3-003
+2026-05-12T06:44:37.831447616Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_NVDA.ETORO_3-003
+2026-05-12T06:44:37.831595288Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: READY
+2026-05-12T06:44:37.831639411Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_FSLY.ETORO_4-004, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_FSLY.ETORO_4-004)>, priority=0)
+2026-05-12T06:44:37.831646394Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_FSLY.ETORO_4-004, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_FSLY.ETORO_4-004)>, priority=0)
+2026-05-12T06:44:37.831653391Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_FSLY.ETORO_4-004
+2026-05-12T06:44:37.831655852Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_FSLY.ETORO_4-004
+2026-05-12T06:44:37.831799531Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: READY
+2026-05-12T06:44:37.831846949Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_INSM.ETORO_5-005, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_INSM.ETORO_5-005)>, priority=0)
+2026-05-12T06:44:37.831854280Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_INSM.ETORO_5-005, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_INSM.ETORO_5-005)>, priority=0)
+2026-05-12T06:44:37.831858639Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_INSM.ETORO_5-005
+2026-05-12T06:44:37.831861127Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_INSM.ETORO_5-005
+2026-05-12T06:44:37.832006626Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: READY
+2026-05-12T06:44:37.832048250Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_BTC.ETORO_6-006, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_BTC.ETORO_6-006)>, priority=0)
+2026-05-12T06:44:37.832054880Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_BTC.ETORO_6-006, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_BTC.ETORO_6-006)>, priority=0)
+2026-05-12T06:44:37.832058939Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_BTC.ETORO_6-006
+2026-05-12T06:44:37.832061793Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_BTC.ETORO_6-006
+2026-05-12T06:44:37.832228476Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: READY
+2026-05-12T06:44:37.832366291Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_ETH.ETORO_7-007, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ETH.ETORO_7-007)>, priority=0)
+2026-05-12T06:44:37.832373963Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_ETH.ETORO_7-007, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ETH.ETORO_7-007)>, priority=0)
+2026-05-12T06:44:37.832378818Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_ETH.ETORO_7-007
+2026-05-12T06:44:37.832381915Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_ETH.ETORO_7-007
+2026-05-12T06:44:37.832553479Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: READY
+2026-05-12T06:44:37.832609018Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_ADA.ETORO_8-008, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ADA.ETORO_8-008)>, priority=0)
+2026-05-12T06:44:37.832615975Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_ADA.ETORO_8-008, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ADA.ETORO_8-008)>, priority=0)
+2026-05-12T06:44:37.832622230Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_ADA.ETORO_8-008
+2026-05-12T06:44:37.832626110Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_ADA.ETORO_8-008
+2026-05-12T06:44:37.832785551Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: READY
+2026-05-12T06:44:37.832831065Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_XRP.ETORO_9-009, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_XRP.ETORO_9-009)>, priority=0)
+2026-05-12T06:44:37.832838119Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_XRP.ETORO_9-009, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_XRP.ETORO_9-009)>, priority=0)
+2026-05-12T06:44:37.832845931Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_XRP.ETORO_9-009
+2026-05-12T06:44:37.832848521Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_XRP.ETORO_9-009
+2026-05-12T06:44:37.833003370Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: READY
+2026-05-12T06:44:37.833051715Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_AERO.ETORO_10-010, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_AERO.ETORO_10-010)>, priority=0)
+2026-05-12T06:44:37.833058974Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_AERO.ETORO_10-010, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_AERO.ETORO_10-010)>, priority=0)
+2026-05-12T06:44:37.833064169Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_AERO.ETORO_10-010
+2026-05-12T06:44:37.833068363Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_AERO.ETORO_10-010
+2026-05-12T06:44:37.833238529Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: READY
+2026-05-12T06:44:37.833280770Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_HYPE.ETORO_11-011, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_HYPE.ETORO_11-011)>, priority=0)
+2026-05-12T06:44:37.833287648Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_HYPE.ETORO_11-011, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_HYPE.ETORO_11-011)>, priority=0)
+2026-05-12T06:44:37.833292175Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_HYPE.ETORO_11-011
+2026-05-12T06:44:37.833294656Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_HYPE.ETORO_11-011
+2026-05-12T06:44:37.833446180Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: READY
+2026-05-12T06:44:37.833493481Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_ONDO.ETORO_12-012, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ONDO.ETORO_12-012)>, priority=0)
+2026-05-12T06:44:37.833500684Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_ONDO.ETORO_12-012, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ONDO.ETORO_12-012)>, priority=0)
+2026-05-12T06:44:37.833507344Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_ONDO.ETORO_12-012
+2026-05-12T06:44:37.833510927Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_ONDO.ETORO_12-012
+2026-05-12T06:44:37.833646451Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: READY
+2026-05-12T06:44:37.833687373Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_01211.HK.ETORO_13-013, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_01211.HK.ETORO_13-013)>, priority=0)
+2026-05-12T06:44:37.833694290Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_01211.HK.ETORO_13-013, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_01211.HK.ETORO_13-013)>, priority=0)
+2026-05-12T06:44:37.833699791Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_01211.HK.ETORO_13-013
+2026-05-12T06:44:37.833703029Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_01211.HK.ETORO_13-013
+2026-05-12T06:44:37.833850528Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: READY
+2026-05-12T06:44:37.833902592Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_XPEV.ETORO_14-014, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_XPEV.ETORO_14-014)>, priority=0)
+2026-05-12T06:44:37.833910315Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_XPEV.ETORO_14-014, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_XPEV.ETORO_14-014)>, priority=0)
+2026-05-12T06:44:37.833916727Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_XPEV.ETORO_14-014
+2026-05-12T06:44:37.833919206Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_XPEV.ETORO_14-014
+2026-05-12T06:44:37.834074862Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: READY
+2026-05-12T06:44:37.834130881Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_PLTR.ETORO_15-015, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_PLTR.ETORO_15-015)>, priority=0)
+2026-05-12T06:44:37.834138513Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_PLTR.ETORO_15-015, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_PLTR.ETORO_15-015)>, priority=0)
+2026-05-12T06:44:37.834143408Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_PLTR.ETORO_15-015
+2026-05-12T06:44:37.834147690Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_PLTR.ETORO_15-015
+2026-05-12T06:44:37.834292771Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: READY
+2026-05-12T06:44:37.834341683Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_RHM.DE.ETORO_16-016, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_RHM.DE.ETORO_16-016)>, priority=0)
+2026-05-12T06:44:37.834351190Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_RHM.DE.ETORO_16-016, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_RHM.DE.ETORO_16-016)>, priority=0)
+2026-05-12T06:44:37.834355364Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_RHM.DE.ETORO_16-016
+2026-05-12T06:44:37.834357595Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_RHM.DE.ETORO_16-016
+2026-05-12T06:44:37.834499721Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: READY
+2026-05-12T06:44:37.834543271Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_NVS.ETORO_17-017, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_NVS.ETORO_17-017)>, priority=0)
+2026-05-12T06:44:37.834551417Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_NVS.ETORO_17-017, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_NVS.ETORO_17-017)>, priority=0)
+2026-05-12T06:44:37.834555396Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_NVS.ETORO_17-017
+2026-05-12T06:44:37.834557464Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_NVS.ETORO_17-017
+2026-05-12T06:44:37.834719488Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: READY
+2026-05-12T06:44:37.834783540Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_ROP.ZU.ETORO_18-018, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ROP.ZU.ETORO_18-018)>, priority=0)
+2026-05-12T06:44:37.834791641Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_ROP.ZU.ETORO_18-018, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_ROP.ZU.ETORO_18-018)>, priority=0)
+2026-05-12T06:44:37.834796072Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_ROP.ZU.ETORO_18-018
+2026-05-12T06:44:37.834798377Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_ROP.ZU.ETORO_18-018
+2026-05-12T06:44:37.834964146Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: READY
+2026-05-12T06:44:37.835071738Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_DOGE.ETORO_19-019, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_DOGE.ETORO_19-019)>, priority=0)
+2026-05-12T06:44:37.835080368Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_DOGE.ETORO_19-019, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_DOGE.ETORO_19-019)>, priority=0)
+2026-05-12T06:44:37.835101240Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_DOGE.ETORO_19-019
+2026-05-12T06:44:37.835103661Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_DOGE.ETORO_19-019
+2026-05-12T06:44:37.835278040Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: READY
+2026-05-12T06:44:37.835332366Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_SHIBxM.ETORO_20-020, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_SHIBxM.ETORO_20-020)>, priority=0)
+2026-05-12T06:44:37.835340549Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_SHIBxM.ETORO_20-020, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_SHIBxM.ETORO_20-020)>, priority=0)
+2026-05-12T06:44:37.835345717Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_SHIBxM.ETORO_20-020
+2026-05-12T06:44:37.835349489Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_SHIBxM.ETORO_20-020
+2026-05-12T06:44:37.835544304Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: READY
+2026-05-12T06:44:37.835614456Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_PEPExM.ETORO_21-021, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_PEPExM.ETORO_21-021)>, priority=0)
+2026-05-12T06:44:37.835623846Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_PEPExM.ETORO_21-021, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_PEPExM.ETORO_21-021)>, priority=0)
+2026-05-12T06:44:37.835629643Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_PEPExM.ETORO_21-021
+2026-05-12T06:44:37.835632904Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_PEPExM.ETORO_21-021
+2026-05-12T06:44:37.835820351Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: READY
+2026-05-12T06:44:37.835874648Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_SOL.ETORO_22-022, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_SOL.ETORO_22-022)>, priority=0)
+2026-05-12T06:44:37.835883935Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_SOL.ETORO_22-022, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_SOL.ETORO_22-022)>, priority=0)
+2026-05-12T06:44:37.835888523Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_SOL.ETORO_22-022
+2026-05-12T06:44:37.835891412Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_SOL.ETORO_22-022
+2026-05-12T06:44:37.836077088Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: READY
+2026-05-12T06:44:37.836198517Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_AVAX.ETORO_23-023, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_AVAX.ETORO_23-023)>, priority=0)
+2026-05-12T06:44:37.836208460Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_AVAX.ETORO_23-023, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_AVAX.ETORO_23-023)>, priority=0)
+2026-05-12T06:44:37.836213146Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_AVAX.ETORO_23-023
+2026-05-12T06:44:37.836216075Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_AVAX.ETORO_23-023
+2026-05-12T06:44:37.836447741Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: READY
+2026-05-12T06:44:37.836502516Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_NATGAS.ETORO_24-024, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_NATGAS.ETORO_24-024)>, priority=0)
+2026-05-12T06:44:37.836512124Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_NATGAS.ETORO_24-024, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_NATGAS.ETORO_24-024)>, priority=0)
+2026-05-12T06:44:37.836516849Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_NATGAS.ETORO_24-024
+2026-05-12T06:44:37.836519817Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_NATGAS.ETORO_24-024
+2026-05-12T06:44:37.836759777Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: READY
+2026-05-12T06:44:37.836815810Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_PALL.ETORO_25-025, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_PALL.ETORO_25-025)>, priority=0)
+2026-05-12T06:44:37.836825467Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_PALL.ETORO_25-025, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_PALL.ETORO_25-025)>, priority=0)
+2026-05-12T06:44:37.836830325Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_PALL.ETORO_25-025
+2026-05-12T06:44:37.836833273Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_PALL.ETORO_25-025
+2026-05-12T06:44:37.837062799Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: READY
+2026-05-12T06:44:37.837128853Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_USDTRY.ETORO_26-026, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_USDTRY.ETORO_26-026)>, priority=0)
+2026-05-12T06:44:37.837138996Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_USDTRY.ETORO_26-026, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_USDTRY.ETORO_26-026)>, priority=0)
+2026-05-12T06:44:37.837143838Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_USDTRY.ETORO_26-026
+2026-05-12T06:44:37.837147144Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_USDTRY.ETORO_26-026
+2026-05-12T06:44:37.837385595Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: READY
+2026-05-12T06:44:37.837447583Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.order.SmaCrossoverStrategy_USDZAR.ETORO_27-027, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_USDZAR.ETORO_27-027)>, priority=0)
+2026-05-12T06:44:37.837457559Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=events.position.SmaCrossoverStrategy_USDZAR.ETORO_27-027, handler=<bound method Strategy.handle_event of SmaCrossoverStrategy(SmaCrossoverStrategy_USDZAR.ETORO_27-027)>, priority=0)
+2026-05-12T06:44:37.837462592Z [INFO] eToro-MultiBot.ExecEngine: Registered OMS.UNSPECIFIED for Strategy SmaCrossoverStrategy_USDZAR.ETORO_27-027
+2026-05-12T06:44:37.837465735Z [INFO] eToro-MultiBot.eToro-MultiBot: Registered Strategy SmaCrossoverStrategy_USDZAR.ETORO_27-027
+2026-05-12T06:44:37.837614213Z [INFO] eToro-MultiBot.TradingNode: Building data client for ETORO_WS_CLIENT
+2026-05-12T06:44:37.837643769Z [INFO] eToro-MultiBot.InstrumentProvider: READY
+2026-05-12T06:44:37.837697327Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: READY
+2026-05-12T06:44:37.837810708Z [INFO] eToro-MultiBot.DataEngine: Registered ETORO_WS_CLIENT
+2026-05-12T06:44:37.837821124Z [INFO] eToro-MultiBot.TradingNode: Building execution client for ETORO
+2026-05-12T06:44:37.837839511Z [INFO] eToro-MultiBot.InstrumentProvider: READY
+2026-05-12T06:44:37.837883615Z [INFO] eToro-MultiBot.ExecClient-ETORO: READY
+2026-05-12T06:44:37.837993866Z [INFO] eToro-MultiBot.ExecEngine: Registered ExecutionClient-ETORO
+2026-05-12T06:44:37.838441731Z [INFO] eToro-MultiBot.TradingNode: STARTING
+2026-05-12T06:44:37.838481700Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838499953Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838512564Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838529014Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838538234Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838549140Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838557359Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838569856Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838654252Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838666358Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838677320Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838686464Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838699195Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838709716Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838720738Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838729130Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838743538Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838757429Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838769891Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838780794Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838793057Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838803399Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838814043Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838831646Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838843667Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838853648Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838861504Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838886051Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x732cb9f8d8b0>
+2026-05-12T06:44:37.838897846Z [DEBUG] eToro-MultiBot.DataEngine: STARTING
+2026-05-12T06:44:37.838902783Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: STARTING
+2026-05-12T06:44:37.838918681Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: RUNNING
+2026-05-12T06:44:37.838948912Z [DEBUG] eToro-MultiBot.DataEngine: Scheduled task 'cmd_queue'
+2026-05-12T06:44:37.838950779Z [DEBUG] eToro-MultiBot.DataEngine: Scheduled task 'req_queue'
+2026-05-12T06:44:37.838951890Z [DEBUG] eToro-MultiBot.DataEngine: Scheduled task 'res_queue'
+2026-05-12T06:44:37.838953161Z [DEBUG] eToro-MultiBot.DataEngine: Scheduled task 'data_queue'
+2026-05-12T06:44:37.838963635Z [INFO] eToro-MultiBot.DataEngine: RUNNING
+2026-05-12T06:44:37.838974809Z [DEBUG] eToro-MultiBot.RiskEngine: STARTING
+2026-05-12T06:44:37.838989879Z [DEBUG] eToro-MultiBot.RiskEngine: Scheduled task 'cmd_queue'
+2026-05-12T06:44:37.838991481Z [DEBUG] eToro-MultiBot.RiskEngine: Scheduled task 'evt_queue'
+2026-05-12T06:44:37.839001441Z [INFO] eToro-MultiBot.RiskEngine: RUNNING
+2026-05-12T06:44:37.839010693Z [DEBUG] eToro-MultiBot.ExecEngine: STARTING
+2026-05-12T06:44:37.839014650Z [DEBUG] eToro-MultiBot.ExecClient-ETORO: STARTING
+2026-05-12T06:44:37.839022294Z [INFO] eToro-MultiBot.ExecClient-ETORO: RUNNING
+2026-05-12T06:44:37.839040826Z [DEBUG] eToro-MultiBot.ExecEngine: Scheduled task 'cmd_queue'
+2026-05-12T06:44:37.839042212Z [DEBUG] eToro-MultiBot.ExecEngine: Scheduled task 'evt_queue'
+2026-05-12T06:44:37.839047669Z [DEBUG] eToro-MultiBot.ExecEngine: Scheduled task 'continuous_reconciliation'
+2026-05-12T06:44:37.839050100Z [INFO] eToro-MultiBot.ExecEngine: Started reconciliation task
+2026-05-12T06:44:37.839059373Z [INFO] eToro-MultiBot.ExecEngine: RUNNING
+2026-05-12T06:44:37.839069312Z [INFO] eToro-MultiBot.DataEngine: Connecting all clients...
+2026-05-12T06:44:37.839073588Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Connecting...
+2026-05-12T06:44:37.839087955Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task '_connect'
+2026-05-12T06:44:37.839100355Z [INFO] eToro-MultiBot.ExecEngine: Connecting all clients...
+2026-05-12T06:44:37.839104185Z [INFO] eToro-MultiBot.ExecClient-ETORO: Connecting...
+2026-05-12T06:44:37.839109132Z [DEBUG] eToro-MultiBot.ExecClient-ETORO: Creating task '_connect'
+2026-05-12T06:44:37.839127832Z [INFO] eToro-MultiBot.TradingNode: Awaiting engine connections and initializations (120.0s timeout)...
+2026-05-12T06:44:37.839407198Z [DEBUG] eToro-MultiBot.DataEngine: DataCommand message queue processing starting (qsize=0)
+2026-05-12T06:44:37.839417247Z [DEBUG] eToro-MultiBot.DataEngine: RequestData message queue processing starting (qsize=0)
+2026-05-12T06:44:37.839424054Z [DEBUG] eToro-MultiBot.DataEngine: DataResponse message queue processing starting (qsize=0)
+2026-05-12T06:44:37.839430089Z [DEBUG] eToro-MultiBot.DataEngine: Data queue processing starting (qsize=0)
+2026-05-12T06:44:37.839436078Z [DEBUG] eToro-MultiBot.RiskEngine: Command message queue processing (qsize=0)
+2026-05-12T06:44:37.839441841Z [DEBUG] eToro-MultiBot.RiskEngine: Event message queue processing starting (qsize=0)
+2026-05-12T06:44:37.839486479Z [DEBUG] eToro-MultiBot.ExecEngine: Command message queue processing starting (qsize=0)
+2026-05-12T06:44:37.839495459Z [DEBUG] eToro-MultiBot.ExecEngine: Event message queue processing starting (qsize=0)
+2026-05-12T06:44:37.839517110Z [INFO] eToro-MultiBot.ExecEngine: Starting continuous reconciliation with intervals: inflight=2000ms, consistency=Nones, position=Nones
+2026-05-12T06:44:37.839520303Z [INFO] eToro-MultiBot.ExecEngine: Awaiting startup reconciliation completion before starting continuous checks
+2026-05-12T06:44:37.882491746Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: WebSocket Verbindungsversuch 1/5 zu wss://ws.etoro.com/ws ...
+2026-05-12T06:44:37.902781252Z [INFO] eToro-MultiBot.ExecClient-ETORO: ⚠️  DRY-RUN MODE: no real orders will be sent.
+2026-05-12T06:44:37.943048799Z [INFO] eToro-MultiBot.ExecClient-ETORO: Execution WS connect attempt 1/5 ...
+2026-05-12T06:44:40.558036397Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: WebSocket verbunden. Authentifiziere...
+2026-05-12T06:44:40.558218558Z [DEBUG] eToro-MultiBot.Cache: Added currency USD
+2026-05-12T06:44:40.558225789Z [DEBUG] eToro-MultiBot.Cache: Added instrument NATGAS.ETORO
+2026-05-12T06:44:40.558318489Z [DEBUG] eToro-MultiBot.Cache: Added instrument ETH.ETORO
+2026-05-12T06:44:40.558370019Z [DEBUG] eToro-MultiBot.Cache: Added instrument USDZAR.ETORO
+2026-05-12T06:44:40.558402599Z [DEBUG] eToro-MultiBot.Cache: Added instrument SOL.ETORO
+2026-05-12T06:44:40.558439862Z [DEBUG] eToro-MultiBot.Cache: Added instrument RIOT.ETORO
+2026-05-12T06:44:40.558489916Z [DEBUG] eToro-MultiBot.Cache: Added instrument 01211.HK.ETORO
+2026-05-12T06:44:40.558528300Z [DEBUG] eToro-MultiBot.Cache: Added instrument ROP.ZU.ETORO
+2026-05-12T06:44:40.558569483Z [DEBUG] eToro-MultiBot.Cache: Added instrument INSM.ETORO
+2026-05-12T06:44:40.558598120Z [DEBUG] eToro-MultiBot.Cache: Added instrument NVS.ETORO
+2026-05-12T06:44:40.558624891Z [DEBUG] eToro-MultiBot.Cache: Added instrument ADA.ETORO
+2026-05-12T06:44:40.558656607Z [DEBUG] eToro-MultiBot.Cache: Added instrument AVAX.ETORO
+2026-05-12T06:44:40.558689083Z [DEBUG] eToro-MultiBot.Cache: Added instrument XPEV.ETORO
+2026-05-12T06:44:40.558720384Z [DEBUG] eToro-MultiBot.Cache: Added instrument PLTR.ETORO
+2026-05-12T06:44:40.558748091Z [DEBUG] eToro-MultiBot.Cache: Added instrument SHIBxM.ETORO
+2026-05-12T06:44:40.558774408Z [DEBUG] eToro-MultiBot.Cache: Added instrument RHM.DE.ETORO
+2026-05-12T06:44:40.558807087Z [DEBUG] eToro-MultiBot.Cache: Added instrument AERO.ETORO
+2026-05-12T06:44:40.558833861Z [DEBUG] eToro-MultiBot.Cache: Added instrument HUT.ETORO
+2026-05-12T06:44:40.558863005Z [DEBUG] eToro-MultiBot.Cache: Added instrument NVDA.ETORO
+2026-05-12T06:44:40.558892499Z [DEBUG] eToro-MultiBot.Cache: Added instrument TSLA.ETORO
+2026-05-12T06:44:40.558918330Z [DEBUG] eToro-MultiBot.Cache: Added instrument FSLY.ETORO
+2026-05-12T06:44:40.558947490Z [DEBUG] eToro-MultiBot.Cache: Added instrument BTC.ETORO
+2026-05-12T06:44:40.558975597Z [DEBUG] eToro-MultiBot.Cache: Added instrument PALL.ETORO
+2026-05-12T06:44:40.559001020Z [DEBUG] eToro-MultiBot.Cache: Added instrument XRP.ETORO
+2026-05-12T06:44:40.559030454Z [DEBUG] eToro-MultiBot.Cache: Added instrument DOGE.ETORO
+2026-05-12T06:44:40.559066258Z [DEBUG] eToro-MultiBot.Cache: Added instrument PEPExM.ETORO
+2026-05-12T06:44:40.559101582Z [DEBUG] eToro-MultiBot.Cache: Added instrument USDTRY.ETORO
+2026-05-12T06:44:40.559148556Z [DEBUG] eToro-MultiBot.Cache: Added instrument ONDO.ETORO
+2026-05-12T06:44:40.559202415Z [DEBUG] eToro-MultiBot.Cache: Added instrument HYPE.ETORO
+2026-05-12T06:44:40.559514743Z [WARN] eToro-MultiBot.ExecClient-ETORO: Auth response not JSON: b'\x00'
+2026-05-12T06:44:40.559580369Z [INFO] eToro-MultiBot.ExecClient-ETORO: Subscribed to trading notification topics.
+2026-05-12T06:44:40.559587053Z [DEBUG] eToro-MultiBot.ExecClient-ETORO: Creating task 'exec_ws_loop'
+2026-05-12T06:44:40.559597434Z [INFO] eToro-MultiBot.ExecClient-ETORO: Execution WS connected and authenticated.
+2026-05-12T06:44:40.559690676Z [DEBUG] eToro-MultiBot.Cache: Added Account(id=ETORO-DEMO-001)
+2026-05-12T06:44:40.559695326Z [DEBUG] eToro-MultiBot.Cache: Indexed AccountId('ETORO-DEMO-001')
+2026-05-12T06:44:40.559712205Z [INFO] eToro-MultiBot.Portfolio: Updated AccountState(account_id=ETORO-DEMO-001, account_type=MARGIN, base_currency=USD, is_reported=False, balances=[AccountBalance(total=0.00 USD, locked=0.00 USD, free=0.00 USD)], margins=[], event_id=ca09e63c-b9bf-4c81-bcde-e9f5e75f649c)
+2026-05-12T06:44:40.559870221Z [INFO] eToro-MultiBot.ExecClient-ETORO: Connected
+2026-05-12T06:44:41.150469008Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Auth-Antwort: {'id': '1ffa47cf-a05e-473a-8d0d-4b87fedb16fc', 'success': True, 'operation': 'Authenticate'}
+2026-05-12T06:44:41.150689075Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Abonniert: ['instrument:22', 'instrument:100001', 'instrument:42', 'instrument:100063', 'instrument:6270', 'instrument:2380', 'instrument:1402', 'instrument:9119', 'instrument:4232', 'instrument:100017', 'instrument:100085', 'instrument:6700', 'instrument:7991', 'instrument:100080', 'instrument:2587', 'instrument:100421', 'instrument:8671', 'instrument:1137', 'instrument:1111', 'instrument:5045', 'instrument:100000', 'instrument:3208', 'instrument:100003', 'instrument:100043', 'instrument:100303', 'instrument:62', 'instrument:100323', 'instrument:100446']
+2026-05-12T06:44:41.150715486Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'message_loop'
+2026-05-12T06:44:41.150820450Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine '_connect' completed
+2026-05-12T06:44:41.150850916Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Connected
+2026-05-12T06:44:41.150908173Z [INFO] eToro-MultiBot.TradingNode: Awaiting execution state reconciliation (30.0s timeout)...
+2026-05-12T06:44:41.150977986Z [INFO] eToro-MultiBot.ExecClient-ETORO: Generating ExecutionMassStatus...
+2026-05-12T06:44:41.151078687Z [WARN] eToro-MultiBot.ExecClient-ETORO: generate_order_status_reports: Kein Query-Endpoint verfügbar. Gebe leere Liste zurück.
+2026-05-12T06:44:41.151144701Z [DEBUG] eToro-MultiBot.ExecEngine: <--[RPT] ExecutionMassStatus(client_id=ETORO, account_id=ETORO-DEMO-001, venue=ETORO, order_reports={}, fill_reports={}, position_reports={}, report_id=1f277197-dcc5-4335-87c3-7ffe0722ad1a, ts_init=1778568281150989371)
+2026-05-12T06:44:41.151164051Z [INFO] eToro-MultiBot.ExecEngine: Reconciling ExecutionMassStatus for ETORO
+2026-05-12T06:44:41.151171448Z [INFO] eToro-MultiBot.ExecEngine: Attempting to adjust fills for 0 instruments
+2026-05-12T06:44:41.153382002Z [INFO] eToro-MultiBot.ExecEngine: Updating adjusted fills for 0 instruments
+2026-05-12T06:44:41.153388730Z [INFO] eToro-MultiBot.ExecEngine: Final order_reports contains 0 orders, fill_reports contains 0 fills across all instruments
+2026-05-12T06:44:41.153481129Z [DEBUG] eToro-MultiBot.ExecEngine: Reconciliation state validation passed for 0 order(s)
+2026-05-12T06:44:41.153514977Z [INFO] eToro-MultiBot.ExecEngine: Reconciliation for ETORO succeeded
+2026-05-12T06:44:41.153529820Z [INFO] eToro-MultiBot.TradingNode: Execution state reconciled
+2026-05-12T06:44:41.153540999Z [DEBUG] eToro-MultiBot.OrderEmulator: STARTING
+2026-05-12T06:44:41.153545257Z [INFO] eToro-MultiBot.OrderEmulator: No emulated orders to reactivate
+2026-05-12T06:44:41.153565029Z [INFO] eToro-MultiBot.OrderEmulator: RUNNING
+2026-05-12T06:44:41.153584217Z [INFO] eToro-MultiBot.Portfolio: Initialized 0 open orders
+2026-05-12T06:44:41.153589553Z [INFO] eToro-MultiBot.Portfolio: Initialized 0 open positions
+2026-05-12T06:44:41.153597542Z [INFO] eToro-MultiBot.TradingNode: Awaiting portfolio initialization (10.0s timeout)...
+2026-05-12T06:44:41.153696328Z [INFO] eToro-MultiBot.ExecEngine: Startup reconciliation completed
+2026-05-12T06:44:41.153718932Z [INFO] eToro-MultiBot.ExecEngine: Applying post-reconciliation startup delay (10.0s)
+2026-05-12T06:44:41.153766794Z [INFO] eToro-MultiBot.TradingNode: Portfolio initialized
+2026-05-12T06:44:41.153772893Z [DEBUG] eToro-MultiBot.eToro-MultiBot: STARTING
+2026-05-12T06:44:41.153785326Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: STARTING
+2026-05-12T06:44:41.153790737Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: self.config.oms_type=None
+2026-05-12T06:44:41.153792054Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: self.config.external_order_claims=None
+2026-05-12T06:44:41.153793105Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.153799091Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.153801141Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.153812819Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: Starte SMA Crossover auf TSLA.ETORO
+2026-05-12T06:44:41.153862220Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.TSLA, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_TSLA.ETORO_0-000)>, priority=0)
+2026-05-12T06:44:41.153914464Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: [CMD]--> SubscribeQuoteTicks(instrument_id=TSLA.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.153959909Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.TSLA.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_TSLA.ETORO_0-000)>, priority=0)
+2026-05-12T06:44:41.153981524Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: [CMD]--> SubscribeBars(bar_type=TSLA.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154034368Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_TSLA.ETORO_0: RUNNING
+2026-05-12T06:44:41.154045764Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: STARTING
+2026-05-12T06:44:41.154049020Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: self.config.oms_type=None
+2026-05-12T06:44:41.154050088Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: self.config.external_order_claims=None
+2026-05-12T06:44:41.154052126Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154055777Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154056751Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154063110Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: Starte SMA Crossover auf HUT.ETORO
+2026-05-12T06:44:41.154077716Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.HUT, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_HUT.ETORO_1-001)>, priority=0)
+2026-05-12T06:44:41.154107237Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: [CMD]--> SubscribeQuoteTicks(instrument_id=HUT.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154128633Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.HUT.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_HUT.ETORO_1-001)>, priority=0)
+2026-05-12T06:44:41.154140672Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: [CMD]--> SubscribeBars(bar_type=HUT.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154180321Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HUT.ETORO_1: RUNNING
+2026-05-12T06:44:41.154191823Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: STARTING
+2026-05-12T06:44:41.154193576Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: self.config.oms_type=None
+2026-05-12T06:44:41.154194573Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: self.config.external_order_claims=None
+2026-05-12T06:44:41.154195896Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154198889Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154199611Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154204732Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: Starte SMA Crossover auf RIOT.ETORO
+2026-05-12T06:44:41.154217055Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.RIOT, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_RIOT.ETORO_2-002)>, priority=0)
+2026-05-12T06:44:41.154231812Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: [CMD]--> SubscribeQuoteTicks(instrument_id=RIOT.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154251339Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.RIOT.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_RIOT.ETORO_2-002)>, priority=0)
+2026-05-12T06:44:41.154262065Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: [CMD]--> SubscribeBars(bar_type=RIOT.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154291764Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RIOT.ETORO_2: RUNNING
+2026-05-12T06:44:41.154301503Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: STARTING
+2026-05-12T06:44:41.154302877Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: self.config.oms_type=None
+2026-05-12T06:44:41.154303516Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: self.config.external_order_claims=None
+2026-05-12T06:44:41.154304332Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154306996Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154308491Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154312544Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: Starte SMA Crossover auf NVDA.ETORO
+2026-05-12T06:44:41.154324119Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.NVDA, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_NVDA.ETORO_3-003)>, priority=0)
+2026-05-12T06:44:41.154336448Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: [CMD]--> SubscribeQuoteTicks(instrument_id=NVDA.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154351174Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.NVDA.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_NVDA.ETORO_3-003)>, priority=0)
+2026-05-12T06:44:41.154362864Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: [CMD]--> SubscribeBars(bar_type=NVDA.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154390693Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVDA.ETORO_3: RUNNING
+2026-05-12T06:44:41.154400484Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: STARTING
+2026-05-12T06:44:41.154402217Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: self.config.oms_type=None
+2026-05-12T06:44:41.154402828Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: self.config.external_order_claims=None
+2026-05-12T06:44:41.154403468Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154405720Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154406404Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154410961Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: Starte SMA Crossover auf FSLY.ETORO
+2026-05-12T06:44:41.154422645Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.FSLY, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_FSLY.ETORO_4-004)>, priority=0)
+2026-05-12T06:44:41.154434129Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: [CMD]--> SubscribeQuoteTicks(instrument_id=FSLY.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154450395Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.FSLY.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_FSLY.ETORO_4-004)>, priority=0)
+2026-05-12T06:44:41.154460467Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: [CMD]--> SubscribeBars(bar_type=FSLY.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154488540Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_FSLY.ETORO_4: RUNNING
+2026-05-12T06:44:41.154498650Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: STARTING
+2026-05-12T06:44:41.154500121Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: self.config.oms_type=None
+2026-05-12T06:44:41.154500691Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: self.config.external_order_claims=None
+2026-05-12T06:44:41.154501346Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154503527Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154504737Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154508693Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: Starte SMA Crossover auf INSM.ETORO
+2026-05-12T06:44:41.154523172Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.INSM, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_INSM.ETORO_5-005)>, priority=0)
+2026-05-12T06:44:41.154535048Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: [CMD]--> SubscribeQuoteTicks(instrument_id=INSM.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154551553Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.INSM.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_INSM.ETORO_5-005)>, priority=0)
+2026-05-12T06:44:41.154560701Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: [CMD]--> SubscribeBars(bar_type=INSM.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154587812Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_INSM.ETORO_5: RUNNING
+2026-05-12T06:44:41.154596942Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: STARTING
+2026-05-12T06:44:41.154598216Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: self.config.oms_type=None
+2026-05-12T06:44:41.154598879Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: self.config.external_order_claims=None
+2026-05-12T06:44:41.154599590Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154601935Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154604019Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154609256Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: Starte SMA Crossover auf BTC.ETORO
+2026-05-12T06:44:41.154622953Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.BTC, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_BTC.ETORO_6-006)>, priority=0)
+2026-05-12T06:44:41.154634983Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: [CMD]--> SubscribeQuoteTicks(instrument_id=BTC.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154649369Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.BTC.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_BTC.ETORO_6-006)>, priority=0)
+2026-05-12T06:44:41.154657604Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: [CMD]--> SubscribeBars(bar_type=BTC.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154686168Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_BTC.ETORO_6: RUNNING
+2026-05-12T06:44:41.154695321Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: STARTING
+2026-05-12T06:44:41.154698968Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: self.config.oms_type=None
+2026-05-12T06:44:41.154699634Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: self.config.external_order_claims=None
+2026-05-12T06:44:41.154700223Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154702818Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154704247Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154707919Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: Starte SMA Crossover auf ETH.ETORO
+2026-05-12T06:44:41.154718835Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ETH, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_ETH.ETORO_7-007)>, priority=0)
+2026-05-12T06:44:41.154730138Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: [CMD]--> SubscribeQuoteTicks(instrument_id=ETH.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154745732Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.ETH.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_ETH.ETORO_7-007)>, priority=0)
+2026-05-12T06:44:41.154755333Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: [CMD]--> SubscribeBars(bar_type=ETH.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154778972Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ETH.ETORO_7: RUNNING
+2026-05-12T06:44:41.154787920Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: STARTING
+2026-05-12T06:44:41.154789179Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: self.config.oms_type=None
+2026-05-12T06:44:41.154789755Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: self.config.external_order_claims=None
+2026-05-12T06:44:41.154790332Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154792430Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154793133Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154800053Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: Starte SMA Crossover auf ADA.ETORO
+2026-05-12T06:44:41.154810756Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ADA, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_ADA.ETORO_8-008)>, priority=0)
+2026-05-12T06:44:41.154824031Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: [CMD]--> SubscribeQuoteTicks(instrument_id=ADA.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154840363Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.ADA.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_ADA.ETORO_8-008)>, priority=0)
+2026-05-12T06:44:41.154849580Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: [CMD]--> SubscribeBars(bar_type=ADA.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154875234Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ADA.ETORO_8: RUNNING
+2026-05-12T06:44:41.154884733Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: STARTING
+2026-05-12T06:44:41.154885890Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: self.config.oms_type=None
+2026-05-12T06:44:41.154886487Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: self.config.external_order_claims=None
+2026-05-12T06:44:41.154886996Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154889087Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154889644Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154893233Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: Starte SMA Crossover auf XRP.ETORO
+2026-05-12T06:44:41.154903261Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.XRP, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_XRP.ETORO_9-009)>, priority=0)
+2026-05-12T06:44:41.154913240Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: [CMD]--> SubscribeQuoteTicks(instrument_id=XRP.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154928084Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.XRP.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_XRP.ETORO_9-009)>, priority=0)
+2026-05-12T06:44:41.154936926Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: [CMD]--> SubscribeBars(bar_type=XRP.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.154963298Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XRP.ETORO_9: RUNNING
+2026-05-12T06:44:41.154972050Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: STARTING
+2026-05-12T06:44:41.154975167Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: self.config.oms_type=None
+2026-05-12T06:44:41.154975793Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: self.config.external_order_claims=None
+2026-05-12T06:44:41.154976400Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.154978671Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.154979240Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.154982616Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: Starte SMA Crossover auf AERO.ETORO
+2026-05-12T06:44:41.154992366Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.AERO, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_AERO.ETORO_10-010)>, priority=0)
+2026-05-12T06:44:41.155002617Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: [CMD]--> SubscribeQuoteTicks(instrument_id=AERO.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155015759Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.AERO.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_AERO.ETORO_10-010)>, priority=0)
+2026-05-12T06:44:41.155028292Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: [CMD]--> SubscribeBars(bar_type=AERO.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155051428Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AERO.ETORO_10: RUNNING
+2026-05-12T06:44:41.155060816Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: STARTING
+2026-05-12T06:44:41.155062090Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: self.config.oms_type=None
+2026-05-12T06:44:41.155062726Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: self.config.external_order_claims=None
+2026-05-12T06:44:41.155063222Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155065664Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155066252Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155070190Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: Starte SMA Crossover auf HYPE.ETORO
+2026-05-12T06:44:41.155094581Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.HYPE, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_HYPE.ETORO_11-011)>, priority=0)
+2026-05-12T06:44:41.155107379Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: [CMD]--> SubscribeQuoteTicks(instrument_id=HYPE.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155122937Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.HYPE.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_HYPE.ETORO_11-011)>, priority=0)
+2026-05-12T06:44:41.155131926Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: [CMD]--> SubscribeBars(bar_type=HYPE.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155162055Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_HYPE.ETORO_11: RUNNING
+2026-05-12T06:44:41.155171369Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: STARTING
+2026-05-12T06:44:41.155173764Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: self.config.oms_type=None
+2026-05-12T06:44:41.155174470Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: self.config.external_order_claims=None
+2026-05-12T06:44:41.155175131Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155177505Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155178115Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155181881Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: Starte SMA Crossover auf ONDO.ETORO
+2026-05-12T06:44:41.155191999Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ONDO, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_ONDO.ETORO_12-012)>, priority=0)
+2026-05-12T06:44:41.155203196Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: [CMD]--> SubscribeQuoteTicks(instrument_id=ONDO.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155218185Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.ONDO.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_ONDO.ETORO_12-012)>, priority=0)
+2026-05-12T06:44:41.155227124Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: [CMD]--> SubscribeBars(bar_type=ONDO.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155251942Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ONDO.ETORO_12: RUNNING
+2026-05-12T06:44:41.155260764Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: STARTING
+2026-05-12T06:44:41.155263801Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: self.config.oms_type=None
+2026-05-12T06:44:41.155264413Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: self.config.external_order_claims=None
+2026-05-12T06:44:41.155264918Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155267043Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155267574Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155274377Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: Starte SMA Crossover auf 01211.HK.ETORO
+2026-05-12T06:44:41.155284847Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.01211.HK, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_01211.HK.ETORO_13-013)>, priority=0)
+2026-05-12T06:44:41.155298646Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: [CMD]--> SubscribeQuoteTicks(instrument_id=01211.HK.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155316608Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.01211.HK.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_01211.HK.ETORO_13-013)>, priority=0)
+2026-05-12T06:44:41.155328416Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: [CMD]--> SubscribeBars(bar_type=01211.HK.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155354721Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_01211.HK.ETORO_13: RUNNING
+2026-05-12T06:44:41.155363531Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: STARTING
+2026-05-12T06:44:41.155365748Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: self.config.oms_type=None
+2026-05-12T06:44:41.155367143Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: self.config.external_order_claims=None
+2026-05-12T06:44:41.155367690Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155369927Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155370661Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155374106Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: Starte SMA Crossover auf XPEV.ETORO
+2026-05-12T06:44:41.155384313Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.XPEV, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_XPEV.ETORO_14-014)>, priority=0)
+2026-05-12T06:44:41.155395748Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: [CMD]--> SubscribeQuoteTicks(instrument_id=XPEV.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155412043Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.XPEV.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_XPEV.ETORO_14-014)>, priority=0)
+2026-05-12T06:44:41.155421273Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: [CMD]--> SubscribeBars(bar_type=XPEV.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155446511Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_XPEV.ETORO_14: RUNNING
+2026-05-12T06:44:41.155454908Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: STARTING
+2026-05-12T06:44:41.155456937Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: self.config.oms_type=None
+2026-05-12T06:44:41.155457560Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: self.config.external_order_claims=None
+2026-05-12T06:44:41.155458115Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155460423Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155460996Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155464507Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: Starte SMA Crossover auf PLTR.ETORO
+2026-05-12T06:44:41.155474043Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.PLTR, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_PLTR.ETORO_15-015)>, priority=0)
+2026-05-12T06:44:41.155484746Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: [CMD]--> SubscribeQuoteTicks(instrument_id=PLTR.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155497996Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.PLTR.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_PLTR.ETORO_15-015)>, priority=0)
+2026-05-12T06:44:41.155509253Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: [CMD]--> SubscribeBars(bar_type=PLTR.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155549130Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PLTR.ETORO_15: RUNNING
+2026-05-12T06:44:41.155564069Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: STARTING
+2026-05-12T06:44:41.155566438Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: self.config.oms_type=None
+2026-05-12T06:44:41.155567397Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: self.config.external_order_claims=None
+2026-05-12T06:44:41.155568282Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155571987Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155572996Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155579024Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: Starte SMA Crossover auf RHM.DE.ETORO
+2026-05-12T06:44:41.155597079Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.RHM.DE, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_RHM.DE.ETORO_16-016)>, priority=0)
+2026-05-12T06:44:41.155615202Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: [CMD]--> SubscribeQuoteTicks(instrument_id=RHM.DE.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155647360Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.RHM.DE.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_RHM.DE.ETORO_16-016)>, priority=0)
+2026-05-12T06:44:41.155665421Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: [CMD]--> SubscribeBars(bar_type=RHM.DE.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155702930Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_RHM.DE.ETORO_16: RUNNING
+2026-05-12T06:44:41.155716585Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: STARTING
+2026-05-12T06:44:41.155718739Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: self.config.oms_type=None
+2026-05-12T06:44:41.155719893Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: self.config.external_order_claims=None
+2026-05-12T06:44:41.155720770Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155724563Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155725451Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155731273Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: Starte SMA Crossover auf NVS.ETORO
+2026-05-12T06:44:41.155749588Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.NVS, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_NVS.ETORO_17-017)>, priority=0)
+2026-05-12T06:44:41.155769533Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: [CMD]--> SubscribeQuoteTicks(instrument_id=NVS.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155797004Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.NVS.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_NVS.ETORO_17-017)>, priority=0)
+2026-05-12T06:44:41.155813321Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: [CMD]--> SubscribeBars(bar_type=NVS.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.155853756Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NVS.ETORO_17: RUNNING
+2026-05-12T06:44:41.155867896Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: STARTING
+2026-05-12T06:44:41.155873038Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: self.config.oms_type=None
+2026-05-12T06:44:41.155874402Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: self.config.external_order_claims=None
+2026-05-12T06:44:41.155875248Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.155879025Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.155880023Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.155885749Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: Starte SMA Crossover auf ROP.ZU.ETORO
+2026-05-12T06:44:41.155904083Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ROP.ZU, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_ROP.ZU.ETORO_18-018)>, priority=0)
+2026-05-12T06:44:41.156041107Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: [CMD]--> SubscribeQuoteTicks(instrument_id=ROP.ZU.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156068286Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_ROP.ZU.ETORO_18-018)>, priority=0)
+2026-05-12T06:44:41.156094767Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: [CMD]--> SubscribeBars(bar_type=ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156133250Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_ROP.ZU.ETORO_18: RUNNING
+2026-05-12T06:44:41.156148766Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: STARTING
+2026-05-12T06:44:41.156153317Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: self.config.oms_type=None
+2026-05-12T06:44:41.156154741Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: self.config.external_order_claims=None
+2026-05-12T06:44:41.156155596Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.156161305Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.156162583Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.156168935Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: Starte SMA Crossover auf DOGE.ETORO
+2026-05-12T06:44:41.156192059Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.DOGE, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_DOGE.ETORO_19-019)>, priority=0)
+2026-05-12T06:44:41.156215958Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: [CMD]--> SubscribeQuoteTicks(instrument_id=DOGE.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156245702Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.DOGE.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_DOGE.ETORO_19-019)>, priority=0)
+2026-05-12T06:44:41.156263464Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: [CMD]--> SubscribeBars(bar_type=DOGE.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156302802Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_DOGE.ETORO_19: RUNNING
+2026-05-12T06:44:41.156317651Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: STARTING
+2026-05-12T06:44:41.156322286Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: self.config.oms_type=None
+2026-05-12T06:44:41.156323500Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: self.config.external_order_claims=None
+2026-05-12T06:44:41.156324373Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.156328409Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.156329572Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.156335694Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: Starte SMA Crossover auf SHIBxM.ETORO
+2026-05-12T06:44:41.156354929Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.SHIBxM, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_SHIBxM.ETORO_20-020)>, priority=0)
+2026-05-12T06:44:41.156372459Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: [CMD]--> SubscribeQuoteTicks(instrument_id=SHIBxM.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156396387Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.SHIBxM.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_SHIBxM.ETORO_20-020)>, priority=0)
+2026-05-12T06:44:41.156412662Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: [CMD]--> SubscribeBars(bar_type=SHIBxM.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156453190Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SHIBxM.ETORO_20: RUNNING
+2026-05-12T06:44:41.156470340Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: STARTING
+2026-05-12T06:44:41.156475428Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: self.config.oms_type=None
+2026-05-12T06:44:41.156476921Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: self.config.external_order_claims=None
+2026-05-12T06:44:41.156477893Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.156481294Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.156482695Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.156488444Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: Starte SMA Crossover auf PEPExM.ETORO
+2026-05-12T06:44:41.156506136Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.PEPExM, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_PEPExM.ETORO_21-021)>, priority=0)
+2026-05-12T06:44:41.156523530Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: [CMD]--> SubscribeQuoteTicks(instrument_id=PEPExM.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156546796Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.PEPExM.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_PEPExM.ETORO_21-021)>, priority=0)
+2026-05-12T06:44:41.156562609Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: [CMD]--> SubscribeBars(bar_type=PEPExM.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156598101Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PEPExM.ETORO_21: RUNNING
+2026-05-12T06:44:41.156612316Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: STARTING
+2026-05-12T06:44:41.156615093Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: self.config.oms_type=None
+2026-05-12T06:44:41.156616266Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: self.config.external_order_claims=None
+2026-05-12T06:44:41.156617122Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.156620692Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.156621823Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.156632338Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: Starte SMA Crossover auf SOL.ETORO
+2026-05-12T06:44:41.156650246Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.SOL, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_SOL.ETORO_22-022)>, priority=0)
+2026-05-12T06:44:41.156668354Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: [CMD]--> SubscribeQuoteTicks(instrument_id=SOL.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156696734Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.SOL.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_SOL.ETORO_22-022)>, priority=0)
+2026-05-12T06:44:41.156712929Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: [CMD]--> SubscribeBars(bar_type=SOL.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156753011Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_SOL.ETORO_22: RUNNING
+2026-05-12T06:44:41.156768324Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: STARTING
+2026-05-12T06:44:41.156771230Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: self.config.oms_type=None
+2026-05-12T06:44:41.156772420Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: self.config.external_order_claims=None
+2026-05-12T06:44:41.156773310Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.156776948Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.156778003Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.156784563Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: Starte SMA Crossover auf AVAX.ETORO
+2026-05-12T06:44:41.156802310Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.AVAX, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_AVAX.ETORO_23-023)>, priority=0)
+2026-05-12T06:44:41.156818561Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: [CMD]--> SubscribeQuoteTicks(instrument_id=AVAX.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156841777Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.AVAX.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_AVAX.ETORO_23-023)>, priority=0)
+2026-05-12T06:44:41.156858068Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: [CMD]--> SubscribeBars(bar_type=AVAX.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.156894020Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_AVAX.ETORO_23: RUNNING
+2026-05-12T06:44:41.156907637Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: STARTING
+2026-05-12T06:44:41.156909786Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: self.config.oms_type=None
+2026-05-12T06:44:41.156910725Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: self.config.external_order_claims=None
+2026-05-12T06:44:41.156911560Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.156914763Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.156915780Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.156922816Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: Starte SMA Crossover auf NATGAS.ETORO
+2026-05-12T06:44:41.156940981Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.NATGAS, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_NATGAS.ETORO_24-024)>, priority=0)
+2026-05-12T06:44:41.156991408Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: [CMD]--> SubscribeQuoteTicks(instrument_id=NATGAS.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157018153Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.NATGAS.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_NATGAS.ETORO_24-024)>, priority=0)
+2026-05-12T06:44:41.157035188Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: [CMD]--> SubscribeBars(bar_type=NATGAS.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157077301Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_NATGAS.ETORO_24: RUNNING
+2026-05-12T06:44:41.157105846Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: STARTING
+2026-05-12T06:44:41.157109574Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: self.config.oms_type=None
+2026-05-12T06:44:41.157110866Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: self.config.external_order_claims=None
+2026-05-12T06:44:41.157112008Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.157116113Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.157117160Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.157123065Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: Starte SMA Crossover auf PALL.ETORO
+2026-05-12T06:44:41.157142479Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.PALL, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_PALL.ETORO_25-025)>, priority=0)
+2026-05-12T06:44:41.157164873Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: [CMD]--> SubscribeQuoteTicks(instrument_id=PALL.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157189338Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.PALL.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_PALL.ETORO_25-025)>, priority=0)
+2026-05-12T06:44:41.157205316Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: [CMD]--> SubscribeBars(bar_type=PALL.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157243536Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_PALL.ETORO_25: RUNNING
+2026-05-12T06:44:41.157258524Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: STARTING
+2026-05-12T06:44:41.157263912Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: self.config.oms_type=None
+2026-05-12T06:44:41.157265172Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: self.config.external_order_claims=None
+2026-05-12T06:44:41.157266067Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.157270199Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.157271229Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.157278148Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: Starte SMA Crossover auf USDTRY.ETORO
+2026-05-12T06:44:41.157297142Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.USDTRY, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_USDTRY.ETORO_26-026)>, priority=0)
+2026-05-12T06:44:41.157313736Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: [CMD]--> SubscribeQuoteTicks(instrument_id=USDTRY.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157337418Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.USDTRY.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_USDTRY.ETORO_26-026)>, priority=0)
+2026-05-12T06:44:41.157353142Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: [CMD]--> SubscribeBars(bar_type=USDTRY.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157393712Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDTRY.ETORO_26: RUNNING
+2026-05-12T06:44:41.157408817Z [DEBUG] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: STARTING
+2026-05-12T06:44:41.157414309Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: self.config.oms_type=None
+2026-05-12T06:44:41.157415745Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: self.config.external_order_claims=None
+2026-05-12T06:44:41.157416658Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: self.config.manage_gtd_expiry=False
+2026-05-12T06:44:41.157420145Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T06:44:41.157421191Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T06:44:41.157427147Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: Starte SMA Crossover auf USDZAR.ETORO
+2026-05-12T06:44:41.157445823Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.USDZAR, handler=<bound method Actor.handle_quote_tick of SmaCrossoverStrategy(SmaCrossoverStrategy_USDZAR.ETORO_27-027)>, priority=0)
+2026-05-12T06:44:41.157462851Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: [CMD]--> SubscribeQuoteTicks(instrument_id=USDZAR.ETORO, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157485804Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.bars.USDZAR.ETORO-1-MINUTE-MID-INTERNAL, handler=<bound method Actor.handle_bar of SmaCrossoverStrategy(SmaCrossoverStrategy_USDZAR.ETORO_27-027)>, priority=0)
+2026-05-12T06:44:41.157562064Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: [CMD]--> SubscribeBars(bar_type=USDZAR.ETORO-1-MINUTE-MID-INTERNAL, client_id=None, venue=ETORO)
+2026-05-12T06:44:41.157603857Z [INFO] eToro-MultiBot.SmaCrossoverStrategy_USDZAR.ETORO_27: RUNNING
+2026-05-12T06:44:41.157629961Z [INFO] eToro-MultiBot.eToro-MultiBot: RUNNING
+2026-05-12T06:44:41.157646908Z [INFO] eToro-MultiBot.TradingNode: RUNNING
+2026-05-12T06:44:41.158014058Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks TSLA.ETORO'
+2026-05-12T06:44:41.158196231Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(TSLA.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.158257731Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.TSLA, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb9bebd00>>, priority=5)
+2026-05-12T06:44:41.158512677Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_TSLA.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.159228838Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.158263349+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.159334792Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks HUT.ETORO'
+2026-05-12T06:44:41.159457759Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(HUT.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.159505384Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.HUT, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb9bebf40>>, priority=5)
+2026-05-12T06:44:41.159693066Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_HUT.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.159779989Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.159510325+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.159846487Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks RIOT.ETORO'
+2026-05-12T06:44:41.159934466Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(RIOT.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.159971042Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.RIOT, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b41c0>>, priority=5)
+2026-05-12T06:44:41.160125024Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_RIOT.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.160208624Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.159974812+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.160291352Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks NVDA.ETORO'
+2026-05-12T06:44:41.160363440Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(NVDA.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.160397867Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.NVDA, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b4400>>, priority=5)
+2026-05-12T06:44:41.160503661Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_NVDA.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.160599462Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.160402250+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.160665782Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks FSLY.ETORO'
+2026-05-12T06:44:41.160734595Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(FSLY.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.160770964Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.FSLY, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b4640>>, priority=5)
+2026-05-12T06:44:41.160920627Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_FSLY.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.161002425Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.160774528+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.161056155Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks INSM.ETORO'
+2026-05-12T06:44:41.161168433Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(INSM.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.161201803Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.INSM, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b4880>>, priority=5)
+2026-05-12T06:44:41.161322502Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_INSM.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.161403814Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.161205260+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.161471044Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks BTC.ETORO'
+2026-05-12T06:44:41.161562266Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(BTC.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.161606205Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.BTC, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b4ac0>>, priority=5)
+2026-05-12T06:44:41.161717804Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_BTC.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.161769994Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.161609988+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.161828497Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks ETH.ETORO'
+2026-05-12T06:44:41.161901904Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(ETH.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.161937542Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ETH, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b4d00>>, priority=5)
+2026-05-12T06:44:41.162054061Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_ETH.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.162125093Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.161941107+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.162184445Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks ADA.ETORO'
+2026-05-12T06:44:41.162257836Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(ADA.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.162293737Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ADA, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b4f40>>, priority=5)
+2026-05-12T06:44:41.162413837Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_ADA.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.162497158Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.162297373+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.162596615Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks XRP.ETORO'
+2026-05-12T06:44:41.162684703Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(XRP.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.162725291Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.XRP, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b5180>>, priority=5)
+2026-05-12T06:44:41.162837307Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_XRP.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.162908229Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.162728996+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.162967326Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks AERO.ETORO'
+2026-05-12T06:44:41.163038693Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(AERO.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.163075519Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.AERO, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b53c0>>, priority=5)
+2026-05-12T06:44:41.163213111Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_AERO.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.163279302Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.163079590+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.163339570Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks HYPE.ETORO'
+2026-05-12T06:44:41.163408846Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(HYPE.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.163445588Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.HYPE, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b5600>>, priority=5)
+2026-05-12T06:44:41.163554768Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_HYPE.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.163613187Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.163449387+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.163676758Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks ONDO.ETORO'
+2026-05-12T06:44:41.163752902Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(ONDO.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.163795491Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ONDO, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b5840>>, priority=5)
+2026-05-12T06:44:41.163917694Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_ONDO.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.163975060Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.163799681+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.164051173Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks 01211.HK.ETORO'
+2026-05-12T06:44:41.164150413Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(01211.HK.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.164200273Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.01211.HK, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b5a80>>, priority=5)
+2026-05-12T06:44:41.164347331Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_01211.HK.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.164406536Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.164204440+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.164485461Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks XPEV.ETORO'
+2026-05-12T06:44:41.164568454Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(XPEV.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.164623196Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.XPEV, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b5cc0>>, priority=5)
+2026-05-12T06:44:41.164749670Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_XPEV.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.164834283Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.164627493+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.164922585Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks PLTR.ETORO'
+2026-05-12T06:44:41.165015072Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(PLTR.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.165068515Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.PLTR, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b5f00>>, priority=5)
+2026-05-12T06:44:41.165230365Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_PLTR.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.165285968Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.165072160+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.165377794Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks RHM.DE.ETORO'
+2026-05-12T06:44:41.165463554Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(RHM.DE.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.165510005Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.RHM.DE, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b6140>>, priority=5)
+2026-05-12T06:44:41.165643541Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_RHM.DE.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.165709188Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.165514033+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.165799615Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks NVS.ETORO'
+2026-05-12T06:44:41.165882905Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(NVS.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.165925695Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.NVS, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b6380>>, priority=5)
+2026-05-12T06:44:41.166054435Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_NVS.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.166135047Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.165929944+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.166217890Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks ROP.ZU.ETORO'
+2026-05-12T06:44:41.166294554Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.166332735Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.ROP.ZU, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b65c0>>, priority=5)
+2026-05-12T06:44:41.166478386Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_ROP.ZU.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.166548656Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.166337020+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.166647260Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks DOGE.ETORO'
+2026-05-12T06:44:41.166730053Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(DOGE.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.166768739Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.DOGE, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b6800>>, priority=5)
+2026-05-12T06:44:41.166887909Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_DOGE.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.166954852Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.166772527+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.167034603Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks SHIBxM.ETORO'
+2026-05-12T06:44:41.167262696Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(SHIBxM.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.167302351Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.SHIBxM, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b6a40>>, priority=5)
+2026-05-12T06:44:41.167426157Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_SHIBxM.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.167500501Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.167306480+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.167592697Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks PEPExM.ETORO'
+2026-05-12T06:44:41.167681131Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(PEPExM.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.167729350Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.PEPExM, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b6c80>>, priority=5)
+2026-05-12T06:44:41.167865759Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_PEPExM.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.167936821Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.167733394+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.168016366Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks SOL.ETORO'
+2026-05-12T06:44:41.168120155Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(SOL.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.168157675Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.SOL, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b6ec0>>, priority=5)
+2026-05-12T06:44:41.168286767Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_SOL.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.168363202Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.168161209+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.168477154Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks AVAX.ETORO'
+2026-05-12T06:44:41.168549793Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(AVAX.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.168588306Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.AVAX, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b7100>>, priority=5)
+2026-05-12T06:44:41.168707757Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_AVAX.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.168800720Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.168591822+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.168929652Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks NATGAS.ETORO'
+2026-05-12T06:44:41.169050929Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(NATGAS.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.169131170Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.NATGAS, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b7340>>, priority=5)
+2026-05-12T06:44:41.169313205Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_NATGAS.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.169388418Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.169134093+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.169530042Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks PALL.ETORO'
+2026-05-12T06:44:41.169616763Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(PALL.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.169659485Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.PALL, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b7580>>, priority=5)
+2026-05-12T06:44:41.169807981Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_PALL.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.169870609Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.169661735+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.170009213Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks USDTRY.ETORO'
+2026-05-12T06:44:41.170104312Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(USDTRY.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.170147167Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.USDTRY, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b77c0>>, priority=5)
+2026-05-12T06:44:41.170285034Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_USDTRY.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.170345578Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.170149335+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.170483183Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks USDZAR.ETORO'
+2026-05-12T06:44:41.170564929Z [DEBUG] eToro-MultiBot.DataEngine: Created aggregator for key=(BarType(USDZAR.ETORO-1-MINUTE-MID-INTERNAL), None)
+2026-05-12T06:44:41.170605387Z [DEBUG] eToro-MultiBot.MessageBus: Added Subscription(topic=data.quotes.ETORO.USDZAR, handler=<bound method BarAggregator.handle_quote_tick of <nautilus_trader.data.aggregation.TimeBarAggregator object at 0x732cb82b7a00>>, priority=5)
+2026-05-12T06:44:41.170746886Z [DEBUG] eToro-MultiBot.nautilus_common::live::timer: Creating timer 'TIME_BAR_USDZAR.ETORO-1-MINUTE-MID-INTERNAL'
+2026-05-12T06:44:41.170812170Z [DEBUG] eToro-MultiBot.TimeBarAggregator: [start_timer] fire_immediately=False, _skip_first_non_full_bar=False, now=2026-05-12 06:44:41.170607500+00:00, start_time=2026-05-12 06:44:00+00:00, first_close_ns=1970-01-01 00:00:00+00:00, next_close_ns=2026-05-12 06:45:00+00:00
+2026-05-12T06:44:41.171015654Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks TSLA.ETORO' completed
+2026-05-12T06:44:41.171018609Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed TSLA.ETORO quotes
+2026-05-12T06:44:41.173811179Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks HUT.ETORO' completed
+2026-05-12T06:44:41.173822120Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed HUT.ETORO quotes
+2026-05-12T06:44:41.173829895Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks RIOT.ETORO' completed
+2026-05-12T06:44:41.173830971Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed RIOT.ETORO quotes
+2026-05-12T06:44:41.173836968Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks NVDA.ETORO' completed
+2026-05-12T06:44:41.173838279Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed NVDA.ETORO quotes
+2026-05-12T06:44:41.173842137Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks FSLY.ETORO' completed
+2026-05-12T06:44:41.173843297Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed FSLY.ETORO quotes
+2026-05-12T06:44:41.173847451Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks INSM.ETORO' completed
+2026-05-12T06:44:41.173848334Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed INSM.ETORO quotes
+2026-05-12T06:44:41.173851922Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks BTC.ETORO' completed
+2026-05-12T06:44:41.173852858Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed BTC.ETORO quotes
+2026-05-12T06:44:41.173857230Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ETH.ETORO' completed
+2026-05-12T06:44:41.173858659Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed ETH.ETORO quotes
+2026-05-12T06:44:41.173862448Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ADA.ETORO' completed
+2026-05-12T06:44:41.173863528Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed ADA.ETORO quotes
+2026-05-12T06:44:41.173867083Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks XRP.ETORO' completed
+2026-05-12T06:44:41.173867853Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed XRP.ETORO quotes
+2026-05-12T06:44:41.173872069Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks AERO.ETORO' completed
+2026-05-12T06:44:41.173873007Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed AERO.ETORO quotes
+2026-05-12T06:44:41.173876576Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks HYPE.ETORO' completed
+2026-05-12T06:44:41.173878887Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed HYPE.ETORO quotes
+2026-05-12T06:44:41.173882268Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ONDO.ETORO' completed
+2026-05-12T06:44:41.173883272Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed ONDO.ETORO quotes
+2026-05-12T06:44:41.173887304Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks 01211.HK.ETORO' completed
+2026-05-12T06:44:41.173888443Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed 01211.HK.ETORO quotes
+2026-05-12T06:44:41.173892194Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks XPEV.ETORO' completed
+2026-05-12T06:44:41.173892957Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed XPEV.ETORO quotes
+2026-05-12T06:44:41.173896818Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks PLTR.ETORO' completed
+2026-05-12T06:44:41.173897910Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed PLTR.ETORO quotes
+2026-05-12T06:44:41.173901433Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks RHM.DE.ETORO' completed
+2026-05-12T06:44:41.173904272Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed RHM.DE.ETORO quotes
+2026-05-12T06:44:41.173907959Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks NVS.ETORO' completed
+2026-05-12T06:44:41.173910591Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed NVS.ETORO quotes
+2026-05-12T06:44:41.173914623Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ROP.ZU.ETORO' completed
+2026-05-12T06:44:41.173915586Z [INFO] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Subscribed ROP.ZU.ETORO quotes
+2026-05-12T06:44:41.173919136Z [DEBUG] eToro-MultiBot.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks DOGE.ETORO' completed
