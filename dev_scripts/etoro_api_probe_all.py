@@ -1,12 +1,11 @@
 """
-eToro API Endpoint-Diagnostik (Extended Edition)
+eToro API Endpoint-Diagnostik (Full Spec Edition)
 =================================================
-Testet umfassend alle bekannten und aus der Dokumentation abgeleiteten 
-eToro REST-Endpoints (GET). Gibt aus, welche erreichbar sind (HTTP 200).
+Testet umfassend alle GET-Endpoints gemäss der offiziellen eToro API-Dokumentation.
+Dies schliesst auch Endpunkte ein, die eventuell Parameter benötigen, um zu prüfen,
+ob die Route existiert (Erwartung: 400 Bad Request statt 404 Route Not Found).
 
-Besonderer Fokus: Prüfung, ob das "Agent Portfolios" Feature aktiv ist.
-Hinweis: POST/PUT/DELETE Endpunkte (Trades, Erstellung, Löschung) werden 
-aus Sicherheitsgründen in diesem reinen Diagnose-Script übersprungen.
+Hinweis: POST/PUT/DELETE Endpunkte werden aus Sicherheitsgründen ignoriert.
 
 Ausführung:
     python3 dev_scripts/etoro_api_probe.py
@@ -29,44 +28,13 @@ USER_KEY = os.getenv("ETORO_USER_KEY", "")
 if not API_KEY or not USER_KEY:
     raise SystemExit("❌  ETORO_API_KEY oder ETORO_USER_KEY fehlen in der .env")
 
-# ── Kandidaten-Endpoints (Umfassende Liste) ───────────────────────────────────
+# ── Endpoints gemäss offizieller Dokumentations-Liste ─────────────────────────
 
 PROBE_GET: list[tuple[str, str]] = [
-    # ── Agent Portfolios (Spezieller Fokus) ───────────────────────────────────
+    # ── Identity & Agent Portfolios ───────────────────────────────────────────
+    ("Identity (me)",                "https://public-api.etoro.com/api/v1/me"),
     ("Agent Portfolios (v1)",        "https://public-api.etoro.com/api/v1/agent-portfolios"),
-    ("Agent Portfolios (v2)",        "https://public-api.etoro.com/api/v2/agent-portfolios"),
-    ("Agent Portfolios Trading",     "https://public-api.etoro.com/api/v1/trading/agent-portfolios"),
     
-    # ── Identity & User Info ──────────────────────────────────────────────────
-    ("Identity GCID",                "https://public-api.etoro.com/api/v1/identity"),
-    ("User Info (Trading)",          "https://public-api.etoro.com/api/v1/trading/user"),
-    ("User Profile",                 "https://public-api.etoro.com/api/v1/trading/user/profile"),
-    ("Users Profile (me)",           "https://public-api.etoro.com/api/v1/users/me/profile"),
-    ("Users Portfolio (me)",         "https://public-api.etoro.com/api/v1/users/me/portfolio"),
-    ("Users Trade Info (me)",        "https://public-api.etoro.com/api/v1/users/me/trade-info"),
-    ("PI Data Copiers",              "https://public-api.etoro.com/api/v1/pi-data/copiers"),
-
-    # ── Account / Balance ─────────────────────────────────────────────────────
-    ("Balance (v1 account)",         "https://public-api.etoro.com/api/v1/trading/account/balance"),
-    ("Balance (v1 demo mode)",       "https://public-api.etoro.com/api/v1/trading/account/balance?mode=demo"),
-    ("Balance (v1 real mode)",       "https://public-api.etoro.com/api/v1/trading/account/balance?mode=real"),
-    ("Balance (v2 account)",         "https://public-api.etoro.com/api/v2/trading/account/balance"),
-    ("Account Summary",              "https://public-api.etoro.com/api/v1/trading/account/summary"),
-
-    # ── Trading: Demo ─────────────────────────────────────────────────────────
-    ("Demo Portfolio",               "https://public-api.etoro.com/api/v1/trading/execution/demo/portfolio"),
-    ("Demo PnL",                     "https://public-api.etoro.com/api/v1/trading/execution/demo/pnl"),
-    ("Demo Positions",               "https://public-api.etoro.com/api/v1/trading/execution/demo/positions"),
-    ("Demo Orders",                  "https://public-api.etoro.com/api/v1/trading/execution/demo/orders"),
-    ("Demo Limit Orders",            "https://public-api.etoro.com/api/v1/trading/execution/demo/limit-orders"),
-
-    # ── Trading: Real ─────────────────────────────────────────────────────────
-    ("Real Portfolio",               "https://public-api.etoro.com/api/v1/trading/execution/real/portfolio"),
-    ("Real PnL",                     "https://public-api.etoro.com/api/v1/trading/execution/real/pnl"),
-    ("Real Positions",               "https://public-api.etoro.com/api/v1/trading/execution/real/positions"),
-    ("Real Orders",                  "https://public-api.etoro.com/api/v1/trading/execution/real/orders"),
-    ("Real Trading History",         "https://public-api.etoro.com/api/v1/trading/execution/real/history"),
-
     # ── Market Data ───────────────────────────────────────────────────────────
     ("Instruments Search",           "https://public-api.etoro.com/api/v1/market-data/search"),
     ("Instruments List",             "https://public-api.etoro.com/api/v1/market-data/instruments"),
@@ -74,21 +42,26 @@ PROBE_GET: list[tuple[str, str]] = [
     ("Exchanges",                    "https://public-api.etoro.com/api/v1/market-data/exchanges"),
     ("Industries",                   "https://public-api.etoro.com/api/v1/market-data/industries"),
     ("Historical Closing Prices",    "https://public-api.etoro.com/api/v1/market-data/historical-closing-prices"),
+    ("Historical Candles",           "https://public-api.etoro.com/api/v1/market-data/candles"),
+    ("Market Rates",                 "https://public-api.etoro.com/api/v1/market-data/rates"),
+
+    # ── Trading: Portfolios & PnL ─────────────────────────────────────────────
+    ("General Portfolio",            "https://public-api.etoro.com/api/v1/trading/info/portfolio"),
+    ("Real Portfolio & PnL",         "https://public-api.etoro.com/api/v1/trading/info/real/pnl"),
+    ("Demo Portfolio & PnL",         "https://public-api.etoro.com/api/v1/trading/info/demo/pnl"),
+    ("Real Trading History",         "https://public-api.etoro.com/api/v1/trading/info/real/history"),
+    ("Demo Trading History",         "https://public-api.etoro.com/api/v1/trading/info/demo/history"),
+
+    # ── Users Info & Social (Feeds/PI) ────────────────────────────────────────
+    ("PI Data Copiers",              "https://public-api.etoro.com/api/v1/pi-data/copiers"),
+    ("Users Search",                 "https://public-api.etoro.com/api/v1/users-info/search"),
+    ("Feeds (Generic)",              "https://public-api.etoro.com/api/v1/feeds"),
 
     # ── Watchlists ────────────────────────────────────────────────────────────
     ("Watchlists (All)",             "https://public-api.etoro.com/api/v1/watchlists"),
     ("Watchlists Default",           "https://public-api.etoro.com/api/v1/watchlists/default"),
     ("Watchlists Curated",           "https://public-api.etoro.com/api/v1/watchlists/curated"),
     ("Watchlists Recommendations",   "https://public-api.etoro.com/api/v1/watchlists/recommendations"),
-
-    # ── Feeds / Social ────────────────────────────────────────────────────────
-    ("User Feeds",                   "https://public-api.etoro.com/api/v1/feeds/user"),
-    ("User Feeds (me)",              "https://public-api.etoro.com/api/v1/feeds/users/me/posts"),
-
-    # ── API root / health ─────────────────────────────────────────────────────
-    ("API root v1",                  "https://public-api.etoro.com/api/v1"),
-    ("API root v2",                  "https://public-api.etoro.com/api/v2"),
-    ("Health check",                 "https://public-api.etoro.com/health"),
 ]
 
 # ── Farb-Codes (ANSI) ─────────────────────────────────────────────────────────
@@ -124,7 +97,8 @@ async def probe_endpoint(
 
             body_parsed: dict | list | None = None
             try:
-                body_parsed = json.loads(body_text)
+                if body_text:
+                    body_parsed = json.loads(body_text)
             except json.JSONDecodeError:
                 pass
 
@@ -148,7 +122,7 @@ def _status_color(status: int | None) -> str:
         return RED
     if 200 <= status < 300:
         return GREEN
-    if status in (401, 403):
+    if status in (400, 401, 403, 422): # 400/422 sind legitime Antworten (fehlende Params/Logik)
         return YELLOW
     if status == 404:
         return MAGENTA
@@ -167,9 +141,9 @@ def _print_result(r: dict) -> None:
             if k.lower() in (
                 "availablebalance", "available_balance", "balance",
                 "totalbalance", "total_balance", "equity",
-                "userid", "user_id", "username", "name", "id",
+                "userid", "user_id", "username", "name", "id", "gcid", "realcid",
                 "errorcode", "errormessage", "message", "detail",
-                "agentportfoliovirtualbalance", "portfolios", "data"
+                "agentportfoliovirtualbalance", "portfolios", "data", "status", "reason"
             )
         }
         body_str = json.dumps(relevant or body, ensure_ascii=False)[:300]
@@ -186,22 +160,21 @@ def _print_result(r: dict) -> None:
 
     print(
         f"  {color}{BOLD}HTTP {status:>3}{RESET}  "
-        f"{color}{r['label']:<32}{RESET}  "
+        f"{color}{r['label']:<30}{RESET}  "
         f"{CYAN}{body_str}{RESET}"
     )
 
 
 async def main() -> None:
-    print(f"\n{BOLD}eToro API Endpoint-Diagnostik (Extended){RESET}")
+    print(f"\n{BOLD}eToro API Endpoint-Diagnostik (Full Spec){RESET}")
     print(f"Zeitstempel : {datetime.now().isoformat()}")
-    print(f"API_KEY     : {API_KEY[:8]}{'*' * (len(API_KEY) - 8)}")
-    print(f"USER_KEY    : {USER_KEY[:8]}{'*' * (len(USER_KEY) - 8)}")
+    print(f"API_KEY     : {API_KEY[:8]}{'*' * max(0, len(API_KEY) - 8)}")
+    print(f"USER_KEY    : {USER_KEY[:8]}{'*' * 16}...")
     print(f"Endpoints   : {len(PROBE_GET)} GET-Probes")
-    print("─" * 85)
+    print("─" * 90)
 
     timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        # Sequentieller Aufruf, damit Logs sauber bleiben und Rate Limits nicht sofort getriggert werden
         results_200:   list[dict] = []
         results_other: list[dict] = []
 
@@ -212,7 +185,7 @@ async def main() -> None:
             else:
                 results_other.append(r)
 
-    # ── Ausgabe der Standard-Probes ───────────────────────────────────────────
+    # ── Ausgabe ───────────────────────────────────────────────────────────────
 
     print(f"\n{BOLD}{GREEN}✅  Erfolgreiche Endpoints (HTTP 2xx):{RESET}")
     if results_200:
@@ -221,56 +194,15 @@ async def main() -> None:
     else:
         print(f"  {RED}Keine 200-Antwort — Prüfe deine API-Keys.{RESET}")
 
-    print(f"\n{BOLD}{YELLOW}⚠️  Andere Antworten (401=Unauthorized, 403=Forbidden, 404=Not Found):{RESET}")
-    for r in results_other:
+    print(f"\n{BOLD}{YELLOW}⚠️  Andere validierte Endpoints (400=Bad Req, 401/403=Auth, 422=Unprocessable):{RESET}")
+    for r in [res for res in results_other if res["status"] != 404]:
         _print_result(r)
 
-    # ── Analyse: Agent Portfolios (Dein Fokus) ────────────────────────────────
+    print(f"\n{BOLD}{MAGENTA}❌  Nicht gefunden (HTTP 404 - Pfad inkorrekt oder veraltet):{RESET}")
+    for r in [res for res in results_other if res["status"] == 404]:
+        _print_result(r)
 
-    print("\n" + "─" * 85)
-    print(f"{BOLD}🤖  ANALYSE: AGENT PORTFOLIOS{RESET}")
-    
-    agent_hits = [r for r in results_200 if "agent portfolio" in r["label"].lower()]
-    agent_denied = [r for r in results_other if "agent portfolio" in r["label"].lower()]
-    
-    if agent_hits:
-        print(f"{GREEN}{BOLD}► STATUS: AKTIV{RESET}")
-        print("Es wurde mindestens ein Agent Portfolio Endpoint erfolgreich (HTTP 200) angesprochen.\n")
-        for r in agent_hits:
-            print(f"  URL  : {r['url']}")
-            print(f"  Body : {json.dumps(r['body'], indent=2, ensure_ascii=False)[:600]}\n")
-    else:
-        print(f"{YELLOW}{BOLD}► STATUS: INAKTIV ODER NICHT AUTORISIERT{RESET}")
-        print("Die Agent Portfolio Endpoints haben keine 200 OK Antwort geliefert. Resultate:\n")
-        for r in agent_denied:
-            status = str(r["status"]) if r["status"] else "ERR"
-            msg = r["body"].get("message", r["body"]) if isinstance(r["body"], dict) else r["body"]
-            print(f"  HTTP {status} | {r['url']} -> {str(msg)[:150]}")
-            
-        print("\nNächste Schritte für Agent Portfolios:")
-        print("  1. Prüfe in der eToro Entwicklerkonsole, ob die 'Agent Portfolios' Scopes für diesen Key aktiv sind.")
-        print("  2. Ein Agent Portfolio muss meistens via POST (`/api/v1/agent-portfolios`) erstellt werden, bevor es im GET sichtbar ist.")
-
-    # ── Analyse: Balance-Zusammenfassung ──────────────────────────────────────
-
-    print("\n" + "─" * 85)
-    balance_hits = [
-        r for r in results_200
-        if isinstance(r["body"], dict) and any(
-            k in str(r["body"]).lower()
-            for k in ("balance", "equity", "available", "total_balance")
-        ) and "agent portfolio" not in r["label"].lower()
-    ]
-    
-    if balance_hits:
-        print(f"{BOLD}💰  Balance-Kandidaten (Standard Accounts):{RESET}")
-        for r in balance_hits:
-            print(f"  [{r['label']}] -> URL: {r['url']}")
-            print(f"  Preview: {json.dumps(r['body'], ensure_ascii=False)[:200]}\n")
-    else:
-        print(f"{YELLOW}Kein klassischer Balance-Endpoint mit 200-Antwort gefunden.{RESET}")
-
-    print("─" * 85)
+    print("\n" + "─" * 90)
     print(f"Probe abgeschlossen: {datetime.now().isoformat()}\n")
 
 
