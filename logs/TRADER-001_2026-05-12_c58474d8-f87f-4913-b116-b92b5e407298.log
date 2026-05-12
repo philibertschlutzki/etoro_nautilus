@@ -1,0 +1,348 @@
+2026-05-12T18:28:03.217480000Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217500000Z [INFO] TRADER-001.TradingNode:  NAUTILUS TRADER - Automated Algorithmic Trading Platform
+2026-05-12T18:28:03.217501000Z [INFO] TRADER-001.TradingNode:  by Nautech Systems Pty Ltd.
+2026-05-12T18:28:03.217502000Z [INFO] TRADER-001.TradingNode:  Copyright (C) 2015-2026. All rights reserved.
+2026-05-12T18:28:03.217503000Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217504000Z [INFO] TRADER-001.TradingNode: 
+2026-05-12T18:28:03.217504001Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣴⣶⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+2026-05-12T18:28:03.217506000Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⣾⣿⣿⣿⠀⢸⣿⣿⣿⣿⣶⣶⣤⣀⠀⠀⠀⠀⠀
+2026-05-12T18:28:03.217506001Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⠀⠀⢀⣴⡇⢀⣾⣿⣿⣿⣿⣿⠀⣾⣿⣿⣿⣿⣿⣿⣿⠿⠓⠀⠀⠀⠀
+2026-05-12T18:28:03.217507000Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⠀⣰⣿⣿⡀⢸⣿⣿⣿⣿⣿⣿⠀⣿⣿⣿⣿⣿⣿⠟⠁⣠⣄⠀⠀⠀⠀
+2026-05-12T18:28:03.217507001Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⢠⣿⣿⣿⣇⠀⢿⣿⣿⣿⣿⣿⠀⢻⣿⣿⣿⡿⢃⣠⣾⣿⣿⣧⡀⠀⠀
+2026-05-12T18:28:03.217508000Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠠⣾⣿⣿⣿⣿⣿⣧⠈⠋⢀⣴⣧⠀⣿⡏⢠⡀⢸⣿⣿⣿⣿⣿⣿⣿⡇⠀
+2026-05-12T18:28:03.217508001Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⣀⠙⢿⣿⣿⣿⣿⣿⠇⢠⣿⣿⣿⡄⠹⠃⠼⠃⠈⠉⠛⠛⠛⠛⠛⠻⠇⠀
+2026-05-12T18:28:03.217509000Z [INFO] TRADER-001.TradingNode: ⠀⠀⢸⡟⢠⣤⠉⠛⠿⢿⣿⠀⢸⣿⡿⠋⣠⣤⣄⠀⣾⣿⣿⣶⣶⣶⣦⡄⠀⠀⠀
+2026-05-12T18:28:03.217509001Z [INFO] TRADER-001.TradingNode: ⠀⠀⠸⠀⣾⠏⣸⣷⠂⣠⣤⠀⠘⢁⣴⣾⣿⣿⣿⡆⠘⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀
+2026-05-12T18:28:03.217510000Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⠛⠀⣿⡟⠀⢻⣿⡄⠸⣿⣿⣿⣿⣿⣿⣿⡀⠘⣿⣿⣿⣿⠟⠀⠀⠀⠀
+2026-05-12T18:28:03.217510001Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⠀⠀⣿⠇⠀⠀⢻⡿⠀⠈⠻⣿⣿⣿⣿⣿⡇⠀⢹⣿⠿⠋⠀⠀⠀⠀⠀
+2026-05-12T18:28:03.217511000Z [INFO] TRADER-001.TradingNode: ⠀⠀⠀⠀⠀⠀⠋⠀⠀⠀⡘⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠀⠀⠀⠀⠀⠀
+2026-05-12T18:28:03.217511001Z [INFO] TRADER-001.TradingNode: 
+2026-05-12T18:28:03.217511002Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217512000Z [INFO] TRADER-001.TradingNode:  SYSTEM SPECIFICATION
+2026-05-12T18:28:03.217512001Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217513000Z [INFO] TRADER-001.TradingNode: CPU architecture: Apple M1
+2026-05-12T18:28:03.217516000Z [INFO] TRADER-001.TradingNode: CPU(s): 8 @ 3204 MHz
+2026-05-12T18:28:03.217518000Z [INFO] TRADER-001.TradingNode: OS: kernel-25.4.0 macOS 26.4.1
+2026-05-12T18:28:03.217563000Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217565000Z [INFO] TRADER-001.TradingNode:  MEMORY USAGE
+2026-05-12T18:28:03.217565001Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217576000Z [INFO] TRADER-001.TradingNode: RAM-Total: 16.00 GiB
+2026-05-12T18:28:03.217578000Z [INFO] TRADER-001.TradingNode: RAM-Used: 10.43 GiB (65.21%)
+2026-05-12T18:28:03.217579000Z [INFO] TRADER-001.TradingNode: RAM-Avail: 5.57 GiB (34.79%)
+2026-05-12T18:28:03.217581000Z [INFO] TRADER-001.TradingNode: Swap: disabled
+2026-05-12T18:28:03.217593000Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217594000Z [INFO] TRADER-001.TradingNode:  IDENTIFIERS
+2026-05-12T18:28:03.217594001Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217596000Z [INFO] TRADER-001.TradingNode: trader_id: TRADER-001
+2026-05-12T18:28:03.217597000Z [INFO] TRADER-001.TradingNode: machine_id: MacBook-Air-von-John.local
+2026-05-12T18:28:03.217599000Z [INFO] TRADER-001.TradingNode: instance_id: c58474d8-f87f-4913-b116-b92b5e407298
+2026-05-12T18:28:03.217600000Z [INFO] TRADER-001.TradingNode: PID: 8495
+2026-05-12T18:28:03.217601000Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217602000Z [INFO] TRADER-001.TradingNode:  VERSIONING
+2026-05-12T18:28:03.217602001Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217654000Z [INFO] TRADER-001.TradingNode: nautilus_trader: 1.226.0
+2026-05-12T18:28:03.217669000Z [INFO] TRADER-001.TradingNode: python: 3.14.4
+2026-05-12T18:28:03.217676000Z [INFO] TRADER-001.TradingNode: numpy: 2.4.4
+2026-05-12T18:28:03.217681000Z [INFO] TRADER-001.TradingNode: pandas: 2.3.3
+2026-05-12T18:28:03.217686000Z [INFO] TRADER-001.TradingNode: msgspec: 0.21.1
+2026-05-12T18:28:03.217691000Z [INFO] TRADER-001.TradingNode: pyarrow: 24.0.0
+2026-05-12T18:28:03.217696000Z [INFO] TRADER-001.TradingNode: pytz: 2026.2
+2026-05-12T18:28:03.217700000Z [INFO] TRADER-001.TradingNode: uvloop: 0.22.1
+2026-05-12T18:28:03.217700001Z [INFO] TRADER-001.TradingNode: =================================================================
+2026-05-12T18:28:03.217743000Z [INFO] TRADER-001.TradingNode: Building system kernel
+2026-05-12T18:28:03.218131000Z [DEBUG] TRADER-001.TradingNode: Event loop signal handling setup for (<Signals.SIGTERM: 15>, <Signals.SIGINT: 2>, <Signals.SIGABRT: 6>)
+2026-05-12T18:28:03.218186000Z [INFO] TRADER-001.MessageBus: config.database=None
+2026-05-12T18:28:03.218189000Z [INFO] TRADER-001.MessageBus: config.encoding='msgpack'
+2026-05-12T18:28:03.218191000Z [INFO] TRADER-001.MessageBus: config.timestamps_as_iso8601=False
+2026-05-12T18:28:03.218192000Z [INFO] TRADER-001.MessageBus: config.buffer_interval_ms=None
+2026-05-12T18:28:03.218194000Z [INFO] TRADER-001.MessageBus: config.autotrim_mins=None
+2026-05-12T18:28:03.218196000Z [INFO] TRADER-001.MessageBus: config.use_trader_prefix=True
+2026-05-12T18:28:03.218197000Z [INFO] TRADER-001.MessageBus: config.use_trader_id=True
+2026-05-12T18:28:03.218198000Z [INFO] TRADER-001.MessageBus: config.use_instance_id=False
+2026-05-12T18:28:03.218199000Z [INFO] TRADER-001.MessageBus: config.streams_prefix='stream'
+2026-05-12T18:28:03.218201000Z [INFO] TRADER-001.MessageBus: config.types_filter=None
+2026-05-12T18:28:03.218257000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=commands.system.shutdown, handler=<bound method NautilusKernel._on_shutdown_system of <nautilus_trader.system.kernel.NautilusKernel object at 0x1284b3770>>, priority=0)
+2026-05-12T18:28:03.218664000Z [INFO] TRADER-001.Cache: READY
+2026-05-12T18:28:03.220494000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'Portfolio.update_account' <bound method Portfolio.update_account of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x128a76d40>>
+2026-05-12T18:28:03.220508000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'Portfolio.update_order' <bound method Portfolio.update_order of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x128a76d40>>
+2026-05-12T18:28:03.220512000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'Portfolio.update_position' <bound method Portfolio.update_position of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x128a76d40>>
+2026-05-12T18:28:03.220531000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=events.order.*, handler=<bound method Portfolio.on_order_event of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x128a76d40>>, priority=10)
+2026-05-12T18:28:03.220541000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=events.position.*, handler=<bound method Portfolio.on_position_event of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x128a76d40>>, priority=10)
+2026-05-12T18:28:03.220551000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=data.quotes.*, handler=<bound method Portfolio.update_quote_tick of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x128a76d40>>, priority=10)
+2026-05-12T18:28:03.220561000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=data.bars.*EXTERNAL, handler=<bound method Portfolio.update_bar of <nautilus_trader.portfolio.portfolio.Portfolio object at 0x128a76d40>>, priority=10)
+2026-05-12T18:28:03.220841000Z [INFO] TRADER-001.DataEngine: READY
+2026-05-12T18:28:03.221008000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'DataEngine.execute' <bound method LiveDataEngine.execute of LiveDataEngine(DataEngine)>
+2026-05-12T18:28:03.221016000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'DataEngine.process' <bound method LiveDataEngine.process of LiveDataEngine(DataEngine)>
+2026-05-12T18:28:03.221019000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'DataEngine.request' <bound method LiveDataEngine.request of LiveDataEngine(DataEngine)>
+2026-05-12T18:28:03.221023000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'DataEngine.response' <bound method LiveDataEngine.response of LiveDataEngine(DataEngine)>
+2026-05-12T18:28:03.221026000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'DataEngine.process_historical' <bound method DataEngine.process_historical of LiveDataEngine(DataEngine)>
+2026-05-12T18:28:03.221106000Z [INFO] TRADER-001.DataEngine: config.graceful_shutdown_on_exception=False
+2026-05-12T18:28:03.221173000Z [INFO] TRADER-001.RiskEngine: READY
+2026-05-12T18:28:03.221224000Z [INFO] TRADER-001.RiskEngine: TradingState is ACTIVE
+2026-05-12T18:28:03.221315000Z [INFO] TRADER-001.Throttler-ORDER_SUBMIT_THROTTLER: READY
+2026-05-12T18:28:03.221358000Z [INFO] TRADER-001.RiskEngine: Set MAX_ORDER_SUBMIT_RATE: 100/00:00:01
+2026-05-12T18:28:03.221402000Z [INFO] TRADER-001.Throttler-ORDER_MODIFY_THROTTLER: READY
+2026-05-12T18:28:03.221423000Z [INFO] TRADER-001.RiskEngine: Set MAX_ORDER_MODIFY_RATE: 100/00:00:01
+2026-05-12T18:28:03.221430000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'RiskEngine.execute' <bound method LiveRiskEngine.execute of LiveRiskEngine(RiskEngine)>
+2026-05-12T18:28:03.221432000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'RiskEngine.process' <bound method LiveRiskEngine.process of LiveRiskEngine(RiskEngine)>
+2026-05-12T18:28:03.221441000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=events.order.*, handler=<bound method RiskEngine._handle_event of LiveRiskEngine(RiskEngine)>, priority=10)
+2026-05-12T18:28:03.221447000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=events.position.*, handler=<bound method RiskEngine._handle_event of LiveRiskEngine(RiskEngine)>, priority=10)
+2026-05-12T18:28:03.221469000Z [INFO] TRADER-001.RiskEngine: config.graceful_shutdown_on_exception=False
+2026-05-12T18:28:03.221591000Z [INFO] TRADER-001.ExecEngine: READY
+2026-05-12T18:28:03.221667000Z [INFO] TRADER-001.ExecEngine: config.snapshot_orders=False
+2026-05-12T18:28:03.221675000Z [INFO] TRADER-001.ExecEngine: config.snapshot_positions=False
+2026-05-12T18:28:03.221678000Z [INFO] TRADER-001.ExecEngine: config.snapshot_positions_interval_secs=None
+2026-05-12T18:28:03.221679000Z [INFO] TRADER-001.ExecEngine: config.allow_overfills=False
+2026-05-12T18:28:03.221690000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'ExecEngine.execute' <bound method LiveExecutionEngine.execute of LiveExecutionEngine(ExecEngine)>
+2026-05-12T18:28:03.221693000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'ExecEngine.process' <bound method LiveExecutionEngine.process of LiveExecutionEngine(ExecEngine)>
+2026-05-12T18:28:03.221887000Z [INFO] TRADER-001.ExecEngine: config.reconciliation=True
+2026-05-12T18:28:03.221896000Z [INFO] TRADER-001.ExecEngine: config.reconciliation_lookback_mins=None
+2026-05-12T18:28:03.221897000Z [INFO] TRADER-001.ExecEngine: config.reconciliation_instrument_ids=None
+2026-05-12T18:28:03.221898000Z [INFO] TRADER-001.ExecEngine: config.filter_unclaimed_external_orders=False
+2026-05-12T18:28:03.221900000Z [INFO] TRADER-001.ExecEngine: config.filter_position_reports=False
+2026-05-12T18:28:03.221901000Z [INFO] TRADER-001.ExecEngine: config.filtered_client_order_ids=None
+2026-05-12T18:28:03.221903000Z [INFO] TRADER-001.ExecEngine: config.inflight_check_interval_ms=2000
+2026-05-12T18:28:03.221904000Z [INFO] TRADER-001.ExecEngine: config.inflight_check_threshold_ms=5000
+2026-05-12T18:28:03.221905000Z [INFO] TRADER-001.ExecEngine: config.inflight_check_retries=5
+2026-05-12T18:28:03.221906000Z [INFO] TRADER-001.ExecEngine: config.own_books_audit_interval_secs=None
+2026-05-12T18:28:03.221908000Z [INFO] TRADER-001.ExecEngine: config.open_check_interval_secs=None
+2026-05-12T18:28:03.221908001Z [INFO] TRADER-001.ExecEngine: config.open_check_open_only=True
+2026-05-12T18:28:03.221910000Z [INFO] TRADER-001.ExecEngine: config.open_check_lookback_mins=60
+2026-05-12T18:28:03.221911000Z [INFO] TRADER-001.ExecEngine: config.open_check_threshold_ms=5000
+2026-05-12T18:28:03.221912000Z [INFO] TRADER-001.ExecEngine: config.open_check_missing_retries=5
+2026-05-12T18:28:03.221913000Z [INFO] TRADER-001.ExecEngine: config.max_single_order_queries_per_cycle=10
+2026-05-12T18:28:03.221914000Z [INFO] TRADER-001.ExecEngine: config.single_order_query_delay_ms=100
+2026-05-12T18:28:03.221915000Z [INFO] TRADER-001.ExecEngine: config.position_check_interval_secs=None
+2026-05-12T18:28:03.221916000Z [INFO] TRADER-001.ExecEngine: config.position_check_lookback_mins=60
+2026-05-12T18:28:03.221917000Z [INFO] TRADER-001.ExecEngine: config.position_check_threshold_ms=5000
+2026-05-12T18:28:03.221919000Z [INFO] TRADER-001.ExecEngine: config.position_check_retries=3
+2026-05-12T18:28:03.221922000Z [INFO] TRADER-001.ExecEngine: config.reconciliation_startup_delay_secs=10.0
+2026-05-12T18:28:03.221923000Z [INFO] TRADER-001.ExecEngine: config.purge_closed_orders_interval_mins=None
+2026-05-12T18:28:03.221924000Z [INFO] TRADER-001.ExecEngine: config.purge_closed_orders_buffer_mins=None
+2026-05-12T18:28:03.221925000Z [INFO] TRADER-001.ExecEngine: config.purge_closed_positions_interval_mins=None
+2026-05-12T18:28:03.221926000Z [INFO] TRADER-001.ExecEngine: config.purge_closed_positions_buffer_mins=None
+2026-05-12T18:28:03.221927000Z [INFO] TRADER-001.ExecEngine: config.purge_account_events_interval_mins=None
+2026-05-12T18:28:03.221929000Z [INFO] TRADER-001.ExecEngine: config.purge_account_events_lookback_mins=None
+2026-05-12T18:28:03.221930000Z [INFO] TRADER-001.ExecEngine: config.purge_from_database=False
+2026-05-12T18:28:03.221931000Z [INFO] TRADER-001.ExecEngine: config.graceful_shutdown_on_exception=False
+2026-05-12T18:28:03.221956000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'ExecEngine.reconcile_execution_report' <bound method LiveExecutionEngine.reconcile_execution_report of LiveExecutionEngine(ExecEngine)>
+2026-05-12T18:28:03.221961000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'ExecEngine.reconcile_execution_mass_status' <bound method LiveExecutionEngine.reconcile_execution_mass_status of LiveExecutionEngine(ExecEngine)>
+2026-05-12T18:28:03.222498000Z [DEBUG] TRADER-001.Cache: Clearing index
+2026-05-12T18:28:03.222504000Z [DEBUG] TRADER-001.Cache: Cleared index
+2026-05-12T18:28:03.222509000Z [DEBUG] TRADER-001.ExecEngine: clear_index took 0ms
+2026-05-12T18:28:03.222607000Z [DEBUG] TRADER-001.Cache: Loading general cache from database
+2026-05-12T18:28:03.222697000Z [INFO] TRADER-001.Cache: Cached 0 general objects from database
+2026-05-12T18:28:03.222703000Z [DEBUG] TRADER-001.ExecEngine: cache_general took 0ms
+2026-05-12T18:28:03.222707000Z [DEBUG] TRADER-001.Cache: Loading currencies from database
+2026-05-12T18:28:03.222738000Z [INFO] TRADER-001.Cache: Cached 0 currencies from database
+2026-05-12T18:28:03.222743000Z [DEBUG] TRADER-001.ExecEngine: cache_currencies took 0ms
+2026-05-12T18:28:03.222744000Z [DEBUG] TRADER-001.Cache: Loading instruments from database
+2026-05-12T18:28:03.222745000Z [INFO] TRADER-001.Cache: Cached 0 instruments from database
+2026-05-12T18:28:03.222747000Z [DEBUG] TRADER-001.ExecEngine: cache_instruments took 0ms
+2026-05-12T18:28:03.222748000Z [DEBUG] TRADER-001.Cache: Loading accounts from database
+2026-05-12T18:28:03.222750000Z [INFO] TRADER-001.Cache: Cached 0 accounts from database
+2026-05-12T18:28:03.222752000Z [DEBUG] TRADER-001.ExecEngine: cache_accounts took 0ms
+2026-05-12T18:28:03.222753000Z [DEBUG] TRADER-001.Cache: Loading orders from database
+2026-05-12T18:28:03.222754000Z [INFO] TRADER-001.Cache: Cached 0 orders from database
+2026-05-12T18:28:03.222756000Z [DEBUG] TRADER-001.ExecEngine: cache_orders took 0ms
+2026-05-12T18:28:03.222757000Z [DEBUG] TRADER-001.Cache: Loading order lists
+2026-05-12T18:28:03.222759000Z [INFO] TRADER-001.Cache: Cached 0 order lists from database
+2026-05-12T18:28:03.222761000Z [DEBUG] TRADER-001.ExecEngine: cache_order_lists took 0ms
+2026-05-12T18:28:03.222762000Z [DEBUG] TRADER-001.Cache: Loading positions from database
+2026-05-12T18:28:03.222764000Z [INFO] TRADER-001.Cache: Cached 0 positions from database
+2026-05-12T18:28:03.222765000Z [DEBUG] TRADER-001.ExecEngine: cache_positions took 0ms
+2026-05-12T18:28:03.222767000Z [DEBUG] TRADER-001.Cache: Building index
+2026-05-12T18:28:03.222807000Z [DEBUG] TRADER-001.Cache: Index built in 0.000s
+2026-05-12T18:28:03.222809000Z [DEBUG] TRADER-001.ExecEngine: build_index took 0ms
+2026-05-12T18:28:03.222841000Z [INFO] TRADER-001.Cache: Checking data integrity
+2026-05-12T18:28:03.223013000Z [INFO] TRADER-001.Cache: Integrity check passed in 116μs
+2026-05-12T18:28:03.223019000Z [DEBUG] TRADER-001.ExecEngine: check_integrity took 1ms
+2026-05-12T18:28:03.223303000Z [DEBUG] TRADER-001.ExecEngine: _set_position_id_counts took 0ms
+2026-05-12T18:28:03.223310000Z [INFO] TRADER-001.ExecEngine: Loaded cache in 1ms
+2026-05-12T18:28:03.223393000Z [INFO] TRADER-001.OrderEmulator: READY
+2026-05-12T18:28:03.223454000Z [DEBUG] TRADER-001.MessageBus: Added endpoint 'OrderEmulator.execute' <bound method OrderEmulator.execute of OrderEmulator(OrderEmulator)>
+2026-05-12T18:28:03.223484000Z [INFO] TRADER-001.TRADER-001: READY
+2026-05-12T18:28:03.223523000Z [INFO] TRADER-001.TradingNode: Initialized in 7ms
+2026-05-12T18:28:03.223545000Z [INFO] TRADER-001.TradingNode: has_cache_backing=False
+2026-05-12T18:28:03.223550000Z [INFO] TRADER-001.TradingNode: has_msgbus_backing=False
+2026-05-12T18:28:03.223728000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: READY
+2026-05-12T18:28:03.223789000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=events.order.ApiFullExecutionTestStrategy-000, handler=<bound method Strategy.handle_event of ApiFullExecutionTestStrategy(ApiFullExecutionTestStrategy-000)>, priority=0)
+2026-05-12T18:28:03.223800000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=events.position.ApiFullExecutionTestStrategy-000, handler=<bound method Strategy.handle_event of ApiFullExecutionTestStrategy(ApiFullExecutionTestStrategy-000)>, priority=0)
+2026-05-12T18:28:03.223822000Z [INFO] TRADER-001.ExecEngine: Registered OMS.UNSPECIFIED for Strategy ApiFullExecutionTestStrategy-000
+2026-05-12T18:28:03.223830000Z [INFO] TRADER-001.TRADER-001: Registered Strategy ApiFullExecutionTestStrategy-000
+2026-05-12T18:28:03.223839000Z [INFO] TRADER-001.TradingNode: Building data client for ETORO_WS_CLIENT
+2026-05-12T18:28:03.223865000Z [INFO] TRADER-001.InstrumentProvider: READY
+2026-05-12T18:28:03.223927000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: READY
+2026-05-12T18:28:03.223980000Z [INFO] TRADER-001.DataEngine: Registered ETORO_WS_CLIENT
+2026-05-12T18:28:03.223994000Z [INFO] TRADER-001.TradingNode: Building execution client for ETORO
+2026-05-12T18:28:03.224019000Z [INFO] TRADER-001.InstrumentProvider: READY
+2026-05-12T18:28:03.224119000Z [INFO] TRADER-001.ExecClient-ETORO: READY
+2026-05-12T18:28:03.224302000Z [INFO] TRADER-001.ExecEngine: Registered ExecutionClient-ETORO
+2026-05-12T18:28:03.225309000Z [INFO] TRADER-001.TradingNode: STARTING
+2026-05-12T18:28:03.225353000Z [DEBUG] TRADER-001.ApiFullExecutionTestStrategy: Registered <concurrent.futures.thread.ThreadPoolExecutor object at 0x1284b38c0>
+2026-05-12T18:28:03.225368000Z [DEBUG] TRADER-001.DataEngine: STARTING
+2026-05-12T18:28:03.225380000Z [DEBUG] TRADER-001.DataClient-ETORO_WS_CLIENT: STARTING
+2026-05-12T18:28:03.225399000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: RUNNING
+2026-05-12T18:28:03.225437000Z [DEBUG] TRADER-001.DataEngine: Scheduled task 'cmd_queue'
+2026-05-12T18:28:03.225443000Z [DEBUG] TRADER-001.DataEngine: Scheduled task 'req_queue'
+2026-05-12T18:28:03.225444000Z [DEBUG] TRADER-001.DataEngine: Scheduled task 'res_queue'
+2026-05-12T18:28:03.225445000Z [DEBUG] TRADER-001.DataEngine: Scheduled task 'data_queue'
+2026-05-12T18:28:03.225455000Z [INFO] TRADER-001.DataEngine: RUNNING
+2026-05-12T18:28:03.225463000Z [DEBUG] TRADER-001.RiskEngine: STARTING
+2026-05-12T18:28:03.225478000Z [DEBUG] TRADER-001.RiskEngine: Scheduled task 'cmd_queue'
+2026-05-12T18:28:03.225483000Z [DEBUG] TRADER-001.RiskEngine: Scheduled task 'evt_queue'
+2026-05-12T18:28:03.225489000Z [INFO] TRADER-001.RiskEngine: RUNNING
+2026-05-12T18:28:03.225496000Z [DEBUG] TRADER-001.ExecEngine: STARTING
+2026-05-12T18:28:03.225502000Z [DEBUG] TRADER-001.ExecClient-ETORO: STARTING
+2026-05-12T18:28:03.225508000Z [INFO] TRADER-001.ExecClient-ETORO: RUNNING
+2026-05-12T18:28:03.225526000Z [DEBUG] TRADER-001.ExecEngine: Scheduled task 'cmd_queue'
+2026-05-12T18:28:03.225530000Z [DEBUG] TRADER-001.ExecEngine: Scheduled task 'evt_queue'
+2026-05-12T18:28:03.225535000Z [DEBUG] TRADER-001.ExecEngine: Scheduled task 'continuous_reconciliation'
+2026-05-12T18:28:03.225537000Z [INFO] TRADER-001.ExecEngine: Started reconciliation task
+2026-05-12T18:28:03.225545000Z [INFO] TRADER-001.ExecEngine: RUNNING
+2026-05-12T18:28:03.225554000Z [INFO] TRADER-001.DataEngine: Connecting all clients...
+2026-05-12T18:28:03.225563000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: Connecting...
+2026-05-12T18:28:03.225570000Z [DEBUG] TRADER-001.DataClient-ETORO_WS_CLIENT: Creating async task '_connect'
+2026-05-12T18:28:03.225583000Z [INFO] TRADER-001.ExecEngine: Connecting all clients...
+2026-05-12T18:28:03.225586000Z [INFO] TRADER-001.ExecClient-ETORO: Connecting...
+2026-05-12T18:28:03.225591000Z [DEBUG] TRADER-001.ExecClient-ETORO: Creating task '_connect'
+2026-05-12T18:28:03.225602000Z [INFO] TRADER-001.TradingNode: Awaiting engine connections and initializations (120.0s timeout)...
+2026-05-12T18:28:03.226055000Z [DEBUG] TRADER-001.DataEngine: DataCommand message queue processing starting (qsize=0)
+2026-05-12T18:28:03.226071000Z [DEBUG] TRADER-001.DataEngine: RequestData message queue processing starting (qsize=0)
+2026-05-12T18:28:03.226078000Z [DEBUG] TRADER-001.DataEngine: DataResponse message queue processing starting (qsize=0)
+2026-05-12T18:28:03.226083000Z [DEBUG] TRADER-001.DataEngine: Data queue processing starting (qsize=0)
+2026-05-12T18:28:03.226091000Z [DEBUG] TRADER-001.RiskEngine: Command message queue processing (qsize=0)
+2026-05-12T18:28:03.226096000Z [DEBUG] TRADER-001.RiskEngine: Event message queue processing starting (qsize=0)
+2026-05-12T18:28:03.226102000Z [DEBUG] TRADER-001.ExecEngine: Command message queue processing starting (qsize=0)
+2026-05-12T18:28:03.226107000Z [DEBUG] TRADER-001.ExecEngine: Event message queue processing starting (qsize=0)
+2026-05-12T18:28:03.226126000Z [INFO] TRADER-001.ExecEngine: Starting continuous reconciliation with intervals: inflight=2000ms, consistency=Nones, position=Nones
+2026-05-12T18:28:03.226132000Z [INFO] TRADER-001.ExecEngine: Awaiting startup reconciliation completion before starting continuous checks
+2026-05-12T18:28:03.259648000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: WebSocket Verbindungsversuch 1/5 zu wss://ws.etoro.com/ws ...
+2026-05-12T18:28:03.546461000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: WebSocket verbunden. Authentifiziere...
+2026-05-12T18:28:03.547740000Z [DEBUG] TRADER-001.Cache: Added currency USD
+2026-05-12T18:28:03.547744000Z [DEBUG] TRADER-001.Cache: Added instrument ADA.ETORO
+2026-05-12T18:28:03.547780000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: Instrument registriert: ADA.ETORO [Crypto] price_prec=5, size_prec=0
+2026-05-12T18:28:03.571369000Z [DEBUG] TRADER-001.ExecClient-ETORO: Creating task 'exec_ws_loop'
+2026-05-12T18:28:03.571382000Z [INFO] TRADER-001.ExecClient-ETORO: Execution WS connected and authenticated.
+2026-05-12T18:28:03.608171000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: Auth-Antwort: {'id': '9931a27e-1d91-4650-afff-e74bfea4daa8', 'success': True, 'operation': 'Authenticate'}
+2026-05-12T18:28:03.608242000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: Abonniert: ['instrument:100017']
+2026-05-12T18:28:03.608248000Z [DEBUG] TRADER-001.DataClient-ETORO_WS_CLIENT: Creating async task 'message_loop'
+2026-05-12T18:28:03.608293000Z [DEBUG] TRADER-001.DataClient-ETORO_WS_CLIENT: Coroutine '_connect' completed
+2026-05-12T18:28:03.608299000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: Connected
+2026-05-12T18:28:03.663395000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: Snapshot ADA.ETORO: MarketOpen=True, AllowBuy=True
+2026-05-12T18:28:03.889865000Z [DEBUG] TRADER-001.Cache: Added Account(id=ETORO-REAL-001)
+2026-05-12T18:28:03.889873000Z [DEBUG] TRADER-001.Cache: Indexed AccountId('ETORO-REAL-001')
+2026-05-12T18:28:03.889891000Z [INFO] TRADER-001.Portfolio: Updated AccountState(account_id=ETORO-REAL-001, account_type=MARGIN, base_currency=USD, is_reported=False, balances=[AccountBalance(total=0.00 USD, locked=0.00 USD, free=0.00 USD)], margins=[], event_id=5e8a7fab-2d8f-41d9-8e69-32c7b080564d)
+2026-05-12T18:28:03.889948000Z [INFO] TRADER-001.ExecClient-ETORO: Connected
+2026-05-12T18:28:03.889981000Z [INFO] TRADER-001.TradingNode: Awaiting execution state reconciliation (30.0s timeout)...
+2026-05-12T18:28:03.890058000Z [INFO] TRADER-001.ExecClient-ETORO: Generating ExecutionMassStatus...
+2026-05-12T18:28:03.890188000Z [DEBUG] TRADER-001.ExecEngine: <--[RPT] ExecutionMassStatus(client_id=ETORO, account_id=ETORO-REAL-001, venue=ETORO, order_reports={}, fill_reports={}, position_reports={}, report_id=eef207a9-107d-4ee1-b816-642c29678e02, ts_init=1778610483890063000)
+2026-05-12T18:28:03.890191000Z [INFO] TRADER-001.ExecEngine: Reconciling ExecutionMassStatus for ETORO
+2026-05-12T18:28:03.890195000Z [INFO] TRADER-001.ExecEngine: Attempting to adjust fills for 0 instruments
+2026-05-12T18:28:03.890285000Z [INFO] TRADER-001.ExecEngine: Updating adjusted fills for 0 instruments
+2026-05-12T18:28:03.890287000Z [INFO] TRADER-001.ExecEngine: Final order_reports contains 0 orders, fill_reports contains 0 fills across all instruments
+2026-05-12T18:28:03.890303000Z [DEBUG] TRADER-001.ExecEngine: Reconciliation state validation passed for 0 order(s)
+2026-05-12T18:28:03.890322000Z [INFO] TRADER-001.ExecEngine: Reconciliation for ETORO succeeded
+2026-05-12T18:28:03.890328000Z [INFO] TRADER-001.TradingNode: Execution state reconciled
+2026-05-12T18:28:03.890337000Z [DEBUG] TRADER-001.OrderEmulator: STARTING
+2026-05-12T18:28:03.890342000Z [INFO] TRADER-001.OrderEmulator: No emulated orders to reactivate
+2026-05-12T18:28:03.890351000Z [INFO] TRADER-001.OrderEmulator: RUNNING
+2026-05-12T18:28:03.890359000Z [INFO] TRADER-001.Portfolio: Initialized 0 open orders
+2026-05-12T18:28:03.890360000Z [INFO] TRADER-001.Portfolio: Initialized 0 open positions
+2026-05-12T18:28:03.890363000Z [INFO] TRADER-001.TradingNode: Awaiting portfolio initialization (10.0s timeout)...
+2026-05-12T18:28:03.890405000Z [INFO] TRADER-001.ExecEngine: Startup reconciliation completed
+2026-05-12T18:28:03.890408000Z [INFO] TRADER-001.ExecEngine: Applying post-reconciliation startup delay (10.0s)
+2026-05-12T18:28:03.890418000Z [INFO] TRADER-001.TradingNode: Portfolio initialized
+2026-05-12T18:28:03.890420000Z [DEBUG] TRADER-001.TRADER-001: STARTING
+2026-05-12T18:28:03.890425000Z [DEBUG] TRADER-001.ApiFullExecutionTestStrategy: STARTING
+2026-05-12T18:28:03.890431000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: self.config.oms_type=None
+2026-05-12T18:28:03.890432000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: self.config.external_order_claims=None
+2026-05-12T18:28:03.890432001Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: self.config.manage_gtd_expiry=False
+2026-05-12T18:28:03.890458000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: Set ClientOrderIdGenerator client_order_id count to 0
+2026-05-12T18:28:03.890460000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: Set ClientOrderIdGenerator order_list_id count to 0
+2026-05-12T18:28:03.890465000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: Full API Test gestartet. Warte auf Daten für ADA.ETORO ...
+2026-05-12T18:28:03.890499000Z [DEBUG] TRADER-001.MessageBus: Added Subscription(topic=data.quotes.ETORO.ADA, handler=<bound method Actor.handle_quote_tick of ApiFullExecutionTestStrategy(ApiFullExecutionTestStrategy-000)>, priority=0)
+2026-05-12T18:28:03.890525000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: [CMD]--> SubscribeQuoteTicks(instrument_id=ADA.ETORO, client_id=None, venue=ETORO)
+2026-05-12T18:28:03.890564000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: [TEST 1] Sende LIMIT BUY: 81 Units @ 0.13530
+2026-05-12T18:28:03.892521000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: <--[EVT] OrderInitialized(instrument_id=ADA.ETORO, client_order_id=O-20260512-182803-001-000-1, side=BUY, type=LIMIT, quantity=81, time_in_force=GTC, post_only=False, reduce_only=False, quote_quantity=False, options={'price': '0.13530', 'display_qty': None, 'expire_time_ns': 0}, emulation_trigger=NO_TRIGGER, trigger_instrument_id=None, contingency_type=NO_CONTINGENCY, order_list_id=None, linked_order_ids=None, parent_order_id=None, exec_algorithm_id=None, exec_algorithm_params=None, exec_spawn_id=None, tags=None)
+2026-05-12T18:28:03.892693000Z [DEBUG] TRADER-001.Cache: Added LimitOrder(BUY 81 ADA.ETORO LIMIT @ 0.13530 GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-1, venue_order_id=None, position_id=None, tags=None)
+2026-05-12T18:28:03.893117000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: [CMD]--> [Risk] SubmitOrder(order=LimitOrder(BUY 81 ADA.ETORO LIMIT @ 0.13530 GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-1, venue_order_id=None, position_id=None, tags=None), position_id=None)
+2026-05-12T18:28:03.893129000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: [TEST 2] Sende MARKET BUY: 41 Units (~11.0 USD)
+2026-05-12T18:28:03.893367000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: <--[EVT] OrderInitialized(instrument_id=ADA.ETORO, client_order_id=O-20260512-182803-001-000-2, side=BUY, type=MARKET, quantity=41, time_in_force=GTC, post_only=False, reduce_only=False, quote_quantity=False, options={}, emulation_trigger=NO_TRIGGER, trigger_instrument_id=None, contingency_type=NO_CONTINGENCY, order_list_id=None, linked_order_ids=None, parent_order_id=None, exec_algorithm_id=None, exec_algorithm_params=None, exec_spawn_id=None, tags=None)
+2026-05-12T18:28:03.893375000Z [DEBUG] TRADER-001.Cache: Added MarketOrder(BUY 41 ADA.ETORO MARKET GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-2, venue_order_id=None, position_id=None, tags=None)
+2026-05-12T18:28:03.893382000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: [CMD]--> [Risk] SubmitOrder(order=MarketOrder(BUY 41 ADA.ETORO MARKET GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-2, venue_order_id=None, position_id=None, tags=None), position_id=None)
+2026-05-12T18:28:03.893393000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: RUNNING
+2026-05-12T18:28:03.893399000Z [INFO] TRADER-001.TRADER-001: RUNNING
+2026-05-12T18:28:03.893407000Z [INFO] TRADER-001.TradingNode: RUNNING
+2026-05-12T18:28:03.893491000Z [DEBUG] TRADER-001.DataClient-ETORO_WS_CLIENT: Creating async task 'subscribe: quote_ticks ADA.ETORO'
+2026-05-12T18:28:03.894021000Z [DEBUG] TRADER-001.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ADA.ETORO' completed
+2026-05-12T18:28:03.894024000Z [INFO] TRADER-001.DataClient-ETORO_WS_CLIENT: Subscribed ADA.ETORO quotes
+2026-05-12T18:28:03.894045000Z [DEBUG] TRADER-001.ExecEngine: Routed by instrument venue: ETORO
+2026-05-12T18:28:03.894196000Z [INFO] TRADER-001.ExecClient-ETORO: Submit LimitOrder(BUY 81 ADA.ETORO LIMIT @ 0.13530 GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-1, venue_order_id=None, position_id=None, tags=None)
+2026-05-12T18:28:03.894204000Z [DEBUG] TRADER-001.ExecClient-ETORO: Creating task 'submit_order: SubmitOrder(order=LimitOrder(BUY 81 ADA.ETORO LIMIT @ 0.13530 GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-1, venue_order_id=None, position_id=None, tags=None), position_id=None)'
+2026-05-12T18:28:03.894212000Z [DEBUG] TRADER-001.ExecEngine: Routed by instrument venue: ETORO
+2026-05-12T18:28:03.894219000Z [INFO] TRADER-001.ExecClient-ETORO: Submit MarketOrder(BUY 41 ADA.ETORO MARKET GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-2, venue_order_id=None, position_id=None, tags=None)
+2026-05-12T18:28:03.894224000Z [DEBUG] TRADER-001.ExecClient-ETORO: Creating task 'submit_order: SubmitOrder(order=MarketOrder(BUY 41 ADA.ETORO MARKET GTC, status=INITIALIZED, client_order_id=O-20260512-182803-001-000-2, venue_order_id=None, position_id=None, tags=None), position_id=None)'
+2026-05-12T18:28:03.895114000Z [INFO] TRADER-001.ExecClient-ETORO: REST POST https://public-api.etoro.com/api/v1/trading/execution/limit-orders | payload={'InstrumentID': 100017, 'IsBuy': True, 'Leverage': 1, 'Rate': 0.1353}
+2026-05-12T18:28:03.895663000Z [INFO] TRADER-001.ExecClient-ETORO: REST POST https://public-api.etoro.com/api/v1/trading/execution/market-open-orders/by-amount | payload={'InstrumentID': 100017, 'IsBuy': True, 'Leverage': 1, 'Amount': 11.09}
+2026-05-12T18:28:03.896169000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: <--[EVT] OrderSubmitted(instrument_id=ADA.ETORO, client_order_id=O-20260512-182803-001-000-1, account_id=ETORO-REAL-001, ts_event=1778610483894241000)
+2026-05-12T18:28:03.896490000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: <--[EVT] OrderSubmitted(instrument_id=ADA.ETORO, client_order_id=O-20260512-182803-001-000-2, account_id=ETORO-REAL-001, ts_event=1778610483895343000)
+2026-05-12T18:28:03.977420000Z [WARN] TRADER-001.ApiFullExecutionTestStrategy: <--[EVT] OrderRejected(instrument_id=ADA.ETORO, client_order_id=O-20260512-182803-001-000-1, account_id=ETORO-REAL-001, reason='etoro_400: Validation failed: 
+ -- Amount: 'Amount' must be greater than '0'. Severity: Error
+ -- AmountInUnits: 'Amount In Units' must be greater than '0'. Severity: Error
+ -- StopLossRate: 'Stop Loss Rate' mus', due_post_only=False, ts_event=1778610483894241000)
+2026-05-12T18:28:03.999369000Z [DEBUG] TRADER-001.ExecClient-ETORO: Creating task 'poll_fill'
+2026-05-12T18:28:03.999483000Z [DEBUG] TRADER-001.Cache: Indexed ClientOrderId('O-20260512-182803-001-000-2') with VenueOrderId('1461179164')
+2026-05-12T18:28:03.999520000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: <--[EVT] OrderAccepted(instrument_id=ADA.ETORO, client_order_id=O-20260512-182803-001-000-2, venue_order_id=1461179164, account_id=ETORO-REAL-001, ts_event=1778610483895343000)
+2026-05-12T18:28:15.890960000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:17.892189000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:19.893939000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:21.894867000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:23.896731000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:25.897813000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:27.899695000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:29.901649000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:31.902759000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:33.904057000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:35.905073000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:37.905932000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:39.906668000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:41.908105000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:43.909259000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:45.910423000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:47.911087000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:49.911543000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:51.911755000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:53.913751000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:55.914418000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:57.916053000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:28:59.917176000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:01.918290000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:03.919312000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:05.920839000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:07.921207000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:09.922525000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:11.923570000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:13.924740000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:15.926300000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:17.927213000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:19.928112000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:21.929510000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:23.930753000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:25.931781000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:29.931646000Z [DEBUG] TRADER-001.ExecEngine: Checking in-flight orders status
+2026-05-12T18:29:33.329053000Z [INFO] TRADER-001.TradingNode: STOPPING
+2026-05-12T18:29:33.329105000Z [DEBUG] TRADER-001.TRADER-001: STOPPING
+2026-05-12T18:29:33.329133000Z [DEBUG] TRADER-001.ApiFullExecutionTestStrategy: STOPPING
+2026-05-12T18:29:33.329142000Z [WARN] TRADER-001.ApiFullExecutionTestStrategy: The `Strategy.on_stop` handler was called when not overridden. It's expected that any actions required when stopping the strategy occur here, such as unsubscribing from data
+2026-05-12T18:29:33.329175000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: Canceling executor tasks
+2026-05-12T18:29:33.329272000Z [INFO] TRADER-001.ApiFullExecutionTestStrategy: STOPPED
+2026-05-12T18:29:33.329293000Z [INFO] TRADER-001.TRADER-001: STOPPED
+2026-05-12T18:29:33.329318000Z [INFO] TRADER-001.TradingNode: Awaiting post stop (10.0s timeout)...
+2026-05-12T18:29:33.329536000Z [DEBUG] TRADER-001.ApiFullExecutionTestStrategy: Executor: Canceled inner worker task
+2026-05-12T18:29:33.513064000Z [WARN] TRADER-001.ExecEngine: Canceled task 'run_evt_queue'
+2026-05-12T18:29:33.513093000Z [DEBUG] TRADER-001.ExecEngine: Event message queue stopped
+2026-05-12T18:29:33.513119000Z [WARN] TRADER-001.DataEngine: DataCommand message queue canceled
+2026-05-12T18:29:33.513123000Z [DEBUG] TRADER-001.DataEngine: DataCommand message queue stopped
+2026-05-12T18:29:33.513150000Z [DEBUG] TRADER-001.ExecEngine: Canceled task 'continuous_reconciliation'
+2026-05-12T18:29:33.513164000Z [WARN] TRADER-001.RiskEngine: Canceled task 'run_evt_queue'
