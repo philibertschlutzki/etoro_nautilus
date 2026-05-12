@@ -49,20 +49,16 @@ class ApiOrderTestStrategy(Strategy):
         if self.buy_submitted:
             return
 
-        # size_precision dynamisch aus dem Cache lesen —
-        # unabhängig davon ob das Instrument als Equity oder CryptoPerpetual
-        # registriert wurde. Schlägt der Cache-Lookup fehl, fallback auf 0.
-        instr = self.cache.instrument(self.instrument_id)
-        size_prec = instr.size_precision if instr is not None else 0
-
+        # eToro's _build_payload rechnet qty → USD-Betrag um (qty * ask_price).
+        # Daher ist Ganzzahl-Rounding verlustfrei für den API-Call.
+        # Alle eToro-Instrumente sind als Equity (size_precision=0) registriert.
         raw_qty = float(self.usd_amount) / float(tick.ask_price)
-        quantity = Quantity(raw_qty, precision=size_prec)
+        quantity = Quantity(max(1, round(raw_qty)), precision=0)
 
         self.log.info(
             f"Sende BUY: {quantity} Units @ Ask {tick.ask_price} "
-            f"(~{self.usd_amount} USD, size_prec={size_prec})"
+            f"(~{self.usd_amount} USD)"
         )
-
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
@@ -90,14 +86,10 @@ class ApiOrderTestStrategy(Strategy):
             self.position_closed = True
 
     def on_order_denied(self, event) -> None:
-        self.log.error(
-            f"Order DENIED: {event.client_order_id} — {event.reason}"
-        )
+        self.log.error(f"Order DENIED: {event.client_order_id} — {event.reason}")
 
     def on_order_rejected(self, event) -> None:
-        self.log.error(
-            f"Order REJECTED: {event.client_order_id} — {event.reason}"
-        )
+        self.log.error(f"Order REJECTED: {event.client_order_id} — {event.reason}")
 
     def on_order_closed(self, event) -> None:
         if self.position_closed and event.client_order_id != self.buy_order_id:
@@ -109,7 +101,6 @@ async def main() -> None:
         print("FEHLER: ETORO_API_KEY oder ETORO_USER_KEY fehlen in der .env.")
         sys.exit(1)
 
-    # eToro-ID für das Test-Symbol aus der Instrument-Map suchen
     etoro_id: str | None = None
     for k, v in ETORO_INSTRUMENTS.items():
         if v == ETORO_API_TEST["symbol"]:
@@ -154,8 +145,6 @@ async def main() -> None:
     node.build()
     print("Trading Node gestartet. Warte auf Trade-Abschluss (max. 90 s) ...")
 
-    # node.run() ist blockierend — im Thread-Pool ausführen damit
-    # der asyncio-Loop weiterläuft und den Timeout überwachen kann.
     loop = asyncio.get_event_loop()
     run_task = loop.run_in_executor(None, node.run)
 
