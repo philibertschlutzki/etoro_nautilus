@@ -4,6 +4,7 @@ import ssl
 import uuid
 import websockets
 import os
+import traceback
 from datetime import datetime
 
 from nautilus_trader.common.enums import LogColor
@@ -325,4 +326,4 @@ class EToroDataClient(LiveMarketDataClient):
                 )
 
         except Exception as e:
-            self._log.error(f"Fehler beim Verarbeiten der Nachricht: {e} | Nachricht: {msg}", exc_info=True)
+            self._log.error(f"Fehler beim Verarbeiten der Nachricht: {e}\n{traceback.format_exc()}\nNachricht: {msg}")
