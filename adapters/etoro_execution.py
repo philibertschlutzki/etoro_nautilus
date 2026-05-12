@@ -25,7 +25,6 @@ import websockets
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.common.providers import InstrumentProvider
-from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.execution.messages import (
     BatchCancelOrders,
     CancelAllOrders,
@@ -35,9 +34,7 @@ from nautilus_trader.execution.messages import (
     SubmitOrder,
     SubmitOrderList,
 )
-from nautilus_trader.live.config import LiveExecClientConfig
 from nautilus_trader.live.execution_client import LiveExecutionClient
-from nautilus_trader.live.factories import LiveExecClientFactory
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import (
     AccountType,
@@ -47,7 +44,6 @@ from nautilus_trader.model.enums import (
     OrderType,
     PositionSide,
 )
-from nautilus_trader.model.events import AccountState
 from nautilus_trader.model.identifiers import (
     ClientId,
     ClientOrderId,
