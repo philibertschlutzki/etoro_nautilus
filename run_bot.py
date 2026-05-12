@@ -2,6 +2,7 @@ import os
 import sys
 import importlib
 import logging
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -177,7 +178,7 @@ def main():
     except KeyboardInterrupt:
         log.warning("Herunterfahren eingeleitet (KeyboardInterrupt)...")
     except Exception as e:
-        log.error(f"Laufzeitfehler: {e}", exc_info=True)
+        log.error(f"Laufzeitfehler: {e}\n{traceback.format_exc()}")
     finally:
         node.stop()
         log.info("Bot erfolgreich beendet.")
