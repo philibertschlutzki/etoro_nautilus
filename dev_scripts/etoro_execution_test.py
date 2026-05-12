@@ -11,6 +11,7 @@ from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy, StrategyConfig
+from nautilus_trader.model.objects import Quantity
 
 # Projektpfad einbinden
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,7 +43,7 @@ class ApiOrderTestStrategy(Strategy):
 
     def on_quote_tick(self, tick: QuoteTick):
         if not self.buy_submitted:
-            quantity = (self.usd_amount / tick.ask_price).quantize(Decimal("0.0001"))
+            quantity = Quantity(float(self.usd_amount) / float(tick.ask_price), precision=4)
             self.log.info(f"Sende BUY: {quantity} Units @ Ask {tick.ask_price} (~{self.usd_amount} USD)")
             
             order = self.order_factory.market(
