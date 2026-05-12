@@ -70,7 +70,7 @@ _REST_TIMEOUT_S       = 10
 
 _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
-    "real": "https://public-api.etoro.com/api/v1/trading/execution/real",
+    "real": "https://public-api.etoro.com/api/v1/trading/execution",
 }
 
 # FIX #1: Korrekter PnL-Pfad laut API-Doku (/trading/info/, nicht /trading/execution/)
@@ -474,15 +474,26 @@ class EToroExecutionClient(LiveExecutionClient):
         # Match incoming message to a known client order via state mapping.
         all_mappings  = self._state.get_all()
         matched_coid: str | None = None
-        for coid, pos_id in all_mappings.items():
-            if (position_id and pos_id == position_id) or (
-                order_id and coid == order_id
+        for coid, stored_id in all_mappings.items():
+            # KORREKTUR: stored_id (eToro ID aus dem State) mit position_id ODER order_id vergleichen
+            if (position_id and stored_id == position_id) or (
+                order_id and stored_id == order_id
             ):
                 matched_coid = coid
                 break
 
         if matched_coid is None:
             return
+
+        # KORREKTUR: Wenn die Position ausgeführt wird und eine neue, finale Position-ID bekommt, 
+        # müssen wir den State aktualisieren. Ansonsten schlägt das spätere "Close" fehl.
+        stored_id = all_mappings[matched_coid]
+        if position_id and position_id != stored_id:
+            await self._state.set(matched_coid, position_id)
+            self._log.info(
+                f"State updated: {matched_coid} -> {position_id} (war {stored_id})", 
+                LogColor.CYAN
+            )
 
         client_order_id = ClientOrderId(matched_coid)
         order           = self._cache.order(client_order_id)
