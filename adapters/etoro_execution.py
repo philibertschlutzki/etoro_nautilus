@@ -164,6 +164,8 @@ class EToroExecutionClient(LiveExecutionClient):
         if self._dry_run:
             self._log.info(
                 "⚠️  DRY-RUN MODE: no real orders will be sent.", LogColor.YELLOW
+            self._log.info(
+                f"REST POST {url} | payload={payload} | x-request-id={req_id}", LogColor.CYAN,
             )
         await self._state.load(warn_fn=self._log.warning)
         self._session = aiohttp.ClientSession(
