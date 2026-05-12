@@ -315,7 +315,7 @@ class EToroDataClient(LiveMarketDataClient):
                 ts_init=self._clock.timestamp_ns(),
             )
 
-            self.handle_quote_tick(tick)
+            self._handle_data(tick)
 
             # Periodic heartbeat so logs confirm the loop is alive
             self._tick_counter += 1
