@@ -6,14 +6,18 @@ token-bucket rate limiting, atomic state persistence, and dry-run mode.
 
 from __future__ import annotations
 
+from adapters.etoro_rate_limiter import _RateLimiter
+from adapters.etoro_state_manager import _StateManager
+from adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
+
+
 import asyncio
 import hashlib
 import json
 import os
 import ssl
-import uuid
 from contextlib import suppress
-from pathlib import Path
+import uuid
 from typing import TYPE_CHECKING, Literal
 
 import aiohttp
@@ -62,8 +66,6 @@ from adapters.instrument_map import ETORO_INSTRUMENTS
 _MAX_CONNECT_ATTEMPTS = 5
 _CONNECT_TIMEOUT_S = 30
 _REST_TIMEOUT_S = 10
-_RATE_LIMIT_CAPACITY = 20
-_RATE_LIMIT_REFILL_INTERVAL = 3.0  # seconds per token
 
 _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
@@ -74,180 +76,6 @@ _PNL_BASE: dict[str, str] = {
     "real": "https://public-api.etoro.com/api/v1/trading/execution/real/pnl",
 }
 _WS_URL = "wss://ws.etoro.com/ws"
-
-
-# ── Rate Limiter ───────────────────────────────────────────────────────────────
-
-class _RateLimiter:
-    """Async token bucket: 20 cap, 1 token / 3 s.
-
-    CLOSE requests queue and wait; OPEN requests fail-fast if no token.
-    """
-
-    def __init__(
-        self,
-        capacity: int = _RATE_LIMIT_CAPACITY,
-        refill_interval: float = _RATE_LIMIT_REFILL_INTERVAL,
-    ) -> None:
-        self._capacity = capacity
-        self._tokens = capacity
-        self._refill_interval = refill_interval
-        self._lock = asyncio.Lock()
-        self._close_queue: asyncio.PriorityQueue[tuple[int, int, asyncio.Future[bool]]] = (
-            asyncio.PriorityQueue()
-        )
-        self._seq = 0
-        self._task: asyncio.Task[None] | None = None
-
-    async def start(self) -> None:
-        self._task = asyncio.ensure_future(self._refill_loop())
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _refill_loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._refill_interval)
-            await self._tick()
-
-    async def _tick(self) -> None:
-        """One refill cycle: add a token if below capacity, drain CLOSE queue."""
-        futures_to_resolve: list[asyncio.Future[bool]] = []
-        async with self._lock:
-            if self._tokens < self._capacity:
-                self._tokens += 1
-            while not self._close_queue.empty() and self._tokens > 0:
-                _, _, future = self._close_queue.get_nowait()
-                if not future.done():
-                    self._tokens -= 1
-                    futures_to_resolve.append(future)
-        for future in futures_to_resolve:
-            if not future.done():
-                future.set_result(True)
-
-    async def acquire(self, priority: str) -> bool:
-        """Acquire a token.
-
-        Returns True when the token is granted.
-        For CLOSE: queues and awaits until granted (never dropped).
-        For OPEN / LIMIT: returns False immediately when capacity is 0.
-        """
-        if priority == "CLOSE":
-            loop = asyncio.get_running_loop()
-            future: asyncio.Future[bool] = loop.create_future()
-            async with self._lock:
-                if self._tokens > 0:
-                    self._tokens -= 1
-                    return True
-                self._seq += 1
-                self._close_queue.put_nowait((0, self._seq, future))
-            return await future
-        else:
-            async with self._lock:
-                if self._tokens > 0:
-                    self._tokens -= 1
-                    return True
-            return False
-
-    @property
-    def tokens(self) -> int:
-        return self._tokens
-
-
-# ── State Manager ─────────────────────────────────────────────────────────────
-
-class _StateManager:
-    """Atomic-write JSON persistence for ClientOrderId → eToro positionId mapping."""
-
-    def __init__(self, state_path: str) -> None:
-        self._path = Path(state_path)
-        self._mapping: dict[str, str] = {}
-        self._lock = asyncio.Lock()
-
-    async def load(self, warn_fn: object = None) -> None:
-        """Load mapping from disk; start with empty dict on any failure."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        if self._path.exists():
-            try:
-                data = self._path.read_text(encoding="utf-8")
-                loaded = json.loads(data)
-                if isinstance(loaded, dict):
-                    self._mapping = {str(k): str(v) for k, v in loaded.items()}
-                else:
-                    self._mapping = {}
-            except Exception as exc:
-                if warn_fn is not None:
-                    warn_fn(
-                        f"State load failed ({exc}); starting with empty mapping.",
-                        LogColor.YELLOW,
-                    )
-                self._mapping = {}
-        else:
-            self._mapping = {}
-
-    async def get(self, client_order_id: str) -> str | None:
-        async with self._lock:
-            return self._mapping.get(client_order_id)
-
-    async def set(self, client_order_id: str, position_id: str) -> None:
-        async with self._lock:
-            self._mapping[client_order_id] = position_id
-            await self._persist()
-
-    async def delete(self, client_order_id: str) -> None:
-        async with self._lock:
-            self._mapping.pop(client_order_id, None)
-            await self._persist()
-
-    async def _persist(self) -> None:
-        tmp = str(self._path) + ".tmp"
-        data = json.dumps(self._mapping, indent=2)
-        Path(tmp).write_text(data, encoding="utf-8")
-        os.replace(tmp, str(self._path))
-
-    def get_all(self) -> dict[str, str]:
-        return dict(self._mapping)
-
-
-# ── Config & Factory ──────────────────────────────────────────────────────────
-
-class EToroExecClientConfig(LiveExecClientConfig, frozen=True, kw_only=True):
-    api_key: str
-    user_key: str
-    environment: Literal["demo", "real"] = "demo"
-    dry_run: bool = True
-    state_path: str = "data/state/execution_mapping.json"
-    enable_trailing_stop: bool = True
-
-
-class EToroLiveExecClientFactory(LiveExecClientFactory):
-    @staticmethod
-    def create(
-        loop: asyncio.AbstractEventLoop,
-        name: str,
-        config: EToroExecClientConfig,
-        msgbus: object,
-        cache: object,
-        clock: object,
-        **kwargs: object,
-    ) -> "EToroExecutionClient":
-        return EToroExecutionClient(
-            loop=loop,
-            msgbus=msgbus,
-            cache=cache,
-            clock=clock,
-            instrument_provider=InstrumentProvider(),
-            api_key=config.api_key,
-            user_key=config.user_key,
-            environment=config.environment,
-            dry_run=config.dry_run,
-            state_path=config.state_path,
-            enable_trailing_stop=config.enable_trailing_stop,
-        )
 
 
 # ── Execution Client ───────────────────────────────────────────────────────────
@@ -280,8 +108,14 @@ class EToroExecutionClient(LiveExecutionClient):
             msgbus=msgbus,
             cache=cache,
             clock=clock,
-            account_id=AccountId(f"ETORO-{environment.upper()}-001"),
         )
+        # Determine and validate Account ID
+        account_id_str = f"ETORO-{environment.upper()}-001" if environment else None
+        if not account_id_str:
+            raise ValueError("Account ID missing in configuration. Ensure environment is correctly set.")
+
+        self._set_account_id(AccountId(account_id_str))
+
         self._api_key = api_key
         self._user_key = user_key
         self._environment = environment
