@@ -14,7 +14,7 @@ from nautilus_trader.live.data_client import LiveMarketDataClient
 from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import QuoteTick
-from nautilus_trader.model.identifiers import ClientId, InstrumentId, Symbol, Venue
+from nautilus_trader.model.identifiers import ClientId, InstrumentId, Venue
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
@@ -26,12 +26,20 @@ _MAX_CONNECT_ATTEMPTS = 5
 _CONNECT_TIMEOUT_S = 30
 _HEARTBEAT_INTERVAL = 60  # log a heartbeat every N ticks
 
+# Einmalig auf Modul-Ebene definiert — nicht bei jeder Instrument-Registrierung
+# neu allokiert. Erweiterbar ohne Logik-Änderung.
+_CRYPTO_SYMBOLS: frozenset[str] = frozenset({
+    "BTC", "ETH", "ADA", "XRP", "SOL", "AVAX", "DOGE",
+    "ONDO", "HYPE", "AERO", "SHIBxM", "PEPExM",
+})
+
 # ── Config & Factory ──────────────────────────────────────────────────────────
 
 class EToroDataClientConfig(LiveDataClientConfig, frozen=True, kw_only=True):
     api_key: str
     user_key: str
     instrument_ids: list[str]
+
 
 class EToroLiveDataClientFactory(LiveDataClientFactory):
     @staticmethod
@@ -47,10 +55,12 @@ class EToroLiveDataClientFactory(LiveDataClientFactory):
             instrument_ids=config.instrument_ids,
         )
 
+
 # ── Client ────────────────────────────────────────────────────────────────────
 
 class EToroDataClient(LiveMarketDataClient):
-    def __init__(self, loop, msgbus, cache, clock, instrument_provider, api_key, user_key, instrument_ids):
+    def __init__(self, loop, msgbus, cache, clock, instrument_provider,
+                 api_key, user_key, instrument_ids):
         super().__init__(
             loop=loop,
             venue=Venue("ETORO"),
@@ -66,9 +76,10 @@ class EToroDataClient(LiveMarketDataClient):
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
         self._tick_counter: int = 0
-        self._instrument_precision: dict[str, int] = {}
+        self._instrument_precision: dict[str, int] = {}  # price precision per eid
+        self._instrument_size_precision: dict[str, int] = {}  # size precision per eid
 
-        self.instrument_map = {}
+        self.instrument_map: dict[str, InstrumentId] = {}
         for eid in self.instrument_ids:
             if eid in ETORO_INSTRUMENTS:
                 self.instrument_map[eid] = InstrumentId.from_str(ETORO_INSTRUMENTS[eid])
@@ -78,6 +89,8 @@ class EToroDataClient(LiveMarketDataClient):
         self._last_bid: dict[str, float] = {}
         self._last_ask: dict[str, float] = {}
 
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
     async def _connect(self) -> None:
         ssl_context = ssl.create_default_context()
         last_exc: Exception | None = None
@@ -86,7 +99,8 @@ class EToroDataClient(LiveMarketDataClient):
             delay = min(10 * attempt, 60)
             try:
                 self._log.info(
-                    f"WebSocket Verbindungsversuch {attempt}/{_MAX_CONNECT_ATTEMPTS} zu {self.ws_url} ...",
+                    f"WebSocket Verbindungsversuch {attempt}/{_MAX_CONNECT_ATTEMPTS} "
+                    f"zu {self.ws_url} ...",
                     LogColor.BLUE,
                 )
                 self._ws = await asyncio.wait_for(
@@ -100,7 +114,6 @@ class EToroDataClient(LiveMarketDataClient):
                 )
                 self._log.info("WebSocket verbunden. Authentifiziere...", LogColor.GREEN)
                 self._register_instruments()
-                # Reset stale prices from a previous session
                 self._last_bid.clear()
                 self._last_ask.clear()
                 await self._authenticate()
@@ -110,11 +123,14 @@ class EToroDataClient(LiveMarketDataClient):
             except Exception as e:
                 last_exc = e
                 self._log.warning(
-                    f"Verbindungsversuch {attempt}/{_MAX_CONNECT_ATTEMPTS} fehlgeschlagen: {e}",
+                    f"Verbindungsversuch {attempt}/{_MAX_CONNECT_ATTEMPTS} "
+                    f"fehlgeschlagen: {e}",
                     LogColor.YELLOW,
                 )
                 if attempt < _MAX_CONNECT_ATTEMPTS:
-                    self._log.info(f"Warte {delay}s vor nächstem Versuch...", LogColor.BLUE)
+                    self._log.info(
+                        f"Warte {delay}s vor nächstem Versuch...", LogColor.BLUE
+                    )
                     await asyncio.sleep(delay)
 
         self._log.error(
@@ -131,6 +147,7 @@ class EToroDataClient(LiveMarketDataClient):
             self._log.info("WebSocket geschlossen.", LogColor.BLUE)
 
     # ── Boilerplate-Methoden ──────────────────────────────────────────────────
+
     async def _subscribe_quote_ticks(self, command) -> None: pass
     async def _unsubscribe_quote_ticks(self, command) -> None: pass
     async def _subscribe_trade_ticks(self, command) -> None: pass
@@ -156,40 +173,46 @@ class EToroDataClient(LiveMarketDataClient):
     # ── Instruments ───────────────────────────────────────────────────────────
 
     def _register_instruments(self) -> None:
-    ts = self._clock.timestamp_ns()
-    for eid, instr_id in self.instrument_map.items():
-        sym = str(instr_id.symbol).upper()
+        ts = self._clock.timestamp_ns()
+        for eid, instr_id in self.instrument_map.items():
+            sym = str(instr_id.symbol).upper()
 
-        # Price precision
-        if "SHIB" in sym or "PEPE" in sym:
-            price_prec, price_incr = 8, 1e-8
-        elif "BTC" in sym or "ETH" in sym:
-            price_prec, price_incr = 2, 0.01
-        else:
-            price_prec, price_incr = 5, 0.00001
+            # ── Price precision ───────────────────────────────────────────────
+            if "SHIB" in sym or "PEPE" in sym:
+                price_prec, price_incr = 8, 1e-8
+            elif "BTC" in sym or "ETH" in sym:
+                price_prec, price_incr = 2, 0.01
+            else:
+                price_prec, price_incr = 5, 0.00001
 
-        # Size precision — Crypto fractional, Stocks ganzzahlig
-        _CRYPTO = {"BTC", "ETH", "ADA", "XRP", "SOL", "AVAX", "DOGE",
-                   "ONDO", "HYPE", "AERO", "SHIBxM", "PEPExM"}
-        _is_crypto = any(c in sym for c in _CRYPTO)
-        size_prec = 4 if _is_crypto else 0
-        lot_qty   = 0.0001 if _is_crypto else 1.0
+            # ── Size precision ────────────────────────────────────────────────
+            # Crypto: 4 Dezimalstellen (z. B. 39.9855 ADA)
+            # Stocks/FX/Commodities: ganzzahlig (z. B. 5 TSLA-Aktien)
+            is_crypto = any(c in sym for c in _CRYPTO_SYMBOLS)
+            size_prec = 4 if is_crypto else 0
+            lot_qty   = 0.0001 if is_crypto else 1.0
 
-        self._instrument_precision[eid] = price_prec
+            self._instrument_precision[eid] = price_prec
+            self._instrument_size_precision[eid] = size_prec  # für spätere Nutzung
 
-        inst = Equity(
-            instrument_id=instr_id,
-            raw_symbol=instr_id.symbol,
-            currency=USD,
-            price_precision=price_prec,
-            price_increment=Price(price_incr, precision=price_prec),
-            lot_size=Quantity(lot_qty, precision=size_prec),  # ← fix
-            ts_event=ts,
-            ts_init=ts,
-        )
+            inst = Equity(
+                instrument_id=instr_id,
+                raw_symbol=instr_id.symbol,
+                currency=USD,
+                price_precision=price_prec,
+                price_increment=Price(price_incr, precision=price_prec),
+                lot_size=Quantity(lot_qty, precision=size_prec),
+                ts_event=ts,
+                ts_init=ts,
+            )
             self._instrument_provider.add(inst)
             self._cache.add_instrument(inst)
             self._msgbus.publish(topic=f"data.instrument.ETORO.{inst.id}", msg=inst)
+            self._log.info(
+                f"Instrument registriert: {instr_id} "
+                f"(price_prec={price_prec}, size_prec={size_prec})",
+                LogColor.BLUE,
+            )
 
     # ── Auth & Subscribe ──────────────────────────────────────────────────────
 
@@ -212,7 +235,10 @@ class EToroDataClient(LiveMarketDataClient):
             if resp.get("status") not in (None, "OK", "ok", 200):
                 raise RuntimeError(f"Authentifizierung fehlgeschlagen: {resp}")
         except json.JSONDecodeError:
-            self._log.warning(f"Auth-Antwort konnte nicht geparst werden: {raw_resp!r}", LogColor.YELLOW)
+            self._log.warning(
+                f"Auth-Antwort konnte nicht geparst werden: {raw_resp!r}",
+                LogColor.YELLOW,
+            )
         await self._subscribe_etoro_instruments()
 
     async def _subscribe_etoro_instruments(self) -> None:
@@ -240,24 +266,33 @@ class EToroDataClient(LiveMarketDataClient):
                     for msg in data["messages"]:
                         self._process_message(msg)
 
-            # Server closed the connection cleanly
             self._log.warning(
-                "WebSocket vom Server sauber geschlossen. Erzwinge Neustart via systemd...",
+                "WebSocket vom Server sauber geschlossen. "
+                "Erzwinge Neustart via systemd...",
                 LogColor.YELLOW,
             )
             os._exit(1)
 
         except websockets.exceptions.ConnectionClosedOK:
-            self._log.warning("WebSocket sauber getrennt (CloseOK). Erzwinge Neustart...", LogColor.YELLOW)
+            self._log.warning(
+                "WebSocket sauber getrennt (CloseOK). Erzwinge Neustart...",
+                LogColor.YELLOW,
+            )
             os._exit(1)
         except websockets.exceptions.ConnectionClosedError as e:
-            self._log.error(f"WebSocket Verbindungsfehler: {e}. Erzwinge Neustart...", LogColor.RED)
+            self._log.error(
+                f"WebSocket Verbindungsfehler: {e}. Erzwinge Neustart...",
+                LogColor.RED,
+            )
             os._exit(1)
         except asyncio.CancelledError:
             self._log.info("Message Loop beendet (Cancelled).", LogColor.BLUE)
             raise
         except Exception as e:
-            self._log.error(f"Unerwarteter WebSocket-Fehler: {e}. Erzwinge Neustart...", LogColor.RED)
+            self._log.error(
+                f"Unerwarteter WebSocket-Fehler: {e}. Erzwinge Neustart...",
+                LogColor.RED,
+            )
             os._exit(1)
 
     # ── Message Processing ────────────────────────────────────────────────────
@@ -268,12 +303,21 @@ class EToroDataClient(LiveMarketDataClient):
             return
 
         try:
-            content = json.loads(msg["content"]) if isinstance(msg.get("content"), str) else msg.get("content")
+            content_raw = msg.get("content", {})
+            content: dict = (
+                json.loads(content_raw)
+                if isinstance(content_raw, str)
+                else content_raw
+            )
             if not isinstance(content, dict):
                 return
 
             topic = msg.get("topic", "")
-            instr_id = topic.split(":")[1] if topic.startswith("instrument:") else str(content.get("InstrumentID", ""))
+            instr_id = (
+                topic.split(":")[1]
+                if topic.startswith("instrument:")
+                else str(content.get("InstrumentID", ""))
+            )
 
             if instr_id not in self.instrument_map:
                 return
@@ -282,12 +326,12 @@ class EToroDataClient(LiveMarketDataClient):
                 is_open = content.get("IsMarketOpen") == "true"
                 allow_buy = content.get("AllowBuy") == "true"
                 self._log.info(
-                    f"Snapshot {self.instrument_map[instr_id]}: MarketOpen={is_open}, AllowBuy={allow_buy}",
+                    f"Snapshot {self.instrument_map[instr_id]}: "
+                    f"MarketOpen={is_open}, AllowBuy={allow_buy}",
                     LogColor.MAGENTA,
                 )
 
-            bid_changed = False
-            ask_changed = False
+            bid_changed = ask_changed = False
 
             if "Bid" in content:
                 self._last_bid[instr_id] = float(content["Bid"])
@@ -301,7 +345,6 @@ class EToroDataClient(LiveMarketDataClient):
 
             bid = self._last_bid.get(instr_id)
             ask = self._last_ask.get(instr_id)
-
             if bid is None or ask is None:
                 return
 
@@ -312,20 +355,18 @@ class EToroDataClient(LiveMarketDataClient):
             else:
                 ts = self._clock.timestamp_ns()
 
-            prec = self._instrument_precision.get(instr_id, 5)
+            price_prec = self._instrument_precision.get(instr_id, 5)
             tick = QuoteTick(
                 instrument_id=self.instrument_map[instr_id],
-                bid_price=Price(bid, precision=prec),
-                ask_price=Price(ask, precision=prec),
+                bid_price=Price(bid, precision=price_prec),
+                ask_price=Price(ask, precision=price_prec),
                 bid_size=Quantity(1.0, precision=0),
                 ask_size=Quantity(1.0, precision=0),
                 ts_event=ts,
                 ts_init=self._clock.timestamp_ns(),
             )
-
             self._handle_data(tick)
 
-            # Periodic heartbeat so logs confirm the loop is alive
             self._tick_counter += 1
             if self._tick_counter % _HEARTBEAT_INTERVAL == 0:
                 self._log.info(
@@ -334,4 +375,8 @@ class EToroDataClient(LiveMarketDataClient):
                 )
 
         except Exception as e:
-            self._log.error(f"Fehler beim Verarbeiten der Nachricht: {e}\n{traceback.format_exc()}\nNachricht: {msg}")
+            self._log.error(
+                f"Fehler beim Verarbeiten der Nachricht: {e}\n"
+                f"{traceback.format_exc()}\n"
+                f"Nachricht: {msg}"
+            )
