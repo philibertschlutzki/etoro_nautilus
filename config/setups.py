@@ -8,8 +8,8 @@ Du kannst dieselbe Strategie mehrfach mit verschiedenen Parametern oder Instrume
 # --- API Test Settings --------------------------------------------------------
 # Dieser Block wird nur vom Test-Script verwendet
 ETORO_API_TEST = {
-    "environment": "real",       # Real oder demo
-    "dry_run": False,            # Muss False sein, damit echte Orders rausgehen
+    "environment": "demo",       # Real oder demo
+    "dry_run": True,            # Muss False sein, damit echte Orders rausgehen
     "symbol": "ADA.ETORO",       # Cardano eignet sich gut (kleiner Preis pro Unit)
     "trade_amount_usd": 11.0,    # Etwas über den 10$ Mindestbetrag zur Sicherheit
     "test_account_id": "TEST_01" # Label für das Logging
