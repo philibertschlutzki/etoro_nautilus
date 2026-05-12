@@ -6,6 +6,7 @@ import websockets
 import os
 import traceback
 from datetime import datetime
+from decimal import Decimal
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.common.providers import InstrumentProvider
@@ -13,9 +14,11 @@ from nautilus_trader.config import LiveDataClientConfig
 from nautilus_trader.live.data_client import LiveMarketDataClient
 from nautilus_trader.live.factories import LiveDataClientFactory
 from nautilus_trader.model.currencies import USD
+from nautilus_trader.model.currency import Currency
 from nautilus_trader.model.data import QuoteTick
+from nautilus_trader.model.enums import CurrencyType
 from nautilus_trader.model.identifiers import ClientId, InstrumentId, Venue
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.instruments import CryptoPerpetual, Equity
 from nautilus_trader.model.objects import Price, Quantity
 
 from adapters.instrument_map import ETORO_INSTRUMENTS
@@ -24,14 +27,19 @@ from adapters.instrument_map import ETORO_INSTRUMENTS
 
 _MAX_CONNECT_ATTEMPTS = 5
 _CONNECT_TIMEOUT_S = 30
-_HEARTBEAT_INTERVAL = 60  # log a heartbeat every N ticks
+_HEARTBEAT_INTERVAL = 60
 
-# Einmalig auf Modul-Ebene definiert — nicht bei jeder Instrument-Registrierung
-# neu allokiert. Erweiterbar ohne Logik-Änderung.
+# Crypto-Symbole die fraktionale Quantities erlauben (size_precision > 0).
 _CRYPTO_SYMBOLS: frozenset[str] = frozenset({
     "BTC", "ETH", "ADA", "XRP", "SOL", "AVAX", "DOGE",
     "ONDO", "HYPE", "AERO", "SHIBxM", "PEPExM",
 })
+
+# Symbole mit nicht-standardmässiger Schreibweise → ISO-Ticker
+_CRYPTO_TICKER: dict[str, str] = {
+    "SHIBxM": "SHIB",
+    "PEPExM": "PEPE",
+}
 
 # ── Config & Factory ──────────────────────────────────────────────────────────
 
@@ -76,7 +84,7 @@ class EToroDataClient(LiveMarketDataClient):
         self.ws_url = "wss://ws.etoro.com/ws"
         self._ws = None
         self._tick_counter: int = 0
-        self._instrument_precision: dict[str, int] = {}  # price precision per eid
+        self._instrument_precision: dict[str, int] = {}       # price precision per eid
         self._instrument_size_precision: dict[str, int] = {}  # size precision per eid
 
         self.instrument_map: dict[str, InstrumentId] = {}
@@ -172,6 +180,20 @@ class EToroDataClient(LiveMarketDataClient):
 
     # ── Instruments ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _make_crypto_currency(ticker: str) -> Currency:
+        """Lädt bekannte Currencies aus der Registry, legt unbekannte on-the-fly an."""
+        try:
+            return Currency.from_str(ticker)
+        except Exception:
+            return Currency(
+                code=ticker,
+                precision=8,
+                iso4217=0,
+                name=ticker,
+                currency_type=CurrencyType.CRYPTO,
+            )
+
     def _register_instruments(self) -> None:
         ts = self._clock.timestamp_ns()
         for eid, instr_id in self.instrument_map.items():
@@ -185,32 +207,63 @@ class EToroDataClient(LiveMarketDataClient):
             else:
                 price_prec, price_incr = 5, 0.00001
 
-            # ── Size precision ────────────────────────────────────────────────
-            # Crypto: 4 Dezimalstellen (z. B. 39.9855 ADA)
-            # Stocks/FX/Commodities: ganzzahlig (z. B. 5 TSLA-Aktien)
+            # ── Instrument-Typ & Size precision ──────────────────────────────
+            # CryptoPerpetual unterstützt size_precision als expliziten Parameter
+            # und ist der semantisch korrekte Typ für fraktional handelbare Assets.
+            # Equity (Aktien/FX/Rohstoffe) bleibt bei ganzzahligen Quantities.
             is_crypto = any(c in sym for c in _CRYPTO_SYMBOLS)
-            size_prec = 4 if is_crypto else 0
-            lot_qty   = 0.0001 if is_crypto else 1.0
+
+            if is_crypto:
+                size_prec = 4
+                ticker = _CRYPTO_TICKER.get(sym, sym)
+                base_ccy = self._make_crypto_currency(ticker)
+                inst = CryptoPerpetual(
+                    instrument_id=instr_id,
+                    raw_symbol=instr_id.symbol,
+                    base_currency=base_ccy,
+                    quote_currency=USD,
+                    settlement_currency=USD,
+                    is_inverse=False,
+                    price_precision=price_prec,
+                    size_precision=size_prec,
+                    price_increment=Price(price_incr, precision=price_prec),
+                    size_increment=Quantity(0.0001, precision=size_prec),
+                    max_quantity=None,
+                    min_quantity=None,
+                    max_notional=None,
+                    min_notional=None,
+                    max_price=None,
+                    min_price=None,
+                    margin_init=Decimal("0.01"),
+                    margin_maint=Decimal("0.005"),
+                    maker_fee=Decimal("0"),
+                    taker_fee=Decimal("0"),
+                    ts_event=ts,
+                    ts_init=ts,
+                )
+            else:
+                size_prec = 0
+                inst = Equity(
+                    instrument_id=instr_id,
+                    raw_symbol=instr_id.symbol,
+                    currency=USD,
+                    price_precision=price_prec,
+                    price_increment=Price(price_incr, precision=price_prec),
+                    lot_size=Quantity(1, precision=0),
+                    ts_event=ts,
+                    ts_init=ts,
+                )
 
             self._instrument_precision[eid] = price_prec
-            self._instrument_size_precision[eid] = size_prec  # für spätere Nutzung
+            self._instrument_size_precision[eid] = size_prec
 
-            inst = Equity(
-                instrument_id=instr_id,
-                raw_symbol=instr_id.symbol,
-                currency=USD,
-                price_precision=price_prec,
-                price_increment=Price(price_incr, precision=price_prec),
-                lot_size=Quantity(lot_qty, precision=size_prec),
-                ts_event=ts,
-                ts_init=ts,
-            )
             self._instrument_provider.add(inst)
             self._cache.add_instrument(inst)
             self._msgbus.publish(topic=f"data.instrument.ETORO.{inst.id}", msg=inst)
             self._log.info(
                 f"Instrument registriert: {instr_id} "
-                f"(price_prec={price_prec}, size_prec={size_prec})",
+                f"[{'Crypto' if is_crypto else 'Equity'}] "
+                f"price_prec={price_prec}, size_prec={inst.size_precision}",
                 LogColor.BLUE,
             )
 
