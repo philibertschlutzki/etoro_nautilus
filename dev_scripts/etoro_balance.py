@@ -1,7 +1,7 @@
 """
 eToro Konto-Balance Abruf
 ==========================
-Ruft Guthaben, offene Positionen, Agent Portfolios (Mirrors) und verfügbares Cash 
+Ruft Guthaben, Agent Portfolios (Mirrors), User Identity und verfügbares Cash 
 für Demo- und Real-Konto ab.
 
 Ausführung:
@@ -38,8 +38,8 @@ PNL_ENDPOINTS = {
     "real": "https://public-api.etoro.com/api/v1/trading/info/real/pnl",
 }
 
-# Korrigierter Endpunkt für User Identity
-IDENTITY_URL = "https://public-api.etoro.com/api/v1/identity"
+# 🛠️ KORREKTUR: Der offizielle Endpunkt lautet /api/v1/me
+IDENTITY_URL = "https://public-api.etoro.com/api/v1/me"
 
 
 def _headers() -> dict:
@@ -82,9 +82,10 @@ async def fetch_identity(session: aiohttp.ClientSession) -> None:
         async with session.get(IDENTITY_URL, headers=_headers()) as resp:
             if resp.status == 200:
                 data = await resp.json()
+                # 🛠️ KORREKTUR: Schlüssel exakt nach OpenAPI-Schema
                 print(f"  GCID           : {data.get('gcid', 'n/a')}")
-                print(f"  Real-CID       : {data.get('realCustomerId', data.get('realCid', 'n/a'))}")
-                print(f"  Demo-CID       : {data.get('demoCustomerId', data.get('demoCid', 'n/a'))}")
+                print(f"  Real-CID       : {data.get('realCid', 'n/a')}")
+                print(f"  Demo-CID       : {data.get('demoCid', 'n/a')}")
             else:
                 body = await resp.text()
                 print(f"  {YELLOW}HTTP {resp.status}: {body[:200]}{RESET}")
