@@ -10,7 +10,6 @@ from adapters.etoro_rate_limiter import _RateLimiter
 from adapters.etoro_state_manager import _StateManager
 from adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
 
-
 import asyncio
 import hashlib
 import json
@@ -18,7 +17,7 @@ import os
 import ssl
 from contextlib import suppress
 import uuid
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import aiohttp
 import websockets
@@ -45,15 +44,15 @@ from nautilus_trader.model.enums import (
     PositionSide,
 )
 from nautilus_trader.model.identifiers import (
+    AccountId,
     ClientId,
     ClientOrderId,
     PositionId,
     TradeId,
-    VenueOrderId,
     Venue,
-    AccountId,
+    VenueOrderId,
 )
-from nautilus_trader.model.objects import AccountBalance, Currency, Money, Price, Quantity
+from nautilus_trader.model.objects import AccountBalance, Money, Price, Quantity
 
 from adapters.instrument_map import ETORO_INSTRUMENTS
 
@@ -105,11 +104,13 @@ class EToroExecutionClient(LiveExecutionClient):
             cache=cache,
             clock=clock,
         )
-        # Determine and validate Account ID
+
         account_id_str = f"ETORO-{environment.upper()}-001" if environment else None
         if not account_id_str:
-            raise ValueError("Account ID missing in configuration. Ensure environment is correctly set.")
-
+            raise ValueError(
+                "Account ID missing in configuration. "
+                "Ensure environment is correctly set."
+            )
         self._set_account_id(AccountId(account_id_str))
 
         self._api_key = api_key
@@ -120,7 +121,6 @@ class EToroExecutionClient(LiveExecutionClient):
         self._rest_base = _REST_BASE[environment]
         self._pnl_base = _PNL_BASE[environment]
 
-        # Reverse lookup: Nautilus InstrumentId string → eToro numeric id string
         self._instrument_to_etoro: dict[str, str] = {
             v: k for k, v in ETORO_INSTRUMENTS.items()
         }
@@ -131,17 +131,11 @@ class EToroExecutionClient(LiveExecutionClient):
         self._ws: object | None = None
         self._ws_task: asyncio.Task[None] | None = None
 
+    # ── Report stubs ──────────────────────────────────────────────────────────
+
     async def generate_order_status_reports(
-        self,
-        instrument_id=None,
-        start=None,
-        end=None,
-        open_only: bool = False,
+        self, instrument_id=None, start=None, end=None, open_only: bool = False
     ) -> list:
-        """
-        eToro bietet keinen sauberen Order-Status-Query-Endpoint.
-        Reconciliation erfolgt ausschliesslich über den WS-Stream und lokalen State.
-        """
         self._log.warning(
             "generate_order_status_reports: Kein Query-Endpoint verfügbar. "
             "Gebe leere Liste zurück.",
@@ -150,48 +144,33 @@ class EToroExecutionClient(LiveExecutionClient):
         return []
 
     async def generate_trade_reports(
-        self,
-        instrument_id=None,
-        venue_order_id=None,
-        start=None,
-        end=None,
+        self, instrument_id=None, venue_order_id=None, start=None, end=None
     ) -> list:
         return []
 
     async def generate_position_status_reports(
-        self,
-        instrument_id=None,
-        start=None,
-        end=None,
+        self, instrument_id=None, start=None, end=None
     ) -> list:
         return []
-    
+
     async def generate_fill_reports(
-        self,
-        instrument_id=None,
-        venue_order_id=None,
-        start=None,
-        end=None,
+        self, instrument_id=None, venue_order_id=None, start=None, end=None
     ) -> list:
         return []
-    
+
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
     async def _connect(self) -> None:
         if self._dry_run:
             self._log.info(
-                "⚠️  DRY-RUN MODE: no real orders will be sent.",
-                LogColor.YELLOW,
+                "⚠️  DRY-RUN MODE: no real orders will be sent.", LogColor.YELLOW
             )
-
         await self._state.load(warn_fn=self._log.warning)
-
         self._session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=_REST_TIMEOUT_S)
         )
         await self._rate_limiter.start()
         await self._connect_ws()
-
         self.generate_account_state(
             balances=[
                 AccountBalance(
@@ -207,23 +186,19 @@ class EToroExecutionClient(LiveExecutionClient):
 
     async def _disconnect(self) -> None:
         await self._rate_limiter.stop()
-
         if self._ws_task is not None:
             self._ws_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._ws_task
             self._ws_task = None
-
         if self._ws is not None:
             await self._ws.close()
             self._ws = None
-
         if self._session is not None:
             await self._session.close()
             self._session = None
-
         self._log.info("EToroExecutionClient disconnected.", LogColor.BLUE)
-    
+
     # ── WebSocket ──────────────────────────────────────────────────────────────
 
     async def _connect_ws(self) -> None:
@@ -257,13 +232,12 @@ class EToroExecutionClient(LiveExecutionClient):
             except Exception as exc:
                 last_exc = exc
                 self._log.warning(
-                    f"Execution WS connect attempt {attempt}/{_MAX_CONNECT_ATTEMPTS} failed: {exc}",
+                    f"Execution WS connect attempt {attempt}/{_MAX_CONNECT_ATTEMPTS} "
+                    f"failed: {exc}",
                     LogColor.YELLOW,
                 )
                 if attempt < _MAX_CONNECT_ATTEMPTS:
-                    self._log.info(
-                        f"Retrying in {delay}s ...", LogColor.BLUE
-                    )
+                    self._log.info(f"Retrying in {delay}s ...", LogColor.BLUE)
                     await asyncio.sleep(delay)
 
         self._log.error(
@@ -287,9 +261,7 @@ class EToroExecutionClient(LiveExecutionClient):
             if resp.get("status") not in (None, "OK", "ok", 200):
                 raise RuntimeError(f"Auth failed: {resp}")
         except json.JSONDecodeError:
-            self._log.warning(
-                f"Auth response not JSON: {raw!r}", LogColor.YELLOW
-            )
+            self._log.warning(f"Auth response not JSON: {raw!r}", LogColor.YELLOW)
 
         sub_payload = {
             "id": str(uuid.uuid4()),
@@ -300,9 +272,7 @@ class EToroExecutionClient(LiveExecutionClient):
             },
         }
         await self._ws.send(json.dumps(sub_payload))
-        self._log.info(
-            "Subscribed to trading notification topics.", LogColor.CYAN
-        )
+        self._log.info("Subscribed to trading notification topics.", LogColor.CYAN)
 
     async def _ws_message_loop(self) -> None:
         try:
@@ -318,8 +288,7 @@ class EToroExecutionClient(LiveExecutionClient):
                         await self._process_ws_message(msg)
 
             self._log.warning(
-                "Execution WS closed by server. Forcing restart ...",
-                LogColor.YELLOW,
+                "Execution WS closed by server. Forcing restart ...", LogColor.YELLOW
             )
             os._exit(1)
 
@@ -358,13 +327,9 @@ class EToroExecutionClient(LiveExecutionClient):
             return
 
         position_id = str(
-            content.get("positionId")
-            or content.get("PositionId")
-            or ""
+            content.get("positionId") or content.get("PositionId") or ""
         )
-        order_id = str(
-            content.get("OrderID") or content.get("orderId") or ""
-        )
+        order_id = str(content.get("OrderID") or content.get("orderId") or "")
 
         all_mappings = self._state.get_all()
         matched_coid: str | None = None
@@ -385,11 +350,7 @@ class EToroExecutionClient(LiveExecutionClient):
 
         ts = self._clock.timestamp_ns()
 
-        if msg_type in (
-            "Trading.Position.Opened",
-            "position.opened",
-            "OrderFilled",
-        ):
+        if msg_type in ("Trading.Position.Opened", "position.opened", "OrderFilled"):
             fill_price_raw = (
                 content.get("OpenRate")
                 or content.get("fillPrice")
@@ -442,45 +403,43 @@ class EToroExecutionClient(LiveExecutionClient):
                 ts_event=ts,
             )
 
-    # ── Command handlers (sync → schedule async task) ─────────────────────────
+    # ── Command handlers ──────────────────────────────────────────────────────
+    # In Nautilus >= 1.200 erwartet LiveExecutionClient.submit_order() dass
+    # _submit_order() eine Coroutine zurückgibt (async def). Sync-Methoden
+    # geben None zurück → TypeError in uvloop.create_task().
 
-    def _submit_order(self, command: SubmitOrder) -> None:
-        self.create_task(
-            self._submit_order_async(command),
-            log_msg=f"submit_{command.order.client_order_id.value}",
-        )
+    async def _submit_order(self, command: SubmitOrder) -> None:
+        await self._submit_order_async(command)
 
-    def _cancel_order(self, command: CancelOrder) -> None:
-        self.create_task(
-            self._cancel_order_async(command),
-            log_msg=f"cancel_{command.client_order_id.value}",
-        )
+    async def _cancel_order(self, command: CancelOrder) -> None:
+        await self._cancel_order_async(command)
 
-    def _modify_order(self, command: ModifyOrder) -> None:
+    async def _modify_order(self, command: ModifyOrder) -> None:
         self._log.warning(
-            f"ModifyOrder not supported by eToro; ignoring {command.client_order_id.value}",
+            f"ModifyOrder not supported by eToro; ignoring "
+            f"{command.client_order_id.value}",
             LogColor.YELLOW,
         )
 
-    def _submit_order_list(self, command: SubmitOrderList) -> None:
+    async def _submit_order_list(self, command: SubmitOrderList) -> None:
         self._log.warning(
             "SubmitOrderList not supported by eToro; ignoring.", LogColor.YELLOW
         )
 
-    def _cancel_all_orders(self, command: CancelAllOrders) -> None:
+    async def _cancel_all_orders(self, command: CancelAllOrders) -> None:
         self._log.warning(
             "CancelAllOrders not supported by eToro; ignoring.", LogColor.YELLOW
         )
 
-    def _batch_cancel_orders(self, command: BatchCancelOrders) -> None:
+    async def _batch_cancel_orders(self, command: BatchCancelOrders) -> None:
         self._log.warning(
             "BatchCancelOrders not supported by eToro; ignoring.", LogColor.YELLOW
         )
 
-    def _query_order(self, command: QueryOrder) -> None:
+    async def _query_order(self, command: QueryOrder) -> None:
         pass  # No query endpoint; rely on WS stream
 
-    # ── Submit order (async) ──────────────────────────────────────────────────
+    # ── Submit order (async impl) ──────────────────────────────────────────────
 
     async def _submit_order_async(self, command: SubmitOrder) -> None:
         order = command.order
@@ -516,41 +475,26 @@ class EToroExecutionClient(LiveExecutionClient):
 
         await self._send_rest_order(order, is_close, etoro_position_id)
 
-    async def _classify_order(
-        self, order: object
-    ) -> tuple[bool, str | None]:
-        """Determine whether an order is a close (and return the eToro positionId)."""
-        open_positions = self._cache.positions_open(
-            instrument_id=order.instrument_id
-        )
+    async def _classify_order(self, order: object) -> tuple[bool, str | None]:
+        open_positions = self._cache.positions_open(instrument_id=order.instrument_id)
         if not open_positions:
             return False, None
 
         pos = open_positions[0]
         is_close_direction = (
             order.side == OrderSide.SELL and pos.side == PositionSide.LONG
-        ) or (
-            order.side == OrderSide.BUY and pos.side == PositionSide.SHORT
-        )
+        ) or (order.side == OrderSide.BUY and pos.side == PositionSide.SHORT)
         if not is_close_direction:
             return False, None
 
-        coid_str = str(pos.opening_order_id)
-        etoro_pos_id = await self._state.get(coid_str)
+        etoro_pos_id = await self._state.get(str(pos.opening_order_id))
         return True, etoro_pos_id
 
     async def _handle_dry_run(
-        self,
-        order: object,
-        is_close: bool,
-        etoro_position_id: str | None,
+        self, order: object, is_close: bool, etoro_position_id: str | None
     ) -> None:
-        fake_pos_id = str(
-            uuid.uuid5(uuid.NAMESPACE_OID, order.client_order_id.value)
-        )
-        req_id = hashlib.md5(
-            order.client_order_id.value.encode("utf-8")
-        ).hexdigest()
+        fake_pos_id = str(uuid.uuid5(uuid.NAMESPACE_OID, order.client_order_id.value))
+        req_id = hashlib.md5(order.client_order_id.value.encode()).hexdigest()
         payload = self._build_payload(order, is_close, etoro_position_id)
 
         if is_close and etoro_position_id:
@@ -580,18 +524,14 @@ class EToroExecutionClient(LiveExecutionClient):
         )
 
         if order.order_type == OrderType.LIMIT:
-            return  # Pending order; wait for fill via WS
+            return
 
         last_quote = self._cache.quote_tick(order.instrument_id)
-        if last_quote is not None:
-            fill_price = (
-                float(last_quote.ask_price)
-                if order.side == OrderSide.BUY
-                else float(last_quote.bid_price)
-            )
-        else:
-            fill_price = 1.0
-
+        fill_price = (
+            float(last_quote.ask_price if order.side == OrderSide.BUY else last_quote.bid_price)
+            if last_quote is not None
+            else 1.0
+        )
         price_precision = instrument.price_precision if instrument is not None else 2
 
         self.generate_order_filled(
@@ -616,10 +556,7 @@ class EToroExecutionClient(LiveExecutionClient):
         )
 
     def _build_payload(
-        self,
-        order: object,
-        is_close: bool,
-        etoro_position_id: str | None,
+        self, order: object, is_close: bool, etoro_position_id: str | None
     ) -> dict:
         if is_close:
             return {"UnitsToDeduct": None}
@@ -628,16 +565,12 @@ class EToroExecutionClient(LiveExecutionClient):
         etoro_id = int(self._instrument_to_etoro.get(instr_str, "0"))
         is_buy = order.side == OrderSide.BUY
 
-        base: dict = {
-            "InstrumentId": etoro_id,
-            "IsBuy": is_buy,
-            "Leverage": 1,
-        }
+        base: dict = {"InstrumentId": etoro_id, "IsBuy": is_buy, "Leverage": 1}
 
         if order.order_type == OrderType.LIMIT:
             base["Rate"] = float(order.price)
             if self._enable_trailing_stop:
-                base["IsTslEnabled"] = False  # TSL only for market orders
+                base["IsTslEnabled"] = False
             return base
 
         qty = float(order.quantity)
@@ -654,14 +587,9 @@ class EToroExecutionClient(LiveExecutionClient):
         return base
 
     async def _send_rest_order(
-        self,
-        order: object,
-        is_close: bool,
-        etoro_position_id: str | None,
+        self, order: object, is_close: bool, etoro_position_id: str | None
     ) -> None:
-        req_id = hashlib.md5(
-            order.client_order_id.value.encode("utf-8")
-        ).hexdigest()
+        req_id = hashlib.md5(order.client_order_id.value.encode()).hexdigest()
         headers = {
             "x-api-key": self._api_key,
             "x-user-key": self._user_key,
@@ -681,9 +609,7 @@ class EToroExecutionClient(LiveExecutionClient):
 
         try:
             assert self._session is not None
-            async with self._session.post(
-                url, json=payload, headers=headers
-            ) as resp:
+            async with self._session.post(url, json=payload, headers=headers) as resp:
                 status = resp.status
                 body_text = await resp.text()
 
@@ -721,9 +647,7 @@ class EToroExecutionClient(LiveExecutionClient):
                         strategy_id=order.strategy_id,
                         instrument_id=order.instrument_id,
                         client_order_id=order.client_order_id,
-                        venue_order_id=VenueOrderId(
-                            etoro_position_id or "unknown"
-                        ),
+                        venue_order_id=VenueOrderId(etoro_position_id or "unknown"),
                         ts_event=self._clock.timestamp_ns(),
                     )
                     self._log.warning(
@@ -741,13 +665,13 @@ class EToroExecutionClient(LiveExecutionClient):
                         ts_event=self._clock.timestamp_ns(),
                     )
                     self._log.error(
-                        f"Order rejected ({status}): {order.client_order_id.value} | {body_text[:200]}",
+                        f"Order rejected ({status}): {order.client_order_id.value} "
+                        f"| {body_text[:200]}",
                         LogColor.RED,
                     )
 
         except asyncio.TimeoutError:
             await self._reconcile_via_pnl(order, req_id)
-
         except Exception as exc:
             self._log.error(
                 f"REST send error for {order.client_order_id.value}: {exc}",
@@ -761,10 +685,7 @@ class EToroExecutionClient(LiveExecutionClient):
                 ts_event=self._clock.timestamp_ns(),
             )
 
-    async def _reconcile_via_pnl(
-        self, order: object, req_id: str
-    ) -> None:
-        """Check PnL endpoint after timeout to determine if order was placed."""
+    async def _reconcile_via_pnl(self, order: object, req_id: str) -> None:
         try:
             assert self._session is not None
             headers = {
@@ -772,24 +693,16 @@ class EToroExecutionClient(LiveExecutionClient):
                 "x-user-key": self._user_key,
                 "x-request-id": str(uuid.uuid4()),
             }
-            async with self._session.get(
-                self._pnl_base, headers=headers
-            ) as resp:
+            async with self._session.get(self._pnl_base, headers=headers) as resp:
                 if resp.status == 200:
                     body = await resp.json()
                     positions = (
-                        body
-                        if isinstance(body, list)
-                        else body.get("positions", [])
+                        body if isinstance(body, list) else body.get("positions", [])
                     )
                     for pos in positions:
                         if str(pos.get("requestId")) == req_id:
-                            pos_id = str(
-                                pos.get("positionId") or req_id
-                            )
-                            await self._state.set(
-                                order.client_order_id.value, pos_id
-                            )
+                            pos_id = str(pos.get("positionId") or req_id)
+                            await self._state.set(order.client_order_id.value, pos_id)
                             self.generate_order_accepted(
                                 strategy_id=order.strategy_id,
                                 instrument_id=order.instrument_id,
@@ -798,14 +711,13 @@ class EToroExecutionClient(LiveExecutionClient):
                                 ts_event=self._clock.timestamp_ns(),
                             )
                             self._log.info(
-                                f"Reconciled via PnL: {order.client_order_id.value} → {pos_id}",
+                                f"Reconciled via PnL: {order.client_order_id.value} "
+                                f"→ {pos_id}",
                                 LogColor.GREEN,
                             )
                             return
         except Exception as exc:
-            self._log.error(
-                f"PnL reconciliation failed: {exc}", LogColor.RED
-            )
+            self._log.error(f"PnL reconciliation failed: {exc}", LogColor.RED)
 
         self.generate_order_rejected(
             strategy_id=order.strategy_id,
@@ -815,7 +727,7 @@ class EToroExecutionClient(LiveExecutionClient):
             ts_event=self._clock.timestamp_ns(),
         )
 
-    # ── Cancel order (async) ──────────────────────────────────────────────────
+    # ── Cancel order (async impl) ──────────────────────────────────────────────
 
     async def _cancel_order_async(self, command: CancelOrder) -> None:
         coid = command.client_order_id.value
@@ -852,7 +764,7 @@ class EToroExecutionClient(LiveExecutionClient):
         headers = {
             "x-api-key": self._api_key,
             "x-user-key": self._user_key,
-            "x-request-id": hashlib.md5(coid.encode("utf-8")).hexdigest(),
+            "x-request-id": hashlib.md5(coid.encode()).hexdigest(),
             "Content-Type": "application/json",
         }
         url = f"{self._rest_base}/market-close-orders/positions/{pos_id}"
@@ -872,6 +784,4 @@ class EToroExecutionClient(LiveExecutionClient):
                 ts_event=self._clock.timestamp_ns(),
             )
         except Exception as exc:
-            self._log.error(
-                f"Cancel REST failed for {coid}: {exc}", LogColor.RED
-            )
+            self._log.error(f"Cancel REST failed for {coid}: {exc}", LogColor.RED)
