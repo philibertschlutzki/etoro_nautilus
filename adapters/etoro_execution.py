@@ -203,10 +203,16 @@ class EToroExecutionClient(LiveExecutionClient):
 
     async def _process_ws_message(self, msg: dict) -> None:
         msg_type = msg.get("type", "")
+        m_type = msg_type.lower()
+        
         content = msg.get("content", {})
         if isinstance(content, str):
             with suppress(json.JSONDecodeError): content = json.loads(content)
         if not isinstance(content, dict): return
+
+        # Optionales WS-Logging zur Fehlersuche
+        if "trading" in m_type or "order" in m_type or "position" in m_type:
+            self._log.info(f"WS Recv [{msg_type}]: {content}", LogColor.CYAN)
 
         # Case-Insensitive Extrahierung
         c_lower = {str(k).lower(): v for k, v in content.items()}
@@ -220,16 +226,25 @@ class EToroExecutionClient(LiveExecutionClient):
         all_mappings = self._state.get_all()
         matched_coid: str | None = None
         
+        # Prio 1: Eindeutiger Request-Token (perfekt für Race Conditions)
         for coid, stored_id in all_mappings.items():
             req_id = self._order_req_id(coid)
-            if (pos_id and stored_id == pos_id) or (ord_id and stored_id == ord_id) or (token and token == req_id):
+            if token and token == req_id:
                 matched_coid = coid
                 break
+                
+        # Prio 2: Mapping über PositionId/OrderId (Rückwärts, damit Close-Orders vor Open-Orders matchen)
+        if not matched_coid:
+            for coid, stored_id in reversed(list(all_mappings.items())):
+                if (pos_id and stored_id == pos_id) or (ord_id and stored_id == ord_id):
+                    matched_coid = coid
+                    break
+                    
         if not matched_coid: return
 
-        # 2. State-Synchronisierung (orderId -> positionId)
+        # 2. State-Synchronisierung (Aktualisierung von temporärer OrderID auf finale PositionID)
         stored_id = all_mappings[matched_coid]
-        if pos_id and pos_id != stored_id:
+        if pos_id and pos_id != stored_id and len(pos_id) > 0:
             await self._state.set(matched_coid, pos_id)
 
         client_order_id = ClientOrderId(matched_coid)
@@ -237,7 +252,6 @@ class EToroExecutionClient(LiveExecutionClient):
         if not order: return
 
         ts = self._clock.timestamp_ns()
-        m_type = msg_type.lower()
 
         # 3. Nautilus Events feuern
         if m_type in ("trading.position.opened", "position.opened", "orderfilled", "trading.order.filled", "trading.position.closed", "position.closed"):
@@ -278,7 +292,7 @@ class EToroExecutionClient(LiveExecutionClient):
         order = command.order
         ts = self._clock.timestamp_ns()
         
-        # Check if this order is closing an existing position
+        # Determine if closing an existing position
         is_close, etoro_pos_id = False, None
         open_positions = self._cache.positions_open(instrument_id=order.instrument_id)
         if open_positions:
@@ -292,7 +306,6 @@ class EToroExecutionClient(LiveExecutionClient):
             self.generate_order_rejected(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, reason="rate_limit", ts_event=ts)
             return
 
-        # Payload & URL generieren
         etoro_id = int(self._instrument_to_etoro.get(str(order.instrument_id), "0"))
         if is_close:
             payload = {"InstrumentID": etoro_id, "UnitsToDeduct": None}
@@ -314,6 +327,11 @@ class EToroExecutionClient(LiveExecutionClient):
                 payload["IsTslEnabled"] = True
 
         req_id = self._order_req_id(order.client_order_id.value)
+
+        # RACE CONDITION FIX: Pre-register im State! 
+        # Falls WS schneller feuert als HTTP antwortet, kennt das System die Order bereits.
+        pre_mapped_id = etoro_pos_id if is_close else req_id
+        await self._state.set(order.client_order_id.value, pre_mapped_id)
 
         # Dry Run
         if self._dry_run:
