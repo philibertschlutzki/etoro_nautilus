@@ -1,7 +1,7 @@
 """eToro LiveExecutionClient for Nautilus Trader.
 
 Beinhaltet REST-Order-Submission, WebSocket Fill-Streaming,
-Rate-Limiting, State-Persistenz und Dry-Run-Unterstützung.
+Rate-Limiting, State-Persistenz, Race-Condition-Puffer und Active PnL-Polling.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ _REST_TIMEOUT_S       = 10
 
 _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
-    "real": "https://public-api.etoro.com/api/v1/trading/execution", # FIX: Kein /real im Live-Handel
+    "real": "https://public-api.etoro.com/api/v1/trading/execution",
 }
 
 _PNL_BASE: dict[str, str] = {
@@ -87,6 +87,9 @@ class EToroExecutionClient(LiveExecutionClient):
         self._session: aiohttp.ClientSession | None = None
         self._ws: object | None                     = None
         self._ws_task: asyncio.Task | None          = None
+        
+        # Buffer für WS-Events, die schneller ankommen als der HTTP Response
+        self._ws_buffer: list[dict] = []
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 
@@ -100,7 +103,6 @@ class EToroExecutionClient(LiveExecutionClient):
 
     @staticmethod
     def _order_req_id(client_order_id_value: str) -> str:
-        """Deterministische Request-ID zur Deduplizierung."""
         return str(uuid.uuid5(uuid.NAMESPACE_OID, client_order_id_value))
 
     # ── Report Stubs ──────────────────────────────────────────────────────────
@@ -137,7 +139,6 @@ class EToroExecutionClient(LiveExecutionClient):
         self._log.info("EToroExecutionClient disconnected.", LogColor.BLUE)
 
     async def _fetch_account_balance(self) -> Money:
-        """Holt das verfügbare Cash aus dem PnL Endpoint."""
         if self._dry_run: return Money(0, USD)
         try:
             async with self._session.get(self._pnl_base, headers=self._make_headers()) as resp:
@@ -187,7 +188,6 @@ class EToroExecutionClient(LiveExecutionClient):
                 try: data = json.loads(raw)
                 except json.JSONDecodeError: continue
                 
-                # Tolerantes Parsing für verschiedene eToro-JSON Strukturen
                 if isinstance(data, dict):
                     if "messages" in data and isinstance(data["messages"], list):
                         for msg in data["messages"]:
@@ -201,7 +201,7 @@ class EToroExecutionClient(LiveExecutionClient):
             self._log.error(f"WS error or closure: {exc}. Forcing restart.", LogColor.RED)
             os._exit(1)
 
-    async def _process_ws_message(self, msg: dict) -> None:
+    async def _process_ws_message(self, msg: dict, is_replay: bool = False) -> None:
         msg_type = msg.get("type", "")
         m_type = msg_type.lower()
         
@@ -210,11 +210,9 @@ class EToroExecutionClient(LiveExecutionClient):
             with suppress(json.JSONDecodeError): content = json.loads(content)
         if not isinstance(content, dict): return
 
-        # Optionales WS-Logging zur Fehlersuche
-        if "trading" in m_type or "order" in m_type or "position" in m_type:
+        if not is_replay:
             self._log.info(f"WS Recv [{msg_type}]: {content}", LogColor.CYAN)
 
-        # Case-Insensitive Extrahierung
         c_lower = {str(k).lower(): v for k, v in content.items()}
         pos_id  = str(c_lower.get("positionid", ""))
         ord_id  = str(c_lower.get("orderid", ""))
@@ -222,27 +220,22 @@ class EToroExecutionClient(LiveExecutionClient):
 
         if not pos_id and not ord_id and not token: return
 
-        # 1. Zuordnung zu einer Nautilus ClientOrderId
         all_mappings = self._state.get_all()
         matched_coid: str | None = None
         
-        # Prio 1: Eindeutiger Request-Token (perfekt für Race Conditions)
-        for coid, stored_id in all_mappings.items():
+        for coid, stored_id in reversed(list(all_mappings.items())):
             req_id = self._order_req_id(coid)
-            if token and token == req_id:
+            if (token and token == req_id) or (pos_id and stored_id == pos_id) or (ord_id and stored_id == ord_id):
                 matched_coid = coid
                 break
                 
-        # Prio 2: Mapping über PositionId/OrderId (Rückwärts, damit Close-Orders vor Open-Orders matchen)
+        # BUFFER LOGIC: Falls Event zu früh ankam, puffern wir es für 50 Durchläufe
         if not matched_coid:
-            for coid, stored_id in reversed(list(all_mappings.items())):
-                if (pos_id and stored_id == pos_id) or (ord_id and stored_id == ord_id):
-                    matched_coid = coid
-                    break
-                    
-        if not matched_coid: return
+            if not is_replay:
+                self._ws_buffer.append(dict(msg))
+                if len(self._ws_buffer) > 50: self._ws_buffer.pop(0)
+            return
 
-        # 2. State-Synchronisierung (Aktualisierung von temporärer OrderID auf finale PositionID)
         stored_id = all_mappings[matched_coid]
         if pos_id and pos_id != stored_id and len(pos_id) > 0:
             await self._state.set(matched_coid, pos_id)
@@ -253,22 +246,24 @@ class EToroExecutionClient(LiveExecutionClient):
 
         ts = self._clock.timestamp_ns()
 
-        # 3. Nautilus Events feuern
         if m_type in ("trading.position.opened", "position.opened", "orderfilled", "trading.order.filled", "trading.position.closed", "position.closed"):
             fill_px = c_lower.get("openrate") or c_lower.get("closerate") or c_lower.get("fillprice") or c_lower.get("executionprice") or c_lower.get("rate")
             if fill_px and (instr := self._cache.instrument(order.instrument_id)):
-                self.generate_order_filled(
-                    strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=client_order_id,
-                    venue_order_id=VenueOrderId(pos_id or ord_id or matched_coid), venue_position_id=PositionId(pos_id or ord_id or matched_coid),
-                    trade_id=TradeId(str(uuid.uuid4())), order_side=order.side, order_type=OrderType.MARKET,
-                    last_qty=order.quantity, last_px=Price(float(fill_px), precision=instr.price_precision),
-                    quote_currency=USD, commission=Money(0.0, USD), liquidity_side=LiquiditySide.TAKER, ts_event=ts,
-                )
+                # Vermeide Duplicate-Fills
+                if order.status.name != "FILLED":
+                    self.generate_order_filled(
+                        strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=client_order_id,
+                        venue_order_id=VenueOrderId(pos_id or ord_id or matched_coid), venue_position_id=PositionId(pos_id or ord_id or matched_coid),
+                        trade_id=TradeId(str(uuid.uuid4())), order_side=order.side, order_type=OrderType.MARKET,
+                        last_qty=order.quantity, last_px=Price(float(fill_px), precision=instr.price_precision),
+                        quote_currency=USD, commission=Money(0.0, USD), liquidity_side=LiquiditySide.TAKER, ts_event=ts,
+                    )
         elif m_type in ("trading.order.accepted", "order.accepted"):
-            self.generate_order_accepted(
-                strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=client_order_id,
-                venue_order_id=VenueOrderId(ord_id or pos_id or matched_coid), ts_event=ts,
-            )
+            if order.status.name == "INITIALIZED" or order.status.name == "SUBMITTED":
+                self.generate_order_accepted(
+                    strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=client_order_id,
+                    venue_order_id=VenueOrderId(ord_id or pos_id or matched_coid), ts_event=ts,
+                )
         elif m_type in ("trading.order.canceled", "order.cancelled"):
             await self._state.delete(matched_coid)
             self.generate_order_canceled(
@@ -292,7 +287,6 @@ class EToroExecutionClient(LiveExecutionClient):
         order = command.order
         ts = self._clock.timestamp_ns()
         
-        # Determine if closing an existing position
         is_close, etoro_pos_id = False, None
         open_positions = self._cache.positions_open(instrument_id=order.instrument_id)
         if open_positions:
@@ -323,17 +317,12 @@ class EToroExecutionClient(LiveExecutionClient):
                 else:
                     payload["AmountInUnits"] = float(order.quantity)
                     url = f"{self._rest_base}/market-open-orders/by-units"
-            if self._enable_trailing_stop and order.order_type != OrderType.LIMIT:
-                payload["IsTslEnabled"] = True
 
         req_id = self._order_req_id(order.client_order_id.value)
 
-        # RACE CONDITION FIX: Pre-register im State! 
-        # Falls WS schneller feuert als HTTP antwortet, kennt das System die Order bereits.
-        pre_mapped_id = etoro_pos_id if is_close else req_id
-        await self._state.set(order.client_order_id.value, pre_mapped_id)
+        # Race Condition Pre-Register
+        await self._state.set(order.client_order_id.value, etoro_pos_id if is_close else req_id)
 
-        # Dry Run
         if self._dry_run:
             fake_id = str(uuid.uuid5(uuid.NAMESPACE_OID, order.client_order_id.value))
             await self._state.set(order.client_order_id.value, fake_id)
@@ -342,7 +331,6 @@ class EToroExecutionClient(LiveExecutionClient):
                 self.generate_order_filled(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, venue_order_id=VenueOrderId(fake_id), venue_position_id=PositionId(fake_id), trade_id=TradeId(str(uuid.uuid4())), order_side=order.side, order_type=order.order_type, last_qty=order.quantity, last_px=Price(1.0, precision=2), quote_currency=USD, commission=Money(0.0, USD), liquidity_side=LiquiditySide.TAKER, ts_event=ts)
             return
 
-        # Real Execution
         try:
             self._log.info(f"REST POST {url} | payload={payload}", LogColor.CYAN)
             async with self._session.post(url, json=payload, headers=self._make_headers(req_id)) as resp:
@@ -350,12 +338,28 @@ class EToroExecutionClient(LiveExecutionClient):
 
                 if 200 <= status < 300:
                     body = json.loads(body_text) if body_text else {}
-                    new_pos_id = str(body.get("orderForOpen", {}).get("orderID") or body.get("positionId") or body.get("orderId") or req_id)
+                    new_pos_id = str(body.get("orderForOpen", {}).get("orderID") or body.get("positionId") or body.get("orderId") or (etoro_pos_id if is_close else req_id))
                     await self._state.set(order.client_order_id.value, new_pos_id)
+                    
                     self.generate_order_accepted(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, venue_order_id=VenueOrderId(new_pos_id), ts_event=ts)
+                    
+                    # 1. Puffer checken (Replay), falls Event während REST Call kam
+                    for evt in list(self._ws_buffer):
+                        content = evt.get("content", {})
+                        if isinstance(content, str):
+                            with suppress(json.JSONDecodeError): content = json.loads(content)
+                        if isinstance(content, dict):
+                            c_lower = {str(k).lower(): v for k, v in content.items()}
+                            if str(c_lower.get("orderid", "")) == new_pos_id or str(c_lower.get("positionid", "")) == new_pos_id:
+                                self._log.info(f"Replaying buffered WS event for {new_pos_id}", LogColor.GREEN)
+                                await self._process_ws_message(evt, is_replay=True)
+
+                    # 2. Sicherheitspolling aktivieren, falls WS komplett versagt
+                    if order.order_type == OrderType.MARKET:
+                        self.create_task(self._poll_for_fill(order, req_id, new_pos_id, is_close), log_msg="poll_fill")
 
                 elif status in (502, 504):
-                    await self._reconcile_via_pnl(order, req_id)
+                    self.create_task(self._poll_for_fill(order, req_id, etoro_pos_id if is_close else req_id, is_close), log_msg="poll_fill")
                 elif status == 404 and is_close:
                     await self._state.delete(order.client_order_id.value)
                     self.generate_order_canceled(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, venue_order_id=VenueOrderId(etoro_pos_id or "unknown"), ts_event=ts)
@@ -363,7 +367,7 @@ class EToroExecutionClient(LiveExecutionClient):
                     self.generate_order_rejected(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, reason=f"etoro_{status}: {body_text[:200]}", ts_event=ts)
 
         except asyncio.TimeoutError:
-            await self._reconcile_via_pnl(order, req_id)
+            self.create_task(self._poll_for_fill(order, req_id, etoro_pos_id if is_close else req_id, is_close), log_msg="poll_fill")
         except Exception as exc:
             self.generate_order_rejected(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, reason=f"error: {exc}", ts_event=ts)
 
@@ -384,23 +388,80 @@ class EToroExecutionClient(LiveExecutionClient):
         
         try:
             async with self._session.post(url, json={"InstrumentID": etoro_id, "UnitsToDeduct": None}, headers=self._make_headers(self._order_req_id(coid))) as resp:
-                if resp.status not in range(200, 300) and resp.status != 404: return # Hard fail, do not clean state
+                if resp.status not in range(200, 300) and resp.status != 404: return
             await self._state.delete(coid)
             self.generate_order_canceled(strategy_id=command.strategy_id, instrument_id=command.instrument_id, client_order_id=command.client_order_id, venue_order_id=VenueOrderId(pos_id), ts_event=ts)
         except Exception as exc:
             self._log.error(f"Cancel failed for {coid}: {exc}", LogColor.RED)
 
-    async def _reconcile_via_pnl(self, order: object, req_id: str) -> None:
-        """Fallback: Sucht nach Timeouts über den PnL Endpunkt ob die Order doch ausgeführt wurde."""
+    # ── PnL Polling Fallback ──────────────────────────────────────────────────
+
+    async def _poll_for_fill(self, order: object, req_id: str, order_id: str, is_close: bool) -> None:
+        """Sicherheitsnetz: Prüft PnL-Daten, falls der WebSocket ausfällt."""
+        for attempt in range(4): # 4x alle 2 Sekunden prüfen
+            await asyncio.sleep(2.0)
+            
+            cached_order = self._cache.order(order.client_order_id)
+            if cached_order and cached_order.status.name == "FILLED": return
+
+            try:
+                if is_close:
+                    # Bei Close prüfen, ob Position aus dem Portfolio verschwunden ist
+                    async with self._session.get(self._pnl_base, headers=self._make_headers()) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            still_open = any(str(p.get("PositionID") or p.get("positionID") or p.get("positionId") or "") == order_id for p in data.get("positions", []))
+                            if not still_open:
+                                instr = self._cache.instrument(order.instrument_id)
+                                quote = self._cache.quote_tick(order.instrument_id)
+                                fill_px = float(quote.bid_price if order.side == OrderSide.SELL else quote.ask_price) if quote else 1.0
+                                
+                                self.generate_order_filled(
+                                    strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id,
+                                    venue_order_id=VenueOrderId(order_id), venue_position_id=PositionId(order_id), trade_id=TradeId(str(uuid.uuid4())),
+                                    order_side=order.side, order_type=order.order_type, last_qty=order.quantity, last_px=Price(fill_px, precision=instr.price_precision if instr else 5),
+                                    quote_currency=USD, commission=Money(0.0, USD), liquidity_side=LiquiditySide.TAKER, ts_event=self._clock.timestamp_ns(),
+                                )
+                                self._log.info(f"Reconciled via PnL (Closed): {order.client_order_id.value} -> PosID {order_id}", LogColor.GREEN)
+                                return
+                else:
+                    # Bei Open prüfen, ob OrderID in den Positionen auftaucht
+                    found = await self._reconcile_via_pnl(order, req_id, order_id)
+                    if found: return
+            except Exception: pass
+            
+    async def _reconcile_via_pnl(self, order: object, req_id: str, order_id: str) -> bool:
+        """Sucht gezielt im PnL-Report nach einer Ausführung."""
         try:
             async with self._session.get(self._pnl_base, headers=self._make_headers()) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    for item in data.get("positions", []) + data.get("ordersForOpen", []):
-                        if str(item.get("token") or item.get("requestId") or "") == req_id:
-                            item_id = str(item.get("positionID") or item.get("orderID") or req_id)
-                            await self._state.set(order.client_order_id.value, item_id)
-                            self.generate_order_accepted(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, venue_order_id=VenueOrderId(item_id), ts_event=self._clock.timestamp_ns())
-                            return
+                    
+                    for item in data.get("positions", []):
+                        i_req = str(item.get("token") or item.get("requestId") or "")
+                        i_ord = str(item.get("orderID") or item.get("orderId") or "")
+                        if (req_id and i_req == req_id) or (order_id and i_ord == order_id):
+                            pos_id = str(item.get("PositionID") or item.get("positionID") or item.get("positionId") or i_ord)
+                            await self._state.set(order.client_order_id.value, pos_id)
+                            
+                            fill_px = item.get("OpenRate") or item.get("openRate") or item.get("rate")
+                            instr = self._cache.instrument(order.instrument_id)
+                            self.generate_order_filled(
+                                strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id,
+                                venue_order_id=VenueOrderId(pos_id), venue_position_id=PositionId(pos_id), trade_id=TradeId(str(uuid.uuid4())),
+                                order_side=order.side, order_type=order.order_type, last_qty=order.quantity, last_px=Price(float(fill_px or 1.0), precision=instr.price_precision if instr else 5),
+                                quote_currency=USD, commission=Money(0.0, USD), liquidity_side=LiquiditySide.TAKER, ts_event=self._clock.timestamp_ns(),
+                            )
+                            self._log.info(f"Reconciled via PnL (Filled): {order.client_order_id.value} -> PosID {pos_id}", LogColor.GREEN)
+                            return True
+                            
+                    for item in data.get("ordersForOpen", []):
+                        i_req = str(item.get("token") or item.get("requestId") or "")
+                        i_ord = str(item.get("orderID") or item.get("orderId") or "")
+                        if (req_id and i_req == req_id) or (order_id and i_ord == order_id):
+                            i_id = str(item.get("orderID") or item.get("orderId") or req_id)
+                            await self._state.set(order.client_order_id.value, i_id)
+                            self.generate_order_accepted(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, venue_order_id=VenueOrderId(i_id), ts_event=self._clock.timestamp_ns())
+                            return True
         except Exception: pass
-        self.generate_order_rejected(strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=order.client_order_id, reason="timeout_no_position", ts_event=self._clock.timestamp_ns())
+        return False
