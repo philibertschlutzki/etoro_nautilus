@@ -34,7 +34,6 @@ class ApiFullExecutionTestStrategy(Strategy):
         self.instrument_id = InstrumentId.from_str(ETORO_API_TEST["symbol"])
         self.usd_amount = Decimal(str(ETORO_API_TEST["trade_amount_usd"]))
         
-        # Test-Phasen-Tracking
         self.phase = 0
         self.limit_buy_id = None
         self.market_buy_id = None
@@ -47,21 +46,16 @@ class ApiFullExecutionTestStrategy(Strategy):
     def on_start(self) -> None:
         self.log.info(f"Full API Test gestartet. Warte auf Daten für {self.instrument_id} ...")
         self.subscribe_quote_ticks(self.instrument_id)
-        
-        # FIX: Prüfe sofort im Cache, ob das WebSocket den Snapshot schon geliefert hat
-        tick = self.cache.quote_tick(self.instrument_id)
-        if tick:
-            self.execute_tests(tick)
+
+    def on_stop(self) -> None:
+        self.unsubscribe_quote_ticks(self.instrument_id)
+        self.log.info("Strategie gestoppt.")
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
-        self.execute_tests(tick)
-        
-    def execute_tests(self, tick: QuoteTick) -> None:
         if self.phase == 0:
             self.phase = 1
             
             # --- TEST 1: POST /limit-orders ---
-            # Setze Limit-Preis 50% unter Marktwert, damit sie garantiert NICHT ausführt
             limit_price_val = float(tick.ask_price) * 0.5
             limit_price = Price(limit_price_val, precision=5)
             limit_qty = Quantity(max(1, round(float(self.usd_amount) / limit_price_val)), precision=0)
@@ -92,11 +86,8 @@ class ApiFullExecutionTestStrategy(Strategy):
             self.submit_order(market_order)
 
     def on_order_accepted(self, event) -> None:
-        # Wird vom WebSocket ausgelöst, wenn das Limit ins Orderbuch aufgenommen wurde
         if event.client_order_id == self.limit_buy_id and not self.limit_canceled:
             self.limit_accepted = True
-            
-            # --- TEST 3: DELETE /limit-orders/{orderId} ---
             self.log.info("[TEST 3] LIMIT Order wurde akzeptiert. Sende Cancel...")
             self.cancel_order(self.cache.order(self.limit_buy_id))
 
@@ -105,12 +96,18 @@ class ApiFullExecutionTestStrategy(Strategy):
             self.log.info("✅ LIMIT Order erfolgreich storniert!")
             self.limit_canceled = True
 
+    def on_order_rejected(self, event) -> None:
+        self.log.error(f"❌ ORDER REJECTED: {event.client_order_id} - {event.reason}")
+        self.log.error("Test wird abgebrochen, da eine Order abgewiesen wurde.")
+        # Hack um den While-Loop sauber zu beenden
+        self.limit_canceled = True
+        self.position_closed = True
+
     def on_order_filled(self, event) -> None:
         if event.client_order_id == self.market_buy_id and not self.market_filled:
             self.log.info(f"✅ MARKET BUY gefüllt: {event.last_qty} Units @ {event.last_px}")
             self.market_filled = True
             
-            # --- TEST 4: POST /market-close-orders/positions/{positionId} ---
             self.log.info("[TEST 4] Sende MARKET SELL zum Schliessen der Position...")
             close_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
@@ -164,9 +161,12 @@ async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbo
             data = await resp.json()
             found_anything = False
             
+            # WICHTIG: Das Casing-Fix für die Arrays!
+            positions = data.get("Positions", data.get("positions", []))
+            orders_open = data.get("OrdersForOpen", data.get("ordersForOpen", []))
+            
             # 1. Offene MARKET Positionen (LONG/SHORT) schliessen
-            for p in data.get("positions", []):
-                # Case-Insensitive Parsing, da eToro manchmal InstrumentId, instrumentID etc. sendet!
+            for p in positions:
                 p_lower = {str(k).lower(): v for k, v in p.items()}
                 if str(p_lower.get("instrumentid", "")) == str(etoro_id):
                     found_anything = True
@@ -185,7 +185,7 @@ async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbo
                             print(f"   ❌ Fehler beim Schliessen von {pos_id}: HTTP {c_resp.status} - {err}")
 
             # 2. Offene LIMIT Orders schliessen
-            for o in data.get("ordersForOpen", []):
+            for o in orders_open:
                 o_lower = {str(k).lower(): v for k, v in o.items()}
                 if str(o_lower.get("instrumentid", "")) == str(etoro_id):
                     found_anything = True
@@ -275,7 +275,7 @@ async def main() -> None:
     except asyncio.TimeoutError:
         pass
         
-    # --- Das Sicherheitsnetz greift hier IMMER (Räumt deine 5 Trades auf) ---
+    # --- Das Sicherheitsnetz ---
     if not ETORO_API_TEST["dry_run"]:
         await emergency_cleanup(
             API_KEY, 
