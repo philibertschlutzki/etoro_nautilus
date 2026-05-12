@@ -45,19 +45,23 @@ class ApiFullExecutionTestStrategy(Strategy):
         self.position_closed = False
 
     def on_start(self) -> None:
-        self.log.info(f"Full API Test gestartet. Warte auf ersten Tick für {self.instrument_id} ...")
+        self.log.info(f"Full API Test gestartet. Warte auf Daten für {self.instrument_id} ...")
         self.subscribe_quote_ticks(self.instrument_id)
-
-    def on_stop(self) -> None:
-        self.unsubscribe_quote_ticks(self.instrument_id)
-        self.log.info("Strategie gestoppt.")
+        
+        # FIX: Prüfe sofort im Cache, ob das WebSocket den Snapshot schon geliefert hat
+        tick = self.cache.quote_tick(self.instrument_id)
+        if tick:
+            self.execute_tests(tick)
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
+        self.execute_tests(tick)
+        
+    def execute_tests(self, tick: QuoteTick) -> None:
         if self.phase == 0:
             self.phase = 1
             
             # --- TEST 1: POST /limit-orders ---
-            # Setze Limit-Preis 50% unter Marktwert, damit sie garantiert nicht ausführt
+            # Setze Limit-Preis 50% unter Marktwert, damit sie garantiert NICHT ausführt
             limit_price_val = float(tick.ask_price) * 0.5
             limit_price = Price(limit_price_val, precision=5)
             limit_qty = Quantity(max(1, round(float(self.usd_amount) / limit_price_val)), precision=0)
@@ -126,17 +130,16 @@ class ApiFullExecutionTestStrategy(Strategy):
 
 
 async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbol: str):
-    """Sicherheitsnetz: Schliesst alle verbleibenden Positionen per direktem REST-Call."""
+    """Sicherheitsnetz: Schliesst alle verbleibenden Positionen und Limit-Orders per REST-Call."""
     print("\n🧹 Führe Emergency Cleanup durch (Suche nach verwaisten Trades)...")
     
     base_url = "https://public-api.etoro.com/api/v1/trading"
     pnl_url = f"{base_url}/info/{environment}/pnl"
-    close_url = f"{base_url}/execution{'/demo' if environment == 'demo' else ''}/market-close-orders/positions"
+    exec_path = "/execution/demo" if environment == "demo" else "/execution"
     
     headers = {
         "x-api-key": api_key,
         "x-user-key": user_key,
-        "x-request-id": str(uuid.uuid4()),
         "Content-Type": "application/json"
     }
     
@@ -150,38 +153,57 @@ async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbo
         return
         
     async with aiohttp.ClientSession() as session:
-        # 1. Alle offenen Positionen via PnL-Endpoint abrufen
-        async with session.get(pnl_url, headers=headers) as resp:
+        h_get = headers.copy()
+        h_get["x-request-id"] = str(uuid.uuid4())
+        
+        async with session.get(pnl_url, headers=h_get) as resp:
             if resp.status != 200:
                 print(f"⚠️ PnL Abruf fehlgeschlagen: HTTP {resp.status}")
                 return
                 
             data = await resp.json()
-            open_positions = [
-                p for p in data.get("positions", []) 
-                if str(p.get("InstrumentID")) == str(etoro_id)
-            ]
+            found_anything = False
             
-            if not open_positions:
-                print("✅ Keine offenen Positionen gefunden. Das Konto ist sauber.")
-                return
-                
-            print(f"⚠️ {len(open_positions)} offene Position(en) für {symbol} gefunden! Führe Zwangsliquidierung durch...")
-            
-            # 2. Alle gefundenen Positionen einzeln schliessen
-            for p in open_positions:
-                pos_id = p.get("PositionID")
-                print(f"   -> Schliesse Position {pos_id}...")
-                
-                payload = {"InstrumentID": int(etoro_id), "UnitsToDeduct": None}
-                headers["x-request-id"] = str(uuid.uuid4()) # Neue ID für jeden Call
-                
-                async with session.post(f"{close_url}/{pos_id}", json=payload, headers=headers) as c_resp:
-                    if c_resp.status in range(200, 300):
-                        print(f"   ✅ Position {pos_id} erfolgreich geschlossen.")
-                    else:
-                        err = await c_resp.text()
-                        print(f"   ❌ Fehler beim Schliessen von {pos_id}: HTTP {c_resp.status} - {err}")
+            # 1. Offene MARKET Positionen (LONG/SHORT) schliessen
+            for p in data.get("positions", []):
+                # Case-Insensitive Parsing, da eToro manchmal InstrumentId, instrumentID etc. sendet!
+                p_lower = {str(k).lower(): v for k, v in p.items()}
+                if str(p_lower.get("instrumentid", "")) == str(etoro_id):
+                    found_anything = True
+                    pos_id = p_lower.get("positionid")
+                    print(f"   -> Schliesse offene Position {pos_id}...")
+                    
+                    payload = {"InstrumentID": int(etoro_id), "UnitsToDeduct": None}
+                    h_close = headers.copy()
+                    h_close["x-request-id"] = str(uuid.uuid4())
+                    
+                    async with session.post(f"{base_url}{exec_path}/market-close-orders/positions/{pos_id}", json=payload, headers=h_close) as c_resp:
+                        if c_resp.status in range(200, 300):
+                            print(f"   ✅ Position {pos_id} erfolgreich geschlossen.")
+                        else:
+                            err = await c_resp.text()
+                            print(f"   ❌ Fehler beim Schliessen von {pos_id}: HTTP {c_resp.status} - {err}")
+
+            # 2. Offene LIMIT Orders schliessen
+            for o in data.get("ordersForOpen", []):
+                o_lower = {str(k).lower(): v for k, v in o.items()}
+                if str(o_lower.get("instrumentid", "")) == str(etoro_id):
+                    found_anything = True
+                    ord_id = o_lower.get("orderid")
+                    print(f"   -> Storniere Limit-Order {ord_id}...")
+                    
+                    h_del = headers.copy()
+                    h_del["x-request-id"] = str(uuid.uuid4())
+                    
+                    async with session.delete(f"{base_url}{exec_path}/limit-orders/{ord_id}", headers=h_del) as d_resp:
+                        if d_resp.status in range(200, 300):
+                            print(f"   ✅ Limit-Order {ord_id} erfolgreich storniert.")
+                        else:
+                            err = await d_resp.text()
+                            print(f"   ❌ Fehler beim Stornieren von {ord_id}: HTTP {d_resp.status} - {err}")
+                            
+            if not found_anything:
+                print("✅ Keine offenen Positionen oder Limits gefunden. Das Konto ist sauber.")
 
 
 async def main() -> None:
@@ -231,7 +253,7 @@ async def main() -> None:
     node.trader.add_strategy(strategy)
 
     node.build()
-    print("Trading Node gestartet. Führe alle Tests aus (max. 90 s) ...")
+    print(f"Trading Node gestartet (Environment: {ETORO_API_TEST['environment'].upper()}). Führe alle Tests aus (max. 90 s) ...")
 
     loop = asyncio.get_event_loop()
     run_task = loop.run_in_executor(None, node.run)
@@ -242,25 +264,30 @@ async def main() -> None:
         timeout -= 1
 
     if strategy.is_finished():
-        print("✅ Alle Execution-Tests erfolgreich abgeschlossen!")
+        print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")
     else:
-        print("⚠️ Timeout — Der Testlauf konnte nicht vollständig abgeschlossen werden.")
+        print("\n⚠️ Timeout — Der Testlauf konnte nicht vollständig abgeschlossen werden.")
 
-    # Node stoppen
+    # Node sauber herunterfahren
     node.stop()
     try:
         await asyncio.wait_for(run_task, timeout=5.0)
     except asyncio.TimeoutError:
         pass
         
-    # --- Das Sicherheitsnetz am Ende ---
+    # --- Das Sicherheitsnetz greift hier IMMER (Räumt deine 5 Trades auf) ---
     if not ETORO_API_TEST["dry_run"]:
-        await emergency_cleanup(API_KEY, USER_KEY, ETORO_API_TEST["environment"], ETORO_API_TEST["symbol"])
+        await emergency_cleanup(
+            API_KEY, 
+            USER_KEY, 
+            ETORO_API_TEST["environment"], 
+            ETORO_API_TEST["symbol"]
+        )
 
 
 if __name__ == "__main__":
     confirm = input(
-        "Achtung: LIVE eToro API-Test — echte Orders und Limits werden platziert!\n"
+        f"Achtung: eToro API-Test ({ETORO_API_TEST['environment'].upper()}) — echte Orders und Limits werden platziert!\n"
         "Weiter? (j/N): "
     )
     if confirm.strip().lower() == "j":
