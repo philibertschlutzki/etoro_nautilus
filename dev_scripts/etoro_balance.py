@@ -1,11 +1,8 @@
 """
 eToro Konto-Balance Abruf
 ==========================
-Ruft Guthaben, offene Positionen und verfügbares Cash für Demo- und Real-Konto ab.
-
-Korrekte Endpoints laut offizieller Doku:
-  Demo PnL: GET https://public-api.etoro.com/api/v1/trading/info/demo/pnl
-  Real PnL: GET https://public-api.etoro.com/api/v1/trading/info/real/pnl
+Ruft Guthaben, offene Positionen, Agent Portfolios (Mirrors) und verfügbares Cash 
+für Demo- und Real-Konto ab.
 
 Ausführung:
     python3 dev_scripts/etoro_balance.py
@@ -28,19 +25,21 @@ USER_KEY = os.getenv("ETORO_USER_KEY", "")
 if not API_KEY or not USER_KEY:
     raise SystemExit("❌  ETORO_API_KEY oder ETORO_USER_KEY fehlen in der .env")
 
-GREEN  = "\033[92m"
-YELLOW = "\033[93m"
-RED    = "\033[91m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-RESET  = "\033[0m"
+GREEN   = "\033[92m"
+YELLOW  = "\033[93m"
+RED     = "\033[91m"
+CYAN    = "\033[96m"
+MAGENTA = "\033[95m"
+BOLD    = "\033[1m"
+RESET   = "\033[0m"
 
 PNL_ENDPOINTS = {
     "demo": "https://public-api.etoro.com/api/v1/trading/info/demo/pnl",
     "real": "https://public-api.etoro.com/api/v1/trading/info/real/pnl",
 }
 
-IDENTITY_URL = "https://public-api.etoro.com/api/v1/trading/info/identity"
+# Korrigierter Endpunkt für User Identity
+IDENTITY_URL = "https://public-api.etoro.com/api/v1/identity"
 
 
 def _headers() -> dict:
@@ -52,13 +51,13 @@ def _headers() -> dict:
     }
 
 
-def _calculate_available_cash(data: dict) -> float:
+def _calculate_available_cash(port: dict) -> float:
     """Verfügbares Cash gemäss offizieller eToro-Formel:
     Available Cash = credit - (Σ ordersForOpen[mirrorID=0].amount + Σ orders.amount)
     """
-    credit = float(data.get("credits", data.get("credit", 0)))
-    orders_for_open = data.get("ordersForOpen", [])
-    orders          = data.get("orders", [])
+    credit = float(port.get("credits", port.get("credit", 0)))
+    orders_for_open = port.get("ordersForOpen", [])
+    orders          = port.get("orders", [])
 
     manual_open_amount = sum(
         float(o.get("amount", 0))
@@ -71,9 +70,9 @@ def _calculate_available_cash(data: dict) -> float:
 
 
 def _print_section(title: str) -> None:
-    print(f"\n{BOLD}{'─' * 60}{RESET}")
+    print(f"\n{BOLD}{'─' * 70}{RESET}")
     print(f"{BOLD}{title}{RESET}")
-    print(f"{BOLD}{'─' * 60}{RESET}")
+    print(f"{BOLD}{'─' * 70}{RESET}")
 
 
 async def fetch_identity(session: aiohttp.ClientSession) -> None:
@@ -84,8 +83,8 @@ async def fetch_identity(session: aiohttp.ClientSession) -> None:
             if resp.status == 200:
                 data = await resp.json()
                 print(f"  GCID           : {data.get('gcid', 'n/a')}")
-                print(f"  Real-CID       : {data.get('realCid', data.get('realCustomerId', 'n/a'))}")
-                print(f"  Demo-CID       : {data.get('demoCid', data.get('demoCustomerId', 'n/a'))}")
+                print(f"  Real-CID       : {data.get('realCustomerId', data.get('realCid', 'n/a'))}")
+                print(f"  Demo-CID       : {data.get('demoCustomerId', data.get('demoCid', 'n/a'))}")
             else:
                 body = await resp.text()
                 print(f"  {YELLOW}HTTP {resp.status}: {body[:200]}{RESET}")
@@ -113,16 +112,19 @@ async def fetch_portfolio(
                 return
 
             data: dict = json.loads(body_text)
+            
+            # WICHTIG: Die Daten sind in "clientPortfolio" gewrappt
+            port = data.get("clientPortfolio", data)
 
-            # ── Kontostand ────────────────────────────────────────────────────
-            credit        = float(data.get("credits", data.get("credit", 0)))
-            available     = _calculate_available_cash(data)
-            equity_raw    = data.get("equity", data.get("netEquity", None))
+            # ── Kontostand (Hauptkonto / Virtuelle Balance) ───────────────────
+            credit        = float(port.get("credits", port.get("credit", 0)))
+            available     = _calculate_available_cash(port)
+            equity_raw    = port.get("equity", port.get("netEquity", None))
             equity        = float(equity_raw) if equity_raw is not None else None
-            realized_pnl  = float(data.get("totalRealizedEquity", data.get("realizedPnL", 0)))
-            unrealized    = float(data.get("totalUnrealizedEquity", data.get("unrealizedPnL", 0)))
+            realized_pnl  = float(port.get("totalRealizedEquity", port.get("realizedPnL", 0)))
+            unrealized    = float(port.get("totalUnrealizedEquity", port.get("unrealizedPnL", 0)))
 
-            print(f"\n  {GREEN}{BOLD}Kontostand{RESET}")
+            print(f"\n  {GREEN}{BOLD}Virtueller Kontostand (Agent Basis){RESET}")
             print(f"  Credit (Gesamt)    : {GREEN}{credit:>12.2f} USD{RESET}")
             print(f"  Verfügbares Cash   : {GREEN}{available:>12.2f} USD{RESET}")
             if equity is not None:
@@ -130,21 +132,45 @@ async def fetch_portfolio(
             print(f"  Realisierter PnL   : {realized_pnl:>12.2f} USD")
             print(f"  Unrealisierter PnL : {unrealized:>12.2f} USD")
 
-            # ── Offene Positionen ─────────────────────────────────────────────
-            positions = data.get("positions", [])
-            orders_for_open = data.get("ordersForOpen", [])
+            # ── Agent Portfolios (Mirrors) ────────────────────────────────────
+            mirrors = port.get("mirrors", [])
+            if mirrors:
+                print(f"\n  {MAGENTA}{BOLD}🤖 Agent Portfolios / Copy Trades: {len(mirrors)}{RESET}")
+                for m in mirrors:
+                    m_id = m.get('mirrorID', '?')
+                    m_name = m.get('parentUsername', 'Unknown')
+                    m_invest = float(m.get('initialInvestment', 0))
+                    m_avail = float(m.get('availableAmount', 0))
+                    m_pnl = float(m.get('closedPositionsNetProfit', 0))
+                    
+                    print(f"  {BOLD}► Portfolio: {m_name} (ID: {m_id}){RESET}")
+                    print(f"      Initiales Investment : {m_invest:>10.2f} USD (Echtes Geld)")
+                    print(f"      Verfügbares Cash     : {m_avail:>10.2f} USD (Zum Traden)")
+                    print(f"      Realisierter PnL     : {m_pnl:>10.2f} USD")
+            else:
+                print(f"\n  {MAGENTA}{BOLD}🤖 Agent Portfolios / Copy Trades: 0{RESET}")
 
-            print(f"\n  {BOLD}Offene Positionen  : {len(positions)}{RESET}")
-            if positions:
+            # ── Offene Positionen ─────────────────────────────────────────────
+            positions = port.get("positions", [])
+            
+            # Positionen aus Mirrors aggregieren
+            mirror_positions = []
+            for m in mirrors:
+                mirror_positions.extend(m.get("positions", []))
+                
+            all_positions = positions + mirror_positions
+
+            print(f"\n  {BOLD}Offene Positionen (Gesamt): {len(all_positions)}{RESET}")
+            if all_positions:
                 print(f"  {'InstrID':>8}  {'Side':>5}  {'Units':>10}  {'OpenRate':>10}  {'CurrentRate':>12}  {'PnL':>10}")
                 print(f"  {'─'*8}  {'─'*5}  {'─'*10}  {'─'*10}  {'─'*12}  {'─'*10}")
-                for pos in positions[:20]:  # max 20 anzeigen
+                for pos in all_positions[:20]:  # max 20 anzeigen
                     side        = "LONG"  if pos.get("isBuy", True) else "SHORT"
                     instrument  = pos.get("instrumentID", pos.get("InstrumentId", "?"))
                     units       = float(pos.get("units", pos.get("amount", 0)))
                     open_rate   = float(pos.get("openRate", pos.get("openPrice", 0)))
                     current     = float(pos.get("currentRate", pos.get("currentPrice", 0)))
-                    pnl         = float(pos.get("profit", pos.get("pnl", 0)))
+                    pnl         = float(pos.get("profit", pos.get("netProfitLossPercentage", pos.get("pnl", 0))))
                     pos_id      = pos.get("positionID", pos.get("positionId", "?"))
                     color       = GREEN if pnl >= 0 else RED
                     print(
@@ -152,10 +178,11 @@ async def fetch_portfolio(
                         f"{open_rate:>10.5f}  {current:>12.5f}  "
                         f"{color}{pnl:>10.2f}{RESET}  (posID={pos_id})"
                     )
-                if len(positions) > 20:
-                    print(f"  ... und {len(positions) - 20} weitere Positionen")
+                if len(all_positions) > 20:
+                    print(f"  ... und {len(all_positions) - 20} weitere Positionen")
 
             # ── Pending Orders ────────────────────────────────────────────────
+            orders_for_open = port.get("ordersForOpen", [])
             pending = [o for o in orders_for_open if o.get("mirrorID", 0) == 0]
             if pending:
                 print(f"\n  {BOLD}Pending Orders (manuell): {len(pending)}{RESET}")
@@ -165,10 +192,6 @@ async def fetch_portfolio(
                         f"InstrID={o.get('instrumentID', '?')}  "
                         f"Amount={o.get('amount', 0):.2f}"
                     )
-
-            # ── Rohstruktur (Debug) ───────────────────────────────────────────
-            top_level_keys = list(data.keys())
-            print(f"\n  {CYAN}Response-Keys: {top_level_keys}{RESET}")
 
     except Exception as exc:
         import traceback
@@ -188,7 +211,7 @@ async def main() -> None:
         await fetch_portfolio(session, "demo")
         await fetch_portfolio(session, "real")
 
-    print(f"\n{'─' * 60}")
+    print(f"\n{'─' * 70}")
     print(f"Abgeschlossen: {datetime.now().isoformat()}\n")
 
 
