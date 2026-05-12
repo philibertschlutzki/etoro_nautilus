@@ -46,12 +46,15 @@ class ApiFullExecutionTestStrategy(Strategy):
     def on_start(self) -> None:
         self.log.info(f"Full API Test gestartet. Warte auf Daten für {self.instrument_id} ...")
         self.subscribe_quote_ticks(self.instrument_id)
-
-    def on_stop(self) -> None:
-        self.unsubscribe_quote_ticks(self.instrument_id)
-        self.log.info("Strategie gestoppt.")
+        
+        tick = self.cache.quote_tick(self.instrument_id)
+        if tick:
+            self.execute_tests(tick)
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
+        self.execute_tests(tick)
+        
+    def execute_tests(self, tick: QuoteTick) -> None:
         if self.phase == 0:
             self.phase = 1
             
@@ -97,9 +100,9 @@ class ApiFullExecutionTestStrategy(Strategy):
             self.limit_canceled = True
 
     def on_order_rejected(self, event) -> None:
+        # FIX 7: Timeout bei Rejection abbrechen
         self.log.error(f"❌ ORDER REJECTED: {event.client_order_id} - {event.reason}")
         self.log.error("Test wird abgebrochen, da eine Order abgewiesen wurde.")
-        # Hack um den While-Loop sauber zu beenden
         self.limit_canceled = True
         self.position_closed = True
 
@@ -129,6 +132,7 @@ class ApiFullExecutionTestStrategy(Strategy):
 async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbol: str):
     """Sicherheitsnetz: Schliesst alle verbleibenden Positionen und Limit-Orders per REST-Call."""
     print("\n🧹 Führe Emergency Cleanup durch (Suche nach verwaisten Trades)...")
+    await asyncio.sleep(2.0)  # Gib eToro kurz Zeit, die Datenbank zu aktualisieren
     
     base_url = "https://public-api.etoro.com/api/v1/trading"
     pnl_url = f"{base_url}/info/{environment}/pnl"
@@ -161,7 +165,6 @@ async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbo
             data = await resp.json()
             found_anything = False
             
-            # WICHTIG: Das Casing-Fix für die Arrays!
             positions = data.get("Positions", data.get("positions", []))
             orders_open = data.get("OrdersForOpen", data.get("ordersForOpen", []))
             
@@ -173,7 +176,7 @@ async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbo
                     pos_id = p_lower.get("positionid")
                     print(f"   -> Schliesse offene Position {pos_id}...")
                     
-                    payload = {"InstrumentID": int(etoro_id), "UnitsToDeduct": None}
+                    payload = {"UnitsToDeduct": None} # FIX 6: Kein InstrumentID bei Close
                     h_close = headers.copy()
                     h_close["x-request-id"] = str(uuid.uuid4())
                     
@@ -264,7 +267,8 @@ async def main() -> None:
         timeout -= 1
 
     if strategy.is_finished():
-        print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")
+        if strategy.limit_canceled and strategy.position_closed:
+            print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")
     else:
         print("\n⚠️ Timeout — Der Testlauf konnte nicht vollständig abgeschlossen werden.")
 

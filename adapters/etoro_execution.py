@@ -128,14 +128,17 @@ class EToroExecutionClient(LiveExecutionClient):
             async with self._session.get(self._pnl_base, headers=self._make_headers()) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    credit = float(data.get("credits", data.get("credit", 0)))
                     
-                    # Casing-Fix: Toleriere Groß- und Kleinschreibung
-                    orders_for_open = data.get("OrdersForOpen", data.get("ordersForOpen", []))
-                    orders = data.get("Orders", data.get("orders", []))
+                    # FIX 5: Komplett Case-Insensitive Balance Check
+                    data_lower = {str(k).lower(): v for k, v in data.items()}
+                    credit = float(data_lower.get("credit", data_lower.get("credits", 0)))
+                    
+                    orders_for_open = data_lower.get("ordersforopen", [])
+                    orders = data_lower.get("orders", [])
                     
                     pending_amount = sum(float(o.get("Amount", o.get("amount", 0))) for o in orders_for_open if o.get("MirrorID", o.get("mirrorID", 0)) == 0)
                     open_amount = sum(float(o.get("Amount", o.get("amount", 0))) for o in orders)
+                    
                     available = credit - (pending_amount + open_amount)
                     return Money(max(available, 0.0), USD)
         except Exception as exc:
@@ -222,9 +225,11 @@ class EToroExecutionClient(LiveExecutionClient):
                 if len(self._ws_buffer) > 50: self._ws_buffer.pop(0)
             return
 
+        # FIX 4: State-Update aus WebSocket. Limit-Orders bekommen hier ihre echte orderId
         stored_id = all_mappings[matched_coid]
-        if pos_id and pos_id != stored_id and len(pos_id) > 0:
-            await self._state.set(matched_coid, pos_id)
+        real_id_from_ws = pos_id or ord_id
+        if real_id_from_ws and real_id_from_ws != stored_id and len(real_id_from_ws) > 0:
+            await self._state.set(matched_coid, real_id_from_ws)
 
         client_order_id = ClientOrderId(matched_coid)
         order = self._cache.order(client_order_id)
@@ -238,7 +243,7 @@ class EToroExecutionClient(LiveExecutionClient):
                 if order.status.name != "FILLED":
                     self.generate_order_filled(
                         strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=client_order_id,
-                        venue_order_id=VenueOrderId(pos_id or ord_id or matched_coid), venue_position_id=PositionId(pos_id or ord_id or matched_coid),
+                        venue_order_id=VenueOrderId(real_id_from_ws or matched_coid), venue_position_id=PositionId(real_id_from_ws or matched_coid),
                         trade_id=TradeId(str(uuid.uuid4())), order_side=order.side, order_type=OrderType.MARKET,
                         last_qty=order.quantity, last_px=Price(float(fill_px), precision=instr.price_precision),
                         quote_currency=USD, commission=Money(0.0, USD), liquidity_side=LiquiditySide.TAKER, ts_event=ts,
@@ -247,13 +252,13 @@ class EToroExecutionClient(LiveExecutionClient):
             if order.status.name == "INITIALIZED" or order.status.name == "SUBMITTED":
                 self.generate_order_accepted(
                     strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=client_order_id,
-                    venue_order_id=VenueOrderId(ord_id or pos_id or matched_coid), ts_event=ts,
+                    venue_order_id=VenueOrderId(real_id_from_ws or matched_coid), ts_event=ts,
                 )
         elif m_type in ("trading.order.canceled", "order.cancelled"):
             await self._state.delete(matched_coid)
             self.generate_order_canceled(
                 strategy_id=order.strategy_id, instrument_id=order.instrument_id, client_order_id=client_order_id,
-                venue_order_id=VenueOrderId(pos_id or ord_id or matched_coid), ts_event=ts,
+                venue_order_id=VenueOrderId(real_id_from_ws or matched_coid), ts_event=ts,
             )
 
     async def _submit_order(self, command: SubmitOrder) -> None: await self._submit_order_async(command)
@@ -283,15 +288,17 @@ class EToroExecutionClient(LiveExecutionClient):
 
         etoro_id = int(self._instrument_to_etoro.get(str(order.instrument_id), "0"))
         
-        # ── Payload Construction mit FIX für Limit-Amount ──
         if is_close:
-            payload = {"InstrumentID": etoro_id, "UnitsToDeduct": None}
+            payload = {"InstrumentID": etoro_id, "UnitsToDeduct": None} # FIX 6: Close payload (bereits korrekt)
             url = f"{self._rest_base}/market-close-orders/positions/{etoro_pos_id}"
         else:
             payload = {"InstrumentID": etoro_id, "IsBuy": order.side == OrderSide.BUY, "Leverage": 1}
             if order.order_type == OrderType.LIMIT:
+                # FIX 1 & 2: Rate, Amount, IsNoStopLoss, IsNoTakeProfit für Limits!
                 payload["Rate"] = float(order.price)
-                payload["Amount"] = round(float(order.quantity) * float(order.price), 2) # WICHTIG: Limit Orders benötigen Amount!
+                payload["Amount"] = round(float(order.quantity) * float(order.price), 2)
+                payload["IsNoStopLoss"] = True
+                payload["IsNoTakeProfit"] = True
                 url = f"{self._rest_base}/limit-orders"
             else:
                 last_quote = self._cache.quote_tick(order.instrument_id)
@@ -363,9 +370,8 @@ class EToroExecutionClient(LiveExecutionClient):
             return
 
         await self._rate_limiter.acquire("CLOSE")
-        etoro_id = int(self._instrument_to_etoro.get(str(command.instrument_id), "0"))
         
-        # Dynamische Pfad-Auswahl basierend auf Order-Typ
+        # FIX 3 & 6: Richtiger Endpoint & Body für Limit (DELETE) vs Market (POST) Cancel
         if order.order_type == OrderType.LIMIT:
             url = f"{self._rest_base}/limit-orders/{pos_id}"
             method = self._session.delete
@@ -373,7 +379,7 @@ class EToroExecutionClient(LiveExecutionClient):
         else:
             url = f"{self._rest_base}/market-close-orders/positions/{pos_id}"
             method = self._session.post
-            payload = {"InstrumentID": etoro_id, "UnitsToDeduct": None}
+            payload = {"UnitsToDeduct": None} # Kein InstrumentID hier
             
         try:
             kwargs = {"headers": self._make_headers(self._order_req_id(coid))}
