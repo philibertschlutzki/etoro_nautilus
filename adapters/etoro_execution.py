@@ -2,6 +2,13 @@
 
 Implements full order execution: REST submission, WebSocket fill stream,
 token-bucket rate limiting, atomic state persistence, and dry-run mode.
+
+API-Spec-konforme URLs (Stand v1.138.0):
+  Open by amount : POST /api/v1/trading/execution/{env}/market-open-orders/by-amount
+  Open by units  : POST /api/v1/trading/execution/{env}/market-open-orders/by-units
+  Close position : POST /api/v1/trading/execution/{env}/market-close-orders/positions/{positionId}
+  Limit order    : POST /api/v1/trading/execution/{env}/limit-orders
+  PnL / Balance  : GET  /api/v1/trading/info/{env}/pnl
 """
 
 from __future__ import annotations
@@ -65,14 +72,14 @@ _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
     "real": "https://public-api.etoro.com/api/v1/trading/execution/real",
 }
+
+# FIX #1: Korrekter PnL-Pfad laut API-Doku (/trading/info/, nicht /trading/execution/)
+# Wird für Balance-Berechnung und Timeout-Reconciliation verwendet.
 _PNL_BASE: dict[str, str] = {
-    "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo/pnl",
-    "real": "https://public-api.etoro.com/api/v1/trading/execution/real/pnl",
+    "demo": "https://public-api.etoro.com/api/v1/trading/info/demo/pnl",
+    "real": "https://public-api.etoro.com/api/v1/trading/info/real/pnl",
 }
-_BALANCE_URL: dict[str, str] = {
-    "demo": "https://public-api.etoro.com/api/v1/trading/account/balance?mode=demo",
-    "real": "https://public-api.etoro.com/api/v1/trading/account/balance",
-}
+
 _WS_URL = "wss://ws.etoro.com/ws"
 
 
@@ -85,6 +92,13 @@ class EToroExecutionClient(LiveExecutionClient):
     All command handlers are async (required by Nautilus >= 1.200).
     URL construction and auth-header creation are centralised to avoid
     duplication across submit / cancel / reconcile paths.
+
+    API-Spec-Fixes vs. Vorversion:
+      #1  PnL-URL: /trading/info/{env}/pnl  (war /trading/execution/{env}/pnl)
+      #2  Response-Parsing: orderForOpen.orderID extrahieren
+      #3  Close-Payload: InstrumentID required laut OpenAPI
+      #4  Payload-Schlüssel: InstrumentID  (war InstrumentId, falsches D)
+      #5  Balance-Berechnung via PnL-Endpoint mit offizieller Formel
     """
 
     def __init__(
@@ -128,7 +142,6 @@ class EToroExecutionClient(LiveExecutionClient):
         self._enable_trailing_stop = enable_trailing_stop
         self._rest_base            = _REST_BASE[environment]
         self._pnl_base             = _PNL_BASE[environment]
-        self._balance_url          = _BALANCE_URL[environment]
 
         # Reverse lookup: Nautilus InstrumentId string → eToro numeric id string
         self._instrument_to_etoro: dict[str, str] = {
@@ -174,11 +187,7 @@ class EToroExecutionClient(LiveExecutionClient):
         etoro_position_id: str | None,
         payload: dict,
     ) -> str:
-        """Single source of truth for REST endpoint URLs.
-
-        Eliminates the duplicated if/elif chain that previously appeared in
-        both _handle_dry_run and _send_rest_order.
-        """
+        """Single source of truth for REST endpoint URLs."""
         if is_close and etoro_position_id:
             return (
                 f"{self._rest_base}/market-close-orders"
@@ -238,7 +247,7 @@ class EToroExecutionClient(LiveExecutionClient):
         await self._rate_limiter.start()
         await self._connect_ws()
 
-        # Fetch real account balance; fall back to zero if unavailable.
+        # FIX #5: Balance via PnL-Endpoint mit offizieller Formel berechnen.
         balance = await self._fetch_account_balance()
         self.generate_account_state(
             balances=[
@@ -275,27 +284,45 @@ class EToroExecutionClient(LiveExecutionClient):
     # ── Account balance ───────────────────────────────────────────────────────
 
     async def _fetch_account_balance(self) -> Money:
-        """Fetch available balance from eToro; returns 0 USD on any failure."""
+        """Fetch available cash from PnL endpoint using official eToro formula.
+
+        Available Cash = credit - (Σ ordersForOpen[mirrorID=0].amount
+                                   + Σ orders.amount)
+
+        Returns 0 USD in dry-run mode or on any fetch failure.
+        """
         if self._dry_run:
             return Money(0, USD)
         try:
             assert self._session is not None
             async with self._session.get(
-                self._balance_url,
+                self._pnl_base,
                 headers=self._make_headers(),
             ) as resp:
                 if resp.status == 200:
-                    body = await resp.json()
-                    raw  = float(
-                        body.get("availableBalance")
-                        or body.get("available_balance")
-                        or 0
+                    data = await resp.json()
+
+                    credit = float(data.get("credits", data.get("credit", 0)))
+
+                    # Only manual open orders (mirrorID == 0) reduce available cash.
+                    orders_for_open_amount = sum(
+                        float(o.get("amount", 0))
+                        for o in data.get("ordersForOpen", [])
+                        if o.get("mirrorID", 0) == 0
                     )
+                    orders_amount = sum(
+                        float(o.get("amount", 0))
+                        for o in data.get("orders", [])
+                    )
+                    available = credit - (orders_for_open_amount + orders_amount)
+
                     self._log.info(
-                        f"Account balance fetched: {raw:.2f} USD",
+                        f"Account balance: credit={credit:.2f} USD  "
+                        f"available={available:.2f} USD",
                         LogColor.GREEN,
                     )
-                    return Money(raw, USD)
+                    return Money(max(available, 0.0), USD)
+
                 self._log.warning(
                     f"Balance fetch returned HTTP {resp.status}; using 0 USD.",
                     LogColor.YELLOW,
@@ -615,20 +642,32 @@ class EToroExecutionClient(LiveExecutionClient):
         etoro_pos_id = await self._state.get(str(pos.opening_order_id))
         return True, etoro_pos_id
 
+    def _etoro_instrument_id(self, order: object) -> int:
+        """Resolve Nautilus InstrumentId → eToro numeric instrument ID."""
+        return int(self._instrument_to_etoro.get(str(order.instrument_id), "0"))
+
     def _build_payload(
         self,
         order: object,
         is_close: bool,
         etoro_position_id: str | None,
     ) -> dict:
+        # FIX #3: InstrumentID is required in close payload (laut OpenAPI spec).
+        # FIX #4: Schlüssel heisst InstrumentID (capital D), nicht InstrumentId.
         if is_close:
-            return {"UnitsToDeduct": None}
+            return {
+                "InstrumentID":  self._etoro_instrument_id(order),
+                "UnitsToDeduct": None,
+            }
 
-        instr_str = str(order.instrument_id)
-        etoro_id  = int(self._instrument_to_etoro.get(instr_str, "0"))
-        is_buy    = order.side == OrderSide.BUY
+        etoro_id = self._etoro_instrument_id(order)
+        is_buy   = order.side == OrderSide.BUY
 
-        base: dict = {"InstrumentId": etoro_id, "IsBuy": is_buy, "Leverage": 1}
+        base: dict = {
+            "InstrumentID": etoro_id,   # FIX #4: capital D
+            "IsBuy":        is_buy,
+            "Leverage":     1,
+        }
 
         if order.order_type == OrderType.LIMIT:
             base["Rate"] = float(order.price)
@@ -751,13 +790,19 @@ class EToroExecutionClient(LiveExecutionClient):
                         body: dict = json.loads(body_text)
                     except json.JSONDecodeError:
                         body = {}
+
+                    # FIX #2: API antwortet mit {"orderForOpen": {"orderID": 13902598}}
+                    # Die orderID ist die positionId für spätere Close-Calls.
+                    order_for_open = body.get("orderForOpen", {})
                     new_pos_id = str(
-                        body.get("positionId")
+                        order_for_open.get("orderID")   # PRIMARY — immer vorhanden
+                        or body.get("positionId")        # Fallbacks
                         or body.get("PositionId")
                         or body.get("orderId")
                         or body.get("OrderId")
-                        or req_id
+                        or req_id                        # Last resort
                     )
+
                     await self._state.set(
                         order.client_order_id.value, new_pos_id
                     )
@@ -770,7 +815,7 @@ class EToroExecutionClient(LiveExecutionClient):
                     )
                     self._log.info(
                         f"Order accepted: {order.client_order_id.value} "
-                        f"→ pos {new_pos_id}",
+                        f"→ orderID {new_pos_id}",
                         LogColor.GREEN,
                     )
 
@@ -840,8 +885,8 @@ class EToroExecutionClient(LiveExecutionClient):
     ) -> None:
         """Check PnL endpoint after a timeout or gateway error.
 
-        If the position is found (matched by x-request-id), the order is
-        accepted and the state mapping updated. Otherwise rejected.
+        Scannt ordersForOpen nach einer Order die per token dem req_id entspricht.
+        Falls gefunden: accepted + state gesetzt. Sonst: rejected.
         """
         try:
             assert self._session is not None
@@ -850,28 +895,34 @@ class EToroExecutionClient(LiveExecutionClient):
                 headers=self._make_headers(),
             ) as resp:
                 if resp.status == 200:
-                    body      = await resp.json()
-                    positions = (
-                        body
-                        if isinstance(body, list)
-                        else body.get("positions", [])
+                    data      = await resp.json()
+                    # Suche in offenen Positionen und pending orders
+                    candidates = (
+                        data.get("positions", [])
+                        + data.get("ordersForOpen", [])
                     )
-                    for pos in positions:
-                        if str(pos.get("requestId")) == req_id:
-                            pos_id = str(pos.get("positionId") or req_id)
+                    for item in candidates:
+                        # token aus dem open-response entspricht x-request-id
+                        if str(item.get("token") or item.get("requestId") or "") == req_id:
+                            item_id = str(
+                                item.get("positionID")
+                                or item.get("positionId")
+                                or item.get("orderID")
+                                or req_id
+                            )
                             await self._state.set(
-                                order.client_order_id.value, pos_id
+                                order.client_order_id.value, item_id
                             )
                             self.generate_order_accepted(
                                 strategy_id=order.strategy_id,
                                 instrument_id=order.instrument_id,
                                 client_order_id=order.client_order_id,
-                                venue_order_id=VenueOrderId(pos_id),
+                                venue_order_id=VenueOrderId(item_id),
                                 ts_event=self._clock.timestamp_ns(),
                             )
                             self._log.info(
                                 f"Reconciled via PnL: "
-                                f"{order.client_order_id.value} → {pos_id}",
+                                f"{order.client_order_id.value} → {item_id}",
                                 LogColor.GREEN,
                             )
                             return
@@ -922,11 +973,16 @@ class EToroExecutionClient(LiveExecutionClient):
 
         await self._rate_limiter.acquire("CLOSE")
 
-        req_id = self._order_req_id(coid)
-        url    = f"{self._rest_base}/market-close-orders/positions/{pos_id}"
+        req_id   = self._order_req_id(coid)
+        url      = f"{self._rest_base}/market-close-orders/positions/{pos_id}"
+        # FIX #3/#4: InstrumentID required und capital D
+        etoro_id = int(
+            self._instrument_to_etoro.get(str(command.instrument_id), "0")
+        )
+        payload  = {"InstrumentID": etoro_id, "UnitsToDeduct": None}
 
         self._log.info(
-            f"REST POST (cancel) {url} | x-request-id={req_id}",
+            f"REST POST (cancel) {url} | payload={payload} | x-request-id={req_id}",
             LogColor.CYAN,
         )
 
@@ -934,7 +990,7 @@ class EToroExecutionClient(LiveExecutionClient):
             assert self._session is not None
             async with self._session.post(
                 url,
-                json={"UnitsToDeduct": None},
+                json=payload,
                 headers=self._make_headers(req_id),
             ) as resp:
                 status = resp.status
