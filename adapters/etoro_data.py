@@ -156,29 +156,37 @@ class EToroDataClient(LiveMarketDataClient):
     # ── Instruments ───────────────────────────────────────────────────────────
 
     def _register_instruments(self) -> None:
-        ts = self._clock.timestamp_ns()
-        for eid, instr_id in self.instrument_map.items():
-            # Estimate precision based on known highly volatile symbols vs standard
-            sym = str(instr_id.symbol).upper()
-            if "SHIB" in sym or "PEPE" in sym:
-                prec, incr = 8, 1e-8
-            elif "BTC" in sym or "ETH" in sym or "SPX" in sym:
-                prec, incr = 2, 0.01
-            else:
-                prec, incr = 5, 0.00001
+    ts = self._clock.timestamp_ns()
+    for eid, instr_id in self.instrument_map.items():
+        sym = str(instr_id.symbol).upper()
 
-            self._instrument_precision[eid] = prec
+        # Price precision
+        if "SHIB" in sym or "PEPE" in sym:
+            price_prec, price_incr = 8, 1e-8
+        elif "BTC" in sym or "ETH" in sym:
+            price_prec, price_incr = 2, 0.01
+        else:
+            price_prec, price_incr = 5, 0.00001
 
-            inst = Equity(
-                instrument_id=instr_id,
-                raw_symbol=instr_id.symbol,
-                currency=USD,
-                price_precision=prec,
-                price_increment=Price(incr, precision=prec),
-                lot_size=Quantity(1, precision=0),
-                ts_event=ts,
-                ts_init=ts,
-            )
+        # Size precision — Crypto fractional, Stocks ganzzahlig
+        _CRYPTO = {"BTC", "ETH", "ADA", "XRP", "SOL", "AVAX", "DOGE",
+                   "ONDO", "HYPE", "AERO", "SHIBxM", "PEPExM"}
+        _is_crypto = any(c in sym for c in _CRYPTO)
+        size_prec = 4 if _is_crypto else 0
+        lot_qty   = 0.0001 if _is_crypto else 1.0
+
+        self._instrument_precision[eid] = price_prec
+
+        inst = Equity(
+            instrument_id=instr_id,
+            raw_symbol=instr_id.symbol,
+            currency=USD,
+            price_precision=price_prec,
+            price_increment=Price(price_incr, precision=price_prec),
+            lot_size=Quantity(lot_qty, precision=size_prec),  # ← fix
+            ts_event=ts,
+            ts_init=ts,
+        )
             self._instrument_provider.add(inst)
             self._cache.add_instrument(inst)
             self._msgbus.publish(topic=f"data.instrument.ETORO.{inst.id}", msg=inst)
