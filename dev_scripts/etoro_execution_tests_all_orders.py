@@ -16,7 +16,8 @@ from nautilus_trader.trading.strategy import Strategy, StrategyConfig
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
-from adapters.etoro_execution import EToroExecClientConfig, EToroLiveExecClientFactory
+from adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
+from adapters.etoro_execution import EToroExecutionClient
 from adapters.instrument_map import ETORO_INSTRUMENTS
 from config.setups import ETORO_API_TEST
 from dotenv import load_dotenv
@@ -42,6 +43,7 @@ class ApiFullExecutionTestStrategy(Strategy):
         self.limit_canceled = False
         self.market_filled = False
         self.position_closed = False
+        self._test_aborted = False
 
     def on_start(self) -> None:
         self.log.info(f"Full API Test gestartet. Warte auf Daten für {self.instrument_id} ...")
@@ -100,11 +102,10 @@ class ApiFullExecutionTestStrategy(Strategy):
             self.limit_canceled = True
 
     def on_order_rejected(self, event) -> None:
-        # FIX 7: Timeout bei Rejection abbrechen
         self.log.error(f"❌ ORDER REJECTED: {event.client_order_id} - {event.reason}")
-        self.log.error("Test wird abgebrochen, da eine Order abgewiesen wurde.")
-        self.limit_canceled = True
-        self.position_closed = True
+        self.log.error("Aborting test due to order rejection.")
+        self._test_aborted = True
+        self.stop()
 
     def on_order_filled(self, event) -> None:
         if event.client_order_id == self.market_buy_id and not self.market_filled:
@@ -125,14 +126,16 @@ class ApiFullExecutionTestStrategy(Strategy):
             self.log.info("✅ Position erfolgreich geschlossen!")
             self.position_closed = True
 
-    def is_finished(self):
-        return self.limit_canceled and self.position_closed
+    def is_finished(self) -> bool:
+        return self._test_aborted or (self.limit_canceled and self.position_closed)
 
 
-async def emergency_cleanup(api_key: str, user_key: str, environment: str, symbol: str):
+async def emergency_cleanup(
+    api_key: str, user_key: str, environment: str, symbol: str, settle_delay_s: float = 3.0
+) -> None:
     """Sicherheitsnetz: Schliesst alle verbleibenden Positionen und Limit-Orders per REST-Call."""
-    print("\n🧹 Führe Emergency Cleanup durch (Suche nach verwaisten Trades)...")
-    await asyncio.sleep(2.0)  # Gib eToro kurz Zeit, die Datenbank zu aktualisieren
+    print(f"\n🧹 Emergency Cleanup (warte {settle_delay_s}s auf Settlement)...")
+    await asyncio.sleep(settle_delay_s)
     
     base_url = "https://public-api.etoro.com/api/v1/trading"
     pnl_url = f"{base_url}/info/{environment}/pnl"
@@ -266,11 +269,12 @@ async def main() -> None:
         await asyncio.sleep(1)
         timeout -= 1
 
-    if strategy.is_finished():
-        if strategy.limit_canceled and strategy.position_closed:
-            print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")
+    if strategy.is_finished() and not strategy._test_aborted:
+        print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")
+    elif strategy._test_aborted:
+        print("\n❌ Test abgebrochen (Order abgewiesen). Cleanup wird ausgeführt.")
     else:
-        print("\n⚠️ Timeout — Der Testlauf konnte nicht vollständig abgeschlossen werden.")
+        print("\n⚠️ Timeout — Testlauf unvollständig.")
 
     # Node sauber herunterfahren
     node.stop()
@@ -285,7 +289,8 @@ async def main() -> None:
             API_KEY, 
             USER_KEY, 
             ETORO_API_TEST["environment"], 
-            ETORO_API_TEST["symbol"]
+            ETORO_API_TEST["symbol"],
+            settle_delay_s=5.0,
         )
 
 
