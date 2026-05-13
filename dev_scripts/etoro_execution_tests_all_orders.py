@@ -17,7 +17,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
 from adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
-from adapters.etoro_execution import EToroExecutionClient
 from adapters.instrument_map import ETORO_INSTRUMENTS
 from config.setups import ETORO_API_TEST
 from dotenv import load_dotenv
@@ -139,6 +138,9 @@ class ApiFullExecutionTestStrategy(Strategy):
         ):
             self.log.info("✅ Position erfolgreich geschlossen!")
             self.position_closed = True
+
+    def on_stop(self) -> None:
+        self.unsubscribe_quote_ticks(self.instrument_id)
 
     def is_finished(self) -> bool:
         return self._test_aborted or (self.limit_canceled and self.position_closed)

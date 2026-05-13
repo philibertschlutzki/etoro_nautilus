@@ -183,8 +183,7 @@ class EToroExecutionClient(LiveExecutionClient):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    self._log.info(f"PnL raw keys: {list(data.keys())}", LogColor.CYAN)
-                    self._log.info(f"PnL sample: { {k: data[k] for k in list(data.keys())[:5]} }", LogColor.CYAN)  # noqa: E501
+                    self._log.debug(f"PnL raw keys: {list(data.keys())}", LogColor.CYAN)  # noqa: E501
 
                     credit = float(
                         data.get("credit")
@@ -701,6 +700,10 @@ class EToroExecutionClient(LiveExecutionClient):
         await self._rate_limiter.acquire("CLOSE")
 
         # FIX 3 & 6: Richtiger Endpoint & Body für Limit (DELETE) vs Market (POST) Cancel  # noqa: E501
+        # NOTE: For LIMIT orders, pos_id may still be req_id (UUID token) if the WS
+        # trading.order.accepted event hasn't arrived yet with the real orderId.
+        # In that case the DELETE will return 404 (handled gracefully below).
+        # emergency_cleanup() acts as the safety net for any orders left open.
         if order.order_type == OrderType.LIMIT:
             url = f"{self._rest_base}/limit-orders/{pos_id}"
             method = self._session.delete
