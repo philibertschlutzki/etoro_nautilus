@@ -149,11 +149,10 @@ async def emergency_cleanup(
     user_key: str,
     environment: str,
     symbol: str,
-    settle_delay_s: float = 3.0,
+    settle_delay_s: float = 5.0,
+    max_retries: int = 3
 ) -> None:
     """Sicherheitsnetz: Schliesst alle verbleibenden Positionen und Limit-Orders per REST-Call."""  # noqa: E501
-    print(f"\n🧹 Emergency Cleanup (warte {settle_delay_s}s auf Settlement)...")
-    await asyncio.sleep(settle_delay_s)
 
     base_url = "https://public-api.etoro.com/api/v1/trading"
     pnl_url = f"{base_url}/info/{environment}/pnl"
@@ -175,73 +174,83 @@ async def emergency_cleanup(
         return
 
     async with aiohttp.ClientSession() as session:
-        h_get = headers.copy()
-        h_get["x-request-id"] = str(uuid.uuid4())
+        for attempt in range(1, max_retries + 1):
+            delay = settle_delay_s * attempt
+            print(f"\n🧹 Emergency Cleanup — Versuch {attempt}/{max_retries} (warte {delay}s)...")  # noqa: E501
+            await asyncio.sleep(delay)
 
-        async with session.get(pnl_url, headers=h_get) as resp:
-            if resp.status != 200:
-                print(f"⚠️ PnL Abruf fehlgeschlagen: HTTP {resp.status}")
-                return
+            h_get = headers.copy()
+            h_get["x-request-id"] = str(uuid.uuid4())
 
-            data = await resp.json()
-            found_anything = False
+            async with session.get(pnl_url, headers=h_get) as resp:
+                if resp.status != 200:
+                    print(f"⚠️ PnL Abruf fehlgeschlagen: HTTP {resp.status}")
+                    return
 
-            positions = data.get("Positions", data.get("positions", []))
-            orders_open = data.get("OrdersForOpen", data.get("ordersForOpen", []))
+                data = await resp.json()
+                print(f"   [DEBUG] PnL-Keys: {list(data.keys())}")
+                print(f"   [DEBUG] Positionen: {len(data.get('positions', data.get('Positions', [])))}")  # noqa: E501
+                print(f"   [DEBUG] OrdersForOpen: {len(data.get('ordersForOpen', data.get('OrdersForOpen', [])))}")  # noqa: E501
 
-            # 1. Offene MARKET Positionen (LONG/SHORT) schliessen
-            for p in positions:
-                p_lower = {str(k).lower(): v for k, v in p.items()}
-                if str(p_lower.get("instrumentid", "")) == str(etoro_id):
-                    found_anything = True
-                    pos_id = p_lower.get("positionid")
-                    print(f"   -> Schliesse offene Position {pos_id}...")
+                found_anything = False
 
-                    payload = {
-                        "UnitsToDeduct": None
-                    }  # FIX 6: Kein InstrumentID bei Close
-                    h_close = headers.copy()
-                    h_close["x-request-id"] = str(uuid.uuid4())
+                positions = data.get("Positions", data.get("positions", []))
+                orders_open = data.get("OrdersForOpen", data.get("ordersForOpen", []))
 
-                    async with session.post(
-                        f"{base_url}{exec_path}/market-close-orders/positions/{pos_id}",  # noqa: E501
-                        json=payload,
-                        headers=h_close,
-                    ) as c_resp:
-                        if c_resp.status in range(200, 300):
-                            print(f"   ✅ Position {pos_id} erfolgreich geschlossen.")
-                        else:
-                            err = await c_resp.text()
-                            print(
-                                f"   ❌ Fehler beim Schliessen von {pos_id}: HTTP {c_resp.status} - {err}"  # noqa: E501
-                            )
+                # 1. Offene MARKET Positionen (LONG/SHORT) schliessen
+                for p in positions:
+                    p_lower = {str(k).lower(): v for k, v in p.items()}
+                    if str(p_lower.get("instrumentid", "")) == str(etoro_id):
+                        found_anything = True
+                        pos_id = p_lower.get("positionid")
+                        print(f"   -> Schliesse offene Position {pos_id}...")
 
-            # 2. Offene LIMIT Orders schliessen
-            for o in orders_open:
-                o_lower = {str(k).lower(): v for k, v in o.items()}
-                if str(o_lower.get("instrumentid", "")) == str(etoro_id):
-                    found_anything = True
-                    ord_id = o_lower.get("orderid")
-                    print(f"   -> Storniere Limit-Order {ord_id}...")
+                        payload = {"UnitsToDeduct": None}  # FIX 6: Kein InstrumentID bei Close  # noqa: E501
+                        h_close = headers.copy()
+                        h_close["x-request-id"] = str(uuid.uuid4())
 
-                    h_del = headers.copy()
-                    h_del["x-request-id"] = str(uuid.uuid4())
+                        async with session.post(
+                            f"{base_url}{exec_path}/market-close-orders/positions/{pos_id}",  # noqa: E501
+                            json=payload,
+                            headers=h_close,
+                        ) as c_resp:
+                            if c_resp.status in range(200, 300):
+                                print(f"   ✅ Position {pos_id} erfolgreich geschlossen.")  # noqa: E501
+                            else:
+                                err = await c_resp.text()
+                                print(
+                                    f"   ❌ Fehler beim Schliessen von {pos_id}: HTTP {c_resp.status} - {err}"  # noqa: E501
+                                )
 
-                    async with session.delete(
-                        f"{base_url}{exec_path}/limit-orders/{ord_id}", headers=h_del
-                    ) as d_resp:
-                        if d_resp.status in range(200, 300):
-                            print(f"   ✅ Limit-Order {ord_id} erfolgreich storniert.")
-                        else:
-                            err = await d_resp.text()
-                            print(
-                                f"   ❌ Fehler beim Stornieren von {ord_id}: HTTP {d_resp.status} - {err}"  # noqa: E501
-                            )
+                # 2. Offene LIMIT Orders schliessen
+                for o in orders_open:
+                    o_lower = {str(k).lower(): v for k, v in o.items()}
+                    if str(o_lower.get("instrumentid", "")) == str(etoro_id):
+                        found_anything = True
+                        ord_id = o_lower.get("orderid")
+                        print(f"   -> Storniere Limit-Order {ord_id}...")
 
-            if not found_anything:
-                print(
-                    "✅ Keine offenen Positionen oder Limits gefunden. Das Konto ist sauber."  # noqa: E501
-                )
+                        h_del = headers.copy()
+                        h_del["x-request-id"] = str(uuid.uuid4())
+
+                        async with session.delete(
+                            f"{base_url}{exec_path}/limit-orders/{ord_id}", headers=h_del  # noqa: E501
+                        ) as d_resp:
+                            if d_resp.status in range(200, 300):
+                                print(f"   ✅ Limit-Order {ord_id} erfolgreich storniert.")  # noqa: E501
+                            else:
+                                err = await d_resp.text()
+                                print(
+                                    f"   ❌ Fehler beim Stornieren von {ord_id}: HTTP {d_resp.status} - {err}"  # noqa: E501
+                                )
+
+            if found_anything:
+                break
+            if attempt < max_retries:
+                print(f"   ↩️  Keine Positionen gefunden, erneuter Versuch in {settle_delay_s * (attempt+1)}s...")  # noqa: E501
+
+        if not found_anything:
+            print("✅ Keine offenen Positionen oder Limits gefunden nach allen Versuchen.")  # noqa: E501
 
 
 async def main() -> None:

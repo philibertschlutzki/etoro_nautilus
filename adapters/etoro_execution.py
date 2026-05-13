@@ -183,18 +183,30 @@ class EToroExecutionClient(LiveExecutionClient):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    # "credit" is the total account credit (gross)
-                    credit = float(data.get("credit", data.get("credits", 0)) or 0)
+                    self._log.info(f"PnL raw keys: {list(data.keys())}", LogColor.CYAN)
+                    self._log.info(f"PnL sample: { {k: data[k] for k in list(data.keys())[:5]} }", LogColor.CYAN)  # noqa: E501
+
+                    credit = float(
+                        data.get("credit")
+                        or data.get("credits")
+                        or data.get("availableCash")
+                        or data.get("equity")
+                        or data.get("netEquity")
+                        or 0
+                    ) or 0.0
+
                     # Deduct only non-mirror pending open orders
+                    orders_open = data.get("ordersForOpen", data.get("OrdersForOpen", []))  # noqa: E501
                     pending = sum(
-                        float(o.get("amount", 0))
-                        for o in data.get("ordersForOpen", [])
-                        if not o.get("mirrorID")
+                        float(o.get("amount", o.get("Amount", 0)))
+                        for o in orders_open
+                        if not o.get("mirrorID", o.get("MirrorID"))
                     )
                     # Deduct invested amount of all open positions
+                    positions = data.get("positions", data.get("Positions", []))
                     invested = sum(
-                        float(p.get("amount", p.get("investedAmount", 0)))
-                        for p in data.get("positions", [])
+                        float(p.get("amount", p.get("investedAmount", p.get("Amount", p.get("InvestedAmount", 0)))))  # noqa: E501
+                        for p in positions
                     )
                     available = max(credit - pending - invested, 0.0)
                     self._log.info(
@@ -432,20 +444,33 @@ class EToroExecutionClient(LiveExecutionClient):
     async def _batch_cancel_orders(self, c: BatchCancelOrders) -> None:
         pass
 
-    async def _query_order(self, c: QueryOrder) -> None:
-        pass
+    async def _query_order(self, command: QueryOrder) -> None:
+        """Antwortet auf Nautilus Inflight-Reconciliation-Queries."""
+        coid = command.client_order_id.value
+        order = self._cache.order(command.client_order_id)
+        if not order or order.status.name not in ("INITIALIZED", "SUBMITTED"):
+            return
+        self._log.info(f"Query ClientOrderId('{coid}')", LogColor.BLUE)
+        try:
+            found = await self._reconcile_via_pnl(
+                order,
+                self._order_req_id(coid),
+                await self._state.get(coid) or "",
+            )
+            if found:
+                self._log.info(
+                    f"Query resolved order {coid} via PnL reconciliation.", LogColor.GREEN  # noqa: E501
+                )
+        except Exception as exc:
+            self._log.warning(f"Query failed for {coid}: {exc}", LogColor.YELLOW)
 
     def _build_limit_payload(self, order, etoro_id: int) -> dict:
-        sl_rate = float(order.price) * 0.5 if order.side == OrderSide.BUY else float(order.price) * 2.0
-        tp_rate = float(order.price) * 2.0 if order.side == OrderSide.BUY else float(order.price) * 0.5
         return {
             "InstrumentID": etoro_id,
             "IsBuy": order.side == OrderSide.BUY,
             "Leverage": 1,
             "Rate": float(order.price),
             "Amount": round(float(order.quantity) * float(order.price), 2),
-            "StopLossRate": round(sl_rate, 4),
-            "TakeProfitRate": round(tp_rate, 4),
             "IsNoStopLoss": True,
             "IsNoTakeProfit": True,
         }
@@ -566,22 +591,22 @@ class EToroExecutionClient(LiveExecutionClient):
                         body.get("orderForOpen", {}).get("orderID")
                         or body.get("positionId")
                         or body.get("orderId")
+                        or body.get("token")
                         or (etoro_pos_id if is_close else req_id)
                     )
                     await self._state.set(order.client_order_id.value, new_pos_id)
 
+                    self.generate_order_accepted(
+                        strategy_id=order.strategy_id,
+                        instrument_id=order.instrument_id,
+                        client_order_id=order.client_order_id,
+                        venue_order_id=VenueOrderId(new_pos_id),
+                        ts_event=ts,
+                    )
                     if order.order_type == OrderType.LIMIT:
                         self._log.info(
-                            f"Limit order submitted, awaiting WS accept for real orderId (token={req_id})",  # noqa: E501
+                            f"Limit order accepted (venue_id={new_pos_id}, token={req_id}). State will be updated when WS delivers real orderId.",  # noqa: E501
                             LogColor.GREEN,
-                        )
-                    else:
-                        self.generate_order_accepted(
-                            strategy_id=order.strategy_id,
-                            instrument_id=order.instrument_id,
-                            client_order_id=order.client_order_id,
-                            venue_order_id=VenueOrderId(new_pos_id),
-                            ts_event=ts,
                         )
 
                     for evt in list(self._ws_buffer):

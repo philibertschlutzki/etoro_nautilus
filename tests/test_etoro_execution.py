@@ -103,6 +103,8 @@ async def test_limit_order_payload_has_is_no_stop_loss(exec_client):
     assert payload["Amount"] == 1500.0
     assert payload["IsNoStopLoss"] is True
     assert payload["IsNoTakeProfit"] is True
+    assert "StopLossRate" not in payload
+    assert "TakeProfitRate" not in payload
 
 
 @pytest.mark.asyncio
@@ -192,7 +194,8 @@ async def test_balance_fetch_parses_credit_key(exec_client):
 async def test_emergency_cleanup_waits_for_settle_delay(mock_session, mock_sleep):
     from dev_scripts.etoro_execution_tests_all_orders import emergency_cleanup
 
-    mock_session_inst = AsyncMock()
+
+    mock_session_inst = MagicMock()
     mock_session.return_value.__aenter__.return_value = mock_session_inst
 
     mock_get_ctx = AsyncMock()
@@ -203,12 +206,40 @@ async def test_emergency_cleanup_waits_for_settle_delay(mock_session, mock_sleep
     }
     mock_session_inst.get.return_value = mock_get_ctx
 
+
     await emergency_cleanup(
         api_key="API_KEY",
         user_key="USER_KEY",
         environment="demo",
-        symbol="BTC/USD",
+        symbol="ADA.ETORO",
         settle_delay_s=3.0,
     )
 
-    mock_sleep.assert_called_once_with(3.0)
+    assert mock_sleep.call_count == 3
+
+@pytest.mark.asyncio
+async def test_limit_order_calls_generate_order_accepted_immediately(exec_client):
+    order = MagicMock()
+    order.client_order_id = ClientOrderId("test_limit_2")
+    order.instrument_id = InstrumentId.from_str("AAPL.NASDAQ")
+    order.strategy_id = ClientId("TEST_STRATEGY")
+    order.side = OrderSide.BUY
+    order.quantity = Quantity.from_int(10)
+    order.price = Price(150.0, precision=2)
+    order.time_in_force = TimeInForce.GTC
+    order.order_type = OrderType.LIMIT
+
+    mock_post_ctx = AsyncMock()
+    mock_post_ctx.__aenter__.return_value.status = 200
+    mock_post_ctx.__aenter__.return_value.text.return_value = '{"token": "mock-token"}'
+    exec_client._session.post.return_value = mock_post_ctx
+
+    mock_command = MagicMock()
+    mock_command.order = order
+
+    exec_client._rate_limiter.acquire = AsyncMock(return_value=True)
+
+    await exec_client._submit_order_async(mock_command)
+
+    # Assert generate_order_accepted is called immediately
+    exec_client.generate_order_accepted.assert_called_once()
