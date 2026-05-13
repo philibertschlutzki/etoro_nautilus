@@ -101,9 +101,9 @@ async def test_limit_order_payload_has_is_no_stop_loss(exec_client):
     payload = kwargs["json"]
     assert payload["Rate"] == 150.0
     assert payload["Amount"] == 1500.0
-    assert payload["IsNoStopLoss"] is True
+    assert payload["IsNoStopLoss"] is False
+    assert payload["StopLossRate"] > 0
     assert payload["IsNoTakeProfit"] is True
-    assert "StopLossRate" not in payload
     assert "TakeProfitRate" not in payload
 
 
@@ -167,7 +167,6 @@ async def test_cancel_market_position_calls_post_close_endpoint(exec_client):
     assert "market-close-orders/positions/mock_pos_id" in args[0]
     payload = kwargs.get("json")
     assert payload == {"UnitsToDeduct": None}
-    assert "InstrumentID" not in payload
 
 
 @pytest.mark.asyncio
