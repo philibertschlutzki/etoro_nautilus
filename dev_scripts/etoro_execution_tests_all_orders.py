@@ -205,7 +205,11 @@ async def emergency_cleanup(
                 found_anything = False
 
                 positions = data.get("Positions", data.get("positions", []))
-                orders_open = data.get("OrdersForOpen", data.get("ordersForOpen", []))
+                orders_open = (
+                    data.get("ordersForOpen", data.get("OrdersForOpen", []))
+                    + data.get("entryOrders", data.get("EntryOrders", []))
+                    + data.get("orders", data.get("Orders", []))
+                )
 
                 # 1. Offene MARKET Positionen (LONG/SHORT) schliessen
                 for p in positions:
@@ -219,7 +223,7 @@ async def emergency_cleanup(
                     pos_id = p_lower.get("positionid")
                     print(f"   -> Schliesse offene Position {pos_id}...")
 
-                    payload = {"UnitsToDeduct": None}  # FIX 6: Kein InstrumentID bei Close  # noqa: E501
+                    payload = {"InstrumentID": etoro_id, "UnitsToDeduct": None}
                     h_close = headers.copy()
                     h_close["x-request-id"] = str(uuid.uuid4())
 
