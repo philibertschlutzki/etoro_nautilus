@@ -466,13 +466,13 @@ class EToroExecutionClient(LiveExecutionClient):
 
     def _build_limit_payload(self, order, etoro_id: int) -> dict:
         limit_rate = float(order.price)
-        # eToro Real-API ignoriert IsNoStopLoss und verlangt StopLossRate > 0.
-        # Wir setzen eine nominell winzige SL-Rate (0.5% unterhalb des Limit-Preises
-        # für BUY, 0.5% oberhalb für SELL), mindestens 1e-05.
+        # Nomineller Minimal-SL: erfüllt eToro-Constraint (> 0) ohne Trading-Risiko.
+        # eToro akzeptiert 1e-05 als gültige SL-Rate (verifiziert aus Live-Portfolio).
+        # Für echte Strategien sollte der SL sinnvoll gesetzt werden.
         if order.side == OrderSide.BUY:
-            sl_rate = round(max(limit_rate * 0.995, 1e-05), 5)
+            sl_rate = max(round(limit_rate * 0.5, 5), 1e-05)   # 50% unter Trigger
         else:
-            sl_rate = round(limit_rate * 1.005, 5)
+            sl_rate = round(limit_rate * 2.0, 5)                # 100% über Trigger
         return {
             "InstrumentID": etoro_id,
             "IsBuy": order.side == OrderSide.BUY,
