@@ -436,12 +436,16 @@ class EToroExecutionClient(LiveExecutionClient):
         pass
 
     def _build_limit_payload(self, order, etoro_id: int) -> dict:
+        sl_rate = float(order.price) * 0.5 if order.side == OrderSide.BUY else float(order.price) * 2.0
+        tp_rate = float(order.price) * 2.0 if order.side == OrderSide.BUY else float(order.price) * 0.5
         return {
             "InstrumentID": etoro_id,
             "IsBuy": order.side == OrderSide.BUY,
             "Leverage": 1,
             "Rate": float(order.price),
             "Amount": round(float(order.quantity) * float(order.price), 2),
+            "StopLossRate": round(sl_rate, 4),
+            "TakeProfitRate": round(tp_rate, 4),
             "IsNoStopLoss": True,
             "IsNoTakeProfit": True,
         }
