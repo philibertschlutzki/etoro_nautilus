@@ -48,7 +48,6 @@ from nautilus_trader.model.identifiers import (
 )
 from nautilus_trader.model.objects import AccountBalance, Money, Price
 
-from adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
 from adapters.etoro_rate_limiter import _RateLimiter
 from adapters.etoro_state_manager import _StateManager
 from adapters.instrument_map import ETORO_INSTRUMENTS
@@ -507,8 +506,11 @@ class EToroExecutionClient(LiveExecutionClient):
             url = f"{self._rest_base}/market-open-orders/by-units"
         return payload, url
 
-    def _build_close_payload(self) -> dict:
-        return {"UnitsToDeduct": None}
+    def _build_close_payload(self, etoro_id: int) -> dict:
+        return {
+            "InstrumentID": etoro_id,
+            "UnitsToDeduct": None,
+        }
 
     async def _submit_order_async(self, command: SubmitOrder) -> None:
         order = command.order
@@ -545,7 +547,7 @@ class EToroExecutionClient(LiveExecutionClient):
         etoro_id = int(self._instrument_to_etoro.get(str(order.instrument_id), "0"))
 
         if is_close:
-            payload = self._build_close_payload()
+            payload = self._build_close_payload(etoro_id)
             url = f"{self._rest_base}/market-close-orders/positions/{etoro_pos_id}"
         elif order.order_type == OrderType.LIMIT:
             payload = self._build_limit_payload(order, etoro_id)
@@ -689,6 +691,45 @@ class EToroExecutionClient(LiveExecutionClient):
                 ts_event=ts,
             )
 
+    async def _resolve_limit_order_id(self, coid: str) -> str | None:
+        """
+        Sucht die echte numerische orderID für eine Limit-Order im PnL-Endpoint.
+        Prüft 'ordersForOpen', 'entryOrders' und 'orders'.
+        Matching via req_id (UUID5 vom coid).
+        """
+        req_id = self._order_req_id(coid)
+        try:
+            async with self._session.get(
+                self._pnl_base, headers=self._make_headers()
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+                data = data.get("clientPortfolio", data)
+
+                for key in ("ordersForOpen", "OrdersForOpen",
+                            "entryOrders", "EntryOrders",
+                            "orders", "Orders"):
+                    for item in data.get(key, []):
+                        item_lower = {str(k).lower(): v for k, v in item.items()}
+                        # Matching via token/requestId
+                        item_token = str(
+                            item_lower.get("token", "")
+                            or item_lower.get("requestid", "")
+                        )
+                        if item_token == req_id:
+                            order_id = str(
+                                item_lower.get("orderid", "")
+                                or item_lower.get("order_id", "")
+                            )
+                            if order_id:
+                                return order_id
+        except Exception as exc:
+            self._log.warning(
+                f"_resolve_limit_order_id failed for {coid}: {exc}", LogColor.YELLOW
+            )
+        return None
+
     async def _cancel_order_async(self, command: CancelOrder) -> None:
         coid = command.client_order_id.value
         if not (order := self._cache.order(command.client_order_id)):
@@ -709,33 +750,59 @@ class EToroExecutionClient(LiveExecutionClient):
 
         await self._rate_limiter.acquire("CLOSE")
 
-        # FIX 3 & 6: Richtiger Endpoint & Body für Limit (DELETE) vs Market (POST) Cancel  # noqa: E501
-        # NOTE: For LIMIT orders, pos_id may still be req_id (UUID token) if the WS
-        # trading.order.accepted event hasn't arrived yet with the real orderId.
-        # In that case the DELETE will return 404 (handled gracefully below).
-        # emergency_cleanup() acts as the safety net for any orders left open.
         if order.order_type == OrderType.LIMIT:
+            # Versuche zuerst mit gespeicherter ID (könnte UUID-Token sein)
             url = f"{self._rest_base}/limit-orders/{pos_id}"
             method = self._session.delete
-            payload = None
-        else:
-            url = f"{self._rest_base}/market-close-orders/positions/{pos_id}"
-            method = self._session.post
-            payload = {"UnitsToDeduct": None}  # Kein InstrumentID hier
 
-        try:
-            kwargs = {"headers": self._make_headers(self._order_req_id(coid))}
-            if payload:
-                kwargs["json"] = payload
+            try:
+                async with method(url, headers=self._make_headers(self._order_req_id(coid))) as resp:
+                    if resp.status in range(200, 300) or resp.status == 404:
+                        # Erfolg oder bereits weg
+                        pass
+                    elif resp.status == 400:
+                        # Token-Problem: Versuche echte orderID via PnL zu finden
+                        self._log.warning(
+                            f"Cancel 400 for {coid} (token-ID issue). "
+                            f"Querying PnL for real orderID...",
+                            LogColor.YELLOW,
+                        )
+                        real_id = await self._resolve_limit_order_id(coid)
+                        if real_id and real_id != pos_id:
+                            self._log.info(
+                                f"Found real orderID {real_id} for {coid}, retrying DELETE.",
+                                LogColor.CYAN,
+                            )
+                            await self._state.set(coid, real_id)
+                            retry_url = f"{self._rest_base}/limit-orders/{real_id}"
+                            async with self._session.delete(
+                                retry_url,
+                                headers=self._make_headers(self._order_req_id(coid))
+                            ) as retry_resp:
+                                if retry_resp.status not in range(200, 300) and retry_resp.status != 404:
+                                    err = await retry_resp.text()
+                                    self._log.error(
+                                        f"Retry cancel also failed for {coid}: "
+                                        f"HTTP {retry_resp.status} {err[:200]}",
+                                        LogColor.RED,
+                                    )
+                        else:
+                            self._log.warning(
+                                f"Could not resolve real orderID for {coid}. "
+                                f"Emergency cleanup will handle it.",
+                                LogColor.YELLOW,
+                            )
+                    else:
+                        body = await resp.text()
+                        self._log.error(
+                            f"Cancel failed for {coid}: HTTP {resp.status} {body[:500]}",
+                            LogColor.RED,
+                        )
+            except Exception as exc:
+                self._log.error(f"Cancel exception for {coid}: {exc}", LogColor.RED)
 
-            async with method(url, **kwargs) as resp:
-                if resp.status not in range(200, 300) and resp.status != 404:
-                    body = await resp.text()
-                    self._log.error(
-                        f"Cancel failed for {coid}: HTTP {resp.status} {body[:500]}",
-                        LogColor.RED,
-                    )
-                    return
+            # IMMER OrderCanceled generieren um PENDING_CANCEL zu vermeiden.
+            # Falls die echte Order noch offen ist, räumt emergency_cleanup sie auf.
             await self._state.delete(coid)
             self.generate_order_canceled(
                 strategy_id=command.strategy_id,
@@ -744,8 +811,37 @@ class EToroExecutionClient(LiveExecutionClient):
                 venue_order_id=VenueOrderId(pos_id),
                 ts_event=ts,
             )
-        except Exception as exc:
-            self._log.error(f"Cancel exception for {coid}: {exc}", LogColor.RED)
+            return
+
+        # Market-Order cancel (close position)
+        else:
+            url = f"{self._rest_base}/market-close-orders/positions/{pos_id}"
+            method = self._session.post
+            payload = {"UnitsToDeduct": None}
+
+            try:
+                async with method(
+                    url,
+                    json=payload,
+                    headers=self._make_headers(self._order_req_id(coid))
+                ) as resp:
+                    if resp.status not in range(200, 300) and resp.status != 404:
+                        body = await resp.text()
+                        self._log.error(
+                            f"Cancel failed for {coid}: HTTP {resp.status} {body[:500]}",
+                            LogColor.RED,
+                        )
+                        return
+                await self._state.delete(coid)
+                self.generate_order_canceled(
+                    strategy_id=command.strategy_id,
+                    instrument_id=command.instrument_id,
+                    client_order_id=command.client_order_id,
+                    venue_order_id=VenueOrderId(pos_id),
+                    ts_event=ts,
+                )
+            except Exception as exc:
+                self._log.error(f"Cancel exception for {coid}: {exc}", LogColor.RED)
 
     async def _poll_for_fill(
         self, order: object, req_id: str, order_id: str, is_close: bool
@@ -831,8 +927,10 @@ class EToroExecutionClient(LiveExecutionClient):
                     data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
 
                     positions = data.get("Positions", data.get("positions", []))
-                    orders_for_open = data.get(
-                        "OrdersForOpen", data.get("ordersForOpen", [])
+                    orders_for_open = (
+                        data.get("OrdersForOpen", data.get("ordersForOpen", []))
+                        + data.get("entryOrders", data.get("EntryOrders", []))
+                        + data.get("orders", data.get("Orders", []))
                     )
 
                     for item in positions:
