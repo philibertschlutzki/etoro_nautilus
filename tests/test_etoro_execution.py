@@ -11,12 +11,18 @@ from nautilus_trader.common.component import MessageBus, Logger, LiveClock
 from nautilus_trader.cache.cache import Cache
 from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import OrderSide, OrderType, TimeInForce
-from nautilus_trader.model.identifiers import ClientId, ClientOrderId, InstrumentId, TraderId
+from nautilus_trader.model.identifiers import (
+    ClientId,
+    ClientOrderId,
+    InstrumentId,
+    TraderId,
+)
 from nautilus_trader.model.objects import Money, Price, Quantity
 from unittest.mock import MagicMock
 from nautilus_trader.model.enums import OrderType
 
 from adapters.etoro_execution import EToroExecutionClient
+
 
 @pytest.fixture
 def exec_client():
@@ -24,7 +30,9 @@ def exec_client():
 
     # In nautilus versions we just patch super().__init__
     # to avoid needing all actual C extension objects instantiated correctly in tests.
-    with patch.object(LiveExecutionClient, '__init__', return_value=None), patch.object(LiveExecutionClient, '_set_account_id', return_value=None):
+    with patch.object(LiveExecutionClient, "__init__", return_value=None), patch.object(
+        LiveExecutionClient, "_set_account_id", return_value=None
+    ):
         client = EToroExecutionClient(
             loop=MagicMock(),
             msgbus=MagicMock(),
@@ -36,7 +44,7 @@ def exec_client():
             environment="demo",
             dry_run=False,
             state_path=":memory:",
-            enable_trailing_stop=False
+            enable_trailing_stop=False,
         )
         # For cython extension types, setting attributes dynamically is hard.
         # Instead, we patch them at the class level.
@@ -59,6 +67,7 @@ def exec_client():
         client._rate_limiter = AsyncMock()
         client._rate_limiter.acquire.return_value = True
         return client
+
 
 @pytest.mark.asyncio
 async def test_limit_order_payload_has_is_no_stop_loss(exec_client):
@@ -126,6 +135,7 @@ async def test_cancel_limit_order_calls_delete_endpoint(exec_client):
     assert "limit-orders/mock_order_id" in args[0]
     exec_client._session.post.assert_not_called()
 
+
 @pytest.mark.asyncio
 async def test_cancel_market_position_calls_post_close_endpoint(exec_client):
     order = MagicMock()
@@ -157,6 +167,7 @@ async def test_cancel_market_position_calls_post_close_endpoint(exec_client):
     assert payload == {"UnitsToDeduct": None}
     assert "InstrumentID" not in payload
 
+
 @pytest.mark.asyncio
 async def test_balance_fetch_parses_credit_key(exec_client):
     mock_get_ctx = AsyncMock()
@@ -164,7 +175,7 @@ async def test_balance_fetch_parses_credit_key(exec_client):
     mock_get_ctx.__aenter__.return_value.json.return_value = {
         "credit": 9921.62,
         "positions": [],
-        "ordersForOpen": []
+        "ordersForOpen": [],
     }
     exec_client._session.get.return_value = mock_get_ctx
 
@@ -188,7 +199,7 @@ async def test_emergency_cleanup_waits_for_settle_delay(mock_session, mock_sleep
     mock_get_ctx.__aenter__.return_value.status = 200
     mock_get_ctx.__aenter__.return_value.json.return_value = {
         "Positions": [],
-        "OrdersForOpen": []
+        "OrdersForOpen": [],
     }
     mock_session_inst.get.return_value = mock_get_ctx
 
@@ -197,7 +208,7 @@ async def test_emergency_cleanup_waits_for_settle_delay(mock_session, mock_sleep
         user_key="USER_KEY",
         environment="demo",
         symbol="BTC/USD",
-        settle_delay_s=3.0
+        settle_delay_s=3.0,
     )
 
     mock_sleep.assert_called_once_with(3.0)
