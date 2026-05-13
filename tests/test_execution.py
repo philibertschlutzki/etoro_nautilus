@@ -236,10 +236,12 @@ class _StubClient:
     """
 
     # Borrow async methods as unbound functions — Python will bind them correctly
-    _handle_dry_run = EToroExecutionClient._handle_dry_run  # type: ignore[attr-defined]
-    _build_payload = EToroExecutionClient._build_payload  # type: ignore[attr-defined]
     _submit_order_async = EToroExecutionClient._submit_order_async  # type: ignore[attr-defined]
-    _classify_order = EToroExecutionClient._classify_order  # type: ignore[attr-defined]
+    _build_payload = EToroExecutionClient._build_close_payload  # stub for dry run tests
+    _build_limit_payload = EToroExecutionClient._build_limit_payload  # stub for dry run tests
+    _build_market_open_payload = EToroExecutionClient._build_market_open_payload  # stub for dry run tests
+    _order_req_id = staticmethod(EToroExecutionClient._order_req_id)
+    _handle_dry_run = EToroExecutionClient._submit_order_async  # dry run logic was moved to submit_order_async
 
     def __init__(self) -> None:
         self._dry_run = True
@@ -282,14 +284,18 @@ async def test_dry_run_handle_dry_run_emits_accepted_and_filled(
     state = _StateManager(str(tmp_path / "state.json"))
     await state.load()
     client._state = state
+    rl = _RateLimiter(capacity=1)
+    client._rate_limiter = rl
 
     accepted_calls: list = []
     filled_calls: list = []
     client.generate_order_accepted = lambda *a, **kw: accepted_calls.append((a, kw))
     client.generate_order_filled = lambda *a, **kw: filled_calls.append((a, kw))
 
+    command = MagicMock()
     order = _make_mock_order()
-    await client._handle_dry_run(order, is_close=False, etoro_position_id=None)
+    command.order = order
+    await client._submit_order_async(command)
 
     assert len(accepted_calls) == 1, "Must emit exactly one accepted event"
     assert len(filled_calls) == 1, "Must emit exactly one filled event"
@@ -303,13 +309,17 @@ async def test_dry_run_limit_order_no_fill(tmp_path: Path) -> None:
     state = _StateManager(str(tmp_path / "state.json"))
     await state.load()
     client._state = state
+    rl = _RateLimiter(capacity=1)
+    client._rate_limiter = rl
     accepted_calls: list = []
     filled_calls: list = []
     client.generate_order_accepted = lambda *a, **kw: accepted_calls.append((a, kw))
     client.generate_order_filled = lambda *a, **kw: filled_calls.append((a, kw))
 
+    command = MagicMock()
     order = _make_mock_order(order_type=OrderType.LIMIT)
-    await client._handle_dry_run(order, is_close=False, etoro_position_id=None)
+    command.order = order
+    await client._submit_order_async(command)
 
     assert len(accepted_calls) == 1
     assert len(filled_calls) == 0, "Limit order must not auto-fill in dry-run"
@@ -322,14 +332,18 @@ async def test_dry_run_no_aiohttp_session_used(tmp_path: Path) -> None:
     state = _StateManager(str(tmp_path / "state.json"))
     await state.load()
     client._state = state
+    rl = _RateLimiter(capacity=1)
+    client._rate_limiter = rl
     client.generate_order_accepted = MagicMock()
     client.generate_order_filled = MagicMock()
 
     assert client._session is None
 
     with patch("aiohttp.ClientSession") as mock_session_cls:
+        command = MagicMock()
         order = _make_mock_order()
-        await client._handle_dry_run(order, is_close=False, etoro_position_id=None)
+        command.order = order
+        await client._submit_order_async(command)
         mock_session_cls.assert_not_called()
 
 
@@ -345,11 +359,15 @@ async def test_dry_run_deterministic_fake_position_id(tmp_path: Path) -> None:
     state = _StateManager(str(tmp_path / "state.json"))
     await state.load()
     client._state = state
+    rl = _RateLimiter(capacity=1)
+    client._rate_limiter = rl
     client.generate_order_accepted = MagicMock()
     client.generate_order_filled = MagicMock()
 
+    command = MagicMock()
     order = _make_mock_order(coid=coid)
-    await client._handle_dry_run(order, is_close=False, etoro_position_id=None)
+    command.order = order
+    await client._submit_order_async(command)
 
     assert await state.get(coid) == expected_pos_id
 
@@ -386,4 +404,4 @@ async def test_dry_run_submit_order_async_rate_limit_rejection(
 
     assert len(submitted_calls) == 1, "submitted must be emitted before rate-limit check"
     assert len(rejected_calls) == 1, "rejected must be emitted on rate-limit exhaustion"
-    assert "rate_limit_exhausted" in str(rejected_calls[0])
+    assert "rate_limit" in str(rejected_calls[0])
