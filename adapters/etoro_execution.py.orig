@@ -183,7 +183,6 @@ class EToroExecutionClient(LiveExecutionClient):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
                     self._log.debug(f"PnL raw keys: {list(data.keys())}", LogColor.CYAN)  # noqa: E501
 
                     credit = float(
@@ -465,22 +464,13 @@ class EToroExecutionClient(LiveExecutionClient):
             self._log.warning(f"Query failed for {coid}: {exc}", LogColor.YELLOW)
 
     def _build_limit_payload(self, order, etoro_id: int) -> dict:
-        limit_rate = float(order.price)
-        # Nomineller Minimal-SL: erfüllt eToro-Constraint (> 0) ohne Trading-Risiko.
-        # eToro akzeptiert 1e-05 als gültige SL-Rate (verifiziert aus Live-Portfolio).
-        # Für echte Strategien sollte der SL sinnvoll gesetzt werden.
-        if order.side == OrderSide.BUY:
-            sl_rate = max(round(limit_rate * 0.5, 5), 1e-05)   # 50% unter Trigger
-        else:
-            sl_rate = round(limit_rate * 2.0, 5)                # 100% über Trigger
         return {
             "InstrumentID": etoro_id,
             "IsBuy": order.side == OrderSide.BUY,
             "Leverage": 1,
-            "Rate": limit_rate,
-            "Amount": round(float(order.quantity) * limit_rate, 2),
-            "StopLossRate": sl_rate,
-            "IsNoStopLoss": False,
+            "Rate": float(order.price),
+            "Amount": round(float(order.quantity) * float(order.price), 2),
+            "IsNoStopLoss": True,
             "IsNoTakeProfit": True,
         }
 
@@ -763,7 +753,6 @@ class EToroExecutionClient(LiveExecutionClient):
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
                             positions = data.get("Positions", data.get("positions", []))  # noqa: E501
                             still_open = any(
                                 str(
@@ -792,7 +781,7 @@ class EToroExecutionClient(LiveExecutionClient):
                                     strategy_id=order.strategy_id,
                                     instrument_id=order.instrument_id,
                                     client_order_id=order.client_order_id,
-                                    venue_order_id=order.venue_order_id or VenueOrderId(order_id),
+                                    venue_order_id=VenueOrderId(order_id),
                                     venue_position_id=PositionId(order_id),
                                     trade_id=TradeId(str(uuid.uuid4())),
                                     order_side=order.side,
@@ -828,7 +817,6 @@ class EToroExecutionClient(LiveExecutionClient):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
 
                     positions = data.get("Positions", data.get("positions", []))
                     orders_for_open = data.get(
@@ -863,7 +851,7 @@ class EToroExecutionClient(LiveExecutionClient):
                                 strategy_id=order.strategy_id,
                                 instrument_id=order.instrument_id,
                                 client_order_id=order.client_order_id,
-                                venue_order_id=order.venue_order_id or VenueOrderId(pos_id),
+                                venue_order_id=VenueOrderId(pos_id),
                                 venue_position_id=PositionId(pos_id),
                                 trade_id=TradeId(str(uuid.uuid4())),
                                 order_side=order.side,
@@ -907,7 +895,7 @@ class EToroExecutionClient(LiveExecutionClient):
                                     strategy_id=order.strategy_id,
                                     instrument_id=order.instrument_id,
                                     client_order_id=order.client_order_id,
-                                    venue_order_id=order.venue_order_id or VenueOrderId(i_id),
+                                    venue_order_id=VenueOrderId(i_id),
                                     venue_position_id=PositionId(i_id),
                                     trade_id=TradeId(str(uuid.uuid4())),
                                     order_side=order.side,
