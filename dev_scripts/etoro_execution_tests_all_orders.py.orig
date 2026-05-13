@@ -37,7 +37,6 @@ class ApiFullExecutionTestStrategy(Strategy):
         self.phase = 0
         self.limit_buy_id = None
         self.market_buy_id = None
-        self.close_order_id = None
 
         self.limit_accepted = False
         self.limit_canceled = False
@@ -129,15 +128,16 @@ class ApiFullExecutionTestStrategy(Strategy):
                 quantity=event.last_qty,
                 time_in_force=TimeInForce.GTC,
             )
-            self.close_order_id = close_order.client_order_id
             self.submit_order(close_order)
 
-    def on_position_closed(self, event) -> None:
-        """Wird aufgerufen wenn eine Position vollständig geschlossen wurde."""
-        if self.market_filled:
+    def on_order_closed(self, event) -> None:
+        if (
+            self.market_filled
+            and event.client_order_id != self.market_buy_id
+            and event.client_order_id != self.limit_buy_id
+        ):
             self.log.info("✅ Position erfolgreich geschlossen!")
             self.position_closed = True
-            self.stop()
 
     def on_stop(self) -> None:
         self.unsubscribe_quote_ticks(self.instrument_id)
@@ -166,14 +166,13 @@ async def emergency_cleanup(
         "Content-Type": "application/json",
     }
 
-    etoro_id: int | None = None
+    etoro_id = None
     for k, v in ETORO_INSTRUMENTS.items():
         if v == symbol:
-            etoro_id = int(k)
+            etoro_id = k
             break
 
-    if etoro_id is None:
-        print(f"⚠️  Symbol {symbol} nicht in ETORO_INSTRUMENTS — Cleanup abgebrochen.")
+    if not etoro_id:
         return
 
     async with aiohttp.ClientSession() as session:
@@ -191,7 +190,6 @@ async def emergency_cleanup(
                     return
 
                 data = await resp.json()
-                data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
                 print(f"   [DEBUG] PnL-Keys: {list(data.keys())}")
                 print(f"   [DEBUG] Positionen: {len(data.get('positions', data.get('Positions', [])))}")  # noqa: E501
                 print(f"   [DEBUG] OrdersForOpen: {len(data.get('ordersForOpen', data.get('OrdersForOpen', [])))}")  # noqa: E501
@@ -204,7 +202,7 @@ async def emergency_cleanup(
                 # 1. Offene MARKET Positionen (LONG/SHORT) schliessen
                 for p in positions:
                     p_lower = {str(k).lower(): v for k, v in p.items()}
-                    if int(p_lower.get("instrumentid", -1)) == etoro_id:
+                    if str(p_lower.get("instrumentid", "")) == str(etoro_id):
                         found_anything = True
                         pos_id = p_lower.get("positionid")
                         print(f"   -> Schliesse offene Position {pos_id}...")
@@ -229,7 +227,7 @@ async def emergency_cleanup(
                 # 2. Offene LIMIT Orders schliessen
                 for o in orders_open:
                     o_lower = {str(k).lower(): v for k, v in o.items()}
-                    if int(o_lower.get("instrumentid", -1)) == etoro_id:
+                    if str(o_lower.get("instrumentid", "")) == str(etoro_id):
                         found_anything = True
                         ord_id = o_lower.get("orderid")
                         print(f"   -> Storniere Limit-Order {ord_id}...")
@@ -254,13 +252,7 @@ async def emergency_cleanup(
                 print(f"   ↩️  Keine Positionen gefunden, erneuter Versuch in {settle_delay_s * (attempt+1)}s...")  # noqa: E501
 
         if not found_anything:
-            print(
-                "⚠️  WARNUNG: Keine offenen Positionen oder Limits für "
-                f"InstrumentID {etoro_id} nach {max_retries} Versuchen gefunden.\n"
-                "   Manuell auf eToro prüfen!"
-            )
-        else:
-            print("✅ Emergency Cleanup abgeschlossen.")
+            print("✅ Keine offenen Positionen oder Limits gefunden nach allen Versuchen.")  # noqa: E501
 
 
 async def main() -> None:
@@ -277,17 +269,6 @@ async def main() -> None:
     if etoro_id is None:
         print(f"FEHLER: {ETORO_API_TEST['symbol']} nicht in ETORO_INSTRUMENTS.")
         sys.exit(1)
-
-    print("🧹 Pre-Start Cleanup — schließe alle offenen Positionen für Test-Instrument...")
-    if not ETORO_API_TEST["dry_run"]:
-        await emergency_cleanup(
-            API_KEY,
-            USER_KEY,
-            ETORO_API_TEST["environment"],
-            ETORO_API_TEST["symbol"],
-            settle_delay_s=2.0,
-            max_retries=2,
-        )
 
     config = TradingNodeConfig(
         logging=LoggingConfig(
