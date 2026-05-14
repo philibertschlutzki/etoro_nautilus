@@ -56,6 +56,12 @@ _MAX_CONNECT_ATTEMPTS = 5
 _CONNECT_TIMEOUT_S = 30
 _REST_TIMEOUT_S = 10
 
+# Poll-Konfiguration (eToro kann 10-90s brauchen bis PnL-Endpoint aktualisiert)
+_POLL_ATTEMPTS_OPEN = 20    # Versuche für Market-Open-Fill (20 × 5s = 100s)
+_POLL_ATTEMPTS_CLOSE = 12   # Versuche für Market-Close-Fill (12 × 5s = 60s)
+_POLL_INTERVAL_S = 5.0      # Sekunden zwischen Poll-Versuchen
+_CANCEL_PNL_DELAY_S = 2.0   # Wartezeit vor PnL-Query nach 400-Cancel
+
 _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
     "real": "https://public-api.etoro.com/api/v1/trading/execution",
@@ -254,6 +260,8 @@ class EToroExecutionClient(LiveExecutionClient):
                                 "topics": [
                                     "trading.notifications",
                                     "portfolio.positions",
+                                    "trading.orders",        # NEU: Order-Status-Updates
+                                    "trading.executions",    # NEU: Fill-Events
                                 ],
                                 "snapshot": False,
                             },
@@ -397,6 +405,9 @@ class EToroExecutionClient(LiveExecutionClient):
                         liquidity_side=LiquiditySide.TAKER,
                         ts_event=ts,
                     )
+            # Balance-Refresh nach Fill
+            self.create_task(self._refresh_balance(), log_msg="balance_refresh")
+
         elif m_type in ("trading.order.accepted", "order.accepted"):
             real_order_id = str(
                 c_lower.get("orderid")
@@ -776,9 +787,10 @@ class EToroExecutionClient(LiveExecutionClient):
                         # Token-Problem: Versuche echte orderID via PnL zu finden
                         self._log.warning(
                             f"Cancel 400 for {coid} (token-ID issue). "
-                            f"Querying PnL for real orderID...",
+                            f"Waiting 2s for eToro PnL propagation...",
                             LogColor.YELLOW,
                         )
+                        await asyncio.sleep(_CANCEL_PNL_DELAY_S)  # eToro braucht Zeit um Order in PnL zu registrieren
                         real_id = await self._resolve_limit_order_id(coid, venue_token=pos_id)
                         if real_id and real_id != pos_id:
                             self._log.info(
@@ -858,10 +870,11 @@ class EToroExecutionClient(LiveExecutionClient):
     async def _poll_for_fill(
         self, order: object, req_id: str, order_id: str, is_close: bool
     ) -> None:
-        # eToro kann 30-90s brauchen bis eine neue Position in PnL erscheint.
-        # 20 Versuche × 5s = 100s Gesamtdauer, deckt das 90s Test-Window ab.
-        for attempt in range(20):
-            await asyncio.sleep(5.0)
+        max_attempts = _POLL_ATTEMPTS_CLOSE if is_close else _POLL_ATTEMPTS_OPEN
+        for attempt in range(max_attempts):
+            # Exponential backoff: 2s, 3s, 5s, 8s, 10s, 10s, ...
+            delay = min(2.0 * (1.5 ** attempt), 10.0)
+            await asyncio.sleep(delay)
             cached_order = self._cache.order(order.client_order_id)
             if cached_order and cached_order.status.name == "FILLED":
                 return
@@ -921,6 +934,7 @@ class EToroExecutionClient(LiveExecutionClient):
                                     f"Reconciled via PnL (Closed): {order.client_order_id.value} -> PosID {order_id}",  # noqa: E501
                                     LogColor.GREEN,
                                 )
+                                self.create_task(self._refresh_balance(), log_msg="balance_refresh")
                                 return
                 else:
                     found = await self._reconcile_via_pnl(order, req_id, order_id)
@@ -1000,6 +1014,7 @@ class EToroExecutionClient(LiveExecutionClient):
                                 f"Reconciled via PnL (Filled): {order.client_order_id.value} -> PosID {pos_id}",  # noqa: E501
                                 LogColor.GREEN,
                             )
+                            self.create_task(self._refresh_balance(), log_msg="balance_refresh")
                             return True
 
                     for item in orders_for_open:
@@ -1040,6 +1055,7 @@ class EToroExecutionClient(LiveExecutionClient):
                                     liquidity_side=LiquiditySide.TAKER,
                                     ts_event=self._clock.timestamp_ns(),
                                 )
+                                self.create_task(self._refresh_balance(), log_msg="balance_refresh")
                             else:
                                 self.generate_order_accepted(
                                     strategy_id=order.strategy_id,
@@ -1052,3 +1068,14 @@ class EToroExecutionClient(LiveExecutionClient):
         except Exception:
             pass
         return False
+
+    async def _refresh_balance(self) -> None:
+        """Aktualisiert Account-Balance nach einem Fill."""
+        await asyncio.sleep(2.0)  # Kurze Pause damit eToro PnL aktualisiert
+        balance = await self._fetch_account_balance()
+        self.generate_account_state(
+            balances=[AccountBalance(total=balance, locked=Money(0, USD), free=balance)],
+            margins=[],
+            reported=True,
+            ts_event=self._clock.timestamp_ns(),
+        )
