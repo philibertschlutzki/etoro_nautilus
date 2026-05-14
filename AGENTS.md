@@ -732,8 +732,8 @@ Strategy.submit_order(SELL when LONG position exists)
            WS will later deliver real orderId (updates state via _process_ws_message)
 → Strategy cancels: cancel_order()
     → DELETE /limit-orders/{stored_id}
-        → 400: retry with real orderId from PnL lookup via Rate-Matching (rate + instrumentID + isBuy)
-        → always: generate_order_canceled() (optimistic)
+        → 400: launch background task to retry with real orderId from PnL lookup via Rate-Matching (rate + instrumentID + isBuy)
+        → always: generate_order_canceled() (optimistic, unblocks strategy immediately)
 ```
 
 ### `_query_order()` — Nautilus Inflight Reconciliation
@@ -976,7 +976,7 @@ data = data.get("clientPortfolio", data)
 Forgetting this causes all position/balance lookups to return empty lists.
 
 ### 2. Limit Order ID vs. Token
-After placing a limit order, the stored ID in `_StateManager` is initially the `x-request-id` UUID (a token), not the real numeric `orderId`. The real orderId arrives asynchronously via WebSocket (`trading.order.accepted`). Until that arrives, DELETE requests to cancel the limit order will return HTTP 400. The cancel handler deals with this via `_resolve_limit_order_id()`, which relies on Rate-Matching (rate + instrumentID + isBuy) since eToro's PnL endpoint does not include correlation tokens for entryOrders.
+After placing a limit order, the stored ID in `_StateManager` is initially the `x-request-id` UUID (a token), not the real numeric `orderId`. The real orderId arrives asynchronously via WebSocket (`trading.order.accepted`). Until that arrives, DELETE requests to cancel the limit order will return HTTP 400. The cancel handler deals with this by launching a background task (`_background_cancel_limit()`) that uses Rate-Matching (rate + instrumentID + isBuy) to find the real orderID via the PnL endpoint once eToro registers the order (typically 3-5 seconds later). This ensures the strategy is unblocked immediately while the cancellation happens asynchronously.
 
 ### 3. `content` as JSON String
 eToro's WebSocket sends `content` as a JSON-encoded string, not an embedded object. Always check and parse:
@@ -1060,6 +1060,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-14 | Refactored limit order rate-matching cancel to run as a background task to prevent strategy blocking during the 3-5s eToro PnL delay | `adapters/etoro_execution.py`, `AGENTS.md` |
 | 2026-05-14 | Updated limit order cancellation logic to use Rate-Matching (rate + instrumentID + isBuy) as eToro PnL entryOrders lack correlation tokens | `adapters/etoro_execution.py`, `AGENTS.md` |
 | 2026-05-14 | Fixed JULES_SYSTEM_PROMPT.md to state that InstrumentID is required in close position payload | `.agents/JULES_SYSTEM_PROMPT.md` |
 | *(initial)* | AGENTS.md created from full repository analysis | `AGENTS.md` |
