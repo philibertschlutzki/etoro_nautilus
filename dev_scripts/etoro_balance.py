@@ -124,21 +124,22 @@ async def fetch_and_display(session: aiohttp.ClientSession, args, identity_data:
         realized_pnl  = float(port.get("totalRealizedEquity", port.get("realizedPnL", 0)))
         unrealized    = float(port.get("totalUnrealizedEquity", port.get("unrealizedPnL", 0)))
         
-        # NEU: Fallback-Berechnung für Equity
+        # Fallback-Berechnung für Equity
         equity_raw    = port.get("equity", port.get("netEquity", None))
         if equity_raw is not None:
             equity = float(equity_raw)
         else:
-            equity = credit + unrealized # Manuelle Berechnung als Fallback
+            equity = credit + unrealized 
 
         print(f"\n {BOLD}💰 KONTO-ÜBERSICHT{RESET}")
         print(f" Credit (Gesamt)    : {credit:>12.2f} USD")
         print(f" Verfügbares Cash   : {available:>12.2f} USD")
-        print(f" Gesamt-Equity      : {equity:>12.2f} USD") # <-- Wird jetzt immer angezeigt
+        print(f" Gesamt-Equity      : {equity:>12.2f} USD")
         print(f" Realisierter PnL   : {realized_pnl:>12.2f} USD")
         
         unrealized_color = GREEN if unrealized >= 0 else RED
         print(f" Offener PnL        : {unrealized_color}{unrealized:>+12.2f} USD{RESET}")
+
         # ── 2. Agent Portfolios (Mirrors) ──────────────────────────────────────────
         mirrors = port.get("mirrors", [])
         if mirrors:
@@ -212,15 +213,14 @@ async def fetch_and_display(session: aiohttp.ClientSession, args, identity_data:
 async def main(args):
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        # Identity einmalig am Start abrufen
         identity_data = await fetch_identity(session)
         
         while True:
             try:
                 await fetch_and_display(session, args, identity_data)
                 await asyncio.sleep(args.interval)
-            except KeyboardInterrupt:
-                print(f"\n\n{YELLOW}Monitor beendet.{RESET}")
+            except asyncio.CancelledError:
+                # Wird durch Ctrl+C von asyncio getriggert
                 break
             except Exception as e:
                 print(f"\n{RED}⚠️ Kritischer Fehler: {e}{RESET}")
@@ -233,4 +233,9 @@ if __name__ == "__main__":
     parser.add_argument("--env", type=str, choices=["real", "demo"], default="real", help="Umgebung: 'real' oder 'demo' (Default: real)")
     args = parser.parse_args()
     
-    asyncio.run(main(args))
+    # Sicherer Graceful-Shutdown-Block
+    try:
+        asyncio.run(main(args))
+    except KeyboardInterrupt:
+        print(f"\n\n{YELLOW}Monitor durch Benutzer beendet (Graceful Shutdown).{RESET}")
+        sys.exit(0)
