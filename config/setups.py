@@ -17,8 +17,8 @@ ETORO_API_TEST = {
 
 # --- eToro execution settings -------------------------------------------------
 ETORO_EXECUTION = {
-    "environment": "demo",   # "demo" | "real"
-    "dry_run": True,         # MUST be set False explicitly to send real orders
+    "environment": "real",   # "demo" | "real"
+    "dry_run": False,         # MUST be set False explicitly to send real orders
     "enable_trailing_stop": True,
 }
 
