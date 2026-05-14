@@ -216,12 +216,12 @@ async def emergency_cleanup(
                     p_lower = {str(k).lower(): v for k, v in p.items()}
                     if _safe_int(p_lower.get("instrumentid")) != etoro_id:
                         continue
-                    if p_lower.get("issettled", False):
-                        print(f"   ℹ️  Position {p_lower.get('positionid')} ist settled — überspringe.")
-                        continue
+                    is_settled = p_lower.get("issettled", False)
+                    if is_settled:
+                        print(f"   ℹ️  Position {p_lower.get('positionid')} ist settled — versuche Close trotzdem...")
                     found_anything = True
                     pos_id = p_lower.get("positionid")
-                    print(f"   -> Schliesse offene Position {pos_id}...")
+                    print(f"   -> Schliesse {'settled ' if is_settled else ''}Position {pos_id}...")
 
                     payload = {"InstrumentID": etoro_id, "UnitsToDeduct": None}
                     h_close = headers.copy()
@@ -245,12 +245,12 @@ async def emergency_cleanup(
                     o_lower = {str(k).lower(): v for k, v in o.items()}
                     if _safe_int(o_lower.get("instrumentid")) != etoro_id:
                         continue
-                    if o_lower.get("issettled", False):
-                        print(f"   ℹ️  Order {o_lower.get('orderid')} ist settled — überspringe.")
-                        continue
+                    is_settled = o_lower.get("issettled", False)
+                    if is_settled:
+                        print(f"   ℹ️  Order {o_lower.get('orderid')} ist settled — versuche Cancel trotzdem...")
                     found_anything = True
                     ord_id = o_lower.get("orderid")
-                    print(f"   -> Storniere Limit-Order {ord_id}...")
+                    print(f"   -> Storniere {'settled ' if is_settled else ''}Limit-Order {ord_id}...")
 
                     h_del = headers.copy()
                     h_del["x-request-id"] = str(uuid.uuid4())
