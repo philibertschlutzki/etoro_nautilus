@@ -447,7 +447,9 @@ class EToroExecutionClient(LiveExecutionClient):
         """Antwortet auf Nautilus Inflight-Reconciliation-Queries."""
         coid = command.client_order_id.value
         order = self._cache.order(command.client_order_id)
-        if not order or order.status.name not in ("INITIALIZED", "SUBMITTED"):
+        # ACCEPTED hinzugefügt: Nautilus queryt auch accepted market orders
+        # damit _poll_for_fill-Timeout durch Continuous Reconciliation kompensiert wird
+        if not order or order.status.name not in ("INITIALIZED", "SUBMITTED", "ACCEPTED"):
             return
         self._log.info(f"Query ClientOrderId('{coid}')", LogColor.BLUE)
         try:
@@ -691,11 +693,12 @@ class EToroExecutionClient(LiveExecutionClient):
                 ts_event=ts,
             )
 
-    async def _resolve_limit_order_id(self, coid: str) -> str | None:
+    async def _resolve_limit_order_id(
+        self, coid: str, venue_token: str | None = None
+    ) -> str | None:
         """
         Sucht die echte numerische orderID für eine Limit-Order im PnL-Endpoint.
-        Prüft 'ordersForOpen', 'entryOrders' und 'orders'.
-        Matching via req_id (UUID5 vom coid).
+        Matching via req_id (UUID5 vom coid) ODER venue_token (REST-Response-Body-Token).
         """
         req_id = self._order_req_id(coid)
         try:
@@ -712,17 +715,26 @@ class EToroExecutionClient(LiveExecutionClient):
                             "orders", "Orders"):
                     for item in data.get(key, []):
                         item_lower = {str(k).lower(): v for k, v in item.items()}
-                        # Matching via token/requestId
                         item_token = str(
                             item_lower.get("token", "")
                             or item_lower.get("requestid", "")
                         )
-                        if item_token == req_id:
+                        # Match via req_id (x-request-id Header) ODER
+                        # venue_token (REST-Response-Body "token" Feld)
+                        if item_token and (
+                            item_token == req_id
+                            or (venue_token and item_token == venue_token)
+                        ):
                             order_id = str(
                                 item_lower.get("orderid", "")
                                 or item_lower.get("order_id", "")
                             )
                             if order_id:
+                                self._log.info(
+                                    f"Resolved limit orderID {order_id} for {coid} "
+                                    f"via token match ({item_token[:8]}...)",
+                                    LogColor.GREEN,
+                                )
                                 return order_id
         except Exception as exc:
             self._log.warning(
@@ -767,7 +779,7 @@ class EToroExecutionClient(LiveExecutionClient):
                             f"Querying PnL for real orderID...",
                             LogColor.YELLOW,
                         )
-                        real_id = await self._resolve_limit_order_id(coid)
+                        real_id = await self._resolve_limit_order_id(coid, venue_token=pos_id)
                         if real_id and real_id != pos_id:
                             self._log.info(
                                 f"Found real orderID {real_id} for {coid}, retrying DELETE.",
@@ -846,8 +858,10 @@ class EToroExecutionClient(LiveExecutionClient):
     async def _poll_for_fill(
         self, order: object, req_id: str, order_id: str, is_close: bool
     ) -> None:
-        for attempt in range(4):
-            await asyncio.sleep(2.0)
+        # eToro kann 30-90s brauchen bis eine neue Position in PnL erscheint.
+        # 20 Versuche × 5s = 100s Gesamtdauer, deckt das 90s Test-Window ab.
+        for attempt in range(20):
+            await asyncio.sleep(5.0)
             cached_order = self._cache.order(order.client_order_id)
             if cached_order and cached_order.status.name == "FILLED":
                 return
@@ -914,6 +928,12 @@ class EToroExecutionClient(LiveExecutionClient):
                         return
             except Exception:
                 pass
+
+        self._log.warning(
+            f"_poll_for_fill exhausted all attempts for {order.client_order_id.value}. "
+            f"Order remains ACCEPTED — check eToro portal manually.",
+            LogColor.YELLOW,
+        )
 
     async def _reconcile_via_pnl(
         self, order: object, req_id: str, order_id: str
