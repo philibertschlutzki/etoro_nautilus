@@ -4,6 +4,7 @@ import sys
 import uuid
 import json
 import aiohttp
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Fügt das Hauptverzeichnis zum Path hinzu
@@ -18,21 +19,15 @@ USER_KEY = os.getenv("ETORO_USER_KEY")
 async def fetch_transaction_history(
     api_key: str, 
     user_key: str, 
-    environment: str, 
-    limit: int = 50
+    days_back: int = 30,
+    page_size: int = 50
 ) -> None:
     """
-    Ruft die letzten Transaktionen/Trades von der eToro API ab.
+    Ruft die letzten Transaktionen/Trades von der eToro API ab, basierend auf der offiziellen OpenAPI Spec.
     """
     
-    base_url = "https://public-api.etoro.com/api/v1/trading"
-    
-    # Liste der möglichen eToro API Endpunkte für die Historie
-    possible_endpoints = [
-        f"{base_url}/info/trade/history",                # Offizieller Doc-Endpunkt
-        f"{base_url}/info/{environment}/trade/history",  # Analog zum PnL-Endpunkt
-        f"{base_url}/info/account/history"               # Fallback
-    ]
+    # Exakter Endpunkt laut OpenAPI Dokumentation für das "Real" Environment
+    url = "https://public-api.etoro.com/api/v1/trading/info/trade/history"
     
     headers = {
         "x-api-key": api_key,
@@ -41,73 +36,66 @@ async def fetch_transaction_history(
         "Content-Type": "application/json",
     }
     
+    # Berechne das minDate (Pflichtparameter laut Spec!)
+    min_date = (datetime.utcnow() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    
     params = {
-        "limit": limit
+        "minDate": min_date,
+        "pageSize": page_size,
+        "page": 1
     }
 
-    print(f"🔄 Rufe Transaktionshistorie ab (Environment: {environment.upper()})...")
+    print(f"🔄 Rufe Transaktionshistorie ab (ab {min_date})...")
 
     async with aiohttp.ClientSession() as session:
-        success = False
-        for url in possible_endpoints:
-            try:
-                # x-request-id für jeden Versuch neu generieren
-                headers["x-request-id"] = str(uuid.uuid4())
+        try:
+            async with session.get(url, headers=headers, params=params) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"❌ Fehler bei der API-Abfrage: HTTP {response.status}")
+                    print(f"Details: {error_text}")
+                    return
+
+                # Laut Spec ist die Response direkt ein Array von Objekten
+                transactions = await response.json()
                 
-                async with session.get(url, headers=headers, params=params) as response:
-                    if response.status == 404:
-                        # Endpunkt existiert nicht, probiere den nächsten
-                        continue
-                    
-                    if response.status != 200:
-                        error_text = await response.text()
-                        print(f"❌ Fehler beim Abrufen von {url}: HTTP {response.status}")
-                        print(f"Details: {error_text}")
-                        return
+                # Fallback, falls eToro es doch in ein Dictionary packt
+                if isinstance(transactions, dict):
+                    transactions = transactions.get("History", transactions.get("history", transactions))
+                
+                if not transactions or not isinstance(transactions, list):
+                    print("ℹ️ Keine Transaktionen in diesem Zeitraum gefunden.")
+                    return
 
-                    # Wenn wir hier sind, war der Request erfolgreich (HTTP 200)
-                    success = True
-                    data = await response.json()
+                print(f"✅ {len(transactions)} Transaktionen erfolgreich geladen:\n")
+                
+                # Ausgabe der Transaktionen formatieren (Felder laut OpenAPI Spec)
+                for tx in transactions:
+                    tx_id = tx.get("positionId", "N/A")
+                    symbol_id = tx.get("instrumentId", "N/A")
+                    is_buy = tx.get("isBuy")
+                    action = "BUY" if is_buy else "SELL" if is_buy is False else "N/A"
+                    open_price = tx.get("openRate", 0.0)
+                    close_price = tx.get("closeRate", 0.0)
+                    profit = tx.get("netProfit", 0.0)
+                    units = tx.get("units", 0.0)
+                    close_time = tx.get("closeTimestamp", "N/A")
                     
-                    # Extrahiere die Transaktionen
-                    transactions = data.get("History", data.get("history", data))
+                    print(f"🔹 ID: {tx_id} | Symbol-ID: {symbol_id} | Aktion: {action} ({units} Units)")
+                    print(f"   Eröffnung: {open_price} | Schließung: {close_price} | PnL: {profit} USD")
+                    print(f"   Geschlossen am: {close_time}")
+                    print("-" * 60)
                     
-                    if not transactions or (isinstance(transactions, dict) and not transactions):
-                        print(f"✅ Verbindung zu {url} erfolgreich, aber keine Transaktionen gefunden.")
-                        print("Rohdaten der API:")
-                        print(json.dumps(data, indent=2))
-                        return
-
-                    print(f"✅ Letzte {len(transactions)} Transaktionen erfolgreich via {url} geladen:\n")
-                    
-                    for tx in transactions:
-                        tx_id = tx.get("PositionID", tx.get("positionId", tx.get("TradeID", "N/A")))
-                        symbol = tx.get("InstrumentID", tx.get("instrumentId", "N/A"))
-                        action = tx.get("Action", tx.get("action", tx.get("Type", "N/A")))
-                        open_price = tx.get("OpenRate", tx.get("openRate", tx.get("OpenPrice", 0.0)))
-                        close_price = tx.get("CloseRate", tx.get("closeRate", tx.get("ClosePrice", 0.0)))
-                        profit = tx.get("NetProfit", tx.get("netProfit", tx.get("Profit", 0.0)))
-                        
-                        print(f"🔹 ID: {tx_id} | Symbol-ID: {symbol} | Aktion: {action}")
-                        print(f"   Eröffnung: {open_price} | Schließung: {close_price} | PnL: {profit} USD")
-                        print("-" * 50)
-                    
-                    break # Erfolgreich, Schleife abbrechen
-                    
-            except Exception as e:
-                print(f"❌ Unerwarteter Fehler bei der Verbindung zu {url}: {e}")
-        
-        if not success:
-            print("❌ Konnte die Transaktionshistorie über keinen der bekannten Endpunkte abrufen. (Alle gaben HTTP 404 zurück)")
+        except Exception as e:
+            print(f"❌ Unerwarteter Fehler bei der Verbindung: {e}")
 
 async def main():
     if not API_KEY or not USER_KEY:
         print("FEHLER: ETORO_API_KEY oder ETORO_USER_KEY fehlen in der .env.")
         sys.exit(1)
-
-    environment = ETORO_API_TEST.get("environment", "demo")
     
-    await fetch_transaction_history(API_KEY, USER_KEY, environment, limit=20)
+    # Historie der letzten 7 Tage abrufen (maximal 50 Einträge)
+    await fetch_transaction_history(API_KEY, USER_KEY, days_back=7, page_size=50)
 
 if __name__ == "__main__":
     asyncio.run(main())
