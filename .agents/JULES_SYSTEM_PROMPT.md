@@ -72,7 +72,7 @@ Run this checklist **immediately after reading AGENTS.md for the first time, and
 - [ ] Verify REST base URLs for demo/real are correct in code
 - [ ] Check that all 4 required HTTP headers are present in `_make_headers()`
 - [ ] Confirm that market open uses `Amount` (USD) when quote available, `AmountInUnits` as fallback
-- [ ] Verify that close position payload does NOT include `InstrumentID` (only `UnitsToDeduct`)
+- [ ] Verify that close position payload DOES include `InstrumentID` along with `UnitsToDeduct: None`
 - [ ] Check that limit orders require both `Rate` and `StopLossRate` (never `IsNoStopLoss: true`)
 - [ ] Verify that `_poll_for_fill()` runs 20 attempts × 5 seconds (100 seconds total)
 - [ ] Confirm that `_order_req_id()` uses UUID5 (deterministic, matches REST token)
