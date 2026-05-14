@@ -1,0 +1,31 @@
+2026-05-14 11:32:58,664 [INFO] Bot gestartet. Logfile: /Users/johndoe/etoro_nautilus/logs/bot_2026-05-14_11-32-58.log
+2026-05-14 11:32:58,690 [INFO] Strategie registriert: SmaCrossoverStrategy_TSLA.ETORO_0
+2026-05-14 11:32:58,690 [INFO] Strategie registriert: SmaCrossoverStrategy_HUT.ETORO_1
+2026-05-14 11:32:58,690 [INFO] Strategie registriert: SmaCrossoverStrategy_RIOT.ETORO_2
+2026-05-14 11:32:58,690 [INFO] Strategie registriert: SmaCrossoverStrategy_NVDA.ETORO_3
+2026-05-14 11:32:58,690 [INFO] Strategie registriert: SmaCrossoverStrategy_FSLY.ETORO_4
+2026-05-14 11:32:58,690 [INFO] Strategie registriert: SmaCrossoverStrategy_INSM.ETORO_5
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_BTC.ETORO_6
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_ETH.ETORO_7
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_ADA.ETORO_8
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_XRP.ETORO_9
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_AERO.ETORO_10
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_HYPE.ETORO_11
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_ONDO.ETORO_12
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_01211.HK.ETORO_13
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_XPEV.ETORO_14
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_PLTR.ETORO_15
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_RHM.DE.ETORO_16
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_NVS.ETORO_17
+2026-05-14 11:32:58,691 [INFO] Strategie registriert: SmaCrossoverStrategy_ROP.ZU.ETORO_18
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_DOGE.ETORO_19
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_SHIBxM.ETORO_20
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_PEPExM.ETORO_21
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_SOL.ETORO_22
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_AVAX.ETORO_23
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_NATGAS.ETORO_24
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_PALL.ETORO_25
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_USDTRY.ETORO_26
+2026-05-14 11:32:58,692 [INFO] Strategie registriert: SmaCrossoverStrategy_USDZAR.ETORO_27
+2026-05-14 11:32:58,820 [INFO] Starte Nautilus eToro-Orchestrator mit 28 Instrumenten...
+2026-05-14 11:32:58,820 [INFO] Druecke Ctrl+C zum Beenden
