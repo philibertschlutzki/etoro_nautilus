@@ -1,21 +1,36 @@
 """
-eToro Konto-Balance Abruf
-==========================
-Ruft Guthaben, Agent Portfolios (Mirrors), User Identity und verfügbares Cash 
-für Demo- und Real-Konto ab.
+Kombinierter eToro Portfolio Monitor
+====================================
+Live-Monitor für das eToro Portfolio (Real oder Demo). 
+Zeigt Kontostand, Agent Portfolios (Mirrors), Offene Positionen und Limit-Orders an.
+Aktualisiert automatisch. Ctrl+C zum Beenden.
 
-Ausführung:
-    python3 dev_scripts/etoro_balance.py
+Usage:
+    python3 dev_scripts/etoro_combined_monitor.py [--interval 30] [--env real]
 """
 
+import argparse
 import asyncio
 import json
 import os
+import sys
 import uuid
+import traceback
 from datetime import datetime
 
 import aiohttp
 from dotenv import load_dotenv
+
+# Pfad für eigene Module (wie adapters) hinzufügen
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Versuche Instrument-Mapping zu laden
+try:
+    from adapters.instrument_map import ETORO_INSTRUMENTS
+    ID_TO_SYMBOL = {str(k): v for k, v in ETORO_INSTRUMENTS.items()}
+except ImportError:
+    print("⚠️ Warnung: adapters.instrument_map konnte nicht geladen werden. IDs werden verwendet.")
+    ID_TO_SYMBOL = {}
 
 load_dotenv()
 
@@ -23,8 +38,9 @@ API_KEY  = os.getenv("ETORO_API_KEY",  "")
 USER_KEY = os.getenv("ETORO_USER_KEY", "")
 
 if not API_KEY or not USER_KEY:
-    raise SystemExit("❌  ETORO_API_KEY oder ETORO_USER_KEY fehlen in der .env")
+    raise SystemExit("❌ ETORO_API_KEY oder ETORO_USER_KEY fehlen in der .env")
 
+# Farben für die Ausgabe
 GREEN   = "\033[92m"
 YELLOW  = "\033[93m"
 RED     = "\033[91m"
@@ -33,14 +49,11 @@ MAGENTA = "\033[95m"
 BOLD    = "\033[1m"
 RESET   = "\033[0m"
 
+IDENTITY_URL = "https://public-api.etoro.com/api/v1/me"
 PNL_ENDPOINTS = {
     "demo": "https://public-api.etoro.com/api/v1/trading/info/demo/pnl",
     "real": "https://public-api.etoro.com/api/v1/trading/info/real/pnl",
 }
-
-# 🛠️ KORREKTUR: Der offizielle Endpunkt lautet /api/v1/me
-IDENTITY_URL = "https://public-api.etoro.com/api/v1/me"
-
 
 def _headers() -> dict:
     return {
@@ -50,11 +63,8 @@ def _headers() -> dict:
         "Content-Type": "application/json",
     }
 
-
 def _calculate_available_cash(port: dict) -> float:
-    """Verfügbares Cash gemäss offizieller eToro-Formel:
-    Available Cash = credit - (Σ ordersForOpen[mirrorID=0].amount + Σ orders.amount)
-    """
+    """Berechnet verfügbares Cash gemäss offizieller eToro-Formel."""
     credit = float(port.get("credits", port.get("credit", 0)))
     orders_for_open = port.get("ordersForOpen", [])
     orders          = port.get("orders", [])
@@ -68,153 +78,159 @@ def _calculate_available_cash(port: dict) -> float:
 
     return credit - (manual_open_amount + pending_orders_amount)
 
-
-def _print_section(title: str) -> None:
-    print(f"\n{BOLD}{'─' * 70}{RESET}")
-    print(f"{BOLD}{title}{RESET}")
-    print(f"{BOLD}{'─' * 70}{RESET}")
-
-
-async def fetch_identity(session: aiohttp.ClientSession) -> None:
-    """Holt User-Identity (GCID, Real-CID, Demo-CID)."""
-    _print_section("👤  User Identity")
+async def fetch_identity(session: aiohttp.ClientSession) -> dict:
+    """Holt die User-Identity einmalig beim Start."""
     try:
         async with session.get(IDENTITY_URL, headers=_headers()) as resp:
             if resp.status == 200:
-                data = await resp.json()
-                # 🛠️ KORREKTUR: Schlüssel exakt nach OpenAPI-Schema
-                print(f"  GCID           : {data.get('gcid', 'n/a')}")
-                print(f"  Real-CID       : {data.get('realCid', 'n/a')}")
-                print(f"  Demo-CID       : {data.get('demoCid', 'n/a')}")
-            else:
-                body = await resp.text()
-                print(f"  {YELLOW}HTTP {resp.status}: {body[:200]}{RESET}")
-    except Exception as exc:
-        print(f"  {RED}Fehler: {exc}{RESET}")
+                return await resp.json()
+    except Exception:
+        pass
+    return {}
 
+async def fetch_and_display(session: aiohttp.ClientSession, args, identity_data: dict) -> None:
+    url = PNL_ENDPOINTS[args.env]
+    
+    async with session.get(url, headers=_headers()) as resp:
+        status = resp.status
+        body_text = await resp.text()
 
-async def fetch_portfolio(
-    session: aiohttp.ClientSession,
-    env: str,
-) -> None:
-    """Holt PnL/Portfolio für Demo oder Real."""
-    url = PNL_ENDPOINTS[env]
-    label = "🟡  DEMO-Konto" if env == "demo" else "🟢  REAL-Konto"
-    _print_section(label)
-    print(f"  URL: {CYAN}{url}{RESET}")
+        # Bildschirm löschen & Header drucken
+        print(f"\033[H\033[J", end="")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{BOLD}{'='*80}{RESET}")
+        print(f"{BOLD} 🚀 eToro Portfolio Monitor | {CYAN}{args.env.upper()}-Konto{RESET}{BOLD} | {now} {RESET}")
+        print(f"{BOLD}{'='*80}{RESET}")
 
-    try:
-        async with session.get(url, headers=_headers()) as resp:
-            status = resp.status
-            body_text = await resp.text()
+        # Identity anzeigen
+        gcid = identity_data.get('gcid', 'n/a')
+        real_cid = identity_data.get('realCid', 'n/a')
+        demo_cid = identity_data.get('demoCid', 'n/a')
+        print(f" 👤 User Identity : GCID={gcid} | Real-CID={real_cid} | Demo-CID={demo_cid}")
+        print(f"{'-'*80}")
 
-            if status != 200:
-                print(f"  {RED}HTTP {status}: {body_text[:300]}{RESET}")
-                return
+        if status != 200:
+            print(f"\n ⚠️ {RED}Fehler beim Abruf der Portfolio-Daten (HTTP {status}){RESET}")
+            print(f" {body_text[:300]}")
+            print(f"\n{'-'*80}\n Nächste Aktualisierung in {args.interval}s... (Ctrl+C zum Beenden)")
+            return
 
-            data: dict = json.loads(body_text)
-            
-            # WICHTIG: Die Daten sind in "clientPortfolio" gewrappt
-            port = data.get("clientPortfolio", data)
+        data = json.loads(body_text)
+        port = data.get("clientPortfolio", data)
 
-            # ── Kontostand (Hauptkonto / Virtuelle Balance) ───────────────────
-            credit        = float(port.get("credits", port.get("credit", 0)))
-            available     = _calculate_available_cash(port)
-            equity_raw    = port.get("equity", port.get("netEquity", None))
-            equity        = float(equity_raw) if equity_raw is not None else None
-            realized_pnl  = float(port.get("totalRealizedEquity", port.get("realizedPnL", 0)))
-            unrealized    = float(port.get("totalUnrealizedEquity", port.get("unrealizedPnL", 0)))
+        # ── 1. Kontostand ──────────────────────────────────────────────────────────
+        credit        = float(port.get("credits", port.get("credit", 0)))
+        available     = _calculate_available_cash(port)
+        realized_pnl  = float(port.get("totalRealizedEquity", port.get("realizedPnL", 0)))
+        unrealized    = float(port.get("totalUnrealizedEquity", port.get("unrealizedPnL", 0)))
+        
+        # NEU: Fallback-Berechnung für Equity
+        equity_raw    = port.get("equity", port.get("netEquity", None))
+        if equity_raw is not None:
+            equity = float(equity_raw)
+        else:
+            equity = credit + unrealized # Manuelle Berechnung als Fallback
 
-            print(f"\n  {GREEN}{BOLD}Virtueller Kontostand (Agent Basis){RESET}")
-            print(f"  Credit (Gesamt)    : {GREEN}{credit:>12.2f} USD{RESET}")
-            print(f"  Verfügbares Cash   : {GREEN}{available:>12.2f} USD{RESET}")
-            if equity is not None:
-                print(f"  Equity             : {GREEN}{equity:>12.2f} USD{RESET}")
-            print(f"  Realisierter PnL   : {realized_pnl:>12.2f} USD")
-            print(f"  Unrealisierter PnL : {unrealized:>12.2f} USD")
-
-            # ── Agent Portfolios (Mirrors) ────────────────────────────────────
-            mirrors = port.get("mirrors", [])
-            if mirrors:
-                print(f"\n  {MAGENTA}{BOLD}🤖 Agent Portfolios / Copy Trades: {len(mirrors)}{RESET}")
-                for m in mirrors:
-                    m_id = m.get('mirrorID', '?')
-                    m_name = m.get('parentUsername', 'Unknown')
-                    m_invest = float(m.get('initialInvestment', 0))
-                    m_avail = float(m.get('availableAmount', 0))
-                    m_pnl = float(m.get('closedPositionsNetProfit', 0))
-                    
-                    print(f"  {BOLD}► Portfolio: {m_name} (ID: {m_id}){RESET}")
-                    print(f"      Initiales Investment : {m_invest:>10.2f} USD (Echtes Geld)")
-                    print(f"      Verfügbares Cash     : {m_avail:>10.2f} USD (Zum Traden)")
-                    print(f"      Realisierter PnL     : {m_pnl:>10.2f} USD")
-            else:
-                print(f"\n  {MAGENTA}{BOLD}🤖 Agent Portfolios / Copy Trades: 0{RESET}")
-
-            # ── Offene Positionen ─────────────────────────────────────────────
-            positions = port.get("positions", [])
-            
-            # Positionen aus Mirrors aggregieren
-            mirror_positions = []
+        print(f"\n {BOLD}💰 KONTO-ÜBERSICHT{RESET}")
+        print(f" Credit (Gesamt)    : {credit:>12.2f} USD")
+        print(f" Verfügbares Cash   : {available:>12.2f} USD")
+        print(f" Gesamt-Equity      : {equity:>12.2f} USD") # <-- Wird jetzt immer angezeigt
+        print(f" Realisierter PnL   : {realized_pnl:>12.2f} USD")
+        
+        unrealized_color = GREEN if unrealized >= 0 else RED
+        print(f" Offener PnL        : {unrealized_color}{unrealized:>+12.2f} USD{RESET}")
+        # ── 2. Agent Portfolios (Mirrors) ──────────────────────────────────────────
+        mirrors = port.get("mirrors", [])
+        if mirrors:
+            print(f"\n {MAGENTA}{BOLD}🤖 AGENT PORTFOLIOS ({len(mirrors)}){RESET}")
             for m in mirrors:
-                mirror_positions.extend(m.get("positions", []))
+                m_name = m.get('parentUsername', 'Unknown')
+                m_avail = float(m.get('availableAmount', 0))
+                m_pnl = float(m.get('closedPositionsNetProfit', 0))
+                print(f" ► {m_name:<15} | Cash: {m_avail:>8.2f} USD | PnL: {m_pnl:>+8.2f} USD")
+
+        # ── 3. Offene Positionen ───────────────────────────────────────────────────
+        positions = port.get("positions", [])
+        mirror_positions = []
+        for m in mirrors:
+            mirror_positions.extend(m.get("positions", []))
+        all_positions = positions + mirror_positions
+
+        print(f"\n {BOLD}📊 OFFENE POSITIONEN ({len(all_positions)}){RESET}")
+        if all_positions:
+            print(f" {'Symbol':<12} {'Side':<6} {'Units':>10} {'Open@':>10} {'Curr@':>10} {'PnL %':>10} {'Settled'}")
+            print(f" {'-'*80}")
+            for p in all_positions:
+                instr_id = str(p.get("instrumentID", p.get("InstrumentId", "")))
+                symbol = ID_TO_SYMBOL.get(instr_id, f"ID:{instr_id}")[:11]
+                side = "LONG" if p.get("isBuy", True) else "SHORT"
+                units = float(p.get("units", p.get("amount", 0)))
+                open_rate = float(p.get("openRate", p.get("openPrice", 0)))
+                curr_rate = float(p.get("currentRate", p.get("currentPrice", 0)) or 0)
                 
-            all_positions = positions + mirror_positions
+                # PnL %
+                api_pnl_pct = p.get("netProfitLossPercentage")
+                if api_pnl_pct is not None:
+                    pnl_pct = float(api_pnl_pct)
+                else:
+                    if open_rate > 0:
+                        pnl_pct = ((curr_rate / open_rate) - 1) * 100 if side == "LONG" else ((open_rate / curr_rate) - 1) * 100
+                    else:
+                        pnl_pct = 0.0
 
-            print(f"\n  {BOLD}Offene Positionen (Gesamt): {len(all_positions)}{RESET}")
-            if all_positions:
-                print(f"  {'InstrID':>8}  {'Side':>5}  {'Units':>10}  {'OpenRate':>10}  {'CurrentRate':>12}  {'PnL':>10}")
-                print(f"  {'─'*8}  {'─'*5}  {'─'*10}  {'─'*10}  {'─'*12}  {'─'*10}")
-                for pos in all_positions[:20]:  # max 20 anzeigen
-                    side        = "LONG"  if pos.get("isBuy", True) else "SHORT"
-                    instrument  = pos.get("instrumentID", pos.get("InstrumentId", "?"))
-                    units       = float(pos.get("units", pos.get("amount", 0)))
-                    open_rate   = float(pos.get("openRate", pos.get("openPrice", 0)))
-                    current     = float(pos.get("currentRate", pos.get("currentPrice", 0)))
-                    pnl         = float(pos.get("profit", pos.get("netProfitLossPercentage", pos.get("pnl", 0))))
-                    pos_id      = pos.get("positionID", pos.get("positionId", "?"))
-                    color       = GREEN if pnl >= 0 else RED
-                    print(
-                        f"  {instrument:>8}  {side:>5}  {units:>10.2f}  "
-                        f"{open_rate:>10.5f}  {current:>12.5f}  "
-                        f"{color}{pnl:>10.2f}{RESET}  (posID={pos_id})"
-                    )
-                if len(all_positions) > 20:
-                    print(f"  ... und {len(all_positions) - 20} weitere Positionen")
+                settled = "✓" if p.get("isSettled") else " "
+                color = GREEN if pnl_pct >= 0 else RED
+                
+                print(f" {symbol:<12} {side:<6} {units:>10.4f} {open_rate:>10.5f} {curr_rate:>10.5f} {color}{pnl_pct:>+9.2f}%{RESET} {settled:^8}")
+        else:
+            print("  (Keine offenen Positionen gefunden)")
 
-            # ── Pending Orders ────────────────────────────────────────────────
-            orders_for_open = port.get("ordersForOpen", [])
-            pending = [o for o in orders_for_open if o.get("mirrorID", 0) == 0]
-            if pending:
-                print(f"\n  {BOLD}Pending Orders (manuell): {len(pending)}{RESET}")
-                for o in pending[:10]:
-                    print(
-                        f"  OrderID={o.get('orderID', '?')}  "
-                        f"InstrID={o.get('instrumentID', '?')}  "
-                        f"Amount={o.get('amount', 0):.2f}"
-                    )
+        # ── 4. Limit Orders ────────────────────────────────────────────────────────
+        orders_for_open = port.get("ordersForOpen", [])
+        entry_orders = data.get("entryOrders", []) 
+        pending = [o for o in (orders_for_open + entry_orders) if o.get("mirrorID", 0) == 0]
+        
+        # Deduplizieren, falls eToro sie in beiden Arrays liefert
+        unique_pending = {o.get("orderID", o.get("orderId")): o for o in pending}.values()
 
-    except Exception as exc:
-        import traceback
-        print(f"  {RED}Fehler: {exc}{RESET}")
-        print(f"  {traceback.format_exc()}")
+        if unique_pending:
+            print(f"\n {BOLD}📋 OFFENE LIMIT-ORDERS ({len(unique_pending)}){RESET}")
+            print(f" {'Symbol':<12} {'Rate':>10} {'Amount':>10} {'OrderID'}")
+            print(f" {'-'*80}")
+            for o in unique_pending:
+                instr_id = str(o.get("instrumentID", ""))
+                symbol = ID_TO_SYMBOL.get(instr_id, f"ID:{instr_id}")[:11]
+                rate = float(o.get("rate", o.get("Rate", 0)))
+                amount = float(o.get("amount", o.get("Amount", 0)))
+                order_id = o.get("orderID", o.get("orderId", "?"))
+                print(f" {symbol:<12} {rate:>10.5f} {amount:>10.2f} USD  {order_id}")
+
+        print(f"\n{'-'*80}")
+        print(f" Nächste Aktualisierung in {args.interval}s... (Ctrl+C zum Beenden)")
 
 
-async def main() -> None:
-    print(f"\n{BOLD}eToro Konto-Balance Abruf{RESET}")
-    print(f"Zeitstempel : {datetime.now().isoformat()}")
-    print(f"API_KEY     : {API_KEY[:8]}{'*' * max(0, len(API_KEY) - 8)}")
-    print(f"USER_KEY    : {USER_KEY[:8]}{'*' * 16}...")
-
+async def main(args):
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        await fetch_identity(session)
-        await fetch_portfolio(session, "demo")
-        await fetch_portfolio(session, "real")
-
-    print(f"\n{'─' * 70}")
-    print(f"Abgeschlossen: {datetime.now().isoformat()}\n")
-
+        # Identity einmalig am Start abrufen
+        identity_data = await fetch_identity(session)
+        
+        while True:
+            try:
+                await fetch_and_display(session, args, identity_data)
+                await asyncio.sleep(args.interval)
+            except KeyboardInterrupt:
+                print(f"\n\n{YELLOW}Monitor beendet.{RESET}")
+                break
+            except Exception as e:
+                print(f"\n{RED}⚠️ Kritischer Fehler: {e}{RESET}")
+                print(traceback.format_exc())
+                await asyncio.sleep(5)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Kombinierter eToro Portfolio Monitor")
+    parser.add_argument("--interval", type=int, default=30, help="Update-Intervall in Sekunden (Default: 30)")
+    parser.add_argument("--env", type=str, choices=["real", "demo"], default="real", help="Umgebung: 'real' oder 'demo' (Default: real)")
+    args = parser.parse_args()
+    
+    asyncio.run(main(args))
