@@ -11,7 +11,7 @@ from nautilus_trader.live.node import TradingNode
 
 # Adapter imports
 from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
-from adapters.etoro_execution import EToroExecClientConfig, EToroLiveExecClientFactory
+from adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
 from adapters.instrument_map import ETORO_INSTRUMENTS
 
 # Config imports
