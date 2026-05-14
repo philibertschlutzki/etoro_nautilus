@@ -60,7 +60,7 @@ _REST_TIMEOUT_S = 10
 _POLL_ATTEMPTS_OPEN = 20    # Versuche für Market-Open-Fill (20 × 5s = 100s)
 _POLL_ATTEMPTS_CLOSE = 12   # Versuche für Market-Close-Fill (12 × 5s = 60s)
 _POLL_INTERVAL_S = 5.0      # Sekunden zwischen Poll-Versuchen
-_CANCEL_PNL_DELAY_S = 2.0   # Wartezeit vor PnL-Query nach 400-Cancel
+_CANCEL_PNL_DELAY_S = 0.0   # Wartezeit vor PnL-Query nach 400-Cancel (nicht mehr benötigt)
 
 _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
@@ -611,6 +611,11 @@ class EToroExecutionClient(LiveExecutionClient):
 
                 if 200 <= status < 300:
                     body = json.loads(body_text) if body_text else {}
+                    if order.order_type == OrderType.LIMIT:
+                        self._log.info(
+                            f"Limit order REST response body: {body}",
+                            LogColor.CYAN,
+                        )
                     new_pos_id = str(
                         body.get("orderForOpen", {}).get("orderID")
                         or body.get("positionId")
@@ -705,13 +710,34 @@ class EToroExecutionClient(LiveExecutionClient):
             )
 
     async def _resolve_limit_order_id(
-        self, coid: str, venue_token: str | None = None
+        self,
+        coid: str,
+        venue_token: str | None = None,
+        order: object | None = None,
     ) -> str | None:
         """
-        Sucht die echte numerische orderID für eine Limit-Order im PnL-Endpoint.
-        Matching via req_id (UUID5 vom coid) ODER venue_token (REST-Response-Body-Token).
+        Sucht die echte numerische orderID einer Limit-Order im PnL-Endpoint.
+
+        Matching-Strategie (in dieser Priorität):
+        1. Token-Match via req_id oder venue_token (falls eToro Tokens exponiert)
+        2. Rate+InstrumentID+IsBuy Match (Hauptstrategie, da eToro keine Tokens in PnL hat)
+        3. Single-Order-Fallback: wenn genau 1 offene Order für das Instrument existiert
         """
         req_id = self._order_req_id(coid)
+
+        # Limit-Rate und InstrumentID aus Order-Objekt extrahieren (für Fallback)
+        limit_rate: float | None = None
+        etoro_instr_id: str | None = None
+        is_buy: bool | None = None
+        if order is not None:
+            try:
+                limit_rate = float(order.price)
+                etoro_instr_id = self._instrument_to_etoro.get(str(order.instrument_id))
+                from nautilus_trader.model.enums import OrderSide
+                is_buy = order.side == OrderSide.BUY
+            except Exception:
+                pass
+
         try:
             async with self._session.get(
                 self._pnl_base, headers=self._make_headers()
@@ -721,32 +747,85 @@ class EToroExecutionClient(LiveExecutionClient):
                 data = await resp.json()
                 data = data.get("clientPortfolio", data)
 
+                # Alle relevanten Order-Quellen sammeln
+                all_orders: list[dict] = []
                 for key in ("ordersForOpen", "OrdersForOpen",
                             "entryOrders", "EntryOrders",
                             "orders", "Orders"):
-                    for item in data.get(key, []):
-                        item_lower = {str(k).lower(): v for k, v in item.items()}
-                        item_token = str(
-                            item_lower.get("token", "")
-                            or item_lower.get("requestid", "")
-                        )
-                        # Match via req_id (x-request-id Header) ODER
-                        # venue_token (REST-Response-Body "token" Feld)
-                        if item_token and (
-                            item_token == req_id
-                            or (venue_token and item_token == venue_token)
-                        ):
-                            order_id = str(
-                                item_lower.get("orderid", "")
-                                or item_lower.get("order_id", "")
+                    all_orders.extend(data.get(key, []))
+
+                # --- Strategie 1: Token-Match (falls eToro irgendwann Tokens exponiert) ---
+                for item in all_orders:
+                    item_lower = {str(k).lower(): v for k, v in item.items()}
+                    item_token = str(
+                        item_lower.get("token", "")
+                        or item_lower.get("requestid", "")
+                    )
+                    if item_token and (
+                        item_token == req_id
+                        or (venue_token and item_token == venue_token)
+                    ):
+                        order_id = str(item_lower.get("orderid", "") or item_lower.get("order_id", ""))
+                        if order_id:
+                            self._log.info(
+                                f"Resolved limit orderID {order_id} for {coid} "
+                                f"via token match.",
+                                LogColor.GREEN,
                             )
+                            return order_id
+
+                # --- Strategie 2: Rate+InstrumentID+IsBuy Match (Hauptstrategie) ---
+                if limit_rate is not None and etoro_instr_id is not None:
+                    rate_matches: list[str] = []
+                    for item in all_orders:
+                        item_lower = {str(k).lower(): v for k, v in item.items()}
+                        # Instrument-Filter
+                        if str(item_lower.get("instrumentid", "")) != str(etoro_instr_id):
+                            continue
+                        # Richtungs-Filter (BUY/SELL)
+                        if is_buy is not None:
+                            item_is_buy = bool(item_lower.get("isbuy", item_lower.get("is_buy", True)))
+                            if item_is_buy != is_buy:
+                                continue
+                        # Rate-Match mit ±0.5% Toleranz
+                        item_rate = float(item_lower.get("rate", item_lower.get("Rate", 0)) or 0)
+                        if item_rate > 0 and abs(item_rate - limit_rate) / limit_rate < 0.005:
+                            order_id = str(item_lower.get("orderid", "") or item_lower.get("order_id", ""))
                             if order_id:
-                                self._log.info(
-                                    f"Resolved limit orderID {order_id} for {coid} "
-                                    f"via token match ({item_token[:8]}...)",
-                                    LogColor.GREEN,
-                                )
-                                return order_id
+                                rate_matches.append(order_id)
+
+                    if len(rate_matches) == 1:
+                        self._log.info(
+                            f"Resolved limit orderID {rate_matches[0]} for {coid} "
+                            f"via rate match (rate={limit_rate}).",
+                            LogColor.GREEN,
+                        )
+                        return rate_matches[0]
+                    elif len(rate_matches) > 1:
+                        self._log.warning(
+                            f"Rate match found {len(rate_matches)} candidates for {coid} "
+                            f"at rate={limit_rate}: {rate_matches}. Using first.",
+                            LogColor.YELLOW,
+                        )
+                        return rate_matches[0]
+
+                # --- Strategie 3: Single-Order-Fallback ---
+                if etoro_instr_id is not None:
+                    instr_orders = [
+                        item for item in all_orders
+                        if str({str(k).lower(): v for k, v in item.items()}.get("instrumentid", "")) == str(etoro_instr_id)
+                    ]
+                    if len(instr_orders) == 1:
+                        item_lower = {str(k).lower(): v for k, v in instr_orders[0].items()}
+                        order_id = str(item_lower.get("orderid", "") or item_lower.get("order_id", ""))
+                        if order_id:
+                            self._log.info(
+                                f"Resolved limit orderID {order_id} for {coid} "
+                                f"via single-order fallback (only open order for instrument).",
+                                LogColor.GREEN,
+                            )
+                            return order_id
+
         except Exception as exc:
             self._log.warning(
                 f"_resolve_limit_order_id failed for {coid}: {exc}", LogColor.YELLOW
@@ -784,14 +863,16 @@ class EToroExecutionClient(LiveExecutionClient):
                         # Erfolg oder bereits weg
                         pass
                     elif resp.status == 400:
-                        # Token-Problem: Versuche echte orderID via PnL zu finden
                         self._log.warning(
-                            f"Cancel 400 for {coid} (token-ID issue). "
-                            f"Waiting 2s for eToro PnL propagation...",
+                            f"Cancel 400 for {coid} (UUID token not valid as orderID). "
+                            f"Querying PnL for real orderID via rate-match...",
                             LogColor.YELLOW,
                         )
-                        await asyncio.sleep(_CANCEL_PNL_DELAY_S)  # eToro braucht Zeit um Order in PnL zu registrieren
-                        real_id = await self._resolve_limit_order_id(coid, venue_token=pos_id)
+                        real_id = await self._resolve_limit_order_id(
+                            coid,
+                            venue_token=pos_id,
+                            order=order,
+                        )
                         if real_id and real_id != pos_id:
                             self._log.info(
                                 f"Found real orderID {real_id} for {coid}, retrying DELETE.",
@@ -803,7 +884,12 @@ class EToroExecutionClient(LiveExecutionClient):
                                 retry_url,
                                 headers=self._make_headers(self._order_req_id(coid))
                             ) as retry_resp:
-                                if retry_resp.status not in range(200, 300) and retry_resp.status != 404:
+                                if retry_resp.status in range(200, 300) or retry_resp.status == 404:
+                                    self._log.info(
+                                        f"✅ Limit order {real_id} successfully canceled via rate-match.",
+                                        LogColor.GREEN,
+                                    )
+                                else:
                                     err = await retry_resp.text()
                                     self._log.error(
                                         f"Retry cancel also failed for {coid}: "
