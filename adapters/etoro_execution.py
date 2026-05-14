@@ -60,7 +60,6 @@ _REST_TIMEOUT_S = 10
 _POLL_ATTEMPTS_OPEN = 20    # Versuche für Market-Open-Fill (20 × 5s = 100s)
 _POLL_ATTEMPTS_CLOSE = 12   # Versuche für Market-Close-Fill (12 × 5s = 60s)
 _POLL_INTERVAL_S = 5.0      # Sekunden zwischen Poll-Versuchen
-_CANCEL_PNL_DELAY_S = 0.0   # Wartezeit vor PnL-Query nach 400-Cancel (nicht mehr benötigt)
 
 _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
@@ -832,6 +831,70 @@ class EToroExecutionClient(LiveExecutionClient):
             )
         return None
 
+    async def _background_cancel_limit(
+        self,
+        coid: str,
+        pos_id: str,
+        order: object,
+    ) -> None:
+        """
+        Führt einen Limit-Cancel im Hintergrund aus nachdem generate_order_canceled
+        bereits an die Strategy signalisiert wurde.
+
+        Wartet in Schritten (2s → 3s → 5s) bis eToro die Order im PnL registriert hat,
+        dann matched via Rate+Instrument und sendet DELETE mit der echten orderID.
+        """
+        delays = [2.0, 3.0, 5.0]  # Gesamt max 10s Wartezeit
+
+        for attempt, delay in enumerate(delays, start=1):
+            await asyncio.sleep(delay)
+
+            real_id = await self._resolve_limit_order_id(
+                coid,
+                venue_token=pos_id,
+                order=order,
+            )
+
+            if real_id:
+                self._log.info(
+                    f"Background cancel: found real orderID {real_id} for {coid} "
+                    f"(attempt {attempt}/{len(delays)}, after {sum(delays[:attempt])}s).",
+                    LogColor.CYAN,
+                )
+                try:
+                    retry_url = f"{self._rest_base}/limit-orders/{real_id}"
+                    async with self._session.delete(
+                        retry_url,
+                        headers=self._make_headers(self._order_req_id(coid))
+                    ) as retry_resp:
+                        if retry_resp.status in range(200, 300) or retry_resp.status == 404:
+                            self._log.info(
+                                f"✅ Background cancel: limit order {real_id} "
+                                f"successfully deleted at eToro.",
+                                LogColor.GREEN,
+                            )
+                            return
+                        else:
+                            err = await retry_resp.text()
+                            self._log.warning(
+                                f"Background cancel DELETE failed for {real_id}: "
+                                f"HTTP {retry_resp.status} — {err[:200]}",
+                                LogColor.YELLOW,
+                            )
+                except Exception as exc:
+                    self._log.warning(
+                        f"Background cancel exception for {coid}: {exc}",
+                        LogColor.YELLOW,
+                    )
+                return  # Nach erfolgreichem Fund nicht nochmal suchen
+
+        # Alle Versuche ausgeschöpft
+        self._log.warning(
+            f"Background cancel exhausted retries for {coid}. "
+            f"Emergency cleanup will handle remaining order at eToro.",
+            LogColor.YELLOW,
+        )
+
     async def _cancel_order_async(self, command: CancelOrder) -> None:
         coid = command.client_order_id.value
         if not (order := self._cache.order(command.client_order_id)):
@@ -853,55 +916,31 @@ class EToroExecutionClient(LiveExecutionClient):
         await self._rate_limiter.acquire("CLOSE")
 
         if order.order_type == OrderType.LIMIT:
-            # Versuche zuerst mit gespeicherter ID (könnte UUID-Token sein)
             url = f"{self._rest_base}/limit-orders/{pos_id}"
             method = self._session.delete
 
             try:
-                async with method(url, headers=self._make_headers(self._order_req_id(coid))) as resp:
+                async with method(
+                    url,
+                    headers=self._make_headers(self._order_req_id(coid))
+                ) as resp:
                     if resp.status in range(200, 300) or resp.status == 404:
-                        # Erfolg oder bereits weg
-                        pass
+                        # Direkter Erfolg: UUID war doch eine gültige orderID, oder Order bereits weg
+                        self._log.info(
+                            f"Cancel {resp.status} for {coid} — direct success.",
+                            LogColor.GREEN,
+                        )
                     elif resp.status == 400:
-                        self._log.warning(
-                            f"Cancel 400 for {coid} (UUID token not valid as orderID). "
-                            f"Querying PnL for real orderID via rate-match...",
-                            LogColor.YELLOW,
+                        # UUID-Token nicht als orderID erkannt → Background-Task startet
+                        self._log.info(
+                            f"Cancel 400 for {coid} (UUID token, not yet valid orderID). "
+                            f"Launching background cancel task (rate-match in 2-10s)...",
+                            LogColor.CYAN,
                         )
-                        real_id = await self._resolve_limit_order_id(
-                            coid,
-                            venue_token=pos_id,
-                            order=order,
+                        self.create_task(
+                            self._background_cancel_limit(coid, pos_id, order),
+                            log_msg="bg_cancel_limit",
                         )
-                        if real_id and real_id != pos_id:
-                            self._log.info(
-                                f"Found real orderID {real_id} for {coid}, retrying DELETE.",
-                                LogColor.CYAN,
-                            )
-                            await self._state.set(coid, real_id)
-                            retry_url = f"{self._rest_base}/limit-orders/{real_id}"
-                            async with self._session.delete(
-                                retry_url,
-                                headers=self._make_headers(self._order_req_id(coid))
-                            ) as retry_resp:
-                                if retry_resp.status in range(200, 300) or retry_resp.status == 404:
-                                    self._log.info(
-                                        f"✅ Limit order {real_id} successfully canceled via rate-match.",
-                                        LogColor.GREEN,
-                                    )
-                                else:
-                                    err = await retry_resp.text()
-                                    self._log.error(
-                                        f"Retry cancel also failed for {coid}: "
-                                        f"HTTP {retry_resp.status} {err[:200]}",
-                                        LogColor.RED,
-                                    )
-                        else:
-                            self._log.warning(
-                                f"Could not resolve real orderID for {coid}. "
-                                f"Emergency cleanup will handle it.",
-                                LogColor.YELLOW,
-                            )
                     else:
                         body = await resp.text()
                         self._log.error(
