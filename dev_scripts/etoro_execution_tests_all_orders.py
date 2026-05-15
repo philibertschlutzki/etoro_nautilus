@@ -121,6 +121,7 @@ class ApiFullExecutionTestStrategy(Strategy):
                 f"✅ MARKET BUY gefüllt: {event.last_qty} Units @ {event.last_px}"
             )
             self.market_filled = True
+            self.phase = 2
 
             self.log.info("[TEST 4] Sende MARKET SELL zum Schliessen der Position...")
             close_order = self.order_factory.market(
@@ -132,18 +133,52 @@ class ApiFullExecutionTestStrategy(Strategy):
             self.close_order_id = close_order.client_order_id
             self.submit_order(close_order)
 
+        elif event.client_order_id == getattr(self, "sl_market_buy_id", None):
+            self.log.info(f"✅ MARKET BUY WITH SL gefüllt: {event.last_qty} Units")
+            self.sl_market_filled = True
+
+            self.log.info("[TEST 6] Sende MARKET SELL zum Schliessen der SL-Position...")
+            close_order = self.order_factory.market(
+                instrument_id=self.instrument_id,
+                order_side=OrderSide.SELL,
+                quantity=event.last_qty,
+                time_in_force=TimeInForce.GTC,
+            )
+            self.submit_order(close_order)
+
     def on_position_closed(self, event) -> None:
         """Wird aufgerufen wenn eine Position vollständig geschlossen wurde."""
-        if self.market_filled:
+        if getattr(self, "sl_market_filled", False) and getattr(self, "position_closed", False):
+            self.log.info("✅ SL-Position erfolgreich geschlossen!")
+            self.sl_position_closed = True
+        elif self.market_filled:
             self.log.info("✅ Position erfolgreich geschlossen!")
             self.position_closed = True
+
+            if getattr(self, "phase", 1) == 2:
+                self.phase = 3
+                self.log.info("[TEST 5] Sende MARKET BUY MIT STOP LOSS TAG...")
+
+                tick = self.cache.quote_tick(self.instrument_id)
+                raw_qty = float(self.usd_amount) / float(tick.ask_price)
+                mkt_qty = Quantity(max(1, round(raw_qty)), precision=0)
+
+                market_sl_order = self.order_factory.market(
+                    instrument_id=self.instrument_id,
+                    order_side=OrderSide.BUY,
+                    quantity=mkt_qty,
+                    time_in_force=TimeInForce.GTC,
+                    tags=["SL:0.10"]
+                )
+                self.sl_market_buy_id = market_sl_order.client_order_id
+                self.submit_order(market_sl_order)
 
     def on_stop(self) -> None:
         self.unsubscribe_quote_ticks(self.instrument_id)
 
     def is_finished(self) -> bool:
         """Test gilt als beendet sobald Position geschlossen (Limit-Cancel via Cleanup)."""
-        return self._test_aborted or self.position_closed
+        return self._test_aborted or getattr(self, "sl_position_closed", False)
 
 
 async def emergency_cleanup(
