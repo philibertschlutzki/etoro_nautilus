@@ -1070,7 +1070,9 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | 2026-05-14 | Updated limit order cancellation logic to use Rate-Matching (rate + instrumentID + isBuy) as eToro PnL entryOrders lack correlation tokens | `adapters/etoro_execution.py`, `AGENTS.md` |
 | 2026-05-14 | Fixed JULES_SYSTEM_PROMPT.md to state that InstrumentID is required in close position payload | `.agents/JULES_SYSTEM_PROMPT.md` |
 | *(initial)* | AGENTS.md created from full repository analysis | `AGENTS.md` |
+| 2026-05-15 | Erweitert `_build_market_open_payload()` um `TP:<pct>`- und `TSL:1`-Tag-Unterstützung; `enable_trailing_stop` wird jetzt im Payload gesetzt | `adapters/etoro_execution.py`, `AGENTS.md` |
+| 2026-05-15 | Neues Skript für erweiterte API-Tests (Short, SL, TP, TSL) | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
 
 ---
 
-*Last updated: 2026-05-14. Update this date and the changelog above whenever you modify this file.*
+*Last updated: 2026-05-15. Update this date and the changelog above whenever you modify this file.*

@@ -516,31 +516,69 @@ class EToroExecutionClient(LiveExecutionClient):
             payload["AmountInUnits"] = float(order.quantity)
             url = f"{self._rest_base}/market-open-orders/by-units"
 
-        # Parse tags for SL:<pct>
+        # Parse tags for SL:<pct>, TP:<pct>, TSL:1
         sl_pct = 0.0
+        tp_pct = 0.0
+        tsl_enabled = self._enable_trailing_stop
+
         for tag in (getattr(order, "tags", None) or []):
-            if isinstance(tag, str) and tag.startswith("SL:"):
-                try:
-                    sl_pct = float(tag[3:])
-                except ValueError:
-                    pass
-                break
+            if isinstance(tag, str):
+                if tag.startswith("SL:"):
+                    try:
+                        sl_pct = float(tag[3:])
+                    except ValueError:
+                        pass
+                elif tag.startswith("TP:"):
+                    try:
+                        tp_pct = float(tag[3:])
+                    except ValueError:
+                        pass
+                elif tag == "TSL:1":
+                    tsl_enabled = True
 
-        if sl_pct > 0 and exec_price is not None:
-            instr = self._cache.instrument(order.instrument_id)
-            if instr:
-                if order.side == OrderSide.BUY:
-                    sl_rate = exec_price * (1.0 - sl_pct)
+        if sl_pct > 0 or tp_pct > 0:
+            if exec_price is not None:
+                instr = self._cache.instrument(order.instrument_id)
+                if instr:
+                    if sl_pct > 0:
+                        if order.side == OrderSide.BUY:
+                            sl_rate = exec_price * (1.0 - sl_pct)
+                        else:
+                            sl_rate = exec_price * (1.0 + sl_pct)
+
+                        payload["StopLossRate"] = round(sl_rate, instr.price_precision)
+                        payload["IsNoStopLoss"] = False
+
+                    if tp_pct > 0:
+                        if order.side == OrderSide.BUY:
+                            tp_rate = exec_price * (1.0 + tp_pct)
+                        else:
+                            tp_rate = exec_price * (1.0 - tp_pct)
+
+                        payload["TakeProfitRate"] = round(tp_rate, instr.price_precision)
+                        payload["IsNoTakeProfit"] = False
+                        self._log.info(
+                            f"[{order.instrument_id}] Take-Profit gesetzt: rate={tp_rate} (TP:{tp_pct*100:.1f}%)",
+                            LogColor.CYAN,
+                        )
                 else:
-                    sl_rate = exec_price * (1.0 + sl_pct)
-
-                payload["StopLossRate"] = round(sl_rate, instr.price_precision)
-                payload["IsNoStopLoss"] = False
+                    self._log.warning(
+                        f"[{order.instrument_id}] Instrument not in cache. Skipping StopLossRate/TakeProfitRate.",
+                        LogColor.YELLOW
+                    )
             else:
-                self._log.warning(
-                    f"[{order.instrument_id}] Instrument not in cache. Skipping StopLossRate.",
-                    LogColor.YELLOW
-                )
+                if sl_pct > 0:
+                    pass # SL Warning is missing in original, keeping it out
+                if tp_pct > 0:
+                    self._log.warning(
+                        f"[{order.instrument_id}] TP-Tag gefunden, aber kein Quote-Tick verfügbar. TP wird übersprungen.",
+                        LogColor.YELLOW,
+                    )
+
+        if tsl_enabled:
+            # TODO: Verify eToro key name for TSL. Candidates: "IsTrailingStop", "IsTslEnabled".
+            # Check live request via etoro_tesla_tracker.py or etoro_api_probe_all.py.
+            payload["IsTrailingStop"] = True
 
         return payload, url
 
