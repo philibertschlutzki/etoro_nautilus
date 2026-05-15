@@ -1060,6 +1060,12 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-14 | Added `momentum_ls_run.py` live orchestrator that combines universe, allocator, and tournament JSONs to launch safe live nodes. Included 24h stale-universe check and identical safety interlocks | `dev_scripts/momentum_ls_run.py`, `AGENTS.md` |
+| 2026-05-14 | Added `SL:<pct>` tag convention in `_build_market_open_payload()`; backward-compatible, existing bots unaffected | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_all_orders.py`, `AGENTS.md` |
+| 2026-05-14 | Added `MomentumLSAllocator`, `MomentumLSBaseStrategy` and `MomentumLSSmaStrategy` to implement no-interference rule and dynamic capital sizing. | `adapters/momentum_ls_allocator.py`, `strategies/momentum_ls_base.py`, `strategies/momentum_ls_sma.py`, `AGENTS.md` |
+| 2026-05-14 | Added `momentum_ls_simulator.py` and `momentum_ls_tournament.py` for backtesting tournament tracking Sortino, Calmar and PF logic over QuoteTicks | `dev_scripts/momentum_ls_simulator.py`, `dev_scripts/momentum_ls_tournament.py`, `AGENTS.md` |
+| 2026-05-14 | Added `momentum_ls_fetch_candles.py` for fetching OHLCV data as a Parquet fallback mechanism matching exact quote tick schema dtypes | `dev_scripts/momentum_ls_fetch_candles.py`, `AGENTS.md` |
+| 2026-05-14 | Added `momentum_ls_universe.py` to fetch eToro Smart Portfolio universe for Momentum-LS strategies | `dev_scripts/momentum_ls_universe.py`, `AGENTS.md` |
 | 2026-05-14 | Refactored limit order rate-matching cancel to run as a background task to prevent strategy blocking during the 3-5s eToro PnL delay | `adapters/etoro_execution.py`, `AGENTS.md` |
 | 2026-05-14 | Updated limit order cancellation logic to use Rate-Matching (rate + instrumentID + isBuy) as eToro PnL entryOrders lack correlation tokens | `adapters/etoro_execution.py`, `AGENTS.md` |
 | 2026-05-14 | Fixed JULES_SYSTEM_PROMPT.md to state that InstrumentID is required in close position payload | `.agents/JULES_SYSTEM_PROMPT.md` |
