@@ -28,7 +28,7 @@ CATALOG_PATH = Path(__file__).parent / "data" / "nautilus"
 class DataRecorderConfig(StrategyConfig, frozen=True):
     catalog_path: str
     instrument_ids: list[str]
-    buffer_size: int = 1000  # Wie viele Ticks gesammelt werden, bevor auf die Festplatte geschrieben wird
+    buffer_size: int = 1000  # Fallback-Limit für extrem hohe Volatilität
 
 class DataRecorderStrategy(Strategy):
     def __init__(self, config: DataRecorderConfig):
@@ -49,9 +49,17 @@ class DataRecorderStrategy(Strategy):
             self.subscribe_quote_ticks(instr_id)
             self.log.info(f"Abonniert für Aufzeichnung: {instr_id}")
 
+        # Intervall-Timer für minütlichen Flush einrichten (60s in Nanosekunden)
+        self.clock.set_timer(
+            name="flush_timer",
+            interval_ns=60 * 1_000_000_000,
+            callback=self._flush
+        )
+        self.log.info("Minütlicher Speicher-Timer erfolgreich initialisiert.")
+
     def on_quote_tick(self, tick: QuoteTick):
         self.ticks_buffer.append(tick)
-        # Wenn der Puffer voll ist -> auf Festplatte schreiben
+        # Wenn das obere Limit erreicht wird, wird auch vor Ablauf der Minute geschrieben
         if len(self.ticks_buffer) >= self.buffer_size:
             self._flush()
 
@@ -59,11 +67,15 @@ class DataRecorderStrategy(Strategy):
         # Beim Herunterfahren noch die restlichen Ticks wegschreiben
         self._flush()
 
-    def _flush(self):
+    def _flush(self, event=None):
+        """Schreibt gesammelte Ticks auf SSD. Event-Parameter wird für den Timer-Callback benötigt."""
         if self.ticks_buffer:
-            self.catalog.write_data(self.ticks_buffer)
-            self.log.info(f"{len(self.ticks_buffer)} Ticks erfolgreich in den Katalog ({self.catalog_path}) geschrieben.")
-            self.ticks_buffer.clear()
+            try:
+                self.catalog.write_data(self.ticks_buffer)
+                self.log.info(f"{len(self.ticks_buffer)} Ticks erfolgreich in den Katalog ({self.catalog_path}) geschrieben.")
+                self.ticks_buffer.clear()
+            except Exception as e:
+                self.log.error(f"Fehler beim Schreiben in den Katalog: {e}")
 
 def main():
     CATALOG_PATH.mkdir(parents=True, exist_ok=True)
@@ -111,7 +123,7 @@ def main():
     recorder_config = DataRecorderConfig(
         catalog_path=str(CATALOG_PATH),
         instrument_ids=symbols_to_record,
-        buffer_size=1000  # Alle 1000 Ticks wird auf die SSD geflusht
+        buffer_size=1000  # Schreibt spätestens nach 1000 Ticks, falls die Minute noch nicht um ist
     )
     recorder = DataRecorderStrategy(config=recorder_config)
     node.trader.add_strategy(recorder)
