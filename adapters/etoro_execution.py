@@ -501,21 +501,47 @@ class EToroExecutionClient(LiveExecutionClient):
             "IsBuy": order.side == OrderSide.BUY,
             "Leverage": 1,
         }
+
         last_quote = self._cache.quote_tick(order.instrument_id)
         if last_quote:
-            payload["Amount"] = round(
-                float(order.quantity)
-                * float(
-                    last_quote.ask_price
-                    if order.side == OrderSide.BUY
-                    else last_quote.bid_price
-                ),
-                2,
+            exec_price = float(
+                last_quote.ask_price
+                if order.side == OrderSide.BUY
+                else last_quote.bid_price
             )
+            payload["Amount"] = round(float(order.quantity) * exec_price, 2)
             url = f"{self._rest_base}/market-open-orders/by-amount"
         else:
+            exec_price = None
             payload["AmountInUnits"] = float(order.quantity)
             url = f"{self._rest_base}/market-open-orders/by-units"
+
+        # Parse tags for SL:<pct>
+        sl_pct = 0.0
+        for tag in (getattr(order, "tags", None) or []):
+            if isinstance(tag, str) and tag.startswith("SL:"):
+                try:
+                    sl_pct = float(tag[3:])
+                except ValueError:
+                    pass
+                break
+
+        if sl_pct > 0 and exec_price is not None:
+            instr = self._cache.instrument(order.instrument_id)
+            if instr:
+                if order.side == OrderSide.BUY:
+                    sl_rate = exec_price * (1.0 - sl_pct)
+                else:
+                    sl_rate = exec_price * (1.0 + sl_pct)
+
+                payload["StopLossRate"] = round(sl_rate, instr.price_precision)
+                payload["IsNoStopLoss"] = False
+            else:
+                self._log.warning(
+                    f"[{order.instrument_id}] Instrument not in cache. Skipping StopLossRate.",
+                    LogColor.YELLOW
+                )
+
         return payload, url
 
     def _build_close_payload(self, etoro_id: int) -> dict:
