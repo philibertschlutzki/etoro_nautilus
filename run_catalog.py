@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import pandas as pd  # <-- Hinzugefügt für pd.Timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -49,10 +50,10 @@ class DataRecorderStrategy(Strategy):
             self.subscribe_quote_ticks(instr_id)
             self.log.info(f"Abonniert für Aufzeichnung: {instr_id}")
 
-        # Intervall-Timer für minütlichen Flush einrichten (60s in Nanosekunden)
+        # Intervall-Timer für minütlichen Flush einrichten
         self.clock.set_timer(
             name="flush_timer",
-            interval_ns=60 * 1_000_000_000,
+            interval=pd.Timedelta(seconds=60),  # <-- Korrigiert: Nutzt nun pd.Timedelta
             callback=self._flush
         )
         self.log.info("Minütlicher Speicher-Timer erfolgreich initialisiert.")
