@@ -41,6 +41,7 @@ def test_sl_payload_none_tag():
 
     dummy = DummyClient.__new__(DummyClient)
     dummy._rest_base = "https://mock.etoro.com"
+    dummy._enable_trailing_stop = False
     object.__setattr__(dummy, "_mock_cache", mock_cache)
 
     payload, _ = DummyClient._build_market_open_payload(dummy, mock_order, 100017)
@@ -53,6 +54,7 @@ def test_sl_payload_empty_tag():
 
     dummy = DummyClient.__new__(DummyClient)
     dummy._rest_base = "https://mock.etoro.com"
+    dummy._enable_trailing_stop = False
     object.__setattr__(dummy, "_mock_cache", mock_cache)
 
     payload, _ = DummyClient._build_market_open_payload(dummy, mock_order, 100017)
@@ -65,6 +67,7 @@ def test_sl_payload_malformed_abc():
 
     dummy = DummyClient.__new__(DummyClient)
     dummy._rest_base = "https://mock.etoro.com"
+    dummy._enable_trailing_stop = False
     object.__setattr__(dummy, "_mock_cache", mock_cache)
 
     payload, _ = DummyClient._build_market_open_payload(dummy, mock_order, 100017)
@@ -77,6 +80,7 @@ def test_sl_payload_malformed_empty():
 
     dummy = DummyClient.__new__(DummyClient)
     dummy._rest_base = "https://mock.etoro.com"
+    dummy._enable_trailing_stop = False
     object.__setattr__(dummy, "_mock_cache", mock_cache)
 
     payload, _ = DummyClient._build_market_open_payload(dummy, mock_order, 100017)
@@ -89,6 +93,7 @@ def test_sl_payload_negative_pct():
 
     dummy = DummyClient.__new__(DummyClient)
     dummy._rest_base = "https://mock.etoro.com"
+    dummy._enable_trailing_stop = False
     object.__setattr__(dummy, "_mock_cache", mock_cache)
 
     payload, _ = DummyClient._build_market_open_payload(dummy, mock_order, 100017)
@@ -101,6 +106,7 @@ def test_sl_payload_valid():
 
     dummy = DummyClient.__new__(DummyClient)
     dummy._rest_base = "https://mock.etoro.com"
+    dummy._enable_trailing_stop = False
     object.__setattr__(dummy, "_mock_cache", mock_cache)
 
     payload, _ = DummyClient._build_market_open_payload(dummy, mock_order, 100017)
