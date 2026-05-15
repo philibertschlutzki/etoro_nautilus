@@ -4,6 +4,8 @@ import sys
 import uuid
 import aiohttp
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dotenv import load_dotenv
 
 from nautilus_trader.config import LoggingConfig, StrategyConfig, TradingNodeConfig
@@ -36,6 +38,7 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
         super().__init__(config)
         self.instrument_id = InstrumentId.from_str(ETORO_API_TEST["symbol"])
         self.phase = 0
+        self.short_order_id = None
         self.short_filled = False
         self.position_closed = False
         self._test_aborted = False
@@ -62,12 +65,13 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
                 time_in_force=TimeInForce.GTC,
                 tags=[f"SL:{sl_pct}", f"TP:{tp_pct}", "TSL:1"],
             )
+            self.short_order_id = short_order.client_order_id
             self.log.info(f"Sende Market SELL mit SL:{sl_pct}, TP:{tp_pct}, TSL:1")
             self.submit_order(short_order)
             self.phase = 1
 
     def on_order_filled(self, event: OrderFilled) -> None:
-        if self.phase == 1 and event.order_side == OrderSide.SELL:
+        if self.phase == 1 and event.client_order_id == self.short_order_id:
             self.log.info(f"Short-Order gefüllt: {event.last_qty} @ {event.last_px}")
             self.short_filled = True
 
@@ -295,7 +299,7 @@ async def main() -> None:
     loop = asyncio.get_event_loop()
     run_task = loop.run_in_executor(None, node.run)
 
-    timeout = 90
+    timeout = 180  # 2 × 90s für zwei sequentielle Fills (Short-Open + Close)
     while timeout > 0 and not strategy.is_finished():
         await asyncio.sleep(1)
         timeout -= 1
