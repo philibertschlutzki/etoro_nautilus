@@ -519,7 +519,6 @@ class EToroExecutionClient(LiveExecutionClient):
         # Parse tags for SL:<pct>, TP:<pct>, TSL:1
         sl_pct = 0.0
         tp_pct = 0.0
-        tsl_enabled = self._enable_trailing_stop
 
         for tag in (getattr(order, "tags", None) or []):
             if isinstance(tag, str):
@@ -533,8 +532,6 @@ class EToroExecutionClient(LiveExecutionClient):
                         tp_pct = float(tag[3:])
                     except ValueError:
                         pass
-                elif tag == "TSL:1":
-                    tsl_enabled = True
 
         if sl_pct > 0 or tp_pct > 0:
             if exec_price is not None:
@@ -568,17 +565,40 @@ class EToroExecutionClient(LiveExecutionClient):
                     )
             else:
                 if sl_pct > 0:
-                    pass # SL Warning is missing in original, keeping it out
+                    self._log.warning(
+                        f"[{order.instrument_id}] SL-Tag gefunden, aber kein Quote-Tick verfügbar. "
+                        "StopLossRate wird übersprungen.",
+                        LogColor.YELLOW,
+                    )
                 if tp_pct > 0:
                     self._log.warning(
-                        f"[{order.instrument_id}] TP-Tag gefunden, aber kein Quote-Tick verfügbar. TP wird übersprungen.",
+                        f"[{order.instrument_id}] TP-Tag gefunden, aber kein Quote-Tick verfügbar. "
+                        "TP wird übersprungen.",
                         LogColor.YELLOW,
                     )
 
-        if tsl_enabled:
-            # TODO: Verify eToro key name for TSL. Candidates: "IsTrailingStop", "IsTslEnabled".
-            # Check live request via etoro_tesla_tracker.py or etoro_api_probe_all.py.
-            payload["IsTrailingStop"] = True
+        # TSL-Aktivierung: nur per explizitem Tag, und nur wenn StopLossRate vorhanden
+        tsl_requested = any(
+            isinstance(tag, str) and tag == "TSL:1"
+            for tag in (getattr(order, "tags", None) or [])
+        )
+
+        if tsl_requested:
+            if "StopLossRate" in payload:
+                # TODO: eToro-Feldname für TSL verifizieren.
+                # Kandidaten: "IsTrailingStop", "IsTslEnabled".
+                # Prüfe Live-Request via etoro_tesla_tracker.py oder etoro_api_probe_all.py.
+                payload["IsTrailingStop"] = True
+                self._log.info(
+                    f"[{order.instrument_id}] Trailing Stop aktiviert (TSL:1 Tag).",
+                    LogColor.CYAN,
+                )
+            else:
+                self._log.warning(
+                    f"[{order.instrument_id}] TSL:1 Tag gefunden, aber kein SL:<pct> Tag gesetzt. "
+                    "TSL wird ignoriert — IsTrailingStop erfordert eine gültige StopLossRate.",
+                    LogColor.YELLOW,
+                )
 
         return payload, url
 
