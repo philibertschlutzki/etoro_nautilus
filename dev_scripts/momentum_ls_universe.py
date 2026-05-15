@@ -33,7 +33,7 @@ def _make_headers(api_key: str, user_key: str) -> dict[str, str]:
 
 
 async def fetch_universe(username: str, api_key: str, user_key: str) -> dict[str, Any] | None:
-    url = f"https://public-api.etoro.com/api/v1/users-info/{username}/portfolio"
+    url = f"https://public-api.etoro.com/api/v1/user-info/people/{username}/portfolio/live"
     headers = _make_headers(api_key, user_key)
     timeout = aiohttp.ClientTimeout(total=10.0)
 
