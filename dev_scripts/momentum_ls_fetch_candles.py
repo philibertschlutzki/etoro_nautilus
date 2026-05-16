@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import sys
-import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,9 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+RATE_LIMIT_DELAY = 1.1 
 
 def _make_headers(api_key: str, user_key: str) -> dict[str, str]:
-    import uuid
     return {
         "x-api-key": api_key,
         "x-user-key": user_key,
@@ -28,59 +28,92 @@ def _make_headers(api_key: str, user_key: str) -> dict[str, str]:
         "Content-Type": "application/json",
     }
 
-
-async def fetch_candles_for_month(
+async def fetch_candles_chunk(
     session: aiohttp.ClientSession,
     instrument_id: int,
-    start_date: datetime,
-    end_date: datetime,
+    end_time: datetime,
     api_key: str,
-    user_key: str
+    user_key: str,
+    interval: str = "OneMinute"
 ) -> list[dict]:
-    url = "https://public-api.etoro.com/api/v1/market-data/candles"
+    count = 1000
+    url = f"https://public-api.etoro.com/api/v1/market-data/instruments/{instrument_id}/history/candles/desc/{interval}/{count}"
 
-    # Format eToro style
     params = {
-        "instrumentId": instrument_id,
-        "period": "OneMinute",
-        "clientType": "Real",
-        "fromDate": start_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "toDate": end_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "endTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
     }
 
-    logger.info(f"Fetching {instrument_id} from {params['fromDate']} to {params['toDate']}")
+    logger.info(f"Fetching {instrument_id} ({interval}) max {count} candles before {params['endTime']}...")
 
     headers = _make_headers(api_key, user_key)
-    try:
-        async with session.get(url, params=params, headers=headers) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("candles", [])
-            else:
-                body = await resp.text()
-                logger.warning(f"Failed to fetch {instrument_id} candles: HTTP {resp.status} - {body[:300]}")
-                return []
-    except Exception as e:
-        logger.warning(f"Error fetching candles: {e}")
-        return []
+    
+    for attempt in range(3):
+        try:
+            async with session.get(url, params=params, headers=headers) as resp:
+                if resp.status == 200:
+                    raw_data = await resp.json()
+                    
+                    # eToro API liefert eine doppelt verschachtelte Struktur: 
+                    # {"candles": [{"instrumentId": 22, "candles": [{"fromDate": ...}]}]}
+                    
+                    # 1. Äußeres Dictionary entpacken
+                    if isinstance(raw_data, dict):
+                        inner = raw_data.get("candles") or raw_data.get("Candles") or raw_data.get("data")
+                        if inner is not None:
+                            raw_data = inner
+                            
+                    # 2. Inneres Array entpacken, falls das erste Element ein Wrapper ist
+                    if isinstance(raw_data, list) and len(raw_data) > 0:
+                        first = raw_data[0]
+                        if isinstance(first, dict):
+                            inner_candles = first.get("candles") or first.get("Candles")
+                            if inner_candles is not None and isinstance(inner_candles, list):
+                                return inner_candles
+                                
+                    return raw_data if isinstance(raw_data, list) else []
+                
+                elif resp.status == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 60))
+                    logger.warning(f"Rate limit exceeded (HTTP 429). Waiting for {retry_after} seconds before retry...")
+                    await asyncio.sleep(retry_after)
+                    continue
+                    
+                else:
+                    body = await resp.text()
+                    logger.warning(f"Failed to fetch {instrument_id} candles: HTTP {resp.status} - {body[:300]}")
+                    return []
+        except Exception as e:
+            logger.warning(f"Network error fetching candles (Attempt {attempt+1}): {e}")
+            await asyncio.sleep(5)
 
+    return []
+
+def _get_key_case_insensitive(row: dict, possible_keys: list) -> str:
+    """Findet den tatsächlichen Key-Namen im Dictionary unabhängig von Groß-/Kleinschreibung."""
+    row_keys_lower = {k.lower(): k for k in row.keys()}
+    for pk in possible_keys:
+        if pk.lower() in row_keys_lower:
+            return row_keys_lower[pk.lower()]
+    return None
 
 def create_quote_ticks_dataframe(candles: list[dict]) -> pd.DataFrame:
     rows = []
 
     for c in candles:
         try:
-            # Parse ISO date
-            # eToro usually returns e.g. "2023-01-01T12:00:00Z"
-            ts_dt = pd.to_datetime(c["fromdate"])
+            date_key = _get_key_case_insensitive(c, ['fromdate', 'startdate', 'date', 'timestamp', 'time', 'start'])
+            low_key = _get_key_case_insensitive(c, ['low', 'l'])
+            high_key = _get_key_case_insensitive(c, ['high', 'h'])
 
-            # ts_event / ts_init are unix nanoseconds
+            if not date_key or not low_key or not high_key:
+                continue
+
+            date_str = c[date_key]
+            ts_dt = pd.to_datetime(date_str)
             ts_ns = int(ts_dt.timestamp() * 1e9)
 
-            # Using low for bid, high for ask
-            # QuoteTick bids/asks must be strings/bytes in typical parquet format
-            low = str(c["low"]).encode("utf-8")
-            high = str(c["high"]).encode("utf-8")
+            low = str(c[low_key]).encode("utf-8")
+            high = str(c[high_key]).encode("utf-8")
             one_sz = b"1"
 
             rows.append({
@@ -89,23 +122,24 @@ def create_quote_ticks_dataframe(candles: list[dict]) -> pd.DataFrame:
                 "bid_size": one_sz,
                 "ask_size": one_sz,
                 "ts_event": pd.Series(ts_ns, dtype='uint64').iloc[0],
-                "ts_init": pd.Series(ts_ns, dtype='uint64').iloc[0]
+                "ts_init": pd.Series(ts_ns, dtype='uint64').iloc[0],
+                "timestamp_dt": ts_dt 
             })
         except Exception as e:
             logger.warning(f"Failed to process candle {c}: {e}")
 
     df = pd.DataFrame(rows)
-    # Ensure correct types based on previous check
     if not df.empty:
         df["ts_event"] = df["ts_event"].astype("uint64")
         df["ts_init"] = df["ts_init"].astype("uint64")
+        df = df.sort_values(by="ts_event", ascending=True).reset_index(drop=True)
     return df
 
 
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--etoro-id", type=int, required=True, help="eToro instrument ID")
-    parser.add_argument("--symbol", type=str, required=True, help="Nautilus symbol (e.g., ADA.ETORO)")
+    parser.add_argument("--symbol", type=str, required=True, help="Nautilus symbol (e.g., NATGAS.ETORO)")
     parser.add_argument("--months", type=int, default=6, help="Number of months to fetch")
     parser.add_argument("--output-dir", type=str, default="data/nautilus/data/quote_tick", help="Output directory")
     args = parser.parse_args()
@@ -126,25 +160,50 @@ async def main():
         sys.exit(0)
 
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=30 * args.months)
+    target_start_date = end_date - timedelta(days=30 * args.months)
 
     all_candles = []
+    current_end_time = end_date
+    last_fetched_oldest_timestamp = None
 
-    timeout = aiohttp.ClientTimeout(total=15.0)
+    timeout = aiohttp.ClientTimeout(total=20.0)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        current_end = end_date
-        while current_end > start_date:
-            current_start = max(current_end - timedelta(days=30), start_date)
-
-            candles = await fetch_candles_for_month(
-                session, args.etoro_id, current_start, current_end, api_key, user_key
+        while current_end_time > target_start_date:
+            
+            chunk = await fetch_candles_chunk(
+                session, args.etoro_id, current_end_time, api_key, user_key
             )
-            all_candles.extend(candles)
+            
+            if not chunk:
+                logger.info("No more candles returned by the API.")
+                break
+                
+            chunk_df = pd.DataFrame(chunk)
+            
+            possible_date_cols = ['fromdate', 'startdate', 'date', 'timestamp', 'time', 'start']
+            date_col = next((col for col in chunk_df.columns if col.lower() in possible_date_cols), None)
+            
+            if not date_col:
+                logger.error("API response format changed. Date column not found.")
+                logger.error(f"Available columns: {chunk_df.columns.tolist()}")
+                if len(chunk) > 0:
+                    logger.error(f"First row sample data: {chunk[0]}")
+                break
+                
+            chunk_df['parsed_date'] = pd.to_datetime(chunk_df[date_col])
+            oldest_candle_time = chunk_df['parsed_date'].min()
+            
+            if last_fetched_oldest_timestamp == oldest_candle_time:
+                logger.warning("API returned identical historical bounds. Breaking loop.")
+                break
 
-            current_end = current_start
-
-            # sleep 1s between requests to avoid rate limits
-            await asyncio.sleep(1.0)
+            all_candles.extend(chunk)
+            last_fetched_oldest_timestamp = oldest_candle_time
+            
+            current_end_time = oldest_candle_time - timedelta(seconds=1)
+            
+            logger.info(f"Chunk fetched. Current oldest record: {oldest_candle_time}. Records accumulated: {len(all_candles)}")
+            await asyncio.sleep(RATE_LIMIT_DELAY)
 
     if not all_candles:
         logger.warning(f"No candles fetched for {args.symbol}.")
@@ -153,23 +212,27 @@ async def main():
     df = create_quote_ticks_dataframe(all_candles)
 
     if df.empty:
-        logger.warning("Dataframe is empty after parsing.")
+        logger.warning("Dataframe is empty after filtering. Columns might have been mismatched.")
+        sys.exit(0)
+
+    df = df.drop_duplicates(subset=["ts_event"]).reset_index(drop=True)
+    df = df[df["timestamp_dt"] >= target_start_date]
+    df = df.drop(columns=["timestamp_dt"])
+
+    if df.empty:
+        logger.warning("Dataframe is empty after filtering to requested date range.")
         sys.exit(0)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_file)
 
-    # Read back to validate
     read_df = pd.read_parquet(out_file)
     if len(read_df) == 0:
         logger.error(f"Validation failed: Parquet file {out_file} is empty.")
         sys.exit(1)
 
-    logger.info(f"Summary: fetched {len(all_candles)} candles, wrote {len(df)} rows to {out_file}")
-    logger.info(f"Date range covered: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
-
+    logger.info(f"Summary: wrote {len(df)} rows to {out_file}")
     sys.exit(0)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
