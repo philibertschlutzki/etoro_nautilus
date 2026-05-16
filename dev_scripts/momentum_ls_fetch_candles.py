@@ -34,7 +34,7 @@ async def fetch_candles_chunk(
     end_time: datetime,
     api_key: str,
     user_key: str,
-    interval: str = "OneMinute" #hier kann der Zeitraum auf z.B. OneDay geändert werden.
+    interval: str = "OneDay" #hier kann der Zeitraum auf z.B. OneDay geändert werden.
 ) -> list[dict]:
     count = 1000
     url = f"https://public-api.etoro.com/api/v1/market-data/instruments/{instrument_id}/history/candles/desc/{interval}/{count}"
