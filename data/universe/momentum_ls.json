@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-05-15T13:51:18.604586+00:00",
+  "fetched_at": "2026-05-16T06:50:11.573676+00:00",
   "username": "Momentum-LS",
   "universe": [
     {
@@ -1733,6 +1733,31 @@
       "raw_name": "Unknown"
     },
     {
+      "etoro_id": "1160",
+      "symbol": null,
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1160",
+      "symbol": null,
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1160",
+      "symbol": null,
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1160",
+      "symbol": null,
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1160",
+      "symbol": null,
+      "raw_name": "Unknown"
+    },
+    {
       "etoro_id": "1129",
       "symbol": null,
       "raw_name": "Unknown"
@@ -1744,31 +1769,6 @@
     },
     {
       "etoro_id": "1129",
-      "symbol": null,
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1160",
-      "symbol": null,
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1160",
-      "symbol": null,
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1160",
-      "symbol": null,
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1160",
-      "symbol": null,
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1160",
       "symbol": null,
       "raw_name": "Unknown"
     },
