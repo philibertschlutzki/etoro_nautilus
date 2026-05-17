@@ -48,57 +48,87 @@ This is a **live algorithmic trading system** built on [Nautilus Trader](https:/
 
 ## 2. Repository Structure
 
-```
+```text
 etoro_nautilus/
-├── adapters/
-│   ├── etoro_config.py          # Pydantic config classes for execution client
-│   ├── etoro_data.py            # LiveMarketDataClient (WebSocket ticks)
-│   ├── etoro_execution.py       # LiveExecutionClient (REST orders + WS fills)
-│   ├── etoro_rate_limiter.py    # Async token-bucket rate limiter
-│   ├── etoro_state_manager.py   # Persistent ClientOrderId → positionId mapping
-│   └── instrument_map.py        # eToro numeric IDs → Nautilus InstrumentId strings
-│
+├── .agents/                        # AI system prompts and documentation
+│   ├── Integration_Guide.md
+│   ├── JULES_SYSTEM_PROMPT.md
+│   ├── API_docs_etoro.md
+│   └── testing.md
+├── adapters/                       # eToro Integration Layer
+│   ├── etoro_config.py             # Config objects and Factory methods
+│   ├── etoro_data.py               # WebSocket client (QuoteTicks/Bars)
+│   ├── etoro_execution.py          # REST API client (Order execution)
+│   ├── etoro_rate_limiter.py       # Priority Queue for Rate Limits
+│   ├── etoro_state_manager.py      # Persistence of Order/Position IDs
+│   ├── instrument_map.py           # Hardcoded Symbol <-> eToroID Map
+│   └── momentum_ls_allocator.py    # Capital allocator for Momentum-LS
+├── backtesting/                    # Backtesting Engine
+│   ├── backtesting_config.json
+│   └── run_backtest.py
 ├── config/
-│   └── setups.py                # ACTIVE_BOTS list + ETORO_EXECUTION settings
-│
-├── strategies/
-│   ├── __init__.py
-│   ├── sma_crossover.py         # Simple SMA crossover
-│   ├── tesla_combo_strategy.py  # SMA + MACD + BB + VWAP combo
-│   ├── vwap_exhaustion.py       # VWAP deviation + volume spike mean reversion
-│   ├── dynamic_breakout.py      # Volume spike + price breakout
-│   ├── adx_atr_momentum.py      # ADX trend strength + ATR trailing stop
-│   ├── trend_pullback.py        # EMA-200 trend + RSI pullback entries
-│   ├── mean_reversion.py        # Keltner channel mean reversion
-│   ├── flash_crash_reversal.py  # Bollinger band crash + RSI oversold reversal
-│   └── volatility_breakout.py   # Bollinger band upper breakout (pump rider)
-│
-├── dev_scripts/
-│   ├── etoro_api_probe.py       # Tests REST endpoints for availability
-│   ├── etoro_api_probe_all.py   # Full spec REST endpoint diagnostics
-│   ├── etoro_balance.py         # Fetches account balance + positions
-│   ├── etoro_deploy_agent_portfolio.py  # Creates agent portfolios
-│   ├── etoro_execution_test.py  # Live ping-pong order test (buy + close)
-│   ├── etoro_execution_tests_all_orders.py  # Tests limit + market + cancel flow
-│   ├── etoro_show_portfolio.py  # Shows general portfolio
-│   ├── etoro_tesla_tracker.py   # Raw WebSocket listener for debugging
-│   ├── get_instruments_id.py    # Looks up eToro numeric IDs by symbol name
-│   └── read_parquet.py          # Inspects recorded Parquet data files
-│
-├── manuals/                     # Human-readable operational guides
-│   ├── deployment.md
+│   └── setups.py                   # Strategy configurations & Credentials
+├── data/                           # Data storage
+│   ├── nautilus/                   # Parquet files for backtesting
+│   ├── state/                      # Runtime state (execution_mapping.json)
+│   └── universe/                   # Universe configurations (momentum_ls.json)
+├── dev_scripts/                    # Standalone tests and utils
+│   ├── auto_map_insturments.py
+│   ├── compact_parquet.py
+│   ├── etoro_api/
+│   ├── etoro_api_probe.py
+│   ├── etoro_api_probe_all.py
+│   ├── etoro_balance.py
+│   ├── etoro_close_orphans.py
+│   ├── etoro_connectivity_test.py
+│   ├── etoro_deploy_agent_portfolio.py
+│   ├── etoro_execution_test.py
+│   ├── etoro_execution_tests_all_orders.py
+│   ├── etoro_fetch_history.py
+│   ├── etoro_tesla_tracker.py
+│   ├── get_instruments_id.py
+│   ├── momentum_ls_fetch_candles.py
+│   ├── momentum_ls_fetch_candles_auto.py
+│   ├── momentum_ls_run.py          # Orchestrator for Momentum-LS
+│   ├── momentum_ls_simulator.py
+│   ├── momentum_ls_tournament.py
+│   ├── momentum_ls_universe.py
+│   ├── read_parquet.py
+│   └── test_nautilus.py
+├── logs/                           # Runtime logs
+├── manuals/                        # Detailed Handbooks
 │   ├── backtesting_manual.md
+│   ├── deployment.md
+│   ├── feature_automation_LS.md
+│   ├── momentum_ls.md
 │   └── new_tickers.md
-│
-├── run_bot.py                   # Main entry point: live trading orchestrator
-├── run_catalog.py               # Data recorder (runs separately)
-├── run_backtest.py              # Backtesting runner
-├── backtesting_config.json      # Backtest configuration
-├── requirements.txt
-└── .env                         # API keys (never commit this)
+├── strategies/                     # Trading Logic
+│   ├── __init__.py
+│   ├── adx_atr_momentum.py
+│   ├── dynamic_breakout.py
+│   ├── flash_crash_reversal.py
+│   ├── mean_reversion.py
+│   ├── momentum_ls_base.py
+│   ├── momentum_ls_sma.py
+│   ├── sma_crossover.py
+│   ├── tesla_combo_strategy.py
+│   ├── trend_pullback.py
+│   ├── volatility_breakout.py
+│   └── vwap_exhaustion.py
+├── tests/                          # Unit tests
+│   ├── __init__.py
+│   ├── test_etoro_execution.py
+│   ├── test_execution.py
+│   ├── test_momentum_ls_allocator.py
+│   ├── test_stop_loss_payload.py
+│   ├── test_tournament_metrics.py
+│   └── test_universe_fetcher.py
+├── AGENTS.md                       # This file
+├── README.md                       # High-level overview
+├── requirements.txt                # Python dependencies
+├── run_bot.py                      # Main entry point (Live Trading)
+└── run_catalog.py                  # Main entry point (Data Recording)
 ```
-
----
 
 ## 3. Architecture & Data Flow
 
@@ -280,6 +310,10 @@ All instruments use `size_precision=0` (integer quantities). This is intentional
 
 #### Market Open Payload
 
+**Note:** Stop Loss, Take Profit, and Trailing Stop Loss are configured via order tags (e.g., `SL:<pct>`, `TP:<pct>`, `TSL:1`) which are parsed and injected into the payload. Limit orders explicitly require `IsNoStopLoss: False` and a valid `StopLossRate > 0`.
+
+
+
 ```python
 # by-amount (preferred, when quote tick is available):
 {
@@ -424,6 +458,17 @@ self._instrument_to_etoro = {v: k for k, v in ETORO_INSTRUMENTS.items()}
 
 ---
 
+
+### 5.6 MomentumLSAllocator
+(`adapters/momentum_ls_allocator.py`)
+
+A thread-safe capital allocator for the Momentum-LS live trading orchestrator.
+It is injected into strategies to override their quantity computation dynamically.
+
+**Key constraints:**
+1. **No-interference rule:** If there is an existing open position for the queried instrument, allocation returns `0.0`.
+2. **Dynamic slicing:** Capital is dynamically sliced based on `account_balance / pending_signals`, where pending signals are universe instruments currently without an open position.
+
 ## 6. Strategy Layer
 
 All strategies live in `strategies/` and follow a strict pattern.
@@ -540,6 +585,65 @@ Feed bars to indicators: `self.indicator.handle_bar(bar)`
 Check ready: `if not self.indicator.initialized: return`
 
 ---
+
+
+
+### Available Strategies in the Repository
+
+#### 1. `AdxAtrMomentumStrategy` (`adx_atr_momentum.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `adx_period: int = 14`, `atr_period: int = 14`, `adx_threshold: float = 25.0`, `stop_loss_atr_multiplier: float = 2.0`, `max_open_positions: int = 1`
+- **Indicators:** `ExponentialMovingAverage`, `AverageTrueRange`
+- **Signal Logic:** Generates buy signals when ADX is above the threshold indicating a strong trend, and filters entries using EMA alignment. Uses ATR to dynamically calculate stop-loss levels.
+
+#### 2. `DynamicBreakoutStrategy` (`dynamic_breakout.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `lookback_period: int = 20`, `breakout_multiplier: float = 1.5`, `max_open_positions: int = 1`
+- **Indicators:** None (Price action based)
+- **Signal Logic:** Tracks rolling high/low over a lookback period and enters positions when current price breaks out beyond a multiplier of the recent range.
+
+#### 3. `FlashCrashReversalStrategy` (`flash_crash_reversal.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `bb_period: int = 20`, `bb_std_dev: float = 2.5`, `rsi_period: int = 14`, `rsi_oversold: float = 25.0`, `max_open_positions: int = 1`
+- **Indicators:** `BollingerBands`, `RelativeStrengthIndex`
+- **Signal Logic:** Looks for extreme oversold conditions by requiring price to pierce the lower Bollinger Band concurrently with an RSI below the oversold threshold to catch rapid reversals.
+
+#### 4. `MeanReversionStrategy` (`mean_reversion.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `lookback: int = 20`, `z_score_threshold: float = 2.0`, `max_open_positions: int = 1`
+- **Indicators:** None
+- **Signal Logic:** Calculates a rolling Z-Score of the closing price and takes mean-reversion trades when the score exceeds the configured threshold.
+
+#### 5. `MomentumLSBaseStrategy` (`momentum_ls_base.py`)
+- **Config fields:** N/A (Base Class)
+- **Indicators:** None
+- **Signal Logic:** Abstract base class that injects the `MomentumLSAllocator`. Subclasses must implement the actual entry logic. The base handles overriding `_compute_quantity()` by querying the allocator for the assigned USD amount.
+
+#### 6. `MomentumLSSmaStrategy` (`momentum_ls_sma.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `sma_period: int = 5`, `max_open_positions: int = 1`
+- **Indicators:** `SimpleMovingAverage`
+- **Signal Logic:** A proof-of-concept subclass of `MomentumLSBaseStrategy`. It implements a rudimentary single SMA crossover to generate signals for tournament integration testing.
+
+#### 7. `SmaCrossoverStrategy` (`sma_crossover.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `fast_sma: int = 10`, `slow_sma: int = 30`, `max_open_positions: int = 1`
+- **Indicators:** `SimpleMovingAverage`
+- **Signal Logic:** Classic dual moving average crossover. Generates buy signals when the fast SMA crosses above the slow SMA, and sell signals on a cross below.
+
+#### 8. `ComboTrendVwapStrategy` (`tesla_combo_strategy.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `fast_ema: int = 9`, `slow_ema: int = 21`, `bb_period: int = 20`, `bb_std: float = 2.0`, `atr_period: int = 14`, `max_open_positions: int = 1`
+- **Indicators:** `SimpleMovingAverage`, `ExponentialMovingAverage`, `BollingerBands`, `AverageTrueRange`
+- **Signal Logic:** A highly specific combination strategy originally tuned for Tesla. It demands alignment across multiple timeframes and bands before confirming a trend continuation entry.
+
+#### 9. `TrendPullbackStrategy` (`trend_pullback.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `ema_trend_period: int = 50`, `rsi_period: int = 14`, `rsi_pullback_level: float = 40.0`, `max_open_positions: int = 1`
+- **Indicators:** `ExponentialMovingAverage`, `RelativeStrengthIndex`
+- **Signal Logic:** Defines the primary trend using a slow EMA and waits for the RSI to dip to a pullback level (e.g., 40) before buying the dip in the direction of the macro trend.
+
+#### 10. `VolatilityBreakoutPumpStrategy` (`volatility_breakout.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `bb_period: int = 20`, `bb_std_dev: float = 2.0`, `volume_multiplier: float = 2.5`, `max_open_positions: int = 1`
+- **Indicators:** `BollingerBands`
+- **Signal Logic:** Monitors Bollinger Band width to detect volatility compression (a "squeeze") and enters when price breaks the upper band accompanied by a volume spike.
+
+#### 11. `VwapExhaustionStrategy` (`vwap_exhaustion.py`)
+- **Config fields:** `instrument_id: str`, `bar_type: str`, `deviation_multiplier: float = 2.5`, `max_open_positions: int = 1`
+- **Indicators:** None (Custom VWAP calculation internal to strategy)
+- **Signal Logic:** Fades extreme moves by shorting or selling when the price deviates significantly far from the volume-weighted average price.
 
 ## 7. Configuration System
 
@@ -898,18 +1002,30 @@ Wrapped in `try/except Exception as e: self._log.error(...)`. The message loop c
 
 All dev scripts are in `dev_scripts/` and load credentials from `.env` automatically via `python-dotenv`.
 
+
 | Script | Purpose | Sends Real Orders? |
-|--------|---------|-------------------|
-| `get_instruments_id.py` | Look up eToro IDs for symbols | No |
-| `etoro_api_probe.py` | Test REST endpoint availability | No |
-| `etoro_api_probe_all.py` | Full spec REST diagnostics | No |
-| `etoro_balance.py` | Show account balance and positions | No |
-| `etoro_show_portfolio.py` | General portfolio view | No |
-| `etoro_tesla_tracker.py` | Raw WebSocket listener | No |
-| `read_parquet.py` | Inspect recorded data files | No |
-| `etoro_deploy_agent_portfolio.py` | Create agent portfolios | **API write** |
-| `etoro_execution_test.py` | Ping-pong: buy + close once | **YES** (if `dry_run=False`) |
-| `etoro_execution_tests_all_orders.py` | Full order test + cleanup | **YES** (if `dry_run=False`) |
+|--------|---------|--------------------|
+| `auto_map_insturments.py` | Auto-generates mapping of InstrumentID to Symbol. | No |
+| `compact_parquet.py` | Utility to compact Parquet files. | No |
+| `etoro_api_probe.py` | Probes specific eToro endpoints for limits/behavior. | No |
+| `etoro_api_probe_all.py` | Probes multiple eToro endpoints. | No |
+| `etoro_balance.py` | Fetches account balance. | No |
+| `etoro_close_orphans.py` | Cleans up stray open positions. | Yes (Close only) |
+| `etoro_connectivity_test.py` | Tests WS & REST connectivity without placing orders. | No |
+| `etoro_deploy_agent_portfolio.py` | Deployment script for portfolios. | Conditional |
+| `etoro_execution_test.py` | Runs `EToroExecutionClient` in a test mode. | Conditional |
+| `etoro_execution_tests_all_orders.py` | Comprehensive order testing script. | Yes |
+| `etoro_fetch_history.py` | Fetches historical data. | No |
+| `etoro_tesla_tracker.py` | Example script tracking Tesla. | No |
+| `get_instruments_id.py` | Looks up instrument IDs based on symbols. | No |
+| `momentum_ls_fetch_candles.py` | Fetches candle data for Momentum-LS. | No |
+| `momentum_ls_fetch_candles_auto.py` | Automated candle data fetcher for Momentum-LS. | No |
+| `momentum_ls_run.py` | Live trading orchestrator for Momentum-LS. | Yes |
+| `momentum_ls_simulator.py` | Simulator for Momentum-LS strategies. | No |
+| `momentum_ls_tournament.py` | Runs tournament selection for Momentum-LS. | No |
+| `momentum_ls_universe.py` | Fetches and filters the Momentum-LS universe. | No |
+| `read_parquet.py` | Utility to read Parquet files. | No |
+| `test_nautilus.py` | Test for loading the Nautilus environment. | No |
 
 ### Running an Execution Test
 
@@ -976,7 +1092,7 @@ data = data.get("clientPortfolio", data)
 Forgetting this causes all position/balance lookups to return empty lists.
 
 ### 2. Limit Order ID vs. Token
-After placing a limit order, the stored ID in `_StateManager` is initially the `x-request-id` UUID (a token), not the real numeric `orderId`. The real orderId arrives asynchronously via WebSocket (`trading.order.accepted`). Until that arrives, DELETE requests to cancel the limit order will return HTTP 400. The cancel handler deals with this by launching a background task (`_background_cancel_limit()`) that uses Rate-Matching (rate + instrumentID + isBuy) to find the real orderID via the PnL endpoint once eToro registers the order (typically 3-5 seconds later). This ensures the strategy is unblocked immediately while the cancellation happens asynchronously.
+After placing a limit order, the stored ID in `_StateManager` is initially the `x-request-id` UUID (a token), not the real numeric `orderId`. The real orderId arrives asynchronously via WebSocket (`trading.order.accepted`). Until that arrives, DELETE requests to cancel the limit order will return HTTP 400. The cancel handler deals with this by launching a background task (`_background_cancel_limit()`) that uses Rate-Matching (rate + instrumentID + isBuy) to find the real orderID via the PnL endpoint. It waits in stepped delays (`2s → 3s → 5s`, total 10s) until eToro registers the order in the PnL. This ensures the strategy is unblocked immediately while the cancellation happens asynchronously.
 
 ### 3. `content` as JSON String
 eToro's WebSocket sends `content` as a JSON-encoded string, not an embedded object. Always check and parse:
@@ -1060,6 +1176,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-17 | Documentation audit: full repository sync, all sections verified | `AGENTS.md` |
 | 2026-05-14 | Added `momentum_ls_run.py` live orchestrator that combines universe, allocator, and tournament JSONs to launch safe live nodes. Included 24h stale-universe check and identical safety interlocks | `dev_scripts/momentum_ls_run.py`, `AGENTS.md` |
 | 2026-05-14 | Added `SL:<pct>` tag convention in `_build_market_open_payload()`; backward-compatible, existing bots unaffected | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_all_orders.py`, `AGENTS.md` |
 | 2026-05-14 | Added `MomentumLSAllocator`, `MomentumLSBaseStrategy` and `MomentumLSSmaStrategy` to implement no-interference rule and dynamic capital sizing. | `adapters/momentum_ls_allocator.py`, `strategies/momentum_ls_base.py`, `strategies/momentum_ls_sma.py`, `AGENTS.md` |
