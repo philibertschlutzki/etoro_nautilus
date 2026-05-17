@@ -11,8 +11,9 @@ from dotenv import load_dotenv
 from nautilus_trader.config import LoggingConfig, StrategyConfig, TradingNodeConfig
 from nautilus_trader.core.message import Event
 from nautilus_trader.model.data import QuoteTick
+import json
 from nautilus_trader.model.enums import OrderSide, TimeInForce
-from nautilus_trader.model.events import OrderFilled, OrderRejected, PositionClosed
+from nautilus_trader.model.events import OrderFilled, OrderRejected, PositionClosed, OrderAccepted
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.live.node import TradingNode
@@ -70,13 +71,41 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             self.submit_order(short_order)
             self.phase = 1
 
+    def on_order_accepted(self, event: OrderAccepted) -> None:
+        if event.client_order_id == self.short_order_id:
+            self.log.info(f"Short-Order accepted: {event.client_order_id}")
+            asyncio.get_event_loop().create_task(self._fetch_pnl_diagnostic())
+
+    async def _fetch_pnl_diagnostic(self) -> None:
+        await asyncio.sleep(5.0)
+        base_url = "https://public-api.etoro.com/api/v1/trading"
+        env = ETORO_API_TEST["environment"]
+        pnl_url = f"{base_url}/info/{env}/pnl"
+        headers = {
+            "x-api-key": API_KEY,
+            "x-user-key": USER_KEY,
+            "Content-Type": "application/json",
+            "x-request-id": str(uuid.uuid4())
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(pnl_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        self.log.info(f"[POST-ACCEPT DIAGNOSTIC] {json.dumps(data)}")
+                    else:
+                        self.log.error(f"[POST-ACCEPT DIAGNOSTIC] Request failed with status {resp.status}")
+        except Exception as e:
+            self.log.error(f"[POST-ACCEPT DIAGNOSTIC] Request failed: {e}")
+
     def on_order_filled(self, event: OrderFilled) -> None:
         if self.phase == 1 and event.client_order_id == self.short_order_id:
             self.log.info(f"Short-Order gefüllt: {event.last_qty} @ {event.last_px}")
             self.short_filled = True
 
             # Start background task to verify TSL field name via PnL
-            self.create_task(self._verify_tsl_field(), log_msg="verify_tsl_field")
+            asyncio.get_event_loop().create_task(self._verify_tsl_field())
 
             close_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
@@ -356,7 +385,7 @@ async def main() -> None:
     loop = asyncio.get_event_loop()
     run_task = loop.run_in_executor(None, node.run)
 
-    timeout = 180  # 2 × 90s für zwei sequentielle Fills (Short-Open + Close)
+    timeout = 300  # 300s für zwei sequentielle Fills (Short-Open + Close)
     while timeout > 0 and not strategy.is_finished():
         await asyncio.sleep(1)
         timeout -= 1
