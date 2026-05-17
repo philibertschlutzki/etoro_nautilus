@@ -1072,7 +1072,8 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | *(initial)* | AGENTS.md created from full repository analysis | `AGENTS.md` |
 | 2026-05-15 | Erweitert `_build_market_open_payload()` um `TP:<pct>`- und `TSL:1`-Tag-Unterstützung; _enable_trailing_stop flag now acts as a system-level guard; TSL:1 tag is only honoured when both the tag is set and the flag is True. Previously the flag was stored but had no effect; SL-Warning für by-units-Pfad ergänzt | `adapters/etoro_execution.py`, `AGENTS.md` |
 | 2026-05-15 | Neues Skript `etoro_execution_tests_advanced.py` für erweiterte API-Tests (Short-Eröffnung, SL, TP, TSL); Order-Matching per client_order_id; 180s Timeout; sys.path-Fix | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
+| 2026-05-17 | Fixed _reconcile_via_pnl to search exitOrders and ordersForClose for positions closed immediately by TSL/SL/TP. Extended position matching to include PositionID in addition to OrderID. Added full PnL diagnostic log when _poll_for_fill exhausts. Increased advanced test timeout to 300s. | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
 
 ---
 
-*Last updated: 2026-05-15. Update this date and the changelog above whenever you modify this file.*
+*Last updated: 2026-05-17. Update this date and the changelog above whenever you modify this file.*

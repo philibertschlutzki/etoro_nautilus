@@ -1160,10 +1160,35 @@ class EToroExecutionClient(LiveExecutionClient):
                 pass
 
         self._log.warning(
-            f"_poll_for_fill exhausted all attempts for {order.client_order_id.value}. "
-            f"Order remains ACCEPTED — check eToro portal manually.",
+            f"_poll_for_fill exhausted all attempts for "
+            f"{order.client_order_id.value}. Order remains ACCEPTED.",
             LogColor.YELLOW,
         )
+        # Diagnostic: fetch and log the full PnL once more
+        try:
+            async with self._session.get(
+                self._pnl_base, headers=self._make_headers()
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    data = data.get("clientPortfolio", data)
+                    self._log.warning(
+                        f"[Diagnostic] PnL keys: {list(data.keys())} | "
+                        f"positions={len(data.get('positions', data.get('Positions', [])))} | "
+                        f"ordersForOpen={len(data.get('ordersForOpen', data.get('OrdersForOpen', [])))} | "
+                        f"exitOrders={len(data.get('exitOrders', []))} | "
+                        f"ordersForClose={len(data.get('ordersForClose', []))}",
+                        LogColor.YELLOW,
+                    )
+                    # Log each exit order to identify silent TSL/SL triggers
+                    for item in data.get("exitOrders", []):
+                        self._log.warning(
+                            f"[Diagnostic] exitOrder: {item}", LogColor.YELLOW
+                        )
+        except Exception as exc:
+            self._log.warning(
+                f"[Diagnostic] PnL fetch failed: {exc}", LogColor.YELLOW
+            )
 
     async def _reconcile_via_pnl(
         self, order: object, req_id: str, order_id: str
@@ -1190,9 +1215,15 @@ class EToroExecutionClient(LiveExecutionClient):
                                 "OrderID", item.get("orderID", item.get("orderId", ""))
                             )
                         )
-                        if (req_id and i_req == req_id) or (
-                            order_id and i_ord == order_id
-                        ):
+                        i_pos = str(
+                            item.get(
+                                "PositionID",
+                                item.get("positionID", item.get("positionId", "")),
+                            )
+                        )
+                        if (req_id and i_req == req_id) \
+                           or (order_id and i_ord == order_id) \
+                           or (order_id and i_pos == order_id):
                             pos_id = str(
                                 item.get(
                                     "PositionID",
@@ -1240,9 +1271,15 @@ class EToroExecutionClient(LiveExecutionClient):
                                 "OrderID", item.get("orderID", item.get("orderId", ""))
                             )
                         )
-                        if (req_id and i_req == req_id) or (
-                            order_id and i_ord == order_id
-                        ):
+                        i_pos = str(
+                            item.get(
+                                "PositionID",
+                                item.get("positionID", item.get("positionId", "")),
+                            )
+                        )
+                        if (req_id and i_req == req_id) \
+                           or (order_id and i_ord == order_id) \
+                           or (order_id and i_pos == order_id):
                             i_id = str(
                                 item.get(
                                     "OrderID",
@@ -1281,6 +1318,94 @@ class EToroExecutionClient(LiveExecutionClient):
                                     ts_event=self._clock.timestamp_ns(),
                                 )
                             return True
+
+                    exit_orders = (
+                        data.get("exitOrders", data.get("ExitOrders", []))
+                        + data.get("ordersForClose", data.get("OrdersForClose", []))
+                        + data.get("ordersForCloseMultiple", data.get("OrdersForCloseMultiple", []))
+                    )
+
+                    for item in exit_orders:
+                        i_req = str(item.get("token", item.get("requestId", "")))
+                        i_ord = str(
+                            item.get(
+                                "OrderID", item.get("orderID", item.get("orderId", ""))
+                            )
+                        )
+                        i_pos = str(
+                            item.get(
+                                "PositionID", item.get("positionID", item.get("positionId", ""))
+                            )
+                        )
+
+                        if (req_id and i_req == req_id) \
+                           or (order_id and i_ord == order_id) \
+                           or (order_id and i_pos == order_id):
+
+                            pos_id = i_pos or i_ord or order_id
+                            await self._state.set(order.client_order_id.value, pos_id)
+                            instr = self._cache.instrument(order.instrument_id)
+
+                            fill_px = item.get(
+                                "closeRate", item.get("CloseRate", item.get("rate", item.get("Rate")))
+                            )
+                            if fill_px is None:
+                                quote = self._cache.quote_tick(order.instrument_id)
+                                fill_px = (
+                                    float(quote.bid_price if order.side == OrderSide.SELL else quote.ask_price)
+                                    if quote else 1.0
+                                )
+
+                            # 1. Open leg
+                            self.generate_order_filled(
+                                strategy_id=order.strategy_id,
+                                instrument_id=order.instrument_id,
+                                client_order_id=order.client_order_id,
+                                venue_order_id=order.venue_order_id or VenueOrderId(pos_id),
+                                venue_position_id=PositionId(pos_id),
+                                trade_id=TradeId(str(uuid.uuid4())),
+                                order_side=order.side,
+                                order_type=order.order_type,
+                                last_qty=order.quantity,
+                                last_px=Price(
+                                    float(fill_px),
+                                    precision=instr.price_precision if instr else 5,
+                                ),
+                                quote_currency=USD,
+                                commission=Money(0.0, USD),
+                                liquidity_side=LiquiditySide.TAKER,
+                                ts_event=self._clock.timestamp_ns(),
+                            )
+
+                            # 2. Close leg (immediate TSL/SL/TP trigger)
+                            opposite_side = OrderSide.BUY if order.side == OrderSide.SELL else OrderSide.SELL
+                            self.generate_order_filled(
+                                strategy_id=order.strategy_id,
+                                instrument_id=order.instrument_id,
+                                client_order_id=order.client_order_id,
+                                venue_order_id=order.venue_order_id or VenueOrderId(pos_id),
+                                venue_position_id=PositionId(pos_id),
+                                trade_id=TradeId(str(uuid.uuid4())),
+                                order_side=opposite_side,
+                                order_type=order.order_type,
+                                last_qty=order.quantity,
+                                last_px=Price(
+                                    float(fill_px),
+                                    precision=instr.price_precision if instr else 5,
+                                ),
+                                quote_currency=USD,
+                                commission=Money(0.0, USD),
+                                liquidity_side=LiquiditySide.TAKER,
+                                ts_event=self._clock.timestamp_ns(),
+                            )
+
+                            self._log.info(
+                                f"Reconciled via exitOrders: position was opened and immediately closed (TSL/SL/TP triggered). coid={order.client_order_id.value} posId={pos_id}",
+                                LogColor.GREEN,
+                            )
+                            self.create_task(self._refresh_balance(), log_msg="balance_refresh")
+                            return True
+
         except Exception:
             pass
         return False
