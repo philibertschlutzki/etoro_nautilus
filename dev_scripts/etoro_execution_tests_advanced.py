@@ -38,11 +38,13 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
     def __init__(self, config: StrategyConfig) -> None:
         super().__init__(config)
         self.instrument_id = InstrumentId.from_str(ETORO_API_TEST["symbol"])
-        self.phase = 0
+        self.phase = 1
         self.short_order_id = None
         self.short_filled = False
         self.position_closed = False
         self._test_aborted = False
+        self.qty = None
+        self.ask_price = None
 
     def on_start(self) -> None:
         self.subscribe_quote_ticks(self.instrument_id)
@@ -51,25 +53,58 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
         )
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
-        if self.phase == 0:
-            sl_pct = 0.05
-            tp_pct = 0.05
-            ask_price = float(tick.ask_price)
+        if self.ask_price is None:
+            self.ask_price = float(tick.ask_price)
+            raw_qty = float(ETORO_API_TEST["trade_amount_usd"]) / self.ask_price
+            self.qty = Quantity(max(1, round(raw_qty)), precision=0)
 
-            raw_qty = float(ETORO_API_TEST["trade_amount_usd"]) / ask_price
-            qty = Quantity(max(1, round(raw_qty)), precision=0)
-
+        if self.phase == 1 and not self.short_order_id:
             short_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=OrderSide.SELL,
-                quantity=qty,
+                quantity=self.qty,
                 time_in_force=TimeInForce.GTC,
-                tags=[f"SL:{sl_pct}", f"TP:{tp_pct}", "TSL:1"],
+                tags=[],
             )
             self.short_order_id = short_order.client_order_id
-            self.log.info(f"Sende Market SELL mit SL:{sl_pct}, TP:{tp_pct}, TSL:1")
+            self.log.info(f"[PHASE 1] Sende Market SELL ohne Tags")
             self.submit_order(short_order)
-            self.phase = 1
+
+        elif self.phase == 2 and not self.short_order_id:
+            short_order = self.order_factory.market(
+                instrument_id=self.instrument_id,
+                order_side=OrderSide.SELL,
+                quantity=self.qty,
+                time_in_force=TimeInForce.GTC,
+                tags=["SL:0.05"],
+            )
+            self.short_order_id = short_order.client_order_id
+            self.log.info(f"[PHASE 2] Sende Market SELL mit SL:0.05")
+            self.submit_order(short_order)
+
+        elif self.phase == 3 and not self.short_order_id:
+            short_order = self.order_factory.market(
+                instrument_id=self.instrument_id,
+                order_side=OrderSide.SELL,
+                quantity=self.qty,
+                time_in_force=TimeInForce.GTC,
+                tags=["SL:0.05", "TP:0.05"],
+            )
+            self.short_order_id = short_order.client_order_id
+            self.log.info(f"[PHASE 3] Sende Market SELL mit SL:0.05, TP:0.05")
+            self.submit_order(short_order)
+
+        elif self.phase == 4 and not self.short_order_id:
+            short_order = self.order_factory.market(
+                instrument_id=self.instrument_id,
+                order_side=OrderSide.SELL,
+                quantity=self.qty,
+                time_in_force=TimeInForce.GTC,
+                tags=["SL:0.05", "TSL:1"],
+            )
+            self.short_order_id = short_order.client_order_id
+            self.log.info(f"[PHASE 4] Sende Market SELL mit SL:0.05, TSL:1")
+            self.submit_order(short_order)
 
     def on_order_accepted(self, event: OrderAccepted) -> None:
         if event.client_order_id == self.short_order_id:
@@ -100,12 +135,13 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             self.log.error(f"[POST-ACCEPT DIAGNOSTIC] Request failed: {e}")
 
     def on_order_filled(self, event: OrderFilled) -> None:
-        if self.phase == 1 and event.client_order_id == self.short_order_id:
-            self.log.info(f"Short-Order gefüllt: {event.last_qty} @ {event.last_px}")
+        if event.client_order_id == self.short_order_id:
+            self.log.info(f"[PHASE {self.phase}] Short-Order gefüllt: {event.last_qty} @ {event.last_px}")
             self.short_filled = True
 
-            # Start background task to verify TSL field name via PnL
-            asyncio.get_event_loop().create_task(self._verify_tsl_field())
+            if self.phase == 4:
+                # Start background task to verify TSL field name via PnL
+                asyncio.get_event_loop().create_task(self._verify_tsl_field())
 
             close_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
@@ -113,9 +149,8 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
                 quantity=event.last_qty,
                 time_in_force=TimeInForce.GTC,
             )
-            self.log.info("Sende Market BUY zum Schließen der Short-Position")
+            self.log.info(f"[PHASE {self.phase}] Sende Market BUY zum Schließen der Short-Position")
             self.submit_order(close_order)
-            self.phase = 2
 
     async def _verify_tsl_field(self) -> None:
         await asyncio.sleep(3.0)  # Wait for PnL propagation
@@ -172,8 +207,13 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             self.log.error(f"Failed to verify TSL field in PnL: {e}")
 
     def on_position_closed(self, event: PositionClosed) -> None:
-        self.position_closed = True
-        self.log.info(f"Position geschlossen: {event.position_id}")
+        self.log.info(f"[PHASE {self.phase}] Position geschlossen: {event.position_id}")
+        if self.phase < 4:
+            self.phase += 1
+            self.short_order_id = None
+            self.short_filled = False
+        else:
+            self.position_closed = True
 
     def on_order_rejected(self, event: OrderRejected) -> None:
         self.log.error(f"Order abgewiesen: {event.reason}")
@@ -184,7 +224,7 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
         self.unsubscribe_quote_ticks(self.instrument_id)
 
     def is_finished(self) -> bool:
-        return self._test_aborted or self.position_closed
+        return self._test_aborted or (self.phase == 4 and self.position_closed)
 
 async def emergency_cleanup(
     api_key: str,
@@ -379,23 +419,33 @@ async def main() -> None:
 
     node.build()
     print(
-        f"Trading Node gestartet (Environment: {ETORO_API_TEST['environment'].upper()}). Führe Tests aus (max. 90 s) ..."
+        f"Trading Node gestartet (Environment: {ETORO_API_TEST['environment'].upper()}). Führe Tests aus (max. {360}s, {4} Phasen) ..."
     )
 
     loop = asyncio.get_event_loop()
     run_task = loop.run_in_executor(None, node.run)
 
-    timeout = 300  # 300s für zwei sequentielle Fills (Short-Open + Close)
-    while timeout > 0 and not strategy.is_finished():
+    timeout = 360  # 4 Phasen x 90s
+    last_phase = 1
+    phase_timeout = 90
+    while timeout > 0 and not strategy.is_finished() and phase_timeout > 0:
+        if strategy.phase != last_phase:
+            last_phase = strategy.phase
+            phase_timeout = 90 # reset phase timeout
         await asyncio.sleep(1)
         timeout -= 1
+        phase_timeout -= 1
+
+    if (timeout <= 0 or phase_timeout <= 0) and not strategy.is_finished():
+        strategy.log.warning(f"Phase {strategy.phase} timed out - TSL/TP combination may be unsupported")
+        strategy._test_aborted = True
 
     if strategy.is_finished() and not strategy._test_aborted:
         print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")
     elif strategy._test_aborted:
-        print("\n❌ Test abgebrochen (Order abgewiesen). Cleanup wird ausgeführt.")
+        print("\n❌ Test abgebrochen oder Timeout erreicht. Cleanup wird ausgeführt.")
     else:
-        print("\n⚠️ Timeout — Testlauf unvollständig.")
+        print("\n⚠️ Testlauf unvollständig.")
 
     # Node sauber herunterfahren
     node.stop()

@@ -12,14 +12,15 @@ ETORO_API_TEST = {
     "dry_run": False,            # Muss False sein, damit echte Orders rausgehen
     "symbol": "ADA.ETORO",       # Cardano eignet sich gut (kleiner Preis pro Unit)
     "trade_amount_usd": 11.0,    # Etwas über den 10$ Mindestbetrag zur Sicherheit
-    "test_account_id": "TEST_01" # Label für das Logging
+    "test_account_id": "TEST_01", # Label für das Logging
+    "enable_trailing_stop": False, # TSL deaktiviert bis Phase-4-Test bestätigt welche Kombination eToro unterstützt
 }
 
 # --- eToro execution settings -------------------------------------------------
 ETORO_EXECUTION = {
     "environment": "real",   # "demo" | "real"
     "dry_run": False,         # MUST be set False explicitly to send real orders
-    "enable_trailing_stop": True,
+    "enable_trailing_stop": False, # TSL deaktiviert bis Phase-4-Test bestätigt welche Kombination eToro unterstützt
 }
 
 ACTIVE_BOTS = [

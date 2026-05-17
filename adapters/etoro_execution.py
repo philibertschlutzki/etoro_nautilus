@@ -700,6 +700,10 @@ class EToroExecutionClient(LiveExecutionClient):
                 status, body_text = resp.status, await resp.text()
 
                 if 200 <= status < 300:
+                    self._log.debug(
+                        f"REST response body for {order.client_order_id.value}: {body_text[:2000]}",
+                        LogColor.CYAN,
+                    )
                     body = json.loads(body_text) if body_text else {}
                     if order.order_type == OrderType.LIMIT:
                         self._log.info(
