@@ -12,10 +12,23 @@ Der `nautilus-catalog.service` auf der Cloud-VM sammelt 24/7 Tick- und Bar-Daten
 
 Synchronisiere die Marktdaten von deinem Server in dein lokales Projektverzeichnis.
 
+
 **Via Terminal (SCP):**
 ```bash
 scp -r <user>@<ip>:/data/nautilus ./data/
 ```
+
+**Daten direkt via eToro API abrufen (Fallback):**
+Falls keine Parquet-Daten von der VM vorhanden sind, können diese per Skript geholt werden:
+
+```bash
+# Für ein einzelnes Symbol (z.B. Tesla, 6 Monate)
+python3 dev_scripts/momentum_ls_fetch_candles.py --etoro-id 1111 --symbol TSLA.ETORO --months 6
+
+# Automatisch alle fehlenden Daten für das Momentum-LS Universum laden
+python3 dev_scripts/momentum_ls_fetch_candles_auto.py --universe data/universe/momentum_ls.json
+```
+
 
 **Via VS Code:**
 Nutze die "Remote - SSH" Erweiterung, navigiere zu `/data/nautilus` und lade den Ordner per Rechtsklick herunter.
@@ -32,16 +45,31 @@ Die JSON-Datei ist wie folgt aufgebaut:
 *   **Backtests (Aktive Strategien):** Eine Liste von Strategien, die simuliert werden sollen.
     *   `strategy_module` / `strategy_class` / `config_class`: Pfade und Namen der Python-Klassen.
     *   `instrument_id` / `bar_type`: Das zu testende Asset (z. B. `TSLA.ETORO`).
-    *   `params`: Ein Dictionary mit allen Indikator-Einstellungen (z. B. `sma_period`: 20). Hier wird optimiert!
+    *   `params`: Ein Dictionary mit allen Indikator-Einstellungen. Beispiele:
+        *   `SmaCrossoverStrategy`: `sma_period`
+        *   `TrendPullbackStrategy`: `ema_period`, `rsi_period`, `rsi_oversold`, `rsi_overbought`
+        *   `MeanReversionStrategy`: `keltner_period`, `keltner_atr_period`, `keltner_multiplier`
 
 ---
 
 ## 3. Ausführung und Workflow
 
+### Regulärer Backtest
+
 Starten Sie den Backtest im lokalen Terminal:
 
 ```bash
-python backtesting/run_backtest.py
+python3 backtesting/run_backtest.py
+```
+
+### Momentum-LS Tournament Backtest
+
+Statt eines manuellen Backtests lässt das Tournament alle Strategien gegeneinander antreten, um die beste für jedes Symbol zu finden:
+
+```bash
+python3 dev_scripts/momentum_ls_tournament.py \
+    --universe data/universe/momentum_ls.json \
+    --output logs/tournament_$(date +%Y-%m-%d).json
 ```
 
 ### Der Optimierungs-Workflow
@@ -66,9 +94,10 @@ from nautilus_trader.analysis.tearsheet import create_tearsheet
 
 # ... (Engine Setup und Run)
 
+report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 create_tearsheet(
     engine=engine,
-    output_path="reports/tearsheet_etoro.html",
+    output_path=report_filename,
     title="eToro Strategie Backtest"
 )
 ```
@@ -78,11 +107,17 @@ create_tearsheet(
 Öffne die erzeugte HTML-Datei im Browser. Sie enthält Plotly-Charts (inkl. Equity, Drawdown und markierten Order-Fills auf den Candlesticks). Achte auf folgende Metriken:
 
 *   **Sharpe Ratio:** Misst die Rendite im Verhältnis zur Volatilität. (> 1.0 ist gut, > 2.0 exzellent).
-*   **Sortino Ratio:** Bestraft nur Abwärtsvolatilität (echtes Risiko) und ist oft aussagekräftiger als die Sharpe Ratio.
+*   **Sortino Ratio:** Bestraft nur Abwärtsvolatilität (echtes Risiko) und ist oft aussagekräftiger als die Sharpe Ratio. (Hauptmetrik im Momentum-LS).
 *   **Max Drawdown:** Der größte prozentuale Wertverlust vom Hoch zum Tief. (> 20-30% ist meist riskant).
 *   **Win-Rate & Profit Factor:** Win-Rate (> 50%) kombiniert mit einem Profit Factor (Bruttogewinn / Bruttoverlust) > 1.5 deutet auf eine robuste Strategie hin.
 
-### 4.2 Fallback (CSV Berichte)
+### 4.2 Interpretation des Tournaments
+Wenn du `momentum_ls_tournament.py` ausgeführt hast, wird eine Tabelle auf der Konsole sowie eine JSON generiert:
+*   **Win?:** Ist in der Tabelle mit einem `✓` markiert, wenn die Strategie der absolute Gewinner für das spezifische Symbol ist.
+*   **Profit Factor Schwelle:** Jede Strategie muss einen PF > 1.5 aufweisen. Wenn keine Strategie dies für ein Symbol schafft, wird das Symbol für diesen Tag nicht gehandelt.
+*   **JSON Output:** Das resultierende JSON listet die Gewinner-Konfigurationen detailliert auf. Diese Datei wird später von `momentum_ls_run.py` eingelesen.
+
+### 4.3 Fallback (CSV Berichte)
 
 Falls die HTML-Generierung fehlschlägt, können rohe CSV-Daten exportiert werden (dies kann im Skript auskommentiert werden):
 
@@ -97,3 +132,18 @@ positions_df.to_csv("reports/positions_etoro.csv")
 
 *   **Overfitting:** Wenn du Parameter extrem lange auf historischen Daten optimierst, passen sie perfekt auf die Vergangenheit, scheitern aber live. Nutze "Out-of-Sample" Tests (Optimiere auf Jan-Okt, teste auf Nov-Dez).
 *   **Slippage:** Offline-Tests gehen oft von perfekten Ausführungen aus. In der Realität schwanken Preise zwischen Ordererteilung und Ausführung. Berücksichtige dies bei deinen Erwartungen.
+
+---
+
+## 5. Synthetische Daten
+
+[In Entwicklung]
+
+
+---
+## Weiterführende Dokumente
+- `manuals/deployment.md`
+- `manuals/momentum_ls.md`
+
+---
+*Zuletzt aktualisiert: 2026-05-17 — Überprüft gegen Repository-Stand vom 2026-05-14*

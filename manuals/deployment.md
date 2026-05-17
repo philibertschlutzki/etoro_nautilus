@@ -10,7 +10,8 @@ Die Architektur ist so konzipiert, dass sie ressourcenschonend arbeitet.
 
 *   **Betriebssystem:** Ubuntu 22.04 LTS oder Debian 11/12.
 *   **Hardware:** Mindestens 1 GB RAM (Google Cloud `e2-micro` empfohlen).
-*   **Software:** Python 3.10+, `git`, `systemd`.
+*   **Software:** Python 3.10+, `git`, `systemd`
+*   **Python Dependencies:** `nautilus_trader>=1.226.0`, `websockets`, `aiohttp`, `python-dotenv`, `requests`, `pandas`, `pyarrow`, `plotly`, `pytest`, `pytest-asyncio`.
 
 ### 1.1. Swap-File Einrichtung (WICHTIG für 1GB RAM VMs)
 
@@ -39,6 +40,9 @@ sudo useradd -r -s /bin/false tradingbot
 
 sudo mkdir -p /opt/etoro_nautilus
 sudo mkdir -p /data/nautilus
+
+# Verzeichnisstruktur anlegen
+mkdir -p data/state data/nautilus data/universe logs
 ```
 
 ---
@@ -72,6 +76,8 @@ Inhalt:
 ```env
 ETORO_API_KEY=DEIN_API_KEY
 ETORO_USER_KEY=DEIN_USER_KEY
+ETORO_CONFIRM_LIVE=1            # ACHTUNG: Nur setzen, wenn echtes Trading gewünscht ist (Safety Interlock)
+MOMENTUM_LS_USERNAME=USERNAME   # eToro Benutzername des Smart Portfolios
 ```
 
 ---
@@ -126,6 +132,16 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 ```
 
+
+### Dienst 3 (Optional): Momentum-LS Daily Orchestrator via Cron
+
+Da das Subsystem einen täglichen Workflow hat, kann dieser per Cron automatisiert werden:
+
+```bash
+# Crontab-Eintrag (crontab -e als tradingbot)
+0 6 * * * cd /opt/etoro_nautilus && ./venv/bin/python dev_scripts/momentum_ls_universe.py --output data/universe/momentum_ls.json && ./venv/bin/python dev_scripts/momentum_ls_tournament.py --universe data/universe/momentum_ls.json --output logs/tournament_today.json && ./venv/bin/python dev_scripts/momentum_ls_run.py --tournament logs/tournament_today.json >> logs/daily_run.log 2>&1
+```
+
 ### Dienste aktivieren und starten
 
 ```bash
@@ -174,9 +190,28 @@ sudo journalctl -u nautilus-catalog.service -f
 sudo journalctl -u nautilus-bot.service --since "24h" | grep -i "error"
 ```
 
-### Daten-Management
+
+### Momentum-LS Workflow Befehle
 
 ```bash
+# Manuelle Ausführung des täglichen Workflows
+python3 dev_scripts/momentum_ls_universe.py --output data/universe/momentum_ls.json
+python3 dev_scripts/momentum_ls_tournament.py --universe data/universe/momentum_ls.json --output logs/tournament_today.json
+python3 dev_scripts/momentum_ls_run.py --tournament logs/tournament_today.json --dry-run
+```
+
+### Daten-Management Befehle
+
+```bash
+# Universe-Datei prüfen
+cat data/universe/momentum_ls.json | python3 -m json.tool | head -50
+
+# State-Datei prüfen (aktive Order-Mappings)
+cat data/state/execution_mapping.json
+
+# Orphan-Positionen schließen (Notfall)
+python3 dev_scripts/etoro_close_orphans.py
+
 # Größe des Datenverzeichnisses prüfen
 du -sh /data/nautilus
 
@@ -184,11 +219,15 @@ du -sh /data/nautilus
 find /data/nautilus -name "*.parquet" | wc -l
 ```
 
+
 ---
 
 ## 5. WebSocket Debugging & Connection Handling
 
 Die asynchrone WebSocket-Verbindung in `adapters/etoro_data.py` ist das kritischste Element des Systems. Hier erfährst du, wie du Verbindungsprobleme identifizierst und behebst.
+
+
+> **Hinweis:** Das System verwendet absichtlich `os._exit(1)` statt `sys.exit()` oder internen asyncio-Reconnects. Dies ist gewollt, um das System vollständig von systemd neu starten zu lassen (`Restart=always`).
 
 ### 5.1. Häufige Probleme erkennen
 
@@ -215,3 +254,36 @@ Achte in den Logs (`journalctl`) auf folgende Indikatoren:
 - Prüfen, ob `ETORO_API_KEY` noch gültig ist.
 - Prüfen, ob die VM Netzwerkprobleme hat (`ping google.com`).
 - RAM-Auslastung prüfen (`free -h`), da OOM-Kills den Prozess stillschweigend beenden können. (Hier hilft das aktivierte Swap-File!).
+
+### 5.3. Konnektivität prüfen
+Vor tiefem Debugging sollte immer das Testskript laufen:
+```bash
+python3 dev_scripts/etoro_connectivity_test.py
+```
+
+---
+
+## 6. Datensicherung & Wartung
+
+*   **Parquet-Daten komprimieren:** Um Platz zu sparen, können viele kleine Dateien zusammengefasst werden.
+    ```bash
+    python3 dev_scripts/compact_parquet.py
+    ```
+*   **State-Dateien sichern:** Bei kritischen Eingriffen.
+    ```bash
+    mkdir -p data/state/backup
+    cp data/state/execution_mapping.json data/state/backup/
+    ```
+*   **Logs rotieren:** Entweder manuell bereinigen oder Logrotate konfigurieren.
+*   **Orphan Positionen:** Werden durch Bugs oder API-Fehler Orders nicht getrackt, können sie mit `python3 dev_scripts/etoro_close_orphans.py` geschlossen werden.
+
+
+---
+## Weiterführende Dokumente
+- `manuals/backtesting_manual.md`
+- `manuals/momentum_ls.md`
+- `manuals/new_tickers.md`
+- `manuals/TESTING.md`
+
+---
+*Zuletzt aktualisiert: 2026-05-17 — Überprüft gegen Repository-Stand vom 2026-05-14*
