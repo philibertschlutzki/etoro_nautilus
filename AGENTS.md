@@ -1006,6 +1006,14 @@ The `.orig` file is the previous version kept for reference. It has known issues
 ### 10. `etoro_config.py` Import in Test Scripts
 Some dev scripts import `EToroExecClientConfig` and `EToroLiveExecClientFactory` from `adapters.etoro_config`, while `run_bot.py` imports them from `adapters.etoro_execution`. Both are valid paths — `etoro_config.py` re-exports these classes for historical reasons. Keep both import paths working.
 
+### 11. SHORT positions silently dropped on REAL account for certain instruments
+market-open-orders/by-amount with IsBuy:False returns HTTP 200 + orderID
+but the position never appears in PnL (credit unchanged, all PnL arrays
+empty). Confirmed on ADA/REAL. SHORT selling via this API endpoint is not
+reliably supported. Strategies should be validated as LONG-only unless
+SHORT support is confirmed for a specific instrument via manual testing.
+The advanced execution test now uses LONG positions exclusively.
+
 ---
 
 ## 17. Code Style & Conventions
@@ -1074,6 +1082,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | 2026-05-15 | Neues Skript `etoro_execution_tests_advanced.py` für erweiterte API-Tests (Short-Eröffnung, SL, TP, TSL); Order-Matching per client_order_id; 180s Timeout; sys.path-Fix | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
 | 2026-05-17 | Fixed _reconcile_via_pnl to search exitOrders and ordersForClose for positions closed immediately by TSL/SL/TP. Extended position matching to include PositionID in addition to OrderID. Added full PnL diagnostic log when _poll_for_fill exhausts. Increased advanced test timeout to 300s. | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
 | 2026-05-17 | Bisected TSL silent-drop: eToro returns HTTP 2xx for MARKET SELL with IsTrailingStop:True but never executes it (PnL empty 5s after accept, credit unchanged). Added _enable_trailing_stop guard so production bots are unaffected. Restructured advanced test into 4 sequential phases to isolate which SL/TP/TSL combination eToro supports on SHORT positions. Added full REST response body logging for all order submissions. | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_advanced.py`, `config/setups.py`, `AGENTS.md` |
+| 2026-05-17 | Redesigned advanced execution test to use LONG positions after confirming SHORT (IsBuy:False) is silently dropped by eToro REAL API for ADA. Added silent-drop detection in on_order_accepted (aborts immediately if PnL empty after 5s). Fixed misleading phase timeout message. Documented SHORT constraint in Section 16. | `dev_scripts/etoro_execution_tests_advanced.py`, `config/setups.py`, `AGENTS.md` |
 
 ---
 
