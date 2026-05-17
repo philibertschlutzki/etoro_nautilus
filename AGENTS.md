@@ -1014,6 +1014,15 @@ reliably supported. Strategies should be validated as LONG-only unless
 SHORT support is confirmed for a specific instrument via manual testing.
 The advanced execution test now uses LONG positions exclusively.
 
+### 12. IsTrailingStop vs isTslEnabled in eToro PnL
+The execution payload uses IsTrailingStop:True to request a trailing stop.
+The PnL endpoint returns isTslEnabled:false for all positions including
+those opened with IsTrailingStop:True. These appear to be different fields.
+IsTrailingStop in the request payload causes the position to fill normally
+(confirmed Phase 4 test). Whether the trailing stop is actually active
+on eToro's side cannot be confirmed from the PnL API alone. Manual
+verification via the eToro web portal is recommended for live TSL orders.
+
 ---
 
 ## 17. Code Style & Conventions
@@ -1084,6 +1093,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | 2026-05-17 | Bisected TSL silent-drop: eToro returns HTTP 2xx for MARKET SELL with IsTrailingStop:True but never executes it (PnL empty 5s after accept, credit unchanged). Added _enable_trailing_stop guard so production bots are unaffected. Restructured advanced test into 4 sequential phases to isolate which SL/TP/TSL combination eToro supports on SHORT positions. Added full REST response body logging for all order submissions. | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_advanced.py`, `config/setups.py`, `AGENTS.md` |
 | 2026-05-17 | Redesigned advanced execution test to use LONG positions after confirming SHORT (IsBuy:False) is silently dropped by eToro REAL API for ADA. Added silent-drop detection in on_order_accepted (aborts immediately if PnL empty after 5s). Fixed misleading phase timeout message. Documented SHORT constraint in Section 16. | `dev_scripts/etoro_execution_tests_advanced.py`, `config/setups.py`, `AGENTS.md` |
 | 2026-05-17 | Behoben: False-Positive im SILENT DROP Detector — eToro PnL-Latenz beträgt 8-12s, Diagnostic-Sleep von 5s auf 12s erhöht, kein Abort mehr aus _fetch_pnl_diagnostic (rein informativ). Alle vorherigen 'silent drop' Orders waren echte Fills mit verzögerter PnL-Sichtbarkeit. | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
+| 2026-05-17 | PR #36 vollständig validiert: alle 4 Execution-Phasen (plain/SL/SL+TP/SL+TSL) auf REAL-Account erfolgreich. isTslEnabled=false in PnL für TSL-Positionen dokumentiert (siehe Pitfall #12). _verify_tsl_field läuft jetzt vor dem Close-Order. Emergency Cleanup nach erfolgreichem Test deaktiviert. | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
 
 ---
 

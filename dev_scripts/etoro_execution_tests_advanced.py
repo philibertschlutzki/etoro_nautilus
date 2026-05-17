@@ -159,7 +159,8 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
 
             if self.phase == 4:
                 # Start background task to verify TSL field name via PnL
-                asyncio.get_event_loop().create_task(self._verify_tsl_field())
+                asyncio.get_event_loop().create_task(self._verify_and_then_close(event))
+                return  # Don't submit close here; _verify_and_then_close does it
 
             close_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
@@ -170,8 +171,20 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             self.log.info(f"[PHASE {self.phase}] Sende Market SELL zum Schließen der LONG-Position")
             self.submit_order(close_order)
 
+    async def _verify_and_then_close(self, event: OrderFilled) -> None:
+        await self._verify_tsl_field()  # runs first, position still open
+        # Then submit close
+        close_order = self.order_factory.market(
+            instrument_id=self.instrument_id,
+            order_side=OrderSide.SELL,
+            quantity=event.last_qty,
+            time_in_force=TimeInForce.GTC,
+        )
+        self.log.info(f"[PHASE 4] Sende Market SELL zum Schließen der LONG-Position")
+        self.submit_order(close_order)
+
     async def _verify_tsl_field(self) -> None:
-        await asyncio.sleep(3.0)  # Wait for PnL propagation
+        await asyncio.sleep(1.0)  # Wait for PnL propagation
         base_url = "https://public-api.etoro.com/api/v1/trading"
         env = ETORO_API_TEST["environment"]
         pnl_url = f"{base_url}/info/{env}/pnl"
@@ -206,14 +219,16 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
 
                             if p_iid == etoro_id and p_lower.get("isbuy") is True:
                                 found_long = True
-                                self.log.debug(f"PnL Position Dict: {p}")
+                                self.log.info(f"[TSL DIAGNOSTIC] Full PnL position dict: {p}")
 
                                 has_tsl = False
+                                tsl_keys = ("istrailingstop", "istslenabled", "istrailingstoploss", "trailingstop", "tsl", "istrailing")
                                 for key in p.keys():
-                                    if key.lower() in ("istrailingstop", "istslenabled") and p[key]:
-                                        has_tsl = True
-                                        self.log.info(f"✅ TSL confirmed using key: {key}")
-                                        break
+                                    if key.lower() in tsl_keys:
+                                        self.log.info(f"[TSL DIAGNOSTIC] Found field {key}={p[key]}")
+                                        if p[key]:
+                                            has_tsl = True
+                                            break
 
                                 if not has_tsl:
                                     self.log.warning("TSL field not confirmed in PnL response - verify IsTrailingStop field name with eToro API docs")
@@ -486,7 +501,8 @@ async def main() -> None:
         pass
 
     # --- Das Sicherheitsnetz ---
-    if not ETORO_API_TEST["dry_run"]:
+    if not ETORO_API_TEST["dry_run"] and strategy._test_aborted:
+        print("🧹 Post-failure cleanup...")
         await emergency_cleanup(
             API_KEY,
             USER_KEY,
@@ -494,6 +510,8 @@ async def main() -> None:
             ETORO_API_TEST["symbol"],
             settle_delay_s=5.0,
         )
+    elif not ETORO_API_TEST["dry_run"]:
+        print("ℹ️  Test erfolgreich — kein Cleanup nötig.")
 
 
 if __name__ == "__main__":
