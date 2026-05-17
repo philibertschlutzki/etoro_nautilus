@@ -32,7 +32,7 @@ USER_KEY = os.environ.get("ETORO_USER_KEY")
 class ApiAdvancedExecutionTestStrategy(Strategy):
     """
     Testet erweiterte eToro-Execution-Features:
-    LONG-Eröffnung, Stop Loss, Take Profit, Trailing Stop Loss.
+    4-phasiger LONG-Test: plain, SL, SL+TP, SL+TSL.
     """
 
     def __init__(self, config: StrategyConfig) -> None:
@@ -117,7 +117,7 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             asyncio.get_event_loop().create_task(self._fetch_pnl_diagnostic(event.venue_order_id.value if event.venue_order_id else "UNKNOWN"))
 
     async def _fetch_pnl_diagnostic(self, venue_order_id: str) -> None:
-        await asyncio.sleep(5.0)
+        await asyncio.sleep(12.0)
         base_url = "https://public-api.etoro.com/api/v1/trading"
         env = ETORO_API_TEST["environment"]
         pnl_url = f"{base_url}/info/{env}/pnl"
@@ -133,7 +133,7 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
                 async with session.get(pnl_url, headers=headers) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        self.log.info(f"[POST-ACCEPT DIAGNOSTIC] {json.dumps(data)}")
+                        self.log.info(f"[POST-ACCEPT DIAGNOSTIC +12s] {json.dumps(data)}")
 
                         client_portfolio = data.get("clientPortfolio", data)
                         positions = client_portfolio.get("Positions", client_portfolio.get("positions", []))
@@ -142,15 +142,15 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
 
                         if len(positions) == 0 and len(orders_open) == 0 and len(exit_orders) == 0:
                             self.log.warning(
-                                f"[SILENT DROP DETECTED] Order {venue_order_id} accepted but not found in PnL after 5s. "
-                                f"IsBuy=True may be unsupported for this instrument on REAL account. Aborting phase."
+                                f"[SILENT DROP DETECTED] Order {venue_order_id} accepted but not found in PnL after 12s. "
+                                f"IsBuy=True may be unsupported for this instrument on REAL account. "
+                                f"PnL may still be propagating (eToro PnL latency is 8-12s). "
+                                f"Continuing — _poll_for_fill will reconcile if position exists."
                             )
-                            self._test_aborted = True
-                            self.stop()
                     else:
-                        self.log.error(f"[POST-ACCEPT DIAGNOSTIC] Request failed with status {resp.status}")
+                        self.log.error(f"[POST-ACCEPT DIAGNOSTIC +12s] Request failed with status {resp.status}")
         except Exception as e:
-            self.log.error(f"[POST-ACCEPT DIAGNOSTIC] Request failed: {e}")
+            self.log.error(f"[POST-ACCEPT DIAGNOSTIC +12s] Request failed: {e}")
 
     def on_order_filled(self, event: OrderFilled) -> None:
         if event.client_order_id == self.long_order_id:
@@ -499,7 +499,7 @@ async def main() -> None:
 if __name__ == "__main__":
     confirm = input(
         f"Achtung: Erweiterte eToro API-Tests ({ETORO_API_TEST['environment'].upper()}) — "
-        "Short-Positionen + SL/TP/TSL werden getestet!\n"
+        "LONG-Positionen mit SL/TP/TSL-Tags werden in 4 Phasen getestet.\n"
         "Weiter? (j/N): "
     )
     if confirm.strip().lower() == "j":
