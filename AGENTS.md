@@ -1177,6 +1177,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | Date | Change | Files Modified |
 |------|--------|----------------|
 | 2026-05-17 | Documentation audit: full repository sync, all sections verified | `AGENTS.md` |
+| 2026-05-17 | Overhauled manuals/ directory: updated deployment.md, backtesting_manual.md, new_tickers.md, momentum_ls.md, feature_automation_LS.md and added TESTING.md | `manuals/*` |
 | 2026-05-14 | Added `momentum_ls_run.py` live orchestrator that combines universe, allocator, and tournament JSONs to launch safe live nodes. Included 24h stale-universe check and identical safety interlocks | `dev_scripts/momentum_ls_run.py`, `AGENTS.md` |
 | 2026-05-14 | Added `SL:<pct>` tag convention in `_build_market_open_payload()`; backward-compatible, existing bots unaffected | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_all_orders.py`, `AGENTS.md` |
 | 2026-05-14 | Added `MomentumLSAllocator`, `MomentumLSBaseStrategy` and `MomentumLSSmaStrategy` to implement no-interference rule and dynamic capital sizing. | `adapters/momentum_ls_allocator.py`, `strategies/momentum_ls_base.py`, `strategies/momentum_ls_sma.py`, `AGENTS.md` |
@@ -1190,4 +1191,4 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 ---
 
-*Last updated: 2026-05-14. Update this date and the changelog above whenever you modify this file.*
+*Last updated: 2026-05-17. Update this date and the changelog above whenever you modify this file.*
