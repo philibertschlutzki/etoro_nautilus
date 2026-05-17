@@ -32,19 +32,20 @@ USER_KEY = os.environ.get("ETORO_USER_KEY")
 class ApiAdvancedExecutionTestStrategy(Strategy):
     """
     Testet erweiterte eToro-Execution-Features:
-    Short-Eröffnung, Stop Loss, Take Profit, Trailing Stop Loss.
+    LONG-Eröffnung, Stop Loss, Take Profit, Trailing Stop Loss.
     """
 
     def __init__(self, config: StrategyConfig) -> None:
         super().__init__(config)
         self.instrument_id = InstrumentId.from_str(ETORO_API_TEST["symbol"])
         self.phase = 1
-        self.short_order_id = None
-        self.short_filled = False
+        self.long_order_id = None
+        self.long_filled = False
         self.position_closed = False
         self._test_aborted = False
         self.qty = None
         self.ask_price = None
+        self._last_payload = []
 
     def on_start(self) -> None:
         self.subscribe_quote_ticks(self.instrument_id)
@@ -58,60 +59,64 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             raw_qty = float(ETORO_API_TEST["trade_amount_usd"]) / self.ask_price
             self.qty = Quantity(max(1, round(raw_qty)), precision=0)
 
-        if self.phase == 1 and not self.short_order_id:
-            short_order = self.order_factory.market(
+        if self.phase == 1 and not self.long_order_id:
+            long_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
-                order_side=OrderSide.SELL,
+                order_side=OrderSide.BUY,
                 quantity=self.qty,
                 time_in_force=TimeInForce.GTC,
                 tags=[],
             )
-            self.short_order_id = short_order.client_order_id
-            self.log.info(f"[PHASE 1] Sende Market SELL ohne Tags")
-            self.submit_order(short_order)
+            self.long_order_id = long_order.client_order_id
+            self.log.info(f"[PHASE 1] Sende Market BUY ohne Tags")
+            self.submit_order(long_order)
+            self._last_payload = []
 
-        elif self.phase == 2 and not self.short_order_id:
-            short_order = self.order_factory.market(
+        elif self.phase == 2 and not self.long_order_id:
+            long_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
-                order_side=OrderSide.SELL,
+                order_side=OrderSide.BUY,
                 quantity=self.qty,
                 time_in_force=TimeInForce.GTC,
                 tags=["SL:0.05"],
             )
-            self.short_order_id = short_order.client_order_id
-            self.log.info(f"[PHASE 2] Sende Market SELL mit SL:0.05")
-            self.submit_order(short_order)
+            self.long_order_id = long_order.client_order_id
+            self.log.info(f"[PHASE 2] Sende Market BUY mit SL:0.05")
+            self.submit_order(long_order)
+            self._last_payload = ["SL:0.05"]
 
-        elif self.phase == 3 and not self.short_order_id:
-            short_order = self.order_factory.market(
+        elif self.phase == 3 and not self.long_order_id:
+            long_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
-                order_side=OrderSide.SELL,
+                order_side=OrderSide.BUY,
                 quantity=self.qty,
                 time_in_force=TimeInForce.GTC,
                 tags=["SL:0.05", "TP:0.05"],
             )
-            self.short_order_id = short_order.client_order_id
-            self.log.info(f"[PHASE 3] Sende Market SELL mit SL:0.05, TP:0.05")
-            self.submit_order(short_order)
+            self.long_order_id = long_order.client_order_id
+            self.log.info(f"[PHASE 3] Sende Market BUY mit SL:0.05, TP:0.05")
+            self.submit_order(long_order)
+            self._last_payload = ["SL:0.05", "TP:0.05"]
 
-        elif self.phase == 4 and not self.short_order_id:
-            short_order = self.order_factory.market(
+        elif self.phase == 4 and not self.long_order_id:
+            long_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
-                order_side=OrderSide.SELL,
+                order_side=OrderSide.BUY,
                 quantity=self.qty,
                 time_in_force=TimeInForce.GTC,
                 tags=["SL:0.05", "TSL:1"],
             )
-            self.short_order_id = short_order.client_order_id
-            self.log.info(f"[PHASE 4] Sende Market SELL mit SL:0.05, TSL:1")
-            self.submit_order(short_order)
+            self.long_order_id = long_order.client_order_id
+            self.log.info(f"[PHASE 4] Sende Market BUY mit SL:0.05, TSL:1")
+            self.submit_order(long_order)
+            self._last_payload = ["SL:0.05", "TSL:1"]
 
     def on_order_accepted(self, event: OrderAccepted) -> None:
-        if event.client_order_id == self.short_order_id:
-            self.log.info(f"Short-Order accepted: {event.client_order_id}")
-            asyncio.get_event_loop().create_task(self._fetch_pnl_diagnostic())
+        if event.client_order_id == self.long_order_id:
+            self.log.info(f"LONG-Order accepted: {event.client_order_id}")
+            asyncio.get_event_loop().create_task(self._fetch_pnl_diagnostic(event.venue_order_id.value if event.venue_order_id else "UNKNOWN"))
 
-    async def _fetch_pnl_diagnostic(self) -> None:
+    async def _fetch_pnl_diagnostic(self, venue_order_id: str) -> None:
         await asyncio.sleep(5.0)
         base_url = "https://public-api.etoro.com/api/v1/trading"
         env = ETORO_API_TEST["environment"]
@@ -129,15 +134,28 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
                     if resp.status == 200:
                         data = await resp.json()
                         self.log.info(f"[POST-ACCEPT DIAGNOSTIC] {json.dumps(data)}")
+
+                        client_portfolio = data.get("clientPortfolio", data)
+                        positions = client_portfolio.get("Positions", client_portfolio.get("positions", []))
+                        orders_open = client_portfolio.get("OrdersForOpen", client_portfolio.get("ordersForOpen", []))
+                        exit_orders = client_portfolio.get("ExitOrders", client_portfolio.get("exitOrders", []))
+
+                        if len(positions) == 0 and len(orders_open) == 0 and len(exit_orders) == 0:
+                            self.log.warning(
+                                f"[SILENT DROP DETECTED] Order {venue_order_id} accepted but not found in PnL after 5s. "
+                                f"IsBuy=True may be unsupported for this instrument on REAL account. Aborting phase."
+                            )
+                            self._test_aborted = True
+                            self.stop()
                     else:
                         self.log.error(f"[POST-ACCEPT DIAGNOSTIC] Request failed with status {resp.status}")
         except Exception as e:
             self.log.error(f"[POST-ACCEPT DIAGNOSTIC] Request failed: {e}")
 
     def on_order_filled(self, event: OrderFilled) -> None:
-        if event.client_order_id == self.short_order_id:
-            self.log.info(f"[PHASE {self.phase}] Short-Order gefüllt: {event.last_qty} @ {event.last_px}")
-            self.short_filled = True
+        if event.client_order_id == self.long_order_id:
+            self.log.info(f"[PHASE {self.phase}] LONG-Order gefüllt: {event.last_qty} @ {event.last_px}")
+            self.long_filled = True
 
             if self.phase == 4:
                 # Start background task to verify TSL field name via PnL
@@ -145,11 +163,11 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
 
             close_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
-                order_side=OrderSide.BUY,
+                order_side=OrderSide.SELL,
                 quantity=event.last_qty,
                 time_in_force=TimeInForce.GTC,
             )
-            self.log.info(f"[PHASE {self.phase}] Sende Market BUY zum Schließen der Short-Position")
+            self.log.info(f"[PHASE {self.phase}] Sende Market SELL zum Schließen der LONG-Position")
             self.submit_order(close_order)
 
     async def _verify_tsl_field(self) -> None:
@@ -178,7 +196,7 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
                                 etoro_id = int(k)
                                 break
 
-                        found_short = False
+                        found_long = False
                         for p in positions:
                             p_lower = {str(k).lower(): v for k, v in p.items()}
                             try:
@@ -186,8 +204,8 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
                             except (ValueError, TypeError):
                                 p_iid = -1
 
-                            if p_iid == etoro_id and p_lower.get("isbuy") is False:
-                                found_short = True
+                            if p_iid == etoro_id and p_lower.get("isbuy") is True:
+                                found_long = True
                                 self.log.debug(f"PnL Position Dict: {p}")
 
                                 has_tsl = False
@@ -201,17 +219,25 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
                                     self.log.warning("TSL field not confirmed in PnL response - verify IsTrailingStop field name with eToro API docs")
                                 break
 
-                        if not found_short:
-                            self.log.debug("Short position not found in PnL during TSL verification.")
+                        if not found_long:
+                            self.log.debug("LONG position not found in PnL during TSL verification.")
         except Exception as e:
             self.log.error(f"Failed to verify TSL field in PnL: {e}")
 
     def on_position_closed(self, event: PositionClosed) -> None:
-        self.log.info(f"[PHASE {self.phase}] Position geschlossen: {event.position_id}")
+        if self.phase == 1:
+            self.log.info("✅ Phase 1 OK: plain LONG/close works.")
+        elif self.phase == 2:
+            self.log.info("✅ Phase 2 OK: SL tag accepted.")
+        elif self.phase == 3:
+            self.log.info("✅ Phase 3 OK: SL+TP tags accepted.")
+        elif self.phase == 4:
+            self.log.info("✅ Phase 4 OK: TSL accepted and filled.")
+
         if self.phase < 4:
             self.phase += 1
-            self.short_order_id = None
-            self.short_filled = False
+            self.long_order_id = None
+            self.long_filled = False
         else:
             self.position_closed = True
 
@@ -437,8 +463,13 @@ async def main() -> None:
         phase_timeout -= 1
 
     if (timeout <= 0 or phase_timeout <= 0) and not strategy.is_finished():
-        strategy.log.warning(f"Phase {strategy.phase} timed out - TSL/TP combination may be unsupported")
+        strategy.log.warning(
+            f"Phase {strategy.phase} timed out waiting for fill. "
+            f"Last payload: {strategy._last_payload}. "
+            f"Check eToro portal for order {strategy.long_order_id}."
+        )
         strategy._test_aborted = True
+        strategy.stop()
 
     if strategy.is_finished() and not strategy._test_aborted:
         print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")
