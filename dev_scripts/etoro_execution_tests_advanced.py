@@ -75,6 +75,9 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             self.log.info(f"Short-Order gefüllt: {event.last_qty} @ {event.last_px}")
             self.short_filled = True
 
+            # Start background task to verify TSL field name via PnL
+            self.create_task(self._verify_tsl_field(), log_msg="verify_tsl_field")
+
             close_order = self.order_factory.market(
                 instrument_id=self.instrument_id,
                 order_side=OrderSide.BUY,
@@ -84,6 +87,60 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
             self.log.info("Sende Market BUY zum Schließen der Short-Position")
             self.submit_order(close_order)
             self.phase = 2
+
+    async def _verify_tsl_field(self) -> None:
+        await asyncio.sleep(3.0)  # Wait for PnL propagation
+        base_url = "https://public-api.etoro.com/api/v1/trading"
+        env = ETORO_API_TEST["environment"]
+        pnl_url = f"{base_url}/info/{env}/pnl"
+        headers = {
+            "x-api-key": API_KEY,
+            "x-user-key": USER_KEY,
+            "Content-Type": "application/json",
+            "x-request-id": str(uuid.uuid4())
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(pnl_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        data = data.get("clientPortfolio", data)
+                        positions = data.get("Positions", data.get("positions", []))
+
+                        etoro_id = None
+                        for k, v in ETORO_INSTRUMENTS.items():
+                            if v == ETORO_API_TEST["symbol"]:
+                                etoro_id = int(k)
+                                break
+
+                        found_short = False
+                        for p in positions:
+                            p_lower = {str(k).lower(): v for k, v in p.items()}
+                            try:
+                                p_iid = int(p_lower.get("instrumentid", -1))
+                            except (ValueError, TypeError):
+                                p_iid = -1
+
+                            if p_iid == etoro_id and p_lower.get("isbuy") is False:
+                                found_short = True
+                                self.log.debug(f"PnL Position Dict: {p}")
+
+                                has_tsl = False
+                                for key in p.keys():
+                                    if key.lower() in ("istrailingstop", "istslenabled") and p[key]:
+                                        has_tsl = True
+                                        self.log.info(f"✅ TSL confirmed using key: {key}")
+                                        break
+
+                                if not has_tsl:
+                                    self.log.warning("TSL field not confirmed in PnL response - verify IsTrailingStop field name with eToro API docs")
+                                break
+
+                        if not found_short:
+                            self.log.debug("Short position not found in PnL during TSL verification.")
+        except Exception as e:
+            self.log.error(f"Failed to verify TSL field in PnL: {e}")
 
     def on_position_closed(self, event: PositionClosed) -> None:
         self.position_closed = True

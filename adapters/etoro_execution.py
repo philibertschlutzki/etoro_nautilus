@@ -500,6 +500,8 @@ class EToroExecutionClient(LiveExecutionClient):
             "InstrumentID": etoro_id,
             "IsBuy": order.side == OrderSide.BUY,
             "Leverage": 1,
+            "IsNoStopLoss": True,
+            "IsNoTakeProfit": True,
         }
 
         last_quote = self._cache.quote_tick(order.instrument_id)
@@ -584,10 +586,15 @@ class EToroExecutionClient(LiveExecutionClient):
         )
 
         if tsl_requested:
-            if "StopLossRate" in payload:
-                # TODO: eToro-Feldname für TSL verifizieren.
-                # Kandidaten: "IsTrailingStop", "IsTslEnabled".
-                # Prüfe Live-Request via etoro_tesla_tracker.py oder etoro_api_probe_all.py.
+            if not self._enable_trailing_stop:
+                self._log.warning(
+                    f"[{order.instrument_id}] TSL:1 Tag gefunden, aber globale TSL-Erlaubnis ist deaktiviert. "
+                    "TSL wird ignoriert.",
+                    LogColor.YELLOW,
+                )
+            elif "StopLossRate" in payload:
+                # _enable_trailing_stop acts as a system-level guard.
+                # Only when both the TSL:1 tag is set AND _enable_trailing_stop is True is TSL applied.
                 payload["IsTrailingStop"] = True
                 self._log.info(
                     f"[{order.instrument_id}] Trailing Stop aktiviert (TSL:1 Tag).",
