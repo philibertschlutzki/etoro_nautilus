@@ -6,7 +6,7 @@ __pycache__/
 # Trading Daten & Logs
 logs/*
 !logs/.gitkeep
-data/
+data/*
 
 # API Keys & Secrets
 *.env
