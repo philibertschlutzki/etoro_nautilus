@@ -263,7 +263,10 @@ Or if you prefer:
 etoro_nautilus/
 ├── .agents/                     # Hidden directory for AI-specific docs
 │   ├── AGENTS.md
-│   └── SYSTEM_PROMPT.md
+│   ├── JULES_SYSTEM_PROMPT.md
+│   ├── Integration_Guide.md
+│   ├── API_docs_etoro.md
+│   └── testing.md
 └── ... (rest of repo)
 ```
 
@@ -363,7 +366,7 @@ A: Absolutely. If Jules finds an unclear section, Jules can improve the document
 ---
 
 **Files Ready to Use:**
-- ✅ AGENTS.md — 18 sections, 7200+ lines, fully cross-referenced
+- ✅ AGENTS.md — 18 sections, 7,300+ lines, fully cross-referenced
 - ✅ JULES_SYSTEM_PROMPT.md — 9 parts, operational instructions for AI agents
 - ✅ This integration guide — explains how they work together
 
