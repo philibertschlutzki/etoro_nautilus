@@ -24,6 +24,9 @@
    - Adding a strategy? → Section 11 + Section 6
    - Debugging WebSocket issues? → Section 5.1 + Section 8
    - Changing order flow? → Section 9 + Section 5.2
+   - Adding a Momentum-LS strategy? → Section 5.6 + Section 6
+   - Debugging the daily orchestrator? → Section 14
+
 
 2. **Re-read the section(s)** carefully. Pay special attention to:
    - **Constraints** (e.g., "size_precision must be 0")
@@ -135,6 +138,12 @@ Pick 3 pitfalls and verify they still apply:
 3. **Size Precision** — Confirm that no instrument uses `size_precision != 0`
 
 ---
+
+### Momentum-LS Subsystem
+
+- [ ] Does `MomentumLSAllocator` preserve the no-interference rule and dynamic capital slicing?
+- [ ] Does `momentum_ls_run.py` preserve the 24h stale-universe check and safety interlocks?
+- [ ] Do `momentum_ls_*` dev scripts use `.env` properly and not auto-send real orders?
 
 ## Part 3: How to Improve AGENTS.md
 
@@ -265,6 +274,24 @@ cache.positions_open(instrument_id=...) for per-instrument caps instead."
 
 ---
 
+
+### Scenario 4: Running the Momentum-LS Daily Workflow
+
+```
+1. Check data/universe/momentum_ls.json for freshness (must be < 24h old)
+2. Execute the tournament script to select winners
+3. Validate output logs and generated markdown deliverables in logs/
+4. Review strategy configuration before kicking off momentum_ls_run.py
+```
+
+### Scenario 5: Debugging the Orchestrator
+
+```
+1. If the orchestrator fails to start, verify safety interlocks in config/setups.py and .env
+2. Inspect Nautilus node startup logs for instrument loading errors
+3. Check AGENTS.md Sections 5.6 and 14 for allocator state details
+```
+
 ## Part 6: Quality Standards for AGENTS.md
 
 When reviewing or updating AGENTS.md, check that:
@@ -327,6 +354,15 @@ When reviewing or updating AGENTS.md, check that:
 
 ---
 
+
+5. ❌ **Hardcoded IDs outside instrument map**
+   - Example: Hardcoding an eToro ID directly in a strategy instead of `instrument_map.py`
+   - Action: Move it to the map and update Section 7.
+
+6. ❌ **Undocumented Momentum-LS script changes**
+   - Example: Modifying a `momentum_ls_*` script without updating the changelog
+   - Action: Document the change in Section 18 immediately.
+
 ## Part 8: Checklist Before Submitting Code Changes
 
 **Always complete this before marking a task as done:**
@@ -373,5 +409,5 @@ When reviewing or updating AGENTS.md, check that:
 
 **End of System Prompt**
 
-*Last updated: 2026-05-14*
+*Last updated: 2026-05-17*
 *Questions or clarifications? Refer to the relevant section of AGENTS.md and check if it can be improved.*
