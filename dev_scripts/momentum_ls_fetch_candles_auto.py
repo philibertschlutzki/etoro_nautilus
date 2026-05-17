@@ -33,6 +33,13 @@ def _make_headers(api_key: str, user_key: str) -> dict[str, str]:
         "Content-Type": "application/json",
     }
 
+def format_nautilus_timestamp(ts_ns: int) -> str:
+    """Konvertiert Nanosekunden-Zeitstempel in das Nautilus Zeitstempel-Format."""
+    dt = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)
+    base_time = dt.strftime('%Y-%m-%dT%H-%M-%S')
+    ns_remainder = int(ts_ns % 1_000_000_000)
+    return f"{base_time}-{ns_remainder:09d}Z"
+
 async def fetch_candles_chunk(
     session: aiohttp.ClientSession,
     instrument_id: int,
@@ -111,6 +118,10 @@ def create_quote_ticks_dataframe(candles: list[dict]) -> pd.DataFrame:
 
             date_str = c[date_key]
             ts_dt = pd.to_datetime(date_str)
+            # Sicherstellen, dass die Zeitzone berücksichtigt wird (UTC)
+            if ts_dt.tzinfo is None:
+                ts_dt = ts_dt.tz_localize('UTC')
+                
             ts_ns = int(ts_dt.timestamp() * 1e9)
 
             low = str(c[low_key]).encode("utf-8")
@@ -147,15 +158,35 @@ async def process_instrument(
     interval: str,
     output_dir: str
 ):
-    """Lade historische Kerzen für ein einzelnes Instrument herunter."""
+    """Lade historische Kerzen für ein einzelnes Instrument herunter (inkl. Delta-Updates)."""
     out_dir = Path(output_dir) / symbol
-    out_file = out_dir / "data.parquet"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    existing_files = list(out_dir.glob("*.parquet"))
+    existing_df = pd.DataFrame()
+    
+    # Delta-Update Logik: Lese existierende Daten, um den letzten Zeitstempel zu finden
+    if existing_files:
+        logger.info(f"[{symbol}] Found {len(existing_files)} existing parquet file(s). Reading to find latest timestamp.")
+        dfs = []
+        for f in existing_files:
+            try:
+                dfs.append(pd.read_parquet(f))
+            except Exception as e:
+                logger.warning(f"[{symbol}] Failed to read {f}: {e}")
+                
+        if dfs:
+            existing_df = pd.concat(dfs, ignore_index=True)
+            if not existing_df.empty and "ts_event" in existing_df.columns:
+                max_ts_ns = existing_df["ts_event"].max()
+                latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
+                
+                # Passe das Startdatum für den Download an
+                if latest_dt > target_start_date:
+                    target_start_date = latest_dt
+                    logger.info(f"[{symbol}] Delta update: Fetching only records newer than {target_start_date}")
 
-    if out_file.exists():
-        logger.info(f"[{symbol}] Parquet file already exists. Skipping.")
-        return
-
-    logger.info(f"=== Starting download for {symbol} (ID: {etoro_id}) ===")
+    logger.info(f"=== Starting API download for {symbol} (ID: {etoro_id}) ===")
     
     current_end_time = datetime.now(timezone.utc)
     all_candles = []
@@ -179,7 +210,11 @@ async def process_instrument(
             logger.error(f"[{symbol}] API response format changed. Date column not found.")
             break
             
+        # Parse Dates & handle timezones
         chunk_df['parsed_date'] = pd.to_datetime(chunk_df[date_col])
+        if chunk_df['parsed_date'].dt.tz is None:
+             chunk_df['parsed_date'] = chunk_df['parsed_date'].dt.tz_localize('UTC')
+        
         oldest_candle_time = chunk_df['parsed_date'].min()
         
         if last_fetched_oldest_timestamp == oldest_candle_time:
@@ -196,33 +231,60 @@ async def process_instrument(
         # Wichtig: Rate-Limit Pause nach JEDEM Request
         await asyncio.sleep(RATE_LIMIT_DELAY)
 
-    if not all_candles:
-        logger.warning(f"[{symbol}] No candles fetched. Moving to next instrument.")
+    # Verarbeite neu heruntergeladene Daten
+    new_df = pd.DataFrame()
+    if all_candles:
+        new_df = create_quote_ticks_dataframe(all_candles)
+        if not new_df.empty:
+            new_df = new_df[new_df["timestamp_dt"] >= target_start_date]
+            new_df = new_df.drop(columns=["timestamp_dt"])
+
+    if new_df.empty and existing_df.empty:
+        logger.warning(f"[{symbol}] No data available (neither existing nor new). Moving to next.")
         return
 
-    df = create_quote_ticks_dataframe(all_candles)
+    # Führe existierende und neue Daten zusammen
+    if not new_df.empty:
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True) if not existing_df.empty else new_df
+    else:
+        combined_df = existing_df
 
-    if df.empty:
-        logger.warning(f"[{symbol}] Dataframe is empty after parsing. Moving to next.")
+    # Duplikate entfernen und chronologisch sortieren
+    combined_df = combined_df.drop_duplicates(subset=["ts_event"]).sort_values(by="ts_event", ascending=True).reset_index(drop=True)
+
+    if combined_df.empty:
+        logger.warning(f"[{symbol}] Dataframe is empty after parsing and combining. Moving to next.")
         return
 
-    df = df.drop_duplicates(subset=["ts_event"]).reset_index(drop=True)
-    df = df[df["timestamp_dt"] >= target_start_date]
-    df = df.drop(columns=["timestamp_dt"])
+    # Generiere Nautilus-konformen Dateinamen basierend auf min und max Timestamp
+    min_ts = combined_df["ts_event"].min()
+    max_ts = combined_df["ts_event"].max()
+    
+    file_name = f"{format_nautilus_timestamp(min_ts)}_{format_nautilus_timestamp(max_ts)}.parquet"
+    out_file = out_dir / file_name
 
-    if df.empty:
-        logger.warning(f"[{symbol}] Dataframe is empty after filtering to date range. Moving to next.")
+    # Vermeide unnötige Schreibvorgänge, wenn keine neuen Daten vorhanden sind und die Zieldatei schon existiert
+    if new_df.empty and out_file.exists():
+        logger.info(f"[{symbol}] No new data fetched. Existing file {file_name} is already up to date.")
         return
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out_file)
-    logger.info(f"[{symbol}] Success: Wrote {len(df)} rows to {out_file}")
+    # Lösche alte Parquet Dateien (inkl. "data.parquet" oder veraltete Timestamp-Dateien)
+    for f in existing_files:
+        try:
+            f.unlink()
+            logger.debug(f"[{symbol}] Deleted old file {f.name}")
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not delete old file {f}: {e}")
+
+    # Speichere die zusammengeführte Gesamtdatei
+    combined_df.to_parquet(out_file)
+    logger.info(f"[{symbol}] Success: Wrote {len(combined_df)} total rows to {out_file.name}")
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Fetch historical data for eToro instruments.")
+    parser = argparse.ArgumentParser(description="Fetch historical data for eToro instruments (with delta updates).")
     parser.add_argument("--symbol", type=str, default=None, help="Optional: Nautilus symbol to fetch (e.g. NATGAS.ETORO). If omitted, fetches ALL from instrument_map.py.")
-    parser.add_argument("--months", type=int, default=6, help="Number of months to fetch")
+    parser.add_argument("--months", type=int, default=6, help="Number of months to fetch (initial load depth)")
     parser.add_argument("--interval", type=str, default="OneDay", help="Candle interval (e.g. OneMinute, FiveMinutes, OneHour, OneDay)")
     parser.add_argument("--output-dir", type=str, default="data/nautilus/data/quote_tick", help="Output directory base path")
     args = parser.parse_args()
@@ -244,8 +306,9 @@ async def main():
     else:
         instruments_to_fetch = ETORO_INSTRUMENTS
         
-    logger.info(f"Starting bulk download for {len(instruments_to_fetch)} instruments...")
+    logger.info(f"Starting bulk download/update for {len(instruments_to_fetch)} instruments...")
 
+    # target_start_date definiert, wie weit wir beim "Initial Load" zurückgehen
     target_start_date = datetime.now(timezone.utc) - timedelta(days=30 * args.months)
 
     timeout = aiohttp.ClientTimeout(total=20.0)
@@ -269,7 +332,7 @@ async def main():
             # Kleine Pause zwischen den Instrumenten zur Sicherheit
             await asyncio.sleep(RATE_LIMIT_DELAY)
 
-    logger.info("=== Bulk download process completed ===")
+    logger.info("=== Bulk update process completed ===")
 
 if __name__ == "__main__":
     asyncio.run(main())
