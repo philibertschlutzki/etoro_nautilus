@@ -1122,6 +1122,37 @@ The `.orig` file is the previous version kept for reference. It has known issues
 ### 10. `etoro_config.py` Import in Test Scripts
 Some dev scripts import `EToroExecClientConfig` and `EToroLiveExecClientFactory` from `adapters.etoro_config`, while `run_bot.py` imports them from `adapters.etoro_execution`. Both are valid paths — `etoro_config.py` re-exports these classes for historical reasons. Keep both import paths working.
 
+### 11. SHORT positions silently dropped on REAL account for certain instruments
+market-open-orders/by-amount with IsBuy:False returns HTTP 200 + orderID
+but the position never appears in PnL (credit unchanged, all PnL arrays
+empty). Confirmed on ADA/REAL. SHORT selling via this API endpoint is not
+reliably supported. Strategies should be validated as LONG-only unless
+SHORT support is confirmed for a specific instrument via manual testing.
+The advanced execution test now uses LONG positions exclusively.
+
+### 12. IsTrailingStop vs isTslEnabled in eToro PnL
+The execution payload uses IsTrailingStop:True to request a trailing stop.
+The PnL endpoint returns isTslEnabled:false for all positions including
+those opened with IsTrailingStop:True. These appear to be different fields.
+IsTrailingStop in the request payload causes the position to fill normally
+(confirmed Phase 4 test). Whether the trailing stop is actually active
+on eToro's side cannot be confirmed from the PnL API alone. Manual
+verification via the eToro web portal is recommended for live TSL orders.
+
+### 13. eToro doubles the StopLossRate internally
+When placing a MARKET order with a StopLossRate calculated as X% below
+the current ask price, eToro stores approximately 2X% below the openRate
+in the PnL endpoint. Example confirmed across multiple test runs on ADA:
+
+  Sent StopLossRate: ask × (1 - 0.05) = 0.2544 × 0.95 = 0.24168
+  PnL stopLossRate:  openRate × (1 - 0.10) = 0.2544 × 0.90 = 0.22906
+
+The SL:0.05 tag convention should be understood as 'request 5% SL',
+but eToro's effective stop will be approximately 10% from open rate.
+To achieve a true 5% stop on the actual fill rate, set SL:0.025.
+This adjustment is applied consistently and does not prevent the order
+from executing — it only affects the distance of the stop-loss trigger.
+
 ---
 
 ## 17. Code Style & Conventions
@@ -1188,6 +1219,13 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | 2026-05-14 | Updated limit order cancellation logic to use Rate-Matching (rate + instrumentID + isBuy) as eToro PnL entryOrders lack correlation tokens | `adapters/etoro_execution.py`, `AGENTS.md` |
 | 2026-05-14 | Fixed JULES_SYSTEM_PROMPT.md to state that InstrumentID is required in close position payload | `.agents/JULES_SYSTEM_PROMPT.md` |
 | *(initial)* | AGENTS.md created from full repository analysis | `AGENTS.md` |
+| 2026-05-15 | Erweitert `_build_market_open_payload()` um `TP:<pct>`- und `TSL:1`-Tag-Unterstützung; _enable_trailing_stop flag now acts as a system-level guard; TSL:1 tag is only honoured when both the tag is set and the flag is True. Previously the flag was stored but had no effect; SL-Warning für by-units-Pfad ergänzt | `adapters/etoro_execution.py`, `AGENTS.md` |
+| 2026-05-15 | Neues Skript `etoro_execution_tests_advanced.py` für erweiterte API-Tests; 4-phasiger LONG-State-Machine (plain / SL / SL+TP / SL+TSL); 360s Timeout; Silent-Drop-Erkennung mit 12s PnL-Latenz-Puffer; SHORT silently dropped auf REAL-Account (IsBuy=False wird von eToro akzeptiert aber nicht ausgeführt), daher LONG-only; sys.path-Fix. | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
+| 2026-05-17 | Fixed _reconcile_via_pnl to search exitOrders and ordersForClose for positions closed immediately by TSL/SL/TP. Extended position matching to include PositionID in addition to OrderID. Added full PnL diagnostic log when _poll_for_fill exhausts. Increased advanced test timeout to 300s. | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
+| 2026-05-17 | Bisected TSL silent-drop: eToro returns HTTP 2xx for MARKET SELL with IsTrailingStop:True but never executes it (PnL empty 5s after accept, credit unchanged). Added _enable_trailing_stop guard so production bots are unaffected. Restructured advanced test into 4 sequential phases to isolate which SL/TP/TSL combination eToro supports on SHORT positions. Added full REST response body logging for all order submissions. | `adapters/etoro_execution.py`, `dev_scripts/etoro_execution_tests_advanced.py`, `config/setups.py`, `AGENTS.md` |
+| 2026-05-17 | Redesigned advanced execution test to use LONG positions after confirming SHORT (IsBuy:False) is silently dropped by eToro REAL API for ADA. Added silent-drop detection in on_order_accepted (aborts immediately if PnL empty after 5s). Fixed misleading phase timeout message. Documented SHORT constraint in Section 16. | `dev_scripts/etoro_execution_tests_advanced.py`, `config/setups.py`, `AGENTS.md` |
+| 2026-05-17 | Behoben: False-Positive im SILENT DROP Detector — eToro PnL-Latenz beträgt 8-12s, Diagnostic-Sleep von 5s auf 12s erhöht, kein Abort mehr aus _fetch_pnl_diagnostic (rein informativ). Alle vorherigen 'silent drop' Orders waren echte Fills mit verzögerter PnL-Sichtbarkeit. | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
+| 2026-05-17 | PR #36 vollständig validiert: alle 4 Execution-Phasen (plain/SL/SL+TP/SL+TSL) auf REAL-Account erfolgreich. isTslEnabled=false in PnL für TSL-Positionen dokumentiert (siehe Pitfall #12). _verify_tsl_field läuft jetzt vor dem Close-Order. Emergency Cleanup nach erfolgreichem Test deaktiviert. Documented eToro SL rate doubling behavior (sent 5% → stored ~10% in PnL). PR #36 fully validated across 2 complete 4-phase test runs. | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
 
 ---
 
