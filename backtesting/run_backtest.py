@@ -5,6 +5,7 @@ import shutil
 import importlib
 from datetime import datetime
 from typing import Dict, Any
+import traceback
 
 import pandas as pd
 
@@ -16,6 +17,7 @@ from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.analysis.tearsheet import create_tearsheet
+from nautilus_trader.persistence.wranglers import QuoteTickDataWrangler
 
 class DualLogger:
     """Fängt Konsolen-Outputs ab und schreibt sie ins Terminal UND in eine Datei."""
@@ -55,15 +57,25 @@ def run_backtest():
     os.makedirs(logs_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_file = os.path.join(logs_dir, f"backtest_{timestamp}.log")
+    error_log_file = os.path.join(logs_dir, f"errors_{timestamp}.log")
     
     sys.stdout = DualLogger(log_file)
     sys.stderr = DualLogger(log_file)
-    print(f"📝 Logging aktiv. Ausgabe wird gespeichert in: {log_file}\n" + "="*60)
+    print(f"📝 Logging aktiv. Ausgabe wird gespeichert in: {log_file}")
+    print(f"🚨 Fehler-Log wird separat geschrieben in: {error_log_file}\n" + "="*60)
+
+    def log_error(msg, exc_info=False):
+        """Schreibt Fehler in die Konsole und in das dedizierte Error-Log."""
+        print(msg)
+        with open(error_log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+            if exc_info:
+                f.write(traceback.format_exc() + "\n")
 
     # 2. Config einlesen
     config_path = os.path.join(os.path.dirname(__file__), "backtesting_config.json")
     if not os.path.exists(config_path):
-        print(f"❌ Fehler: Config {config_path} nicht gefunden.")
+        log_error(f"❌ Fehler: Config {config_path} nicht gefunden.")
         return
 
     config_data = load_config(config_path)
@@ -76,7 +88,7 @@ def run_backtest():
     bt_end   = pd.Timestamp(end_time_str,   tz="UTC") if end_time_str   else None
 
     if not strategies_list:
-        print("⚠️ Keine Strategien in Config definiert. Breche ab.")
+        log_error("⚠️ Keine Strategien in Config definiert. Breche ab.")
         return
 
     # 3. ROBUSTE PFADVERWALTUNG & AUTO-FIX FÜR NAUTILUS
@@ -111,7 +123,7 @@ def run_backtest():
                 })
 
     if not dynamic_instruments:
-        print(f"⚠️ Keine Tick-Daten im Verzeichnis {tick_dir} gefunden. Breche ab.")
+        log_error(f"⚠️ Keine Tick-Daten im Verzeichnis {tick_dir} gefunden. Breche ab.")
         return
 
     print(f"✅ {len(dynamic_instruments)} Instrumente gefunden. Registriere im Katalog...")
@@ -145,7 +157,6 @@ def run_backtest():
 
             print(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
 
-            # start und end wurden aus BacktestEngineConfig entfernt!
             engine_config = BacktestEngineConfig(
                 trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}",
             )
@@ -160,25 +171,47 @@ def run_backtest():
             )
 
             inst_id = InstrumentId.from_str(inst_id_str)
-            # Instrument aus dem Katalog laden
-            engine.add_instrument(create_mock_instrument(inst_id_str))
+            mock_inst = create_mock_instrument(inst_id_str)
+            engine.add_instrument(mock_inst)
 
-            # --- ECHTE DATEN LADEN MIT ZEITRAUM-FILTER ---
+            # --- ECHTE DATEN LADEN DIREKT VIA PANDAS (BYPASS CATALOG) ---
             try:
-                # Hier übergeben wir start und end an die Datenabfrage
-                query_kwargs = {"instrument_ids": [inst_id]}
-                if bt_start: query_kwargs["start"] = bt_start
-                if bt_end:   query_kwargs["end"] = bt_end
-                
-                ticks = catalog.quote_ticks(**query_kwargs)
-                if ticks and len(ticks) > 0:
-                    engine.add_data(ticks)
-                    print(f"   ✅ {len(ticks)} Ticks geladen. Bars werden live aus den Ticks berechnet!")
-                else:
-                    print(f"   ⚠️ Katalog liefert 0 Ticks für {inst_id_str} im gewählten Zeitraum. Ueberspringe.")
+                inst_dir = os.path.join(tick_dir, f"instrument_id={inst_id_str}")
+                df_list = []
+                if os.path.exists(inst_dir):
+                    for file in os.listdir(inst_dir):
+                        if file.endswith(".parquet"):
+                            df_list.append(pd.read_parquet(os.path.join(inst_dir, file)))
+
+                if not df_list:
+                    print(f"   ⚠️ Keine Parquet-Dateien für {inst_id_str} gefunden.")
                     continue
-            except ValueError as e:
-                print(f"   ⚠️ Fehler beim Laden von Ticks fuer {inst_id_str}: {e}. Ueberspringe.")
+
+                df_ticks = pd.concat(df_list, ignore_index=True)
+
+                # 1. Zeitraum filtern (ts_event in Nanosekunden)
+                start_ns = int(bt_start.timestamp() * 1e9) if bt_start else 0
+                end_ns   = int(bt_end.timestamp() * 1e9)   if bt_end   else 9999999999999999999
+                df_ticks = df_ticks[(df_ticks['ts_event'] >= start_ns) & (df_ticks['ts_event'] <= end_ns)]
+
+                if df_ticks.empty:
+                    print(f"   ⚠️ 0 Ticks für {inst_id_str} im gewählten Zeitraum. Ueberspringe.")
+                    continue
+
+                # 2. Daten für Nautilus formatieren
+                df_ticks['instrument_id'] = inst_id_str 
+                
+                # BUGFIX: Nautilus benötigt zwingend einen DatetimeIndex inkl. Zeitzone (tzinfo)!
+                df_ticks.index = pd.to_datetime(df_ticks['ts_event'], unit='ns', utc=True)
+                
+                wrangler = QuoteTickDataWrangler(mock_inst)
+                ticks = wrangler.process(df_ticks)
+
+                engine.add_data(ticks)
+                print(f"   ✅ {len(ticks)} Ticks direkt via Pandas geladen und in die Engine injiziert!")
+
+            except Exception as e:
+                log_error(f"   ❌ Fehler beim manuellen Laden der Ticks fuer {inst_id_str}: {e}. Ueberspringe.", exc_info=True)
                 continue
 
             # --- STRATEGIE INIT ---
@@ -196,16 +229,17 @@ def run_backtest():
                 engine.add_strategy(strategy)
 
             except Exception as e:
-                print(f"   ❌ Fehler beim Konfigurieren von {strategy_class_name}: {e}")
+                log_error(f"   ❌ Fehler beim Konfigurieren von {strategy_class_name}: {e}", exc_info=True)
                 continue
 
             # --- ENGINE STARTEN ---
             try:
                 engine.run()
             except Exception as e:
-                print(f"   ❌ engine.run() fehlgeschlagen fuer {inst_id_str} / {strategy_class_name}: {e}")
+                log_error(f"   ❌ engine.run() fehlgeschlagen fuer {inst_id_str} / {strategy_class_name}: {e}", exc_info=True)
                 continue
 
+            # --- REPORTS ERSTELLEN ---
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
 
@@ -217,7 +251,7 @@ def run_backtest():
                 )
                 print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
             except Exception as e:
-                print(f"   ⚠️ HTML-Tearsheet fehlgeschlagen: {e}. Erstelle CSV-Fallback...")
+                log_error(f"   ⚠️ HTML-Tearsheet fehlgeschlagen: {e}. Erstelle CSV-Fallback...", exc_info=False)
                 try:
                     positions_df = engine.trader.generate_positions_report()
                     fills_df = engine.trader.generate_order_fills_report()
@@ -231,7 +265,7 @@ def run_backtest():
                         account_df.to_csv(os.path.join(reports_dir, f"account_{inst_id_str}_{strategy_class_name}_{timestamp}.csv"))
                     print(f"   ✅ CSV-Fallbacks gespeichert.")
                 except Exception as fallback_e:
-                    print(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}")
+                    log_error(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}", exc_info=True)
 
     print("\n✅ Matrix-Backtest vollstaendig abgeschlossen!")
 
