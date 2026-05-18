@@ -60,7 +60,7 @@ def analyze_all_parquets(base_dir: str):
 
 if __name__ == "__main__":
     # Standardpfad setzen, falls nichts übergeben wird
-    target_path = "./data/nautilus/nautilus_data/quote_tick"
+    target_path = "data/nautilus/data/quote_tick/"
     
     # Prüfe, ob ein Pfad beim Aufruf übergeben wurde (Überschreibt den Standard)
     if len(sys.argv) > 1:

@@ -49,17 +49,6 @@ def create_mock_instrument(instrument_id_str: str) -> Equity:
         ts_init=0,
     )
 
-def undo_hive_partitioning(base_dir: str):
-    """Macht fehlerhafte Ordner-Umbenennungen rückgängig."""
-    if not os.path.exists(base_dir):
-        return
-    for folder_name in os.listdir(base_dir):
-        if folder_name.startswith("instrument_id="):
-            old_path = os.path.join(base_dir, folder_name)
-            new_folder_name = folder_name.replace("instrument_id=", "")
-            new_path = os.path.join(base_dir, new_folder_name)
-            os.rename(old_path, new_path)
-
 def run_backtest():
     # 1. Logging Setup
     logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
@@ -109,15 +98,16 @@ def run_backtest():
 
     # 4. INSTRUMENTE SUCHEN & REGISTRIEREN
     tick_dir = os.path.join(expected_data_dir, "quote_tick")
-    undo_hive_partitioning(tick_dir)
 
     dynamic_instruments = []
     if os.path.exists(tick_dir):
         for folder_name in os.listdir(tick_dir):
             if os.path.isdir(os.path.join(tick_dir, folder_name)):
+                # Extrahiere die ID aus dem Hive-Partitioning (instrument_id=...)
+                clean_id = folder_name.replace("instrument_id=", "")
                 dynamic_instruments.append({
-                    "id": folder_name,
-                    "bar_type": f"{folder_name}-1-MINUTE-MID-INTERNAL"
+                    "id": clean_id,
+                    "bar_type": f"{clean_id}-1-MINUTE-MID-INTERNAL"
                 })
 
     if not dynamic_instruments:
@@ -155,10 +145,9 @@ def run_backtest():
 
             print(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
 
+            # start und end wurden aus BacktestEngineConfig entfernt!
             engine_config = BacktestEngineConfig(
                 trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}",
-                **({"start": bt_start} if bt_start else {}),
-                **({"end":   bt_end}   if bt_end   else {}),
             )
             engine = BacktestEngine(config=engine_config)
 
@@ -171,17 +160,22 @@ def run_backtest():
             )
 
             inst_id = InstrumentId.from_str(inst_id_str)
-            # Instrument aus dem Katalog laden (jetzt klappt es, da der Cache frisch ist)
+            # Instrument aus dem Katalog laden
             engine.add_instrument(create_mock_instrument(inst_id_str))
 
-            # --- ECHTE DATEN LADEN ---
+            # --- ECHTE DATEN LADEN MIT ZEITRAUM-FILTER ---
             try:
-                ticks = catalog.quote_ticks(instrument_ids=[inst_id])
+                # Hier übergeben wir start und end an die Datenabfrage
+                query_kwargs = {"instrument_ids": [inst_id]}
+                if bt_start: query_kwargs["start"] = bt_start
+                if bt_end:   query_kwargs["end"] = bt_end
+                
+                ticks = catalog.quote_ticks(**query_kwargs)
                 if ticks and len(ticks) > 0:
                     engine.add_data(ticks)
                     print(f"   ✅ {len(ticks)} Ticks geladen. Bars werden live aus den Ticks berechnet!")
                 else:
-                    print(f"   ⚠️ Katalog liefert 0 Ticks für {inst_id_str}. (Markt flach). Ueberspringe.")
+                    print(f"   ⚠️ Katalog liefert 0 Ticks für {inst_id_str} im gewählten Zeitraum. Ueberspringe.")
                     continue
             except ValueError as e:
                 print(f"   ⚠️ Fehler beim Laden von Ticks fuer {inst_id_str}: {e}. Ueberspringe.")
