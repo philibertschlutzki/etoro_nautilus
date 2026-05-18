@@ -176,6 +176,7 @@ sudo systemctl restart nautilus-bot.service
 | **Status prüfen** | `sudo systemctl status nautilus-bot` |
 | **Starten / Stoppen** | `sudo systemctl [start/stop] nautilus-bot` |
 | **Neu starten** | `sudo systemctl restart nautilus-bot` |
+| **Daten herunterladen** | `scp "username032@yourserver:/opt/etoro_nautilus/data/archive/*.zip" .` |
 
 ### Logfile-Analyse (Journalctl)
 
