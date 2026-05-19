@@ -12,6 +12,7 @@ import traceback
 import contextlib
 import io
 import multiprocessing
+import atexit
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
@@ -24,6 +25,25 @@ from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.analysis.tearsheet import create_tearsheet
+
+_worker_log_files: list[str] = []
+
+def _cleanup_worker_logs():
+    """Wird bei normalem Exit und bei Crash aufgerufen."""
+    for path in _worker_log_files:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+
+atexit.register(_cleanup_worker_logs)
+
+# Bekannte Crypto-Symbole auf eToro (unterstützen Fraktionen)
+_CRYPTO_SYMBOLS = frozenset({
+    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
+    "HYPE", "ONDO", "SHIBxM",
+})
 
 
 class DualLogger:
@@ -99,21 +119,31 @@ def infer_precision_from_ticks(ticks: list) -> int:
     return int(max(precisions)) if precisions else 5
 
 
+def _get_size_precision(instrument_id_str: str) -> int:
+    """
+    Gibt die korrekte size_precision zurück, kompatibel mit eToro Live-Execution.
+    Crypto: 8 (eToro erlaubt Fractional Crypto)
+    Equity/Commodities: 0 (eToro rundet auf ganze Units)
+    """
+    symbol = instrument_id_str.split(".")[0]
+    return 8 if symbol in _CRYPTO_SYMBOLS else 0
+
 def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> Equity:
     """Generiert ein dynamisches Mock-Instrument."""
     inst_id = InstrumentId.from_str(instrument_id_str)
-    price_increment = round(10 ** (-price_precision), price_precision)
-    SIZE_PRECISION = 5
-    size_increment = round(10 ** (-SIZE_PRECISION), SIZE_PRECISION)
+    price_increment_val = round(10 ** (-price_precision), price_precision)
+    size_prec = _get_size_precision(instrument_id_str)
+    size_inc_val = round(10 ** (-size_prec), size_prec) if size_prec > 0 else 1.0
+
     return Equity(
         instrument_id=inst_id,
         raw_symbol=inst_id.symbol,
         currency=USD,
         price_precision=price_precision,
-        price_increment=Price(price_increment, precision=price_precision),
-        size_precision=SIZE_PRECISION,
-        size_increment=Quantity(size_increment, precision=SIZE_PRECISION),
-        lot_size=Quantity(size_increment, precision=SIZE_PRECISION),
+        price_increment=Price(price_increment_val, precision=price_precision),
+        size_precision=size_prec,
+        size_increment=Quantity(size_inc_val, precision=size_prec),
+        lot_size=Quantity(size_inc_val, precision=size_prec),
         ts_event=0,
         ts_init=0,
     )
@@ -568,8 +598,15 @@ def run_backtest():
     all_results = []
 
     # 6. MATRIX TESTING STARTEN
+    _use_multiprocessing = True
     futures = {}
-    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+
+    try:
+        if _use_multiprocessing:
+            executor = ProcessPoolExecutor(max_workers=os.cpu_count())
+        else:
+            executor = None
+
         for inst in dynamic_instruments:
             inst_id_str = inst["id"]
             bar_type = inst["bar_type"]
@@ -587,41 +624,87 @@ def run_backtest():
 
             print(f"   ✅ {len(ticks)} Ticks geladen für {inst_id_str}.")
 
+            if _use_multiprocessing and len(futures) == 0:
+                try:
+                    import pickle
+                    pickle.dumps(ticks[0])
+                except Exception as _pickle_err:
+                    print(f"⚠️ QuoteTick nicht picklefähig ({_pickle_err}) — "
+                          f"Fallback auf sequenziellen Modus.")
+                    _use_multiprocessing = False
+                    if executor is not None:
+                        executor.shutdown(wait=False)
+                        executor = None
+
             for strat in strategies_list:
                 worker_log_file = os.path.join(logs_dir, f"worker_{inst_id_str.replace('.', '_')}_{strat['strategy_class']}_{timestamp}.log")
-                future = executor.submit(
-                    run_single_backtest_worker,
-                    inst_id_str,
-                    bar_type,
-                    strat,
-                    ticks,
-                    start_capital,
-                    args.htmlreport,
-                    reports_dir,
-                    worker_log_file
-                )
-                futures[future] = (inst_id_str, strat["strategy_class"], worker_log_file)
+                _worker_log_files.append(worker_log_file)
 
-    print("\n⏳ Warte auf Abschluss der Worker-Prozesse...")
+                if _use_multiprocessing and executor is not None:
+                    future = executor.submit(
+                        run_single_backtest_worker,
+                        inst_id_str,
+                        bar_type,
+                        strat,
+                        ticks,
+                        start_capital,
+                        args.htmlreport,
+                        reports_dir,
+                        worker_log_file
+                    )
+                    futures[future] = (inst_id_str, strat["strategy_class"], worker_log_file)
+                else:
+                    result = run_single_backtest_worker(
+                        inst_id_str, bar_type, strat, ticks,
+                        start_capital, args.htmlreport, reports_dir, worker_log_file
+                    )
 
-    for future in as_completed(futures):
-        inst_id_str, strategy_class_name, worker_log_file = futures[future]
+                    if os.path.exists(worker_log_file):
+                        with open(worker_log_file, "r", encoding="utf-8") as wf:
+                            content = wf.read().strip()
+                            if content:
+                                print(content)
+                        try:
+                            os.remove(worker_log_file)
+                        except OSError:
+                            pass
 
-        # Logs des Workers in das Haupt-Log überführen und Datei löschen
-        if os.path.exists(worker_log_file):
-            with open(worker_log_file, "r", encoding="utf-8") as wf:
-                print(wf.read().strip())
-            try:
-                os.remove(worker_log_file)
-            except OSError:
-                pass
+                    if result and result.get("metrics"):
+                        all_results.append(result)
 
-        try:
-            result = future.result()
-            if result and result.get("metrics"):
-                all_results.append(result)
-        except Exception as e:
-            log_error(f"   ❌ Worker-Prozess für {inst_id_str} / {strategy_class_name} ist fehlgeschlagen: {e}", exc_info=True)
+        if _use_multiprocessing and executor is not None:
+            total = len(futures)
+            done_count = 0
+            print(f"\n⏳ {total} Backtest-Jobs gestartet. Warte auf Ergebnisse...")
+
+            for future in as_completed(futures):
+                inst_id_str, strategy_class_name, worker_log_file = futures[future]
+                done_count += 1
+
+                # Logs des Workers in das Haupt-Log überführen und Datei löschen
+                if os.path.exists(worker_log_file):
+                    with open(worker_log_file, "r", encoding="utf-8") as wf:
+                        content = wf.read().strip()
+                        if content:
+                            print(content)
+                    try:
+                        os.remove(worker_log_file)
+                    except OSError:
+                        pass
+
+                try:
+                    result = future.result()
+                    if result and result.get("metrics"):
+                        all_results.append(result)
+                except Exception as e:
+                    log_error(f"   ❌ Worker-Prozess für {inst_id_str}/{strategy_class_name} fehlgeschlagen: {e}", exc_info=True)
+
+                print(f"   [{done_count}/{total}] Abgeschlossen: {inst_id_str} / {strategy_class_name}")
+
+            executor.shutdown(wait=True)
+
+    finally:
+        _cleanup_worker_logs()
 
     # --- TOURNAMENT MODUS ---
     if args.momentum:
