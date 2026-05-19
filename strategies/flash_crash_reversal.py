@@ -79,10 +79,18 @@ class FlashCrashReversalStrategy(Strategy):
     def _compute_quantity(self, bar: Bar) -> Quantity | None:
         instrument = self.cache.instrument(self.instrument_id)
         if instrument is None:
-            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache – Order übersprungen")
+            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
             return None
         units = self.config.trade_amount_usd / float(bar.close)
-        return instrument.make_qty(units)
+        qty = instrument.make_qty(units, round_down=True)
+        if qty == 0:
+            self._log.warning(
+                f"[{self.instrument_id}] Berechnete Quantity=0 "
+                f"(units={units:.6f}, Kapital={self.config.trade_amount_usd} USD) "
+                f"— Signal übersprungen (Kapital für 1 Einheit unzureichend)"
+            )
+            return None
+        return qty
 
     def _on_buy_signal(self, bar: Bar) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
