@@ -14,7 +14,8 @@ from nautilus_trader.trading.strategy import Strategy, StrategyConfig
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
-from adapters.etoro_execution import EToroExecClientConfig, EToroLiveExecClientFactory
+from adapters.etoro_execution import EToroLiveExecClientFactory
+from adapters.etoro_config import EToroExecClientConfig
 from adapters.instrument_map import ETORO_INSTRUMENTS
 from config.setups import ETORO_API_TEST
 from dotenv import load_dotenv

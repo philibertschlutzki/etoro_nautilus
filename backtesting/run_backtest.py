@@ -9,6 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any
 import traceback
+import contextlib
+import io
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
 
@@ -98,14 +102,18 @@ def infer_precision_from_ticks(ticks: list) -> int:
 def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> Equity:
     """Generiert ein dynamisches Mock-Instrument."""
     inst_id = InstrumentId.from_str(instrument_id_str)
-    increment = round(10 ** (-price_precision), price_precision)
+    price_increment = round(10 ** (-price_precision), price_precision)
+    SIZE_PRECISION = 5
+    size_increment = round(10 ** (-SIZE_PRECISION), SIZE_PRECISION)
     return Equity(
         instrument_id=inst_id,
         raw_symbol=inst_id.symbol,
         currency=USD,
         price_precision=price_precision,
-        price_increment=Price(increment, precision=price_precision),
-        lot_size=Quantity(1, precision=0),
+        price_increment=Price(price_increment, precision=price_precision),
+        size_precision=SIZE_PRECISION,
+        size_increment=Quantity(size_increment, precision=SIZE_PRECISION),
+        lot_size=Quantity(size_increment, precision=SIZE_PRECISION),
         ts_event=0,
         ts_init=0,
     )
@@ -129,7 +137,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float) -> dict:
         return NULL
 
     pnl_col = next(
-        (c for c in ['realized_pnl', 'pnl', 'net_pnl', 'commission']
+        (c for c in ['realized_pnl', 'pnl', 'net_pnl']
          if c in fills.columns),
         None
     )
@@ -295,6 +303,129 @@ def print_tournament_table(all_results: list[dict], per_symbol_winners: dict) ->
     return winner_count, no_winner_symbols
 
 
+def run_single_backtest_worker(inst_id_str: str, bar_type: str, strat: dict, ticks: list, start_capital: float, generate_html_report: bool, reports_dir: str, worker_log_file: str) -> dict:
+    """Top-level Funktion (picklefähig) zur Ausführung eines einzelnen Backtests in einem isolierten Prozess. Gibt result-dict zurück."""
+
+    def worker_log(msg):
+        with open(worker_log_file, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+
+    def worker_log_error(msg, exc_info=False):
+        full_msg = f"ERROR: {msg}"
+        if exc_info:
+            full_msg += f"\n{traceback.format_exc()}"
+        worker_log(full_msg)
+
+    strategy_class_name = strat["strategy_class"]
+    module_name = strat["strategy_module"]
+    config_class_name = strat["config_class"]
+
+    worker_log(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
+
+    try:
+        price_precision = infer_precision_from_ticks(ticks)
+
+        engine_config = BacktestEngineConfig(
+            trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}",
+        )
+        engine = BacktestEngine(config=engine_config)
+
+        engine.add_venue(
+            venue=Venue("ETORO"),
+            oms_type=OmsType.NETTING,
+            account_type=AccountType.MARGIN,
+            base_currency=USD,
+            starting_balances=[Money(start_capital, USD)]
+        )
+
+        mock_inst = create_mock_instrument(inst_id_str, price_precision)
+        engine.add_instrument(mock_inst)
+        engine.add_data(ticks)
+    except Exception as e:
+        worker_log_error(f"   ❌ Fehler beim Setup der Engine für {inst_id_str}: {e}. Überspringe.", exc_info=True)
+        return {}
+
+    try:
+        module = importlib.import_module(module_name)
+        StrategyClass = getattr(module, strategy_class_name)
+        ConfigClass = getattr(module, config_class_name)
+
+        params = strat.get("params", {}).copy()
+        params["instrument_id"] = inst_id_str
+        params["bar_type"] = bar_type
+
+        strategy_config = ConfigClass(**params)
+        strategy = StrategyClass(config=strategy_config)
+        engine.add_strategy(strategy)
+    except Exception as e:
+        worker_log_error(f"   ❌ Fehler beim Konfigurieren von {strategy_class_name}: {e}", exc_info=True)
+        return {}
+
+    try:
+        engine.run()
+    except Exception as e:
+        worker_log_error(f"   ❌ engine.run() fehlgeschlagen fuer {inst_id_str} / {strategy_class_name}: {e}", exc_info=True)
+        return {}
+
+    try:
+        positions_report = engine.trader.generate_positions_report()
+        if not positions_report.empty:
+            open_col = next(
+                (c for c in ['is_open', 'open'] if c in positions_report.columns),
+                None
+            )
+            if open_col:
+                open_count = int(positions_report[open_col].astype(bool).sum())
+            else:
+                open_count = len(positions_report)
+            if open_count > 0:
+                worker_log(f"   ⚠️ {open_count} Positionen nach Backtest-Ende offen — unrealized PnL nicht in Metriken enthalten")
+    except Exception as e:
+        worker_log(f"   ⚠️ Konnte offene Positionen nicht prüfen: {e}")
+
+    metrics = extract_metrics(engine, start_capital)
+    worker_log(f"   📊 Metriken: Trades={metrics['total_trades']}, WinRate={metrics['win_rate']:.2%}, PF={metrics['profit_factor']:.2f}, Sortino={metrics['sortino_ratio']:.2f}")
+
+    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    if generate_html_report and metrics.get('profit_factor', 0.0) > 1.0:
+        report_filename = os.path.join(
+            reports_dir,
+            f"tearsheet_{inst_id_str}_{strategy_class_name}_{run_timestamp}.html"
+        )
+        try:
+            create_tearsheet(
+                engine=engine,
+                output_path=report_filename,
+                title=f"Tearsheet {inst_id_str} - {strategy_class_name}"
+            )
+            worker_log(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
+        except Exception as e:
+            worker_log_error(f"   ⚠️ HTML-Tearsheet fehlgeschlagen: {e}. Erstelle CSV-Fallback...", exc_info=False)
+            try:
+                positions_df = engine.trader.generate_positions_report()
+                fills_df = engine.trader.generate_order_fills_report()
+                account_df = engine.trader.generate_account_report(venue=Venue("ETORO"))
+
+                if not positions_df.empty:
+                    positions_df.to_csv(os.path.join(reports_dir, f"positions_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
+                if not fills_df.empty:
+                    fills_df.to_csv(os.path.join(reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
+                if not account_df.empty:
+                    account_df.to_csv(os.path.join(reports_dir, f"account_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
+                worker_log("   ✅ CSV-Fallbacks gespeichert.")
+            except Exception as fallback_e:
+                worker_log_error(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}", exc_info=True)
+
+    engine.dispose()
+
+    return {
+        "symbol": inst_id_str,
+        "strategy": strategy_class_name,
+        "metrics": metrics,
+    }
+
+
 def run_backtest():
     # 1. Argument parsing
     parser = argparse.ArgumentParser(description="NautilusTrader Backtesting Engine")
@@ -413,10 +544,12 @@ def run_backtest():
 
     # Mock-Instrumente gebündelt schreiben
     dummy_instruments = [create_mock_instrument(inst["id"]) for inst in dynamic_instruments]
-    try:
-        catalog.write_data(dummy_instruments)
-    except Exception as e:
-        print(f"   ℹ️ Instrument bereits im Katalog ({type(e).__name__}) — übersprungen")
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            catalog.write_data(dummy_instruments)
+        except Exception:
+            pass  # Bereits im Katalog — expected
+    print(f"✅ {len(dummy_instruments)} Mock-Instrumente im Katalog registriert (oder bereits vorhanden).")
 
     # WICHTIG: Katalog komplett neu laden, damit die frisch geschriebenen Instrumente im RAM sind!
     catalog = ParquetDataCatalog(catalog_path)
@@ -435,135 +568,60 @@ def run_backtest():
     all_results = []
 
     # 6. MATRIX TESTING STARTEN
-    for inst in dynamic_instruments:
-        inst_id_str = inst["id"]
-        bar_type = inst["bar_type"]
+    futures = {}
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        for inst in dynamic_instruments:
+            inst_id_str = inst["id"]
+            bar_type = inst["bar_type"]
 
-        for strat in strategies_list:
-            module_name = strat["strategy_module"]
-            strategy_class_name = strat["strategy_class"]
-            config_class_name = strat["config_class"]
-
-            print(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
-
+            # Einmal laden — für alle Strategien dieses Instruments wiederverwenden
             try:
-                # --- TICK-DATEN VIA KATALOG LADEN ---
                 ticks = load_ticks_from_catalog(catalog, inst_id_str, bt_start, bt_end)
-
-                if not ticks:
-                    print(f"   ⚠️ 0 Ticks für {inst_id_str} im gewählten Zeitraum. Ueberspringe.")
-                    continue
-
-                print(f"   ✅ {len(ticks)} Ticks via Katalog geladen.")
-
-                # Preis-Präzision aus Daten ableiten
-                price_precision = infer_precision_from_ticks(ticks)
-
-                # Engine konfigurieren
-                engine_config = BacktestEngineConfig(
-                    trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}",
-                )
-                engine = BacktestEngine(config=engine_config)
-
-                engine.add_venue(
-                    venue=Venue("ETORO"),
-                    oms_type=OmsType.HEDGING,
-                    account_type=AccountType.MARGIN,
-                    base_currency=USD,
-                    starting_balances=[Money(start_capital, USD)]
-                )
-
-                mock_inst = create_mock_instrument(inst_id_str, price_precision)
-                engine.add_instrument(mock_inst)
-                engine.add_data(ticks)
-
             except Exception as e:
                 log_error(f"   ❌ Fehler beim Laden der Ticks fuer {inst_id_str}: {e}. Ueberspringe.", exc_info=True)
                 continue
 
-            # --- STRATEGIE INIT ---
-            try:
-                module = importlib.import_module(module_name)
-                StrategyClass = getattr(module, strategy_class_name)
-                ConfigClass = getattr(module, config_class_name)
-
-                params = strat.get("params", {}).copy()
-                params["instrument_id"] = inst_id_str
-                params["bar_type"] = bar_type
-
-                strategy_config = ConfigClass(**params)
-                strategy = StrategyClass(config=strategy_config)
-                engine.add_strategy(strategy)
-
-            except Exception as e:
-                log_error(f"   ❌ Fehler beim Konfigurieren von {strategy_class_name}: {e}", exc_info=True)
+            if not ticks:
+                print(f"   ⚠️ 0 Ticks für {inst_id_str} im gewählten Zeitraum. Überspringe.")
                 continue
 
-            # --- ENGINE STARTEN ---
-            try:
-                engine.run()
-            except Exception as e:
-                log_error(f"   ❌ engine.run() fehlgeschlagen fuer {inst_id_str} / {strategy_class_name}: {e}", exc_info=True)
-                continue
+            print(f"   ✅ {len(ticks)} Ticks geladen für {inst_id_str}.")
 
-            # --- OPEN POSITIONS CHECK ---
-            try:
-                positions_report = engine.trader.generate_positions_report()
-                if not positions_report.empty:
-                    open_col = next(
-                        (c for c in ['is_open', 'open'] if c in positions_report.columns),
-                        None
-                    )
-                    if open_col:
-                        open_count = int(positions_report[open_col].astype(bool).sum())
-                    else:
-                        open_count = len(positions_report)
-                    if open_count > 0:
-                        print(f"   ⚠️ {open_count} Positionen nach Backtest-Ende offen — unrealized PnL nicht in Metriken enthalten")
-            except Exception as e:
-                log_error(f"   ⚠️ Konnte offene Positionen nicht prüfen: {e}")
-
-            # --- METRIKEN EXTRAHIEREN ---
-            metrics = extract_metrics(engine, start_capital)
-            print(f"   📊 Metriken: Trades={metrics['total_trades']}, WinRate={metrics['win_rate']:.2%}, PF={metrics['profit_factor']:.2f}, Sortino={metrics['sortino_ratio']:.2f}")
-
-            all_results.append({
-                "symbol": inst_id_str,
-                "strategy": strategy_class_name,
-                "metrics": metrics,
-            })
-
-            # --- REPORTS ERSTELLEN ---
-            run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-            if args.htmlreport:
-                report_filename = os.path.join(
+            for strat in strategies_list:
+                worker_log_file = os.path.join(logs_dir, f"worker_{inst_id_str.replace('.', '_')}_{strat['strategy_class']}_{timestamp}.log")
+                future = executor.submit(
+                    run_single_backtest_worker,
+                    inst_id_str,
+                    bar_type,
+                    strat,
+                    ticks,
+                    start_capital,
+                    args.htmlreport,
                     reports_dir,
-                    f"tearsheet_{inst_id_str}_{strategy_class_name}_{run_timestamp}.html"
+                    worker_log_file
                 )
-                try:
-                    create_tearsheet(
-                        engine=engine,
-                        output_path=report_filename,
-                        title=f"Tearsheet {inst_id_str} - {strategy_class_name}"
-                    )
-                    print(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
-                except Exception as e:
-                    log_error(f"   ⚠️ HTML-Tearsheet fehlgeschlagen: {e}. Erstelle CSV-Fallback...", exc_info=False)
-                    try:
-                        positions_df = engine.trader.generate_positions_report()
-                        fills_df = engine.trader.generate_order_fills_report()
-                        account_df = engine.trader.generate_account_report(venue=Venue("ETORO"))
+                futures[future] = (inst_id_str, strat["strategy_class"], worker_log_file)
 
-                        if not positions_df.empty:
-                            positions_df.to_csv(os.path.join(reports_dir, f"positions_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
-                        if not fills_df.empty:
-                            fills_df.to_csv(os.path.join(reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
-                        if not account_df.empty:
-                            account_df.to_csv(os.path.join(reports_dir, f"account_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
-                        print(f"   ✅ CSV-Fallbacks gespeichert.")
-                    except Exception as fallback_e:
-                        log_error(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}", exc_info=True)
+    print("\n⏳ Warte auf Abschluss der Worker-Prozesse...")
+
+    for future in as_completed(futures):
+        inst_id_str, strategy_class_name, worker_log_file = futures[future]
+
+        # Logs des Workers in das Haupt-Log überführen und Datei löschen
+        if os.path.exists(worker_log_file):
+            with open(worker_log_file, "r", encoding="utf-8") as wf:
+                print(wf.read().strip())
+            try:
+                os.remove(worker_log_file)
+            except OSError:
+                pass
+
+        try:
+            result = future.result()
+            if result and result.get("metrics"):
+                all_results.append(result)
+        except Exception as e:
+            log_error(f"   ❌ Worker-Prozess für {inst_id_str} / {strategy_class_name} ist fehlgeschlagen: {e}", exc_info=True)
 
     # --- TOURNAMENT MODUS ---
     if args.momentum:
@@ -590,5 +648,6 @@ def run_backtest():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     run_backtest()
