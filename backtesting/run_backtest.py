@@ -33,6 +33,7 @@ from adapters.instrument_utils import get_size_precision
 
 _worker_log_files: list[str] = []
 
+
 def _cleanup_worker_logs():
     """Wird bei normalem Exit und bei Crash aufgerufen."""
     for path in _worker_log_files:
@@ -41,6 +42,7 @@ def _cleanup_worker_logs():
                 os.remove(path)
         except OSError:
             pass
+
 
 atexit.register(_cleanup_worker_logs)
 
@@ -119,7 +121,14 @@ def infer_precision_from_ticks(ticks: list) -> int:
 
 
 def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> Equity:
-    """Generiert ein dynamisches Mock-Instrument."""
+    """
+    Generiert ein dynamisches Mock-Instrument.
+
+    size_precision wird via lot_size.precision an Nautilus übergeben —
+    size_precision und size_increment sind in dieser Nautilus-Version keine
+    direkten Equity-Konstruktor-Parameter. Nautilus leitet size_precision
+    intern aus lot_size.precision ab.
+    """
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
     size_prec = get_size_precision(instrument_id_str)
@@ -131,8 +140,6 @@ def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> 
         currency=USD,
         price_precision=price_precision,
         price_increment=Price(price_increment_val, precision=price_precision),
-        size_precision=size_prec,
-        size_increment=Quantity(size_inc_val, precision=size_prec),
         lot_size=Quantity(size_inc_val, precision=size_prec),
         ts_event=0,
         ts_init=0,
@@ -323,8 +330,20 @@ def print_tournament_table(all_results: list[dict], per_symbol_winners: dict) ->
     return winner_count, no_winner_symbols
 
 
-def run_single_backtest_worker(inst_id_str: str, bar_type: str, strat: dict, ticks: list, start_capital: float, generate_html_report: bool, reports_dir: str, worker_log_file: str) -> dict:
-    """Top-level Funktion (picklefähig) zur Ausführung eines einzelnen Backtests in einem isolierten Prozess. Gibt result-dict zurück."""
+def run_single_backtest_worker(
+    inst_id_str: str,
+    bar_type: str,
+    strat: dict,
+    ticks: list,
+    start_capital: float,
+    generate_html_report: bool,
+    reports_dir: str,
+    worker_log_file: str,
+) -> dict:
+    """
+    Top-level Funktion (picklefähig) zur Ausführung eines einzelnen Backtests
+    in einem isolierten Prozess. Gibt result-dict zurück.
+    """
 
     def worker_log(msg):
         with open(worker_log_file, "a", encoding="utf-8") as f:
@@ -404,7 +423,12 @@ def run_single_backtest_worker(inst_id_str: str, bar_type: str, strat: dict, tic
         worker_log(f"   ⚠️ Konnte offene Positionen nicht prüfen: {e}")
 
     metrics = extract_metrics(engine, start_capital)
-    worker_log(f"   📊 Metriken: Trades={metrics['total_trades']}, WinRate={metrics['win_rate']:.2%}, PF={metrics['profit_factor']:.2f}, Sortino={metrics['sortino_ratio']:.2f}")
+    worker_log(
+        f"   📊 Metriken: Trades={metrics['total_trades']}, "
+        f"WinRate={metrics['win_rate']:.2%}, "
+        f"PF={metrics['profit_factor']:.2f}, "
+        f"Sortino={metrics['sortino_ratio']:.2f}"
+    )
 
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
@@ -428,11 +452,20 @@ def run_single_backtest_worker(inst_id_str: str, bar_type: str, strat: dict, tic
                 account_df = engine.trader.generate_account_report(venue=Venue("ETORO"))
 
                 if not positions_df.empty:
-                    positions_df.to_csv(os.path.join(reports_dir, f"positions_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
+                    positions_df.to_csv(os.path.join(
+                        reports_dir,
+                        f"positions_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"
+                    ))
                 if not fills_df.empty:
-                    fills_df.to_csv(os.path.join(reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
+                    fills_df.to_csv(os.path.join(
+                        reports_dir,
+                        f"fills_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"
+                    ))
                 if not account_df.empty:
-                    account_df.to_csv(os.path.join(reports_dir, f"account_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
+                    account_df.to_csv(os.path.join(
+                        reports_dir,
+                        f"account_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"
+                    ))
                 worker_log("   ✅ CSV-Fallbacks gespeichert.")
             except Exception as fallback_e:
                 worker_log_error(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}", exc_info=True)
@@ -491,7 +524,7 @@ def run_backtest():
     sys.stdout = DualLogger(log_file)
     sys.stderr = DualLogger(log_file)
     print(f"📝 Logging aktiv. Ausgabe wird gespeichert in: {log_file}")
-    print(f"🚨 Fehler-Log wird separat geschrieben in: {error_log_file}\n" + "="*60)
+    print(f"🚨 Fehler-Log wird separat geschrieben in: {error_log_file}\n" + "=" * 60)
 
     def log_error(msg, exc_info=False):
         """Schreibt Fehler in die Konsole und in das dedizierte Error-Log."""
@@ -530,7 +563,8 @@ def run_backtest():
     else:
         catalog_path = global_settings.get("catalog_path", "./data/nautilus")
 
-    if not os.path.exists(os.path.join(catalog_path, "quote_tick")) and os.path.exists(os.path.join(catalog_path, "nautilus_data", "quote_tick")):
+    if not os.path.exists(os.path.join(catalog_path, "quote_tick")) and \
+       os.path.exists(os.path.join(catalog_path, "nautilus_data", "quote_tick")):
         catalog_path = os.path.join(catalog_path, "nautilus_data")
 
     # Nautilus erwartet zwingend einen 'data' Ordner IN catalog_path
@@ -562,7 +596,8 @@ def run_backtest():
     # Katalog instanziieren
     catalog = ParquetDataCatalog(catalog_path)
 
-    # Mock-Instrumente gebündelt schreiben
+    # Mock-Instrumente gebündelt schreiben — stdout/stderr unterdrücken
+    # um "File already exists, skipping write"-Spam zu vermeiden
     dummy_instruments = [create_mock_instrument(inst["id"]) for inst in dynamic_instruments]
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         try:
@@ -588,6 +623,7 @@ def run_backtest():
     all_results = []
 
     # 6. MATRIX TESTING STARTEN
+    # executor wird vor try initialisiert damit finally keinen NameError riskiert
     executor = None
     _use_multiprocessing = True
     futures = {}
@@ -613,20 +649,26 @@ def run_backtest():
 
             print(f"   ✅ {len(ticks)} Ticks geladen für {inst_id_str}.")
 
+            # QuoteTick-Picklability prüfen beim ersten Instrument mit Ticks
             if _use_multiprocessing and len(futures) == 0:
                 try:
                     import pickle
                     pickle.dumps(ticks[0])
                 except Exception as _pickle_err:
-                    print(f"⚠️ QuoteTick nicht picklefähig ({_pickle_err}) — "
-                          f"Fallback auf sequenziellen Modus.")
+                    print(
+                        f"⚠️ QuoteTick nicht picklefähig ({_pickle_err}) — "
+                        f"Fallback auf sequenziellen Modus."
+                    )
                     _use_multiprocessing = False
                     if executor is not None:
                         executor.shutdown(wait=False)
                         executor = None
 
             for strat in strategies_list:
-                worker_log_file = os.path.join(logs_dir, f"worker_{inst_id_str.replace('.', '_')}_{strat['strategy_class']}_{timestamp}.log")
+                worker_log_file = os.path.join(
+                    logs_dir,
+                    f"worker_{inst_id_str.replace('.', '_')}_{strat['strategy_class']}_{timestamp}.log"
+                )
                 _worker_log_files.append(worker_log_file)
 
                 if _use_multiprocessing and executor is not None:
@@ -639,13 +681,14 @@ def run_backtest():
                         start_capital,
                         args.htmlreport,
                         reports_dir,
-                        worker_log_file
+                        worker_log_file,
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], worker_log_file)
                 else:
+                    # Sequenzieller Fallback
                     result = run_single_backtest_worker(
                         inst_id_str, bar_type, strat, ticks,
-                        start_capital, args.htmlreport, reports_dir, worker_log_file
+                        start_capital, args.htmlreport, reports_dir, worker_log_file,
                     )
 
                     if os.path.exists(worker_log_file):
@@ -670,7 +713,7 @@ def run_backtest():
                 inst_id_str, strategy_class_name, worker_log_file = futures[future]
                 done_count += 1
 
-                # Logs des Workers in das Haupt-Log überführen und Datei löschen
+                # Worker-Log sofort in Haupt-Log mergen und Datei löschen
                 if os.path.exists(worker_log_file):
                     with open(worker_log_file, "r", encoding="utf-8") as wf:
                         content = wf.read().strip()
@@ -686,7 +729,10 @@ def run_backtest():
                     if result and result.get("metrics"):
                         all_results.append(result)
                 except Exception as e:
-                    log_error(f"   ❌ Worker-Prozess für {inst_id_str}/{strategy_class_name} fehlgeschlagen: {e}", exc_info=True)
+                    log_error(
+                        f"   ❌ Worker-Prozess für {inst_id_str}/{strategy_class_name} fehlgeschlagen: {e}",
+                        exc_info=True,
+                    )
 
                 print(f"   [{done_count}/{total}] Abgeschlossen: {inst_id_str} / {strategy_class_name}")
 
@@ -710,7 +756,11 @@ def run_backtest():
             print(f"\n✅ Tournament abgeschlossen: {total_symbols} Symbole, {winner_count} Gewinner")
 
             if aggregate_winner:
-                print(f"🏆 Aggregat-Sieger: {aggregate_winner['strategy']} ({aggregate_winner['win_count']} Wins, Ø Sortino: {aggregate_winner['mean_sortino']})")
+                print(
+                    f"🏆 Aggregat-Sieger: {aggregate_winner['strategy']} "
+                    f"({aggregate_winner['win_count']} Wins, "
+                    f"Ø Sortino: {aggregate_winner['mean_sortino']})"
+                )
 
             if no_winner_symbols:
                 print(f"⚠️  Keine qualifizierte Strategie: {', '.join(no_winner_symbols)}")
