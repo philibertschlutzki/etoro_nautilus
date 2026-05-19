@@ -44,12 +44,6 @@ def _cleanup_worker_logs():
 
 atexit.register(_cleanup_worker_logs)
 
-# Bekannte Crypto-Symbole auf eToro (unterstützen Fraktionen)
-_CRYPTO_SYMBOLS = frozenset({
-    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
-    "HYPE", "ONDO", "SHIBxM",
-})
-
 
 class DualLogger:
     """Fängt Konsolen-Outputs ab und schreibt sie ins Terminal UND in eine Datei."""
@@ -594,14 +588,13 @@ def run_backtest():
     all_results = []
 
     # 6. MATRIX TESTING STARTEN
+    executor = None
     _use_multiprocessing = True
     futures = {}
 
     try:
         if _use_multiprocessing:
             executor = ProcessPoolExecutor(max_workers=os.cpu_count())
-        else:
-            executor = None
 
         for inst in dynamic_instruments:
             inst_id_str = inst["id"]
@@ -701,7 +694,7 @@ def run_backtest():
 
     finally:
         _cleanup_worker_logs()
-        if _use_multiprocessing and executor is not None:
+        if executor is not None:
             try:
                 executor.shutdown(wait=False, cancel_futures=True)
             except TypeError:

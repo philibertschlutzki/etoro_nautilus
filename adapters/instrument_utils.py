@@ -1,6 +1,6 @@
 _CRYPTO_SYMBOLS = frozenset({
     "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
-    "HYPE", "ONDO", "SHIBxM",
+    "HYPE", "ONDO", "SHIBxM", "AERO", "PEPExM",
 })
 
 _FRACTIONAL_SYMBOLS = frozenset({
