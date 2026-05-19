@@ -329,7 +329,9 @@ def run_backtest():
     args = parser.parse_args()
 
     # 2. Logging Setup
-    logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _project_root = os.path.dirname(_script_dir)
+    logs_dir = os.path.join(_project_root, "logs")
     os.makedirs(logs_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_file = os.path.join(logs_dir, f"backtest_{timestamp}.log")
@@ -352,7 +354,7 @@ def run_backtest():
     if args.config:
         config_path = args.config
     else:
-        config_path = os.path.join(os.path.dirname(__file__), "backtesting_config.json")
+        config_path = os.path.join(_script_dir, "backtesting_config.json")
 
     if not os.path.exists(config_path):
         log_error(f"❌ Fehler: Config {config_path} nicht gefunden.")
@@ -420,7 +422,7 @@ def run_backtest():
     catalog = ParquetDataCatalog(catalog_path)
 
     start_capital = global_settings.get("start_capital", 100000.0)
-    reports_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
+    reports_dir = os.path.join(_project_root, "reports")
     os.makedirs(reports_dir, exist_ok=True)
 
     # Tournament output path
@@ -428,10 +430,7 @@ def run_backtest():
     if args.output:
         tournament_output = args.output
     else:
-        tournament_output = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "logs",
-            f"tournament_{date_str}.json"
-        )
+        tournament_output = os.path.join(_project_root, "logs", f"tournament_{date_str}.json")
 
     all_results = []
 
