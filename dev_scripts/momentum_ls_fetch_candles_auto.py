@@ -23,7 +23,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # eToro Rate Limit (max 60 Requests pro Minute)
-RATE_LIMIT_DELAY = 1.1 
+RATE_LIMIT_DELAY = 1.1
+
 
 def _make_headers(api_key: str, user_key: str) -> dict[str, str]:
     return {
@@ -33,12 +34,14 @@ def _make_headers(api_key: str, user_key: str) -> dict[str, str]:
         "Content-Type": "application/json",
     }
 
+
 def format_nautilus_timestamp(ts_ns: int) -> str:
     """Konvertiert Nanosekunden-Zeitstempel in das Nautilus Zeitstempel-Format."""
     dt = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)
     base_time = dt.strftime('%Y-%m-%dT%H-%M-%S')
     ns_remainder = int(ts_ns % 1_000_000_000)
     return f"{base_time}-{ns_remainder:09d}Z"
+
 
 async def fetch_candles_chunk(
     session: aiohttp.ClientSession,
@@ -58,43 +61,44 @@ async def fetch_candles_chunk(
     logger.info(f"[{instrument_id}] Fetching max {count} ({interval}) candles before {params['endTime']}...")
 
     headers = _make_headers(api_key, user_key)
-    
+
     for attempt in range(3):
         try:
             async with session.get(url, params=params, headers=headers) as resp:
                 if resp.status == 200:
                     raw_data = await resp.json()
-                    
+
                     if isinstance(raw_data, dict):
                         inner = raw_data.get("candles") or raw_data.get("Candles") or raw_data.get("data")
                         if inner is not None:
                             raw_data = inner
-                            
+
                     if isinstance(raw_data, list) and len(raw_data) > 0:
                         first = raw_data[0]
                         if isinstance(first, dict):
                             inner_candles = first.get("candles") or first.get("Candles")
                             if inner_candles is not None and isinstance(inner_candles, list):
                                 return inner_candles
-                                
+
                     return raw_data if isinstance(raw_data, list) else []
-                
+
                 elif resp.status == 429:
                     retry_after = int(resp.headers.get("Retry-After", 60))
                     logger.warning(f"[{instrument_id}] Rate limit exceeded (HTTP 429). Waiting for {retry_after}s...")
                     await asyncio.sleep(retry_after)
                     continue
-                    
+
                 else:
                     body = await resp.text()
                     logger.warning(f"[{instrument_id}] Failed to fetch candles: HTTP {resp.status} - {body[:200]}")
                     return []
-                    
+
         except Exception as e:
             logger.warning(f"[{instrument_id}] Network error (Attempt {attempt+1}): {e}")
             await asyncio.sleep(5)
 
     return []
+
 
 def _get_key_case_insensitive(row: dict, possible_keys: list) -> str:
     row_keys_lower = {k.lower(): k for k in row.keys()}
@@ -103,100 +107,186 @@ def _get_key_case_insensitive(row: dict, possible_keys: list) -> str:
             return row_keys_lower[pk.lower()]
     return None
 
-def create_quote_ticks_dataframe(candles: list[dict]) -> pd.DataFrame:
-    rows = []
+
+def _ensure_instrument_registered(catalog, instrument_id_str: str, price_precision: int = 5) -> None:
+    """
+    Registriert ein Mock-Instrument im Katalog, falls noch nicht vorhanden.
+    Wird vor catalog.write_data(ticks) benötigt.
+    """
+    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.model.objects import Price, Quantity
+    from nautilus_trader.model.instruments import Equity
+    from nautilus_trader.model.currencies import USD
+
+    inst_id = InstrumentId.from_str(instrument_id_str)
+    increment = round(10 ** (-price_precision), price_precision)
+    instrument = Equity(
+        instrument_id=inst_id,
+        raw_symbol=inst_id.symbol,
+        currency=USD,
+        price_precision=price_precision,
+        price_increment=Price(increment, precision=price_precision),
+        lot_size=Quantity(1, precision=0),
+        ts_event=0,
+        ts_init=0,
+    )
+    try:
+        catalog.write_data([instrument])
+    except Exception as e:
+        logger.debug(f"Instrument {instrument_id_str} already registered or write skipped: {e}")
+
+
+def _collect_existing_ts(symbol_dir: str, instrument_id_str: str) -> set:
+    """
+    Liest ts_event-Werte aus allen Parquet-Dateien im symbol_dir via pandas.
+    Erkennt und löscht Dateien im alten Format (bid_price als bytes/object).
+    Sicher: kein catalog.quote_ticks()-Aufruf → kein Rust-Panic.
+    """
+    symbol_path = Path(symbol_dir)
+    existing_ts: set = set()
+    for f in symbol_path.glob("*.parquet"):
+        try:
+            df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
+            if df['bid_price'].dtype == object:
+                # Altes Format: Preise als UTF-8-Bytes gespeichert → löschen
+                f.unlink()
+                logger.info(f"[{instrument_id_str}] Altes Format entfernt: {f.name}")
+            else:
+                existing_ts.update(df['ts_event'].tolist())
+        except Exception as e:
+            # Nicht lesbare Datei → als altes/korruptes Format behandeln und löschen
+            try:
+                f.unlink()
+                logger.info(f"[{instrument_id_str}] Unlesbare Parquet-Datei entfernt: {f.name}")
+            except Exception as rm_err:
+                logger.warning(f"[{instrument_id_str}] Konnte {f.name} nicht löschen: {rm_err}")
+    return existing_ts
+
+
+def write_candles_to_catalog(
+    candles: list[dict],
+    instrument_id_str: str,
+    catalog_path: str,
+    price_precision: int = 5,
+) -> int:
+    """
+    Schreibt historische Candle-Daten als QuoteTick-Objekte in den
+    NautilusTrader ParquetDataCatalog. Gibt die Anzahl geschriebener Ticks zurück.
+
+    Mapping: Low → bid_price, High → ask_price (für Backtest-kompatibilität)
+    """
+    from nautilus_trader.model.data import QuoteTick
+    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.model.objects import Price, Quantity
+    from nautilus_trader.persistence.catalog import ParquetDataCatalog
+
+    inst_id = InstrumentId.from_str(instrument_id_str)
+    catalog = ParquetDataCatalog(catalog_path)
+
+    ticks = []
     for c in candles:
         try:
             date_key = _get_key_case_insensitive(c, ['fromdate', 'startdate', 'date', 'timestamp', 'time', 'start'])
             low_key = _get_key_case_insensitive(c, ['low', 'l'])
             high_key = _get_key_case_insensitive(c, ['high', 'h'])
-
             if not date_key or not low_key or not high_key:
                 continue
 
-            date_str = c[date_key]
-            ts_dt = pd.to_datetime(date_str)
+            ts_dt = pd.to_datetime(c[date_key])
             if ts_dt.tzinfo is None:
                 ts_dt = ts_dt.tz_localize('UTC')
-                
             ts_ns = int(ts_dt.timestamp() * 1e9)
 
-            low = str(c[low_key]).encode("utf-8")
-            high = str(c[high_key]).encode("utf-8")
-            one_sz = b"1"
+            bid = float(c[low_key])
+            ask = float(c[high_key])
 
-            rows.append({
-                "bid_price": low,
-                "ask_price": high,
-                "bid_size": one_sz,
-                "ask_size": one_sz,
-                "ts_event": pd.Series(ts_ns, dtype='uint64').iloc[0],
-                "ts_init": pd.Series(ts_ns, dtype='uint64').iloc[0],
-                "timestamp_dt": ts_dt 
-            })
+            # Precision dynamisch aus dem Wert ableiten
+            prec = len(str(bid).rstrip('0').split('.')[-1]) if '.' in str(bid) else 0
+            prec = min(max(prec, 2), 8)
+
+            tick = QuoteTick(
+                instrument_id=inst_id,
+                bid_price=Price(bid, precision=prec),
+                ask_price=Price(ask, precision=prec),
+                bid_size=Quantity(1, precision=0),
+                ask_size=Quantity(1, precision=0),
+                ts_event=ts_ns,
+                ts_init=ts_ns,
+            )
+            ticks.append(tick)
         except Exception as e:
-            pass
+            logger.debug(f"Skipping candle for {instrument_id_str}: {e}")
+            continue
 
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df["ts_event"] = df["ts_event"].astype("uint64")
-        df["ts_init"] = df["ts_init"].astype("uint64")
-        df = df.sort_values(by="ts_event", ascending=True).reset_index(drop=True)
-    return df
+    if ticks:
+        prec = ticks[0].bid_price.precision if ticks else price_precision
 
+        # Deduplizierung via pandas (kein catalog.quote_ticks() → kein Rust-Panic).
+        # Erkennt und löscht auch alte Dateien im falschen Byte-Format.
+        # catalog.write_data() uses hive partitioning → instrument_id=SYMBOL/
+        # Old code wrote to plain SYMBOL/ — check both to clean legacy files and dedup correctly.
+        _base = os.path.join(catalog_path, "data", "quote_tick")
+        symbol_dir_plain = os.path.join(_base, instrument_id_str)
+        symbol_dir_hive = os.path.join(_base, f"instrument_id={instrument_id_str}")
+        existing_ts: set = set()
+        if os.path.isdir(symbol_dir_plain):
+            existing_ts.update(_collect_existing_ts(symbol_dir_plain, instrument_id_str))
+        if os.path.isdir(symbol_dir_hive):
+            existing_ts.update(_collect_existing_ts(symbol_dir_hive, instrument_id_str))
+        if existing_ts:
+            ticks = [t for t in ticks if t.ts_event not in existing_ts]
 
-def get_date_range_str(df: pd.DataFrame) -> str:
-    """Hilfsfunktion für lesbare Datumsbereiche im Report"""
-    if df.empty or "ts_event" not in df.columns:
-        return "N/A"
-    min_dt = datetime.fromtimestamp(df["ts_event"].min() / 1e9, tz=timezone.utc)
-    max_dt = datetime.fromtimestamp(df["ts_event"].max() / 1e9, tz=timezone.utc)
-    return f"{min_dt.strftime('%Y-%m-%d')} to {max_dt.strftime('%Y-%m-%d')}"
+        # Instrument registrieren, dann Ticks schreiben
+        _ensure_instrument_registered(catalog, instrument_id_str, prec)
+        if ticks:
+            ticks.sort(key=lambda x: x.ts_init)
+            catalog.write_data(ticks)
+
+    return len(ticks)
 
 
 async def process_instrument(
-    session: aiohttp.ClientSession, 
-    etoro_id: int, 
-    symbol: str, 
-    target_start_date: datetime, 
-    api_key: str, 
-    user_key: str, 
+    session: aiohttp.ClientSession,
+    etoro_id: int,
+    symbol: str,
+    target_start_date: datetime,
+    api_key: str,
+    user_key: str,
     intervals_cascade: list[str],
-    output_dir: str
+    output_dir: str,
+    catalog_path: str,
 ) -> dict:
     """Lade historische Kerzen herunter und retourniere einen Summary-Eintrag."""
-    out_dir = Path(output_dir) / symbol
-    out_dir.mkdir(parents=True, exist_ok=True)
-    
-    existing_files = list(out_dir.glob("*.parquet"))
-    existing_df = pd.DataFrame()
-    
-    # Delta-Update Logik
-    if existing_files:
-        logger.info(f"[{symbol}] Found existing data. Reading to find latest timestamp.")
-        dfs = []
-        for f in existing_files:
-            try:
-                dfs.append(pd.read_parquet(f))
-            except Exception as e:
-                logger.warning(f"[{symbol}] Failed to read {f}: {e}")
-                
-        if dfs:
-            existing_df = pd.concat(dfs, ignore_index=True)
-            if not existing_df.empty and "ts_event" in existing_df.columns:
-                max_ts_ns = existing_df["ts_event"].max()
-                latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
-                
-                if latest_dt > target_start_date:
-                    target_start_date = latest_dt
-                    logger.info(f"[{symbol}] Delta update: Fetching only records newer than {target_start_date}")
+    # Delta-Update Logik: Finde neuesten Zeitstempel via pandas (kein catalog.quote_ticks())
+    adjusted_start = target_start_date
+    has_existing_data = False
+    _base_tick_dir = os.path.join(catalog_path, "data", "quote_tick")
+    symbol_dir_plain = os.path.join(_base_tick_dir, symbol)
+    symbol_dir_hive = os.path.join(_base_tick_dir, f"instrument_id={symbol}")
+    try:
+        existing_ts: set = set()
+        if os.path.isdir(symbol_dir_plain):
+            existing_ts.update(_collect_existing_ts(symbol_dir_plain, symbol))
+        if os.path.isdir(symbol_dir_hive):
+            existing_ts.update(_collect_existing_ts(symbol_dir_hive, symbol))
+        if existing_ts:
+            has_existing_data = True
+            max_ts_ns = max(existing_ts)
+            latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
+            if latest_dt > target_start_date:
+                adjusted_start = latest_dt
+                logger.info(f"[{symbol}] Delta update: Fetching only records newer than {adjusted_start}")
+    except Exception as e:
+        logger.warning(f"[{symbol}] Could not check existing data: {e}")
+
+    target_start_date = adjusted_start
 
     logger.info(f"=== Starting API download for {symbol} (ID: {etoro_id}) ===")
-    
+
     current_end_time = datetime.now(timezone.utc)
     all_candles = []
     intervals_used = []
-    
+
     for current_interval in intervals_cascade:
         logger.info(f"[{symbol}] Attempting download with interval: {current_interval}")
         last_fetched_oldest_timestamp = None
@@ -205,26 +295,26 @@ async def process_instrument(
             chunk = await fetch_candles_chunk(
                 session, etoro_id, current_end_time, api_key, user_key, current_interval
             )
-            
+
             if not chunk:
                 logger.info(f"[{symbol}] No more candles available for interval {current_interval}. Falling back to larger interval if available.")
-                break 
-                
+                break
+
             chunk_df = pd.DataFrame(chunk)
-            
+
             possible_date_cols = ['fromdate', 'startdate', 'date', 'timestamp', 'time', 'start']
             date_col = next((col for col in chunk_df.columns if col.lower() in possible_date_cols), None)
-            
+
             if not date_col:
                 logger.error(f"[{symbol}] API response format changed. Date column not found.")
                 break
-                
+
             chunk_df['parsed_date'] = pd.to_datetime(chunk_df[date_col])
             if chunk_df['parsed_date'].dt.tz is None:
-                 chunk_df['parsed_date'] = chunk_df['parsed_date'].dt.tz_localize('UTC')
-            
+                chunk_df['parsed_date'] = chunk_df['parsed_date'].dt.tz_localize('UTC')
+
             oldest_candle_time = chunk_df['parsed_date'].min()
-            
+
             if last_fetched_oldest_timestamp == oldest_candle_time:
                 logger.warning(f"[{symbol}] Hit historical depth limit for {current_interval}. Falling back to next interval.")
                 break
@@ -232,73 +322,59 @@ async def process_instrument(
             all_candles.extend(chunk)
             if current_interval not in intervals_used:
                 intervals_used.append(current_interval)
-                
+
             last_fetched_oldest_timestamp = oldest_candle_time
             current_end_time = oldest_candle_time - timedelta(seconds=1)
-            
+
             logger.info(f"[{symbol}] ({current_interval}) Chunk fetched. Oldest record: {oldest_candle_time}. Accumulated: {len(all_candles)}")
             await asyncio.sleep(RATE_LIMIT_DELAY)
-            
+
         if current_end_time <= target_start_date:
             logger.info(f"[{symbol}] Reached target start date ({target_start_date}).")
             break
 
-    # Verarbeitung
-    new_df = pd.DataFrame()
+    # Schreiben via Katalog
+    new_count = 0
     if all_candles:
-        new_df = create_quote_ticks_dataframe(all_candles)
-        if not new_df.empty:
-            new_df = new_df[new_df["timestamp_dt"] >= target_start_date]
-            new_df = new_df.drop(columns=["timestamp_dt"])
+        new_count = write_candles_to_catalog(all_candles, symbol, catalog_path)
+        logger.info(f"[{symbol}] Wrote {new_count} new ticks to catalog.")
 
-    if new_df.empty and existing_df.empty:
+    if new_count == 0 and not has_existing_data:
         logger.warning(f"[{symbol}] No data available (neither existing nor new). Moving to next.")
         return {"symbol": symbol, "status": "No Data", "intervals": "-", "rows": 0, "range": "N/A"}
 
-    # Kombinieren
-    if not new_df.empty:
-        combined_df = pd.concat([existing_df, new_df], ignore_index=True) if not existing_df.empty else new_df
-    else:
-        combined_df = existing_df
+    if new_count == 0 and has_existing_data:
+        logger.info(f"[{symbol}] No new data fetched. Existing data is already up to date.")
 
-    combined_df = combined_df.drop_duplicates(subset=["ts_event"]).sort_values(by="ts_event", ascending=True).reset_index(drop=True)
-
-    if combined_df.empty:
-        return {"symbol": symbol, "status": "Error (Empty after merge)", "intervals": "-", "rows": 0, "range": "N/A"}
-
-    min_ts = combined_df["ts_event"].min()
-    max_ts = combined_df["ts_event"].max()
-    
-    file_name = f"{format_nautilus_timestamp(min_ts)}_{format_nautilus_timestamp(max_ts)}.parquet"
-    out_file = out_dir / file_name
-
-    # Check ob up to date
-    if new_df.empty and out_file.exists():
-        logger.info(f"[{symbol}] No new data fetched. Existing file is already up to date.")
-        return {
-            "symbol": symbol, 
-            "status": "Up-to-date", 
-            "intervals": "-", 
-            "rows": len(combined_df), 
-            "range": get_date_range_str(combined_df)
-        }
-
-    # Aufräumen & Speichern
-    for f in existing_files:
+    # Statistiken via pandas (kein catalog.quote_ticks() → kein Rust-Panic)
+    # Read from hive-partitioned dir (instrument_id=SYMBOL/) where catalog.write_data() writes.
+    total_rows = 0
+    date_range = "N/A"
+    if os.path.isdir(symbol_dir_hive):
         try:
-            f.unlink()
-        except Exception:
-            pass
+            all_ts: list = []
+            for f in Path(symbol_dir_hive).glob("*.parquet"):
+                try:
+                    df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
+                    if df['bid_price'].dtype != object:
+                        all_ts.extend(df['ts_event'].tolist())
+                except Exception:
+                    pass
+            total_rows = len(all_ts)
+            if all_ts:
+                min_dt = datetime.fromtimestamp(min(all_ts) / 1e9, tz=timezone.utc)
+                max_dt = datetime.fromtimestamp(max(all_ts) / 1e9, tz=timezone.utc)
+                date_range = f"{min_dt.strftime('%Y-%m-%d')} to {max_dt.strftime('%Y-%m-%d')}"
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not query stats: {e}")
 
-    combined_df.to_parquet(out_file)
-    logger.info(f"[{symbol}] Success: Wrote {len(combined_df)} total rows.")
-    
+    status = "Updated/New" if new_count > 0 else "Up-to-date"
     return {
-        "symbol": symbol, 
-        "status": "Updated/New", 
-        "intervals": ", ".join(intervals_used) if intervals_used else "-", 
-        "rows": len(combined_df), 
-        "range": get_date_range_str(combined_df)
+        "symbol": symbol,
+        "status": status,
+        "intervals": ", ".join(intervals_used) if intervals_used else "-",
+        "rows": total_rows,
+        "range": date_range,
     }
 
 
@@ -307,7 +383,10 @@ async def main():
     parser.add_argument("--symbol", type=str, default=None, help="Optional: Nautilus symbol to fetch.")
     parser.add_argument("--months", type=int, default=12, help="Number of months to fetch (initial load depth)")
     parser.add_argument("--intervals", type=str, default="OneHour,OneDay,OneWeek", help="Comma-separated intervals")
-    parser.add_argument("--output-dir", type=str, default="data/nautilus/data/quote_tick", help="Output directory")
+    parser.add_argument("--output-dir", type=str, default="data/nautilus/data/quote_tick",
+                        help="Legacy output directory for summary reports (kept for backwards compatibility)")
+    parser.add_argument("--catalog-path", type=str, default="data/nautilus",
+                        help="Root path of NautilusTrader ParquetDataCatalog (same as run_catalog.py)")
     args = parser.parse_args()
 
     load_dotenv()
@@ -324,12 +403,11 @@ async def main():
         instruments_to_fetch = {k: v for k, v in ETORO_INSTRUMENTS.items() if v == args.symbol}
     else:
         instruments_to_fetch = ETORO_INSTRUMENTS
-        
+
     logger.info(f"Starting bulk download/update using intervals {intervals_list} ...")
 
     target_start_date = datetime.now(timezone.utc) - timedelta(days=30 * args.months)
-    
-    # Sammelt die Resultate für den Report
+
     summary_results = []
 
     timeout = aiohttp.ClientTimeout(total=20.0)
@@ -345,45 +423,43 @@ async def main():
                     api_key=api_key,
                     user_key=user_key,
                     intervals_cascade=intervals_list,
-                    output_dir=args.output_dir
+                    output_dir=args.output_dir,
+                    catalog_path=args.catalog_path,
                 )
                 if result:
                     summary_results.append(result)
             except Exception as e:
                 logger.error(f"Unexpected error processing {symbol}: {e}")
                 summary_results.append({"symbol": symbol, "status": "Failed", "intervals": "-", "rows": 0, "range": "N/A"})
-                
+
             await asyncio.sleep(RATE_LIMIT_DELAY)
 
     # ==========================================
     # REPORTING & ZUSAMMENFASSUNG
     # ==========================================
     logger.info("\n=== Bulk update process completed ===")
-    
+
     if summary_results:
-        # Erstelle eine formattierte Text-Tabelle
         report_lines = []
         report_lines.append("=== DOWNLOAD SUMMARY REPORT ===")
         report_lines.append(f"{'Symbol':<15} | {'Status':<12} | {'Intervals Used':<25} | {'Total Rows':<10} | {'Date Range'}")
         report_lines.append("-" * 105)
-        
+
         for res in summary_results:
             report_lines.append(f"{res['symbol']:<15} | {res['status']:<12} | {res['intervals']:<25} | {res['rows']:<10} | {res['range']}")
-            
+
         report_text = "\n".join(report_lines)
-        
-        # Gebe die Tabelle in der Konsole aus
         print(f"\n{report_text}\n")
-        
-        # Speichere die Tabelle zusätzlich als .txt Datei, damit nichts verloren geht
+
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
         timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S')
         report_path = Path(args.output_dir) / f"download_summary_{timestamp_str}.txt"
-        
+
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(report_text)
-            
+
         logger.info(f"Summary report was successfully saved to: {report_path}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
