@@ -62,6 +62,7 @@ etoro_nautilus/
 │   ├── etoro_rate_limiter.py       # Priority Queue for Rate Limits
 │   ├── etoro_state_manager.py      # Persistence of Order/Position IDs
 │   ├── instrument_map.py           # Hardcoded Symbol <-> eToroID Map
+│   ├── instrument_utils.py         # Precision definitions for asset classes
 │   └── momentum_ls_allocator.py    # Capital allocator for Momentum-LS
 ├── backtesting/                    # Backtesting Engine
 │   ├── backtesting_config.json
@@ -83,6 +84,7 @@ etoro_nautilus/
 │   ├── etoro_connectivity_test.py
 │   ├── etoro_deploy_agent_portfolio.py
 │   ├── etoro_execution_test.py
+│   ├── etoro_execution_tests_advanced.py
 │   ├── etoro_execution_tests_all_orders.py
 │   ├── etoro_fetch_history.py
 │   ├── etoro_tesla_tracker.py
@@ -266,9 +268,9 @@ self.generate_account_state(balances, margins, reported, ts_event)
 | `BTC` or `ETH` | 2 | `0.01` |
 | All others | 5 | `0.00001` |
 
-All instruments use `size_precision=0` (integer quantities). This is intentional — eToro orders are placed in USD amounts, so fractional units are not needed.
+Instrument size precision is dynamically determined per asset class using `get_size_precision()` from `adapters/instrument_utils.py` (Crypto=8, Forex/Commodities=5, Equity=0). This ensures accurate quantity generation for fractional shares.
 
-**Crypto symbol set (`_CRYPTO_SYMBOLS`):** Used only for log classification, not for trading logic. When adding a new crypto, add its symbol to this frozenset.
+**Crypto symbol set:** The symbol classification (`_CRYPTO_SYMBOLS`, `_FRACTIONAL_SYMBOLS`) has been centralized in `adapters/instrument_utils.py`. When adding a new fractional asset, add its symbol there.
 
 **On any WebSocket disconnect/error:** Calls `os._exit(1)`. systemd is responsible for restart. Do NOT add in-process reconnection logic — this is intentional design.
 
@@ -363,7 +365,7 @@ All instruments use `size_precision=0` (integer quantities). This is intentional
 
 #### WebSocket Topics (Execution Client)
 
-Subscribes to: `"trading.notifications"` and `"portfolio.positions"`.
+Subscribes to: `"trading.notifications"`, `"portfolio.positions"`, `"trading.orders"`, and `"trading.executions"`.
 
 Relevant message types (checked via `msg_type.lower()`):
 - `"trading.position.opened"` / `"position.opened"` — fill event
@@ -384,7 +386,10 @@ WS messages are matched to orders by checking (in priority order):
 #### `_poll_for_fill()` — Reconciliation Fallback
 
 Runs as a background task after any market order submission. Parameters:
-- **20 attempts × 5 seconds = 100 seconds total** — designed to cover eToro's 30–90s settlement window.
+- **Exponential backoff logic** (2s, 3s, 5s, 8s, up to 10s intervals).
+- **Open Orders:** 20 attempts max.
+- **Close Orders:** 12 attempts max.
+- Designed to cover eToro's 30–90s settlement window.
 - Checks `cache.order(client_order_id).status.name == "FILLED"` each iteration.
 - For **open orders**: calls `_reconcile_via_pnl()` which scans PnL positions by token or orderId.
 - For **close orders**: checks that the positionId is no longer in the PnL positions list.
@@ -469,6 +474,20 @@ It is injected into strategies to override their quantity computation dynamicall
 1. **No-interference rule:** If there is an existing open position for the queried instrument, allocation returns `0.0`.
 2. **Dynamic slicing:** Capital is dynamically sliced based on `account_balance / pending_signals`, where pending signals are universe instruments currently without an open position.
 
+### 5.7 InstrumentUtils
+(`adapters/instrument_utils.py`)
+
+**Purpose:** Acts as the single source of truth for `size_precision` logic across both the live execution client and the backtesting engine.
+
+**API:** `get_size_precision(instrument_id_str: str) -> int`
+
+**Return values based on predefined lists:**
+- **Crypto:** `8` (Supports fractional quantities - e.g., BTC, ETH, ADA) defined in `_CRYPTO_SYMBOLS`.
+- **Forex/Commodities:** `5` (Supports fractional quantities - e.g., NATGAS, PALL) defined in `_FRACTIONAL_SYMBOLS`.
+- **Equity:** `0` (Strictly integer quantities; floats are rejected by eToro `by-units` fallback).
+
+**Usage:** Imported by `adapters/etoro_data.py` (when registering Live instruments) and `backtesting/run_backtest.py` (when creating mock instruments).
+
 ## 6. Strategy Layer
 
 All strategies live in `strategies/` and follow a strict pattern.
@@ -548,7 +567,7 @@ def _compute_quantity(self, bar: Bar) -> Quantity | None:
     return instrument.make_qty(units)
 ```
 
-`instrument.make_qty()` applies `size_precision=0` (rounds to integer), which is correct — eToro converts the integer unit count to USD internally using the current rate.
+`instrument.make_qty()` applies the appropriate `size_precision` configured for the asset class (e.g. 8 for Crypto, 0 for Equities). This allows fractional units for Crypto and ensures integer rounding for Equities, preventing live execution mismatch errors.
 
 ### Closing Positions
 
@@ -645,7 +664,28 @@ Check ready: `if not self.indicator.initialized: return`
 - **Indicators:** None (Custom VWAP calculation internal to strategy)
 - **Signal Logic:** Fades extreme moves by shorting or selling when the price deviates significantly far from the volume-weighted average price.
 
-## 7. Configuration System
+## 7. Backtesting Engine
+
+The main entry point for strategy evaluation is `python3 backtesting/run_backtest.py`. It supports high-performance matrix testing of all configurations across the entire instrument universe.
+
+### Matrix Testing & Multiprocessing
+- Tests all configured strategies against all available instruments using a parallel `ProcessPoolExecutor`.
+- **Pickleability Check:** Cython extension types (like `QuoteTick`) may not be pickleable on all platforms. The engine performs a `pickle.dumps` check on the first tick; if it fails, it cleanly falls back to sequential execution.
+- **Log Merging:** Worker processes log to temporary files (`worker_*.log`), which are immediately read and merged into stdout to maintain real-time streaming, then deleted via an `atexit` cleanup handler.
+
+### Execution Constraints
+- **OMS Type:** Configures venues with `OmsType.NETTING` (not `HEDGING`) so Sell orders correctly close open Buy positions, enabling strategy PnL realization.
+- **Size Precision:** `create_mock_instrument` calculates `size_precision` and `size_increment` dynamically via `instrument_utils.get_size_precision()` (8 for Crypto, 5 for Forex/Commodities, 0 for Equities) to match live eToro precision rounding rules.
+
+### Tournament Mode (`--momentum`)
+Passing `--momentum` activates a tournament mode designed to rank strategies for live deployment:
+- Generates metrics across all instruments and strategies.
+- Qualifies strategies where `profit_factor > 1.5` AND `total_trades >= 5`.
+- Generates an automated ranking based on Sortino and Calmar ratios.
+- Outputs results to `logs/tournament_YYYY-MM-DD.json`, which is natively read by the live orchestrator `momentum_ls_run.py`.
+- Generates HTML Tearsheets (when `--htmlreport` is passed) only for combinations where `profit_factor > 1.0` to save I/O overhead.
+
+## 8. Configuration System
 
 ### `config/setups.py`
 
@@ -698,7 +738,7 @@ The `strategy_id` is constructed as: `"{strategy_class}_{symbol}_{index}"`.
 
 ---
 
-## 8. eToro API Reference
+## 9. eToro API Reference
 
 ### WebSocket Protocol
 
@@ -796,7 +836,7 @@ data = data.get("clientPortfolio", data)
 
 ---
 
-## 9. Order Lifecycle & Reconciliation
+## 10. Order Lifecycle & Reconciliation
 
 ### Market Open Order
 
@@ -846,7 +886,7 @@ Called by Nautilus automatically for orders in `INITIALIZED`, `SUBMITTED`, or `A
 
 ---
 
-## 10. Adding New Instruments
+## 11. Adding New Instruments
 
 **Step 1:** Find the eToro numeric ID:
 ```bash
@@ -862,9 +902,9 @@ ETORO_INSTRUMENTS = {
 }
 ```
 
-**Step 3:** If the symbol is a cryptocurrency, add it to `_CRYPTO_SYMBOLS` in `adapters/etoro_data.py`:
+**Step 3:** If the symbol is a cryptocurrency or fractional asset, add it to `_CRYPTO_SYMBOLS` or `_FRACTIONAL_SYMBOLS` in `adapters/instrument_utils.py`:
 ```python
-_CRYPTO_SYMBOLS: frozenset[str] = frozenset({
+_CRYPTO_SYMBOLS = frozenset({
     "BTC", "ETH", ..., "NEWSYM",
 })
 ```
@@ -892,7 +932,7 @@ _CRYPTO_SYMBOLS: frozenset[str] = frozenset({
 
 ---
 
-## 11. Adding New Strategies
+## 12. Adding New Strategies
 
 **Step 1:** Create `strategies/my_new_strategy.py` following the pattern in Section 6.
 
@@ -931,7 +971,7 @@ STRATEGY_REGISTRY = {
 
 ---
 
-## 12. Safety & Risk Controls
+## 13. Safety & Risk Controls
 
 ### Live Trading Safety Interlock
 
@@ -975,7 +1015,7 @@ Note: `cache.positions_open()` (no instrument filter) counts across ALL instrume
 
 ---
 
-## 13. Error Handling Conventions
+## 14. Error Handling Conventions
 
 ### In Adapters
 
@@ -998,7 +1038,7 @@ Wrapped in `try/except Exception as e: self._log.error(...)`. The message loop c
 
 ---
 
-## 14. Testing & Development Scripts
+## 15. Testing & Development Scripts
 
 All dev scripts are in `dev_scripts/` and load credentials from `.env` automatically via `python-dotenv`.
 
@@ -1014,6 +1054,7 @@ All dev scripts are in `dev_scripts/` and load credentials from `.env` automatic
 | `etoro_connectivity_test.py` | Tests WS & REST connectivity without placing orders. | No |
 | `etoro_deploy_agent_portfolio.py` | Deployment script for portfolios. | Conditional |
 | `etoro_execution_test.py` | Runs `EToroExecutionClient` in a test mode. | Conditional |
+| `etoro_execution_tests_advanced.py` | Advanced 4-phase state machine test (LONG, SL/TP/TSL). | Yes |
 | `etoro_execution_tests_all_orders.py` | Comprehensive order testing script. | Yes |
 | `etoro_fetch_history.py` | Fetches historical data. | No |
 | `etoro_tesla_tracker.py` | Example script tracking Tesla. | No |
@@ -1043,7 +1084,7 @@ python3 dev_scripts/etoro_execution_test.py
 
 ---
 
-## 15. Environment Setup
+## 16. Environment Setup
 
 ### `.env` file (never commit)
 
@@ -1082,7 +1123,7 @@ logs/
 
 ---
 
-## 16. Common Pitfalls & Known Issues
+## 17. Common Pitfalls & Known Issues
 
 ### 1. PnL Envelope Unwrapping
 The real PnL endpoint wraps data in `clientPortfolio`. The demo endpoint may or may not. Always unwrap:
@@ -1104,8 +1145,8 @@ if isinstance(content_raw, str):
 ### 4. `IsMarketOpen` and `AllowBuy` are Strings
 In Snapshot messages, these fields are `"true"` / `"false"` strings, not Python booleans. Always compare with the string: `content.get("IsMarketOpen") == "true"`.
 
-### 5. Size Precision is Always 0
-All instruments are registered with `size_precision=0`. `instrument.make_qty(units)` will floor/round to integer. This is correct for eToro — never change this to a non-zero value without verifying eToro API behavior for fractional units.
+### 5. Asset-Class Specific Size Precision
+Instrument `size_precision` is actively determined by asset class (Crypto=8, Forex/Commodity=5, Equity=0). `instrument.make_qty(units)` will apply the correct precision for the target asset. This is vital as the `by-amount` API pathway handles USD conversions cleanly, but fallback `by-units` paths (e.g. for some shorting operations) will fail if eToro expects an integer for Equities but receives a float.
 
 ### 6. `cache.positions_open()` Counts All Instruments
 The unfiltered `self.cache.positions_open()` call counts across all instruments. If running 28 bots each with `max_open_positions=1`, the global count limit will be hit immediately after the first position is opened. Consider whether strategies should use the instrument-filtered version for the cap check.
@@ -1155,7 +1196,7 @@ from executing — it only affects the distance of the stop-loss trigger.
 
 ---
 
-## 17. Code Style & Conventions
+## 18. Code Style & Conventions
 
 ### Language
 - All **code** is in English.
@@ -1201,7 +1242,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 ---
 
-## 18. Changelog (Agent-Maintained)
+## 19. Changelog (Agent-Maintained)
 
 > **Instructions for Jules:** When you make changes to this repository, append an entry to this section. Include the date, a brief description of what changed, and which files were modified. This log helps track what changes have been applied automatically.
 
@@ -1226,7 +1267,11 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | 2026-05-17 | Redesigned advanced execution test to use LONG positions after confirming SHORT (IsBuy:False) is silently dropped by eToro REAL API for ADA. Added silent-drop detection in on_order_accepted (aborts immediately if PnL empty after 5s). Fixed misleading phase timeout message. Documented SHORT constraint in Section 16. | `dev_scripts/etoro_execution_tests_advanced.py`, `config/setups.py`, `AGENTS.md` |
 | 2026-05-17 | Behoben: False-Positive im SILENT DROP Detector — eToro PnL-Latenz beträgt 8-12s, Diagnostic-Sleep von 5s auf 12s erhöht, kein Abort mehr aus _fetch_pnl_diagnostic (rein informativ). Alle vorherigen 'silent drop' Orders waren echte Fills mit verzögerter PnL-Sichtbarkeit. | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
 | 2026-05-17 | PR #36 vollständig validiert: alle 4 Execution-Phasen (plain/SL/SL+TP/SL+TSL) auf REAL-Account erfolgreich. isTslEnabled=false in PnL für TSL-Positionen dokumentiert (siehe Pitfall #12). _verify_tsl_field läuft jetzt vor dem Close-Order. Emergency Cleanup nach erfolgreichem Test deaktiviert. Documented eToro SL rate doubling behavior (sent 5% → stored ~10% in PnL). PR #36 fully validated across 2 complete 4-phase test runs. | `dev_scripts/etoro_execution_tests_advanced.py`, `AGENTS.md` |
+| 2026-05-19 | Backtesting: `size_precision=0` → asset-klassenspezifisch (8/5/0); `OmsType.HEDGING` → `NETTING`; `commission`-Fallback aus Metrik-Extraktion entfernt; Ticks aus innerer Schleife in äussere verschoben (77 statt 693 Disk-Reads); `ProcessPoolExecutor` mit serialisierbarem QuoteTick-Check und sequenziellem Fallback; Catalog-Write-Spam unterdrückt; HTML-Report-Threshold PF > 1.0 | `backtesting/run_backtest.py` |
+| 2026-05-19 | Neu: `adapters/instrument_utils.py` als zentrale Precision-Logik für Backtest und Live | `adapters/instrument_utils.py` |
+| 2026-05-19 | `etoro_data.py`: `size_precision` via `get_size_precision()` aus `instrument_utils`; lokales `_CRYPTO_SYMBOLS` entfernt; `is_crypto` aus Precision abgeleitet | `adapters/etoro_data.py` |
+| 2026-05-19 | `run_backtest.py`: toter Code `_CRYPTO_SYMBOLS` entfernt; `executor = None` vor `try`-Block initialisiert | `backtesting/run_backtest.py` |
 
 ---
 
-*Last updated: 2026-05-17. Update this date and the changelog above whenever you modify this file.*
+*Last updated: 2026-05-19. Update this date and the changelog above whenever you modify this file.*
