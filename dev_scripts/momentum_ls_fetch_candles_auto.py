@@ -111,8 +111,7 @@ def _get_key_case_insensitive(row: dict, possible_keys: list) -> str:
 def _ensure_instrument_registered(catalog, instrument_id_str: str, price_precision: int = 5) -> None:
     """
     Registriert ein Mock-Instrument im Katalog, falls noch nicht vorhanden.
-    NautilusTrader benötigt Instrument-Metadaten im Katalog bevor quote_ticks()
-    aufgerufen werden kann — sonst Rust-Panic mit MissingMetadata("instrument_id").
+    Wird vor catalog.write_data(ticks) benötigt.
     """
     from nautilus_trader.model.identifiers import InstrumentId
     from nautilus_trader.model.objects import Price, Quantity
@@ -135,6 +134,33 @@ def _ensure_instrument_registered(catalog, instrument_id_str: str, price_precisi
         catalog.write_data([instrument])
     except Exception as e:
         logger.debug(f"Instrument {instrument_id_str} already registered or write skipped: {e}")
+
+
+def _collect_existing_ts(symbol_dir: str, instrument_id_str: str) -> set:
+    """
+    Liest ts_event-Werte aus allen Parquet-Dateien im symbol_dir via pandas.
+    Erkennt und löscht Dateien im alten Format (bid_price als bytes/object).
+    Sicher: kein catalog.quote_ticks()-Aufruf → kein Rust-Panic.
+    """
+    symbol_path = Path(symbol_dir)
+    existing_ts: set = set()
+    for f in symbol_path.glob("*.parquet"):
+        try:
+            df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
+            if df['bid_price'].dtype == object:
+                # Altes Format: Preise als UTF-8-Bytes gespeichert → löschen
+                f.unlink()
+                logger.info(f"[{instrument_id_str}] Altes Format entfernt: {f.name}")
+            else:
+                existing_ts.update(df['ts_event'].tolist())
+        except Exception as e:
+            # Nicht lesbare Datei → als altes/korruptes Format behandeln und löschen
+            try:
+                f.unlink()
+                logger.info(f"[{instrument_id_str}] Unlesbare Parquet-Datei entfernt: {f.name}")
+            except Exception as rm_err:
+                logger.warning(f"[{instrument_id_str}] Konnte {f.name} nicht löschen: {rm_err}")
+    return existing_ts
 
 
 def write_candles_to_catalog(
@@ -193,21 +219,17 @@ def write_candles_to_catalog(
             continue
 
     if ticks:
-        # Instrument im Katalog registrieren (Pflicht vor quote_ticks()-Aufruf)
         prec = ticks[0].bid_price.precision if ticks else price_precision
-        _ensure_instrument_registered(catalog, instrument_id_str, prec)
 
-        # Deduplizierung: vorhandene ts_event prüfen (nur wenn Daten-Ordner existiert)
+        # Deduplizierung via pandas (kein catalog.quote_ticks() → kein Rust-Panic).
+        # Erkennt und löscht auch alte Dateien im falschen Byte-Format.
         symbol_dir = os.path.join(catalog_path, "data", "quote_tick", instrument_id_str)
-        existing = []
-        try:
-            if os.path.isdir(symbol_dir):
-                existing = catalog.quote_ticks(instrument_ids=[instrument_id_str])
-            existing_ts = {t.ts_event for t in existing}
+        if os.path.isdir(symbol_dir):
+            existing_ts = _collect_existing_ts(symbol_dir, instrument_id_str)
             ticks = [t for t in ticks if t.ts_event not in existing_ts]
-        except Exception as e:
-            logger.debug(f"Could not load existing ticks for dedup ({instrument_id_str}): {e}")
 
+        # Instrument registrieren, dann Ticks schreiben
+        _ensure_instrument_registered(catalog, instrument_id_str, prec)
         if ticks:
             catalog.write_data(ticks)
 
@@ -226,28 +248,22 @@ async def process_instrument(
     catalog_path: str,
 ) -> dict:
     """Lade historische Kerzen herunter und retourniere einen Summary-Eintrag."""
-    from nautilus_trader.persistence.catalog import ParquetDataCatalog
-
-    catalog = ParquetDataCatalog(catalog_path)
-
-    # Delta-Update Logik: Finde neuesten Zeitstempel im Katalog
-    # Nur prüfen wenn der Daten-Ordner bereits existiert (vermeidet Rust-Panic)
+    # Delta-Update Logik: Finde neuesten Zeitstempel via pandas (kein catalog.quote_ticks())
     adjusted_start = target_start_date
     has_existing_data = False
     symbol_dir = os.path.join(catalog_path, "data", "quote_tick", symbol)
     if os.path.isdir(symbol_dir):
         try:
-            _ensure_instrument_registered(catalog, symbol)
-            existing_ticks = catalog.quote_ticks(instrument_ids=[symbol])
-            if existing_ticks:
+            existing_ts = _collect_existing_ts(symbol_dir, symbol)
+            if existing_ts:
                 has_existing_data = True
-                max_ts_ns = max(t.ts_event for t in existing_ticks)
+                max_ts_ns = max(existing_ts)
                 latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
                 if latest_dt > target_start_date:
                     adjusted_start = latest_dt
                     logger.info(f"[{symbol}] Delta update: Fetching only records newer than {adjusted_start}")
         except Exception as e:
-            logger.warning(f"[{symbol}] Could not check existing catalog data: {e}")
+            logger.warning(f"[{symbol}] Could not check existing data: {e}")
 
     target_start_date = adjusted_start
 
@@ -316,21 +332,26 @@ async def process_instrument(
     if new_count == 0 and has_existing_data:
         logger.info(f"[{symbol}] No new data fetched. Existing data is already up to date.")
 
-    # Statistiken aus Katalog abfragen (nur wenn Ordner existiert)
+    # Statistiken via pandas (kein catalog.quote_ticks() → kein Rust-Panic)
     total_rows = 0
     date_range = "N/A"
     if os.path.isdir(symbol_dir):
         try:
-            all_ticks = catalog.quote_ticks(instrument_ids=[symbol])
-            total_rows = len(all_ticks)
-            if all_ticks:
-                min_ts = min(t.ts_event for t in all_ticks)
-                max_ts = max(t.ts_event for t in all_ticks)
-                min_dt = datetime.fromtimestamp(min_ts / 1e9, tz=timezone.utc)
-                max_dt = datetime.fromtimestamp(max_ts / 1e9, tz=timezone.utc)
+            all_ts: list = []
+            for f in Path(symbol_dir).glob("*.parquet"):
+                try:
+                    df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
+                    if df['bid_price'].dtype != object:
+                        all_ts.extend(df['ts_event'].tolist())
+                except Exception:
+                    pass
+            total_rows = len(all_ts)
+            if all_ts:
+                min_dt = datetime.fromtimestamp(min(all_ts) / 1e9, tz=timezone.utc)
+                max_dt = datetime.fromtimestamp(max(all_ts) / 1e9, tz=timezone.utc)
                 date_range = f"{min_dt.strftime('%Y-%m-%d')} to {max_dt.strftime('%Y-%m-%d')}"
         except Exception as e:
-            logger.warning(f"[{symbol}] Could not query catalog for stats: {e}")
+            logger.warning(f"[{symbol}] Could not query stats: {e}")
 
     status = "Updated/New" if new_count > 0 else "Up-to-date"
     return {
