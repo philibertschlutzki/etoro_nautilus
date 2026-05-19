@@ -231,6 +231,7 @@ def write_candles_to_catalog(
         # Instrument registrieren, dann Ticks schreiben
         _ensure_instrument_registered(catalog, instrument_id_str, prec)
         if ticks:
+            ticks.sort(key=lambda x: x.ts_init)
             catalog.write_data(ticks)
 
     return len(ticks)
