@@ -223,9 +223,17 @@ def write_candles_to_catalog(
 
         # Deduplizierung via pandas (kein catalog.quote_ticks() → kein Rust-Panic).
         # Erkennt und löscht auch alte Dateien im falschen Byte-Format.
-        symbol_dir = os.path.join(catalog_path, "data", "quote_tick", instrument_id_str)
-        if os.path.isdir(symbol_dir):
-            existing_ts = _collect_existing_ts(symbol_dir, instrument_id_str)
+        # catalog.write_data() uses hive partitioning → instrument_id=SYMBOL/
+        # Old code wrote to plain SYMBOL/ — check both to clean legacy files and dedup correctly.
+        _base = os.path.join(catalog_path, "data", "quote_tick")
+        symbol_dir_plain = os.path.join(_base, instrument_id_str)
+        symbol_dir_hive = os.path.join(_base, f"instrument_id={instrument_id_str}")
+        existing_ts: set = set()
+        if os.path.isdir(symbol_dir_plain):
+            existing_ts.update(_collect_existing_ts(symbol_dir_plain, instrument_id_str))
+        if os.path.isdir(symbol_dir_hive):
+            existing_ts.update(_collect_existing_ts(symbol_dir_hive, instrument_id_str))
+        if existing_ts:
             ticks = [t for t in ticks if t.ts_event not in existing_ts]
 
         # Instrument registrieren, dann Ticks schreiben
@@ -252,19 +260,24 @@ async def process_instrument(
     # Delta-Update Logik: Finde neuesten Zeitstempel via pandas (kein catalog.quote_ticks())
     adjusted_start = target_start_date
     has_existing_data = False
-    symbol_dir = os.path.join(catalog_path, "data", "quote_tick", symbol)
-    if os.path.isdir(symbol_dir):
-        try:
-            existing_ts = _collect_existing_ts(symbol_dir, symbol)
-            if existing_ts:
-                has_existing_data = True
-                max_ts_ns = max(existing_ts)
-                latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
-                if latest_dt > target_start_date:
-                    adjusted_start = latest_dt
-                    logger.info(f"[{symbol}] Delta update: Fetching only records newer than {adjusted_start}")
-        except Exception as e:
-            logger.warning(f"[{symbol}] Could not check existing data: {e}")
+    _base_tick_dir = os.path.join(catalog_path, "data", "quote_tick")
+    symbol_dir_plain = os.path.join(_base_tick_dir, symbol)
+    symbol_dir_hive = os.path.join(_base_tick_dir, f"instrument_id={symbol}")
+    try:
+        existing_ts: set = set()
+        if os.path.isdir(symbol_dir_plain):
+            existing_ts.update(_collect_existing_ts(symbol_dir_plain, symbol))
+        if os.path.isdir(symbol_dir_hive):
+            existing_ts.update(_collect_existing_ts(symbol_dir_hive, symbol))
+        if existing_ts:
+            has_existing_data = True
+            max_ts_ns = max(existing_ts)
+            latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
+            if latest_dt > target_start_date:
+                adjusted_start = latest_dt
+                logger.info(f"[{symbol}] Delta update: Fetching only records newer than {adjusted_start}")
+    except Exception as e:
+        logger.warning(f"[{symbol}] Could not check existing data: {e}")
 
     target_start_date = adjusted_start
 
@@ -334,12 +347,13 @@ async def process_instrument(
         logger.info(f"[{symbol}] No new data fetched. Existing data is already up to date.")
 
     # Statistiken via pandas (kein catalog.quote_ticks() → kein Rust-Panic)
+    # Read from hive-partitioned dir (instrument_id=SYMBOL/) where catalog.write_data() writes.
     total_rows = 0
     date_range = "N/A"
-    if os.path.isdir(symbol_dir):
+    if os.path.isdir(symbol_dir_hive):
         try:
             all_ts: list = []
-            for f in Path(symbol_dir).glob("*.parquet"):
+            for f in Path(symbol_dir_hive).glob("*.parquet"):
                 try:
                     df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
                     if df['bid_price'].dtype != object:
