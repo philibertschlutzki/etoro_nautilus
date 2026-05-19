@@ -108,6 +108,35 @@ def _get_key_case_insensitive(row: dict, possible_keys: list) -> str:
     return None
 
 
+def _ensure_instrument_registered(catalog, instrument_id_str: str, price_precision: int = 5) -> None:
+    """
+    Registriert ein Mock-Instrument im Katalog, falls noch nicht vorhanden.
+    NautilusTrader benötigt Instrument-Metadaten im Katalog bevor quote_ticks()
+    aufgerufen werden kann — sonst Rust-Panic mit MissingMetadata("instrument_id").
+    """
+    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.model.objects import Price, Quantity
+    from nautilus_trader.model.instruments import Equity
+    from nautilus_trader.model.currencies import USD
+
+    inst_id = InstrumentId.from_str(instrument_id_str)
+    increment = round(10 ** (-price_precision), price_precision)
+    instrument = Equity(
+        instrument_id=inst_id,
+        raw_symbol=inst_id.symbol,
+        currency=USD,
+        price_precision=price_precision,
+        price_increment=Price(increment, precision=price_precision),
+        lot_size=Quantity(1, precision=0),
+        ts_event=0,
+        ts_init=0,
+    )
+    try:
+        catalog.write_data([instrument])
+    except Exception as e:
+        logger.debug(f"Instrument {instrument_id_str} already registered or write skipped: {e}")
+
+
 def write_candles_to_catalog(
     candles: list[dict],
     instrument_id_str: str,
@@ -164,10 +193,16 @@ def write_candles_to_catalog(
             continue
 
     if ticks:
-        # Deduplizierung: vorhandene ts_event prüfen
+        # Instrument im Katalog registrieren (Pflicht vor quote_ticks()-Aufruf)
+        prec = ticks[0].bid_price.precision if ticks else price_precision
+        _ensure_instrument_registered(catalog, instrument_id_str, prec)
+
+        # Deduplizierung: vorhandene ts_event prüfen (nur wenn Daten-Ordner existiert)
+        symbol_dir = os.path.join(catalog_path, "data", "quote_tick", instrument_id_str)
         existing = []
         try:
-            existing = catalog.quote_ticks(instrument_ids=[instrument_id_str])
+            if os.path.isdir(symbol_dir):
+                existing = catalog.quote_ticks(instrument_ids=[instrument_id_str])
             existing_ts = {t.ts_event for t in existing}
             ticks = [t for t in ticks if t.ts_event not in existing_ts]
         except Exception as e:
@@ -196,19 +231,23 @@ async def process_instrument(
     catalog = ParquetDataCatalog(catalog_path)
 
     # Delta-Update Logik: Finde neuesten Zeitstempel im Katalog
+    # Nur prüfen wenn der Daten-Ordner bereits existiert (vermeidet Rust-Panic)
     adjusted_start = target_start_date
     has_existing_data = False
-    try:
-        existing_ticks = catalog.quote_ticks(instrument_ids=[symbol])
-        if existing_ticks:
-            has_existing_data = True
-            max_ts_ns = max(t.ts_event for t in existing_ticks)
-            latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
-            if latest_dt > target_start_date:
-                adjusted_start = latest_dt
-                logger.info(f"[{symbol}] Delta update: Fetching only records newer than {adjusted_start}")
-    except Exception as e:
-        logger.warning(f"[{symbol}] Could not check existing catalog data: {e}")
+    symbol_dir = os.path.join(catalog_path, "data", "quote_tick", symbol)
+    if os.path.isdir(symbol_dir):
+        try:
+            _ensure_instrument_registered(catalog, symbol)
+            existing_ticks = catalog.quote_ticks(instrument_ids=[symbol])
+            if existing_ticks:
+                has_existing_data = True
+                max_ts_ns = max(t.ts_event for t in existing_ticks)
+                latest_dt = datetime.fromtimestamp(max_ts_ns / 1e9, tz=timezone.utc)
+                if latest_dt > target_start_date:
+                    adjusted_start = latest_dt
+                    logger.info(f"[{symbol}] Delta update: Fetching only records newer than {adjusted_start}")
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not check existing catalog data: {e}")
 
     target_start_date = adjusted_start
 
@@ -277,20 +316,21 @@ async def process_instrument(
     if new_count == 0 and has_existing_data:
         logger.info(f"[{symbol}] No new data fetched. Existing data is already up to date.")
 
-    # Statistiken aus Katalog abfragen
+    # Statistiken aus Katalog abfragen (nur wenn Ordner existiert)
     total_rows = 0
     date_range = "N/A"
-    try:
-        all_ticks = catalog.quote_ticks(instrument_ids=[symbol])
-        total_rows = len(all_ticks)
-        if all_ticks:
-            min_ts = min(t.ts_event for t in all_ticks)
-            max_ts = max(t.ts_event for t in all_ticks)
-            min_dt = datetime.fromtimestamp(min_ts / 1e9, tz=timezone.utc)
-            max_dt = datetime.fromtimestamp(max_ts / 1e9, tz=timezone.utc)
-            date_range = f"{min_dt.strftime('%Y-%m-%d')} to {max_dt.strftime('%Y-%m-%d')}"
-    except Exception as e:
-        logger.warning(f"[{symbol}] Could not query catalog for stats: {e}")
+    if os.path.isdir(symbol_dir):
+        try:
+            all_ticks = catalog.quote_ticks(instrument_ids=[symbol])
+            total_rows = len(all_ticks)
+            if all_ticks:
+                min_ts = min(t.ts_event for t in all_ticks)
+                max_ts = max(t.ts_event for t in all_ticks)
+                min_dt = datetime.fromtimestamp(min_ts / 1e9, tz=timezone.utc)
+                max_dt = datetime.fromtimestamp(max_ts / 1e9, tz=timezone.utc)
+                date_range = f"{min_dt.strftime('%Y-%m-%d')} to {max_dt.strftime('%Y-%m-%d')}"
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not query catalog for stats: {e}")
 
     status = "Updated/New" if new_count > 0 else "Up-to-date"
     return {
