@@ -50,9 +50,11 @@ class ApiOrderTestStrategy(Strategy):
         if self.buy_submitted:
             return
 
-        # eToro's _build_payload rechnet qty → USD-Betrag um (qty * ask_price).
-        # Daher ist Ganzzahl-Rounding verlustfrei für den API-Call.
-        # Alle eToro-Instrumente sind als Equity (size_precision=0) registriert.
+        # eToro Live-API: Equity-Instrumente akzeptieren nur ganzzahlige Quantities (precision=0).
+        # Crypto-Instrumente (BTC, ETH etc.) unterstützen Fraktionen — hier nicht relevant
+        # da ETORO_API_TEST auf ein Equity-Instrument zeigt.
+        # Backtest-Mock-Instrumente verwenden asset-klassenspezifische size_precision
+        # (0 für Equities, 8 für Crypto) — siehe create_mock_instrument() in run_backtest.py.
         raw_qty = float(self.usd_amount) / float(tick.ask_price)
         quantity = Quantity(max(1, round(raw_qty)), precision=0)
 
