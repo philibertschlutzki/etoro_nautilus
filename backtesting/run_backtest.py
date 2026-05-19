@@ -17,6 +17,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
 
+# Add the project root to sys.path so that 'adapters' can be imported correctly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.identifiers import Venue, InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
@@ -25,6 +28,8 @@ from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.analysis.tearsheet import create_tearsheet
+
+from adapters.instrument_utils import get_size_precision
 
 _worker_log_files: list[str] = []
 
@@ -119,20 +124,11 @@ def infer_precision_from_ticks(ticks: list) -> int:
     return int(max(precisions)) if precisions else 5
 
 
-def _get_size_precision(instrument_id_str: str) -> int:
-    """
-    Gibt die korrekte size_precision zurück, kompatibel mit eToro Live-Execution.
-    Crypto: 8 (eToro erlaubt Fractional Crypto)
-    Equity/Commodities: 0 (eToro rundet auf ganze Units)
-    """
-    symbol = instrument_id_str.split(".")[0]
-    return 8 if symbol in _CRYPTO_SYMBOLS else 0
-
 def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> Equity:
     """Generiert ein dynamisches Mock-Instrument."""
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
-    size_prec = _get_size_precision(instrument_id_str)
+    size_prec = get_size_precision(instrument_id_str)
     size_inc_val = round(10 ** (-size_prec), size_prec) if size_prec > 0 else 1.0
 
     return Equity(
@@ -705,6 +701,11 @@ def run_backtest():
 
     finally:
         _cleanup_worker_logs()
+        if _use_multiprocessing and executor is not None:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                executor.shutdown(wait=False)
 
     # --- TOURNAMENT MODUS ---
     if args.momentum:
