@@ -19,19 +19,13 @@ from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
 from adapters.instrument_map import ETORO_INSTRUMENTS
+from adapters.instrument_utils import get_size_precision
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _MAX_CONNECT_ATTEMPTS = 5
 _CONNECT_TIMEOUT_S = 30
 _HEARTBEAT_INTERVAL = 60
-
-# Crypto-Symbole — zur Klassifikation bei der Instrument-Registrierung.
-# Erweiterbar ohne Logik-Änderung.
-_CRYPTO_SYMBOLS: frozenset[str] = frozenset({
-    "BTC", "ETH", "ADA", "XRP", "SOL", "AVAX", "DOGE",
-    "ONDO", "HYPE", "AERO", "SHIBxM", "PEPExM",
-})
 
 # ── Config & Factory ──────────────────────────────────────────────────────────
 
@@ -185,10 +179,12 @@ class EToroDataClient(LiveMarketDataClient):
                 price_prec, price_incr = 5, 0.00001
 
             # ── Instrument-Typ ────────────────────────────────────────────────
-            # Alle eToro-Instrumente werden als Equity registriert (size_precision=0).
-            # Die Strategie rundet Quantities auf ganze Einheiten — für eToro korrekt,
-            # da _build_payload() sowieso in USD-Betrag (qty * px) umrechnet.
-            is_crypto = any(c in sym for c in _CRYPTO_SYMBOLS)
+            # Die Live-Strategie verlässt sich auf die korrekte size_precision
+            # um Quantities vor dem API-Call via instrument.make_qty() sauber zu runden.
+            size_prec = get_size_precision(str(instr_id))
+            is_crypto = size_prec > 0
+
+            size_inc_val = round(10 ** (-size_prec), size_prec) if size_prec > 0 else 1.0
 
             inst = Equity(
                 instrument_id=instr_id,
@@ -196,7 +192,9 @@ class EToroDataClient(LiveMarketDataClient):
                 currency=USD,
                 price_precision=price_prec,
                 price_increment=Price(price_incr, precision=price_prec),
-                lot_size=Quantity(1, precision=0),
+                size_precision=size_prec,
+                size_increment=Quantity(size_inc_val, precision=size_prec),
+                lot_size=Quantity(size_inc_val, precision=size_prec),
                 ts_event=ts,
                 ts_init=ts,
             )
