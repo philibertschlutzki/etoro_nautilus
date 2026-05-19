@@ -561,11 +561,23 @@ def _on_buy_signal(self, bar: Bar) -> None:
 def _compute_quantity(self, bar: Bar) -> Quantity | None:
     instrument = self.cache.instrument(self.instrument_id)
     if instrument is None:
-        self._log.error(f"[{self.instrument_id}] Instrument not in cache")
+        self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
         return None
     units = self.config.trade_amount_usd / float(bar.close)
-    return instrument.make_qty(units)
+    qty = instrument.make_qty(units, round_down=True)  # round_down=True ist Pflicht!
+    if qty == 0:
+        # Passiert bei Equities (size_precision=0) wenn trade_amount_usd < price
+        self._log.warning(
+            f"[{self.instrument_id}] Quantity=0 nach Rundung "
+            f"(units={units:.6f}) — Signal übersprungen"
+        )
+        return None
+    return qty
 ```
+
+> **Kritisch:** `make_qty(units)` ohne `round_down=True` wirft bei Equity-Instrumenten
+> (size_precision=0) einen harten `ValueError`, wenn `units < 1`. Das führt zu einem
+> unkontrollierten Worker-Crash im Backtest-Pool. Siehe Section 16, Pitfall #14.
 
 `instrument.make_qty()` applies the appropriate `size_precision` configured for the asset class (e.g. 8 for Crypto, 0 for Equities). This allows fractional units for Crypto and ensures integer rounding for Equities, preventing live execution mismatch errors.
 
@@ -1194,6 +1206,50 @@ To achieve a true 5% stop on the actual fill rate, set SL:0.025.
 This adjustment is applied consistently and does not prevent the order
 from executing — it only affects the distance of the stop-loss trigger.
 
+### 14. `make_qty` ValueError bei Equity-Instrumenten im Backtest
+
+**Symptom:** `ValueError: Invalid value for quantity: X was rounded to zero due to
+size increment 1 and size precision 0` — tritt auf, wenn `trade_amount_usd / price < 1`
+bei einem Equity-Instrument (size_precision=0).
+
+**Root Cause:** `instrument.make_qty(units)` verwendet `round_down=False` als Default.
+Bei `size_precision=0` (ganzzahlige Stückelung) wirft Nautilus einen harten ValueError
+statt auf 0 abzurunden, wenn der berechnete Bruchwert kleiner als 1 Einheit ist.
+Der Fehler propagiert aus Cython und kann nicht vom äußeren `try/except` in
+`run_single_backtest_worker` gefangen werden — der Worker-Prozess crasht hart.
+
+**Lösung:** Immer `instrument.make_qty(units, round_down=True)` verwenden und das
+Ergebnis auf 0 prüfen:
+```python
+qty = instrument.make_qty(units, round_down=True)
+if qty == 0:
+    return None  # Signal überspringen, zu wenig Kapital für 1 Einheit
+```
+
+**Betroffene Dateien:** Alle Strategie-Dateien in `strategies/` (9 Stück).
+Siehe auch Section 6 (`_compute_quantity()` Pattern) — dort ist das korrekte
+Muster jetzt dokumentiert.
+
+### 15. `BrokenProcessPool` durch OOM bei zu vielen parallelen Backtest-Workern
+
+**Symptom:** `concurrent.futures.process.BrokenProcessPool: A process in the
+process pool was terminated abruptly while the future was running or pending.`
+— tritt nach dem ersten Worker-Crash auf und invalidiert alle noch-pending Futures.
+
+**Root Cause:** `ProcessPoolExecutor(max_workers=os.cpu_count())` startet so viele
+Worker wie CPUs. Jeder Worker lädt eine vollständige Nautilus `BacktestEngine`
+inkl. Tick-Daten als Pickle-Payload. Bei 77 Instrumenten × 9 Strategien = 693 Jobs
+und z.B. 10 CPUs laufen gleichzeitig 10 Engines im RAM → OOM → SIGKILL →
+`BrokenProcessPool` für alle weiteren Futures (Python kann SIGKILL nicht fangen).
+Zusätzlich akkumuliert RAM über die Pool-Laufzeit, da Worker nie recycelt werden.
+
+**Lösung:**
+1. Worker auf `max(1, min(os.cpu_count() // 2, 6))` begrenzen.
+2. `max_tasks_per_child=1` (Python ≥ 3.11) recycelt jeden Worker nach einem Job.
+3. `BrokenProcessPool` explizit fangen und auf sequenziellen Fallback wechseln.
+
+**Betroffene Datei:** `backtesting/run_backtest.py`.
+
 ---
 
 ## 18. Code Style & Conventions
@@ -1248,6 +1304,8 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-19 | Bugfix: `make_qty` ValueError bei Equity-Instrumenten — alle 9 Strategie-Dateien auf `round_down=True` + None-Guard umgestellt; Section 6 `_compute_quantity()`-Pattern aktualisiert | `strategies/*.py`, `AGENTS.md` |
+| 2026-05-19 | Bugfix: `BrokenProcessPool` OOM-Crash — `ProcessPoolExecutor` auf `cpu//2` (max 6) Worker begrenzt; `max_tasks_per_child=1` für Python ≥ 3.11; expliziter `BrokenProcessPool`-Catch mit sequenziellem Fallback | `backtesting/run_backtest.py`, `AGENTS.md` |
 | 2026-05-17 | Documentation audit: full repository sync, all sections verified | `AGENTS.md` |
 | 2026-05-17 | Overhauled manuals/ directory: updated deployment.md, backtesting_manual.md, new_tickers.md, momentum_ls.md, feature_automation_LS.md and added TESTING.md | `manuals/*` |
 | 2026-05-14 | Added `momentum_ls_run.py` live orchestrator that combines universe, allocator, and tournament JSONs to launch safe live nodes. Included 24h stale-universe check and identical safety interlocks | `dev_scripts/momentum_ls_run.py`, `AGENTS.md` |
