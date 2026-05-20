@@ -192,8 +192,6 @@ class EToroDataClient(LiveMarketDataClient):
                 currency=USD,
                 price_precision=price_prec,
                 price_increment=Price(price_incr, precision=price_prec),
-                size_precision=size_prec,
-                size_increment=Quantity(size_inc_val, precision=size_prec),
                 lot_size=Quantity(size_inc_val, precision=size_prec),
                 ts_event=ts,
                 ts_init=ts,
@@ -207,7 +205,7 @@ class EToroDataClient(LiveMarketDataClient):
             self._log.info(
                 f"Instrument registriert: {instr_id} "
                 f"[{'Crypto' if is_crypto else 'Equity'}] "
-                f"price_prec={price_prec}, size_prec={inst.size_precision}",
+                f"price_prec={price_prec}, size_prec={size_prec}",
                 LogColor.BLUE,
             )
 
