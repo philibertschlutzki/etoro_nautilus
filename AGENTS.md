@@ -539,6 +539,7 @@ def _on_buy_signal(self, bar: Bar) -> None:
         if pos.side == PositionSide.LONG:
             return   # Already long, do nothing
         self._close_position(pos)   # Close opposite (short) position
+        self.current_signal = None   # Signal-State-Reset: prevents Flat-Lock on next bar
         return   # Do NOT open new position in same bar
     if len(self.cache.positions_open()) >= self.config.max_open_positions:
         return
@@ -553,6 +554,8 @@ def _on_buy_signal(self, bar: Bar) -> None:
     )
     self.submit_order(order)
 ```
+
+> **Flat-Lock-Gefahr:** Nach `_close_position()` darf `return` nur stehen wenn der Signal-State gleichzeitig zurückgesetzt wird. Andernfalls blockiert der Bar-Guard jeden Neueinstieg dauerhaft.
 
 ### Quantity Calculation
 
@@ -1286,6 +1289,21 @@ Zusätzlich akkumuliert RAM über die Pool-Laufzeit, da Worker nie recycelt werd
 
 **Betroffene Datei:** `backtesting/run_backtest.py`.
 
+### 16. Flat-Lock durch Signal-State-Persistenz nach Reverse Entry
+
+**Symptom:** Backtest zeigt `offen ≈ Trades / 2`, alle WinRate/PF/Sortino = 0.00.
+Tournament-Modus kann keine validen Rankings berechnen.
+
+**Root Cause:** In `_on_buy_signal()` / `_on_sell_signal()` wird beim Drehen einer
+Position `_close_position(pos)` + `return` aufgerufen ohne den Signal-State
+zurückzusetzen. `self.current_signal` (oder equivalent) bleibt auf "BUY"/"SELL".
+Nachfolgende Bars: Bar-Guard `if self.current_signal == ...: return` greift sofort
+und verhindert den Einstieg in die neue Richtung dauerhaft ("Flat-Lock").
+
+**Fix:** Signal-State nach `_close_position()` auf None/FLAT zurücksetzen, ODER
+Pending-Entry-Flag setzen und in `on_position_closed()` den Einstieg nachholen.
+Siehe Section 6 Boilerplate für das korrekte Muster.
+
 ---
 
 ## 18. Code Style & Conventions
@@ -1340,6 +1358,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-20 | Bugfix (4 kritische Fehler): (A) Metriken-Extraktion auf `engine.cache.positions()` + `generate_positions_report()`-Fallback umgestellt — WinRate/PF/Sortino waren dauerhaft 0.00 weil `generate_order_fills_report()` keine `realized_pnl`-Spalte enthält; (B) Open-Position-Zählung auf `status`-Spalte korrigiert — vorher wurden alle historischen DataFrame-Rows gezählt statt nur OPEN-Status (Faktor-2-Anomalie behoben); (C) Flat-Lock in allen Signal-Methoden behoben — `current_signal`/`current_position` wird nach `_close_position()` auf None zurückgesetzt, sodass Reverse-Entry auf der nächsten Bar möglich ist; (D) `OmsType.NETTING`-Konsistenz validiert — einzige Verwendung in run_backtest.py, kein HEDGING. AGENTS.md Section 6 Boilerplate + Section 17 (Pitfall #16) aktualisiert. | `backtesting/run_backtest.py`, `strategies/mean_reversion.py`, `strategies/dynamic_breakout.py`, `strategies/sma_crossover.py`, `strategies/flash_crash_reversal.py`, `strategies/volatility_breakout.py`, `strategies/trend_pullback.py`, `strategies/tesla_combo_strategy.py`, `strategies/adx_atr_momentum.py`, `strategies/momentum_ls_sma.py`, `AGENTS.md` |
 | 2026-05-20 | Bugfix (kritisch): `make_qty` ValueError korrekt behoben — Pre-check `units < size_increment` + `try/except ValueError` in allen 9 Strategie-Dateien. AGENTS.md Pitfall #14 und Section 6 Boilerplate korrigiert: `round_down=True` verhindert den ValueError NICHT (war falsch dokumentiert seit 2026-05-19). | `strategies/*.py`, `AGENTS.md` |
 | 2026-05-19 | Bugfix: `make_qty` ValueError bei Equity-Instrumenten — alle 9 Strategie-Dateien auf `round_down=True` + None-Guard umgestellt; Section 6 `_compute_quantity()`-Pattern aktualisiert | `strategies/*.py`, `AGENTS.md` |
 | 2026-05-19 | Bugfix: `BrokenProcessPool` OOM-Crash — `ProcessPoolExecutor` auf `cpu//2` (max 6) Worker begrenzt; `max_tasks_per_child=1` für Python ≥ 3.11; expliziter `BrokenProcessPool`-Catch mit sequenziellem Fallback | `backtesting/run_backtest.py`, `AGENTS.md` |
