@@ -12,7 +12,7 @@
       "strategy_class": "SmaCrossoverStrategy",
       "config_class": "SmaCrossoverConfig",
       "params": {
-        "sma_period": 20
+        "sma_period": 2
       }
     },
     {
@@ -20,10 +20,10 @@
       "strategy_class": "TrendPullbackStrategy",
       "config_class": "TrendPullbackConfig",
       "params": {
-        "ema_period": 200,
-        "rsi_period": 14,
-        "rsi_oversold": 30.0,
-        "rsi_overbought": 70.0
+        "ema_period": 3,
+        "rsi_period": 2,
+        "rsi_oversold": 65.0,
+        "rsi_overbought": 35.0
       }
     },
     {
@@ -31,9 +31,9 @@
       "strategy_class": "MeanReversionStrategy",
       "config_class": "MeanReversionConfig",
       "params": {
-        "keltner_period": 20,
-        "keltner_atr_period": 20,
-        "keltner_multiplier": 2.0
+        "keltner_period": 2,
+        "keltner_atr_period": 2,
+        "keltner_multiplier": 0.1
       }
     },
     {
@@ -41,9 +41,9 @@
       "strategy_class": "DynamicBreakoutStrategy",
       "config_class": "DynamicBreakoutConfig",
       "params": {
-        "volume_sma_period": 20,
-        "volume_multiplier": 2.5,
-        "price_breakout_period": 20
+        "volume_sma_period": 2,
+        "volume_multiplier": 0.1,
+        "price_breakout_period": 2
       }
     },
     {
@@ -51,11 +51,11 @@
       "strategy_class": "FlashCrashReversalStrategy",
       "config_class": "FlashCrashReversalConfig",
       "params": {
-        "bb_period": 20,
-        "bb_std_dev": 2.5,
-        "rsi_period": 14,
-        "rsi_oversold": 25.0,
-        "rsi_overbought": 70.0
+        "bb_period": 2,
+        "bb_std_dev": 0.1,
+        "rsi_period": 2,
+        "rsi_oversold": 65.0,
+        "rsi_overbought": 35.0
       }
     },
     {
@@ -63,8 +63,8 @@
       "strategy_class": "VolatilityBreakoutPumpStrategy",
       "config_class": "VolatilityBreakoutConfig",
       "params": {
-        "bb_period": 20,
-        "bb_std_dev": 2.0
+        "bb_period": 2,
+        "bb_std_dev": 0.1
       }
     },
     {
@@ -72,12 +72,12 @@
       "strategy_class": "ComboTrendVwapStrategy",
       "config_class": "ComboTrendVwapConfig",
       "params": {
-        "sma_period": 50,
-        "macd_fast": 12,
-        "macd_slow": 26,
-        "bb_period": 20,
-        "bb_std_dev": 2.0,
-        "bb_entry_tolerance": 0.005
+        "sma_period": 3,
+        "macd_fast": 2,
+        "macd_slow": 4,
+        "bb_period": 2,
+        "bb_std_dev": 0.1,
+        "bb_entry_tolerance": 0.5
       }
     },
     {
@@ -85,12 +85,10 @@
       "strategy_class": "AdxAtrMomentumStrategy",
       "config_class": "AdxAtrMomentumConfig",
       "params": {
-        "adx_period": 14,
-        "ema_period": 50,
-        "atr_period": 14,
-        "atr_multiplier": 2.0,
-        "instrument_id": "XPEV.ETORO",
-        "bar_type": "XPEV.ETORO-1-MINUTE-MID-INTERNAL"
+        "adx_period": 2,
+        "ema_period": 3,
+        "atr_period": 2,
+        "atr_multiplier": 0.1
       }
     },
     {
@@ -98,11 +96,9 @@
       "strategy_class": "VwapExhaustionStrategy",
       "config_class": "VwapExhaustionConfig",
       "params": {
-        "volume_sma_period": 20,
-        "deviation_threshold": 0.03,
-        "volume_multiplier": 2.0,
-        "instrument_id": "DOGE.ETORO",
-        "bar_type": "DOGE.ETORO-1-MINUTE-MID-INTERNAL"
+        "volume_sma_period": 2,
+        "deviation_threshold": 0.001,
+        "volume_multiplier": 0.1
       }
     }
   ]

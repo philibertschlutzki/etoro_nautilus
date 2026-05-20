@@ -1,0 +1,154 @@
+📝 Logging aktiv. Ausgabe wird gespeichert in: /home/user/etoro_nautilus/logs/backtest_2026-05-20_17-03-37.log
+🚨 Fehler-Log wird separat geschrieben in: /home/user/etoro_nautilus/logs/errors_2026-05-20_17-03-37.log
+============================================================
+¼ 77 Instrumente gefunden. Registriere im Katalog...
+
+⏳ 693 Backtest-Jobs gestartet. Warte auf Ergebnisse...
+🚀 Starte Backtest: Instrument E.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 1 Positionen nach Backtest-Ende offen — unrealized PnL nicht enthalten
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [1/693] Abgeschlossen: E.ETORO / TrendPullbackStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 1 Positionen nach Backtest-Ende offen — unrealized PnL nicht enthalten
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [2/693] Abgeschlossen: E.ETORO / SmaCrossoverStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 1 Positionen nach Backtest-Ende offen — unrealized PnL nicht enthalten
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [3/693] Abgeschlossen: E.ETORO / DynamicBreakoutStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 1 Positionen nach Backtest-Ende offen — unrealized PnL nicht enthalten
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [4/693] Abgeschlossen: E.ETORO / MeanReversionStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 1 Positionen nach Backtest-Ende offen — unrealized PnL nicht enthalten
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [5/693] Abgeschlossen: E.ETORO / FlashCrashReversalStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   📊 Metriken: Trades=1, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [6/693] Abgeschlossen: E.ETORO / VolatilityBreakoutPumpStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie AdxAtrMomentumStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [7/693] Abgeschlossen: E.ETORO / AdxAtrMomentumStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 1 Positionen nach Backtest-Ende offen — unrealized PnL nicht enthalten
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [8/693] Abgeschlossen: E.ETORO / VwapExhaustionStrategy
+🚀 Starte Backtest: Instrument E.ETORO | Strategie ComboTrendVwapStrategy
+   📊 Metriken: Trades=1, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [9/693] Abgeschlossen: E.ETORO / ComboTrendVwapStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie SmaCrossoverStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [10/693] Abgeschlossen: FICO.ETORO / SmaCrossoverStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie TrendPullbackStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [11/693] Abgeschlossen: FICO.ETORO / TrendPullbackStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie MeanReversionStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [12/693] Abgeschlossen: FICO.ETORO / MeanReversionStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie DynamicBreakoutStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [13/693] Abgeschlossen: FICO.ETORO / DynamicBreakoutStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie FlashCrashReversalStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [14/693] Abgeschlossen: FICO.ETORO / FlashCrashReversalStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie VolatilityBreakoutPumpStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [15/693] Abgeschlossen: FICO.ETORO / VolatilityBreakoutPumpStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie VwapExhaustionStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [16/693] Abgeschlossen: FICO.ETORO / VwapExhaustionStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie AdxAtrMomentumStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [17/693] Abgeschlossen: FICO.ETORO / AdxAtrMomentumStrategy
+🚀 Starte Backtest: Instrument FICO.ETORO | Strategie ComboTrendVwapStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [18/693] Abgeschlossen: FICO.ETORO / ComboTrendVwapStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie SmaCrossoverStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [19/693] Abgeschlossen: CRM.ETORO / SmaCrossoverStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie TrendPullbackStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [20/693] Abgeschlossen: CRM.ETORO / TrendPullbackStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie MeanReversionStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [21/693] Abgeschlossen: CRM.ETORO / MeanReversionStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie DynamicBreakoutStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [22/693] Abgeschlossen: CRM.ETORO / DynamicBreakoutStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie FlashCrashReversalStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [23/693] Abgeschlossen: CRM.ETORO / FlashCrashReversalStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie VolatilityBreakoutPumpStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [24/693] Abgeschlossen: CRM.ETORO / VolatilityBreakoutPumpStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie AdxAtrMomentumStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [25/693] Abgeschlossen: CRM.ETORO / AdxAtrMomentumStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie VwapExhaustionStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [26/693] Abgeschlossen: CRM.ETORO / VwapExhaustionStrategy
+🚀 Starte Backtest: Instrument CRM.ETORO | Strategie ComboTrendVwapStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [27/693] Abgeschlossen: CRM.ETORO / ComboTrendVwapStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie SmaCrossoverStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [28/693] Abgeschlossen: ESLT.ETORO / SmaCrossoverStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie TrendPullbackStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [29/693] Abgeschlossen: ESLT.ETORO / TrendPullbackStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie MeanReversionStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [30/693] Abgeschlossen: ESLT.ETORO / MeanReversionStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie DynamicBreakoutStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [31/693] Abgeschlossen: ESLT.ETORO / DynamicBreakoutStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie FlashCrashReversalStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [32/693] Abgeschlossen: ESLT.ETORO / FlashCrashReversalStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie VolatilityBreakoutPumpStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [33/693] Abgeschlossen: ESLT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie AdxAtrMomentumStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [34/693] Abgeschlossen: ESLT.ETORO / AdxAtrMomentumStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie VwapExhaustionStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [35/693] Abgeschlossen: ESLT.ETORO / VwapExhaustionStrategy
+🚀 Starte Backtest: Instrument ESLT.ETORO | Strategie ComboTrendVwapStrategy
+[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion
+   📊 Metriken: Trades=0, WinRate=0.00%, PF=0.00, Sortino=0.00
+   [36/693] Abgeschlossen: ESLT.ETORO / ComboTrendVwapStrategy
