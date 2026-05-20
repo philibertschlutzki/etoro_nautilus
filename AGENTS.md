@@ -564,9 +564,24 @@ def _compute_quantity(self, bar: Bar) -> Quantity | None:
         self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
         return None
     units = self.config.trade_amount_usd / float(bar.close)
-    qty = instrument.make_qty(units, round_down=True)  # round_down=True ist Pflicht!
+    # Pre-check: Equity-Instrumente (size_precision=0) erfordern mindestens 1 ganze Einheit.
+    # Nautilus wirft einen harten ValueError bei make_qty() wenn das gerundete Ergebnis 0 ergibt —
+    # auch mit round_down=True. Pre-check verhindert den Aufruf; try/except ist zusätzliche Absicherung.
+    if units < float(instrument.size_increment):
+        self._log.warning(
+            f"[{self.instrument_id}] Zu wenig Kapital für 1 Einheit "
+            f"(units={units:.6f}, size_increment={instrument.size_increment}) "
+            f"— Signal übersprungen"
+        )
+        return None
+    try:
+        qty = instrument.make_qty(units, round_down=True)
+    except ValueError as e:
+        self._log.warning(
+            f"[{self.instrument_id}] make_qty ValueError: {e} — Signal übersprungen"
+        )
+        return None
     if qty == 0:
-        # Passiert bei Equities (size_precision=0) wenn trade_amount_usd < price
         self._log.warning(
             f"[{self.instrument_id}] Quantity=0 nach Rundung "
             f"(units={units:.6f}) — Signal übersprungen"
@@ -575,9 +590,12 @@ def _compute_quantity(self, bar: Bar) -> Quantity | None:
     return qty
 ```
 
-> **Kritisch:** `make_qty(units)` ohne `round_down=True` wirft bei Equity-Instrumenten
-> (size_precision=0) einen harten `ValueError`, wenn `units < 1`. Das führt zu einem
-> unkontrollierten Worker-Crash im Backtest-Pool. Siehe Section 16, Pitfall #14.
+> **Kritisch (korrigiert):** `instrument.make_qty(units, round_down=True)` wirft bei
+> Equity-Instrumenten (size_precision=0) einen harten `ValueError` wenn `units < 1`,
+> **auch mit `round_down=True`**. Der Fehler wird von Nautilus in Cython geworfen und
+> propagiert unkontrolliert durch den Backtest-Worker. Lösung: Immer `units < size_increment`
+> vor dem Aufruf prüfen UND den Aufruf zusätzlich mit `try/except ValueError` absichern.
+> Siehe Section 16, Pitfall #14 (korrigiert).
 
 `instrument.make_qty()` applies the appropriate `size_precision` configured for the asset class (e.g. 8 for Crypto, 0 for Equities). This allows fractional units for Crypto and ensures integer rounding for Equities, preventing live execution mismatch errors.
 
@@ -1206,29 +1224,47 @@ To achieve a true 5% stop on the actual fill rate, set SL:0.025.
 This adjustment is applied consistently and does not prevent the order
 from executing — it only affects the distance of the stop-loss trigger.
 
-### 14. `make_qty` ValueError bei Equity-Instrumenten im Backtest
+### 14. `make_qty` ValueError bei Equity-Instrumenten — `round_down=True` verhindert den Fehler NICHT
 
 **Symptom:** `ValueError: Invalid value for quantity: X was rounded to zero due to
 size increment 1 and size precision 0` — tritt auf, wenn `trade_amount_usd / price < 1`
-bei einem Equity-Instrument (size_precision=0).
+bei einem Equity-Instrument (size_precision=0). Der Worker-Prozess crasht hart.
 
-**Root Cause:** `instrument.make_qty(units)` verwendet `round_down=False` als Default.
-Bei `size_precision=0` (ganzzahlige Stückelung) wirft Nautilus einen harten ValueError
-statt auf 0 abzurunden, wenn der berechnete Bruchwert kleiner als 1 Einheit ist.
-Der Fehler propagiert aus Cython und kann nicht vom äußeren `try/except` in
-`run_single_backtest_worker` gefangen werden — der Worker-Prozess crasht hart.
+**Root Cause:** `instrument.make_qty(units, round_down=True)` wirft in Nautilus Cython
+einen harten `ValueError` wenn das Ergebnis nach Rundung 0 ergibt — **unabhängig vom
+`round_down`-Parameter**. Das `round_down=True`-Flag verhindert den Fehler NICHT.
+Die Aussage in der Commit-Message vom 2026-05-19 war daher unvollständig: Der Fix
+(Umstieg auf `round_down=True`) ist notwendig, aber nicht ausreichend.
 
-**Lösung:** Immer `instrument.make_qty(units, round_down=True)` verwenden und das
-Ergebnis auf 0 prüfen:
+Der Fehler propagiert aus Cython durch die NautilusTrader-Callchain
+(`TimeBarAggregator._build_bar` → `on_bar` → `_compute_quantity`) und kann NICHT
+vom äußeren `try/except` in `run_single_backtest_worker` abgefangen werden, da er
+im Worker-Prozess selbst entsteht.
+
+**Betroffene Instrumente (Beispiele):** Alle Equities mit Preis > `trade_amount_usd`:
+FICO (~$1600), RHM.DE (~$1580), TSLA (~$450), NVDA (~$190), GOOGL (~$316), etc.
+
+**Korrekte Lösung:** Zweistufige Absicherung in `_compute_quantity()`:
+1. **Pre-check:** `if units < float(instrument.size_increment): return None`
+2. **try/except:** `try: qty = instrument.make_qty(units, round_down=True)`
+                   `except ValueError: return None`
+
 ```python
-qty = instrument.make_qty(units, round_down=True)
+# Korrekte Implementierung (beide Stufen erforderlich):
+if units < float(instrument.size_increment):
+    self._log.warning(f"... Zu wenig Kapital ...")
+    return None
+try:
+    qty = instrument.make_qty(units, round_down=True)
+except ValueError as e:
+    self._log.warning(f"... make_qty ValueError: {e} ...")
+    return None
 if qty == 0:
-    return None  # Signal überspringen, zu wenig Kapital für 1 Einheit
+    return None
+return qty
 ```
 
-**Betroffene Dateien:** Alle Strategie-Dateien in `strategies/` (9 Stück).
-Siehe auch Section 6 (`_compute_quantity()` Pattern) — dort ist das korrekte
-Muster jetzt dokumentiert.
+**Betroffene Dateien:** Alle 9 Strategie-Dateien in `strategies/`. Korrektur dokumentiert in Section 6 (`_compute_quantity()` Pattern).
 
 ### 15. `BrokenProcessPool` durch OOM bei zu vielen parallelen Backtest-Workern
 
@@ -1304,6 +1340,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-20 | Bugfix (kritisch): `make_qty` ValueError korrekt behoben — Pre-check `units < size_increment` + `try/except ValueError` in allen 9 Strategie-Dateien. AGENTS.md Pitfall #14 und Section 6 Boilerplate korrigiert: `round_down=True` verhindert den ValueError NICHT (war falsch dokumentiert seit 2026-05-19). | `strategies/*.py`, `AGENTS.md` |
 | 2026-05-19 | Bugfix: `make_qty` ValueError bei Equity-Instrumenten — alle 9 Strategie-Dateien auf `round_down=True` + None-Guard umgestellt; Section 6 `_compute_quantity()`-Pattern aktualisiert | `strategies/*.py`, `AGENTS.md` |
 | 2026-05-19 | Bugfix: `BrokenProcessPool` OOM-Crash — `ProcessPoolExecutor` auf `cpu//2` (max 6) Worker begrenzt; `max_tasks_per_child=1` für Python ≥ 3.11; expliziter `BrokenProcessPool`-Catch mit sequenziellem Fallback | `backtesting/run_backtest.py`, `AGENTS.md` |
 | 2026-05-17 | Documentation audit: full repository sync, all sections verified | `AGENTS.md` |
@@ -1332,4 +1369,4 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 ---
 
-*Last updated: 2026-05-19. Update this date and the changelog above whenever you modify this file.*
+*Last updated: 2026-05-20. Update this date and the changelog above whenever you modify this file.*
