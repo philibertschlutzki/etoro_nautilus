@@ -1,4 +1,3 @@
-from typing import Optional
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.model.data import Bar
@@ -46,10 +45,10 @@ class MomentumLSBaseStrategy(Strategy):
         self._log.warning("Could not resolve free balance from cache. Returning 0.0.")
         return 0.0
 
-    def _compute_quantity(self, bar: Bar) -> Optional[Quantity]:
+    def _compute_quantity(self, bar: Bar) -> Quantity | None:
         instrument = self.cache.instrument(self.instrument_id)
         if instrument is None:
-            self._log.error(f"[{self.instrument_id}] Instrument not in cache")
+            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
             return None
 
         balance = self._get_current_balance()
@@ -59,4 +58,12 @@ class MomentumLSBaseStrategy(Strategy):
             return None
 
         units = usd_amount / float(bar.close)
-        return instrument.make_qty(units)
+        qty = instrument.make_qty(units, round_down=True)
+        if qty == 0:
+            self._log.warning(
+                f"[{self.instrument_id}] Berechnete Quantity=0 "
+                f"(units={units:.6f}, Kapital={usd_amount} USD) "
+                f"— Signal übersprungen (Kapital für 1 Einheit unzureichend)"
+            )
+            return None
+        return qty
