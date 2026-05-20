@@ -1,0 +1,790 @@
+📝 Logging aktiv. Ausgabe wird gespeichert in: /home/user/etoro_nautilus/logs/backtest_2026-05-19_16-34-17.log
+🚨 Fehler-Log wird separat geschrieben in: /home/user/etoro_nautilus/logs/errors_2026-05-19_16-34-17.log
+============================================================
+✅ 28 Instrumente gefunden. Registriere im Katalog...
+File /home/user/etoro_nautilus/data/nautilus/data/equity/01211.HK.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/ADA.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/AERO.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/AVAX.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/BTC.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/DOGE.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/ETH.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/FSLY.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/HUT.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/HYPE.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/INSM.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/NATGAS.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/NVDA.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/NVS.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/ONDO.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/PALL.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/PEPExM.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/PLTR.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/RHM.DE.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/RIOT.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/ROP.ZU.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/SHIBxM.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/SOL.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/TSLA.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/USDTRY.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/USDZAR.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/XPEV.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+File /home/user/etoro_nautilus/data/nautilus/data/equity/XRP.ETORO/1970-01-01T00-00-00-000000000Z_1970-01-01T00-00-00-000000000Z.parquet already exists, skipping write
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SOL.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für SOL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument 01211.HK.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für 01211.HK.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HUT.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für HUT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AERO.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für AERO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVDA.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für NVDA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ADA.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für ADA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NATGAS.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für NATGAS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RHM.DE.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für RHM.DE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ONDO.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für ONDO.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument SHIBxM.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für SHIBxM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument NVS.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für NVS.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDZAR.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für USDZAR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument RIOT.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für RIOT.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument TSLA.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für TSLA.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PEPExM.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für PEPExM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument USDTRY.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für USDTRY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument INSM.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für INSM.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument FSLY.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für FSLY.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument BTC.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für BTC.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XPEV.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für XPEV.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ETH.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für ETH.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument HYPE.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für HYPE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument AVAX.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für AVAX.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PLTR.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für PLTR.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument XRP.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für XRP.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument ROP.ZU.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für ROP.ZU.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument PALL.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für PALL.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie SmaCrossoverStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie TrendPullbackStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie MeanReversionStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie DynamicBreakoutStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie FlashCrashReversalStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie VolatilityBreakoutPumpStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie ComboTrendVwapStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie AdxAtrMomentumStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+🚀 Starte Backtest: Instrument DOGE.ETORO | Strategie VwapExhaustionStrategy
+   ⚠️ 0 Ticks für DOGE.ETORO im gewählten Zeitraum. Ueberspringe.
+
+✅ Matrix-Backtest vollstaendig abgeschlossen!

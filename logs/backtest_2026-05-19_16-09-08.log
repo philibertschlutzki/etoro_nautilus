@@ -1,0 +1,4 @@
+📝 Logging aktiv. Ausgabe wird gespeichert in: /home/user/etoro_nautilus/logs/backtest_2026-05-19_16-09-08.log
+🚨 Fehler-Log wird separat geschrieben in: /home/user/etoro_nautilus/logs/errors_2026-05-19_16-09-08.log
+============================================================
+❌ Fehler: Config /home/user/etoro_nautilus/dev_scripts/backtesting_config.json nicht gefunden.
