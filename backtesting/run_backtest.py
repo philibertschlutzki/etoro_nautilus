@@ -147,45 +147,92 @@ def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> 
     )
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None) -> dict:
     """
-    Extrahiert Tournament-Metriken. Berücksichtigt offene Positionen
-    über unrealized PnL (da Nautilus diese nicht auto-schliesst).
+    Extrahiert Tournament-Metriken aus geschlossenen Positionen.
+    Primär: engine.cache.positions() — direkte Position-Objekte mit realized_pnl.
+    Fallback: generate_positions_report() DataFrame mit status-Spalten-Filter.
     """
     NULL = {"total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0}
 
+    pnls: list[float] = []
+
     try:
-        fills = engine.trader.generate_order_fills_report()
+        all_positions = engine.cache.positions()
+        closed = [p for p in all_positions if not p.is_open]
+
+        if not closed:
+            if log_fn:
+                log_fn("[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion")
+            return NULL
+
+        for pos in closed:
+            try:
+                pnls.append(float(pos.realized_pnl.as_decimal()))
+            except AttributeError:
+                try:
+                    pnls.append(float(pos.realized_pnl))
+                except (TypeError, ValueError):
+                    pass
     except Exception:
-        return NULL
+        # Fallback: generate_positions_report() DataFrame
+        try:
+            pos_df = engine.trader.generate_positions_report()
+        except Exception:
+            return NULL
 
-    if fills.empty:
-        return NULL
+        if pos_df.empty:
+            if log_fn:
+                log_fn("[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion")
+            return NULL
 
-    pnl_col = next(
-        (c for c in ['realized_pnl', 'pnl', 'net_pnl']
-         if c in fills.columns),
-        None
-    )
-    if pnl_col is None:
-        return {**NULL, "total_trades": len(fills)}
+        # Nur geschlossene Positionen auswerten (status != OPEN)
+        if 'status' in pos_df.columns:
+            closed_df = pos_df[
+                ~pos_df['status'].astype(str).str.upper().str.contains('OPEN')
+            ]
+        else:
+            closed_df = pos_df
 
-    pnls = pd.to_numeric(fills[pnl_col], errors='coerce').dropna()
-    if pnls.empty:
+        if closed_df.empty:
+            if log_fn:
+                log_fn("[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion")
+            return NULL
+
+        pnl_col = next(
+            (c for c in ['realized_pnl', 'pnl', 'net_pnl'] if c in closed_df.columns),
+            None
+        )
+        if pnl_col is None:
+            return {**NULL, "total_trades": len(closed_df)}
+
+        def _parse_money(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                try:
+                    return float(str(v).split()[0])
+                except (ValueError, IndexError):
+                    return float('nan')
+
+        parsed = closed_df[pnl_col].apply(_parse_money)
+        pnls = [x for x in parsed.tolist() if not math.isnan(x)]
+
+    if not pnls:
         return NULL
 
     n = len(pnls)
-    wins = int((pnls > 0).sum())
-    gross_profit = float(pnls[pnls > 0].sum())
-    gross_loss = float(abs(pnls[pnls < 0].sum()))
+    wins = sum(1 for v in pnls if v > 0)
+    gross_profit = sum(v for v in pnls if v > 0)
+    gross_loss = abs(sum(v for v in pnls if v < 0))
 
     profit_factor = (gross_profit / gross_loss) if gross_loss > 0 \
                     else (999.0 if gross_profit > 0 else 0.0)
     win_rate = wins / n if n > 0 else 0.0
 
-    rets = list(pnls / starting_capital)
+    rets = [v / starting_capital for v in pnls]
     cum = 1.0
     peak = 1.0
     max_dd = 0.0
@@ -410,20 +457,19 @@ def run_single_backtest_worker(
     try:
         positions_report = engine.trader.generate_positions_report()
         if not positions_report.empty:
-            open_col = next(
-                (c for c in ['is_open', 'open'] if c in positions_report.columns),
-                None
-            )
-            if open_col:
-                open_count = int(positions_report[open_col].astype(bool).sum())
+            if 'status' in positions_report.columns:
+                open_count = len(positions_report[
+                    positions_report['status'].astype(str).str.upper().str.contains('OPEN')
+                ])
             else:
-                open_count = len(positions_report)
+                open_count = 0
+                worker_log("[Backtest] Positions-DataFrame enthält keine 'status'-Spalte")
             if open_count > 0:
                 worker_log(f"   ⚠️ {open_count} Positionen nach Backtest-Ende offen — unrealized PnL nicht in Metriken enthalten")
     except Exception as e:
         worker_log(f"   ⚠️ Konnte offene Positionen nicht prüfen: {e}")
 
-    metrics = extract_metrics(engine, start_capital)
+    metrics = extract_metrics(engine, start_capital, log_fn=worker_log)
     worker_log(
         f"   📊 Metriken: Trades={metrics['total_trades']}, "
         f"WinRate={metrics['win_rate']:.2%}, "

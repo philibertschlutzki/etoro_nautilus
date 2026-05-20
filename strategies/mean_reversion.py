@@ -106,6 +106,7 @@ class MeanReversionStrategy(Strategy):
             if pos.side == PositionSide.LONG:
                 return
             self._close_position(pos)
+            self.current_signal = None  # Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -127,6 +128,7 @@ class MeanReversionStrategy(Strategy):
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position(pos)
+            self.current_signal = None  # Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
