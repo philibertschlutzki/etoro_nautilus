@@ -156,6 +156,10 @@ class AdxAtrMomentumStrategy(Strategy):
             if pos.side == PositionSide.LONG:
                 return
             self._close_position(pos)
+            # State zurücksetzen — ermöglicht Neueinstieg auf nächster Bar (kein Flat-Lock)
+            self.current_position = None
+            self.entry_price = 0.0
+            self.trailing_stop = 0.0
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -177,6 +181,10 @@ class AdxAtrMomentumStrategy(Strategy):
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position(pos)
+            # State zurücksetzen — ermöglicht Neueinstieg auf nächster Bar (kein Flat-Lock)
+            self.current_position = None
+            self.entry_price = 0.0
+            self.trailing_stop = 0.0
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
