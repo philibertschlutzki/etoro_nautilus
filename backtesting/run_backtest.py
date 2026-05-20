@@ -14,6 +14,7 @@ import io
 import multiprocessing
 import atexit
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool as _BrokenPool
 
 import pandas as pd
 
@@ -630,7 +631,11 @@ def run_backtest():
 
     try:
         if _use_multiprocessing:
-            executor = ProcessPoolExecutor(max_workers=os.cpu_count())
+            _max_workers = max(1, min((os.cpu_count() or 1) // 2, 6))
+            if sys.version_info >= (3, 11):
+                executor = ProcessPoolExecutor(max_workers=_max_workers, max_tasks_per_child=1)
+            else:
+                executor = ProcessPoolExecutor(max_workers=_max_workers)
 
         for inst in dynamic_instruments:
             inst_id_str = inst["id"]
@@ -728,9 +733,60 @@ def run_backtest():
                     result = future.result()
                     if result and result.get("metrics"):
                         all_results.append(result)
+                except _BrokenPool:
+                    log_error(
+                        f"   💥 Worker-Pool gecrasht (OOM/SIGKILL) bei "
+                        f"{inst_id_str}/{strategy_class_name}. "
+                        f"Wechsle zu sequenziellem Fallback für alle verbleibenden Jobs.",
+                        exc_info=False,
+                    )
+                    _use_multiprocessing = False
+                    # Verbleibende pending Futures sequenziell abarbeiten
+                    remaining = {
+                        f: v for f, v in futures.items()
+                        if not f.done() and f is not future
+                    }
+                    for rem_future, (rem_inst, rem_strat_name, rem_log) in remaining.items():
+                        rem_strat = next(
+                            (s for s in strategies_list if s["strategy_class"] == rem_strat_name),
+                            None,
+                        )
+                        if rem_strat is None:
+                            continue
+                        rem_ticks = load_ticks_from_catalog(catalog, rem_inst, bt_start, bt_end)
+                        if not rem_ticks:
+                            continue
+                        res = run_single_backtest_worker(
+                            rem_inst,
+                            f"{rem_inst}-1-MINUTE-MID-INTERNAL",
+                            rem_strat,
+                            rem_ticks,
+                            start_capital,
+                            args.htmlreport,
+                            reports_dir,
+                            rem_log,
+                        )
+                        if rem_log in _worker_log_files:
+                            _worker_log_files.remove(rem_log)
+                        if os.path.exists(rem_log):
+                            with open(rem_log, "r", encoding="utf-8") as wf:
+                                log_content = wf.read().strip()
+                                if log_content:
+                                    print(log_content)
+                            try:
+                                os.remove(rem_log)
+                            except OSError:
+                                pass
+                        done_count += 1
+                        print(f"   [{done_count}/{total}] Abgeschlossen (sequenziell): "
+                              f"{rem_inst} / {rem_strat_name}")
+                        if res and res.get("metrics"):
+                            all_results.append(res)
+                    break  # Verlasse as_completed-Loop (alle Jobs bereits inline abgearbeitet)
                 except Exception as e:
                     log_error(
-                        f"   ❌ Worker-Prozess für {inst_id_str}/{strategy_class_name} fehlgeschlagen: {e}",
+                        f"   ❌ Worker-Prozess für {inst_id_str}/{strategy_class_name} "
+                        f"fehlgeschlagen: {e}",
                         exc_info=True,
                     )
 
