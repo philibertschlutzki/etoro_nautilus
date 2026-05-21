@@ -33,6 +33,8 @@ Alle detaillierten Anleitungen, operativen Prozesse und Konfigurationsdetails si
     *   Detaillierte Beschreibung der Momentum-LS Strategie.
 5.  [**Feature Automation LS (`manuals/feature_automation_LS.md`)**](./manuals/feature_automation_LS.md)
     *   Dokumentation zur Feature Automation im Momentum-LS System.
+6.  [**🔄 End-to-End Workflow (`manuals/end_to_end_workflow.md`)**](./manuals/end_to_end_workflow.md)
+    *   Umfassendes Handbuch über den Workflow von der Datengenerierung bis zum Live-Trading.
 
 ---
 
