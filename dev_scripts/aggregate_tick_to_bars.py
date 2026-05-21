@@ -6,12 +6,16 @@ Aggregiert Quote-Ticks aus dem NautilusTrader-ParquetDataCatalog zu OHLCV-Bars.
 
 Bekannte Fehlerquellen werden automatisch behandelt:
   - BarType-Konstruktion (BarSpecification-Objekt statt String)
-  - Arrow-Schema-Konflikte (price_precision-Metadaten werden in-place normalisiert)
+  - Arrow-Schema-Konflikte (price_precision): Parquet-Files werden in-place
+    gepatcht, danach wird ein frischer Katalog instanziert.
+  - Fallback: Bei persistentem Merge-Fehler werden Dateien einzeln geladen.
 """
 import os
 import sys
 import argparse
 import logging
+import shutil
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -55,69 +59,139 @@ def discover_instruments_from_catalog(catalog_path: str) -> list[str]:
 
 def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> bool:
     """
-    Vereinheitlicht konfliktträchtige Arrow-Schema-Metadaten (z.B. 'price_precision')
+    Vereinheitlicht conflicting Arrow-Schema-Metadaten (z.B. 'price_precision')
     über alle Parquet-Dateien eines Instruments in-place.
 
-    Strategie: Die zuletzt geschriebene Datei (alphabetisch letzter Dateiname)
-    gilt als Referenz – ihre Metadaten werden auf alle älteren Dateien übertragen.
+    Änderungen gegenüber Vorgängerversion:
+    - rglob statt glob (findet auch Files in Unterverzeichnissen)
+    - Vergleich des KOMPLETTEN Metadaten-Dicts (nicht nur price_precision)
+    - INFO-Logging am Anfang zur Bestätigung des Aufrufs
+    - Metadata-Key-Suche sowohl als bytes als auch als str
 
-    Returns True wenn mindestens eine Datei gepatcht wurde, sonst False.
+    Returns True wenn mind. eine Datei gepatcht wurde.
     """
-    inst_dir = (
-        Path(catalog_path) / "data" / "quote_tick"
-        / f"instrument_id={instrument_id_str}"
-    )
+    inst_dir = Path(catalog_path) / "data" / "quote_tick" / instrument_id_str
+
     if not inst_dir.exists():
+        logger.info(f"  [normalize] Verzeichnis nicht gefunden: {inst_dir}")
         return False
 
-    parquet_files = sorted(inst_dir.glob("*.parquet"))
+    # REKURSIV suchen (rglob statt glob)
+    parquet_files = sorted(inst_dir.rglob("*.parquet"))
+    logger.info(
+        f"  [normalize] {instrument_id_str}: {len(parquet_files)} Parquet-Dateien "
+        f"in {inst_dir}"
+    )
+
     if len(parquet_files) <= 1:
         return False
 
-    # Schema-Metadaten aller Dateien einlesen (nur Header, kein Vollladen)
-    file_metas: list[tuple[Path, dict]] = []
+    # Schemas einlesen — alle Metadaten
+    file_schemas: list[tuple[Path, dict]] = []
     for f in parquet_files:
         try:
             schema = pq.read_schema(str(f))
-            file_metas.append((f, schema.metadata or {}))
+            meta = schema.metadata or {}
+            file_schemas.append((f, meta))
         except Exception as e:
-            logger.warning(f"  ⚠️  Schema-Lesefehler bei {f.name}: {e} – überspringe")
+            logger.warning(f"  [normalize] Schema-Lesefehler {f.name}: {e}")
 
-    if len(file_metas) <= 1:
+    if len(file_schemas) <= 1:
+        logger.info(f"  [normalize] Zu wenige lesbare Schemas, überspringe.")
         return False
 
-    # Prüfen ob überhaupt ein Konflikt besteht
-    precision_values = {
-        m.get(b'price_precision', b'__missing__') for _, m in file_metas
-    }
-    if len(precision_values) <= 1:
-        return False  # Kein Konflikt
+    # Konflikt-Erkennung: price_precision unter bytes- UND string-Keys suchen
+    def get_precision(meta: dict) -> str | None:
+        for key in (b'price_precision', 'price_precision'):
+            val = meta.get(key)
+            if val is not None:
+                return val.decode() if isinstance(val, bytes) else str(val)
+        return None
 
-    # Neueste Datei (letzter Name alphabetisch) als Referenz
-    ref_metadata = file_metas[-1][1]
-    ref_precision = ref_metadata.get(b'price_precision', b'?').decode()
+    precisions = {get_precision(m) for _, m in file_schemas}
+    precisions.discard(None)
+
+    logger.info(f"  [normalize] Gefundene price_precision-Werte: {precisions}")
+
+    if len(precisions) <= 1:
+        # Kein Konflikt bei price_precision — trotzdem auf vollständige
+        # Metadaten-Gleichheit prüfen (andere Keys könnten abweichen)
+        all_metas = [m for _, m in file_schemas]
+        if all(m == all_metas[0] for m in all_metas):
+            logger.info(f"  [normalize] Keine Metadaten-Konflikte gefunden.")
+            return False
+        logger.info(f"  [normalize] Sonstige Metadaten-Unterschiede gefunden.")
+
+    # Neueste Datei (alphabetisch letzter Name) als Referenz
+    ref_meta = file_schemas[-1][1]
+    ref_precision = get_precision(ref_meta) or '?'
     logger.info(
-        f"  🔧 Metadaten-Konflikt bei {instrument_id_str} "
-        f"(Werte: {sorted([v.decode() for v in precision_values])}) – "
-        f"normalisiere auf price_precision={ref_precision}"
+        f"  🔧 Normalisiere {instrument_id_str} auf "
+        f"price_precision={ref_precision} "
+        f"(Referenz: {file_schemas[-1][0].name})"
     )
 
     patched = 0
-    for f, meta in file_metas:
-        if meta.get(b'price_precision') == ref_metadata.get(b'price_precision'):
-            continue  # Bereits korrekt
+    for f, meta in file_schemas:
+        if meta == ref_meta:
+            continue
         try:
             table = pq.read_table(str(f))
-            patched_table = table.replace_schema_metadata(ref_metadata)
-            pq.write_table(patched_table, str(f), compression="snappy")
+            new_table = table.replace_schema_metadata(ref_meta)
+            pq.write_table(new_table, str(f), compression="snappy")
             patched += 1
-            logger.debug(f"    ✔ {f.name} gepatcht")
+            logger.info(f"    ✔ Gepatcht: {f.name}")
         except Exception as e:
-            logger.warning(f"    ⚠️  Patch fehlgeschlagen für {f.name}: {e}")
+            logger.warning(f"    ⚠️  Patch-Fehler {f.name}: {e}")
 
-    if patched:
-        logger.info(f"  ✅ {patched} Datei(en) für {instrument_id_str} gepatcht")
+    logger.info(f"  ✅ {patched}/{len(file_schemas)} Dateien gepatcht.")
     return patched > 0
+
+
+def load_ticks_file_by_file(
+    catalog_path: str, instrument_id_str: str
+) -> list:
+    """
+    Fallback: Liest jeden Parquet-File einzeln via temporären Einzel-Katalog.
+    Umgeht das Schema-Merge-Problem, da jeder Temp-Katalog nur 1 File enthält.
+    """
+    inst_dir = Path(catalog_path) / "data" / "quote_tick" / instrument_id_str
+    parquet_files = sorted(inst_dir.rglob("*.parquet"))
+
+    if not parquet_files:
+        return []
+
+    logger.info(
+        f"  [fallback] Lade {len(parquet_files)} Dateien einzeln "
+        f"für {instrument_id_str}..."
+    )
+
+    all_ticks: list = []
+    for pf in parquet_files:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_inst_dir = Path(tmp) / "data" / "quote_tick" / instrument_id_str
+            tmp_inst_dir.mkdir(parents=True)
+            dest = tmp_inst_dir / pf.name
+            shutil.copy2(str(pf), str(dest))
+
+            try:
+                tmp_catalog = ParquetDataCatalog(tmp)
+                ticks = tmp_catalog.quote_ticks(
+                    instrument_ids=[instrument_id_str]
+                )
+                all_ticks.extend(ticks)
+                logger.info(
+                    f"    ✔ {pf.name}: {len(ticks)} Ticks"
+                )
+            except Exception as e:
+                logger.warning(f"    ⚠️  Einzellese-Fehler {pf.name}: {e}")
+
+    # Nach ts_event sortieren
+    all_ticks.sort(key=lambda t: t.ts_event)
+    logger.info(
+        f"  [fallback] Gesamt: {len(all_ticks)} Ticks für {instrument_id_str}"
+    )
+    return all_ticks
 
 
 def parse_bar_spec(bar_spec_str: str, price_type: PriceType) -> BarSpecification:
@@ -136,7 +210,9 @@ def parse_bar_spec(bar_spec_str: str, price_type: PriceType) -> BarSpecification
             try:
                 step = int(bar_spec_str[:-len(suffix)])
             except ValueError:
-                raise ValueError(f"Ungültiger Step-Wert in bar_spec: '{bar_spec_str}'")
+                raise ValueError(
+                    f"Ungültiger Step-Wert in bar_spec: '{bar_spec_str}'"
+                )
             return BarSpecification(step, aggregation, price_type)
     raise ValueError(
         f"Unbekanntes bar_spec-Format: '{bar_spec_str}'. "
@@ -145,13 +221,11 @@ def parse_bar_spec(bar_spec_str: str, price_type: PriceType) -> BarSpecification
 
 
 def bar_spec_to_pandas_freq(bar_spec_str: str) -> str:
-    """Konvertiert bar_spec-String in pandas-Resample-Frequenz."""
     bar_spec_str = bar_spec_str.lower().strip()
     freq_map = {"m": "min", "h": "h", "d": "D"}
     for suffix, pd_unit in freq_map.items():
         if bar_spec_str.endswith(suffix):
-            step = bar_spec_str[:-len(suffix)]
-            return f"{step}{pd_unit}"
+            return f"{bar_spec_str[:-len(suffix)]}{pd_unit}"
     raise ValueError(f"Unbekanntes bar_spec-Format für pandas: '{bar_spec_str}'")
 
 
@@ -167,7 +241,6 @@ def aggregate_ticks_to_bars(
     start_year: int,
     end_year: int,
 ) -> None:
-    catalog = ParquetDataCatalog(catalog_path)
 
     # --- BarType aufbauen ---
     p_type = getattr(PriceType, price_type_str.upper(), PriceType.MID)
@@ -185,15 +258,27 @@ def aggregate_ticks_to_bars(
 
     logger.info(f"⏳ Verarbeite {instrument_id_str}...")
 
-    # --- Metadaten-Konflikt vorab beheben ---
+    # ------------------------------------------------------------------
+    # WICHTIG: Metadaten normalisieren VOR der Katalog-Instanzierung,
+    # damit der Katalog keine gecachten alten Schemas verwendet.
+    # ------------------------------------------------------------------
     normalize_parquet_metadata(catalog_path, instrument_id_str)
 
-    # --- Ticks laden ---
+    # Frischen Katalog NACH der Normalisierung erstellen
+    catalog = ParquetDataCatalog(catalog_path)
+
+    # --- Ticks laden (mit Fallback) ---
+    ticks = None
     try:
         ticks = catalog.quote_ticks(instrument_ids=[instrument_id_str])
     except Exception as e:
-        logger.error(f"❌ Fehler beim Laden von Ticks für {instrument_id_str}: {e}")
-        return
+        logger.warning(
+            f"  catalog.quote_ticks() fehlgeschlagen: {e}\n"
+            f"  → Starte Fallback (file-by-file)..."
+        )
+
+    if ticks is None:
+        ticks = load_ticks_file_by_file(catalog_path, instrument_id_str)
 
     if not ticks:
         logger.warning(f"⚠️  Keine Ticks für {instrument_id_str}, überspringe.")
@@ -231,7 +316,9 @@ def aggregate_ticks_to_bars(
     resampled = ohlc.join(volume).dropna()
 
     if resampled.empty:
-        logger.warning(f"⚠️  Resampling lieferte keine Bars für {instrument_id_str}.")
+        logger.warning(
+            f"⚠️  Resampling lieferte keine Bars für {instrument_id_str}."
+        )
         return
 
     # --- Bar-Objekte erzeugen ---
@@ -243,8 +330,8 @@ def aggregate_ticks_to_bars(
             Price(row.low,   5),
             Price(row.close, 5),
             Quantity(row.vol, 0),
-            int(dt.value),   # ts_event (Nanosekunden)
-            int(dt.value),   # ts_init
+            int(dt.value),
+            int(dt.value),
         )
         for dt, row in resampled.iterrows()
     ]
@@ -284,8 +371,7 @@ def main():
     )
     parser.add_argument(
         "--instrument", type=str, default=None,
-        help="Einzelnes Instrument verarbeiten (z.B. 'NVDA.ETORO'), "
-             "Standard: alle Instrumente im Katalog",
+        help="Einzelnes Instrument verarbeiten (z.B. 'NVDA.ETORO')",
     )
     args = parser.parse_args()
 
@@ -299,7 +385,7 @@ def main():
         return
 
     logger.info(
-        f"📋 {len(instruments)} Instrument(e) gefunden, "
+        f"📋 {len(instruments)} Instrument(e), "
         f"starte Aggregation ({args.bar_spec}, {args.price_type})..."
     )
 
