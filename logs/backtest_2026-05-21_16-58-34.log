@@ -1,0 +1,14 @@
+📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-05-21_16-58-34.log
+🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-05-21_16-58-34.log
+======================================================================
+📅 Zeitraum: 2022-04-01 → 2026-05-14
+📋 77 Instrumente gefunden.
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent.
+
+⏳ Starte 693 Backtest-Jobs (77 × 9 Strategien)...
+🚀 01211.HK.ETORO | SmaCrossoverStrategy
+💥 Worker-Pool abgestürzt bei 01211.HK.ETORO/SmaCrossoverStrategy. Falle auf sequenziellen Modus zurück.
+
+✅ Matrix-Backtest vollständig abgeschlossen!

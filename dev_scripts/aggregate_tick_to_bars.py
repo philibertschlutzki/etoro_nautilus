@@ -59,16 +59,9 @@ def discover_instruments_from_catalog(catalog_path: str) -> list[str]:
 
 def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> bool:
     """
-    Vereinheitlicht conflicting Arrow-Schema-Metadaten (z.B. 'price_precision')
-    über alle Parquet-Dateien eines Instruments in-place.
-
-    Änderungen gegenüber Vorgängerversion:
-    - rglob statt glob (findet auch Files in Unterverzeichnissen)
-    - Vergleich des KOMPLETTEN Metadaten-Dicts (nicht nur price_precision)
-    - INFO-Logging am Anfang zur Bestätigung des Aufrufs
-    - Metadata-Key-Suche sowohl als bytes als auch als str
-
-    Returns True wenn mind. eine Datei gepatcht wurde.
+    Vereinheitlicht conflicting Arrow-Schema-Metadaten und konvertiert
+    die Spaltentypen physisch auf FixedSizeBinary(16), um Abstürze zu verhindern.
+    Verarbeitet auch Single-File-Verzeichnisse sauber.
     """
     inst_dir = Path(catalog_path) / "data" / "quote_tick" / instrument_id_str
 
@@ -76,76 +69,62 @@ def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> boo
         logger.info(f"  [normalize] Verzeichnis nicht gefunden: {inst_dir}")
         return False
 
-    # REKURSIV suchen (rglob statt glob)
     parquet_files = sorted(inst_dir.rglob("*.parquet"))
     logger.info(
         f"  [normalize] {instrument_id_str}: {len(parquet_files)} Parquet-Dateien "
         f"in {inst_dir}"
     )
 
-    if len(parquet_files) <= 1:
+    if not parquet_files:
         return False
 
-    # Schemas einlesen — alle Metadaten
-    file_schemas: list[tuple[Path, dict]] = []
+    # Referenz-Metadaten der letzten Datei holen
+    try:
+        ref_schema = pq.read_schema(str(parquet_files[-1]))
+        ref_meta = ref_schema.metadata or {}
+    except Exception as e:
+        logger.warning(f"  [normalize] Referenz-Schema-Lesefehler: {e}")
+        ref_meta = {}
+
+    target_cols = {'bid_price', 'ask_price', 'bid_size', 'ask_size'}
+    any_file_patched = False
+
     for f in parquet_files:
         try:
-            schema = pq.read_schema(str(f))
-            meta = schema.metadata or {}
-            file_schemas.append((f, meta))
-        except Exception as e:
-            logger.warning(f"  [normalize] Schema-Lesefehler {f.name}: {e}")
-
-    if len(file_schemas) <= 1:
-        logger.info(f"  [normalize] Zu wenige lesbare Schemas, überspringe.")
-        return False
-
-    # Konflikt-Erkennung: price_precision unter bytes- UND string-Keys suchen
-    def get_precision(meta: dict) -> str | None:
-        for key in (b'price_precision', 'price_precision'):
-            val = meta.get(key)
-            if val is not None:
-                return val.decode() if isinstance(val, bytes) else str(val)
-        return None
-
-    precisions = {get_precision(m) for _, m in file_schemas}
-    precisions.discard(None)
-
-    logger.info(f"  [normalize] Gefundene price_precision-Werte: {precisions}")
-
-    if len(precisions) <= 1:
-        # Kein Konflikt bei price_precision — trotzdem auf vollständige
-        # Metadaten-Gleichheit prüfen (andere Keys könnten abweichen)
-        all_metas = [m for _, m in file_schemas]
-        if all(m == all_metas[0] for m in all_metas):
-            logger.info(f"  [normalize] Keine Metadaten-Konflikte gefunden.")
-            return False
-        logger.info(f"  [normalize] Sonstige Metadaten-Unterschiede gefunden.")
-
-    # Neueste Datei (alphabetisch letzter Name) als Referenz
-    ref_meta = file_schemas[-1][1]
-    ref_precision = get_precision(ref_meta) or '?'
-    logger.info(
-        f"  🔧 Normalisiere {instrument_id_str} auf "
-        f"price_precision={ref_precision} "
-        f"(Referenz: {file_schemas[-1][0].name})"
-    )
-
-    patched = 0
-    for f, meta in file_schemas:
-        if meta == ref_meta:
-            continue
-        try:
             table = pq.read_table(str(f))
-            new_table = table.replace_schema_metadata(ref_meta)
-            pq.write_table(new_table, str(f), compression="snappy")
-            patched += 1
-            logger.info(f"    ✔ Gepatcht: {f.name}")
+            schema = table.schema
+            
+            needs_cast = False
+            new_fields = []
+            new_columns = []
+            
+            # Physische Typen prüfen und ggf. konvertieren
+            for field, col in zip(schema, table.itercolumns()):
+                if field.name in target_cols:
+                    is_fixed_16 = pa.types.is_fixed_size_binary(field.type) and field.type.byte_width == 16
+                    if not is_fixed_16:
+                        # Erzwinge den echten Typecast zu FixedSizeBinary(16)
+                        col = col.cast(pa.binary(16))
+                        field = field.with_type(pa.binary(16))
+                        needs_cast = True
+                new_fields.append(field)
+                new_columns.append(col)
+            
+            metadata_mismatch = schema.metadata != ref_meta
+            
+            # Überschreiben, wenn Typen oder Metadaten inkonsistent sind
+            if needs_cast or metadata_mismatch:
+                new_schema = pa.schema(new_fields, metadata=ref_meta)
+                new_table = pa.Table.from_arrays(new_columns, schema=new_schema)
+                pq.write_table(new_table, str(f), compression="snappy")
+                any_file_patched = True
+                logger.info(f"    ✔ Typen/Metadaten konvertiert: {f.name}")
         except Exception as e:
-            logger.warning(f"    ⚠️  Patch-Fehler {f.name}: {e}")
+            logger.warning(f"    ⚠️  Patch-Fehler bei Datei {f.name}: {e}")
 
-    logger.info(f"  ✅ {patched}/{len(file_schemas)} Dateien gepatcht.")
-    return patched > 0
+    if any_file_patched:
+        logger.info(f"  ✅ Typen erfolgreich auf FixedSizeBinary(16) angepasst.")
+    return any_file_patched
 
 
 def load_ticks_file_by_file(
