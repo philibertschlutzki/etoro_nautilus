@@ -1,24 +1,38 @@
+#!/usr/bin/env python3
+"""
+run_backtest.py
+
+NautilusTrader Multi-Strategie Backtesting Engine mit Tournament-Modus.
+
+Fixes gegenüber Vorgänger:
+  - normalize_parquet_metadata() vor dem Backtesting (Arrow-Schema-Konflikte)
+  - Verbessertes Fehler-Logging in Worker-Prozessen
+  - Tote Code-Pfade (falsche Verzeichnisstruktur-Prüfung) entfernt
+  - Encoding-Fix: ¼ → 📋
+  - MACD-Parameter-Validierung (fast < slow)
+  - Worker-Logging via logger statt print
+"""
+
 import os
 import sys
 import json
 import math
-import shutil
 import argparse
 import importlib
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, Any
-import traceback
 import contextlib
 import io
 import multiprocessing
 import atexit
+import traceback
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool as _BrokenPool
 
 import pandas as pd
+import pyarrow.parquet as pq
 
-# Add the project root to sys.path so that 'adapters' can be imported correctly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
@@ -32,11 +46,15 @@ from nautilus_trader.analysis.tearsheet import create_tearsheet
 
 from adapters.instrument_utils import get_size_precision
 
+# ---------------------------------------------------------------------------
+# Globale Housekeeping
+# ---------------------------------------------------------------------------
+
 _worker_log_files: list[str] = []
 
 
-def _cleanup_worker_logs():
-    """Wird bei normalem Exit und bei Crash aufgerufen."""
+def _cleanup_worker_logs() -> None:
+    """Löscht temporäre Worker-Logs bei normalem Exit und bei Crash."""
     for path in _worker_log_files:
         try:
             if os.path.exists(path):
@@ -48,23 +66,101 @@ def _cleanup_worker_logs():
 atexit.register(_cleanup_worker_logs)
 
 
+# ---------------------------------------------------------------------------
+# DualLogger — Konsole + Datei
+# ---------------------------------------------------------------------------
+
 class DualLogger:
-    """Fängt Konsolen-Outputs ab und schreibt sie ins Terminal UND in eine Datei."""
-    def __init__(self, filepath: str):
+    """Schreibt stdout/stderr gleichzeitig ins Terminal und in eine Log-Datei."""
+
+    def __init__(self, filepath: str) -> None:
         self.terminal = sys.stdout
         self.log = open(filepath, "a", encoding="utf-8")
 
-    def write(self, message):
+    def write(self, message: str) -> None:
         self.terminal.write(message)
         self.log.write(message)
 
-    def flush(self):
+    def flush(self) -> None:
         self.terminal.flush()
         self.log.flush()
 
 
-def load_config(filepath: str) -> Dict[str, Any]:
-    with open(filepath, 'r') as f:
+# ---------------------------------------------------------------------------
+# Parquet-Metadaten-Normalisierung (Fix: Arrow Schema-Konflikte)
+# ---------------------------------------------------------------------------
+
+def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> bool:
+    """
+    Vereinheitlicht conflicting Arrow-Schema-Metadaten (price_precision) aller
+    Parquet-Dateien eines Instruments in-place.
+
+    Muss vor catalog.quote_ticks() aufgerufen werden, da unterschiedliche
+    price_precision-Werte in mehreren Dateien das Arrow-Dataset-Merge blockieren.
+
+    Returns True wenn mind. eine Datei gepatcht wurde.
+    """
+    inst_dir = Path(catalog_path) / "data" / "quote_tick" / instrument_id_str
+
+    if not inst_dir.exists():
+        return False
+
+    parquet_files = sorted(inst_dir.rglob("*.parquet"))
+    if len(parquet_files) <= 1:
+        return False
+
+    file_metas: list[tuple[Path, dict]] = []
+    for f in parquet_files:
+        try:
+            schema = pq.read_schema(str(f))
+            file_metas.append((f, schema.metadata or {}))
+        except Exception:
+            pass  # Unlesbare Datei überspringen
+
+    if len(file_metas) <= 1:
+        return False
+
+    def get_precision(meta: dict) -> str | None:
+        for key in (b'price_precision', 'price_precision'):
+            val = meta.get(key)
+            if val is not None:
+                return val.decode() if isinstance(val, bytes) else str(val)
+        return None
+
+    precisions = {get_precision(m) for _, m in file_metas}
+    precisions.discard(None)
+
+    all_metas = [m for _, m in file_metas]
+    if len(precisions) <= 1 and all(m == all_metas[0] for m in all_metas):
+        return False  # Kein Konflikt
+
+    ref_meta = file_metas[-1][1]
+    ref_precision = get_precision(ref_meta) or '?'
+    print(f"  🔧 [{instrument_id_str}] Metadaten-Konflikt {precisions} → normalisiere auf precision={ref_precision}")
+
+    patched = 0
+    for f, meta in file_metas:
+        if meta == ref_meta:
+            continue
+        try:
+            import pyarrow.parquet as _pq
+            table = _pq.read_table(str(f))
+            _pq.write_table(table.replace_schema_metadata(ref_meta), str(f), compression="snappy")
+            patched += 1
+        except Exception as e:
+            print(f"  ⚠️  [{instrument_id_str}] Patch-Fehler {f.name}: {e}")
+
+    if patched:
+        print(f"  ✅ [{instrument_id_str}] {patched}/{len(file_metas)} Dateien gepatcht")
+    return patched > 0
+
+
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen
+# ---------------------------------------------------------------------------
+
+def load_config(filepath: str) -> dict[str, Any]:
+    with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
@@ -77,9 +173,35 @@ def discover_instruments_from_catalog(catalog_path: str) -> list[str]:
             full = os.path.join(tick_dir, entry)
             if os.path.isdir(full) and not entry.startswith('.'):
                 clean = entry.replace("instrument_id=", "")
-                if '.' in clean or clean.endswith('.ETORO'):
+                if clean:
                     instruments.append(clean)
-    return instruments
+    return sorted(instruments)
+
+
+def validate_strategy_params(strat: dict) -> list[str]:
+    """
+    Prüft Strategy-Parameter auf bekannte Inkonsistenzen.
+    Gibt Liste von Warnungen zurück (leer = alles OK).
+    """
+    warnings = []
+    params = strat.get("params", {})
+    name = strat.get("strategy_class", "?")
+
+    macd_fast = params.get("macd_fast")
+    macd_slow = params.get("macd_slow")
+    if macd_fast is not None and macd_slow is not None:
+        if macd_fast >= macd_slow:
+            warnings.append(
+                f"{name}: macd_fast ({macd_fast}) >= macd_slow ({macd_slow}) — "
+                "MACD-Berechnung ergibt keinen Sinn; macd_slow muss größer sein."
+            )
+
+    for key in ("bb_std_dev", "keltner_multiplier", "atr_multiplier", "volume_multiplier"):
+        val = params.get(key)
+        if val is not None and val <= 0:
+            warnings.append(f"{name}: {key}={val} ist <= 0 — ungültiger Multiplikator.")
+
+    return warnings
 
 
 def load_ticks_from_catalog(
@@ -88,7 +210,7 @@ def load_ticks_from_catalog(
     start: pd.Timestamp | None,
     end: pd.Timestamp | None,
 ) -> list:
-    """Lädt QuoteTick-Objekte via ParquetDataCatalog."""
+    """Lädt QuoteTick-Objekte via ParquetDataCatalog mit Zeitfilterung."""
     try:
         ticks = catalog.quote_ticks(
             instrument_ids=[instrument_id_str],
@@ -97,21 +219,20 @@ def load_ticks_from_catalog(
         )
         return ticks if ticks else []
     except Exception as e:
-        print(f"   ⚠️ Katalog-Ladefehler für {instrument_id_str}: {e}")
-        return []
+        raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
 
 
 def infer_precision_from_ticks(ticks: list) -> int:
     if not ticks:
-        return 5
+        return 2
     precisions = []
-    for t in ticks[:10]:
+    for t in ticks[:20]:
         if hasattr(t.bid_price, 'precision'):
             precisions.append(t.bid_price.precision)
-    return int(max(precisions)) if precisions else 5
+    return int(max(precisions)) if precisions else 2
 
 
-def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> Equity:
+def create_mock_instrument(instrument_id_str: str, price_precision: int = 2) -> Equity:
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
     size_prec = get_size_precision(instrument_id_str)
@@ -129,23 +250,25 @@ def create_mock_instrument(instrument_id_str: str, price_precision: int = 5) -> 
     )
 
 
+# ---------------------------------------------------------------------------
+# Metriken & Tournament-Logik
+# ---------------------------------------------------------------------------
+
 def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None) -> dict:
     """Extrahiert Tournament-Metriken aus geschlossenen Positionen."""
-    NULL = {"total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
-            "sortino_ratio": 0.0, "calmar_ratio": 0.0,
-            "max_drawdown": 0.0, "total_return": 0.0}
+    NULL = {
+        "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
+        "sortino_ratio": 0.0, "calmar_ratio": 0.0,
+        "max_drawdown": 0.0, "total_return": 0.0,
+    }
 
     pnls: list[float] = []
-
     try:
-        all_positions = engine.cache.positions()
-        closed = [p for p in all_positions if not p.is_open]
-
+        closed = [p for p in engine.cache.positions() if not p.is_open]
         if not closed:
             if log_fn:
-                log_fn("[Backtest] Keine abgeschlossenen Positionen für Metriken-Extraktion")
+                log_fn("[Metriken] Keine abgeschlossenen Positionen.")
             return NULL
-
         for pos in closed:
             try:
                 pnls.append(float(pos.realized_pnl.as_decimal()))
@@ -165,9 +288,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
     gross_profit = sum(v for v in pnls if v > 0)
     gross_loss = abs(sum(v for v in pnls if v < 0))
 
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 \
-                    else (999.0 if gross_profit > 0 else 0.0)
-    win_rate = wins / n if n > 0 else 0.0
+    profit_factor = (
+        (gross_profit / gross_loss) if gross_loss > 0
+        else (999.0 if gross_profit > 0 else 0.0)
+    )
+    win_rate = wins / n
 
     rets = [v / starting_capital for v in pnls]
     cum = 1.0
@@ -175,21 +300,18 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
     max_dd = 0.0
     for r in rets:
         cum *= (1.0 + r)
-        if cum > peak:
-            peak = cum
+        peak = max(peak, cum)
         dd = (peak - cum) / peak
-        if dd > max_dd:
-            max_dd = dd
+        max_dd = max(max_dd, dd)
 
     total_return = cum - 1.0
 
-    # OPTIMIERUNG: Behebt das Sortino-Artefakt bei unzureichender Trade-Anzahl
     if n < 5:
         sortino = 0.0
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
         dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
-        mean_ret = sum(rets) / len(rets)
+        mean_ret = sum(rets) / n
         sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else 0.0
 
     calmar = (total_return / max_dd) if max_dd > 0 else 0.0
@@ -240,22 +362,31 @@ def select_winners(all_results: list[dict]) -> tuple[dict, dict | None]:
     if win_counts:
         max_wins = max(win_counts.values())
         top = [s for s, w in win_counts.items() if w == max_wins]
-        best = max(top, key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s]))
+        best = max(
+            top,
+            key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s])
+        )
         aggregate_winner = {
             "strategy": best,
             "win_count": win_counts[best],
             "mean_sortino": round(
                 sum(sortinos_by_strat[best]) / len(sortinos_by_strat[best]), 4
-            )
+            ),
         }
 
     return per_symbol_winners, aggregate_winner
 
 
-def write_tournament_json(all_results: list[dict], output_path: str, universe_snapshot: str = "") -> None:
+def write_tournament_json(
+    all_results: list[dict],
+    output_path: str,
+    universe_snapshot: str = "",
+) -> None:
     per_symbol_winners, aggregate_winner = select_winners(all_results)
-    eligible_count = sum(1 for r in all_results if r["metrics"]["profit_factor"] > 1.5 and r["metrics"]["total_trades"] >= 5)
-
+    eligible_count = sum(
+        1 for r in all_results
+        if r["metrics"]["profit_factor"] > 1.5 and r["metrics"]["total_trades"] >= 5
+    )
     output = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "universe_snapshot": universe_snapshot,
@@ -265,43 +396,56 @@ def write_tournament_json(all_results: list[dict], output_path: str, universe_sn
         "aggregate_winner": aggregate_winner,
         "full_results": all_results,
     }
-
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
-        json.dump(output, f, indent=2)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
     print(f"\n📄 Tournament-Ergebnisse gespeichert: {output_path}")
 
 
-def print_tournament_table(all_results: list[dict], per_symbol_winners: dict) -> tuple[int, list[str]]:
+def print_tournament_table(
+    all_results: list[dict],
+    per_symbol_winners: dict,
+) -> tuple[int, list[str]]:
     print(f"\n{'Symbol':<20} | {'Strategy':<30} | {'Sortino':>7} | {'Calmar':>7} | {'PF':>7} | {'Trades':>6} | Win?")
     print("-" * 95)
 
     winner_count = 0
-    all_symbols = set()
-    winning_symbols = set()
+    all_symbols: set[str] = set()
+    winning_symbols: set[str] = set()
 
-    for r in all_results:
+    for r in sorted(all_results, key=lambda x: (x["symbol"], x["strategy"])):
         sym = r["symbol"]
         strat = r["strategy"]
         m = r["metrics"]
         all_symbols.add(sym)
 
-        is_winner = (sym in per_symbol_winners and per_symbol_winners[sym]["strategy"] == strat)
+        is_winner = (
+            sym in per_symbol_winners
+            and per_symbol_winners[sym]["strategy"] == strat
+        )
         if is_winner:
             winner_count += 1
             winning_symbols.add(sym)
 
         win_mark = "✓" if is_winner else ""
-        print(f"{sym:<20} | {strat:<30} | {m['sortino_ratio']:>7.2f} | {m['calmar_ratio']:>7.2f} | {m['profit_factor']:>7.2f} | {m['total_trades']:>6} | {win_mark}")
+        print(
+            f"{sym:<20} | {strat:<30} | {m['sortino_ratio']:>7.2f} | "
+            f"{m['calmar_ratio']:>7.2f} | {m['profit_factor']:>7.2f} | "
+            f"{m['total_trades']:>6} | {win_mark}"
+        )
 
     return winner_count, sorted(all_symbols - winning_symbols)
 
+
+# ---------------------------------------------------------------------------
+# Worker-Prozess
+# ---------------------------------------------------------------------------
 
 def run_single_backtest_worker(
     inst_id_str: str,
     bar_type: str,
     strat: dict,
-    catalog_path: str,       # OPTIMIERUNG: Übergabe des Pfads statt Objektliste zur Eliminierung des IPC-Overheads
+    catalog_path: str,
     bt_start: pd.Timestamp | None,
     bt_end: pd.Timestamp | None,
     start_capital: float,
@@ -309,34 +453,46 @@ def run_single_backtest_worker(
     reports_dir: str,
     worker_log_file: str,
 ) -> dict:
-    """Isolierter Worker-Prozess: Instanziiert den Katalog lokal und führt das Backtesting aus."""
-    def worker_log(msg):
+    """
+    Isolierter Worker-Prozess. Instanziiert den Katalog lokal und führt
+    ein einzelnes Backtest durch (1 Instrument × 1 Strategie).
+    """
+    def wlog(msg: str) -> None:
         with open(worker_log_file, "a", encoding="utf-8") as f:
             f.write(msg + "\n")
 
-    def worker_log_error(msg, exc_info=False):
-        full_msg = f"ERROR: {msg}"
-        if exc_info:
-            full_msg += f"\n{traceback.format_exc()}"
-        worker_log(full_msg)
+    def wlog_error(msg: str, exc: bool = False) -> None:
+        full = f"[ERROR] {msg}"
+        if exc:
+            full += f"\n{traceback.format_exc()}"
+        wlog(full)
 
     strategy_class_name = strat["strategy_class"]
-    module_name = strat["strategy_module"]
-    config_class_name = strat["config_class"]
+    module_name         = strat["strategy_module"]
+    config_class_name   = strat["config_class"]
 
-    worker_log(f"\n🚀 Starte Backtest: Instrument {inst_id_str} | Strategie {strategy_class_name}")
+    wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
+    # --- Ticks laden ---
     try:
-        # Lokale Instanziierung im Worker verhindert IPC-Flaschenhälse
         catalog = ParquetDataCatalog(catalog_path)
         ticks = load_ticks_from_catalog(catalog, inst_id_str, bt_start, bt_end)
+    except RuntimeError as e:
+        wlog_error(f"Tick-Ladefehler für {inst_id_str}: {e}", exc=True)
+        return {}
 
-        if not ticks:
-            worker_log(f"   ⚠️ 0 Ticks für {inst_id_str} im gewählten Zeitraum gefunden.")
-            return {}
+    if not ticks:
+        wlog(f"   ⚠️ 0 Ticks im Zeitraum für {inst_id_str} — überspringe.")
+        return {}
 
+    wlog(f"   📥 {len(ticks)} Ticks geladen.")
+
+    # --- Engine-Setup ---
+    try:
         price_precision = infer_precision_from_ticks(ticks)
-        engine_config = BacktestEngineConfig(trader_id=f"Matrix-{inst_id_str.replace('.', '_')}-{strategy_class_name}")
+        engine_config = BacktestEngineConfig(
+            trader_id=f"BT-{inst_id_str.replace('.', '_')}-{strategy_class_name}"
+        )
         engine = BacktestEngine(config=engine_config)
 
         engine.add_venue(
@@ -344,275 +500,303 @@ def run_single_backtest_worker(
             oms_type=OmsType.NETTING,
             account_type=AccountType.MARGIN,
             base_currency=USD,
-            starting_balances=[Money(start_capital, USD)]
+            starting_balances=[Money(start_capital, USD)],
         )
 
         mock_inst = create_mock_instrument(inst_id_str, price_precision)
         engine.add_instrument(mock_inst)
         engine.add_data(ticks)
     except Exception as e:
-        worker_log_error(f"   ❌ Fehler beim Setup der Engine für {inst_id_str}: {e}.", exc_info=True)
+        wlog_error(f"Engine-Setup fehlgeschlagen für {inst_id_str}: {e}", exc=True)
         return {}
 
+    # --- Strategie laden & konfigurieren ---
     try:
-        module = importlib.import_module(module_name)
-        StrategyClass = getattr(module, strategy_class_name)
-        ConfigClass = getattr(module, config_class_name)
+        module       = importlib.import_module(module_name)
+        StratCls     = getattr(module, strategy_class_name)
+        ConfigCls    = getattr(module, config_class_name)
 
         params = strat.get("params", {}).copy()
         params["instrument_id"] = inst_id_str
-        params["bar_type"] = bar_type
+        params["bar_type"]      = bar_type
 
-        strategy_config = ConfigClass(**params)
-        strategy = StrategyClass(config=strategy_config)
+        strategy_config = ConfigCls(**params)
+        strategy        = StratCls(config=strategy_config)
         engine.add_strategy(strategy)
     except Exception as e:
-        worker_log_error(f"   ❌ Fehler beim Konfigurieren von {strategy_class_name}: {e}", exc_info=True)
+        wlog_error(f"Strategie-Konfiguration fehlgeschlagen ({strategy_class_name}): {e}", exc=True)
         return {}
 
+    # --- Backtest ausführen ---
     try:
         engine.run()
     except Exception as e:
-        worker_log_error(f"   ❌ engine.run() fehlgeschlagen: {e}", exc_info=True)
+        wlog_error(f"engine.run() fehlgeschlagen: {e}", exc=True)
         return {}
 
-    # OPTIMIERUNG: Behebt das Brittle Spalten-Parsing durch nativer API-Zugriff auf den Cache
+    # --- Offene Positionen prüfen ---
     try:
-        open_positions = engine.cache.positions_open()
-        if open_positions:
-            worker_log(f"   ⚠️ {len(open_positions)} Positionen nach Backtest-Ende offen — unrealized PnL nicht enthalten")
-    except Exception as e:
-        worker_log(f"   ⚠️ Konnte offene Positionen nicht prüfen: {e}")
+        open_pos = engine.cache.positions_open()
+        if open_pos:
+            wlog(f"   ⚠️ {len(open_pos)} Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)")
+    except Exception:
+        pass
 
-    metrics = extract_metrics(engine, start_capital, log_fn=worker_log)
-    worker_log(f"   📊 Metriken: Trades={metrics['total_trades']}, WinRate={metrics['win_rate']:.2%}, PF={metrics['profit_factor']:.2f}, Sortino={metrics['sortino_ratio']:.2f}")
+    # --- Metriken ---
+    metrics = extract_metrics(engine, start_capital, log_fn=wlog)
+    wlog(
+        f"   📊 Trades={metrics['total_trades']} | "
+        f"WinRate={metrics['win_rate']:.1%} | "
+        f"PF={metrics['profit_factor']:.2f} | "
+        f"Sortino={metrics['sortino_ratio']:.2f} | "
+        f"MaxDD={metrics['max_drawdown']:.1%}"
+    )
 
-    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-    if generate_html_report and metrics.get('profit_factor', 0.0) > 1.0:
-        report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{run_timestamp}.html")
+    # --- HTML-Report (optional, nur wenn PF > 1.0) ---
+    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    if generate_html_report and metrics.get("profit_factor", 0.0) > 1.0:
+        report_path = os.path.join(
+            reports_dir,
+            f"tearsheet_{inst_id_str}_{strategy_class_name}_{run_ts}.html"
+        )
         try:
-            create_tearsheet(engine=engine, output_path=report_filename, title=f"Tearsheet {inst_id_str} - {strategy_class_name}")
-            worker_log(f"   📈 Tearsheet erfolgreich gespeichert: {report_filename}")
+            create_tearsheet(
+                engine=engine,
+                output_path=report_path,
+                title=f"Tearsheet {inst_id_str} — {strategy_class_name}",
+            )
+            wlog(f"   📈 Tearsheet gespeichert: {report_path}")
         except Exception as e:
-            worker_log_error(f"   ⚠️ Tearsheet fehlgeschlagen: {e}. Erstelle CSV-Fallback...", exc_info=False)
+            wlog(f"   ⚠️ Tearsheet fehlgeschlagen ({e}), erstelle CSV-Fallback...")
             try:
-                positions_df = engine.trader.generate_positions_report()
+                pos_df   = engine.trader.generate_positions_report()
                 fills_df = engine.trader.generate_order_fills_report()
-                if not positions_df.empty:
-                    positions_df.to_csv(os.path.join(reports_dir, f"positions_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
+                if not pos_df.empty:
+                    pos_df.to_csv(os.path.join(
+                        reports_dir, f"positions_{inst_id_str}_{strategy_class_name}_{run_ts}.csv"
+                    ))
                 if not fills_df.empty:
-                    fills_df.to_csv(os.path.join(reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{run_timestamp}.csv"))
-                worker_log("   ✅ CSV-Fallbacks gespeichert.")
-            except Exception as fallback_e:
-                worker_log_error(f"   ❌ CSV-Fallback ebenfalls fehlgeschlagen: {fallback_e}", exc_info=True)
+                    fills_df.to_csv(os.path.join(
+                        reports_dir, f"fills_{inst_id_str}_{strategy_class_name}_{run_ts}.csv"
+                    ))
+                wlog("   ✅ CSV-Fallbacks gespeichert.")
+            except Exception as fe:
+                wlog_error(f"CSV-Fallback ebenfalls fehlgeschlagen: {fe}", exc=True)
 
     engine.dispose()
     return {"symbol": inst_id_str, "strategy": strategy_class_name, "metrics": metrics}
 
 
-def run_backtest():
+# ---------------------------------------------------------------------------
+# Haupt-Einstiegspunkt
+# ---------------------------------------------------------------------------
+
+def run_backtest() -> None:
     parser = argparse.ArgumentParser(description="NautilusTrader Backtesting Engine")
-    parser.add_argument("--momentum", action="store_true", help="Tournament mode")
-    parser.add_argument("--htmlreport", action="store_true", help="Generate HTML tearsheets")
-    parser.add_argument("--catalog-path", type=str, default=None)
-    parser.add_argument("--config", type=str, default=None)
-    parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--momentum",     action="store_true", help="Tournament-Modus: Gewinner-Selektion")
+    parser.add_argument("--htmlreport",   action="store_true", help="HTML-Tearsheets generieren")
+    parser.add_argument("--catalog-path", type=str, default=None, help="Pfad zum ParquetDataCatalog")
+    parser.add_argument("--config",       type=str, default=None, help="Pfad zur Config-JSON")
+    parser.add_argument("--output",       type=str, default=None, help="Ausgabedatei für Tournament-JSON")
     args = parser.parse_args()
 
-    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    # --- Verzeichnisse & Logging ---
+    _script_dir  = os.path.dirname(os.path.abspath(__file__))
     _project_root = os.path.dirname(_script_dir)
-    logs_dir = os.path.join(_project_root, "logs")
+    logs_dir     = os.path.join(_project_root, "logs")
     os.makedirs(logs_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_file = os.path.join(logs_dir, f"backtest_{timestamp}.log")
+
+    timestamp     = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file      = os.path.join(logs_dir, f"backtest_{timestamp}.log")
     error_log_file = os.path.join(logs_dir, f"errors_{timestamp}.log")
 
     sys.stdout = DualLogger(log_file)
     sys.stderr = DualLogger(log_file)
-    print(f"📝 Logging aktiv. Ausgabe wird gespeichert in: {log_file}")
-    print(f"🚨 Fehler-Log wird separat geschrieben in: {error_log_file}\n" + "=" * 60)
+    print(f"📝 Log-Datei: {log_file}")
+    print(f"🚨 Fehler-Log: {error_log_file}")
+    print("=" * 70)
 
-    def log_error(msg, exc_info=False):
+    def log_error(msg: str, exc: bool = False) -> None:
         print(msg)
         with open(error_log_file, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-            if exc_info:
+            if exc:
                 f.write(traceback.format_exc() + "\n")
 
-    if args.config:
-        config_path = args.config
-    else:
-        config_path = os.path.join(_script_dir, "backtesting_config.json")
-
+    # --- Config laden ---
+    config_path = args.config or os.path.join(_script_dir, "backtesting_config.json")
     if not os.path.exists(config_path):
-        log_error(f"❌ Fehler: Config {config_path} nicht gefunden.")
+        log_error(f"❌ Config nicht gefunden: {config_path}")
         return
 
-    config_data = load_config(config_path)
-    global_settings = config_data.get("global_settings", {})
-    strategies_list = config_data.get("strategies", [])
-
-    start_time_str = global_settings.get("start_time")
-    end_time_str = global_settings.get("end_time")
-    bt_start = pd.Timestamp(start_time_str, tz="UTC") if start_time_str else None
-    bt_end   = pd.Timestamp(end_time_str,   tz="UTC") if end_time_str   else None
+    config_data      = load_config(config_path)
+    global_settings  = config_data.get("global_settings", {})
+    strategies_list  = config_data.get("strategies", [])
 
     if not strategies_list:
-        log_error("⚠️ Keine Strategien in Config definiert. Breche ab.")
+        log_error("⚠️ Keine Strategien in Config definiert.")
         return
 
-    if args.catalog_path:
-        catalog_path = args.catalog_path
-    else:
-        catalog_path = global_settings.get("catalog_path", "./data/nautilus")
+    # --- Strategie-Parameter validieren ---
+    param_warnings: list[str] = []
+    for strat in strategies_list:
+        param_warnings.extend(validate_strategy_params(strat))
+    if param_warnings:
+        print("\n⚠️  Parameter-Warnungen:")
+        for w in param_warnings:
+            print(f"   • {w}")
+        print()
 
-    if not os.path.exists(os.path.join(catalog_path, "quote_tick")) and \
-       os.path.exists(os.path.join(catalog_path, "nautilus_data", "quote_tick")):
-        catalog_path = os.path.join(catalog_path, "nautilus_data")
+    # --- Zeitraum & Kapital ---
+    start_time_str = global_settings.get("start_time")
+    end_time_str   = global_settings.get("end_time")
+    bt_start = pd.Timestamp(start_time_str, tz="UTC") if start_time_str else None
+    bt_end   = pd.Timestamp(end_time_str,   tz="UTC") if end_time_str   else None
+    start_capital = global_settings.get("start_capital", 100_000.0)
+
+    # --- Katalog-Pfad ---
+    catalog_path = args.catalog_path or global_settings.get("catalog_path", "./data/nautilus")
 
     expected_data_dir = os.path.join(catalog_path, "data")
     os.makedirs(expected_data_dir, exist_ok=True)
 
-    for folder in ["quote_tick", "bar"]:
-        wrong_source = os.path.join(catalog_path, folder)
-        correct_target = os.path.join(expected_data_dir, folder)
-        if os.path.exists(wrong_source) and not os.path.exists(correct_target):
-            print(f"📂 Optimiere Ordnerstruktur: Verschiebe {folder} -> data/{folder}")
-            shutil.move(wrong_source, correct_target)
-
+    # --- Instrumente entdecken ---
     instrument_ids = discover_instruments_from_catalog(catalog_path)
-    dynamic_instruments = [{"id": iid, "bar_type": f"{iid}-1-MINUTE-MID-INTERNAL"} for iid in instrument_ids]
-
-    if not dynamic_instruments:
-        log_error(f"⚠️ Keine Tick-Daten im Verzeichnis {expected_data_dir}/quote_tick gefunden.")
+    if not instrument_ids:
+        log_error(f"⚠️ Keine Instrumente in {expected_data_dir}/quote_tick gefunden.")
         return
 
-    print(f"¼ {len(dynamic_instruments)} Instrumente gefunden. Registriere im Katalog...")
+    print(f"📋 {len(instrument_ids)} Instrumente gefunden.")
 
+    # --- WICHTIG: Metadaten-Normalisierung vor dem Backtesting ---
+    # Stellt sicher, dass catalog.quote_ticks() nicht am Arrow-Schema-Merge scheitert.
+    # Einmalig notwendig wenn verschiedene NautilusTrader-Versionen Daten mit
+    # unterschiedlicher price_precision geschrieben haben.
+    print("\n🔍 Prüfe Parquet-Schema-Konsistenz...")
+    patched_count = 0
+    for inst_id in instrument_ids:
+        if normalize_parquet_metadata(catalog_path, inst_id):
+            patched_count += 1
+    if patched_count:
+        print(f"  ✅ {patched_count} Instrument(e) gepatcht.")
+    else:
+        print("  ✅ Alle Schemas konsistent — kein Patch erforderlich.")
+
+    # --- Mock-Instrumente im Katalog registrieren ---
     catalog = ParquetDataCatalog(catalog_path)
-    dummy_instruments = [create_mock_instrument(inst["id"]) for inst in dynamic_instruments]
+    dummy_instruments = [create_mock_instrument(iid) for iid in instrument_ids]
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         try:
             catalog.write_data(dummy_instruments)
         except Exception:
             pass
 
-    start_capital = global_settings.get("start_capital", 100000.0)
+    dynamic_instruments = [
+        {
+            "id": iid,
+            # INTERNAL = Engine aggregiert Ticks zu Bars intern beim run()
+            "bar_type": f"{iid}-1-MINUTE-MID-INTERNAL",
+        }
+        for iid in instrument_ids
+    ]
+
     reports_dir = os.path.join(_project_root, "reports")
     os.makedirs(reports_dir, exist_ok=True)
 
     date_str = datetime.now().strftime("%Y-%m-%d")
-    tournament_output = args.output if args.output else os.path.join(_project_root, "logs", f"tournament_{date_str}.json")
+    tournament_output = args.output or os.path.join(
+        _project_root, "logs", f"tournament_{date_str}.json"
+    )
 
-    all_results = []
+    total_jobs = len(dynamic_instruments) * len(strategies_list)
+    print(f"\n⏳ Starte {total_jobs} Backtest-Jobs "
+          f"({len(dynamic_instruments)} Instrumente × {len(strategies_list)} Strategien)...")
+
+    # --- Multiprocessing-Setup ---
+    _use_mp = True
+    _max_workers = max(1, min((os.cpu_count() or 1) // 2, 6))
     executor = None
-    _use_multiprocessing = True
-    futures = {}
+    futures: dict = {}
+    all_results: list[dict] = []
 
     try:
-        if _use_multiprocessing:
-            _max_workers = max(1, min((os.cpu_count() or 1) // 2, 6))
+        if _use_mp:
             if sys.version_info >= (3, 11):
-                executor = ProcessPoolExecutor(max_workers=_max_workers, max_tasks_per_child=1)
+                executor = ProcessPoolExecutor(
+                    max_workers=_max_workers,
+                    max_tasks_per_child=1,  # Verhindert Memory-Akkumulation
+                )
             else:
                 executor = ProcessPoolExecutor(max_workers=_max_workers)
 
         for inst in dynamic_instruments:
             inst_id_str = inst["id"]
-            bar_type = inst["bar_type"]
+            bar_type    = inst["bar_type"]
 
             for strat in strategies_list:
-                worker_log_file = os.path.join(logs_dir, f"worker_{inst_id_str.replace('.', '_')}_{strat['strategy_class']}_{timestamp}.log")
+                worker_log_file = os.path.join(
+                    logs_dir,
+                    f"worker_{inst_id_str.replace('.', '_')}"
+                    f"_{strat['strategy_class']}_{timestamp}.log"
+                )
                 _worker_log_files.append(worker_log_file)
 
-                if _use_multiprocessing and executor is not None:
+                if _use_mp and executor is not None:
                     future = executor.submit(
                         run_single_backtest_worker,
-                        inst_id_str,
-                        bar_type,
-                        strat,
-                        catalog_path, # Übergabe des Verzeichnis-Pfads statt der geladenen Ticks
-                        bt_start,
-                        bt_end,
-                        start_capital,
-                        args.htmlreport,
-                        reports_dir,
-                        worker_log_file,
+                        inst_id_str, bar_type, strat,
+                        catalog_path, bt_start, bt_end,
+                        start_capital, args.htmlreport,
+                        reports_dir, worker_log_file,
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], worker_log_file)
                 else:
+                    # Sequenzieller Fallback
                     result = run_single_backtest_worker(
-                        inst_id_str, bar_type, strat, catalog_path, bt_start, bt_end,
-                        start_capital, args.htmlreport, reports_dir, worker_log_file,
+                        inst_id_str, bar_type, strat,
+                        catalog_path, bt_start, bt_end,
+                        start_capital, args.htmlreport,
+                        reports_dir, worker_log_file,
                     )
-                    if os.path.exists(worker_log_file):
-                        with open(worker_log_file, "r", encoding="utf-8") as wf:
-                            content = wf.read().strip()
-                            if content:
-                                print(content)
-                        try:
-                            os.remove(worker_log_file)
-                        except OSError:
-                            pass
+                    _flush_worker_log(worker_log_file)
                     if result and result.get("metrics"):
                         all_results.append(result)
 
-        if _use_multiprocessing and executor is not None:
-            total = len(futures)
+        # --- Futures abarbeiten ---
+        if _use_mp and executor is not None:
             done_count = 0
-            print(f"\n⏳ {total} Backtest-Jobs gestartet. Warte auf Ergebnisse...")
-
             for future in as_completed(futures):
-                inst_id_str, strategy_class_name, worker_log_file = futures[future]
+                inst_id_str, strat_name, worker_log_file = futures[future]
                 done_count += 1
-
-                if os.path.exists(worker_log_file):
-                    with open(worker_log_file, "r", encoding="utf-8") as wf:
-                        content = wf.read().strip()
-                        if content:
-                            print(content)
-                    try:
-                        os.remove(worker_log_file)
-                    except OSError:
-                        pass
+                _flush_worker_log(worker_log_file)
 
                 try:
                     result = future.result()
                     if result and result.get("metrics"):
                         all_results.append(result)
-                except _BrokenPool:
-                    log_error(f"   💥 Worker-Pool gecrasht (OOM/SIGKILL) bei {inst_id_str}/{strategy_class_name}. Wechsle zu sequenziellem Fallback.", exc_info=False)
-                    _use_multiprocessing = False
-                    remaining = {f: v for f, v in futures.items() if not f.done() and f is not future}
-                    for rem_future, (rem_inst, rem_strat_name, rem_log) in remaining.items():
-                        rem_strat = next((s for s in strategies_list if s["strategy_class"] == rem_strat_name), None)
-                        if rem_strat is None:
-                            continue
-                        res = run_single_backtest_worker(
-                            rem_inst, f"{rem_inst}-1-MINUTE-MID-INTERNAL", rem_strat,
-                            catalog_path, bt_start, bt_end, start_capital, args.htmlreport, reports_dir, rem_log,
-                        )
-                        if rem_log in _worker_log_files:
-                            _worker_log_files.remove(rem_log)
-                        if os.path.exists(rem_log):
-                            with open(rem_log, "r", encoding="utf-8") as wf:
-                                log_content = wf.read().strip()
-                                if log_content:
-                                    print(log_content)
-                            try:
-                                os.remove(rem_log)
-                            except OSError:
-                                pass
-                        done_count += 1
-                        print(f"   [{done_count}/{total}] Abgeschlossen (sequenziell): {rem_inst} / {rem_strat_name}")
-                        if res and res.get("metrics"):
-                            all_results.append(res)
-                    break
-                except Exception as e:
-                    log_error(f"   ❌ Worker-Prozess für {inst_id_str}/{strategy_class_name} fehlgeschlagen: {e}", exc_info=True)
 
-                print(f"   [{done_count}/{total}] Abgeschlossen: {inst_id_str} / {strategy_class_name}")
+                except _BrokenPool:
+                    log_error(
+                        f"💥 Worker-Pool gecrasht (OOM/SIGKILL) bei {inst_id_str}/{strat_name}. "
+                        "Wechsle zu sequenziellem Fallback.",
+                        exc=False,
+                    )
+                    _use_mp = False
+                    _run_remaining_sequentially(
+                        futures, future, strategies_list, catalog_path,
+                        bt_start, bt_end, start_capital, args.htmlreport,
+                        reports_dir, all_results, done_count, total_jobs,
+                        log_error,
+                    )
+                    break
+
+                except Exception as e:
+                    log_error(
+                        f"❌ Worker {inst_id_str}/{strat_name} fehlgeschlagen: {e}",
+                        exc=True,
+                    )
+
+                print(f"   [{done_count:>4}/{total_jobs}] {inst_id_str} / {strat_name}")
 
             executor.shutdown(wait=True)
 
@@ -624,22 +808,93 @@ def run_backtest():
             except TypeError:
                 executor.shutdown(wait=False)
 
+    # --- Tournament-Auswertung ---
     if args.momentum and all_results:
         per_symbol_winners, aggregate_winner = select_winners(all_results)
         winner_count, no_winner_symbols = print_tournament_table(all_results, per_symbol_winners)
         total_symbols = len(set(r["symbol"] for r in all_results))
-        print(f"\n✅ Tournament abgeschlossen: {total_symbols} Symbole, {winner_count} Gewinner")
 
+        print(f"\n✅ Tournament: {total_symbols} Symbole | {winner_count} Gewinner-Kombinationen")
         if aggregate_winner:
-            print(f"🏆 Aggregat-Sieger: {aggregate_winner['strategy']} ({aggregate_winner['win_count']} Wins, Ø Sortino: {aggregate_winner['mean_sortino']})")
+            print(
+                f"🏆 Aggregat-Sieger: {aggregate_winner['strategy']} "
+                f"({aggregate_winner['win_count']} Wins, "
+                f"Ø Sortino: {aggregate_winner['mean_sortino']})"
+            )
         if no_winner_symbols:
             print(f"⚠️  Keine qualifizierte Strategie: {', '.join(no_winner_symbols)}")
             for sym in no_winner_symbols:
-                log_error(f"⚠️ {sym}: Keine qualifizierte Strategie — wird nicht gehandelt")
+                log_error(f"⚠️ {sym}: Keine qualifizierte Strategie")
+
         write_tournament_json(all_results, tournament_output)
+    elif all_results:
+        print(f"\n📊 {len(all_results)} Backtest-Ergebnisse gesammelt (kein --momentum Flag).")
 
     print("\n✅ Matrix-Backtest vollständig abgeschlossen!")
 
+
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen für den Haupt-Loop
+# ---------------------------------------------------------------------------
+
+def _flush_worker_log(worker_log_file: str) -> None:
+    """Gibt Worker-Log-Inhalt auf stdout aus und löscht die Datei."""
+    if os.path.exists(worker_log_file):
+        try:
+            with open(worker_log_file, "r", encoding="utf-8") as wf:
+                content = wf.read().strip()
+            if content:
+                print(content)
+            os.remove(worker_log_file)
+        except OSError:
+            pass
+    if worker_log_file in _worker_log_files:
+        _worker_log_files.remove(worker_log_file)
+
+
+def _run_remaining_sequentially(
+    futures: dict,
+    failed_future,
+    strategies_list: list,
+    catalog_path: str,
+    bt_start,
+    bt_end,
+    start_capital: float,
+    generate_html: bool,
+    reports_dir: str,
+    all_results: list,
+    done_count: int,
+    total_jobs: int,
+    log_error,
+) -> None:
+    """Sequenzieller Fallback wenn Worker-Pool gecrasht ist."""
+    remaining = {
+        f: v for f, v in futures.items()
+        if not f.done() and f is not failed_future
+    }
+    for rem_future, (rem_inst, rem_strat_name, rem_log) in remaining.items():
+        rem_strat = next(
+            (s for s in strategies_list if s["strategy_class"] == rem_strat_name),
+            None
+        )
+        if rem_strat is None:
+            continue
+        bar_type = f"{rem_inst}-1-MINUTE-MID-INTERNAL"
+        res = run_single_backtest_worker(
+            rem_inst, bar_type, rem_strat,
+            catalog_path, bt_start, bt_end,
+            start_capital, generate_html, reports_dir, rem_log,
+        )
+        _flush_worker_log(rem_log)
+        done_count += 1
+        print(f"   [{done_count:>4}/{total_jobs}] (seq) {rem_inst} / {rem_strat_name}")
+        if res and res.get("metrics"):
+            all_results.append(res)
+
+
+# ---------------------------------------------------------------------------
+# Einstiegspunkt
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()

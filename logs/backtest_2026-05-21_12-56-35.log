@@ -1,0 +1,221 @@
+📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-05-21_12-56-35.log
+🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-05-21_12-56-35.log
+======================================================================
+📋 77 Instrumente gefunden.
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent — kein Patch erforderlich.
+
+⏳ Starte 693 Backtest-Jobs (77 Instrumente × 9 Strategien)...
+🚀 01211.HK.ETORO | TrendPullbackStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   1/693] 01211.HK.ETORO / TrendPullbackStrategy
+🚀 01211.HK.ETORO | DynamicBreakoutStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   2/693] 01211.HK.ETORO / DynamicBreakoutStrategy
+🚀 01211.HK.ETORO | SmaCrossoverStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   3/693] 01211.HK.ETORO / SmaCrossoverStrategy
+🚀 01211.HK.ETORO | MeanReversionStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   4/693] 01211.HK.ETORO / MeanReversionStrategy
+🚀 01211.HK.ETORO | FlashCrashReversalStrategy
+   📥 1947 Ticks geladen.
+   📊 Trades=1 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   5/693] 01211.HK.ETORO / FlashCrashReversalStrategy
+🚀 01211.HK.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   6/693] 01211.HK.ETORO / VolatilityBreakoutPumpStrategy
+🚀 01211.HK.ETORO | AdxAtrMomentumStrategy
+   📥 1947 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   7/693] 01211.HK.ETORO / AdxAtrMomentumStrategy
+🚀 01211.HK.ETORO | ComboTrendVwapStrategy
+   📥 1947 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   8/693] 01211.HK.ETORO / ComboTrendVwapStrategy
+🚀 01211.HK.ETORO | VwapExhaustionStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   9/693] 01211.HK.ETORO / VwapExhaustionStrategy
+🚀 ACN.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  10/693] ACN.ETORO / TrendPullbackStrategy
+🚀 ACN.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  11/693] ACN.ETORO / SmaCrossoverStrategy
+🚀 ACN.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  12/693] ACN.ETORO / DynamicBreakoutStrategy
+🚀 ACN.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  13/693] ACN.ETORO / MeanReversionStrategy
+🚀 ACN.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  14/693] ACN.ETORO / FlashCrashReversalStrategy
+🚀 ACN.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  15/693] ACN.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ACN.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  16/693] ACN.ETORO / VwapExhaustionStrategy
+🚀 ACN.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  17/693] ACN.ETORO / AdxAtrMomentumStrategy
+🚀 ADA.ETORO | SmaCrossoverStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  18/693] ADA.ETORO / SmaCrossoverStrategy
+🚀 ACN.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  19/693] ACN.ETORO / ComboTrendVwapStrategy
+🚀 ADA.ETORO | TrendPullbackStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  20/693] ADA.ETORO / TrendPullbackStrategy
+🚀 ADA.ETORO | DynamicBreakoutStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  21/693] ADA.ETORO / DynamicBreakoutStrategy
+🚀 ADA.ETORO | MeanReversionStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  22/693] ADA.ETORO / MeanReversionStrategy
+🚀 ADA.ETORO | FlashCrashReversalStrategy
+   📥 1819 Ticks geladen.
+   📊 Trades=1 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  23/693] ADA.ETORO / FlashCrashReversalStrategy
+🚀 ADA.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  24/693] ADA.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ADA.ETORO | VwapExhaustionStrategy
+   📥 1819 Ticks geladen.
+   📊 Trades=1 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  25/693] ADA.ETORO / VwapExhaustionStrategy
+🚀 ADA.ETORO | AdxAtrMomentumStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  26/693] ADA.ETORO / AdxAtrMomentumStrategy
+🚀 ADA.ETORO | ComboTrendVwapStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  27/693] ADA.ETORO / ComboTrendVwapStrategy
+🚀 ADBE.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  28/693] ADBE.ETORO / SmaCrossoverStrategy
+🚀 ADBE.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  29/693] ADBE.ETORO / TrendPullbackStrategy
+🚀 ADBE.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  30/693] ADBE.ETORO / MeanReversionStrategy
+🚀 ADBE.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  31/693] ADBE.ETORO / DynamicBreakoutStrategy
+🚀 ADBE.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  32/693] ADBE.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ADBE.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  33/693] ADBE.ETORO / FlashCrashReversalStrategy
+🚀 AERO.ETORO | SmaCrossoverStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  34/693] AERO.ETORO / SmaCrossoverStrategy
+🚀 ADBE.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  35/693] ADBE.ETORO / AdxAtrMomentumStrategy
+🚀 ADBE.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  36/693] ADBE.ETORO / VwapExhaustionStrategy
+🚀 AERO.ETORO | TrendPullbackStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  37/693] AERO.ETORO / TrendPullbackStrategy
+🚀 ADBE.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  38/693] ADBE.ETORO / ComboTrendVwapStrategy
+🚀 AERO.ETORO | MeanReversionStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  39/693] AERO.ETORO / MeanReversionStrategy
+🚀 AERO.ETORO | DynamicBreakoutStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  40/693] AERO.ETORO / DynamicBreakoutStrategy
