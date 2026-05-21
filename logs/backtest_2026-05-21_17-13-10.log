@@ -70,3 +70,8 @@
 [Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
    📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
    [  11/693] ACN.ETORO / TrendPullbackStrategy
+🚀 ACN.ETORO | DynamicBreakoutStrategy
+   📥 1833 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1152 Trades erfolgreich berechnet.
+   📊 Trades=1152 | WinRate=14.9% | PF=0.23 | Sortino=-6.00 | MaxDD=0.3%
+   [  12/693] ACN.ETORO / DynamicBreakoutStrategy
