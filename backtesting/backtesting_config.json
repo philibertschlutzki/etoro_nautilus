@@ -1,10 +1,11 @@
 {
   "global_settings": {
     "catalog_path": "./data/nautilus",
-    "start_time": "2026-01-01",
+    "start_time": "2022-04-01",
     "end_time": "2026-05-14",
     "start_capital": 100000000.0,
-    "_note_instruments": "Instrumente werden automatisch via Filesystem-Scan aus data/nautilus/data/quote_tick/ erkannt. Nicht gewünschte Instrumente einfach aus diesem Ordner entfernen oder umbenennen."
+    "_note_instruments": "Instrumente werden automatisch via Filesystem-Scan aus data/nautilus/data/quote_tick/ erkannt.",
+    "_note_period": "start_time auf 2022 gesetzt: maximaler Datensatz, mehr Trades, stabilere Indikatoren"
   },
   "strategies": [
     {
@@ -20,10 +21,10 @@
       "strategy_class": "TrendPullbackStrategy",
       "config_class": "TrendPullbackConfig",
       "params": {
-        "ema_period": 3,
+        "ema_period": 2,
         "rsi_period": 2,
-        "rsi_oversold": 95.0,
-        "rsi_overbought": 5.0
+        "rsi_oversold": 40.0,
+        "rsi_overbought": 60.0
       }
     },
     {
@@ -33,7 +34,7 @@
       "params": {
         "keltner_period": 2,
         "keltner_atr_period": 2,
-        "keltner_multiplier": 0.01
+        "keltner_multiplier": 0.1
       }
     },
     {
@@ -42,7 +43,7 @@
       "config_class": "DynamicBreakoutConfig",
       "params": {
         "volume_sma_period": 2,
-        "volume_multiplier": 0.01,
+        "volume_multiplier": 0.5,
         "price_breakout_period": 2
       }
     },
@@ -52,10 +53,10 @@
       "config_class": "FlashCrashReversalConfig",
       "params": {
         "bb_period": 2,
-        "bb_std_dev": 0.01,
+        "bb_std_dev": 0.5,
         "rsi_period": 2,
-        "rsi_oversold": 95.0,
-        "rsi_overbought": 5.0
+        "rsi_oversold": 40.0,
+        "rsi_overbought": 60.0
       }
     },
     {
@@ -64,7 +65,7 @@
       "config_class": "VolatilityBreakoutConfig",
       "params": {
         "bb_period": 2,
-        "bb_std_dev": 0.01
+        "bb_std_dev": 0.5
       }
     },
     {
@@ -72,11 +73,11 @@
       "strategy_class": "ComboTrendVwapStrategy",
       "config_class": "ComboTrendVwapConfig",
       "params": {
-        "sma_period": 3,
+        "sma_period": 2,
         "macd_fast": 2,
-        "macd_slow": 4,
+        "macd_slow": 3,
         "bb_period": 2,
-        "bb_std_dev": 0.01,
+        "bb_std_dev": 0.5,
         "bb_entry_tolerance": 0.99
       }
     },
@@ -86,9 +87,9 @@
       "config_class": "AdxAtrMomentumConfig",
       "params": {
         "adx_period": 2,
-        "ema_period": 3,
+        "ema_period": 2,
         "atr_period": 2,
-        "atr_multiplier": 0.01
+        "atr_multiplier": 0.1
       }
     },
     {
@@ -97,8 +98,8 @@
       "config_class": "VwapExhaustionConfig",
       "params": {
         "volume_sma_period": 2,
-        "deviation_threshold": 0.0001,
-        "volume_multiplier": 0.01
+        "deviation_threshold": 0.001,
+        "volume_multiplier": 0.5
       }
     }
   ]
