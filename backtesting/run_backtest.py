@@ -4,13 +4,15 @@ run_backtest.py
 
 NautilusTrader Multi-Strategie Backtesting Engine mit Tournament-Modus.
 
-Fixes:
-  - OmsType.NETTING → OmsType.HEDGING (korrekte Position-Lifecycles)
-  - extract_metrics: Fills-basierte Zählung statt is_open-Filter
+Optimierungen & Fixes:
+  - OmsType.NETTING (Klassischer Netting-Modus für korrekte Order-Exekution)
+  - extract_metrics: Behebt den AttributeError (Cache hat kein .fills()). Verwendet 
+    jetzt robust den offiziellen trader.generate_fills_report() DataFrame.
+  - Dynamisches Upscaling von 'trade_amount_usd': Verhindert das lautlose Verwerfen 
+    von Signalen bei US-Aktien (Bug 1: units < size_increment).
   - Zeitfilter: pd.Timestamp → Nanosekunden (Katalog-Kompatibilität)
   - normalize_parquet_metadata() vor Backtesting (Arrow-Schema-Konflikte)
-  - validate_strategy_params() (MACD fast < slow, positive Multiplikatoren)
-  - Tote Code-Pfade entfernt; ¼ → 📋 Encoding-Fix
+  - Robuste Fehlerbehandlung bei KeyboardInterrupt im Multiprocessing.
 """
 
 import os
@@ -29,6 +31,7 @@ from pathlib import Path
 from typing import Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool as _BrokenPool
+from collections import deque
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -88,13 +91,6 @@ class DualLogger:
 # ---------------------------------------------------------------------------
 
 def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> bool:
-    """
-    Vereinheitlicht conflicting Arrow-Schema-Metadaten (price_precision) aller
-    Parquet-Dateien eines Instruments in-place.
-
-    Fix: Arrow-Dataset-Merge schlägt fehl wenn verschiedene Parquet-Files
-    unterschiedliche price_precision-Werte im Schema-Header haben.
-    """
     inst_dir = Path(catalog_path) / "data" / "quote_tick" / instrument_id_str
     if not inst_dir.exists():
         return False
@@ -171,7 +167,6 @@ def discover_instruments_from_catalog(catalog_path: str) -> list[str]:
 
 
 def validate_strategy_params(strat: dict) -> list[str]:
-    """Prüft auf bekannte Parameter-Inkonsistenzen (MACD, Multiplikatoren)."""
     warnings: list[str] = []
     params = strat.get("params", {})
     name = strat.get("strategy_class", "?")
@@ -190,10 +185,6 @@ def validate_strategy_params(strat: dict) -> list[str]:
 
 
 def ts_to_ns(ts: pd.Timestamp | None) -> int | None:
-    """
-    Fix: NautilusTrader-Katalog erwartet Nanosekunden-Integer für Zeitfilter,
-    nicht pd.Timestamp-Objekte. pd.Timestamp.value gibt Unix-Nanosekunden zurück.
-    """
     return int(ts.value) if ts is not None else None
 
 
@@ -203,11 +194,6 @@ def load_ticks_from_catalog(
     start_ns: int | None,
     end_ns: int | None,
 ) -> list:
-    """
-    Lädt QuoteTick-Objekte mit Nanosekunden-Zeitfilter.
-
-    Fix: pd.Timestamp → int (Nanosekunden) für korrekte Katalog-Filterung.
-    """
     try:
         ticks = catalog.quote_ticks(
             instrument_ids=[instrument_id_str],
@@ -249,19 +235,15 @@ def create_mock_instrument(instrument_id_str: str, price_precision: int = 2) -> 
 
 
 # ---------------------------------------------------------------------------
-# Metriken — Fix: Fills-basierte Zählung
+# Metriken — Präzisions-FIFO-Matching für Netting Accounts via Fills Report
 # ---------------------------------------------------------------------------
 
 def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None) -> dict:
     """
     Extrahiert Tournament-Metriken.
-
-    Fix: In OmsType.HEDGING haben geschlossene Positionen is_open=False.
-    Fallback: Fills-basierte Zählung falls Positions-Methode 0 ergibt.
-
-    Vorgänger-Problem: OmsType.NETTING behält 1 Position-Objekt das immer
-    is_open=True bleibt (net_quantity ≠ 0) → alte closed=[]-Logik ergab 0 Trades
-    obwohl Trades stattfanden.
+    
+    Korrektur: Nutzt trader.generate_fills_report() statt des fehlerhaften Cache-Zugriffs.
+    Unterstützt robustes FIFO-Position-Matching über DataFrames.
     """
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
@@ -269,113 +251,130 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         "max_drawdown": 0.0, "total_return": 0.0,
     }
 
-    pnls: list[float] = []
-
-    # --- Methode 1: Geschlossene Positionen (HEDGING-Modus) ---
     try:
-        all_positions = engine.cache.positions()
-        closed = [p for p in all_positions if not p.is_open]
+        try:
+            df_fills = engine.trader.generate_fills_report()
+        except Exception:
+            df_fills = pd.DataFrame()
 
-        if closed:
-            for pos in closed:
-                try:
-                    pnls.append(float(pos.realized_pnl.as_decimal()))
-                except AttributeError:
-                    try:
-                        pnls.append(float(pos.realized_pnl))
-                    except (TypeError, ValueError):
-                        pass
-        else:
+        if df_fills.empty:
+            try:
+                df_fills = engine.trader.generate_order_fills_report()
+            except Exception:
+                df_fills = pd.DataFrame()
+
+        if df_fills.empty:
             if log_fn:
-                log_fn("[Metriken] Keine geschlossenen Positionen — versuche Fills-Methode")
+                log_fn("[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.")
+            return NULL
 
-    except Exception:
-        pass
+        # Fills nach Instrumenten gruppieren
+        instrument_fills: dict[str, list] = {}
+        for row in df_fills.itertuples():
+            iid = str(getattr(row, 'instrument_id', ''))
+            if not iid:
+                continue
+            instrument_fills.setdefault(iid, []).append(row)
 
-    # --- Methode 2: Fills-basierte Zählung (Fallback für NETTING-Reste) ---
-    if not pnls:
-        try:
-            # Realized PnL aus ALLEN Positionen (inkl. noch offener) auslesen
-            all_positions = engine.cache.positions()
-            for pos in all_positions:
+        pnls: list[float] = []
+
+        # Chronologisches FIFO-Matching pro Instrument
+        for iid, f_list in instrument_fills.items():
+            sorted_fills = sorted(f_list, key=lambda x: getattr(x, 'ts_event', getattr(x, 'ts_init', 0)))
+            buy_queue: deque[tuple[float, float]] = deque()  # (Stückzahl, Preis)
+            sell_queue: deque[tuple[float, float]] = deque() # (Stückzahl, Preis)
+
+            for f in sorted_fills:
                 try:
-                    pnl = float(pos.realized_pnl.as_decimal())
-                    if pnl != 0.0:
+                    qty = float(getattr(f, 'last_qty', getattr(f, 'filled_qty', getattr(f, 'quantity', 0.0))))
+                    price = float(getattr(f, 'last_px', getattr(f, 'avg_px', getattr(f, 'price', 0.0))))
+                    side_str = str(getattr(f, 'order_side', getattr(f, 'side', ''))).upper()
+                except Exception:
+                    continue
+
+                if qty <= 0:
+                    continue
+
+                is_buy = "BUY" in side_str
+
+                if is_buy:
+                    while qty > 0 and sell_queue:
+                        s_qty, s_price = sell_queue[0]
+                        match_qty = min(qty, s_qty)
+                        pnl = match_qty * (s_price - price)
                         pnls.append(pnl)
-                except (AttributeError, TypeError, ValueError):
-                    pass
+                        qty -= match_qty
+                        sell_queue[0] = (s_qty - match_qty, s_price)
+                        if sell_queue[0][0] <= 1e-9:
+                            sell_queue.popleft()
+                    if qty > 0:
+                        buy_queue.append((qty, price))
+                else:  # SIDE IS SELL
+                    while qty > 0 and buy_queue:
+                        b_qty, b_price = buy_queue[0]
+                        match_qty = min(qty, b_qty)
+                        pnl = match_qty * (price - b_price)
+                        pnls.append(pnl)
+                        qty -= match_qty
+                        buy_queue[0] = (b_qty - match_qty, b_price)
+                        if buy_queue[0][0] <= 1e-9:
+                            buy_queue.popleft()
+                    if qty > 0:
+                        sell_queue.append((qty, price))
 
-            if pnls and log_fn:
-                log_fn(
-                    f"[Metriken] Fills-Methode: {len(pnls)} Trades aus "
-                    f"realized_pnl extrahiert"
-                )
-        except Exception:
-            pass
+        if not pnls:
+            if log_fn:
+                log_fn("[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.")
+            return NULL
 
-    # --- Methode 3: Trader-Report (letzter Fallback) ---
-    if not pnls:
-        try:
-            pos_report = engine.trader.generate_positions_report()
-            if not pos_report.empty and 'realized_pnl' in pos_report.columns:
-                for val in pos_report['realized_pnl']:
-                    try:
-                        fval = float(str(val).split()[0])
-                        if fval != 0.0:
-                            pnls.append(fval)
-                    except (ValueError, IndexError):
-                        pass
-            if pnls and log_fn:
-                log_fn(f"[Metriken] Trader-Report-Methode: {len(pnls)} Trades")
-        except Exception:
-            pass
-
-    if not pnls:
         if log_fn:
-            log_fn("[Metriken] Keine Trades detektiert (alle Methoden erfolglos)")
+            log_fn(f"[Metriken] FIFO-Extraktion: {len(pnls)} Trades erfolgreich berechnet.")
+
+        n = len(pnls)
+        wins = sum(1 for v in pnls if v > 0)
+        gross_profit = sum(v for v in pnls if v > 0)
+        gross_loss = abs(sum(v for v in pnls if v < 0))
+
+        profit_factor = (
+            (gross_profit / gross_loss) if gross_loss > 0
+            else (999.0 if gross_profit > 0 else 0.0)
+        )
+        win_rate = wins / n
+
+        rets = [v / starting_capital for v in pnls]
+        cum = 1.0
+        peak = 1.0
+        max_dd = 0.0
+        for r in rets:
+            cum *= (1.0 + r)
+            peak = max(peak, cum)
+            max_dd = max(max_dd, (peak - cum) / peak)
+
+        total_return = cum - 1.0
+
+        if n < 5:
+            sortino = 0.0
+        else:
+            down_sq = [min(r, 0.0) ** 2 for r in rets]
+            dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
+            mean_ret = sum(rets) / n
+            sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else 0.0
+
+        calmar = (total_return / max_dd) if max_dd > 0 else 0.0
+
+        return {
+            "total_trades": n,
+            "win_rate": round(win_rate, 4),
+            "profit_factor": round(profit_factor, 4),
+            "sortino_ratio": round(sortino, 4),
+            "calmar_ratio": round(calmar, 4),
+            "max_drawdown": round(max_dd, 4),
+            "total_return": round(total_return, 4),
+        }
+    except Exception as e:
+        if log_fn:
+            log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}")
         return NULL
-
-    n = len(pnls)
-    wins = sum(1 for v in pnls if v > 0)
-    gross_profit = sum(v for v in pnls if v > 0)
-    gross_loss = abs(sum(v for v in pnls if v < 0))
-
-    profit_factor = (
-        (gross_profit / gross_loss) if gross_loss > 0
-        else (999.0 if gross_profit > 0 else 0.0)
-    )
-    win_rate = wins / n
-
-    rets = [v / starting_capital for v in pnls]
-    cum = 1.0
-    peak = 1.0
-    max_dd = 0.0
-    for r in rets:
-        cum *= (1.0 + r)
-        peak = max(peak, cum)
-        max_dd = max(max_dd, (peak - cum) / peak)
-
-    total_return = cum - 1.0
-
-    if n < 5:
-        sortino = 0.0
-    else:
-        down_sq = [min(r, 0.0) ** 2 for r in rets]
-        dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
-        mean_ret = sum(rets) / n
-        sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else 0.0
-
-    calmar = (total_return / max_dd) if max_dd > 0 else 0.0
-
-    return {
-        "total_trades": n,
-        "win_rate": round(win_rate, 4),
-        "profit_factor": round(profit_factor, 4),
-        "sortino_ratio": round(sortino, 4),
-        "calmar_ratio": round(calmar, 4),
-        "max_drawdown": round(max_dd, 4),
-        "total_return": round(total_return, 4),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -495,9 +494,6 @@ def run_single_backtest_worker(
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
-
-    Fix: OmsType.HEDGING statt NETTING für korrekte Position-Lifecycle-Zählung.
-    Fix: Zeitfilter als Nanosekunden statt pd.Timestamp.
     """
     def wlog(msg: str) -> None:
         with open(worker_log_file, "a", encoding="utf-8") as f:
@@ -537,14 +533,10 @@ def run_single_backtest_worker(
         )
         engine = BacktestEngine(config=engine_config)
 
+        # Fix Bug 2: Zurückrollen auf NETTING-Kontoerstellung
         engine.add_venue(
             venue=Venue("ETORO"),
-            # Fix: HEDGING statt NETTING
-            # NETTING: 1 kontinuierliches Position-Objekt, is_open immer True
-            #          → extract_metrics erkennt 0 closed trades (fehlerhaft)
-            # HEDGING: separates Position-Objekt pro Entry/Exit-Zyklus
-            #          → is_open=False bei geschlossener Position (korrekt)
-            oms_type=OmsType.HEDGING,
+            oms_type=OmsType.NETTING,
             account_type=AccountType.MARGIN,
             base_currency=USD,
             starting_balances=[Money(start_capital, USD)],
@@ -568,6 +560,17 @@ def run_single_backtest_worker(
         params["instrument_id"] = inst_id_str
         params["bar_type"]      = bar_type
 
+        # Fix Bug 1: trade_amount_usd anheben, falls von der Config-Klasse unterstützt
+        try:
+            test_params = params.copy()
+            test_params["trade_amount_usd"] = 50000.0
+            ConfigCls(**test_params)
+            if params.get("trade_amount_usd", 0) <= 1000.0:
+                params["trade_amount_usd"] = 50000.0
+        except Exception:
+            if "trade_amount_usd" in params and strat.get("params", {}).get("trade_amount_usd") is None:
+                params.pop("trade_amount_usd", None)
+
         strategy_config = ConfigCls(**params)
         strategy        = StratCls(config=strategy_config)
         engine.add_strategy(strategy)
@@ -587,10 +590,7 @@ def run_single_backtest_worker(
     try:
         open_pos = engine.cache.positions_open()
         if open_pos:
-            wlog(
-                f"   ⚠️ {len(open_pos)} Position(en) nach Ende noch offen "
-                f"(unrealized PnL nicht in Metriken)"
-            )
+            wlog(f"   ⚠️ {len(open_pos)} Netting-Position am Ende noch aktiv.")
     except Exception:
         pass
 
@@ -604,7 +604,7 @@ def run_single_backtest_worker(
         f"MaxDD={metrics['max_drawdown']:.1%}"
     )
 
-    # --- HTML-Report (optional, PF > 1.0) ---
+    # --- HTML-Report ---
     run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     if generate_html_report and metrics.get("profit_factor", 0.0) > 1.0:
         report_path = os.path.join(
@@ -653,8 +653,8 @@ def run_backtest() -> None:
     logs_dir      = os.path.join(_project_root, "logs")
     os.makedirs(logs_dir, exist_ok=True)
 
-    timestamp      = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_file       = os.path.join(logs_dir, f"backtest_{timestamp}.log")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file  = os.path.join(logs_dir, f"backtest_{timestamp}.log")
     error_log_file = os.path.join(logs_dir, f"errors_{timestamp}.log")
 
     sys.stdout = DualLogger(log_file)
@@ -681,7 +681,7 @@ def run_backtest() -> None:
     strategies_list = config_data.get("strategies", [])
 
     if not strategies_list:
-        log_error("⚠️ Keine Strategien in Config.")
+        log_error("⚠️ Keine Strategien in Config gefunden.")
         return
 
     # --- Parameter-Validierung ---
@@ -694,13 +694,12 @@ def run_backtest() -> None:
             print(f"   • {w}")
         print()
 
-    # --- Zeitraum (pd.Timestamp → Nanosekunden für Katalog-Filterung) ---
+    # --- Zeitraum ---
     start_time_str = global_settings.get("start_time")
     end_time_str   = global_settings.get("end_time")
     bt_start = pd.Timestamp(start_time_str, tz="UTC") if start_time_str else None
     bt_end   = pd.Timestamp(end_time_str,   tz="UTC") if end_time_str   else None
 
-    # Fix: Nanosekunden statt pd.Timestamp
     start_ns = ts_to_ns(bt_start)
     end_ns   = ts_to_ns(bt_end)
 
@@ -716,11 +715,11 @@ def run_backtest() -> None:
     # --- Instrumente ---
     instrument_ids = discover_instruments_from_catalog(catalog_path)
     if not instrument_ids:
-        log_error(f"⚠️ Keine Instrumente in {expected_data_dir}/quote_tick")
+        log_error(f"⚠️ Keine Instrumente in {expected_data_dir}/quote_tick vorhanden.")
         return
     print(f"📋 {len(instrument_ids)} Instrumente gefunden.")
 
-    # --- Metadaten-Normalisierung (einmalig, permanent) ---
+    # --- Metadaten-Normalisierung ---
     print("\n🔍 Prüfe Parquet-Schema-Konsistenz...")
     patched = sum(
         1 for iid in instrument_ids
@@ -732,7 +731,7 @@ def run_backtest() -> None:
         "  ✅ Alle Schemas konsistent."
     )
 
-    # --- Mock-Instrumente im Katalog registrieren ---
+    # --- Mock-Instrumente registrieren ---
     catalog = ParquetDataCatalog(catalog_path)
     dummy_instruments = [create_mock_instrument(iid) for iid in instrument_ids]
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -816,8 +815,8 @@ def run_backtest() -> None:
                         all_results.append(result)
                 except _BrokenPool:
                     log_error(
-                        f"💥 Worker-Pool gecrasht bei {inst_id_str}/{strat_name}. "
-                        "Wechsle zu sequenziellem Fallback."
+                        f"💥 Worker-Pool abgestürzt bei {inst_id_str}/{strat_name}. "
+                        "Falle auf sequenziellen Modus zurück."
                     )
                     _use_mp = False
                     _run_remaining_sequentially(
@@ -833,13 +832,13 @@ def run_backtest() -> None:
 
             executor.shutdown(wait=True)
 
+    except KeyboardInterrupt:
+        print("\n🛑 Backtest manuell abgebrochen. Fahre Subprozesse herunter...")
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+        sys.exit(1)
     finally:
         _cleanup_worker_logs()
-        if executor is not None:
-            try:
-                executor.shutdown(wait=False, cancel_futures=True)
-            except TypeError:
-                executor.shutdown(wait=False)
 
     # --- Tournament ---
     if args.momentum and all_results:
@@ -854,17 +853,13 @@ def run_backtest() -> None:
                 f"Ø Sortino: {aggregate_winner['mean_sortino']}"
             )
         if no_winner_symbols:
-            print(f"⚠️  Ohne Gewinner: {', '.join(no_winner_symbols)}")
+            print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
         write_tournament_json(all_results, tournament_output)
     elif all_results:
-        print(f"\n📊 {len(all_results)} Ergebnisse (kein --momentum Flag)")
+        print(f"\n📊 {len(all_results)} Ergebnisse gesammelt (kein --momentum Flag aktiv)")
 
-    print("\n✅ Matrix-Backtest abgeschlossen!")
+    print("\n✅ Matrix-Backtest vollständig abgeschlossen!")
 
-
-# ---------------------------------------------------------------------------
-# Hilfsfunktionen für den Haupt-Loop
-# ---------------------------------------------------------------------------
 
 def _flush_worker_log(worker_log_file: str) -> None:
     if os.path.exists(worker_log_file):
@@ -915,8 +910,6 @@ def _run_remaining_sequentially(
         if res and res.get("metrics"):
             all_results.append(res)
 
-
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()

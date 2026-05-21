@@ -1,0 +1,4 @@
+2026-05-21 16:06:23,793 [INFO] === Parquet Compaction Run Started ===
+2026-05-21 16:06:23,794 [ERROR] Datenverzeichnis /opt/etoro_nautilus/data/nautilus/data/quote_tick nicht gefunden.
+2026-05-21 16:06:58,692 [INFO] === Parquet Compaction Run Started ===
+2026-05-21 16:06:58,693 [ERROR] Datenverzeichnis etoro_nautilus/data/nautilus/data/quote_tick nicht gefunden.

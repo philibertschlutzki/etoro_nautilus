@@ -1,0 +1,1385 @@
+📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-05-21_15-11-39.log
+🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-05-21_15-11-39.log
+======================================================================
+📅 Zeitraum: 2022-04-01 → 2026-05-14
+📋 77 Instrumente gefunden.
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent.
+
+⏳ Starte 693 Backtest-Jobs (77 × 9 Strategien)...
+🚀 01211.HK.ETORO | TrendPullbackStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   1/693] 01211.HK.ETORO / TrendPullbackStrategy
+🚀 01211.HK.ETORO | DynamicBreakoutStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1296 Trades erfolgreich berechnet.
+   📊 Trades=1296 | WinRate=10.0% | PF=0.14 | Sortino=-7.23 | MaxDD=0.7%
+   [   2/693] 01211.HK.ETORO / DynamicBreakoutStrategy
+🚀 01211.HK.ETORO | SmaCrossoverStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1254 Trades erfolgreich berechnet.
+   📊 Trades=1254 | WinRate=10.7% | PF=0.14 | Sortino=-7.23 | MaxDD=0.7%
+   [   3/693] 01211.HK.ETORO / SmaCrossoverStrategy
+🚀 01211.HK.ETORO | MeanReversionStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2336 Trades erfolgreich berechnet.
+   📊 Trades=2336 | WinRate=2.9% | PF=0.01 | Sortino=-7.11 | MaxDD=1.4%
+   [   4/693] 01211.HK.ETORO / MeanReversionStrategy
+🚀 01211.HK.ETORO | FlashCrashReversalStrategy
+   📥 1947 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1174 Trades erfolgreich berechnet.
+   📊 Trades=1174 | WinRate=2.7% | PF=0.01 | Sortino=-7.43 | MaxDD=0.7%
+   [   5/693] 01211.HK.ETORO / FlashCrashReversalStrategy
+🚀 01211.HK.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1174 Trades erfolgreich berechnet.
+   📊 Trades=1174 | WinRate=10.4% | PF=0.12 | Sortino=-7.29 | MaxDD=0.6%
+   [   6/693] 01211.HK.ETORO / VolatilityBreakoutPumpStrategy
+🚀 01211.HK.ETORO | AdxAtrMomentumStrategy
+   📥 1947 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   7/693] 01211.HK.ETORO / AdxAtrMomentumStrategy
+🚀 01211.HK.ETORO | VwapExhaustionStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 356 Trades erfolgreich berechnet.
+   📊 Trades=356 | WinRate=19.7% | PF=0.14 | Sortino=-6.19 | MaxDD=0.1%
+   [   8/693] 01211.HK.ETORO / VwapExhaustionStrategy
+🚀 01211.HK.ETORO | ComboTrendVwapStrategy
+   📥 1947 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   9/693] 01211.HK.ETORO / ComboTrendVwapStrategy
+🚀 ACN.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  10/693] ACN.ETORO / TrendPullbackStrategy
+🚀 ACN.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1128 Trades erfolgreich berechnet.
+   📊 Trades=1128 | WinRate=14.6% | PF=0.20 | Sortino=-6.42 | MaxDD=0.4%
+   [  11/693] ACN.ETORO / SmaCrossoverStrategy
+🚀 ACN.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1148 Trades erfolgreich berechnet.
+   📊 Trades=1148 | WinRate=14.9% | PF=0.21 | Sortino=-6.29 | MaxDD=0.4%
+   [  12/693] ACN.ETORO / DynamicBreakoutStrategy
+🚀 ACN.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1936 Trades erfolgreich berechnet.
+   📊 Trades=1936 | WinRate=4.8% | PF=0.02 | Sortino=-6.82 | MaxDD=0.8%
+   [  13/693] ACN.ETORO / MeanReversionStrategy
+🚀 ACN.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 980 Trades erfolgreich berechnet.
+   📊 Trades=980 | WinRate=11.4% | PF=0.15 | Sortino=-6.56 | MaxDD=0.3%
+   [  14/693] ACN.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ACN.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 980 Trades erfolgreich berechnet.
+   📊 Trades=980 | WinRate=5.8% | PF=0.02 | Sortino=-6.72 | MaxDD=0.4%
+   [  15/693] ACN.ETORO / FlashCrashReversalStrategy
+🚀 ACN.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 224 Trades erfolgreich berechnet.
+   📊 Trades=224 | WinRate=25.0% | PF=0.14 | Sortino=-5.50 | MaxDD=0.0%
+   [  16/693] ACN.ETORO / VwapExhaustionStrategy
+🚀 ACN.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  17/693] ACN.ETORO / AdxAtrMomentumStrategy
+🚀 ADA.ETORO | SmaCrossoverStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1084 Trades erfolgreich berechnet.
+   📊 Trades=1084 | WinRate=14.2% | PF=0.21 | Sortino=-5.44 | MaxDD=0.7%
+   [  18/693] ADA.ETORO / SmaCrossoverStrategy
+🚀 ACN.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  19/693] ACN.ETORO / ComboTrendVwapStrategy
+🚀 ADA.ETORO | TrendPullbackStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  20/693] ADA.ETORO / TrendPullbackStrategy
+🚀 ADA.ETORO | MeanReversionStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1942 Trades erfolgreich berechnet.
+   📊 Trades=1942 | WinRate=0.4% | PF=0.00 | Sortino=-6.30 | MaxDD=2.2%
+   [  21/693] ADA.ETORO / MeanReversionStrategy
+🚀 ADA.ETORO | DynamicBreakoutStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1114 Trades erfolgreich berechnet.
+   📊 Trades=1114 | WinRate=13.3% | PF=0.21 | Sortino=-5.46 | MaxDD=0.8%
+   [  22/693] ADA.ETORO / DynamicBreakoutStrategy
+🚀 ADA.ETORO | FlashCrashReversalStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 910 Trades erfolgreich berechnet.
+   📊 Trades=910 | WinRate=0.4% | PF=0.00 | Sortino=-7.08 | MaxDD=1.1%
+   [  23/693] ADA.ETORO / FlashCrashReversalStrategy
+🚀 ADA.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 908 Trades erfolgreich berechnet.
+   📊 Trades=908 | WinRate=10.6% | PF=0.17 | Sortino=-5.90 | MaxDD=0.7%
+   [  24/693] ADA.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ADA.ETORO | VwapExhaustionStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 196 Trades erfolgreich berechnet.
+   📊 Trades=196 | WinRate=17.3% | PF=0.59 | Sortino=-2.75 | MaxDD=0.1%
+   [  25/693] ADA.ETORO / VwapExhaustionStrategy
+🚀 ADA.ETORO | AdxAtrMomentumStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  26/693] ADA.ETORO / AdxAtrMomentumStrategy
+🚀 ADA.ETORO | ComboTrendVwapStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  27/693] ADA.ETORO / ComboTrendVwapStrategy
+🚀 ADBE.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  28/693] ADBE.ETORO / TrendPullbackStrategy
+🚀 ADBE.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1140 Trades erfolgreich berechnet.
+   📊 Trades=1140 | WinRate=15.9% | PF=0.21 | Sortino=-5.95 | MaxDD=0.4%
+   [  29/693] ADBE.ETORO / SmaCrossoverStrategy
+🚀 ADBE.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2210 Trades erfolgreich berechnet.
+   📊 Trades=2210 | WinRate=2.8% | PF=0.02 | Sortino=-6.62 | MaxDD=1.0%
+   [  30/693] ADBE.ETORO / MeanReversionStrategy
+🚀 ADBE.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1148 Trades erfolgreich berechnet.
+   📊 Trades=1148 | WinRate=15.8% | PF=0.21 | Sortino=-5.92 | MaxDD=0.4%
+   [  31/693] ADBE.ETORO / DynamicBreakoutStrategy
+🚀 ADBE.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1058 Trades erfolgreich berechnet.
+   📊 Trades=1058 | WinRate=2.1% | PF=0.02 | Sortino=-6.56 | MaxDD=0.5%
+   [  32/693] ADBE.ETORO / FlashCrashReversalStrategy
+🚀 ADBE.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1058 Trades erfolgreich berechnet.
+   📊 Trades=1058 | WinRate=11.1% | PF=0.15 | Sortino=-6.36 | MaxDD=0.4%
+   [  33/693] ADBE.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AERO.ETORO | SmaCrossoverStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 706 Trades erfolgreich berechnet.
+   📊 Trades=706 | WinRate=16.2% | PF=0.17 | Sortino=-5.59 | MaxDD=0.5%
+   [  34/693] AERO.ETORO / SmaCrossoverStrategy
+🚀 ADBE.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  35/693] ADBE.ETORO / AdxAtrMomentumStrategy
+🚀 ADBE.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 196 Trades erfolgreich berechnet.
+   📊 Trades=196 | WinRate=21.9% | PF=0.06 | Sortino=-6.41 | MaxDD=0.0%
+   [  36/693] ADBE.ETORO / VwapExhaustionStrategy
+🚀 AERO.ETORO | TrendPullbackStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  37/693] AERO.ETORO / TrendPullbackStrategy
+🚀 AERO.ETORO | MeanReversionStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1342 Trades erfolgreich berechnet.
+   📊 Trades=1342 | WinRate=0.1% | PF=0.00 | Sortino=-6.11 | MaxDD=1.5%
+   [  38/693] AERO.ETORO / MeanReversionStrategy
+🚀 AERO.ETORO | DynamicBreakoutStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 718 Trades erfolgreich berechnet.
+   📊 Trades=718 | WinRate=16.2% | PF=0.17 | Sortino=-5.61 | MaxDD=0.5%
+   [  39/693] AERO.ETORO / DynamicBreakoutStrategy
+🚀 ADBE.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  40/693] ADBE.ETORO / ComboTrendVwapStrategy
+🚀 AERO.ETORO | FlashCrashReversalStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 642 Trades erfolgreich berechnet.
+   📊 Trades=642 | WinRate=0.0% | PF=0.00 | Sortino=-6.97 | MaxDD=0.7%
+   [  41/693] AERO.ETORO / FlashCrashReversalStrategy
+🚀 AERO.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1220 Ticks geladen.
+[Metriken] FIFO-Extraktion: 646 Trades erfolgreich berechnet.
+   📊 Trades=646 | WinRate=13.0% | PF=0.18 | Sortino=-5.73 | MaxDD=0.5%
+   [  42/693] AERO.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AERO.ETORO | AdxAtrMomentumStrategy
+   📥 1220 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  43/693] AERO.ETORO / AdxAtrMomentumStrategy
+🚀 AERO.ETORO | VwapExhaustionStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 202 Trades erfolgreich berechnet.
+   📊 Trades=202 | WinRate=14.8% | PF=0.43 | Sortino=-3.95 | MaxDD=0.1%
+   [  44/693] AERO.ETORO / VwapExhaustionStrategy
+🚀 AERO.ETORO | ComboTrendVwapStrategy
+   📥 1220 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  45/693] AERO.ETORO / ComboTrendVwapStrategy
+🚀 AG.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  46/693] AG.ETORO / TrendPullbackStrategy
+🚀 AG.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1284 Trades erfolgreich berechnet.
+   📊 Trades=1284 | WinRate=12.1% | PF=0.14 | Sortino=-7.33 | MaxDD=1.1%
+   [  47/693] AG.ETORO / SmaCrossoverStrategy
+🚀 AG.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1318 Trades erfolgreich berechnet.
+   📊 Trades=1318 | WinRate=11.6% | PF=0.14 | Sortino=-7.39 | MaxDD=1.1%
+   [  48/693] AG.ETORO / DynamicBreakoutStrategy
+🚀 AG.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 2260 Trades erfolgreich berechnet.
+   📊 Trades=2260 | WinRate=4.1% | PF=0.02 | Sortino=-7.74 | MaxDD=2.1%
+   [  49/693] AG.ETORO / MeanReversionStrategy
+🚀 AG.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1096 Trades erfolgreich berechnet.
+   📊 Trades=1096 | WinRate=3.7% | PF=0.02 | Sortino=-8.10 | MaxDD=1.0%
+   [  50/693] AG.ETORO / FlashCrashReversalStrategy
+🚀 AG.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1096 Trades erfolgreich berechnet.
+   📊 Trades=1096 | WinRate=10.5% | PF=0.11 | Sortino=-7.73 | MaxDD=1.0%
+   [  51/693] AG.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AG.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  52/693] AG.ETORO / AdxAtrMomentumStrategy
+🚀 AG.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  53/693] AG.ETORO / ComboTrendVwapStrategy
+🚀 AG.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 382 Trades erfolgreich berechnet.
+   📊 Trades=382 | WinRate=16.8% | PF=0.15 | Sortino=-6.15 | MaxDD=0.2%
+   [  54/693] AG.ETORO / VwapExhaustionStrategy
+🚀 AVAX.ETORO | TrendPullbackStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  55/693] AVAX.ETORO / TrendPullbackStrategy
+🚀 AVAX.ETORO | SmaCrossoverStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1076 Trades erfolgreich berechnet.
+   📊 Trades=1076 | WinRate=12.6% | PF=0.16 | Sortino=-6.19 | MaxDD=0.9%
+   [  56/693] AVAX.ETORO / SmaCrossoverStrategy
+🚀 AVAX.ETORO | DynamicBreakoutStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1124 Trades erfolgreich berechnet.
+   📊 Trades=1124 | WinRate=12.4% | PF=0.16 | Sortino=-6.13 | MaxDD=0.9%
+   [  57/693] AVAX.ETORO / DynamicBreakoutStrategy
+🚀 AVAX.ETORO | MeanReversionStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1726 Trades erfolgreich berechnet.
+   📊 Trades=1726 | WinRate=0.0% | PF=0.00 | Sortino=-7.30 | MaxDD=2.4%
+   [  58/693] AVAX.ETORO / MeanReversionStrategy
+🚀 AVAX.ETORO | FlashCrashReversalStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 826 Trades erfolgreich berechnet.
+   📊 Trades=826 | WinRate=0.2% | PF=0.00 | Sortino=-7.48 | MaxDD=1.1%
+   [  59/693] AVAX.ETORO / FlashCrashReversalStrategy
+🚀 AVAX.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 824 Trades erfolgreich berechnet.
+   📊 Trades=824 | WinRate=11.2% | PF=0.13 | Sortino=-6.61 | MaxDD=0.8%
+   [  60/693] AVAX.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AVAX.ETORO | VwapExhaustionStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 198 Trades erfolgreich berechnet.
+   📊 Trades=198 | WinRate=6.6% | PF=0.23 | Sortino=-1.82 | MaxDD=0.1%
+   [  61/693] AVAX.ETORO / VwapExhaustionStrategy
+🚀 AVAX.ETORO | AdxAtrMomentumStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  62/693] AVAX.ETORO / AdxAtrMomentumStrategy
+🚀 BTC.ETORO | SmaCrossoverStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 51 Trades erfolgreich berechnet.
+   📊 Trades=51 | WinRate=15.7% | PF=0.33 | Sortino=-7.72 | MaxDD=0.1%
+   [  63/693] BTC.ETORO / SmaCrossoverStrategy
+🚀 AVAX.ETORO | ComboTrendVwapStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  64/693] AVAX.ETORO / ComboTrendVwapStrategy
+🚀 BTC.ETORO | TrendPullbackStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  65/693] BTC.ETORO / TrendPullbackStrategy
+🚀 BTC.ETORO | MeanReversionStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 93 Trades erfolgreich berechnet.
+   📊 Trades=93 | WinRate=0.0% | PF=0.00 | Sortino=-11.76 | MaxDD=0.1%
+   [  66/693] BTC.ETORO / MeanReversionStrategy
+🚀 BTC.ETORO | DynamicBreakoutStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 51 Trades erfolgreich berechnet.
+   📊 Trades=51 | WinRate=15.7% | PF=0.33 | Sortino=-7.72 | MaxDD=0.1%
+   [  67/693] BTC.ETORO / DynamicBreakoutStrategy
+🚀 BTC.ETORO | FlashCrashReversalStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 45 Trades erfolgreich berechnet.
+   📊 Trades=45 | WinRate=0.0% | PF=0.00 | Sortino=-12.75 | MaxDD=0.1%
+   [  68/693] BTC.ETORO / FlashCrashReversalStrategy
+🚀 BTC.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 45 Trades erfolgreich berechnet.
+   📊 Trades=45 | WinRate=15.6% | PF=0.19 | Sortino=-8.15 | MaxDD=0.0%
+   [  69/693] BTC.ETORO / VolatilityBreakoutPumpStrategy
+🚀 BTC.ETORO | VwapExhaustionStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1 Trades erfolgreich berechnet.
+   📊 Trades=1 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  70/693] BTC.ETORO / VwapExhaustionStrategy
+🚀 BTC.ETORO | AdxAtrMomentumStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  71/693] BTC.ETORO / AdxAtrMomentumStrategy
+🚀 BTC.ETORO | ComboTrendVwapStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  72/693] BTC.ETORO / ComboTrendVwapStrategy
+🚀 CAT.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  73/693] CAT.ETORO / TrendPullbackStrategy
+🚀 CAT.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1110 Trades erfolgreich berechnet.
+   📊 Trades=1110 | WinRate=15.7% | PF=0.21 | Sortino=-6.04 | MaxDD=0.4%
+   [  74/693] CAT.ETORO / SmaCrossoverStrategy
+🚀 CAT.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1112 Trades erfolgreich berechnet.
+   📊 Trades=1112 | WinRate=15.5% | PF=0.21 | Sortino=-6.02 | MaxDD=0.4%
+   [  75/693] CAT.ETORO / DynamicBreakoutStrategy
+🚀 CAT.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 2096 Trades erfolgreich berechnet.
+   📊 Trades=2096 | WinRate=3.0% | PF=0.01 | Sortino=-6.93 | MaxDD=0.9%
+   [  76/693] CAT.ETORO / MeanReversionStrategy
+🚀 CAT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1004 Trades erfolgreich berechnet.
+   📊 Trades=1004 | WinRate=14.7% | PF=0.22 | Sortino=-5.90 | MaxDD=0.3%
+   [  77/693] CAT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CAT.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1004 Trades erfolgreich berechnet.
+   📊 Trades=1004 | WinRate=4.2% | PF=0.01 | Sortino=-7.24 | MaxDD=0.4%
+   [  78/693] CAT.ETORO / FlashCrashReversalStrategy
+🚀 CAT.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  79/693] CAT.ETORO / AdxAtrMomentumStrategy
+🚀 CAT.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 212 Trades erfolgreich berechnet.
+   📊 Trades=212 | WinRate=21.7% | PF=0.10 | Sortino=-5.30 | MaxDD=0.0%
+   [  80/693] CAT.ETORO / VwapExhaustionStrategy
+🚀 CAT.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 2 Trades erfolgreich berechnet.
+   📊 Trades=2 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  81/693] CAT.ETORO / ComboTrendVwapStrategy
+🚀 CHTR.ETORO | SmaCrossoverStrategy
+   📥 1879 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1046 Trades erfolgreich berechnet.
+   📊 Trades=1046 | WinRate=16.9% | PF=0.23 | Sortino=-5.63 | MaxDD=0.4%
+   [  82/693] CHTR.ETORO / SmaCrossoverStrategy
+🚀 CHTR.ETORO | TrendPullbackStrategy
+   📥 1879 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  83/693] CHTR.ETORO / TrendPullbackStrategy
+🚀 CHTR.ETORO | MeanReversionStrategy
+   📥 1879 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1930 Trades erfolgreich berechnet.
+   📊 Trades=1930 | WinRate=3.9% | PF=0.02 | Sortino=-6.83 | MaxDD=1.2%
+   [  84/693] CHTR.ETORO / MeanReversionStrategy
+🚀 CHTR.ETORO | DynamicBreakoutStrategy
+   📥 1879 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1134 Trades erfolgreich berechnet.
+   📊 Trades=1134 | WinRate=16.8% | PF=0.24 | Sortino=-5.30 | MaxDD=0.4%
+   [  85/693] CHTR.ETORO / DynamicBreakoutStrategy
+🚀 CHTR.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1879 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 918 Trades erfolgreich berechnet.
+   📊 Trades=918 | WinRate=14.1% | PF=0.14 | Sortino=-6.51 | MaxDD=0.4%
+   [  86/693] CHTR.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CHTR.ETORO | FlashCrashReversalStrategy
+   📥 1879 Ticks geladen.
+[Metriken] FIFO-Extraktion: 918 Trades erfolgreich berechnet.
+   📊 Trades=918 | WinRate=3.2% | PF=0.01 | Sortino=-6.80 | MaxDD=0.6%
+   [  87/693] CHTR.ETORO / FlashCrashReversalStrategy
+🚀 CHTR.ETORO | AdxAtrMomentumStrategy
+   📥 1879 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  88/693] CHTR.ETORO / AdxAtrMomentumStrategy
+🚀 CHTR.ETORO | VwapExhaustionStrategy
+   📥 1879 Ticks geladen.
+[Metriken] FIFO-Extraktion: 220 Trades erfolgreich berechnet.
+   📊 Trades=220 | WinRate=26.8% | PF=0.22 | Sortino=-3.82 | MaxDD=0.1%
+   [  89/693] CHTR.ETORO / VwapExhaustionStrategy
+🚀 CHTR.ETORO | ComboTrendVwapStrategy
+   📥 1879 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  90/693] CHTR.ETORO / ComboTrendVwapStrategy
+🚀 CIEN.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1258 Trades erfolgreich berechnet.
+   📊 Trades=1258 | WinRate=12.2% | PF=0.12 | Sortino=-7.12 | MaxDD=0.9%
+   [  91/693] CIEN.ETORO / SmaCrossoverStrategy
+🚀 CIEN.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  92/693] CIEN.ETORO / TrendPullbackStrategy
+🚀 CIEN.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2330 Trades erfolgreich berechnet.
+   📊 Trades=2330 | WinRate=2.9% | PF=0.02 | Sortino=-7.86 | MaxDD=1.7%
+   [  93/693] CIEN.ETORO / MeanReversionStrategy
+🚀 CIEN.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1282 Trades erfolgreich berechnet.
+   📊 Trades=1282 | WinRate=11.7% | PF=0.12 | Sortino=-7.20 | MaxDD=0.9%
+   [  94/693] CIEN.ETORO / DynamicBreakoutStrategy
+🚀 CIEN.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1136 Trades erfolgreich berechnet.
+   📊 Trades=1136 | WinRate=3.5% | PF=0.02 | Sortino=-7.85 | MaxDD=0.8%
+   [  95/693] CIEN.ETORO / FlashCrashReversalStrategy
+🚀 CIEN.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1136 Trades erfolgreich berechnet.
+   📊 Trades=1136 | WinRate=12.2% | PF=0.13 | Sortino=-7.13 | MaxDD=0.7%
+   [  96/693] CIEN.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CIEN.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 392 Trades erfolgreich berechnet.
+   📊 Trades=392 | WinRate=20.9% | PF=0.19 | Sortino=-6.00 | MaxDD=0.2%
+   [  97/693] CIEN.ETORO / VwapExhaustionStrategy
+🚀 CIEN.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  98/693] CIEN.ETORO / AdxAtrMomentumStrategy
+🚀 CIEN.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  99/693] CIEN.ETORO / ComboTrendVwapStrategy
+🚀 CMG.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1084 Trades erfolgreich berechnet.
+   📊 Trades=1084 | WinRate=18.1% | PF=0.19 | Sortino=-6.04 | MaxDD=0.4%
+   [ 100/693] CMG.ETORO / SmaCrossoverStrategy
+🚀 CMG.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 101/693] CMG.ETORO / TrendPullbackStrategy
+🚀 CMG.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1860 Trades erfolgreich berechnet.
+   📊 Trades=1860 | WinRate=3.0% | PF=0.02 | Sortino=-7.41 | MaxDD=1.0%
+   [ 102/693] CMG.ETORO / MeanReversionStrategy
+🚀 CMG.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1144 Trades erfolgreich berechnet.
+   📊 Trades=1144 | WinRate=16.0% | PF=0.18 | Sortino=-5.93 | MaxDD=0.4%
+   [ 103/693] CMG.ETORO / DynamicBreakoutStrategy
+🚀 CMG.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 860 Trades erfolgreich berechnet.
+   📊 Trades=860 | WinRate=3.5% | PF=0.02 | Sortino=-7.18 | MaxDD=0.5%
+   [ 104/693] CMG.ETORO / FlashCrashReversalStrategy
+🚀 CMG.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 862 Trades erfolgreich berechnet.
+   📊 Trades=862 | WinRate=14.7% | PF=0.14 | Sortino=-6.66 | MaxDD=0.3%
+   [ 105/693] CMG.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CMG.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 210 Trades erfolgreich berechnet.
+   📊 Trades=210 | WinRate=24.3% | PF=0.25 | Sortino=-5.38 | MaxDD=0.0%
+   [ 106/693] CMG.ETORO / VwapExhaustionStrategy
+🚀 CMG.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 107/693] CMG.ETORO / AdxAtrMomentumStrategy
+🚀 CMG.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 108/693] CMG.ETORO / ComboTrendVwapStrategy
+🚀 COHR.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1244 Trades erfolgreich berechnet.
+   📊 Trades=1244 | WinRate=13.2% | PF=0.13 | Sortino=-6.98 | MaxDD=1.0%
+   [ 109/693] COHR.ETORO / SmaCrossoverStrategy
+🚀 COHR.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 110/693] COHR.ETORO / TrendPullbackStrategy
+🚀 COHR.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1256 Trades erfolgreich berechnet.
+   📊 Trades=1256 | WinRate=13.2% | PF=0.14 | Sortino=-6.95 | MaxDD=1.0%
+   [ 111/693] COHR.ETORO / DynamicBreakoutStrategy
+🚀 COHR.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2168 Trades erfolgreich berechnet.
+   📊 Trades=2168 | WinRate=4.6% | PF=0.02 | Sortino=-7.76 | MaxDD=2.1%
+   [ 112/693] COHR.ETORO / MeanReversionStrategy
+🚀 COHR.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1038 Trades erfolgreich berechnet.
+   📊 Trades=1038 | WinRate=4.8% | PF=0.03 | Sortino=-7.56 | MaxDD=1.0%
+   [ 113/693] COHR.ETORO / FlashCrashReversalStrategy
+🚀 COHR.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1038 Trades erfolgreich berechnet.
+   📊 Trades=1038 | WinRate=16.1% | PF=0.18 | Sortino=-6.76 | MaxDD=0.8%
+   [ 114/693] COHR.ETORO / VolatilityBreakoutPumpStrategy
+🚀 COHR.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 115/693] COHR.ETORO / AdxAtrMomentumStrategy
+🚀 COHR.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 410 Trades erfolgreich berechnet.
+   📊 Trades=410 | WinRate=18.8% | PF=0.13 | Sortino=-5.99 | MaxDD=0.2%
+   [ 116/693] COHR.ETORO / VwapExhaustionStrategy
+🚀 COHR.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 117/693] COHR.ETORO / ComboTrendVwapStrategy
+🚀 CPRT.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1100 Trades erfolgreich berechnet.
+   📊 Trades=1100 | WinRate=12.8% | PF=0.15 | Sortino=-6.73 | MaxDD=0.4%
+   [ 118/693] CPRT.ETORO / SmaCrossoverStrategy
+🚀 CPRT.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 119/693] CPRT.ETORO / TrendPullbackStrategy
+🚀 CPRT.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1820 Trades erfolgreich berechnet.
+   📊 Trades=1820 | WinRate=3.4% | PF=0.01 | Sortino=-7.41 | MaxDD=0.8%
+   [ 120/693] CPRT.ETORO / MeanReversionStrategy
+🚀 CPRT.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1214 Trades erfolgreich berechnet.
+   📊 Trades=1214 | WinRate=12.2% | PF=0.16 | Sortino=-6.37 | MaxDD=0.4%
+   [ 121/693] CPRT.ETORO / DynamicBreakoutStrategy
+🚀 CPRT.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 880 Trades erfolgreich berechnet.
+   📊 Trades=880 | WinRate=4.8% | PF=0.01 | Sortino=-7.13 | MaxDD=0.4%
+   [ 122/693] CPRT.ETORO / FlashCrashReversalStrategy
+🚀 CPRT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 884 Trades erfolgreich berechnet.
+   📊 Trades=884 | WinRate=12.2% | PF=0.12 | Sortino=-7.14 | MaxDD=0.3%
+   [ 123/693] CPRT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CPRT.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 124/693] CPRT.ETORO / AdxAtrMomentumStrategy
+🚀 CPRT.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 216 Trades erfolgreich berechnet.
+   📊 Trades=216 | WinRate=26.4% | PF=0.26 | Sortino=-5.11 | MaxDD=0.0%
+   [ 125/693] CPRT.ETORO / VwapExhaustionStrategy
+🚀 CPRT.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 126/693] CPRT.ETORO / ComboTrendVwapStrategy
+🚀 CRM.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1128 Trades erfolgreich berechnet.
+   📊 Trades=1128 | WinRate=18.3% | PF=0.18 | Sortino=-6.12 | MaxDD=0.4%
+   [ 127/693] CRM.ETORO / SmaCrossoverStrategy
+🚀 CRM.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 128/693] CRM.ETORO / TrendPullbackStrategy
+🚀 CRM.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1892 Trades erfolgreich berechnet.
+   📊 Trades=1892 | WinRate=4.4% | PF=0.02 | Sortino=-6.90 | MaxDD=1.0%
+   [ 129/693] CRM.ETORO / MeanReversionStrategy
+🚀 CRM.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1138 Trades erfolgreich berechnet.
+   📊 Trades=1138 | WinRate=17.9% | PF=0.18 | Sortino=-6.09 | MaxDD=0.4%
+   [ 130/693] CRM.ETORO / DynamicBreakoutStrategy
+🚀 CRM.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1000 Trades erfolgreich berechnet.
+   📊 Trades=1000 | WinRate=4.8% | PF=0.02 | Sortino=-6.95 | MaxDD=0.5%
+   [ 131/693] CRM.ETORO / FlashCrashReversalStrategy
+🚀 CRM.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1000 Trades erfolgreich berechnet.
+   📊 Trades=1000 | WinRate=13.4% | PF=0.14 | Sortino=-6.12 | MaxDD=0.4%
+   [ 132/693] CRM.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CRM.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 133/693] CRM.ETORO / AdxAtrMomentumStrategy
+🚀 CRM.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 196 Trades erfolgreich berechnet.
+   📊 Trades=196 | WinRate=18.4% | PF=0.05 | Sortino=-6.31 | MaxDD=0.1%
+   [ 134/693] CRM.ETORO / VwapExhaustionStrategy
+🚀 CRM.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 135/693] CRM.ETORO / ComboTrendVwapStrategy
+🚀 DOCU.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1242 Trades erfolgreich berechnet.
+   📊 Trades=1242 | WinRate=13.2% | PF=0.16 | Sortino=-6.49 | MaxDD=0.7%
+   [ 136/693] DOCU.ETORO / SmaCrossoverStrategy
+🚀 DOCU.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 137/693] DOCU.ETORO / TrendPullbackStrategy
+🚀 DOCU.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2178 Trades erfolgreich berechnet.
+   📊 Trades=2178 | WinRate=2.8% | PF=0.02 | Sortino=-7.12 | MaxDD=1.6%
+   [ 138/693] DOCU.ETORO / MeanReversionStrategy
+🚀 DOCU.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1270 Trades erfolgreich berechnet.
+   📊 Trades=1270 | WinRate=12.4% | PF=0.15 | Sortino=-6.59 | MaxDD=0.7%
+   [ 139/693] DOCU.ETORO / DynamicBreakoutStrategy
+🚀 DOCU.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1072 Trades erfolgreich berechnet.
+   📊 Trades=1072 | WinRate=3.1% | PF=0.01 | Sortino=-7.16 | MaxDD=0.8%
+   [ 140/693] DOCU.ETORO / FlashCrashReversalStrategy
+🚀 DOCU.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1070 Trades erfolgreich berechnet.
+   📊 Trades=1070 | WinRate=9.5% | PF=0.10 | Sortino=-7.18 | MaxDD=0.7%
+   [ 141/693] DOCU.ETORO / VolatilityBreakoutPumpStrategy
+🚀 DOCU.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 360 Trades erfolgreich berechnet.
+   📊 Trades=360 | WinRate=16.9% | PF=0.11 | Sortino=-6.44 | MaxDD=0.1%
+   [ 142/693] DOCU.ETORO / VwapExhaustionStrategy
+🚀 DOCU.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 143/693] DOCU.ETORO / AdxAtrMomentumStrategy
+🚀 DOGE.ETORO | SmaCrossoverStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1140 Trades erfolgreich berechnet.
+   📊 Trades=1140 | WinRate=12.5% | PF=0.23 | Sortino=-5.57 | MaxDD=0.8%
+   [ 144/693] DOGE.ETORO / SmaCrossoverStrategy
+🚀 DOCU.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 145/693] DOCU.ETORO / ComboTrendVwapStrategy
+🚀 DOGE.ETORO | TrendPullbackStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 146/693] DOGE.ETORO / TrendPullbackStrategy
+🚀 DOGE.ETORO | MeanReversionStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2180 Trades erfolgreich berechnet.
+   📊 Trades=2180 | WinRate=0.2% | PF=0.00 | Sortino=-6.07 | MaxDD=2.4%
+   [ 147/693] DOGE.ETORO / MeanReversionStrategy
+🚀 DOGE.ETORO | DynamicBreakoutStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1144 Trades erfolgreich berechnet.
+   📊 Trades=1144 | WinRate=12.4% | PF=0.22 | Sortino=-5.61 | MaxDD=0.8%
+   [ 148/693] DOGE.ETORO / DynamicBreakoutStrategy
+🚀 DOGE.ETORO | FlashCrashReversalStrategy
+   📥 1819 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1016 Trades erfolgreich berechnet.
+   📊 Trades=1016 | WinRate=0.0% | PF=0.00 | Sortino=-6.99 | MaxDD=1.1%
+   [ 149/693] DOGE.ETORO / FlashCrashReversalStrategy
+🚀 DOGE.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1018 Trades erfolgreich berechnet.
+   📊 Trades=1018 | WinRate=10.7% | PF=0.19 | Sortino=-5.64 | MaxDD=0.7%
+   [ 150/693] DOGE.ETORO / VolatilityBreakoutPumpStrategy
+🚀 DOGE.ETORO | VwapExhaustionStrategy
+   📥 1819 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 192 Trades erfolgreich berechnet.
+   📊 Trades=192 | WinRate=14.6% | PF=1.66 | Sortino=5.00 | MaxDD=0.1%
+   [ 151/693] DOGE.ETORO / VwapExhaustionStrategy
+🚀 DOGE.ETORO | AdxAtrMomentumStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 152/693] DOGE.ETORO / AdxAtrMomentumStrategy
+🚀 DOGE.ETORO | ComboTrendVwapStrategy
+   📥 1819 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 153/693] DOGE.ETORO / ComboTrendVwapStrategy
+🚀 DUOL.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1152 Trades erfolgreich berechnet.
+   📊 Trades=1152 | WinRate=13.1% | PF=0.21 | Sortino=-5.85 | MaxDD=0.7%
+   [ 154/693] DUOL.ETORO / SmaCrossoverStrategy
+🚀 DUOL.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 155/693] DUOL.ETORO / TrendPullbackStrategy
+🚀 DUOL.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1172 Trades erfolgreich berechnet.
+   📊 Trades=1172 | WinRate=13.3% | PF=0.21 | Sortino=-5.78 | MaxDD=0.7%
+   [ 156/693] DUOL.ETORO / DynamicBreakoutStrategy
+🚀 DUOL.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2156 Trades erfolgreich berechnet.
+   📊 Trades=2156 | WinRate=2.3% | PF=0.02 | Sortino=-6.45 | MaxDD=1.7%
+   [ 157/693] DUOL.ETORO / MeanReversionStrategy
+🚀 DUOL.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1054 Trades erfolgreich berechnet.
+   📊 Trades=1054 | WinRate=10.0% | PF=0.17 | Sortino=-5.90 | MaxDD=0.7%
+   [ 158/693] DUOL.ETORO / VolatilityBreakoutPumpStrategy
+🚀 DUOL.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1054 Trades erfolgreich berechnet.
+   📊 Trades=1054 | WinRate=3.0% | PF=0.02 | Sortino=-6.60 | MaxDD=0.8%
+   [ 159/693] DUOL.ETORO / FlashCrashReversalStrategy
+🚀 DUOL.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 160/693] DUOL.ETORO / AdxAtrMomentumStrategy
+🚀 DUOL.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 194 Trades erfolgreich berechnet.
+   📊 Trades=194 | WinRate=22.7% | PF=0.06 | Sortino=-6.88 | MaxDD=0.1%
+   [ 161/693] DUOL.ETORO / VwapExhaustionStrategy
+🚀 DUOL.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 162/693] DUOL.ETORO / ComboTrendVwapStrategy
+🚀 E.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1278 Trades erfolgreich berechnet.
+   📊 Trades=1278 | WinRate=14.3% | PF=0.17 | Sortino=-6.44 | MaxDD=0.4%
+   [ 163/693] E.ETORO / SmaCrossoverStrategy
+🚀 E.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 164/693] E.ETORO / TrendPullbackStrategy
+🚀 E.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2396 Trades erfolgreich berechnet.
+   📊 Trades=2396 | WinRate=7.8% | PF=0.05 | Sortino=-6.77 | MaxDD=0.7%
+   [ 165/693] E.ETORO / MeanReversionStrategy
+🚀 E.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1302 Trades erfolgreich berechnet.
+   📊 Trades=1302 | WinRate=14.3% | PF=0.18 | Sortino=-6.40 | MaxDD=0.4%
+   [ 166/693] E.ETORO / DynamicBreakoutStrategy
+🚀 E.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1070 Trades erfolgreich berechnet.
+   📊 Trades=1070 | WinRate=8.1% | PF=0.06 | Sortino=-6.22 | MaxDD=0.3%
+   [ 167/693] E.ETORO / FlashCrashReversalStrategy
+🚀 E.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1070 Trades erfolgreich berechnet.
+   📊 Trades=1070 | WinRate=16.8% | PF=0.19 | Sortino=-6.28 | MaxDD=0.3%
+   [ 168/693] E.ETORO / VolatilityBreakoutPumpStrategy
+🚀 E.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 278 Trades erfolgreich berechnet.
+   📊 Trades=278 | WinRate=34.5% | PF=0.41 | Sortino=-3.82 | MaxDD=0.0%
+   [ 169/693] E.ETORO / VwapExhaustionStrategy
+🚀 E.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 170/693] E.ETORO / AdxAtrMomentumStrategy
+🚀 E.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 171/693] E.ETORO / ComboTrendVwapStrategy
+🚀 EEFT.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1252 Trades erfolgreich berechnet.
+   📊 Trades=1252 | WinRate=12.7% | PF=0.15 | Sortino=-7.05 | MaxDD=0.5%
+   [ 172/693] EEFT.ETORO / SmaCrossoverStrategy
+🚀 EEFT.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 173/693] EEFT.ETORO / TrendPullbackStrategy
+🚀 EEFT.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 2096 Trades erfolgreich berechnet.
+   📊 Trades=2096 | WinRate=2.3% | PF=0.01 | Sortino=-7.67 | MaxDD=1.2%
+   [ 174/693] EEFT.ETORO / MeanReversionStrategy
+🚀 EEFT.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1266 Trades erfolgreich berechnet.
+   📊 Trades=1266 | WinRate=12.4% | PF=0.14 | Sortino=-7.10 | MaxDD=0.5%
+   [ 175/693] EEFT.ETORO / DynamicBreakoutStrategy
+🚀 EEFT.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1022 Trades erfolgreich berechnet.
+   📊 Trades=1022 | WinRate=1.2% | PF=0.01 | Sortino=-7.36 | MaxDD=0.6%
+   [ 176/693] EEFT.ETORO / FlashCrashReversalStrategy
+🚀 EEFT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1022 Trades erfolgreich berechnet.
+   📊 Trades=1022 | WinRate=10.9% | PF=0.09 | Sortino=-7.77 | MaxDD=0.5%
+   [ 177/693] EEFT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ESLT.ETORO | SmaCrossoverStrategy
+   📥 957 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 630 Trades erfolgreich berechnet.
+   📊 Trades=630 | WinRate=8.9% | PF=0.06 | Sortino=-7.39 | MaxDD=0.2%
+   [ 178/693] ESLT.ETORO / SmaCrossoverStrategy
+🚀 ESLT.ETORO | TrendPullbackStrategy
+   📥 957 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 179/693] ESLT.ETORO / TrendPullbackStrategy
+🚀 EEFT.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 376 Trades erfolgreich berechnet.
+   📊 Trades=376 | WinRate=21.3% | PF=0.12 | Sortino=-6.24 | MaxDD=0.1%
+   [ 180/693] EEFT.ETORO / VwapExhaustionStrategy
+🚀 ESLT.ETORO | MeanReversionStrategy
+   📥 957 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1212 Trades erfolgreich berechnet.
+   📊 Trades=1212 | WinRate=2.6% | PF=0.02 | Sortino=-7.71 | MaxDD=0.4%
+   [ 181/693] ESLT.ETORO / MeanReversionStrategy
+🚀 ESLT.ETORO | DynamicBreakoutStrategy
+   📥 957 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 640 Trades erfolgreich berechnet.
+   📊 Trades=640 | WinRate=9.1% | PF=0.06 | Sortino=-7.42 | MaxDD=0.2%
+   [ 182/693] ESLT.ETORO / DynamicBreakoutStrategy
+🚀 EEFT.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 183/693] EEFT.ETORO / AdxAtrMomentumStrategy
+🚀 ESLT.ETORO | FlashCrashReversalStrategy
+   📥 957 Ticks geladen.
+[Metriken] FIFO-Extraktion: 570 Trades erfolgreich berechnet.
+   📊 Trades=570 | WinRate=3.2% | PF=0.02 | Sortino=-8.25 | MaxDD=0.2%
+   [ 184/693] ESLT.ETORO / FlashCrashReversalStrategy
+🚀 ESLT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 957 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 570 Trades erfolgreich berechnet.
+   📊 Trades=570 | WinRate=13.9% | PF=0.09 | Sortino=-7.09 | MaxDD=0.2%
+   [ 185/693] ESLT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ESLT.ETORO | ComboTrendVwapStrategy
+   📥 957 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 186/693] ESLT.ETORO / ComboTrendVwapStrategy
+🚀 ESLT.ETORO | AdxAtrMomentumStrategy
+   📥 957 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 187/693] ESLT.ETORO / AdxAtrMomentumStrategy
+🚀 ETH.ETORO | SmaCrossoverStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 188/693] ETH.ETORO / SmaCrossoverStrategy
+🚀 ETH.ETORO | TrendPullbackStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 189/693] ETH.ETORO / TrendPullbackStrategy
+🚀 ETH.ETORO | MeanReversionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 190/693] ETH.ETORO / MeanReversionStrategy
+🚀 ETH.ETORO | DynamicBreakoutStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 191/693] ETH.ETORO / DynamicBreakoutStrategy
+🚀 ESLT.ETORO | VwapExhaustionStrategy
+   📥 957 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 316 Trades erfolgreich berechnet.
+   📊 Trades=316 | WinRate=26.9% | PF=0.24 | Sortino=-5.29 | MaxDD=0.1%
+   [ 192/693] ESLT.ETORO / VwapExhaustionStrategy
+🚀 ETH.ETORO | FlashCrashReversalStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 193/693] ETH.ETORO / FlashCrashReversalStrategy
+🚀 ETH.ETORO | VolatilityBreakoutPumpStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 194/693] ETH.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ETH.ETORO | ComboTrendVwapStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 195/693] ETH.ETORO / ComboTrendVwapStrategy
+🚀 ETH.ETORO | AdxAtrMomentumStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 196/693] ETH.ETORO / AdxAtrMomentumStrategy
+🚀 ETH.ETORO | VwapExhaustionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 197/693] ETH.ETORO / VwapExhaustionStrategy
+🚀 EEFT.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 198/693] EEFT.ETORO / ComboTrendVwapStrategy
+🚀 FICO.ETORO | TrendPullbackStrategy
+   📥 1884 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 199/693] FICO.ETORO / TrendPullbackStrategy
+🚀 FICO.ETORO | DynamicBreakoutStrategy
+   📥 1884 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1202 Trades erfolgreich berechnet.
+   📊 Trades=1202 | WinRate=11.7% | PF=0.14 | Sortino=-6.36 | MaxDD=0.6%
+   [ 200/693] FICO.ETORO / DynamicBreakoutStrategy
+🚀 FICO.ETORO | SmaCrossoverStrategy
+   📥 1884 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1148 Trades erfolgreich berechnet.
+   📊 Trades=1148 | WinRate=12.2% | PF=0.14 | Sortino=-6.55 | MaxDD=0.6%
+   [ 201/693] FICO.ETORO / SmaCrossoverStrategy
+🚀 FICO.ETORO | MeanReversionStrategy
+   📥 1884 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1976 Trades erfolgreich berechnet.
+   📊 Trades=1976 | WinRate=2.4% | PF=0.01 | Sortino=-7.31 | MaxDD=1.3%
+   [ 202/693] FICO.ETORO / MeanReversionStrategy
+🚀 FICO.ETORO | FlashCrashReversalStrategy
+   📥 1884 Ticks geladen.
+[Metriken] FIFO-Extraktion: 948 Trades erfolgreich berechnet.
+   📊 Trades=948 | WinRate=2.5% | PF=0.02 | Sortino=-7.45 | MaxDD=0.6%
+   [ 203/693] FICO.ETORO / FlashCrashReversalStrategy
+🚀 FICO.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1884 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 952 Trades erfolgreich berechnet.
+   📊 Trades=952 | WinRate=14.1% | PF=0.16 | Sortino=-6.51 | MaxDD=0.5%
+   [ 204/693] FICO.ETORO / VolatilityBreakoutPumpStrategy
