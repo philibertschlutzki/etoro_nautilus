@@ -12,8 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 try:
     from nautilus_trader.persistence.catalog import ParquetDataCatalog
-    from nautilus_trader.model.data import Bar
-    from nautilus_trader.model.identifiers import BarType
+    from nautilus_trader.model.data import Bar, BarType  # ✨ Hier korrigiert: BarType aus .data importiert
     from nautilus_trader.model.objects import Price, Quantity
 except ImportError as e:
     print(f"❌ Fehler beim Importieren von Nautilus Trader: {e}")
