@@ -109,10 +109,7 @@ def _get_key_case_insensitive(row: dict, possible_keys: list) -> str:
 
 
 def _ensure_instrument_registered(catalog, instrument_id_str: str, price_precision: int = 5) -> None:
-    """
-    Registriert ein Mock-Instrument im Katalog, falls noch nicht vorhanden.
-    Wird vor catalog.write_data(ticks) benötigt.
-    """
+    """Registriert ein Mock-Instrument im Katalog, falls noch nicht vorhanden."""
     from nautilus_trader.model.identifiers import InstrumentId
     from nautilus_trader.model.objects import Price, Quantity
     from nautilus_trader.model.instruments import Equity
@@ -136,28 +133,49 @@ def _ensure_instrument_registered(catalog, instrument_id_str: str, price_precisi
         logger.debug(f"Instrument {instrument_id_str} already registered or write skipped: {e}")
 
 
+def _is_legacy_text_format(val) -> bool:
+    """
+    Prüft, ob der Wert aus dem alten Format stammt (Preise als reine Klartext-Strings/UTF-8-Bytes).
+    Das neue gültige Nautilus-Format nutzt Binär-Structs, die nicht als Float parsbare Strings sind.
+    """
+    if isinstance(val, bytes):
+        try:
+            float(val.decode('utf-8'))
+            return True
+        except (UnicodeDecodeError, ValueError):
+            return False
+    elif isinstance(val, str):
+        try:
+            float(val)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
 def _collect_existing_ts(symbol_dir: str, instrument_id_str: str) -> set:
     """
     Liest ts_event-Werte aus allen Parquet-Dateien im symbol_dir via pandas.
-    Erkennt und löscht Dateien im alten Format (bid_price als bytes/object).
-    Sicher: kein catalog.quote_ticks()-Aufruf → kein Rust-Panic.
+    Erkennt und löscht Dateien im alten Format (bid_price als Text-String/Bytes).
     """
     symbol_path = Path(symbol_dir)
     existing_ts: set = set()
-    for f in symbol_path.glob("*.parquet"):
+    for f in symbol_path.rglob("*.parquet"):
         try:
             df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
-            if df['bid_price'].dtype == object:
-                # Altes Format: Preise als UTF-8-Bytes gespeichert → löschen
+            if df.empty:
+                continue
+            
+            first_val = df['bid_price'].iloc[0]
+            if _is_legacy_text_format(first_val):
                 f.unlink()
-                logger.info(f"[{instrument_id_str}] Altes Format entfernt: {f.name}")
+                logger.info(f"[{instrument_id_str}] Altes Text-Format entfernt: {f.name}")
             else:
                 existing_ts.update(df['ts_event'].tolist())
         except Exception as e:
-            # Nicht lesbare Datei → als altes/korruptes Format behandeln und löschen
             try:
                 f.unlink()
-                logger.info(f"[{instrument_id_str}] Unlesbare Parquet-Datei entfernt: {f.name}")
+                logger.info(f"[{instrument_id_str}] Unlesbare/korrupte Parquet-Datei entfernt: {f.name}")
             except Exception as rm_err:
                 logger.warning(f"[{instrument_id_str}] Konnte {f.name} nicht löschen: {rm_err}")
     return existing_ts
@@ -169,12 +187,7 @@ def write_candles_to_catalog(
     catalog_path: str,
     price_precision: int = 5,
 ) -> int:
-    """
-    Schreibt historische Candle-Daten als QuoteTick-Objekte in den
-    NautilusTrader ParquetDataCatalog. Gibt die Anzahl geschriebener Ticks zurück.
-
-    Mapping: Low → bid_price, High → ask_price (für Backtest-kompatibilität)
-    """
+    """Schreibt historische Candle-Daten als QuoteTick-Objekte in den Katalog."""
     from nautilus_trader.model.data import QuoteTick
     from nautilus_trader.model.identifiers import InstrumentId
     from nautilus_trader.model.objects import Price, Quantity
@@ -200,7 +213,6 @@ def write_candles_to_catalog(
             bid = float(c[low_key])
             ask = float(c[high_key])
 
-            # Precision dynamisch aus dem Wert ableiten
             prec = len(str(bid).rstrip('0').split('.')[-1]) if '.' in str(bid) else 0
             prec = min(max(prec, 2), 8)
 
@@ -221,10 +233,6 @@ def write_candles_to_catalog(
     if ticks:
         prec = ticks[0].bid_price.precision if ticks else price_precision
 
-        # Deduplizierung via pandas (kein catalog.quote_ticks() → kein Rust-Panic).
-        # Erkennt und löscht auch alte Dateien im falschen Byte-Format.
-        # catalog.write_data() uses hive partitioning → instrument_id=SYMBOL/
-        # Old code wrote to plain SYMBOL/ — check both to clean legacy files and dedup correctly.
         _base = os.path.join(catalog_path, "data", "quote_tick")
         symbol_dir_plain = os.path.join(_base, instrument_id_str)
         symbol_dir_hive = os.path.join(_base, f"instrument_id={instrument_id_str}")
@@ -236,7 +244,6 @@ def write_candles_to_catalog(
         if existing_ts:
             ticks = [t for t in ticks if t.ts_event not in existing_ts]
 
-        # Instrument registrieren, dann Ticks schreiben
         _ensure_instrument_registered(catalog, instrument_id_str, prec)
         if ticks:
             ticks.sort(key=lambda x: x.ts_init)
@@ -257,7 +264,6 @@ async def process_instrument(
     catalog_path: str,
 ) -> dict:
     """Lade historische Kerzen herunter und retourniere einen Summary-Eintrag."""
-    # Delta-Update Logik: Finde neuesten Zeitstempel via pandas (kein catalog.quote_ticks())
     adjusted_start = target_start_date
     has_existing_data = False
     _base_tick_dir = os.path.join(catalog_path, "data", "quote_tick")
@@ -333,7 +339,6 @@ async def process_instrument(
             logger.info(f"[{symbol}] Reached target start date ({target_start_date}).")
             break
 
-    # Schreiben via Katalog
     new_count = 0
     if all_candles:
         new_count = write_candles_to_catalog(all_candles, symbol, catalog_path)
@@ -346,20 +351,30 @@ async def process_instrument(
     if new_count == 0 and has_existing_data:
         logger.info(f"[{symbol}] No new data fetched. Existing data is already up to date.")
 
-    # Statistiken via pandas (kein catalog.quote_ticks() → kein Rust-Panic)
-    # Read from hive-partitioned dir (instrument_id=SYMBOL/) where catalog.write_data() writes.
+    # Statistiken extrahieren
     total_rows = 0
     date_range = "N/A"
+    
+    dirs_to_check = []
+    if os.path.isdir(symbol_dir_plain):
+        dirs_to_check.append(symbol_dir_plain)
     if os.path.isdir(symbol_dir_hive):
+        dirs_to_check.append(symbol_dir_hive)
+
+    if dirs_to_check:
         try:
             all_ts: list = []
-            for f in Path(symbol_dir_hive).glob("*.parquet"):
-                try:
-                    df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
-                    if df['bid_price'].dtype != object:
-                        all_ts.extend(df['ts_event'].tolist())
-                except Exception:
-                    pass
+            for d in dirs_to_check:
+                for f in Path(d).rglob("*.parquet"):
+                    try:
+                        df = pd.read_parquet(f, columns=['bid_price', 'ts_event'])
+                        if not df.empty:
+                            first_val = df['bid_price'].iloc[0]
+                            # Valide Binär-Structs zählen lassen, nur altes Textformat filtern
+                            if not _is_legacy_text_format(first_val):
+                                all_ts.extend(df['ts_event'].tolist())
+                    except Exception:
+                        pass
             total_rows = len(all_ts)
             if all_ts:
                 min_dt = datetime.fromtimestamp(min(all_ts) / 1e9, tz=timezone.utc)
@@ -384,9 +399,9 @@ async def main():
     parser.add_argument("--months", type=int, default=12, help="Number of months to fetch (initial load depth)")
     parser.add_argument("--intervals", type=str, default="OneHour,OneDay,OneWeek", help="Comma-separated intervals")
     parser.add_argument("--output-dir", type=str, default="data/nautilus/data/quote_tick",
-                        help="Legacy output directory for summary reports (kept for backwards compatibility)")
+                        help="Legacy output directory for summary reports")
     parser.add_argument("--catalog-path", type=str, default="data/nautilus",
-                        help="Root path of NautilusTrader ParquetDataCatalog (same as run_catalog.py)")
+                        help="Root path of NautilusTrader ParquetDataCatalog")
     args = parser.parse_args()
 
     load_dotenv()
@@ -434,9 +449,6 @@ async def main():
 
             await asyncio.sleep(RATE_LIMIT_DELAY)
 
-    # ==========================================
-    # REPORTING & ZUSAMMENFASSUNG
-    # ==========================================
     logger.info("\n=== Bulk update process completed ===")
 
     if summary_results:
