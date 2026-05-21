@@ -10,7 +10,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 
 # Konfiguration für Log-Datei
-LOG_DIR = Path("logs/")
+LOG_DIR = Path("logs")
 LOG_FILE = LOG_DIR / "diagnose_output.txt"
 
 def log_print(message: str, file_handle=None):
