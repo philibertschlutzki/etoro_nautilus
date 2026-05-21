@@ -121,10 +121,33 @@ class AdxAtrMomentumStrategy(Strategy):
     def _compute_quantity(self, bar: Bar) -> Quantity | None:
         instrument = self.cache.instrument(self.instrument_id)
         if instrument is None:
-            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache – Order übersprungen")
+            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
             return None
         units = self.config.trade_amount_usd / float(bar.close)
-        return instrument.make_qty(units)
+        # Pre-check: Equity-Instrumente (size_precision=0) erfordern mindestens 1 ganze Einheit.
+        # Nautilus wirft einen harten ValueError bei make_qty() wenn das gerundete Ergebnis 0 ergibt —
+        # auch mit round_down=True. Pre-check verhindert den Aufruf; try/except ist zusätzliche Absicherung.
+        if units < float(instrument.size_increment):
+            self._log.warning(
+                f"[{self.instrument_id}] Zu wenig Kapital für 1 Einheit "
+                f"(units={units:.6f}, size_increment={instrument.size_increment}) "
+                f"— Signal übersprungen"
+            )
+            return None
+        try:
+            qty = instrument.make_qty(units, round_down=True)
+        except ValueError as e:
+            self._log.warning(
+                f"[{self.instrument_id}] make_qty ValueError: {e} — Signal übersprungen"
+            )
+            return None
+        if qty == 0:
+            self._log.warning(
+                f"[{self.instrument_id}] Quantity=0 nach Rundung "
+                f"(units={units:.6f}) — Signal übersprungen"
+            )
+            return None
+        return qty
 
     def _on_buy_signal(self, bar: Bar) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -133,6 +156,10 @@ class AdxAtrMomentumStrategy(Strategy):
             if pos.side == PositionSide.LONG:
                 return
             self._close_position(pos)
+            # State zurücksetzen — ermöglicht Neueinstieg auf nächster Bar (kein Flat-Lock)
+            self.current_position = None
+            self.entry_price = 0.0
+            self.trailing_stop = 0.0
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -154,6 +181,10 @@ class AdxAtrMomentumStrategy(Strategy):
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position(pos)
+            # State zurücksetzen — ermöglicht Neueinstieg auf nächster Bar (kein Flat-Lock)
+            self.current_position = None
+            self.entry_price = 0.0
+            self.trailing_stop = 0.0
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return

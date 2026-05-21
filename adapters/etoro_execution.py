@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import ssl
+import time
 import uuid
 import random
 from contextlib import suppress
@@ -56,10 +57,13 @@ _MAX_CONNECT_ATTEMPTS = 5
 _CONNECT_TIMEOUT_S = 30
 _REST_TIMEOUT_S = 10
 
-# Poll-Konfiguration (eToro kann 10-90s brauchen bis PnL-Endpoint aktualisiert)
-_POLL_ATTEMPTS_OPEN = 20    # Versuche für Market-Open-Fill (20 × 5s = 100s)
-_POLL_ATTEMPTS_CLOSE = 12   # Versuche für Market-Close-Fill (12 × 5s = 60s)
-_POLL_INTERVAL_S = 5.0      # Sekunden zwischen Poll-Versuchen
+_POLL_ATTEMPTS_OPEN = 20
+_POLL_ATTEMPTS_CLOSE = 12
+_POLL_INTERVAL_S = 5.0
+
+# TTL for the WS event buffer: events older than this are not replayed
+_WS_BUFFER_TTL_S = 30.0
+_WS_BUFFER_MAX = 50
 
 _REST_BASE: dict[str, str] = {
     "demo": "https://public-api.etoro.com/api/v1/trading/execution/demo",
@@ -117,7 +121,10 @@ class EToroExecutionClient(LiveExecutionClient):
         self._session: aiohttp.ClientSession | None = None
         self._ws: object | None = None
         self._ws_task: asyncio.Task | None = None
-        self._ws_buffer: list[dict] = []
+
+        # [WS-2] TTL-based WS event buffer: list of (monotonic_timestamp, event_dict)
+        # Events older than _WS_BUFFER_TTL_S are silently dropped on replay.
+        self._ws_buffer: list[tuple[float, dict]] = []
 
     def _make_headers(self, req_id: str | None = None) -> dict[str, str]:
         return {
@@ -176,9 +183,22 @@ class EToroExecutionClient(LiveExecutionClient):
             await self._ws.close()
         if self._session:
             await self._session.close()
+        # Flush any pending state writes before exit
+        if self._state._flush_task and not self._state._flush_task.done():
+            self._state._flush_task.cancel()
+            await self._state._persist_now()
         self._log.info("EToroExecutionClient disconnected.", LogColor.BLUE)
 
     async def _fetch_account_balance(self) -> Money:
+        """Fetch available cash balance.
+
+        [EX-3] Fix: uses the official eToro formula:
+            available = credit - pending_non_mirror_orders_for_open
+
+        The previous implementation also subtracted `invested` (open position amounts),
+        causing a double-deduction because eToro's `credit` field already reflects
+        deployed capital. See: https://api-portal.etoro.com/guides/calculate-available-cash.md
+        """
         if self._dry_run:
             return Money(0, USD)
         try:
@@ -187,8 +207,8 @@ class EToroExecutionClient(LiveExecutionClient):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
-                    self._log.debug(f"PnL raw keys: {list(data.keys())}", LogColor.CYAN)  # noqa: E501
+                    data = data.get("clientPortfolio", data)
+                    self._log.debug(f"PnL raw keys: {list(data.keys())}", LogColor.CYAN)
 
                     credit = float(
                         data.get("credit")
@@ -199,23 +219,18 @@ class EToroExecutionClient(LiveExecutionClient):
                         or 0
                     ) or 0.0
 
-                    # Deduct only non-mirror pending open orders
-                    orders_open = data.get("ordersForOpen", data.get("OrdersForOpen", []))  # noqa: E501
+                    # Deduct only non-mirror pending open orders (official eToro formula)
+                    orders_open = data.get("ordersForOpen", data.get("OrdersForOpen", []))
                     pending = sum(
                         float(o.get("amount", o.get("Amount", 0)))
                         for o in orders_open
                         if not o.get("mirrorID", o.get("MirrorID"))
                     )
-                    # Deduct invested amount of all open positions
-                    positions = data.get("positions", data.get("Positions", []))
-                    invested = sum(
-                        float(p.get("amount", p.get("investedAmount", p.get("Amount", p.get("InvestedAmount", 0)))))  # noqa: E501
-                        for p in positions
-                    )
-                    available = max(credit - pending - invested, 0.0)
+
+                    available = max(credit - pending, 0.0)
                     self._log.info(
-                        f"Balance: credit={credit}, pending={pending}, invested={invested}, "  # noqa: E501
-                        f"available={available}",
+                        f"Balance: credit={credit:.2f}, pending={pending:.2f}, "
+                        f"available={available:.2f}",
                         LogColor.CYAN,
                     )
                     return Money(available, USD)
@@ -230,9 +245,16 @@ class EToroExecutionClient(LiveExecutionClient):
     async def _connect_ws(self) -> None:
         for attempt in range(1, _MAX_CONNECT_ATTEMPTS + 1):
             try:
+                # [WS-1] ping_timeout added — mirrors etoro_data.py configuration.
+                # Without this, silent TCP drops leave the socket in a "connected"
+                # state indefinitely; ping_timeout=20 forces a hard reconnect within
+                # ping_interval + ping_timeout = 40 seconds.
                 self._ws = await asyncio.wait_for(
                     websockets.connect(
-                        _WS_URL, ssl=ssl.create_default_context(), ping_interval=20
+                        _WS_URL,
+                        ssl=ssl.create_default_context(),
+                        ping_interval=20,
+                        ping_timeout=20,
                     ),
                     timeout=_CONNECT_TIMEOUT_S,
                 )
@@ -259,8 +281,8 @@ class EToroExecutionClient(LiveExecutionClient):
                                 "topics": [
                                     "trading.notifications",
                                     "portfolio.positions",
-                                    "trading.orders",        # NEU: Order-Status-Updates
-                                    "trading.executions",    # NEU: Fill-Events
+                                    "trading.orders",
+                                    "trading.executions",
                                 ],
                                 "snapshot": False,
                             },
@@ -334,28 +356,33 @@ class EToroExecutionClient(LiveExecutionClient):
         if not pos_id and not ord_id and not token:
             return
 
-        all_mappings = self._state.get_all()
+        # [EX-1] O(1) COID resolution via pre-computed reverse-lookup caches.
+        # Replaces the former O(N) loop that also recomputed uuid5() on every
+        # iteration. Cache is maintained synchronously in _StateManager.set/delete.
         matched_coid: str | None = None
 
-        for coid, stored_id in reversed(list(all_mappings.items())):
-            req_id = self._order_req_id(coid)
-            if (
-                (token and token == req_id)
-                or (pos_id and stored_id == pos_id)
-                or (ord_id and stored_id == ord_id)
-            ):
-                matched_coid = coid
-                break
+        if token:
+            matched_coid = self._state._req_id_to_coid.get(token)
+
+        if matched_coid is None and pos_id:
+            matched_coid = self._state._venue_id_to_coid.get(pos_id)
+
+        if matched_coid is None and ord_id:
+            matched_coid = self._state._venue_id_to_coid.get(ord_id)
 
         if not matched_coid:
             if not is_replay:
-                self._ws_buffer.append(dict(msg))
-                if len(self._ws_buffer) > 50:
-                    self._ws_buffer.pop(0)
+                # [WS-2] TTL-based buffer: evict stale events before inserting
+                now = time.monotonic()
+                self._ws_buffer = [
+                    (t, m) for (t, m) in self._ws_buffer
+                    if now - t < _WS_BUFFER_TTL_S
+                ]
+                if len(self._ws_buffer) < _WS_BUFFER_MAX:
+                    self._ws_buffer.append((now, dict(msg)))
             return
 
-        # FIX 4: State-Update aus WebSocket. Limit-Orders bekommen hier ihre echte orderId  # noqa: E501
-        stored_id = all_mappings[matched_coid]
+        stored_id = self._state.get_all().get(matched_coid, "")
         real_id_from_ws = pos_id or ord_id
         if (
             real_id_from_ws
@@ -404,7 +431,6 @@ class EToroExecutionClient(LiveExecutionClient):
                         liquidity_side=LiquiditySide.TAKER,
                         ts_event=ts,
                     )
-            # Balance-Refresh nach Fill
             self.create_task(self._refresh_balance(), log_msg="balance_refresh")
 
         elif m_type in ("trading.order.accepted", "order.accepted"):
@@ -454,11 +480,8 @@ class EToroExecutionClient(LiveExecutionClient):
         pass
 
     async def _query_order(self, command: QueryOrder) -> None:
-        """Antwortet auf Nautilus Inflight-Reconciliation-Queries."""
         coid = command.client_order_id.value
         order = self._cache.order(command.client_order_id)
-        # ACCEPTED hinzugefügt: Nautilus queryt auch accepted market orders
-        # damit _poll_for_fill-Timeout durch Continuous Reconciliation kompensiert wird
         if not order or order.status.name not in ("INITIALIZED", "SUBMITTED", "ACCEPTED"):
             return
         self._log.info(f"Query ClientOrderId('{coid}')", LogColor.BLUE)
@@ -470,20 +493,17 @@ class EToroExecutionClient(LiveExecutionClient):
             )
             if found:
                 self._log.info(
-                    f"Query resolved order {coid} via PnL reconciliation.", LogColor.GREEN  # noqa: E501
+                    f"Query resolved order {coid} via PnL reconciliation.", LogColor.GREEN
                 )
         except Exception as exc:
             self._log.warning(f"Query failed for {coid}: {exc}", LogColor.YELLOW)
 
     def _build_limit_payload(self, order, etoro_id: int) -> dict:
         limit_rate = float(order.price)
-        # Nomineller Minimal-SL: erfüllt eToro-Constraint (> 0) ohne Trading-Risiko.
-        # eToro akzeptiert 1e-05 als gültige SL-Rate (verifiziert aus Live-Portfolio).
-        # Für echte Strategien sollte der SL sinnvoll gesetzt werden.
         if order.side == OrderSide.BUY:
-            sl_rate = max(round(limit_rate * 0.5, 5), 1e-05)   # 50% unter Trigger
+            sl_rate = max(round(limit_rate * 0.5, 5), 1e-05)
         else:
-            sl_rate = round(limit_rate * 2.0, 5)                # 100% über Trigger
+            sl_rate = round(limit_rate * 2.0, 5)
         return {
             "InstrumentID": etoro_id,
             "IsBuy": order.side == OrderSide.BUY,
@@ -518,7 +538,6 @@ class EToroExecutionClient(LiveExecutionClient):
             payload["AmountInUnits"] = float(order.quantity)
             url = f"{self._rest_base}/market-open-orders/by-units"
 
-        # Parse tags for SL:<pct>, TP:<pct>, TSL:1
         sl_pct = 0.0
         tp_pct = 0.0
 
@@ -544,7 +563,6 @@ class EToroExecutionClient(LiveExecutionClient):
                             sl_rate = exec_price * (1.0 - sl_pct)
                         else:
                             sl_rate = exec_price * (1.0 + sl_pct)
-
                         payload["StopLossRate"] = round(sl_rate, instr.price_precision)
                         payload["IsNoStopLoss"] = False
 
@@ -553,33 +571,33 @@ class EToroExecutionClient(LiveExecutionClient):
                             tp_rate = exec_price * (1.0 + tp_pct)
                         else:
                             tp_rate = exec_price * (1.0 - tp_pct)
-
                         payload["TakeProfitRate"] = round(tp_rate, instr.price_precision)
                         payload["IsNoTakeProfit"] = False
                         self._log.info(
-                            f"[{order.instrument_id}] Take-Profit gesetzt: rate={tp_rate} (TP:{tp_pct*100:.1f}%)",
+                            f"[{order.instrument_id}] Take-Profit gesetzt: "
+                            f"rate={tp_rate:.5f} (TP:{tp_pct*100:.1f}%)",
                             LogColor.CYAN,
                         )
                 else:
                     self._log.warning(
-                        f"[{order.instrument_id}] Instrument not in cache. Skipping StopLossRate/TakeProfitRate.",
-                        LogColor.YELLOW
+                        f"[{order.instrument_id}] Instrument not in cache. "
+                        "Skipping StopLossRate/TakeProfitRate.",
+                        LogColor.YELLOW,
                     )
             else:
                 if sl_pct > 0:
                     self._log.warning(
-                        f"[{order.instrument_id}] SL-Tag gefunden, aber kein Quote-Tick verfügbar. "
+                        f"[{order.instrument_id}] SL-Tag gefunden, aber kein Quote-Tick. "
                         "StopLossRate wird übersprungen.",
                         LogColor.YELLOW,
                     )
                 if tp_pct > 0:
                     self._log.warning(
-                        f"[{order.instrument_id}] TP-Tag gefunden, aber kein Quote-Tick verfügbar. "
+                        f"[{order.instrument_id}] TP-Tag gefunden, aber kein Quote-Tick. "
                         "TP wird übersprungen.",
                         LogColor.YELLOW,
                     )
 
-        # TSL-Aktivierung: nur per explizitem Tag, und nur wenn StopLossRate vorhanden
         tsl_requested = any(
             isinstance(tag, str) and tag == "TSL:1"
             for tag in (getattr(order, "tags", None) or [])
@@ -588,13 +606,10 @@ class EToroExecutionClient(LiveExecutionClient):
         if tsl_requested:
             if not self._enable_trailing_stop:
                 self._log.warning(
-                    f"[{order.instrument_id}] TSL:1 Tag gefunden, aber globale TSL-Erlaubnis ist deaktiviert. "
-                    "TSL wird ignoriert.",
+                    f"[{order.instrument_id}] TSL:1 Tag: globale TSL-Erlaubnis deaktiviert.",
                     LogColor.YELLOW,
                 )
             elif "StopLossRate" in payload:
-                # _enable_trailing_stop acts as a system-level guard.
-                # Only when both the TSL:1 tag is set AND _enable_trailing_stop is True is TSL applied.
                 payload["IsTrailingStop"] = True
                 self._log.info(
                     f"[{order.instrument_id}] Trailing Stop aktiviert (TSL:1 Tag).",
@@ -602,8 +617,7 @@ class EToroExecutionClient(LiveExecutionClient):
                 )
             else:
                 self._log.warning(
-                    f"[{order.instrument_id}] TSL:1 Tag gefunden, aber kein SL:<pct> Tag gesetzt. "
-                    "TSL wird ignoriert — IsTrailingStop erfordert eine gültige StopLossRate.",
+                    f"[{order.instrument_id}] TSL:1 Tag ohne SL:<pct> — TSL ignoriert.",
                     LogColor.YELLOW,
                 )
 
@@ -701,14 +715,14 @@ class EToroExecutionClient(LiveExecutionClient):
 
                 if 200 <= status < 300:
                     self._log.debug(
-                        f"REST response body for {order.client_order_id.value}: {body_text[:2000]}",
+                        f"REST response body for {order.client_order_id.value}: "
+                        f"{body_text[:2000]}",
                         LogColor.CYAN,
                     )
                     body = json.loads(body_text) if body_text else {}
                     if order.order_type == OrderType.LIMIT:
                         self._log.info(
-                            f"Limit order REST response body: {body}",
-                            LogColor.CYAN,
+                            f"Limit order REST response body: {body}", LogColor.CYAN
                         )
                     new_pos_id = str(
                         body.get("orderForOpen", {}).get("orderID")
@@ -728,11 +742,20 @@ class EToroExecutionClient(LiveExecutionClient):
                     )
                     if order.order_type == OrderType.LIMIT:
                         self._log.info(
-                            f"Limit order accepted (venue_id={new_pos_id}, token={req_id}). State will be updated when WS delivers real orderId.",  # noqa: E501
+                            f"Limit order accepted (venue_id={new_pos_id}, token={req_id}). "
+                            "State will be updated when WS delivers real orderId.",
                             LogColor.GREEN,
                         )
 
-                    for evt in list(self._ws_buffer):
+                    # [WS-2] Replay buffered events, evicting stale ones first
+                    now = time.monotonic()
+                    valid_buffer = [
+                        (t, m) for (t, m) in self._ws_buffer
+                        if now - t < _WS_BUFFER_TTL_S
+                    ]
+                    self._ws_buffer = valid_buffer
+
+                    for _ts, evt in valid_buffer:
                         content = evt.get("content", {})
                         if isinstance(content, str):
                             with suppress(json.JSONDecodeError):
@@ -776,7 +799,8 @@ class EToroExecutionClient(LiveExecutionClient):
                     )
                 else:
                     self._log.warning(
-                        f"HTTP {status} for {order.client_order_id.value}: {body_text[:500]}",  # noqa: E501
+                        f"HTTP {status} for {order.client_order_id.value}: "
+                        f"{body_text[:500]}",
                         LogColor.YELLOW,
                     )
                     self.generate_order_rejected(
@@ -809,17 +833,8 @@ class EToroExecutionClient(LiveExecutionClient):
         venue_token: str | None = None,
         order: object | None = None,
     ) -> str | None:
-        """
-        Sucht die echte numerische orderID einer Limit-Order im PnL-Endpoint.
-
-        Matching-Strategie (in dieser Priorität):
-        1. Token-Match via req_id oder venue_token (falls eToro Tokens exponiert)
-        2. Rate+InstrumentID+IsBuy Match (Hauptstrategie, da eToro keine Tokens in PnL hat)
-        3. Single-Order-Fallback: wenn genau 1 offene Order für das Instrument existiert
-        """
         req_id = self._order_req_id(coid)
 
-        # Limit-Rate und InstrumentID aus Order-Objekt extrahieren (für Fallback)
         limit_rate: float | None = None
         etoro_instr_id: str | None = None
         is_buy: bool | None = None
@@ -841,14 +856,13 @@ class EToroExecutionClient(LiveExecutionClient):
                 data = await resp.json()
                 data = data.get("clientPortfolio", data)
 
-                # Alle relevanten Order-Quellen sammeln
                 all_orders: list[dict] = []
                 for key in ("ordersForOpen", "OrdersForOpen",
                             "entryOrders", "EntryOrders",
                             "orders", "Orders"):
                     all_orders.extend(data.get(key, []))
 
-                # --- Strategie 1: Token-Match (falls eToro irgendwann Tokens exponiert) ---
+                # Strategy 1: Token match
                 for item in all_orders:
                     item_lower = {str(k).lower(): v for k, v in item.items()}
                     item_token = str(
@@ -859,32 +873,38 @@ class EToroExecutionClient(LiveExecutionClient):
                         item_token == req_id
                         or (venue_token and item_token == venue_token)
                     ):
-                        order_id = str(item_lower.get("orderid", "") or item_lower.get("order_id", ""))
+                        order_id = str(
+                            item_lower.get("orderid", "")
+                            or item_lower.get("order_id", "")
+                        )
                         if order_id:
                             self._log.info(
-                                f"Resolved limit orderID {order_id} for {coid} "
-                                f"via token match.",
+                                f"Resolved limit orderID {order_id} for {coid} via token.",
                                 LogColor.GREEN,
                             )
                             return order_id
 
-                # --- Strategie 2: Rate+InstrumentID+IsBuy Match (Hauptstrategie) ---
+                # Strategy 2: Rate + InstrumentID + IsBuy
                 if limit_rate is not None and etoro_instr_id is not None:
                     rate_matches: list[str] = []
                     for item in all_orders:
                         item_lower = {str(k).lower(): v for k, v in item.items()}
-                        # Instrument-Filter
                         if str(item_lower.get("instrumentid", "")) != str(etoro_instr_id):
                             continue
-                        # Richtungs-Filter (BUY/SELL)
                         if is_buy is not None:
-                            item_is_buy = bool(item_lower.get("isbuy", item_lower.get("is_buy", True)))
+                            item_is_buy = bool(
+                                item_lower.get("isbuy", item_lower.get("is_buy", True))
+                            )
                             if item_is_buy != is_buy:
                                 continue
-                        # Rate-Match mit ±0.5% Toleranz
-                        item_rate = float(item_lower.get("rate", item_lower.get("Rate", 0)) or 0)
+                        item_rate = float(
+                            item_lower.get("rate", item_lower.get("Rate", 0)) or 0
+                        )
                         if item_rate > 0 and abs(item_rate - limit_rate) / limit_rate < 0.005:
-                            order_id = str(item_lower.get("orderid", "") or item_lower.get("order_id", ""))
+                            order_id = str(
+                                item_lower.get("orderid", "")
+                                or item_lower.get("order_id", "")
+                            )
                             if order_id:
                                 rate_matches.append(order_id)
 
@@ -897,25 +917,32 @@ class EToroExecutionClient(LiveExecutionClient):
                         return rate_matches[0]
                     elif len(rate_matches) > 1:
                         self._log.warning(
-                            f"Rate match found {len(rate_matches)} candidates for {coid} "
+                            f"Rate match: {len(rate_matches)} candidates for {coid} "
                             f"at rate={limit_rate}: {rate_matches}. Using first.",
                             LogColor.YELLOW,
                         )
                         return rate_matches[0]
 
-                # --- Strategie 3: Single-Order-Fallback ---
+                # Strategy 3: Single-order fallback
                 if etoro_instr_id is not None:
                     instr_orders = [
                         item for item in all_orders
-                        if str({str(k).lower(): v for k, v in item.items()}.get("instrumentid", "")) == str(etoro_instr_id)
+                        if str(
+                            {str(k).lower(): v for k, v in item.items()}.get(
+                                "instrumentid", ""
+                            )
+                        ) == str(etoro_instr_id)
                     ]
                     if len(instr_orders) == 1:
                         item_lower = {str(k).lower(): v for k, v in instr_orders[0].items()}
-                        order_id = str(item_lower.get("orderid", "") or item_lower.get("order_id", ""))
+                        order_id = str(
+                            item_lower.get("orderid", "")
+                            or item_lower.get("order_id", "")
+                        )
                         if order_id:
                             self._log.info(
                                 f"Resolved limit orderID {order_id} for {coid} "
-                                f"via single-order fallback (only open order for instrument).",
+                                "via single-order fallback.",
                                 LogColor.GREEN,
                             )
                             return order_id
@@ -932,40 +959,30 @@ class EToroExecutionClient(LiveExecutionClient):
         pos_id: str,
         order: object,
     ) -> None:
-        """
-        Führt einen Limit-Cancel im Hintergrund aus nachdem generate_order_canceled
-        bereits an die Strategy signalisiert wurde.
-
-        Wartet in Schritten (2s → 3s → 5s) bis eToro die Order im PnL registriert hat,
-        dann matched via Rate+Instrument und sendet DELETE mit der echten orderID.
-        """
-        delays = [2.0, 3.0, 5.0]  # Gesamt max 10s Wartezeit
+        delays = [2.0, 3.0, 5.0]
 
         for attempt, delay in enumerate(delays, start=1):
             await asyncio.sleep(delay)
 
             real_id = await self._resolve_limit_order_id(
-                coid,
-                venue_token=pos_id,
-                order=order,
+                coid, venue_token=pos_id, order=order
             )
 
             if real_id:
                 self._log.info(
                     f"Background cancel: found real orderID {real_id} for {coid} "
-                    f"(attempt {attempt}/{len(delays)}, after {sum(delays[:attempt])}s).",
+                    f"(attempt {attempt}/{len(delays)}).",
                     LogColor.CYAN,
                 )
                 try:
                     retry_url = f"{self._rest_base}/limit-orders/{real_id}"
                     async with self._session.delete(
                         retry_url,
-                        headers=self._make_headers(self._order_req_id(coid))
+                        headers=self._make_headers(self._order_req_id(coid)),
                     ) as retry_resp:
                         if retry_resp.status in range(200, 300) or retry_resp.status == 404:
                             self._log.info(
-                                f"✅ Background cancel: limit order {real_id} "
-                                f"successfully deleted at eToro.",
+                                f"✅ Background cancel: limit {real_id} deleted.",
                                 LogColor.GREEN,
                             )
                             return
@@ -978,15 +995,12 @@ class EToroExecutionClient(LiveExecutionClient):
                             )
                 except Exception as exc:
                     self._log.warning(
-                        f"Background cancel exception for {coid}: {exc}",
-                        LogColor.YELLOW,
+                        f"Background cancel exception for {coid}: {exc}", LogColor.YELLOW
                     )
-                return  # Nach erfolgreichem Fund nicht nochmal suchen
+                return
 
-        # Alle Versuche ausgeschöpft
         self._log.warning(
-            f"Background cancel exhausted retries for {coid}. "
-            f"Emergency cleanup will handle remaining order at eToro.",
+            f"Background cancel exhausted retries for {coid}.",
             LogColor.YELLOW,
         )
 
@@ -1012,24 +1026,21 @@ class EToroExecutionClient(LiveExecutionClient):
 
         if order.order_type == OrderType.LIMIT:
             url = f"{self._rest_base}/limit-orders/{pos_id}"
-            method = self._session.delete
 
             try:
-                async with method(
+                async with self._session.delete(
                     url,
-                    headers=self._make_headers(self._order_req_id(coid))
+                    headers=self._make_headers(self._order_req_id(coid)),
                 ) as resp:
                     if resp.status in range(200, 300) or resp.status == 404:
-                        # Direkter Erfolg: UUID war doch eine gültige orderID, oder Order bereits weg
                         self._log.info(
                             f"Cancel {resp.status} for {coid} — direct success.",
                             LogColor.GREEN,
                         )
                     elif resp.status == 400:
-                        # UUID-Token nicht als orderID erkannt → Background-Task startet
                         self._log.info(
-                            f"Cancel 400 for {coid} (UUID token, not yet valid orderID). "
-                            f"Launching background cancel task (rate-match in 2-10s)...",
+                            f"Cancel 400 for {coid} (UUID token). "
+                            "Launching background cancel task...",
                             LogColor.CYAN,
                         )
                         self.create_task(
@@ -1045,8 +1056,6 @@ class EToroExecutionClient(LiveExecutionClient):
             except Exception as exc:
                 self._log.error(f"Cancel exception for {coid}: {exc}", LogColor.RED)
 
-            # IMMER OrderCanceled generieren um PENDING_CANCEL zu vermeiden.
-            # Falls die echte Order noch offen ist, räumt emergency_cleanup sie auf.
             await self._state.delete(coid)
             self.generate_order_canceled(
                 strategy_id=command.strategy_id,
@@ -1057,17 +1066,15 @@ class EToroExecutionClient(LiveExecutionClient):
             )
             return
 
-        # Market-Order cancel (close position)
         else:
             url = f"{self._rest_base}/market-close-orders/positions/{pos_id}"
-            method = self._session.post
             payload = {"UnitsToDeduct": None}
 
             try:
-                async with method(
+                async with self._session.post(
                     url,
                     json=payload,
-                    headers=self._make_headers(self._order_req_id(coid))
+                    headers=self._make_headers(self._order_req_id(coid)),
                 ) as resp:
                     if resp.status not in range(200, 300) and resp.status != 404:
                         body = await resp.text()
@@ -1092,7 +1099,6 @@ class EToroExecutionClient(LiveExecutionClient):
     ) -> None:
         max_attempts = _POLL_ATTEMPTS_CLOSE if is_close else _POLL_ATTEMPTS_OPEN
         for attempt in range(max_attempts):
-            # Exponential backoff: 2s, 3s, 5s, 8s, 10s, 10s, ...
             delay = min(2.0 * (1.5 ** attempt), 10.0)
             await asyncio.sleep(delay)
             cached_order = self._cache.order(order.client_order_id)
@@ -1106,8 +1112,8 @@ class EToroExecutionClient(LiveExecutionClient):
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
-                            positions = data.get("Positions", data.get("positions", []))  # noqa: E501
+                            data = data.get("clientPortfolio", data)
+                            positions = data.get("Positions", data.get("positions", []))
                             still_open = any(
                                 str(
                                     p.get(
@@ -1130,12 +1136,12 @@ class EToroExecutionClient(LiveExecutionClient):
                                     if quote
                                     else 1.0
                                 )
-
                                 self.generate_order_filled(
                                     strategy_id=order.strategy_id,
                                     instrument_id=order.instrument_id,
                                     client_order_id=order.client_order_id,
-                                    venue_order_id=order.venue_order_id or VenueOrderId(order_id),
+                                    venue_order_id=order.venue_order_id
+                                    or VenueOrderId(order_id),
                                     venue_position_id=PositionId(order_id),
                                     trade_id=TradeId(str(uuid.uuid4())),
                                     order_side=order.side,
@@ -1143,7 +1149,7 @@ class EToroExecutionClient(LiveExecutionClient):
                                     last_qty=order.quantity,
                                     last_px=Price(
                                         fill_px,
-                                        precision=instr.price_precision if instr else 5,  # noqa: E501
+                                        precision=instr.price_precision if instr else 5,
                                     ),
                                     quote_currency=USD,
                                     commission=Money(0.0, USD),
@@ -1151,10 +1157,13 @@ class EToroExecutionClient(LiveExecutionClient):
                                     ts_event=self._clock.timestamp_ns(),
                                 )
                                 self._log.info(
-                                    f"Reconciled via PnL (Closed): {order.client_order_id.value} -> PosID {order_id}",  # noqa: E501
+                                    f"Reconciled via PnL (Closed): "
+                                    f"{order.client_order_id.value} -> PosID {order_id}",
                                     LogColor.GREEN,
                                 )
-                                self.create_task(self._refresh_balance(), log_msg="balance_refresh")
+                                self.create_task(
+                                    self._refresh_balance(), log_msg="balance_refresh"
+                                )
                                 return
                 else:
                     found = await self._reconcile_via_pnl(order, req_id, order_id)
@@ -1168,7 +1177,6 @@ class EToroExecutionClient(LiveExecutionClient):
             f"{order.client_order_id.value}. Order remains ACCEPTED.",
             LogColor.YELLOW,
         )
-        # Diagnostic: fetch and log the full PnL once more
         try:
             async with self._session.get(
                 self._pnl_base, headers=self._make_headers()
@@ -1184,7 +1192,6 @@ class EToroExecutionClient(LiveExecutionClient):
                         f"ordersForClose={len(data.get('ordersForClose', []))}",
                         LogColor.YELLOW,
                     )
-                    # Log each exit order to identify silent TSL/SL triggers
                     for item in data.get("exitOrders", []):
                         self._log.warning(
                             f"[Diagnostic] exitOrder: {item}", LogColor.YELLOW
@@ -1203,7 +1210,7 @@ class EToroExecutionClient(LiveExecutionClient):
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    data = data.get("clientPortfolio", data)  # Unwrap Real-PnL-Envelope
+                    data = data.get("clientPortfolio", data)
 
                     positions = data.get("Positions", data.get("positions", []))
                     orders_for_open = (
@@ -1215,9 +1222,7 @@ class EToroExecutionClient(LiveExecutionClient):
                     for item in positions:
                         i_req = str(item.get("token", item.get("requestId", "")))
                         i_ord = str(
-                            item.get(
-                                "OrderID", item.get("orderID", item.get("orderId", ""))
-                            )
+                            item.get("OrderID", item.get("orderID", item.get("orderId", "")))
                         )
                         i_pos = str(
                             item.get(
@@ -1225,15 +1230,15 @@ class EToroExecutionClient(LiveExecutionClient):
                                 item.get("positionID", item.get("positionId", "")),
                             )
                         )
-                        if (req_id and i_req == req_id) \
-                           or (order_id and i_ord == order_id) \
-                           or (order_id and i_pos == order_id):
+                        if (
+                            (req_id and i_req == req_id)
+                            or (order_id and i_ord == order_id)
+                            or (order_id and i_pos == order_id)
+                        ):
                             pos_id = str(
                                 item.get(
                                     "PositionID",
-                                    item.get(
-                                        "positionID", item.get("positionId", i_ord)
-                                    ),
+                                    item.get("positionID", item.get("positionId", i_ord)),
                                 )
                             )
                             await self._state.set(order.client_order_id.value, pos_id)
@@ -1246,7 +1251,8 @@ class EToroExecutionClient(LiveExecutionClient):
                                 strategy_id=order.strategy_id,
                                 instrument_id=order.instrument_id,
                                 client_order_id=order.client_order_id,
-                                venue_order_id=order.venue_order_id or VenueOrderId(pos_id),
+                                venue_order_id=order.venue_order_id
+                                or VenueOrderId(pos_id),
                                 venue_position_id=PositionId(pos_id),
                                 trade_id=TradeId(str(uuid.uuid4())),
                                 order_side=order.side,
@@ -1262,18 +1268,19 @@ class EToroExecutionClient(LiveExecutionClient):
                                 ts_event=self._clock.timestamp_ns(),
                             )
                             self._log.info(
-                                f"Reconciled via PnL (Filled): {order.client_order_id.value} -> PosID {pos_id}",  # noqa: E501
+                                f"Reconciled via PnL (Filled): "
+                                f"{order.client_order_id.value} -> PosID {pos_id}",
                                 LogColor.GREEN,
                             )
-                            self.create_task(self._refresh_balance(), log_msg="balance_refresh")
+                            self.create_task(
+                                self._refresh_balance(), log_msg="balance_refresh"
+                            )
                             return True
 
                     for item in orders_for_open:
                         i_req = str(item.get("token", item.get("requestId", "")))
                         i_ord = str(
-                            item.get(
-                                "OrderID", item.get("orderID", item.get("orderId", ""))
-                            )
+                            item.get("OrderID", item.get("orderID", item.get("orderId", "")))
                         )
                         i_pos = str(
                             item.get(
@@ -1281,9 +1288,11 @@ class EToroExecutionClient(LiveExecutionClient):
                                 item.get("positionID", item.get("positionId", "")),
                             )
                         )
-                        if (req_id and i_req == req_id) \
-                           or (order_id and i_ord == order_id) \
-                           or (order_id and i_pos == order_id):
+                        if (
+                            (req_id and i_req == req_id)
+                            or (order_id and i_ord == order_id)
+                            or (order_id and i_pos == order_id)
+                        ):
                             i_id = str(
                                 item.get(
                                     "OrderID",
@@ -1297,7 +1306,8 @@ class EToroExecutionClient(LiveExecutionClient):
                                     strategy_id=order.strategy_id,
                                     instrument_id=order.instrument_id,
                                     client_order_id=order.client_order_id,
-                                    venue_order_id=order.venue_order_id or VenueOrderId(i_id),
+                                    venue_order_id=order.venue_order_id
+                                    or VenueOrderId(i_id),
                                     venue_position_id=PositionId(i_id),
                                     trade_id=TradeId(str(uuid.uuid4())),
                                     order_side=order.side,
@@ -1305,14 +1315,16 @@ class EToroExecutionClient(LiveExecutionClient):
                                     last_qty=order.quantity,
                                     last_px=Price(
                                         1.0,
-                                        precision=instr.price_precision if instr else 5,  # noqa: E501
+                                        precision=instr.price_precision if instr else 5,
                                     ),
                                     quote_currency=USD,
                                     commission=Money(0.0, USD),
                                     liquidity_side=LiquiditySide.TAKER,
                                     ts_event=self._clock.timestamp_ns(),
                                 )
-                                self.create_task(self._refresh_balance(), log_msg="balance_refresh")
+                                self.create_task(
+                                    self._refresh_balance(), log_msg="balance_refresh"
+                                )
                             else:
                                 self.generate_order_accepted(
                                     strategy_id=order.strategy_id,
@@ -1323,49 +1335,76 @@ class EToroExecutionClient(LiveExecutionClient):
                                 )
                             return True
 
+                    # [EX-2] exitOrders branch: TSL/SL/TP was triggered by eToro before
+                    # Nautilus had a chance to see the open position.
+                    #
+                    # PREVIOUS BEHAVIOUR (broken): two generate_order_filled() calls with
+                    # the same client_order_id — open leg (BUY) + synthetic close leg (SELL).
+                    # This caused Nautilus InvalidStateTrigger because an already-FILLED
+                    # order cannot be filled again on a different side.
+                    #
+                    # FIXED BEHAVIOUR: generate only the open-leg fill, which correctly
+                    # creates the Nautilus position. Balance refresh is triggered. The
+                    # resulting phantom position (open in Nautilus, closed at eToro) is
+                    # flagged in the log so the operator can reconcile manually or via
+                    # etoro_close_orphans.py. A proper autonomous-close mechanism (synthetic
+                    # close order via a separate ClientOrderId) should be implemented as a
+                    # follow-up task [EX-2-followup].
                     exit_orders = (
                         data.get("exitOrders", data.get("ExitOrders", []))
                         + data.get("ordersForClose", data.get("OrdersForClose", []))
-                        + data.get("ordersForCloseMultiple", data.get("OrdersForCloseMultiple", []))
+                        + data.get(
+                            "ordersForCloseMultiple",
+                            data.get("OrdersForCloseMultiple", []),
+                        )
                     )
 
                     for item in exit_orders:
                         i_req = str(item.get("token", item.get("requestId", "")))
                         i_ord = str(
-                            item.get(
-                                "OrderID", item.get("orderID", item.get("orderId", ""))
-                            )
+                            item.get("OrderID", item.get("orderID", item.get("orderId", "")))
                         )
                         i_pos = str(
                             item.get(
-                                "PositionID", item.get("positionID", item.get("positionId", ""))
+                                "PositionID",
+                                item.get("positionID", item.get("positionId", "")),
                             )
                         )
 
-                        if (req_id and i_req == req_id) \
-                           or (order_id and i_ord == order_id) \
-                           or (order_id and i_pos == order_id):
-
+                        if (
+                            (req_id and i_req == req_id)
+                            or (order_id and i_ord == order_id)
+                            or (order_id and i_pos == order_id)
+                        ):
                             pos_id = i_pos or i_ord or order_id
                             await self._state.set(order.client_order_id.value, pos_id)
                             instr = self._cache.instrument(order.instrument_id)
 
                             fill_px = item.get(
-                                "closeRate", item.get("CloseRate", item.get("rate", item.get("Rate")))
+                                "closeRate",
+                                item.get(
+                                    "CloseRate", item.get("rate", item.get("Rate"))
+                                ),
                             )
                             if fill_px is None:
                                 quote = self._cache.quote_tick(order.instrument_id)
                                 fill_px = (
-                                    float(quote.bid_price if order.side == OrderSide.SELL else quote.ask_price)
-                                    if quote else 1.0
+                                    float(
+                                        quote.bid_price
+                                        if order.side == OrderSide.SELL
+                                        else quote.ask_price
+                                    )
+                                    if quote
+                                    else 1.0
                                 )
 
-                            # 1. Open leg
+                            # Generate only the open-leg fill (safe for Nautilus state machine)
                             self.generate_order_filled(
                                 strategy_id=order.strategy_id,
                                 instrument_id=order.instrument_id,
                                 client_order_id=order.client_order_id,
-                                venue_order_id=order.venue_order_id or VenueOrderId(pos_id),
+                                venue_order_id=order.venue_order_id
+                                or VenueOrderId(pos_id),
                                 venue_position_id=PositionId(pos_id),
                                 trade_id=TradeId(str(uuid.uuid4())),
                                 order_side=order.side,
@@ -1381,33 +1420,21 @@ class EToroExecutionClient(LiveExecutionClient):
                                 ts_event=self._clock.timestamp_ns(),
                             )
 
-                            # 2. Close leg (immediate TSL/SL/TP trigger)
-                            opposite_side = OrderSide.BUY if order.side == OrderSide.SELL else OrderSide.SELL
-                            self.generate_order_filled(
-                                strategy_id=order.strategy_id,
-                                instrument_id=order.instrument_id,
-                                client_order_id=order.client_order_id,
-                                venue_order_id=order.venue_order_id or VenueOrderId(pos_id),
-                                venue_position_id=PositionId(pos_id),
-                                trade_id=TradeId(str(uuid.uuid4())),
-                                order_side=opposite_side,
-                                order_type=order.order_type,
-                                last_qty=order.quantity,
-                                last_px=Price(
-                                    float(fill_px),
-                                    precision=instr.price_precision if instr else 5,
-                                ),
-                                quote_currency=USD,
-                                commission=Money(0.0, USD),
-                                liquidity_side=LiquiditySide.TAKER,
-                                ts_event=self._clock.timestamp_ns(),
+                            # [EX-2] Phantom position warning: eToro has autonomously
+                            # closed this position (TSL/SL/TP). Nautilus now has an open
+                            # position that no longer exists at the broker. Run
+                            # dev_scripts/etoro_close_orphans.py --symbol <sym> to audit.
+                            self._log.warning(
+                                f"[EX-2] Autonomous TSL/SL/TP close detected for "
+                                f"coid={order.client_order_id.value} posId={pos_id}. "
+                                f"Nautilus position is now a phantom — reconcile via "
+                                f"etoro_close_orphans.py or next strategy signal.",
+                                LogColor.YELLOW,
                             )
 
-                            self._log.info(
-                                f"Reconciled via exitOrders: position was opened and immediately closed (TSL/SL/TP triggered). coid={order.client_order_id.value} posId={pos_id}",
-                                LogColor.GREEN,
+                            self.create_task(
+                                self._refresh_balance(), log_msg="balance_refresh"
                             )
-                            self.create_task(self._refresh_balance(), log_msg="balance_refresh")
                             return True
 
         except Exception:
@@ -1415,11 +1442,13 @@ class EToroExecutionClient(LiveExecutionClient):
         return False
 
     async def _refresh_balance(self) -> None:
-        """Aktualisiert Account-Balance nach einem Fill."""
-        await asyncio.sleep(2.0)  # Kurze Pause damit eToro PnL aktualisiert
+        """Refresh account balance after a fill (2s delay for eToro PnL propagation)."""
+        await asyncio.sleep(2.0)
         balance = await self._fetch_account_balance()
         self.generate_account_state(
-            balances=[AccountBalance(total=balance, locked=Money(0, USD), free=balance)],
+            balances=[
+                AccountBalance(total=balance, locked=Money(0, USD), free=balance)
+            ],
             margins=[],
             reported=True,
             ts_event=self._clock.timestamp_ns(),

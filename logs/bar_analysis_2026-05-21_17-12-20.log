@@ -1,0 +1,937 @@
+🔍 Starte Massen-Analyse im Bar-Verzeichnis: /home/user/etoro_nautilus/data/nautilus/data/bar
+======================================================================
+
+🟢 01211.HK.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-03-15T00-00-00-000000000Z_2026-05-21T07-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': '01211.HK.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': '01211.HK.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2118
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                       open                                                                 high                                                                  low                                                                close                                                          volume             ts_event              ts_init
+     0           b'\x00`Cn\xf2\xf2\x0f\x08\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00`Cn\xf2\xf2\x0f\x08\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00`Cn\xf2\xf2\x0f\x08\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00`Cn\xf2\xf2\x0f\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1647302400000000000  1647302400000000000
+     1  b'\x00\xa0\xef\xb9\x16\x92\x9b\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xef\xb9\x16\x92\x9b\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xef\xb9\x16\x92\x9b\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xef\xb9\x16\x92\x9b\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1647388800000000000  1647388800000000000
+     2       b'\x00\xc07\x95\xea\x98\xc7\t\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xc07\x95\xea\x98\xc7\t\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xc07\x95\xea\x98\xc7\t\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xc07\x95\xea\x98\xc7\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1647475200000000000  1647475200000000000
+----------------------------------------------------------------------
+
+🟢 ACN.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-21-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ACN.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ACN.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1969
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\x00\x98\xea\x10\xe4\xd4+\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x98\xea\x10\xe4\xd4+\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x98\xea\x10\xe4\xd4+\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x98\xea\x10\xe4\xd4+\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1     b'\x00\xc0.\xd7\x05\xa6\x1f-\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0.\xd7\x05\xa6\x1f-\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0.\xd7\x05\xa6\x1f-\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0.\xd7\x05\xa6\x1f-\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2           b'\x00\xe0\xe1\xeaHZ(-\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xe0\xe1\xeaHZ(-\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xe0\xe1\xeaHZ(-\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xe0\xe1\xeaHZ(-\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 ADA.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ADA.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ADA.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 3497
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                     open                                                               high                                                                low                                                              close                                                          volume             ts_event              ts_init
+     0       b'\x00\x90\r\xc8\x9f}\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x90\r\xc8\x9f}\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x90\r\xc8\x9f}\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x90\r\xc8\x9f}\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1        b'\x00\x88\xfb\x8b)m\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x88\xfb\x8b)m\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x88\xfb\x8b)m\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x88\xfb\x8b)m\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2  b'\x00\x98\xdd\x93\xd9\x13\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x98\xdd\x93\xd9\x13\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x98\xdd\x93\xd9\x13\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x98\xdd\x93\xd9\x13\t\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 ADBE.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-20T00-00-00-000000000Z_2026-05-21T08-30-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ADBE.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ADBE.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2027
+   - Daten-Snippet (erste 3 Zeilen):
+                                                               open                                                         high                                                          low                                                        close                                                          volume             ts_event              ts_init
+     0   b'\x00 \x86\xbb\xae\x889<\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \x86\xbb\xae\x889<\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \x86\xbb\xae\x889<\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \x86\xbb\xae\x889<\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     1   b'\x00\x80\x9aM\xab\x0fG;\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\x80\x9aM\xab\x0fG;\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\x80\x9aM\xab\x0fG;\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\x80\x9aM\xab\x0fG;\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+     2  b'\x00 \x95\x12\r\x19\xb09\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \x95\x12\r\x19\xb09\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \x95\x12\r\x19\xb09\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \x95\x12\r\x19\xb09\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650585600000000000  1650585600000000000
+----------------------------------------------------------------------
+
+🟢 AERO.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2025-04-17T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'AERO.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'AERO.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 8358
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                  open                                                            high                                                             low                                                           close                                                          volume             ts_event              ts_init
+     0      b'\x00`\xb4e:\x01\x0e\x00\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xb4e:\x01\x0e\x00\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xb4e:\x01\x0e\x00\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xb4e:\x01\x0e\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1744848000000000000  1744848000000000000
+     1     b'\x00`\x1f\xf2w\xb8\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`\x1f\xf2w\xb8\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`\x1f\xf2w\xb8\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`\x1f\xf2w\xb8\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1744934400000000000  1744934400000000000
+     2  b'\x00\x00\x92@\x90\xc1\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x92@\x90\xc1\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x92@\x90\xc1\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x92@\x90\xc1\r\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1745020800000000000  1745020800000000000
+----------------------------------------------------------------------
+
+🟢 AG.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'AG.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'AG.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\xe0\x92\xf9\x9cN\xdd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x92\xf9\x9cN\xdd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x92\xf9\x9cN\xdd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x92\xf9\x9cN\xdd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1  b'\x00\x00\xcd\xacO\xda\xcd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xcd\xacO\xda\xcd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xcd\xacO\xda\xcd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xcd\xacO\xda\xcd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2     b'\x00\x80\x93Q\xceg\xd1\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80\x93Q\xceg\xd1\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80\x93Q\xceg\xd1\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80\x93Q\xceg\xd1\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 AVAX.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-33-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'AVAX.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'AVAX.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2038
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\xe0\xf3\xb1\xf6hx\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xf3\xb1\xf6hx\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xf3\xb1\xf6hx\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xf3\xb1\xf6hx\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1  b'\x00 \xb3\xfc\x84\x80t\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \xb3\xfc\x84\x80t\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \xb3\xfc\x84\x80t\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \xb3\xfc\x84\x80t\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2     b'\x00@\xed\xaf7\x0ce\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xed\xaf7\x0ce\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xed\xaf7\x0ce\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xed\xaf7\x0ce\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 BTC.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'BTC.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'BTC.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 8563
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0        b'\x00\xc04?H\xa8\x1ew\x0e\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc04?H\xa8\x1ew\x0e\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc04?H\xa8\x1ew\x0e\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc04?H\xa8\x1ew\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1  b'\x00\x00 \xb1B\x12\x87\xad\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00 \xb1B\x12\x87\xad\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00 \xb1B\x12\x87\xad\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00 \xb1B\x12\x87\xad\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2  b'\x00@\xac\xc4\x9e\xc2\xaeN\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xac\xc4\x9e\xc2\xaeN\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xac\xc4\x9e\xc2\xaeN\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xac\xc4\x9e\xc2\xaeN\x0e\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 CAT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-20T00-00-00-000000000Z_2026-05-21T08-29-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'CAT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'CAT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2027
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\xc0\x93\x1d\xd8\xad~ \x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x93\x1d\xd8\xad~ \x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x93\x1d\xd8\xad~ \x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x93\x1d\xd8\xad~ \x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     1        b'\x00`\xf6\x17f[\x8c \x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\xf6\x17f[\x8c \x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\xf6\x17f[\x8c \x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\xf6\x17f[\x8c \x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+     2  b'\x00\xe0\x7f.Y\xcb\xd8\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x7f.Y\xcb\xd8\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x7f.Y\xcb\xd8\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x7f.Y\xcb\xd8\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650585600000000000  1650585600000000000
+----------------------------------------------------------------------
+
+🟢 CHTR.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T07-42-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'CHTR.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'CHTR.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1963
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0        b'\x00 \xfcIM\xd6\xe3K\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 \xfcIM\xd6\xe3K\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 \xfcIM\xd6\xe3K\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 \xfcIM\xd6\xe3K\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\x00\x82\x1c\x8aW\x98K\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\x1c\x8aW\x98K\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\x1c\x8aW\x98K\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\x1c\x8aW\x98K\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2        b'\x00\xc0\xe0Q<\xf9`I\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xe0Q<\xf9`I\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xe0Q<\xf9`I\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xe0Q<\xf9`I\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 CIEN.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'CIEN.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'CIEN.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00`;\xd9\xa0\x87_\x08\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`;\xd9\xa0\x87_\x08\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`;\xd9\xa0\x87_\x08\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`;\xd9\xa0\x87_\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1     b'\x00\x00\x02aO\xf1\x17\x08\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00\x02aO\xf1\x17\x08\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00\x02aO\xf1\x17\x08\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00\x02aO\xf1\x17\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\xc0\x9b9\xc9\x88\x06\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x9b9\xc9\x88\x06\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x9b9\xc9\x88\x06\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x9b9\xc9\x88\x06\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 CMG.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-25-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'CMG.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'CMG.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1982
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\xc0\xbc\xa5\x8e\x17o\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xbc\xa5\x8e\x17o\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xbc\xa5\x8e\x17o\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xbc\xa5\x8e\x17o\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1        b'\x00 I\x97Z\x19\x82\x04\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 I\x97Z\x19\x82\x04\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 I\x97Z\x19\x82\x04\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 I\x97Z\x19\x82\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2           b'\x00`\x028[\xed^\x04\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00`\x028[\xed^\x04\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00`\x028[\xed^\x04\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00`\x028[\xed^\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 COHR.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'COHR.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'COHR.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                             open                                                       high                                                        low                                                      close                                                          volume             ts_event              ts_init
+     0  b'\x00\xc01\xeb\\U\xa8\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc01\xeb\\U\xa8\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc01\xeb\\U\xa8\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc01\xeb\\U\xa8\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1        b'\x00@\x00%-N\\\t\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x00%-N\\\t\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x00%-N\\\t\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x00%-N\\\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2      b'\x00\xa0A2\xd0OT\t\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xa0A2\xd0OT\t\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xa0A2\xd0OT\t\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xa0A2\xd0OT\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 CPRT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T07-42-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'CPRT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'CPRT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1965
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                  open                                                            high                                                             low                                                           close                                                          volume             ts_event              ts_init
+     0   b'\x00 \xef\x89O\xf0\x18\x04\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \xef\x89O\xf0\x18\x04\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \xef\x89O\xf0\x18\x04\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \xef\x89O\xf0\x18\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\x80\x08\xc5\x18\r3\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x08\xc5\x18\r3\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x08\xc5\x18\r3\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x08\xc5\x18\r3\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2            b'\x00 \x96fGA.\x04\x00\x00\x00\x00\x00\x00\x00\x00'            b'\x00 \x96fGA.\x04\x00\x00\x00\x00\x00\x00\x00\x00'            b'\x00 \x96fGA.\x04\x00\x00\x00\x00\x00\x00\x00\x00'            b'\x00 \x96fGA.\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 CRM.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-30-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'CRM.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'CRM.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2011
+   - Daten-Snippet (erste 3 Zeilen):
+                                                               open                                                         high                                                          low                                                        close                                                          volume             ts_event              ts_init
+     0   b'\x00\xa0}\xd9-\xba.\x1a\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\xa0}\xd9-\xba.\x1a\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\xa0}\xd9-\xba.\x1a\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\xa0}\xd9-\xba.\x1a\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\xa0\r\xf8\xf1vE\x1a\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\r\xf8\xf1vE\x1a\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\r\xf8\xf1vE\x1a\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\r\xf8\xf1vE\x1a\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2   b'\x00\xe0F\xa4\xd1dl\x19\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\xe0F\xa4\xd1dl\x19\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\xe0F\xa4\xd1dl\x19\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00\xe0F\xa4\xd1dl\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 DOCU.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'DOCU.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'DOCU.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0       b'\x00\xe0\t\xa0\xba}.\x0f\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xe0\t\xa0\xba}.\x0f\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xe0\t\xa0\xba}.\x0f\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xe0\t\xa0\xba}.\x0f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1        b'\x00\xc0\xfei0\xc8M\x0e\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xfei0\xc8M\x0e\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xfei0\xc8M\x0e\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xfei0\xc8M\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\xa0\xbe\x0c\xf0\xf8=\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xbe\x0c\xf0\xf8=\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xbe\x0c\xf0\xf8=\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xbe\x0c\xf0\xf8=\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 DOGE.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'DOGE.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'DOGE.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 8629
+   - Daten-Snippet (erste 3 Zeilen):
+                                                              open                                                        high                                                         low                                                       close                                                          volume             ts_event              ts_init
+     0  b'\x00H \xd2\xb6H\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00H \xd2\xb6H\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00H \xd2\xb6H\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00H \xd2\xb6H\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1     b'\x00x\x0fPqK\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00x\x0fPqK\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00x\x0fPqK\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00x\x0fPqK\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2  b'\x00\xe0]\xf3AD\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0]\xf3AD\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0]\xf3AD\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0]\xf3AD\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 DUOL.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-18T00-00-00-000000000Z_2026-05-21T08-28-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'DUOL.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'DUOL.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1979
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00\xe0\xef:<\xafH\x0c\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0\xef:<\xafH\x0c\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0\xef:<\xafH\x0c\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0\xef:<\xafH\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650240000000000000  1650240000000000000
+     1     b'\x00`\xa8\xa0\xdb\x8d|\x0c\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`\xa8\xa0\xdb\x8d|\x0c\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`\xa8\xa0\xdb\x8d|\x0c\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`\xa8\xa0\xdb\x8d|\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     2  b'\x00\x80\xc8\xc0\x93\xe3^\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xc8\xc0\x93\xe3^\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xc8\xc0\x93\xe3^\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xc8\xc0\x93\xe3^\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+----------------------------------------------------------------------
+
+🟢 E.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-04T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'E.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'E.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                  open                                                            high                                                             low                                                           close                                                          volume             ts_event              ts_init
+     0  b'\x00 \xd8\xcb\x1b\\\x1a\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \xd8\xcb\x1b\\\x1a\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \xd8\xcb\x1b\\\x1a\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \xd8\xcb\x1b\\\x1a\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649030400000000000  1649030400000000000
+     1     b'\x00@\x88\n\x98n\x13\x04\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\x88\n\x98n\x13\x04\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\x88\n\x98n\x13\x04\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\x88\n\x98n\x13\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     2   b'\x00 \x03s\xbc\xe2\x07\x04\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \x03s\xbc\xe2\x07\x04\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \x03s\xbc\xe2\x07\x04\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \x03s\xbc\xe2\x07\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+----------------------------------------------------------------------
+
+🟢 EEFT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'EEFT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'EEFT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\x80\x1c\xc8\x18\xfaW\x12\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x1c\xc8\x18\xfaW\x12\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x1c\xc8\x18\xfaW\x12\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x1c\xc8\x18\xfaW\x12\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1     b"\x00\xa0'\x15a\xe3\xcc\x11\x00\x00\x00\x00\x00\x00\x00\x00"     b"\x00\xa0'\x15a\xe3\xcc\x11\x00\x00\x00\x00\x00\x00\x00\x00"     b"\x00\xa0'\x15a\xe3\xcc\x11\x00\x00\x00\x00\x00\x00\x00\x00"     b"\x00\xa0'\x15a\xe3\xcc\x11\x00\x00\x00\x00\x00\x00\x00\x00"  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2        b'\x00`\x14gU\xe6\x86\x11\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\x14gU\xe6\x86\x11\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\x14gU\xe6\x86\x11\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\x14gU\xe6\x86\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 ESLT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2025-11-16T22-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ESLT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ESLT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1045
+   - Daten-Snippet (erste 3 Zeilen):
+                                                              open                                                        high                                                         low                                                       close                                                          volume             ts_event              ts_init
+     0  b'\x00\xc0\xc5G\xf5K\xb9A\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xc5G\xf5K\xb9A\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xc5G\xf5K\xb9A\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xc5G\xf5K\xb9A\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1763330400000000000  1763330400000000000
+     1        b'\x00@\x067\x07|SB\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x067\x07|SB\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x067\x07|SB\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x067\x07|SB\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1763596800000000000  1763596800000000000
+     2  b'\x00\xa0w\x94\x17\x9aEC\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0w\x94\x17\x9aEC\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0w\x94\x17\x9aEC\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0w\x94\x17\x9aEC\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1763647200000000000  1763647200000000000
+----------------------------------------------------------------------
+
+🟢 ETH.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ETH.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ETH.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 9072
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                     open                                                               high                                                                low                                                              close                                                          volume             ts_event              ts_init
+     0            b'\x00\xc0Jy\xc0UT\xe8\x00\x00\x00\x00\x00\x00\x00\x00'            b'\x00\xc0Jy\xc0UT\xe8\x00\x00\x00\x00\x00\x00\x00\x00'            b'\x00\xc0Jy\xc0UT\xe8\x00\x00\x00\x00\x00\x00\x00\x00'            b'\x00\xc0Jy\xc0UT\xe8\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1  b'\x00\x80\xe5\r\xc1\xff\x98\xeb\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xe5\r\xc1\xff\x98\xeb\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xe5\r\xc1\xff\x98\xeb\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xe5\r\xc1\xff\x98\xeb\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2                  b'\x00 %;:-&\xe7\x00\x00\x00\x00\x00\x00\x00\x00'                  b'\x00 %;:-&\xe7\x00\x00\x00\x00\x00\x00\x00\x00'                  b'\x00 %;:-&\xe7\x00\x00\x00\x00\x00\x00\x00\x00'                  b'\x00 %;:-&\xe7\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 FICO.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-30-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'FICO.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'FICO.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1973
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00`\xdf\xd2\x92W\xb68\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\xdf\xd2\x92W\xb68\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\xdf\xd2\x92W\xb68\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`\xdf\xd2\x92W\xb68\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\xa0\x96\x88\xcf\x03\x029\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x96\x88\xcf\x03\x029\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x96\x88\xcf\x03\x029\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x96\x88\xcf\x03\x029\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2     b'\x00\xc0\x96\x82\xbd\x13K7\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0\x96\x82\xbd\x13K7\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0\x96\x82\xbd\x13K7\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0\x96\x82\xbd\x13K7\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 FISV.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T07-49-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'FISV.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'FISV.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1966
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                     open                                                               high                                                                low                                                              close                                                          volume             ts_event              ts_init
+     0  b'\x00\x00\xc9\x1e\xd7\xec\t\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xc9\x1e\xd7\xec\t\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xc9\x1e\xd7\xec\t\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xc9\x1e\xd7\xec\t\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1      b'\x00\xa0\xd5\xca#\x8d<\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xa0\xd5\xca#\x8d<\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xa0\xd5\xca#\x8d<\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xa0\xd5\xca#\x8d<\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2      b'\x00`\xf9\x17\xd4\x9d"\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xf9\x17\xd4\x9d"\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xf9\x17\xd4\x9d"\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xf9\x17\xd4\x9d"\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 FSLY.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'FSLY.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'FSLY.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2301
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0        b'\x00\xb0_os>\x9a\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xb0_os>\x9a\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xb0_os>\x9a\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xb0_os>\x9a\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1  b'\x00\x18Q\x7f\x03\x01p\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x18Q\x7f\x03\x01p\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x18Q\x7f\x03\x01p\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x18Q\x7f\x03\x01p\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2     b'\x00\x00r@\x18\x1eo\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00r@\x18\x1eo\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00r@\x18\x1eo\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00r@\x18\x1eo\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 GLW.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-29-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'GLW.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'GLW.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2030
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\xc0o\xd6\xa1\xef\xc2\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0o\xd6\xa1\xef\xc2\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0o\xd6\xa1\xef\xc2\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0o\xd6\xa1\xef\xc2\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1     b'\x00 \xceK\x06\xc9\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xceK\x06\xc9\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xceK\x06\xc9\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xceK\x06\xc9\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2  b'\x00\xc0\x16\xb3\x99@\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x16\xb3\x99@\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x16\xb3\x99@\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x16\xb3\x99@\xd8\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 GOOGL.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-29-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'GOOGL.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'GOOGL.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2033
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0     b'\x00\x80`\x18\xb1<\xd5\x11\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80`\x18\xb1<\xd5\x11\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80`\x18\xb1<\xd5\x11\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80`\x18\xb1<\xd5\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\xc0\x0eO\x99\x03\xf2\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x0eO\x99\x03\xf2\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x0eO\x99\x03\xf2\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x0eO\x99\x03\xf2\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2     b'\x00\xe0%\xf0\xfcs\xa5\x11\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0%\xf0\xfcs\xa5\x11\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0%\xf0\xfcs\xa5\x11\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0%\xf0\xfcs\xa5\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 GSAT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'GSAT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'GSAT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00`\x1c\xe2\x13W\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\x1c\xe2\x13W\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\x1c\xe2\x13W\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\x1c\xe2\x13W\x01\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1  b'\x00\x809-\x05\x0b\xd4\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x809-\x05\x0b\xd4\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x809-\x05\x0b\xd4\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x809-\x05\x0b\xd4\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\x00\xe6>\x89b\xc9\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xe6>\x89b\xc9\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xe6>\x89b\xc9\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xe6>\x89b\xc9\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 GTLB.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-04T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'GTLB.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'GTLB.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\x80c\x8e\xaaH\xf2\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80c\x8e\xaaH\xf2\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80c\x8e\xaaH\xf2\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80c\x8e\xaaH\xf2\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649030400000000000  1649030400000000000
+     1  b'\x00\xa0AI\x8e\x83\xe8\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0AI\x8e\x83\xe8\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0AI\x8e\x83\xe8\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0AI\x8e\x83\xe8\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     2     b'\x00@\xae\xc31\xc47\x07\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xae\xc31\xc47\x07\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xae\xc31\xc47\x07\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xae\xc31\xc47\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+----------------------------------------------------------------------
+
+🟢 HAL.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-25-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'HAL.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'HAL.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2010
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                       open                                                                 high                                                                  low                                                                close                                                          volume             ts_event              ts_init
+     0                 b'\x00`G[8v\xc6\x05\x00\x00\x00\x00\x00\x00\x00\x00'                 b'\x00`G[8v\xc6\x05\x00\x00\x00\x00\x00\x00\x00\x00'                 b'\x00`G[8v\xc6\x05\x00\x00\x00\x00\x00\x00\x00\x00'                 b'\x00`G[8v\xc6\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\xc0\x7f\xe9\x86\x92\x8f\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x7f\xe9\x86\x92\x8f\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x7f\xe9\x86\x92\x8f\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\x7f\xe9\x86\x92\x8f\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2                 b'\x00`!t"\xb9y\x05\x00\x00\x00\x00\x00\x00\x00\x00'                 b'\x00`!t"\xb9y\x05\x00\x00\x00\x00\x00\x00\x00\x00'                 b'\x00`!t"\xb9y\x05\x00\x00\x00\x00\x00\x00\x00\x00'                 b'\x00`!t"\xb9y\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 HUBS.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'HUBS.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'HUBS.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0        b'\x00\x00W\xff]\x07$C\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00W\xff]\x07$C\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00W\xff]\x07$C\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00W\xff]\x07$C\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1  b'\x00\xa0\xa4k\xb6\xe3\x80>\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xa4k\xb6\xe3\x80>\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xa4k\xb6\xe3\x80>\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xa4k\xb6\xe3\x80>\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2        b'\x00\xe06$\xe0L\xfe>\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe06$\xe0L\xfe>\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe06$\xe0L\xfe>\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe06$\xe0L\xfe>\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 HUT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-04T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'HUT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'HUT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2659
+   - Daten-Snippet (erste 3 Zeilen):
+                                                              open                                                        high                                                         low                                                       close                                                          volume             ts_event              ts_init
+     0  b'\x00 m\xaaj\xe2\xd1\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 m\xaaj\xe2\xd1\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 m\xaaj\xe2\xd1\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 m\xaaj\xe2\xd1\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649030400000000000  1649030400000000000
+     1  b'\x00`\xdd{\xedb\xb6\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xdd{\xedb\xb6\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xdd{\xedb\xb6\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xdd{\xedb\xb6\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     2     b'\x00xj\xcaq\xf2r\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00xj\xcaq\xf2r\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00xj\xcaq\xf2r\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00xj\xcaq\xf2r\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+----------------------------------------------------------------------
+
+🟢 HYPE.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2025-04-09T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'HYPE.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'HYPE.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 6681
+   - Daten-Snippet (erste 3 Zeilen):
+                                                              open                                                        high                                                         low                                                       close                                                          volume             ts_event              ts_init
+     0  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1744156800000000000  1744156800000000000
+     1  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x0c=]S\xaa\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1744243200000000000  1744243200000000000
+     2  b'\x00\x00:]\xcc\xacV\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00:]\xcc\xacV\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00:]\xcc\xacV\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00:]\xcc\xacV\x07\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1757894400000000000  1757894400000000000
+----------------------------------------------------------------------
+
+🟢 INSM.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-30T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'INSM.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'INSM.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2115
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                  open                                                            high                                                             low                                                           close                                                          volume             ts_event              ts_init
+     0      b"\x00@'i\xfc\x87\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00"      b"\x00@'i\xfc\x87\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00"      b"\x00@'i\xfc\x87\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00"      b"\x00@'i\xfc\x87\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00"  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1651276800000000000  1651276800000000000
+     1   b'\x00 \xea\xe0\x82Z\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \xea\xe0\x82Z\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \xea\xe0\x82Z\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00 \xea\xe0\x82Z\x0c\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1651363200000000000  1651363200000000000
+     2  b'\x00\xa0\xde\x01i\x10\r\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xde\x01i\x10\r\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xde\x01i\x10\r\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xde\x01i\x10\r\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1651449600000000000  1651449600000000000
+----------------------------------------------------------------------
+
+🟢 INSW.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-11-26T22-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'INSW.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'INSW.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1778
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\x80\x12\x17\xb28L\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x12\x17\xb28L\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x12\x17\xb28L\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x12\x17\xb28L\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701036000000000000  1701036000000000000
+     1     b'\x00\x00\xa5\x95;Z3\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00\xa5\x95;Z3\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00\xa5\x95;Z3\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x00\xa5\x95;Z3\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701302400000000000  1701302400000000000
+     2        b'\x00\xe0<f!\xa6E\x06\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0<f!\xa6E\x06\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0<f!\xa6E\x06\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0<f!\xa6E\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701640800000000000  1701640800000000000
+----------------------------------------------------------------------
+
+🟢 JNJ.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-20T00-00-00-000000000Z_2026-05-21T08-19-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'JNJ.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'JNJ.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1991
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00\xc0\xaaN\xc2Db\x19\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xaaN\xc2Db\x19\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xaaN\xc2Db\x19\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xc0\xaaN\xc2Db\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     1  b'\x00\xa0\xfd\xe4\x0c\xd4x\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xfd\xe4\x0c\xd4x\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xfd\xe4\x0c\xd4x\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xfd\xe4\x0c\xd4x\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+     2           b'\x00\xa0P^\x87?D\x19\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xa0P^\x87?D\x19\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xa0P^\x87?D\x19\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xa0P^\x87?D\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650585600000000000  1650585600000000000
+----------------------------------------------------------------------
+
+🟢 LRCX.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-26-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'LRCX.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'LRCX.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2004
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\xa0\xd1~\x10t\x93\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xd1~\x10t\x93\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xd1~\x10t\x93\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\xd1~\x10t\x93\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1     b'\x00 \xe9\xb1EE\xd1\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xe9\xb1EE\xd1\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xe9\xb1EE\xd1\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xe9\xb1EE\xd1\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2    b'\x00\xc0B-\x7f\r\xb0\x06\x00\x00\x00\x00\x00\x00\x00\x00'    b'\x00\xc0B-\x7f\r\xb0\x06\x00\x00\x00\x00\x00\x00\x00\x00'    b'\x00\xc0B-\x7f\r\xb0\x06\x00\x00\x00\x00\x00\x00\x00\x00'    b'\x00\xc0B-\x7f\r\xb0\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 LULU.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-30-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'LULU.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'LULU.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1979
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0       b'\x00\x00Q\r\xc1a\xa67\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x00Q\r\xc1a\xa67\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x00Q\r\xc1a\xa67\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x00Q\r\xc1a\xa67\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\xe0\xe1I\x16\xf0\x1a7\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xe1I\x16\xf0\x1a7\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xe1I\x16\xf0\x1a7\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xe1I\x16\xf0\x1a7\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2           b'\x00\xe0\x98goK%5\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xe0\x98goK%5\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xe0\x98goK%5\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xe0\x98goK%5\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 MNDY.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-04T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'MNDY.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'MNDY.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                       open                                                                 high                                                                  low                                                                close                                                          volume             ts_event              ts_init
+     0  b'\x00\xe0\x0f\xc0\xd3\x8a\xd4\x17\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x0f\xc0\xd3\x8a\xd4\x17\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x0f\xc0\xd3\x8a\xd4\x17\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x0f\xc0\xd3\x8a\xd4\x17\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649030400000000000  1649030400000000000
+     1        b'\x00\xe0\x86L^\xbf\xef\x16\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0\x86L^\xbf\xef\x16\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0\x86L^\xbf\xef\x16\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0\x86L^\xbf\xef\x16\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     2        b'\x00@\x0e\xac\x1b_\x8a\x14\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x0e\xac\x1b_\x8a\x14\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x0e\xac\x1b_\x8a\x14\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\x0e\xac\x1b_\x8a\x14\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+----------------------------------------------------------------------
+
+🟢 MTZ.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'MTZ.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'MTZ.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                  open                                                            high                                                             low                                                           close                                                          volume             ts_event              ts_init
+     0      b'\x00`\xb7\xe0{\xea^\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xb7\xe0{\xea^\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xb7\xe0{\xea^\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xb7\xe0{\xea^\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1   b'\x00`5\x01\x97\xdc\x17\x0b\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00`5\x01\x97\xdc\x17\x0b\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00`5\x01\x97\xdc\x17\x0b\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00`5\x01\x97\xdc\x17\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\x00D\x98\xa7\xa4\xdb\n\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00D\x98\xa7\xa4\xdb\n\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00D\x98\xa7\xa4\xdb\n\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00D\x98\xa7\xa4\xdb\n\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 MU.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-20T00-00-00-000000000Z_2026-05-21T08-30-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'MU.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'MU.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2037
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                     open                                                               high                                                                low                                                              close                                                          volume             ts_event              ts_init
+     0        b'\x00\x00\xb6d\xa7\x0fV\n\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00\xb6d\xa7\x0fV\n\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00\xb6d\xa7\x0fV\n\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00\xb6d\xa7\x0fV\n\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     1       b'\x00@\xae\x95\xb5\\\x0f\n\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00@\xae\x95\xb5\\\x0f\n\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00@\xae\x95\xb5\\\x0f\n\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00@\xae\x95\xb5\\\x0f\n\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+     2  b'\x00\x00\x98\x12\xe3\xbd\xb9\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x98\x12\xe3\xbd\xb9\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x98\x12\xe3\xbd\xb9\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x98\x12\xe3\xbd\xb9\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650585600000000000  1650585600000000000
+----------------------------------------------------------------------
+
+🟢 NATGAS.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-07-06T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'NATGAS.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'NATGAS.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2954
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0     b'\x00\x10\x83\x859W\xc4\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x10\x83\x859W\xc4\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x10\x83\x859W\xc4\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x10\x83\x859W\xc4\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1657065600000000000  1657065600000000000
+     1  b'\x00\xc0\xa4\x96`\xae\xd1\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xa4\x96`\xae\xd1\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xa4\x96`\xae\xd1\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xa4\x96`\xae\xd1\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1657152000000000000  1657152000000000000
+     2        b'\x00\xa0\x1e?i-\xd9\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xa0\x1e?i-\xd9\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xa0\x1e?i-\xd9\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xa0\x1e?i-\xd9\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1657238400000000000  1657238400000000000
+----------------------------------------------------------------------
+
+🟢 NOW.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-27-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'NOW.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'NOW.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2031
+   - Daten-Snippet (erste 3 Zeilen):
+                                                               open                                                         high                                                          low                                                        close                                                          volume             ts_event              ts_init
+     0  b'\x00 \x06\xa7P\x1a\n\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \x06\xa7P\x1a\n\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \x06\xa7P\x1a\n\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00 \x06\xa7P\x1a\n\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1      b'\x00`\xe5.g\xab3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xe5.g\xab3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xe5.g\xab3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xe5.g\xab3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2  b'\x00@\xfb\x1fh\xe9\xfe\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xfb\x1fh\xe9\xfe\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xfb\x1fh\xe9\xfe\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xfb\x1fh\xe9\xfe\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 NVDA.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-20T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'NVDA.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'NVDA.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 5340
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0       b'\x00\x98w,e\x88\n\x03\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x98w,e\x88\n\x03\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x98w,e\x88\n\x03\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\x98w,e\x88\n\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     1  b'\x00\xb0i\xf2\x0cN\xf0\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xb0i\xf2\x0cN\xf0\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xb0i\xf2\x0cN\xf0\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xb0i\xf2\x0cN\xf0\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+     2     b'\x00\xe0\x82dm:\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\x82dm:\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\x82dm:\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\x82dm:\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650585600000000000  1650585600000000000
+----------------------------------------------------------------------
+
+🟢 NVS.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'NVS.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'NVS.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2589
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0           b'\x00p\xb7[(\x018\x0c\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00p\xb7[(\x018\x0c\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00p\xb7[(\x018\x0c\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00p\xb7[(\x018\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1        b'\x00\x10H\xc5\xfc~n\x0c\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x10H\xc5\xfc~n\x0c\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x10H\xc5\xfc~n\x0c\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x10H\xc5\xfc~n\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\xa8\xbf\x1f\xden\xa1\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa8\xbf\x1f\xden\xa1\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa8\xbf\x1f\xden\xa1\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa8\xbf\x1f\xden\xa1\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 ONDO.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2024-03-26T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ONDO.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ONDO.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1920
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0        b'\x00\x80\x8f>6B \x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\x8f>6B \x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\x8f>6B \x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\x8f>6B \x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1711411200000000000  1711411200000000000
+     1  b'\x00@V\xd3\xfb\x0c\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@V\xd3\xfb\x0c\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@V\xd3\xfb\x0c\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@V\xd3\xfb\x0c\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1711497600000000000  1711497600000000000
+     2  b'\x00`\xbdB\xfa\xcb\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xbdB\xfa\xcb\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xbdB\xfa\xcb\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xbdB\xfa\xcb\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1711584000000000000  1711584000000000000
+----------------------------------------------------------------------
+
+🟢 PALL.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'PALL.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'PALL.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2164
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                     open                                                               high                                                                low                                                              close                                                          volume             ts_event              ts_init
+     0     b'\x00\xb0\x95\x1e,\n\xce\x05\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xb0\x95\x1e,\n\xce\x05\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xb0\x95\x1e,\n\xce\x05\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xb0\x95\x1e,\n\xce\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1         b'\x00\xb093~\x11\xa8\x05\x00\x00\x00\x00\x00\x00\x00\x00'         b'\x00\xb093~\x11\xa8\x05\x00\x00\x00\x00\x00\x00\x00\x00'         b'\x00\xb093~\x11\xa8\x05\x00\x00\x00\x00\x00\x00\x00\x00'         b'\x00\xb093~\x11\xa8\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\xd8\x86\xe0\t\xaa\xc5\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xd8\x86\xe0\t\xaa\xc5\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xd8\x86\xe0\t\xaa\xc5\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xd8\x86\xe0\t\xaa\xc5\x05\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 PBR.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-07T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'PBR.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'PBR.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0     b'\x00 \x19^\xab0\x1c\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \x19^\xab0\x1c\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \x19^\xab0\x1c\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \x19^\xab0\x1c\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+     1  b'\x00\x80/\xc4\xad\xab&\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80/\xc4\xad\xab&\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80/\xc4\xad\xab&\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80/\xc4\xad\xab&\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649376000000000000  1649376000000000000
+     2  b'\x00\x80\x18\x06z\x17(\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x18\x06z\x17(\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x18\x06z\x17(\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\x18\x06z\x17(\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649635200000000000  1649635200000000000
+----------------------------------------------------------------------
+
+🟢 PEPExM.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-07-03T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'PEPExM.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'PEPExM.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1746
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\x00\xc1o\xf2\x86#\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xc1o\xf2\x86#\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xc1o\xf2\x86#\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xc1o\xf2\x86#\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1656806400000000000  1656806400000000000
+     1     b'\x00\x90\xbbJ\x86Ye\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x90\xbbJ\x86Ye\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x90\xbbJ\x86Ye\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x90\xbbJ\x86Ye\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1727740800000000000  1727740800000000000
+     2        b'\x00`+\xf8\xcc.R\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`+\xf8\xcc.R\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`+\xf8\xcc.R\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`+\xf8\xcc.R\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1727827200000000000  1727827200000000000
+----------------------------------------------------------------------
+
+🟢 PINS.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'PINS.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'PINS.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\x80\xd9^\xaej\xb7\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xd9^\xaej\xb7\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xd9^\xaej\xb7\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80\xd9^\xaej\xb7\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1           b'\x00@9g\xa5Rj\x03\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00@9g\xa5Rj\x03\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00@9g\xa5Rj\x03\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00@9g\xa5Rj\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2     b'\x00\xe0\x1f,\xdc5P\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\x1f,\xdc5P\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\x1f,\xdc5P\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\x1f,\xdc5P\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 PLTR.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'PLTR.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'PLTR.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 4269
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00p\xf9\xd9\xdc\x1b\xbd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00p\xf9\xd9\xdc\x1b\xbd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00p\xf9\xd9\xdc\x1b\xbd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00p\xf9\xd9\xdc\x1b\xbd\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\xf8K\x95\x9b\xa9\xcb\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8K\x95\x9b\xa9\xcb\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8K\x95\x9b\xa9\xcb\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8K\x95\x9b\xa9\xcb\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2  b'\x00\x10\xab\xab\xe1E\xc5\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x10\xab\xab\xe1E\xc5\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x10\xab\xab\xe1E\xc5\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x10\xab\xab\xe1E\xc5\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 POWL.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-11-26T22-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'POWL.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'POWL.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1778
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00`C\xb3,\x8e\xcc\x03\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`C\xb3,\x8e\xcc\x03\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`C\xb3,\x8e\xcc\x03\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`C\xb3,\x8e\xcc\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701036000000000000  1701036000000000000
+     1     b'\x00\x80O\xeaw\xf1\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80O\xeaw\xf1\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80O\xeaw\xf1\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80O\xeaw\xf1\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701302400000000000  1701302400000000000
+     2  b'\x00\x00\x1c9\x84\xc2\xe2\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x1c9\x84\xc2\xe2\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x1c9\x84\xc2\xe2\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x1c9\x84\xc2\xe2\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701640800000000000  1701640800000000000
+----------------------------------------------------------------------
+
+🟢 RHM.DE.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-05-10T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'RHM.DE.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'RHM.DE.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 3496
+   - Daten-Snippet (erste 3 Zeilen):
+                                                              open                                                        high                                                         low                                                       close                                                          volume             ts_event              ts_init
+     0     b'\x00@\xb0\x83NKB\x19\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xb0\x83NKB\x19\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xb0\x83NKB\x19\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xb0\x83NKB\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1652140800000000000  1652140800000000000
+     1  b'\x00@\xe4\xa9C\xb7^\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xe4\xa9C\xb7^\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xe4\xa9C\xb7^\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xe4\xa9C\xb7^\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1652227200000000000  1652227200000000000
+     2  b'\x00\xc0v(\xcd\xd8E\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0v(\xcd\xd8E\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0v(\xcd\xd8E\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0v(\xcd\xd8E\x19\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1652313600000000000  1652313600000000000
+----------------------------------------------------------------------
+
+🟢 RIOT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T10-32-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'RIOT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'RIOT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 3313
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0       b'\x008\x81\xaf\x1c}\n\x02\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x008\x81\xaf\x1c}\n\x02\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x008\x81\xaf\x1c}\n\x02\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x008\x81\xaf\x1c}\n\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\x18\xdb\xbc1\x9d\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x18\xdb\xbc1\x9d\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x18\xdb\xbc1\x9d\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x18\xdb\xbc1\x9d\x01\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2     b'\x00\xe8\xcaA\xd3+\xe7\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe8\xcaA\xd3+\xe7\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe8\xcaA\xd3+\xe7\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe8\xcaA\xd3+\xe7\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 ROP.ZU.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-08T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ROP.ZU.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ROP.ZU.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2146
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\xe0h\xe9\x85\xc7\x027\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0h\xe9\x85\xc7\x027\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0h\xe9\x85\xc7\x027\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0h\xe9\x85\xc7\x027\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649376000000000000  1649376000000000000
+     1              b'\x00@i{W(\x8d7\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00@i{W(\x8d7\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00@i{W(\x8d7\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00@i{W(\x8d7\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649635200000000000  1649635200000000000
+     2        b'\x00\x80\xd5c)\x08R6\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\xd5c)\x08R6\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\xd5c)\x08R6\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\xd5c)\x08R6\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649721600000000000  1649721600000000000
+----------------------------------------------------------------------
+
+🟢 SE.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'SE.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'SE.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\xa0\x9a\xcbc\xc8\xc5\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x9a\xcbc\xc8\xc5\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x9a\xcbc\xc8\xc5\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x9a\xcbc\xc8\xc5\x11\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1  b'\x00\xe0\x1a\x9d\xa2\x9ay\x10\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x1a\x9d\xa2\x9ay\x10\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x1a\x9d\xa2\x9ay\x10\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x1a\x9d\xa2\x9ay\x10\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2     b'\x00\xe0?\x9a\xb5\xddG\x10\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0?\x9a\xb5\xddG\x10\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0?\x9a\xb5\xddG\x10\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0?\x9a\xb5\xddG\x10\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 SHIBxM.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-33-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'SHIBxM.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'SHIBxM.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2077
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                       open                                                                 high                                                                  low                                                                close                                                          volume             ts_event              ts_init
+     0        b'\x00 \x88\x1e\xdc\x1c!\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 \x88\x1e\xdc\x1c!\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 \x88\x1e\xdc\x1c!\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00 \x88\x1e\xdc\x1c!\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1              b'\x00\xb8r<\xe1I!\x01\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00\xb8r<\xe1I!\x01\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00\xb8r<\xe1I!\x01\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00\xb8r<\xe1I!\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2  b'\x00\xa0\x8b\x82\xe6\xab\x18\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x8b\x82\xe6\xab\x18\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x8b\x82\xe6\xab\x18\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x8b\x82\xe6\xab\x18\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 SNAP.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-17-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'SNAP.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'SNAP.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1979
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                       open                                                                 high                                                                  low                                                                close                                                          volume             ts_event              ts_init
+     0  b'\x00\xc0\xdc\xe2\x16\x91\x9c\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xdc\xe2\x16\x91\x9c\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xdc\xe2\x16\x91\x9c\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xdc\xe2\x16\x91\x9c\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1              b'\x00`\x1c\xcbU#m\x04\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00`\x1c\xcbU#m\x04\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00`\x1c\xcbU#m\x04\x00\x00\x00\x00\x00\x00\x00\x00'              b'\x00`\x1c\xcbU#m\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2        b'\x00\x80\x1f\x83L\xa11\x04\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\x1f\x83L\xa11\x04\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\x1f\x83L\xa11\x04\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x80\x1f\x83L\xa11\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 SOL.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'SOL.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'SOL.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 5782
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                       open                                                                 high                                                                  low                                                                close                                                          volume             ts_event              ts_init
+     0             b'\x000\rx\x1bh\xe2\x02\x00\x00\x00\x00\x00\x00\x00\x00'             b'\x000\rx\x1bh\xe2\x02\x00\x00\x00\x00\x00\x00\x00\x00'             b'\x000\rx\x1bh\xe2\x02\x00\x00\x00\x00\x00\x00\x00\x00'             b'\x000\rx\x1bh\xe2\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1        b'\x008\xba\xe9j\xbc\xea\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x008\xba\xe9j\xbc\xea\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x008\xba\xe9j\xbc\xea\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x008\xba\xe9j\xbc\xea\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2  b'\x00\x88\xa7\xca\x1d\xb1\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x88\xa7\xca\x1d\xb1\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x88\xa7\xca\x1d\xb1\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x88\xa7\xca\x1d\xb1\xc5\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 SQM.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'SQM.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'SQM.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\x00;\x02\x95\x8b\x18\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00;\x02\x95\x8b\x18\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00;\x02\x95\x8b\x18\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00;\x02\x95\x8b\x18\x0c\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1     b'\x00\xe0\xba*D\xc9\xad\x0b\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\xba*D\xc9\xad\x0b\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\xba*D\xc9\xad\x0b\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\xba*D\xc9\xad\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00@\xa3\x14\xdf\x1b\xbb\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xa3\x14\xdf\x1b\xbb\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xa3\x14\xdf\x1b\xbb\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00@\xa3\x14\xdf\x1b\xbb\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 STX.US.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-29-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'STX.US.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'STX.US.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2012
+   - Daten-Snippet (erste 3 Zeilen):
+                                                               open                                                         high                                                          low                                                        close                                                          volume             ts_event              ts_init
+     0      b'\x00`\xd4H=\xc2|\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xd4H=\xc2|\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xd4H=\xc2|\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00`\xd4H=\xc2|\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1      b'\x00\xe095b5\xe5\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xe095b5\xe5\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xe095b5\xe5\x0b\x00\x00\x00\x00\x00\x00\x00\x00'      b'\x00\xe095b5\xe5\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2  b'\x00\x80h\t\xfbv\xd6\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80h\t\xfbv\xd6\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80h\t\xfbv\xd6\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80h\t\xfbv\xd6\x0b\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 TEAM.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-24-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'TEAM.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'TEAM.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1979
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0              b"\x00`\x02'GG\x0e%\x00\x00\x00\x00\x00\x00\x00\x00"              b"\x00`\x02'GG\x0e%\x00\x00\x00\x00\x00\x00\x00\x00"              b"\x00`\x02'GG\x0e%\x00\x00\x00\x00\x00\x00\x00\x00"              b"\x00`\x02'GG\x0e%\x00\x00\x00\x00\x00\x00\x00\x00"  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00\xc0\xa3\xeb\x82\xb5\x8e%\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xa3\xeb\x82\xb5\x8e%\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xa3\xeb\x82\xb5\x8e%\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xa3\xeb\x82\xb5\x8e%\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2        b'\x00\x00o\xa1\xea\x87]$\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00o\xa1\xea\x87]$\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00o\xa1\xea\x87]$\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x00o\xa1\xea\x87]$\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 TSEM.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'TSEM.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'TSEM.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\x00\x05M\xd4\xc6\xbb\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x05M\xd4\xc6\xbb\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x05M\xd4\xc6\xbb\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x05M\xd4\xc6\xbb\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1     b'\x00 \xb5\x8bP\xd9\xb4\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xb5\x8bP\xd9\xb4\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xb5\x8bP\xd9\xb4\x06\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00 \xb5\x8bP\xd9\xb4\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\xe0\xde\x82\x8e-\xba\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xde\x82\x8e-\xba\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xde\x82\x8e-\xba\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xde\x82\x8e-\xba\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 TSLA.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-20T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'TSLA.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'TSLA.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 5056
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0           b'\x00\xc0L\xf5E\x97j.\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xc0L\xf5E\x97j.\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xc0L\xf5E\x97j.\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xc0L\xf5E\x97j.\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     1        b'\x00\xe8\xfc1\xb5\xba40\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe8\xfc1\xb5\xba40\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe8\xfc1\xb5\xba40\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe8\xfc1\xb5\xba40\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+     2  b'\x00\xd0\x93\xe6\x9b\x1f\xdf.\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xd0\x93\xe6\x9b\x1f\xdf.\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xd0\x93\xe6\x9b\x1f\xdf.\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xd0\x93\xe6\x9b\x1f\xdf.\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650585600000000000  1650585600000000000
+----------------------------------------------------------------------
+
+🟢 TTD.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-29-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'TTD.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'TTD.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1987
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                  open                                                            high                                                             low                                                           close                                                          volume             ts_event              ts_init
+     0   b'\x00@\xebQ\xbd\xe1\xee\x08\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00@\xebQ\xbd\xe1\xee\x08\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00@\xebQ\xbd\xe1\xee\x08\x00\x00\x00\x00\x00\x00\x00\x00'   b'\x00@\xebQ\xbd\xe1\xee\x08\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1  b'\x00`\xbc\xb7\xc4\xe7\x93\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xbc\xb7\xc4\xe7\x93\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xbc\xb7\xc4\xe7\x93\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\xbc\xb7\xc4\xe7\x93\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2           b'\x00\xa0RFv\xa03\t\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xa0RFv\xa03\t\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xa0RFv\xa03\t\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xa0RFv\xa03\t\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 TTMI.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-11-26T22-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'TTMI.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'TTMI.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1774
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00`1\xccA\xf7\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`1\xccA\xf7\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`1\xccA\xf7\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00`1\xccA\xf7\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701036000000000000  1701036000000000000
+     1  b'\x00\xc0\xd1\xa6z\xeb\x04\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xd1\xa6z\xeb\x04\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xd1\xa6z\xeb\x04\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xd1\xa6z\xeb\x04\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701734400000000000  1701734400000000000
+     2  b'\x00\xc0\xff"\xe2\x13\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xff"\xe2\x13\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xff"\xe2\x13\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xc0\xff"\xe2\x13\x02\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1701820800000000000  1701820800000000000
+----------------------------------------------------------------------
+
+🟢 USDTRY.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-07-14T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'USDTRY.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'USDTRY.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2626
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\xe83\xee\xb4\x1aj\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe83\xee\xb4\x1aj\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe83\xee\xb4\x1aj\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe83\xee\xb4\x1aj\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1657756800000000000  1657756800000000000
+     1     b'\x00\x80k\x07G\xedg\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80k\x07G\xedg\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80k\x07G\xedg\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80k\x07G\xedg\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1657843200000000000  1657843200000000000
+     2           b'\x00@\x95Dgog\x02\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00@\x95Dgog\x02\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00@\x95Dgog\x02\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00@\x95Dgog\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1658102400000000000  1658102400000000000
+----------------------------------------------------------------------
+
+🟢 USDZAR.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-07-14T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'USDZAR.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'USDZAR.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 6885
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00\x10;\xa3B\xfa^\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x10;\xa3B\xfa^\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x10;\xa3B\xfa^\x02\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\x10;\xa3B\xfa^\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1657756800000000000  1657756800000000000
+     1     b'\x00\xf0 \xe9\xee\xb2a\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xf0 \xe9\xee\xb2a\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xf0 \xe9\xee\xb2a\x02\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xf0 \xe9\xee\xb2a\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1657843200000000000  1657843200000000000
+     2  b'\x00\xf8\xe3\xb6\xc1\x8b^\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8\xe3\xb6\xc1\x8b^\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8\xe3\xb6\xc1\x8b^\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8\xe3\xb6\xc1\x8b^\x02\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1658102400000000000  1658102400000000000
+----------------------------------------------------------------------
+
+🟢 VLO.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-18T00-00-00-000000000Z_2026-05-21T08-17-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'VLO.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'VLO.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1966
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0     b'\x00@\x87h\xa4V\xf3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\x87h\xa4V\xf3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\x87h\xa4V\xf3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\x87h\xa4V\xf3\x0e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650240000000000000  1650240000000000000
+     1     b'\x00\xe07\x1c"\xa6+\x0f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe07\x1c"\xa6+\x0f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe07\x1c"\xa6+\x0f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe07\x1c"\xa6+\x0f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     2  b'\x00\xe0\xa4(\x97G\x05\x0f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xa4(\x97G\x05\x0f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xa4(\x97G\x05\x0f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xa4(\x97G\x05\x0f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+----------------------------------------------------------------------
+
+🟢 VRT.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-07T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'VRT.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'VRT.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0     b'\x00`B\xe0\xe7G\xe2\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`B\xe0\xe7G\xe2\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`B\xe0\xe7G\xe2\x01\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00`B\xe0\xe7G\xe2\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+     1        b'\x00\xe0d}5&\xe0\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0d}5&\xe0\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0d}5&\xe0\x01\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00\xe0d}5&\xe0\x01\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649376000000000000  1649376000000000000
+     2  b'\x00\x00[\xc9\x91;\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00[\xc9\x91;\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00[\xc9\x91;\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00[\xc9\x91;\xbf\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649462400000000000  1649462400000000000
+----------------------------------------------------------------------
+
+🟢 WBD.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-18T00-00-00-000000000Z_2026-05-21T08-29-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'WBD.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'WBD.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1969
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0  b'\x00\xe0\x95\xb7\xa5\xbcX\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x95\xb7\xa5\xbcX\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x95\xb7\xa5\xbcX\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\x95\xb7\xa5\xbcX\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650240000000000000  1650240000000000000
+     1           b'\x00\xc0o\xed_#W\x03\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xc0o\xed_#W\x03\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xc0o\xed_#W\x03\x00\x00\x00\x00\x00\x00\x00\x00'           b'\x00\xc0o\xed_#W\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     2     b'\x00\xc0\x97\xbf9\x085\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0\x97\xbf9\x085\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0\x97\xbf9\x085\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xc0\x97\xbf9\x085\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+----------------------------------------------------------------------
+
+🟢 WDAY.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T07-54-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'WDAY.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'WDAY.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1973
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                    open                                                              high                                                               low                                                             close                                                          volume             ts_event              ts_init
+     0        b'\x00@\xcfz\xdb{\xa0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\xcfz\xdb{\xa0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\xcfz\xdb{\xa0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00@\xcfz\xdb{\xa0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1     b'\x00@\xc4\x10\xc3n\xe0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xc4\x10\xc3n\xe0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xc4\x10\xc3n\xe0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00@\xc4\x10\xc3n\xe0\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2  b'\x00\xa0\x0f\x9e{\x03\x1a\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x0f\x9e{\x03\x1a\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x0f\x9e{\x03\x1a\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xa0\x0f\x9e{\x03\x1a\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+🟢 WDC.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-20T00-00-00-000000000Z_2026-05-21T08-29-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'WDC.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'WDC.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2023
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0  b'\x00\xe0\xa2\xc7GV\xed\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xa2\xc7GV\xed\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xa2\xc7GV\xed\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xe0\xa2\xc7GV\xed\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     1  b'\x00\x00\xe3$\x88%\xfd\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xe3$\x88%\xfd\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xe3$\x88%\xfd\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xe3$\x88%\xfd\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+     2    b'\x00 y\xd0\t\x02\xe8\x06\x00\x00\x00\x00\x00\x00\x00\x00'    b'\x00 y\xd0\t\x02\xe8\x06\x00\x00\x00\x00\x00\x00\x00\x00'    b'\x00 y\xd0\t\x02\xe8\x06\x00\x00\x00\x00\x00\x00\x00\x00'    b'\x00 y\xd0\t\x02\xe8\x06\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650585600000000000  1650585600000000000
+----------------------------------------------------------------------
+
+🟢 WIX.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-07T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'WIX.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'WIX.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2059
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                  open                                                            high                                                             low                                                           close                                                          volume             ts_event              ts_init
+     0  b'\x00\x00\xf9\x85\x02=\x98\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xf9\x85\x02=\x98\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xf9\x85\x02=\x98\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\xf9\x85\x02=\x98\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+     1     b'\x00\xe0\xa6*\x19\xa3*\r\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\xa6*\x19\xa3*\r\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\xa6*\x19\xa3*\r\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xe0\xa6*\x19\xa3*\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649376000000000000  1649376000000000000
+     2  b'\x00`\x1f\x16\xa8\x8e\x03\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\x1f\x16\xa8\x8e\x03\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\x1f\x16\xa8\x8e\x03\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00`\x1f\x16\xa8\x8e\x03\r\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649635200000000000  1649635200000000000
+----------------------------------------------------------------------
+
+🟢 XPEV.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-05T00-00-00-000000000Z_2026-05-20T19-59-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'XPEV.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'XPEV.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 2049
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                       open                                                                 high                                                                  low                                                                close                                                          volume             ts_event              ts_init
+     0       b'\x00\xd0\xa2\xdb\x06\t4\x04\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xd0\xa2\xdb\x06\t4\x04\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xd0\xa2\xdb\x06\t4\x04\x00\x00\x00\x00\x00\x00\x00\x00'       b'\x00\xd0\xa2\xdb\x06\t4\x04\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649116800000000000  1649116800000000000
+     1     b'\x00(\xc1\xf8\xb1\x87\xef\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00(\xc1\xf8\xb1\x87\xef\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00(\xc1\xf8\xb1\x87\xef\x03\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00(\xc1\xf8\xb1\x87\xef\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649203200000000000  1649203200000000000
+     2  b'\x00\xf8\xb0\xce\x9d\xa3\xe3\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8\xb0\xce\x9d\xa3\xe3\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8\xb0\xce\x9d\xa3\xe3\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\xf8\xb0\xce\x9d\xa3\xe3\x03\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1649289600000000000  1649289600000000000
+----------------------------------------------------------------------
+
+🟢 XRP.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2023-08-29T00-00-00-000000000Z_2026-05-21T10-34-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'XRP.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'XRP.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 6423
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0     b'\x00Hc^\xc1\xa4\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00Hc^\xc1\xa4\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00Hc^\xc1\xa4\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00Hc^\xc1\xa4\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693267200000000000  1693267200000000000
+     1        b'\x00h!C7\xb2\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00h!C7\xb2\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00h!C7\xb2\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'        b'\x00h!C7\xb2\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693353600000000000  1693353600000000000
+     2  b'\x00hx\xb8\xae\x00\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00hx\xb8\xae\x00\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00hx\xb8\xae\x00\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00hx\xb8\xae\x00\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1693440000000000000  1693440000000000000
+----------------------------------------------------------------------
+
+🟢 ZS.ETORO-1-MINUTE-MID-EXTERNAL |
+Datei: 2022-04-19T00-00-00-000000000Z_2026-05-21T08-26-00-000000000Z.parquet
+   - Spalten: open (fixed_size_binary[16]), high (fixed_size_binary[16]), low (fixed_size_binary[16]), close (fixed_size_binary[16]), volume (fixed_size_binary[16]), ts_event (uint64), ts_init (uint64)
+   - Metadaten: {'bar_type': 'ZS.ETORO-1-MINUTE-MID-EXTERNAL', 'instrument_id': 'ZS.ETORO', 'price_precision': '5', 'size_precision': '0'}
+   - Anzahl Bars in dieser Datei: 1999
+   - Daten-Snippet (erste 3 Zeilen):
+                                                                 open                                                           high                                                            low                                                          close                                                          volume             ts_event              ts_init
+     0     b'\x00\x80g\xdd\x92(=\x1f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80g\xdd\x92(=\x1f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80g\xdd\x92(=\x1f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\x80g\xdd\x92(=\x1f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650326400000000000  1650326400000000000
+     1     b'\x00\xa0Y\x81\xe3U"\x1f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xa0Y\x81\xe3U"\x1f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xa0Y\x81\xe3U"\x1f\x00\x00\x00\x00\x00\x00\x00\x00'     b'\x00\xa0Y\x81\xe3U"\x1f\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650412800000000000  1650412800000000000
+     2  b'\x00\x80F\xb6\x075\x91\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80F\xb6\x075\x91\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80F\xb6\x075\x91\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x80F\xb6\x075\x91\x1e\x00\x00\x00\x00\x00\x00\x00\x00'  b'\x00\x00\x82\xdf\xe4\rG\x00\x00\x00\x00\x00\x00\x00\x00\x00'  1650499200000000000  1650499200000000000
+----------------------------------------------------------------------
+
+============================================================
+📊 ZUSAMMENFASSUNG DER BAR-ANALYSE
+============================================================
+Total .parquet Dateien geprüft: 77
+Leere Dateien (0 Bars):         0
+Dateien MIT echten Daten:       77
+============================================================
+💾 Analyse abgeschlossen. Log gespeichert in:
+   /home/user/etoro_nautilus/logs/bar_analysis_2026-05-21_17-12-20.log
+
