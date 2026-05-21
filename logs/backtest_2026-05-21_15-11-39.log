@@ -3054,3 +3054,63 @@ RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: F
 [Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
    📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
    [ 335/693] LULU.ETORO / TrendPullbackStrategy
+🚀 LULU.ETORO | MeanReversionStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1878 Trades erfolgreich berechnet.
+   📊 Trades=1878 | WinRate=3.5% | PF=0.02 | Sortino=-6.33 | MaxDD=1.0%
+   [ 336/693] LULU.ETORO / MeanReversionStrategy
+🚀 LULU.ETORO | DynamicBreakoutStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1170 Trades erfolgreich berechnet.
+   📊 Trades=1170 | WinRate=14.2% | PF=0.21 | Sortino=-5.53 | MaxDD=0.4%
+   [ 337/693] LULU.ETORO / DynamicBreakoutStrategy
+🚀 LULU.ETORO | FlashCrashReversalStrategy
+   📥 1873 Ticks geladen.
+[Metriken] FIFO-Extraktion: 930 Trades erfolgreich berechnet.
+   📊 Trades=930 | WinRate=2.1% | PF=0.01 | Sortino=-6.43 | MaxDD=0.5%
+   [ 338/693] LULU.ETORO / FlashCrashReversalStrategy
+🚀 LULU.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 930 Trades erfolgreich berechnet.
+   📊 Trades=930 | WinRate=11.0% | PF=0.15 | Sortino=-6.08 | MaxDD=0.4%
+   [ 339/693] LULU.ETORO / VolatilityBreakoutPumpStrategy
+🚀 LULU.ETORO | VwapExhaustionStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 188 Trades erfolgreich berechnet.
+   📊 Trades=188 | WinRate=18.6% | PF=0.03 | Sortino=-6.58 | MaxDD=0.1%
+   [ 340/693] LULU.ETORO / VwapExhaustionStrategy
+🚀 LULU.ETORO | AdxAtrMomentumStrategy
+   📥 1873 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 341/693] LULU.ETORO / AdxAtrMomentumStrategy
+
+🛑 Backtest manuell abgebrochen. Fahre Subprozesse herunter...
+Exception ignored in: <module 'threading' from '/usr/lib/python3.12/threading.py'>
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/threading.py", line 1592, in _shutdown
+    atexit_call()
+  File "/usr/lib/python3.12/concurrent/futures/process.py", line 102, in _python_exit
+    t.join()
+  File "/usr/lib/python3.12/threading.py", line 1147, in join
+    self._wait_for_tstate_lock()
+  File "/usr/lib/python3.12/threading.py", line 1167, in _wait_for_tstate_lock
+    if lock.acquire(block, timeout):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt: 
+Exception ignored in: <module 'threading' from '/usr/lib/python3.12/threading.py'>
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/threading.py", line 1592, in _shutdown
+    atexit_call()
+  File "/usr/lib/python3.12/concurrent/futures/process.py", line 102, in _python_exit
+    t.join()
+  File "/usr/lib/python3.12/threading.py", line 1147, in join
+    self._wait_for_tstate_lock()
+  File "/usr/lib/python3.12/threading.py", line 1167, in _wait_for_tstate_lock
+    if lock.acquire(block, timeout):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt: 
