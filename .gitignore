@@ -4,7 +4,7 @@ __pycache__/
 *.pyc
 
 # Trading Daten & Logs
-#logs/*
+logs/*
 !logs/.gitkeep
 #data/*
 
