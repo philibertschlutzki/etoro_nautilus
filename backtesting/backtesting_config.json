@@ -3,7 +3,7 @@
     "catalog_path": "./data/nautilus",
     "start_time": "2026-01-01",
     "end_time": "2026-05-14",
-    "start_capital": 10000.0,
+    "start_capital": 100000000.0,
     "_note_instruments": "Instrumente werden automatisch via Filesystem-Scan aus data/nautilus/data/quote_tick/ erkannt. Nicht gewünschte Instrumente einfach aus diesem Ordner entfernen oder umbenennen."
   },
   "strategies": [
@@ -22,8 +22,8 @@
       "params": {
         "ema_period": 3,
         "rsi_period": 2,
-        "rsi_oversold": 65.0,
-        "rsi_overbought": 35.0
+        "rsi_oversold": 95.0,
+        "rsi_overbought": 5.0
       }
     },
     {
@@ -33,7 +33,7 @@
       "params": {
         "keltner_period": 2,
         "keltner_atr_period": 2,
-        "keltner_multiplier": 0.1
+        "keltner_multiplier": 0.01
       }
     },
     {
@@ -42,7 +42,7 @@
       "config_class": "DynamicBreakoutConfig",
       "params": {
         "volume_sma_period": 2,
-        "volume_multiplier": 0.1,
+        "volume_multiplier": 0.01,
         "price_breakout_period": 2
       }
     },
@@ -52,10 +52,10 @@
       "config_class": "FlashCrashReversalConfig",
       "params": {
         "bb_period": 2,
-        "bb_std_dev": 0.1,
+        "bb_std_dev": 0.01,
         "rsi_period": 2,
-        "rsi_oversold": 65.0,
-        "rsi_overbought": 35.0
+        "rsi_oversold": 95.0,
+        "rsi_overbought": 5.0
       }
     },
     {
@@ -64,7 +64,7 @@
       "config_class": "VolatilityBreakoutConfig",
       "params": {
         "bb_period": 2,
-        "bb_std_dev": 0.1
+        "bb_std_dev": 0.01
       }
     },
     {
@@ -76,8 +76,8 @@
         "macd_fast": 2,
         "macd_slow": 4,
         "bb_period": 2,
-        "bb_std_dev": 0.1,
-        "bb_entry_tolerance": 0.5
+        "bb_std_dev": 0.01,
+        "bb_entry_tolerance": 0.99
       }
     },
     {
@@ -88,7 +88,7 @@
         "adx_period": 2,
         "ema_period": 3,
         "atr_period": 2,
-        "atr_multiplier": 0.1
+        "atr_multiplier": 0.01
       }
     },
     {
@@ -97,8 +97,8 @@
       "config_class": "VwapExhaustionConfig",
       "params": {
         "volume_sma_period": 2,
-        "deviation_threshold": 0.001,
-        "volume_multiplier": 0.1
+        "deviation_threshold": 0.0001,
+        "volume_multiplier": 0.01
       }
     }
   ]
