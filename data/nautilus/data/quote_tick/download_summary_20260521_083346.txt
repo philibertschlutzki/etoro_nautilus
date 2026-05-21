@@ -1,0 +1,80 @@
+=== DOWNLOAD SUMMARY REPORT ===
+Symbol          | Status       | Intervals Used            | Total Rows | Date Range
+---------------------------------------------------------------------------------------------------------
+NATGAS.ETORO    | Up-to-date   | OneHour                   | 3000       | 2022-07-06 to 2026-05-21
+USDZAR.ETORO    | Up-to-date   | OneHour                   | 2000       | 2022-07-14 to 2026-05-21
+USDTRY.ETORO    | Up-to-date   | OneHour                   | 2000       | 2022-07-14 to 2026-05-21
+CAT.ETORO       | Failed       | -                         | 0          | N/A
+JNJ.ETORO       | Up-to-date   | OneHour                   | 3000       | 2022-04-20 to 2026-05-21
+PBR.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-07 to 2026-05-20
+TSLA.ETORO      | Failed       | -                         | 0          | N/A
+ADBE.ETORO      | Up-to-date   | OneHour                   | 6000       | 2022-04-20 to 2026-05-21
+WDC.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-20 to 2026-05-21
+MU.ETORO        | Failed       | -                         | 0          | N/A
+NVDA.ETORO      | Up-to-date   | OneHour                   | 3000       | 2022-04-20 to 2026-05-21
+WIX.ETORO       | Failed       | -                         | 0          | N/A
+PINS.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+ROP.ZU.ETORO    | Up-to-date   | OneHour                   | 2000       | 2022-04-08 to 2026-05-20
+ACN.ETORO       | Failed       | -                         | 0          | N/A
+VLO.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-18 to 2026-05-21
+HAL.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+GLW.ETORO       | Failed       | -                         | 0          | N/A
+CHTR.ETORO      | Failed       | -                         | 0          | N/A
+CRM.ETORO       | Failed       | -                         | 0          | N/A
+FISV.ETORO      | Failed       | -                         | 0          | N/A
+MTZ.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+LRCX.ETORO      | Failed       | -                         | 0          | N/A
+CMG.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+SNAP.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+01211.HK.ETORO  | Up-to-date   | OneHour                   | 2000       | 2022-03-15 to 2026-05-21
+RHM.DE.ETORO    | Up-to-date   | OneHour                   | 2000       | 2022-05-10 to 2026-05-20
+PALL.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+GSAT.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+HUBS.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+NVS.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+NOW.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+WDAY.ETORO      | Up-to-date   | OneHour                   | 3000       | 2022-04-19 to 2026-05-21
+TEAM.ETORO      | Up-to-date   | OneHour                   | 4000       | 2022-04-19 to 2026-05-21
+LULU.ETORO      | Up-to-date   | OneHour                   | 3000       | 2022-04-19 to 2026-05-21
+STX.US.ETORO    | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+DOCU.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+TTD.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+ZS.ETORO        | Failed       | -                         | 0          | N/A
+CIEN.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+FSLY.ETORO      | Failed       | -                         | 0          | N/A
+EEFT.ETORO      | Failed       | -                         | 0          | N/A
+SE.ETORO        | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+CPRT.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+COHR.ETORO      | Failed       | -                         | 0          | N/A
+RIOT.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+GOOGL.ETORO     | Failed       | -                         | 0          | N/A
+TSEM.ETORO      | Failed       | -                         | 0          | N/A
+AG.ETORO        | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+XPEV.ETORO      | Failed       | -                         | 0          | N/A
+SQM.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-05 to 2026-05-20
+PLTR.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 to 2026-05-21
+GTLB.ETORO      | Failed       | -                         | 0          | N/A
+WBD.ETORO       | Up-to-date   | OneHour                   | 3000       | 2022-04-18 to 2026-05-21
+DUOL.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-18 to 2026-05-21
+E.ETORO         | Up-to-date   | OneHour                   | 2000       | 2022-04-04 to 2026-05-20
+HUT.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-04 to 2026-05-20
+VRT.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-07 to 2026-05-20
+FICO.ETORO      | Up-to-date   | OneHour                   | 5000       | 2022-04-19 to 2026-05-21
+INSM.ETORO      | Up-to-date   | OneHour                   | 1986       | 2022-04-30 to 2026-05-20
+MNDY.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-04 to 2026-05-20
+INSW.ETORO      | Up-to-date   | OneHour                   | 1591       | 2023-11-30 to 2026-05-20
+TTMI.ETORO      | Up-to-date   | OneHour                   | 1587       | 2023-12-05 to 2026-05-20
+POWL.ETORO      | Up-to-date   | OneHour                   | 1591       | 2023-11-30 to 2026-05-20
+ESLT.ETORO      | Up-to-date   | OneHour                   | 997        | 2025-11-16 to 2026-05-20
+BTC.ETORO       | Up-to-date   | OneHour                   | 2000       | 2023-08-29 to 2026-05-21
+ETH.ETORO       | Up-to-date   | OneHour                   | 2000       | 2023-08-29 to 2026-05-21
+XRP.ETORO       | Up-to-date   | OneHour                   | 2000       | 2023-08-29 to 2026-05-21
+ADA.ETORO       | Up-to-date   | OneHour                   | 2000       | 2023-08-29 to 2026-05-21
+DOGE.ETORO      | Failed       | -                         | 0          | N/A
+SOL.ETORO       | Up-to-date   | OneHour                   | 2000       | 2023-08-29 to 2026-05-21
+SHIBxM.ETORO    | Up-to-date   | OneHour                   | 2000       | 2023-08-29 to 2026-05-21
+AVAX.ETORO      | Failed       | -                         | 0          | N/A
+PEPExM.ETORO    | Up-to-date   | OneHour                   | 1601       | 2022-07-03 to 2026-05-21
+ONDO.ETORO      | Up-to-date   | OneHour                   | 1789       | 2024-03-26 to 2026-05-21
+AERO.ETORO      | Up-to-date   | OneHour                   | 1401       | 2025-04-17 to 2026-05-21
+HYPE.ETORO      | Up-to-date   | OneHour                   | 1252       | 2025-04-09 to 2026-05-21
