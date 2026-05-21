@@ -1880,3 +1880,1177 @@ RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: F
 [Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
    📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
    [ 252/693] GSAT.ETORO / ComboTrendVwapStrategy
+🚀 GTLB.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1276 Trades erfolgreich berechnet.
+   📊 Trades=1276 | WinRate=12.1% | PF=0.13 | Sortino=-6.59 | MaxDD=0.9%
+   [ 253/693] GTLB.ETORO / SmaCrossoverStrategy
+🚀 GTLB.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 254/693] GTLB.ETORO / TrendPullbackStrategy
+🚀 GTLB.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 2246 Trades erfolgreich berechnet.
+   📊 Trades=2246 | WinRate=3.3% | PF=0.02 | Sortino=-7.27 | MaxDD=2.1%
+   [ 255/693] GTLB.ETORO / MeanReversionStrategy
+🚀 GTLB.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1294 Trades erfolgreich berechnet.
+   📊 Trades=1294 | WinRate=11.6% | PF=0.12 | Sortino=-6.60 | MaxDD=1.0%
+   [ 256/693] GTLB.ETORO / DynamicBreakoutStrategy
+🚀 GTLB.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1074 Trades erfolgreich berechnet.
+   📊 Trades=1074 | WinRate=3.5% | PF=0.02 | Sortino=-7.08 | MaxDD=1.0%
+   [ 257/693] GTLB.ETORO / FlashCrashReversalStrategy
+🚀 GTLB.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1072 Trades erfolgreich berechnet.
+   📊 Trades=1072 | WinRate=10.0% | PF=0.09 | Sortino=-7.37 | MaxDD=0.9%
+   [ 258/693] GTLB.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GTLB.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 259/693] GTLB.ETORO / AdxAtrMomentumStrategy
+🚀 GTLB.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 412 Trades erfolgreich berechnet.
+   📊 Trades=412 | WinRate=20.6% | PF=0.18 | Sortino=-5.33 | MaxDD=0.1%
+   [ 260/693] GTLB.ETORO / VwapExhaustionStrategy
+🚀 GTLB.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 261/693] GTLB.ETORO / ComboTrendVwapStrategy
+🚀 HAL.ETORO | SmaCrossoverStrategy
+   📥 1873 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1184 Trades erfolgreich berechnet.
+   📊 Trades=1184 | WinRate=13.9% | PF=0.16 | Sortino=-6.67 | MaxDD=0.6%
+   [ 262/693] HAL.ETORO / SmaCrossoverStrategy
+🚀 HAL.ETORO | TrendPullbackStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 263/693] HAL.ETORO / TrendPullbackStrategy
+🚀 HAL.ETORO | MeanReversionStrategy
+   📥 1873 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1910 Trades erfolgreich berechnet.
+   📊 Trades=1910 | WinRate=3.9% | PF=0.01 | Sortino=-6.99 | MaxDD=1.2%
+   [ 264/693] HAL.ETORO / MeanReversionStrategy
+🚀 HAL.ETORO | DynamicBreakoutStrategy
+   📥 1873 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1226 Trades erfolgreich berechnet.
+   📊 Trades=1226 | WinRate=13.7% | PF=0.17 | Sortino=-6.49 | MaxDD=0.6%
+   [ 265/693] HAL.ETORO / DynamicBreakoutStrategy
+🚀 HAL.ETORO | FlashCrashReversalStrategy
+   📥 1873 Ticks geladen.
+[Metriken] FIFO-Extraktion: 944 Trades erfolgreich berechnet.
+   📊 Trades=944 | WinRate=5.0% | PF=0.02 | Sortino=-6.80 | MaxDD=0.5%
+   [ 266/693] HAL.ETORO / FlashCrashReversalStrategy
+🚀 HAL.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 942 Trades erfolgreich berechnet.
+   📊 Trades=942 | WinRate=13.1% | PF=0.12 | Sortino=-6.83 | MaxDD=0.5%
+   [ 267/693] HAL.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HAL.ETORO | VwapExhaustionStrategy
+   📥 1873 Ticks geladen.
+[Metriken] FIFO-Extraktion: 230 Trades erfolgreich berechnet.
+   📊 Trades=230 | WinRate=28.7% | PF=0.23 | Sortino=-5.31 | MaxDD=0.0%
+   [ 268/693] HAL.ETORO / VwapExhaustionStrategy
+🚀 HAL.ETORO | AdxAtrMomentumStrategy
+   📥 1873 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 269/693] HAL.ETORO / AdxAtrMomentumStrategy
+🚀 HAL.ETORO | ComboTrendVwapStrategy
+   📥 1873 Ticks geladen.
+[Metriken] FIFO-Extraktion: 2 Trades erfolgreich berechnet.
+   📊 Trades=2 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 270/693] HAL.ETORO / ComboTrendVwapStrategy
+🚀 HUBS.ETORO | SmaCrossoverStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1318 Trades erfolgreich berechnet.
+   📊 Trades=1318 | WinRate=10.0% | PF=0.11 | Sortino=-7.46 | MaxDD=0.9%
+   [ 271/693] HUBS.ETORO / SmaCrossoverStrategy
+🚀 HUBS.ETORO | TrendPullbackStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 272/693] HUBS.ETORO / TrendPullbackStrategy
+🚀 HUBS.ETORO | DynamicBreakoutStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1334 Trades erfolgreich berechnet.
+   📊 Trades=1334 | WinRate=9.9% | PF=0.11 | Sortino=-7.50 | MaxDD=1.0%
+   [ 273/693] HUBS.ETORO / DynamicBreakoutStrategy
+🚀 HUBS.ETORO | MeanReversionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2316 Trades erfolgreich berechnet.
+   📊 Trades=2316 | WinRate=3.2% | PF=0.01 | Sortino=-7.55 | MaxDD=1.7%
+   [ 274/693] HUBS.ETORO / MeanReversionStrategy
+🚀 HUBS.ETORO | FlashCrashReversalStrategy
+   📥 1961 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1104 Trades erfolgreich berechnet.
+   📊 Trades=1104 | WinRate=2.2% | PF=0.01 | Sortino=-7.46 | MaxDD=0.8%
+   [ 275/693] HUBS.ETORO / FlashCrashReversalStrategy
+🚀 HUBS.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1102 Trades erfolgreich berechnet.
+   📊 Trades=1102 | WinRate=10.0% | PF=0.09 | Sortino=-7.49 | MaxDD=0.8%
+   [ 276/693] HUBS.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HUT.ETORO | SmaCrossoverStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 277/693] HUT.ETORO / SmaCrossoverStrategy
+🚀 HUT.ETORO | TrendPullbackStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 278/693] HUT.ETORO / TrendPullbackStrategy
+🚀 HUT.ETORO | MeanReversionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 279/693] HUT.ETORO / MeanReversionStrategy
+🚀 HUT.ETORO | DynamicBreakoutStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 280/693] HUT.ETORO / DynamicBreakoutStrategy
+🚀 HUT.ETORO | FlashCrashReversalStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 281/693] HUT.ETORO / FlashCrashReversalStrategy
+🚀 HUT.ETORO | VolatilityBreakoutPumpStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 282/693] HUT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HUT.ETORO | ComboTrendVwapStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 283/693] HUT.ETORO / ComboTrendVwapStrategy
+🚀 HUT.ETORO | AdxAtrMomentumStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 284/693] HUT.ETORO / AdxAtrMomentumStrategy
+🚀 HUT.ETORO | VwapExhaustionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 285/693] HUT.ETORO / VwapExhaustionStrategy
+🚀 HYPE.ETORO | SmaCrossoverStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 286/693] HYPE.ETORO / SmaCrossoverStrategy
+🚀 HYPE.ETORO | TrendPullbackStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 287/693] HYPE.ETORO / TrendPullbackStrategy
+🚀 HYPE.ETORO | MeanReversionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 288/693] HYPE.ETORO / MeanReversionStrategy
+🚀 HYPE.ETORO | DynamicBreakoutStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 289/693] HYPE.ETORO / DynamicBreakoutStrategy
+🚀 HYPE.ETORO | FlashCrashReversalStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 290/693] HYPE.ETORO / FlashCrashReversalStrategy
+🚀 HYPE.ETORO | VolatilityBreakoutPumpStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 291/693] HYPE.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HYPE.ETORO | ComboTrendVwapStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 292/693] HYPE.ETORO / ComboTrendVwapStrategy
+🚀 HYPE.ETORO | AdxAtrMomentumStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 293/693] HYPE.ETORO / AdxAtrMomentumStrategy
+🚀 HYPE.ETORO | VwapExhaustionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 294/693] HYPE.ETORO / VwapExhaustionStrategy
+🚀 INSM.ETORO | SmaCrossoverStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 295/693] INSM.ETORO / SmaCrossoverStrategy
+🚀 INSM.ETORO | TrendPullbackStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 296/693] INSM.ETORO / TrendPullbackStrategy
+🚀 INSM.ETORO | MeanReversionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 297/693] INSM.ETORO / MeanReversionStrategy
+🚀 INSM.ETORO | DynamicBreakoutStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 298/693] INSM.ETORO / DynamicBreakoutStrategy
+🚀 HUBS.ETORO | AdxAtrMomentumStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 299/693] HUBS.ETORO / AdxAtrMomentumStrategy
+🚀 INSM.ETORO | FlashCrashReversalStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 300/693] INSM.ETORO / FlashCrashReversalStrategy
+🚀 INSM.ETORO | VolatilityBreakoutPumpStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 301/693] INSM.ETORO / VolatilityBreakoutPumpStrategy
+🚀 INSM.ETORO | ComboTrendVwapStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 302/693] INSM.ETORO / ComboTrendVwapStrategy
+🚀 INSM.ETORO | AdxAtrMomentumStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 303/693] INSM.ETORO / AdxAtrMomentumStrategy
+🚀 INSM.ETORO | VwapExhaustionStrategy
+[ERROR] Tick-Ladefehler: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 198, in load_ticks_from_catalog
+    ticks = catalog.quote_ticks(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/base.py", line 174, in quote_ticks
+    return self.query(data_cls=QuoteTick, identifiers=instrument_ids, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1639, in query
+    data = self._query_rust(
+           ^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1686, in _query_rust
+    session = self.backend_session(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1828, in backend_session
+    self._register_directory_table(
+  File "/home/user/etoro_nautilus/venv/lib/python3.12/site-packages/nautilus_trader/persistence/catalog/parquet.py", line 1903, in _register_directory_table
+    session.add_file(data_type, table, file_uri, query)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 517, in run_single_backtest_worker
+    ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/etoro_nautilus/backtesting/run_backtest.py", line 205, in load_ticks_from_catalog
+    raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
+RuntimeError: catalog.quote_ticks() fehlgeschlagen: Arrow error: Schema error: Fail to merge schema field 'bid_price' because the from data_type = Binary does not equal FixedSizeBinary(16)
+   [ 304/693] INSM.ETORO / VwapExhaustionStrategy
+🚀 HUBS.ETORO | VwapExhaustionStrategy
+   📥 1961 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 372 Trades erfolgreich berechnet.
+   📊 Trades=372 | WinRate=19.9% | PF=0.19 | Sortino=-5.13 | MaxDD=0.1%
+   [ 305/693] HUBS.ETORO / VwapExhaustionStrategy
+🚀 HUBS.ETORO | ComboTrendVwapStrategy
+   📥 1961 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 306/693] HUBS.ETORO / ComboTrendVwapStrategy
+🚀 INSW.ETORO | TrendPullbackStrategy
+   📥 1680 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 307/693] INSW.ETORO / TrendPullbackStrategy
+🚀 INSW.ETORO | SmaCrossoverStrategy
+   📥 1680 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1148 Trades erfolgreich berechnet.
+   📊 Trades=1148 | WinRate=6.5% | PF=0.03 | Sortino=-8.06 | MaxDD=0.8%
+   [ 308/693] INSW.ETORO / SmaCrossoverStrategy
+🚀 INSW.ETORO | MeanReversionStrategy
+   📥 1680 Ticks geladen.
+[Metriken] FIFO-Extraktion: 2060 Trades erfolgreich berechnet.
+   📊 Trades=2060 | WinRate=2.0% | PF=0.01 | Sortino=-8.10 | MaxDD=1.2%
+   [ 309/693] INSW.ETORO / MeanReversionStrategy
+🚀 INSW.ETORO | DynamicBreakoutStrategy
+   📥 1680 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1166 Trades erfolgreich berechnet.
+   📊 Trades=1166 | WinRate=6.4% | PF=0.03 | Sortino=-8.06 | MaxDD=0.8%
+   [ 310/693] INSW.ETORO / DynamicBreakoutStrategy
+🚀 INSW.ETORO | FlashCrashReversalStrategy
+   📥 1680 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 990 Trades erfolgreich berechnet.
+   📊 Trades=990 | WinRate=1.7% | PF=0.01 | Sortino=-8.07 | MaxDD=0.6%
+   [ 311/693] INSW.ETORO / FlashCrashReversalStrategy
+🚀 INSW.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1680 Ticks geladen.
+[Metriken] FIFO-Extraktion: 990 Trades erfolgreich berechnet.
+   📊 Trades=990 | WinRate=7.0% | PF=0.03 | Sortino=-8.06 | MaxDD=0.7%
+   [ 312/693] INSW.ETORO / VolatilityBreakoutPumpStrategy
+🚀 INSW.ETORO | AdxAtrMomentumStrategy
+   📥 1680 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 313/693] INSW.ETORO / AdxAtrMomentumStrategy
+🚀 INSW.ETORO | VwapExhaustionStrategy
+   📥 1680 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 356 Trades erfolgreich berechnet.
+   📊 Trades=356 | WinRate=17.7% | PF=0.11 | Sortino=-6.66 | MaxDD=0.1%
+   [ 314/693] INSW.ETORO / VwapExhaustionStrategy
+🚀 INSW.ETORO | ComboTrendVwapStrategy
+   📥 1680 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 315/693] INSW.ETORO / ComboTrendVwapStrategy
+🚀 JNJ.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 316/693] JNJ.ETORO / TrendPullbackStrategy
+🚀 JNJ.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1186 Trades erfolgreich berechnet.
+   📊 Trades=1186 | WinRate=12.6% | PF=0.12 | Sortino=-6.88 | MaxDD=0.3%
+   [ 317/693] JNJ.ETORO / SmaCrossoverStrategy
+🚀 JNJ.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1198 Trades erfolgreich berechnet.
+   📊 Trades=1198 | WinRate=12.6% | PF=0.12 | Sortino=-6.88 | MaxDD=0.3%
+   [ 318/693] JNJ.ETORO / DynamicBreakoutStrategy
+🚀 JNJ.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2214 Trades erfolgreich berechnet.
+   📊 Trades=2214 | WinRate=2.3% | PF=0.01 | Sortino=-7.22 | MaxDD=0.6%
+   [ 319/693] JNJ.ETORO / MeanReversionStrategy
+🚀 JNJ.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1024 Trades erfolgreich berechnet.
+   📊 Trades=1024 | WinRate=9.2% | PF=0.10 | Sortino=-7.25 | MaxDD=0.2%
+   [ 320/693] JNJ.ETORO / VolatilityBreakoutPumpStrategy
+🚀 JNJ.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1022 Trades erfolgreich berechnet.
+   📊 Trades=1022 | WinRate=1.4% | PF=0.01 | Sortino=-7.67 | MaxDD=0.3%
+   [ 321/693] JNJ.ETORO / FlashCrashReversalStrategy
+🚀 JNJ.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 322/693] JNJ.ETORO / AdxAtrMomentumStrategy
+🚀 JNJ.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 190 Trades erfolgreich berechnet.
+   📊 Trades=190 | WinRate=25.3% | PF=0.11 | Sortino=-6.39 | MaxDD=0.0%
+   [ 323/693] JNJ.ETORO / VwapExhaustionStrategy
+🚀 JNJ.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 324/693] JNJ.ETORO / ComboTrendVwapStrategy
+🚀 LRCX.ETORO | TrendPullbackStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 325/693] LRCX.ETORO / TrendPullbackStrategy
+🚀 LRCX.ETORO | SmaCrossoverStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1148 Trades erfolgreich berechnet.
+   📊 Trades=1148 | WinRate=14.9% | PF=0.19 | Sortino=-6.35 | MaxDD=0.5%
+   [ 326/693] LRCX.ETORO / SmaCrossoverStrategy
+🚀 LRCX.ETORO | DynamicBreakoutStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1148 Trades erfolgreich berechnet.
+   📊 Trades=1148 | WinRate=15.1% | PF=0.19 | Sortino=-6.32 | MaxDD=0.5%
+   [ 327/693] LRCX.ETORO / DynamicBreakoutStrategy
+🚀 LRCX.ETORO | MeanReversionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1968 Trades erfolgreich berechnet.
+   📊 Trades=1968 | WinRate=3.9% | PF=0.02 | Sortino=-6.78 | MaxDD=1.3%
+   [ 328/693] LRCX.ETORO / MeanReversionStrategy
+🚀 LRCX.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 948 Trades erfolgreich berechnet.
+   📊 Trades=948 | WinRate=15.9% | PF=0.20 | Sortino=-6.02 | MaxDD=0.4%
+   [ 329/693] LRCX.ETORO / VolatilityBreakoutPumpStrategy
+🚀 LRCX.ETORO | FlashCrashReversalStrategy
+   📥 1872 Ticks geladen.
+[Metriken] FIFO-Extraktion: 948 Trades erfolgreich berechnet.
+   📊 Trades=948 | WinRate=5.8% | PF=0.03 | Sortino=-6.94 | MaxDD=0.6%
+   [ 330/693] LRCX.ETORO / FlashCrashReversalStrategy
+🚀 LRCX.ETORO | VwapExhaustionStrategy
+   📥 1872 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 196 Trades erfolgreich berechnet.
+   📊 Trades=196 | WinRate=17.9% | PF=0.06 | Sortino=-6.46 | MaxDD=0.1%
+   [ 331/693] LRCX.ETORO / VwapExhaustionStrategy
+🚀 LRCX.ETORO | AdxAtrMomentumStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 332/693] LRCX.ETORO / AdxAtrMomentumStrategy
+🚀 LRCX.ETORO | ComboTrendVwapStrategy
+   📥 1872 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 333/693] LRCX.ETORO / ComboTrendVwapStrategy
+🚀 LULU.ETORO | SmaCrossoverStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1148 Trades erfolgreich berechnet.
+   📊 Trades=1148 | WinRate=14.7% | PF=0.21 | Sortino=-5.57 | MaxDD=0.4%
+   [ 334/693] LULU.ETORO / SmaCrossoverStrategy
+🚀 LULU.ETORO | TrendPullbackStrategy
+   📥 1873 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [ 335/693] LULU.ETORO / TrendPullbackStrategy
