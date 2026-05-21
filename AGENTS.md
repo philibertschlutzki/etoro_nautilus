@@ -44,6 +44,11 @@ This is a **live algorithmic trading system** built on [Nautilus Trader](https:/
 
 **Critical constraint:** This system interacts with real financial markets. Bugs in order logic, position state, or reconciliation can cause real monetary losses. Every change to `adapters/` must be reviewed with extreme care.
 
+### Roadmap & Architecture Upgrades
+**Fractional Equities via By-Amount Endpoint:** The system currently relies on the "By-Units" eToro fallback for certain operations (e.g., closing positions or shorting). Because this endpoint strictly requires integer values for Equities, the `size_precision` for Equities is currently forced to `0`. This leads to Nautilus `ValueError` crashes during backtesting and live trading if `trade_amount_usd` is smaller than a single share (see **Section 17, Pitfall #14**).
+
+**Future AI Agents must be aware:** A major architectural rewrite is required for the `etoro_execution.py` adapter. It must be refactored to route fractional equity orders via the "By-Amount" endpoints exclusively. Once completed, Nautilus needs to maintain an internal "units" abstraction while the adapter sends USD payloads. Only then can `size_precision` for Equities be increased from `0` to `5` (or eToro's standard).
+
 ---
 
 ## 2. Repository Structure
@@ -1359,6 +1364,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | Date | Change | Files Modified |
 |------|--------|----------------|
 | 2026-05-20 | Bugfix (4 kritische Fehler): (A) Metriken-Extraktion auf `engine.cache.positions()` + `generate_positions_report()`-Fallback umgestellt — WinRate/PF/Sortino waren dauerhaft 0.00 weil `generate_order_fills_report()` keine `realized_pnl`-Spalte enthält; (B) Open-Position-Zählung auf `status`-Spalte korrigiert — vorher wurden alle historischen DataFrame-Rows gezählt statt nur OPEN-Status (Faktor-2-Anomalie behoben); (C) Flat-Lock in allen Signal-Methoden behoben — `current_signal`/`current_position` wird nach `_close_position()` auf None zurückgesetzt, sodass Reverse-Entry auf der nächsten Bar möglich ist; (D) `OmsType.NETTING`-Konsistenz validiert — einzige Verwendung in run_backtest.py, kein HEDGING. AGENTS.md Section 6 Boilerplate + Section 17 (Pitfall #16) aktualisiert. | `backtesting/run_backtest.py`, `strategies/mean_reversion.py`, `strategies/dynamic_breakout.py`, `strategies/sma_crossover.py`, `strategies/flash_crash_reversal.py`, `strategies/volatility_breakout.py`, `strategies/trend_pullback.py`, `strategies/tesla_combo_strategy.py`, `strategies/adx_atr_momentum.py`, `strategies/momentum_ls_sma.py`, `AGENTS.md` |
+| 2026-05-21 | Added `manuals/end_to_end_workflow.md` documenting the 4-step pipeline, Demo/Live isolation, and the Fractional Equities limitation. Updated `README.md` and added "Roadmap & Architecture Upgrades" to `AGENTS.md`. | `manuals/end_to_end_workflow.md`, `README.md`, `AGENTS.md` |
 | 2026-05-20 | Bugfix (kritisch): `make_qty` ValueError korrekt behoben — Pre-check `units < size_increment` + `try/except ValueError` in allen 9 Strategie-Dateien. AGENTS.md Pitfall #14 und Section 6 Boilerplate korrigiert: `round_down=True` verhindert den ValueError NICHT (war falsch dokumentiert seit 2026-05-19). | `strategies/*.py`, `AGENTS.md` |
 | 2026-05-19 | Bugfix: `make_qty` ValueError bei Equity-Instrumenten — alle 9 Strategie-Dateien auf `round_down=True` + None-Guard umgestellt; Section 6 `_compute_quantity()`-Pattern aktualisiert | `strategies/*.py`, `AGENTS.md` |
 | 2026-05-19 | Bugfix: `BrokenProcessPool` OOM-Crash — `ProcessPoolExecutor` auf `cpu//2` (max 6) Worker begrenzt; `max_tasks_per_child=1` für Python ≥ 3.11; expliziter `BrokenProcessPool`-Catch mit sequenziellem Fallback | `backtesting/run_backtest.py`, `AGENTS.md` |
