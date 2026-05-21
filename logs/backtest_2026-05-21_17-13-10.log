@@ -1,0 +1,22 @@
+📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-05-21_17-13-10.log
+🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-05-21_17-13-10.log
+======================================================================
+📅 Zeitraum: 2022-04-01 → 2026-05-14
+📋 77 Instrumente gefunden.
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent.
+
+⏳ Starte 693 Backtest-Jobs (77 × 9 Strategien)...
+🚀 01211.HK.ETORO | TrendPullbackStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   1/693] 01211.HK.ETORO / TrendPullbackStrategy
+🚀 01211.HK.ETORO | DynamicBreakoutStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1296 Trades erfolgreich berechnet.
+   📊 Trades=1296 | WinRate=10.0% | PF=0.14 | Sortino=-7.19 | MaxDD=0.7%
+   [   2/693] 01211.HK.ETORO / DynamicBreakoutStrategy
