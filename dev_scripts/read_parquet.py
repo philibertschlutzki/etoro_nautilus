@@ -1,6 +1,22 @@
 import os
 import sys
 import pandas as pd
+from datetime import datetime
+from pathlib import Path
+
+class DualOutput:
+    """Klasse, die alle print-Ausgaben sowohl auf der Konsole als auch in einer Logdatei ausgibt."""
+    def __init__(self, file_path):
+        self.terminal = sys.stdout
+        self.log = open(file_path, "w", encoding="utf-8")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 
 def analyze_all_parquets(base_dir: str):
     """Durchsucht rekursiv ein Verzeichnis nach Parquet-Dateien und analysiert sie."""
@@ -70,4 +86,31 @@ if __name__ == "__main__":
         print(f"⚠️ Warnung: '{target_path}' ist kein gültiges Verzeichnis.")
         print("Bitte gib den Pfad zum Ordner 'quote_tick' an.")
     else:
-        analyze_all_parquets(target_path)
+        # Pfad-Ermittlung für den etoro_nautilus/logs Ordner
+        script_dir = Path(__file__).parent.resolve()
+        
+        # Falls das Skript in 'dev_scripts' liegt, gehen wir einen Ordner höher zum Root
+        if script_dir.name == "dev_scripts" or not (script_dir / "data").exists():
+            log_dir = script_dir.parent / "logs"
+        else:
+            log_dir = script_dir / "logs"
+
+        # Log-Ordner erstellen, falls nicht vorhanden
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generiere eindeutigen Dateinamen mit Zeitstempel
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_file = log_dir / f"parquet_analysis_{timestamp}.log"
+
+        # Umleitung der Standardausgabe starten
+        original_stdout = sys.stdout
+        dual_output = DualOutput(log_file)
+        sys.stdout = dual_output
+
+        try:
+            analyze_all_parquets(target_path)
+            print(f"\n💾 Analyse abgeschlossen. Ausgabe zusätzlich gespeichert in:\n   {log_file}")
+        finally:
+            # Verbindung sauber trennen und Datei schließen
+            sys.stdout = original_stdout
+            dual_output.log.close()
