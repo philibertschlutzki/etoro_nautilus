@@ -219,3 +219,9 @@
 [Metriken] Keine abgeschlossenen Positionen.
    📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
    [  40/693] AERO.ETORO / DynamicBreakoutStrategy
+🚀 AERO.ETORO | FlashCrashReversalStrategy
+   📥 1220 Ticks geladen.
+   ⚠️ 1 Positionen nach Laufzeitende noch offen (unrealized PnL nicht enthalten)
+[Metriken] Keine abgeschlossenen Positionen.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  41/693] AERO.ETORO / FlashCrashReversalStrategy
