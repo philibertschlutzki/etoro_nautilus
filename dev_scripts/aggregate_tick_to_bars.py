@@ -103,14 +103,15 @@ def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> boo
                 if field.name in target_cols:
                     is_fixed_16 = pa.types.is_fixed_size_binary(field.type) and field.type.byte_width == 16
                     if not is_fixed_16:
-                        # Erzwinge den echten Typecast zu FixedSizeBinary(16)
-                        col = col.cast(pa.binary(16))
+                        # FIX 1: 2-stufiger Cast, um "BinaryView -> FixedSizeBinary" Fehler zu umgehen
+                        col = col.cast(pa.binary()).cast(pa.binary(16))
                         field = field.with_type(pa.binary(16))
                         needs_cast = True
                 new_fields.append(field)
                 new_columns.append(col)
             
-            metadata_mismatch = schema.metadata != ref_meta
+            # FIX 2: Sicherer Metadaten-Vergleich (None vs {})
+            metadata_mismatch = (schema.metadata or {}) != ref_meta
             
             # Überschreiben, wenn Typen oder Metadaten inkonsistent sind
             if needs_cast or metadata_mismatch:
@@ -120,57 +121,13 @@ def normalize_parquet_metadata(catalog_path: str, instrument_id_str: str) -> boo
                 any_file_patched = True
                 logger.info(f"    ✔ Typen/Metadaten konvertiert: {f.name}")
         except Exception as e:
-            logger.warning(f"    ⚠️  Patch-Fehler bei Datei {f.name}: {e}")
+            # FIX 3: Fehler lautstark machen, damit du weißt, wenn eine Datei blockiert
+            logger.error(f"    ❌ KRITISCHER Patch-Fehler bei Datei {f.name}: {e}")
+            raise e 
 
     if any_file_patched:
         logger.info(f"  ✅ Typen erfolgreich auf FixedSizeBinary(16) angepasst.")
     return any_file_patched
-
-
-def load_ticks_file_by_file(
-    catalog_path: str, instrument_id_str: str
-) -> list:
-    """
-    Fallback: Liest jeden Parquet-File einzeln via temporären Einzel-Katalog.
-    Umgeht das Schema-Merge-Problem, da jeder Temp-Katalog nur 1 File enthält.
-    """
-    inst_dir = Path(catalog_path) / "data" / "quote_tick" / instrument_id_str
-    parquet_files = sorted(inst_dir.rglob("*.parquet"))
-
-    if not parquet_files:
-        return []
-
-    logger.info(
-        f"  [fallback] Lade {len(parquet_files)} Dateien einzeln "
-        f"für {instrument_id_str}..."
-    )
-
-    all_ticks: list = []
-    for pf in parquet_files:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_inst_dir = Path(tmp) / "data" / "quote_tick" / instrument_id_str
-            tmp_inst_dir.mkdir(parents=True)
-            dest = tmp_inst_dir / pf.name
-            shutil.copy2(str(pf), str(dest))
-
-            try:
-                tmp_catalog = ParquetDataCatalog(tmp)
-                ticks = tmp_catalog.quote_ticks(
-                    instrument_ids=[instrument_id_str]
-                )
-                all_ticks.extend(ticks)
-                logger.info(
-                    f"    ✔ {pf.name}: {len(ticks)} Ticks"
-                )
-            except Exception as e:
-                logger.warning(f"    ⚠️  Einzellese-Fehler {pf.name}: {e}")
-
-    # Nach ts_event sortieren
-    all_ticks.sort(key=lambda t: t.ts_event)
-    logger.info(
-        f"  [fallback] Gesamt: {len(all_ticks)} Ticks für {instrument_id_str}"
-    )
-    return all_ticks
 
 
 def parse_bar_spec(bar_spec_str: str, price_type: PriceType) -> BarSpecification:
@@ -315,9 +272,22 @@ def aggregate_ticks_to_bars(
         for dt, row in resampled.iterrows()
     ]
 
+    # =======================================================================
+    # NEU: Bestehende, überlappende Bar-Dateien für dieses Instrument löschen
+    # =======================================================================
+    bar_dir = Path(catalog_path) / "data" / "bar" / str(bar_type)
+    if bar_dir.exists():
+        logger.info(f"  🧹 Bereinige altes Bar-Verzeichnis (Vermeidung von Interval-Konflikten): {bar_dir.name}")
+        try:
+            shutil.rmtree(bar_dir)
+            # Kurz warten/Katalog zwingen, den Datei-Cache für dieses Verzeichnis zu vergessen
+            catalog = ParquetDataCatalog(catalog_path)
+        except Exception as e:
+            logger.warning(f"  ⚠️  Konnte altes Verzeichnis {bar_dir.name} nicht vollständig löschen: {e}")
+    # =======================================================================
+
     catalog.write_data(bars)
     logger.info(f"✅ {instrument_id_str}: {len(bars)} Bars geschrieben.")
-
 
 # ---------------------------------------------------------------------------
 # Einstiegspunkt
