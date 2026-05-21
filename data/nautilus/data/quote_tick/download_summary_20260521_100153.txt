@@ -1,0 +1,52 @@
+=== DOWNLOAD SUMMARY REPORT ===
+Symbol          | Status       | Intervals Used            | Total Rows | Date Range
+---------------------------------------------------------------------------------------------------------
+CPRT.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+WDAY.ETORO      | Up-to-date   | OneHour                   | 5000       | 2022-04-19 bis 2026-05-21
+FISV.ETORO      | Up-to-date   | OneHour                   | 3000       | 2022-04-19 bis 2026-05-21
+GOOGL.ETORO     | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+VLO.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-18 bis 2026-05-21
+ESLT.ETORO      | Up-to-date   | OneHour                   | 997        | 2025-11-16 bis 2026-05-20
+AG.ETORO        | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+WBD.ETORO       | Up-to-date   | OneHour                   | 5000       | 2022-04-18 bis 2026-05-21
+CAT.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-20 bis 2026-05-21
+NOW.ETORO       | Failed       | -                         | 0          | N/A
+INSW.ETORO      | Up-to-date   | OneHour                   | 1720       | 2023-11-26 bis 2026-05-20
+COHR.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+CMG.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+LRCX.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+DUOL.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-18 bis 2026-05-21
+TTD.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+MTZ.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+FICO.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+TTMI.ETORO      | Up-to-date   | OneHour                   | 1715       | 2023-11-26 bis 2026-05-20
+LULU.ETORO      | Failed       | -                         | 0          | N/A
+MU.ETORO        | Up-to-date   | OneHour                   | 2000       | 2022-04-20 bis 2026-05-21
+HAL.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+SE.ETORO        | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+JNJ.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-20 bis 2026-05-21
+SQM.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+MNDY.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-04 bis 2026-05-20
+GSAT.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+VRT.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-07 bis 2026-05-20
+CIEN.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+POWL.ETORO      | Up-to-date   | OneHour                   | 1720       | 2023-11-26 bis 2026-05-20
+CRM.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+WIX.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-07 bis 2026-05-20
+WDC.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-20 bis 2026-05-21
+SNAP.ETORO      | Failed       | -                         | 0          | N/A
+PBR.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-07 bis 2026-05-20
+TEAM.ETORO      | Up-to-date   | OneHour                   | 3000       | 2022-04-19 bis 2026-05-21
+E.ETORO         | Up-to-date   | OneHour                   | 2000       | 2022-04-04 bis 2026-05-20
+PINS.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+GLW.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+TSEM.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+STX.US.ETORO    | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+EEFT.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+ACN.ETORO       | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+GTLB.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-04 bis 2026-05-20
+ADBE.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-20 bis 2026-05-21
+CHTR.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-19 bis 2026-05-21
+DOCU.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+HUBS.ETORO      | Up-to-date   | OneHour                   | 2000       | 2022-04-05 bis 2026-05-20
+ZS.ETORO        | Up-to-date   | OneHour                   | 7000       | 2022-04-19 bis 2026-05-21
