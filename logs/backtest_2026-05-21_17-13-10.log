@@ -1,0 +1,77 @@
+📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-05-21_17-13-10.log
+🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-05-21_17-13-10.log
+======================================================================
+📅 Zeitraum: 2022-04-01 → 2026-05-14
+📋 77 Instrumente gefunden.
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent.
+
+⏳ Starte 693 Backtest-Jobs (77 × 9 Strategien)...
+🚀 01211.HK.ETORO | TrendPullbackStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   1/693] 01211.HK.ETORO / TrendPullbackStrategy
+🚀 01211.HK.ETORO | DynamicBreakoutStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1296 Trades erfolgreich berechnet.
+   📊 Trades=1296 | WinRate=10.0% | PF=0.14 | Sortino=-7.19 | MaxDD=0.7%
+   [   2/693] 01211.HK.ETORO / DynamicBreakoutStrategy
+🚀 01211.HK.ETORO | SmaCrossoverStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1254 Trades erfolgreich berechnet.
+   📊 Trades=1254 | WinRate=10.7% | PF=0.14 | Sortino=-7.19 | MaxDD=0.7%
+   [   3/693] 01211.HK.ETORO / SmaCrossoverStrategy
+🚀 01211.HK.ETORO | MeanReversionStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 2336 Trades erfolgreich berechnet.
+   📊 Trades=2336 | WinRate=2.9% | PF=0.01 | Sortino=-7.08 | MaxDD=1.4%
+   [   4/693] 01211.HK.ETORO / MeanReversionStrategy
+🚀 01211.HK.ETORO | FlashCrashReversalStrategy
+   📥 1947 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1174 Trades erfolgreich berechnet.
+   📊 Trades=1174 | WinRate=2.7% | PF=0.01 | Sortino=-7.39 | MaxDD=0.7%
+   [   5/693] 01211.HK.ETORO / FlashCrashReversalStrategy
+🚀 01211.HK.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1174 Trades erfolgreich berechnet.
+   📊 Trades=1174 | WinRate=10.4% | PF=0.12 | Sortino=-7.25 | MaxDD=0.6%
+   [   6/693] 01211.HK.ETORO / VolatilityBreakoutPumpStrategy
+🚀 01211.HK.ETORO | AdxAtrMomentumStrategy
+   📥 1947 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   7/693] 01211.HK.ETORO / AdxAtrMomentumStrategy
+🚀 01211.HK.ETORO | VwapExhaustionStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 356 Trades erfolgreich berechnet.
+   📊 Trades=356 | WinRate=19.7% | PF=0.14 | Sortino=-6.12 | MaxDD=0.1%
+   [   8/693] 01211.HK.ETORO / VwapExhaustionStrategy
+🚀 01211.HK.ETORO | ComboTrendVwapStrategy
+   📥 1947 Ticks geladen.
+[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [   9/693] 01211.HK.ETORO / ComboTrendVwapStrategy
+🚀 ACN.ETORO | SmaCrossoverStrategy
+   📥 1833 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1118 Trades erfolgreich berechnet.
+   📊 Trades=1118 | WinRate=15.2% | PF=0.22 | Sortino=-6.12 | MaxDD=0.3%
+   [  10/693] ACN.ETORO / SmaCrossoverStrategy
+🚀 ACN.ETORO | TrendPullbackStrategy
+   📥 1833 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.
+   📊 Trades=0 | WinRate=0.0% | PF=0.00 | Sortino=0.00 | MaxDD=0.0%
+   [  11/693] ACN.ETORO / TrendPullbackStrategy
+🚀 ACN.ETORO | DynamicBreakoutStrategy
+   📥 1833 Ticks geladen.
+[Metriken] FIFO-Extraktion: 1152 Trades erfolgreich berechnet.
+   📊 Trades=1152 | WinRate=14.9% | PF=0.23 | Sortino=-6.00 | MaxDD=0.3%
+   [  12/693] ACN.ETORO / DynamicBreakoutStrategy

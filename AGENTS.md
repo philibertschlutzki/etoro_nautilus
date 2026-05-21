@@ -539,6 +539,7 @@ def _on_buy_signal(self, bar: Bar) -> None:
         if pos.side == PositionSide.LONG:
             return   # Already long, do nothing
         self._close_position(pos)   # Close opposite (short) position
+        self.current_signal = None   # Signal-State-Reset: prevents Flat-Lock on next bar
         return   # Do NOT open new position in same bar
     if len(self.cache.positions_open()) >= self.config.max_open_positions:
         return
@@ -554,6 +555,8 @@ def _on_buy_signal(self, bar: Bar) -> None:
     self.submit_order(order)
 ```
 
+> **Flat-Lock-Gefahr:** Nach `_close_position()` darf `return` nur stehen wenn der Signal-State gleichzeitig zurückgesetzt wird. Andernfalls blockiert der Bar-Guard jeden Neueinstieg dauerhaft.
+
 ### Quantity Calculation
 
 **Always use this exact pattern:**
@@ -561,11 +564,41 @@ def _on_buy_signal(self, bar: Bar) -> None:
 def _compute_quantity(self, bar: Bar) -> Quantity | None:
     instrument = self.cache.instrument(self.instrument_id)
     if instrument is None:
-        self._log.error(f"[{self.instrument_id}] Instrument not in cache")
+        self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
         return None
     units = self.config.trade_amount_usd / float(bar.close)
-    return instrument.make_qty(units)
+    # Pre-check: Equity-Instrumente (size_precision=0) erfordern mindestens 1 ganze Einheit.
+    # Nautilus wirft einen harten ValueError bei make_qty() wenn das gerundete Ergebnis 0 ergibt —
+    # auch mit round_down=True. Pre-check verhindert den Aufruf; try/except ist zusätzliche Absicherung.
+    if units < float(instrument.size_increment):
+        self._log.warning(
+            f"[{self.instrument_id}] Zu wenig Kapital für 1 Einheit "
+            f"(units={units:.6f}, size_increment={instrument.size_increment}) "
+            f"— Signal übersprungen"
+        )
+        return None
+    try:
+        qty = instrument.make_qty(units, round_down=True)
+    except ValueError as e:
+        self._log.warning(
+            f"[{self.instrument_id}] make_qty ValueError: {e} — Signal übersprungen"
+        )
+        return None
+    if qty == 0:
+        self._log.warning(
+            f"[{self.instrument_id}] Quantity=0 nach Rundung "
+            f"(units={units:.6f}) — Signal übersprungen"
+        )
+        return None
+    return qty
 ```
+
+> **Kritisch (korrigiert):** `instrument.make_qty(units, round_down=True)` wirft bei
+> Equity-Instrumenten (size_precision=0) einen harten `ValueError` wenn `units < 1`,
+> **auch mit `round_down=True`**. Der Fehler wird von Nautilus in Cython geworfen und
+> propagiert unkontrolliert durch den Backtest-Worker. Lösung: Immer `units < size_increment`
+> vor dem Aufruf prüfen UND den Aufruf zusätzlich mit `try/except ValueError` absichern.
+> Siehe Section 16, Pitfall #14 (korrigiert).
 
 `instrument.make_qty()` applies the appropriate `size_precision` configured for the asset class (e.g. 8 for Crypto, 0 for Equities). This allows fractional units for Crypto and ensures integer rounding for Equities, preventing live execution mismatch errors.
 
@@ -1194,6 +1227,83 @@ To achieve a true 5% stop on the actual fill rate, set SL:0.025.
 This adjustment is applied consistently and does not prevent the order
 from executing — it only affects the distance of the stop-loss trigger.
 
+### 14. `make_qty` ValueError bei Equity-Instrumenten — `round_down=True` verhindert den Fehler NICHT
+
+**Symptom:** `ValueError: Invalid value for quantity: X was rounded to zero due to
+size increment 1 and size precision 0` — tritt auf, wenn `trade_amount_usd / price < 1`
+bei einem Equity-Instrument (size_precision=0). Der Worker-Prozess crasht hart.
+
+**Root Cause:** `instrument.make_qty(units, round_down=True)` wirft in Nautilus Cython
+einen harten `ValueError` wenn das Ergebnis nach Rundung 0 ergibt — **unabhängig vom
+`round_down`-Parameter**. Das `round_down=True`-Flag verhindert den Fehler NICHT.
+Die Aussage in der Commit-Message vom 2026-05-19 war daher unvollständig: Der Fix
+(Umstieg auf `round_down=True`) ist notwendig, aber nicht ausreichend.
+
+Der Fehler propagiert aus Cython durch die NautilusTrader-Callchain
+(`TimeBarAggregator._build_bar` → `on_bar` → `_compute_quantity`) und kann NICHT
+vom äußeren `try/except` in `run_single_backtest_worker` abgefangen werden, da er
+im Worker-Prozess selbst entsteht.
+
+**Betroffene Instrumente (Beispiele):** Alle Equities mit Preis > `trade_amount_usd`:
+FICO (~$1600), RHM.DE (~$1580), TSLA (~$450), NVDA (~$190), GOOGL (~$316), etc.
+
+**Korrekte Lösung:** Zweistufige Absicherung in `_compute_quantity()`:
+1. **Pre-check:** `if units < float(instrument.size_increment): return None`
+2. **try/except:** `try: qty = instrument.make_qty(units, round_down=True)`
+                   `except ValueError: return None`
+
+```python
+# Korrekte Implementierung (beide Stufen erforderlich):
+if units < float(instrument.size_increment):
+    self._log.warning(f"... Zu wenig Kapital ...")
+    return None
+try:
+    qty = instrument.make_qty(units, round_down=True)
+except ValueError as e:
+    self._log.warning(f"... make_qty ValueError: {e} ...")
+    return None
+if qty == 0:
+    return None
+return qty
+```
+
+**Betroffene Dateien:** Alle 9 Strategie-Dateien in `strategies/`. Korrektur dokumentiert in Section 6 (`_compute_quantity()` Pattern).
+
+### 15. `BrokenProcessPool` durch OOM bei zu vielen parallelen Backtest-Workern
+
+**Symptom:** `concurrent.futures.process.BrokenProcessPool: A process in the
+process pool was terminated abruptly while the future was running or pending.`
+— tritt nach dem ersten Worker-Crash auf und invalidiert alle noch-pending Futures.
+
+**Root Cause:** `ProcessPoolExecutor(max_workers=os.cpu_count())` startet so viele
+Worker wie CPUs. Jeder Worker lädt eine vollständige Nautilus `BacktestEngine`
+inkl. Tick-Daten als Pickle-Payload. Bei 77 Instrumenten × 9 Strategien = 693 Jobs
+und z.B. 10 CPUs laufen gleichzeitig 10 Engines im RAM → OOM → SIGKILL →
+`BrokenProcessPool` für alle weiteren Futures (Python kann SIGKILL nicht fangen).
+Zusätzlich akkumuliert RAM über die Pool-Laufzeit, da Worker nie recycelt werden.
+
+**Lösung:**
+1. Worker auf `max(1, min(os.cpu_count() // 2, 6))` begrenzen.
+2. `max_tasks_per_child=1` (Python ≥ 3.11) recycelt jeden Worker nach einem Job.
+3. `BrokenProcessPool` explizit fangen und auf sequenziellen Fallback wechseln.
+
+**Betroffene Datei:** `backtesting/run_backtest.py`.
+
+### 16. Flat-Lock durch Signal-State-Persistenz nach Reverse Entry
+
+**Symptom:** Backtest zeigt `offen ≈ Trades / 2`, alle WinRate/PF/Sortino = 0.00.
+Tournament-Modus kann keine validen Rankings berechnen.
+
+**Root Cause:** In `_on_buy_signal()` / `_on_sell_signal()` wird beim Drehen einer
+Position `_close_position(pos)` + `return` aufgerufen ohne den Signal-State
+zurückzusetzen. `self.current_signal` (oder equivalent) bleibt auf "BUY"/"SELL".
+Nachfolgende Bars: Bar-Guard `if self.current_signal == ...: return` greift sofort
+und verhindert den Einstieg in die neue Richtung dauerhaft ("Flat-Lock").
+
+**Fix:** Signal-State nach `_close_position()` auf None/FLAT zurücksetzen, ODER
+Pending-Entry-Flag setzen und in `on_position_closed()` den Einstieg nachholen.
+Siehe Section 6 Boilerplate für das korrekte Muster.
+
 ---
 
 ## 18. Code Style & Conventions
@@ -1248,6 +1358,10 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-20 | Bugfix (4 kritische Fehler): (A) Metriken-Extraktion auf `engine.cache.positions()` + `generate_positions_report()`-Fallback umgestellt — WinRate/PF/Sortino waren dauerhaft 0.00 weil `generate_order_fills_report()` keine `realized_pnl`-Spalte enthält; (B) Open-Position-Zählung auf `status`-Spalte korrigiert — vorher wurden alle historischen DataFrame-Rows gezählt statt nur OPEN-Status (Faktor-2-Anomalie behoben); (C) Flat-Lock in allen Signal-Methoden behoben — `current_signal`/`current_position` wird nach `_close_position()` auf None zurückgesetzt, sodass Reverse-Entry auf der nächsten Bar möglich ist; (D) `OmsType.NETTING`-Konsistenz validiert — einzige Verwendung in run_backtest.py, kein HEDGING. AGENTS.md Section 6 Boilerplate + Section 17 (Pitfall #16) aktualisiert. | `backtesting/run_backtest.py`, `strategies/mean_reversion.py`, `strategies/dynamic_breakout.py`, `strategies/sma_crossover.py`, `strategies/flash_crash_reversal.py`, `strategies/volatility_breakout.py`, `strategies/trend_pullback.py`, `strategies/tesla_combo_strategy.py`, `strategies/adx_atr_momentum.py`, `strategies/momentum_ls_sma.py`, `AGENTS.md` |
+| 2026-05-20 | Bugfix (kritisch): `make_qty` ValueError korrekt behoben — Pre-check `units < size_increment` + `try/except ValueError` in allen 9 Strategie-Dateien. AGENTS.md Pitfall #14 und Section 6 Boilerplate korrigiert: `round_down=True` verhindert den ValueError NICHT (war falsch dokumentiert seit 2026-05-19). | `strategies/*.py`, `AGENTS.md` |
+| 2026-05-19 | Bugfix: `make_qty` ValueError bei Equity-Instrumenten — alle 9 Strategie-Dateien auf `round_down=True` + None-Guard umgestellt; Section 6 `_compute_quantity()`-Pattern aktualisiert | `strategies/*.py`, `AGENTS.md` |
+| 2026-05-19 | Bugfix: `BrokenProcessPool` OOM-Crash — `ProcessPoolExecutor` auf `cpu//2` (max 6) Worker begrenzt; `max_tasks_per_child=1` für Python ≥ 3.11; expliziter `BrokenProcessPool`-Catch mit sequenziellem Fallback | `backtesting/run_backtest.py`, `AGENTS.md` |
 | 2026-05-17 | Documentation audit: full repository sync, all sections verified | `AGENTS.md` |
 | 2026-05-17 | Overhauled manuals/ directory: updated deployment.md, backtesting_manual.md, new_tickers.md, momentum_ls.md, feature_automation_LS.md and added TESTING.md | `manuals/*` |
 | 2026-05-14 | Added `momentum_ls_run.py` live orchestrator that combines universe, allocator, and tournament JSONs to launch safe live nodes. Included 24h stale-universe check and identical safety interlocks | `dev_scripts/momentum_ls_run.py`, `AGENTS.md` |
@@ -1274,4 +1388,4 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 ---
 
-*Last updated: 2026-05-19. Update this date and the changelog above whenever you modify this file.*
+*Last updated: 2026-05-20. Update this date and the changelog above whenever you modify this file.*

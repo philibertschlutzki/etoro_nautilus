@@ -259,7 +259,8 @@ class ApiAdvancedExecutionTestStrategy(Strategy):
     def on_order_rejected(self, event: OrderRejected) -> None:
         self.log.error(f"Order abgewiesen: {event.reason}")
         self._test_aborted = True
-        self.stop()
+        if self.is_running:
+            self.stop()
 
     def on_stop(self) -> None:
         self.unsubscribe_quote_ticks(self.instrument_id)
@@ -484,7 +485,8 @@ async def main() -> None:
             f"Check eToro portal for order {strategy.long_order_id}."
         )
         strategy._test_aborted = True
-        strategy.stop()
+        if strategy.is_running:
+            strategy.stop()
 
     if strategy.is_finished() and not strategy._test_aborted:
         print("\n✅ Alle Execution-Tests erfolgreich abgeschlossen!")

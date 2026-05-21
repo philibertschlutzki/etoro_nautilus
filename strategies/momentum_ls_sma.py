@@ -72,8 +72,9 @@ class MomentumLSSmaStrategy(MomentumLSBaseStrategy):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            # Close short position
+            # Gegenposition schließen und Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
             self._close_position(pos)
+            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -95,8 +96,9 @@ class MomentumLSSmaStrategy(MomentumLSBaseStrategy):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            # Close long position
+            # Gegenposition schließen und Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
             self._close_position(pos)
+            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
