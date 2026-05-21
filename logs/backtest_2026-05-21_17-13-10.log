@@ -20,3 +20,9 @@
 [Metriken] FIFO-Extraktion: 1296 Trades erfolgreich berechnet.
    📊 Trades=1296 | WinRate=10.0% | PF=0.14 | Sortino=-7.19 | MaxDD=0.7%
    [   2/693] 01211.HK.ETORO / DynamicBreakoutStrategy
+🚀 01211.HK.ETORO | SmaCrossoverStrategy
+   📥 1947 Ticks geladen.
+   ⚠️ 1 Netting-Position am Ende noch aktiv.
+[Metriken] FIFO-Extraktion: 1254 Trades erfolgreich berechnet.
+   📊 Trades=1254 | WinRate=10.7% | PF=0.14 | Sortino=-7.19 | MaxDD=0.7%
+   [   3/693] 01211.HK.ETORO / SmaCrossoverStrategy
