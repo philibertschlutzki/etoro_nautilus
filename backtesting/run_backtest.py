@@ -45,7 +45,13 @@ from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.enums import OmsType, AccountType
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.instruments import Equity
-from nautilus_trader.analysis.tearsheet import create_tearsheet
+try:
+    from nautilus_trader.analysis.tearsheet import create_tearsheet
+    _HAS_TEARSHEET = True
+except ImportError:
+    _HAS_TEARSHEET = False
+    def create_tearsheet(*args, **kwargs):
+        raise ImportError("nautilus_trader.analysis.tearsheet not available in this version.")
 
 from adapters.instrument_utils import get_size_precision
 
