@@ -752,6 +752,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # ── Pflicht-Verzeichnisse vorab anlegen (I/O-Laufzeitfehler verhindern) ──
+    IMPORT_PATH.mkdir(parents=True, exist_ok=True)
+    (PROJECT_ROOT / "data" / "state").mkdir(parents=True, exist_ok=True)
+
     _setup_logging()
 
     load_dotenv(str(ENV_FILE))
