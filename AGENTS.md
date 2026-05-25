@@ -69,12 +69,18 @@ etoro_nautilus/
 │   ├── instrument_map.py           # Hardcoded Symbol <-> eToroID Map
 │   ├── instrument_utils.py         # Precision definitions for asset classes
 │   └── momentum_ls_allocator.py    # Capital allocator for Momentum-LS
+├── automation/                     # Autonomous Daily Pipeline (NEW)
+│   ├── __init__.py
+│   ├── daily_orchestrator.py       # Master script — 5-Phase End-to-End Pipeline
+│   ├── fractional_trading.py       # Pitfall-#14 Fix: by-amount USD orders for Equities
+│   └── log_manager.py              # LLM-optimized RotatingFileHandler + JSON events
 ├── backtesting/                    # Backtesting Engine
 │   ├── backtesting_config.json
 │   └── run_backtest.py
 ├── config/
 │   └── setups.py                   # Strategy configurations & Credentials
 ├── data/                           # Data storage
+│   ├── import/                     # ZIP drop-zone for nautilus_data_*.zip (auto-deleted)
 │   ├── nautilus/                   # Parquet files for backtesting
 │   ├── state/                      # Runtime state (execution_mapping.json)
 │   └── universe/                   # Universe configurations (momentum_ls.json)
@@ -138,6 +144,54 @@ etoro_nautilus/
 ```
 
 ## 3. Architecture & Data Flow
+
+### Autonomous Daily Pipeline (`automation/daily_orchestrator.py`)
+
+The master orchestrator executes 5 sequential phases each day. Run from PROJECT_ROOT:
+
+```bash
+# Standard daily run (full pipeline):
+python3 automation/daily_orchestrator.py --skip-api-fetch
+
+# Dry-run (skip backtest + bot start, test Phase 1+2 only):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+
+# With API backfill for last 7 days:
+python3 automation/daily_orchestrator.py  # requires ETORO_API_KEY + ETORO_USER_KEY in .env
+```
+
+**Phase 1 — Universe & Mapping:**
+- Loads `data/universe/momentum_ls.json` (49 instruments).
+- Warns if universe is >24h old; auto-maps any unknown eToro IDs to symbols.
+
+**Phase 2 — Data Acquisition (ZIP → Merge → Cleanup → API-Backfill):**
+- Scans `data/import/` for a `nautilus_data_*.zip` file.
+- Validates Parquet schema: bid_price/ask_price must be present and never null.
+- **PyArrow-native merge** (no pandas roundtrip): all price/size columns cast to `FixedSizeBinary(16)` — required by Nautilus Rust backend (see Pitfall #15b below).
+- Deduplicates by `ts_event` using `pandas.Series.duplicated()` + `pa.Table.take()` (no binary type corruption).
+- Saves single `data.parquet` per instrument (deletes old timestamp-based files).
+- Deletes ZIP via `os.remove()` after successful merge.
+- Runs `migrate_catalog_to_fixed_binary()` idempotently to fix any remaining `binary` / `BinaryView` files.
+- Optional API backfill: fills last 7-day gaps via eToro candles endpoint.
+
+**Phase 3+4 — Backtesting & Tournament:**
+- 7-day window: `today_midnight_UTC - 7 days → today_midnight_UTC` (deterministic).
+- Writes dynamic config to `logs/backtest_dynamic_config.json` (start_capital=10,000 USD).
+- Calls `backtesting/run_backtest.py` as subprocess, waits up to 3600s.
+- Reads tournament JSON → selects `aggregate_winner` (best Sortino-ranked strategy).
+
+**Phase 5 — Live Deployment:**
+- Three-condition safety interlock: `ETORO_EXECUTION["environment"]=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE==1` in `.env`.
+- Starts bot as detached subprocess (`subprocess.Popen` + `start_new_session=True`).
+- Bot stdout/stderr → `logs/live_bot_YYYYMMDD.log`.
+- PID saved to `logs/live_bot.pid`.
+- Orchestrator exits 0; bot continues independently.
+
+**Logging:**
+- `RotatingFileHandler`: max 1 MB per file, 5 backup copies.
+- 7-day log retention: files older than 7 days auto-deleted on startup.
+- JSON events: `[JSON_EVENT] {...}` for LLM-parsable audit trail.
+- Structured formatter: `TIMESTAMP | LEVEL | LOGGER | MESSAGE`.
 
 ### Live Trading Flow
 
@@ -1078,6 +1132,36 @@ Wrapped in `try/except Exception as e: self._log.error(...)`. The message loop c
 
 ## 15. Testing & Development Scripts
 
+### Automation Pipeline Scripts (`automation/`)
+
+| Script | Purpose |
+|--------|---------|
+| `automation/daily_orchestrator.py` | **Master script** — runs all 5 phases end-to-end |
+| `automation/fractional_trading.py` | Pitfall-#14 fix utilities (by-amount payloads, size_increment cache) |
+| `automation/log_manager.py` | LLM-optimized logging: `setup_bot_logging()`, `emit_execution_event()` |
+
+**Usage:**
+```bash
+# Drop a nautilus_data_*.zip into data/import/, then:
+python3 automation/daily_orchestrator.py --skip-api-fetch
+
+# Dry run (tests Phase 1+2, skips backtest + bot):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+
+# Full run with API backfill (needs keys in .env):
+python3 automation/daily_orchestrator.py
+```
+
+**Key behaviors:**
+- ZIP is deleted by `os.remove()` after successful merge (irreversible — backup first).
+- All parquet files are migrated to `FixedSizeBinary(16)` automatically.
+- `ETORO_CONFIRM_LIVE=1` must be set in `.env` for bot to start (safety interlock).
+- Backtest uses 7-day midnight-UTC window with $10,000 start capital.
+
+---
+
+### Development Scripts (`dev_scripts/`)
+
 All dev scripts are in `dev_scripts/` and load credentials from `.env` automatically via `python-dotenv`.
 
 
@@ -1294,7 +1378,26 @@ Zusätzlich akkumuliert RAM über die Pool-Laufzeit, da Worker nie recycelt werd
 
 **Betroffene Datei:** `backtesting/run_backtest.py`.
 
-### 16. Flat-Lock durch Signal-State-Persistenz nach Reverse Entry
+### 16. PyArrow 24+ `binary` → `BinaryView` → Nautilus Rust-Panic
+
+**Symptom:** `thread 'tokio-runtime-worker' panicked ... InvalidColumnType("bid_price", 0, FixedSizeBinary(16), BinaryView)` im Backtest-Subprocess. Alle 693 Worker-Jobs crashen auf dem ersten Instrument. Backtest liefert 0 Ergebnisse.
+
+**Root Cause:** PyArrow ≥ 16 / PyArrow 24 liest `binary`-Spalten aus Parquet im
+Arbeitsspeicher als `BinaryView` (Arrow spec change). Das Nautilus Rust-Backend
+erwartet zwingend `FixedSizeBinary(16)` (128-bit fixed-length encoding) für
+`bid_price`, `ask_price`, `bid_size`, `ask_size`. ZIP-Dateien von eToro schreiben
+variable `binary`-Typ auch wenn die Werte stets 16 Bytes lang sind.
+
+**Fix in `automation/daily_orchestrator.py`:**
+1. `_build_target_schema()` erzwingt immer `pa.binary(16)` (= `FixedSizeBinary(16)`) für alle Preis/Größen-Spalten, unabhängig vom Quellschema.
+2. `migrate_catalog_to_fixed_binary()` migriert alle bestehenden Katalog-Dateien idempotent (wird in Phase 2 ausgeführt — schnell, da nur falsch typisierte Dateien angefasst werden).
+3. `_cast_to_schema()` wandelt `binary` / `BinaryView` / `large_binary` sicher zu `FixedSizeBinary(16)` ohne Datenverlust (Werte sind garantiert 16 Bytes).
+
+**Wichtig:** `pa.binary(16)` ist PyArrow-Syntax für `FixedSizeBinary(16)`. Nicht verwechseln mit `pa.binary()` (variable Länge). Beim Schreiben via `pq.write_table()` wird der Typ korrekt serialisiert.
+
+**Betroffene Dateien:** `automation/daily_orchestrator.py` (Funktionen `_build_target_schema`, `migrate_catalog_to_fixed_binary`, `_cast_to_schema`).
+
+### 17. Flat-Lock durch Signal-State-Persistenz nach Reverse Entry
 
 **Symptom:** Backtest zeigt `offen ≈ Trades / 2`, alle WinRate/PF/Sortino = 0.00.
 Tournament-Modus kann keine validen Rankings berechnen.
@@ -1391,7 +1494,11 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 | 2026-05-19 | Neu: `adapters/instrument_utils.py` als zentrale Precision-Logik für Backtest und Live | `adapters/instrument_utils.py` |
 | 2026-05-19 | `etoro_data.py`: `size_precision` via `get_size_precision()` aus `instrument_utils`; lokales `_CRYPTO_SYMBOLS` entfernt; `is_crypto` aus Precision abgeleitet | `adapters/etoro_data.py` |
 | 2026-05-19 | `run_backtest.py`: toter Code `_CRYPTO_SYMBOLS` entfernt; `executor = None` vor `try`-Block initialisiert | `backtesting/run_backtest.py` |
+| 2026-05-24 | **Neu: `automation/` Pipeline** — `daily_orchestrator.py` (5-Phase End-to-End, v1.1), `fractional_trading.py` (Pitfall-#14 Fix: by-amount USD orders), `log_manager.py` (LLM-optimiertes Logging: RotatingFileHandler 1MB, 7-Tage-Retention, JSON-Events). Vollständig verifiziert gegen nautilus_data_2026-05-21.zip auf 10k USD Demo-Konto. | `automation/__init__.py`, `automation/daily_orchestrator.py`, `automation/fractional_trading.py`, `automation/log_manager.py` |
+| 2026-05-24 | **Fix: PyArrow 24+ BinaryView-Panic** — `_build_target_schema()` erzwingt `FixedSizeBinary(16)` für alle Preis/Größen-Spalten; `migrate_catalog_to_fixed_binary()` migriert bestehende Katalog-Dateien idempotent. Nautilus Rust-Panic `InvalidColumnType("bid_price", 0, FixedSizeBinary(16), BinaryView)` behoben. Backtest läuft jetzt vollständig: 693 Jobs, 72 Symbole, 8 Gewinner, ComboTrendVwapStrategy (Ø Sortino 39.20). | `automation/daily_orchestrator.py`, `AGENTS.md` |
+| 2026-05-24 | **Fix: `create_tearsheet` Import** — nautilus_trader 1.221.0 enthält kein `nautilus_trader.analysis.tearsheet`; Import in try/except gewrapped. | `backtesting/run_backtest.py` |
+| 2026-05-24 | **AGENTS.md & manuals/ aktualisiert** — Section 2 (Repository Structure), Section 3 (Autonomous Daily Pipeline), Section 15 (Automation Scripts), Pitfall #16 (BinaryView), Changelog. Neues Handbuch: `manuals/automation_orchestrator.md`. | `AGENTS.md`, `manuals/automation_orchestrator.md` |
 
 ---
 
-*Last updated: 2026-05-20. Update this date and the changelog above whenever you modify this file.*
+*Last updated: 2026-05-24. Update this date and the changelog above whenever you modify this file.*
