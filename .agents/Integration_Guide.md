@@ -104,12 +104,48 @@ When AGENTS.md says **"do NOT do X"**, this is binding on Jules:
 | Never change `size_precision` from 0 to non-zero | Section 5.1 + 6 | Breaks eToro USD-amount calculation |
 | Never weaken `_check_live_safety_interlock()` | Section 12 | Prevents accidental real trading |
 | Never add in-process WebSocket reconnection | Section 12 + 16 | systemd handles restarts; in-process caused state corruption |
+| **Never add `from adapters import` in `automation/`** | Section 15 | `automation/` is a standalone package — must work without adapters/ |
+| **Never use pandas roundtrip for FSB(16) data** | Section 15 + Pitfall #15b | `to_pandas()` converts FixedSizeBinary(16) → BinaryView → Nautilus Rust-Panic |
+| **Never use hardcoded precision maps in `automation/`** | Section 15 | Precisions must come from eToro API dynamically |
 
 If Jules is tempted to violate any of these, the System Prompt requires Jules to:
 1. Document the reason for the change
 2. Update the relevant AGENTS.md section
 3. Add a detailed changelog entry
 4. Request human (you) approval before proceeding
+
+### 1b. `automation/` Standalone Architecture
+
+The `automation/` directory is a **fully standalone product** as of v2.0 (2026-05-25). Key rules:
+
+```
+automation/
+├── api_backfiller.py    → Standalone API-Backfiller (no adapters/ import)
+│   - Dynamic precision: GET /api/v1/market-data/instruments?instrumentIds=...
+│   - FSB(16) encoding: struct.pack('<q', round(v*10**p)) + b'\x00'*8
+│   - Arrow metadata: b"price_precision", b"size_precision", b"instrument_id"
+│
+├── catalog_service.py   → 24/7 WebSocket service (no adapters/ import)
+│   - Hourly flush → data/import/[Timestamp].zip
+│   - ZIP path: quote_tick/{symbol}/{timestamp}.parquet
+│   - Systemd-compatible (os._exit(1) on WebSocket error)
+│
+└── daily_orchestrator.py → v2.0 (no adapters/ import)
+    - Multi-ZIP: reads ALL *.zip from data/import/
+    - Simple merge: pa.concat_tables + dedup (no _cast_to_schema)
+    - No migrate_catalog_to_fixed_binary (sources already clean)
+```
+
+**Data Flow (Shift-Left):**
+```
+catalog_service.py ──hourly──► data/import/20260525_140000.zip  [FSB(16)]
+api_backfiller.py  ────────────► data/nautilus/.../data.parquet [FSB(16)]
+                                            │
+                              daily_orchestrator.py Phase 2
+                                            │ concat_tables + dedup
+                                            ▼
+                             data/nautilus/.../data.parquet [merged]
+```
 
 ### 2. Documentation-Driven Updates
 

@@ -137,6 +137,14 @@ Pick 3 pitfalls and verify they still apply:
 2. **Limit Order ID vs. Token** — Verify that `_cancel_order_async()` has the PnL fallback logic
 3. **Size Precision** — Confirm that no instrument uses `size_precision != 0`
 
+### automation/ Standalone Constraints
+
+- [ ] Verify no `from adapters import` or `import adapters` in any `automation/*.py`
+- [ ] Verify `automation/api_backfiller.py` calls eToro API for precisions (not local maps)
+- [ ] Verify `automation/catalog_service.py` produces ZIPs with path `quote_tick/{symbol}/...`
+- [ ] Verify `automation/daily_orchestrator.py` handles all `*.zip` files (not just one)
+- [ ] Verify Arrow metadata b"price_precision", b"size_precision", b"instrument_id" in all written Parquet files
+
 ---
 
 ### Momentum-LS Subsystem
@@ -290,6 +298,25 @@ cache.positions_open(instrument_id=...) for per-instrument caps instead."
 1. If the orchestrator fails to start, verify safety interlocks in config/setups.py and .env
 2. Inspect Nautilus node startup logs for instrument loading errors
 3. Check AGENTS.md Sections 5.6 and 14 for allocator state details
+```
+
+### Scenario 6: Working on `automation/` (Standalone Module)
+
+```
+CRITICAL RULE: automation/ is a standalone package. NEVER add imports from adapters/.
+
+1. Read AGENTS.md Section 15 (Automation Pipeline Scripts) — note the Standalone constraint.
+2. Verify no file in automation/ contains "from adapters import" or "import adapters".
+3. For instrument precisions: use fetch_precisions_from_api() from api_backfiller.py
+   — NOT get_size_precision() from adapters/instrument_utils.py.
+4. For instrument mapping: load from data/universe/momentum_ls.json
+   — NOT from adapters/instrument_map.py (ETORO_INSTRUMENTS).
+5. For FixedSizeBinary(16) encoding: use _encode_fsb16() pattern from api_backfiller.py:
+     struct.pack('<q', round(value * 10**prec)) + b'\x00' * 8
+   — NOT pa.Table.from_pandas() (pandas roundtrip corrupts FSB(16)!).
+6. ZIP structure for catalog_service.py output:
+     quote_tick/{symbol}/{timestamp}.parquet
+   — orchestrator uses this path to extract symbol name.
 ```
 
 ## Part 6: Quality Standards for AGENTS.md

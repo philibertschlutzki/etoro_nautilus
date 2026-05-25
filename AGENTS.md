@@ -69,9 +69,11 @@ etoro_nautilus/
 │   ├── instrument_map.py           # Hardcoded Symbol <-> eToroID Map
 │   ├── instrument_utils.py         # Precision definitions for asset classes
 │   └── momentum_ls_allocator.py    # Capital allocator for Momentum-LS
-├── automation/                     # Autonomous Daily Pipeline (NEW)
+├── automation/                     # Autonomous Daily Pipeline — STANDALONE (kein adapters/-Import)
 │   ├── __init__.py
-│   ├── daily_orchestrator.py       # Master script — 5-Phase End-to-End Pipeline
+│   ├── api_backfiller.py           # Standalone API-Backfiller — dynamische Precision via API, FSB(16)-nativ
+│   ├── catalog_service.py          # Standalone 24/7-Dienst — WebSocket-Tick-Sammlung, stündliche ZIPs
+│   ├── daily_orchestrator.py       # Master script v2.0 — 5-Phase End-to-End, Multi-ZIP, kein adapters/-Import
 │   ├── fractional_trading.py       # Pitfall-#14 Fix: by-amount USD orders for Equities
 │   └── log_manager.py              # LLM-optimized RotatingFileHandler + JSON events
 ├── backtesting/                    # Backtesting Engine
@@ -164,15 +166,16 @@ python3 automation/daily_orchestrator.py  # requires ETORO_API_KEY + ETORO_USER_
 - Loads `data/universe/momentum_ls.json` (49 instruments).
 - Warns if universe is >24h old; auto-maps any unknown eToro IDs to symbols.
 
-**Phase 2 — Data Acquisition (ZIP → Merge → Cleanup → API-Backfill):**
-- Scans `data/import/` for a `nautilus_data_*.zip` file.
-- Validates Parquet schema: bid_price/ask_price must be present and never null.
-- **PyArrow-native merge** (no pandas roundtrip): all price/size columns cast to `FixedSizeBinary(16)` — required by Nautilus Rust backend (see Pitfall #15b below).
-- Deduplicates by `ts_event` using `pandas.Series.duplicated()` + `pa.Table.take()` (no binary type corruption).
-- Saves single `data.parquet` per instrument (deletes old timestamp-based files).
-- Deletes ZIP via `os.remove()` after successful merge.
-- Runs `migrate_catalog_to_fixed_binary()` idempotently to fix any remaining `binary` / `BinaryView` files.
-- Optional API backfill: fills last 7-day gaps via eToro candles endpoint.
+**Phase 2 — Data Acquisition (Multi-ZIP → Simple Merge → API-Backfill):**
+- **Shift-Left Data Quality:** Alle Quellen liefern bereits 100% Nautilus-kompatible Parquet-Daten.
+  - `catalog_service.py` schreibt stündlich `[Timestamp].zip` Dateien nach `data/import/`.
+  - `api_backfiller.py` schreibt direkt FixedSizeBinary(16) ohne Roundtrip.
+- Scans `data/import/` für **alle** `*.zip`-Dateien (bei täglichem Run ≈ 24 ZIPs).
+- Validiert Parquet-Schema: bid_price/ask_price/bid_size/ask_size müssen vorhanden sein.
+- **Einfacher Merge** (PyArrow-nativ): `pa.concat_tables` + ts_event-Dedup — kein `_cast_to_schema`, kein `migrate_catalog_to_fixed_binary` nötig.
+- Speichert `data.parquet` pro Instrument (löscht alte Timestamp-Dateien).
+- Löscht alle verarbeiteten ZIPs via `os.remove()` nach erfolgreichem Merge.
+- API-Backfill via `automation/api_backfiller.py`: dynamische Precision, direktes FSB(16).
 
 **Phase 3+4 — Backtesting & Tournament:**
 - 7-day window: `today_midnight_UTC - 7 days → today_midnight_UTC` (deterministic).
@@ -1134,29 +1137,61 @@ Wrapped in `try/except Exception as e: self._log.error(...)`. The message loop c
 
 ### Automation Pipeline Scripts (`automation/`)
 
+> **STANDALONE-PRODUKT:** Alle Dateien in `automation/` sind vollständig unabhängig vom restlichen Repository. Sie dürfen **keine Importe aus `adapters/`** enthalten. Instrument-Precisions werden dynamisch via eToro API ermittelt.
+
 | Script | Purpose |
 |--------|---------|
-| `automation/daily_orchestrator.py` | **Master script** — runs all 5 phases end-to-end |
+| `automation/daily_orchestrator.py` | **Master script v2.0** — 5-Phase End-to-End, Multi-ZIP, kein adapters/-Import |
+| `automation/api_backfiller.py` | **Standalone API-Backfiller** — dynamische Precisions via API, direkt FSB(16) |
+| `automation/catalog_service.py` | **Standalone 24/7-Dienst** — WebSocket-Ticks + stündliche ZIPs nach data/import/ |
 | `automation/fractional_trading.py` | Pitfall-#14 fix utilities (by-amount payloads, size_increment cache) |
 | `automation/log_manager.py` | LLM-optimized logging: `setup_bot_logging()`, `emit_execution_event()` |
 
-**Usage:**
-```bash
-# Drop a nautilus_data_*.zip into data/import/, then:
-python3 automation/daily_orchestrator.py --skip-api-fetch
-
-# Dry run (tests Phase 1+2, skips backtest + bot):
-python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
-
-# Full run with API backfill (needs keys in .env):
-python3 automation/daily_orchestrator.py
+**Datenfluss (Shift-Left Data Quality):**
+```
+catalog_service.py (24/7 WebSocket)
+    │ jede Stunde
+    ▼
+data/import/[Timestamp].zip   ←──── api_backfiller.py (7-Tage-Lücken)
+    │ täglich (≈ 24 ZIPs)
+    ▼
+daily_orchestrator.py Phase 2
+    │ pa.concat_tables + dedup
+    ▼
+data/nautilus/data/quote_tick/{symbol}/data.parquet  [FSB(16), Metadaten]
+    │
+    ▼ Phase 3+4
+backtesting/run_backtest.py (693 Jobs)
+    │
+    ▼ Phase 5
+dev_scripts/momentum_ls_run.py (Live-Bot)
 ```
 
-**Key behaviors:**
-- ZIP is deleted by `os.remove()` after successful merge (irreversible — backup first).
-- All parquet files are migrated to `FixedSizeBinary(16)` automatically.
-- `ETORO_CONFIRM_LIVE=1` must be set in `.env` for bot to start (safety interlock).
-- Backtest uses 7-day midnight-UTC window with $10,000 start capital.
+**Usage:**
+```bash
+# Täglicher Run (catalog_service.py hat ZIPs befüllt):
+python3 automation/daily_orchestrator.py --skip-api-fetch
+
+# Dry run (Phase 1+2, kein Backtest + Bot):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+
+# Mit API-Backfill für letzte 7 Tage:
+python3 automation/daily_orchestrator.py  # benötigt ETORO_API_KEY + ETORO_USER_KEY
+
+# Nur API-Backfiller (Standalone):
+python3 automation/api_backfiller.py --days 7
+
+# Nur Catalog-Service starten (systemd-fähig):
+python3 automation/catalog_service.py
+```
+
+**Key behaviors (v2.0):**
+- **Multi-ZIP:** Alle `*.zip` in `data/import/` werden eingelesen (≈ 24 ZIPs bei täglichem Run).
+- **Kein Type-Cast:** Quellen liefern bereits FSB(16) — `migrate_catalog_to_fixed_binary()` entfällt.
+- **Einfacher Merge:** `pa.concat_tables` + ts_event-Dedup direkt auf Arrow-Ebene.
+- ZIPs werden nach erfolgreichem Merge per `os.remove()` gelöscht (unwiderruflich).
+- `ETORO_CONFIRM_LIVE=1` muss in `.env` gesetzt sein (Safety-Interlock).
+- Backtest: 7-Tage-Midnight-UTC-Fenster, $10.000 Startkapital.
 
 ---
 
@@ -1466,6 +1501,7 @@ class MyConfig(StrategyConfig, frozen=True, kw_only=True):
 
 | Date | Change | Files Modified |
 |------|--------|----------------|
+| 2026-05-25 | **Phase-2-Shift-Left: Standalone `automation/` Paket (v2.0)** — (1) `api_backfiller.py`: Ersetzt Inline-Gap-Fetch; dynamische Precision via eToro API (`/market-data/instruments`), direkte FSB(16)-Enkodierung per `struct.pack('<q', raw)+b'\x00'*8`, Arrow-Metadaten-Injektion (b"price_precision", b"size_precision", b"instrument_id"), kein adapters/-Import. (2) `catalog_service.py`: Ersetzt `run_catalog.py`; eToro-WebSocket 24/7-Dienst, stündlicher Flush → Dedup → Parquet (FSB(16)) → `[Timestamp].zip` in `data/import/`, systemd-fähig, kein adapters/-Import. (3) `daily_orchestrator.py v2.0`: Multi-ZIP-Handling (alle `*.zip` in `data/import/`), einfacher Merge via `pa.concat_tables`, kein `migrate_catalog_to_fixed_binary`, kein adapters/-Import (Precision-Heuristik inline). | `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/daily_orchestrator.py`, `AGENTS.md`, `manuals/automation_orchestrator.md`, `.agents/JULES_SYSTEM_PROMPT.md`, `.agents/Integration_Guide.md` |
 | 2026-05-20 | Bugfix (4 kritische Fehler): (A) Metriken-Extraktion auf `engine.cache.positions()` + `generate_positions_report()`-Fallback umgestellt — WinRate/PF/Sortino waren dauerhaft 0.00 weil `generate_order_fills_report()` keine `realized_pnl`-Spalte enthält; (B) Open-Position-Zählung auf `status`-Spalte korrigiert — vorher wurden alle historischen DataFrame-Rows gezählt statt nur OPEN-Status (Faktor-2-Anomalie behoben); (C) Flat-Lock in allen Signal-Methoden behoben — `current_signal`/`current_position` wird nach `_close_position()` auf None zurückgesetzt, sodass Reverse-Entry auf der nächsten Bar möglich ist; (D) `OmsType.NETTING`-Konsistenz validiert — einzige Verwendung in run_backtest.py, kein HEDGING. AGENTS.md Section 6 Boilerplate + Section 17 (Pitfall #16) aktualisiert. | `backtesting/run_backtest.py`, `strategies/mean_reversion.py`, `strategies/dynamic_breakout.py`, `strategies/sma_crossover.py`, `strategies/flash_crash_reversal.py`, `strategies/volatility_breakout.py`, `strategies/trend_pullback.py`, `strategies/tesla_combo_strategy.py`, `strategies/adx_atr_momentum.py`, `strategies/momentum_ls_sma.py`, `AGENTS.md` |
 | 2026-05-21 | Added `manuals/end_to_end_workflow.md` documenting the 4-step pipeline, Demo/Live isolation, and the Fractional Equities limitation. Updated `README.md` and added "Roadmap & Architecture Upgrades" to `AGENTS.md`. | `manuals/end_to_end_workflow.md`, `README.md`, `AGENTS.md` |
 | 2026-05-20 | Bugfix (kritisch): `make_qty` ValueError korrekt behoben — Pre-check `units < size_increment` + `try/except ValueError` in allen 9 Strategie-Dateien. AGENTS.md Pitfall #14 und Section 6 Boilerplate korrigiert: `round_down=True` verhindert den ValueError NICHT (war falsch dokumentiert seit 2026-05-19). | `strategies/*.py`, `AGENTS.md` |
