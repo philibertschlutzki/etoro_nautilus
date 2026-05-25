@@ -41,6 +41,31 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# ─── Inline Precision-Heuristik (kein adapters/-Import) ──────────────────────
+# Repliziert adapters/instrument_utils.get_size_precision() ohne externen Import.
+# Muss bei Änderungen an instrument_utils.py synchron gehalten werden.
+_CRYPTO_SYMBOLS = frozenset({
+    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
+    "HYPE", "ONDO", "SHIBxM", "AERO", "PEPExM",
+})
+_FRACTIONAL_SYMBOLS = frozenset({
+    "NATGAS", "USDTRY", "USDZAR", "PALL",
+})
+
+
+def _get_size_precision(symbol: str) -> int:
+    """Standalone size_precision — kein adapters/-Import.
+
+    Crypto=8, Forex/Commodities=5, Equity=0.
+    Identische Logik wie adapters/instrument_utils.get_size_precision().
+    """
+    sym = symbol.split(".")[0]
+    if sym in _CRYPTO_SYMBOLS:
+        return 8
+    if sym in _FRACTIONAL_SYMBOLS:
+        return 5
+    return 0
+
 # Persistenter Cache für size_increment-Werte
 _SIZE_INCREMENT_CACHE_PATH = Path(__file__).parent.parent / "data" / "state" / "size_increment_cache.json"
 _size_increment_cache: dict[str, float] = {}
@@ -86,10 +111,8 @@ def get_size_increment(symbol: str, etoro_id: str) -> float:
     if key in _size_increment_cache:
         return _size_increment_cache[key]
 
-    # Default-Werte nach Asset-Klasse
-    sym_base = symbol.split(".")[0]
-    from adapters.instrument_utils import get_size_precision
-    prec = get_size_precision(symbol)
+    # Default-Werte nach Asset-Klasse (inline, kein adapters/-Import)
+    prec = _get_size_precision(symbol)
 
     if prec >= 8:
         default = 1e-8   # Crypto
@@ -285,8 +308,7 @@ def get_dynamic_size_precision(symbol: str, etoro_id: str) -> int:
     da USD direkt angegeben wird. Diese Funktion wird hauptsächlich für den
     Backtesting-Kontext verwendet.
     """
-    from adapters.instrument_utils import get_size_precision
-    base_prec = get_size_precision(symbol)
+    base_prec = _get_size_precision(symbol)  # inline, kein adapters/-Import
 
     if base_prec == 0:
         # Equity: by-amount Route → precision auf 8 setzen für interne

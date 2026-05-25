@@ -820,25 +820,54 @@ def phase5_live_deployment(
 
 
 def _ensure_safety_interlocks(log: logging.Logger) -> None:
-    """Validiert Safety-Interlocks für Live-Trading.
+    """Validiert Safety-Interlocks für Live-Trading (vollständig standalone).
 
-    Hinweis: config/setups.py ist KEIN adapters/-Import.
-    Import bleibt zulässig für Phase 5.
+    Konfigurationsquellen in Priorität:
+      1. ETORO_EXECUTION env-var als JSON-String:
+            ETORO_EXECUTION='{"environment": "real", "dry_run": false}'
+      2. Optionaler Fallback via importlib auf config/setups.py (nicht adapters/).
+      3. Sicherer Standalone-Default: environment="demo", dry_run=True.
     """
-    try:
-        from config.setups import ETORO_EXECUTION
-        env     = ETORO_EXECUTION.get("environment", "demo")
-        dry_run = ETORO_EXECUTION.get("dry_run", True)
-        if env != "real":
-            log.warning(f"[Phase 5] ETORO_EXECUTION['environment'] = '{env}' (erwartet 'real').")
-        else:
-            log.info("[Phase 5] ✓ environment='real' — Demo-Konto konfiguriert.")
-        if dry_run:
-            log.warning("[Phase 5] ETORO_EXECUTION['dry_run'] = True — kein Live-Trading!")
-        else:
-            log.info("[Phase 5] ✓ dry_run=False — Live-Modus aktiviert.")
-    except ImportError:
-        log.warning("[Phase 5] config/setups.py nicht importierbar — Safety-Check übersprungen.")
+    etoro_exec: dict = {}
+
+    # Quelle 1: Environment-Variable (Standalone-bevorzugt)
+    etoro_exec_raw = os.getenv("ETORO_EXECUTION", "").strip()
+    if etoro_exec_raw:
+        try:
+            etoro_exec = json.loads(etoro_exec_raw)
+            log.debug("[Phase 5] ETORO_EXECUTION aus Umgebungsvariable geladen.")
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning(
+                f"[Phase 5] ETORO_EXECUTION-EnvVar JSON ungültig ({e}) — "
+                "ignoriere und versuche Fallback."
+            )
+
+    # Quelle 2: Optionaler Fallback auf config/setups.py (kein adapters/-Import)
+    if not etoro_exec:
+        try:
+            import importlib
+            _cfg = importlib.import_module("config.setups")
+            etoro_exec = getattr(_cfg, "ETORO_EXECUTION", {})
+            if etoro_exec:
+                log.debug("[Phase 5] ETORO_EXECUTION aus config/setups.py geladen (Fallback).")
+        except (ImportError, AttributeError, Exception):
+            log.info(
+                "[Phase 5] config/setups.py nicht verfügbar — "
+                "Standalone-Default: environment=demo, dry_run=True."
+            )
+
+    env     = etoro_exec.get("environment", "demo")
+    dry_run = etoro_exec.get("dry_run", True)
+
+    if env != "real":
+        log.warning(f"[Phase 5] ETORO_EXECUTION['environment'] = '{env}' (erwartet 'real').")
+    else:
+        log.info("[Phase 5] ✓ environment='real' — Demo-Konto konfiguriert.")
+
+    if dry_run:
+        log.warning("[Phase 5] ETORO_EXECUTION['dry_run'] = True — kein Live-Trading!")
+    else:
+        log.info("[Phase 5] ✓ dry_run=False — Live-Modus aktiviert.")
 
     confirm_live = os.getenv("ETORO_CONFIRM_LIVE", "0").strip()
     if confirm_live != "1":
@@ -870,6 +899,11 @@ def main() -> int:
     load_dotenv(str(ENV_FILE))
     api_key  = os.getenv("ETORO_API_KEY",  "")
     user_key = os.getenv("ETORO_USER_KEY", "")
+
+    # ── Pflicht-Verzeichnisse vorab anlegen (I/O-Laufzeitfehler verhindern) ──
+    IMPORT_PATH.mkdir(parents=True, exist_ok=True)
+    (PROJECT_ROOT / "data" / "state").mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     log = _setup_orchestrator_logging()
 
