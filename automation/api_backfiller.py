@@ -705,6 +705,10 @@ def main() -> int:
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
+    # ── Pflicht-Verzeichnisse vorab anlegen (I/O-Laufzeitfehler verhindern) ──
+    QUOTE_TICK_PATH.mkdir(parents=True, exist_ok=True)
+    (PROJECT_ROOT / "data" / "state").mkdir(parents=True, exist_ok=True)
+
     load_dotenv(str(ENV_FILE))
     api_key  = os.getenv("ETORO_API_KEY",  "")
     user_key = os.getenv("ETORO_USER_KEY", "")
