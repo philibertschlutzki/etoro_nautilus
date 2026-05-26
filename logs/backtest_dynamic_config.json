@@ -1,0 +1,105 @@
+{
+  "global_settings": {
+    "catalog_path": "/home/user/etoro_nautilus/data/nautilus",
+    "start_time": "2026-05-19T00:00:00Z",
+    "end_time": "2026-05-26T00:00:00Z",
+    "start_capital": 10000.0,
+    "_note": "Dynamisch generiert — Fenster: 2026-05-19 bis 2026-05-26 (Midnight UTC). Quellen: catalog_service.py (stündliche ZIPs) + api_backfiller.py (7-Tage-Candles). Alle Daten als FSB(16)."
+  },
+  "strategies": [
+    {
+      "strategy_module": "strategies.sma_crossover",
+      "strategy_class": "SmaCrossoverStrategy",
+      "config_class": "SmaCrossoverConfig",
+      "params": {
+        "sma_period": 2
+      }
+    },
+    {
+      "strategy_module": "strategies.trend_pullback",
+      "strategy_class": "TrendPullbackStrategy",
+      "config_class": "TrendPullbackConfig",
+      "params": {
+        "ema_period": 2,
+        "rsi_period": 2,
+        "rsi_oversold": 40.0,
+        "rsi_overbought": 60.0
+      }
+    },
+    {
+      "strategy_module": "strategies.mean_reversion",
+      "strategy_class": "MeanReversionStrategy",
+      "config_class": "MeanReversionConfig",
+      "params": {
+        "keltner_period": 2,
+        "keltner_atr_period": 2,
+        "keltner_multiplier": 0.1
+      }
+    },
+    {
+      "strategy_module": "strategies.dynamic_breakout",
+      "strategy_class": "DynamicBreakoutStrategy",
+      "config_class": "DynamicBreakoutConfig",
+      "params": {
+        "volume_sma_period": 2,
+        "volume_multiplier": 0.5,
+        "price_breakout_period": 2
+      }
+    },
+    {
+      "strategy_module": "strategies.flash_crash_reversal",
+      "strategy_class": "FlashCrashReversalStrategy",
+      "config_class": "FlashCrashReversalConfig",
+      "params": {
+        "bb_period": 2,
+        "bb_std_dev": 0.5,
+        "rsi_period": 2,
+        "rsi_oversold": 40.0,
+        "rsi_overbought": 60.0
+      }
+    },
+    {
+      "strategy_module": "strategies.volatility_breakout",
+      "strategy_class": "VolatilityBreakoutPumpStrategy",
+      "config_class": "VolatilityBreakoutConfig",
+      "params": {
+        "bb_period": 2,
+        "bb_std_dev": 0.5
+      }
+    },
+    {
+      "strategy_module": "strategies.tesla_combo_strategy",
+      "strategy_class": "ComboTrendVwapStrategy",
+      "config_class": "ComboTrendVwapConfig",
+      "params": {
+        "sma_period": 2,
+        "macd_fast": 2,
+        "macd_slow": 3,
+        "bb_period": 2,
+        "bb_std_dev": 0.5,
+        "bb_entry_tolerance": 0.99
+      }
+    },
+    {
+      "strategy_module": "strategies.adx_atr_momentum",
+      "strategy_class": "AdxAtrMomentumStrategy",
+      "config_class": "AdxAtrMomentumConfig",
+      "params": {
+        "adx_period": 2,
+        "ema_period": 2,
+        "atr_period": 2,
+        "atr_multiplier": 0.1
+      }
+    },
+    {
+      "strategy_module": "strategies.vwap_exhaustion",
+      "strategy_class": "VwapExhaustionStrategy",
+      "config_class": "VwapExhaustionConfig",
+      "params": {
+        "volume_sma_period": 2,
+        "deviation_threshold": 0.001,
+        "volume_multiplier": 0.5
+      }
+    }
+  ]
+}
