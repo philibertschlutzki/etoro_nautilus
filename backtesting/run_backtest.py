@@ -53,7 +53,15 @@ except ImportError:
     def create_tearsheet(*args, **kwargs):
         raise ImportError("nautilus_trader.analysis.tearsheet not available in this version.")
 
-from adapters.instrument_utils import get_size_precision
+# ─── Precision-Heuristik aus automation.utils (kein adapters/-Import) ────────
+try:
+    from automation.utils import _fallback_precisions
+except ImportError:
+    # Fallback wenn PROJECT_ROOT noch nicht im sys.path
+    _project_root_for_import = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if _project_root_for_import not in sys.path:
+        sys.path.insert(0, _project_root_for_import)
+    from automation.utils import _fallback_precisions
 
 # ---------------------------------------------------------------------------
 # Globale Housekeeping
@@ -194,6 +202,200 @@ def ts_to_ns(ts: pd.Timestamp | None) -> int | None:
     return int(ts.value) if ts is not None else None
 
 
+# ---------------------------------------------------------------------------
+# Precision-Hilfsfunktionen (Task 3: aus Parquet-Metadaten lesen)
+# ---------------------------------------------------------------------------
+
+def read_precisions_from_parquet(catalog_path: str, instrument_id_str: str) -> tuple[int, int]:
+    """Liest price_precision und size_precision aus Parquet-Schema-Metadaten.
+
+    Root Cause Fix für:
+      RuntimeError: invalid tick.bid_size.precision=8 did not match instrument.size_precision=0
+
+    Lie die Precisions direkt aus den Arrow-Schema-Metadaten des Parquet-Katalogs.
+    Fallback: _fallback_precisions() aus automation/utils.py.
+
+    Args:
+        catalog_path:        Pfad zum Nautilus-Katalog (z.B. ./data/nautilus)
+        instrument_id_str:   Instrument-ID (z.B. "ETH.ETORO")
+
+    Returns:
+        (price_precision, size_precision)
+    """
+    parquet_path = os.path.join(
+        catalog_path, "data", "quote_tick", instrument_id_str, "data.parquet"
+    )
+    if os.path.exists(parquet_path):
+        try:
+            schema = pq.read_schema(parquet_path)
+            meta   = schema.metadata or {}
+            price_prec = int(meta.get(b"price_precision", b"2").decode())
+            size_prec  = int(meta.get(b"size_precision",  b"0").decode())
+            return price_prec, size_prec
+        except Exception:
+            pass  # Fallback below
+    # Kein Parquet oder Metadaten fehlen → Symbol-basierte Heuristik
+    return _fallback_precisions(instrument_id_str)
+
+
+# ---------------------------------------------------------------------------
+# Strategy-Defaults-Loader und Merge-Logik (Task 2)
+# ---------------------------------------------------------------------------
+
+def _get_project_root() -> str:
+    """Gibt das Projekt-Root-Verzeichnis zurück (parent von backtesting/)."""
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+
+def load_strategy_defaults(project_root: str | None = None) -> dict:
+    """Lädt strategy_defaults.json aus automation/config/.
+
+    Args:
+        project_root: Projekt-Root-Pfad. Wenn None, wird auto-detektiert.
+
+    Returns:
+        Dict {ClassName: {param: default_value, ...}}
+    """
+    root = project_root or _get_project_root()
+    defaults_path = os.path.join(root, "automation", "config", "strategy_defaults.json")
+    if os.path.exists(defaults_path):
+        try:
+            with open(defaults_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # _schema-Schlüssel entfernen
+            return {k: v for k, v in data.items() if not k.startswith("_")}
+        except Exception as e:
+            print(f"  ⚠️  strategy_defaults.json Ladefehler: {e} — nutze leere Defaults.")
+    return {}
+
+
+def apply_strategy_defaults(strategies: list[dict], defaults: dict) -> list[dict]:
+    """Merged strategy_defaults.json mit Strategie-Params aus der Config.
+
+    Merge-Reihenfolge (niedrig → hoch Priorität):
+      1. strategy_defaults.json (Basis)
+      2. strategy.params aus der übergebenen Config (Override)
+
+    Args:
+        strategies: Liste der Strategie-Dicts (aus dem generierten Config-JSON)
+        defaults:   Dict aus strategy_defaults.json
+
+    Returns:
+        Neue Liste mit gemergten params-Dicts.
+    """
+    result = []
+    for strat in strategies:
+        class_name    = strat.get("strategy_class", "")
+        class_defaults = defaults.get(class_name, {})
+        merged_params  = {**class_defaults, **strat.get("params", {})}
+        result.append({**strat, "params": merged_params})
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tournament-Config-Loader und Scoring (Task 5)
+# ---------------------------------------------------------------------------
+
+def load_tournament_config(project_root: str | None = None) -> dict:
+    """Lädt tournament.json aus automation/config/.
+
+    Returns:
+        Tournament-Konfigurations-Dict.
+    """
+    root = project_root or _get_project_root()
+    cfg_path = os.path.join(root, "automation", "config", "tournament.json")
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {k: v for k, v in data.items() if not k.startswith("_")}
+        except Exception as e:
+            print(f"  ⚠️  tournament.json Ladefehler: {e} — nutze Legacy-Defaults.")
+    # Legacy-Defaults (Rückwärts-Kompatibilität)
+    return {
+        "min_trades": 5,
+        "min_sortino": 0.0,
+        "min_profit_factor": 1.5,
+        "max_drawdown": 1.0,
+        "min_win_rate": 0.0,
+        "min_total_return": 0.0,
+        "eligible_requires_all": ["min_trades"],
+        "eligible_requires_any": ["min_profit_factor"],
+        "scoring": {
+            "sortino_weight": 0.4,
+            "profit_factor_weight": 0.3,
+            "win_rate_weight": 0.2,
+            "drawdown_penalty_weight": 0.1,
+        },
+    }
+
+
+def compute_tournament_score(metrics: dict, scoring: dict) -> float:
+    """Berechnet den composite Tournament-Score.
+
+    Score = sortino * sw + profit_factor * pfw + win_rate * wrw - max_drawdown * ddw
+
+    Args:
+        metrics: Metriken-Dict aus extract_metrics()
+        scoring: Scoring-Konfig-Dict aus tournament.json
+
+    Returns:
+        Composite Score (float).
+    """
+    sw  = scoring.get("sortino_weight", 0.4)
+    pfw = scoring.get("profit_factor_weight", 0.3)
+    wrw = scoring.get("win_rate_weight", 0.2)
+    ddw = scoring.get("drawdown_penalty_weight", 0.1)
+
+    sortino       = metrics.get("sortino_ratio", 0.0)
+    profit_factor = metrics.get("profit_factor", 0.0)
+    win_rate      = metrics.get("win_rate", 0.0)
+    max_drawdown  = metrics.get("max_drawdown", 0.0)
+
+    return (
+        sortino       * sw
+        + profit_factor * pfw
+        + win_rate      * wrw
+        - max_drawdown  * ddw
+    )
+
+
+def _is_eligible(metrics: dict, tournament_cfg: dict) -> bool:
+    """Prüft ob eine Strategie für das Tournament eligibel ist.
+
+    eligible_requires_all: ALLE Bedingungen müssen erfüllt sein.
+    eligible_requires_any: MINDESTENS EINE Bedingung muss erfüllt sein.
+    """
+    n_trades     = metrics.get("total_trades", 0)
+    sortino      = metrics.get("sortino_ratio", 0.0)
+    pf           = metrics.get("profit_factor", 0.0)
+    max_dd       = metrics.get("max_drawdown", 1.0)
+    win_rate     = metrics.get("win_rate", 0.0)
+    total_return = metrics.get("total_return", 0.0)
+
+    condition_map = {
+        "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
+        "min_sortino":       sortino      >= tournament_cfg.get("min_sortino", 0.0),
+        "min_profit_factor": pf           >= tournament_cfg.get("min_profit_factor", 1.0),
+        "max_drawdown":      max_dd       <= tournament_cfg.get("max_drawdown", 1.0),
+        "min_win_rate":      win_rate     >= tournament_cfg.get("min_win_rate", 0.0),
+        "min_total_return":  total_return >= tournament_cfg.get("min_total_return", 0.0),
+    }
+
+    # Harte Filter: ALLE müssen erfüllt sein
+    for cond_name in tournament_cfg.get("eligible_requires_all", []):
+        if not condition_map.get(cond_name, True):
+            return False
+
+    # Weiche Filter: MINDESTENS EINE muss erfüllt sein
+    any_conditions = tournament_cfg.get("eligible_requires_any", [])
+    if any_conditions:
+        if not any(condition_map.get(c, False) for c in any_conditions):
+            return False
+
+    return True
+
+
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,
@@ -222,10 +424,39 @@ def infer_precision_from_ticks(ticks: list) -> int:
     return int(max(precisions)) if precisions else 2
 
 
-def create_mock_instrument(instrument_id_str: str, price_precision: int = 2) -> Equity:
+def create_mock_instrument(
+    instrument_id_str: str,
+    price_precision: int = 2,
+    size_precision: int | None = None,
+    catalog_path: str | None = None,
+) -> Equity:
+    """Erstellt ein Mock-Equity-Instrument für den Backtest-Engine.
+
+    Task 3 Fix: size_precision wird aus Parquet-Metadaten gelesen (nicht aus adapters/).
+    Wenn catalog_path angegeben, werden Precisions aus dem Parquet-Schema gelesen.
+
+    Args:
+        instrument_id_str: Nautilus-Instrument-ID (z.B. "ETH.ETORO")
+        price_precision:   Preis-Precision (Standard: 2)
+        size_precision:    Größen-Precision. Wenn None und catalog_path angegeben,
+                           wird aus Parquet-Metadaten gelesen. Sonst Fallback-Heuristik.
+        catalog_path:      Pfad zum Nautilus-Katalog für Parquet-Metadaten-Lookup.
+
+    Returns:
+        Equity-Instrument mit korrekten Precisions.
+    """
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
-    size_prec = get_size_precision(instrument_id_str)
+
+    # size_precision aus Parquet-Metadaten oder Heuristik
+    if size_precision is None:
+        if catalog_path:
+            _, size_prec = read_precisions_from_parquet(catalog_path, instrument_id_str)
+        else:
+            _, size_prec = _fallback_precisions(instrument_id_str)
+    else:
+        size_prec = size_precision
+
     size_inc_val = round(10 ** (-size_prec), size_prec) if size_prec > 0 else 1.0
 
     return Equity(
@@ -387,28 +618,55 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 # Tournament-Logik
 # ---------------------------------------------------------------------------
 
-def select_winners(all_results: list[dict]) -> tuple[dict, dict | None]:
+def select_winners(
+    all_results: list[dict],
+    tournament_cfg: dict | None = None,
+) -> tuple[dict, dict | None]:
+    """Wählt Gewinner pro Symbol anhand der Tournament-Konfiguration.
+
+    Task 5: Robuste Multi-Kriterien-Selektion mit:
+      - eligible_requires_all: harte Filter (z.B. min_trades >= 10)
+      - eligible_requires_any: weiche Filter (min_sortino ODER min_profit_factor)
+      - composite Score für die finale Gewinner-Auswahl
+      - score-Feld im Output
+
+    Args:
+        all_results:     Liste aller Backtest-Ergebnisse
+        tournament_cfg:  Konfig aus tournament.json. Wenn None, wird geladen.
+
+    Returns:
+        (per_symbol_winners, aggregate_winner)
+    """
+    if tournament_cfg is None:
+        tournament_cfg = load_tournament_config()
+
+    scoring = tournament_cfg.get("scoring", {})
+
+    # Eligible filtern
     eligible = [
         r for r in all_results
-        if r["metrics"]["profit_factor"] > 1.5
-        and r["metrics"]["total_trades"] >= 5
+        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
     ]
+
+    # Besten pro Symbol via composite Score auswählen
     per_symbol: dict[str, dict] = {}
     for r in eligible:
-        sym = r["symbol"]
-        curr = per_symbol.get(sym)
-        if curr is None:
-            per_symbol[sym] = r
-        else:
-            new_key = (r["metrics"]["sortino_ratio"], r["metrics"]["calmar_ratio"])
-            if new_key > (curr["metrics"]["sortino_ratio"], curr["metrics"]["calmar_ratio"]):
-                per_symbol[sym] = r
+        sym   = r["symbol"]
+        score = compute_tournament_score(r["metrics"], scoring)
+        curr  = per_symbol.get(sym)
+        if curr is None or score > curr.get("_score", float("-inf")):
+            per_symbol[sym] = {**r, "_score": score}
 
     per_symbol_winners = {
-        sym: {"strategy": r["strategy"], "metrics": r["metrics"]}
+        sym: {
+            "strategy": r["strategy"],
+            "metrics":  r["metrics"],
+            "score":    round(r["_score"], 6),
+        }
         for sym, r in per_symbol.items()
     }
 
+    # Aggregierter Gewinner: Strategie mit den meisten Symbol-Siegen
     win_counts: dict[str, int] = {}
     sortinos_by_strat: dict[str, list] = {}
     for r in per_symbol.values():
@@ -419,11 +677,11 @@ def select_winners(all_results: list[dict]) -> tuple[dict, dict | None]:
     aggregate_winner = None
     if win_counts:
         max_wins = max(win_counts.values())
-        top = [s for s, w in win_counts.items() if w == max_wins]
-        best = max(top, key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s]))
+        top      = [s for s, w in win_counts.items() if w == max_wins]
+        best     = max(top, key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s]))
         aggregate_winner = {
-            "strategy": best,
-            "win_count": win_counts[best],
+            "strategy":    best,
+            "win_count":   win_counts[best],
             "mean_sortino": round(
                 sum(sortinos_by_strat[best]) / len(sortinos_by_strat[best]), 4
             ),
@@ -436,20 +694,29 @@ def write_tournament_json(
     all_results: list[dict],
     output_path: str,
     universe_snapshot: str = "",
+    tournament_cfg: dict | None = None,
 ) -> None:
-    per_symbol_winners, aggregate_winner = select_winners(all_results)
+    """Schreibt Tournament-Ergebnisse als JSON.
+
+    Task 5: Jeder Gewinner-Eintrag enthält jetzt ein 'score'-Feld.
+    """
+    if tournament_cfg is None:
+        tournament_cfg = load_tournament_config()
+
+    per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
     eligible_count = sum(
         1 for r in all_results
-        if r["metrics"]["profit_factor"] > 1.5 and r["metrics"]["total_trades"] >= 5
+        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
     )
     output = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "universe_snapshot": universe_snapshot,
+        "generated_at":                datetime.now(timezone.utc).isoformat(),
+        "universe_snapshot":           universe_snapshot,
         "total_symbol_strategy_pairs": len(all_results),
-        "eligible_pairs": eligible_count,
-        "per_symbol_winners": per_symbol_winners,
-        "aggregate_winner": aggregate_winner,
-        "full_results": all_results,
+        "eligible_pairs":              eligible_count,
+        "tournament_criteria":         tournament_cfg,
+        "per_symbol_winners":          per_symbol_winners,
+        "aggregate_winner":            aggregate_winner,
+        "full_results":                all_results,
     }
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -460,6 +727,7 @@ def write_tournament_json(
 def print_tournament_table(
     all_results: list[dict],
     per_symbol_winners: dict,
+    tournament_cfg: dict | None = None,
 ) -> tuple[int, list[str]]:
     print(f"\n{'Symbol':<20} | {'Strategy':<30} | {'Sortino':>7} | {'Calmar':>7} | {'PF':>7} | {'Trades':>6} | Win?")
     print("-" * 95)
@@ -533,13 +801,27 @@ def run_single_backtest_worker(
 
     # --- Engine-Setup ---
     try:
+        # Task 3: price_precision aus Ticks, size_precision aus Parquet-Metadaten
         price_precision = infer_precision_from_ticks(ticks)
+        pp_parquet, sp_parquet = read_precisions_from_parquet(catalog_path, inst_id_str)
+        # Verwende Parquet-Precision als Fallback wenn Ticks keine Precision liefern
+        if price_precision == 2 and pp_parquet != 2:
+            price_precision = pp_parquet
+        size_precision = sp_parquet
+
+        wlog(
+            f"   🔬 Precisions: price={price_precision} (ticks), "
+            f"size={size_precision} (parquet meta)"
+        )
+
         engine_config = BacktestEngineConfig(
             trader_id=f"BT-{inst_id_str.replace('.', '_')}-{strategy_class_name}"
         )
         engine = BacktestEngine(config=engine_config)
 
-        # Fix Bug 2: Zurückrollen auf NETTING-Kontoerstellung
+        # Task 4: Spread-Modeling — NautilusTrader füllt Buy@Ask, Sell@Bid per Default
+        # Dies ist das korrekte Verhalten bei QuoteTick-Daten (kein extra FillModel nötig).
+        # spread_modeling=true in backtest.json dokumentiert dieses Verhalten explizit.
         engine.add_venue(
             venue=Venue("ETORO"),
             oms_type=OmsType.NETTING,
@@ -548,7 +830,10 @@ def run_single_backtest_worker(
             starting_balances=[Money(start_capital, USD)],
         )
 
-        mock_inst = create_mock_instrument(inst_id_str, price_precision)
+        # Task 3 Fix: Mock-Instrument mit korrekter size_precision aus Parquet-Metadaten
+        mock_inst = create_mock_instrument(
+            inst_id_str, price_precision, size_precision=size_precision
+        )
         engine.add_instrument(mock_inst)
         engine.add_data(ticks)
 
@@ -652,6 +937,8 @@ def run_backtest() -> None:
     parser.add_argument("--catalog-path", type=str, default=None)
     parser.add_argument("--config",       type=str, default=None)
     parser.add_argument("--output",       type=str, default=None)
+    parser.add_argument("--dry-run",      action="store_true",
+                        help="Config-Validierung ohne echten Backtest-Run.")
     args = parser.parse_args()
 
     _script_dir   = os.path.dirname(os.path.abspath(__file__))
@@ -676,6 +963,36 @@ def run_backtest() -> None:
             if exc:
                 f.write(traceback.format_exc() + "\n")
 
+    # --- backtest.json (Task 4: Spread-Modeling-Flag) ---
+    backtest_global_cfg = {}
+    _bt_cfg_path = os.path.join(_project_root, "automation", "config", "backtest.json")
+    if os.path.exists(_bt_cfg_path):
+        try:
+            with open(_bt_cfg_path, "r", encoding="utf-8") as _f:
+                backtest_global_cfg = {k: v for k, v in json.load(_f).items() if not k.startswith("_")}
+        except Exception as _e:
+            print(f"  ⚠️  backtest.json Ladefehler: {_e}")
+    spread_modeling = backtest_global_cfg.get("spread_modeling", True)
+    fill_model_str  = backtest_global_cfg.get("fill_model", "bid_ask")
+    print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str})")
+    if spread_modeling:
+        print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
+    else:
+        print("   ℹ️  Spread-Modeling deaktiviert (Kompatibilitätsmodus)")
+
+    # --- Tournament-Config (Task 5) ---
+    tournament_cfg = load_tournament_config(_project_root)
+    print(
+        f"🏆 Tournament: min_trades={tournament_cfg.get('min_trades')}, "
+        f"min_sortino={tournament_cfg.get('min_sortino')}, "
+        f"min_pf={tournament_cfg.get('min_profit_factor')}"
+    )
+
+    # --- Strategie-Defaults laden (Task 2) ---
+    strategy_defaults = load_strategy_defaults(_project_root)
+    if strategy_defaults:
+        print(f"⚙️  Strategy-Defaults geladen für: {', '.join(strategy_defaults.keys())}")
+
     # --- Config ---
     config_path = args.config or os.path.join(_script_dir, "backtesting_config.json")
     if not os.path.exists(config_path):
@@ -686,9 +1003,25 @@ def run_backtest() -> None:
     global_settings = config_data.get("global_settings", {})
     strategies_list = config_data.get("strategies", [])
 
+    # Task 6: Nur aktive Strategien berücksichtigen
+    active_before = len(strategies_list)
+    strategies_list = [s for s in strategies_list if s.get("active", True) is not False]
+    if len(strategies_list) < active_before:
+        print(f"⚙️  {active_before - len(strategies_list)} inaktive Strategie(n) übersprungen.")
+
     if not strategies_list:
-        log_error("⚠️ Keine Strategien in Config gefunden.")
+        log_error("⚠️ Keine aktiven Strategien in Config gefunden.")
         return
+
+    # Task 2: Strategy-Defaults auf die Strategie-Params anwenden (Overrides behalten Vorrang)
+    strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults)
+    if strategy_defaults:
+        example_sma = next(
+            (s for s in strategies_list if s.get("strategy_class") == "SmaCrossoverStrategy"), None
+        )
+        if example_sma:
+            sma_period = example_sma.get("params", {}).get("sma_period", "?")
+            print(f"✅ Defaults angewandt — SmaCrossoverStrategy: sma_period={sma_period}")
 
     # --- Parameter-Validierung ---
     param_warnings: list[str] = []
@@ -715,6 +1048,16 @@ def run_backtest() -> None:
     start_capital = global_settings.get("start_capital", 100_000.0)
     catalog_path = args.catalog_path or global_settings.get("catalog_path", "./data/nautilus")
 
+    # --- Dry-Run: Zeige Konfiguration und exit (Task 2 Acceptance Criterion) ---
+    if getattr(args, "dry_run", False):
+        print("\n🔍 DRY-RUN: Strategie-Konfiguration nach Defaults-Merge:")
+        for strat in strategies_list:
+            cls  = strat.get("strategy_class", "?")
+            prms = strat.get("params", {})
+            print(f"   {cls}: {json.dumps(prms, ensure_ascii=False)}")
+        print("\n✅ Dry-Run abgeschlossen (kein Backtest gestartet).")
+        return
+
     expected_data_dir = os.path.join(catalog_path, "data")
     os.makedirs(expected_data_dir, exist_ok=True)
 
@@ -737,9 +1080,15 @@ def run_backtest() -> None:
         "  ✅ Alle Schemas konsistent."
     )
 
-    # --- Mock-Instrumente registrieren ---
+    # --- Mock-Instrumente registrieren (Task 3: korrekte Precisions aus Parquet-Metadaten) ---
     catalog = ParquetDataCatalog(catalog_path)
-    dummy_instruments = [create_mock_instrument(iid) for iid in instrument_ids]
+    dummy_instruments = [
+        create_mock_instrument(
+            iid,
+            *read_precisions_from_parquet(catalog_path, iid),
+        )
+        for iid in instrument_ids
+    ]
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         try:
             catalog.write_data(dummy_instruments)
@@ -846,12 +1195,21 @@ def run_backtest() -> None:
     finally:
         _cleanup_worker_logs()
 
-    # --- Tournament ---
+    # --- Tournament (Task 5: robuste Multi-Kriterien-Selektion) ---
     if args.momentum and all_results:
-        per_symbol_winners, aggregate_winner = select_winners(all_results)
-        winner_count, no_winner_symbols = print_tournament_table(all_results, per_symbol_winners)
+        per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
+        winner_count, no_winner_symbols = print_tournament_table(
+            all_results, per_symbol_winners, tournament_cfg
+        )
         total_symbols = len(set(r["symbol"] for r in all_results))
-        print(f"\n✅ Tournament: {total_symbols} Symbole | {winner_count} Gewinner")
+        eligible_count = sum(
+            1 for r in all_results
+            if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
+        )
+        print(
+            f"\n✅ Tournament: {total_symbols} Symbole | "
+            f"{eligible_count} eligibel | {winner_count} Gewinner"
+        )
         if aggregate_winner:
             print(
                 f"🏆 {aggregate_winner['strategy']} — "
@@ -860,7 +1218,7 @@ def run_backtest() -> None:
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
-        write_tournament_json(all_results, tournament_output)
+        write_tournament_json(all_results, tournament_output, tournament_cfg=tournament_cfg)
     elif all_results:
         print(f"\n📊 {len(all_results)} Ergebnisse gesammelt (kein --momentum Flag aktiv)")
 
