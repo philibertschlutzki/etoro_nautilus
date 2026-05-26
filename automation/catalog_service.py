@@ -101,26 +101,13 @@ def _setup_logging() -> None:
     )
 
 
-# ─── Precision-Heuristik (Fallback) ──────────────────────────────────────────
-_CRYPTO_SYMBOLS = frozenset({
-    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
-    "HYPE", "ONDO", "SHIBxM", "AERO", "PEPExM",
-})
-_FRACTIONAL_SYMBOLS = frozenset({
-    "NATGAS", "USDTRY", "USDZAR", "PALL",
-})
-
-
-def _fallback_precisions(symbol: str) -> tuple[int, int]:
-    """Fallback: (price_precision, size_precision) basierend auf Symbolname."""
-    sym = symbol.split(".")[0]
-    if "SHIB" in sym or "PEPE" in sym:
-        return 8, 8
-    if sym in _CRYPTO_SYMBOLS:
-        return 2, 8
-    if sym in _FRACTIONAL_SYMBOLS:
-        return 5, 5
-    return 2, 0   # Equity-Default
+# ─── Precision-Heuristik (aus automation.utils — kein doppelter Code) ────────
+try:
+    from automation.utils import _fallback_precisions
+except ImportError:
+    import sys as _sys
+    _sys.path.insert(0, str(_THIS_DIR.parent))
+    from automation.utils import _fallback_precisions
 
 
 # ─── FixedSizeBinary(16) Encoding ────────────────────────────────────────────

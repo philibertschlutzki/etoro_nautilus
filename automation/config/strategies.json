@@ -1,0 +1,79 @@
+{
+  "_schema": {
+    "description": "Aktive Strategie-Liste mit optionalen per-Strategie-Parameter-Overrides. Defaults kommen aus strategy_defaults.json; Werte hier haben Vorrang.",
+    "fields": {
+      "active": "bool — wenn false, wird die Strategie beim Backtest übersprungen",
+      "strategy_module": "Python-Modul-Pfad der Strategie",
+      "strategy_class": "Klassen-Name der Strategie",
+      "config_class": "Klassen-Name der Strategie-Konfiguration",
+      "params": "Optionale Parameter-Overrides (merged über strategy_defaults.json)"
+    }
+  },
+  "strategies": [
+    {
+      "active": true,
+      "strategy_module": "strategies.sma_crossover",
+      "strategy_class": "SmaCrossoverStrategy",
+      "config_class": "SmaCrossoverConfig",
+      "params": {}
+    },
+    {
+      "active": false,
+      "strategy_module": "strategies.trend_pullback",
+      "strategy_class": "TrendPullbackStrategy",
+      "config_class": "TrendPullbackConfig",
+      "params": {},
+      "_note": "FIFO-Schließungen=0 (Position wird nie geclosed, nur eröffnet). Deaktiviert bis systemischer Defekt behoben."
+    },
+    {
+      "active": true,
+      "strategy_module": "strategies.mean_reversion",
+      "strategy_class": "MeanReversionStrategy",
+      "config_class": "MeanReversionConfig",
+      "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "strategies.dynamic_breakout",
+      "strategy_class": "DynamicBreakoutStrategy",
+      "config_class": "DynamicBreakoutConfig",
+      "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "strategies.flash_crash_reversal",
+      "strategy_class": "FlashCrashReversalStrategy",
+      "config_class": "FlashCrashReversalConfig",
+      "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "strategies.volatility_breakout",
+      "strategy_class": "VolatilityBreakoutPumpStrategy",
+      "config_class": "VolatilityBreakoutConfig",
+      "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "strategies.tesla_combo_strategy",
+      "strategy_class": "ComboTrendVwapStrategy",
+      "config_class": "ComboTrendVwapConfig",
+      "params": {}
+    },
+    {
+      "active": false,
+      "strategy_module": "strategies.adx_atr_momentum",
+      "strategy_class": "AdxAtrMomentumStrategy",
+      "config_class": "AdxAtrMomentumConfig",
+      "params": {},
+      "_note": "0 Trades bei ~100% aller Symbole. Deaktiviert bis systemischer Defekt (ADX-Indikator oder Signal-Logik) behoben."
+    },
+    {
+      "active": true,
+      "strategy_module": "strategies.vwap_exhaustion",
+      "strategy_class": "VwapExhaustionStrategy",
+      "config_class": "VwapExhaustionConfig",
+      "params": {}
+    }
+  ]
+}
