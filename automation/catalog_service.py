@@ -74,7 +74,7 @@ _BASE_URL_MARKET  = "https://public-api.etoro.com/api/v1/market-data"
 _SEARCH_URL       = f"{_BASE_URL_MARKET}/search"
 
 # ─── Timing ───────────────────────────────────────────────────────────────────
-FLUSH_INTERVAL_S  = 3600   # 1 Stunde
+FLUSH_INTERVAL_S  = 60   # 1 Stunde
 WS_MAX_ATTEMPTS   = 5
 WS_CONNECT_TIMEOUT = 30
 
