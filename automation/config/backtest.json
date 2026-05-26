@@ -1,0 +1,19 @@
+{
+  "_schema": {
+    "description": "Globale Backtest-Einstellungen. catalog_path ist relativ zu PROJECT_ROOT. Wird von daily_orchestrator.py und run_backtest.py gelesen.",
+    "fields": {
+      "catalog_path": "Pfad zum Nautilus-Datenkatalog (relativ zu PROJECT_ROOT)",
+      "start_capital": "Start-Kapital in USD für jeden Backtest-Run",
+      "spread_modeling": "bool — wenn true, werden Buy-Orders zum ask_price und Sell-Orders zum bid_price gefüllt (realistischere Simulation). NautilusTrader Default-Verhalten mit QuoteTicks.",
+      "fill_model": "Füll-Modell: 'bid_ask' (Buy@Ask, Sell@Bid) oder 'mid' (beide @ Midprice)",
+      "worker_log_cleanup": "bool — wenn true, werden Worker-Log-Dateien nach Abschluss gelöscht",
+      "max_workers": "Maximale Anzahl paralleler Worker-Prozesse (null = auto: cpu_count/2, max 6)"
+    }
+  },
+  "catalog_path": "data/nautilus",
+  "start_capital": 100000.0,
+  "spread_modeling": true,
+  "fill_model": "bid_ask",
+  "worker_log_cleanup": true,
+  "max_workers": null
+}

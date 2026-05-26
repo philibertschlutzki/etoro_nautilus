@@ -71,31 +71,14 @@ _CANDLES_URL     = (
 # ─── Logging ─────────────────────────────────────────────────────────────────
 log = logging.getLogger("api_backfiller")
 
-# ─── Precision-Heuristik (Fallback, falls API keine Daten liefert) ───────────
-_CRYPTO_SYMBOLS = frozenset({
-    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
-    "HYPE", "ONDO", "SHIBxM", "AERO", "PEPExM",
-})
-_FRACTIONAL_SYMBOLS = frozenset({
-    "NATGAS", "USDTRY", "USDZAR", "PALL",
-})
-
-
-def _fallback_precisions(symbol: str) -> tuple[int, int]:
-    """Fallback-Precisions basierend auf Symbolname (keine API-Abfrage).
-
-    Returns:
-        (price_precision, size_precision)
-    """
-    sym = symbol.split(".")[0]
-    if "SHIB" in sym or "PEPE" in sym:
-        return 8, 8
-    if sym in _CRYPTO_SYMBOLS:
-        return 2, 8
-    if sym in _FRACTIONAL_SYMBOLS:
-        return 5, 5
-    # Equity: price_prec=2, size_prec=0
-    return 2, 0
+# ─── Precision-Heuristik (aus automation.utils — kein doppelter Code) ────────
+try:
+    from automation.utils import _fallback_precisions
+except ImportError:
+    # Direkter Import wenn automation/ nicht im sys.path ist
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from automation.utils import _fallback_precisions
 
 
 # ─── FixedSizeBinary(16) Encoding ────────────────────────────────────────────
@@ -714,8 +697,15 @@ def main() -> int:
     user_key = os.getenv("ETORO_USER_KEY", "")
 
     if not api_key or not user_key:
-        log.error("[api_backfiller] ETORO_API_KEY oder ETORO_USER_KEY fehlen in .env — Abbruch.")
-        return 1
+        if args.dry_run:
+            # Im Dry-Run-Modus sind API-Keys optional — Universe-Validierung genügt
+            log.warning(
+                "[api_backfiller] ETORO_API_KEY oder ETORO_USER_KEY fehlen — "
+                "Dry-Run ohne API-Aufruf."
+            )
+        else:
+            log.error("[api_backfiller] ETORO_API_KEY oder ETORO_USER_KEY fehlen in .env — Abbruch.")
+            return 1
 
     etoro_id_map = _load_etoro_id_map(Path(args.universe))
     if not etoro_id_map:
@@ -723,6 +713,17 @@ def main() -> int:
         return 1
 
     specific_symbols = set(args.symbols) if args.symbols else None
+
+    # Dry-Run ohne API-Keys: Liste der Symbole ausgeben und exit
+    if args.dry_run and (not api_key or not user_key):
+        log.info(
+            f"[api_backfiller] DRY-RUN (no API keys): "
+            f"{len(etoro_id_map)} Symbole im Universe würden backgefüllt."
+        )
+        for eid, sym in sorted(etoro_id_map.items(), key=lambda x: x[1]):
+            pp, sp = _fallback_precisions(sym)
+            log.info(f"  {sym} (ID={eid}): price_prec={pp}, size_prec={sp}")
+        return 0
 
     filled = asyncio.run(
         run_backfill(

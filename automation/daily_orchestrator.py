@@ -79,8 +79,14 @@ UNIVERSE_PATH    = PROJECT_ROOT / "data" / "universe" / "momentum_ls.json"
 LOGS_DIR         = PROJECT_ROOT / "logs"
 REPORTS_DIR      = PROJECT_ROOT / "reports"
 TOURNAMENT_PATH  = LOGS_DIR / f"tournament_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.json"
-BACKTEST_CFG     = PROJECT_ROOT / "backtesting" / "backtesting_config.json"
 ENV_FILE         = PROJECT_ROOT / ".env"
+
+# ─── Automation-Config-Pfade (neues Config-Root ab Task 1) ───────────────────
+AUTOMATION_CFG_DIR    = PROJECT_ROOT / "automation" / "config"
+STRATEGIES_CFG        = AUTOMATION_CFG_DIR / "strategies.json"
+STRATEGY_DEFAULTS_CFG = AUTOMATION_CFG_DIR / "strategy_defaults.json"
+TOURNAMENT_CFG        = AUTOMATION_CFG_DIR / "tournament.json"
+BACKTEST_CFG          = AUTOMATION_CFG_DIR / "backtest.json"
 
 # ─── Logging-Konfiguration ────────────────────────────────────────────────────
 LOG_MAX_BYTES   = 1 * 1024 * 1024   # 1 MB max pro Log-Datei
@@ -90,39 +96,18 @@ LOG_RETENTION_D = 7
 # ─── Pflicht-Spalten für QuoteTick-Schema-Validierung ────────────────────────
 REQUIRED_COLUMNS = frozenset({"bid_price", "ask_price", "bid_size", "ask_size", "ts_event", "ts_init"})
 
-# ─── Inline Precision-Heuristik (kein adapters/-Import) ──────────────────────
-_CRYPTO_SYMBOLS = frozenset({
-    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
-    "HYPE", "ONDO", "SHIBxM", "AERO", "PEPExM",
-})
-_FRACTIONAL_SYMBOLS = frozenset({
-    "NATGAS", "USDTRY", "USDZAR", "PALL",
-})
+# ─── Precision-Heuristik (aus automation.utils — kein doppelter Code) ────────
+from automation.utils import _fallback_precisions
 
 
 def _get_size_precision(symbol: str) -> int:
-    """Inline-Heuristik für size_precision (kein adapters/-Import).
-
-    Crypto=8, Forex/Commodities=5, Equity=0.
-    """
-    sym = symbol.split(".")[0]
-    if sym in _CRYPTO_SYMBOLS:
-        return 8
-    if sym in _FRACTIONAL_SYMBOLS:
-        return 5
-    return 0
+    """Delegiert an automation.utils._fallback_precisions."""
+    return _fallback_precisions(symbol)[1]
 
 
 def _get_price_precision(symbol: str) -> int:
-    """Inline-Heuristik für price_precision."""
-    sym = symbol.split(".")[0]
-    if "SHIB" in sym or "PEPE" in sym:
-        return 8
-    if sym in _CRYPTO_SYMBOLS:
-        return 2
-    if sym in _FRACTIONAL_SYMBOLS:
-        return 5
-    return 2   # Equity-Default
+    """Delegiert an automation.utils._fallback_precisions."""
+    return _fallback_precisions(symbol)[0]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -679,12 +664,33 @@ def phase3_4_backtest_and_tournament(
 
 
 def _build_backtest_config(start: datetime, end: datetime, start_capital: float) -> dict:
-    strategies = []
+    """Baut die dynamische Backtest-Config aus automation/config/*.json.
+
+    Liest Strategien aus automation/config/strategies.json (nur active=true).
+    Liest Start-Kapital und Spread-Einstellungen aus automation/config/backtest.json.
+    Generierte Laufzeit-JSONs werden weiterhin in logs/ geschrieben.
+    """
+    # ── Global Settings aus backtest.json lesen ──────────────────────────────
     if BACKTEST_CFG.exists():
         try:
             with open(str(BACKTEST_CFG), "r", encoding="utf-8") as f:
-                base_cfg = json.load(f)
-            strategies = base_cfg.get("strategies", [])
+                bt_cfg = json.load(f)
+            start_capital = bt_cfg.get("start_capital", start_capital)
+        except Exception:
+            pass
+
+    # ── Strategien aus automation/config/strategies.json (nur active=true) ──
+    strategies: list[dict] = []
+    if STRATEGIES_CFG.exists():
+        try:
+            with open(str(STRATEGIES_CFG), "r", encoding="utf-8") as f:
+                strat_data = json.load(f)
+            all_strats = strat_data.get("strategies", [])
+            for s in all_strats:
+                if s.get("active", True):
+                    # _note und active-Felder nicht in die generierte Config übernehmen
+                    clean = {k: v for k, v in s.items() if k not in ("active", "_note")}
+                    strategies.append(clean)
         except Exception:
             pass
 
@@ -693,7 +699,7 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float)
             "strategy_module": "strategies.sma_crossover",
             "strategy_class":  "SmaCrossoverStrategy",
             "config_class":    "SmaCrossoverConfig",
-            "params":          {"sma_period": 2},
+            "params":          {},
         }]
 
     return {
@@ -704,7 +710,8 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float)
             "start_capital": start_capital,
             "_note": (
                 f"Dynamisch generiert — Fenster: {start.date()} bis {end.date()} "
-                "(Midnight UTC). Quellen: catalog_service.py (stündliche ZIPs) + "
+                "(Midnight UTC). Config-Root: automation/config/. "
+                "Quellen: catalog_service.py (stündliche ZIPs) + "
                 "api_backfiller.py (7-Tage-Candles). Alle Daten als FSB(16)."
             ),
         },

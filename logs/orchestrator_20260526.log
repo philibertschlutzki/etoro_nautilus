@@ -300,3 +300,44 @@
 2026-05-26 16:27:27,913 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
 2026-05-26 16:27:27,913 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-05-26T14:27:27.913361+00:00", "exit_code": 0}
 2026-05-26 16:27:27,913 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
+2026-05-26 15:05:38,823 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
+2026-05-26 15:05:38,824 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
+2026-05-26 15:05:38,824 | INFO     | orchestrator | ║  Start: 2026-05-26T15:05:38.824205+00:00                    ║
+2026-05-26 15:05:38,824 | INFO     | orchestrator | ║  DRY-RUN: JA                                                   ║
+2026-05-26 15:05:38,824 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
+2026-05-26 15:05:38,824 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
+2026-05-26 15:05:38,824 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-05-26T15:05:38.824490+00:00", "dry_run": true, "skip_api_fetch": true, "version": "2.0", "python": "3.11.15 (main, Mar  3 2026, 09:26:23) [GCC 13.3.0]"}
+2026-05-26 15:05:38,824 | WARNING  | orchestrator | ETORO_API_KEY oder ETORO_USER_KEY fehlen — API-Backfill wird übersprungen.
+2026-05-26 15:05:38,824 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,825 | INFO     | orchestrator | PHASE 1: Universe & Mapping
+2026-05-26 15:05:38,825 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,826 | WARNING  | orchestrator | [Phase 1] Universe-Daten sind 248.1h alt (> 24h). Bitte neu fetchen.
+2026-05-26 15:05:38,826 | INFO     | orchestrator | [Phase 1] 49 eindeutige Instrumente im Universum.
+2026-05-26 15:05:38,827 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "timestamp_utc": "2026-05-26T15:05:38.827014+00:00", "universe_size": 49, "unmapped_count": 0}
+2026-05-26 15:05:38,827 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,827 | INFO     | orchestrator | PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)
+2026-05-26 15:05:38,827 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,827 | INFO     | orchestrator | [Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.
+2026-05-26 15:05:38,827 | INFO     | orchestrator | [Phase 2c] API-Backfill übersprungen (--skip-api-fetch).
+2026-05-26 15:05:38,827 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2_COMPLETE", "timestamp_utc": "2026-05-26T15:05:38.827555+00:00", "merged_instruments": 0, "zips_deleted": 0, "api_filled_count": 0}
+2026-05-26 15:05:38,827 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,827 | INFO     | orchestrator | PHASE 3+4: Matrix-Backtesting & Tournament
+2026-05-26 15:05:38,827 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,827 | INFO     | orchestrator | [Phase 3] Zeitfenster: 2026-05-19T00:00:00+00:00 → 2026-05-26T00:00:00+00:00
+2026-05-26 15:05:38,828 | INFO     | orchestrator | [Phase 3] Dynamische Config: /home/user/etoro_nautilus/logs/backtest_dynamic_config.json
+2026-05-26 15:05:38,828 | INFO     | orchestrator | [Phase 3] Backtest-Kommando: /usr/local/bin/python3 /home/user/etoro_nautilus/backtesting/run_backtest.py --momentum --catalog-path /home/user/etoro_nautilus/data/nautilus --config /home/user/etoro_nautilus/logs/backtest_dynamic_config.json --output /home/user/etoro_nautilus/logs/tournament_2026-05-26.json
+2026-05-26 15:05:38,828 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BACKTEST_START", "timestamp_utc": "2026-05-26T15:05:38.828515+00:00", "start": "2026-05-19T00:00:00+00:00", "end": "2026-05-26T00:00:00+00:00", "capital": 10000.0}
+2026-05-26 15:05:38,828 | INFO     | orchestrator | [Phase 3] DRY-RUN: Backtest übersprungen.
+2026-05-26 15:05:38,828 | INFO     | orchestrator | [Phase 4] Dummy-Tournament gespeichert: /home/user/etoro_nautilus/logs/tournament_2026-05-26.json
+2026-05-26 15:05:38,828 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,828 | INFO     | orchestrator | PHASE 5: Live Deployment & Bot-Start
+2026-05-26 15:05:38,829 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-26 15:05:38,832 | DEBUG    | orchestrator | [Phase 5] ETORO_EXECUTION aus config/setups.py geladen (Fallback).
+2026-05-26 15:05:38,833 | INFO     | orchestrator | [Phase 5] ✓ environment='real' — Demo-Konto konfiguriert.
+2026-05-26 15:05:38,833 | INFO     | orchestrator | [Phase 5] ✓ dry_run=False — Live-Modus aktiviert.
+2026-05-26 15:05:38,833 | WARNING  | orchestrator | [Phase 5] ETORO_CONFIRM_LIVE ist nicht '1' — Safety-Interlock aktiv.
+2026-05-26 15:05:38,833 | INFO     | orchestrator | [Phase 5] Bot-Kommando: /usr/local/bin/python3 /home/user/etoro_nautilus/dev_scripts/momentum_ls_run.py --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json --tournament /home/user/etoro_nautilus/logs/tournament_2026-05-26.json
+2026-05-26 15:05:38,833 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_START_INITIATED", "timestamp_utc": "2026-05-26T15:05:38.833316+00:00", "cmd": ["/usr/local/bin/python3", "/home/user/etoro_nautilus/dev_scripts/momentum_ls_run.py", "--universe", "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "--tournament", "/home/user/etoro_nautilus/logs/tournament_2026-05-26.json"], "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260526.log", "tournament": "/home/user/etoro_nautilus/logs/tournament_2026-05-26.json", "universe": "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "dry_run": true}
+2026-05-26 15:05:38,833 | INFO     | orchestrator | [Phase 5] DRY-RUN: Bot-Subprocess übersprungen.
+2026-05-26 15:05:38,833 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-05-26T15:05:38.833461+00:00", "exit_code": 0}
+2026-05-26 15:05:38,833 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
