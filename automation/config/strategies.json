@@ -12,14 +12,14 @@
   "strategies": [
     {
       "active": true,
-      "strategy_module": "strategies.sma_crossover",
+      "strategy_module": "automation.strategies.sma_crossover",
       "strategy_class": "SmaCrossoverStrategy",
       "config_class": "SmaCrossoverConfig",
       "params": {}
     },
     {
       "active": false,
-      "strategy_module": "strategies.trend_pullback",
+      "strategy_module": "automation.strategies.trend_pullback",
       "strategy_class": "TrendPullbackStrategy",
       "config_class": "TrendPullbackConfig",
       "params": {},
@@ -27,42 +27,42 @@
     },
     {
       "active": true,
-      "strategy_module": "strategies.mean_reversion",
+      "strategy_module": "automation.strategies.mean_reversion",
       "strategy_class": "MeanReversionStrategy",
       "config_class": "MeanReversionConfig",
       "params": {}
     },
     {
       "active": true,
-      "strategy_module": "strategies.dynamic_breakout",
+      "strategy_module": "automation.strategies.dynamic_breakout",
       "strategy_class": "DynamicBreakoutStrategy",
       "config_class": "DynamicBreakoutConfig",
       "params": {}
     },
     {
       "active": true,
-      "strategy_module": "strategies.flash_crash_reversal",
+      "strategy_module": "automation.strategies.flash_crash_reversal",
       "strategy_class": "FlashCrashReversalStrategy",
       "config_class": "FlashCrashReversalConfig",
       "params": {}
     },
     {
       "active": true,
-      "strategy_module": "strategies.volatility_breakout",
+      "strategy_module": "automation.strategies.volatility_breakout",
       "strategy_class": "VolatilityBreakoutPumpStrategy",
       "config_class": "VolatilityBreakoutConfig",
       "params": {}
     },
     {
       "active": true,
-      "strategy_module": "strategies.tesla_combo_strategy",
+      "strategy_module": "automation.strategies.tesla_combo_strategy",
       "strategy_class": "ComboTrendVwapStrategy",
       "config_class": "ComboTrendVwapConfig",
       "params": {}
     },
     {
       "active": false,
-      "strategy_module": "strategies.adx_atr_momentum",
+      "strategy_module": "automation.strategies.adx_atr_momentum",
       "strategy_class": "AdxAtrMomentumStrategy",
       "config_class": "AdxAtrMomentumConfig",
       "params": {},
@@ -70,7 +70,7 @@
     },
     {
       "active": true,
-      "strategy_module": "strategies.vwap_exhaustion",
+      "strategy_module": "automation.strategies.vwap_exhaustion",
       "strategy_class": "VwapExhaustionStrategy",
       "config_class": "VwapExhaustionConfig",
       "params": {}
