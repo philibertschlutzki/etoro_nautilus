@@ -10,12 +10,12 @@ from nautilus_trader.config import TradingNodeConfig, LoggingConfig
 from nautilus_trader.live.node import TradingNode
 
 # Adapter imports
-from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
-from adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
-from adapters.instrument_map import ETORO_INSTRUMENTS
+from archive.adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
+from archive.adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
+from archive.adapters.instrument_map import ETORO_INSTRUMENTS
 
 # Config imports
-from config.setups import ACTIVE_BOTS, ETORO_EXECUTION
+from archive.config.setups import ACTIVE_BOTS, ETORO_EXECUTION
 
 load_dotenv()
 API_KEY = os.getenv("ETORO_API_KEY")

@@ -14,8 +14,8 @@ from nautilus_trader.trading.strategy import Strategy, StrategyConfig
 from nautilus_trader.model.data import QuoteTick
 
 # Adapter & Config Importe
-from adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
-from config.setups import ACTIVE_BOTS
+from archive.adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
+from archive.config.setups import ACTIVE_BOTS
 
 # Lade API Keys
 load_dotenv()
