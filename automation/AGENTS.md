@@ -256,7 +256,7 @@ Da alle Quellen bereits FSB(16) liefern, entfällt im Orchestrator jede Typ-Migr
 
 **Metriken** (`extract_metrics`): FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Sortino nur ab n ≥ 5 Trades. Tournament-Selektion via `select_winners()`.
 
-**⚠️ Aktiver Bug:** `create_mock_instrument` erhält `size_precision=sp_parquet` (=0 aus Metadaten) und erzeugt dadurch ein nicht-fraktionales Instrument → 0 Trades. Siehe Pitfall #14.
+🟢 **Behoben:** `create_mock_instrument` und `run_single_backtest_worker` erzwingen nun einen `size_precision`-Fallback auf 8 via temporärer PyArrow-Schema-Injection (Pitfall #14 gelöst, Schreibseiten-Persistenz #23 steht noch aus).
 
 ---
 
@@ -423,6 +423,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 | 2026-05-28 | dynamic_breakout.py (Price-Range), vwap_exhaustion.py (Price-Deviation only) — Volume-Abhängigkeit entfernt (synthetische Bars volume=1.0). | `automation/strategies/dynamic_breakout.py`, `automation/strategies/vwap_exhaustion.py` |
 | 2026-05-27 | `automation/` als eigenständiges Produkt etabliert — kein adapters/-Import (Ausnahme momentum_ls_run.py). | alle automation/*.py |
 
+| 2026-05-28 | size_precision=8 Fix via PyArrow Schema-Injection implementiert (Pitfall #14). | `automation/backtest_runner.py` |
 ---
 
 *Zuletzt aktualisiert: 2026-05-28. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
