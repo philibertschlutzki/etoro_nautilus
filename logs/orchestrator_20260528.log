@@ -1,571 +1,524 @@
-2026-05-28 16:23:29,078 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
-2026-05-28 16:23:29,078 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
-2026-05-28 16:23:29,078 | INFO     | orchestrator | ║  Start: 2026-05-28T14:23:29.078832+00:00                    ║
-2026-05-28 16:23:29,078 | INFO     | orchestrator | ║  DRY-RUN: NEIN                                                 ║
-2026-05-28 16:23:29,079 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
-2026-05-28 16:23:29,079 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
-2026-05-28 16:23:29,079 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-05-28T14:23:29.079179+00:00", "dry_run": false, "skip_api_fetch": false, "version": "2.0", "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]"}
-2026-05-28 16:23:29,079 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:23:29,079 | INFO     | orchestrator | PHASE 1: Universe & Mapping
-2026-05-28 16:23:29,079 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:23:29,080 | WARNING  | orchestrator | [Phase 1] Universe-Daten sind 295.4h alt (> 24h). Bitte neu fetchen.
-2026-05-28 16:23:29,080 | INFO     | orchestrator | [Phase 1] 49 eindeutige Instrumente im Universum.
-2026-05-28 16:23:29,080 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "timestamp_utc": "2026-05-28T14:23:29.080577+00:00", "universe_size": 49, "unmapped_count": 0}
-2026-05-28 16:23:29,080 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:23:29,080 | INFO     | orchestrator | PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)
-2026-05-28 16:23:29,080 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:23:29,081 | DEBUG    | orchestrator | [Phase 2a] ZIPs: ['20260528_064323.zip', '20260528_064424.zip', '20260528_064524.zip', '20260528_064624.zip', '20260528_064724.zip', '20260528_064742.zip', '20260528_064824.zip', '20260528_064924.zip', '20260528_075018.zip', '20260528_130500.zip', '20260528_140502.zip']
-2026-05-28 16:23:29,081 | INFO     | orchestrator | [Phase 2a] 11 ZIP-Datei(en) gefunden: ['20260528_064323.zip', '20260528_064424.zip', '20260528_064524.zip', '20260528_064624.zip', '20260528_064724.zip', '20260528_064742.zip', '20260528_064824.zip', '20260528_064924.zip', '20260528_075018.zip', '20260528_130500.zip', '20260528_140502.zip']
-2026-05-28 16:23:29,081 | INFO     | orchestrator | [Phase 2a] Verarbeite 11 ZIP-Datei(en) …
-2026-05-28 16:23:29,082 | INFO     | orchestrator | [Phase 2a] 20260528_064323.zip: 49 Parquet-Dateien.
-2026-05-28 16:23:29,336 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_064323.parquet: 1 Zeilen für ACN.ETORO.
-2026-05-28 16:23:29,337 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064323.parquet: 1 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,338 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_064323.parquet: 1 Zeilen für AG.ETORO.
-2026-05-28 16:23:29,339 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_064323.parquet: 1 Zeilen für CAT.ETORO.
-2026-05-28 16:23:29,340 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_064323.parquet: 1 Zeilen für CHTR.ETORO.
-2026-05-28 16:23:29,341 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_064323.parquet: 1 Zeilen für CIEN.ETORO.
-2026-05-28 16:23:29,342 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_064323.parquet: 1 Zeilen für CMG.ETORO.
-2026-05-28 16:23:29,343 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_064323.parquet: 1 Zeilen für COHR.ETORO.
-2026-05-28 16:23:29,344 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_064323.parquet: 1 Zeilen für CPRT.ETORO.
-2026-05-28 16:23:29,345 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064323.parquet: 2 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,346 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_064323.parquet: 1 Zeilen für DOCU.ETORO.
-2026-05-28 16:23:29,347 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_064323.parquet: 1 Zeilen für DUOL.ETORO.
-2026-05-28 16:23:29,348 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_064323.parquet: 1 Zeilen für E.ETORO.
-2026-05-28 16:23:29,349 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_064323.parquet: 1 Zeilen für EEFT.ETORO.
-2026-05-28 16:23:29,350 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_064323.parquet: 1 Zeilen für ESLT.ETORO.
-2026-05-28 16:23:29,350 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_064323.parquet: 1 Zeilen für FICO.ETORO.
-2026-05-28 16:23:29,351 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_064323.parquet: 1 Zeilen für FISV.ETORO.
-2026-05-28 16:23:29,352 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_064323.parquet: 8 Zeilen für GLW.ETORO.
-2026-05-28 16:23:29,353 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064323.parquet: 5 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,354 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_064323.parquet: 1 Zeilen für GSAT.ETORO.
-2026-05-28 16:23:29,355 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_064323.parquet: 1 Zeilen für GTLB.ETORO.
-2026-05-28 16:23:29,356 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_064323.parquet: 1 Zeilen für HAL.ETORO.
-2026-05-28 16:23:29,356 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_064323.parquet: 1 Zeilen für HUBS.ETORO.
-2026-05-28 16:23:29,357 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_064323.parquet: 1 Zeilen für INSW.ETORO.
-2026-05-28 16:23:29,358 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_064323.parquet: 1 Zeilen für JNJ.ETORO.
-2026-05-28 16:23:29,359 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_064323.parquet: 1 Zeilen für LRCX.ETORO.
-2026-05-28 16:23:29,360 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_064323.parquet: 1 Zeilen für LULU.ETORO.
-2026-05-28 16:23:29,361 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_064323.parquet: 1 Zeilen für MNDY.ETORO.
-2026-05-28 16:23:29,362 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_064323.parquet: 1 Zeilen für MTZ.ETORO.
-2026-05-28 16:23:29,362 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064323.parquet: 24 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,363 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064323.parquet: 2 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,364 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_064323.parquet: 1 Zeilen für PBR.ETORO.
-2026-05-28 16:23:29,365 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_064323.parquet: 1 Zeilen für PINS.ETORO.
-2026-05-28 16:23:29,366 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_064323.parquet: 1 Zeilen für POWL.ETORO.
-2026-05-28 16:23:29,367 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_064323.parquet: 1 Zeilen für SE.ETORO.
-2026-05-28 16:23:29,367 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_064323.parquet: 1 Zeilen für SNAP.ETORO.
-2026-05-28 16:23:29,368 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_064323.parquet: 1 Zeilen für SQM.ETORO.
-2026-05-28 16:23:29,369 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_064323.parquet: 4 Zeilen für STX.US.ETORO.
-2026-05-28 16:23:29,370 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_064323.parquet: 1 Zeilen für TEAM.ETORO.
-2026-05-28 16:23:29,371 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_064323.parquet: 1 Zeilen für TSEM.ETORO.
-2026-05-28 16:23:29,372 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_064323.parquet: 1 Zeilen für TTD.ETORO.
-2026-05-28 16:23:29,372 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_064323.parquet: 1 Zeilen für TTMI.ETORO.
-2026-05-28 16:23:29,373 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_064323.parquet: 1 Zeilen für VLO.ETORO.
-2026-05-28 16:23:29,374 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_064323.parquet: 1 Zeilen für VRT.ETORO.
-2026-05-28 16:23:29,375 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_064323.parquet: 1 Zeilen für WBD.ETORO.
-2026-05-28 16:23:29,376 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_064323.parquet: 1 Zeilen für WDAY.ETORO.
-2026-05-28 16:23:29,377 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064323.parquet: 3 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,377 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_064323.parquet: 1 Zeilen für WIX.ETORO.
-2026-05-28 16:23:29,378 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064323.parquet: 1 Zeilen für ZS.ETORO.
-2026-05-28 16:23:29,379 | INFO     | orchestrator | [Phase 2a] 20260528_064424.zip: 8 Parquet-Dateien.
-2026-05-28 16:23:29,379 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064424.parquet: 4 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,380 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064424.parquet: 1 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,381 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064424.parquet: 3 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,382 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_064424.parquet: 1 Zeilen für JNJ.ETORO.
-2026-05-28 16:23:29,383 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064424.parquet: 24 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,383 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064424.parquet: 5 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,384 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064424.parquet: 2 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,385 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064424.parquet: 1 Zeilen für ZS.ETORO.
-2026-05-28 16:23:29,385 | INFO     | orchestrator | [Phase 2a] 20260528_064524.zip: 8 Parquet-Dateien.
-2026-05-28 16:23:29,387 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064524.parquet: 6 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,388 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064524.parquet: 7 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,389 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064524.parquet: 6 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,394 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064524.parquet: 36 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,395 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064524.parquet: 3 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,397 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_064524.parquet: 1 Zeilen für STX.US.ETORO.
-2026-05-28 16:23:29,398 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_064524.parquet: 2 Zeilen für WDAY.ETORO.
-2026-05-28 16:23:29,399 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064524.parquet: 1 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,399 | INFO     | orchestrator | [Phase 2a] 20260528_064624.zip: 7 Parquet-Dateien.
-2026-05-28 16:23:29,400 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064624.parquet: 5 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,402 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064624.parquet: 1 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,403 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_064624.parquet: 1 Zeilen für GLW.ETORO.
-2026-05-28 16:23:29,405 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064624.parquet: 1 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,408 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064624.parquet: 18 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,413 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064624.parquet: 5 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,414 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064624.parquet: 1 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,414 | INFO     | orchestrator | [Phase 2a] 20260528_064724.zip: 7 Parquet-Dateien.
-2026-05-28 16:23:29,416 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064724.parquet: 5 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,417 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064724.parquet: 11 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,418 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_064724.parquet: 2 Zeilen für LRCX.ETORO.
-2026-05-28 16:23:29,420 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_064724.parquet: 2 Zeilen für LULU.ETORO.
-2026-05-28 16:23:29,422 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064724.parquet: 13 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,423 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064724.parquet: 11 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,424 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_064724.parquet: 1 Zeilen für TEAM.ETORO.
-2026-05-28 16:23:29,424 | INFO     | orchestrator | [Phase 2a] 20260528_064742.zip: 6 Parquet-Dateien.
-2026-05-28 16:23:29,426 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064742.parquet: 2 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,427 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064742.parquet: 1 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,428 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_064742.parquet: 2 Zeilen für LULU.ETORO.
-2026-05-28 16:23:29,429 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064742.parquet: 12 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,430 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064742.parquet: 14 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,431 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_064742.parquet: 1 Zeilen für TEAM.ETORO.
-2026-05-28 16:23:29,432 | INFO     | orchestrator | [Phase 2a] 20260528_064824.zip: 9 Parquet-Dateien.
-2026-05-28 16:23:29,433 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064824.parquet: 1 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,434 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_064824.parquet: 1 Zeilen für CAT.ETORO.
-2026-05-28 16:23:29,435 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064824.parquet: 6 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,436 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064824.parquet: 2 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,438 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064824.parquet: 18 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,439 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064824.parquet: 18 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,441 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_064824.parquet: 1 Zeilen für VLO.ETORO.
-2026-05-28 16:23:29,446 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064824.parquet: 2 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,451 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064824.parquet: 1 Zeilen für ZS.ETORO.
-2026-05-28 16:23:29,451 | INFO     | orchestrator | [Phase 2a] 20260528_064924.zip: 7 Parquet-Dateien.
-2026-05-28 16:23:29,452 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_064924.parquet: 2 Zeilen für CAT.ETORO.
-2026-05-28 16:23:29,453 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064924.parquet: 3 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,455 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064924.parquet: 3 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,456 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_064924.parquet: 1 Zeilen für JNJ.ETORO.
-2026-05-28 16:23:29,457 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064924.parquet: 21 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,458 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064924.parquet: 4 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,460 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064924.parquet: 3 Zeilen für ZS.ETORO.
-2026-05-28 16:23:29,460 | INFO     | orchestrator | [Phase 2a] 20260528_075018.zip: 49 Parquet-Dateien.
-2026-05-28 16:23:29,462 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_075018.parquet: 19 Zeilen für ACN.ETORO.
-2026-05-28 16:23:29,463 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_075018.parquet: 149 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,465 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_075018.parquet: 1 Zeilen für AG.ETORO.
-2026-05-28 16:23:29,467 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_075018.parquet: 299 Zeilen für CAT.ETORO.
-2026-05-28 16:23:29,468 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_075018.parquet: 1 Zeilen für CHTR.ETORO.
-2026-05-28 16:23:29,472 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_075018.parquet: 1 Zeilen für CIEN.ETORO.
-2026-05-28 16:23:29,473 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_075018.parquet: 1 Zeilen für CMG.ETORO.
-2026-05-28 16:23:29,475 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_075018.parquet: 1 Zeilen für COHR.ETORO.
-2026-05-28 16:23:29,476 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_075018.parquet: 3 Zeilen für CPRT.ETORO.
-2026-05-28 16:23:29,478 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_075018.parquet: 130 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,479 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_075018.parquet: 1 Zeilen für DOCU.ETORO.
-2026-05-28 16:23:29,480 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_075018.parquet: 15 Zeilen für DUOL.ETORO.
-2026-05-28 16:23:29,481 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_075018.parquet: 1 Zeilen für E.ETORO.
-2026-05-28 16:23:29,482 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_075018.parquet: 1 Zeilen für EEFT.ETORO.
-2026-05-28 16:23:29,483 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_075018.parquet: 1 Zeilen für ESLT.ETORO.
-2026-05-28 16:23:29,484 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_075018.parquet: 14 Zeilen für FICO.ETORO.
-2026-05-28 16:23:29,485 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_075018.parquet: 259 Zeilen für FISV.ETORO.
-2026-05-28 16:23:29,487 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_075018.parquet: 119 Zeilen für GLW.ETORO.
-2026-05-28 16:23:29,488 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_075018.parquet: 233 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,489 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_075018.parquet: 1 Zeilen für GSAT.ETORO.
-2026-05-28 16:23:29,490 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_075018.parquet: 1 Zeilen für GTLB.ETORO.
-2026-05-28 16:23:29,494 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_075018.parquet: 688 Zeilen für HAL.ETORO.
-2026-05-28 16:23:29,496 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_075018.parquet: 1 Zeilen für HUBS.ETORO.
-2026-05-28 16:23:29,497 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_075018.parquet: 1 Zeilen für INSW.ETORO.
-2026-05-28 16:23:29,499 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_075018.parquet: 12 Zeilen für JNJ.ETORO.
-2026-05-28 16:23:29,500 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_075018.parquet: 119 Zeilen für LRCX.ETORO.
-2026-05-28 16:23:29,502 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_075018.parquet: 20 Zeilen für LULU.ETORO.
-2026-05-28 16:23:29,503 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_075018.parquet: 1 Zeilen für MNDY.ETORO.
-2026-05-28 16:23:29,504 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_075018.parquet: 1 Zeilen für MTZ.ETORO.
-2026-05-28 16:23:29,507 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_075018.parquet: 1069 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,508 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_075018.parquet: 341 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,510 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_075018.parquet: 1 Zeilen für PBR.ETORO.
-2026-05-28 16:23:29,511 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_075018.parquet: 1 Zeilen für PINS.ETORO.
-2026-05-28 16:23:29,513 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_075018.parquet: 1 Zeilen für POWL.ETORO.
-2026-05-28 16:23:29,514 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_075018.parquet: 1 Zeilen für SE.ETORO.
-2026-05-28 16:23:29,515 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_075018.parquet: 7 Zeilen für SNAP.ETORO.
-2026-05-28 16:23:29,520 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_075018.parquet: 1 Zeilen für SQM.ETORO.
-2026-05-28 16:23:29,521 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_075018.parquet: 72 Zeilen für STX.US.ETORO.
-2026-05-28 16:23:29,523 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_075018.parquet: 31 Zeilen für TEAM.ETORO.
-2026-05-28 16:23:29,524 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_075018.parquet: 1 Zeilen für TSEM.ETORO.
-2026-05-28 16:23:29,525 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_075018.parquet: 12 Zeilen für TTD.ETORO.
-2026-05-28 16:23:29,527 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_075018.parquet: 1 Zeilen für TTMI.ETORO.
-2026-05-28 16:23:29,528 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_075018.parquet: 14 Zeilen für VLO.ETORO.
-2026-05-28 16:23:29,529 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_075018.parquet: 1 Zeilen für VRT.ETORO.
-2026-05-28 16:23:29,530 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_075018.parquet: 3 Zeilen für WBD.ETORO.
-2026-05-28 16:23:29,531 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_075018.parquet: 25 Zeilen für WDAY.ETORO.
-2026-05-28 16:23:29,532 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_075018.parquet: 170 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,533 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_075018.parquet: 1 Zeilen für WIX.ETORO.
-2026-05-28 16:23:29,534 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_075018.parquet: 119 Zeilen für ZS.ETORO.
-2026-05-28 16:23:29,535 | INFO     | orchestrator | [Phase 2a] 20260528_130500.zip: 49 Parquet-Dateien.
-2026-05-28 16:23:29,537 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_130500.parquet: 25 Zeilen für ACN.ETORO.
-2026-05-28 16:23:29,538 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_130500.parquet: 122 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,539 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_130500.parquet: 1 Zeilen für AG.ETORO.
-2026-05-28 16:23:29,540 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_130500.parquet: 80 Zeilen für CAT.ETORO.
-2026-05-28 16:23:29,541 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_130500.parquet: 14 Zeilen für CHTR.ETORO.
-2026-05-28 16:23:29,542 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_130500.parquet: 1 Zeilen für CIEN.ETORO.
-2026-05-28 16:23:29,543 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_130500.parquet: 2 Zeilen für CMG.ETORO.
-2026-05-28 16:23:29,544 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_130500.parquet: 1 Zeilen für COHR.ETORO.
-2026-05-28 16:23:29,545 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_130500.parquet: 21 Zeilen für CPRT.ETORO.
-2026-05-28 16:23:29,546 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_130500.parquet: 403 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,547 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_130500.parquet: 1 Zeilen für DOCU.ETORO.
-2026-05-28 16:23:29,548 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_130500.parquet: 10 Zeilen für DUOL.ETORO.
-2026-05-28 16:23:29,549 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_130500.parquet: 1 Zeilen für E.ETORO.
-2026-05-28 16:23:29,550 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_130500.parquet: 1 Zeilen für EEFT.ETORO.
-2026-05-28 16:23:29,551 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_130500.parquet: 1 Zeilen für ESLT.ETORO.
-2026-05-28 16:23:29,552 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_130500.parquet: 5 Zeilen für FICO.ETORO.
-2026-05-28 16:23:29,553 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_130500.parquet: 7 Zeilen für FISV.ETORO.
-2026-05-28 16:23:29,554 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_130500.parquet: 196 Zeilen für GLW.ETORO.
-2026-05-28 16:23:29,555 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_130500.parquet: 687 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,556 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_130500.parquet: 1 Zeilen für GSAT.ETORO.
-2026-05-28 16:23:29,559 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_130500.parquet: 1 Zeilen für GTLB.ETORO.
-2026-05-28 16:23:29,562 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_130500.parquet: 20 Zeilen für HAL.ETORO.
-2026-05-28 16:23:29,563 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_130500.parquet: 1 Zeilen für HUBS.ETORO.
-2026-05-28 16:23:29,566 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_130500.parquet: 1 Zeilen für INSW.ETORO.
-2026-05-28 16:23:29,567 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_130500.parquet: 29 Zeilen für JNJ.ETORO.
-2026-05-28 16:23:29,568 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_130500.parquet: 115 Zeilen für LRCX.ETORO.
-2026-05-28 16:23:29,570 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_130500.parquet: 17 Zeilen für LULU.ETORO.
-2026-05-28 16:23:29,571 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_130500.parquet: 1 Zeilen für MNDY.ETORO.
-2026-05-28 16:23:29,575 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_130500.parquet: 1 Zeilen für MTZ.ETORO.
-2026-05-28 16:23:29,577 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_130500.parquet: 1680 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,579 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_130500.parquet: 483 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,580 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_130500.parquet: 1 Zeilen für PBR.ETORO.
-2026-05-28 16:23:29,582 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_130500.parquet: 1 Zeilen für PINS.ETORO.
-2026-05-28 16:23:29,583 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_130500.parquet: 1 Zeilen für POWL.ETORO.
-2026-05-28 16:23:29,584 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_130500.parquet: 1 Zeilen für SE.ETORO.
-2026-05-28 16:23:29,586 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_130500.parquet: 11 Zeilen für SNAP.ETORO.
-2026-05-28 16:23:29,587 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_130500.parquet: 1 Zeilen für SQM.ETORO.
-2026-05-28 16:23:29,588 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_130500.parquet: 116 Zeilen für STX.US.ETORO.
-2026-05-28 16:23:29,590 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_130500.parquet: 65 Zeilen für TEAM.ETORO.
-2026-05-28 16:23:29,591 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_130500.parquet: 1 Zeilen für TSEM.ETORO.
-2026-05-28 16:23:29,593 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_130500.parquet: 63 Zeilen für TTD.ETORO.
-2026-05-28 16:23:29,594 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_130500.parquet: 1 Zeilen für TTMI.ETORO.
-2026-05-28 16:23:29,595 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_130500.parquet: 4 Zeilen für VLO.ETORO.
-2026-05-28 16:23:29,596 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_130500.parquet: 1 Zeilen für VRT.ETORO.
-2026-05-28 16:23:29,597 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_130500.parquet: 8 Zeilen für WBD.ETORO.
-2026-05-28 16:23:29,598 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_130500.parquet: 53 Zeilen für WDAY.ETORO.
-2026-05-28 16:23:29,599 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_130500.parquet: 165 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,600 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_130500.parquet: 1 Zeilen für WIX.ETORO.
-2026-05-28 16:23:29,601 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_130500.parquet: 168 Zeilen für ZS.ETORO.
-2026-05-28 16:23:29,602 | INFO     | orchestrator | [Phase 2a] 20260528_140502.zip: 49 Parquet-Dateien.
-2026-05-28 16:23:29,603 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_140502.parquet: 467 Zeilen für ACN.ETORO.
-2026-05-28 16:23:29,604 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_140502.parquet: 796 Zeilen für ADBE.ETORO.
-2026-05-28 16:23:29,605 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_140502.parquet: 699 Zeilen für AG.ETORO.
-2026-05-28 16:23:29,607 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_140502.parquet: 604 Zeilen für CAT.ETORO.
-2026-05-28 16:23:29,608 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_140502.parquet: 260 Zeilen für CHTR.ETORO.
-2026-05-28 16:23:29,609 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_140502.parquet: 517 Zeilen für CIEN.ETORO.
-2026-05-28 16:23:29,610 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_140502.parquet: 581 Zeilen für CMG.ETORO.
-2026-05-28 16:23:29,611 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_140502.parquet: 774 Zeilen für COHR.ETORO.
-2026-05-28 16:23:29,613 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_140502.parquet: 393 Zeilen für CPRT.ETORO.
-2026-05-28 16:23:29,614 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_140502.parquet: 1590 Zeilen für CRM.ETORO.
-2026-05-28 16:23:29,615 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_140502.parquet: 421 Zeilen für DOCU.ETORO.
-2026-05-28 16:23:29,616 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_140502.parquet: 255 Zeilen für DUOL.ETORO.
-2026-05-28 16:23:29,617 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_140502.parquet: 415 Zeilen für E.ETORO.
-2026-05-28 16:23:29,618 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_140502.parquet: 66 Zeilen für EEFT.ETORO.
-2026-05-28 16:23:29,619 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_140502.parquet: 651 Zeilen für ESLT.ETORO.
-2026-05-28 16:23:29,620 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_140502.parquet: 257 Zeilen für FICO.ETORO.
-2026-05-28 16:23:29,621 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_140502.parquet: 472 Zeilen für FISV.ETORO.
-2026-05-28 16:23:29,622 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_140502.parquet: 784 Zeilen für GLW.ETORO.
-2026-05-28 16:23:29,623 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_140502.parquet: 2131 Zeilen für GOOGL.ETORO.
-2026-05-28 16:23:29,624 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_140502.parquet: 137 Zeilen für GSAT.ETORO.
-2026-05-28 16:23:29,629 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_140502.parquet: 830 Zeilen für GTLB.ETORO.
-2026-05-28 16:23:29,633 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_140502.parquet: 791 Zeilen für HAL.ETORO.
-2026-05-28 16:23:29,634 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_140502.parquet: 311 Zeilen für HUBS.ETORO.
-2026-05-28 16:23:29,636 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_140502.parquet: 163 Zeilen für INSW.ETORO.
-2026-05-28 16:23:29,639 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_140502.parquet: 597 Zeilen für JNJ.ETORO.
-2026-05-28 16:23:29,641 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_140502.parquet: 900 Zeilen für LRCX.ETORO.
-2026-05-28 16:23:29,642 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_140502.parquet: 473 Zeilen für LULU.ETORO.
-2026-05-28 16:23:29,644 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_140502.parquet: 199 Zeilen für MNDY.ETORO.
-2026-05-28 16:23:29,645 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_140502.parquet: 204 Zeilen für MTZ.ETORO.
-2026-05-28 16:23:29,647 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_140502.parquet: 2661 Zeilen für MU.ETORO.
-2026-05-28 16:23:29,652 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_140502.parquet: 1904 Zeilen für NOW.ETORO.
-2026-05-28 16:23:29,653 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_140502.parquet: 295 Zeilen für PBR.ETORO.
-2026-05-28 16:23:29,654 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_140502.parquet: 411 Zeilen für PINS.ETORO.
-2026-05-28 16:23:29,656 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_140502.parquet: 290 Zeilen für POWL.ETORO.
-2026-05-28 16:23:29,657 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_140502.parquet: 457 Zeilen für SE.ETORO.
-2026-05-28 16:23:29,659 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_140502.parquet: 82 Zeilen für SNAP.ETORO.
-2026-05-28 16:23:29,660 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_140502.parquet: 286 Zeilen für SQM.ETORO.
-2026-05-28 16:23:29,661 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_140502.parquet: 812 Zeilen für STX.US.ETORO.
-2026-05-28 16:23:29,662 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_140502.parquet: 736 Zeilen für TEAM.ETORO.
-2026-05-28 16:23:29,664 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_140502.parquet: 712 Zeilen für TSEM.ETORO.
-2026-05-28 16:23:29,665 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_140502.parquet: 869 Zeilen für TTD.ETORO.
-2026-05-28 16:23:29,666 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_140502.parquet: 332 Zeilen für TTMI.ETORO.
-2026-05-28 16:23:29,667 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_140502.parquet: 280 Zeilen für VLO.ETORO.
-2026-05-28 16:23:29,668 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_140502.parquet: 874 Zeilen für VRT.ETORO.
-2026-05-28 16:23:29,669 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_140502.parquet: 78 Zeilen für WBD.ETORO.
-2026-05-28 16:23:29,670 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_140502.parquet: 464 Zeilen für WDAY.ETORO.
-2026-05-28 16:23:29,671 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_140502.parquet: 1047 Zeilen für WDC.ETORO.
-2026-05-28 16:23:29,673 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_140502.parquet: 189 Zeilen für WIX.ETORO.
-2026-05-28 16:23:29,674 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_140502.parquet: 1146 Zeilen für ZS.ETORO.
-2026-05-28 16:23:29,676 | INFO     | orchestrator | [Phase 2b] ACN.ETORO: 512 bestehend + 512 neu → 512 Zeilen (-45 Duplikate)
-2026-05-28 16:23:29,678 | INFO     | orchestrator | [Phase 2b] ACN.ETORO: 512 Zeilen → data.parquet
-2026-05-28 16:23:29,682 | INFO     | orchestrator | [Phase 2b] ADBE.ETORO: 1084 bestehend + 1084 neu → 1084 Zeilen (-288 Duplikate)
-2026-05-28 16:23:29,683 | INFO     | orchestrator | [Phase 2b] ADBE.ETORO: 1084 Zeilen → data.parquet
-2026-05-28 16:23:29,686 | INFO     | orchestrator | [Phase 2b] AG.ETORO: 702 bestehend + 702 neu → 726 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,687 | INFO     | orchestrator | [Phase 2b] AG.ETORO: 726 Zeilen → data.parquet
-2026-05-28 16:23:29,689 | INFO     | orchestrator | [Phase 2b] CAT.ETORO: 987 bestehend + 987 neu → 986 Zeilen (-383 Duplikate)
-2026-05-28 16:23:29,691 | INFO     | orchestrator | [Phase 2b] CAT.ETORO: 986 Zeilen → data.parquet
-2026-05-28 16:23:29,696 | INFO     | orchestrator | [Phase 2b] CHTR.ETORO: 276 bestehend + 276 neu → 277 Zeilen (-16 Duplikate)
-2026-05-28 16:23:29,698 | INFO     | orchestrator | [Phase 2b] CHTR.ETORO: 277 Zeilen → data.parquet
-2026-05-28 16:23:29,702 | INFO     | orchestrator | [Phase 2b] CIEN.ETORO: 520 bestehend + 520 neu → 544 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,704 | INFO     | orchestrator | [Phase 2b] CIEN.ETORO: 544 Zeilen → data.parquet
-2026-05-28 16:23:29,707 | INFO     | orchestrator | [Phase 2b] CMG.ETORO: 585 bestehend + 585 neu → 584 Zeilen (-4 Duplikate)
-2026-05-28 16:23:29,708 | INFO     | orchestrator | [Phase 2b] CMG.ETORO: 584 Zeilen → data.parquet
-2026-05-28 16:23:29,711 | INFO     | orchestrator | [Phase 2b] COHR.ETORO: 777 bestehend + 777 neu → 801 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,713 | INFO     | orchestrator | [Phase 2b] COHR.ETORO: 801 Zeilen → data.parquet
-2026-05-28 16:23:29,716 | INFO     | orchestrator | [Phase 2b] CPRT.ETORO: 418 bestehend + 418 neu → 417 Zeilen (-25 Duplikate)
-2026-05-28 16:23:29,718 | INFO     | orchestrator | [Phase 2b] CPRT.ETORO: 417 Zeilen → data.parquet
-2026-05-28 16:23:29,724 | INFO     | orchestrator | [Phase 2b] CRM.ETORO: 2150 bestehend + 2150 neu → 2147 Zeilen (-560 Duplikate)
-2026-05-28 16:23:29,726 | INFO     | orchestrator | [Phase 2b] CRM.ETORO: 2147 Zeilen → data.parquet
-2026-05-28 16:23:29,729 | INFO     | orchestrator | [Phase 2b] DOCU.ETORO: 424 bestehend + 424 neu → 448 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,730 | INFO     | orchestrator | [Phase 2b] DOCU.ETORO: 448 Zeilen → data.parquet
-2026-05-28 16:23:29,733 | INFO     | orchestrator | [Phase 2b] DUOL.ETORO: 281 bestehend + 281 neu → 282 Zeilen (-26 Duplikate)
-2026-05-28 16:23:29,734 | INFO     | orchestrator | [Phase 2b] DUOL.ETORO: 282 Zeilen → data.parquet
-2026-05-28 16:23:29,736 | INFO     | orchestrator | [Phase 2b] E.ETORO: 418 bestehend + 418 neu → 442 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,737 | INFO     | orchestrator | [Phase 2b] E.ETORO: 442 Zeilen → data.parquet
-2026-05-28 16:23:29,743 | INFO     | orchestrator | [Phase 2b] EEFT.ETORO: 69 bestehend + 69 neu → 93 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,744 | INFO     | orchestrator | [Phase 2b] EEFT.ETORO: 93 Zeilen → data.parquet
-2026-05-28 16:23:29,747 | INFO     | orchestrator | [Phase 2b] ESLT.ETORO: 654 bestehend + 654 neu → 679 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,748 | INFO     | orchestrator | [Phase 2b] ESLT.ETORO: 679 Zeilen → data.parquet
-2026-05-28 16:23:29,751 | INFO     | orchestrator | [Phase 2b] FICO.ETORO: 277 bestehend + 277 neu → 278 Zeilen (-20 Duplikate)
-2026-05-28 16:23:29,752 | INFO     | orchestrator | [Phase 2b] FICO.ETORO: 278 Zeilen → data.parquet
-2026-05-28 16:23:29,758 | INFO     | orchestrator | [Phase 2b] FISV.ETORO: 739 bestehend + 739 neu → 739 Zeilen (-267 Duplikate)
-2026-05-28 16:23:29,761 | INFO     | orchestrator | [Phase 2b] FISV.ETORO: 739 Zeilen → data.parquet
-2026-05-28 16:23:29,766 | INFO     | orchestrator | [Phase 2b] GLW.ETORO: 1108 bestehend + 1108 neu → 1108 Zeilen (-324 Duplikate)
-2026-05-28 16:23:29,768 | INFO     | orchestrator | [Phase 2b] GLW.ETORO: 1108 Zeilen → data.parquet
-2026-05-28 16:23:29,773 | INFO     | orchestrator | [Phase 2b] GOOGL.ETORO: 3083 bestehend + 3083 neu → 3082 Zeilen (-952 Duplikate)
-2026-05-28 16:23:29,776 | INFO     | orchestrator | [Phase 2b] GOOGL.ETORO: 3082 Zeilen → data.parquet
-2026-05-28 16:23:29,780 | INFO     | orchestrator | [Phase 2b] GSAT.ETORO: 140 bestehend + 140 neu → 164 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,781 | INFO     | orchestrator | [Phase 2b] GSAT.ETORO: 164 Zeilen → data.parquet
-2026-05-28 16:23:29,785 | INFO     | orchestrator | [Phase 2b] GTLB.ETORO: 833 bestehend + 833 neu → 857 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,787 | INFO     | orchestrator | [Phase 2b] GTLB.ETORO: 857 Zeilen → data.parquet
-2026-05-28 16:23:29,792 | INFO     | orchestrator | [Phase 2b] HAL.ETORO: 1500 bestehend + 1500 neu → 1500 Zeilen (-709 Duplikate)
-2026-05-28 16:23:29,794 | INFO     | orchestrator | [Phase 2b] HAL.ETORO: 1500 Zeilen → data.parquet
-2026-05-28 16:23:29,797 | INFO     | orchestrator | [Phase 2b] HUBS.ETORO: 314 bestehend + 314 neu → 338 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,799 | INFO     | orchestrator | [Phase 2b] HUBS.ETORO: 338 Zeilen → data.parquet
-2026-05-28 16:23:29,803 | INFO     | orchestrator | [Phase 2b] INSW.ETORO: 166 bestehend + 166 neu → 190 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,804 | INFO     | orchestrator | [Phase 2b] INSW.ETORO: 190 Zeilen → data.parquet
-2026-05-28 16:23:29,807 | INFO     | orchestrator | [Phase 2b] JNJ.ETORO: 641 bestehend + 641 neu → 641 Zeilen (-44 Duplikate)
-2026-05-28 16:23:29,808 | INFO     | orchestrator | [Phase 2b] JNJ.ETORO: 641 Zeilen → data.parquet
-2026-05-28 16:23:29,811 | INFO     | orchestrator | [Phase 2b] LRCX.ETORO: 1137 bestehend + 1137 neu → 1137 Zeilen (-237 Duplikate)
-2026-05-28 16:23:29,813 | INFO     | orchestrator | [Phase 2b] LRCX.ETORO: 1137 Zeilen → data.parquet
-2026-05-28 16:23:29,817 | INFO     | orchestrator | [Phase 2b] LULU.ETORO: 515 bestehend + 515 neu → 513 Zeilen (-42 Duplikate)
-2026-05-28 16:23:29,818 | INFO     | orchestrator | [Phase 2b] LULU.ETORO: 513 Zeilen → data.parquet
-2026-05-28 16:23:29,821 | INFO     | orchestrator | [Phase 2b] MNDY.ETORO: 202 bestehend + 202 neu → 226 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,823 | INFO     | orchestrator | [Phase 2b] MNDY.ETORO: 226 Zeilen → data.parquet
-2026-05-28 16:23:29,826 | INFO     | orchestrator | [Phase 2b] MTZ.ETORO: 207 bestehend + 207 neu → 231 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,827 | INFO     | orchestrator | [Phase 2b] MTZ.ETORO: 231 Zeilen → data.parquet
-2026-05-28 16:23:29,839 | INFO     | orchestrator | [Phase 2b] MU.ETORO: 5576 bestehend + 5576 neu → 5564 Zeilen (-2915 Duplikate)
-2026-05-28 16:23:29,843 | INFO     | orchestrator | [Phase 2b] MU.ETORO: 5564 Zeilen → data.parquet
-2026-05-28 16:23:29,850 | INFO     | orchestrator | [Phase 2b] NOW.ETORO: 2790 bestehend + 2790 neu → 2776 Zeilen (-886 Duplikate)
-2026-05-28 16:23:29,853 | INFO     | orchestrator | [Phase 2b] NOW.ETORO: 2776 Zeilen → data.parquet
-2026-05-28 16:23:29,856 | INFO     | orchestrator | [Phase 2b] PBR.ETORO: 298 bestehend + 298 neu → 322 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,858 | INFO     | orchestrator | [Phase 2b] PBR.ETORO: 322 Zeilen → data.parquet
-2026-05-28 16:23:29,861 | INFO     | orchestrator | [Phase 2b] PINS.ETORO: 414 bestehend + 414 neu → 438 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,862 | INFO     | orchestrator | [Phase 2b] PINS.ETORO: 438 Zeilen → data.parquet
-2026-05-28 16:23:29,865 | INFO     | orchestrator | [Phase 2b] POWL.ETORO: 293 bestehend + 293 neu → 317 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,867 | INFO     | orchestrator | [Phase 2b] POWL.ETORO: 317 Zeilen → data.parquet
-2026-05-28 16:23:29,870 | INFO     | orchestrator | [Phase 2b] SE.ETORO: 460 bestehend + 460 neu → 484 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,871 | INFO     | orchestrator | [Phase 2b] SE.ETORO: 484 Zeilen → data.parquet
-2026-05-28 16:23:29,873 | INFO     | orchestrator | [Phase 2b] SNAP.ETORO: 101 bestehend + 101 neu → 100 Zeilen (-19 Duplikate)
-2026-05-28 16:23:29,874 | INFO     | orchestrator | [Phase 2b] SNAP.ETORO: 100 Zeilen → data.parquet
-2026-05-28 16:23:29,876 | INFO     | orchestrator | [Phase 2b] SQM.ETORO: 289 bestehend + 289 neu → 313 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,877 | INFO     | orchestrator | [Phase 2b] SQM.ETORO: 313 Zeilen → data.parquet
-2026-05-28 16:23:29,884 | INFO     | orchestrator | [Phase 2b] STX.US.ETORO: 1005 bestehend + 1005 neu → 1004 Zeilen (-193 Duplikate)
-2026-05-28 16:23:29,886 | INFO     | orchestrator | [Phase 2b] STX.US.ETORO: 1004 Zeilen → data.parquet
-2026-05-28 16:23:29,891 | INFO     | orchestrator | [Phase 2b] TEAM.ETORO: 835 bestehend + 835 neu → 833 Zeilen (-99 Duplikate)
-2026-05-28 16:23:29,892 | INFO     | orchestrator | [Phase 2b] TEAM.ETORO: 833 Zeilen → data.parquet
-2026-05-28 16:23:29,895 | INFO     | orchestrator | [Phase 2b] TSEM.ETORO: 715 bestehend + 715 neu → 739 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,897 | INFO     | orchestrator | [Phase 2b] TSEM.ETORO: 739 Zeilen → data.parquet
-2026-05-28 16:23:29,901 | INFO     | orchestrator | [Phase 2b] TTD.ETORO: 945 bestehend + 945 neu → 944 Zeilen (-76 Duplikate)
-2026-05-28 16:23:29,902 | INFO     | orchestrator | [Phase 2b] TTD.ETORO: 944 Zeilen → data.parquet
-2026-05-28 16:23:29,905 | INFO     | orchestrator | [Phase 2b] TTMI.ETORO: 335 bestehend + 335 neu → 359 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,906 | INFO     | orchestrator | [Phase 2b] TTMI.ETORO: 359 Zeilen → data.parquet
-2026-05-28 16:23:29,909 | INFO     | orchestrator | [Phase 2b] VLO.ETORO: 300 bestehend + 300 neu → 299 Zeilen (-20 Duplikate)
-2026-05-28 16:23:29,910 | INFO     | orchestrator | [Phase 2b] VLO.ETORO: 299 Zeilen → data.parquet
-2026-05-28 16:23:29,913 | INFO     | orchestrator | [Phase 2b] VRT.ETORO: 877 bestehend + 877 neu → 901 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,915 | INFO     | orchestrator | [Phase 2b] VRT.ETORO: 901 Zeilen → data.parquet
-2026-05-28 16:23:29,917 | INFO     | orchestrator | [Phase 2b] WBD.ETORO: 90 bestehend + 90 neu → 89 Zeilen (-12 Duplikate)
-2026-05-28 16:23:29,919 | INFO     | orchestrator | [Phase 2b] WBD.ETORO: 89 Zeilen → data.parquet
-2026-05-28 16:23:29,922 | INFO     | orchestrator | [Phase 2b] WDAY.ETORO: 545 bestehend + 545 neu → 545 Zeilen (-81 Duplikate)
-2026-05-28 16:23:29,924 | INFO     | orchestrator | [Phase 2b] WDAY.ETORO: 545 Zeilen → data.parquet
-2026-05-28 16:23:29,929 | INFO     | orchestrator | [Phase 2b] WDC.ETORO: 1391 bestehend + 1391 neu → 1391 Zeilen (-344 Duplikate)
-2026-05-28 16:23:29,931 | INFO     | orchestrator | [Phase 2b] WDC.ETORO: 1391 Zeilen → data.parquet
-2026-05-28 16:23:29,934 | INFO     | orchestrator | [Phase 2b] WIX.ETORO: 192 bestehend + 192 neu → 216 Zeilen (-3 Duplikate)
-2026-05-28 16:23:29,935 | INFO     | orchestrator | [Phase 2b] WIX.ETORO: 216 Zeilen → data.parquet
-2026-05-28 16:23:29,939 | INFO     | orchestrator | [Phase 2b] ZS.ETORO: 1439 bestehend + 1439 neu → 1439 Zeilen (-293 Duplikate)
-2026-05-28 16:23:29,941 | INFO     | orchestrator | [Phase 2b] ZS.ETORO: 1439 Zeilen → data.parquet
-2026-05-28 16:23:29,941 | INFO     | orchestrator | [Phase 2b] Merge abgeschlossen: 49 Instrumente.
-2026-05-28 16:23:29,944 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064323.zip
-2026-05-28 16:23:29,946 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064424.zip
-2026-05-28 16:23:29,946 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064524.zip
-2026-05-28 16:23:29,947 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064624.zip
-2026-05-28 16:23:29,947 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064724.zip
-2026-05-28 16:23:29,947 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064742.zip
-2026-05-28 16:23:29,947 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064824.zip
-2026-05-28 16:23:29,948 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064924.zip
-2026-05-28 16:23:29,948 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_075018.zip
-2026-05-28 16:23:29,948 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_130500.zip
-2026-05-28 16:23:29,948 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_140502.zip
-2026-05-28 16:23:29,948 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ZIPS_DELETED", "timestamp_utc": "2026-05-28T14:23:29.948587+00:00", "count": 11, "paths": ["/home/user/etoro_nautilus/data/import/20260528_064323.zip", "/home/user/etoro_nautilus/data/import/20260528_064424.zip", "/home/user/etoro_nautilus/data/import/20260528_064524.zip", "/home/user/etoro_nautilus/data/import/20260528_064624.zip", "/home/user/etoro_nautilus/data/import/20260528_064724.zip", "/home/user/etoro_nautilus/data/import/20260528_064742.zip", "/home/user/etoro_nautilus/data/import/20260528_064824.zip", "/home/user/etoro_nautilus/data/import/20260528_064924.zip", "/home/user/etoro_nautilus/data/import/20260528_075018.zip", "/home/user/etoro_nautilus/data/import/20260528_130500.zip", "/home/user/etoro_nautilus/data/import/20260528_140502.zip"]}
-2026-05-28 16:23:29,950 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 49 Instrumente.
-2026-05-28 16:23:29,950 | INFO     | orchestrator | [Phase 2c] API-Backfill für 49 Symbole …
-2026-05-28 16:23:29,950 | DEBUG    | asyncio | Using selector: EpollSelector
-2026-05-28 16:23:29,951 | INFO     | api_backfiller | [api_backfiller] Starte Backfill: 2026-05-21 → 2026-05-28 | 49 Instrumente
-2026-05-28 16:23:29,951 | INFO     | api_backfiller | [api_backfiller] Lade Instrument-Precisions via eToro API …
-2026-05-28 16:23:31,626 | INFO     | api_backfiller | [api_backfiller] Precisions via API: 0/49 Instrumente.
-2026-05-28 16:23:31,630 | DEBUG    | api_backfiller | [api_backfiller] ACN.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,635 | DEBUG    | api_backfiller | [api_backfiller] ADBE.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,640 | DEBUG    | api_backfiller | [api_backfiller] AG.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,644 | DEBUG    | api_backfiller | [api_backfiller] CAT.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,645 | DEBUG    | api_backfiller | [api_backfiller] CHTR.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,647 | DEBUG    | api_backfiller | [api_backfiller] CIEN.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,649 | DEBUG    | api_backfiller | [api_backfiller] CMG.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,651 | DEBUG    | api_backfiller | [api_backfiller] COHR.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,653 | DEBUG    | api_backfiller | [api_backfiller] CPRT.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,656 | DEBUG    | api_backfiller | [api_backfiller] CRM.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,657 | DEBUG    | api_backfiller | [api_backfiller] DOCU.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,659 | DEBUG    | api_backfiller | [api_backfiller] DUOL.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,661 | DEBUG    | api_backfiller | [api_backfiller] E.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,662 | DEBUG    | api_backfiller | [api_backfiller] EEFT.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,664 | DEBUG    | api_backfiller | [api_backfiller] ESLT.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,665 | DEBUG    | api_backfiller | [api_backfiller] FICO.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,667 | DEBUG    | api_backfiller | [api_backfiller] FISV.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,669 | DEBUG    | api_backfiller | [api_backfiller] GLW.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,672 | DEBUG    | api_backfiller | [api_backfiller] GOOGL.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,674 | DEBUG    | api_backfiller | [api_backfiller] GSAT.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,675 | DEBUG    | api_backfiller | [api_backfiller] GTLB.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,677 | DEBUG    | api_backfiller | [api_backfiller] HAL.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,679 | DEBUG    | api_backfiller | [api_backfiller] HUBS.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,680 | DEBUG    | api_backfiller | [api_backfiller] INSW.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,682 | DEBUG    | api_backfiller | [api_backfiller] JNJ.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,684 | DEBUG    | api_backfiller | [api_backfiller] LRCX.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,686 | DEBUG    | api_backfiller | [api_backfiller] LULU.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,687 | DEBUG    | api_backfiller | [api_backfiller] MNDY.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,688 | DEBUG    | api_backfiller | [api_backfiller] MTZ.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,692 | DEBUG    | api_backfiller | [api_backfiller] MU.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,694 | DEBUG    | api_backfiller | [api_backfiller] NOW.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,695 | DEBUG    | api_backfiller | [api_backfiller] PBR.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,696 | DEBUG    | api_backfiller | [api_backfiller] PINS.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,697 | DEBUG    | api_backfiller | [api_backfiller] POWL.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,698 | DEBUG    | api_backfiller | [api_backfiller] SE.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,699 | DEBUG    | api_backfiller | [api_backfiller] SNAP.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,700 | DEBUG    | api_backfiller | [api_backfiller] SQM.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,702 | DEBUG    | api_backfiller | [api_backfiller] STX.US.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,703 | DEBUG    | api_backfiller | [api_backfiller] TEAM.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,705 | DEBUG    | api_backfiller | [api_backfiller] TSEM.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,707 | DEBUG    | api_backfiller | [api_backfiller] TTD.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,708 | DEBUG    | api_backfiller | [api_backfiller] TTMI.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,710 | DEBUG    | api_backfiller | [api_backfiller] VLO.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,712 | DEBUG    | api_backfiller | [api_backfiller] VRT.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,713 | DEBUG    | api_backfiller | [api_backfiller] WBD.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,714 | DEBUG    | api_backfiller | [api_backfiller] WDAY.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,717 | DEBUG    | api_backfiller | [api_backfiller] WDC.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,718 | DEBUG    | api_backfiller | [api_backfiller] WIX.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,720 | DEBUG    | api_backfiller | [api_backfiller] ZS.ETORO: Daten aktuell (Lücke 0.3h) — überspringe.
-2026-05-28 16:23:31,720 | INFO     | api_backfiller | [api_backfiller] Backfill abgeschlossen: 0 Symbole befüllt.
-2026-05-28 16:23:31,721 | INFO     | orchestrator | [Phase 2c] API-Backfill: 0 Symbole befüllt.
-2026-05-28 16:23:31,735 | INFO     | orchestrator | [Phase 2d] 5 Symbole unzureichend — starte Historical Fetcher ...
-2026-05-28 16:23:31,737 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 49 Instrumente.
-2026-05-28 16:23:31,737 | DEBUG    | asyncio | Using selector: EpollSelector
-2026-05-28 16:23:31,739 | INFO     | historical_fetcher | [historical_fetcher] 5/5 Symbole werden gefetcht (months=12, min_bars=200).
-2026-05-28 16:23:31,739 | INFO     | historical_fetcher | [historical_fetcher] Lade Instrument-Precisions via eToro API …
-2026-05-28 16:23:32,957 | INFO     | historical_fetcher | [historical_fetcher] Precisions via API: 0/5 Instrumente.
-2026-05-28 16:23:32,969 | INFO     | historical_fetcher | [EEFT.ETORO] Delta-Update: Fetch ab 2026-05-21T13:59:59+00:00 rückwärts bis 2025-06-02T14:23:32.958320+00:00
-2026-05-28 16:23:33,520 | DEBUG    | historical_fetcher | [EEFT.ETORO] OneHour: 1000 Candles, älteste: 2025-10-28T15:00:00+00:00
-2026-05-28 16:23:35,112 | INFO     | historical_fetcher | [EEFT.ETORO] Historische Tiefe für OneHour erreicht.
-2026-05-28 16:23:35,605 | DEBUG    | historical_fetcher | [EEFT.ETORO] OneDay: 1000 Candles, älteste: 2022-04-12T00:00:00+00:00
-2026-05-28 16:23:36,707 | INFO     | historical_fetcher | [EEFT.ETORO] Ziel-Startdatum mit OneDay erreicht.
-2026-05-28 16:23:36,737 | INFO     | historical_fetcher | [EEFT.ETORO] 1237 Candles → speichere (price_prec=2).
-2026-05-28 16:23:36,741 | DEBUG    | historical_fetcher | [api_backfiller] EEFT.ETORO: 1330→1304 Zeilen (-26 Duplikate)
-2026-05-28 16:23:36,742 | INFO     | historical_fetcher | [api_backfiller] EEFT.ETORO: 1304 Zeilen gespeichert (price_prec=2, size_prec=0) → data.parquet
-2026-05-28 16:23:37,848 | INFO     | historical_fetcher | [GSAT.ETORO] Delta-Update: Fetch ab 2026-05-21T13:59:59+00:00 rückwärts bis 2025-06-02T14:23:37.845253+00:00
-2026-05-28 16:23:38,347 | DEBUG    | historical_fetcher | [GSAT.ETORO] OneHour: 1000 Candles, älteste: 2025-10-28T14:00:00+00:00
-2026-05-28 16:23:39,940 | INFO     | historical_fetcher | [GSAT.ETORO] Historische Tiefe für OneHour erreicht.
-2026-05-28 16:23:40,418 | DEBUG    | historical_fetcher | [GSAT.ETORO] OneDay: 1000 Candles, älteste: 2022-04-12T00:00:00+00:00
-2026-05-28 16:23:41,519 | INFO     | historical_fetcher | [GSAT.ETORO] Ziel-Startdatum mit OneDay erreicht.
-2026-05-28 16:23:41,549 | INFO     | historical_fetcher | [GSAT.ETORO] 1237 Candles → speichere (price_prec=2).
-2026-05-28 16:23:41,556 | DEBUG    | historical_fetcher | [api_backfiller] GSAT.ETORO: 1401→1375 Zeilen (-26 Duplikate)
-2026-05-28 16:23:41,558 | INFO     | historical_fetcher | [api_backfiller] GSAT.ETORO: 1375 Zeilen gespeichert (price_prec=2, size_prec=0) → data.parquet
-2026-05-28 16:23:42,661 | INFO     | historical_fetcher | [INSW.ETORO] Delta-Update: Fetch ab 2026-05-21T13:59:59+00:00 rückwärts bis 2025-06-02T14:23:42.659736+00:00
-2026-05-28 16:23:43,144 | DEBUG    | historical_fetcher | [INSW.ETORO] OneHour: 1000 Candles, älteste: 2025-10-28T13:00:00+00:00
-2026-05-28 16:23:44,722 | INFO     | historical_fetcher | [INSW.ETORO] Historische Tiefe für OneHour erreicht.
-2026-05-28 16:23:45,060 | DEBUG    | historical_fetcher | [INSW.ETORO] OneDay: 596 Candles, älteste: 2023-11-30T00:00:00+00:00
-2026-05-28 16:23:46,162 | INFO     | historical_fetcher | [INSW.ETORO] Ziel-Startdatum mit OneDay erreicht.
-2026-05-28 16:23:46,187 | INFO     | historical_fetcher | [INSW.ETORO] 1237 Candles → speichere (price_prec=2).
-2026-05-28 16:23:46,193 | DEBUG    | historical_fetcher | [api_backfiller] INSW.ETORO: 1427→1401 Zeilen (-26 Duplikate)
-2026-05-28 16:23:46,195 | INFO     | historical_fetcher | [api_backfiller] INSW.ETORO: 1401 Zeilen gespeichert (price_prec=2, size_prec=0) → data.parquet
-2026-05-28 16:23:47,301 | INFO     | historical_fetcher | [SNAP.ETORO] Delta-Update: Fetch ab 2026-05-28T06:42:12.331605+00:00 rückwärts bis 2025-06-02T14:23:47.297818+00:00
-2026-05-28 16:23:47,822 | DEBUG    | historical_fetcher | [SNAP.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T09:00:00+00:00
-2026-05-28 16:23:49,387 | INFO     | historical_fetcher | [SNAP.ETORO] Historische Tiefe für OneHour erreicht.
-2026-05-28 16:23:49,902 | DEBUG    | historical_fetcher | [SNAP.ETORO] OneDay: 1000 Candles, älteste: 2022-04-25T00:00:00+00:00
-2026-05-28 16:23:51,002 | INFO     | historical_fetcher | [SNAP.ETORO] Ziel-Startdatum mit OneDay erreicht.
-2026-05-28 16:23:51,013 | INFO     | historical_fetcher | [SNAP.ETORO] 1244 Candles → speichere (price_prec=2).
-2026-05-28 16:23:51,021 | DEBUG    | historical_fetcher | [api_backfiller] SNAP.ETORO: 1344→1302 Zeilen (-42 Duplikate)
-2026-05-28 16:23:51,024 | INFO     | historical_fetcher | [api_backfiller] SNAP.ETORO: 1302 Zeilen gespeichert (price_prec=2, size_prec=0) → data.parquet
-2026-05-28 16:23:52,130 | INFO     | historical_fetcher | [WBD.ETORO] Delta-Update: Fetch ab 2026-05-28T06:39:53.759591+00:00 rückwärts bis 2025-06-02T14:23:52.126823+00:00
-2026-05-28 16:23:52,523 | DEBUG    | historical_fetcher | [WBD.ETORO] OneHour: 1000 Candles, älteste: 2026-03-25T04:00:00+00:00
-2026-05-28 16:23:53,970 | INFO     | historical_fetcher | [WBD.ETORO] Historische Tiefe für OneHour erreicht.
-2026-05-28 16:23:54,350 | DEBUG    | historical_fetcher | [WBD.ETORO] OneDay: 1000 Candles, älteste: 2022-04-22T00:00:00+00:00
-2026-05-28 16:23:55,451 | INFO     | historical_fetcher | [WBD.ETORO] Ziel-Startdatum mit OneDay erreicht.
-2026-05-28 16:23:55,459 | INFO     | historical_fetcher | [WBD.ETORO] 1244 Candles → speichere (price_prec=2).
-2026-05-28 16:23:55,463 | DEBUG    | historical_fetcher | [api_backfiller] WBD.ETORO: 1333→1290 Zeilen (-43 Duplikate)
-2026-05-28 16:23:55,467 | INFO     | historical_fetcher | [api_backfiller] WBD.ETORO: 1290 Zeilen gespeichert (price_prec=2, size_prec=0) → data.parquet
-2026-05-28 16:23:56,570 | INFO     | historical_fetcher | [historical_fetcher] Fertig: 5 Symbole befüllt.
-2026-05-28 16:23:56,571 | INFO     | orchestrator | [Phase 2d] Historical Fetcher: 5 Symbole befüllt.
-2026-05-28 16:23:56,571 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2D_COMPLETE", "timestamp_utc": "2026-05-28T14:23:56.571648+00:00", "insufficient_count": 5, "hist_filled_count": 5}
-2026-05-28 16:23:56,571 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2_COMPLETE", "timestamp_utc": "2026-05-28T14:23:56.571806+00:00", "merged_instruments": 49, "zips_deleted": 11, "api_filled_count": 0, "hist_filled_count": 5}
-2026-05-28 16:23:56,571 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:23:56,572 | INFO     | orchestrator | PHASE 3+4: Matrix-Backtesting & Tournament
-2026-05-28 16:23:56,572 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:23:56,572 | INFO     | orchestrator | [Phase 3] Zeitfenster: 2026-04-28T00:00:00+00:00 → 2026-05-28T00:00:00+00:00
-2026-05-28 16:23:56,573 | INFO     | orchestrator | [Phase 3] Dynamische Config: /home/user/etoro_nautilus/logs/backtest_dynamic_config.json
-2026-05-28 16:23:56,573 | INFO     | orchestrator | [Phase 3] Backtest-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/backtest_runner.py --momentum --catalog-path /home/user/etoro_nautilus/data/nautilus --config /home/user/etoro_nautilus/logs/backtest_dynamic_config.json --output /home/user/etoro_nautilus/logs/tournament_2026-05-28.json
-2026-05-28 16:23:56,573 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BACKTEST_START", "timestamp_utc": "2026-05-28T14:23:56.573400+00:00", "start": "2026-04-28T00:00:00+00:00", "end": "2026-05-28T00:00:00+00:00"}
-2026-05-28 16:26:06,970 | INFO     | orchestrator | [Phase 3] Backtest beendet (Exit-Code: 0).
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: 10_000.00 USD[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: [36m=================================================================[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: [36m BACKTEST RUN[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: [36m=================================================================[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Run config ID:  None[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Run ID:         38cbddea-c6cc-4cc7-8081-a1ad20fb4923[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Run started:    2026-05-28T14:26:02.837224000Z[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Backtest start: 2026-05-21T14:00:00.000000000Z[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Batch start:    2026-05-21T14:00:00.000000000Z[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Batch end:      2026-05-27T19:59:55.103424000Z[0m
-2026-05-28 16:26:07,012 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T14:00:00.000000000Z[0m [INFO] BT-WIX_ETORO-HourlyMeanReversionStrategy.BacktestEngine: [36m-----------------------------------------------------------------[0m
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] 🚀 WIX.ETORO | HourlyMeanReversionStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    📥 27 Ticks geladen.
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] Traceback (most recent call last):
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]   File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]     engine.run()
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    [ 384/392] WIX.ETORO / HourlyMeanReversionStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | SmaCrossoverStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    [ 385/392] ZS.ETORO / SmaCrossoverStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | MeanReversionStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    [ 386/392] ZS.ETORO / MeanReversionStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | DynamicBreakoutStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG]    [ 387/392] ZS.ETORO / DynamicBreakoutStrategy
-2026-05-28 16:26:07,013 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | FlashCrashReversalStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    [ 388/392] ZS.ETORO / FlashCrashReversalStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | VolatilityBreakoutPumpStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    [ 389/392] ZS.ETORO / VolatilityBreakoutPumpStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | ComboTrendVwapStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    [ 390/392] ZS.ETORO / ComboTrendVwapStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | VwapExhaustionStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    [ 391/392] ZS.ETORO / VwapExhaustionStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | HourlyMeanReversionStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    ⚠️ 0 Ticks im Zeitraum — überspringe.
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG]    [ 392/392] ZS.ETORO / HourlyMeanReversionStrategy
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG] 
-2026-05-28 16:26:07,014 | DEBUG    | orchestrator |   [BT-LOG] ✅ Matrix-Backtest vollständig abgeschlossen!
-2026-05-28 16:26:07,017 | INFO     | orchestrator | [Phase 4] Tournament: 0 Gewinner.
-2026-05-28 16:26:07,017 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "TOURNAMENT_COMPLETE", "timestamp_utc": "2026-05-28T14:26:07.017141+00:00", "winner_count": 0, "aggregate_winner": null, "path": "/home/user/etoro_nautilus/logs/tournament_2026-05-28.json"}
-2026-05-28 16:26:07,017 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:26:07,017 | INFO     | orchestrator | PHASE 5: Live Deployment & Bot-Start
-2026-05-28 16:26:07,017 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:26:07,017 | INFO     | orchestrator | [Phase 5] Bot-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/momentum_ls_run.py --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json --tournament /home/user/etoro_nautilus/logs/tournament_2026-05-28.json
-2026-05-28 16:26:07,017 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_START_INITIATED", "timestamp_utc": "2026-05-28T14:26:07.017827+00:00", "cmd": ["/home/user/etoro_nautilus/venv/bin/python3", "/home/user/etoro_nautilus/automation/momentum_ls_run.py", "--universe", "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "--tournament", "/home/user/etoro_nautilus/logs/tournament_2026-05-28.json"], "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260528.log", "tournament": "/home/user/etoro_nautilus/logs/tournament_2026-05-28.json", "universe": "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "dry_run": false}
-2026-05-28 16:26:07,018 | INFO     | orchestrator | [Phase 5] Trading-Bot gestartet (PID: 182317).
-2026-05-28 16:26:07,018 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_STARTED", "timestamp_utc": "2026-05-28T14:26:07.018659+00:00", "pid": 182317, "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260528.log"}
-2026-05-28 16:26:07,018 | INFO     | orchestrator | [Phase 5] PID gespeichert: /home/user/etoro_nautilus/logs/live_bot.pid
-2026-05-28 16:26:07,018 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:26:07,019 | INFO     | orchestrator | ORCHESTRATOR ERFOLGREICH ABGESCHLOSSEN
-2026-05-28 16:26:07,019 | INFO     | orchestrator |   Bot läuft als PID 182317
-2026-05-28 16:26:07,019 | INFO     | orchestrator |   Bot-Log: /home/user/etoro_nautilus/logs/live_bot_20260528.log
-2026-05-28 16:26:07,019 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
-2026-05-28 16:26:07,019 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-05-28T14:26:07.019344+00:00", "exit_code": 0}
-2026-05-28 16:26:07,019 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
+2026-05-28 20:12:01,362 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
+2026-05-28 20:12:01,362 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
+2026-05-28 20:12:01,362 | INFO     | orchestrator | ║  Start: 2026-05-28T18:12:01.362802+00:00                    ║
+2026-05-28 20:12:01,362 | INFO     | orchestrator | ║  DRY-RUN: NEIN                                                 ║
+2026-05-28 20:12:01,362 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
+2026-05-28 20:12:01,362 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
+2026-05-28 20:12:01,362 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-05-28T18:12:01.362926+00:00", "dry_run": false, "skip_api_fetch": false, "version": "2.0", "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]"}
+2026-05-28 20:12:01,363 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:12:01,363 | INFO     | orchestrator | PHASE 1: Universe & Mapping
+2026-05-28 20:12:01,363 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:12:01,363 | WARNING  | orchestrator | [Phase 1] Universe-Daten sind 299.2h alt (> 24h). Bitte neu fetchen.
+2026-05-28 20:12:01,363 | INFO     | orchestrator | [Phase 1] 49 eindeutige Instrumente im Universum.
+2026-05-28 20:12:01,363 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "timestamp_utc": "2026-05-28T18:12:01.363657+00:00", "universe_size": 49, "unmapped_count": 0}
+2026-05-28 20:12:01,363 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:12:01,363 | INFO     | orchestrator | PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)
+2026-05-28 20:12:01,363 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:12:01,363 | DEBUG    | orchestrator | [Phase 2a] ZIPs: ['20260528_064323.zip', '20260528_064824.zip', '20260528_130500.zip', '20260528_064724.zip', '20260528_064624.zip', '20260528_064924.zip', '20260528_075018.zip', '20260528_064742.zip', '20260528_140502.zip', '20260528_064524.zip', '20260528_064424.zip']
+2026-05-28 20:12:01,363 | INFO     | orchestrator | [Phase 2a] 11 ZIP-Datei(en) gefunden: ['20260528_064323.zip', '20260528_064824.zip', '20260528_130500.zip', '20260528_064724.zip', '20260528_064624.zip', '20260528_064924.zip', '20260528_075018.zip', '20260528_064742.zip', '20260528_140502.zip', '20260528_064524.zip', '20260528_064424.zip']
+2026-05-28 20:12:01,363 | INFO     | orchestrator | [Phase 2a] Verarbeite 11 ZIP-Datei(en) …
+2026-05-28 20:12:01,364 | INFO     | orchestrator | [Phase 2a] 20260528_064323.zip: 49 Parquet-Dateien.
+2026-05-28 20:12:01,518 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_064323.parquet: 1 Zeilen für ACN.ETORO.
+2026-05-28 20:12:01,519 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064323.parquet: 1 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,520 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_064323.parquet: 1 Zeilen für AG.ETORO.
+2026-05-28 20:12:01,521 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_064323.parquet: 1 Zeilen für CAT.ETORO.
+2026-05-28 20:12:01,522 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_064323.parquet: 1 Zeilen für CHTR.ETORO.
+2026-05-28 20:12:01,523 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_064323.parquet: 1 Zeilen für CIEN.ETORO.
+2026-05-28 20:12:01,523 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_064323.parquet: 1 Zeilen für CMG.ETORO.
+2026-05-28 20:12:01,524 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_064323.parquet: 1 Zeilen für COHR.ETORO.
+2026-05-28 20:12:01,525 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_064323.parquet: 1 Zeilen für CPRT.ETORO.
+2026-05-28 20:12:01,525 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064323.parquet: 2 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,526 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_064323.parquet: 1 Zeilen für DOCU.ETORO.
+2026-05-28 20:12:01,527 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_064323.parquet: 1 Zeilen für DUOL.ETORO.
+2026-05-28 20:12:01,527 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_064323.parquet: 1 Zeilen für E.ETORO.
+2026-05-28 20:12:01,528 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_064323.parquet: 1 Zeilen für EEFT.ETORO.
+2026-05-28 20:12:01,528 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_064323.parquet: 1 Zeilen für ESLT.ETORO.
+2026-05-28 20:12:01,529 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_064323.parquet: 1 Zeilen für FICO.ETORO.
+2026-05-28 20:12:01,530 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_064323.parquet: 1 Zeilen für FISV.ETORO.
+2026-05-28 20:12:01,530 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_064323.parquet: 8 Zeilen für GLW.ETORO.
+2026-05-28 20:12:01,531 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064323.parquet: 5 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,532 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_064323.parquet: 1 Zeilen für GSAT.ETORO.
+2026-05-28 20:12:01,532 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_064323.parquet: 1 Zeilen für GTLB.ETORO.
+2026-05-28 20:12:01,533 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_064323.parquet: 1 Zeilen für HAL.ETORO.
+2026-05-28 20:12:01,534 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_064323.parquet: 1 Zeilen für HUBS.ETORO.
+2026-05-28 20:12:01,534 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_064323.parquet: 1 Zeilen für INSW.ETORO.
+2026-05-28 20:12:01,535 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_064323.parquet: 1 Zeilen für JNJ.ETORO.
+2026-05-28 20:12:01,536 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_064323.parquet: 1 Zeilen für LRCX.ETORO.
+2026-05-28 20:12:01,536 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_064323.parquet: 1 Zeilen für LULU.ETORO.
+2026-05-28 20:12:01,537 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_064323.parquet: 1 Zeilen für MNDY.ETORO.
+2026-05-28 20:12:01,537 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_064323.parquet: 1 Zeilen für MTZ.ETORO.
+2026-05-28 20:12:01,538 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064323.parquet: 24 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,539 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064323.parquet: 2 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,539 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_064323.parquet: 1 Zeilen für PBR.ETORO.
+2026-05-28 20:12:01,540 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_064323.parquet: 1 Zeilen für PINS.ETORO.
+2026-05-28 20:12:01,541 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_064323.parquet: 1 Zeilen für POWL.ETORO.
+2026-05-28 20:12:01,541 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_064323.parquet: 1 Zeilen für SE.ETORO.
+2026-05-28 20:12:01,542 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_064323.parquet: 1 Zeilen für SNAP.ETORO.
+2026-05-28 20:12:01,543 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_064323.parquet: 1 Zeilen für SQM.ETORO.
+2026-05-28 20:12:01,543 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_064323.parquet: 4 Zeilen für STX.US.ETORO.
+2026-05-28 20:12:01,544 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_064323.parquet: 1 Zeilen für TEAM.ETORO.
+2026-05-28 20:12:01,544 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_064323.parquet: 1 Zeilen für TSEM.ETORO.
+2026-05-28 20:12:01,545 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_064323.parquet: 1 Zeilen für TTD.ETORO.
+2026-05-28 20:12:01,546 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_064323.parquet: 1 Zeilen für TTMI.ETORO.
+2026-05-28 20:12:01,546 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_064323.parquet: 1 Zeilen für VLO.ETORO.
+2026-05-28 20:12:01,547 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_064323.parquet: 1 Zeilen für VRT.ETORO.
+2026-05-28 20:12:01,548 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_064323.parquet: 1 Zeilen für WBD.ETORO.
+2026-05-28 20:12:01,548 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_064323.parquet: 1 Zeilen für WDAY.ETORO.
+2026-05-28 20:12:01,549 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064323.parquet: 3 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,550 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_064323.parquet: 1 Zeilen für WIX.ETORO.
+2026-05-28 20:12:01,550 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064323.parquet: 1 Zeilen für ZS.ETORO.
+2026-05-28 20:12:01,551 | INFO     | orchestrator | [Phase 2a] 20260528_064824.zip: 9 Parquet-Dateien.
+2026-05-28 20:12:01,551 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064824.parquet: 1 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,552 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_064824.parquet: 1 Zeilen für CAT.ETORO.
+2026-05-28 20:12:01,552 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064824.parquet: 6 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,553 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064824.parquet: 2 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,554 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064824.parquet: 18 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,554 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064824.parquet: 18 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,555 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_064824.parquet: 1 Zeilen für VLO.ETORO.
+2026-05-28 20:12:01,556 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064824.parquet: 2 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,556 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064824.parquet: 1 Zeilen für ZS.ETORO.
+2026-05-28 20:12:01,557 | INFO     | orchestrator | [Phase 2a] 20260528_130500.zip: 49 Parquet-Dateien.
+2026-05-28 20:12:01,557 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_130500.parquet: 25 Zeilen für ACN.ETORO.
+2026-05-28 20:12:01,558 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_130500.parquet: 122 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,559 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_130500.parquet: 1 Zeilen für AG.ETORO.
+2026-05-28 20:12:01,559 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_130500.parquet: 80 Zeilen für CAT.ETORO.
+2026-05-28 20:12:01,560 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_130500.parquet: 14 Zeilen für CHTR.ETORO.
+2026-05-28 20:12:01,561 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_130500.parquet: 1 Zeilen für CIEN.ETORO.
+2026-05-28 20:12:01,561 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_130500.parquet: 2 Zeilen für CMG.ETORO.
+2026-05-28 20:12:01,562 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_130500.parquet: 1 Zeilen für COHR.ETORO.
+2026-05-28 20:12:01,563 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_130500.parquet: 21 Zeilen für CPRT.ETORO.
+2026-05-28 20:12:01,564 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_130500.parquet: 403 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,564 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_130500.parquet: 1 Zeilen für DOCU.ETORO.
+2026-05-28 20:12:01,565 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_130500.parquet: 10 Zeilen für DUOL.ETORO.
+2026-05-28 20:12:01,566 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_130500.parquet: 1 Zeilen für E.ETORO.
+2026-05-28 20:12:01,567 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_130500.parquet: 1 Zeilen für EEFT.ETORO.
+2026-05-28 20:12:01,567 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_130500.parquet: 1 Zeilen für ESLT.ETORO.
+2026-05-28 20:12:01,568 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_130500.parquet: 5 Zeilen für FICO.ETORO.
+2026-05-28 20:12:01,569 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_130500.parquet: 7 Zeilen für FISV.ETORO.
+2026-05-28 20:12:01,570 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_130500.parquet: 196 Zeilen für GLW.ETORO.
+2026-05-28 20:12:01,570 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_130500.parquet: 687 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,571 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_130500.parquet: 1 Zeilen für GSAT.ETORO.
+2026-05-28 20:12:01,572 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_130500.parquet: 1 Zeilen für GTLB.ETORO.
+2026-05-28 20:12:01,573 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_130500.parquet: 20 Zeilen für HAL.ETORO.
+2026-05-28 20:12:01,573 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_130500.parquet: 1 Zeilen für HUBS.ETORO.
+2026-05-28 20:12:01,574 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_130500.parquet: 1 Zeilen für INSW.ETORO.
+2026-05-28 20:12:01,575 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_130500.parquet: 29 Zeilen für JNJ.ETORO.
+2026-05-28 20:12:01,575 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_130500.parquet: 115 Zeilen für LRCX.ETORO.
+2026-05-28 20:12:01,576 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_130500.parquet: 17 Zeilen für LULU.ETORO.
+2026-05-28 20:12:01,577 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_130500.parquet: 1 Zeilen für MNDY.ETORO.
+2026-05-28 20:12:01,577 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_130500.parquet: 1 Zeilen für MTZ.ETORO.
+2026-05-28 20:12:01,578 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_130500.parquet: 1680 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,579 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_130500.parquet: 483 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,580 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_130500.parquet: 1 Zeilen für PBR.ETORO.
+2026-05-28 20:12:01,580 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_130500.parquet: 1 Zeilen für PINS.ETORO.
+2026-05-28 20:12:01,581 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_130500.parquet: 1 Zeilen für POWL.ETORO.
+2026-05-28 20:12:01,582 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_130500.parquet: 1 Zeilen für SE.ETORO.
+2026-05-28 20:12:01,582 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_130500.parquet: 11 Zeilen für SNAP.ETORO.
+2026-05-28 20:12:01,583 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_130500.parquet: 1 Zeilen für SQM.ETORO.
+2026-05-28 20:12:01,584 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_130500.parquet: 116 Zeilen für STX.US.ETORO.
+2026-05-28 20:12:01,584 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_130500.parquet: 65 Zeilen für TEAM.ETORO.
+2026-05-28 20:12:01,585 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_130500.parquet: 1 Zeilen für TSEM.ETORO.
+2026-05-28 20:12:01,586 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_130500.parquet: 63 Zeilen für TTD.ETORO.
+2026-05-28 20:12:01,586 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_130500.parquet: 1 Zeilen für TTMI.ETORO.
+2026-05-28 20:12:01,587 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_130500.parquet: 4 Zeilen für VLO.ETORO.
+2026-05-28 20:12:01,588 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_130500.parquet: 1 Zeilen für VRT.ETORO.
+2026-05-28 20:12:01,588 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_130500.parquet: 8 Zeilen für WBD.ETORO.
+2026-05-28 20:12:01,589 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_130500.parquet: 53 Zeilen für WDAY.ETORO.
+2026-05-28 20:12:01,589 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_130500.parquet: 165 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,590 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_130500.parquet: 1 Zeilen für WIX.ETORO.
+2026-05-28 20:12:01,591 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_130500.parquet: 168 Zeilen für ZS.ETORO.
+2026-05-28 20:12:01,591 | INFO     | orchestrator | [Phase 2a] 20260528_064724.zip: 7 Parquet-Dateien.
+2026-05-28 20:12:01,592 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064724.parquet: 5 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,592 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064724.parquet: 11 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,593 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_064724.parquet: 2 Zeilen für LRCX.ETORO.
+2026-05-28 20:12:01,594 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_064724.parquet: 2 Zeilen für LULU.ETORO.
+2026-05-28 20:12:01,594 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064724.parquet: 13 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,595 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064724.parquet: 11 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,596 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_064724.parquet: 1 Zeilen für TEAM.ETORO.
+2026-05-28 20:12:01,596 | INFO     | orchestrator | [Phase 2a] 20260528_064624.zip: 7 Parquet-Dateien.
+2026-05-28 20:12:01,596 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064624.parquet: 5 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,597 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064624.parquet: 1 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,598 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_064624.parquet: 1 Zeilen für GLW.ETORO.
+2026-05-28 20:12:01,598 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064624.parquet: 1 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,599 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064624.parquet: 18 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,600 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064624.parquet: 5 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,601 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064624.parquet: 1 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,601 | INFO     | orchestrator | [Phase 2a] 20260528_064924.zip: 7 Parquet-Dateien.
+2026-05-28 20:12:01,602 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_064924.parquet: 2 Zeilen für CAT.ETORO.
+2026-05-28 20:12:01,603 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064924.parquet: 3 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,604 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064924.parquet: 3 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,604 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_064924.parquet: 1 Zeilen für JNJ.ETORO.
+2026-05-28 20:12:01,605 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064924.parquet: 21 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,606 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064924.parquet: 4 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,607 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064924.parquet: 3 Zeilen für ZS.ETORO.
+2026-05-28 20:12:01,607 | INFO     | orchestrator | [Phase 2a] 20260528_075018.zip: 49 Parquet-Dateien.
+2026-05-28 20:12:01,608 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_075018.parquet: 19 Zeilen für ACN.ETORO.
+2026-05-28 20:12:01,608 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_075018.parquet: 149 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,609 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_075018.parquet: 1 Zeilen für AG.ETORO.
+2026-05-28 20:12:01,610 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_075018.parquet: 299 Zeilen für CAT.ETORO.
+2026-05-28 20:12:01,610 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_075018.parquet: 1 Zeilen für CHTR.ETORO.
+2026-05-28 20:12:01,611 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_075018.parquet: 1 Zeilen für CIEN.ETORO.
+2026-05-28 20:12:01,612 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_075018.parquet: 1 Zeilen für CMG.ETORO.
+2026-05-28 20:12:01,612 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_075018.parquet: 1 Zeilen für COHR.ETORO.
+2026-05-28 20:12:01,613 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_075018.parquet: 3 Zeilen für CPRT.ETORO.
+2026-05-28 20:12:01,614 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_075018.parquet: 130 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,614 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_075018.parquet: 1 Zeilen für DOCU.ETORO.
+2026-05-28 20:12:01,615 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_075018.parquet: 15 Zeilen für DUOL.ETORO.
+2026-05-28 20:12:01,616 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_075018.parquet: 1 Zeilen für E.ETORO.
+2026-05-28 20:12:01,617 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_075018.parquet: 1 Zeilen für EEFT.ETORO.
+2026-05-28 20:12:01,618 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_075018.parquet: 1 Zeilen für ESLT.ETORO.
+2026-05-28 20:12:01,618 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_075018.parquet: 14 Zeilen für FICO.ETORO.
+2026-05-28 20:12:01,619 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_075018.parquet: 259 Zeilen für FISV.ETORO.
+2026-05-28 20:12:01,620 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_075018.parquet: 119 Zeilen für GLW.ETORO.
+2026-05-28 20:12:01,620 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_075018.parquet: 233 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,621 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_075018.parquet: 1 Zeilen für GSAT.ETORO.
+2026-05-28 20:12:01,622 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_075018.parquet: 1 Zeilen für GTLB.ETORO.
+2026-05-28 20:12:01,623 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_075018.parquet: 688 Zeilen für HAL.ETORO.
+2026-05-28 20:12:01,623 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_075018.parquet: 1 Zeilen für HUBS.ETORO.
+2026-05-28 20:12:01,624 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_075018.parquet: 1 Zeilen für INSW.ETORO.
+2026-05-28 20:12:01,625 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_075018.parquet: 12 Zeilen für JNJ.ETORO.
+2026-05-28 20:12:01,625 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_075018.parquet: 119 Zeilen für LRCX.ETORO.
+2026-05-28 20:12:01,626 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_075018.parquet: 20 Zeilen für LULU.ETORO.
+2026-05-28 20:12:01,627 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_075018.parquet: 1 Zeilen für MNDY.ETORO.
+2026-05-28 20:12:01,627 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_075018.parquet: 1 Zeilen für MTZ.ETORO.
+2026-05-28 20:12:01,628 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_075018.parquet: 1069 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,629 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_075018.parquet: 341 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,629 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_075018.parquet: 1 Zeilen für PBR.ETORO.
+2026-05-28 20:12:01,630 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_075018.parquet: 1 Zeilen für PINS.ETORO.
+2026-05-28 20:12:01,631 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_075018.parquet: 1 Zeilen für POWL.ETORO.
+2026-05-28 20:12:01,631 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_075018.parquet: 1 Zeilen für SE.ETORO.
+2026-05-28 20:12:01,632 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_075018.parquet: 7 Zeilen für SNAP.ETORO.
+2026-05-28 20:12:01,633 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_075018.parquet: 1 Zeilen für SQM.ETORO.
+2026-05-28 20:12:01,633 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_075018.parquet: 72 Zeilen für STX.US.ETORO.
+2026-05-28 20:12:01,634 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_075018.parquet: 31 Zeilen für TEAM.ETORO.
+2026-05-28 20:12:01,634 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_075018.parquet: 1 Zeilen für TSEM.ETORO.
+2026-05-28 20:12:01,635 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_075018.parquet: 12 Zeilen für TTD.ETORO.
+2026-05-28 20:12:01,636 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_075018.parquet: 1 Zeilen für TTMI.ETORO.
+2026-05-28 20:12:01,636 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_075018.parquet: 14 Zeilen für VLO.ETORO.
+2026-05-28 20:12:01,637 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_075018.parquet: 1 Zeilen für VRT.ETORO.
+2026-05-28 20:12:01,638 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_075018.parquet: 3 Zeilen für WBD.ETORO.
+2026-05-28 20:12:01,638 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_075018.parquet: 25 Zeilen für WDAY.ETORO.
+2026-05-28 20:12:01,639 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_075018.parquet: 170 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,640 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_075018.parquet: 1 Zeilen für WIX.ETORO.
+2026-05-28 20:12:01,640 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_075018.parquet: 119 Zeilen für ZS.ETORO.
+2026-05-28 20:12:01,641 | INFO     | orchestrator | [Phase 2a] 20260528_064742.zip: 6 Parquet-Dateien.
+2026-05-28 20:12:01,641 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064742.parquet: 2 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,642 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064742.parquet: 1 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,643 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_064742.parquet: 2 Zeilen für LULU.ETORO.
+2026-05-28 20:12:01,643 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064742.parquet: 12 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,644 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064742.parquet: 14 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,644 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_064742.parquet: 1 Zeilen für TEAM.ETORO.
+2026-05-28 20:12:01,645 | INFO     | orchestrator | [Phase 2a] 20260528_140502.zip: 49 Parquet-Dateien.
+2026-05-28 20:12:01,645 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ACN.ETORO/20260528_140502.parquet: 467 Zeilen für ACN.ETORO.
+2026-05-28 20:12:01,646 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_140502.parquet: 796 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,647 | DEBUG    | orchestrator | [Phase 2a] quote_tick/AG.ETORO/20260528_140502.parquet: 699 Zeilen für AG.ETORO.
+2026-05-28 20:12:01,648 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CAT.ETORO/20260528_140502.parquet: 604 Zeilen für CAT.ETORO.
+2026-05-28 20:12:01,649 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CHTR.ETORO/20260528_140502.parquet: 260 Zeilen für CHTR.ETORO.
+2026-05-28 20:12:01,650 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CIEN.ETORO/20260528_140502.parquet: 517 Zeilen für CIEN.ETORO.
+2026-05-28 20:12:01,651 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CMG.ETORO/20260528_140502.parquet: 581 Zeilen für CMG.ETORO.
+2026-05-28 20:12:01,652 | DEBUG    | orchestrator | [Phase 2a] quote_tick/COHR.ETORO/20260528_140502.parquet: 774 Zeilen für COHR.ETORO.
+2026-05-28 20:12:01,652 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CPRT.ETORO/20260528_140502.parquet: 393 Zeilen für CPRT.ETORO.
+2026-05-28 20:12:01,653 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_140502.parquet: 1590 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,654 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DOCU.ETORO/20260528_140502.parquet: 421 Zeilen für DOCU.ETORO.
+2026-05-28 20:12:01,655 | DEBUG    | orchestrator | [Phase 2a] quote_tick/DUOL.ETORO/20260528_140502.parquet: 255 Zeilen für DUOL.ETORO.
+2026-05-28 20:12:01,656 | DEBUG    | orchestrator | [Phase 2a] quote_tick/E.ETORO/20260528_140502.parquet: 415 Zeilen für E.ETORO.
+2026-05-28 20:12:01,656 | DEBUG    | orchestrator | [Phase 2a] quote_tick/EEFT.ETORO/20260528_140502.parquet: 66 Zeilen für EEFT.ETORO.
+2026-05-28 20:12:01,657 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ESLT.ETORO/20260528_140502.parquet: 651 Zeilen für ESLT.ETORO.
+2026-05-28 20:12:01,658 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FICO.ETORO/20260528_140502.parquet: 257 Zeilen für FICO.ETORO.
+2026-05-28 20:12:01,658 | DEBUG    | orchestrator | [Phase 2a] quote_tick/FISV.ETORO/20260528_140502.parquet: 472 Zeilen für FISV.ETORO.
+2026-05-28 20:12:01,659 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GLW.ETORO/20260528_140502.parquet: 784 Zeilen für GLW.ETORO.
+2026-05-28 20:12:01,660 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_140502.parquet: 2131 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,661 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GSAT.ETORO/20260528_140502.parquet: 137 Zeilen für GSAT.ETORO.
+2026-05-28 20:12:01,662 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GTLB.ETORO/20260528_140502.parquet: 830 Zeilen für GTLB.ETORO.
+2026-05-28 20:12:01,662 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HAL.ETORO/20260528_140502.parquet: 791 Zeilen für HAL.ETORO.
+2026-05-28 20:12:01,663 | DEBUG    | orchestrator | [Phase 2a] quote_tick/HUBS.ETORO/20260528_140502.parquet: 311 Zeilen für HUBS.ETORO.
+2026-05-28 20:12:01,664 | DEBUG    | orchestrator | [Phase 2a] quote_tick/INSW.ETORO/20260528_140502.parquet: 163 Zeilen für INSW.ETORO.
+2026-05-28 20:12:01,664 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_140502.parquet: 597 Zeilen für JNJ.ETORO.
+2026-05-28 20:12:01,665 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LRCX.ETORO/20260528_140502.parquet: 900 Zeilen für LRCX.ETORO.
+2026-05-28 20:12:01,666 | DEBUG    | orchestrator | [Phase 2a] quote_tick/LULU.ETORO/20260528_140502.parquet: 473 Zeilen für LULU.ETORO.
+2026-05-28 20:12:01,667 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MNDY.ETORO/20260528_140502.parquet: 199 Zeilen für MNDY.ETORO.
+2026-05-28 20:12:01,667 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MTZ.ETORO/20260528_140502.parquet: 204 Zeilen für MTZ.ETORO.
+2026-05-28 20:12:01,668 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_140502.parquet: 2661 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,669 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_140502.parquet: 1904 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,670 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PBR.ETORO/20260528_140502.parquet: 295 Zeilen für PBR.ETORO.
+2026-05-28 20:12:01,671 | DEBUG    | orchestrator | [Phase 2a] quote_tick/PINS.ETORO/20260528_140502.parquet: 411 Zeilen für PINS.ETORO.
+2026-05-28 20:12:01,671 | DEBUG    | orchestrator | [Phase 2a] quote_tick/POWL.ETORO/20260528_140502.parquet: 290 Zeilen für POWL.ETORO.
+2026-05-28 20:12:01,672 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SE.ETORO/20260528_140502.parquet: 457 Zeilen für SE.ETORO.
+2026-05-28 20:12:01,673 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SNAP.ETORO/20260528_140502.parquet: 82 Zeilen für SNAP.ETORO.
+2026-05-28 20:12:01,673 | DEBUG    | orchestrator | [Phase 2a] quote_tick/SQM.ETORO/20260528_140502.parquet: 286 Zeilen für SQM.ETORO.
+2026-05-28 20:12:01,674 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_140502.parquet: 812 Zeilen für STX.US.ETORO.
+2026-05-28 20:12:01,675 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TEAM.ETORO/20260528_140502.parquet: 736 Zeilen für TEAM.ETORO.
+2026-05-28 20:12:01,675 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TSEM.ETORO/20260528_140502.parquet: 712 Zeilen für TSEM.ETORO.
+2026-05-28 20:12:01,676 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTD.ETORO/20260528_140502.parquet: 869 Zeilen für TTD.ETORO.
+2026-05-28 20:12:01,677 | DEBUG    | orchestrator | [Phase 2a] quote_tick/TTMI.ETORO/20260528_140502.parquet: 332 Zeilen für TTMI.ETORO.
+2026-05-28 20:12:01,677 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VLO.ETORO/20260528_140502.parquet: 280 Zeilen für VLO.ETORO.
+2026-05-28 20:12:01,678 | DEBUG    | orchestrator | [Phase 2a] quote_tick/VRT.ETORO/20260528_140502.parquet: 874 Zeilen für VRT.ETORO.
+2026-05-28 20:12:01,679 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WBD.ETORO/20260528_140502.parquet: 78 Zeilen für WBD.ETORO.
+2026-05-28 20:12:01,679 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_140502.parquet: 464 Zeilen für WDAY.ETORO.
+2026-05-28 20:12:01,680 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_140502.parquet: 1047 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,681 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WIX.ETORO/20260528_140502.parquet: 189 Zeilen für WIX.ETORO.
+2026-05-28 20:12:01,681 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_140502.parquet: 1146 Zeilen für ZS.ETORO.
+2026-05-28 20:12:01,682 | INFO     | orchestrator | [Phase 2a] 20260528_064524.zip: 8 Parquet-Dateien.
+2026-05-28 20:12:01,682 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064524.parquet: 6 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,683 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064524.parquet: 7 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,683 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064524.parquet: 6 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,684 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064524.parquet: 36 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,685 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064524.parquet: 3 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,685 | DEBUG    | orchestrator | [Phase 2a] quote_tick/STX.US.ETORO/20260528_064524.parquet: 1 Zeilen für STX.US.ETORO.
+2026-05-28 20:12:01,686 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDAY.ETORO/20260528_064524.parquet: 2 Zeilen für WDAY.ETORO.
+2026-05-28 20:12:01,687 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064524.parquet: 1 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,687 | INFO     | orchestrator | [Phase 2a] 20260528_064424.zip: 8 Parquet-Dateien.
+2026-05-28 20:12:01,687 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ADBE.ETORO/20260528_064424.parquet: 4 Zeilen für ADBE.ETORO.
+2026-05-28 20:12:01,688 | DEBUG    | orchestrator | [Phase 2a] quote_tick/CRM.ETORO/20260528_064424.parquet: 1 Zeilen für CRM.ETORO.
+2026-05-28 20:12:01,689 | DEBUG    | orchestrator | [Phase 2a] quote_tick/GOOGL.ETORO/20260528_064424.parquet: 3 Zeilen für GOOGL.ETORO.
+2026-05-28 20:12:01,689 | DEBUG    | orchestrator | [Phase 2a] quote_tick/JNJ.ETORO/20260528_064424.parquet: 1 Zeilen für JNJ.ETORO.
+2026-05-28 20:12:01,690 | DEBUG    | orchestrator | [Phase 2a] quote_tick/MU.ETORO/20260528_064424.parquet: 24 Zeilen für MU.ETORO.
+2026-05-28 20:12:01,691 | DEBUG    | orchestrator | [Phase 2a] quote_tick/NOW.ETORO/20260528_064424.parquet: 5 Zeilen für NOW.ETORO.
+2026-05-28 20:12:01,691 | DEBUG    | orchestrator | [Phase 2a] quote_tick/WDC.ETORO/20260528_064424.parquet: 2 Zeilen für WDC.ETORO.
+2026-05-28 20:12:01,692 | DEBUG    | orchestrator | [Phase 2a] quote_tick/ZS.ETORO/20260528_064424.parquet: 1 Zeilen für ZS.ETORO.
+2026-05-28 20:12:01,694 | INFO     | orchestrator | [Phase 2b] ACN.ETORO: 512 bestehend + 512 neu → 599 Zeilen (-512 Duplikate)
+2026-05-28 20:12:01,695 | INFO     | orchestrator | [Phase 2b] ACN.ETORO: 599 Zeilen → data.parquet
+2026-05-28 20:12:01,697 | INFO     | orchestrator | [Phase 2b] ADBE.ETORO: 1084 bestehend + 1084 neu → 1176 Zeilen (-1084 Duplikate)
+2026-05-28 20:12:01,698 | INFO     | orchestrator | [Phase 2b] ADBE.ETORO: 1176 Zeilen → data.parquet
+2026-05-28 20:12:01,700 | INFO     | orchestrator | [Phase 2b] AG.ETORO: 702 bestehend + 702 neu → 732 Zeilen (-702 Duplikate)
+2026-05-28 20:12:01,700 | INFO     | orchestrator | [Phase 2b] AG.ETORO: 732 Zeilen → data.parquet
+2026-05-28 20:12:01,702 | INFO     | orchestrator | [Phase 2b] CAT.ETORO: 987 bestehend + 987 neu → 1078 Zeilen (-987 Duplikate)
+2026-05-28 20:12:01,703 | INFO     | orchestrator | [Phase 2b] CAT.ETORO: 1078 Zeilen → data.parquet
+2026-05-28 20:12:01,704 | INFO     | orchestrator | [Phase 2b] CHTR.ETORO: 276 bestehend + 276 neu → 364 Zeilen (-276 Duplikate)
+2026-05-28 20:12:01,705 | INFO     | orchestrator | [Phase 2b] CHTR.ETORO: 364 Zeilen → data.parquet
+2026-05-28 20:12:01,706 | INFO     | orchestrator | [Phase 2b] CIEN.ETORO: 520 bestehend + 520 neu → 550 Zeilen (-520 Duplikate)
+2026-05-28 20:12:01,707 | INFO     | orchestrator | [Phase 2b] CIEN.ETORO: 550 Zeilen → data.parquet
+2026-05-28 20:12:01,709 | INFO     | orchestrator | [Phase 2b] CMG.ETORO: 585 bestehend + 585 neu → 672 Zeilen (-585 Duplikate)
+2026-05-28 20:12:01,709 | INFO     | orchestrator | [Phase 2b] CMG.ETORO: 672 Zeilen → data.parquet
+2026-05-28 20:12:01,711 | INFO     | orchestrator | [Phase 2b] COHR.ETORO: 777 bestehend + 777 neu → 807 Zeilen (-777 Duplikate)
+2026-05-28 20:12:01,712 | INFO     | orchestrator | [Phase 2b] COHR.ETORO: 807 Zeilen → data.parquet
+2026-05-28 20:12:01,713 | INFO     | orchestrator | [Phase 2b] CPRT.ETORO: 418 bestehend + 418 neu → 505 Zeilen (-418 Duplikate)
+2026-05-28 20:12:01,714 | INFO     | orchestrator | [Phase 2b] CPRT.ETORO: 505 Zeilen → data.parquet
+2026-05-28 20:12:01,717 | INFO     | orchestrator | [Phase 2b] CRM.ETORO: 2150 bestehend + 2150 neu → 2239 Zeilen (-2150 Duplikate)
+2026-05-28 20:12:01,718 | INFO     | orchestrator | [Phase 2b] CRM.ETORO: 2239 Zeilen → data.parquet
+2026-05-28 20:12:01,719 | INFO     | orchestrator | [Phase 2b] DOCU.ETORO: 424 bestehend + 424 neu → 454 Zeilen (-424 Duplikate)
+2026-05-28 20:12:01,720 | INFO     | orchestrator | [Phase 2b] DOCU.ETORO: 454 Zeilen → data.parquet
+2026-05-28 20:12:01,721 | INFO     | orchestrator | [Phase 2b] DUOL.ETORO: 281 bestehend + 281 neu → 373 Zeilen (-281 Duplikate)
+2026-05-28 20:12:01,722 | INFO     | orchestrator | [Phase 2b] DUOL.ETORO: 373 Zeilen → data.parquet
+2026-05-28 20:12:01,723 | INFO     | orchestrator | [Phase 2b] E.ETORO: 418 bestehend + 418 neu → 448 Zeilen (-418 Duplikate)
+2026-05-28 20:12:01,724 | INFO     | orchestrator | [Phase 2b] E.ETORO: 448 Zeilen → data.parquet
+2026-05-28 20:12:01,726 | INFO     | orchestrator | [Phase 2b] EEFT.ETORO: 69 bestehend + 69 neu → 1308 Zeilen (-69 Duplikate)
+2026-05-28 20:12:01,726 | INFO     | orchestrator | [Phase 2b] EEFT.ETORO: 1308 Zeilen → data.parquet
+2026-05-28 20:12:01,728 | INFO     | orchestrator | [Phase 2b] ESLT.ETORO: 654 bestehend + 654 neu → 685 Zeilen (-654 Duplikate)
+2026-05-28 20:12:01,729 | INFO     | orchestrator | [Phase 2b] ESLT.ETORO: 685 Zeilen → data.parquet
+2026-05-28 20:12:01,730 | INFO     | orchestrator | [Phase 2b] FICO.ETORO: 277 bestehend + 277 neu → 365 Zeilen (-277 Duplikate)
+2026-05-28 20:12:01,731 | INFO     | orchestrator | [Phase 2b] FICO.ETORO: 365 Zeilen → data.parquet
+2026-05-28 20:12:01,732 | INFO     | orchestrator | [Phase 2b] FISV.ETORO: 739 bestehend + 739 neu → 829 Zeilen (-739 Duplikate)
+2026-05-28 20:12:01,733 | INFO     | orchestrator | [Phase 2b] FISV.ETORO: 829 Zeilen → data.parquet
+2026-05-28 20:12:01,735 | INFO     | orchestrator | [Phase 2b] GLW.ETORO: 1108 bestehend + 1108 neu → 1200 Zeilen (-1108 Duplikate)
+2026-05-28 20:12:01,736 | INFO     | orchestrator | [Phase 2b] GLW.ETORO: 1200 Zeilen → data.parquet
+2026-05-28 20:12:01,739 | INFO     | orchestrator | [Phase 2b] GOOGL.ETORO: 3083 bestehend + 3083 neu → 3174 Zeilen (-3083 Duplikate)
+2026-05-28 20:12:01,740 | INFO     | orchestrator | [Phase 2b] GOOGL.ETORO: 3174 Zeilen → data.parquet
+2026-05-28 20:12:01,742 | INFO     | orchestrator | [Phase 2b] GSAT.ETORO: 140 bestehend + 140 neu → 1379 Zeilen (-140 Duplikate)
+2026-05-28 20:12:01,743 | INFO     | orchestrator | [Phase 2b] GSAT.ETORO: 1379 Zeilen → data.parquet
+2026-05-28 20:12:01,745 | INFO     | orchestrator | [Phase 2b] GTLB.ETORO: 833 bestehend + 833 neu → 863 Zeilen (-833 Duplikate)
+2026-05-28 20:12:01,746 | INFO     | orchestrator | [Phase 2b] GTLB.ETORO: 863 Zeilen → data.parquet
+2026-05-28 20:12:01,748 | INFO     | orchestrator | [Phase 2b] HAL.ETORO: 1500 bestehend + 1500 neu → 1585 Zeilen (-1500 Duplikate)
+2026-05-28 20:12:01,749 | INFO     | orchestrator | [Phase 2b] HAL.ETORO: 1585 Zeilen → data.parquet
+2026-05-28 20:12:01,750 | INFO     | orchestrator | [Phase 2b] HUBS.ETORO: 314 bestehend + 314 neu → 344 Zeilen (-314 Duplikate)
+2026-05-28 20:12:01,751 | INFO     | orchestrator | [Phase 2b] HUBS.ETORO: 344 Zeilen → data.parquet
+2026-05-28 20:12:01,753 | INFO     | orchestrator | [Phase 2b] INSW.ETORO: 166 bestehend + 166 neu → 1405 Zeilen (-166 Duplikate)
+2026-05-28 20:12:01,753 | INFO     | orchestrator | [Phase 2b] INSW.ETORO: 1405 Zeilen → data.parquet
+2026-05-28 20:12:01,755 | INFO     | orchestrator | [Phase 2b] JNJ.ETORO: 641 bestehend + 641 neu → 730 Zeilen (-641 Duplikate)
+2026-05-28 20:12:01,756 | INFO     | orchestrator | [Phase 2b] JNJ.ETORO: 730 Zeilen → data.parquet
+2026-05-28 20:12:01,758 | INFO     | orchestrator | [Phase 2b] LRCX.ETORO: 1137 bestehend + 1137 neu → 1229 Zeilen (-1137 Duplikate)
+2026-05-28 20:12:01,758 | INFO     | orchestrator | [Phase 2b] LRCX.ETORO: 1229 Zeilen → data.parquet
+2026-05-28 20:12:01,760 | INFO     | orchestrator | [Phase 2b] LULU.ETORO: 515 bestehend + 515 neu → 605 Zeilen (-515 Duplikate)
+2026-05-28 20:12:01,761 | INFO     | orchestrator | [Phase 2b] LULU.ETORO: 605 Zeilen → data.parquet
+2026-05-28 20:12:01,762 | INFO     | orchestrator | [Phase 2b] MNDY.ETORO: 202 bestehend + 202 neu → 232 Zeilen (-202 Duplikate)
+2026-05-28 20:12:01,762 | INFO     | orchestrator | [Phase 2b] MNDY.ETORO: 232 Zeilen → data.parquet
+2026-05-28 20:12:01,764 | INFO     | orchestrator | [Phase 2b] MTZ.ETORO: 207 bestehend + 207 neu → 237 Zeilen (-207 Duplikate)
+2026-05-28 20:12:01,764 | INFO     | orchestrator | [Phase 2b] MTZ.ETORO: 237 Zeilen → data.parquet
+2026-05-28 20:12:01,770 | INFO     | orchestrator | [Phase 2b] MU.ETORO: 5576 bestehend + 5576 neu → 5656 Zeilen (-5576 Duplikate)
+2026-05-28 20:12:01,772 | INFO     | orchestrator | [Phase 2b] MU.ETORO: 5656 Zeilen → data.parquet
+2026-05-28 20:12:01,775 | INFO     | orchestrator | [Phase 2b] NOW.ETORO: 2790 bestehend + 2790 neu → 2867 Zeilen (-2790 Duplikate)
+2026-05-28 20:12:01,777 | INFO     | orchestrator | [Phase 2b] NOW.ETORO: 2867 Zeilen → data.parquet
+2026-05-28 20:12:01,778 | INFO     | orchestrator | [Phase 2b] PBR.ETORO: 298 bestehend + 298 neu → 328 Zeilen (-298 Duplikate)
+2026-05-28 20:12:01,779 | INFO     | orchestrator | [Phase 2b] PBR.ETORO: 328 Zeilen → data.parquet
+2026-05-28 20:12:01,780 | INFO     | orchestrator | [Phase 2b] PINS.ETORO: 414 bestehend + 414 neu → 444 Zeilen (-414 Duplikate)
+2026-05-28 20:12:01,781 | INFO     | orchestrator | [Phase 2b] PINS.ETORO: 444 Zeilen → data.parquet
+2026-05-28 20:12:01,782 | INFO     | orchestrator | [Phase 2b] POWL.ETORO: 293 bestehend + 293 neu → 323 Zeilen (-293 Duplikate)
+2026-05-28 20:12:01,783 | INFO     | orchestrator | [Phase 2b] POWL.ETORO: 323 Zeilen → data.parquet
+2026-05-28 20:12:01,784 | INFO     | orchestrator | [Phase 2b] SE.ETORO: 460 bestehend + 460 neu → 490 Zeilen (-460 Duplikate)
+2026-05-28 20:12:01,785 | INFO     | orchestrator | [Phase 2b] SE.ETORO: 490 Zeilen → data.parquet
+2026-05-28 20:12:01,786 | INFO     | orchestrator | [Phase 2b] SNAP.ETORO: 101 bestehend + 101 neu → 1306 Zeilen (-101 Duplikate)
+2026-05-28 20:12:01,787 | INFO     | orchestrator | [Phase 2b] SNAP.ETORO: 1306 Zeilen → data.parquet
+2026-05-28 20:12:01,788 | INFO     | orchestrator | [Phase 2b] SQM.ETORO: 289 bestehend + 289 neu → 319 Zeilen (-289 Duplikate)
+2026-05-28 20:12:01,789 | INFO     | orchestrator | [Phase 2b] SQM.ETORO: 319 Zeilen → data.parquet
+2026-05-28 20:12:01,791 | INFO     | orchestrator | [Phase 2b] STX.US.ETORO: 1005 bestehend + 1005 neu → 1096 Zeilen (-1005 Duplikate)
+2026-05-28 20:12:01,791 | INFO     | orchestrator | [Phase 2b] STX.US.ETORO: 1096 Zeilen → data.parquet
+2026-05-28 20:12:01,793 | INFO     | orchestrator | [Phase 2b] TEAM.ETORO: 835 bestehend + 835 neu → 925 Zeilen (-835 Duplikate)
+2026-05-28 20:12:01,794 | INFO     | orchestrator | [Phase 2b] TEAM.ETORO: 925 Zeilen → data.parquet
+2026-05-28 20:12:01,796 | INFO     | orchestrator | [Phase 2b] TSEM.ETORO: 715 bestehend + 715 neu → 745 Zeilen (-715 Duplikate)
+2026-05-28 20:12:01,796 | INFO     | orchestrator | [Phase 2b] TSEM.ETORO: 745 Zeilen → data.parquet
+2026-05-28 20:12:01,798 | INFO     | orchestrator | [Phase 2b] TTD.ETORO: 945 bestehend + 945 neu → 1036 Zeilen (-945 Duplikate)
+2026-05-28 20:12:01,799 | INFO     | orchestrator | [Phase 2b] TTD.ETORO: 1036 Zeilen → data.parquet
+2026-05-28 20:12:01,800 | INFO     | orchestrator | [Phase 2b] TTMI.ETORO: 335 bestehend + 335 neu → 365 Zeilen (-335 Duplikate)
+2026-05-28 20:12:01,800 | INFO     | orchestrator | [Phase 2b] TTMI.ETORO: 365 Zeilen → data.parquet
+2026-05-28 20:12:01,802 | INFO     | orchestrator | [Phase 2b] VLO.ETORO: 300 bestehend + 300 neu → 383 Zeilen (-300 Duplikate)
+2026-05-28 20:12:01,802 | INFO     | orchestrator | [Phase 2b] VLO.ETORO: 383 Zeilen → data.parquet
+2026-05-28 20:12:01,804 | INFO     | orchestrator | [Phase 2b] VRT.ETORO: 877 bestehend + 877 neu → 907 Zeilen (-877 Duplikate)
+2026-05-28 20:12:01,805 | INFO     | orchestrator | [Phase 2b] VRT.ETORO: 907 Zeilen → data.parquet
+2026-05-28 20:12:01,807 | INFO     | orchestrator | [Phase 2b] WBD.ETORO: 90 bestehend + 90 neu → 1294 Zeilen (-90 Duplikate)
+2026-05-28 20:12:01,807 | INFO     | orchestrator | [Phase 2b] WBD.ETORO: 1294 Zeilen → data.parquet
+2026-05-28 20:12:01,809 | INFO     | orchestrator | [Phase 2b] WDAY.ETORO: 545 bestehend + 545 neu → 637 Zeilen (-545 Duplikate)
+2026-05-28 20:12:01,809 | INFO     | orchestrator | [Phase 2b] WDAY.ETORO: 637 Zeilen → data.parquet
+2026-05-28 20:12:01,811 | INFO     | orchestrator | [Phase 2b] WDC.ETORO: 1391 bestehend + 1391 neu → 1483 Zeilen (-1391 Duplikate)
+2026-05-28 20:12:01,812 | INFO     | orchestrator | [Phase 2b] WDC.ETORO: 1483 Zeilen → data.parquet
+2026-05-28 20:12:01,814 | INFO     | orchestrator | [Phase 2b] WIX.ETORO: 192 bestehend + 192 neu → 222 Zeilen (-192 Duplikate)
+2026-05-28 20:12:01,814 | INFO     | orchestrator | [Phase 2b] WIX.ETORO: 222 Zeilen → data.parquet
+2026-05-28 20:12:01,816 | INFO     | orchestrator | [Phase 2b] ZS.ETORO: 1439 bestehend + 1439 neu → 1530 Zeilen (-1439 Duplikate)
+2026-05-28 20:12:01,817 | INFO     | orchestrator | [Phase 2b] ZS.ETORO: 1530 Zeilen → data.parquet
+2026-05-28 20:12:01,817 | INFO     | orchestrator | [Phase 2b] Merge abgeschlossen: 49 Instrumente.
+2026-05-28 20:12:01,819 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064323.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064824.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_130500.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064724.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064624.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064924.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_075018.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064742.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_140502.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064524.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [Phase 2b] ZIP gelöscht: 20260528_064424.zip
+2026-05-28 20:12:01,820 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ZIPS_DELETED", "timestamp_utc": "2026-05-28T18:12:01.820854+00:00", "count": 11, "paths": ["/home/user/etoro_nautilus/data/import/20260528_064323.zip", "/home/user/etoro_nautilus/data/import/20260528_064824.zip", "/home/user/etoro_nautilus/data/import/20260528_130500.zip", "/home/user/etoro_nautilus/data/import/20260528_064724.zip", "/home/user/etoro_nautilus/data/import/20260528_064624.zip", "/home/user/etoro_nautilus/data/import/20260528_064924.zip", "/home/user/etoro_nautilus/data/import/20260528_075018.zip", "/home/user/etoro_nautilus/data/import/20260528_064742.zip", "/home/user/etoro_nautilus/data/import/20260528_140502.zip", "/home/user/etoro_nautilus/data/import/20260528_064524.zip", "/home/user/etoro_nautilus/data/import/20260528_064424.zip"]}
+2026-05-28 20:12:01,821 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 49 Instrumente.
+2026-05-28 20:12:01,821 | INFO     | orchestrator | [Phase 2c] API-Backfill für 49 Symbole …
+2026-05-28 20:12:01,821 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-05-28 20:12:01,821 | INFO     | api_backfiller | [api_backfiller] Starte Backfill: 2026-05-21 → 2026-05-28 | 49 Instrumente
+2026-05-28 20:12:01,821 | INFO     | api_backfiller | [api_backfiller] Lade Instrument-Precisions via eToro API …
+2026-05-28 20:12:02,433 | INFO     | api_backfiller | [api_backfiller] Precisions via API: 0/49 Instrumente.
+2026-05-28 20:12:02,436 | DEBUG    | api_backfiller | [api_backfiller] ACN.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,439 | DEBUG    | api_backfiller | [api_backfiller] ADBE.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,441 | DEBUG    | api_backfiller | [api_backfiller] AG.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,443 | DEBUG    | api_backfiller | [api_backfiller] CAT.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,444 | DEBUG    | api_backfiller | [api_backfiller] CHTR.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,445 | DEBUG    | api_backfiller | [api_backfiller] CIEN.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,446 | DEBUG    | api_backfiller | [api_backfiller] CMG.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,448 | DEBUG    | api_backfiller | [api_backfiller] COHR.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,449 | DEBUG    | api_backfiller | [api_backfiller] CPRT.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,451 | DEBUG    | api_backfiller | [api_backfiller] CRM.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,452 | DEBUG    | api_backfiller | [api_backfiller] DOCU.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,453 | DEBUG    | api_backfiller | [api_backfiller] DUOL.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,454 | DEBUG    | api_backfiller | [api_backfiller] E.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,455 | DEBUG    | api_backfiller | [api_backfiller] EEFT.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,456 | DEBUG    | api_backfiller | [api_backfiller] ESLT.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,457 | DEBUG    | api_backfiller | [api_backfiller] FICO.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,458 | DEBUG    | api_backfiller | [api_backfiller] FISV.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,459 | DEBUG    | api_backfiller | [api_backfiller] GLW.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,461 | DEBUG    | api_backfiller | [api_backfiller] GOOGL.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,462 | DEBUG    | api_backfiller | [api_backfiller] GSAT.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,463 | DEBUG    | api_backfiller | [api_backfiller] GTLB.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,464 | DEBUG    | api_backfiller | [api_backfiller] HAL.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,465 | DEBUG    | api_backfiller | [api_backfiller] HUBS.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,466 | DEBUG    | api_backfiller | [api_backfiller] INSW.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,467 | DEBUG    | api_backfiller | [api_backfiller] JNJ.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,468 | DEBUG    | api_backfiller | [api_backfiller] LRCX.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,469 | DEBUG    | api_backfiller | [api_backfiller] LULU.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,470 | DEBUG    | api_backfiller | [api_backfiller] MNDY.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,470 | DEBUG    | api_backfiller | [api_backfiller] MTZ.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,472 | DEBUG    | api_backfiller | [api_backfiller] MU.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,473 | DEBUG    | api_backfiller | [api_backfiller] NOW.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,474 | DEBUG    | api_backfiller | [api_backfiller] PBR.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,475 | DEBUG    | api_backfiller | [api_backfiller] PINS.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,476 | DEBUG    | api_backfiller | [api_backfiller] POWL.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,477 | DEBUG    | api_backfiller | [api_backfiller] SE.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,478 | DEBUG    | api_backfiller | [api_backfiller] SNAP.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,478 | DEBUG    | api_backfiller | [api_backfiller] SQM.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,479 | DEBUG    | api_backfiller | [api_backfiller] STX.US.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,480 | DEBUG    | api_backfiller | [api_backfiller] TEAM.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,481 | DEBUG    | api_backfiller | [api_backfiller] TSEM.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,482 | DEBUG    | api_backfiller | [api_backfiller] TTD.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,482 | DEBUG    | api_backfiller | [api_backfiller] TTMI.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,483 | DEBUG    | api_backfiller | [api_backfiller] VLO.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,484 | DEBUG    | api_backfiller | [api_backfiller] VRT.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,485 | DEBUG    | api_backfiller | [api_backfiller] WBD.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,486 | DEBUG    | api_backfiller | [api_backfiller] WDAY.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,487 | DEBUG    | api_backfiller | [api_backfiller] WDC.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,487 | DEBUG    | api_backfiller | [api_backfiller] WIX.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,488 | DEBUG    | api_backfiller | [api_backfiller] ZS.ETORO: Daten aktuell (Lücke 0.2h) — überspringe.
+2026-05-28 20:12:02,489 | INFO     | api_backfiller | [api_backfiller] Backfill abgeschlossen: 0 Symbole befüllt.
+2026-05-28 20:12:02,490 | INFO     | orchestrator | [Phase 2c] API-Backfill: 0 Symbole befüllt.
+2026-05-28 20:12:02,497 | INFO     | orchestrator | [Phase 2d] Alle Symbole haben ausreichend Daten — Historical Fetcher übersprungen.
+2026-05-28 20:12:02,498 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2D_COMPLETE", "timestamp_utc": "2026-05-28T18:12:02.498009+00:00", "insufficient_count": 0, "hist_filled_count": 0}
+2026-05-28 20:12:02,498 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2_COMPLETE", "timestamp_utc": "2026-05-28T18:12:02.498113+00:00", "merged_instruments": 49, "zips_deleted": 11, "api_filled_count": 0, "hist_filled_count": 0}
+2026-05-28 20:12:02,498 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:12:02,498 | INFO     | orchestrator | PHASE 3+4: Matrix-Backtesting & Tournament
+2026-05-28 20:12:02,498 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:12:02,498 | INFO     | orchestrator | [Phase 3] Zeitfenster: 2026-04-28T00:00:00+00:00 → 2026-05-28T00:00:00+00:00
+2026-05-28 20:12:02,498 | INFO     | orchestrator | [Phase 3] Dynamische Config: /home/user/etoro_nautilus/logs/backtest_dynamic_config.json
+2026-05-28 20:12:02,498 | INFO     | orchestrator | [Phase 3] Backtest-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/backtest_runner.py --momentum --catalog-path /home/user/etoro_nautilus/data/nautilus --config /home/user/etoro_nautilus/logs/backtest_dynamic_config.json --output /home/user/etoro_nautilus/logs/tournament_2026-05-28.json
+2026-05-28 20:12:02,498 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BACKTEST_START", "timestamp_utc": "2026-05-28T18:12:02.498957+00:00", "start": "2026-04-28T00:00:00+00:00", "end": "2026-05-28T00:00:00+00:00"}
+2026-05-28 20:13:00,243 | INFO     | orchestrator | [Phase 3] Backtest beendet (Exit-Code: 0).
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: [36m BACKTEST RUN[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: [36m=================================================================[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Run config ID:  None[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Run ID:         0316ed11-8740-42ad-8e32-774f55c7f9c0[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Run started:    2026-05-28T18:12:59.306083000Z[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Backtest start: 2026-05-21T19:00:00.000000000Z[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Batch start:    2026-05-21T19:00:00.000000000Z[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: Batch end:      2026-05-28T00:00:00.000000000Z[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [1m2026-05-21T19:00:00.000000000Z[0m [INFO] BT-ZS_ETORO-HourlyMeanReversionStrategy.BacktestEngine: [36m-----------------------------------------------------------------[0m
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | ComboTrendVwapStrategy
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]    📥 74 Ticks geladen.
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] Traceback (most recent call last):
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]   File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 911, in run_single_backtest_worker
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]     engine.run()
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]    [ 390/392] ZS.ETORO / ComboTrendVwapStrategy
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | VwapExhaustionStrategy
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]    📥 74 Ticks geladen.
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG] Traceback (most recent call last):
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]   File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 911, in run_single_backtest_worker
+2026-05-28 20:13:00,284 | DEBUG    | orchestrator |   [BT-LOG]     engine.run()
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG] RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]    [ 391/392] ZS.ETORO / VwapExhaustionStrategy
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG] 🚀 ZS.ETORO | HourlyMeanReversionStrategy
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]    📥 74 Ticks geladen.
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG] [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG] Traceback (most recent call last):
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 911, in run_single_backtest_worker
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]     engine.run()
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]   File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG] RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG]    [ 392/392] ZS.ETORO / HourlyMeanReversionStrategy
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-05-28 20:13:00,285 | DEBUG    | orchestrator |   [BT-LOG] ✅ Matrix-Backtest vollständig abgeschlossen!
+2026-05-28 20:13:00,287 | WARNING  | orchestrator | [Phase 4] Tournament-Datei nicht gefunden — erstelle Dummy.
+2026-05-28 20:13:00,287 | INFO     | orchestrator | [Phase 4] Dummy-Tournament gespeichert: /home/user/etoro_nautilus/logs/tournament_2026-05-28.json
+2026-05-28 20:13:00,287 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:13:00,287 | INFO     | orchestrator | PHASE 5: Live Deployment & Bot-Start
+2026-05-28 20:13:00,287 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:13:00,287 | INFO     | orchestrator | [Phase 5] Bot-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/momentum_ls_run.py --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json --tournament /home/user/etoro_nautilus/logs/tournament_2026-05-28.json
+2026-05-28 20:13:00,287 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_START_INITIATED", "timestamp_utc": "2026-05-28T18:13:00.287422+00:00", "cmd": ["/home/user/etoro_nautilus/venv/bin/python3", "/home/user/etoro_nautilus/automation/momentum_ls_run.py", "--universe", "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "--tournament", "/home/user/etoro_nautilus/logs/tournament_2026-05-28.json"], "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260528.log", "tournament": "/home/user/etoro_nautilus/logs/tournament_2026-05-28.json", "universe": "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "dry_run": false}
+2026-05-28 20:13:00,287 | INFO     | orchestrator | [Phase 5] Trading-Bot gestartet (PID: 162940).
+2026-05-28 20:13:00,288 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_STARTED", "timestamp_utc": "2026-05-28T18:13:00.287987+00:00", "pid": 162940, "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260528.log"}
+2026-05-28 20:13:00,288 | INFO     | orchestrator | [Phase 5] PID gespeichert: /home/user/etoro_nautilus/logs/live_bot.pid
+2026-05-28 20:13:00,288 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:13:00,288 | INFO     | orchestrator | ORCHESTRATOR ERFOLGREICH ABGESCHLOSSEN
+2026-05-28 20:13:00,288 | INFO     | orchestrator |   Bot läuft als PID 162940
+2026-05-28 20:13:00,288 | INFO     | orchestrator |   Bot-Log: /home/user/etoro_nautilus/logs/live_bot_20260528.log
+2026-05-28 20:13:00,288 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-28 20:13:00,288 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-05-28T18:13:00.288229+00:00", "exit_code": 0}
+2026-05-28 20:13:00,288 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
