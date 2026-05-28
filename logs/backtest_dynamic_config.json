@@ -1,10 +1,10 @@
 {
   "global_settings": {
     "catalog_path": "/home/user/etoro_nautilus/data/nautilus",
-    "start_time": "2026-05-21T00:00:00Z",
+    "start_time": "2026-04-28T00:00:00Z",
     "end_time": "2026-05-28T00:00:00Z",
-    "start_capital": 100000.0,
-    "_note": "Dynamisch generiert — Fenster: 2026-05-21 bis 2026-05-28 (Midnight UTC). Config-Root: automation/config/. Quellen: catalog_service.py (stündliche ZIPs) + api_backfiller.py (7-Tage-Candles). Alle Daten als FSB(16)."
+    "start_capital": 10000.0,
+    "_note": "Dynamisch generiert — Fenster: 2026-04-28 bis 2026-05-28 (Midnight UTC, 30 Tage). Config-Root: automation/config/. Quellen: catalog_service.py (stündliche ZIPs) + api_backfiller.py + historical_fetcher.py. Alle Daten als FSB(16)."
   },
   "strategies": [
     {
@@ -47,6 +47,12 @@
       "strategy_module": "automation.strategies.vwap_exhaustion",
       "strategy_class": "VwapExhaustionStrategy",
       "config_class": "VwapExhaustionConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.hourly_mean_reversion",
+      "strategy_class": "HourlyMeanReversionStrategy",
+      "config_class": "HourlyMeanReversionConfig",
       "params": {}
     }
   ]
