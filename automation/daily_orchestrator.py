@@ -819,7 +819,7 @@ def phase5_live_deployment(
     bot_log    = LOGS_DIR / f"live_bot_{today_str}.log"
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-    bot_script = PROJECT_ROOT / "dev_scripts" / "momentum_ls_run.py"
+    bot_script = PROJECT_ROOT / "automation" / "momentum_ls_run.py"
     if not bot_script.exists():
         log.error(f"[Phase 5] Bot-Skript nicht gefunden: {bot_script}")
         return 1
