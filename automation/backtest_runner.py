@@ -485,7 +485,10 @@ def create_mock_instrument(
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
 
-    sp = size_precision if size_precision is not None else 8
+    # size_precision=0 stems from Parquet metadata that is incorrect for eToro
+    # equity-CFDs (by-amount/fractional semantics). Treat 0 (and None) as "use
+    # fractional default". Positive values (e.g. 2/6 for forex/crypto) are honored.
+    sp = size_precision if (size_precision is not None and size_precision > 0) else 8
     size_increment_val = round(10 ** (-sp), sp) if sp > 0 else 1.0
 
     return Cfd(

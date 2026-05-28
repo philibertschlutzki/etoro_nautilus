@@ -405,6 +405,9 @@ def _build_arrow_meta(symbol: str, price_prec: int, size_prec: int) -> dict[byte
       b"size_precision"  → z.B. b"8"
       b"instrument_id"   → z.B. b"BTC.ETORO"
     """
+    if size_prec is None or size_prec <= 0:
+        size_prec = 8
+
     return {
         b"price_precision": str(price_prec).encode(),
         b"size_precision":  str(size_prec).encode(),
