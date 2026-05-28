@@ -93,6 +93,17 @@ def _get_latest_ts_ns(parquet_file: Path) -> int | None:
     except Exception:
         return None
 
+def _get_oldest_ts_ns(parquet_file: Path) -> int | None:
+    """Returns the oldest ts_event in nanoseconds from an existing parquet file."""
+    try:
+        import pyarrow.compute as pc
+        t = pq.read_table(str(parquet_file), columns=["ts_event"])
+        if len(t) == 0:
+            return None
+        return int(pc.min(t.column("ts_event")).as_py())
+    except Exception:
+        return None
+
 
 # ─── Candle Timestamp Parser ─────────────────────────────────────────────────
 
@@ -196,16 +207,14 @@ async def _fetch_symbol(
     dest_file = QUOTE_TICK_PATH / symbol / "data.parquet"
     target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
 
-    # Delta-update: only fetch candles newer than the latest stored timestamp
-    if dest_file.exists():
-        latest_ns = _get_latest_ts_ns(dest_file)
-        if latest_ns is not None:
-            latest_dt = datetime.fromtimestamp(latest_ns / 1e9, tz=timezone.utc)
-            if latest_dt > target_start:
-                target_start = latest_dt + timedelta(seconds=1)
-                log.info(f"[{symbol}] Delta-Update: Fetch ab {target_start.isoformat()}")
-
+    # Delta-update: iterate backwards from the oldest locally stored timestamp
     current_end_time = datetime.now(timezone.utc)
+    if dest_file.exists():
+        oldest_ns = _get_oldest_ts_ns(dest_file)
+        if oldest_ns is not None:
+            oldest_dt = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc)
+            current_end_time = oldest_dt - timedelta(seconds=1)
+            log.info(f"[{symbol}] Delta-Update: Fetch ab {current_end_time.isoformat()} rückwärts bis {target_start.isoformat()}")
     all_candles: list[dict] = []
 
     # Cascade: OneHour first, then OneDay to reach deeper history
