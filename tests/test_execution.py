@@ -136,6 +136,7 @@ async def test_state_manager_round_trip(tmp_path: Path) -> None:
 
     await sm.set("O-001", "pos-abc")
     await sm.set("O-002", "pos-def")
+    await asyncio.sleep(0.6)
 
     # Re-load from the same file
     sm2 = _StateManager(state_file)
@@ -173,6 +174,7 @@ async def test_state_manager_atomic_write_failure_leaves_file_intact(
     sm = _StateManager(str(state_file))
     await sm.load()
     await sm.set("O-001", "pos-before")
+    await asyncio.sleep(0.6)
 
     original_content = state_file.read_text(encoding="utf-8")
 
@@ -195,6 +197,7 @@ async def test_state_manager_concurrent_writes_no_loss(tmp_path: Path) -> None:
         await sm.set(f"order_{i}", f"pos_{i}")
 
     await asyncio.gather(*[writer(i) for i in range(100)])
+    await asyncio.sleep(0.6)
 
     mapping = sm.get_all()
     assert len(mapping) == 100

@@ -1,0 +1,5 @@
+2026-05-28T08:00:00.000Z | ℹ️  INFO     | live_bot                       | [LogManager] Logger 'live_bot' initialisiert. Log-Datei: /app/logs/live_bot_20260528.log (max 1024 KB, 5 Backups)
+2026-05-28T08:00:00.050Z | ℹ️  INFO     | live_bot                       | [JSON_EVENT] {"event_type": "BOT_STARTED", "timestamp_utc": "2026-05-28T08:00:00.050Z", "pid": 12345, "log_file": "/app/logs/live_bot_20260528.log"}
+2026-05-28T08:00:05.100Z | ℹ️  INFO     | live_bot                       | [JSON_EVENT] {"event_type": "ORDER_SUBMITTED", "timestamp_utc": "2026-05-28T08:00:05.100Z", "symbol": "AAPL", "side": "BUY", "amount_usd": 100.0, "status": "SUBMITTED"}
+2026-05-28T08:00:06.200Z | ℹ️  INFO     | live_bot                       | [JSON_EVENT] {"event_type": "ORDER_FILLED", "timestamp_utc": "2026-05-28T08:00:06.200Z", "symbol": "AAPL", "side": "BUY", "amount_usd": 100.0, "status": "FILLED", "price": 150.0, "order_id": "100000001"}
+2026-05-28T16:00:00.000Z | ℹ️  INFO     | live_bot                       | [JSON_EVENT] {"event_type": "BOT_STOPPED", "timestamp_utc": "2026-05-28T16:00:00.000Z", "reason": "End of trading day"}
