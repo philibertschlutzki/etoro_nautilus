@@ -21,7 +21,7 @@ from archive.adapters.instrument_map import ETORO_INSTRUMENTS
 from archive.adapters.momentum_ls_allocator import MomentumLSAllocator
 
 from archive.config.setups import ETORO_EXECUTION
-from run_bot import _check_live_safety_interlock
+from archive.run_bot import _check_live_safety_interlock
 
 logging.basicConfig(
     level=logging.INFO,
