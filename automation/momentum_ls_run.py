@@ -85,7 +85,7 @@ def main():
         logger.warning(f"Universe data is stale (fetched_at > 24 hours ago: {fetched_at})")
 
     # Reverse lookup for etoro_ids
-    symbol_to_etoro_id = {v: k for k, v in ETORO_INSTRUMENTS.items()}
+    symbol_to_etoro_id = {v["symbol"]: k for k, v in ETORO_INSTRUMENTS.items() if isinstance(v, dict) and "symbol" in v}
 
     per_symbol_winners = tournament_data.get("per_symbol_winners", {})
 

@@ -485,15 +485,18 @@ def create_mock_instrument(
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
 
+    sp = size_precision if size_precision is not None else 8
+    size_increment_val = round(10 ** (-sp), sp) if sp > 0 else 1.0
+
     return Cfd(
         instrument_id=inst_id,
         raw_symbol=inst_id.symbol,
         asset_class=AssetClass.EQUITY,
         quote_currency=USD,
         price_precision=price_precision,
-        size_precision=8,
+        size_precision=sp,
         price_increment=Price(price_increment_val, precision=price_precision),
-        size_increment=Quantity(1e-8, precision=8),
+        size_increment=Quantity(size_increment_val, precision=sp),
         ts_event=0,
         ts_init=0,
     )
