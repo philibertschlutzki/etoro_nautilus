@@ -18,14 +18,6 @@
       "params": {}
     },
     {
-      "active": false,
-      "strategy_module": "automation.strategies.trend_pullback",
-      "strategy_class": "TrendPullbackStrategy",
-      "config_class": "TrendPullbackConfig",
-      "params": {},
-      "_note": "FIFO-Schließungen=0 (Position wird nie geclosed, nur eröffnet). Deaktiviert bis systemischer Defekt behoben."
-    },
-    {
       "active": true,
       "strategy_module": "automation.strategies.mean_reversion",
       "strategy_class": "MeanReversionStrategy",
@@ -61,19 +53,34 @@
       "params": {}
     },
     {
-      "active": false,
-      "strategy_module": "automation.strategies.adx_atr_momentum",
-      "strategy_class": "AdxAtrMomentumStrategy",
-      "config_class": "AdxAtrMomentumConfig",
-      "params": {},
-      "_note": "0 Trades bei ~100% aller Symbole. Deaktiviert bis systemischer Defekt (ADX-Indikator oder Signal-Logik) behoben."
-    },
-    {
       "active": true,
       "strategy_module": "automation.strategies.vwap_exhaustion",
       "strategy_class": "VwapExhaustionStrategy",
       "config_class": "VwapExhaustionConfig",
       "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.hourly_mean_reversion",
+      "strategy_class": "HourlyMeanReversionStrategy",
+      "config_class": "HourlyMeanReversionConfig",
+      "params": {}
+    },
+    {
+      "active": false,
+      "strategy_module": "automation.strategies.trend_pullback",
+      "strategy_class": "TrendPullbackStrategy",
+      "config_class": "TrendPullbackConfig",
+      "params": {},
+      "_note": "Deaktiviert: 0 FIFO-Schliessungen in allen Tests."
+    },
+    {
+      "active": false,
+      "strategy_module": "automation.strategies.adx_atr_momentum",
+      "strategy_class": "AdxAtrMomentumStrategy",
+      "config_class": "AdxAtrMomentumConfig",
+      "params": {},
+      "_note": "Deaktiviert: ADX-Initialisierungsproblem."
     }
   ]
 }

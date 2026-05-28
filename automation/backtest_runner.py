@@ -114,9 +114,9 @@ from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.model.identifiers import Venue, InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from nautilus_trader.model.currencies import USD
-from nautilus_trader.model.enums import OmsType, AccountType
+from nautilus_trader.model.enums import OmsType, AccountType, AssetClass
 from nautilus_trader.model.objects import Money, Price, Quantity
-from nautilus_trader.model.instruments import Equity
+from nautilus_trader.model.instruments import Cfd
 try:
     from nautilus_trader.analysis.tearsheet import create_tearsheet
     _HAS_TEARSHEET = True
@@ -465,43 +465,35 @@ def create_mock_instrument(
     price_precision: int = 2,
     size_precision: int | None = None,
     catalog_path: str | None = None,
-) -> Equity:
-    """Erstellt ein Mock-Equity-Instrument für den Backtest-Engine.
+) -> Cfd:
+    """Erstellt ein Mock-CFD-Instrument für den Backtest-Engine.
 
-    Task 3 Fix: size_precision wird aus Parquet-Metadaten gelesen (nicht aus adapters/).
-    Wenn catalog_path angegeben, werden Precisions aus dem Parquet-Schema gelesen.
+    Uses Cfd(asset_class=EQUITY) instead of Equity because NautilusTrader
+    Equity.size_increment is always 1.0 regardless of lot_size, causing
+    make_qty() to reject fractional units < 1.0. Cfd accepts size_precision
+    and size_increment directly, enabling fractional trading simulation.
 
     Args:
         instrument_id_str: Nautilus-Instrument-ID (z.B. "ETH.ETORO")
         price_precision:   Preis-Precision (Standard: 2)
-        size_precision:    Größen-Precision. Wenn None und catalog_path angegeben,
-                           wird aus Parquet-Metadaten gelesen. Sonst Fallback-Heuristik.
-        catalog_path:      Pfad zum Nautilus-Katalog für Parquet-Metadaten-Lookup.
+        size_precision:    Ignoriert — immer 8 für fractional support.
+        catalog_path:      Ignoriert — kein Parquet-Lookup mehr nötig.
 
     Returns:
-        Equity-Instrument mit korrekten Precisions.
+        Cfd-Instrument mit size_precision=8 (fractional, eToro by-amount semantics).
     """
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
 
-    # size_precision aus Parquet-Metadaten oder Heuristik
-    if size_precision is None:
-        if catalog_path:
-            _, size_prec = read_precisions_from_parquet(catalog_path, instrument_id_str)
-        else:
-            _, size_prec = _fallback_precisions(instrument_id_str)
-    else:
-        size_prec = size_precision
-
-    size_inc_val = round(10 ** (-size_prec), size_prec) if size_prec > 0 else 1.0
-
-    return Equity(
+    return Cfd(
         instrument_id=inst_id,
         raw_symbol=inst_id.symbol,
-        currency=USD,
+        asset_class=AssetClass.EQUITY,
+        quote_currency=USD,
         price_precision=price_precision,
+        size_precision=8,
         price_increment=Price(price_increment_val, precision=price_precision),
-        lot_size=Quantity(size_inc_val, precision=size_prec),
+        size_increment=Quantity(1e-8, precision=8),
         ts_event=0,
         ts_init=0,
     )
@@ -887,13 +879,15 @@ def run_single_backtest_worker(
         params["instrument_id"] = inst_id_str
         params["bar_type"]      = bar_type
 
-        # Fix Bug 1: trade_amount_usd anheben, falls von der Config-Klasse unterstützt
+        # Fix: trade_amount_usd auf 15% des Startkapitals setzen (min. $500)
+        # wenn der Wert fehlt oder zu klein ist.
         try:
             test_params = params.copy()
-            test_params["trade_amount_usd"] = 50000.0
+            test_params["trade_amount_usd"] = 1500.0
             ConfigCls(**test_params)
-            if params.get("trade_amount_usd", 0) <= 1000.0:
-                params["trade_amount_usd"] = 50000.0
+            trade_usd = params.get("trade_amount_usd", 0)
+            if trade_usd <= 0 or trade_usd < 500.0:
+                params["trade_amount_usd"] = max(start_capital * 0.15, 500.0)
         except Exception:
             if "trade_amount_usd" in params and strat.get("params", {}).get("trade_amount_usd") is None:
                 params.pop("trade_amount_usd", None)

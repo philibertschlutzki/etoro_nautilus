@@ -1,57 +1,52 @@
 {
   "_schema": {
-    "description": "Sensible Default-Parameter pro Strategie. Werden in run_backtest.py als Basis geladen. Parameter in strategies.json haben Vorrang (Override-Mechanismus).",
-    "fields": {
-      "<StrategyClassName>": "Dict mit Default-Parametern für diese Strategie. Alle Werte können in strategies.json pro Strategie überschrieben werden."
-    }
+    "description": "Default-Parameter pro Strategie für 1h-Candle-Daten (12 Monate History). Perioden auf stündliche Auflösung optimiert. Werte in strategies.json haben Vorrang."
   },
   "SmaCrossoverStrategy": {
-    "sma_period": 20
-  },
-  "TrendPullbackStrategy": {
-    "ema_period": 20,
-    "rsi_period": 14,
-    "rsi_oversold": 35.0,
-    "rsi_overbought": 65.0
+    "sma_period": 5,
+    "trade_amount_usd": 1500.0
   },
   "MeanReversionStrategy": {
-    "keltner_period": 20,
-    "keltner_atr_period": 14,
-    "keltner_multiplier": 1.5
+    "keltner_period": 10,
+    "keltner_atr_period": 10,
+    "keltner_multiplier": 1.5,
+    "trade_amount_usd": 1500.0
   },
   "DynamicBreakoutStrategy": {
-    "volume_sma_period": 20,
-    "volume_multiplier": 1.5,
-    "price_breakout_period": 20
+    "price_breakout_period": 10,
+    "trade_amount_usd": 1500.0
   },
   "FlashCrashReversalStrategy": {
-    "bb_period": 20,
+    "bb_period": 10,
     "bb_std_dev": 2.0,
-    "rsi_period": 14,
+    "rsi_period": 7,
     "rsi_oversold": 30.0,
-    "rsi_overbought": 70.0
+    "rsi_overbought": 70.0,
+    "trade_amount_usd": 1500.0
   },
   "VolatilityBreakoutPumpStrategy": {
-    "bb_period": 20,
-    "bb_std_dev": 2.0
+    "bb_period": 10,
+    "bb_std_dev": 2.0,
+    "trade_amount_usd": 1500.0
   },
   "ComboTrendVwapStrategy": {
     "sma_period": 20,
-    "macd_fast": 12,
-    "macd_slow": 26,
-    "bb_period": 20,
+    "macd_fast": 5,
+    "macd_slow": 13,
+    "macd_signal_period": 9,
+    "bb_period": 10,
     "bb_std_dev": 2.0,
-    "bb_entry_tolerance": 1.0
-  },
-  "AdxAtrMomentumStrategy": {
-    "adx_period": 14,
-    "ema_period": 20,
-    "atr_period": 14,
-    "atr_multiplier": 1.5
+    "bb_entry_tolerance": 1.0,
+    "trade_amount_usd": 1500.0
   },
   "VwapExhaustionStrategy": {
-    "volume_sma_period": 20,
-    "deviation_threshold": 0.005,
-    "volume_multiplier": 1.5
+    "deviation_threshold": 0.03,
+    "trade_amount_usd": 1500.0
+  },
+  "HourlyMeanReversionStrategy": {
+    "keltner_period": 10,
+    "keltner_atr_period": 10,
+    "keltner_multiplier": 1.5,
+    "trade_amount_usd": 1500.0
   }
 }

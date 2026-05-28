@@ -130,3 +130,17 @@ Alle Tests befinden sich in `tests/` und lassen sich via `pytest` ausführen. Di
 | 2026-05-27 | testing.md ersetzt — konsistent mit _fallback_precisions, neue Tests | automation/testing.md |
 | 2026-05-27 | Root-AGENTS.md und Root-requirements.txt nach archive/ verschoben | archive/ |
 | 2026-05-28 | Implementierung der vollständigen Test Suite (100% Coverage) | tests/*.py |
+| 2026-05-28 | historical_fetcher.py — Standalone deep backfill, interval cascade OneHour→OneDay, count=1000, 12M default, automated via Phase 2d | automation/historical_fetcher.py |
+| 2026-05-28 | daily_orchestrator.py — Phase 2d (auto historical fetch for insufficient symbols), --reset-catalog flag, 30-day backtest window | automation/daily_orchestrator.py |
+| 2026-05-28 | backtest_runner.py — size_precision=8 for all mock instruments (fractional), trade_amount_usd=capital×0.15, consistent start_capital from backtest.json | automation/backtest_runner.py |
+| 2026-05-28 | hourly_strategy_base.py — HourlyStrategyBase with ATR trailing stop (1.5×) + time exit (48 bars) for all strategies | automation/strategies/hourly_strategy_base.py |
+| 2026-05-28 | hourly_mean_reversion.py — New HourlyMeanReversionStrategy, Keltner(10,1.5), optimised for 1h candles | automation/strategies/hourly_mean_reversion.py |
+| 2026-05-28 | All active strategies — inherit HourlyStrategyBase, use safe_compute_quantity(), ATR trailing stop + 48h time exit | automation/strategies/*.py |
+| 2026-05-28 | dynamic_breakout.py — Refactored to price-range breakout (no volume dependency) | automation/strategies/dynamic_breakout.py |
+| 2026-05-28 | vwap_exhaustion.py — Refactored to price-deviation only from VWAP (no volume dependency) | automation/strategies/vwap_exhaustion.py |
+| 2026-05-28 | strategy_defaults.json — All periods optimised for 1h candle data, trade_amount_usd=1500 | automation/config/strategy_defaults.json |
+| 2026-05-28 | tournament.json — min_trades=4, min_sortino=0.3, min_pf=1.1 | automation/config/tournament.json |
+| 2026-05-28 | backtest.json — start_capital=10000.0 consistent, min_bars_for_backtest=200 | automation/config/backtest.json |
+| 2026-05-28 | strategies.json — Added HourlyMeanReversionStrategy (active), DynamicBreakout + VwapExhaustion kept active (rebuilt) | automation/config/strategies.json |
+| 2026-05-28 | backtest_runner.py — Switched mock instrument from Equity to Cfd(AssetClass.EQUITY) with size_precision=8; Equity.size_increment is always 1.0 in NautilusTrader regardless of lot_size, causing make_qty to reject fractional units; Cfd accepts size_precision/size_increment directly | automation/backtest_runner.py |
+| 2026-05-28 | hourly_strategy_base.py — Added _compute_quantity() using instrument.lot_size (not size_increment) for fractional equity support; all strategies inherit from base, removing 8 duplicate overrides | automation/strategies/hourly_strategy_base.py, automation/strategies/*.py |
