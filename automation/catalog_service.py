@@ -323,7 +323,7 @@ def _write_zip(
 
             # eToro equity-CFDs use fractional by-amount sizing. A size_precision of 0
             # forces whole-share orders and suppresses all fractional trades downstream.
-            if size_prec is None or size_prec <= 0:
+            if size_prec is None or size_prec < 0:
                 size_prec = 8
 
             # Arrow-Metadaten injizieren
