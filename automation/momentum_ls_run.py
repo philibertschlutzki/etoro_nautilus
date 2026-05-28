@@ -15,8 +15,8 @@ from nautilus_trader.live.node import TradingNode
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from archive.adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
-from archive.adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
+from automation.adapters.etoro_data import EToroDataClientConfig, EToroLiveDataClientFactory
+from automation.adapters.etoro_config import EToroExecClientConfig, EToroLiveExecClientFactory
 import json
 with open("automation/config/instrument_map.json", "r") as f:
     _imap = json.load(f)

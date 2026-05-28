@@ -2,7 +2,7 @@
 
 > **Zweck:** Diese Datei ist der verbindliche Leitfaden für Jules (und jeden anderen KI-Coding-Agenten), der am **`automation/`-Paket** arbeitet. Sie beschreibt **ausschließlich** das `automation/`-Verzeichnis als eigenständiges, hermetisches Produkt. Sie ist mit dem tatsächlichen Code-Stand abgeglichen — inklusive bekannter, **derzeit offener** Bugs (siehe Abschnitt 16). Halte diese Datei bei jeder strukturellen Änderung aktuell.
 
-> **Geltungsbereich:** Nur `automation/`. Das Root-`adapters/`-, Root-`strategies/`- und `backtesting/`-Verzeichnis sind **Legacy** und wurden nach `archive/` verschoben. Sie sind NICHT Gegenstand dieser Datei. Ein einziger Code-Pfad (`momentum_ls_run.py`) importiert dennoch aus `archive/` — siehe Pitfall #19.
+> **Geltungsbereich:** Nur `automation/`. Das Root-`adapters/`-, Root-`strategies/`- und `backtesting/`-Verzeichnis sind **Legacy** und wurden nach `archive/` verschoben. Sie sind NICHT Gegenstand dieser Datei.
 
 ---
 
@@ -56,7 +56,7 @@ automation/
 ├── historical_fetcher.py       # Deep Backfill (12M), Interval-Kaskade OneHour→OneDay
 ├── log_manager.py              # LLM-optimiertes Logging (RotatingFileHandler, JSON-Events)
 ├── momentum_ls_allocator.py    # Kapital-Allocator (No-Interference, dynamisches Slicing)
-├── momentum_ls_run.py          # Live-Trading-Orchestrator (⚠️ importiert aus archive/ — Pitfall #19)
+├── momentum_ls_run.py          # Live-Trading-Orchestrator
 ├── universe_fetcher.py         # Smart-Portfolio-Universe-Fetch (standalone)
 ├── utils.py                    # _fallback_precisions() — zentrale Precision-Heuristik
 ├── config/
@@ -128,7 +128,7 @@ daily_orchestrator.py — 5 Phasen:
 - Instrument-Map: `automation/config/instrument_map.json` (generiert aus dem alten `adapters/instrument_map.py`).
 - `.env`-Pfad-Konvention: `automation/.env` → Fallback `PROJECT_ROOT/.env`.
 
-**Bekannte Verletzung:** `momentum_ls_run.py` importiert `from archive.adapters.etoro_data import …` und `from archive.adapters.etoro_config import …`. Damit ist der Live-Pfad NICHT hermetisch. Siehe Pitfall #19.
+
 
 ---
 
@@ -264,7 +264,7 @@ Da alle Quellen bereits FSB(16) liefern, entfällt im Orchestrator jede Typ-Migr
 
 `momentum_ls_run.py` wird als Detached Subprocess (`subprocess.Popen`, `start_new_session=True`) gestartet. Liest `per_symbol_winners` aus dem Tournament-JSON, mappt JEDEN Gewinner auf `MomentumLSSmaStrategy` (PoC — `STRATEGY_REGISTRY` enthält nur diese eine Strategie). Safety-Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`.
 
-**⚠️ Inkonsistenzen:** Import aus `archive.adapters` (Pitfall #19); alle Tournament-Gewinner werden unabhängig von der tatsächlich gewinnenden Strategie auf die SMA-PoC-Strategie reduziert (Pitfall #22).
+**⚠️ Inkonsistenzen:** Alle Tournament-Gewinner werden unabhängig von der tatsächlich gewinnenden Strategie auf die SMA-PoC-Strategie reduziert (Pitfall #22).
 
 ---
 
@@ -350,10 +350,10 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Entweder Strategien auf `safe_compute_quantity` umstellen oder die Funktion entfernen und die Logik in `HourlyStrategyBase` konsolidieren (siehe #20).
 **Betroffen:** `automation/fractional_trading.py`.
 
-### 🔴 #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
-**Symptom:** Live-Pfad ist nicht hermetisch.
+### 🟢 #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
+**STATUS:** Behoben
 **Root Cause:** `from archive.adapters.etoro_data import …` und `from archive.adapters.etoro_config import …`. `automation/` soll laut Abschnitt 4 keine externen Importe haben.
-**Fix:** Adapter nach `automation/adapters/` migrieren ODER das Standalone-Constraint für den Live-Pfad explizit als Ausnahme dokumentieren und den Isolations-Test entsprechend anpassen.
+**Fix:** Adapter in `automation/adapters/` migriert und Isolations-Test entsprechend angepasst. Keine dokumentierte Standalone-Ausnahme mehr.
 **Betroffen:** `automation/momentum_ls_run.py`.
 
 ### 🔴 #22 — Alle Tournament-Gewinner werden auf MomentumLSSmaStrategy reduziert
@@ -362,10 +362,10 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Alle aktiven Strategien auf `MomentumLSBaseStrategy`-Signatur (Allocator-Injektion) portieren und registrieren.
 **Betroffen:** `automation/momentum_ls_run.py`, `automation/strategies/*.py`.
 
-### 🟡 #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
-**Symptom:** Selbst nach Fix von #14 bleiben Live-Metadaten kaputt.
+### 🟢 #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
+**STATUS:** Behoben
 **Root Cause:** `catalog_service.py` (ZIP-Metadaten), `api_backfiller._build_arrow_meta` und `utils._fallback_precisions` schreiben für Equities `size_precision=0`. `daily_orchestrator._ensure_metadata` übernimmt diese.
-**Fix:** Für Equity-CFDs an der Schreibseite `size_precision ≥ 2` (eToro By-Amount fractional) erzwingen, oder die Equity-Default-Precision in `_fallback_precisions` anheben. Achtung: bestehende `data/nautilus/data/cfd/*.parquet` müssen regeneriert werden.
+**Fix:** Schreibseite auf `size_precision=2` für Equities angehoben. Bestandsdaten via `automation/regenerate_precision.py` regeneriert.
 **Betroffen:** `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/daily_orchestrator.py`.
 
 ### 🟡 #24 — Datendichte vs. Indikator-Warmup
@@ -398,7 +398,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 ## 17. Conventions für KI-Coding-Agents (Jules)
 
-- **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, dokumentiert).
+- **Standalone-Constraint** (Abschnitt 4) strikt einhalten — **ausnahmslos** für ganz `automation/`.
 - Neue Strategien → `automation/strategies/`, von `HourlyStrategyBase` erben, in `strategies.json` registrieren.
 - Neue Instrumente → `automation/config/instrument_map.json`.
 - Precisions IMMER über `automation/utils._fallback_precisions` bzw. API — keine zweite Heuristik einführen.
@@ -416,6 +416,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
 | 2026-05-28 | **automation/AGENTS.md neu erstellt** — vollständig auf `automation/` abgeglichen, alle offenen Bugs als Pitfalls #14–#24 mit STATUS-Kennzeichnung dokumentiert (size_precision-Kette, divergierende _compute_quantity, toter safe_compute_quantity, archive.adapters-Import, SMA-PoC-Reduktion). | `automation/AGENTS.md` |
+| 2026-05-28 | #19: Adapter in `automation/adapters` migriert (Hermetisches Standalone). #23: Schreibseite `size_precision=2` und `regenerate_precision.py` Tool. | `automation/AGENTS.md`, `automation/momentum_ls_run.py`, `automation/adapters/*`, `automation/regenerate_precision.py`, `automation/api_backfiller.py`, `automation/utils.py`, `automation/catalog_service.py` |
 | 2026-05-28 | size_precision=8 für Mock-Instrumente *intendiert* (Cfd(EQUITY)); im Code jedoch durch Parameter-Durchschlag von sp_parquet=0 unwirksam — siehe Pitfall #14. | `automation/backtest_runner.py` |
 | 2026-05-28 | HourlyStrategyBase (ATR-Trailing 1.5× + 48-Bar-Time-Exit); alle aktiven Strategien erben davon. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/*.py` |
 | 2026-05-28 | historical_fetcher.py (Deep Backfill 12M, Kaskade OneHour→OneDay); Phase 2d im Orchestrator; 30-Tage-Backtest-Fenster; --reset-catalog. | `automation/historical_fetcher.py`, `automation/daily_orchestrator.py` |
