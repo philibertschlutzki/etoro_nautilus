@@ -3,14 +3,13 @@ from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Quantity
-from nautilus_trader.trading.strategy import Strategy
-
 from nautilus_trader.indicators import SimpleMovingAverage
 from nautilus_trader.indicators import MovingAverageConvergenceDivergence
 from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import BollingerBands
 from nautilus_trader.indicators import AverageTrueRange
+
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase
 
 
 class ComboTrendVwapConfig(StrategyConfig, frozen=True):
@@ -29,8 +28,8 @@ class ComboTrendVwapConfig(StrategyConfig, frozen=True):
     max_open_positions: int = 1
 
 
-class ComboTrendVwapStrategy(Strategy):
-    """Generische Trend+Momentum+Volatilitäts+VWAP-Strategie mit echter Orderausführung."""
+class ComboTrendVwapStrategy(HourlyStrategyBase):
+    """Generische Trend+Momentum+Volatilitäts+VWAP-Strategie mit ATR Trailing Stop / 48h Time-Exit."""
 
     def __init__(self, config: ComboTrendVwapConfig):
         super().__init__(config)
@@ -49,6 +48,7 @@ class ComboTrendVwapStrategy(Strategy):
         self.current_vwap = 0.0
 
     def on_start(self):
+        super().on_start()
         self._log.info(
             f"Starte ComboTrendVwapStrategy auf {self.instrument_id}", LogColor.GREEN
         )
@@ -70,6 +70,9 @@ class ComboTrendVwapStrategy(Strategy):
             self.macd_signal.update_raw(self.macd.value)
         self.bb.handle_bar(bar)
         self.atr.handle_bar(bar)
+
+        if self._check_exits_and_update(bar):
+            return
 
         if not (
             self.sma.initialized
@@ -122,37 +125,6 @@ class ComboTrendVwapStrategy(Strategy):
 
     # ── Order helpers ──────────────────────────────────────────────────────────
 
-    def _compute_quantity(self, bar: Bar) -> Quantity | None:
-        instrument = self.cache.instrument(self.instrument_id)
-        if instrument is None:
-            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
-            return None
-        units = self.config.trade_amount_usd / float(bar.close)
-        # Pre-check: Equity-Instrumente (size_precision=0) erfordern mindestens 1 ganze Einheit.
-        # Nautilus wirft einen harten ValueError bei make_qty() wenn das gerundete Ergebnis 0 ergibt —
-        # auch mit round_down=True. Pre-check verhindert den Aufruf; try/except ist zusätzliche Absicherung.
-        if units < float(instrument.size_increment):
-            self._log.warning(
-                f"[{self.instrument_id}] Zu wenig Kapital für 1 Einheit "
-                f"(units={units:.6f}, size_increment={instrument.size_increment}) "
-                f"— Signal übersprungen"
-            )
-            return None
-        try:
-            qty = instrument.make_qty(units, round_down=True)
-        except ValueError as e:
-            self._log.warning(
-                f"[{self.instrument_id}] make_qty ValueError: {e} — Signal übersprungen"
-            )
-            return None
-        if qty == 0:
-            self._log.warning(
-                f"[{self.instrument_id}] Quantity=0 nach Rundung "
-                f"(units={units:.6f}) — Signal übersprungen"
-            )
-            return None
-        return qty
-
     def _on_buy_signal(self, bar: Bar) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
@@ -160,7 +132,7 @@ class ComboTrendVwapStrategy(Strategy):
             if pos.side == PositionSide.LONG:
                 return
             self._close_position(pos)
-            self.current_signal = None  # Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
+            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -182,7 +154,7 @@ class ComboTrendVwapStrategy(Strategy):
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position(pos)
-            self.current_signal = None  # Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
+            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -217,16 +189,6 @@ class ComboTrendVwapStrategy(Strategy):
     def on_order_rejected(self, event) -> None:
         self._log.warning(
             f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
-        )
-
-    def on_position_opened(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionOpened: {event}", LogColor.GREEN
-        )
-
-    def on_position_closed(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionClosed: {event}", LogColor.RED
         )
 
     def on_stop(self):

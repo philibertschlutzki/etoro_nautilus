@@ -337,10 +337,56 @@ def phase2_data_acquisition(
     else:
         log.info("[Phase 2c] API-Backfill übersprungen (--skip-api-fetch).")
 
+    # 2d. Historical Fetcher für Symbole ohne ausreichende Daten
+    try:
+        from automation.historical_fetcher import run_historical_fetch, is_symbol_data_sufficient
+        from automation.api_backfiller import _load_etoro_id_map as _load_id_map_2d
+
+        insufficient = [
+            item["symbol"]
+            for item in universe_result.get("universe", [])
+            if item.get("symbol") and not is_symbol_data_sufficient(item["symbol"], min_bars=200)
+        ]
+        if insufficient:
+            log.info(
+                f"[Phase 2d] {len(insufficient)} Symbole unzureichend — starte Historical Fetcher ..."
+            )
+            etoro_id_map_2d = _load_id_map_2d(UNIVERSE_PATH)
+            insufficient_ids = {
+                k: v for k, v in etoro_id_map_2d.items() if v in set(insufficient)
+            }
+            try:
+                hist_filled = asyncio.run(
+                    run_historical_fetch(
+                        api_key=api_key,
+                        user_key=user_key,
+                        etoro_id_to_symbol=insufficient_ids,
+                        months=12,
+                        min_bars=200,
+                    )
+                )
+                result["hist_filled"] = hist_filled
+                log.info(f"[Phase 2d] Historical Fetcher: {len(hist_filled)} Symbole befüllt.")
+            except Exception as e:
+                log.error(f"[Phase 2d] Historical Fetcher Fehler: {e}\n{traceback.format_exc()}")
+                result["hist_filled"] = []
+        else:
+            log.info("[Phase 2d] Alle Symbole haben ausreichend Daten — Historical Fetcher übersprungen.")
+            result["hist_filled"] = []
+
+        emit_json_event(log, "PHASE2D_COMPLETE", {
+            "insufficient_count": len(insufficient) if insufficient else 0,
+            "hist_filled_count": len(result.get("hist_filled", [])),
+        })
+    except Exception as e:
+        log.error(f"[Phase 2d] Historical Fetcher Modul-Fehler: {e}\n{traceback.format_exc()}")
+        result["hist_filled"] = []
+
     emit_json_event(log, "PHASE2_COMPLETE", {
         "merged_instruments": result["merged_count"],
         "zips_deleted":       result["zips_deleted"],
         "api_filled_count":   len(result["api_filled"]),
+        "hist_filled_count":  len(result.get("hist_filled", [])),
     })
     return result
 
@@ -584,12 +630,11 @@ def phase3_4_backtest_and_tournament(
     log.info("═" * 60)
 
     today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    seven_days_ago = today_midnight - timedelta(days=7)
+    thirty_days_ago = today_midnight - timedelta(days=30)
 
-    log.info(f"[Phase 3] Zeitfenster: {seven_days_ago.isoformat()} → {today_midnight.isoformat()}")
+    log.info(f"[Phase 3] Zeitfenster: {thirty_days_ago.isoformat()} → {today_midnight.isoformat()}")
 
-    start_capital = 10_000.0
-    dynamic_config   = _build_backtest_config(seven_days_ago, today_midnight, start_capital)
+    dynamic_config   = _build_backtest_config(thirty_days_ago, today_midnight, start_capital=None)
     dynamic_cfg_path = LOGS_DIR / "backtest_dynamic_config.json"
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     with open(str(dynamic_cfg_path), "w", encoding="utf-8") as f:
@@ -610,9 +655,8 @@ def phase3_4_backtest_and_tournament(
 
     log.info(f"[Phase 3] Backtest-Kommando: {' '.join(cmd)}")
     emit_json_event(log, "BACKTEST_START", {
-        "start":   seven_days_ago.isoformat(),
-        "end":     today_midnight.isoformat(),
-        "capital": start_capital,
+        "start": thirty_days_ago.isoformat(),
+        "end":   today_midnight.isoformat(),
     })
 
     if dry_run:
@@ -665,21 +709,23 @@ def phase3_4_backtest_and_tournament(
     return {"tournament_path": str(TOURNAMENT_PATH), "dry_run": False}
 
 
-def _build_backtest_config(start: datetime, end: datetime, start_capital: float) -> dict:
+def _build_backtest_config(start: datetime, end: datetime, start_capital: float | None = None) -> dict:
     """Baut die dynamische Backtest-Config aus automation/config/*.json.
 
     Liest Strategien aus automation/config/strategies.json (nur active=true).
-    Liest Start-Kapital und Spread-Einstellungen aus automation/config/backtest.json.
+    Liest Start-Kapital aus automation/config/backtest.json (einzige Quelle).
     Generierte Laufzeit-JSONs werden weiterhin in logs/ geschrieben.
     """
-    # ── Global Settings aus backtest.json lesen ──────────────────────────────
+    # ── Global Settings aus backtest.json lesen (einzige Quelle für start_capital) ──
     if BACKTEST_CFG.exists():
         try:
             with open(str(BACKTEST_CFG), "r", encoding="utf-8") as f:
                 bt_cfg = json.load(f)
-            start_capital = bt_cfg.get("start_capital", start_capital)
+            start_capital = bt_cfg.get("start_capital", 10000.0)
         except Exception:
-            pass
+            start_capital = 10000.0
+    else:
+        start_capital = 10000.0
 
     # ── Strategien aus automation/config/strategies.json (nur active=true) ──
     strategies: list[dict] = []
@@ -712,9 +758,9 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float)
             "start_capital": start_capital,
             "_note": (
                 f"Dynamisch generiert — Fenster: {start.date()} bis {end.date()} "
-                "(Midnight UTC). Config-Root: automation/config/. "
+                "(Midnight UTC, 30 Tage). Config-Root: automation/config/. "
                 "Quellen: catalog_service.py (stündliche ZIPs) + "
-                "api_backfiller.py (7-Tage-Candles). Alle Daten als FSB(16)."
+                "api_backfiller.py + historical_fetcher.py. Alle Daten als FSB(16)."
             ),
         },
         "strategies": strategies,
@@ -838,6 +884,8 @@ def main() -> int:
     )
     parser.add_argument("--dry-run",        action="store_true", help="Kein echter Bot-Start.")
     parser.add_argument("--skip-api-fetch", action="store_true", help="API-Backfill überspringen.")
+    parser.add_argument("--reset-catalog", action="store_true",
+        help="Löscht data/nautilus/data/quote_tick/ vollständig vor Phase 2 (einmalig).")
     args = parser.parse_args()
 
     load_dotenv(str(ENV_FILE))
@@ -850,6 +898,14 @@ def main() -> int:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     log = _setup_orchestrator_logging()
+
+    # ── Catalog-Reset (einmalig) ────────────────────────────────────────────
+    if args.reset_catalog:
+        import shutil
+        if QUOTE_TICK_PATH.exists():
+            shutil.rmtree(str(QUOTE_TICK_PATH))
+            log.info(f"[RESET] Catalog geleert: {QUOTE_TICK_PATH}")
+        QUOTE_TICK_PATH.mkdir(parents=True, exist_ok=True)
 
     log.info("╔" + "═" * 60 + "╗")
     log.info("║  eToro Nautilus — Daily Orchestrator v2.0                  ║")

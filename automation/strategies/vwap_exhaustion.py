@@ -1,29 +1,42 @@
-from collections import deque
+"""
+automation/strategies/vwap_exhaustion.py
+=========================================
+VWAP Exhaustion (Price-Deviation only) — volume multiplier condition removed.
 
+Entry logic (price deviation only):
+  - BUY when (close - vwap) / vwap <= -deviation_threshold  (oversold vs. VWAP)
+  - SELL when (close - vwap) / vwap >= +deviation_threshold  (overbought vs. VWAP)
+
+Volume multiplier condition has been removed because synthetic bars built from
+1h QuoteTicks always have volume=1.0, which makes the volume condition (1.0 > 1.0 x 2.5)
+never true.
+
+Note: With synthetic bars (volume=1.0), VWAP approximates typical price, which is
+acceptable for the price-deviation signal.
+
+Exit logic (via HourlyStrategyBase):
+  - ATR Trailing Stop: 1.5x ATR
+  - Time-based exit: 48 bars
+"""
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.objects import Quantity
-from nautilus_trader.trading.strategy import Strategy
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase
 
 
 class VwapExhaustionConfig(StrategyConfig, frozen=True):
     instrument_id: str
     bar_type: str
-    volume_sma_period: int = 20
     deviation_threshold: float = 0.03
-    volume_multiplier: float = 2.0
     trade_amount_usd: float = 100.0
     max_open_positions: int = 1
 
 
-class VwapExhaustionStrategy(Strategy):
+class VwapExhaustionStrategy(HourlyStrategyBase):
     """
-    Mean-Reversion-Strategie für hochvolatile Retail-Assets (Meme-Coins, Krypto),
-    basierend auf Abweichungen vom VWAP kombiniert mit Volumen-Spikes.
-    Mit echter Orderausführung.
+    VWAP Exhaustion (price-deviation only) with ATR Trailing Stop and 48h Time-Exit.
     """
 
     def __init__(self, config: VwapExhaustionConfig):
@@ -31,14 +44,13 @@ class VwapExhaustionStrategy(Strategy):
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
 
-        self.volume_history: deque = deque(maxlen=config.volume_sma_period)
-
         self.cumulative_vp = 0.0
         self.cumulative_volume = 0.0
         self.current_vwap = 0.0
         self.current_day: int | None = None
 
     def on_start(self):
+        super().on_start()
         self._log.info(
             f"Starte VwapExhaustion-Strategie auf {self.instrument_id}", LogColor.GREEN
         )
@@ -48,8 +60,6 @@ class VwapExhaustionStrategy(Strategy):
         volume = float(bar.volume)
         close_price = float(bar.close)
         typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
-
-        self.volume_history.append(volume)
 
         bar_day = bar.ts_event // 86400000000000
         if self.current_day != bar_day:
@@ -64,71 +74,33 @@ class VwapExhaustionStrategy(Strategy):
         if self.cumulative_volume > 0:
             self.current_vwap = self.cumulative_vp / self.cumulative_volume
 
-        if len(self.volume_history) < self.config.volume_sma_period:
+        if self._check_exits_and_update(bar):
             return
 
         if self.current_vwap <= 0:
             return
 
-        avg_volume = sum(self.volume_history) / len(self.volume_history)
         deviation = (close_price - self.current_vwap) / self.current_vwap
 
-        if (
-            deviation <= -self.config.deviation_threshold
-            and volume > avg_volume * self.config.volume_multiplier
-        ):
+        if deviation <= -self.config.deviation_threshold:
             self._log.info(
-                f"[{self.instrument_id}] BUY SIGNAL (VWAP Exhaustion Bottom) | "
+                f"[{self.instrument_id}] BUY SIGNAL (VWAP Deviation Bottom) | "
                 f"Close: {close_price:.2f} | VWAP: {self.current_vwap:.2f} | "
-                f"Dev: {deviation*100:.2f}% | Vol: {volume:.2f} (Avg: {avg_volume:.2f})",
+                f"Dev: {deviation * 100:.2f}%",
                 LogColor.GREEN,
             )
             self._on_buy_signal(bar)
 
-        elif (
-            deviation >= self.config.deviation_threshold
-            and volume > avg_volume * self.config.volume_multiplier
-        ):
+        elif deviation >= self.config.deviation_threshold:
             self._log.info(
-                f"[{self.instrument_id}] SELL SIGNAL (VWAP Exhaustion Top) | "
+                f"[{self.instrument_id}] SELL SIGNAL (VWAP Deviation Top) | "
                 f"Close: {close_price:.2f} | VWAP: {self.current_vwap:.2f} | "
-                f"Dev: {deviation*100:.2f}% | Vol: {volume:.2f} (Avg: {avg_volume:.2f})",
+                f"Dev: {deviation * 100:.2f}%",
                 LogColor.RED,
             )
             self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
-
-    def _compute_quantity(self, bar: Bar) -> Quantity | None:
-        instrument = self.cache.instrument(self.instrument_id)
-        if instrument is None:
-            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
-            return None
-        units = self.config.trade_amount_usd / float(bar.close)
-        # Pre-check: Equity-Instrumente (size_precision=0) erfordern mindestens 1 ganze Einheit.
-        # Nautilus wirft einen harten ValueError bei make_qty() wenn das gerundete Ergebnis 0 ergibt —
-        # auch mit round_down=True. Pre-check verhindert den Aufruf; try/except ist zusätzliche Absicherung.
-        if units < float(instrument.size_increment):
-            self._log.warning(
-                f"[{self.instrument_id}] Zu wenig Kapital für 1 Einheit "
-                f"(units={units:.6f}, size_increment={instrument.size_increment}) "
-                f"— Signal übersprungen"
-            )
-            return None
-        try:
-            qty = instrument.make_qty(units, round_down=True)
-        except ValueError as e:
-            self._log.warning(
-                f"[{self.instrument_id}] make_qty ValueError: {e} — Signal übersprungen"
-            )
-            return None
-        if qty == 0:
-            self._log.warning(
-                f"[{self.instrument_id}] Quantity=0 nach Rundung "
-                f"(units={units:.6f}) — Signal übersprungen"
-            )
-            return None
-        return qty
 
     def _on_buy_signal(self, bar: Bar) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -192,16 +164,6 @@ class VwapExhaustionStrategy(Strategy):
     def on_order_rejected(self, event) -> None:
         self._log.warning(
             f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
-        )
-
-    def on_position_opened(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionOpened: {event}", LogColor.GREEN
-        )
-
-    def on_position_closed(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionClosed: {event}", LogColor.RED
         )
 
     def on_stop(self):

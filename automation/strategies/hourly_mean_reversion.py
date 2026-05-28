@@ -1,74 +1,91 @@
-from nautilus_trader.common.enums import LogColor
+"""
+automation/strategies/hourly_mean_reversion.py
+===============================================
+HourlyMeanReversionStrategy — optimised for 1h candle data.
+
+Entry logic:
+  - BUY when close < Keltner lower band (oversold, expect reversion to mean)
+  - SELL when close > Keltner upper band (overbought, expect reversion to mean)
+
+Exit logic (via HourlyStrategyBase):
+  - ATR Trailing Stop: 1.5x ATR
+  - Time-based exit: 48 bars (= 48 hours with 1h candles)
+
+Parameters (tuned for hourly data):
+  - keltner_period: 10 (vs 20 in MeanReversionStrategy)
+  - keltner_multiplier: 1.5
+  - keltner_atr_period: 10
+"""
+from __future__ import annotations
+
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.data import QuoteTick, Bar, BarType
+from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.indicators import SimpleMovingAverage
+from nautilus_trader.indicators import KeltnerChannel
 
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
 
 
-class SmaCrossoverConfig(StrategyConfig, frozen=True):
+class HourlyMeanReversionConfig(StrategyConfig, frozen=True):
     instrument_id: str
     bar_type: str
-    sma_period: int = 5
-    trade_amount_usd: float = 100.0
+    keltner_period: int = 10
+    keltner_atr_period: int = 10
+    keltner_multiplier: float = 1.5
+    trade_amount_usd: float = 1500.0
     max_open_positions: int = 1
 
 
-class SmaCrossoverStrategy(HourlyStrategyBase):
-    """Klassische SMA Crossover Strategie mit ATR Trailing Stop und 48h Time-Exit."""
+class HourlyMeanReversionStrategy(HourlyStrategyBase):
+    """
+    Mean Reversion strategy optimised for 1h candles using Keltner Channel(10, 1.5).
+    Inherits ATR Trailing Stop (1.5x) and 48-bar Time-based Exit from HourlyStrategyBase.
+    """
 
-    def __init__(self, config: SmaCrossoverConfig):
+    def __init__(self, config: HourlyMeanReversionConfig):
         super().__init__(config)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
-        self.sma = SimpleMovingAverage(config.sma_period)
+        self.keltner = KeltnerChannel(
+            period=config.keltner_period,
+            k_multiplier=config.keltner_multiplier,
+        )
         self.current_signal: str | None = None
 
     def on_start(self):
         super().on_start()
-        self._log.info(f"Starte SMA Crossover auf {self.instrument_id}", LogColor.GREEN)
-        self.subscribe_quote_ticks(self.instrument_id)
+        self._log.info(f"Starte HourlyMeanReversion auf {self.instrument_id}")
         self.subscribe_bars(self.bar_type)
 
-    def on_quote_tick(self, tick: QuoteTick):
-        pass
-
     def on_bar(self, bar: Bar):
-        self.sma.handle_bar(bar)
+        self.keltner.handle_bar(bar)
 
         if self._check_exits_and_update(bar):
             return
 
-        if not self.sma.initialized:
+        if not self.keltner.initialized:
             return
 
         close_price = float(bar.close)
+        lower_band = self.keltner.lower
+        upper_band = self.keltner.upper
 
-        self._log.info(
-            f"[{self.instrument_id}] BAR GESCHLOSSEN | Close: {close_price:.2f} | "
-            f"SMA({self.config.sma_period}): {self.sma.value:.2f}"
-        )
-
-        if close_price > self.sma.value and self.current_signal != "BUY":
+        if close_price < lower_band and self.current_signal != "BUY":
             self._log.info(
-                f"[{self.instrument_id}] BUY SIGNAL (Close > SMA)", LogColor.GREEN
+                f"[{self.instrument_id}] BUY SIGNAL (Close < Keltner Lower) "
+                f"Close: {close_price:.2f} Lower: {lower_band:.2f}"
             )
             self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
-        elif close_price < self.sma.value and self.current_signal != "SELL":
+        elif close_price > upper_band and self.current_signal != "SELL":
             self._log.info(
-                f"[{self.instrument_id}] SELL SIGNAL (Close < SMA)", LogColor.RED
+                f"[{self.instrument_id}] SELL SIGNAL (Close > Keltner Upper) "
+                f"Close: {close_price:.2f} Upper: {upper_band:.2f}"
             )
             self.current_signal = "SELL"
             self._on_sell_signal(bar)
-
-    # ── Order helpers ──────────────────────────────────────────────────────────
-
-    def _has_open_position(self) -> bool:
-        return bool(self.cache.positions_open(instrument_id=self.instrument_id))
 
     def _on_buy_signal(self, bar: Bar) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -124,19 +141,12 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
         )
         self.submit_order(order)
 
-    # ── Lifecycle callbacks ────────────────────────────────────────────────────
-
     def on_order_filled(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] OrderFilled: {event}", LogColor.GREEN
-        )
+        self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
 
     def on_order_rejected(self, event) -> None:
-        self._log.warning(
-            f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
-        )
+        self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
 
     def on_stop(self):
-        self._log.info(f"Strategie auf {self.instrument_id} gestoppt.", LogColor.RED)
-        self.unsubscribe_quote_ticks(self.instrument_id)
+        self._log.info(f"HourlyMeanReversion auf {self.instrument_id} gestoppt.")
         self.unsubscribe_bars(self.bar_type)
