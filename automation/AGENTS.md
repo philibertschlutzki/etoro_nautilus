@@ -129,3 +129,4 @@ Alle Tests befinden sich in `tests/` und lassen sich via `pytest` ausführen. Di
 | 2026-05-27 | Safety-Interlocks entfernt — Steuerung via API-Keys | automation/daily_orchestrator.py |
 | 2026-05-27 | testing.md ersetzt — konsistent mit _fallback_precisions, neue Tests | automation/testing.md |
 | 2026-05-27 | Root-AGENTS.md und Root-requirements.txt nach archive/ verschoben | archive/ |
+| 2026-05-28 | Implementierung der vollständigen Test Suite (100% Coverage) | tests/*.py |
