@@ -1,0 +1,17 @@
+2026-05-28 12:05:00,029 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-28 12:05:00,029 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-28 12:05:00,030 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-28 12:05:00,030 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-28 12:05:00,600 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-28 12:05:00,600 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-28 12:05:00,611 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-28 12:05:01,219 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-28 12:05:01,351 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': '9549dcc0-a070-478b-bef8-0a1bea8963ae', 'success': True, 'operation': 'Authenticate'}
+2026-05-28 12:05:01,351 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-28 12:20:44,130 | INFO     | catalog_service | [catalog_service] Heartbeat: 1000 Ticks verarbeitet, 1000 im Puffer.
+2026-05-28 12:35:05,436 | INFO     | catalog_service | [catalog_service] Heartbeat: 2000 Ticks verarbeitet, 2000 im Puffer.
+2026-05-28 12:46:44,106 | INFO     | catalog_service | [catalog_service] Heartbeat: 3000 Ticks verarbeitet, 3000 im Puffer.
+2026-05-28 12:58:37,561 | INFO     | catalog_service | [catalog_service] Heartbeat: 4000 Ticks verarbeitet, 4000 im Puffer.
+2026-05-28 13:05:00,651 | INFO     | catalog_service | [catalog_service] Flush gestartet: 4591 Ticks, 49 Instrumente.
+2026-05-28 13:05:02,062 | INFO     | catalog_service | [catalog_service] ZIP geschrieben: 20260528_130500.zip | 49 Instrumente | 4591 Ticks gesamt
+2026-05-28 13:05:02,063 | INFO     | catalog_service | [catalog_service] ZIP bereit für Orchestrator: /opt/etoro_nautilus/data/import/20260528_130500.zip
