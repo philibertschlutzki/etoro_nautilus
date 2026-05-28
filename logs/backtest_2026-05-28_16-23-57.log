@@ -1,5 +1,5 @@
-📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-05-28_15-12-53.log
-🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-05-28_15-12-53.log
+📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-05-28_16-23-57.log
+🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-05-28_16-23-57.log
 ======================================================================
 📊 Spread-Modeling: True (fill_model=bid_ask)
    ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)
@@ -19,12 +19,12 @@
 🚀 ACN.ETORO | MeanReversionStrategy
    ⚠️ 0 Ticks im Zeitraum — überspringe.
    [   2/392] ACN.ETORO / MeanReversionStrategy
-🚀 ACN.ETORO | DynamicBreakoutStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
-   [   3/392] ACN.ETORO / DynamicBreakoutStrategy
 🚀 ACN.ETORO | FlashCrashReversalStrategy
    ⚠️ 0 Ticks im Zeitraum — überspringe.
-   [   4/392] ACN.ETORO / FlashCrashReversalStrategy
+   [   3/392] ACN.ETORO / FlashCrashReversalStrategy
+🚀 ACN.ETORO | DynamicBreakoutStrategy
+   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   [   4/392] ACN.ETORO / DynamicBreakoutStrategy
 🚀 ACN.ETORO | VolatilityBreakoutPumpStrategy
    ⚠️ 0 Ticks im Zeitraum — überspringe.
    [   5/392] ACN.ETORO / VolatilityBreakoutPumpStrategy
@@ -726,7 +726,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 104/392] E.ETORO / HourlyMeanReversionStrategy
 🚀 EEFT.ETORO | SmaCrossoverStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -739,7 +739,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 105/392] EEFT.ETORO / SmaCrossoverStrategy
 🚀 EEFT.ETORO | MeanReversionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -752,7 +752,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 106/392] EEFT.ETORO / MeanReversionStrategy
 🚀 EEFT.ETORO | DynamicBreakoutStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -765,7 +765,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 107/392] EEFT.ETORO / DynamicBreakoutStrategy
 🚀 EEFT.ETORO | FlashCrashReversalStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -778,7 +778,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 108/392] EEFT.ETORO / FlashCrashReversalStrategy
 🚀 EEFT.ETORO | VolatilityBreakoutPumpStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -791,7 +791,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 109/392] EEFT.ETORO / VolatilityBreakoutPumpStrategy
 🚀 EEFT.ETORO | ComboTrendVwapStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -804,7 +804,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 110/392] EEFT.ETORO / ComboTrendVwapStrategy
 🚀 EEFT.ETORO | VwapExhaustionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -817,7 +817,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 111/392] EEFT.ETORO / VwapExhaustionStrategy
 🚀 EEFT.ETORO | HourlyMeanReversionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1030,7 +1030,7 @@ RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_pr
    ⚠️ 0 Ticks im Zeitraum — überspringe.
    [ 152/392] GOOGL.ETORO / HourlyMeanReversionStrategy
 🚀 GSAT.ETORO | SmaCrossoverStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1043,7 +1043,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 153/392] GSAT.ETORO / SmaCrossoverStrategy
 🚀 GSAT.ETORO | MeanReversionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1056,7 +1056,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 154/392] GSAT.ETORO / MeanReversionStrategy
 🚀 GSAT.ETORO | DynamicBreakoutStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1069,7 +1069,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 155/392] GSAT.ETORO / DynamicBreakoutStrategy
 🚀 GSAT.ETORO | FlashCrashReversalStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1082,7 +1082,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 156/392] GSAT.ETORO / FlashCrashReversalStrategy
 🚀 GSAT.ETORO | VolatilityBreakoutPumpStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1095,7 +1095,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 157/392] GSAT.ETORO / VolatilityBreakoutPumpStrategy
 🚀 GSAT.ETORO | ComboTrendVwapStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1108,7 +1108,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 158/392] GSAT.ETORO / ComboTrendVwapStrategy
 🚀 GSAT.ETORO | VwapExhaustionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1121,7 +1121,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 159/392] GSAT.ETORO / VwapExhaustionStrategy
 🚀 GSAT.ETORO | HourlyMeanReversionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1366,7 +1366,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 184/392] HUBS.ETORO / HourlyMeanReversionStrategy
 🚀 INSW.ETORO | SmaCrossoverStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1379,7 +1379,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 185/392] INSW.ETORO / SmaCrossoverStrategy
 🚀 INSW.ETORO | MeanReversionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1392,7 +1392,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 186/392] INSW.ETORO / MeanReversionStrategy
 🚀 INSW.ETORO | DynamicBreakoutStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1405,7 +1405,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 187/392] INSW.ETORO / DynamicBreakoutStrategy
 🚀 INSW.ETORO | FlashCrashReversalStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1418,7 +1418,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 188/392] INSW.ETORO / FlashCrashReversalStrategy
 🚀 INSW.ETORO | VolatilityBreakoutPumpStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1431,7 +1431,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 189/392] INSW.ETORO / VolatilityBreakoutPumpStrategy
 🚀 INSW.ETORO | ComboTrendVwapStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1444,7 +1444,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 190/392] INSW.ETORO / ComboTrendVwapStrategy
 🚀 INSW.ETORO | VwapExhaustionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1457,7 +1457,7 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 191/392] INSW.ETORO / VwapExhaustionStrategy
 🚀 INSW.ETORO | HourlyMeanReversionStrategy
-   📥 27 Ticks geladen.
+   📥 163 Ticks geladen.
    🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
 [ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
 Traceback (most recent call last):
@@ -1776,12 +1776,12 @@ RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_pr
 🚀 NOW.ETORO | SmaCrossoverStrategy
    ⚠️ 0 Ticks im Zeitraum — überspringe.
    [ 241/392] NOW.ETORO / SmaCrossoverStrategy
-🚀 NOW.ETORO | DynamicBreakoutStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
-   [ 242/392] NOW.ETORO / DynamicBreakoutStrategy
 🚀 NOW.ETORO | MeanReversionStrategy
    ⚠️ 0 Ticks im Zeitraum — überspringe.
-   [ 243/392] NOW.ETORO / MeanReversionStrategy
+   [ 242/392] NOW.ETORO / MeanReversionStrategy
+🚀 NOW.ETORO | DynamicBreakoutStrategy
+   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   [ 243/392] NOW.ETORO / DynamicBreakoutStrategy
 🚀 NOW.ETORO | FlashCrashReversalStrategy
    ⚠️ 0 Ticks im Zeitraum — überspringe.
    [ 244/392] NOW.ETORO / FlashCrashReversalStrategy
@@ -2214,28 +2214,108 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 280/392] SE.ETORO / HourlyMeanReversionStrategy
 🚀 SNAP.ETORO | SmaCrossoverStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 281/392] SNAP.ETORO / SmaCrossoverStrategy
 🚀 SNAP.ETORO | MeanReversionStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 282/392] SNAP.ETORO / MeanReversionStrategy
 🚀 SNAP.ETORO | DynamicBreakoutStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 283/392] SNAP.ETORO / DynamicBreakoutStrategy
 🚀 SNAP.ETORO | FlashCrashReversalStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 284/392] SNAP.ETORO / FlashCrashReversalStrategy
 🚀 SNAP.ETORO | VolatilityBreakoutPumpStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 285/392] SNAP.ETORO / VolatilityBreakoutPumpStrategy
 🚀 SNAP.ETORO | ComboTrendVwapStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 286/392] SNAP.ETORO / ComboTrendVwapStrategy
 🚀 SNAP.ETORO | VwapExhaustionStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 287/392] SNAP.ETORO / VwapExhaustionStrategy
 🚀 SNAP.ETORO | HourlyMeanReversionStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 488 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 288/392] SNAP.ETORO / HourlyMeanReversionStrategy
 🚀 SQM.ETORO | SmaCrossoverStrategy
    📥 27 Ticks geladen.
@@ -2750,28 +2830,108 @@ Traceback (most recent call last):
 RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 352/392] VRT.ETORO / HourlyMeanReversionStrategy
 🚀 WBD.ETORO | SmaCrossoverStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 353/392] WBD.ETORO / SmaCrossoverStrategy
 🚀 WBD.ETORO | MeanReversionStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 354/392] WBD.ETORO / MeanReversionStrategy
 🚀 WBD.ETORO | DynamicBreakoutStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 355/392] WBD.ETORO / DynamicBreakoutStrategy
 🚀 WBD.ETORO | FlashCrashReversalStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 356/392] WBD.ETORO / FlashCrashReversalStrategy
 🚀 WBD.ETORO | VolatilityBreakoutPumpStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 357/392] WBD.ETORO / VolatilityBreakoutPumpStrategy
 🚀 WBD.ETORO | ComboTrendVwapStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 358/392] WBD.ETORO / ComboTrendVwapStrategy
 🚀 WBD.ETORO | VwapExhaustionStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 359/392] WBD.ETORO / VwapExhaustionStrategy
 🚀 WBD.ETORO | HourlyMeanReversionStrategy
-   ⚠️ 0 Ticks im Zeitraum — überspringe.
+   📥 469 Ticks geladen.
+   🔬 Precisions: price=2 (ticks), size=0 (parquet meta)
+[ERROR] engine.run() fehlgeschlagen: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 905, in run_single_backtest_worker
+    engine.run()
+  File "nautilus_trader/backtest/engine.pyx", line 1372, in nautilus_trader.backtest.engine.BacktestEngine.run
+  File "nautilus_trader/backtest/engine.pyx", line 1645, in nautilus_trader.backtest.engine.BacktestEngine._run
+  File "nautilus_trader/backtest/engine.pyx", line 3441, in nautilus_trader.backtest.engine.SimulatedExchange.process_quote_tick
+  File "nautilus_trader/backtest/engine.pyx", line 4425, in nautilus_trader.backtest.engine.OrderMatchingEngine.process_quote_tick
+RuntimeError: invalid tick.bid_size.precision=0 did not match instrument.size_precision=8
    [ 360/392] WBD.ETORO / HourlyMeanReversionStrategy
 🚀 WDAY.ETORO | SmaCrossoverStrategy
    ⚠️ 0 Ticks im Zeitraum — überspringe.
