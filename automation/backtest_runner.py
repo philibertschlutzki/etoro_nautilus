@@ -1214,7 +1214,7 @@ def run_backtest() -> None:
             pass
 
     dynamic_instruments = [
-        {"id": iid, "bar_type": f"{iid}-1-MINUTE-MID-INTERNAL"}
+        {"id": iid, "bar_type": f"{iid}-1-HOUR-MID-INTERNAL"}
         for iid in instrument_ids
     ]
 
@@ -1381,7 +1381,7 @@ def _run_remaining_sequentially(
         )
         if rem_strat is None:
             continue
-        bar_type = f"{rem_inst}-1-MINUTE-MID-INTERNAL"
+        bar_type = f"{rem_inst}-1-HOUR-MID-INTERNAL"
         res = run_single_backtest_worker(
             rem_inst, bar_type, rem_strat, catalog_path,
             start_ns, end_ns, start_capital, generate_html, reports_dir, rem_log,
