@@ -297,3 +297,554 @@
 2026-05-29 17:29:05,627 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
 2026-05-29 17:29:05,627 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-05-29T15:29:05.627283+00:00", "exit_code": 0}
 2026-05-29 17:29:05,627 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
+2026-05-29 17:35:30,005 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
+2026-05-29 17:35:30,005 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
+2026-05-29 17:35:30,005 | INFO     | orchestrator | ║  Start: 2026-05-29T15:35:30.005698+00:00                    ║
+2026-05-29 17:35:30,005 | INFO     | orchestrator | ║  DRY-RUN: NEIN                                                 ║
+2026-05-29 17:35:30,005 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
+2026-05-29 17:35:30,005 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
+2026-05-29 17:35:30,005 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-05-29T15:35:30.005833+00:00", "dry_run": false, "skip_api_fetch": false, "version": "2.0", "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]"}
+2026-05-29 17:35:30,006 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:35:30,006 | INFO     | orchestrator | PHASE 1: Universe & Mapping
+2026-05-29 17:35:30,006 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:35:30,006 | WARNING  | orchestrator | [Phase 1] Universe-Daten sind 320.6h alt (> 24h). Bitte neu fetchen.
+2026-05-29 17:35:30,006 | INFO     | orchestrator | [Phase 1] 49 eindeutige Instrumente im Universum.
+2026-05-29 17:35:30,006 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "timestamp_utc": "2026-05-29T15:35:30.006696+00:00", "universe_size": 49, "unmapped_count": 0}
+2026-05-29 17:35:30,006 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:35:30,006 | INFO     | orchestrator | PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)
+2026-05-29 17:35:30,006 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:35:30,006 | INFO     | orchestrator | [Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.
+2026-05-29 17:35:30,007 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 49 Instrumente.
+2026-05-29 17:35:30,007 | INFO     | orchestrator | [Phase 2c] API-Backfill für 49 Symbole …
+2026-05-29 17:35:30,007 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-05-29 17:35:30,007 | INFO     | api_backfiller | [api_backfiller] Starte Backfill: 2026-05-22 → 2026-05-29 | 49 Instrumente
+2026-05-29 17:35:30,007 | INFO     | api_backfiller | [api_backfiller] Lade Instrument-Precisions via eToro API …
+2026-05-29 17:35:30,720 | INFO     | api_backfiller | [api_backfiller] Precisions via API: 0/49 Instrumente.
+2026-05-29 17:35:30,884 | DEBUG    | api_backfiller | [api_backfiller] ACN.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,886 | DEBUG    | api_backfiller | [api_backfiller] ADBE.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,887 | DEBUG    | api_backfiller | [api_backfiller] AG.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,888 | DEBUG    | api_backfiller | [api_backfiller] CAT.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,889 | DEBUG    | api_backfiller | [api_backfiller] CHTR.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,890 | DEBUG    | api_backfiller | [api_backfiller] CIEN.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,891 | DEBUG    | api_backfiller | [api_backfiller] CMG.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,891 | DEBUG    | api_backfiller | [api_backfiller] COHR.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,892 | DEBUG    | api_backfiller | [api_backfiller] CPRT.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,893 | DEBUG    | api_backfiller | [api_backfiller] CRM.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,894 | DEBUG    | api_backfiller | [api_backfiller] DOCU.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,895 | DEBUG    | api_backfiller | [api_backfiller] DUOL.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,896 | DEBUG    | api_backfiller | [api_backfiller] E.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,896 | DEBUG    | api_backfiller | [api_backfiller] EEFT.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,897 | DEBUG    | api_backfiller | [api_backfiller] ESLT.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,898 | DEBUG    | api_backfiller | [api_backfiller] FICO.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,898 | DEBUG    | api_backfiller | [api_backfiller] FISV.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,899 | DEBUG    | api_backfiller | [api_backfiller] GLW.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,900 | DEBUG    | api_backfiller | [api_backfiller] GOOGL.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,900 | DEBUG    | api_backfiller | [api_backfiller] GSAT.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,901 | DEBUG    | api_backfiller | [api_backfiller] GTLB.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,902 | DEBUG    | api_backfiller | [api_backfiller] HAL.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,903 | DEBUG    | api_backfiller | [api_backfiller] HUBS.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,903 | DEBUG    | api_backfiller | [api_backfiller] INSW.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,904 | DEBUG    | api_backfiller | [api_backfiller] JNJ.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,905 | DEBUG    | api_backfiller | [api_backfiller] LRCX.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,906 | DEBUG    | api_backfiller | [api_backfiller] LULU.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,906 | DEBUG    | api_backfiller | [api_backfiller] MNDY.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,907 | DEBUG    | api_backfiller | [api_backfiller] MTZ.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,907 | DEBUG    | api_backfiller | [api_backfiller] MU.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,908 | DEBUG    | api_backfiller | [api_backfiller] NOW.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,909 | DEBUG    | api_backfiller | [api_backfiller] PBR.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,909 | DEBUG    | api_backfiller | [api_backfiller] PINS.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,910 | DEBUG    | api_backfiller | [api_backfiller] POWL.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,910 | DEBUG    | api_backfiller | [api_backfiller] SE.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,911 | DEBUG    | api_backfiller | [api_backfiller] SNAP.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,912 | DEBUG    | api_backfiller | [api_backfiller] SQM.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,912 | DEBUG    | api_backfiller | [api_backfiller] STX.US.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,913 | DEBUG    | api_backfiller | [api_backfiller] TEAM.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,913 | DEBUG    | api_backfiller | [api_backfiller] TSEM.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,914 | DEBUG    | api_backfiller | [api_backfiller] TTD.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,915 | DEBUG    | api_backfiller | [api_backfiller] TTMI.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,915 | DEBUG    | api_backfiller | [api_backfiller] VLO.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,916 | DEBUG    | api_backfiller | [api_backfiller] VRT.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,917 | DEBUG    | api_backfiller | [api_backfiller] WBD.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,917 | DEBUG    | api_backfiller | [api_backfiller] WDAY.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,918 | DEBUG    | api_backfiller | [api_backfiller] WDC.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,918 | DEBUG    | api_backfiller | [api_backfiller] WIX.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,919 | DEBUG    | api_backfiller | [api_backfiller] ZS.ETORO: Daten aktuell (Lücke 0.6h) — überspringe.
+2026-05-29 17:35:30,919 | INFO     | api_backfiller | [api_backfiller] Backfill abgeschlossen: 0 Symbole befüllt.
+2026-05-29 17:35:30,920 | INFO     | orchestrator | [Phase 2c] API-Backfill: 0 Symbole befüllt.
+2026-05-29 17:35:30,923 | INFO     | orchestrator | [Phase 2d] 49 Symbole unzureichend — starte Historical Fetcher ...
+2026-05-29 17:35:30,924 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 49 Instrumente.
+2026-05-29 17:35:30,924 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-05-29 17:35:30,926 | INFO     | historical_fetcher | [historical_fetcher] 49/49 Symbole werden gefetcht (months=12, min_bars=200).
+2026-05-29 17:35:30,926 | INFO     | historical_fetcher | [historical_fetcher] Lade Instrument-Precisions via eToro API …
+2026-05-29 17:35:31,532 | INFO     | historical_fetcher | [historical_fetcher] Precisions via API: 0/49 Instrumente.
+2026-05-29 17:35:31,541 | INFO     | historical_fetcher | [ACN.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:31.532927+00:00
+2026-05-29 17:35:31,646 | DEBUG    | historical_fetcher | [ACN.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T23:00:00+00:00
+2026-05-29 17:35:32,859 | INFO     | historical_fetcher | [ACN.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:35:32,969 | DEBUG    | historical_fetcher | [ACN.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:35:34,070 | INFO     | historical_fetcher | [ACN.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:35:34,077 | INFO     | historical_fetcher | [ACN.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:35:34,080 | DEBUG    | historical_fetcher | [api_backfiller] ACN.ETORO: 1335→1200 Zeilen (-135 Duplikate)
+2026-05-29 17:35:34,082 | INFO     | historical_fetcher | [api_backfiller] ACN.ETORO: 1200 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:35:35,187 | INFO     | historical_fetcher | [ADBE.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:35.185311+00:00
+2026-05-29 17:35:35,315 | DEBUG    | historical_fetcher | [ADBE.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T12:00:00+00:00
+2026-05-29 17:35:36,576 | INFO     | historical_fetcher | [ADBE.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:35:36,681 | DEBUG    | historical_fetcher | [ADBE.ETORO] OneDay: 1000 Candles, älteste: 2022-04-27T00:00:00+00:00
+2026-05-29 17:35:37,782 | INFO     | historical_fetcher | [ADBE.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:35:37,788 | INFO     | historical_fetcher | [ADBE.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:35:37,791 | DEBUG    | historical_fetcher | [api_backfiller] ADBE.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:35:37,793 | INFO     | historical_fetcher | [api_backfiller] ADBE.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:35:38,898 | INFO     | historical_fetcher | [AG.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:38.895433+00:00
+2026-05-29 17:35:39,012 | DEBUG    | historical_fetcher | [AG.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:35:40,238 | INFO     | historical_fetcher | [AG.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:35:41,297 | DEBUG    | historical_fetcher | [AG.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:35:42,399 | INFO     | historical_fetcher | [AG.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:35:42,404 | INFO     | historical_fetcher | [AG.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:35:42,407 | DEBUG    | historical_fetcher | [api_backfiller] AG.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:35:42,408 | INFO     | historical_fetcher | [api_backfiller] AG.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:35:43,511 | INFO     | historical_fetcher | [CAT.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:43.509606+00:00
+2026-05-29 17:35:43,654 | DEBUG    | historical_fetcher | [CAT.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T14:00:00+00:00
+2026-05-29 17:35:44,874 | INFO     | historical_fetcher | [CAT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:35:44,984 | DEBUG    | historical_fetcher | [CAT.ETORO] OneDay: 1000 Candles, älteste: 2022-04-27T00:00:00+00:00
+2026-05-29 17:35:46,085 | INFO     | historical_fetcher | [CAT.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:35:46,090 | INFO     | historical_fetcher | [CAT.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:35:46,094 | DEBUG    | historical_fetcher | [api_backfiller] CAT.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:35:46,095 | INFO     | historical_fetcher | [api_backfiller] CAT.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:35:47,200 | INFO     | historical_fetcher | [CHTR.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:47.197087+00:00
+2026-05-29 17:35:47,337 | DEBUG    | historical_fetcher | [CHTR.ETORO] OneHour: 1000 Candles, älteste: 2026-03-24T21:00:00+00:00
+2026-05-29 17:35:48,580 | INFO     | historical_fetcher | [CHTR.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:35:48,688 | DEBUG    | historical_fetcher | [CHTR.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:35:49,789 | INFO     | historical_fetcher | [CHTR.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:35:49,794 | INFO     | historical_fetcher | [CHTR.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:35:49,798 | DEBUG    | historical_fetcher | [api_backfiller] CHTR.ETORO: 1327→1199 Zeilen (-128 Duplikate)
+2026-05-29 17:35:49,799 | INFO     | historical_fetcher | [api_backfiller] CHTR.ETORO: 1199 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:35:50,903 | INFO     | historical_fetcher | [CIEN.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:50.900691+00:00
+2026-05-29 17:35:51,016 | DEBUG    | historical_fetcher | [CIEN.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:35:52,233 | INFO     | historical_fetcher | [CIEN.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:35:52,351 | DEBUG    | historical_fetcher | [CIEN.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:35:53,452 | INFO     | historical_fetcher | [CIEN.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:35:53,458 | INFO     | historical_fetcher | [CIEN.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:35:53,461 | DEBUG    | historical_fetcher | [api_backfiller] CIEN.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:35:53,463 | INFO     | historical_fetcher | [api_backfiller] CIEN.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:35:54,568 | INFO     | historical_fetcher | [CMG.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:54.565405+00:00
+2026-05-29 17:35:54,922 | DEBUG    | historical_fetcher | [CMG.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T16:00:00+00:00
+2026-05-29 17:35:56,152 | INFO     | historical_fetcher | [CMG.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:35:56,344 | DEBUG    | historical_fetcher | [CMG.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:35:57,444 | INFO     | historical_fetcher | [CMG.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:35:57,450 | INFO     | historical_fetcher | [CMG.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:35:57,453 | DEBUG    | historical_fetcher | [api_backfiller] CMG.ETORO: 1335→1200 Zeilen (-135 Duplikate)
+2026-05-29 17:35:57,454 | INFO     | historical_fetcher | [api_backfiller] CMG.ETORO: 1200 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:35:58,558 | INFO     | historical_fetcher | [COHR.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:35:58.555641+00:00
+2026-05-29 17:35:58,672 | DEBUG    | historical_fetcher | [COHR.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:35:59,877 | INFO     | historical_fetcher | [COHR.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:00,011 | DEBUG    | historical_fetcher | [COHR.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:36:01,112 | INFO     | historical_fetcher | [COHR.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:01,117 | INFO     | historical_fetcher | [COHR.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:36:01,120 | DEBUG    | historical_fetcher | [api_backfiller] COHR.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:36:01,122 | INFO     | historical_fetcher | [api_backfiller] COHR.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:02,225 | INFO     | historical_fetcher | [CPRT.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:02.223614+00:00
+2026-05-29 17:36:02,332 | DEBUG    | historical_fetcher | [CPRT.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T22:00:00+00:00
+2026-05-29 17:36:03,671 | INFO     | historical_fetcher | [CPRT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:03,786 | DEBUG    | historical_fetcher | [CPRT.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:36:04,887 | INFO     | historical_fetcher | [CPRT.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:04,894 | INFO     | historical_fetcher | [CPRT.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:04,897 | DEBUG    | historical_fetcher | [api_backfiller] CPRT.ETORO: 1335→1200 Zeilen (-135 Duplikate)
+2026-05-29 17:36:04,899 | INFO     | historical_fetcher | [api_backfiller] CPRT.ETORO: 1200 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:06,005 | INFO     | historical_fetcher | [CRM.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:06.001627+00:00
+2026-05-29 17:36:06,118 | DEBUG    | historical_fetcher | [CRM.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T15:00:00+00:00
+2026-05-29 17:36:07,386 | INFO     | historical_fetcher | [CRM.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:07,516 | DEBUG    | historical_fetcher | [CRM.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:36:08,618 | INFO     | historical_fetcher | [CRM.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:08,623 | INFO     | historical_fetcher | [CRM.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:08,627 | DEBUG    | historical_fetcher | [api_backfiller] CRM.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:36:08,628 | INFO     | historical_fetcher | [api_backfiller] CRM.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:09,733 | INFO     | historical_fetcher | [DOCU.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:09.729693+00:00
+2026-05-29 17:36:09,849 | DEBUG    | historical_fetcher | [DOCU.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T16:00:00+00:00
+2026-05-29 17:36:11,077 | INFO     | historical_fetcher | [DOCU.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:11,181 | DEBUG    | historical_fetcher | [DOCU.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:36:12,281 | INFO     | historical_fetcher | [DOCU.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:12,286 | INFO     | historical_fetcher | [DOCU.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:36:12,290 | DEBUG    | historical_fetcher | [api_backfiller] DOCU.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:36:12,291 | INFO     | historical_fetcher | [api_backfiller] DOCU.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:13,395 | INFO     | historical_fetcher | [DUOL.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:13.392656+00:00
+2026-05-29 17:36:13,651 | DEBUG    | historical_fetcher | [DUOL.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T12:00:00+00:00
+2026-05-29 17:36:14,885 | INFO     | historical_fetcher | [DUOL.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:15,086 | DEBUG    | historical_fetcher | [DUOL.ETORO] OneDay: 1000 Candles, älteste: 2022-04-25T00:00:00+00:00
+2026-05-29 17:36:16,188 | INFO     | historical_fetcher | [DUOL.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:16,193 | INFO     | historical_fetcher | [DUOL.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:16,198 | DEBUG    | historical_fetcher | [api_backfiller] DUOL.ETORO: 1336→1202 Zeilen (-134 Duplikate)
+2026-05-29 17:36:16,198 | INFO     | historical_fetcher | [api_backfiller] DUOL.ETORO: 1202 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:17,303 | INFO     | historical_fetcher | [E.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:17.300765+00:00
+2026-05-29 17:36:17,414 | DEBUG    | historical_fetcher | [E.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:36:18,626 | INFO     | historical_fetcher | [E.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:18,736 | DEBUG    | historical_fetcher | [E.ETORO] OneDay: 1000 Candles, älteste: 2022-04-12T00:00:00+00:00
+2026-05-29 17:36:19,837 | INFO     | historical_fetcher | [E.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:19,843 | INFO     | historical_fetcher | [E.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:36:19,846 | DEBUG    | historical_fetcher | [api_backfiller] E.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:36:19,847 | INFO     | historical_fetcher | [api_backfiller] E.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:20,952 | INFO     | historical_fetcher | [EEFT.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:20.949723+00:00
+2026-05-29 17:36:21,063 | DEBUG    | historical_fetcher | [EEFT.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T16:00:00+00:00
+2026-05-29 17:36:22,290 | INFO     | historical_fetcher | [EEFT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:22,413 | DEBUG    | historical_fetcher | [EEFT.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:36:23,515 | INFO     | historical_fetcher | [EEFT.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:23,521 | INFO     | historical_fetcher | [EEFT.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:36:23,524 | DEBUG    | historical_fetcher | [api_backfiller] EEFT.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:36:23,525 | INFO     | historical_fetcher | [api_backfiller] EEFT.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:24,630 | INFO     | historical_fetcher | [ESLT.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:24.626649+00:00
+2026-05-29 17:36:24,757 | DEBUG    | historical_fetcher | [ESLT.ETORO] OneHour: 893 Candles, älteste: 2025-11-20T14:00:00+00:00
+2026-05-29 17:36:25,967 | INFO     | historical_fetcher | [ESLT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:26,034 | DEBUG    | historical_fetcher | [ESLT.ETORO] OneDay: 122 Candles, älteste: 2025-11-20T00:00:00+00:00
+2026-05-29 17:36:27,206 | INFO     | historical_fetcher | [ESLT.ETORO] Historische Tiefe für OneDay erreicht.
+2026-05-29 17:36:27,209 | INFO     | historical_fetcher | [ESLT.ETORO] 1015 Candles → speichere (price_prec=2).
+2026-05-29 17:36:27,213 | DEBUG    | historical_fetcher | [api_backfiller] ESLT.ETORO: 1043→1015 Zeilen (-28 Duplikate)
+2026-05-29 17:36:27,214 | INFO     | historical_fetcher | [api_backfiller] ESLT.ETORO: 1015 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:28,318 | INFO     | historical_fetcher | [FICO.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:28.315613+00:00
+2026-05-29 17:36:28,516 | DEBUG    | historical_fetcher | [FICO.ETORO] OneHour: 1000 Candles, älteste: 2026-03-25T02:00:00+00:00
+2026-05-29 17:36:29,744 | INFO     | historical_fetcher | [FICO.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:30,756 | DEBUG    | historical_fetcher | [FICO.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:36:31,858 | INFO     | historical_fetcher | [FICO.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:31,866 | INFO     | historical_fetcher | [FICO.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:31,869 | DEBUG    | historical_fetcher | [api_backfiller] FICO.ETORO: 1333→1200 Zeilen (-133 Duplikate)
+2026-05-29 17:36:31,870 | INFO     | historical_fetcher | [api_backfiller] FICO.ETORO: 1200 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:32,975 | INFO     | historical_fetcher | [FISV.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:32.972875+00:00
+2026-05-29 17:36:33,086 | DEBUG    | historical_fetcher | [FISV.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T14:00:00+00:00
+2026-05-29 17:36:34,312 | INFO     | historical_fetcher | [FISV.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:34,430 | DEBUG    | historical_fetcher | [FISV.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:36:35,532 | INFO     | historical_fetcher | [FISV.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:35,539 | INFO     | historical_fetcher | [FISV.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:35,542 | DEBUG    | historical_fetcher | [api_backfiller] FISV.ETORO: 1333→1200 Zeilen (-133 Duplikate)
+2026-05-29 17:36:35,543 | INFO     | historical_fetcher | [api_backfiller] FISV.ETORO: 1200 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:36,649 | INFO     | historical_fetcher | [GLW.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:36.645953+00:00
+2026-05-29 17:36:36,903 | DEBUG    | historical_fetcher | [GLW.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T15:00:00+00:00
+2026-05-29 17:36:38,114 | INFO     | historical_fetcher | [GLW.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:38,241 | DEBUG    | historical_fetcher | [GLW.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:36:39,343 | INFO     | historical_fetcher | [GLW.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:39,349 | INFO     | historical_fetcher | [GLW.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:39,352 | DEBUG    | historical_fetcher | [api_backfiller] GLW.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:36:39,353 | INFO     | historical_fetcher | [api_backfiller] GLW.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:40,457 | INFO     | historical_fetcher | [GOOGL.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:40.455255+00:00
+2026-05-29 17:36:40,582 | DEBUG    | historical_fetcher | [GOOGL.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T15:00:00+00:00
+2026-05-29 17:36:41,834 | INFO     | historical_fetcher | [GOOGL.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:41,950 | DEBUG    | historical_fetcher | [GOOGL.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:36:43,052 | INFO     | historical_fetcher | [GOOGL.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:43,057 | INFO     | historical_fetcher | [GOOGL.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:43,060 | DEBUG    | historical_fetcher | [api_backfiller] GOOGL.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:36:43,061 | INFO     | historical_fetcher | [api_backfiller] GOOGL.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:44,166 | INFO     | historical_fetcher | [GSAT.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:44.163564+00:00
+2026-05-29 17:36:44,326 | DEBUG    | historical_fetcher | [GSAT.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:36:45,560 | INFO     | historical_fetcher | [GSAT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:45,673 | DEBUG    | historical_fetcher | [GSAT.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:36:46,774 | INFO     | historical_fetcher | [GSAT.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:46,780 | INFO     | historical_fetcher | [GSAT.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:36:46,784 | DEBUG    | historical_fetcher | [api_backfiller] GSAT.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:36:46,785 | INFO     | historical_fetcher | [api_backfiller] GSAT.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:47,889 | INFO     | historical_fetcher | [GTLB.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:47.886672+00:00
+2026-05-29 17:36:48,010 | DEBUG    | historical_fetcher | [GTLB.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T16:00:00+00:00
+2026-05-29 17:36:49,238 | INFO     | historical_fetcher | [GTLB.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:49,332 | DEBUG    | historical_fetcher | [GTLB.ETORO] OneDay: 1000 Candles, älteste: 2022-04-12T00:00:00+00:00
+2026-05-29 17:36:50,433 | INFO     | historical_fetcher | [GTLB.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:50,438 | INFO     | historical_fetcher | [GTLB.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:36:50,442 | DEBUG    | historical_fetcher | [api_backfiller] GTLB.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:36:50,443 | INFO     | historical_fetcher | [api_backfiller] GTLB.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:51,547 | INFO     | historical_fetcher | [HAL.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:51.544728+00:00
+2026-05-29 17:36:51,680 | DEBUG    | historical_fetcher | [HAL.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T13:00:00+00:00
+2026-05-29 17:36:52,913 | INFO     | historical_fetcher | [HAL.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:53,036 | DEBUG    | historical_fetcher | [HAL.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:36:54,138 | INFO     | historical_fetcher | [HAL.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:54,145 | INFO     | historical_fetcher | [HAL.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:36:54,147 | DEBUG    | historical_fetcher | [api_backfiller] HAL.ETORO: 1334→1200 Zeilen (-134 Duplikate)
+2026-05-29 17:36:54,148 | INFO     | historical_fetcher | [api_backfiller] HAL.ETORO: 1200 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:55,252 | INFO     | historical_fetcher | [HUBS.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:55.250003+00:00
+2026-05-29 17:36:55,404 | DEBUG    | historical_fetcher | [HUBS.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:36:56,664 | INFO     | historical_fetcher | [HUBS.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:36:56,778 | DEBUG    | historical_fetcher | [HUBS.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:36:57,879 | INFO     | historical_fetcher | [HUBS.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:36:57,885 | INFO     | historical_fetcher | [HUBS.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:36:57,888 | DEBUG    | historical_fetcher | [api_backfiller] HUBS.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:36:57,889 | INFO     | historical_fetcher | [api_backfiller] HUBS.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:36:58,992 | INFO     | historical_fetcher | [INSW.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:36:58.990696+00:00
+2026-05-29 17:36:59,117 | DEBUG    | historical_fetcher | [INSW.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T14:00:00+00:00
+2026-05-29 17:37:00,324 | INFO     | historical_fetcher | [INSW.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:00,420 | DEBUG    | historical_fetcher | [INSW.ETORO] OneDay: 597 Candles, älteste: 2023-11-30T00:00:00+00:00
+2026-05-29 17:37:01,521 | INFO     | historical_fetcher | [INSW.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:01,526 | INFO     | historical_fetcher | [INSW.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:01,529 | DEBUG    | historical_fetcher | [api_backfiller] INSW.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:01,531 | INFO     | historical_fetcher | [api_backfiller] INSW.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:02,635 | INFO     | historical_fetcher | [JNJ.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:02.632885+00:00
+2026-05-29 17:37:02,758 | DEBUG    | historical_fetcher | [JNJ.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T13:00:00+00:00
+2026-05-29 17:37:04,010 | INFO     | historical_fetcher | [JNJ.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:04,118 | DEBUG    | historical_fetcher | [JNJ.ETORO] OneDay: 1000 Candles, älteste: 2022-04-27T00:00:00+00:00
+2026-05-29 17:37:05,219 | INFO     | historical_fetcher | [JNJ.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:05,225 | INFO     | historical_fetcher | [JNJ.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:05,250 | DEBUG    | historical_fetcher | [api_backfiller] JNJ.ETORO: 1334→1201 Zeilen (-133 Duplikate)
+2026-05-29 17:37:05,251 | INFO     | historical_fetcher | [api_backfiller] JNJ.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:06,354 | INFO     | historical_fetcher | [LRCX.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:06.352670+00:00
+2026-05-29 17:37:06,454 | DEBUG    | historical_fetcher | [LRCX.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T14:00:00+00:00
+2026-05-29 17:37:07,679 | INFO     | historical_fetcher | [LRCX.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:07,811 | DEBUG    | historical_fetcher | [LRCX.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:37:08,912 | INFO     | historical_fetcher | [LRCX.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:08,918 | INFO     | historical_fetcher | [LRCX.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:08,920 | DEBUG    | historical_fetcher | [api_backfiller] LRCX.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:37:08,921 | INFO     | historical_fetcher | [api_backfiller] LRCX.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:10,025 | INFO     | historical_fetcher | [LULU.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:10.022637+00:00
+2026-05-29 17:37:10,220 | DEBUG    | historical_fetcher | [LULU.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T13:00:00+00:00
+2026-05-29 17:37:11,451 | INFO     | historical_fetcher | [LULU.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:11,562 | DEBUG    | historical_fetcher | [LULU.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:37:12,664 | INFO     | historical_fetcher | [LULU.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:12,672 | INFO     | historical_fetcher | [LULU.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:12,674 | DEBUG    | historical_fetcher | [api_backfiller] LULU.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:37:12,675 | INFO     | historical_fetcher | [api_backfiller] LULU.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:13,779 | INFO     | historical_fetcher | [MNDY.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:13.777773+00:00
+2026-05-29 17:37:13,896 | DEBUG    | historical_fetcher | [MNDY.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T16:00:00+00:00
+2026-05-29 17:37:15,120 | INFO     | historical_fetcher | [MNDY.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:15,265 | DEBUG    | historical_fetcher | [MNDY.ETORO] OneDay: 1000 Candles, älteste: 2022-04-12T00:00:00+00:00
+2026-05-29 17:37:16,367 | INFO     | historical_fetcher | [MNDY.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:16,373 | INFO     | historical_fetcher | [MNDY.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:16,376 | DEBUG    | historical_fetcher | [api_backfiller] MNDY.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:16,377 | INFO     | historical_fetcher | [api_backfiller] MNDY.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:17,481 | INFO     | historical_fetcher | [MTZ.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:17.479401+00:00
+2026-05-29 17:37:17,585 | DEBUG    | historical_fetcher | [MTZ.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:37:18,813 | INFO     | historical_fetcher | [MTZ.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:18,932 | DEBUG    | historical_fetcher | [MTZ.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:37:20,032 | INFO     | historical_fetcher | [MTZ.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:20,038 | INFO     | historical_fetcher | [MTZ.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:20,040 | DEBUG    | historical_fetcher | [api_backfiller] MTZ.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:20,041 | INFO     | historical_fetcher | [api_backfiller] MTZ.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:21,144 | INFO     | historical_fetcher | [MU.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:21.142679+00:00
+2026-05-29 17:37:21,265 | DEBUG    | historical_fetcher | [MU.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T15:00:00+00:00
+2026-05-29 17:37:22,482 | INFO     | historical_fetcher | [MU.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:22,631 | DEBUG    | historical_fetcher | [MU.ETORO] OneDay: 1000 Candles, älteste: 2022-04-27T00:00:00+00:00
+2026-05-29 17:37:23,732 | INFO     | historical_fetcher | [MU.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:23,738 | INFO     | historical_fetcher | [MU.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:23,741 | DEBUG    | historical_fetcher | [api_backfiller] MU.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:37:23,742 | INFO     | historical_fetcher | [api_backfiller] MU.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:24,845 | INFO     | historical_fetcher | [NOW.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:24.843641+00:00
+2026-05-29 17:37:24,979 | DEBUG    | historical_fetcher | [NOW.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T11:00:00+00:00
+2026-05-29 17:37:26,320 | INFO     | historical_fetcher | [NOW.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:26,449 | DEBUG    | historical_fetcher | [NOW.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:37:27,551 | INFO     | historical_fetcher | [NOW.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:27,559 | INFO     | historical_fetcher | [NOW.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:27,563 | DEBUG    | historical_fetcher | [api_backfiller] NOW.ETORO: 1335→1201 Zeilen (-134 Duplikate)
+2026-05-29 17:37:27,564 | INFO     | historical_fetcher | [api_backfiller] NOW.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:28,667 | INFO     | historical_fetcher | [PBR.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:28.665680+00:00
+2026-05-29 17:37:28,772 | DEBUG    | historical_fetcher | [PBR.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:37:29,974 | INFO     | historical_fetcher | [PBR.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:30,088 | DEBUG    | historical_fetcher | [PBR.ETORO] OneDay: 1000 Candles, älteste: 2022-04-18T00:00:00+00:00
+2026-05-29 17:37:31,188 | INFO     | historical_fetcher | [PBR.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:31,194 | INFO     | historical_fetcher | [PBR.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:31,197 | DEBUG    | historical_fetcher | [api_backfiller] PBR.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:31,198 | INFO     | historical_fetcher | [api_backfiller] PBR.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:32,303 | INFO     | historical_fetcher | [PINS.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:32.300509+00:00
+2026-05-29 17:37:32,433 | DEBUG    | historical_fetcher | [PINS.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:37:33,629 | INFO     | historical_fetcher | [PINS.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:33,753 | DEBUG    | historical_fetcher | [PINS.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:37:34,855 | INFO     | historical_fetcher | [PINS.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:34,861 | INFO     | historical_fetcher | [PINS.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:34,864 | DEBUG    | historical_fetcher | [api_backfiller] PINS.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:34,864 | INFO     | historical_fetcher | [api_backfiller] PINS.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:35,967 | INFO     | historical_fetcher | [POWL.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:35.966016+00:00
+2026-05-29 17:37:36,086 | DEBUG    | historical_fetcher | [POWL.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T16:00:00+00:00
+2026-05-29 17:37:37,389 | INFO     | historical_fetcher | [POWL.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:37,475 | DEBUG    | historical_fetcher | [POWL.ETORO] OneDay: 597 Candles, älteste: 2023-11-30T00:00:00+00:00
+2026-05-29 17:37:38,577 | INFO     | historical_fetcher | [POWL.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:38,584 | INFO     | historical_fetcher | [POWL.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:38,609 | DEBUG    | historical_fetcher | [api_backfiller] POWL.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:38,610 | INFO     | historical_fetcher | [api_backfiller] POWL.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:39,714 | INFO     | historical_fetcher | [SE.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:39.712719+00:00
+2026-05-29 17:37:39,852 | DEBUG    | historical_fetcher | [SE.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:37:41,063 | INFO     | historical_fetcher | [SE.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:41,219 | DEBUG    | historical_fetcher | [SE.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:37:42,320 | INFO     | historical_fetcher | [SE.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:42,326 | INFO     | historical_fetcher | [SE.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:42,328 | DEBUG    | historical_fetcher | [api_backfiller] SE.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:42,329 | INFO     | historical_fetcher | [api_backfiller] SE.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:43,432 | INFO     | historical_fetcher | [SNAP.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:43.430673+00:00
+2026-05-29 17:37:43,549 | DEBUG    | historical_fetcher | [SNAP.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T10:00:00+00:00
+2026-05-29 17:37:44,907 | INFO     | historical_fetcher | [SNAP.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:45,018 | DEBUG    | historical_fetcher | [SNAP.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:37:46,119 | INFO     | historical_fetcher | [SNAP.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:46,127 | INFO     | historical_fetcher | [SNAP.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:46,130 | DEBUG    | historical_fetcher | [api_backfiller] SNAP.ETORO: 1336→1202 Zeilen (-134 Duplikate)
+2026-05-29 17:37:46,132 | INFO     | historical_fetcher | [api_backfiller] SNAP.ETORO: 1202 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:47,236 | INFO     | historical_fetcher | [SQM.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:47.234667+00:00
+2026-05-29 17:37:47,365 | DEBUG    | historical_fetcher | [SQM.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:37:48,584 | INFO     | historical_fetcher | [SQM.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:48,719 | DEBUG    | historical_fetcher | [SQM.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:37:49,820 | INFO     | historical_fetcher | [SQM.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:49,826 | INFO     | historical_fetcher | [SQM.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:37:49,829 | DEBUG    | historical_fetcher | [api_backfiller] SQM.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:37:49,830 | INFO     | historical_fetcher | [api_backfiller] SQM.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:50,933 | INFO     | historical_fetcher | [STX.US.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:50.931979+00:00
+2026-05-29 17:37:51,046 | DEBUG    | historical_fetcher | [STX.US.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T12:00:00+00:00
+2026-05-29 17:37:52,392 | INFO     | historical_fetcher | [STX.US.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:52,497 | DEBUG    | historical_fetcher | [STX.US.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:37:53,598 | INFO     | historical_fetcher | [STX.US.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:53,604 | INFO     | historical_fetcher | [STX.US.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:53,608 | DEBUG    | historical_fetcher | [api_backfiller] STX.US.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:37:53,609 | INFO     | historical_fetcher | [api_backfiller] STX.US.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:54,714 | INFO     | historical_fetcher | [TEAM.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:54.711550+00:00
+2026-05-29 17:37:54,839 | DEBUG    | historical_fetcher | [TEAM.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T09:00:00+00:00
+2026-05-29 17:37:56,045 | INFO     | historical_fetcher | [TEAM.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:56,241 | DEBUG    | historical_fetcher | [TEAM.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:37:57,342 | INFO     | historical_fetcher | [TEAM.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:37:57,348 | INFO     | historical_fetcher | [TEAM.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:37:57,351 | DEBUG    | historical_fetcher | [api_backfiller] TEAM.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:37:57,352 | INFO     | historical_fetcher | [api_backfiller] TEAM.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:37:58,455 | INFO     | historical_fetcher | [TSEM.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:37:58.453946+00:00
+2026-05-29 17:37:58,588 | DEBUG    | historical_fetcher | [TSEM.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T16:00:00+00:00
+2026-05-29 17:37:59,806 | INFO     | historical_fetcher | [TSEM.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:37:59,925 | DEBUG    | historical_fetcher | [TSEM.ETORO] OneDay: 1000 Candles, älteste: 2022-04-13T00:00:00+00:00
+2026-05-29 17:38:01,027 | INFO     | historical_fetcher | [TSEM.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:01,035 | INFO     | historical_fetcher | [TSEM.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:38:01,038 | DEBUG    | historical_fetcher | [api_backfiller] TSEM.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:38:01,040 | INFO     | historical_fetcher | [api_backfiller] TSEM.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:02,142 | INFO     | historical_fetcher | [TTD.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:02.141598+00:00
+2026-05-29 17:38:02,263 | DEBUG    | historical_fetcher | [TTD.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T14:00:00+00:00
+2026-05-29 17:38:03,517 | INFO     | historical_fetcher | [TTD.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:03,623 | DEBUG    | historical_fetcher | [TTD.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:38:04,725 | INFO     | historical_fetcher | [TTD.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:04,730 | INFO     | historical_fetcher | [TTD.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:38:04,733 | DEBUG    | historical_fetcher | [api_backfiller] TTD.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:38:04,734 | INFO     | historical_fetcher | [api_backfiller] TTD.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:05,837 | INFO     | historical_fetcher | [TTMI.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:05.835705+00:00
+2026-05-29 17:38:05,975 | DEBUG    | historical_fetcher | [TTMI.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:38:07,202 | INFO     | historical_fetcher | [TTMI.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:07,300 | DEBUG    | historical_fetcher | [TTMI.ETORO] OneDay: 593 Candles, älteste: 2023-12-05T00:00:00+00:00
+2026-05-29 17:38:08,401 | INFO     | historical_fetcher | [TTMI.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:08,408 | INFO     | historical_fetcher | [TTMI.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:38:08,412 | DEBUG    | historical_fetcher | [api_backfiller] TTMI.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:38:08,414 | INFO     | historical_fetcher | [api_backfiller] TTMI.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:09,518 | INFO     | historical_fetcher | [VLO.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:09.516447+00:00
+2026-05-29 17:38:09,764 | DEBUG    | historical_fetcher | [VLO.ETORO] OneHour: 1000 Candles, älteste: 2026-03-25T15:00:00+00:00
+2026-05-29 17:38:10,979 | INFO     | historical_fetcher | [VLO.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:11,121 | DEBUG    | historical_fetcher | [VLO.ETORO] OneDay: 1000 Candles, älteste: 2022-04-25T00:00:00+00:00
+2026-05-29 17:38:12,222 | INFO     | historical_fetcher | [VLO.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:12,228 | INFO     | historical_fetcher | [VLO.ETORO] 1243 Candles → speichere (price_prec=2).
+2026-05-29 17:38:12,230 | DEBUG    | historical_fetcher | [api_backfiller] VLO.ETORO: 1329→1198 Zeilen (-131 Duplikate)
+2026-05-29 17:38:12,232 | INFO     | historical_fetcher | [api_backfiller] VLO.ETORO: 1198 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:13,335 | INFO     | historical_fetcher | [VRT.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:13.334179+00:00
+2026-05-29 17:38:13,450 | DEBUG    | historical_fetcher | [VRT.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T15:00:00+00:00
+2026-05-29 17:38:14,732 | INFO     | historical_fetcher | [VRT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:14,865 | DEBUG    | historical_fetcher | [VRT.ETORO] OneDay: 1000 Candles, älteste: 2022-04-14T00:00:00+00:00
+2026-05-29 17:38:15,967 | INFO     | historical_fetcher | [VRT.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:15,975 | INFO     | historical_fetcher | [VRT.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:38:15,978 | DEBUG    | historical_fetcher | [api_backfiller] VRT.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:38:15,980 | INFO     | historical_fetcher | [api_backfiller] VRT.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:17,085 | INFO     | historical_fetcher | [WBD.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:17.082588+00:00
+2026-05-29 17:38:17,195 | DEBUG    | historical_fetcher | [WBD.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T05:00:00+00:00
+2026-05-29 17:38:18,423 | INFO     | historical_fetcher | [WBD.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:18,530 | DEBUG    | historical_fetcher | [WBD.ETORO] OneDay: 1000 Candles, älteste: 2022-04-25T00:00:00+00:00
+2026-05-29 17:38:19,631 | INFO     | historical_fetcher | [WBD.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:19,665 | INFO     | historical_fetcher | [WBD.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:38:19,669 | DEBUG    | historical_fetcher | [api_backfiller] WBD.ETORO: 1335→1201 Zeilen (-134 Duplikate)
+2026-05-29 17:38:19,670 | INFO     | historical_fetcher | [api_backfiller] WBD.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:20,775 | INFO     | historical_fetcher | [WDAY.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:20.772614+00:00
+2026-05-29 17:38:20,883 | DEBUG    | historical_fetcher | [WDAY.ETORO] OneHour: 1000 Candles, älteste: 2026-03-26T17:00:00+00:00
+2026-05-29 17:38:22,269 | INFO     | historical_fetcher | [WDAY.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:22,391 | DEBUG    | historical_fetcher | [WDAY.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:38:23,493 | INFO     | historical_fetcher | [WDAY.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:23,501 | INFO     | historical_fetcher | [WDAY.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:38:23,504 | DEBUG    | historical_fetcher | [api_backfiller] WDAY.ETORO: 1336→1200 Zeilen (-136 Duplikate)
+2026-05-29 17:38:23,505 | INFO     | historical_fetcher | [api_backfiller] WDAY.ETORO: 1200 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:24,610 | INFO     | historical_fetcher | [WDC.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:24.607745+00:00
+2026-05-29 17:38:24,726 | DEBUG    | historical_fetcher | [WDC.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T15:00:00+00:00
+2026-05-29 17:38:25,944 | INFO     | historical_fetcher | [WDC.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:26,067 | DEBUG    | historical_fetcher | [WDC.ETORO] OneDay: 1000 Candles, älteste: 2022-04-27T00:00:00+00:00
+2026-05-29 17:38:27,169 | INFO     | historical_fetcher | [WDC.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:27,175 | INFO     | historical_fetcher | [WDC.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:38:27,177 | DEBUG    | historical_fetcher | [api_backfiller] WDC.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:38:27,178 | INFO     | historical_fetcher | [api_backfiller] WDC.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:28,281 | INFO     | historical_fetcher | [WIX.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:28.279656+00:00
+2026-05-29 17:38:28,399 | DEBUG    | historical_fetcher | [WIX.ETORO] OneHour: 1000 Candles, älteste: 2025-10-29T16:00:00+00:00
+2026-05-29 17:38:29,874 | INFO     | historical_fetcher | [WIX.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:29,980 | DEBUG    | historical_fetcher | [WIX.ETORO] OneDay: 1000 Candles, älteste: 2022-04-18T00:00:00+00:00
+2026-05-29 17:38:31,081 | INFO     | historical_fetcher | [WIX.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:31,087 | INFO     | historical_fetcher | [WIX.ETORO] 1237 Candles → speichere (price_prec=2).
+2026-05-29 17:38:31,089 | DEBUG    | historical_fetcher | [api_backfiller] WIX.ETORO: 1265→1237 Zeilen (-28 Duplikate)
+2026-05-29 17:38:31,090 | INFO     | historical_fetcher | [api_backfiller] WIX.ETORO: 1237 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:32,194 | INFO     | historical_fetcher | [ZS.ETORO] Delta-Update: Fetch ab 2026-05-22T15:59:59+00:00 rückwärts bis 2025-06-03T15:38:32.192039+00:00
+2026-05-29 17:38:32,502 | DEBUG    | historical_fetcher | [ZS.ETORO] OneHour: 1000 Candles, älteste: 2026-03-27T12:00:00+00:00
+2026-05-29 17:38:33,711 | INFO     | historical_fetcher | [ZS.ETORO] Historische Tiefe für OneHour erreicht.
+2026-05-29 17:38:33,815 | DEBUG    | historical_fetcher | [ZS.ETORO] OneDay: 1000 Candles, älteste: 2022-04-26T00:00:00+00:00
+2026-05-29 17:38:34,916 | INFO     | historical_fetcher | [ZS.ETORO] Ziel-Startdatum mit OneDay erreicht.
+2026-05-29 17:38:34,922 | INFO     | historical_fetcher | [ZS.ETORO] 1244 Candles → speichere (price_prec=2).
+2026-05-29 17:38:34,925 | DEBUG    | historical_fetcher | [api_backfiller] ZS.ETORO: 1336→1201 Zeilen (-135 Duplikate)
+2026-05-29 17:38:34,926 | INFO     | historical_fetcher | [api_backfiller] ZS.ETORO: 1201 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-05-29 17:38:36,028 | INFO     | historical_fetcher | [historical_fetcher] Fertig: 49 Symbole befüllt.
+2026-05-29 17:38:36,030 | INFO     | orchestrator | [Phase 2d] Historical Fetcher: 49 Symbole befüllt.
+2026-05-29 17:38:36,030 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2D_COMPLETE", "timestamp_utc": "2026-05-29T15:38:36.030105+00:00", "insufficient_count": 49, "hist_filled_count": 49}
+2026-05-29 17:38:36,030 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2_COMPLETE", "timestamp_utc": "2026-05-29T15:38:36.030194+00:00", "merged_instruments": 0, "zips_deleted": 0, "api_filled_count": 0, "hist_filled_count": 49}
+2026-05-29 17:38:36,030 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:38:36,030 | INFO     | orchestrator | PHASE 3+4: Matrix-Backtesting & Tournament
+2026-05-29 17:38:36,030 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:38:36,030 | INFO     | orchestrator | [Phase 3] Zeitfenster: 2026-04-29T00:00:00+00:00 → 2026-05-29T00:00:00+00:00
+2026-05-29 17:38:36,030 | INFO     | orchestrator | [Phase 3] Dynamische Config: /home/user/etoro_nautilus/logs/backtest_dynamic_config.json
+2026-05-29 17:38:36,030 | INFO     | orchestrator | [Phase 3] Backtest-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/backtest_runner.py --momentum --catalog-path /home/user/etoro_nautilus/data/nautilus --config /home/user/etoro_nautilus/logs/backtest_dynamic_config.json --output /home/user/etoro_nautilus/logs/tournament_2026-05-29.json
+2026-05-29 17:38:36,031 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BACKTEST_START", "timestamp_utc": "2026-05-29T15:38:36.031026+00:00", "start": "2026-04-29T00:00:00+00:00", "end": "2026-05-29T00:00:00+00:00"}
+2026-05-29 17:40:00,791 | INFO     | orchestrator | [Phase 3] Backtest beendet (Exit-Code: 0).
+2026-05-29 17:40:05,658 | DEBUG    | orchestrator |   [BT-LOG] VRT.ETORO            | SmaCrossoverStrategy           |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] VRT.ETORO            | VolatilityBreakoutPumpStrategy |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] VRT.ETORO            | VwapExhaustionStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | ComboTrendVwapStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | DynamicBreakoutStrategy        |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | FlashCrashReversalStrategy     |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | HourlyMeanReversionStrategy    |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | MeanReversionStrategy          |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | SmaCrossoverStrategy           |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | VolatilityBreakoutPumpStrategy |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WBD.ETORO            | VwapExhaustionStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | ComboTrendVwapStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | DynamicBreakoutStrategy        |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | FlashCrashReversalStrategy     |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | HourlyMeanReversionStrategy    |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | MeanReversionStrategy          |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | SmaCrossoverStrategy           |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | VolatilityBreakoutPumpStrategy |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDAY.ETORO           | VwapExhaustionStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | ComboTrendVwapStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | DynamicBreakoutStrategy        |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | FlashCrashReversalStrategy     |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | HourlyMeanReversionStrategy    |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | MeanReversionStrategy          |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | SmaCrossoverStrategy           |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | VolatilityBreakoutPumpStrategy |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | VwapExhaustionStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | ComboTrendVwapStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | DynamicBreakoutStrategy        |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | FlashCrashReversalStrategy     |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | HourlyMeanReversionStrategy    |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | MeanReversionStrategy          |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | SmaCrossoverStrategy           |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | VolatilityBreakoutPumpStrategy |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | VwapExhaustionStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | ComboTrendVwapStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | DynamicBreakoutStrategy        |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | FlashCrashReversalStrategy     |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | HourlyMeanReversionStrategy    |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | MeanReversionStrategy          |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | SmaCrossoverStrategy           |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | VolatilityBreakoutPumpStrategy |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | VwapExhaustionStrategy         |    0.00 |    0.00 |    0.00 |      0 | 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ✅ Tournament: 49 Symbole | 0 eligibel | 0 Gewinner
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ⚠️  Ohne eindeutigen Gewinner: ACN.ETORO, ADBE.ETORO, AG.ETORO, CAT.ETORO, CHTR.ETORO, CIEN.ETORO, CMG.ETORO, COHR.ETORO, CPRT.ETORO, CRM.ETORO, DOCU.ETORO, DUOL.ETORO, E.ETORO, EEFT.ETORO, ESLT.ETORO, FICO.ETORO, FISV.ETORO, GLW.ETORO, GOOGL.ETORO, GSAT.ETORO, GTLB.ETORO, HAL.ETORO, HUBS.ETORO, INSW.ETORO, JNJ.ETORO, LRCX.ETORO, LULU.ETORO, MNDY.ETORO, MTZ.ETORO, MU.ETORO, NOW.ETORO, PBR.ETORO, PINS.ETORO, POWL.ETORO, SE.ETORO, SNAP.ETORO, SQM.ETORO, STX.US.ETORO, TEAM.ETORO, TSEM.ETORO, TTD.ETORO, TTMI.ETORO, VLO.ETORO, VRT.ETORO, WBD.ETORO, WDAY.ETORO, WDC.ETORO, WIX.ETORO, ZS.ETORO
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] 📄 Tournament-Ergebnisse gespeichert: /home/user/etoro_nautilus/logs/tournament_2026-05-29.json
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-05-29 17:40:05,659 | DEBUG    | orchestrator |   [BT-LOG] ✅ Matrix-Backtest vollständig abgeschlossen!
+2026-05-29 17:40:05,881 | INFO     | orchestrator | [Phase 4] Tournament: 0 Gewinner.
+2026-05-29 17:40:05,881 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "TOURNAMENT_COMPLETE", "timestamp_utc": "2026-05-29T15:40:05.881634+00:00", "winner_count": 0, "aggregate_winner": null, "path": "/home/user/etoro_nautilus/logs/tournament_2026-05-29.json"}
+2026-05-29 17:40:05,881 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:40:05,881 | INFO     | orchestrator | PHASE 5: Live Deployment & Bot-Start
+2026-05-29 17:40:05,881 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:40:05,881 | INFO     | orchestrator | [Phase 5] Bot-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/momentum_ls_run.py --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json --tournament /home/user/etoro_nautilus/logs/tournament_2026-05-29.json
+2026-05-29 17:40:05,882 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_START_INITIATED", "timestamp_utc": "2026-05-29T15:40:05.882026+00:00", "cmd": ["/home/user/etoro_nautilus/venv/bin/python3", "/home/user/etoro_nautilus/automation/momentum_ls_run.py", "--universe", "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "--tournament", "/home/user/etoro_nautilus/logs/tournament_2026-05-29.json"], "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260529.log", "tournament": "/home/user/etoro_nautilus/logs/tournament_2026-05-29.json", "universe": "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "dry_run": false}
+2026-05-29 17:40:05,884 | INFO     | orchestrator | [Phase 5] Trading-Bot gestartet (PID: 62042).
+2026-05-29 17:40:05,884 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_STARTED", "timestamp_utc": "2026-05-29T15:40:05.884784+00:00", "pid": 62042, "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260529.log"}
+2026-05-29 17:40:05,884 | INFO     | orchestrator | [Phase 5] PID gespeichert: /home/user/etoro_nautilus/logs/live_bot.pid
+2026-05-29 17:40:05,884 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:40:05,884 | INFO     | orchestrator | ORCHESTRATOR ERFOLGREICH ABGESCHLOSSEN
+2026-05-29 17:40:05,885 | INFO     | orchestrator |   Bot läuft als PID 62042
+2026-05-29 17:40:05,885 | INFO     | orchestrator |   Bot-Log: /home/user/etoro_nautilus/logs/live_bot_20260529.log
+2026-05-29 17:40:05,885 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-05-29 17:40:05,885 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-05-29T15:40:05.885085+00:00", "exit_code": 0}
+2026-05-29 17:40:05,885 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
