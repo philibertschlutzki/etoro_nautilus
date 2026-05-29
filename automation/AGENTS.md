@@ -167,7 +167,7 @@ Thread-safe. No-Interference-Regel: existiert eine offene Position für das Inst
 Alle aktiven Single-Instrument-Strategien erben hiervon. Liefert automatisch:
 - **ATR-Trailing-Stop** (1.5× ATR, `DEFAULT_ATR_TRAILING_MULTIPLIER`)
 - **Time-based Exit** (48 Bars, `DEFAULT_MAX_BARS_IN_TRADE`)
-- gemeinsames `_compute_quantity()` (⚠️ nutzt `instrument.lot_size` — siehe Pitfall #20)
+- gemeinsames `_compute_quantity()` (nutzt `instrument.make_qty(..., round_down=True)`; siehe Pitfall #20)
 
 `on_bar()` muss in Subklassen `_check_exits_and_update(bar)` als ERSTE Aktion aufrufen und bei Rückgabe `True` sofort `return`.
 
@@ -175,6 +175,7 @@ Alle aktiven Single-Instrument-Strategien erben hiervon. Liefert automatisch:
 class MyStrategy(HourlyStrategyBase):
     def on_start(self):
         super().on_start()          # PFLICHT
+        self.subscribe_quote_ticks(self.instrument_id)  # Zwingend für Live-Bar-Aggregation (INTERNAL)
         self.subscribe_bars(self.bar_type)
     def on_bar(self, bar: Bar):
         if self._check_exits_and_update(bar):
@@ -184,6 +185,8 @@ class MyStrategy(HourlyStrategyBase):
 
 ### Flat-Lock-Vermeidung (Pitfall #17)
 Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`current_signal` / `current_position`) auf `None` zurückgesetzt werden, sonst blockiert der Bar-Guard jeden Neueinstieg dauerhaft. Alle aktiven Strategien setzen dies korrekt um.
+
+`HourlyStrategyBase.__init__(self, config, allocator=None)` nimmt optional einen `MomentumLSAllocator`. Bei gesetztem Allocator löst `on_start()` den Account auf und `_compute_quantity` zieht die Allokation über `get_allocation`. Im Backtest ist `allocator=None` → `config.trade_amount_usd` wird genutzt.
 
 ### Aktive Strategien (`strategies.json` active=true)
 | Klasse | Datei | Indikatoren | Default trade_amount_usd |
@@ -200,8 +203,8 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 ### Inaktive Strategien (active=false)
 | Klasse | Grund |
 |--------|-------|
-| TrendPullbackStrategy | 0 FIFO-Schließungen in allen Tests; erbt NICHT von HourlyStrategyBase (direkt `Strategy`, EMA-Period 200 initialisiert bei kurzen Daten nie) |
-| AdxAtrMomentumStrategy | ADX-Initialisierungsproblem; erbt direkt von `Strategy` |
+| TrendPullbackStrategy | 0 FIFO-Schließungen in allen Tests; erbt von HourlyStrategyBase (EMA-Period 200 initialisiert bei kurzen Daten nie) |
+| AdxAtrMomentumStrategy | ADX-Initialisierungsproblem; erbt von HourlyStrategyBase |
 
 **Wichtig:** Die Config-Klassen in `config_class` müssen exakt zu den Feldern passen, die der Backtest spreizt. Die Konfig-Field-Beschreibungen in der alten Root-AGENTS.md waren teils falsch (z.B. `lookback`/`z_score_threshold` für MeanReversion existieren NICHT — die echte Config nutzt `keltner_period`/`keltner_multiplier`). Maßgeblich ist immer der Code der jeweiligen `*Config`-Klasse.
 
@@ -260,9 +263,13 @@ Da alle Quellen bereits FSB(16) liefern, entfällt im Orchestrator jede Typ-Migr
 
 ## 11. Live Deployment (Phase 5)
 
-`momentum_ls_run.py` wird als Detached Subprocess (`subprocess.Popen`, `start_new_session=True`) gestartet. Liest `per_symbol_winners` aus dem Tournament-JSON, mappt JEDEN Gewinner auf `MomentumLSSmaStrategy` (PoC — `STRATEGY_REGISTRY` enthält nur diese eine Strategie). Safety-Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`.
+`momentum_ls_run.py` wird als Detached Subprocess (`subprocess.Popen`, `start_new_session=True`) gestartet. Liest `per_symbol_winners` aus dem Tournament-JSON.
+- Nutzt eine dynamische `STRATEGY_REGISTRY` (geladen aus `strategies.json`, active=true).
+- Die echte Tournament-Gewinner-Strategie pro Symbol wird registriert (Pitfall #22 ist behoben).
+- Allocator-Injektion erfolgt via `HourlyStrategyBase`.
+- Der Live-`bar_type` ist zwingend `{symbol}-1-HOUR-MID-INTERNAL`, da eToro nur QuoteTicks streamt.
 
-**⚠️ Inkonsistenzen:** alle Tournament-Gewinner werden unabhängig von der tatsächlich gewinnenden Strategie auf die SMA-PoC-Strategie reduziert (Pitfall #22).
+Safety-Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`. Stale-Check: Prüft ob Universe-Daten älter als 24 Stunden sind.
 
 ---
 
@@ -435,6 +442,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-05-29 | **PR #64 final:** §6/§11 auf Ist-Stand synchronisiert (make_qty statt lot_size, QuoteTick-Subscription im Beispiel, allocator-Parameter, korrekte Vererbung inaktiver Strategien, Live-Deployment-Beschreibung), Fail-Fast bei 0 Registrierungen | `automation/momentum_ls_run.py`, `AGENTS.md` |
 | 2026-05-29 | **Hotfix PR #64:** Config-Felder als Strings übergeben (Crash-Fix), §8-Tabelle/Absatz auf size_precision=2 vervollständigt, Instanziierungs-Smoke-Test ergänzt. | `automation/momentum_ls_run.py`, `automation/tests/test_live_strategy_mapping.py`, `AGENTS.md`, diverse Strategien |
 | 2026-05-29 | **Fix Pitfall #22 (Live-Strategie-Reduktion)** — Dynamische Registry in `momentum_ls_run.py`, Allocator in `HourlyStrategyBase`, PoC-Dateien entfernt, 1h-bar_type (MID), QuoteTick-Subscriptions in allen Strategien ergänzt. Dokumentations-Korrekturen (C2-C6). | `automation/momentum_ls_run.py`, `automation/strategies/hourly_strategy_base.py`, `automation/strategies/sma_crossover.py`, diverse Strategien, AGENTS.md, Test_report.md |
 | 2026-05-29 | **Synchronisation von Code und Dokumentation:** Auflösung der `safe_compute_quantity`-Diskrepanz (Pitfall #21), Korrektur des Regenerations-Status (Pitfall #23) und Nachtrag der Fixes für Deferred Flush (#25) sowie Try/Finally-Cleanup (#26). | `automation/AGENTS.md`, `automation/Test_report.md`, `automation/fractional_trading.py` |

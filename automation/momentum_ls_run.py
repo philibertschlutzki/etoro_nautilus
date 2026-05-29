@@ -262,14 +262,25 @@ def main():
     node.add_data_client_factory("ETORO_WS_CLIENT", EToroLiveDataClientFactory)
     node.add_exec_client_factory("ETORO", EToroLiveExecClientFactory)
 
+    successful_strategies = 0
+    failed_strategies = []
+
     for idx, bot_spec in enumerate(bots_config):
         strat_class_name = bot_spec.get("strategy_class")
         try:
             strategy = _instantiate_strategy(bot_spec, registry, allocator, idx)
             node.trader.add_strategy(strategy)
             logger.info(f"Strategie registriert: {strategy.config.strategy_id} (Winner: {strat_class_name})")
+            successful_strategies += 1
         except Exception as e:
-            logger.error(f"FEHLER beim Laden der Strategie {strat_class_name}: {e}")
+            logger.error(f"FEHLER beim Laden der Strategie {strat_class_name} auf {bot_spec.get('symbol')}: {e}")
+            failed_strategies.append((bot_spec.get("symbol"), strat_class_name))
+
+    if successful_strategies == 0:
+        logger.error("Keine einzige Strategie konnte erfolgreich registriert werden. Breche Start ab (Fail-Fast).")
+        sys.exit(1)
+    elif len(failed_strategies) > 0:
+        logger.warning(f"Warnung: {len(failed_strategies)} Strategie(n) konnten nicht registriert werden: {failed_strategies}")
 
     node.build()
     logger.info(f"Starte Nautilus Momentum-LS Orchestrator mit {len(active_symbols)} Instrumenten...")
