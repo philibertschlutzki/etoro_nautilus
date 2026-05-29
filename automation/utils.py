@@ -50,7 +50,7 @@ def _fallback_precisions(symbol: str) -> tuple[int, int]:
     if sym in _FRACTIONAL_SYMBOLS:
         return 5, 5
     # Equity-Default
-    return 2, 0
+    return 2, 2
 
 
 __all__ = ["_fallback_precisions"]

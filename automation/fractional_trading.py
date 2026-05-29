@@ -195,61 +195,7 @@ async def fetch_size_increments_from_api(
     return results
 
 
-def safe_compute_quantity(
-    instrument: Any,
-    trade_amount_usd: float,
-    current_price: float,
-) -> Any | None:
-    """
-    Sicherer Wrapper für Nautilus' instrument.make_qty() — Pitfall #14 Fix.
 
-    Zweistufige Absicherung:
-    1. Pre-check: units < size_increment → return None
-    2. try/except ValueError → return None
-
-    Bei None: Strategie soll keine Order senden (Signal lautlos überspringen).
-    Die Live-Implementierung nutzt den by-amount Endpunkt und ruft diese
-    Funktion daher nur für Nicht-Equity-Assets auf.
-    """
-    if current_price <= 0:
-        logger.warning("[FractionalTrading] Ungültiger Preis (≤ 0) — make_qty übersprungen.")
-        return None
-
-    units = trade_amount_usd / current_price
-
-    try:
-        size_inc = float(instrument.size_increment)
-    except Exception:
-        size_inc = 1.0
-
-    # Stufe 1: Pre-check
-    if units < size_inc:
-        logger.warning(
-            f"[FractionalTrading] Zu wenig Kapital: {trade_amount_usd} USD / {current_price} = "
-            f"{units:.8f} Units < size_increment {size_inc}. "
-            "Order wird übersprungen (Pitfall #14 Fix)."
-        )
-        return None
-
-    # Stufe 2: try/except für make_qty
-    try:
-        qty = instrument.make_qty(units, round_down=True)
-        if qty == 0:
-            logger.warning(
-                f"[FractionalTrading] make_qty returned 0 für {units:.8f} Units. "
-                "Order übersprungen."
-            )
-            return None
-        return qty
-    except ValueError as e:
-        logger.warning(
-            f"[FractionalTrading] make_qty ValueError (Pitfall #14): {e}. "
-            "Order übersprungen — nutze by-amount Route im Live-Bot."
-        )
-        return None
-    except Exception as e:
-        logger.error(f"[FractionalTrading] Unerwarteter Fehler in make_qty: {e}")
-        return None
 
 
 def build_by_amount_payload(

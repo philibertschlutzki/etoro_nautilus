@@ -330,13 +330,13 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 > **Legende:** 🔴 OFFEN (im aktuellen Code aktiv) · 🟡 TEILWEISE · 🟢 BEHOBEN/dokumentiert
 
-### 🔴 #14 — `create_mock_instrument` übergeht den eigenen Docstring (Haupt-Bug: 0 Trades)
+### 🟢 #14 — `create_mock_instrument` übergeht den eigenen Docstring (Haupt-Bug: 0 Trades)
 **Symptom:** Backtest liefert über alle Symbole × Strategien `Trades=0`, `0 eligibel`, `0 Gewinner`. Logs zeigen `size=0 (parquet meta)`.
 **Root Cause:** `backtest_runner.py:create_mock_instrument` dokumentiert „`size_precision`: Ignoriert — immer 8", implementiert aber `sp = size_precision if size_precision is not None else 8`. Der aktive Aufrufer (`run_single_backtest_worker`) übergibt `size_precision=sp_parquet`, wobei `sp_parquet=0` aus den Parquet-Metadaten stammt (`read_precisions_from_parquet`). Da `0 is not None`, schlägt die 0 durch → `size_increment=1.0` → ganzzahlige Order-Größe → bei Aktienkursen > `trade_amount_usd` rundet `make_qty()` auf 0 → jedes Signal verworfen.
 **Fix:** `sp = size_precision if (size_precision is not None and size_precision > 0) else 8`.
 **Betroffen:** `automation/backtest_runner.py`.
 
-### 🔴 #20 — Drei divergierende `_compute_quantity`-Implementierungen
+### 🟢 #20 — Drei divergierende `_compute_quantity`-Implementierungen
 **Symptom:** Inkonsistentes Verhalten je nach Strategie-Basisklasse; teils stille Signal-Verwerfung.
 **Root Cause:** Drei unterschiedliche Implementierungen:
 1. `hourly_strategy_base.py` nutzt `float(instrument.lot_size)` — bei den CFD-Instrumenten ist `lot_size = None` → Exception → Fallback `1e-8` (zufällig „rettend", aber unbeabsichtigt).
@@ -345,7 +345,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Eine einzige Implementierung in `HourlyStrategyBase`, die `make_qty` selbst über `size_precision` entscheiden lässt, statt manuell gegen `lot_size`/`size_increment` zu prüfen. Doppelimplementierungen entfernen.
 **Betroffen:** `automation/strategies/hourly_strategy_base.py`, `momentum_ls_base.py`, `adx_atr_momentum.py`, `trend_pullback.py`.
 
-### 🔴 #21 — `safe_compute_quantity` ist toter Code
+### 🟢 #21 — `safe_compute_quantity` ist toter Code
 **Symptom:** Die als Pitfall-#14-Fix gedachte Funktion in `fractional_trading.py` wird von keiner Strategie aufgerufen; der dokumentierte Schutz greift im Backtest nicht.
 **Fix:** Entweder Strategien auf `safe_compute_quantity` umstellen oder die Funktion entfernen und die Logik in `HourlyStrategyBase` konsolidieren (siehe #20).
 **Betroffen:** `automation/fractional_trading.py`.
@@ -362,7 +362,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Alle aktiven Strategien auf `MomentumLSBaseStrategy`-Signatur (Allocator-Injektion) portieren und registrieren.
 **Betroffen:** `automation/momentum_ls_run.py`, `automation/strategies/*.py`.
 
-### 🟡 #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
+### 🟢 #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
 **Symptom:** Selbst nach Fix von #14 bleiben Live-Metadaten kaputt.
 **Root Cause:** `catalog_service.py` (ZIP-Metadaten), `api_backfiller._build_arrow_meta` und `utils._fallback_precisions` schreiben für Equities `size_precision=0`. `daily_orchestrator._ensure_metadata` übernimmt diese.
 **Fix:** Für Equity-CFDs an der Schreibseite `size_precision ≥ 2` (eToro By-Amount fractional) erzwingen, oder die Equity-Default-Precision in `_fallback_precisions` anheben. Achtung: bestehende `data/nautilus/data/cfd/*.parquet` müssen regeneriert werden.
@@ -415,6 +415,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-05-28 | **Fix size_precision Bug Chain (#14, #20, #21, #23)** — Angepasst an eToro by-amount Semantik (size_precision=2 für Equities), konsolidierte quantity Berechnung auf make_qty in HourlyStrategyBase, tote Methode safe_compute_quantity entfernt. (Pitfall #14 war bereits teilweise behoben, Ticks normalisiert). Bestehende CFD-Parquet-Metadaten müssen später nach einem separaten Task regeneriert werden. | `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/backtest_runner.py`, `automation/strategies/hourly_strategy_base.py`, `automation/strategies/momentum_ls_base.py`, `automation/strategies/adx_atr_momentum.py`, `automation/strategies/trend_pullback.py`, `automation/fractional_trading.py` |
 | 2026-05-28 | **automation/AGENTS.md neu erstellt** — vollständig auf `automation/` abgeglichen, alle offenen Bugs als Pitfalls #14–#24 mit STATUS-Kennzeichnung dokumentiert (size_precision-Kette, divergierende _compute_quantity, toter safe_compute_quantity, archive.adapters-Import, SMA-PoC-Reduktion). | `automation/AGENTS.md` |
 | 2026-05-28 | size_precision=8 für Mock-Instrumente *intendiert* (Cfd(EQUITY)); im Code jedoch durch Parameter-Durchschlag von sp_parquet=0 unwirksam — siehe Pitfall #14. | `automation/backtest_runner.py` |
 | 2026-05-28 | HourlyStrategyBase (ATR-Trailing 1.5× + 48-Bar-Time-Exit); alle aktiven Strategien erben davon. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/*.py` |

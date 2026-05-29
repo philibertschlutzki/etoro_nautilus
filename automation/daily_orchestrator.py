@@ -607,6 +607,8 @@ def _ensure_metadata(existing_meta: dict, symbol: str) -> dict:
 
     if b"size_precision" not in meta:
         sp = _get_size_precision(symbol)
+        if sp <= 0:
+            sp = 2
         meta[b"size_precision"] = str(sp).encode()
 
     # pandas-Metadaten entfernen
