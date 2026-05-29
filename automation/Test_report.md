@@ -13,8 +13,8 @@ Die technische Funktionalität und alle Edge Cases des `automation/` Pakets wurd
 ### 3. Fallback Precisions (`tests/test_utils.py`)
 - **Precision Fallback (`test_fallback_precisions`)**: Testet die Heuristik `_fallback_precisions` für bekannte Cryptos (BTC/ETH -> 2,8), Spezielle Cryptos (PEPE/SHIB -> 8,8), Fractional (NATGAS -> 5,5), und Equities (AAPL/TSLA -> 2,0). Resultat: Erfolgreich.
 
-### 4. Byte-Level & API Integration (`tests/test_api_backfiller.py`)
-- **Arrow Encoding (`test_encode_fsb16`)**: Überprüft `_encode_fsb16`, welches float zu einem 16-Bytes `FixedSizeBinary` encoded. Resultat: Erfolgreich.
+### 4. Byte-Level & API Integration (`tests/test_api_backfiller.py` & `tests/test_fsb16_roundtrip.py`)
+- **Arrow Encoding (`test_fsb16_roundtrip`)**: Überprüft die `_serde`-Encoder, welche float zu einem echten 10^16 skalierten 16-Bytes `FixedSizeBinary` encoden, und testet den Roundtrip durch den Nautilus-Katalog. Resultat: Erfolgreich.
 - **Precision API (`test_fetch_precisions_from_api`)**: Simuliert den Call gegen die eToro API, um die `price_precision` und `size_precision` abzugreifen. Resultat: Erfolgreich.
 - **Parquet Merge (`test_merge_and_save`)**: Testet das atomare Deduplizieren und Schreiben eines Parquet-Katalogs anhand von simulierten `ts_event` Datensätzen. Resultat: Erfolgreich.
 
@@ -40,11 +40,15 @@ Die technische Funktionalität und alle Edge Cases des `automation/` Pakets wurd
 
 ### 9. test_size_precision_fixes.py
 Fokus: Fix Pitfall #14 und #20, Behebung inkonsistenter `size_precision` in Mocks und Strategien.
-- **test_create_mock_instrument_zero_precision**: Prüft, dass eine Anforderung von `size_precision=0` in NautilusTrader auf 8 normalisiert wird, um den Legacy-Nautilus-Absturz (`float(1e-8)`) zu umgehen, solange Parquets nicht regeneriert wurden.
+- **test_create_mock_instrument_zero_precision**: Prüft, dass eine Anforderung von `size_precision=0` in NautilusTrader auf 8 normalisiert wird, um den Legacy-Nautilus-Absturz (`float(1e-8)`) zu umgehen.
 - **test_strategy_inheritance**: Prüft, dass alle 8 aktiven Strategien (z.B. `SmaCrossoverStrategy`, `MeanReversionStrategy`) sowie die inaktiven `AdxAtrMomentumStrategy` und `TrendPullbackStrategy` korrekt von `HourlyStrategyBase` erben und keine eigene `_compute_quantity`-Methode besitzen (Konsolidierung in der Basisklasse).
 - **test_load_ticks_from_catalog_normalizes_precision**: Verifiziert den Boundary-Check, dass aus dem Katalog gelesene (historische) QuoteTicks auf 8 normalisiert werden.
 
-### 10. test_live_strategy_mapping.py (NEU)
+### 10. test_backtest_trades_generated.py (NEU)
+Fokus: End-to-End-Test der Datensimulation und Backtest-Generierung.
+- **test_backtest_trades_generated**: Erzeugt Parquet-Dateien mit simulierten Oszillationen (`sin` Welle), um Cross-Over-Signale zu provozieren und assertiert `total_trades > 0`. Dadurch wird sichergestellt, dass nicht 0.0-Preise durch Encoding-Fehler an den Worker gesendet werden.
+
+### 11. test_live_strategy_mapping.py (NEU)
 Fokus: Dynamisches Mapping der Tournament-Gewinner auf Nautilus-Bots (Pitfall #22 Fix).
 - **test_build_strategy_registry**: Prüft, dass inaktive Strategien ignoriert werden und Fallbacks (SMA) nicht erzwungen werden.
 - **test_build_bots_config**: Verifiziert, dass `trade_amount_usd` entfernt wird, der `bar_type` korrekt auf `MID-INTERNAL` gesetzt wird und nur Symbole mit bekanntem Gewinner und existierender `etoro_id` eine Config erhalten.

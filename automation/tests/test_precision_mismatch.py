@@ -13,22 +13,33 @@ from nautilus_trader.model.objects import Money
 from pathlib import Path
 from automation.backtest_runner import run_single_backtest_worker, _normalize_size_precision, create_mock_instrument
 
+import math
+import shutil
+
 def test_single_worker_precision_mismatch():
     instrument_id = InstrumentId.from_str("AAPL.ETORO")
-    tick = QuoteTick(
-        instrument_id=instrument_id,
-        bid_price=Price(100.0, 2),
-        ask_price=Price(100.1, 2),
-        bid_size=Quantity(1.0, 0),
-        ask_size=Quantity(1.0, 0),
-        ts_event=time.time_ns(),
-        ts_init=time.time_ns(),
-    )
+
+    ticks = []
+    base_ts = time.time_ns() - 100 * 3600 * 1_000_000_000
+    for i in range(100):
+        # Oscillate to trigger trades
+        price_val = 100.0 + 5.0 * math.sin(i * 0.5)
+        ticks.append(QuoteTick(
+            instrument_id=instrument_id,
+            bid_price=Price(price_val, 2),
+            ask_price=Price(price_val, 2),
+            bid_size=Quantity(1.0, 0),
+            ask_size=Quantity(1.0, 0),
+            ts_event=base_ts + i * 3600 * 1_000_000_000,
+            ts_init=base_ts + i * 3600 * 1_000_000_000,
+        ))
 
     original_catalog = "/tmp/test_catalog_worker_mismatch"
+    if os.path.exists(original_catalog):
+        shutil.rmtree(original_catalog)
     os.makedirs(original_catalog, exist_ok=True)
     catalog = ParquetDataCatalog(original_catalog)
-    catalog.write_data([tick])
+    catalog.write_data(ticks)
 
     strat = {
         "strategy_class": "DynamicBreakoutStrategy",
@@ -57,3 +68,6 @@ def test_single_worker_precision_mismatch():
     assert res != {}, "Worker crashed and returned {}"
     assert "symbol" in res
     assert res["symbol"] == "AAPL.ETORO"
+
+    metrics = res.get("metrics", {})
+    assert metrics.get("total_trades", 0) > 0, "No trades were generated!"
