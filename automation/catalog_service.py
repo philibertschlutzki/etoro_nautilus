@@ -111,20 +111,13 @@ except ImportError:
 
 
 # ─── FixedSizeBinary(16) Encoding ────────────────────────────────────────────
-# Nautilus-Format: raw_int64 = round(value * 10^precision), LE + 8 Null-Bytes
-
-def _encode_fsb16(value: float, precision: int) -> bytes:
-    """Kodiert Preis/Menge als Nautilus FixedSizeBinary(16)."""
-    raw = round(value * (10 ** precision))
-    raw = max(-(2 ** 63), min(2 ** 63 - 1, raw))
-    return struct.pack("<q", raw) + b"\x00" * 8
-
-
-def _encode_qty_fsb16(qty: float, precision: int) -> bytes:
-    """Kodiert eine Menge als FixedSizeBinary(16). Immer ≥ 0."""
-    raw = round(qty * (10 ** precision))
-    raw = max(0, min(2 ** 63 - 1, raw))
-    return struct.pack("<q", raw) + b"\x00" * 8
+try:
+    from automation._serde import encode_price_fsb16, encode_qty_fsb16
+except ImportError:
+    import sys as _sys
+    from pathlib import Path
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from automation._serde import encode_price_fsb16, encode_qty_fsb16
 
 
 # ─── Tick-Puffer ─────────────────────────────────────────────────────────────
@@ -288,7 +281,7 @@ def _write_zip(
 
             price_prec = state.price_prec
             size_prec  = state.size_prec
-            size_bytes = _encode_qty_fsb16(1.0, size_prec)
+            size_bytes = encode_qty_fsb16(1.0, size_prec)
 
             # Deduplizieren nach ts_event
             seen_ts: set[int] = set()
@@ -302,8 +295,8 @@ def _write_zip(
             unique_ticks.sort(key=lambda t: t.ts_event)
 
             # In FSB(16)-Arrays konvertieren
-            bid_prices = [_encode_fsb16(t.bid, price_prec) for t in unique_ticks]
-            ask_prices = [_encode_fsb16(t.ask, price_prec) for t in unique_ticks]
+            bid_prices = [encode_price_fsb16(t.bid, price_prec) for t in unique_ticks]
+            ask_prices = [encode_price_fsb16(t.ask, price_prec) for t in unique_ticks]
             bid_sizes  = [size_bytes] * len(unique_ticks)
             ask_sizes  = [size_bytes] * len(unique_ticks)
             ts_events  = [t.ts_event for t in unique_ticks]
