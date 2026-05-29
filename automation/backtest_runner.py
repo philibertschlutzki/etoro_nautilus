@@ -432,9 +432,6 @@ def _is_eligible(metrics: dict, tournament_cfg: dict) -> bool:
     return True
 
 
-from nautilus_trader.model.data import QuoteTick
-from nautilus_trader.model.objects import Quantity
-
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,
@@ -452,6 +449,8 @@ def load_ticks_from_catalog(
 
         # Normalisiere Tick Precision (Pitfall #14)
         if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision <= 0:
+            from nautilus_trader.model.data import QuoteTick
+            from nautilus_trader.model.objects import Quantity
             sp = 8
             normalized = []
             for t in ticks:

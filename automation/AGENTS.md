@@ -350,7 +350,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Entweder Strategien auf `safe_compute_quantity` umstellen oder die Funktion entfernen und die Logik in `HourlyStrategyBase` konsolidieren (siehe #20).
 **Betroffen:** `automation/fractional_trading.py`.
 
-### 🔴 #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
+### 🟢 #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
 **Symptom:** Live-Pfad ist nicht hermetisch.
 **Root Cause:** `from archive.adapters.etoro_data import …` und `from archive.adapters.etoro_config import …`. `automation/` soll laut Abschnitt 4 keine externen Importe haben.
 **Fix:** Adapter nach `automation/adapters/` migrieren ODER das Standalone-Constraint für den Live-Pfad explizit als Ausnahme dokumentieren und den Isolations-Test entsprechend anpassen.
@@ -398,7 +398,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 ## 17. Conventions für KI-Coding-Agents (Jules)
 
-- **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, dokumentiert).
+- **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, behoben).
 - Neue Strategien → `automation/strategies/`, von `HourlyStrategyBase` erben, in `strategies.json` registrieren.
 - Neue Instrumente → `automation/config/instrument_map.json`.
 - Precisions IMMER über `automation/utils._fallback_precisions` bzw. API — keine zweite Heuristik einführen.
