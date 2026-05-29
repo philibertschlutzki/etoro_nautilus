@@ -8,7 +8,6 @@ Die technische Funktionalität und alle Edge Cases des `automation/` Pakets wurd
 - **Instrument Map Check (`test_instrument_map_json_valid`)**: Verifiziert, ob die `instrument_map.json` Struktur korrekt geladen wird (`instruments`, `symbol`, `asset_class`, `price_precision`, `size_precision`). Resultat: Erfolgreich.
 
 ### 2. Order-Sicherheit (`tests/test_fractional_trading.py`)
-- **Quantity Check (`test_safe_compute_quantity_units_lt_size_increment` & `test_safe_compute_quantity_value_error`)**: Testet das Verhalten von `safe_compute_quantity` falls `units < size_increment` oder ein `ValueError` bei `make_qty` ausgelöst wird. Resultat: Erfolgreich (gibt `None` zurück).
 - **Payload Build Check (`test_build_by_amount_payload_buy` & `test_build_by_amount_payload_sell`)**: Validiere die Erstellung der eToro-kompatiblen Payload-Daten. Stellt sicher, dass das `InstrumentID`, `IsBuy`, und die berechneten Limits für TP und SL korrekt generiert werden. Resultat: Erfolgreich.
 
 ### 3. Fallback Precisions (`tests/test_utils.py`)

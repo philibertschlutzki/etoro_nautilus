@@ -15,7 +15,7 @@ Lösung:
     2. size_increment via eToro-Instruments-API abfragen und persistent cachen.
     3. get_size_precision() für Crypto/Forex korrekt beibehalten; Equities
        gehen ausschließlich über den by-amount-Pfad.
-    4. make_qty-Sicherheitswrapper (pre-check + try/except).
+
 
 Wichtige Endpunkte:
     - Instruments-Suche: GET /api/v1/market-data/instruments (mit instrumentIds)
@@ -259,7 +259,6 @@ def get_dynamic_size_precision(symbol: str, etoro_id: str) -> int:
     if base_prec == 0:
         # Equity: by-amount Route → precision auf 8 setzen für interne
         # Verwaltung, aber make_qty NIEMALS mit < 1.0 Units aufrufen
-        # (Pre-check in safe_compute_quantity schützt davor)
         return 0  # Behalte 0 für Nautilus-Kompatibilität; by-amount schützt live
 
     return base_prec
