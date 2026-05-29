@@ -43,7 +43,6 @@ import logging
 import logging.handlers
 import os
 import ssl
-import struct
 import sys
 import traceback
 import uuid
@@ -81,7 +80,6 @@ WS_CONNECT_TIMEOUT = 30
 # ─── Logging ─────────────────────────────────────────────────────────────────
 log = logging.getLogger("catalog_service")
 
-
 def _setup_logging() -> None:
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -111,13 +109,16 @@ except ImportError:
 
 
 # ─── FixedSizeBinary(16) Encoding ────────────────────────────────────────────
-try:
-    from automation._serde import encode_price_fsb16, encode_qty_fsb16
-except ImportError:
-    import sys as _sys
-    from pathlib import Path
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from automation._serde import encode_price_fsb16, encode_qty_fsb16
+
+def _encode_fsb16(value: float, precision: int) -> bytes:
+    """Kodiert Preis/Menge als Nautilus FixedSizeBinary(16) (High-Precision i128)."""
+    raw = int(value * 10**16)
+    return raw.to_bytes(16, "little", signed=True)
+
+def _encode_qty_fsb16(qty: float, precision: int) -> bytes:
+    """Kodiert eine Menge als FixedSizeBinary(16) (High-Precision i128). Immer ≥ 0."""
+    raw = int(qty * 10**16)
+    return raw.to_bytes(16, "little", signed=True)
 
 
 # ─── Tick-Puffer ─────────────────────────────────────────────────────────────
@@ -144,11 +145,7 @@ async def _fetch_precisions(
     user_key: str,
     etoro_id_to_state: dict[str, InstrumentState],
 ) -> dict[str, tuple[int, int]]:
-    """Holt Precisions via eToro Instruments-Endpoint.
-
-    Returns:
-        {etoro_id: (price_prec, size_prec)}
-    """
+    """Holt Precisions via eToro Instruments-Endpoint."""
     result: dict[str, tuple[int, int]] = {}
     etoro_ids = list(etoro_id_to_state.keys())
 
@@ -236,18 +233,7 @@ def _write_zip(
     ticks_by_symbol: dict[str, list[RawTick]],
     instrument_states: dict[str, InstrumentState],
 ) -> Path | None:
-    """Schreibt alle Ticks als Parquet-Dateien in ein ZIP.
-
-    ZIP-Struktur (kompatibel mit daily_orchestrator.py):
-      quote_tick/{symbol}/{timestamp}.parquet
-
-    Args:
-        ticks_by_symbol:   {symbol: [RawTick, ...]}
-        instrument_states: {etoro_id: InstrumentState}
-
-    Returns:
-        Pfad zur geschriebenen ZIP-Datei oder None bei leerem Puffer.
-    """
+    """Schreibt alle Ticks als Parquet-Dateien in ein ZIP."""
     if not any(ticks_by_symbol.values()):
         return None
 
@@ -266,7 +252,6 @@ def _write_zip(
         pa.field("ts_init",   pa.uint64()),
     ])
 
-    # Symbol → InstrumentState-Map aufbauen
     sym_to_state: dict[str, InstrumentState] = {s.symbol: s for s in instrument_states.values()}
 
     written_count = 0
@@ -281,9 +266,8 @@ def _write_zip(
 
             price_prec = state.price_prec
             size_prec  = state.size_prec
-            size_bytes = encode_qty_fsb16(1.0, size_prec)
+            size_bytes = _encode_qty_fsb16(1.0, size_prec)
 
-            # Deduplizieren nach ts_event
             seen_ts: set[int] = set()
             unique_ticks: list[RawTick] = []
             for tick in ticks:
@@ -291,12 +275,10 @@ def _write_zip(
                     seen_ts.add(tick.ts_event)
                     unique_ticks.append(tick)
 
-            # Nach ts_event sortieren
             unique_ticks.sort(key=lambda t: t.ts_event)
 
-            # In FSB(16)-Arrays konvertieren
-            bid_prices = [encode_price_fsb16(t.bid, price_prec) for t in unique_ticks]
-            ask_prices = [encode_price_fsb16(t.ask, price_prec) for t in unique_ticks]
+            bid_prices = [_encode_fsb16(t.bid, price_prec) for t in unique_ticks]
+            ask_prices = [_encode_fsb16(t.ask, price_prec) for t in unique_ticks]
             bid_sizes  = [size_bytes] * len(unique_ticks)
             ask_sizes  = [size_bytes] * len(unique_ticks)
             ts_events  = [t.ts_event for t in unique_ticks]
@@ -314,12 +296,9 @@ def _write_zip(
                 schema=schema,
             )
 
-            # eToro equity-CFDs use fractional by-amount sizing. A size_precision of 0
-            # forces whole-share orders and suppresses all fractional trades downstream.
             if size_prec is None or size_prec <= 0:
                 size_prec = 2
 
-            # Arrow-Metadaten injizieren
             meta = {
                 b"price_precision": str(price_prec).encode(),
                 b"size_precision":  str(size_prec).encode(),
@@ -327,12 +306,10 @@ def _write_zip(
             }
             table = table.replace_schema_metadata(meta)
 
-            # Parquet in Speicher schreiben
             buf = io.BytesIO()
             pq.write_table(table, buf, compression="snappy")
             buf.seek(0)
 
-            # In ZIP eintragen: quote_tick/{symbol}/{timestamp}.parquet
             parquet_path_in_zip = f"quote_tick/{symbol}/{now_str}.parquet"
             zf.writestr(parquet_path_in_zip, buf.read())
             written_count += 1
@@ -356,15 +333,7 @@ def _write_zip(
 # ─── CatalogService ───────────────────────────────────────────────────────────
 
 class CatalogService:
-    """Kontinuierlicher Katalog-Dienst: WebSocket-Tick-Sammlung + stündliches ZIP.
-
-    Architektur:
-      - Zwei AsyncIO-Tasks:
-        1. _ws_loop():    WebSocket-Empfang + Puffer-Füllen (läuft 24/7)
-        2. _flush_loop(): Stündlicher Flush → ZIP → data/import/ (läuft parallel)
-      - _tick_lock:       asyncio.Lock schützt _tick_buffer gegen Race Conditions
-      - Bei WebSocket-Fehler: os._exit(1) für systemd-Restart
-    """
+    """Kontinuierlicher Katalog-Dienst: WebSocket-Tick-Sammlung + stündliches ZIP."""
 
     def __init__(
         self,
@@ -377,7 +346,6 @@ class CatalogService:
         self.user_key  = user_key
         self.flush_interval_s = flush_interval_s
 
-        # Instrument-States initialisieren (Precisions werden in run() gesetzt)
         self._states: dict[str, InstrumentState] = {
             eid: InstrumentState(
                 symbol=sym, etoro_id=eid,
@@ -387,18 +355,14 @@ class CatalogService:
             for eid, sym in etoro_id_to_symbol.items()
         }
 
-        # Tick-Puffer: {symbol: [RawTick, ...]}
         self._tick_buffer: dict[str, list[RawTick]] = defaultdict(list)
         self._tick_lock = asyncio.Lock()
 
-        # Zuletzt gesehene Bid/Ask pro eToro-ID (für Snapshot-Handling)
         self._last_bid: dict[str, float] = {}
         self._last_ask: dict[str, float] = {}
 
         self._ws = None
         self._tick_counter = 0
-
-    # ── Precision-Update ──────────────────────────────────────────────────────
 
     async def _update_precisions(self) -> None:
         """Aktualisiert Instrument-Precisions via eToro API (beim Start)."""
@@ -421,10 +385,7 @@ class CatalogService:
             f"[catalog_service] Precisions aktualisiert: {updated}/{len(self._states)} Instrumente."
         )
 
-    # ── WebSocket ─────────────────────────────────────────────────────────────
-
     async def _ws_connect(self) -> None:
-        """Verbindet mit eToro WebSocket, authentifiziert, abonniert Instrumente."""
         ssl_ctx = ssl.create_default_context()
         last_exc: Exception | None = None
 
@@ -464,7 +425,6 @@ class CatalogService:
         os._exit(1)
 
     async def _ws_authenticate(self) -> None:
-        """Sendet Auth-Payload und abonniert Instrumente."""
         auth_payload = {
             "id":        str(uuid.uuid4()),
             "operation": "Authenticate",
@@ -475,7 +435,6 @@ class CatalogService:
         }
         await self._ws.send(json.dumps(auth_payload))
 
-        # Auf Auth-Antwort warten (erste nicht-leere Nachricht)
         while True:
             raw = await asyncio.wait_for(self._ws.recv(), timeout=30)
             if raw and raw not in (b"", b"\x00", ""):
@@ -490,7 +449,6 @@ class CatalogService:
         except json.JSONDecodeError:
             log.warning(f"[catalog_service] Auth-Antwort nicht parsebar: {raw!r}")
 
-        # Alle Instrumente abonnieren
         topics = [f"instrument:{eid}" for eid in self._states]
         sub_payload = {
             "id":        str(uuid.uuid4()),
@@ -501,7 +459,6 @@ class CatalogService:
         log.info(f"[catalog_service] Abonniert: {len(topics)} Instrumente.")
 
     async def _ws_loop(self) -> None:
-        """Hauptloop: Empfängt WebSocket-Nachrichten und füllt den Tick-Puffer."""
         await self._ws_connect()
 
         try:
@@ -517,7 +474,6 @@ class CatalogService:
                     for msg in data["messages"]:
                         await self._process_message(msg)
 
-            # Server hat Verbindung sauber geschlossen
             log.warning("[catalog_service] WS vom Server geschlossen. Erzwinge Neustart.")
             os._exit(1)
 
@@ -535,7 +491,6 @@ class CatalogService:
             os._exit(1)
 
     async def _process_message(self, msg: dict) -> None:
-        """Verarbeitet eine einzelne WebSocket-Nachricht und fügt Tick in Puffer."""
         msg_type = msg.get("type")
         if msg_type not in ("Trading.Instrument.Rate", "Snapshot"):
             return
@@ -606,22 +561,12 @@ class CatalogService:
         except Exception as e:
             log.debug(f"[catalog_service] Message-Fehler: {e} | msg={msg}")
 
-    # ── Stündlicher Flush ─────────────────────────────────────────────────────
-
     async def _flush_loop(self) -> None:
-        """Asynchroner Task: Flusht den Tick-Puffer stündlich als ZIP.
-
-        Läuft parallel zum _ws_loop. Wacht FLUSH_INTERVAL_S Sekunden,
-        dann wird der aktuelle Puffer atomar geleert und verarbeitet.
-        Die Datensammlung läuft während des Flushes nahtlos weiter.
-        """
         while True:
             await asyncio.sleep(self.flush_interval_s)
             await self._do_flush()
 
     async def _do_flush(self) -> None:
-        """Führt einen einzelnen Flush aus: Puffer → Dedup → Parquet → ZIP."""
-        # Puffer atomar tauschen (Datensammlung läuft weiter)
         async with self._tick_lock:
             snapshot  = dict(self._tick_buffer)
             total_new = sum(len(v) for v in snapshot.values())
@@ -647,26 +592,20 @@ class CatalogService:
                 f"[catalog_service] Flush-Fehler: {e}\n{traceback.format_exc()}"
             )
 
-    # ── Haupt-Run ─────────────────────────────────────────────────────────────
-
     async def run(self) -> None:
-        """Startet den Dienst: Precision-Fetch → WS-Loop + Flush-Loop parallel."""
         log.info(
             f"[catalog_service] Dienst startet: {len(self._states)} Instrumente, "
             f"Flush-Intervall: {self.flush_interval_s}s"
         )
 
-        # Precisions beim Start dynamisch laden
         await self._update_precisions()
 
-        # WS-Loop und Flush-Loop parallel starten
         ws_task    = asyncio.create_task(self._ws_loop(),    name="ws_loop")
         flush_task = asyncio.create_task(self._flush_loop(), name="flush_loop")
 
         log.info("[catalog_service] WebSocket-Loop und Flush-Loop gestartet.")
 
         try:
-            # Warte auf das erste fertiggestellte Task (beide sollten ewig laufen)
             done, pending = await asyncio.wait(
                 [ws_task, flush_task],
                 return_when=asyncio.FIRST_EXCEPTION,
@@ -683,7 +622,6 @@ class CatalogService:
             log.info("[catalog_service] Dienst wird sauber beendet …")
             ws_task.cancel()
             flush_task.cancel()
-            # Letzten Flush vor Beenden
             log.info("[catalog_service] Finaler Flush vor Beenden …")
             await self._do_flush()
             raise
@@ -692,7 +630,6 @@ class CatalogService:
 # ─── Universe Loader ──────────────────────────────────────────────────────────
 
 def _load_etoro_id_map(universe_path: Path) -> dict[str, str]:
-    """Lädt {etoro_id: symbol} aus data/universe/momentum_ls.json."""
     if not universe_path.exists():
         log.warning(f"[catalog_service] Universe-Datei nicht gefunden: {universe_path}")
         return {}
@@ -737,7 +674,6 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # ── Pflicht-Verzeichnisse vorab anlegen (I/O-Laufzeitfehler verhindern) ──
     IMPORT_PATH.mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "data" / "state").mkdir(parents=True, exist_ok=True)
 
@@ -751,9 +687,7 @@ def main() -> int:
         log.error("[catalog_service] ETORO_API_KEY oder ETORO_USER_KEY fehlen — Abbruch.")
         return 1
 
-    # Instrument-Map laden
     if args.instrument_ids:
-        # Explizite IDs ohne Symbol (Fallback-Symbol = ID.ETORO)
         etoro_id_map = {eid: f"ID{eid}.ETORO" for eid in args.instrument_ids}
         log.info(f"[catalog_service] Explizite IDs: {list(etoro_id_map.keys())}")
     else:
