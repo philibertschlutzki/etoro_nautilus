@@ -52,7 +52,7 @@ automation/
 ├── backtest_runner.py          # Matrix-Backtest + Tournament (ersetzt backtesting/run_backtest.py)
 ├── catalog_service.py          # 24/7 WebSocket-Tick-Sammlung → stündliche ZIPs nach data/import/
 ├── daily_orchestrator.py       # 5-Phasen End-to-End-Pipeline (v2.0)
-├── fractional_trading.py       # By-Amount-USD-Orders + safe_compute_quantity (Pitfall-#14-Utilities)
+├── fractional_trading.py       # By-Amount-USD-Orders (Pitfall-#14-Utilities)
 ├── historical_fetcher.py       # Deep Backfill (12M), Interval-Kaskade OneHour→OneDay
 ├── log_manager.py              # LLM-optimiertes Logging (RotatingFileHandler, JSON-Events)
 ├── momentum_ls_allocator.py    # Kapital-Allocator (No-Interference, dynamisches Slicing)
@@ -156,7 +156,7 @@ Siehe Abschnitt 3. 5 Phasen, JSON-Events (`[JSON_EVENT] {...}`), RotatingFileHan
 Thread-safe. No-Interference-Regel: existiert eine offene Position für das Instrument, Allokation = `0.0`. Dynamisches Slicing: `account_balance / pending_signals`. Floor: < $11.00 → `0.0` (eToro-Mindestbetrag).
 
 ### 5.8 fractional_trading.py — By-Amount-Utilities
-`safe_compute_quantity()` (zweistufig: Pre-Check `units < size_increment` + `try/except ValueError`), `build_by_amount_payload()` (USD direkt, InstrumentId/IsBuy/InvestmentAmount/SL/TP), persistenter `size_increment`-Cache. **Hinweis:** `safe_compute_quantity` wird im aktuellen Code von keiner Strategie tatsächlich aufgerufen — siehe Pitfall #21.
+`build_by_amount_payload()` (USD direkt, InstrumentId/IsBuy/InvestmentAmount/SL/TP), persistenter `size_increment`-Cache.
 
 ### 5.9 log_manager.py — LLM-Logging
 `setup_bot_logging()`, `emit_execution_event()`, `emit_order_event()`. StructuredFormatter mit eingerückten Stacktraces.
@@ -347,7 +347,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ### 🟢 #21 — `safe_compute_quantity` ist toter Code
 **Symptom:** Die als Pitfall-#14-Fix gedachte Funktion in `fractional_trading.py` wird von keiner Strategie aufgerufen; der dokumentierte Schutz greift im Backtest nicht.
-**Fix:** Entweder Strategien auf `safe_compute_quantity` umstellen oder die Funktion entfernen und die Logik in `HourlyStrategyBase` konsolidieren (siehe #20).
+**Fix:** Die ungenutzte Funktion `safe_compute_quantity` wurde vollständig aus der Codebasis und den Tests entfernt. Die Logik ist nun alleinig in `HourlyStrategyBase.make_qty` konsolidiert (siehe #20).
 **Betroffen:** `automation/fractional_trading.py`.
 
 ### 🟢 #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
@@ -365,7 +365,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ### 🟢 #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
 **Symptom:** Selbst nach Fix von #14 bleiben Live-Metadaten kaputt.
 **Root Cause:** `catalog_service.py` (ZIP-Metadaten), `api_backfiller._build_arrow_meta` und `utils._fallback_precisions` schreiben für Equities `size_precision=0`. `daily_orchestrator._ensure_metadata` übernimmt diese.
-**Fix:** Schreibseite auf `size_precision=2` für Equities angehoben. Bestandsdaten via `automation/regenerate_precision.py` regeneriert.
+**Fix:** Schreibseite auf `size_precision=2` für Equities angehoben. `regenerate_precision.py --inplace` wurde erfolgreich auf den Datenbestand angewendet und die Bestandsdaten wurden regeneriert.
 **Betroffen:** `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/daily_orchestrator.py`.
 
 ### 🟡 #24 — Datendichte vs. Indikator-Warmup
@@ -384,6 +384,17 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 ### 🟢 #18 — `make_qty` ValueError bei Equities
 `round_down=True` verhindert den ValueError NICHT. Zweistufige Absicherung (Pre-Check + try/except) dokumentiert. **Teilweise** umgesetzt — siehe #20/#21 für die verbleibende Inkonsistenz.
+
+
+### 🟢 #25 — Asynchrone Speicherung (Deferred Flush Bug)
+**Symptom:** Datenverlust oder Inkonsistenzen beim Schreiben der Puffer.
+**Fix:** Korrektes Flush-Handling implementiert (dokumentiert in `Test_report.md` via `test_do_flush`).
+**Betroffen:** `automation/catalog_service.py`.
+
+### 🟢 #26 — Fehlendes Cleanup temporärer Verzeichnisse
+**Symptom:** Mögliche Dateisystem-Müllansammlung bei fehlerhaftem Backtest-Abbruch.
+**Fix:** Absicherung des `temp_catalog_dir` Cleanups durch einen harten `try/finally`-Block (via `patch_try_finally.py`).
+**Betroffen:** `automation/backtest_runner.py`.
 
 ### Daten-/API-Pitfalls (aus dem Adapter-Erbe, relevant für Live)
 - **PnL-Envelope:** Reale PnL wrappt in `clientPortfolio` → immer `data.get("clientPortfolio", data)`.
@@ -415,6 +426,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-05-29 | **Synchronisation von Code und Dokumentation:** Auflösung der `safe_compute_quantity`-Diskrepanz (Pitfall #21), Korrektur des Regenerations-Status (Pitfall #23) und Nachtrag der Fixes für Deferred Flush (#25) sowie Try/Finally-Cleanup (#26). | `automation/AGENTS.md`, `automation/Test_report.md`, `automation/fractional_trading.py` |
 | 2026-05-28 | **Fix size_precision Bug Chain (#14, #20, #21, #23)** — Angepasst an eToro by-amount Semantik (size_precision=2 für Equities), konsolidierte quantity Berechnung auf make_qty in HourlyStrategyBase, tote Methode safe_compute_quantity entfernt. (Pitfall #14 war bereits teilweise behoben, Ticks normalisiert). Bestehende CFD-Parquet-Metadaten müssen später nach einem separaten Task regeneriert werden. | `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/backtest_runner.py`, `automation/strategies/hourly_strategy_base.py`, `automation/strategies/momentum_ls_base.py`, `automation/strategies/adx_atr_momentum.py`, `automation/strategies/trend_pullback.py`, `automation/fractional_trading.py` |
 | 2026-05-28 | **automation/AGENTS.md neu erstellt** — vollständig auf `automation/` abgeglichen, alle offenen Bugs als Pitfalls #14–#24 mit STATUS-Kennzeichnung dokumentiert (size_precision-Kette, divergierende _compute_quantity, toter safe_compute_quantity, archive.adapters-Import, SMA-PoC-Reduktion). | `automation/AGENTS.md` |
 | 2026-05-28 | #19: Adapter in `automation/adapters` migriert (Hermetisches Standalone). #23: Schreibseite `size_precision=2` und `regenerate_precision.py` Tool. | `automation/AGENTS.md`, `automation/momentum_ls_run.py`, `automation/adapters/*`, `automation/regenerate_precision.py`, `automation/api_backfiller.py`, `automation/utils.py`, `automation/catalog_service.py` |
@@ -427,4 +439,4 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 | 2026-05-28 | size_precision=8 Fix via PyArrow Schema-Injection implementiert (Pitfall #14). | `automation/backtest_runner.py` |
 ---
 
-*Zuletzt aktualisiert: 2026-05-28. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-05-29. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
