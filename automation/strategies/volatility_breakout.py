@@ -5,6 +5,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import BollingerBands
 
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class VolatilityBreakoutConfig(StrategyConfig, frozen=True):
@@ -21,8 +22,8 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
     Volatility Breakout (Pump) Strategie mit ATR Trailing Stop und 48h Time-Exit.
     """
 
-    def __init__(self, config: VolatilityBreakoutConfig):
-        super().__init__(config)
+    def __init__(self, config: VolatilityBreakoutConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
 
@@ -32,6 +33,7 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
     def on_start(self):
         super().on_start()
         self._log.info(f"Starte Breakout Pump Rider auf {self.instrument_id}")
+        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
@@ -127,4 +129,5 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
+        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)

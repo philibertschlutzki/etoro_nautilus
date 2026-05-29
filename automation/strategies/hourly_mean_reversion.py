@@ -25,6 +25,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import KeltnerChannel
 
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class HourlyMeanReversionConfig(StrategyConfig, frozen=True):
@@ -43,8 +44,8 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
     Inherits ATR Trailing Stop (1.5x) and 48-bar Time-based Exit from HourlyStrategyBase.
     """
 
-    def __init__(self, config: HourlyMeanReversionConfig):
-        super().__init__(config)
+    def __init__(self, config: HourlyMeanReversionConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
         self.keltner = KeltnerChannel(
@@ -56,6 +57,7 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
     def on_start(self):
         super().on_start()
         self._log.info(f"Starte HourlyMeanReversion auf {self.instrument_id}")
+        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
@@ -149,4 +151,5 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"HourlyMeanReversion auf {self.instrument_id} gestoppt.")
+        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)

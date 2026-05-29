@@ -76,8 +76,6 @@ automation/
     ├── tesla_combo_strategy.py # aktiv (ComboTrendVwapStrategy)
     ├── vwap_exhaustion.py      # aktiv (Price-Deviation only)
     ├── hourly_mean_reversion.py# aktiv
-    ├── momentum_ls_base.py     # Basisklasse für Momentum-LS (Allocator-Injektion)
-    ├── momentum_ls_sma.py      # Momentum-LS PoC (SMA)
     ├── trend_pullback.py       # INAKTIV (0 FIFO-Schließungen)
     └── adx_atr_momentum.py     # INAKTIV (ADX-Initialisierungsproblem)
 ```
@@ -169,7 +167,7 @@ Thread-safe. No-Interference-Regel: existiert eine offene Position für das Inst
 Alle aktiven Single-Instrument-Strategien erben hiervon. Liefert automatisch:
 - **ATR-Trailing-Stop** (1.5× ATR, `DEFAULT_ATR_TRAILING_MULTIPLIER`)
 - **Time-based Exit** (48 Bars, `DEFAULT_MAX_BARS_IN_TRADE`)
-- gemeinsames `_compute_quantity()` (⚠️ nutzt `instrument.lot_size` — siehe Pitfall #20)
+- gemeinsames `_compute_quantity()` (nutzt `instrument.make_qty(..., round_down=True)`; siehe Pitfall #20)
 
 `on_bar()` muss in Subklassen `_check_exits_and_update(bar)` als ERSTE Aktion aufrufen und bei Rückgabe `True` sofort `return`.
 
@@ -177,6 +175,7 @@ Alle aktiven Single-Instrument-Strategien erben hiervon. Liefert automatisch:
 class MyStrategy(HourlyStrategyBase):
     def on_start(self):
         super().on_start()          # PFLICHT
+        self.subscribe_quote_ticks(self.instrument_id)  # Zwingend für Live-Bar-Aggregation (INTERNAL)
         self.subscribe_bars(self.bar_type)
     def on_bar(self, bar: Bar):
         if self._check_exits_and_update(bar):
@@ -186,6 +185,8 @@ class MyStrategy(HourlyStrategyBase):
 
 ### Flat-Lock-Vermeidung (Pitfall #17)
 Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`current_signal` / `current_position`) auf `None` zurückgesetzt werden, sonst blockiert der Bar-Guard jeden Neueinstieg dauerhaft. Alle aktiven Strategien setzen dies korrekt um.
+
+`HourlyStrategyBase.__init__(self, config, allocator=None)` nimmt optional einen `MomentumLSAllocator`. Bei gesetztem Allocator löst `on_start()` den Account auf und `_compute_quantity` zieht die Allokation über `get_allocation`. Im Backtest ist `allocator=None` → `config.trade_amount_usd` wird genutzt.
 
 ### Aktive Strategien (`strategies.json` active=true)
 | Klasse | Datei | Indikatoren | Default trade_amount_usd |
@@ -202,8 +203,8 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 ### Inaktive Strategien (active=false)
 | Klasse | Grund |
 |--------|-------|
-| TrendPullbackStrategy | 0 FIFO-Schließungen in allen Tests; erbt NICHT von HourlyStrategyBase (direkt `Strategy`, EMA-Period 200 initialisiert bei kurzen Daten nie) |
-| AdxAtrMomentumStrategy | ADX-Initialisierungsproblem; erbt direkt von `Strategy` |
+| TrendPullbackStrategy | 0 FIFO-Schließungen in allen Tests; erbt von HourlyStrategyBase (EMA-Period 200 initialisiert bei kurzen Daten nie) |
+| AdxAtrMomentumStrategy | ADX-Initialisierungsproblem; erbt von HourlyStrategyBase |
 
 **Wichtig:** Die Config-Klassen in `config_class` müssen exakt zu den Feldern passen, die der Backtest spreizt. Die Konfig-Field-Beschreibungen in der alten Root-AGENTS.md waren teils falsch (z.B. `lookback`/`z_score_threshold` für MeanReversion existieren NICHT — die echte Config nutzt `keltner_period`/`keltner_multiplier`). Maßgeblich ist immer der Code der jeweiligen `*Config`-Klasse.
 
@@ -231,9 +232,9 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 | SHIB/PEPE | 8 | 8 |
 | Crypto (BTC, ETH, …) | 2 | 8 |
 | Forex/Commodity (NATGAS, PALL, …) | 5 | 5 |
-| **Equity (Default)** | **2** | **0** |
+| **Equity (Default)** | **2** | **2** |
 
-**Das `size_precision=0` für Equities ist die Wurzel mehrerer Bugs** (Pitfall #14, #20). eToro handelt Aktien als fractional CFDs; ein `size_precision` von 0 erzwingt ganzzahlige Order-Größen und unterdrückt bei Aktienkursen > `trade_amount_usd` jeden Trade. Die `instrument_map.json` persistiert ebenfalls `size_precision: 0` für alle Equities.
+Früher erzwang size_precision=0 ganzzahlige Order-Größen und unterdrückte Trades bei Aktienkursen > trade_amount_usd; seit Pitfall #23 schreiben utils._fallback_precisions und instrument_map.json durchgängig size_precision=2 für Equities.
 
 ---
 
@@ -262,9 +263,13 @@ Da alle Quellen bereits FSB(16) liefern, entfällt im Orchestrator jede Typ-Migr
 
 ## 11. Live Deployment (Phase 5)
 
-`momentum_ls_run.py` wird als Detached Subprocess (`subprocess.Popen`, `start_new_session=True`) gestartet. Liest `per_symbol_winners` aus dem Tournament-JSON, mappt JEDEN Gewinner auf `MomentumLSSmaStrategy` (PoC — `STRATEGY_REGISTRY` enthält nur diese eine Strategie). Safety-Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`.
+`momentum_ls_run.py` wird als Detached Subprocess (`subprocess.Popen`, `start_new_session=True`) gestartet. Liest `per_symbol_winners` aus dem Tournament-JSON.
+- Nutzt eine dynamische `STRATEGY_REGISTRY` (geladen aus `strategies.json`, active=true).
+- Die echte Tournament-Gewinner-Strategie pro Symbol wird registriert (Pitfall #22 ist behoben).
+- Allocator-Injektion erfolgt via `HourlyStrategyBase`.
+- Der Live-`bar_type` ist zwingend `{symbol}-1-HOUR-MID-INTERNAL`, da eToro nur QuoteTicks streamt.
 
-**⚠️ Inkonsistenzen:** alle Tournament-Gewinner werden unabhängig von der tatsächlich gewinnenden Strategie auf die SMA-PoC-Strategie reduziert (Pitfall #22).
+Safety-Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`. Stale-Check: Prüft ob Universe-Daten älter als 24 Stunden sind.
 
 ---
 
@@ -339,7 +344,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ### 🟢 #20 — Drei divergierende `_compute_quantity`-Implementierungen
 **Symptom:** Inkonsistentes Verhalten je nach Strategie-Basisklasse; teils stille Signal-Verwerfung.
 **Root Cause:** Drei unterschiedliche Implementierungen:
-1. `hourly_strategy_base.py` nutzt `float(instrument.lot_size)` — bei den CFD-Instrumenten ist `lot_size = None` → Exception → Fallback `1e-8` (zufällig „rettend", aber unbeabsichtigt).
+1. `hourly_strategy_base.py` nutzt `instrument.make_qty(units, round_down=True)` und greift nicht auf `lot_size` zu.
 2. `momentum_ls_base.py`, `adx_atr_momentum.py`, `trend_pullback.py` nutzen `float(instrument.size_increment)` — bei `size_increment=1` und `units<1` → `return None`.
 3. `fractional_trading.safe_compute_quantity` nutzt `size_increment`, wird aber nirgends aufgerufen.
 **Fix:** Eine einzige Implementierung in `HourlyStrategyBase`, die `make_qty` selbst über `size_precision` entscheiden lässt, statt manuell gegen `lot_size`/`size_increment` zu prüfen. Doppelimplementierungen entfernen.
@@ -356,10 +361,9 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Adapter in `automation/adapters/` migriert und Isolations-Test entsprechend angepasst. Keine dokumentierte Standalone-Ausnahme mehr.
 **Betroffen:** `automation/momentum_ls_run.py`.
 
-### 🔴 #22 — Alle Tournament-Gewinner werden auf MomentumLSSmaStrategy reduziert
+### 🟢 #22 — Alle Tournament-Gewinner werden auf MomentumLSSmaStrategy reduziert
 **Symptom:** Egal welche Strategie das Tournament pro Symbol gewinnt, live läuft immer SMA(5).
-**Root Cause:** `STRATEGY_REGISTRY` in `momentum_ls_run.py` enthält nur `MomentumLSSmaStrategy`; `bot_spec["strategy_class"]` wird hart auf diese gesetzt (PoC-Stand). `original_winner_class` wird nur geloggt.
-**Fix:** Alle aktiven Strategien auf `MomentumLSBaseStrategy`-Signatur (Allocator-Injektion) portieren und registrieren.
+**Fix:** Dynamische Registry aus `strategies.json`, echte Gewinner-Strategie wird live registriert, Allocator-Hook in `HourlyStrategyBase`, PoC-Dateien entfernt, Live-`bar_type` auf 1h umgestellt (MID-INTERNAL), QuoteTick-Subscription in allen aktiven Strategien.
 **Betroffen:** `automation/momentum_ls_run.py`, `automation/strategies/*.py`.
 
 ### 🟢 #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
@@ -396,6 +400,18 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 **Fix:** Absicherung des `temp_catalog_dir` Cleanups durch einen harten `try/finally`-Block (via `patch_try_finally.py`).
 **Betroffen:** `automation/backtest_runner.py`.
 
+### 🟡 Docstrings in `daily_orchestrator.py` vs. Code
+**Symptom:** Die Kommentare/Docstrings in `daily_orchestrator.py` behaupten fälschlicherweise "7 Tage" für das Backtest-Fenster, während der Code korrekterweise `timedelta(days=30)` verwendet.
+**Fix:** Die Kommentare anpassen, um die 30 Tage aus dem Code widerzuspiegeln (noch offen/wird nur dokumentiert).
+
+### 🟡 #27 — Divergierende size_precision-Heuristiken (Equity: utils=2 vs. adapters/fractional=0)
+**Symptom:** Es existieren drei widersprüchliche Heuristiken für Equity `size_precision`: `automation/utils._fallback_precisions` liefert 2, während `automation/adapters/instrument_utils.get_size_precision` und `automation/fractional_trading._get_size_precision` fälschlicherweise 0 liefern.
+**Fix:** Offene Architektur-Schuld. Diese müssen konsolidiert werden (keine zweite Heuristik einführen!).
+
+### 🟡 KeltnerChannel `atr_period` Mismatch
+**Symptom:** `mean_reversion.py` und `hourly_mean_reversion.py` führen `keltner_atr_period` in der Config, übergeben sie aber nicht an `KeltnerChannel(period=…, k_multiplier=…)`.
+**Fix:** Parameter korrekt übergeben (noch offen/wird nur dokumentiert).
+
 ### Daten-/API-Pitfalls (aus dem Adapter-Erbe, relevant für Live)
 - **PnL-Envelope:** Reale PnL wrappt in `clientPortfolio` → immer `data.get("clientPortfolio", data)`.
 - **`content` als JSON-String:** WebSocket-`content` ist meist String → `json.loads` falls `isinstance(str)`.
@@ -426,6 +442,9 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-05-29 | **PR #64 final:** §6/§11 auf Ist-Stand synchronisiert (make_qty statt lot_size, QuoteTick-Subscription im Beispiel, allocator-Parameter, korrekte Vererbung inaktiver Strategien, Live-Deployment-Beschreibung), Fail-Fast bei 0 Registrierungen | `automation/momentum_ls_run.py`, `AGENTS.md` |
+| 2026-05-29 | **Hotfix PR #64:** Config-Felder als Strings übergeben (Crash-Fix), §8-Tabelle/Absatz auf size_precision=2 vervollständigt, Instanziierungs-Smoke-Test ergänzt. | `automation/momentum_ls_run.py`, `automation/tests/test_live_strategy_mapping.py`, `AGENTS.md`, diverse Strategien |
+| 2026-05-29 | **Fix Pitfall #22 (Live-Strategie-Reduktion)** — Dynamische Registry in `momentum_ls_run.py`, Allocator in `HourlyStrategyBase`, PoC-Dateien entfernt, 1h-bar_type (MID), QuoteTick-Subscriptions in allen Strategien ergänzt. Dokumentations-Korrekturen (C2-C6). | `automation/momentum_ls_run.py`, `automation/strategies/hourly_strategy_base.py`, `automation/strategies/sma_crossover.py`, diverse Strategien, AGENTS.md, Test_report.md |
 | 2026-05-29 | **Synchronisation von Code und Dokumentation:** Auflösung der `safe_compute_quantity`-Diskrepanz (Pitfall #21), Korrektur des Regenerations-Status (Pitfall #23) und Nachtrag der Fixes für Deferred Flush (#25) sowie Try/Finally-Cleanup (#26). | `automation/AGENTS.md`, `automation/Test_report.md`, `automation/fractional_trading.py` |
 | 2026-05-28 | **Fix size_precision Bug Chain (#14, #20, #21, #23)** — Angepasst an eToro by-amount Semantik (size_precision=2 für Equities), konsolidierte quantity Berechnung auf make_qty in HourlyStrategyBase, tote Methode safe_compute_quantity entfernt. (Pitfall #14 war bereits teilweise behoben, Ticks normalisiert). Bestehende CFD-Parquet-Metadaten müssen später nach einem separaten Task regeneriert werden. | `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/backtest_runner.py`, `automation/strategies/hourly_strategy_base.py`, `automation/strategies/momentum_ls_base.py`, `automation/strategies/adx_atr_momentum.py`, `automation/strategies/trend_pullback.py`, `automation/fractional_trading.py` |
 | 2026-05-28 | **automation/AGENTS.md neu erstellt** — vollständig auf `automation/` abgeglichen, alle offenen Bugs als Pitfalls #14–#24 mit STATUS-Kennzeichnung dokumentiert (size_precision-Kette, divergierende _compute_quantity, toter safe_compute_quantity, archive.adapters-Import, SMA-PoC-Reduktion). | `automation/AGENTS.md` |

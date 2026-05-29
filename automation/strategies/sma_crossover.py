@@ -6,6 +6,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import SimpleMovingAverage
 
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class SmaCrossoverConfig(StrategyConfig, frozen=True):
@@ -19,8 +20,8 @@ class SmaCrossoverConfig(StrategyConfig, frozen=True):
 class SmaCrossoverStrategy(HourlyStrategyBase):
     """Klassische SMA Crossover Strategie mit ATR Trailing Stop und 48h Time-Exit."""
 
-    def __init__(self, config: SmaCrossoverConfig):
-        super().__init__(config)
+    def __init__(self, config: SmaCrossoverConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
         self.sma = SimpleMovingAverage(config.sma_period)
@@ -89,6 +90,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
             order_side=OrderSide.BUY,
             quantity=qty,
             time_in_force=TimeInForce.GTC,
+            tags=["SL:0.10"],
         )
         self.submit_order(order)
 
@@ -111,6 +113,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
             order_side=OrderSide.SELL,
             quantity=qty,
             time_in_force=TimeInForce.GTC,
+            tags=["SL:0.10"],
         )
         self.submit_order(order)
 

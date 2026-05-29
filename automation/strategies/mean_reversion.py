@@ -5,6 +5,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import KeltnerChannel
 
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class MeanReversionConfig(StrategyConfig, frozen=True):
@@ -22,8 +23,8 @@ class MeanReversionStrategy(HourlyStrategyBase):
     Mean Reversion / Keltner Channel Strategie mit ATR Trailing Stop und 48h Time-Exit.
     """
 
-    def __init__(self, config: MeanReversionConfig):
-        super().__init__(config)
+    def __init__(self, config: MeanReversionConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
         self.keltner = KeltnerChannel(

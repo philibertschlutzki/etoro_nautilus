@@ -30,6 +30,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.indicators import AverageTrueRange
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 log = logging.getLogger(__name__)
 
@@ -49,8 +50,10 @@ class HourlyStrategyBase(Strategy):
       _in_position: bool                  — whether a position is currently open
     """
 
-    def __init__(self, config: StrategyConfig):
+    def __init__(self, config: StrategyConfig, allocator: MomentumLSAllocator | None = None):
         super().__init__(config)
+        self.allocator: MomentumLSAllocator | None = allocator
+        self._account_id = None
         # Subclasses set these in their own __init__
         self.instrument_id: InstrumentId
         self.bar_type: BarType
@@ -65,7 +68,39 @@ class HourlyStrategyBase(Strategy):
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
-        pass
+        if self.allocator is not None:
+            accounts = self.cache.accounts()
+            if accounts:
+                self._account_id = accounts[0].id
+            else:
+                self._log.warning("No accounts found in cache on start. Allocation might fail.")
+
+    def _get_current_balance(self) -> float:
+        if not self._account_id:
+            accounts = self.cache.accounts()
+            if accounts:
+                self._account_id = accounts[0].id
+
+        if not self._account_id:
+            return 0.0
+
+        account = self.cache.account(self._account_id)
+        instrument = self.cache.instrument(self.instrument_id)
+
+        if account and account.balances and instrument:
+            balance_list = list(account.balances) if not isinstance(account.balances, list) else account.balances
+            # Check if elements are dict or objects
+            if isinstance(account.balances, dict):
+                balance_obj = account.balances.get(instrument.quote_currency)
+                if balance_obj:
+                    return float(getattr(balance_obj, 'total', balance_obj.free if hasattr(balance_obj, 'free') else 0.0))
+            else:
+                balance_obj = next((b for b in balance_list if getattr(b, 'currency', None) == instrument.quote_currency), None)
+                if balance_obj:
+                    return float(getattr(balance_obj, 'total', balance_obj.free if hasattr(balance_obj, 'free') else 0.0))
+
+        self._log.warning("Could not resolve free balance from cache. Returning 0.0.")
+        return 0.0
 
     def _check_exits_and_update(self, bar: Bar) -> bool:
         """
@@ -164,7 +199,7 @@ class HourlyStrategyBase(Strategy):
         if price <= 0:
             return None
 
-        if hasattr(self, "allocator") and hasattr(self, "_get_current_balance"):
+        if self.allocator is not None:
             balance = self._get_current_balance()
             trade_amount_usd = self.allocator.get_allocation(self.instrument_id, self.cache, balance)
         else:

@@ -22,6 +22,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class DynamicBreakoutConfig(StrategyConfig, frozen=True):
@@ -38,8 +39,8 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
     Buys when close breaks above the recent price high; sells on a break below the recent low.
     """
 
-    def __init__(self, config: DynamicBreakoutConfig):
-        super().__init__(config)
+    def __init__(self, config: DynamicBreakoutConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
 
@@ -53,6 +54,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self._log.info(
             f"Starte Dynamic Breakout (Price-Range) auf {self.instrument_id}", LogColor.GREEN
         )
+        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
@@ -164,4 +166,5 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
+        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)

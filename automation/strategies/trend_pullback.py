@@ -5,6 +5,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import RelativeStrengthIndex
 
@@ -26,8 +27,8 @@ class TrendPullbackStrategy(HourlyStrategyBase):
     Bestimmt den übergeordneten Trend (EMA 200) und kauft bei kurzfristigen Pullbacks (RSI überverkauft).
     """
 
-    def __init__(self, config: TrendPullbackConfig):
-        super().__init__(config)
+    def __init__(self, config: TrendPullbackConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
         self.ema = ExponentialMovingAverage(config.ema_period)
