@@ -412,6 +412,12 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 **Symptom:** `mean_reversion.py` und `hourly_mean_reversion.py` führen `keltner_atr_period` in der Config, übergeben sie aber nicht an `KeltnerChannel(period=…, k_multiplier=…)`.
 **Fix:** Parameter korrekt übergeben (noch offen/wird nur dokumentiert).
 
+### 🟢 #28 — Backtest BarType Diskrepanz (0 Trades / 0 Gewinner)
+**Symptom:** Backtest liefert `Trades=0` für alle Strategien/Symbole, obwohl der Live-Pfad läuft.
+**Root Cause:** Die Backtest-Engine nutzte hardcoded `1-MINUTE-MID-INTERNAL`, während historische Daten stündlich (1-HOUR) gestreamt werden und die Strategien (`HourlyStrategyBase`) für Stunden-Bars konfiguriert sind. Minuten-Bars wurden zwar aggregiert, aber bei stündlichen Quelldaten entstehen kaum bewegte Bars; zudem feuerte der 48-Bar-Time-Exit nach 48 Minuten statt 48 Stunden.
+**Fix:** Hardcoded `1-MINUTE-MID-INTERNAL` in `backtest_runner.py` durch `1-HOUR-MID-INTERNAL` ersetzt.
+**Betroffen:** `automation/backtest_runner.py`
+
 ### Daten-/API-Pitfalls (aus dem Adapter-Erbe, relevant für Live)
 - **PnL-Envelope:** Reale PnL wrappt in `clientPortfolio` → immer `data.get("clientPortfolio", data)`.
 - **`content` als JSON-String:** WebSocket-`content` ist meist String → `json.loads` falls `isinstance(str)`.
