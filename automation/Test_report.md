@@ -28,9 +28,10 @@ Die technische Funktionalität und alle Edge Cases des `automation/` Pakets wurd
 - **Universe Stale Check (`test_is_universe_stale`)**: Simuliert einen Stale-Check basierend auf dem `fetched_at` Zeitstempel > 24 Stunden. Resultat: Erfolgreich.
 - **Live Deployment Detached Start (`test_detached_start`)**: Verifiziert, dass `subprocess.Popen` in Phase 5 mit dem Flag `start_new_session=True` gestartet wird, um das Detachment zu garantieren. Resultat: Erfolgreich.
 
-### 7. Metrics & Concurrency (`tests/test_backtest_runner.py` & `tests/test_allocator.py`)
+### 7. Metrics & Concurrency (`tests/test_backtest_runner.py`, `tests/test_backtest_runner_bar_type.py`, `tests/test_precision_mismatch.py` & `tests/test_allocator.py`)
 - **Metrics Extraction (`test_extract_metrics`)**: Extrahiert Win Rate, Profit Factor, etc. aus einem simulierten FIFO Long/Short DataFrame von Fills. Resultat: Erfolgreich.
 - **Tournament Selection (`test_select_winners`)**: Stellt sicher, dass `eligible_requires_all` (hard) und `eligible_requires_any` (soft) richtig selektieren. Resultat: Erfolgreich.
+- **Trade Generation Assertions (`test_backtest_runner_bar_type`, `test_precision_mismatch`)**: Sichern ab, dass mit korrekt erzeugten Ticks (via Custom-Encoder und nativen Nautilus Arrow Tabellen) Indikatoren auffüllen, Fills auslösen und `total_trades > 0` erzeugen. Resultat: Erfolgreich.
 - **Allocator Logic (`test_allocator_no_interference` & `test_allocator_floor_limit`)**: Verifiziert das $11 Floor Limit sowie das No-Interference-Prinzip (keine Allokation, wenn ein Instrument bereits Positionen hält). Resultat: Erfolgreich.
 
 ### 8. LLM-Optimization Logging (`tests/test_log_manager.py`)
@@ -44,9 +45,10 @@ Fokus: Fix Pitfall #14 und #20, Behebung inkonsistenter `size_precision` in Mock
 - **test_strategy_inheritance**: Prüft, dass alle 8 aktiven Strategien (z.B. `SmaCrossoverStrategy`, `MeanReversionStrategy`) sowie die inaktiven `AdxAtrMomentumStrategy` und `TrendPullbackStrategy` korrekt von `HourlyStrategyBase` erben und keine eigene `_compute_quantity`-Methode besitzen (Konsolidierung in der Basisklasse).
 - **test_load_ticks_from_catalog_normalizes_precision**: Verifiziert den Boundary-Check, dass aus dem Katalog gelesene (historische) QuoteTicks auf 8 normalisiert werden.
 
-### 10. test_backtest_trades_generated.py (NEU)
-Fokus: End-to-End-Test der Datensimulation und Backtest-Generierung.
-- **test_backtest_trades_generated**: Erzeugt Parquet-Dateien mit simulierten Oszillationen (`sin` Welle), um Cross-Over-Signale zu provozieren und assertiert `total_trades > 0`. Dadurch wird sichergestellt, dass nicht 0.0-Preise durch Encoding-Fehler an den Worker gesendet werden.
+### 10. test_backtest_trades_generated.py (NEU) & test_fsb16_roundtrip.py (NEU)
+Fokus: End-to-End-Test der Datensimulation, Backtest-Generierung und Validierung des nativen Nautilus Readers.
+- **test_backtest_trades_generated**: Erzeugt Parquet-Dateien mit simulierten Oszillationen (`sin` Welle), um Cross-Over-Signale zu provozieren und assertiert `total_trades > 0`. Dadurch wird sichergestellt, dass nicht 0.0-Preise durch Encoding-Fehler an den Worker gesendet werden und effektiv echte Fills/Trades ausgelöst werden.
+- **test_fsb16_roundtrip**: Sichert ab, dass der Custom-Encoder von Nautilus decodiert wird und testet den Roundtrip fehlerfrei durch den nativen `ParquetDataCatalog.quote_ticks()` Nautilus-Reader. Resultat: Erfolgreich.
 
 ### 11. test_live_strategy_mapping.py (NEU)
 Fokus: Dynamisches Mapping der Tournament-Gewinner auf Nautilus-Bots (Pitfall #22 Fix).
