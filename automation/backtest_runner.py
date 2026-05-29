@@ -446,7 +446,29 @@ def load_ticks_from_catalog(
             start=start_ns,
             end=end_ns,
         )
-        return ticks if ticks else []
+        if not ticks:
+            return []
+
+        # Normalisiere Tick Precision (Pitfall #14)
+        if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision <= 0:
+            from nautilus_trader.model.data import QuoteTick
+            from nautilus_trader.model.objects import Quantity
+            sp = 8
+            normalized = []
+            for t in ticks:
+                normalized.append(
+                    QuoteTick(
+                        instrument_id=t.instrument_id,
+                        bid_price=t.bid_price,
+                        ask_price=t.ask_price,
+                        bid_size=Quantity(float(t.bid_size), precision=sp),
+                        ask_size=Quantity(float(t.ask_size), precision=sp),
+                        ts_event=t.ts_event,
+                        ts_init=t.ts_init,
+                    )
+                )
+            return normalized
+        return ticks
     except Exception as e:
         raise RuntimeError(f"catalog.quote_ticks() fehlgeschlagen: {e}") from e
 

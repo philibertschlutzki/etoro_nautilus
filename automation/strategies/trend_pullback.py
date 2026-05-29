@@ -4,6 +4,7 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase
 from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import RelativeStrengthIndex
 
@@ -19,7 +20,7 @@ class TrendPullbackConfig(StrategyConfig, frozen=True):
     max_open_positions: int = 1
 
 
-class TrendPullbackStrategy(Strategy):
+class TrendPullbackStrategy(HourlyStrategyBase):
     """
     Trend & Pullback Strategie für stabile Assets.
     Bestimmt den übergeordneten Trend (EMA 200) und kauft bei kurzfristigen Pullbacks (RSI überverkauft).
@@ -69,37 +70,6 @@ class TrendPullbackStrategy(Strategy):
             self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
-
-    def _compute_quantity(self, bar: Bar) -> Quantity | None:
-        instrument = self.cache.instrument(self.instrument_id)
-        if instrument is None:
-            self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
-            return None
-        units = self.config.trade_amount_usd / float(bar.close)
-        # Pre-check: Equity-Instrumente (size_precision=0) erfordern mindestens 1 ganze Einheit.
-        # Nautilus wirft einen harten ValueError bei make_qty() wenn das gerundete Ergebnis 0 ergibt —
-        # auch mit round_down=True. Pre-check verhindert den Aufruf; try/except ist zusätzliche Absicherung.
-        if units < float(instrument.size_increment):
-            self._log.warning(
-                f"[{self.instrument_id}] Zu wenig Kapital für 1 Einheit "
-                f"(units={units:.6f}, size_increment={instrument.size_increment}) "
-                f"— Signal übersprungen"
-            )
-            return None
-        try:
-            qty = instrument.make_qty(units, round_down=True)
-        except ValueError as e:
-            self._log.warning(
-                f"[{self.instrument_id}] make_qty ValueError: {e} — Signal übersprungen"
-            )
-            return None
-        if qty == 0:
-            self._log.warning(
-                f"[{self.instrument_id}] Quantity=0 nach Rundung "
-                f"(units={units:.6f}) — Signal übersprungen"
-            )
-            return None
-        return qty
 
     def _on_buy_signal(self, bar: Bar) -> None:
         positions = self.cache.positions_open(instrument_id=self.instrument_id)

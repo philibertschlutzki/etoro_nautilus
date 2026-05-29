@@ -155,11 +155,6 @@ class HourlyStrategyBase(Strategy):
         self.submit_order(order)
 
     def _compute_quantity(self, bar: Bar) -> Quantity | None:
-        """
-        Compute order quantity using instrument.lot_size for fractional equity support.
-        NautilusTrader Equity.size_increment is always 1.0 regardless of lot_size;
-        using lot_size directly allows correct fractional quantities in backtests.
-        """
         instrument = self.cache.instrument(self.instrument_id)
         if instrument is None:
             self._log.error(f"[{self.instrument_id}] Instrument nicht im Cache")
@@ -169,31 +164,23 @@ class HourlyStrategyBase(Strategy):
         if price <= 0:
             return None
 
-        trade_amount_usd = getattr(self.config, "trade_amount_usd", 100.0)
-        units = trade_amount_usd / price
+        if hasattr(self, "allocator") and hasattr(self, "_get_current_balance"):
+            balance = self._get_current_balance()
+            trade_amount_usd = self.allocator.get_allocation(self.instrument_id, self.cache, balance)
+        else:
+            trade_amount_usd = getattr(self.config, "trade_amount_usd", 100.0)
 
-        # Equity.size_increment is always 1.0 in NautilusTrader; use lot_size instead
-        try:
-            size_inc = float(instrument.lot_size)
-        except Exception:
-            size_inc = 1e-8
-
-        if units < size_inc:
-            self._log.warning(
-                f"[{self.instrument_id}] Zu wenig Kapital: {trade_amount_usd} USD / "
-                f"{price} = {units:.8f} < lot_size {size_inc}. Order übersprungen."
-            )
+        if trade_amount_usd <= 0:
             return None
+
+        units = trade_amount_usd / price
 
         try:
             qty = instrument.make_qty(units, round_down=True)
-            if qty == 0:
-                self._log.warning(
-                    f"[{self.instrument_id}] make_qty returned 0 für {units:.8f} Units."
-                )
-                return None
+            if qty is None or float(qty) == 0:
+                 return None
             return qty
-        except (ValueError, Exception) as e:
+        except ValueError as e:
             self._log.warning(f"[{self.instrument_id}] make_qty Fehler: {e}")
             return None
 
