@@ -89,6 +89,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
             order_side=OrderSide.BUY,
             quantity=qty,
             time_in_force=TimeInForce.GTC,
+            tags=["SL:0.10"],
         )
         self.submit_order(order)
 
@@ -111,6 +112,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
             order_side=OrderSide.SELL,
             quantity=qty,
             time_in_force=TimeInForce.GTC,
+            tags=["SL:0.10"],
         )
         self.submit_order(order)
 

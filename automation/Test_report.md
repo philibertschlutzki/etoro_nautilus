@@ -36,3 +36,15 @@ Die technische Funktionalität und alle Edge Cases des `automation/` Pakets wurd
 ### 8. LLM-Optimization Logging (`tests/test_log_manager.py`)
 - **JSON Event Parsing (`test_emit_execution_event_json_format`)**: Kontrolliert, dass Events korrekt mit dem Prefix `[JSON_EVENT]` und in gültigem JSON geloggt werden. Resultat: Erfolgreich.
 - **Log Cleanup (`test_cleanup_old_logs`)**: Generiert dummy-Logs, manipuliert den Timestamp auf > 7 Tage und validiert die ordnungsgemäße Löschung. Resultat: Erfolgreich.
+
+
+### 9. test_size_precision_fixes.py
+Fokus: Fix Pitfall #14 und #20, Behebung inkonsistenter `size_precision` in Mocks und Strategien.
+- **test_create_mock_instrument_zero_precision**: Prüft, dass eine Anforderung von `size_precision=0` in NautilusTrader auf 8 normalisiert wird, um den Legacy-Nautilus-Absturz (`float(1e-8)`) zu umgehen, solange Parquets nicht regeneriert wurden.
+- **test_strategy_inheritance**: Prüft, dass alle 8 aktiven Strategien (z.B. `SmaCrossoverStrategy`, `MeanReversionStrategy`) sowie die inaktiven `AdxAtrMomentumStrategy` und `TrendPullbackStrategy` korrekt von `HourlyStrategyBase` erben und keine eigene `_compute_quantity`-Methode besitzen (Konsolidierung in der Basisklasse).
+- **test_load_ticks_from_catalog_normalizes_precision**: Verifiziert den Boundary-Check, dass aus dem Katalog gelesene (historische) QuoteTicks auf 8 normalisiert werden.
+
+### 10. test_live_strategy_mapping.py (NEU)
+Fokus: Dynamisches Mapping der Tournament-Gewinner auf Nautilus-Bots (Pitfall #22 Fix).
+- **test_build_strategy_registry**: Prüft, dass inaktive Strategien ignoriert werden und Fallbacks (SMA) nicht erzwungen werden.
+- **test_build_bots_config**: Verifiziert, dass `trade_amount_usd` entfernt wird, der `bar_type` korrekt auf `MID-INTERNAL` gesetzt wird und nur Symbole mit bekanntem Gewinner und existierender `etoro_id` eine Config erhalten.

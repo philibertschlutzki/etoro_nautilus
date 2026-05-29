@@ -1,6 +1,5 @@
 from automation.utils import _fallback_precisions
 from automation.backtest_runner import create_mock_instrument
-from automation.strategies.momentum_ls_base import MomentumLSBaseStrategy
 from automation.strategies.adx_atr_momentum import AdxAtrMomentumStrategy
 from automation.strategies.trend_pullback import TrendPullbackStrategy
 from nautilus_trader.model.data import QuoteTick
@@ -20,11 +19,33 @@ def test_create_mock_instrument_zero_precision():
     assert inst.size_precision == 8
     assert float(inst.size_increment) == 1e-08
 
+from automation.strategies.sma_crossover import SmaCrossoverStrategy
+from automation.strategies.mean_reversion import MeanReversionStrategy
+from automation.strategies.dynamic_breakout import DynamicBreakoutStrategy
+from automation.strategies.flash_crash_reversal import FlashCrashReversalStrategy
+from automation.strategies.volatility_breakout import VolatilityBreakoutPumpStrategy
+from automation.strategies.tesla_combo_strategy import ComboTrendVwapStrategy
+from automation.strategies.vwap_exhaustion import VwapExhaustionStrategy
+from automation.strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
+
 def test_strategy_inheritance():
-    assert "HourlyStrategyBase" in [b.__name__ for b in MomentumLSBaseStrategy.__bases__]
+    active_strategies = [
+        SmaCrossoverStrategy,
+        MeanReversionStrategy,
+        DynamicBreakoutStrategy,
+        FlashCrashReversalStrategy,
+        VolatilityBreakoutPumpStrategy,
+        ComboTrendVwapStrategy,
+        VwapExhaustionStrategy,
+        HourlyMeanReversionStrategy
+    ]
+
+    for strategy_class in active_strategies:
+        assert "HourlyStrategyBase" in [b.__name__ for b in strategy_class.__mro__], f"{strategy_class.__name__} does not inherit from HourlyStrategyBase"
+        assert "_compute_quantity" not in strategy_class.__dict__, f"{strategy_class.__name__} has its own _compute_quantity"
+
     assert "HourlyStrategyBase" in [b.__name__ for b in AdxAtrMomentumStrategy.__bases__]
     assert "HourlyStrategyBase" in [b.__name__ for b in TrendPullbackStrategy.__bases__]
-    assert "_compute_quantity" not in MomentumLSBaseStrategy.__dict__
     assert "_compute_quantity" not in AdxAtrMomentumStrategy.__dict__
     assert "_compute_quantity" not in TrendPullbackStrategy.__dict__
 

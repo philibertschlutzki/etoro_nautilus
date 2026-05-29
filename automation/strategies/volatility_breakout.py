@@ -32,6 +32,7 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
     def on_start(self):
         super().on_start()
         self._log.info(f"Starte Breakout Pump Rider auf {self.instrument_id}")
+        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
@@ -127,4 +128,5 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
+        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)

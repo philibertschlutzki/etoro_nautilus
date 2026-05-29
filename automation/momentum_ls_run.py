@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 
 from nautilus_trader.config import TradingNodeConfig, LoggingConfig
 from nautilus_trader.live.node import TradingNode
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.data import BarType
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -39,13 +41,87 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Registry for strategies (Only Momentum-LS strategies)
-STRATEGY_REGISTRY = {
-    "MomentumLSSmaStrategy": ("automation.strategies.momentum_ls_sma", "MomentumLSSmaStrategy", "MomentumLSSmaConfig"),
-    # As an example we mapped SMA. To use other strategies they should be migrated to inherit MomentumLSBaseStrategy first.
-    # In a full deployment, all strategies from Phase 3 would be ported. Here we map any winner to MomentumLSSmaStrategy
-    # to demonstrate the wiring (as per requirements, we only created momentum_ls_sma.py as proof of concept in Phase 4).
-}
+def _build_strategy_registry(strategies_cfg_path: str) -> dict[str, tuple[str, str, str]]:
+    """Baut {strategy_class: (module, class, config_class)} aus strategies.json (active=true)."""
+    with open(strategies_cfg_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    registry: dict[str, tuple[str, str, str]] = {}
+    for s in data.get("strategies", []):
+        if s.get("active", True) is not False:
+            registry[s["strategy_class"]] = (
+                s["strategy_module"], s["strategy_class"], s["config_class"]
+            )
+    return registry
+
+def _load_strategy_defaults(defaults_cfg_path: str) -> dict[str, dict]:
+    with open(defaults_cfg_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
+def _build_bots_config(
+    universe_data: dict,
+    tournament_data: dict,
+    registry: dict[str, tuple[str, str, str]],
+    defaults: dict[str, dict],
+    strategies_raw: list[dict],
+    symbol_to_etoro_id: dict[str, str]
+) -> tuple[list[str], list[dict]]:
+    """Mappt Tournament-Gewinner pro Symbol auf bot_spec-Dicts.
+    Reine Funktion ohne I/O / Logging-Seiteneffekte (für Unit-Tests).
+    Symbole ohne registrierten Gewinner werden übersprungen (kein SMA-Fallback).
+    """
+    per_symbol_winners = tournament_data.get("per_symbol_winners", {})
+    active_symbols = []
+    bots_config = []
+
+    for uni_obj in universe_data.get("universe", []):
+        symbol = uni_obj.get("symbol")
+        if not symbol:
+            continue
+
+        winner = per_symbol_winners.get(symbol)
+        if not winner:
+            continue
+
+        strat_class_name = winner["strategy"]
+        etoro_id = symbol_to_etoro_id.get(symbol)
+
+        if not etoro_id:
+            continue
+
+        if strat_class_name not in registry:
+            continue
+
+        # Merge params
+        strat_defaults = defaults.get(strat_class_name, {})
+        strat_override = {}
+        for s in strategies_raw:
+            if s.get("strategy_class") == strat_class_name:
+                strat_override = s.get("params", {})
+                break
+
+        merged_params = {**strat_defaults, **strat_override}
+
+        # Remove trade_amount_usd
+        if "trade_amount_usd" in merged_params:
+            del merged_params["trade_amount_usd"]
+
+        bot_spec = {
+            "strategy_class": strat_class_name,
+            "etoro_id": etoro_id,
+            "symbol": symbol,
+            "bar_type": f"{symbol}-1-HOUR-MID-INTERNAL",
+            "params": merged_params
+        }
+
+        if "max_open_positions" in merged_params:
+            bot_spec["max_open_positions"] = merged_params["max_open_positions"]
+            del merged_params["max_open_positions"]
+
+        active_symbols.append(symbol)
+        bots_config.append(bot_spec)
+
+    return active_symbols, bots_config
 
 def main():
     parser = argparse.ArgumentParser()
@@ -84,41 +160,41 @@ def main():
     if (datetime.now(timezone.utc) - fetched_at).total_seconds() > 24 * 3600:
         logger.warning(f"Universe data is stale (fetched_at > 24 hours ago: {fetched_at})")
 
+    # Load configuration files
+    project_root = Path(__file__).resolve().parent
+    strategies_cfg_path = project_root / "config" / "strategies.json"
+    defaults_cfg_path = project_root / "config" / "strategy_defaults.json"
+
+    registry = _build_strategy_registry(str(strategies_cfg_path))
+    defaults = _load_strategy_defaults(str(defaults_cfg_path))
+
+    with open(strategies_cfg_path, "r", encoding="utf-8") as f:
+        strategies_raw = json.load(f).get("strategies", [])
+
     # Reverse lookup for etoro_ids
     symbol_to_etoro_id = {v["symbol"]: k for k, v in ETORO_INSTRUMENTS.items() if isinstance(v, dict) and "symbol" in v}
 
+    active_symbols, bots_config = _build_bots_config(
+        universe_data,
+        tournament_data,
+        registry,
+        defaults,
+        strategies_raw,
+        symbol_to_etoro_id
+    )
+
+    # Log skipped ones (to mimic the original behavior)
     per_symbol_winners = tournament_data.get("per_symbol_winners", {})
-
-    active_symbols = []
-    bots_config = []
-
     for uni_obj in universe_data.get("universe", []):
         symbol = uni_obj.get("symbol")
-        if not symbol:
-            continue
-
-        winner = per_symbol_winners.get(symbol)
-        if not winner:
-            logger.warning(f"No tournament winner for {symbol}. Skipping.")
-            continue
-
-        strat_class_name = winner["strategy"]
-        etoro_id = symbol_to_etoro_id.get(symbol)
-
-        if not etoro_id:
-            logger.warning(f"Could not resolve etoro_id for {symbol}. Skipping.")
-            continue
-
-        active_symbols.append(symbol)
-        bots_config.append({
-            "strategy_class": "MomentumLSSmaStrategy", # Using the PoC strategy for all winners as required by the spec constraints
-            "original_winner_class": strat_class_name,
-            "etoro_id": etoro_id,
-            "symbol": symbol,
-            "bar_type": f"{symbol}-1-MINUTE-MID-INTERNAL",
-            "params": {"sma_period": 5},
-            "max_open_positions": 1
-        })
+        if symbol:
+            winner = per_symbol_winners.get(symbol)
+            if not winner:
+                logger.warning(f"No tournament winner for {symbol}. Skipping.")
+            elif not symbol_to_etoro_id.get(symbol):
+                logger.warning(f"Could not resolve etoro_id for {symbol}. Skipping.")
+            elif winner["strategy"] not in registry:
+                logger.warning(f"Winner strategy {winner['strategy']} not in active registry for {symbol}. Skipping.")
 
     if not active_symbols:
         logger.error("No valid symbols to trade after cross-referencing universe and tournament.")
@@ -166,31 +242,29 @@ def main():
     node.add_exec_client_factory("ETORO", EToroLiveExecClientFactory)
 
     for idx, bot_spec in enumerate(bots_config):
-        strategy_class_name = bot_spec.get("strategy_class")
+        strat_class_name = bot_spec.get("strategy_class")
 
-        if strategy_class_name in STRATEGY_REGISTRY:
-            module_name, class_name, config_name = STRATEGY_REGISTRY[strategy_class_name]
-            try:
-                module = importlib.import_module(module_name)
-                StrategyClass = getattr(module, class_name)
-                ConfigClass = getattr(module, config_name)
+        module_name, class_name, config_name = registry[strat_class_name]
+        try:
+            module = importlib.import_module(module_name)
+            StrategyClass = getattr(module, class_name)
+            ConfigClass = getattr(module, config_name)
 
-                strat_config = ConfigClass(
-                    strategy_id=f"MLS_{strategy_class_name}_{bot_spec['symbol']}_{idx}",
-                    instrument_id=bot_spec["symbol"],
-                    bar_type=bot_spec["bar_type"],
-                    max_open_positions=bot_spec.get("max_open_positions", 1),
-                    **bot_spec["params"]
-                )
+            cfg_kwargs = dict(
+                strategy_id=f"MLS_{strat_class_name}_{bot_spec['symbol']}_{idx}",
+                instrument_id=InstrumentId.from_str(bot_spec["symbol"]),
+                bar_type=BarType.from_str(bot_spec["bar_type"]),
+                **bot_spec["params"],
+            )
+            if "max_open_positions" in bot_spec:
+                cfg_kwargs["max_open_positions"] = bot_spec["max_open_positions"]
 
-                # Momentum-LS specific signature
-                strategy = StrategyClass(config=strat_config, allocator=allocator)
-                node.trader.add_strategy(strategy)
-                logger.info(f"Strategie registriert: {strat_config.strategy_id} (Winner was {bot_spec['original_winner_class']})")
-            except Exception as e:
-                logger.error(f"FEHLER beim Laden der Strategie {strategy_class_name}: {e}")
-        else:
-            logger.warning(f"Unbekannte Strategieklasse in Config ignoriert: {strategy_class_name}")
+            strat_config = ConfigClass(**cfg_kwargs)
+            strategy = StrategyClass(config=strat_config, allocator=allocator)
+            node.trader.add_strategy(strategy)
+            logger.info(f"Strategie registriert: {strat_config.strategy_id} (Winner: {strat_class_name})")
+        except Exception as e:
+            logger.error(f"FEHLER beim Laden der Strategie {strat_class_name}: {e}")
 
     node.build()
     logger.info(f"Starte Nautilus Momentum-LS Orchestrator mit {len(active_symbols)} Instrumenten...")
