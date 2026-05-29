@@ -95,3 +95,67 @@ def test_build_bots_config():
     assert params["keltner_period"] == 20  # Overriden from raw
     assert bot_spec["max_open_positions"] == 2
     assert "max_open_positions" not in params # Should be extracted
+
+from automation.momentum_ls_run import _instantiate_strategy
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.data import BarType
+from automation.momentum_ls_allocator import MomentumLSAllocator
+from automation.strategies.sma_crossover import SmaCrossoverStrategy
+from automation.strategies.mean_reversion import MeanReversionStrategy
+
+def test_strategy_instantiation():
+    registry = {
+        "SmaCrossoverStrategy": ("automation.strategies.sma_crossover", "SmaCrossoverStrategy", "SmaCrossoverConfig"),
+        "MeanReversionStrategy": ("automation.strategies.mean_reversion", "MeanReversionStrategy", "MeanReversionConfig")
+    }
+
+    allocator = MomentumLSAllocator(["AAPL.ETORO", "TSLA.ETORO"])
+
+    # Test SMA
+    sma_spec = {
+        "strategy_class": "SmaCrossoverStrategy",
+        "symbol": "AAPL.ETORO",
+        "bar_type": "AAPL.ETORO-1-HOUR-MID-INTERNAL",
+        "params": {"sma_period": 5},
+        "max_open_positions": 1
+    }
+    sma_strategy = _instantiate_strategy(sma_spec, registry, allocator, 0)
+    assert isinstance(sma_strategy, SmaCrossoverStrategy)
+    assert sma_strategy.config.instrument_id == "AAPL.ETORO"
+    assert sma_strategy.config.bar_type == "AAPL.ETORO-1-HOUR-MID-INTERNAL"
+    assert sma_strategy.instrument_id == InstrumentId.from_str("AAPL.ETORO")
+    assert sma_strategy.bar_type == BarType.from_str("AAPL.ETORO-1-HOUR-MID-INTERNAL")
+    assert sma_strategy.allocator is allocator
+
+    # Test Mean Reversion
+    mr_spec = {
+        "strategy_class": "MeanReversionStrategy",
+        "symbol": "TSLA.ETORO",
+        "bar_type": "TSLA.ETORO-1-HOUR-MID-INTERNAL",
+        "params": {"keltner_period": 10},
+        "max_open_positions": 2
+    }
+    mr_strategy = _instantiate_strategy(mr_spec, registry, allocator, 1)
+    assert isinstance(mr_strategy, MeanReversionStrategy)
+    assert mr_strategy.config.instrument_id == "TSLA.ETORO"
+    assert mr_strategy.config.bar_type == "TSLA.ETORO-1-HOUR-MID-INTERNAL"
+    assert mr_strategy.instrument_id == InstrumentId.from_str("TSLA.ETORO")
+    assert mr_strategy.bar_type == BarType.from_str("TSLA.ETORO-1-HOUR-MID-INTERNAL")
+    assert mr_strategy.allocator is allocator
+
+def test_strategy_instantiation_fails_with_core_objects():
+    registry = {
+        "SmaCrossoverStrategy": ("automation.strategies.sma_crossover", "SmaCrossoverStrategy", "SmaCrossoverConfig")
+    }
+    allocator = MomentumLSAllocator(["AAPL.ETORO"])
+
+    invalid_spec = {
+        "strategy_class": "SmaCrossoverStrategy",
+        "symbol": InstrumentId.from_str("AAPL.ETORO"), # Intentional typo to trigger failure if object passed
+        "bar_type": BarType.from_str("AAPL.ETORO-1-HOUR-MID-INTERNAL"),
+        "params": {"sma_period": 5}
+    }
+
+    # Passing Core Objects should fail when creating ConfigClass because ConfigClass expects strings for validation
+    with pytest.raises(Exception):
+        _instantiate_strategy(invalid_spec, registry, allocator, 0)

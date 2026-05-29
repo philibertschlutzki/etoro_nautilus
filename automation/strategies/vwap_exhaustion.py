@@ -24,6 +24,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class VwapExhaustionConfig(StrategyConfig, frozen=True):
@@ -39,8 +40,8 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
     VWAP Exhaustion (price-deviation only) with ATR Trailing Stop and 48h Time-Exit.
     """
 
-    def __init__(self, config: VwapExhaustionConfig):
-        super().__init__(config)
+    def __init__(self, config: VwapExhaustionConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
 

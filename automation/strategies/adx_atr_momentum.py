@@ -6,6 +6,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.momentum_ls_allocator import MomentumLSAllocator
 
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.indicators import ExponentialMovingAverage
@@ -29,8 +30,8 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
     ATR (Trailing Stop). Mit echter Orderausführung.
     """
 
-    def __init__(self, config: AdxAtrMomentumConfig):
-        super().__init__(config)
+    def __init__(self, config: AdxAtrMomentumConfig, allocator: MomentumLSAllocator | None = None):
+        super().__init__(config, allocator)
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
 

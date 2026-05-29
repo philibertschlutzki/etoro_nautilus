@@ -12,8 +12,6 @@ from dotenv import load_dotenv
 
 from nautilus_trader.config import TradingNodeConfig, LoggingConfig
 from nautilus_trader.live.node import TradingNode
-from nautilus_trader.model.identifiers import InstrumentId
-from nautilus_trader.model.data import BarType
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -122,6 +120,29 @@ def _build_bots_config(
         bots_config.append(bot_spec)
 
     return active_symbols, bots_config
+
+def _instantiate_strategy(bot_spec: dict, registry: dict[str, tuple[str, str, str]], allocator: MomentumLSAllocator, idx: int):
+    import importlib
+    strat_class_name = bot_spec.get("strategy_class")
+    if strat_class_name not in registry:
+        raise ValueError(f"Unknown strategy class {strat_class_name}")
+
+    module_name, class_name, config_name = registry[strat_class_name]
+    module = importlib.import_module(module_name)
+    StrategyClass = getattr(module, class_name)
+    ConfigClass = getattr(module, config_name)
+
+    cfg_kwargs = dict(
+        strategy_id=f"MLS_{strat_class_name}_{bot_spec['symbol']}_{idx}",
+        instrument_id=bot_spec["symbol"],
+        bar_type=bot_spec["bar_type"],
+        **bot_spec["params"],
+    )
+    if "max_open_positions" in bot_spec:
+        cfg_kwargs["max_open_positions"] = bot_spec["max_open_positions"]
+
+    strat_config = ConfigClass(**cfg_kwargs)
+    return StrategyClass(config=strat_config, allocator=allocator)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -243,26 +264,10 @@ def main():
 
     for idx, bot_spec in enumerate(bots_config):
         strat_class_name = bot_spec.get("strategy_class")
-
-        module_name, class_name, config_name = registry[strat_class_name]
         try:
-            module = importlib.import_module(module_name)
-            StrategyClass = getattr(module, class_name)
-            ConfigClass = getattr(module, config_name)
-
-            cfg_kwargs = dict(
-                strategy_id=f"MLS_{strat_class_name}_{bot_spec['symbol']}_{idx}",
-                instrument_id=InstrumentId.from_str(bot_spec["symbol"]),
-                bar_type=BarType.from_str(bot_spec["bar_type"]),
-                **bot_spec["params"],
-            )
-            if "max_open_positions" in bot_spec:
-                cfg_kwargs["max_open_positions"] = bot_spec["max_open_positions"]
-
-            strat_config = ConfigClass(**cfg_kwargs)
-            strategy = StrategyClass(config=strat_config, allocator=allocator)
+            strategy = _instantiate_strategy(bot_spec, registry, allocator, idx)
             node.trader.add_strategy(strategy)
-            logger.info(f"Strategie registriert: {strat_config.strategy_id} (Winner: {strat_class_name})")
+            logger.info(f"Strategie registriert: {strategy.config.strategy_id} (Winner: {strat_class_name})")
         except Exception as e:
             logger.error(f"FEHLER beim Laden der Strategie {strat_class_name}: {e}")
 

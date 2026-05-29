@@ -229,9 +229,9 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 | SHIB/PEPE | 8 | 8 |
 | Crypto (BTC, ETH, …) | 2 | 8 |
 | Forex/Commodity (NATGAS, PALL, …) | 5 | 5 |
-| **Equity (Default)** | **2** | **0** |
+| **Equity (Default)** | **2** | **2** |
 
-**Das `size_precision=2` für Equities behebt vorherige Fehler (siehe Pitfall #23)** (Pitfall #14, #20). eToro handelt Aktien als fractional CFDs; ein `size_precision` von 0 erzwingt ganzzahlige Order-Größen und unterdrückt bei Aktienkursen > `trade_amount_usd` jeden Trade. Die `instrument_map.json` persistiert ebenfalls `size_precision: 2` für alle Equities.
+Früher erzwang size_precision=0 ganzzahlige Order-Größen und unterdrückte Trades bei Aktienkursen > trade_amount_usd; seit Pitfall #23 schreiben utils._fallback_precisions und instrument_map.json durchgängig size_precision=2 für Equities.
 
 ---
 
@@ -435,6 +435,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-05-29 | **Hotfix PR #64:** Config-Felder als Strings übergeben (Crash-Fix), §8-Tabelle/Absatz auf size_precision=2 vervollständigt, Instanziierungs-Smoke-Test ergänzt. | `automation/momentum_ls_run.py`, `automation/tests/test_live_strategy_mapping.py`, `AGENTS.md`, diverse Strategien |
 | 2026-05-29 | **Fix Pitfall #22 (Live-Strategie-Reduktion)** — Dynamische Registry in `momentum_ls_run.py`, Allocator in `HourlyStrategyBase`, PoC-Dateien entfernt, 1h-bar_type (MID), QuoteTick-Subscriptions in allen Strategien ergänzt. Dokumentations-Korrekturen (C2-C6). | `automation/momentum_ls_run.py`, `automation/strategies/hourly_strategy_base.py`, `automation/strategies/sma_crossover.py`, diverse Strategien, AGENTS.md, Test_report.md |
 | 2026-05-29 | **Synchronisation von Code und Dokumentation:** Auflösung der `safe_compute_quantity`-Diskrepanz (Pitfall #21), Korrektur des Regenerations-Status (Pitfall #23) und Nachtrag der Fixes für Deferred Flush (#25) sowie Try/Finally-Cleanup (#26). | `automation/AGENTS.md`, `automation/Test_report.md`, `automation/fractional_trading.py` |
 | 2026-05-28 | **Fix size_precision Bug Chain (#14, #20, #21, #23)** — Angepasst an eToro by-amount Semantik (size_precision=2 für Equities), konsolidierte quantity Berechnung auf make_qty in HourlyStrategyBase, tote Methode safe_compute_quantity entfernt. (Pitfall #14 war bereits teilweise behoben, Ticks normalisiert). Bestehende CFD-Parquet-Metadaten müssen später nach einem separaten Task regeneriert werden. | `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/backtest_runner.py`, `automation/strategies/hourly_strategy_base.py`, `automation/strategies/momentum_ls_base.py`, `automation/strategies/adx_atr_momentum.py`, `automation/strategies/trend_pullback.py`, `automation/fractional_trading.py` |
