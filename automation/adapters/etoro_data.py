@@ -18,8 +18,8 @@ from nautilus_trader.model.identifiers import ClientId, InstrumentId, Venue
 from nautilus_trader.model.instruments import Equity
 from nautilus_trader.model.objects import Price, Quantity
 
-from archive.adapters.instrument_map import ETORO_INSTRUMENTS
-from archive.adapters.instrument_utils import get_size_precision
+from automation.adapters.instrument_map import ETORO_INSTRUMENTS
+from automation.adapters.instrument_utils import get_size_precision
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 

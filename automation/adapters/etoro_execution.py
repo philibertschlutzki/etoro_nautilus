@@ -49,9 +49,9 @@ from nautilus_trader.model.identifiers import (
 )
 from nautilus_trader.model.objects import AccountBalance, Money, Price
 
-from archive.adapters.etoro_rate_limiter import _RateLimiter
-from archive.adapters.etoro_state_manager import _StateManager
-from archive.adapters.instrument_map import ETORO_INSTRUMENTS
+from automation.adapters.etoro_rate_limiter import _RateLimiter
+from automation.adapters.etoro_state_manager import _StateManager
+from automation.adapters.instrument_map import ETORO_INSTRUMENTS
 
 _MAX_CONNECT_ATTEMPTS = 5
 _CONNECT_TIMEOUT_S = 30

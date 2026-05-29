@@ -107,6 +107,8 @@ from collections import deque
 
 import pandas as pd
 import pyarrow.parquet as pq
+import tempfile
+import shutil
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -482,6 +484,14 @@ def infer_precision_from_ticks(ticks: list) -> int:
     return int(max(precisions)) if precisions else 2
 
 
+def _normalize_size_precision(sp: int | None) -> int:
+    """
+    Normalizes size_precision: 0 or None -> fallback 8, otherwise keep it.
+    This guarantees consistent fractional order behavior for Equity CFDs.
+    """
+    return sp if (sp is not None and sp > 0) else 8
+
+
 def create_mock_instrument(
     instrument_id_str: str,
     price_precision: int = 2,
@@ -498,11 +508,11 @@ def create_mock_instrument(
     Args:
         instrument_id_str: Nautilus-Instrument-ID (z.B. "ETH.ETORO")
         price_precision:   Preis-Precision (Standard: 2)
-        size_precision:    Ignoriert — immer 8 für fractional support.
+        size_precision:    0/None -> fallback 8, sonst beibehalten.
         catalog_path:      Ignoriert — kein Parquet-Lookup mehr nötig.
 
     Returns:
-        Cfd-Instrument mit size_precision=8 (fractional, eToro by-amount semantics).
+        Cfd-Instrument mit korrigierter size_precision (fractional, eToro by-amount semantics).
     """
     inst_id = InstrumentId.from_str(instrument_id_str)
     price_increment_val = round(10 ** (-price_precision), price_precision)
@@ -510,7 +520,7 @@ def create_mock_instrument(
     # size_precision=0 stems from Parquet metadata that is incorrect for eToro
     # equity-CFDs (by-amount/fractional semantics). Treat 0 (and None) as "use
     # fractional default". Positive values (e.g. 2/6 for forex/crypto) are honored.
-    sp = size_precision if (size_precision is not None and size_precision > 0) else 8
+    sp = _normalize_size_precision(size_precision)
     size_increment_val = round(10 ** (-sp), sp) if sp > 0 else 1.0
 
     return Cfd(
@@ -810,6 +820,50 @@ def print_tournament_table(
 # Worker-Prozess
 # ---------------------------------------------------------------------------
 
+def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str) -> str | None:
+    """
+    Reads a Parquet file for an instrument, normalizes size_precision > 0 else 8,
+    and returns a path to a temporary catalog directory if modifications were needed.
+    """
+    original_path = Path(original_catalog_path) / "data" / "quote_tick" / instrument_id
+    if not original_path.exists():
+        return None
+
+    parquet_files = list(original_path.glob("*.parquet"))
+    if not parquet_files:
+        return None
+
+    first_file = parquet_files[0]
+    table = pq.read_table(str(first_file))
+    meta = table.schema.metadata or {}
+
+    # Extract existing precision from bytes
+    val = meta.get(b"size_precision", b"0")
+    sp_parquet = int(val.decode("utf-8") if isinstance(val, bytes) else val)
+
+    # Apply the exact same normalization logic
+    normalized_sp = _normalize_size_precision(sp_parquet)
+
+    # If it matches, no I/O needed; return None
+    if normalized_sp == sp_parquet:
+        return None
+
+    # Inject the normalized precision back into the schema
+    meta[b"size_precision"] = str(normalized_sp).encode("utf-8")
+
+    # Write to a temporary catalog directory
+    temp_catalog = tempfile.mkdtemp(prefix="nautilus_temp_catalog_")
+    target_path = Path(temp_catalog) / "data" / "quote_tick" / instrument_id
+    target_path.mkdir(parents=True, exist_ok=True)
+
+    for p_file in parquet_files:
+        t = pq.read_table(str(p_file))
+        t = t.replace_schema_metadata(meta)
+        pq.write_table(t, str(target_path / p_file.name))
+
+    return temp_catalog
+
+
 def run_single_backtest_worker(
     inst_id_str: str,
     bar_type: str,
@@ -841,152 +895,154 @@ def run_single_backtest_worker(
 
     wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
-    # --- Ticks laden ---
+    temp_catalog_dir = None
     try:
-        catalog = ParquetDataCatalog(catalog_path)
-        ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
-    except RuntimeError as e:
-        wlog_err(f"Tick-Ladefehler: {e}", exc=True)
-        return {}
+        # --- Ticks laden (mit Schema Injection falls nötig) ---
+        try:
+            temp_catalog_dir = _get_normalized_catalog_path(catalog_path, inst_id_str)
+            effective_catalog_path = temp_catalog_dir if temp_catalog_dir else catalog_path
 
-    if not ticks:
-        wlog(f"   ⚠️ 0 Ticks im Zeitraum — überspringe.")
-        return {}
+            catalog = ParquetDataCatalog(effective_catalog_path)
+            ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+        except RuntimeError as e:
+            wlog_err(f"Tick-Ladefehler: {e}", exc=True)
+            return {}
 
-    wlog(f"   📥 {len(ticks)} Ticks geladen.")
+        if not ticks:
+            wlog(f"   ⚠️ 0 Ticks im Zeitraum — überspringe.")
+            return {}
 
-    # --- Engine-Setup ---
-    try:
-        # Task 3: price_precision aus Ticks, size_precision aus Parquet-Metadaten
-        price_precision = infer_precision_from_ticks(ticks)
-        pp_parquet, sp_parquet = read_precisions_from_parquet(catalog_path, inst_id_str)
-        # Verwende Parquet-Precision als Fallback wenn Ticks keine Precision liefern
-        if price_precision == 2 and pp_parquet != 2:
-            price_precision = pp_parquet
-        size_precision = sp_parquet
+        wlog(f"   📥 {len(ticks)} Ticks geladen.")
+
+        # --- Engine-Setup ---
+        try:
+            # Task 3: price_precision aus Ticks, size_precision aus Parquet-Metadaten
+            price_precision = infer_precision_from_ticks(ticks)
+            pp_parquet, sp_parquet = read_precisions_from_parquet(catalog_path, inst_id_str)
+            # Verwende Parquet-Precision als Fallback wenn Ticks keine Precision liefern
+            if price_precision == 2 and pp_parquet != 2:
+                price_precision = pp_parquet
+
+            # Normalize size precision for both ticks AND instrument to prevent mismatch
+            size_precision = _normalize_size_precision(sp_parquet)
+
+            wlog(
+                f"   🔬 Precisions: price={price_precision} (ticks), "
+                f"size={size_precision} (parquet meta, normalized)"
+            )
+
+            engine_config = BacktestEngineConfig(
+                trader_id=f"BT-{inst_id_str.replace('.', '_')}-{strategy_class_name}"
+            )
+            engine = BacktestEngine(config=engine_config)
+
+            # Task 4: Spread-Modeling — NautilusTrader füllt Buy@Ask, Sell@Bid per Default
+            engine.add_venue(
+                venue=Venue("ETORO"),
+                oms_type=OmsType.NETTING,
+                account_type=AccountType.MARGIN,
+                base_currency=USD,
+                starting_balances=[Money(start_capital, USD)],
+            )
+
+            # Task 3 Fix: Mock-Instrument mit korrekter size_precision aus Parquet-Metadaten
+            mock_inst = create_mock_instrument(
+                inst_id_str, price_precision, size_precision=size_precision
+            )
+            engine.add_instrument(mock_inst)
+            engine.add_data(ticks)
+
+        except Exception as e:
+            wlog_err(f"Engine-Setup fehlgeschlagen: {e}", exc=True)
+            return {}
+
+        # --- Strategie konfigurieren ---
+        try:
+            module    = importlib.import_module(module_name)
+            StratCls  = getattr(module, strategy_class_name)
+            ConfigCls = getattr(module, config_class_name)
+
+            params = strat.get("params", {}).copy()
+            params["instrument_id"] = inst_id_str
+            params["bar_type"]      = bar_type
+
+            # Fix: trade_amount_usd auf 15% des Startkapitals setzen
+            try:
+                test_params = params.copy()
+                test_params["trade_amount_usd"] = 1500.0
+                config = ConfigCls(**test_params)
+                params["trade_amount_usd"] = max(500.0, start_capital * 0.15)
+            except Exception:
+                pass
+
+            config = ConfigCls(**params)
+            strategy = StratCls(config=config)
+            engine.add_strategy(strategy)
+        except Exception as e:
+            wlog_err(f"Strategie-Setup fehlgeschlagen: {e}", exc=True)
+            return {}
+
+        # --- Backtest ausführen ---
+        try:
+            engine.run()
+        except Exception as e:
+            wlog_err(f"Backtest gecrasht: {e}", exc=True)
+            return {}
+
+        # --- Metriken extrahieren ---
+        metrics = extract_metrics(engine, start_capital, log_fn=wlog)
 
         wlog(
-            f"   🔬 Precisions: price={price_precision} (ticks), "
-            f"size={size_precision} (parquet meta)"
+            f"   📊 Trades={metrics['total_trades']} | "
+            f"WinRate={metrics['win_rate']:.1%} | "
+            f"PF={metrics['profit_factor']:.2f} | "
+            f"Sortino={metrics['sortino_ratio']:.2f} | "
+            f"Return={metrics['total_return']:.2f}%"
         )
 
-        engine_config = BacktestEngineConfig(
-            trader_id=f"BT-{inst_id_str.replace('.', '_')}-{strategy_class_name}"
-        )
-        engine = BacktestEngine(config=engine_config)
-
-        # Task 4: Spread-Modeling — NautilusTrader füllt Buy@Ask, Sell@Bid per Default
-        # Dies ist das korrekte Verhalten bei QuoteTick-Daten (kein extra FillModel nötig).
-        # spread_modeling=true in backtest.json dokumentiert dieses Verhalten explizit.
-        engine.add_venue(
-            venue=Venue("ETORO"),
-            oms_type=OmsType.NETTING,
-            account_type=AccountType.MARGIN,
-            base_currency=USD,
-            starting_balances=[Money(start_capital, USD)],
-        )
-
-        # Task 3 Fix: Mock-Instrument mit korrekter size_precision aus Parquet-Metadaten
-        mock_inst = create_mock_instrument(
-            inst_id_str, price_precision, size_precision=size_precision
-        )
-        engine.add_instrument(mock_inst)
-        engine.add_data(ticks)
-
-    except Exception as e:
-        wlog_err(f"Engine-Setup fehlgeschlagen: {e}", exc=True)
-        return {}
-
-    # --- Strategie konfigurieren ---
-    try:
-        module    = importlib.import_module(module_name)
-        StratCls  = getattr(module, strategy_class_name)
-        ConfigCls = getattr(module, config_class_name)
-
-        params = strat.get("params", {}).copy()
-        params["instrument_id"] = inst_id_str
-        params["bar_type"]      = bar_type
-
-        # Fix: trade_amount_usd auf 15% des Startkapitals setzen (min. $500)
-        # wenn der Wert fehlt oder zu klein ist.
-        try:
-            test_params = params.copy()
-            test_params["trade_amount_usd"] = 1500.0
-            ConfigCls(**test_params)
-            trade_usd = params.get("trade_amount_usd", 0)
-            if trade_usd <= 0 or trade_usd < 500.0:
-                params["trade_amount_usd"] = max(start_capital * 0.15, 500.0)
-        except Exception:
-            if "trade_amount_usd" in params and strat.get("params", {}).get("trade_amount_usd") is None:
-                params.pop("trade_amount_usd", None)
-
-        strategy_config = ConfigCls(**params)
-        strategy        = StratCls(config=strategy_config)
-        engine.add_strategy(strategy)
-
-    except Exception as e:
-        wlog_err(f"Strategie-Konfiguration fehlgeschlagen ({strategy_class_name}): {e}", exc=True)
-        return {}
-
-    # --- Backtest ausführen ---
-    try:
-        engine.run()
-    except Exception as e:
-        wlog_err(f"engine.run() fehlgeschlagen: {e}", exc=True)
-        return {}
-
-    # --- Offene Positionen prüfen ---
-    try:
-        open_pos = engine.cache.positions_open()
-        if open_pos:
-            wlog(f"   ⚠️ {len(open_pos)} Netting-Position am Ende noch aktiv.")
-    except Exception:
-        pass
-
-    # --- Metriken extrahieren ---
-    metrics = extract_metrics(engine, start_capital, log_fn=wlog)
-    wlog(
-        f"   📊 Trades={metrics['total_trades']} | "
-        f"WinRate={metrics['win_rate']:.1%} | "
-        f"PF={metrics['profit_factor']:.2f} | "
-        f"Sortino={metrics['sortino_ratio']:.2f} | "
-        f"MaxDD={metrics['max_drawdown']:.1%}"
-    )
-
-    # --- HTML-Report ---
-    run_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    if generate_html_report and metrics.get("profit_factor", 0.0) > 1.0:
-        report_path = os.path.join(
-            reports_dir,
-            f"tearsheet_{inst_id_str}_{strategy_class_name}_{run_ts}.html"
-        )
-        try:
-            create_tearsheet(engine=engine, output_path=report_path,
-                             title=f"Tearsheet {inst_id_str} — {strategy_class_name}")
-            wlog(f"   📈 Tearsheet: {report_path}")
-        except Exception as e:
-            wlog(f"   ⚠️ Tearsheet fehlgeschlagen ({e}), erstelle CSV...")
+        # --- Optional: HTML Tearsheet ---
+        if generate_html_report and metrics["total_trades"] > 0:
             try:
-                for name, df in [
-                    ("positions", engine.trader.generate_positions_report()),
-                    ("fills",     engine.trader.generate_order_fills_report()),
-                ]:
-                    if not df.empty:
-                        df.to_csv(os.path.join(
-                            reports_dir,
-                            f"{name}_{inst_id_str}_{strategy_class_name}_{run_ts}.csv"
-                        ))
-                wlog("   ✅ CSV gespeichert.")
-            except Exception as fe:
-                wlog_err(f"CSV-Fallback fehlgeschlagen: {fe}", exc=True)
+                name = inst_id_str.replace('.', '_')
+                run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    engine.dispose()
-    return {"symbol": inst_id_str, "strategy": strategy_class_name, "metrics": metrics}
+                # Use specific output path according to Task 5
+                report_path = os.path.join(
+                    reports_dir,
+                    f"{name}_{strategy_class_name}_{run_ts}.html"
+                )
+                create_tearsheet(
+                    engine.trader,
+                    title=f"Backtest {inst_id_str} | {strategy_class_name}",
+                    output_file=report_path
+                )
+                wlog(f"   📈 HTML-Report: {report_path}")
+            except Exception as e:
+                wlog_err(f"HTML-Generierung fehlgeschlagen: {e}", exc=True)
+                try:
+                    fills_df = engine.trader.generate_fills_report()
+                    if not fills_df.empty:
+                        fills_df.to_csv(
+                            os.path.join(
+                                reports_dir,
+                                f"{name}_{inst_id_str}_{strategy_class_name}_{run_ts}.csv"
+                            ))
+                    wlog("   ✅ CSV gespeichert.")
+                except Exception as fe:
+                    wlog_err(f"CSV-Fallback fehlgeschlagen: {fe}", exc=True)
+
+        engine.dispose()
+        return {"symbol": inst_id_str, "strategy": strategy_class_name, "metrics": metrics}
+    finally:
+        if temp_catalog_dir and os.path.exists(temp_catalog_dir):
+            import shutil
+            shutil.rmtree(temp_catalog_dir)
 
 
 # ---------------------------------------------------------------------------
 # Haupt-Einstiegspunkt
 # ---------------------------------------------------------------------------
+
 
 def run_backtest() -> None:
     parser = argparse.ArgumentParser(description="NautilusTrader Backtesting Engine")

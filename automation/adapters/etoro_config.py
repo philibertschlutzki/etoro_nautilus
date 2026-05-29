@@ -8,7 +8,7 @@ from nautilus_trader.live.config import LiveExecClientConfig
 from nautilus_trader.live.factories import LiveExecClientFactory
 
 if TYPE_CHECKING:
-    from archive.adapters.etoro_execution import EToroExecutionClient
+    from automation.adapters.etoro_execution import EToroExecutionClient
 
 class EToroExecClientConfig(LiveExecClientConfig, frozen=True, kw_only=True):
     api_key: str
@@ -29,7 +29,7 @@ class EToroLiveExecClientFactory(LiveExecClientFactory):
         clock: object,
         **kwargs: object,
     ) -> "EToroExecutionClient":
-        from archive.adapters.etoro_execution import EToroExecutionClient
+        from automation.adapters.etoro_execution import EToroExecutionClient
         return EToroExecutionClient(
             loop=loop,
             msgbus=msgbus,

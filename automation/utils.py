@@ -34,7 +34,7 @@ def _fallback_precisions(symbol: str) -> tuple[int, int]:
       1. SHIBxM / PEPExM (PEPE): price=8, size=8
       2. Bekannte Crypto-Symbole:  price=2, size=8
       3. Fractional Commodities:   price=5, size=5
-      4. Equity (Default):         price=2, size=0
+      4. Equity (Default):         price=2, size=2
 
     Args:
         symbol: Nautilus-Symbol (z.B. "ETH.ETORO") oder Basis-Symbol (z.B. "ETH")
