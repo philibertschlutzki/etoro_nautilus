@@ -156,7 +156,7 @@ Siehe Abschnitt 3. 5 Phasen, JSON-Events (`[JSON_EVENT] {...}`), RotatingFileHan
 Thread-safe. No-Interference-Regel: existiert eine offene Position für das Instrument, Allokation = `0.0`. Dynamisches Slicing: `account_balance / pending_signals`. Floor: < $11.00 → `0.0` (eToro-Mindestbetrag).
 
 ### 5.8 fractional_trading.py — By-Amount-Utilities
-`build_by_amount_payload()` (USD direkt, InstrumentId/IsBuy/InvestmentAmount/SL/TP), persistenter `size_increment`-Cache. **Hinweis:** `safe_compute_quantity` wird im aktuellen Code von keiner Strategie tatsächlich aufgerufen — siehe Pitfall #21.
+`build_by_amount_payload()` (USD direkt, InstrumentId/IsBuy/InvestmentAmount/SL/TP), persistenter `size_increment`-Cache.
 
 ### 5.9 log_manager.py — LLM-Logging
 `setup_bot_logging()`, `emit_execution_event()`, `emit_order_event()`. StructuredFormatter mit eingerückten Stacktraces.
@@ -347,7 +347,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ### 🟢 #21 — `safe_compute_quantity` ist toter Code
 **Symptom:** Die als Pitfall-#14-Fix gedachte Funktion in `fractional_trading.py` wird von keiner Strategie aufgerufen; der dokumentierte Schutz greift im Backtest nicht.
-**Fix:** Entweder Strategien auf `safe_compute_quantity` umstellen oder die Funktion entfernen und die Logik in `HourlyStrategyBase` konsolidieren (siehe #20).
+**Fix:** Die ungenutzte Funktion `safe_compute_quantity` wurde vollständig aus der Codebasis und den Tests entfernt. Die Logik ist nun alleinig in `HourlyStrategyBase.make_qty` konsolidiert (siehe #20).
 **Betroffen:** `automation/fractional_trading.py`.
 
 ### 🟢 #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
@@ -439,4 +439,4 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 | 2026-05-28 | size_precision=8 Fix via PyArrow Schema-Injection implementiert (Pitfall #14). | `automation/backtest_runner.py` |
 ---
 
-*Zuletzt aktualisiert: 2026-05-28. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-05-29. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
