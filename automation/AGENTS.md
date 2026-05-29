@@ -64,7 +64,7 @@ automation/
 │   ├── instrument_map.json     # {etoro_id: {symbol, asset_class, price/size_precision}}
 │   ├── strategies.json         # Aktive Strategie-Liste mit active-Flag
 │   ├── strategy_defaults.json  # Per-Strategie-Defaults (1h-Candle-optimiert, trade_amount_usd=1500)
-│   └── tournament.json         # Selektionskriterien (min_trades=4, min_sortino=0.3, min_pf=1.1)
+│   └── tournament.json         # Selektionskriterien (min_trades=20, min_sortino=0.3, min_pf=1.1)
 └── strategies/
     ├── __init__.py
     ├── hourly_strategy_base.py # Basisklasse: ATR-Trailing-Stop (1.5×) + 48-Bar-Time-Exit
@@ -474,6 +474,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 | 2026-05-27 | `automation/` als eigenständiges Produkt etabliert — kein adapters/-Import (Ausnahme momentum_ls_run.py). | alle automation/*.py |
 
 | 2026-05-28 | size_precision=8 Fix via PyArrow Schema-Injection implementiert (Pitfall #14). | `automation/backtest_runner.py` |
+| 2026-05-29 | **Issue #72 (`min_trades` Erhöhung):** Die Schwelle für `min_trades` in der Tournament-Config und den Default-Werten wurde von 4 auf 20 angehoben, um robustere Ratios (Sortino, Profit-Factor) auf Basis einer statistisch tragfähigeren Stichprobe zu gewährleisten. | `automation/config/tournament.json`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
 ---
 
 *Zuletzt aktualisiert: 2026-05-29. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
