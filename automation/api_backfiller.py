@@ -82,34 +82,13 @@ except ImportError:
 
 
 # ─── FixedSizeBinary(16) Encoding ────────────────────────────────────────────
-# Nautilus speichert Price/Quantity als:
-#   raw_int64 = round(value * 10^precision)
-#   Serialisiert als: 8 Byte Little-Endian int64 + 8 Null-Bytes = 16 Bytes gesamt.
-#
-# Wichtig: Dies ist das EXAKT gleiche Format das Nautilus' Rust-Backend
-# beim Lesen aus dem Parquet-Katalog erwartet.
-
-def _encode_fsb16(value: float, precision: int) -> bytes:
-    """Kodiert einen Dezimalwert als Nautilus FixedSizeBinary(16).
-
-    Args:
-        value:     Dezimalwert (z.B. Preis oder Menge).
-        precision: Anzahl der Nachkommastellen.
-
-    Returns:
-        16 Bytes: 8-Byte LE int64 (skalierter Wert) + 8 Null-Bytes.
-    """
-    raw = round(value * (10 ** precision))
-    # int64-Bereich sicherstellen
-    raw = max(-(2 ** 63), min(2 ** 63 - 1, raw))
-    return struct.pack("<q", raw) + b"\x00" * 8
-
-
-def _encode_qty_fsb16(qty: float, precision: int) -> bytes:
-    """Kodiert eine Menge als FixedSizeBinary(16). Mengen sind immer ≥ 0."""
-    raw = round(qty * (10 ** precision))
-    raw = max(0, min(2 ** 63 - 1, raw))
-    return struct.pack("<q", raw) + b"\x00" * 8
+try:
+    from automation._serde import encode_price_fsb16, encode_qty_fsb16
+except ImportError:
+    import sys as _sys
+    from pathlib import Path
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from automation._serde import encode_price_fsb16, encode_qty_fsb16
 
 
 # ─── Dynamische Precision via eToro API ──────────────────────────────────────
@@ -317,7 +296,7 @@ def _candles_to_arrow_table(
     ts_inits:   list[int]   = []
 
     # Menge = 1 Lot (Candle-Daten haben keine separaten Volumen-Spalten)
-    size_bytes = _encode_qty_fsb16(1.0, size_prec)
+    size_bytes = encode_qty_fsb16(1.0, size_prec)
 
     for c in candles:
         try:
@@ -331,6 +310,7 @@ def _candles_to_arrow_table(
             )
             low_val  = c_low.get("low")  or c_low.get("l")
             high_val = c_low.get("high") or c_low.get("h")
+            close_val = c_low.get("close") or c_low.get("c")
 
             if not date_val or low_val is None or high_val is None:
                 continue
@@ -340,6 +320,8 @@ def _candles_to_arrow_table(
 
             if low <= 0 or high <= 0:
                 continue
+
+            price = float(close_val) if close_val is not None else (low + high) / 2.0
 
             # Timestamp parsen
             if isinstance(date_val, (int, float)):
@@ -357,8 +339,9 @@ def _candles_to_arrow_table(
                 continue
 
             # Direkt als FSB(16) enkodieren — KEIN Umweg über strings/bytes
-            bid_prices.append(_encode_fsb16(low,  price_prec))
-            ask_prices.append(_encode_fsb16(high, price_prec))
+            # Zero-Spread (bid=ask=close)
+            bid_prices.append(encode_price_fsb16(price, price_prec))
+            ask_prices.append(encode_price_fsb16(price, price_prec))
             bid_sizes.append(size_bytes)
             ask_sizes.append(size_bytes)
             ts_events.append(ts_ns)
