@@ -1,19 +1,14 @@
+import pytest
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
-from nautilus_trader.model.instruments import Cfd
-from nautilus_trader.model.enums import AssetClass, OmsType, AccountType
-from nautilus_trader.model.currencies import USD
-from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
-from nautilus_trader.model.identifiers import Venue
 import time
 import os
-from nautilus_trader.model.objects import Money
 from pathlib import Path
-from automation.backtest_runner import run_single_backtest_worker, _normalize_size_precision, create_mock_instrument
+from automation.backtest_runner import run_single_backtest_worker
 
-def test_single_worker_precision_mismatch():
+def test_single_worker_bar_type_hour():
     instrument_id = InstrumentId.from_str("AAPL.ETORO")
     tick = QuoteTick(
         instrument_id=instrument_id,
@@ -25,7 +20,7 @@ def test_single_worker_precision_mismatch():
         ts_init=time.time_ns(),
     )
 
-    original_catalog = "/tmp/test_catalog_worker_mismatch"
+    original_catalog = "/tmp/test_catalog_worker_bar_type"
     os.makedirs(original_catalog, exist_ok=True)
     catalog = ParquetDataCatalog(original_catalog)
     catalog.write_data([tick])
@@ -50,7 +45,7 @@ def test_single_worker_precision_mismatch():
         start_capital=1000.0,
         generate_html_report=False,
         reports_dir="/tmp/reports",
-        worker_log_file="/tmp/worker.log"
+        worker_log_file="/tmp/worker_bar_type.log"
     )
 
     # Assert that metrics are returned and it did not crash returning {}
