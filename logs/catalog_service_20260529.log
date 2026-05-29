@@ -1,0 +1,19 @@
+2026-05-29 17:57:36,165 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 17:57:36,165 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /home/user/etoro_nautilus/data/import
+2026-05-29 17:57:36,166 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 17:57:36,166 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 17:57:36,599 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 17:57:36,600 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 17:57:36,623 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 17:57:36,866 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 17:57:36,928 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': 'c3c7d778-2dea-4722-b1af-3ed809791f79', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 17:57:36,929 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 17:59:25,086 | INFO     | catalog_service | [catalog_service] Heartbeat: 1000 Ticks verarbeitet, 1000 im Puffer.
+2026-05-29 18:01:15,305 | INFO     | catalog_service | [catalog_service] Heartbeat: 2000 Ticks verarbeitet, 2000 im Puffer.
+2026-05-29 18:01:18,755 | INFO     | catalog_service | [catalog_service] Dienst wird sauber beendet …
+2026-05-29 18:01:18,755 | INFO     | catalog_service | [catalog_service] Finaler Flush vor Beenden …
+2026-05-29 18:01:18,784 | INFO     | catalog_service | [catalog_service] Flush gestartet: 2035 Ticks, 49 Instrumente.
+2026-05-29 18:01:18,947 | INFO     | catalog_service | [catalog_service] ZIP geschrieben: 20260529_160118.zip | 49 Instrumente | 2035 Ticks gesamt
+2026-05-29 18:01:18,947 | INFO     | catalog_service | [catalog_service] ZIP bereit für Orchestrator: /home/user/etoro_nautilus/data/import/20260529_160118.zip
+2026-05-29 18:01:18,947 | INFO     | catalog_service | [catalog_service] WS-Loop abgebrochen.
+2026-05-29 18:01:18,949 | INFO     | catalog_service | [catalog_service] Manuell beendet (KeyboardInterrupt).
