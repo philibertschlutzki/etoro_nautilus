@@ -38,7 +38,6 @@ import asyncio
 import json
 import logging
 import os
-import struct
 import sys
 import traceback
 import uuid
@@ -82,13 +81,15 @@ except ImportError:
 
 
 # ─── FixedSizeBinary(16) Encoding ────────────────────────────────────────────
-try:
-    from automation._serde import encode_price_fsb16, encode_qty_fsb16
-except ImportError:
-    import sys as _sys
-    from pathlib import Path
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from automation._serde import encode_price_fsb16, encode_qty_fsb16
+def _encode_fsb16(value: float, precision: int) -> bytes:
+    """Kodiert Preis/Menge als Nautilus FixedSizeBinary(16) (High-Precision i128)."""
+    raw = int(value * 10**16)
+    return raw.to_bytes(16, "little", signed=True)
+
+def _encode_qty_fsb16(qty: float, precision: int) -> bytes:
+    """Kodiert eine Menge als FixedSizeBinary(16) (High-Precision i128)."""
+    raw = int(qty * 10**16)
+    return raw.to_bytes(16, "little", signed=True)
 
 
 # ─── Dynamische Precision via eToro API ──────────────────────────────────────
@@ -99,22 +100,7 @@ async def fetch_precisions_from_api(
     api_key: str,
     user_key: str,
 ) -> dict[str, tuple[int, int]]:
-    """Holt price_precision und size_precision DYNAMISCH via eToro API.
-
-    Strategie:
-      1. GET /api/v1/market-data/instruments?instrumentIds=...
-         Sucht nach Feldern: decimalPlaces, pricePrecision, digits, precision
-      2. Falls die API keine Precision-Felder liefert: Fallback auf Heuristik.
-
-    Args:
-        session:   aiohttp ClientSession
-        etoro_ids: Liste der eToro Instrument-IDs
-        api_key:   eToro API-Key
-        user_key:  eToro User-Key
-
-    Returns:
-        Dict: {etoro_id: (price_precision, size_precision)}
-    """
+    """Holt price_precision und size_precision DYNAMISCH via eToro API."""
     result: dict[str, tuple[int, int]] = {}
     if not etoro_ids:
         return result
@@ -235,7 +221,6 @@ async def _fetch_candles(
             ) as resp:
                 if resp.status == 200:
                     raw = await resp.json(content_type=None)
-                    # Verschiedene Response-Strukturen abfangen
                     if isinstance(raw, dict):
                         raw = raw.get("candles") or raw.get("data") or raw
                     if isinstance(raw, list):
@@ -271,21 +256,7 @@ def _candles_to_arrow_table(
     size_prec: int,
     start_dt: datetime,
 ) -> pa.Table | None:
-    """Konvertiert Candle-Daten DIREKT in eine PyArrow-Table mit FixedSizeBinary(16).
-
-    KRITISCH: Kein pandas-Roundtrip. Preise und Größen werden sofort als
-    FixedSizeBinary(16) enkodiert — das Nautilus Rust-Backend-Format.
-
-    Args:
-        candles:    Liste der Candle-Dicts (low/high/date Felder)
-        symbol:     Nautilus-Symbol-String (z.B. "TSLA.ETORO")
-        price_prec: Anzahl Nachkommastellen für Preise
-        size_prec:  Anzahl Nachkommastellen für Mengen
-        start_dt:   Frühestes Datum (älter werden ignoriert)
-
-    Returns:
-        PyArrow-Table mit FSB(16)-Spalten oder None bei leeren Daten.
-    """
+    """Konvertiert Candle-Daten DIREKT in eine PyArrow-Table mit FixedSizeBinary(16)."""
     _FSB16 = pa.binary(16)
 
     bid_prices: list[bytes] = []
@@ -295,12 +266,11 @@ def _candles_to_arrow_table(
     ts_events:  list[int]   = []
     ts_inits:   list[int]   = []
 
-    # Menge = 1 Lot (Candle-Daten haben keine separaten Volumen-Spalten)
-    size_bytes = encode_qty_fsb16(1.0, size_prec)
+    # Menge = 1 Lot
+    size_bytes = _encode_qty_fsb16(1.0, size_prec)
 
     for c in candles:
         try:
-            # Feld-Namen normalisieren (eToro gibt manchmal camelCase, manchmal lowercase)
             c_low = {k.lower(): v for k, v in c.items()}
             date_val = (
                 c_low.get("fromdate")
@@ -338,10 +308,9 @@ def _candles_to_arrow_table(
             if ts_ns < min_ts_ns:
                 continue
 
-            # Direkt als FSB(16) enkodieren — KEIN Umweg über strings/bytes
-            # Zero-Spread (bid=ask=close)
-            bid_prices.append(encode_price_fsb16(price, price_prec))
-            ask_prices.append(encode_price_fsb16(price, price_prec))
+            # Zero-Spread (bid=ask=close) für Backtesting
+            bid_prices.append(_encode_fsb16(price, price_prec))
+            ask_prices.append(_encode_fsb16(price, price_prec))
             bid_sizes.append(size_bytes)
             ask_sizes.append(size_bytes)
             ts_events.append(ts_ns)
@@ -381,13 +350,7 @@ def _candles_to_arrow_table(
 # ─── Metadaten-Builder ────────────────────────────────────────────────────────
 
 def _build_arrow_meta(symbol: str, price_prec: int, size_prec: int) -> dict[bytes, bytes]:
-    """Erstellt Nautilus-konforme Arrow-Schema-Metadaten.
-
-    Byte-Keys sind PFLICHT für Nautilus Rust-Backend:
-      b"price_precision" → z.B. b"5"
-      b"size_precision"  → z.B. b"8"
-      b"instrument_id"   → z.B. b"BTC.ETORO"
-    """
+    """Erstellt Nautilus-konforme Arrow-Schema-Metadaten."""
     if size_prec is None or size_prec <= 0:
         size_prec = 2
 
@@ -418,25 +381,7 @@ def _merge_and_save(
     price_prec: int,
     size_prec: int,
 ) -> bool:
-    """Merged neue Daten mit bestehendem Parquet-Katalog und speichert atomar.
-
-    Merge-Strategie:
-      1. Bestehende data.parquet lesen (falls vorhanden)
-      2. Neue Tabelle per pa.concat_tables anhängen
-      3. Nach ts_event deduplizieren und sortieren
-      4. Metadaten injizieren
-      5. Atomar als data.parquet speichern
-
-    Args:
-        log_ctx:    Logger
-        new_table:  Neue PyArrow-Table (bereits FSB(16))
-        symbol:     Nautilus-Symbol
-        price_prec: Preis-Precision
-        size_prec:  Größen-Precision
-
-    Returns:
-        True bei Erfolg.
-    """
+    """Merged neue Daten mit bestehendem Parquet-Katalog und speichert atomar."""
     dest_dir  = QUOTE_TICK_PATH / symbol
     dest_file = dest_dir / "data.parquet"
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -512,19 +457,7 @@ async def run_backfill(
     dry_run: bool = False,
     specific_symbols: set[str] | None = None,
 ) -> list[str]:
-    """Backfill-Hauptlogik. Kann als Modul aus dem Orchestrator aufgerufen werden.
-
-    Args:
-        api_key:              eToro API-Key
-        user_key:             eToro User-Key
-        etoro_id_to_symbol:   Dict {etoro_id: nautilus_symbol}
-        days:                 Anzahl Tage zurück (Standard: 7)
-        dry_run:              Wenn True, kein Schreiben
-        specific_symbols:     Wenn gesetzt, nur diese Symbole befüllen
-
-    Returns:
-        Liste der erfolgreich backgefüllten Symbole.
-    """
+    """Backfill-Hauptlogik."""
     if not api_key or not user_key:
         log.warning("[api_backfiller] API-Keys fehlen — Backfill übersprungen.")
         return []
@@ -542,7 +475,6 @@ async def run_backfill(
     filled: list[str] = []
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        # ── Schritt 1: Precisions dynamisch via API holen ────────────────────
         log.info("[api_backfiller] Lade Instrument-Precisions via eToro API …")
         api_precisions = await fetch_precisions_from_api(
             session, etoro_ids, api_key, user_key
@@ -551,13 +483,10 @@ async def run_backfill(
             f"[api_backfiller] Precisions via API: {len(api_precisions)}/{len(etoro_ids)} Instrumente."
         )
 
-        # ── Schritt 2: Pro Instrument Candles fetchen und speichern ─────────
         for etoro_id, symbol in sorted(etoro_id_to_symbol.items(), key=lambda x: x[1]):
-            # Filter auf spezifische Symbole
             if specific_symbols and symbol not in specific_symbols:
                 continue
 
-            # Prüfen ob Daten aktuell genug sind (Lücke < 1h → überspringen)
             dest_file = QUOTE_TICK_PATH / symbol / "data.parquet"
             if dest_file.exists():
                 latest_ts = _get_latest_ts(dest_file)
@@ -567,7 +496,6 @@ async def run_backfill(
                         log.debug(f"[api_backfiller] {symbol}: Daten aktuell (Lücke {gap_h:.1f}h) — überspringe.")
                         continue
 
-            # Precisions ermitteln (API → Fallback)
             if etoro_id in api_precisions:
                 price_prec, size_prec = api_precisions[etoro_id]
             else:
@@ -578,14 +506,12 @@ async def run_backfill(
                 )
 
             try:
-                # Candles abrufen
                 candles = await _fetch_candles(session, etoro_id, end_dt, api_key, user_key)
                 if not candles:
                     log.debug(f"[api_backfiller] {symbol}: Keine Candles — überspringe.")
                     await asyncio.sleep(0.5)
                     continue
 
-                # Direkt in Arrow-Table mit FSB(16) konvertieren
                 table = _candles_to_arrow_table(
                     candles, symbol, price_prec, size_prec, start_dt
                 )
@@ -606,7 +532,7 @@ async def run_backfill(
                     if _merge_and_save(log, table, symbol, price_prec, size_prec):
                         filled.append(symbol)
 
-                await asyncio.sleep(1.1)  # Rate-Limit respektieren
+                await asyncio.sleep(1.1)
 
             except Exception as e:
                 log.warning(
@@ -622,11 +548,7 @@ async def run_backfill(
 # ─── Universe Loader (Standalone, kein adapters-Import) ──────────────────────
 
 def _load_etoro_id_map(universe_path: Path) -> dict[str, str]:
-    """Lädt die eToro-ID → Nautilus-Symbol-Map aus der Universe-Datei.
-
-    Returns:
-        Dict {etoro_id: nautilus_symbol}, z.B. {"1111": "TSLA.ETORO"}
-    """
+    """Lädt die eToro-ID → Nautilus-Symbol-Map aus der Universe-Datei."""
     if not universe_path.exists():
         log.warning(f"[api_backfiller] Universe-Datei nicht gefunden: {universe_path}")
         return {}
@@ -674,7 +596,6 @@ def main() -> int:
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
 
-    # ── Pflicht-Verzeichnisse vorab anlegen (I/O-Laufzeitfehler verhindern) ──
     QUOTE_TICK_PATH.mkdir(parents=True, exist_ok=True)
     (PROJECT_ROOT / "data" / "state").mkdir(parents=True, exist_ok=True)
 
@@ -684,7 +605,6 @@ def main() -> int:
 
     if not api_key or not user_key:
         if args.dry_run:
-            # Im Dry-Run-Modus sind API-Keys optional — Universe-Validierung genügt
             log.warning(
                 "[api_backfiller] ETORO_API_KEY oder ETORO_USER_KEY fehlen — "
                 "Dry-Run ohne API-Aufruf."
@@ -700,7 +620,6 @@ def main() -> int:
 
     specific_symbols = set(args.symbols) if args.symbols else None
 
-    # Dry-Run ohne API-Keys: Liste der Symbole ausgeben und exit
     if args.dry_run and (not api_key or not user_key):
         log.info(
             f"[api_backfiller] DRY-RUN (no API keys): "
