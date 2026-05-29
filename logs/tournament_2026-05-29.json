@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-29T16:57:41.221362+00:00",
+  "generated_at": "2026-05-29T17:04:10.208897+00:00",
   "universe_snapshot": "",
   "total_symbol_strategy_pairs": 392,
   "eligible_pairs": 0,
@@ -43,7 +43,7 @@
     },
     {
       "symbol": "ACN.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "MeanReversionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -56,7 +56,7 @@
     },
     {
       "symbol": "ACN.ETORO",
-      "strategy": "MeanReversionStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -96,19 +96,6 @@
     {
       "symbol": "ACN.ETORO",
       "strategy": "ComboTrendVwapStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0
-      }
-    },
-    {
-      "symbol": "ACN.ETORO",
-      "strategy": "HourlyMeanReversionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -133,6 +120,19 @@
       }
     },
     {
+      "symbol": "ACN.ETORO",
+      "strategy": "HourlyMeanReversionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0
+      }
+    },
+    {
       "symbol": "ADBE.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -303,7 +303,7 @@
     },
     {
       "symbol": "AG.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -316,7 +316,7 @@
     },
     {
       "symbol": "AG.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -797,19 +797,6 @@
     },
     {
       "symbol": "COHR.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0
-      }
-    },
-    {
-      "symbol": "COHR.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -823,6 +810,19 @@
     },
     {
       "symbol": "COHR.ETORO",
+      "strategy": "FlashCrashReversalStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0
+      }
+    },
+    {
+      "symbol": "COHR.ETORO",
       "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
@@ -1005,7 +1005,7 @@
     },
     {
       "symbol": "CRM.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1018,7 +1018,7 @@
     },
     {
       "symbol": "CRM.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1291,7 +1291,7 @@
     },
     {
       "symbol": "E.ETORO",
-      "strategy": "MeanReversionStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1304,7 +1304,7 @@
     },
     {
       "symbol": "E.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "MeanReversionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1343,6 +1343,19 @@
     },
     {
       "symbol": "E.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0
+      }
+    },
+    {
+      "symbol": "E.ETORO",
       "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
@@ -1357,19 +1370,6 @@
     {
       "symbol": "E.ETORO",
       "strategy": "HourlyMeanReversionStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0
-      }
-    },
-    {
-      "symbol": "E.ETORO",
-      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1421,7 +1421,7 @@
     },
     {
       "symbol": "EEFT.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1434,7 +1434,7 @@
     },
     {
       "symbol": "EEFT.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1759,7 +1759,7 @@
     },
     {
       "symbol": "FISV.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1772,7 +1772,7 @@
     },
     {
       "symbol": "FISV.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1863,7 +1863,7 @@
     },
     {
       "symbol": "GLW.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -1876,7 +1876,7 @@
     },
     {
       "symbol": "GLW.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2071,7 +2071,7 @@
     },
     {
       "symbol": "GSAT.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2084,7 +2084,7 @@
     },
     {
       "symbol": "GSAT.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2162,7 +2162,7 @@
     },
     {
       "symbol": "GTLB.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2175,7 +2175,7 @@
     },
     {
       "symbol": "GTLB.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2266,7 +2266,7 @@
     },
     {
       "symbol": "HAL.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2279,7 +2279,7 @@
     },
     {
       "symbol": "HAL.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2448,7 +2448,7 @@
     },
     {
       "symbol": "INSW.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2461,7 +2461,7 @@
     },
     {
       "symbol": "INSW.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2799,7 +2799,7 @@
     },
     {
       "symbol": "LULU.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2812,7 +2812,7 @@
     },
     {
       "symbol": "LULU.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2903,7 +2903,7 @@
     },
     {
       "symbol": "MNDY.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2916,7 +2916,7 @@
     },
     {
       "symbol": "MNDY.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3306,7 +3306,7 @@
     },
     {
       "symbol": "PBR.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3332,7 +3332,7 @@
     },
     {
       "symbol": "PBR.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3371,7 +3371,7 @@
     },
     {
       "symbol": "PINS.ETORO",
-      "strategy": "MeanReversionStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3384,7 +3384,7 @@
     },
     {
       "symbol": "PINS.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "MeanReversionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3423,7 +3423,7 @@
     },
     {
       "symbol": "PINS.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3436,7 +3436,7 @@
     },
     {
       "symbol": "PINS.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3501,7 +3501,7 @@
     },
     {
       "symbol": "POWL.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3514,7 +3514,7 @@
     },
     {
       "symbol": "POWL.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3800,7 +3800,7 @@
     },
     {
       "symbol": "SQM.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3813,7 +3813,7 @@
     },
     {
       "symbol": "SQM.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4034,7 +4034,7 @@
     },
     {
       "symbol": "TEAM.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4047,7 +4047,7 @@
     },
     {
       "symbol": "TEAM.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4125,7 +4125,7 @@
     },
     {
       "symbol": "TSEM.ETORO",
-      "strategy": "VolatilityBreakoutPumpStrategy",
+      "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4138,7 +4138,7 @@
     },
     {
       "symbol": "TSEM.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
+      "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4515,7 +4515,7 @@
     },
     {
       "symbol": "VRT.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "MeanReversionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4528,7 +4528,7 @@
     },
     {
       "symbol": "VRT.ETORO",
-      "strategy": "MeanReversionStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4671,7 +4671,7 @@
     },
     {
       "symbol": "WBD.ETORO",
-      "strategy": "ComboTrendVwapStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4684,7 +4684,7 @@
     },
     {
       "symbol": "WBD.ETORO",
-      "strategy": "VwapExhaustionStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4723,7 +4723,7 @@
     },
     {
       "symbol": "WDAY.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "MeanReversionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4736,7 +4736,7 @@
     },
     {
       "symbol": "WDAY.ETORO",
-      "strategy": "MeanReversionStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -5048,7 +5048,7 @@
     },
     {
       "symbol": "ZS.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -5061,7 +5061,7 @@
     },
     {
       "symbol": "ZS.ETORO",
-      "strategy": "FlashCrashReversalStrategy",
+      "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
