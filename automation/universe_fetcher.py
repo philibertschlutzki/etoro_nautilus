@@ -97,6 +97,7 @@ async def run_fetch(
     universe = []
     known_count = 0
     unknown_count = 0
+    unknown_instruments = {}
 
     for pos in positions:
         pos_lower = {k.lower(): v for k, v in pos.items()}
@@ -106,7 +107,9 @@ async def run_fetch(
         symbol = instrument_map.get(instrument_id)
 
         if symbol is None:
-            logger.warning(f"Unknown instrument ID: {instrument_id} ({raw_name})")
+            if instrument_id not in unknown_instruments:
+                unknown_instruments[instrument_id] = {"name": raw_name, "count": 0}
+            unknown_instruments[instrument_id]["count"] += 1
             unknown_count += 1
         else:
             known_count += 1
@@ -116,6 +119,9 @@ async def run_fetch(
             "symbol": symbol,
             "raw_name": raw_name
         })
+
+    for uid, info in unknown_instruments.items():
+        logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - occurred {info['count']} times")
 
     output_data = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -133,7 +139,7 @@ async def run_fetch(
 
     logger.info(f"Total positions: {len(universe)}")
     logger.info(f"Known symbols: {known_count}")
-    logger.info(f"Unknown symbols: {unknown_count}")
+    logger.info(f"Unknown symbols: {len(unknown_instruments)} unique, {unknown_count} total")
     logger.info(f"Saved to {output_path}")
 
     return True
