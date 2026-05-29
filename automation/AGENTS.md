@@ -2,7 +2,7 @@
 
 > **Zweck:** Diese Datei ist der verbindliche Leitfaden für Jules (und jeden anderen KI-Coding-Agenten), der am **`automation/`-Paket** arbeitet. Sie beschreibt **ausschließlich** das `automation/`-Verzeichnis als eigenständiges, hermetisches Produkt. Sie ist mit dem tatsächlichen Code-Stand abgeglichen — inklusive bekannter, **derzeit offener** Bugs (siehe Abschnitt 16). Halte diese Datei bei jeder strukturellen Änderung aktuell.
 
-> **Geltungsbereich:** Nur `automation/`. Das Root-`adapters/`-, Root-`strategies/`- und `backtesting/`-Verzeichnis sind **Legacy** und wurden nach `archive/` verschoben. Sie sind NICHT Gegenstand dieser Datei. Ein einziger Code-Pfad (`momentum_ls_run.py`) importiert dennoch aus `archive/` — siehe Pitfall #19.
+> **Geltungsbereich:** Nur `automation/`. Das Root-`adapters/`-, Root-`strategies/`- und `backtesting/`-Verzeichnis sind **Legacy** und wurden nach `archive/` verschoben. Sie sind NICHT Gegenstand dieser Datei. Alle Adapter wurden nach `automation/adapters/` migriert — siehe Pitfall #19.
 
 ---
 
@@ -56,7 +56,7 @@ automation/
 ├── historical_fetcher.py       # Deep Backfill (12M), Interval-Kaskade OneHour→OneDay
 ├── log_manager.py              # LLM-optimiertes Logging (RotatingFileHandler, JSON-Events)
 ├── momentum_ls_allocator.py    # Kapital-Allocator (No-Interference, dynamisches Slicing)
-├── momentum_ls_run.py          # Live-Trading-Orchestrator (⚠️ importiert aus archive/ — Pitfall #19)
+├── momentum_ls_run.py          # Live-Trading-Orchestrator
 ├── universe_fetcher.py         # Smart-Portfolio-Universe-Fetch (standalone)
 ├── utils.py                    # _fallback_precisions() — zentrale Precision-Heuristik
 ├── config/
@@ -128,7 +128,7 @@ daily_orchestrator.py — 5 Phasen:
 - Instrument-Map: `automation/config/instrument_map.json` (generiert aus dem alten `adapters/instrument_map.py`).
 - `.env`-Pfad-Konvention: `automation/.env` → Fallback `PROJECT_ROOT/.env`.
 
-**Bekannte Verletzung:** `momentum_ls_run.py` importiert `from archive.adapters.etoro_data import …` und `from archive.adapters.etoro_config import …`. Damit ist der Live-Pfad NICHT hermetisch. Siehe Pitfall #19.
+**Standalone-Prinzip:** Eingehalten. Alle Adapter liegen in `automation/adapters/`.
 
 ---
 
@@ -264,7 +264,7 @@ Da alle Quellen bereits FSB(16) liefern, entfällt im Orchestrator jede Typ-Migr
 
 `momentum_ls_run.py` wird als Detached Subprocess (`subprocess.Popen`, `start_new_session=True`) gestartet. Liest `per_symbol_winners` aus dem Tournament-JSON, mappt JEDEN Gewinner auf `MomentumLSSmaStrategy` (PoC — `STRATEGY_REGISTRY` enthält nur diese eine Strategie). Safety-Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`.
 
-**⚠️ Inkonsistenzen:** Import aus `archive.adapters` (Pitfall #19); alle Tournament-Gewinner werden unabhängig von der tatsächlich gewinnenden Strategie auf die SMA-PoC-Strategie reduziert (Pitfall #22).
+**⚠️ Inkonsistenzen:** alle Tournament-Gewinner werden unabhängig von der tatsächlich gewinnenden Strategie auf die SMA-PoC-Strategie reduziert (Pitfall #22).
 
 ---
 
