@@ -341,7 +341,7 @@ def load_tournament_config(project_root: str | None = None) -> dict:
             print(f"  ⚠️  tournament.json Ladefehler: {e} — nutze Legacy-Defaults.")
     # Legacy-Defaults (Rückwärts-Kompatibilität)
     return {
-        "min_trades": 5,
+        "min_trades": 20,
         "min_sortino": 0.0,
         "min_profit_factor": 1.5,
         "max_drawdown": 1.0,
