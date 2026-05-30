@@ -7,6 +7,16 @@ import pyarrow.parquet as pq
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from automation._serde import encode_price_fsb16, encode_qty_fsb16
 from automation.backtest_runner import run_single_backtest_worker
+import concurrent.futures
+
+def run_isolated_worker(*args, **kwargs):
+    """
+    Kapselt den Backtest-Lauf in einen separaten Prozess,
+    um Rust-Core-Panics im Hauptprozess zu verhindern.
+    """
+    with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(run_single_backtest_worker, *args, **kwargs)
+        return future.result()
 
 def test_backtest_trades_generated(tmp_path):
     catalog_path = tmp_path / "nautilus"
@@ -84,7 +94,7 @@ def test_backtest_trades_generated(tmp_path):
     from pathlib import Path
     sys.path.append(str(Path(".").absolute()))
 
-    res = run_single_backtest_worker(
+    res = run_isolated_worker(
         inst_id_str="AAPL.ETORO",
         bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL",
         strat=strat,
