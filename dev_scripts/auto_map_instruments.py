@@ -96,7 +96,8 @@ def main():
 
         for pos in universe_data.get("universe", []):
             eid = pos.get("etoro_id")
-            if eid and eid not in existing_map:
+            symbol = pos.get("symbol")
+            if eid and (eid not in existing_map or symbol in (None, "", "Unknown")):
                 unknown_ids.add(eid)
 
     if not unknown_ids:
@@ -120,7 +121,8 @@ def main():
     for uid in unknown_ids:
         if uid in meta_lookup:
             item = meta_lookup[uid]
-            symbol = item.get("SymbolFull")
+            symbol_full = item.get("SymbolFull")
+            symbol = f"{symbol_full}.ETORO" if symbol_full else None
             asset_class = item.get("AssetClass", "Unknown")
             precisions = _fallback_precisions(asset_class)
 
