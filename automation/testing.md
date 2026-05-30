@@ -31,7 +31,7 @@ Neue Tests befinden sich im `tests/` Verzeichnis. Das `automation/`-Paket wird v
   assert _fallback_precisions("ETH.ETORO") == (2, 8)
   ```
 - Es gibt **keine Kill-List**. Keine Erwähnung von Kill-List in den Tests!
-- Nutze `automation.backtest_runner` für `select_tournament_winner` und `score_strategy` Aufrufe.
+- Nutze `automation.backtest_runner` für `compute_tournament_score` und `select_winners` Aufrufe.
 
 ### Ausführung
 ```bash
