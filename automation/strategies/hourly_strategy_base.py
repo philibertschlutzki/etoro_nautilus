@@ -45,6 +45,10 @@ class HourlyStrategyConfig(StrategyConfig, frozen=True):
     max_bars_in_trade: int = 48
 
 
+DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
+DEFAULT_MAX_BARS_IN_TRADE = 48  # 48 hours with 1h candles
+
+
 class HourlyStrategyBase(Strategy):
     """
     Base strategy providing ATR Trailing Stop and Time-based Exit for hourly candles.
@@ -69,8 +73,12 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
-        self._max_bars_in_trade: int = self.config.max_bars_in_trade
-        self._atr_trailing_multiplier: float = self.config.atr_trailing_multiplier
+        self._atr_trailing_multiplier: float = float(getattr(
+            config, "atr_trailing_multiplier", DEFAULT_ATR_TRAILING_MULTIPLIER
+        ))
+        self._max_bars_in_trade: int = int(getattr(
+            config, "max_bars_in_trade", DEFAULT_MAX_BARS_IN_TRADE
+        ))
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
