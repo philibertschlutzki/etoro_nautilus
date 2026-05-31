@@ -834,8 +834,8 @@ def phase5_live_deployment(
         if not agg:
             log.error("[Phase 5] Kein Aggregat-Sieger im Tournament. Abbruch.")
             return 1
-        if not agg.get("oos_eligible", True):  # Default to True for backwards compat if missing
-            log.warning(f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} erfüllt die Kriterien im jüngsten OOS-Slice nicht. Kontrollierter Abbruch (kein Live-Deploy).")
+        if not agg.get("oos_eligible", False):  # Fail-Closed
+            log.warning(f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} erfüllt die Kriterien im jüngsten OOS-Slice nicht (oder Status unbekannt). Kontrollierter Abbruch (kein Live-Deploy).")
             return 0
         log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} ist eligibel.")
     except Exception as e:
