@@ -699,7 +699,7 @@ def phase3_4_backtest_and_tournament(
             if agg:
                 log.info(
                     f"[Phase 4] Aggregierter Gewinner: {agg['strategy']} "
-                    f"({agg['win_count']} Wins, Ø Sortino: {agg['mean_sortino']:.2f})"
+                    f"({agg['win_count']} Wins, Median Sortino: {agg['median_sortino']:.2f})"
                 )
             emit_json_event(log, "TOURNAMENT_COMPLETE", {
                 "winner_count":     len(winners),
