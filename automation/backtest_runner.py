@@ -828,7 +828,7 @@ def select_winners(
         # Tie-breaker: 1. Max Wins, 2. Max Median Sortino
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
-        best     = max(top, key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s]))
+        best     = max(top, key=lambda s: get_median(sortinos_by_strat[s]))
         oos_eligible = False
         best_results = [r.get("oos_metrics", {}) for r in all_results if r["strategy"] == best and r.get("oos_metrics")]
         if best_results:
@@ -846,8 +846,8 @@ def select_winners(
         aggregate_winner = {
             "strategy":    best,
             "win_count":   win_counts[best],
-            "mean_sortino": round(
-                sum(sortinos_by_strat[best]) / len(sortinos_by_strat[best]), 4
+            "median_sortino": round(
+                get_median(sortinos_by_strat[best]), 4
             ),
             "oos_eligible": oos_eligible,
         }
@@ -1452,7 +1452,7 @@ def run_backtest() -> None:
             print(
                 f"🏆 {aggregate_winner['strategy']} — "
                 f"{aggregate_winner['win_count']} Wins, "
-                f"Ø Sortino: {aggregate_winner['median_sortino']}"
+                f"Median Sortino: {aggregate_winner['median_sortino']}"
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
