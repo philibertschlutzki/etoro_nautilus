@@ -37,7 +37,7 @@ def test_strategy_inheritance():
         VolatilityBreakoutPumpStrategy,
         ComboTrendVwapStrategy,
         VwapExhaustionStrategy,
-        HourlyMeanReversionStrategy
+        MeanReversionStrategy
     ]
 
     for strategy_class in active_strategies:

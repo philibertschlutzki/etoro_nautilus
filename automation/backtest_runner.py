@@ -401,6 +401,15 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -
         max_dd       = metrics.get("oos_metrics", {}).get("max_drawdown", 1.0)
         win_rate     = metrics.get("oos_metrics", {}).get("win_rate", 0.0)
         total_return = metrics.get("oos_metrics", {}).get("total_return", 0.0)
+
+        condition_map = {
+            "min_trades":        n_trades     >= tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0)),
+            "min_sortino":       sortino      >= tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0)),
+            "min_profit_factor": pf           >= tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
+            "max_drawdown":      max_dd       <= tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
+            "min_win_rate":      win_rate     >= tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
+            "min_total_return":  total_return >= tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)),
+        }
     else:
         n_trades     = metrics.get("total_trades", 0)
         sortino      = metrics.get("sortino_ratio", 0.0)
@@ -409,14 +418,14 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -
         win_rate     = metrics.get("win_rate", 0.0)
         total_return = metrics.get("total_return", 0.0)
 
-    condition_map = {
-        "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
-        "min_sortino":       sortino      >= tournament_cfg.get("min_sortino", 0.0),
-        "min_profit_factor": pf           >= tournament_cfg.get("min_profit_factor", 1.0),
-        "max_drawdown":      max_dd       <= tournament_cfg.get("max_drawdown", 1.0),
-        "min_win_rate":      win_rate     >= tournament_cfg.get("min_win_rate", 0.0),
-        "min_total_return":  total_return >= tournament_cfg.get("min_total_return", 0.0),
-    }
+        condition_map = {
+            "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
+            "min_sortino":       sortino      >= tournament_cfg.get("min_sortino", 0.0),
+            "min_profit_factor": pf           >= tournament_cfg.get("min_profit_factor", 1.0),
+            "max_drawdown":      max_dd       <= tournament_cfg.get("max_drawdown", 1.0),
+            "min_win_rate":      win_rate     >= tournament_cfg.get("min_win_rate", 0.0),
+            "min_total_return":  total_return >= tournament_cfg.get("min_total_return", 0.0),
+        }
 
     # Harte Filter: ALLE müssen erfüllt sein
     for cond_name in tournament_cfg.get("eligible_requires_all", []):
@@ -830,15 +839,20 @@ def select_winners(
         top      = [s for s, w in win_counts.items() if w == max_wins]
         best     = max(top, key=lambda s: get_median(sortinos_by_strat[s]))
         oos_eligible = False
-        best_results = [r.get("oos_metrics", {}) for r in all_results if r["strategy"] == best and r.get("oos_metrics")]
+
+        # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
+        best_results = [r.get("oos_metrics", {}) for r in per_symbol.values()
+                        if r["strategy"] == best and r.get("oos_metrics")]
+
         if best_results:
+            n_res = len(best_results)
             avg_oos = {
-                "total_trades": sum(oos.get("total_trades", 0) for oos in best_results) / len(best_results),
-                "sortino_ratio": sum(oos.get("sortino_ratio", 0.0) for oos in best_results) / len(best_results),
-                "profit_factor": sum(oos.get("profit_factor", 0.0) for oos in best_results) / len(best_results),
-                "max_drawdown": sum(oos.get("max_drawdown", 1.0) for oos in best_results) / len(best_results),
-                "win_rate": sum(oos.get("win_rate", 0.0) for oos in best_results) / len(best_results),
-                "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / len(best_results),
+                "total_trades": sum(oos.get("total_trades", 0) for oos in best_results),
+                "sortino_ratio": get_median([oos.get("sortino_ratio", 0.0) for oos in best_results]),
+                "profit_factor": get_median([oos.get("profit_factor", 0.0) for oos in best_results]),
+                "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
+                "win_rate": get_median([oos.get("win_rate", 0.0) for oos in best_results]),
+                "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0,
             }
             agg_metrics = {"oos_metrics": avg_oos}
             oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True)
