@@ -1,6 +1,6 @@
 {
   "global_settings": {
-    "catalog_path": "/home/user/etoro_nautilus/data/nautilus",
+    "catalog_path": "/app/data/nautilus",
     "start_time": "2026-01-01T00:00:00Z",
     "end_time": "2026-05-31T00:00:00Z",
     "start_capital": 10000.0,
@@ -52,12 +52,6 @@
       "strategy_module": "automation.strategies.vwap_exhaustion",
       "strategy_class": "VwapExhaustionStrategy",
       "config_class": "VwapExhaustionConfig",
-      "params": {}
-    },
-    {
-      "strategy_module": "automation.strategies.hourly_mean_reversion",
-      "strategy_class": "HourlyMeanReversionStrategy",
-      "config_class": "HourlyMeanReversionConfig",
       "params": {}
     }
   ]

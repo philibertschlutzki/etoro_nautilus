@@ -7,7 +7,7 @@ eToro Nautilus — Täglicher End-to-End-Orchestrator (v2.0)
 Führt 5 Phasen sequentiell und fehlerresistent aus:
   Phase 1  — Universe & Mapping (dynamische Instrumentenliste)
   Phase 2  — Datenbeschaffung  (Multi-ZIP-Import, Merge, API-Backfill)
-  Phase 3  — Backtesting        (Matrix-Backtest mit 30-Tage-Midnight-UTC-Fenster)
+  Phase 3  — Backtesting        (Matrix-Backtest mit dynamischem Fenster laut Config)
   Phase 4  — Tournament         (Sortino/PF-Turnier, Pitfall-#14-Fix)
   Phase 5  — Live Deployment   (Safety-Interlocks, Detached Bot, Log-Rotation)
 
@@ -658,8 +658,8 @@ def phase3_4_backtest_and_tournament(
 
     log.info(f"[Phase 3] Backtest-Kommando: {' '.join(cmd)}")
     emit_json_event(log, "BACKTEST_START", {
-        "start": thirty_days_ago.isoformat(),
-        "end":   today_midnight.isoformat(),
+        "start": dynamic_config["global_settings"]["start_time"],
+        "end":   dynamic_config["global_settings"]["end_time"],
     })
 
     if dry_run:
