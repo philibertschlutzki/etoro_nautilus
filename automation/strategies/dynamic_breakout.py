@@ -29,6 +29,7 @@ class DynamicBreakoutConfig(StrategyConfig, frozen=True):
     instrument_id: str
     bar_type: str
     price_breakout_period: int = 10
+    cooldown_bars: int = 12
     trade_amount_usd: float = 100.0
     max_open_positions: int = 1
 
@@ -48,6 +49,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self.low_history: deque = deque(maxlen=config.price_breakout_period)
 
         self.current_signal: str | None = None
+        self.bars_since_last_signal: int = 0
 
     def on_start(self):
         super().on_start()
@@ -58,6 +60,8 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
+        self.bars_since_last_signal += 1
+
         high = float(bar.high)
         low = float(bar.low)
         close_price = float(bar.close)
@@ -80,7 +84,9 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             f"Low({self.config.price_breakout_period}): {period_low:.2f}"
         )
 
-        if close_price >= period_high and self.current_signal != "BUY":
+        can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
+
+        if close_price >= period_high and (self.current_signal != "BUY" and can_signal):
             self._log.info(
                 f"[{self.instrument_id}] BUY SIGNAL (Price Breakout High)",
                 LogColor.GREEN,
@@ -88,7 +94,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
-        elif close_price <= period_low and self.current_signal != "SELL":
+        elif close_price <= period_low and (self.current_signal != "SELL" and can_signal):
             self._log.info(
                 f"[{self.instrument_id}] SELL SIGNAL (Price Breakout Low)",
                 LogColor.RED,
@@ -99,13 +105,14 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
+        self.bars_since_last_signal = 0
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
             self._close_position(pos)
-            self.current_signal = None
+            self.current_signal = "BUY"
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -121,13 +128,14 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _on_sell_signal(self, bar: Bar) -> None:
+        self.bars_since_last_signal = 0
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position(pos)
-            self.current_signal = None
+            self.current_signal = "SELL"
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
