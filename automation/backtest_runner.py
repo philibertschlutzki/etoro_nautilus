@@ -1466,7 +1466,7 @@ def run_backtest() -> None:
             print(
                 f"🏆 {aggregate_winner['strategy']} — "
                 f"{aggregate_winner['win_count']} Wins, "
-                f"Ø Sortino: {aggregate_winner['median_sortino']}"
+                f"Ø Sortino: {aggregate_winner['mean_sortino']}"
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
