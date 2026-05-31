@@ -23,16 +23,12 @@ from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class VwapExhaustionConfig(StrategyConfig, frozen=True):
-    instrument_id: str
-    bar_type: str
+class VwapExhaustionConfig(HourlyStrategyConfig, frozen=True):
     deviation_threshold: float = 0.03
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class VwapExhaustionStrategy(HourlyStrategyBase):

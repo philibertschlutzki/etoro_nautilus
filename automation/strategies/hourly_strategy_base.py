@@ -34,9 +34,15 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 log = logging.getLogger(__name__)
 
-DEFAULT_ATR_PERIOD = 14
-DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
-DEFAULT_MAX_BARS_IN_TRADE = 48  # 48 hours with 1h candles
+
+class HourlyStrategyConfig(StrategyConfig, frozen=True):
+    instrument_id: str
+    bar_type: str
+    trade_amount_usd: float = 100.0
+    max_open_positions: int = 1
+    atr_period: int = 14
+    atr_trailing_multiplier: float = 1.5
+    max_bars_in_trade: int = 48
 
 
 class HourlyStrategyBase(Strategy):
@@ -50,7 +56,7 @@ class HourlyStrategyBase(Strategy):
       _in_position: bool                  — whether a position is currently open
     """
 
-    def __init__(self, config: StrategyConfig, allocator: MomentumLSAllocator | None = None):
+    def __init__(self, config: HourlyStrategyConfig, allocator: MomentumLSAllocator | None = None):
         super().__init__(config)
         self.allocator: MomentumLSAllocator | None = allocator
         self._account_id = None
@@ -58,13 +64,13 @@ class HourlyStrategyBase(Strategy):
         self.instrument_id: InstrumentId
         self.bar_type: BarType
 
-        self._exit_atr = AverageTrueRange(DEFAULT_ATR_PERIOD)
+        self._exit_atr = AverageTrueRange(self.config.atr_period)
         self._trailing_stop_price: float | None = None
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
-        self._max_bars_in_trade: int = DEFAULT_MAX_BARS_IN_TRADE
-        self._atr_trailing_multiplier: float = DEFAULT_ATR_TRAILING_MULTIPLIER
+        self._max_bars_in_trade: int = self.config.max_bars_in_trade
+        self._atr_trailing_multiplier: float = self.config.atr_trailing_multiplier
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""

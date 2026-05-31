@@ -4,21 +4,17 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import RelativeStrengthIndex
 
 
-class TrendPullbackConfig(StrategyConfig, frozen=True):
-    instrument_id: str
-    bar_type: str
+class TrendPullbackConfig(HourlyStrategyConfig, frozen=True):
     ema_period: int = 200
     rsi_period: int = 14
     rsi_oversold: float = 30.0
     rsi_overbought: float = 70.0
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class TrendPullbackStrategy(HourlyStrategyBase):

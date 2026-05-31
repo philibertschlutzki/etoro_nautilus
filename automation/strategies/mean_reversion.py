@@ -4,18 +4,14 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import KeltnerChannel
 
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class MeanReversionConfig(StrategyConfig, frozen=True):
-    instrument_id: str
-    bar_type: str
+class MeanReversionConfig(HourlyStrategyConfig, frozen=True):
     keltner_period: int = 20
     keltner_atr_period: int = 20
     keltner_multiplier: float = 2.0
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class MeanReversionStrategy(HourlyStrategyBase):

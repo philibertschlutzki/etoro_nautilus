@@ -9,13 +9,11 @@ from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import BollingerBands
 from nautilus_trader.indicators import AverageTrueRange
 
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class ComboTrendVwapConfig(StrategyConfig, frozen=True):
-    instrument_id: str
-    bar_type: str
+class ComboTrendVwapConfig(HourlyStrategyConfig, frozen=True):
     sma_period: int = 50
     macd_fast: int = 12
     macd_slow: int = 26
@@ -25,8 +23,6 @@ class ComboTrendVwapConfig(StrategyConfig, frozen=True):
     atr_period: int = 14
     atr_multiplier: float = 0.5
     bb_entry_tolerance: float = 0.001
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class ComboTrendVwapStrategy(HourlyStrategyBase):
