@@ -398,18 +398,26 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
     )
 
 
-def _is_eligible(metrics: dict, tournament_cfg: dict) -> bool:
+def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
 
     eligible_requires_all: ALLE Bedingungen müssen erfüllt sein.
     eligible_requires_any: MINDESTENS EINE Bedingung muss erfüllt sein.
     """
-    n_trades     = metrics.get("total_trades", 0)
-    sortino      = metrics.get("sortino_ratio", 0.0)
-    pf           = metrics.get("profit_factor", 0.0)
-    max_dd       = metrics.get("max_drawdown", 1.0)
-    win_rate     = metrics.get("win_rate", 0.0)
-    total_return = metrics.get("total_return", 0.0)
+    if check_oos:
+        n_trades     = metrics.get("oos_metrics", {}).get("total_trades", 0)
+        sortino      = metrics.get("oos_metrics", {}).get("sortino_ratio", 0.0)
+        pf           = metrics.get("oos_metrics", {}).get("profit_factor", 0.0)
+        max_dd       = metrics.get("oos_metrics", {}).get("max_drawdown", 1.0)
+        win_rate     = metrics.get("oos_metrics", {}).get("win_rate", 0.0)
+        total_return = metrics.get("oos_metrics", {}).get("total_return", 0.0)
+    else:
+        n_trades     = metrics.get("total_trades", 0)
+        sortino      = metrics.get("sortino_ratio", 0.0)
+        pf           = metrics.get("profit_factor", 0.0)
+        max_dd       = metrics.get("max_drawdown", 1.0)
+        win_rate     = metrics.get("win_rate", 0.0)
+        total_return = metrics.get("total_return", 0.0)
 
     condition_map = {
         "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
@@ -541,7 +549,62 @@ def create_mock_instrument(
 # Metriken — Präzisions-FIFO-Matching für Netting Accounts via Fills Report
 # ---------------------------------------------------------------------------
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None) -> dict:
+
+def _calculate_stats(pnl_list: list[float], starting_capital: float) -> dict:
+    import math
+    NULL = {
+        "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
+        "sortino_ratio": 0.0, "calmar_ratio": 0.0,
+        "max_drawdown": 0.0, "total_return": 0.0,
+    }
+    if not pnl_list:
+        return NULL
+
+    n = len(pnl_list)
+    wins = sum(1 for v in pnl_list if v > 0)
+    gross_profit = sum(v for v in pnl_list if v > 0)
+    gross_loss = abs(sum(v for v in pnl_list if v < 0))
+
+    profit_factor = (
+        (gross_profit / gross_loss) if gross_loss > 0
+        else (999.0 if gross_profit > 0 else 0.0)
+    )
+
+    win_rate = wins / n if n > 0 else 0.0
+
+    rets = [v / starting_capital for v in pnl_list]
+    cum = 1.0
+    peak = 1.0
+    max_dd = 0.0
+    for r in rets:
+        cum *= (1.0 + r)
+        peak = max(peak, cum)
+        max_dd = max(max_dd, (peak - cum) / peak)
+
+    total_return = cum - 1.0
+
+    if n < 5:
+        sortino = 0.0
+    else:
+        down_sq = [min(r, 0.0) ** 2 for r in rets]
+        dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
+        mean_ret = sum(rets) / n
+        sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else 0.0
+
+    calmar = (total_return / max_dd) if max_dd > 0 else 0.0
+
+    return {
+        "total_trades":  n,
+        "win_rate":      float(win_rate),
+        "profit_factor": float(profit_factor),
+        "sortino_ratio": float(sortino),
+        "calmar_ratio":  float(calmar),
+        "max_drawdown":  float(max_dd),
+        "total_return":  float(total_return),
+    }
+
+
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, oos_start_ns: int | None = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -579,7 +642,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 continue
             instrument_fills.setdefault(iid, []).append(row)
 
-        pnls: list[float] = []
+        pnls_with_ts = []
 
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
@@ -605,7 +668,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         s_qty, s_price = sell_queue[0]
                         match_qty = min(qty, s_qty)
                         pnl = match_qty * (s_price - price)
-                        pnls.append(pnl)
+                        ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
+                        if isinstance(ts, pd.Timestamp):
+                            ts = ts.value
+                        ts = int(ts)
+                        pnls_with_ts.append((pnl, ts))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price)
                         if sell_queue[0][0] <= 1e-9:
@@ -617,7 +684,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         b_qty, b_price = buy_queue[0]
                         match_qty = min(qty, b_qty)
                         pnl = match_qty * (price - b_price)
-                        pnls.append(pnl)
+                        ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
+                        if isinstance(ts, pd.Timestamp):
+                            ts = ts.value
+                        ts = int(ts)
+                        pnls_with_ts.append((pnl, ts))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price)
                         if buy_queue[0][0] <= 1e-9:
@@ -625,54 +696,34 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     if qty > 0:
                         sell_queue.append((qty, price))
 
-        if not pnls:
+        if not pnls_with_ts:
             if log_fn:
                 log_fn("[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.")
             return NULL
 
         if log_fn:
-            log_fn(f"[Metriken] FIFO-Extraktion: {len(pnls)} Trades erfolgreich berechnet.")
+            log_fn(f"[Metriken] FIFO-Extraktion: {len(pnls_with_ts)} Trades erfolgreich berechnet.")
 
-        n = len(pnls)
-        wins = sum(1 for v in pnls if v > 0)
-        gross_profit = sum(v for v in pnls if v > 0)
-        gross_loss = abs(sum(v for v in pnls if v < 0))
+        is_pnls = []
+        oos_pnls = []
 
-        profit_factor = (
-            (gross_profit / gross_loss) if gross_loss > 0
-            else (999.0 if gross_profit > 0 else 0.0)
-        )
-        win_rate = wins / n
+        for pnl, ts in pnls_with_ts:
+            if oos_start_ns is not None and ts >= oos_start_ns:
+                oos_pnls.append(pnl)
+            else:
+                is_pnls.append(pnl)
 
-        rets = [v / starting_capital for v in pnls]
-        cum = 1.0
-        peak = 1.0
-        max_dd = 0.0
-        for r in rets:
-            cum *= (1.0 + r)
-            peak = max(peak, cum)
-            max_dd = max(max_dd, (peak - cum) / peak)
-
-        total_return = cum - 1.0
-
-        if n < 5:
-            sortino = 0.0
-        else:
-            down_sq = [min(r, 0.0) ** 2 for r in rets]
-            dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
-            mean_ret = sum(rets) / n
-            sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else 0.0
-
-        calmar = (total_return / max_dd) if max_dd > 0 else 0.0
+        print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
+        is_metrics = _calculate_stats(is_pnls, starting_capital)
+        oos_metrics = _calculate_stats(oos_pnls, starting_capital) if oos_pnls else {
+            "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
+            "sortino_ratio": 0.0, "calmar_ratio": 0.0,
+            "max_drawdown": 0.0, "total_return": 0.0,
+        }
 
         return {
-            "total_trades": n,
-            "win_rate": round(win_rate, 4),
-            "profit_factor": round(profit_factor, 4),
-            "sortino_ratio": round(sortino, 4),
-            "calmar_ratio": round(calmar, 4),
-            "max_drawdown": round(max_dd, 4),
-            "total_return": round(total_return, 4),
+            "metrics": is_metrics,
+            "oos_metrics": oos_metrics
         }
     except Exception as e:
         if log_fn:
@@ -727,6 +778,7 @@ def select_winners(
         sym: {
             "strategy": r["strategy"],
             "metrics":  r["metrics"],
+            "oos_metrics": r.get("oos_metrics", {}),
             "score":    round(r["_score"], 6),
         }
         for sym, r in per_symbol.items()
@@ -745,12 +797,27 @@ def select_winners(
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
         best     = max(top, key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s]))
+        oos_eligible = False
+        best_results = [r.get("oos_metrics", {}) for r in all_results if r["strategy"] == best and r.get("oos_metrics")]
+        if best_results:
+            avg_oos = {
+                "total_trades": sum(oos.get("total_trades", 0) for oos in best_results) / len(best_results),
+                "sortino_ratio": sum(oos.get("sortino_ratio", 0.0) for oos in best_results) / len(best_results),
+                "profit_factor": sum(oos.get("profit_factor", 0.0) for oos in best_results) / len(best_results),
+                "max_drawdown": sum(oos.get("max_drawdown", 1.0) for oos in best_results) / len(best_results),
+                "win_rate": sum(oos.get("win_rate", 0.0) for oos in best_results) / len(best_results),
+                "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / len(best_results),
+            }
+            agg_metrics = {"oos_metrics": avg_oos}
+            oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True)
+
         aggregate_winner = {
             "strategy":    best,
             "win_count":   win_counts[best],
             "mean_sortino": round(
                 sum(sortinos_by_strat[best]) / len(sortinos_by_strat[best]), 4
             ),
+            "oos_eligible": oos_eligible,
         }
 
     return per_symbol_winners, aggregate_winner
@@ -990,18 +1057,27 @@ def run_single_backtest_worker(
             return {}
 
         # --- Metriken extrahieren ---
-        metrics = extract_metrics(engine, start_capital, log_fn=wlog)
+        oos_start_ns = strat.get("_oos_start_ns", None)
+        extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, oos_start_ns=oos_start_ns)
+
+        # If extraction failed, extract_metrics returns NULL dictionary instead of nested dict
+        if "metrics" in extracted_data:
+            metrics = extracted_data["metrics"]
+            oos_metrics = extracted_data.get("oos_metrics", {})
+        else:
+            metrics = extracted_data
+            oos_metrics = {}
 
         wlog(
-            f"   📊 Trades={metrics['total_trades']} | "
-            f"WinRate={metrics['win_rate']:.1%} | "
-            f"PF={metrics['profit_factor']:.2f} | "
-            f"Sortino={metrics['sortino_ratio']:.2f} | "
-            f"Return={metrics['total_return']:.2f}%"
+            f"   📊 Trades={metrics.get('total_trades', 0)} | "
+            f"WinRate={metrics.get('win_rate', 0.0):.1%} | "
+            f"PF={metrics.get('profit_factor', 0.0):.2f} | "
+            f"Sortino={metrics.get('sortino_ratio', 0.0):.2f} | "
+            f"Return={metrics.get('total_return', 0.0):.2f}%"
         )
 
         # --- Optional: HTML Tearsheet ---
-        if generate_html_report and metrics["total_trades"] > 0:
+        if generate_html_report and metrics.get("total_trades", 0) > 0:
             try:
                 name = inst_id_str.replace('.', '_')
                 run_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1032,7 +1108,12 @@ def run_single_backtest_worker(
                     wlog_err(f"CSV-Fallback fehlgeschlagen: {fe}", exc=True)
 
         engine.dispose()
-        return {"symbol": inst_id_str, "strategy": strategy_class_name, "metrics": metrics}
+        return {
+            "symbol": inst_id_str,
+            "strategy": strategy_class_name,
+            "metrics": metrics,
+            "oos_metrics": oos_metrics
+        }
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
             import shutil
@@ -1250,6 +1331,11 @@ def run_backtest() -> None:
             bar_type    = inst["bar_type"]
 
             for strat in strategies_list:
+                walk_forward_cfg = global_settings.get("walk_forward")
+                if walk_forward_cfg and end_ns:
+                    oos_days = walk_forward_cfg.get("oos_window_days", 30)
+                    strat["_oos_start_ns"] = end_ns - (oos_days * 24 * 60 * 60 * 1_000_000_000)
+
                 wlf = os.path.join(
                     logs_dir,
                     f"worker_{inst_id_str.replace('.', '_')}"

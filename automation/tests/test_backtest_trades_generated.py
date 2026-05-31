@@ -7,6 +7,8 @@ import pyarrow.parquet as pq
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 from automation._serde import encode_price_fsb16, encode_qty_fsb16
 from automation.backtest_runner import run_single_backtest_worker
+import sys
+from pathlib import Path
 
 def test_backtest_trades_generated(tmp_path):
     catalog_path = tmp_path / "nautilus"
@@ -80,8 +82,6 @@ def test_backtest_trades_generated(tmp_path):
         "params": {}
     }
 
-    import sys
-    from pathlib import Path
     sys.path.append(str(Path(".").absolute()))
 
     res = run_single_backtest_worker(
@@ -94,7 +94,7 @@ def test_backtest_trades_generated(tmp_path):
         start_capital=1000.0,
         generate_html_report=False,
         reports_dir=str(tmp_path / "reports"),
-        worker_log_file=str(tmp_path / "worker.log")
+        worker_log_file=str(tmp_path / "worker.log"),
     )
 
     assert res != {}, "Worker crashed and returned {}"

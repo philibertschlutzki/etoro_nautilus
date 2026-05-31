@@ -634,7 +634,8 @@ def phase3_4_backtest_and_tournament(
     today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     thirty_days_ago = today_midnight - timedelta(days=30)
 
-    log.info(f"[Phase 3] Zeitfenster: {thirty_days_ago.isoformat()} → {today_midnight.isoformat()}")
+    # Start time is calculated inside _build_backtest_config based on WF settings
+    pass
 
     dynamic_config   = _build_backtest_config(thirty_days_ago, today_midnight, start_capital=None)
     dynamic_cfg_path = LOGS_DIR / "backtest_dynamic_config.json"
@@ -712,6 +713,8 @@ def phase3_4_backtest_and_tournament(
 
 
 def _build_backtest_config(start: datetime, end: datetime, start_capital: float | None = None) -> dict:
+    from datetime import timedelta
+
     """Baut die dynamische Backtest-Config aus automation/config/*.json.
 
     Liest Strategien aus automation/config/strategies.json (nur active=true).
@@ -719,6 +722,7 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
     Generierte Laufzeit-JSONs werden weiterhin in logs/ geschrieben.
     """
     # ── Global Settings aus backtest.json lesen (einzige Quelle für start_capital) ──
+    bt_cfg = {}
     if BACKTEST_CFG.exists():
         try:
             with open(str(BACKTEST_CFG), "r", encoding="utf-8") as f:
@@ -728,6 +732,11 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
             start_capital = 10000.0
     else:
         start_capital = 10000.0
+
+    wf_cfg = bt_cfg.get("walk_forward")
+    if wf_cfg:
+        total_days = wf_cfg.get("is_window_days", 90) + wf_cfg.get("splits", 2) * wf_cfg.get("oos_window_days", 30)
+        start = end - timedelta(days=total_days)
 
     # ── Strategien aus automation/config/strategies.json (nur active=true) ──
     strategies: list[dict] = []
@@ -758,9 +767,10 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
             "start_time":    start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_time":      end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "start_capital": start_capital,
+            "walk_forward":  bt_cfg.get("walk_forward"),
             "_note": (
                 f"Dynamisch generiert — Fenster: {start.date()} bis {end.date()} "
-                "(Midnight UTC, 30 Tage). Config-Root: automation/config/. "
+                "(Midnight UTC). Config-Root: automation/config/. "
                 "Quellen: catalog_service.py (stündliche ZIPs) + "
                 "api_backfiller.py + historical_fetcher.py. Alle Daten als FSB(16)."
             ),
@@ -815,6 +825,21 @@ def phase5_live_deployment(
     tournament_path = tournament_result.get("tournament_path", str(TOURNAMENT_PATH))
     if not Path(tournament_path).exists():
         log.error(f"[Phase 5] Tournament-Datei nicht gefunden: {tournament_path}")
+        return 1
+
+    try:
+        with open(tournament_path, "r", encoding="utf-8") as tf:
+            t_data = json.load(tf)
+        agg = t_data.get("aggregate_winner")
+        if not agg:
+            log.error("[Phase 5] Kein Aggregat-Sieger im Tournament. Abbruch.")
+            return 1
+        if not agg.get("oos_eligible", True):  # Default to True for backwards compat if missing
+            log.warning(f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} erfüllt die Kriterien im jüngsten OOS-Slice nicht. Kontrollierter Abbruch (kein Live-Deploy).")
+            return 0
+        log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} ist eligibel.")
+    except Exception as e:
+        log.error(f"[Phase 5] Fehler beim Lesen des OOS-Gates: {e}")
         return 1
 
     today_str  = datetime.now(timezone.utc).strftime("%Y%m%d")
