@@ -60,6 +60,13 @@
       "params": {}
     },
     {
+      "active": true,
+      "strategy_module": "automation.strategies.hourly_mean_reversion",
+      "strategy_class": "HourlyMeanReversionStrategy",
+      "config_class": "HourlyMeanReversionConfig",
+      "params": {}
+    },
+    {
       "active": false,
       "strategy_module": "automation.strategies.trend_pullback",
       "strategy_class": "TrendPullbackStrategy",
