@@ -1,0 +1,216 @@
+2026-05-29 15:55:45,071 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 15:55:45,071 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-29 15:55:45,072 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 15:55:45,073 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 15:55:45,649 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 15:55:45,649 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 15:55:45,662 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 15:55:46,234 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 15:55:46,363 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': '11dad15a-1339-4838-b433-5d78cdf8d79a', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 15:55:46,364 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 15:56:19,852 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 15:56:19,852 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-29 15:56:19,853 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 15:56:19,854 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 15:56:20,416 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 15:56:20,416 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 15:56:20,427 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 15:56:20,955 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 15:56:21,093 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': '3a2d6a15-e7c8-4e7d-81b7-a5f60b7b381a', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 15:56:21,093 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 15:57:57,794 | INFO     | catalog_service | [catalog_service] Heartbeat: 1000 Ticks verarbeitet, 1000 im Puffer.
+2026-05-29 15:59:03,692 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 15:59:03,693 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-29 15:59:03,694 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 15:59:03,694 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 15:59:04,232 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 15:59:04,232 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 15:59:04,243 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 15:59:04,804 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 15:59:04,942 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': 'c1b46f66-6999-439e-b999-0042021aec6c', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 15:59:04,942 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 16:00:53,772 | INFO     | catalog_service | [catalog_service] Heartbeat: 1000 Ticks verarbeitet, 1000 im Puffer.
+2026-05-29 16:02:35,195 | INFO     | catalog_service | [catalog_service] Heartbeat: 2000 Ticks verarbeitet, 2000 im Puffer.
+2026-05-29 16:04:24,732 | INFO     | catalog_service | [catalog_service] Heartbeat: 3000 Ticks verarbeitet, 3000 im Puffer.
+2026-05-29 16:06:22,595 | INFO     | catalog_service | [catalog_service] Heartbeat: 4000 Ticks verarbeitet, 4000 im Puffer.
+2026-05-29 16:08:06,714 | INFO     | catalog_service | [catalog_service] Heartbeat: 5000 Ticks verarbeitet, 5000 im Puffer.
+2026-05-29 16:10:01,168 | INFO     | catalog_service | [catalog_service] Heartbeat: 6000 Ticks verarbeitet, 6000 im Puffer.
+2026-05-29 16:11:51,862 | INFO     | catalog_service | [catalog_service] Heartbeat: 7000 Ticks verarbeitet, 7000 im Puffer.
+2026-05-29 16:14:12,198 | INFO     | catalog_service | [catalog_service] Heartbeat: 8000 Ticks verarbeitet, 8000 im Puffer.
+2026-05-29 16:15:48,196 | INFO     | catalog_service | [catalog_service] Heartbeat: 9000 Ticks verarbeitet, 9000 im Puffer.
+2026-05-29 16:17:45,148 | INFO     | catalog_service | [catalog_service] Heartbeat: 10000 Ticks verarbeitet, 10000 im Puffer.
+2026-05-29 16:19:31,865 | INFO     | catalog_service | [catalog_service] Heartbeat: 11000 Ticks verarbeitet, 11000 im Puffer.
+2026-05-29 16:21:34,218 | INFO     | catalog_service | [catalog_service] Heartbeat: 12000 Ticks verarbeitet, 12000 im Puffer.
+2026-05-29 16:23:47,095 | INFO     | catalog_service | [catalog_service] Heartbeat: 13000 Ticks verarbeitet, 13000 im Puffer.
+2026-05-29 16:25:47,596 | INFO     | catalog_service | [catalog_service] Heartbeat: 14000 Ticks verarbeitet, 14000 im Puffer.
+2026-05-29 16:27:49,732 | INFO     | catalog_service | [catalog_service] Heartbeat: 15000 Ticks verarbeitet, 15000 im Puffer.
+2026-05-29 16:29:52,791 | INFO     | catalog_service | [catalog_service] Heartbeat: 16000 Ticks verarbeitet, 16000 im Puffer.
+2026-05-29 16:31:47,011 | INFO     | catalog_service | [catalog_service] Heartbeat: 17000 Ticks verarbeitet, 17000 im Puffer.
+2026-05-29 16:33:45,576 | INFO     | catalog_service | [catalog_service] Heartbeat: 18000 Ticks verarbeitet, 18000 im Puffer.
+2026-05-29 16:35:47,131 | INFO     | catalog_service | [catalog_service] Heartbeat: 19000 Ticks verarbeitet, 19000 im Puffer.
+2026-05-29 16:37:21,163 | INFO     | catalog_service | [catalog_service] Heartbeat: 20000 Ticks verarbeitet, 20000 im Puffer.
+2026-05-29 16:39:28,108 | INFO     | catalog_service | [catalog_service] Heartbeat: 21000 Ticks verarbeitet, 21000 im Puffer.
+2026-05-29 16:41:23,207 | INFO     | catalog_service | [catalog_service] Heartbeat: 22000 Ticks verarbeitet, 22000 im Puffer.
+2026-05-29 16:43:41,126 | INFO     | catalog_service | [catalog_service] Heartbeat: 23000 Ticks verarbeitet, 23000 im Puffer.
+2026-05-29 16:43:45,978 | ERROR    | catalog_service | [catalog_service] WS-Verbindungsfehler: no close frame received or sent. Erzwinge Neustart.
+2026-05-29 16:43:57,205 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 16:43:57,206 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-29 16:43:57,207 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 16:43:57,207 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 16:43:57,732 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 16:43:57,732 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 16:43:57,745 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 16:43:58,365 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 16:43:58,502 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': 'f3265af2-a5fa-4489-a3eb-430755e71bae', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 16:43:58,503 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 16:46:00,859 | INFO     | catalog_service | [catalog_service] Heartbeat: 1000 Ticks verarbeitet, 1000 im Puffer.
+2026-05-29 16:48:05,597 | INFO     | catalog_service | [catalog_service] Heartbeat: 2000 Ticks verarbeitet, 2000 im Puffer.
+2026-05-29 16:50:13,126 | INFO     | catalog_service | [catalog_service] Heartbeat: 3000 Ticks verarbeitet, 3000 im Puffer.
+2026-05-29 16:52:29,190 | INFO     | catalog_service | [catalog_service] Heartbeat: 4000 Ticks verarbeitet, 4000 im Puffer.
+2026-05-29 16:54:39,274 | INFO     | catalog_service | [catalog_service] Heartbeat: 5000 Ticks verarbeitet, 5000 im Puffer.
+2026-05-29 16:56:46,156 | INFO     | catalog_service | [catalog_service] Heartbeat: 6000 Ticks verarbeitet, 6000 im Puffer.
+2026-05-29 16:58:49,736 | INFO     | catalog_service | [catalog_service] Heartbeat: 7000 Ticks verarbeitet, 7000 im Puffer.
+2026-05-29 17:01:02,118 | INFO     | catalog_service | [catalog_service] Heartbeat: 8000 Ticks verarbeitet, 8000 im Puffer.
+2026-05-29 17:03:07,181 | INFO     | catalog_service | [catalog_service] Heartbeat: 9000 Ticks verarbeitet, 9000 im Puffer.
+2026-05-29 17:05:25,605 | INFO     | catalog_service | [catalog_service] Heartbeat: 10000 Ticks verarbeitet, 10000 im Puffer.
+2026-05-29 17:07:44,838 | INFO     | catalog_service | [catalog_service] Heartbeat: 11000 Ticks verarbeitet, 11000 im Puffer.
+2026-05-29 17:10:13,191 | INFO     | catalog_service | [catalog_service] Heartbeat: 12000 Ticks verarbeitet, 12000 im Puffer.
+2026-05-29 17:12:19,858 | INFO     | catalog_service | [catalog_service] Heartbeat: 13000 Ticks verarbeitet, 13000 im Puffer.
+2026-05-29 17:14:35,753 | INFO     | catalog_service | [catalog_service] Heartbeat: 14000 Ticks verarbeitet, 14000 im Puffer.
+2026-05-29 17:16:38,384 | INFO     | catalog_service | [catalog_service] Heartbeat: 15000 Ticks verarbeitet, 15000 im Puffer.
+2026-05-29 17:18:55,161 | INFO     | catalog_service | [catalog_service] Heartbeat: 16000 Ticks verarbeitet, 16000 im Puffer.
+2026-05-29 17:21:03,268 | INFO     | catalog_service | [catalog_service] Heartbeat: 17000 Ticks verarbeitet, 17000 im Puffer.
+2026-05-29 17:22:56,174 | INFO     | catalog_service | [catalog_service] Heartbeat: 18000 Ticks verarbeitet, 18000 im Puffer.
+2026-05-29 17:25:03,154 | INFO     | catalog_service | [catalog_service] Heartbeat: 19000 Ticks verarbeitet, 19000 im Puffer.
+2026-05-29 17:27:05,760 | INFO     | catalog_service | [catalog_service] Heartbeat: 20000 Ticks verarbeitet, 20000 im Puffer.
+2026-05-29 17:29:19,866 | INFO     | catalog_service | [catalog_service] Heartbeat: 21000 Ticks verarbeitet, 21000 im Puffer.
+2026-05-29 17:31:34,780 | INFO     | catalog_service | [catalog_service] Heartbeat: 22000 Ticks verarbeitet, 22000 im Puffer.
+2026-05-29 17:33:47,200 | INFO     | catalog_service | [catalog_service] Heartbeat: 23000 Ticks verarbeitet, 23000 im Puffer.
+2026-05-29 17:35:49,119 | INFO     | catalog_service | [catalog_service] Heartbeat: 24000 Ticks verarbeitet, 24000 im Puffer.
+2026-05-29 17:38:07,219 | INFO     | catalog_service | [catalog_service] Heartbeat: 25000 Ticks verarbeitet, 25000 im Puffer.
+2026-05-29 17:40:27,720 | INFO     | catalog_service | [catalog_service] Heartbeat: 26000 Ticks verarbeitet, 26000 im Puffer.
+2026-05-29 17:42:27,197 | INFO     | catalog_service | [catalog_service] Heartbeat: 27000 Ticks verarbeitet, 27000 im Puffer.
+2026-05-29 17:43:57,786 | INFO     | catalog_service | [catalog_service] Flush gestartet: 27700 Ticks, 49 Instrumente.
+2026-05-29 17:43:59,522 | INFO     | catalog_service | [catalog_service] ZIP geschrieben: 20260529_174357.zip | 49 Instrumente | 27700 Ticks gesamt
+2026-05-29 17:43:59,523 | INFO     | catalog_service | [catalog_service] ZIP bereit für Orchestrator: /opt/etoro_nautilus/data/import/20260529_174357.zip
+2026-05-29 17:44:37,110 | INFO     | catalog_service | [catalog_service] Heartbeat: 28000 Ticks verarbeitet, 300 im Puffer.
+2026-05-29 17:46:37,241 | INFO     | catalog_service | [catalog_service] Heartbeat: 29000 Ticks verarbeitet, 1300 im Puffer.
+2026-05-29 17:48:36,582 | INFO     | catalog_service | [catalog_service] Heartbeat: 30000 Ticks verarbeitet, 2300 im Puffer.
+2026-05-29 17:50:50,173 | INFO     | catalog_service | [catalog_service] Heartbeat: 31000 Ticks verarbeitet, 3300 im Puffer.
+2026-05-29 17:53:03,176 | INFO     | catalog_service | [catalog_service] Heartbeat: 32000 Ticks verarbeitet, 4300 im Puffer.
+2026-05-29 17:55:07,834 | INFO     | catalog_service | [catalog_service] Heartbeat: 33000 Ticks verarbeitet, 5300 im Puffer.
+2026-05-29 17:57:08,853 | INFO     | catalog_service | [catalog_service] Heartbeat: 34000 Ticks verarbeitet, 6300 im Puffer.
+2026-05-29 17:59:15,163 | INFO     | catalog_service | [catalog_service] Heartbeat: 35000 Ticks verarbeitet, 7300 im Puffer.
+2026-05-29 18:01:01,716 | INFO     | catalog_service | [catalog_service] Heartbeat: 36000 Ticks verarbeitet, 8300 im Puffer.
+2026-05-29 18:02:50,598 | INFO     | catalog_service | [catalog_service] Heartbeat: 37000 Ticks verarbeitet, 9300 im Puffer.
+2026-05-29 18:04:58,571 | INFO     | catalog_service | [catalog_service] Heartbeat: 38000 Ticks verarbeitet, 10300 im Puffer.
+2026-05-29 18:07:02,165 | INFO     | catalog_service | [catalog_service] Heartbeat: 39000 Ticks verarbeitet, 11300 im Puffer.
+2026-05-29 18:09:09,230 | INFO     | catalog_service | [catalog_service] Heartbeat: 40000 Ticks verarbeitet, 12300 im Puffer.
+2026-05-29 18:11:24,162 | INFO     | catalog_service | [catalog_service] Heartbeat: 41000 Ticks verarbeitet, 13300 im Puffer.
+2026-05-29 18:13:42,170 | INFO     | catalog_service | [catalog_service] Heartbeat: 42000 Ticks verarbeitet, 14300 im Puffer.
+2026-05-29 18:15:41,171 | INFO     | catalog_service | [catalog_service] Heartbeat: 43000 Ticks verarbeitet, 15300 im Puffer.
+2026-05-29 18:18:01,868 | INFO     | catalog_service | [catalog_service] Heartbeat: 44000 Ticks verarbeitet, 16300 im Puffer.
+2026-05-29 18:20:17,611 | INFO     | catalog_service | [catalog_service] Heartbeat: 45000 Ticks verarbeitet, 17300 im Puffer.
+2026-05-29 18:22:30,876 | INFO     | catalog_service | [catalog_service] Heartbeat: 46000 Ticks verarbeitet, 18300 im Puffer.
+2026-05-29 18:24:44,598 | INFO     | catalog_service | [catalog_service] Heartbeat: 47000 Ticks verarbeitet, 19300 im Puffer.
+2026-05-29 18:26:55,771 | INFO     | catalog_service | [catalog_service] Heartbeat: 48000 Ticks verarbeitet, 20300 im Puffer.
+2026-05-29 18:29:00,179 | INFO     | catalog_service | [catalog_service] Heartbeat: 49000 Ticks verarbeitet, 21300 im Puffer.
+2026-05-29 18:30:53,152 | INFO     | catalog_service | [catalog_service] Heartbeat: 50000 Ticks verarbeitet, 22300 im Puffer.
+2026-05-29 18:33:11,763 | INFO     | catalog_service | [catalog_service] Heartbeat: 51000 Ticks verarbeitet, 23300 im Puffer.
+2026-05-29 18:35:30,175 | INFO     | catalog_service | [catalog_service] Heartbeat: 52000 Ticks verarbeitet, 24300 im Puffer.
+2026-05-29 18:37:36,344 | INFO     | catalog_service | [catalog_service] Heartbeat: 53000 Ticks verarbeitet, 25300 im Puffer.
+2026-05-29 18:39:36,203 | INFO     | catalog_service | [catalog_service] Heartbeat: 54000 Ticks verarbeitet, 26300 im Puffer.
+2026-05-29 18:41:42,175 | INFO     | catalog_service | [catalog_service] Heartbeat: 55000 Ticks verarbeitet, 27300 im Puffer.
+2026-05-29 18:43:48,396 | INFO     | catalog_service | [catalog_service] Heartbeat: 56000 Ticks verarbeitet, 28300 im Puffer.
+2026-05-29 18:43:59,535 | INFO     | catalog_service | [catalog_service] Flush gestartet: 28377 Ticks, 49 Instrumente.
+2026-05-29 18:43:59,768 | INFO     | catalog_service | [catalog_service] ZIP geschrieben: 20260529_184359.zip | 49 Instrumente | 28377 Ticks gesamt
+2026-05-29 18:43:59,769 | INFO     | catalog_service | [catalog_service] ZIP bereit für Orchestrator: /opt/etoro_nautilus/data/import/20260529_184359.zip
+2026-05-29 18:45:47,896 | INFO     | catalog_service | [catalog_service] Heartbeat: 57000 Ticks verarbeitet, 923 im Puffer.
+2026-05-29 18:47:42,731 | INFO     | catalog_service | [catalog_service] Heartbeat: 58000 Ticks verarbeitet, 1923 im Puffer.
+2026-05-29 18:49:56,610 | INFO     | catalog_service | [catalog_service] Heartbeat: 59000 Ticks verarbeitet, 2923 im Puffer.
+2026-05-29 18:51:46,169 | INFO     | catalog_service | [catalog_service] Heartbeat: 60000 Ticks verarbeitet, 3923 im Puffer.
+2026-05-29 18:53:44,772 | INFO     | catalog_service | [catalog_service] Heartbeat: 61000 Ticks verarbeitet, 4923 im Puffer.
+2026-05-29 18:55:52,191 | INFO     | catalog_service | [catalog_service] Heartbeat: 62000 Ticks verarbeitet, 5923 im Puffer.
+2026-05-29 18:57:52,586 | INFO     | catalog_service | [catalog_service] Heartbeat: 63000 Ticks verarbeitet, 6923 im Puffer.
+2026-05-29 18:59:53,776 | INFO     | catalog_service | [catalog_service] Heartbeat: 64000 Ticks verarbeitet, 7923 im Puffer.
+2026-05-29 19:01:29,790 | INFO     | catalog_service | [catalog_service] Heartbeat: 65000 Ticks verarbeitet, 8923 im Puffer.
+2026-05-29 19:03:21,659 | INFO     | catalog_service | [catalog_service] Heartbeat: 66000 Ticks verarbeitet, 9923 im Puffer.
+2026-05-29 19:05:21,863 | INFO     | catalog_service | [catalog_service] Heartbeat: 67000 Ticks verarbeitet, 10923 im Puffer.
+2026-05-29 19:07:15,838 | INFO     | catalog_service | [catalog_service] Heartbeat: 68000 Ticks verarbeitet, 11923 im Puffer.
+2026-05-29 19:09:21,718 | INFO     | catalog_service | [catalog_service] Heartbeat: 69000 Ticks verarbeitet, 12923 im Puffer.
+2026-05-29 19:11:29,564 | INFO     | catalog_service | [catalog_service] Heartbeat: 70000 Ticks verarbeitet, 13923 im Puffer.
+2026-05-29 19:13:28,170 | INFO     | catalog_service | [catalog_service] Heartbeat: 71000 Ticks verarbeitet, 14923 im Puffer.
+2026-05-29 19:15:13,596 | INFO     | catalog_service | [catalog_service] Heartbeat: 72000 Ticks verarbeitet, 15923 im Puffer.
+2026-05-29 19:17:14,734 | INFO     | catalog_service | [catalog_service] Heartbeat: 73000 Ticks verarbeitet, 16923 im Puffer.
+2026-05-29 19:19:15,159 | INFO     | catalog_service | [catalog_service] Heartbeat: 74000 Ticks verarbeitet, 17923 im Puffer.
+2026-05-29 19:21:12,215 | INFO     | catalog_service | [catalog_service] Heartbeat: 75000 Ticks verarbeitet, 18923 im Puffer.
+2026-05-29 19:23:22,948 | INFO     | catalog_service | [catalog_service] Heartbeat: 76000 Ticks verarbeitet, 19923 im Puffer.
+2026-05-29 19:24:57,182 | INFO     | catalog_service | [catalog_service] Heartbeat: 77000 Ticks verarbeitet, 20923 im Puffer.
+2026-05-29 19:26:58,624 | INFO     | catalog_service | [catalog_service] Heartbeat: 78000 Ticks verarbeitet, 21923 im Puffer.
+2026-05-29 19:28:52,693 | INFO     | catalog_service | [catalog_service] Heartbeat: 79000 Ticks verarbeitet, 22923 im Puffer.
+2026-05-29 19:30:13,171 | INFO     | catalog_service | [catalog_service] Heartbeat: 80000 Ticks verarbeitet, 23923 im Puffer.
+2026-05-29 19:31:42,886 | INFO     | catalog_service | [catalog_service] Heartbeat: 81000 Ticks verarbeitet, 24923 im Puffer.
+2026-05-29 19:33:14,183 | INFO     | catalog_service | [catalog_service] Heartbeat: 82000 Ticks verarbeitet, 25923 im Puffer.
+2026-05-29 19:34:45,810 | INFO     | catalog_service | [catalog_service] Heartbeat: 83000 Ticks verarbeitet, 26923 im Puffer.
+2026-05-29 19:36:09,750 | INFO     | catalog_service | [catalog_service] Heartbeat: 84000 Ticks verarbeitet, 27923 im Puffer.
+2026-05-29 19:37:48,761 | INFO     | catalog_service | [catalog_service] Heartbeat: 85000 Ticks verarbeitet, 28923 im Puffer.
+2026-05-29 19:39:29,850 | INFO     | catalog_service | [catalog_service] Heartbeat: 86000 Ticks verarbeitet, 29923 im Puffer.
+2026-05-29 19:41:02,192 | INFO     | catalog_service | [catalog_service] Heartbeat: 87000 Ticks verarbeitet, 30923 im Puffer.
+2026-05-29 19:42:33,171 | INFO     | catalog_service | [catalog_service] Heartbeat: 88000 Ticks verarbeitet, 31923 im Puffer.
+2026-05-29 19:43:59,784 | INFO     | catalog_service | [catalog_service] Flush gestartet: 32835 Ticks, 49 Instrumente.
+2026-05-29 19:43:59,999 | INFO     | catalog_service | [catalog_service] ZIP geschrieben: 20260529_194359.zip | 49 Instrumente | 32835 Ticks gesamt
+2026-05-29 19:44:00,000 | INFO     | catalog_service | [catalog_service] ZIP bereit für Orchestrator: /opt/etoro_nautilus/data/import/20260529_194359.zip
+2026-05-29 19:44:07,919 | INFO     | catalog_service | [catalog_service] Heartbeat: 89000 Ticks verarbeitet, 88 im Puffer.
+2026-05-29 19:45:33,792 | INFO     | catalog_service | [catalog_service] Heartbeat: 90000 Ticks verarbeitet, 1088 im Puffer.
+2026-05-29 19:46:58,156 | INFO     | catalog_service | [catalog_service] Heartbeat: 91000 Ticks verarbeitet, 2088 im Puffer.
+2026-05-29 19:48:22,216 | INFO     | catalog_service | [catalog_service] Heartbeat: 92000 Ticks verarbeitet, 3088 im Puffer.
+2026-05-29 19:49:41,204 | INFO     | catalog_service | [catalog_service] Heartbeat: 93000 Ticks verarbeitet, 4088 im Puffer.
+2026-05-29 19:51:18,818 | INFO     | catalog_service | [catalog_service] Heartbeat: 94000 Ticks verarbeitet, 5088 im Puffer.
+2026-05-29 19:52:21,613 | INFO     | catalog_service | [catalog_service] Heartbeat: 95000 Ticks verarbeitet, 6088 im Puffer.
+2026-05-29 19:53:53,461 | INFO     | catalog_service | [catalog_service] Heartbeat: 96000 Ticks verarbeitet, 7088 im Puffer.
+2026-05-29 19:54:36,170 | INFO     | catalog_service | [catalog_service] Heartbeat: 97000 Ticks verarbeitet, 8088 im Puffer.
+2026-05-29 19:55:37,231 | INFO     | catalog_service | [catalog_service] Heartbeat: 98000 Ticks verarbeitet, 9088 im Puffer.
+2026-05-29 19:56:32,270 | INFO     | catalog_service | [catalog_service] Heartbeat: 99000 Ticks verarbeitet, 10088 im Puffer.
+2026-05-29 19:57:28,310 | INFO     | catalog_service | [catalog_service] Heartbeat: 100000 Ticks verarbeitet, 11088 im Puffer.
+2026-05-29 19:58:21,654 | INFO     | catalog_service | [catalog_service] Heartbeat: 101000 Ticks verarbeitet, 12088 im Puffer.
+2026-05-29 19:59:09,846 | INFO     | catalog_service | [catalog_service] Heartbeat: 102000 Ticks verarbeitet, 13088 im Puffer.
+2026-05-29 20:06:43,487 | ERROR    | catalog_service | [catalog_service] WS-Verbindungsfehler: no close frame received or sent. Erzwinge Neustart.
+2026-05-29 20:06:54,446 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 20:06:54,446 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-29 20:06:54,447 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 20:06:54,448 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 20:06:55,045 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 20:06:55,045 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 20:06:55,059 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 20:06:55,636 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 20:06:55,767 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': '3d9e19e2-bc0c-4355-9f00-795668ce77cf', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 20:06:55,767 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 20:19:09,797 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 20:19:09,798 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-29 20:19:09,799 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 20:19:09,800 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 20:19:10,924 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 20:19:10,924 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 20:19:10,938 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 20:19:11,561 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 20:19:11,701 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': 'c9f33a93-d8fb-4ac5-b3c1-d44d29f10fdc', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 20:19:11,702 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 20:51:52,866 | INFO     | catalog_service | [catalog_service] Universe geladen: 49 Instrumente.
+2026-05-29 20:51:52,868 | INFO     | catalog_service | [catalog_service] Starte mit 49 Instrumenten | Flush alle 3600s | ZIPs → /opt/etoro_nautilus/data/import
+2026-05-29 20:51:52,869 | INFO     | catalog_service | [catalog_service] Dienst startet: 49 Instrumente, Flush-Intervall: 3600s
+2026-05-29 20:51:52,869 | INFO     | catalog_service | [catalog_service] Lade Instrument-Precisions via eToro API …
+2026-05-29 20:51:53,417 | INFO     | catalog_service | [catalog_service] Precisions aktualisiert: 0/49 Instrumente.
+2026-05-29 20:51:53,417 | INFO     | catalog_service | [catalog_service] WebSocket-Loop und Flush-Loop gestartet.
+2026-05-29 20:51:53,430 | INFO     | catalog_service | [catalog_service] WS Verbindungsversuch 1/5 → wss://ws.etoro.com/ws
+2026-05-29 20:51:54,070 | INFO     | catalog_service | [catalog_service] WebSocket verbunden. Authentifiziere …
+2026-05-29 20:51:54,208 | INFO     | catalog_service | [catalog_service] Auth-Antwort: {'id': '9a58eb0b-db7d-4985-98de-bce7fb63116b', 'success': True, 'operation': 'Authenticate'}
+2026-05-29 20:51:54,208 | INFO     | catalog_service | [catalog_service] Abonniert: 49 Instrumente.
+2026-05-29 21:51:53,498 | INFO     | catalog_service | [catalog_service] Flush gestartet: 49 Ticks, 49 Instrumente.
+2026-05-29 21:51:54,977 | INFO     | catalog_service | [catalog_service] ZIP geschrieben: 20260529_215153.zip | 49 Instrumente | 49 Ticks gesamt
+2026-05-29 21:51:54,978 | INFO     | catalog_service | [catalog_service] ZIP bereit für Orchestrator: /opt/etoro_nautilus/data/import/20260529_215153.zip
+2026-05-29 22:51:54,981 | INFO     | catalog_service | [catalog_service] Flush: Puffer leer — kein ZIP geschrieben.
+2026-05-29 23:51:54,986 | INFO     | catalog_service | [catalog_service] Flush gestartet: 3 Ticks, 3 Instrumente.
+2026-05-29 23:51:55,037 | INFO     | catalog_service | [catalog_service] ZIP geschrieben: 20260529_235154.zip | 3 Instrumente | 3 Ticks gesamt
+2026-05-29 23:51:55,038 | INFO     | catalog_service | [catalog_service] ZIP bereit für Orchestrator: /opt/etoro_nautilus/data/import/20260529_235154.zip
+2026-05-30 00:51:55,041 | INFO     | catalog_service | [catalog_service] Flush: Puffer leer — kein ZIP geschrieben.
+2026-05-30 01:51:55,045 | INFO     | catalog_service | [catalog_service] Flush: Puffer leer — kein ZIP geschrieben.

@@ -77,28 +77,6 @@ def read_precisions_from_parquet(parquet_path: str | Path, instrument_id: str = 
         return _fallback_precisions(symbol)
 
 
-def score_strategy(metrics: dict, scoring_cfg: dict) -> float:
-    score = 0.0
-    score += metrics.get("sortino_ratio", 0) * scoring_cfg.get("sortino_weight", 0.4)
-    score += metrics.get("profit_factor", 0) * scoring_cfg.get("profit_factor_weight", 0.3)
-    score += metrics.get("win_rate", 0) * scoring_cfg.get("win_rate_weight", 0.2)
-    score -= metrics.get("max_drawdown", 0) * scoring_cfg.get("drawdown_penalty_weight", 0.1)
-    return score
-
-def select_tournament_winner(results: list[dict], cfg: dict) -> dict | None:
-    best_candidate = None
-    best_score = -999.0
-    for r in results:
-        metrics = r.get("metrics", {})
-        if not _is_eligible(metrics, cfg):
-            continue
-        score = score_strategy(metrics, cfg.get("scoring", {}))
-        if score > best_score:
-            best_score = score
-            best_candidate = r
-    if best_candidate:
-        return best_candidate
-    return None
 
 from typing import Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -346,18 +324,30 @@ def load_tournament_config(project_root: str | None = None) -> dict:
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return {k: v for k, v in data.items() if not k.startswith("_")}
+            cfg = {k: v for k, v in data.items() if not k.startswith("_")}
+            # Startup-Validierung
+            req_all = set(cfg.get("eligible_requires_all", []))
+            req_any = set(cfg.get("eligible_requires_any", []))
+            used = req_all | req_any
+            metric_keys = {k for k in cfg.keys() if k not in ("eligible_requires_all", "eligible_requires_any", "scoring")}
+            for k in metric_keys:
+                if k not in used:
+                    print(f"  ⚠️  Tournament-Kriterium '{k}' ist definiert, aber nicht in eligible_requires_all/any referenziert!")
+            for u in used:
+                if u not in metric_keys:
+                    print(f"  ⚠️  Referenziertes Kriterium '{u}' in eligible_requires_all/any ist nicht definiert!")
+            return cfg
         except Exception as e:
             print(f"  ⚠️  tournament.json Ladefehler: {e} — nutze Legacy-Defaults.")
     # Legacy-Defaults (Rückwärts-Kompatibilität)
     return {
-        "min_trades": 5,
+        "min_trades": 20,
         "min_sortino": 0.0,
         "min_profit_factor": 1.5,
         "max_drawdown": 1.0,
         "min_win_rate": 0.0,
         "min_total_return": 0.0,
-        "eligible_requires_all": ["min_trades"],
+        "eligible_requires_all": ["min_trades", "min_win_rate", "max_drawdown"],
         "eligible_requires_any": ["min_profit_factor"],
         "scoring": {
             "sortino_weight": 0.4,
@@ -765,11 +755,37 @@ def select_winners(
         if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
     ]
 
+    # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)
+    if eligible:
+        def get_ranks(vals, reverse=False):
+            su = sorted(list(set(vals)), reverse=reverse)
+            if len(su) <= 1:
+                return [1.0] * len(vals)
+            return [(su.index(v)) / (len(su) - 1) for v in vals]
+
+        sortinos = [r["metrics"].get("sortino_ratio", 0.0) for r in eligible]
+        pfs = [r["metrics"].get("profit_factor", 0.0) for r in eligible]
+        wrs = [r["metrics"].get("win_rate", 0.0) for r in eligible]
+        dds = [r["metrics"].get("max_drawdown", 0.0) for r in eligible]
+
+        rs = get_ranks(sortinos)
+        rp = get_ranks(pfs)
+        rw = get_ranks(wrs)
+        rd = get_ranks(dds)
+
+        for i, r in enumerate(eligible):
+            r["norm_metrics"] = {
+                "sortino_ratio": rs[i],
+                "profit_factor": rp[i],
+                "win_rate": rw[i],
+                "max_drawdown": rd[i]
+            }
+
     # Besten pro Symbol via composite Score auswählen
     per_symbol: dict[str, dict] = {}
     for r in eligible:
         sym   = r["symbol"]
-        score = compute_tournament_score(r["metrics"], scoring)
+        score = compute_tournament_score(r.get("norm_metrics", r["metrics"]), scoring)
         curr  = per_symbol.get(sym)
         if curr is None or score > curr.get("_score", float("-inf")):
             per_symbol[sym] = {**r, "_score": score}
@@ -794,6 +810,22 @@ def select_winners(
 
     aggregate_winner = None
     if win_counts:
+        def get_median(vals):
+            sv = sorted(vals)
+            n = len(sv)
+            if n == 0: return 0.0
+            if n % 2 == 1: return sv[n//2]
+            return (sv[n//2 - 1] + sv[n//2]) / 2.0
+
+        def get_iqr(vals):
+            sv = sorted(vals)
+            n = len(sv)
+            if n < 2: return 0.0
+            q1 = sv[n//4]
+            q3 = sv[(n*3)//4]
+            return q3 - q1
+
+        # Tie-breaker: 1. Max Wins, 2. Max Median Sortino
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
         best     = max(top, key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s]))
@@ -847,6 +879,8 @@ def write_tournament_json(
         "total_symbol_strategy_pairs": len(all_results),
         "eligible_pairs":              eligible_count,
         "tournament_criteria":         tournament_cfg,
+        "normalization_method":        "rank_based",
+        "normalization_population":    eligible_count,
         "per_symbol_winners":          per_symbol_winners,
         "aggregate_winner":            aggregate_winner,
         "full_results":                all_results,
@@ -1418,7 +1452,7 @@ def run_backtest() -> None:
             print(
                 f"🏆 {aggregate_winner['strategy']} — "
                 f"{aggregate_winner['win_count']} Wins, "
-                f"Ø Sortino: {aggregate_winner['mean_sortino']}"
+                f"Ø Sortino: {aggregate_winner['median_sortino']}"
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")

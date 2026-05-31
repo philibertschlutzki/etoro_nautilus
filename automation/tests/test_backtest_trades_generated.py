@@ -84,7 +84,7 @@ def test_backtest_trades_generated(tmp_path):
 
     sys.path.append(str(Path(".").absolute()))
 
-    res = run_single_backtest_worker(
+    res = run_isolated_worker(
         inst_id_str="AAPL.ETORO",
         bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL",
         strat=strat,
