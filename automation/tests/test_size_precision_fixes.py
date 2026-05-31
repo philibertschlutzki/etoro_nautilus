@@ -26,7 +26,7 @@ from automation.strategies.flash_crash_reversal import FlashCrashReversalStrateg
 from automation.strategies.volatility_breakout import VolatilityBreakoutPumpStrategy
 from automation.strategies.tesla_combo_strategy import ComboTrendVwapStrategy
 from automation.strategies.vwap_exhaustion import VwapExhaustionStrategy
-from automation.strategies.hourly_mean_reversion import HourlyMeanReversionStrategy
+from automation.strategies.mean_reversion import MeanReversionStrategy
 
 def test_strategy_inheritance():
     active_strategies = [
@@ -37,7 +37,7 @@ def test_strategy_inheritance():
         VolatilityBreakoutPumpStrategy,
         ComboTrendVwapStrategy,
         VwapExhaustionStrategy,
-        HourlyMeanReversionStrategy
+        MeanReversionStrategy
     ]
 
     for strategy_class in active_strategies:
