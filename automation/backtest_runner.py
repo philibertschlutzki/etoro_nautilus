@@ -401,6 +401,15 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -
         max_dd       = metrics.get("oos_metrics", {}).get("max_drawdown", 1.0)
         win_rate     = metrics.get("oos_metrics", {}).get("win_rate", 0.0)
         total_return = metrics.get("oos_metrics", {}).get("total_return", 0.0)
+
+        condition_map = {
+            "min_trades":        n_trades     >= tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0)),
+            "min_sortino":       sortino      >= tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0)),
+            "min_profit_factor": pf           >= tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
+            "max_drawdown":      max_dd       <= tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
+            "min_win_rate":      win_rate     >= tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
+            "min_total_return":  total_return >= tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)),
+        }
     else:
         n_trades     = metrics.get("total_trades", 0)
         sortino      = metrics.get("sortino_ratio", 0.0)
@@ -409,14 +418,14 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -
         win_rate     = metrics.get("win_rate", 0.0)
         total_return = metrics.get("total_return", 0.0)
 
-    condition_map = {
-        "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
-        "min_sortino":       sortino      >= tournament_cfg.get("min_sortino", 0.0),
-        "min_profit_factor": pf           >= tournament_cfg.get("min_profit_factor", 1.0),
-        "max_drawdown":      max_dd       <= tournament_cfg.get("max_drawdown", 1.0),
-        "min_win_rate":      win_rate     >= tournament_cfg.get("min_win_rate", 0.0),
-        "min_total_return":  total_return >= tournament_cfg.get("min_total_return", 0.0),
-    }
+        condition_map = {
+            "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
+            "min_sortino":       sortino      >= tournament_cfg.get("min_sortino", 0.0),
+            "min_profit_factor": pf           >= tournament_cfg.get("min_profit_factor", 1.0),
+            "max_drawdown":      max_dd       <= tournament_cfg.get("max_drawdown", 1.0),
+            "min_win_rate":      win_rate     >= tournament_cfg.get("min_win_rate", 0.0),
+            "min_total_return":  total_return >= tournament_cfg.get("min_total_return", 0.0),
+        }
 
     # Harte Filter: ALLE müssen erfüllt sein
     for cond_name in tournament_cfg.get("eligible_requires_all", []):
@@ -540,12 +549,13 @@ def create_mock_instrument(
 # ---------------------------------------------------------------------------
 
 
-def _calculate_stats(pnl_list: list[float], starting_capital: float) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float) -> dict:
     import math
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
+        "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
     }
     if not pnl_list:
         return NULL
@@ -583,6 +593,20 @@ def _calculate_stats(pnl_list: list[float], starting_capital: float) -> dict:
 
     calmar = (total_return / max_dd) if max_dd > 0 else 0.0
 
+    import statistics
+    if hold_list:
+        holds_s = [h / 1e9 for h, _ in hold_list]
+        med_hold = statistics.median(holds_s)
+
+        total_qty = sum(qty for _, qty in hold_list)
+        if total_qty > 1e-9:
+            avg_hold = sum((h / 1e9) * qty for h, qty in hold_list) / total_qty
+        else:
+            avg_hold = sum(holds_s) / len(holds_s)
+    else:
+        avg_hold = 0.0
+        med_hold = 0.0
+
     return {
         "total_trades":  n,
         "win_rate":      float(win_rate),
@@ -591,6 +615,8 @@ def _calculate_stats(pnl_list: list[float], starting_capital: float) -> dict:
         "calmar_ratio":  float(calmar),
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
+        "avg_holding_time_s": float(avg_hold),
+        "median_holding_time_s": float(med_hold),
     }
 
 
@@ -605,6 +631,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
+        "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
     }
 
     try:
@@ -637,8 +664,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
             sorted_fills = sorted(f_list, key=lambda x: getattr(x, 'ts_event', getattr(x, 'ts_init', 0)))
-            buy_queue: deque[tuple[float, float]] = deque()  # (Stückzahl, Preis)
-            sell_queue: deque[tuple[float, float]] = deque() # (Stückzahl, Preis)
+            buy_queue: deque[tuple[float, float, int]] = deque()  # (Stückzahl, Preis, ts_entry)
+            sell_queue: deque[tuple[float, float, int]] = deque() # (Stückzahl, Preis, ts_entry)
 
             for f in sorted_fills:
                 try:
@@ -655,36 +682,46 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
                 if is_buy:
                     while qty > 0 and sell_queue:
-                        s_qty, s_price = sell_queue[0]
+                        s_qty, s_price, s_ts = sell_queue[0]
                         match_qty = min(qty, s_qty)
                         pnl = match_qty * (s_price - price)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
                         ts = int(ts)
-                        pnls_with_ts.append((pnl, ts))
+                        holding_time_ns = ts - s_ts
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
-                        sell_queue[0] = (s_qty - match_qty, s_price)
+                        sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
                             sell_queue.popleft()
                     if qty > 0:
-                        buy_queue.append((qty, price))
+                        ts_init = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
+                        if isinstance(ts_init, pd.Timestamp):
+                            ts_init = ts_init.value
+                        ts_init = int(ts_init)
+                        buy_queue.append((qty, price, ts_init))
                 else:  # SIDE IS SELL
                     while qty > 0 and buy_queue:
-                        b_qty, b_price = buy_queue[0]
+                        b_qty, b_price, b_ts = buy_queue[0]
                         match_qty = min(qty, b_qty)
                         pnl = match_qty * (price - b_price)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
                         ts = int(ts)
-                        pnls_with_ts.append((pnl, ts))
+                        holding_time_ns = ts - b_ts
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
-                        buy_queue[0] = (b_qty - match_qty, b_price)
+                        buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
                             buy_queue.popleft()
                     if qty > 0:
-                        sell_queue.append((qty, price))
+                        ts_init = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
+                        if isinstance(ts_init, pd.Timestamp):
+                            ts_init = ts_init.value
+                        ts_init = int(ts_init)
+                        sell_queue.append((qty, price, ts_init))
 
         if not pnls_with_ts:
             if log_fn:
@@ -696,19 +733,24 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         is_pnls = []
         oos_pnls = []
+        is_holds = []
+        oos_holds = []
 
-        for pnl, ts in pnls_with_ts:
+        for pnl, ts, holding_time_ns, match_qty in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
+                oos_holds.append((holding_time_ns, match_qty))
             else:
                 is_pnls.append(pnl)
+                is_holds.append((holding_time_ns, match_qty))
 
         print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
-        is_metrics = _calculate_stats(is_pnls, starting_capital)
-        oos_metrics = _calculate_stats(oos_pnls, starting_capital) if oos_pnls else {
+        is_metrics = _calculate_stats(is_pnls, is_holds, starting_capital)
+        oos_metrics = _calculate_stats(oos_pnls, oos_holds, starting_capital) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
+            "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         }
 
         return {
@@ -828,17 +870,22 @@ def select_winners(
         # Tie-breaker: 1. Max Wins, 2. Max Median Sortino
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
-        best     = max(top, key=lambda s: sum(sortinos_by_strat[s]) / len(sortinos_by_strat[s]))
+        best     = max(top, key=lambda s: get_median(sortinos_by_strat[s]))
         oos_eligible = False
-        best_results = [r.get("oos_metrics", {}) for r in all_results if r["strategy"] == best and r.get("oos_metrics")]
+
+        # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
+        best_results = [r.get("oos_metrics", {}) for r in per_symbol.values()
+                        if r["strategy"] == best and r.get("oos_metrics")]
+
         if best_results:
+            n_res = len(best_results)
             avg_oos = {
-                "total_trades": sum(oos.get("total_trades", 0) for oos in best_results) / len(best_results),
-                "sortino_ratio": sum(oos.get("sortino_ratio", 0.0) for oos in best_results) / len(best_results),
-                "profit_factor": sum(oos.get("profit_factor", 0.0) for oos in best_results) / len(best_results),
-                "max_drawdown": sum(oos.get("max_drawdown", 1.0) for oos in best_results) / len(best_results),
-                "win_rate": sum(oos.get("win_rate", 0.0) for oos in best_results) / len(best_results),
-                "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / len(best_results),
+                "total_trades": sum(oos.get("total_trades", 0) for oos in best_results),
+                "sortino_ratio": get_median([oos.get("sortino_ratio", 0.0) for oos in best_results]),
+                "profit_factor": get_median([oos.get("profit_factor", 0.0) for oos in best_results]),
+                "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
+                "win_rate": get_median([oos.get("win_rate", 0.0) for oos in best_results]),
+                "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0,
             }
             agg_metrics = {"oos_metrics": avg_oos}
             oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True)
@@ -846,8 +893,8 @@ def select_winners(
         aggregate_winner = {
             "strategy":    best,
             "win_count":   win_counts[best],
-            "mean_sortino": round(
-                sum(sortinos_by_strat[best]) / len(sortinos_by_strat[best]), 4
+            "median_sortino": round(
+                get_median(sortinos_by_strat[best]), 4
             ),
             "oos_eligible": oos_eligible,
         }
@@ -896,8 +943,8 @@ def print_tournament_table(
     per_symbol_winners: dict,
     tournament_cfg: dict | None = None,
 ) -> tuple[int, list[str]]:
-    print(f"\n{'Symbol':<20} | {'Strategy':<30} | {'Sortino':>7} | {'Calmar':>7} | {'PF':>7} | {'Trades':>6} | Win?")
-    print("-" * 95)
+    print(f"\n{'Symbol':<20} | {'Strategy':<30} | {'Sortino':>7} | {'Calmar':>7} | {'PF':>7} | {'Trades':>6} | {'Hold(h)':>7} | Win?")
+    print("-" * 105)
     winner_count = 0
     all_symbols: set[str] = set()
     winning_symbols: set[str] = set()
@@ -909,10 +956,11 @@ def print_tournament_table(
         if is_winner:
             winner_count += 1
             winning_symbols.add(sym)
+        hold_h = m.get('avg_holding_time_s', 0.0) / 3600.0
         print(
             f"{sym:<20} | {strat:<30} | {m['sortino_ratio']:>7.2f} | "
             f"{m['calmar_ratio']:>7.2f} | {m['profit_factor']:>7.2f} | "
-            f"{m['total_trades']:>6} | {'✓' if is_winner else ''}"
+            f"{m['total_trades']:>6} | {hold_h:>7.1f} | {'✓' if is_winner else ''}"
         )
     return winner_count, sorted(all_symbols - winning_symbols)
 
@@ -1452,7 +1500,7 @@ def run_backtest() -> None:
             print(
                 f"🏆 {aggregate_winner['strategy']} — "
                 f"{aggregate_winner['win_count']} Wins, "
-                f"Ø Sortino: {aggregate_winner['median_sortino']}"
+                f"Median Sortino: {aggregate_winner['median_sortino']}"
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")

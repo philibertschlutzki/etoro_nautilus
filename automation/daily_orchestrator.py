@@ -7,7 +7,7 @@ eToro Nautilus — Täglicher End-to-End-Orchestrator (v2.0)
 Führt 5 Phasen sequentiell und fehlerresistent aus:
   Phase 1  — Universe & Mapping (dynamische Instrumentenliste)
   Phase 2  — Datenbeschaffung  (Multi-ZIP-Import, Merge, API-Backfill)
-  Phase 3  — Backtesting        (Matrix-Backtest mit 30-Tage-Midnight-UTC-Fenster)
+  Phase 3  — Backtesting        (Matrix-Backtest mit dynamischem Fenster laut Config)
   Phase 4  — Tournament         (Sortino/PF-Turnier, Pitfall-#14-Fix)
   Phase 5  — Live Deployment   (Safety-Interlocks, Detached Bot, Log-Rotation)
 
@@ -626,7 +626,7 @@ def phase3_4_backtest_and_tournament(
     log: logging.Logger,
     dry_run: bool = False,
 ) -> dict:
-    """Phase 3 & 4: Matrix-Backtesting + Tournament (unverändert gegenüber v1.x)."""
+    """Phase 3 & 4: Matrix-Backtesting + Tournament (mit dynamischem Fenster)."""
     log.info("═" * 60)
     log.info("PHASE 3+4: Matrix-Backtesting & Tournament")
     log.info("═" * 60)
@@ -658,8 +658,9 @@ def phase3_4_backtest_and_tournament(
 
     log.info(f"[Phase 3] Backtest-Kommando: {' '.join(cmd)}")
     emit_json_event(log, "BACKTEST_START", {
-        "start": thirty_days_ago.isoformat(),
-        "end":   today_midnight.isoformat(),
+        "start": dynamic_config.get("global_settings", {}).get("start_time", thirty_days_ago.isoformat()),
+        "end":   dynamic_config.get("global_settings", {}).get("end_time", today_midnight.isoformat()),
+        "walk_forward_active": bool(dynamic_config.get("global_settings", {}).get("walk_forward")),
     })
 
     if dry_run:
@@ -699,7 +700,7 @@ def phase3_4_backtest_and_tournament(
             if agg:
                 log.info(
                     f"[Phase 4] Aggregierter Gewinner: {agg['strategy']} "
-                    f"({agg['win_count']} Wins, Ø Sortino: {agg['mean_sortino']:.2f})"
+                    f"({agg['win_count']} Wins, Median Sortino: {agg['median_sortino']:.2f})"
                 )
             emit_json_event(log, "TOURNAMENT_COMPLETE", {
                 "winner_count":     len(winners),
