@@ -241,8 +241,14 @@ class HourlyStrategyBase(Strategy):
         self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
-            # If it filled, the position is already closed, so we don't need to execute market close!
-            self._pending_cancels.clear()
+
+            # Protect against partial fills: Only clear if the position is fully closed
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            if not positions or positions[0].quantity == 0:
+                self._pending_cancels.clear()
+            elif not self._pending_cancels:
+                # If there are no more pending cancels but the position is still partially open, close it!
+                self._execute_market_close()
 
     def on_order_rejected(self, event) -> None:
         self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
