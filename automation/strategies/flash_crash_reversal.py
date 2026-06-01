@@ -5,20 +5,16 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import BollingerBands
 from nautilus_trader.indicators import RelativeStrengthIndex
 
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class FlashCrashReversalConfig(StrategyConfig, frozen=True):
-    instrument_id: str
-    bar_type: str
+class FlashCrashReversalConfig(HourlyStrategyConfig, frozen=True):
     bb_period: int = 20
     bb_std_dev: float = 2.5
     rsi_period: int = 14
     rsi_oversold: float = 25.0
     rsi_overbought: float = 70.0
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class FlashCrashReversalStrategy(HourlyStrategyBase):

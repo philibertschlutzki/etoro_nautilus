@@ -34,7 +34,17 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 log = logging.getLogger(__name__)
 
-DEFAULT_ATR_PERIOD = 14
+
+class HourlyStrategyConfig(StrategyConfig, frozen=True):
+    instrument_id: str
+    bar_type: str
+    trade_amount_usd: float = 100.0
+    max_open_positions: int = 1
+    atr_period: int = 14
+    atr_trailing_multiplier: float = 1.5
+    max_bars_in_trade: int = 48
+
+
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
 DEFAULT_MAX_BARS_IN_TRADE = 48  # 48 hours with 1h candles
 
@@ -50,7 +60,7 @@ class HourlyStrategyBase(Strategy):
       _in_position: bool                  — whether a position is currently open
     """
 
-    def __init__(self, config: StrategyConfig, allocator: MomentumLSAllocator | None = None):
+    def __init__(self, config: HourlyStrategyConfig, allocator: MomentumLSAllocator | None = None):
         super().__init__(config)
         self.allocator: MomentumLSAllocator | None = allocator
         self._account_id = None
@@ -58,13 +68,23 @@ class HourlyStrategyBase(Strategy):
         self.instrument_id: InstrumentId
         self.bar_type: BarType
 
-        self._exit_atr = AverageTrueRange(DEFAULT_ATR_PERIOD)
+        self._exit_atr = AverageTrueRange(self.config.atr_period)
         self._trailing_stop_price: float | None = None
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
-        self._max_bars_in_trade: int = DEFAULT_MAX_BARS_IN_TRADE
-        self._atr_trailing_multiplier: float = DEFAULT_ATR_TRAILING_MULTIPLIER
+        # Safely extract overrides, guarding against null or empty string injections from JSON
+        raw_atr = getattr(config, "atr_trailing_multiplier", None)
+        try:
+            self._atr_trailing_multiplier: float = float(raw_atr) if raw_atr is not None else DEFAULT_ATR_TRAILING_MULTIPLIER
+        except (TypeError, ValueError):
+            self._atr_trailing_multiplier = DEFAULT_ATR_TRAILING_MULTIPLIER
+
+        raw_bars = getattr(config, "max_bars_in_trade", None)
+        try:
+            self._max_bars_in_trade: int = int(raw_bars) if raw_bars is not None else DEFAULT_MAX_BARS_IN_TRADE
+        except (TypeError, ValueError):
+            self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
@@ -108,6 +128,14 @@ class HourlyStrategyBase(Strategy):
         Updates ATR, trailing stop level, and bar counter.
         Returns True if an exit order was submitted (caller should return immediately).
         Returns False if no exit triggered (caller continues with signal logic).
+
+        NOTE regarding Slippage vs. Native Orders:
+        The exit logic deliberately evaluates against the closed bar (`bar.close`) rather than
+        submitting native intra-bar `trailing_stop_market` orders to the exchange.
+        This prevents the strategy from being stopped out by short, extreme intra-bar noise ("whipsaws").
+        Crucially, this ensures absolute consistency between historical backtests (which use 1h bars)
+        and the Walk-Forward/Out-of-Sample live execution, maintaining the statistical integrity of the
+        gating thresholds.
         """
         self._exit_atr.handle_bar(bar)
 
