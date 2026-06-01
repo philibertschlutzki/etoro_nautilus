@@ -626,7 +626,7 @@ def phase3_4_backtest_and_tournament(
     log: logging.Logger,
     dry_run: bool = False,
 ) -> dict:
-    """Phase 3 & 4: Matrix-Backtesting + Tournament (unverändert gegenüber v1.x)."""
+    """Phase 3 & 4: Matrix-Backtesting + Tournament (mit dynamischem Fenster)."""
     log.info("═" * 60)
     log.info("PHASE 3+4: Matrix-Backtesting & Tournament")
     log.info("═" * 60)
@@ -658,8 +658,9 @@ def phase3_4_backtest_and_tournament(
 
     log.info(f"[Phase 3] Backtest-Kommando: {' '.join(cmd)}")
     emit_json_event(log, "BACKTEST_START", {
-        "start": dynamic_config["global_settings"]["start_time"],
-        "end":   dynamic_config["global_settings"]["end_time"],
+        "start": dynamic_config.get("global_settings", {}).get("start_time", thirty_days_ago.isoformat()),
+        "end":   dynamic_config.get("global_settings", {}).get("end_time", today_midnight.isoformat()),
+        "walk_forward_active": bool(dynamic_config.get("global_settings", {}).get("walk_forward")),
     })
 
     if dry_run:
