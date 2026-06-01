@@ -9,6 +9,18 @@ from automation._serde import encode_price_fsb16, encode_qty_fsb16
 from automation.backtest_runner import run_single_backtest_worker
 import sys
 from pathlib import Path
+import concurrent.futures
+import multiprocessing
+
+def run_isolated_worker(*args, **kwargs):
+    """
+    Kapselt den Backtest-Lauf in einen separaten Prozess,
+    um Rust-Core-Panics im Hauptprozess zu verhindern.
+    """
+    ctx = multiprocessing.get_context("spawn")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=1, mp_context=ctx) as executor:
+        future = executor.submit(run_single_backtest_worker, *args, **kwargs)
+        return future.result()
 
 def test_backtest_trades_generated(tmp_path):
     catalog_path = tmp_path / "nautilus"
