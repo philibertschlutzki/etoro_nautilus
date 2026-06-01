@@ -4,7 +4,7 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import BollingerBands
 
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
@@ -13,8 +13,6 @@ class VolatilityBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     bar_type: str
     bb_period: int = 20
     bb_std_dev: float = 2.0
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):

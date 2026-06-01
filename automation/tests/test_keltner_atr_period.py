@@ -1,16 +1,15 @@
 import os
-import shutil
-import pytest
 import math
+import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
-from nautilus_trader.persistence.catalog import ParquetDataCatalog
+import concurrent.futures
+from pathlib import Path
+import sys
+import multiprocessing
+
 from automation._serde import encode_price_fsb16, encode_qty_fsb16
 from automation.backtest_runner import run_single_backtest_worker
-import sys
-from pathlib import Path
-import concurrent.futures
-import multiprocessing
 
 def run_isolated_worker(*args, **kwargs):
     """
@@ -22,7 +21,7 @@ def run_isolated_worker(*args, **kwargs):
         future = executor.submit(run_single_backtest_worker, *args, **kwargs)
         return future.result()
 
-def test_backtest_trades_generated(tmp_path):
+def test_keltner_atr_period_effect(tmp_path):
     catalog_path = tmp_path / "nautilus"
     tick_dir = catalog_path / "data" / "quote_tick" / "AAPL.ETORO"
     tick_dir.mkdir(parents=True, exist_ok=True)
@@ -41,10 +40,12 @@ def test_backtest_trades_generated(tmp_path):
     import time
     base_ts = int(time.time() * 1e9) - 100 * 3600 * 1_000_000_000
 
-    # Generate ~100 oscillating points so an SMA crosses over multiple times
+    # Generate ~100 oscillating points so an SMA/Keltner crosses over multiple times
     for i in range(100):
         # Oscillate around 100.0 with a sin wave amplitude 5
         price_val = 100.0 + 5.0 * math.sin(i * 0.5)
+        # Adding a bit of trend to cause trades
+        price_val += i * 0.1
         qty_val = 1.0
 
         bid_prices.append(encode_price_fsb16(price_val, price_prec))
@@ -87,26 +88,23 @@ def test_backtest_trades_generated(tmp_path):
     table = table.replace_schema_metadata(meta)
     pq.write_table(table, str(parquet_file))
 
-    strat = {
-        "strategy_class": "DynamicBreakoutStrategy",
-        "strategy_module": "automation.strategies.dynamic_breakout",
-        "config_class": "DynamicBreakoutConfig",
-        "params": {}
-    }
-
     sys.path.append(str(Path(".").absolute()))
 
-    import concurrent.futures
+    strat_20 = {
+        "strategy_class": "MeanReversionStrategy",
+        "strategy_module": "automation.strategies.mean_reversion",
+        "config_class": "MeanReversionConfig",
+        "params": {
+            "keltner_period": 20,
+            "keltner_atr_period": 20,
+            "keltner_multiplier": 2.0
+        }
+    }
 
-    def run_isolated_worker(*args, **kwargs):
-        with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(run_single_backtest_worker, *args, **kwargs)
-            return future.result()
-
-    res = run_isolated_worker(
+    res_20 = run_isolated_worker(
         inst_id_str="AAPL.ETORO",
         bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL",
-        strat=strat,
+        strat=strat_20,
         catalog_path=str(catalog_path),
         start_ns=None,
         end_ns=None,
@@ -116,10 +114,42 @@ def test_backtest_trades_generated(tmp_path):
         worker_log_file=str(tmp_path / "worker.log"),
     )
 
-    assert res != {}, "Worker crashed and returned {}"
-    assert "symbol" in res
-    assert res["symbol"] == "AAPL.ETORO"
+    strat_5 = {
+        "strategy_class": "MeanReversionStrategy",
+        "strategy_module": "automation.strategies.mean_reversion",
+        "config_class": "MeanReversionConfig",
+        "params": {
+            "keltner_period": 20,
+            "keltner_atr_period": 5,
+            "keltner_multiplier": 2.0
+        }
+    }
 
-    # Assert total_trades > 0 to verify correct prices caused trade execution
-    metrics = res.get("metrics", {})
-    assert metrics.get("total_trades", 0) > 0, "No trades were generated! Price encoding might still be 0.0"
+    res_5 = run_isolated_worker(
+        inst_id_str="AAPL.ETORO",
+        bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL",
+        strat=strat_5,
+        catalog_path=str(catalog_path),
+        start_ns=None,
+        end_ns=None,
+        start_capital=1000.0,
+        generate_html_report=False,
+        reports_dir=str(tmp_path / "reports_5"),
+        worker_log_file=str(tmp_path / "worker_5.log"),
+    )
+
+    assert res_20 != {}, "Worker crashed and returned empty dict for atr_period=20"
+    assert res_5 != {}, "Worker crashed and returned empty dict for atr_period=5"
+
+    metrics_20 = res_20.get("metrics", {})
+    metrics_5 = res_5.get("metrics", {})
+
+    trades_20 = metrics_20.get("total_trades", 0)
+    trades_5 = metrics_5.get("total_trades", 0)
+
+    print(f"Total trades with atr_period=20: {trades_20}")
+    print(f"Total trades with atr_period=5: {trades_5}")
+
+    # Der Test schlägt fehl (oder sollte es zumindest vor dem Fix tun, wenn der Parameter gar keine Wirkung hätte)
+    # Mit dem Fix muss es eine Wirkung geben, auch wenn es theoretisch durch Zufall gleich sein könnte, ist es sehr unwahrscheinlich.
+    assert trades_20 != trades_5, "Änderung von keltner_atr_period hatte keinen Einfluss auf die Metriken"

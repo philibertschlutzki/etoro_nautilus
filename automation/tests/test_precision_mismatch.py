@@ -14,7 +14,9 @@ def run_isolated_worker(*args, **kwargs):
     Kapselt den Backtest-Lauf in einen separaten Prozess,
     um Rust-Core-Panics im Hauptprozess zu verhindern.
     """
-    with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
+    import multiprocessing
+    ctx = multiprocessing.get_context("spawn")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=1, mp_context=ctx) as executor:
         future = executor.submit(run_single_backtest_worker, *args, **kwargs)
         return future.result()
 
@@ -93,6 +95,13 @@ def test_single_worker_precision_mismatch(tmp_path):
 
     import sys
     sys.path.append(str(Path(".").absolute()))
+
+    import concurrent.futures
+
+    def run_isolated_worker(*args, **kwargs):
+        with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_single_backtest_worker, *args, **kwargs)
+            return future.result()
 
     res = run_isolated_worker(
         inst_id_str="AAPL.ETORO",

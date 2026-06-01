@@ -5,7 +5,7 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import SimpleMovingAverage
 
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
@@ -13,8 +13,6 @@ class SmaCrossoverConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     instrument_id: str
     bar_type: str
     sma_period: int = 5
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class SmaCrossoverStrategy(HourlyStrategyBase):
@@ -26,6 +24,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
         self.bar_type = BarType.from_str(config.bar_type)
         self.sma = SimpleMovingAverage(config.sma_period)
         self.current_signal: str | None = None
+        self.bars_since_last_signal: int = 0
 
     def on_start(self):
         super().on_start()
@@ -37,6 +36,8 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
         pass
 
     def on_bar(self, bar: Bar):
+        self.bars_since_last_signal += 1
+
         self.sma.handle_bar(bar)
 
         if self._check_exits_and_update(bar):
@@ -52,14 +53,16 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
             f"SMA({self.config.sma_period}): {self.sma.value:.2f}"
         )
 
-        if close_price > self.sma.value and self.current_signal != "BUY":
+        can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
+
+        if close_price > self.sma.value and (self.current_signal != "BUY" and can_signal):
             self._log.info(
                 f"[{self.instrument_id}] BUY SIGNAL (Close > SMA)", LogColor.GREEN
             )
             self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
-        elif close_price < self.sma.value and self.current_signal != "SELL":
+        elif close_price < self.sma.value and (self.current_signal != "SELL" and can_signal):
             self._log.info(
                 f"[{self.instrument_id}] SELL SIGNAL (Close < SMA)", LogColor.RED
             )
@@ -72,6 +75,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
         return bool(self.cache.positions_open(instrument_id=self.instrument_id))
 
     def _on_buy_signal(self, bar: Bar) -> None:
+        self.bars_since_last_signal = 0
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
@@ -95,6 +99,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _on_sell_signal(self, bar: Bar) -> None:
+        self.bars_since_last_signal = 0
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]

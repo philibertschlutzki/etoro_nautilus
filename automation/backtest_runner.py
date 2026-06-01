@@ -529,12 +529,13 @@ def create_mock_instrument(
 # ---------------------------------------------------------------------------
 
 
-def _calculate_stats(pnl_list: list[float], starting_capital: float) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float) -> dict:
     import math
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
+        "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
     }
     if not pnl_list:
         return NULL
@@ -572,6 +573,20 @@ def _calculate_stats(pnl_list: list[float], starting_capital: float) -> dict:
 
     calmar = (total_return / max_dd) if max_dd > 0 else 0.0
 
+    import statistics
+    if hold_list:
+        holds_s = [h / 1e9 for h, _ in hold_list]
+        med_hold = statistics.median(holds_s)
+
+        total_qty = sum(qty for _, qty in hold_list)
+        if total_qty > 1e-9:
+            avg_hold = sum((h / 1e9) * qty for h, qty in hold_list) / total_qty
+        else:
+            avg_hold = sum(holds_s) / len(holds_s)
+    else:
+        avg_hold = 0.0
+        med_hold = 0.0
+
     return {
         "total_trades":  n,
         "win_rate":      float(win_rate),
@@ -580,6 +595,8 @@ def _calculate_stats(pnl_list: list[float], starting_capital: float) -> dict:
         "calmar_ratio":  float(calmar),
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
+        "avg_holding_time_s": float(avg_hold),
+        "median_holding_time_s": float(med_hold),
     }
 
 
@@ -594,6 +611,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
+        "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
     }
 
     try:
@@ -685,11 +703,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 is_holding_times.append(ht)
 
         print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
-        is_metrics = _calculate_stats(is_pnls, starting_capital)
-        oos_metrics = _calculate_stats(oos_pnls, starting_capital) if oos_pnls else {
+        is_metrics = _calculate_stats(is_pnls, is_holds, starting_capital)
+        oos_metrics = _calculate_stats(oos_pnls, oos_holds, starting_capital) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
+            "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         }
 
         return {
@@ -882,8 +901,8 @@ def print_tournament_table(
     per_symbol_winners: dict,
     tournament_cfg: dict | None = None,
 ) -> tuple[int, list[str]]:
-    print(f"\n{'Symbol':<20} | {'Strategy':<30} | {'Sortino':>7} | {'Calmar':>7} | {'PF':>7} | {'Trades':>6} | Win?")
-    print("-" * 95)
+    print(f"\n{'Symbol':<20} | {'Strategy':<30} | {'Sortino':>7} | {'Calmar':>7} | {'PF':>7} | {'Trades':>6} | {'Hold(h)':>7} | Win?")
+    print("-" * 105)
     winner_count = 0
     all_symbols: set[str] = set()
     winning_symbols: set[str] = set()
@@ -895,10 +914,11 @@ def print_tournament_table(
         if is_winner:
             winner_count += 1
             winning_symbols.add(sym)
+        hold_h = m.get('avg_holding_time_s', 0.0) / 3600.0
         print(
             f"{sym:<20} | {strat:<30} | {m['sortino_ratio']:>7.2f} | "
             f"{m['calmar_ratio']:>7.2f} | {m['profit_factor']:>7.2f} | "
-            f"{m['total_trades']:>6} | {'✓' if is_winner else ''}"
+            f"{m['total_trades']:>6} | {hold_h:>7.1f} | {'✓' if is_winner else ''}"
         )
     return winner_count, sorted(all_symbols - winning_symbols)
 
