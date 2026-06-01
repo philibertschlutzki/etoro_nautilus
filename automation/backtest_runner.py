@@ -359,34 +359,14 @@ def load_tournament_config(project_root: str | None = None) -> dict:
 
 
 def compute_tournament_score(metrics: dict, scoring: dict) -> float:
-    """Berechnet den composite Tournament-Score.
+    # "maximiere total_return / Ø_holding_bars (Rendite pro Haltedauer-Einheit)"
+    # holding time is in seconds, so bars is / 3600
+    avg_holding_time_s = metrics.get("avg_holding_time_s", 0.0)
+    holding_bars = max(avg_holding_time_s / 3600.0, 1.0) # floor to 1 to avoid div by zero
+    total_return = metrics.get("total_return", 0.0)
 
-    Score = sortino * sw + profit_factor * pfw + win_rate * wrw - max_drawdown * ddw
-
-    Args:
-        metrics: Metriken-Dict aus extract_metrics()
-        scoring: Scoring-Konfig-Dict aus tournament.json
-
-    Returns:
-        Composite Score (float).
-    """
-    sw  = scoring.get("sortino_weight", 0.4)
-    pfw = scoring.get("profit_factor_weight", 0.3)
-    wrw = scoring.get("win_rate_weight", 0.2)
-    ddw = scoring.get("drawdown_penalty_weight", 0.1)
-
-    sortino       = metrics.get("sortino_ratio", 0.0)
-    profit_factor = metrics.get("profit_factor", 0.0)
-    win_rate      = metrics.get("win_rate", 0.0)
-    max_drawdown  = metrics.get("max_drawdown", 0.0)
-
-    return (
-        sortino       * sw
-        + profit_factor * pfw
-        + win_rate      * wrw
-        - max_drawdown  * ddw
-    )
-
+    score = total_return / holding_bars
+    return score
 
 def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
@@ -664,8 +644,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
             sorted_fills = sorted(f_list, key=lambda x: getattr(x, 'ts_event', getattr(x, 'ts_init', 0)))
-            buy_queue: deque[tuple[float, float, int]] = deque()  # (Stückzahl, Preis, ts_entry)
-            sell_queue: deque[tuple[float, float, int]] = deque() # (Stückzahl, Preis, ts_entry)
+            buy_queue: deque[tuple[float, float, int]] = deque()  # (Stückzahl, Preis, Timestamp)
+            sell_queue: deque[tuple[float, float, int]] = deque() # (Stückzahl, Preis, Timestamp)
 
             for f in sorted_fills:
                 try:
@@ -690,38 +670,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
-                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
                             sell_queue.popleft()
                     if qty > 0:
-                        ts_init = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts_init, pd.Timestamp):
-                            ts_init = ts_init.value
-                        ts_init = int(ts_init)
-                        buy_queue.append((qty, price, ts_init))
-                else:  # SIDE IS SELL
-                    while qty > 0 and buy_queue:
-                        b_qty, b_price, b_ts = buy_queue[0]
-                        match_qty = min(qty, b_qty)
-                        pnl = match_qty * (price - b_price)
-                        ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts, pd.Timestamp):
-                            ts = ts.value
-                        ts = int(ts)
-                        holding_time_ns = ts - b_ts
-                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
-                        qty -= match_qty
-                        buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
-                        if buy_queue[0][0] <= 1e-9:
-                            buy_queue.popleft()
-                    if qty > 0:
-                        ts_init = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts_init, pd.Timestamp):
-                            ts_init = ts_init.value
-                        ts_init = int(ts_init)
-                        sell_queue.append((qty, price, ts_init))
+                        ts_entry = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
+                        if isinstance(ts_entry, pd.Timestamp):
+                            ts_entry = ts_entry.value
+                        sell_queue.append((qty, price, int(ts_entry)))
 
         if not pnls_with_ts:
             if log_fn:
@@ -733,16 +691,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         is_pnls = []
         oos_pnls = []
-        is_holds = []
-        oos_holds = []
+        is_holding_times = []
+        oos_holding_times = []
 
-        for pnl, ts, holding_time_ns, match_qty in pnls_with_ts:
+        for pnl, ts, ht in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
-                oos_holds.append((holding_time_ns, match_qty))
+                oos_holding_times.append(ht)
             else:
                 is_pnls.append(pnl)
-                is_holds.append((holding_time_ns, match_qty))
+                is_holding_times.append(ht)
 
         print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
         is_metrics = _calculate_stats(is_pnls, is_holds, starting_capital)

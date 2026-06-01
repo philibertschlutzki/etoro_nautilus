@@ -1,5 +1,5 @@
 from nautilus_trader.common.enums import LogColor
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -13,7 +13,9 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase, Hourl
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class ComboTrendVwapConfig(HourlyStrategyConfig, frozen=True):
+class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
+    instrument_id: str
+    bar_type: str
     sma_period: int = 50
     macd_fast: int = 12
     macd_slow: int = 26
@@ -178,16 +180,6 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
-
-    def on_order_filled(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] OrderFilled: {event}", LogColor.GREEN
-        )
-
-    def on_order_rejected(self, event) -> None:
-        self._log.warning(
-            f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
-        )
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")

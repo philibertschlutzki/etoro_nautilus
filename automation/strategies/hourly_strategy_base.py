@@ -49,6 +49,13 @@ DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
 DEFAULT_MAX_BARS_IN_TRADE = 48  # 48 hours with 1h candles
 
 
+
+class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
+    atr_trailing_multiplier: float | None = None
+    max_bars_in_trade: int | None = None
+    profit_target_pct: float | None = None
+
+
 class HourlyStrategyBase(Strategy):
     """
     Base strategy providing ATR Trailing Stop and Time-based Exit for hourly candles.
@@ -70,21 +77,20 @@ class HourlyStrategyBase(Strategy):
 
         self._exit_atr = AverageTrueRange(self.config.atr_period)
         self._trailing_stop_price: float | None = None
+        self._take_profit_price: float | None = None
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
-        # Safely extract overrides, guarding against null or empty string injections from JSON
-        raw_atr = getattr(config, "atr_trailing_multiplier", None)
-        try:
-            self._atr_trailing_multiplier: float = float(raw_atr) if raw_atr is not None else DEFAULT_ATR_TRAILING_MULTIPLIER
-        except (TypeError, ValueError):
+        self._pending_cancels: set = set()
+        self._max_bars_in_trade = getattr(config, "max_bars_in_trade", None)
+        if self._max_bars_in_trade is None:
+            self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
+
+        self._atr_trailing_multiplier = getattr(config, "atr_trailing_multiplier", None)
+        if self._atr_trailing_multiplier is None:
             self._atr_trailing_multiplier = DEFAULT_ATR_TRAILING_MULTIPLIER
 
-        raw_bars = getattr(config, "max_bars_in_trade", None)
-        try:
-            self._max_bars_in_trade: int = int(raw_bars) if raw_bars is not None else DEFAULT_MAX_BARS_IN_TRADE
-        except (TypeError, ValueError):
-            self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
+        self._profit_target_pct = getattr(config, "profit_target_pct", None)
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
@@ -147,9 +153,13 @@ class HourlyStrategyBase(Strategy):
                 self._trailing_stop_price = None
                 self._trailing_stop_side = None
                 self._bars_in_position = 0
+            self._pending_cancels.clear()
             return False
 
         pos = positions[0]
+
+
+
         close = float(bar.close)
 
         # Initialise on first bar after entry (on_position_opened sets _in_position=False
@@ -157,6 +167,7 @@ class HourlyStrategyBase(Strategy):
         if not self._in_position:
             self._in_position = True
             self._bars_in_position = 0
+            self._pending_cancels.clear()
             self._trailing_stop_side = "LONG" if pos.side == PositionSide.LONG else "SHORT"
             if self._exit_atr.initialized:
                 atr_val = self._exit_atr.value
@@ -166,6 +177,7 @@ class HourlyStrategyBase(Strategy):
                     self._trailing_stop_price = close + self._atr_trailing_multiplier * atr_val
             else:
                 self._trailing_stop_price = None
+
 
         self._bars_in_position += 1
 
@@ -191,6 +203,7 @@ class HourlyStrategyBase(Strategy):
                     f"ATR Trailing Stop SHORT hit @ {close:.4f} >= {self._trailing_stop_price:.4f}"
                 )
 
+
         # Exit condition 2: Time-based exit (48 bars)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
             exit_reason = f"Time-exit after {self._bars_in_position} bars"
@@ -201,13 +214,31 @@ class HourlyStrategyBase(Strategy):
             self._in_position = False
             self._trailing_stop_price = None
             self._trailing_stop_side = None
+            self._take_profit_price = None
             self._bars_in_position = 0
+            self._pending_cancels.clear()
             return True
 
         return False
 
     def _close_position_base(self, pos) -> None:
-        """Submits a market order to close the given position."""
+        """Submits a market order to close the given position. Cancels pending limits first."""
+        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+        if open_orders:
+            for order in open_orders:
+                self._pending_cancels.add(order.client_order_id)
+                self.cancel_order(order)
+            return  # Wait for on_order_canceled
+
+        self._execute_market_close(pos)
+
+    def _execute_market_close(self, pos=None) -> None:
+        if pos is None:
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            if not positions:
+                return
+            pos = positions[0]
+
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -216,6 +247,33 @@ class HourlyStrategyBase(Strategy):
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
+
+    def on_order_canceled(self, event) -> None:
+        self._log.info(f"[{self.instrument_id}] OrderCanceled: {event}")
+        if event.client_order_id in self._pending_cancels:
+            self._pending_cancels.remove(event.client_order_id)
+            if not self._pending_cancels:
+                self._execute_market_close()
+
+    def on_order_filled(self, event) -> None:
+        self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
+        if event.client_order_id in self._pending_cancels:
+            self._pending_cancels.remove(event.client_order_id)
+
+            # Protect against partial fills: Only clear if the position is fully closed
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            if not positions or positions[0].quantity == 0:
+                self._pending_cancels.clear()
+            elif not self._pending_cancels:
+                # If there are no more pending cancels but the position is still partially open, close it!
+                self._execute_market_close()
+
+    def on_order_rejected(self, event) -> None:
+        self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
+        if event.client_order_id in self._pending_cancels:
+            self._pending_cancels.remove(event.client_order_id)
+            if not self._pending_cancels:
+                self._execute_market_close()
 
     def _compute_quantity(self, bar: Bar) -> Quantity | None:
         instrument = self.cache.instrument(self.instrument_id)
@@ -252,13 +310,43 @@ class HourlyStrategyBase(Strategy):
         trailing stop on the first bar after entry."""
         self._in_position = False  # triggers init block in _check_exits_and_update
         self._bars_in_position = 0
+        self._pending_cancels.clear()
         self._trailing_stop_price = None
         self._trailing_stop_side = None
+        self._take_profit_price = None
         self._log.info(f"[{self.instrument_id}] PositionOpened: {event}")
+
+        # Submit native limit order for profit target
+        if self._profit_target_pct is not None:
+            instrument = self.cache.instrument(self.instrument_id)
+            if instrument:
+                entry_price = float(event.avg_px_open)
+                if event.side == PositionSide.LONG:
+                    target = entry_price * (1.0 + self._profit_target_pct / 100.0)
+                    exit_side = OrderSide.SELL
+                else:
+                    target = entry_price * (1.0 - self._profit_target_pct / 100.0)
+                    exit_side = OrderSide.BUY
+
+                # We format price based on instrument precision
+                price = instrument.make_price(target)
+                qty = event.quantity
+
+                order = self.order_factory.limit(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=qty,
+                    price=price,
+                    time_in_force=TimeInForce.GTC,
+                )
+                self.submit_order(order)
+                self._log.info(f"[{self.instrument_id}] Submitted Take Profit Limit Order at {float(price):.4f}")
 
     def on_position_closed(self, event) -> None:
         self._in_position = False
         self._trailing_stop_price = None
         self._trailing_stop_side = None
+        self._take_profit_price = None
         self._bars_in_position = 0
+        self._pending_cancels.clear()
         self._log.info(f"[{self.instrument_id}] PositionClosed: {event}")

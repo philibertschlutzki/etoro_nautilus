@@ -1,4 +1,4 @@
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import QuoteTick, Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -8,7 +8,9 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase, Hourl
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class MeanReversionConfig(HourlyStrategyConfig, frozen=True):
+class MeanReversionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
+    instrument_id: str
+    bar_type: str
     keltner_period: int = 20
     keltner_atr_period: int = 20
     keltner_multiplier: float = 2.0
@@ -147,12 +149,6 @@ class MeanReversionStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
-
-    def on_order_filled(self, event) -> None:
-        self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
-
-    def on_order_rejected(self, event) -> None:
-        self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")

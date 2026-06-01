@@ -1,4 +1,4 @@
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -9,7 +9,9 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase, Hourl
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class FlashCrashReversalConfig(HourlyStrategyConfig, frozen=True):
+class FlashCrashReversalConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
+    instrument_id: str
+    bar_type: str
     bb_period: int = 20
     bb_std_dev: float = 2.5
     rsi_period: int = 14
@@ -54,6 +56,7 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
 
         is_recovery = close_price > self.bb.upper
         is_overbought = self.rsi.value > self.config.rsi_overbought
+        is_mean_reversion = close_price >= self.bb.middle
 
         if is_crash and is_oversold and self.current_signal != "BUY":
             self._log.info(
@@ -63,13 +66,14 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
-        elif (is_recovery or is_overbought) and self.current_signal == "BUY":
+        elif (is_recovery or is_overbought or is_mean_reversion) and self.current_signal == "BUY":
             self._log.info(
                 f"[{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
                 f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
             )
             self.current_signal = "SELL"
             self._on_sell_signal(bar)
+            self.current_signal = None
 
         elif self.current_signal == "SELL":
             self.current_signal = None
@@ -121,22 +125,16 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _close_position(self, pos) -> None:
-        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=exit_side,
-            quantity=pos.quantity,
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(order)
+        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+        if open_orders:
+            for order in open_orders:
+                self._pending_cancels.add(order.client_order_id)
+                self.cancel_order(order)
+            return
+
+        self._execute_market_close(pos)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
-
-    def on_order_filled(self, event) -> None:
-        self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
-
-    def on_order_rejected(self, event) -> None:
-        self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")

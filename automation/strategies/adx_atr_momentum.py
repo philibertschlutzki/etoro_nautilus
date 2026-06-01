@@ -1,5 +1,5 @@
 from nautilus_trader.common.enums import LogColor
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -13,7 +13,9 @@ from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import DirectionalMovement
 
 
-class AdxAtrMomentumConfig(HourlyStrategyConfig, frozen=True):
+class AdxAtrMomentumConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
+    instrument_id: str
+    bar_type: str
     adx_period: int = 14
     ema_period: int = 50
     atr_period: int = 14
@@ -184,26 +186,6 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
-
-    def on_order_filled(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] OrderFilled: {event}", LogColor.GREEN
-        )
-
-    def on_order_rejected(self, event) -> None:
-        self._log.warning(
-            f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
-        )
-
-    def on_position_opened(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionOpened: {event}", LogColor.GREEN
-        )
-
-    def on_position_closed(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionClosed: {event}", LogColor.RED
-        )
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
