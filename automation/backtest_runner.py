@@ -540,7 +540,7 @@ def create_mock_instrument(
 # ---------------------------------------------------------------------------
 
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[int], starting_capital: float) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float) -> dict:
     import math
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
@@ -586,9 +586,14 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[int], starting_capit
 
     import statistics
     if hold_list:
-        holds_s = [h / 1e9 for h in hold_list]
-        avg_hold = sum(holds_s) / len(holds_s)
+        holds_s = [h / 1e9 for h, _ in hold_list]
         med_hold = statistics.median(holds_s)
+
+        total_qty = sum(qty for _, qty in hold_list)
+        if total_qty > 1e-9:
+            avg_hold = sum((h / 1e9) * qty for h, qty in hold_list) / total_qty
+        else:
+            avg_hold = sum(holds_s) / len(holds_s)
     else:
         avg_hold = 0.0
         med_hold = 0.0
@@ -676,7 +681,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
-                        pnls_with_ts.append((pnl, ts, holding_time_ns))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
@@ -697,7 +702,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - b_ts
-                        pnls_with_ts.append((pnl, ts, holding_time_ns))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
@@ -722,13 +727,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holds = []
         oos_holds = []
 
-        for pnl, ts, holding_time_ns in pnls_with_ts:
+        for pnl, ts, holding_time_ns, match_qty in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
-                oos_holds.append(holding_time_ns)
+                oos_holds.append((holding_time_ns, match_qty))
             else:
                 is_pnls.append(pnl)
-                is_holds.append(holding_time_ns)
+                is_holds.append((holding_time_ns, match_qty))
 
         print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
         is_metrics = _calculate_stats(is_pnls, is_holds, starting_capital)

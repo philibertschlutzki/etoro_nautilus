@@ -94,3 +94,44 @@ def test_extract_metrics_holding_time_short():
     assert m["total_trades"] == 1
     assert m["avg_holding_time_s"] == 100.0
     assert m["median_holding_time_s"] == 100.0
+
+
+def test_extract_metrics_weighted_holding_time():
+    engine_mock = MagicMock()
+    # Buy 10 units at ts=0
+    # Sell 2 units at ts=10 (hold = 10s)
+    # Sell 8 units at ts=20 (hold = 20s)
+
+    # Expected weighted avg: (2*10 + 8*20) / 10 = (20 + 160) / 10 = 180 / 10 = 18.0 s
+
+    records = [
+        {
+            "instrument_id": "MSFT.NASDAQ",
+            "last_qty": 10.0,
+            "last_px": 100.0,
+            "order_side": "BUY",
+            "ts_event": 0,
+        },
+        {
+            "instrument_id": "MSFT.NASDAQ",
+            "last_qty": 2.0,
+            "last_px": 110.0,
+            "order_side": "SELL",
+            "ts_event": 10 * 10**9,
+        },
+        {
+            "instrument_id": "MSFT.NASDAQ",
+            "last_qty": 8.0,
+            "last_px": 120.0,
+            "order_side": "SELL",
+            "ts_event": 20 * 10**9,
+        }
+    ]
+    df_fills = pd.DataFrame.from_records(records)
+    engine_mock.trader.generate_fills_report.return_value = df_fills
+
+    metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
+    m = metrics_result["metrics"]
+
+    assert m["total_trades"] == 2
+    assert m["avg_holding_time_s"] == 18.0
