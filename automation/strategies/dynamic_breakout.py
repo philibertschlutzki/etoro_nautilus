@@ -112,7 +112,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             if pos.side == PositionSide.LONG:
                 return
             self._close_position(pos)
-            self.current_signal = "BUY"
+            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -135,7 +135,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position(pos)
-            self.current_signal = "SELL"
+            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
