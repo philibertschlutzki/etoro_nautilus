@@ -69,18 +69,13 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             self._on_buy_signal(bar)
 
         elif (is_recovery or is_overbought or is_mean_reversion) and self.current_signal == "BUY":
-            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
-            if not open_orders:
-                self._log.info(
-                    f"[{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
-                    f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
-                )
-                self.current_signal = "SELL"
-                self._on_sell_signal(bar)
-                self.current_signal = None
-            else:
-                for order in open_orders:
-                    self.cancel_order(order)
+            self._log.info(
+                f"[{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
+                f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
+            )
+            self.current_signal = "SELL"
+            self._on_sell_signal(bar)
+            self.current_signal = None
 
         elif self.current_signal == "SELL":
             self.current_signal = None
@@ -93,12 +88,7 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
-            if not open_orders:
-                self._close_position(pos)
-            else:
-                for order in open_orders:
-                    self.cancel_order(order)
+            self._close_position(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -120,12 +110,7 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
-            if not open_orders:
-                self._close_position(pos)
-            else:
-                for order in open_orders:
-                    self.cancel_order(order)
+            self._close_position(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -142,6 +127,11 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _close_position(self, pos) -> None:
+        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+        if open_orders:
+            for order in open_orders:
+                self.cancel_order(order)
+
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
         order = self.order_factory.market(
             instrument_id=self.instrument_id,

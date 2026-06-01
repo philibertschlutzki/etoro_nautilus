@@ -138,13 +138,7 @@ class HourlyStrategyBase(Strategy):
 
         pos = positions[0]
 
-        # Do not check exit conditions or try to close if the position is already pending close
-        # Avoids Order-Spamming and Event-Loop Blockade
-        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
-        if open_orders:
-            for order in open_orders:
-                self.cancel_order(order)
-            return True # Wait for cancellation to complete before generating new signals
+
 
         close = float(bar.close)
 
@@ -206,7 +200,12 @@ class HourlyStrategyBase(Strategy):
         return False
 
     def _close_position_base(self, pos) -> None:
-        """Submits a market order to close the given position."""
+        """Submits a market order to close the given position. Cancels pending limits first."""
+        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+        if open_orders:
+            for order in open_orders:
+                self.cancel_order(order)
+
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -278,6 +277,7 @@ class HourlyStrategyBase(Strategy):
                     quantity=qty,
                     price=price,
                     time_in_force=TimeInForce.GTC,
+                    reduce_only=True,
                 )
                 self.submit_order(order)
                 self._log.info(f"[{self.instrument_id}] Submitted Take Profit Limit Order at {float(price):.4f}")
