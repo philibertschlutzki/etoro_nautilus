@@ -331,7 +331,8 @@ def load_tournament_config(project_root: str | None = None) -> dict:
             used = req_all | req_any
             metric_keys = {k for k in cfg.keys() if k not in ("eligible_requires_all", "eligible_requires_any", "scoring")}
             for k in metric_keys:
-                if k not in used:
+                base_k = k[4:] if k.startswith("oos_") else k
+                if base_k not in used:
                     print(f"  ⚠️  Tournament-Kriterium '{k}' ist definiert, aber nicht in eligible_requires_all/any referenziert!")
             for u in used:
                 if u not in metric_keys:

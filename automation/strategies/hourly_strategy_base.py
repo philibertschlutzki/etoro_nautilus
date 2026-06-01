@@ -35,26 +35,18 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 log = logging.getLogger(__name__)
 
 
-class HourlyStrategyConfig(StrategyConfig, frozen=True):
+class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     instrument_id: str
     bar_type: str
     trade_amount_usd: float = 100.0
     max_open_positions: int = 1
     atr_period: int = 14
-    atr_trailing_multiplier: float = 1.5
-    max_bars_in_trade: int = 48
-
+    atr_trailing_multiplier: float | None = 1.5
+    max_bars_in_trade: int | None = 48
+    profit_target_pct: float | None = None
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
 DEFAULT_MAX_BARS_IN_TRADE = 48  # 48 hours with 1h candles
-
-
-
-class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
-    atr_trailing_multiplier: float | None = None
-    max_bars_in_trade: int | None = None
-    profit_target_pct: float | None = None
-
 
 class HourlyStrategyBase(Strategy):
     """
