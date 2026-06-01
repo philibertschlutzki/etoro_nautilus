@@ -29,9 +29,3 @@ def test_flash_crash_has_mean_reversion_logic():
     assert "open_orders = self.cache.orders_open(instrument_id=self.instrument_id)" in content
     assert "self.cancel_order(order)" in content
     assert "pos.is_closing" not in content
-
-def test_profit_target_logic_present():
-    with open("automation/strategies/hourly_strategy_base.py", "r") as f:
-        content = f.read()
-    assert "Profit Target LONG hit" in content
-    assert "Profit Target SHORT hit" in content

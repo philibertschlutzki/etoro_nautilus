@@ -163,14 +163,6 @@ class HourlyStrategyBase(Strategy):
             else:
                 self._trailing_stop_price = None
 
-            # Initialize take profit based on the actual execution price
-            if self._profit_target_pct is not None and pos.avg_px_open > 0:
-                if self._trailing_stop_side == "LONG":
-                    self._take_profit_price = float(pos.avg_px_open) * (1.0 + self._profit_target_pct / 100.0)
-                else:
-                    self._take_profit_price = float(pos.avg_px_open) * (1.0 - self._profit_target_pct / 100.0)
-            else:
-                self._take_profit_price = None
 
         self._bars_in_position += 1
 
@@ -196,12 +188,6 @@ class HourlyStrategyBase(Strategy):
                     f"ATR Trailing Stop SHORT hit @ {close:.4f} >= {self._trailing_stop_price:.4f}"
                 )
 
-        # Exit condition 1.5: Profit Target hit
-        if exit_reason is None and self._take_profit_price is not None:
-            if self._trailing_stop_side == "LONG" and close >= self._take_profit_price:
-                exit_reason = f"Profit Target LONG hit @ {close:.4f} >= {self._take_profit_price:.4f}"
-            elif self._trailing_stop_side == "SHORT" and close <= self._take_profit_price:
-                exit_reason = f"Profit Target SHORT hit @ {close:.4f} <= {self._take_profit_price:.4f}"
 
         # Exit condition 2: Time-based exit (48 bars)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
@@ -267,7 +253,34 @@ class HourlyStrategyBase(Strategy):
         self._bars_in_position = 0
         self._trailing_stop_price = None
         self._trailing_stop_side = None
+        self._take_profit_price = None
         self._log.info(f"[{self.instrument_id}] PositionOpened: {event}")
+
+        # Submit native limit order for profit target
+        if self._profit_target_pct is not None:
+            instrument = self.cache.instrument(self.instrument_id)
+            if instrument:
+                entry_price = float(event.avg_px_open)
+                if event.side == PositionSide.LONG:
+                    target = entry_price * (1.0 + self._profit_target_pct / 100.0)
+                    exit_side = OrderSide.SELL
+                else:
+                    target = entry_price * (1.0 - self._profit_target_pct / 100.0)
+                    exit_side = OrderSide.BUY
+
+                # We format price based on instrument precision
+                price = instrument.make_price(target)
+                qty = event.quantity
+
+                order = self.order_factory.limit(
+                    instrument_id=self.instrument_id,
+                    order_side=exit_side,
+                    quantity=qty,
+                    price=price,
+                    time_in_force=TimeInForce.GTC,
+                )
+                self.submit_order(order)
+                self._log.info(f"[{self.instrument_id}] Submitted Take Profit Limit Order at {float(price):.4f}")
 
     def on_position_closed(self, event) -> None:
         self._in_position = False
