@@ -71,6 +71,7 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
+        self._pending_cancel_for_close: bool = False
         self._max_bars_in_trade = getattr(config, "max_bars_in_trade", None)
         if self._max_bars_in_trade is None:
             self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
@@ -134,6 +135,7 @@ class HourlyStrategyBase(Strategy):
                 self._trailing_stop_price = None
                 self._trailing_stop_side = None
                 self._bars_in_position = 0
+            self._pending_cancel_for_close = False
             return False
 
         pos = positions[0]
@@ -147,6 +149,7 @@ class HourlyStrategyBase(Strategy):
         if not self._in_position:
             self._in_position = True
             self._bars_in_position = 0
+            self._pending_cancel_for_close = False
             self._trailing_stop_side = "LONG" if pos.side == PositionSide.LONG else "SHORT"
             if self._exit_atr.initialized:
                 atr_val = self._exit_atr.value
@@ -195,6 +198,7 @@ class HourlyStrategyBase(Strategy):
             self._trailing_stop_side = None
             self._take_profit_price = None
             self._bars_in_position = 0
+            self._pending_cancel_for_close = False
             return True
 
         return False
@@ -203,8 +207,19 @@ class HourlyStrategyBase(Strategy):
         """Submits a market order to close the given position. Cancels pending limits first."""
         open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
         if open_orders:
+            self._pending_cancel_for_close = True
             for order in open_orders:
                 self.cancel_order(order)
+            return  # Wait for on_order_canceled
+
+        self._execute_market_close(pos)
+
+    def _execute_market_close(self, pos=None) -> None:
+        if pos is None:
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            if not positions:
+                return
+            pos = positions[0]
 
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
         order = self.order_factory.market(
@@ -214,6 +229,12 @@ class HourlyStrategyBase(Strategy):
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
+
+    def on_order_canceled(self, event) -> None:
+        self._log.info(f"[{self.instrument_id}] OrderCanceled: {event}")
+        if self._pending_cancel_for_close:
+            self._pending_cancel_for_close = False
+            self._execute_market_close()
 
     def _compute_quantity(self, bar: Bar) -> Quantity | None:
         instrument = self.cache.instrument(self.instrument_id)
@@ -250,6 +271,7 @@ class HourlyStrategyBase(Strategy):
         trailing stop on the first bar after entry."""
         self._in_position = False  # triggers init block in _check_exits_and_update
         self._bars_in_position = 0
+        self._pending_cancel_for_close = False
         self._trailing_stop_price = None
         self._trailing_stop_side = None
         self._take_profit_price = None
@@ -277,7 +299,6 @@ class HourlyStrategyBase(Strategy):
                     quantity=qty,
                     price=price,
                     time_in_force=TimeInForce.GTC,
-                    reduce_only=True,
                 )
                 self.submit_order(order)
                 self._log.info(f"[{self.instrument_id}] Submitted Take Profit Limit Order at {float(price):.4f}")
@@ -288,4 +309,5 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_side = None
         self._take_profit_price = None
         self._bars_in_position = 0
+        self._pending_cancel_for_close = False
         self._log.info(f"[{self.instrument_id}] PositionClosed: {event}")
