@@ -1,6 +1,6 @@
 {
   "_schema": {
-    "description": "Default-Parameter pro Strategie für 1h-Candle-Daten (12 Monate History). Perioden auf stündliche Auflösung optimiert. Werte in strategies.json haben Vorrang."
+    "description": "Default-Parameter pro Strategie f\u00fcr 1h-Candle-Daten (12 Monate History). Perioden auf st\u00fcndliche Aufl\u00f6sung optimiert. Werte in strategies.json haben Vorrang."
   },
   "SmaCrossoverStrategy": {
     "sma_period": 5,
@@ -22,7 +22,9 @@
     "rsi_period": 7,
     "rsi_oversold": 30.0,
     "rsi_overbought": 70.0,
-    "trade_amount_usd": 1500.0
+    "trade_amount_usd": 1500.0,
+    "atr_trailing_multiplier": 0.75,
+    "max_bars_in_trade": 16
   },
   "VolatilityBreakoutPumpStrategy": {
     "bb_period": 10,

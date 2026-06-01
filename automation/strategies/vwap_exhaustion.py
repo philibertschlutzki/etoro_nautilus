@@ -19,7 +19,7 @@ Exit logic (via HourlyStrategyBase):
   - Time-based exit: 48 bars
 """
 from nautilus_trader.common.enums import LogColor
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -27,7 +27,7 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class VwapExhaustionConfig(StrategyConfig, frozen=True):
+class VwapExhaustionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     instrument_id: str
     bar_type: str
     deviation_threshold: float = 0.03

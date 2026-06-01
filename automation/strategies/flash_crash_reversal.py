@@ -1,4 +1,4 @@
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -9,7 +9,7 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class FlashCrashReversalConfig(StrategyConfig, frozen=True):
+class FlashCrashReversalConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     instrument_id: str
     bar_type: str
     bb_period: int = 20
@@ -58,6 +58,7 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
 
         is_recovery = close_price > self.bb.upper
         is_overbought = self.rsi.value > self.config.rsi_overbought
+        is_mean_reversion = close_price >= self.bb.middle
 
         if is_crash and is_oversold and self.current_signal != "BUY":
             self._log.info(
@@ -67,13 +68,16 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
-        elif (is_recovery or is_overbought) and self.current_signal == "BUY":
-            self._log.info(
-                f"[{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
-                f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
-            )
-            self.current_signal = "SELL"
-            self._on_sell_signal(bar)
+        elif (is_recovery or is_overbought or is_mean_reversion) and self.current_signal == "BUY":
+            # Check pending orders to avoid spamming
+            if not self.cache.orders_open(instrument_id=self.instrument_id):
+                self._log.info(
+                    f"[{self.instrument_id}] RECOVERY COMPLETE. SELL SIGNAL | "
+                    f"Close: {close_price:.5f} | RSI: {self.rsi.value:.2f}"
+                )
+                self.current_signal = "SELL"
+                self._on_sell_signal(bar)
+                self.current_signal = None
 
         elif self.current_signal == "SELL":
             self.current_signal = None
@@ -86,7 +90,8 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position(pos)
+            if not self.cache.orders_open(instrument_id=self.instrument_id):
+                self._close_position(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -108,7 +113,8 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position(pos)
+            if not self.cache.orders_open(instrument_id=self.instrument_id):
+                self._close_position(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:

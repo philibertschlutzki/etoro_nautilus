@@ -39,6 +39,13 @@ DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
 DEFAULT_MAX_BARS_IN_TRADE = 48  # 48 hours with 1h candles
 
 
+
+class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
+    atr_trailing_multiplier: float | None = None
+    max_bars_in_trade: int | None = None
+    profit_target_pct: float | None = None
+
+
 class HourlyStrategyBase(Strategy):
     """
     Base strategy providing ATR Trailing Stop and Time-based Exit for hourly candles.
@@ -60,11 +67,19 @@ class HourlyStrategyBase(Strategy):
 
         self._exit_atr = AverageTrueRange(DEFAULT_ATR_PERIOD)
         self._trailing_stop_price: float | None = None
+        self._take_profit_price: float | None = None
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
-        self._max_bars_in_trade: int = DEFAULT_MAX_BARS_IN_TRADE
-        self._atr_trailing_multiplier: float = DEFAULT_ATR_TRAILING_MULTIPLIER
+        self._max_bars_in_trade = getattr(config, "max_bars_in_trade", None)
+        if self._max_bars_in_trade is None:
+            self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
+
+        self._atr_trailing_multiplier = getattr(config, "atr_trailing_multiplier", None)
+        if self._atr_trailing_multiplier is None:
+            self._atr_trailing_multiplier = DEFAULT_ATR_TRAILING_MULTIPLIER
+
+        self._profit_target_pct = getattr(config, "profit_target_pct", None)
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
@@ -122,6 +137,12 @@ class HourlyStrategyBase(Strategy):
             return False
 
         pos = positions[0]
+
+        # Do not check exit conditions or try to close if the position is already pending close
+        # Avoids Order-Spamming and Event-Loop Blockade
+        if self.cache.orders_open(instrument_id=self.instrument_id):
+            return True
+
         close = float(bar.close)
 
         # Initialise on first bar after entry (on_position_opened sets _in_position=False
@@ -138,6 +159,15 @@ class HourlyStrategyBase(Strategy):
                     self._trailing_stop_price = close + self._atr_trailing_multiplier * atr_val
             else:
                 self._trailing_stop_price = None
+
+            # Initialize take profit based on the actual execution price
+            if self._profit_target_pct is not None and pos.avg_px_open > 0:
+                if self._trailing_stop_side == "LONG":
+                    self._take_profit_price = float(pos.avg_px_open) * (1.0 + self._profit_target_pct / 100.0)
+                else:
+                    self._take_profit_price = float(pos.avg_px_open) * (1.0 - self._profit_target_pct / 100.0)
+            else:
+                self._take_profit_price = None
 
         self._bars_in_position += 1
 
@@ -163,6 +193,13 @@ class HourlyStrategyBase(Strategy):
                     f"ATR Trailing Stop SHORT hit @ {close:.4f} >= {self._trailing_stop_price:.4f}"
                 )
 
+        # Exit condition 1.5: Profit Target hit
+        if exit_reason is None and self._take_profit_price is not None:
+            if self._trailing_stop_side == "LONG" and close >= self._take_profit_price:
+                exit_reason = f"Profit Target LONG hit @ {close:.4f} >= {self._take_profit_price:.4f}"
+            elif self._trailing_stop_side == "SHORT" and close <= self._take_profit_price:
+                exit_reason = f"Profit Target SHORT hit @ {close:.4f} <= {self._take_profit_price:.4f}"
+
         # Exit condition 2: Time-based exit (48 bars)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
             exit_reason = f"Time-exit after {self._bars_in_position} bars"
@@ -173,6 +210,7 @@ class HourlyStrategyBase(Strategy):
             self._in_position = False
             self._trailing_stop_price = None
             self._trailing_stop_side = None
+            self._take_profit_price = None
             self._bars_in_position = 0
             return True
 
@@ -232,5 +270,6 @@ class HourlyStrategyBase(Strategy):
         self._in_position = False
         self._trailing_stop_price = None
         self._trailing_stop_side = None
+        self._take_profit_price = None
         self._bars_in_position = 0
         self._log.info(f"[{self.instrument_id}] PositionClosed: {event}")

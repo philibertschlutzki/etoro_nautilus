@@ -1,5 +1,5 @@
 from nautilus_trader.common.enums import LogColor
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import QuoteTick, Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -9,7 +9,7 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
-class SmaCrossoverConfig(StrategyConfig, frozen=True):
+class SmaCrossoverConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     instrument_id: str
     bar_type: str
     sma_period: int = 5

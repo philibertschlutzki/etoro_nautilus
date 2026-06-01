@@ -1,4 +1,4 @@
-from nautilus_trader.config import StrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import QuoteTick, Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -10,7 +10,7 @@ from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import RelativeStrengthIndex
 
 
-class TrendPullbackConfig(StrategyConfig, frozen=True):
+class TrendPullbackConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     instrument_id: str
     bar_type: str
     ema_period: int = 200
