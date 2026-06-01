@@ -1452,7 +1452,7 @@ def run_backtest() -> None:
         )
         print(
             f"\n✅ Tournament: {total_symbols} Symbole | "
-            f"{eligible_count} eligibel | {winner_count} Gewinner"
+            f"{eligible_count} eligible Paare | {winner_count} Gewinner-Symbole"
         )
         if aggregate_winner:
             print(
