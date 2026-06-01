@@ -73,12 +73,16 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
-        self._atr_trailing_multiplier: float = float(getattr(
-            config, "atr_trailing_multiplier", DEFAULT_ATR_TRAILING_MULTIPLIER
-        ))
-        self._max_bars_in_trade: int = int(getattr(
-            config, "max_bars_in_trade", DEFAULT_MAX_BARS_IN_TRADE
-        ))
+        # Safely extract overrides, guarding against None (null) injections from JSON
+        raw_atr = getattr(config, "atr_trailing_multiplier", None)
+        self._atr_trailing_multiplier: float = float(
+            raw_atr if raw_atr is not None else DEFAULT_ATR_TRAILING_MULTIPLIER
+        )
+
+        raw_bars = getattr(config, "max_bars_in_trade", None)
+        self._max_bars_in_trade: int = int(
+            raw_bars if raw_bars is not None else DEFAULT_MAX_BARS_IN_TRADE
+        )
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
