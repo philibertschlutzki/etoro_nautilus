@@ -26,7 +26,8 @@ def test_flash_crash_has_mean_reversion_logic():
         content = f.read()
     assert "is_mean_reversion = close_price >= self.bb.middle" in content
     assert "is_recovery or is_overbought or is_mean_reversion" in content
-    assert "if not self.cache.orders_open(instrument_id=self.instrument_id):" in content
+    assert "open_orders = self.cache.orders_open(instrument_id=self.instrument_id)" in content
+    assert "self.cancel_order(order)" in content
     assert "pos.is_closing" not in content
 
 def test_profit_target_logic_present():

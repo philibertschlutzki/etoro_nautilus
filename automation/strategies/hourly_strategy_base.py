@@ -140,8 +140,11 @@ class HourlyStrategyBase(Strategy):
 
         # Do not check exit conditions or try to close if the position is already pending close
         # Avoids Order-Spamming and Event-Loop Blockade
-        if self.cache.orders_open(instrument_id=self.instrument_id):
-            return True
+        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+        if open_orders:
+            for order in open_orders:
+                self.cancel_order(order)
+            return True # Wait for cancellation to complete before generating new signals
 
         close = float(bar.close)
 
