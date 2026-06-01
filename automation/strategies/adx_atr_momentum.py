@@ -189,26 +189,6 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
 
-    def on_order_filled(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] OrderFilled: {event}", LogColor.GREEN
-        )
-
-    def on_order_rejected(self, event) -> None:
-        self._log.warning(
-            f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
-        )
-
-    def on_position_opened(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionOpened: {event}", LogColor.GREEN
-        )
-
-    def on_position_closed(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] PositionClosed: {event}", LogColor.RED
-        )
-
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
         self.unsubscribe_bars(self.bar_type)

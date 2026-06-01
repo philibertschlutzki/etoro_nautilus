@@ -154,16 +154,6 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
 
-    def on_order_filled(self, event) -> None:
-        self._log.info(
-            f"[{self.instrument_id}] OrderFilled: {event}", LogColor.GREEN
-        )
-
-    def on_order_rejected(self, event) -> None:
-        self._log.warning(
-            f"[{self.instrument_id}] OrderRejected: {event}", LogColor.RED
-        )
-
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
         self.unsubscribe_quote_ticks(self.instrument_id)
