@@ -73,16 +73,18 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
-        # Safely extract overrides, guarding against None (null) injections from JSON
+        # Safely extract overrides, guarding against null or empty string injections from JSON
         raw_atr = getattr(config, "atr_trailing_multiplier", None)
-        self._atr_trailing_multiplier: float = float(
-            raw_atr if raw_atr is not None else DEFAULT_ATR_TRAILING_MULTIPLIER
-        )
+        try:
+            self._atr_trailing_multiplier: float = float(raw_atr) if raw_atr is not None else DEFAULT_ATR_TRAILING_MULTIPLIER
+        except (TypeError, ValueError):
+            self._atr_trailing_multiplier = DEFAULT_ATR_TRAILING_MULTIPLIER
 
         raw_bars = getattr(config, "max_bars_in_trade", None)
-        self._max_bars_in_trade: int = int(
-            raw_bars if raw_bars is not None else DEFAULT_MAX_BARS_IN_TRADE
-        )
+        try:
+            self._max_bars_in_trade: int = int(raw_bars) if raw_bars is not None else DEFAULT_MAX_BARS_IN_TRADE
+        except (TypeError, ValueError):
+            self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
@@ -126,6 +128,14 @@ class HourlyStrategyBase(Strategy):
         Updates ATR, trailing stop level, and bar counter.
         Returns True if an exit order was submitted (caller should return immediately).
         Returns False if no exit triggered (caller continues with signal logic).
+
+        NOTE regarding Slippage vs. Native Orders:
+        The exit logic deliberately evaluates against the closed bar (`bar.close`) rather than
+        submitting native intra-bar `trailing_stop_market` orders to the exchange.
+        This prevents the strategy from being stopped out by short, extreme intra-bar noise ("whipsaws").
+        Crucially, this ensures absolute consistency between historical backtests (which use 1h bars)
+        and the Walk-Forward/Out-of-Sample live execution, maintaining the statistical integrity of the
+        gating thresholds.
         """
         self._exit_atr.handle_bar(bar)
 
