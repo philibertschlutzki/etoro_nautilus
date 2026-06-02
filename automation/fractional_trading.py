@@ -97,6 +97,7 @@ def get_size_increment(symbol: str, etoro_id: str) -> float:
         default = 1e-5   # Forex/Commodity
     else:
         default = 1.0    # Equity (eToro by-amount Route verhindert den Crash)
+        # Even with prec=2, the lot_size/default increment remains 1.0 for the by-amount route.
 
     _size_increment_cache[key] = default
     return default
