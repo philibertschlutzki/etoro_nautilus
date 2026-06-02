@@ -46,11 +46,8 @@ class MeanReversionStrategy(HourlyStrategyBase):
         self.register_indicator_for_bars(self.bar_type, self.keltner_ma)
         self.register_indicator_for_bars(self.bar_type, self.keltner_atr)
 
-        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
-    def on_quote_tick(self, tick: QuoteTick):
-        pass
 
     def on_bar(self, bar: Bar):
         # Indicators are automatically updated via `register_indicator_for_bars`
@@ -152,5 +149,4 @@ class MeanReversionStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
-        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)
