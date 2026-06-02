@@ -182,9 +182,18 @@ class EToroDataClient(LiveMarketDataClient):
             # Die Live-Strategie verlässt sich auf die korrekte size_precision
             # um Quantities vor dem API-Call via instrument.make_qty() sauber zu runden.
             size_prec = get_size_precision(str(instr_id))
-            is_crypto = size_prec > 0
 
-            size_inc_val = round(10 ** (-size_prec), size_prec) if size_prec > 0 else 1.0
+            # Since _fallback_precisions gives 2 to Equities, we use explicit asset class check
+            # if we wanted to be perfectly precise, but here we can just rely on the symbols or known sets.
+            # A more robust way to detect crypto in this file given the changes is precision == 8.
+            # However, eToro Equities are by-amount and have size_prec=2.
+            is_crypto = size_prec >= 8
+
+            # For Equities (size_prec=2), we want size_inc_val to still be 1.0 because of the by-amount routing!
+            if size_prec >= 5:
+                size_inc_val = round(10 ** (-size_prec), size_prec)
+            else:
+                size_inc_val = 1.0
 
             inst = Equity(
                 instrument_id=instr_id,
@@ -198,6 +207,7 @@ class EToroDataClient(LiveMarketDataClient):
             )
 
             self._instrument_precision[eid] = price_prec
+            self._instrument_size_precision[eid] = size_prec
 
             self._instrument_provider.add(inst)
             self._cache.add_instrument(inst)
@@ -351,12 +361,13 @@ class EToroDataClient(LiveMarketDataClient):
                 ts = self._clock.timestamp_ns()
 
             price_prec = self._instrument_precision.get(instr_id, 5)
+            size_prec = self._instrument_size_precision.get(instr_id, 0)
             tick = QuoteTick(
                 instrument_id=self.instrument_map[instr_id],
                 bid_price=Price(bid, precision=price_prec),
                 ask_price=Price(ask, precision=price_prec),
-                bid_size=Quantity(1.0, precision=0),
-                ask_size=Quantity(1.0, precision=0),
+                bid_size=Quantity(1.0, precision=size_prec),
+                ask_size=Quantity(1.0, precision=size_prec),
                 ts_event=ts,
                 ts_init=self._clock.timestamp_ns(),
             )

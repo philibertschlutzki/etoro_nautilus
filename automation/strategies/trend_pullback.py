@@ -35,11 +35,8 @@ class TrendPullbackStrategy(HourlyStrategyBase):
 
     def on_start(self):
         self._log.info(f"Starte Trend & Pullback auf {self.instrument_id}")
-        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
-    def on_quote_tick(self, tick: QuoteTick):
-        pass
 
     def on_bar(self, bar: Bar):
         self.ema.handle_bar(bar)
@@ -128,5 +125,4 @@ class TrendPullbackStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
-        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)

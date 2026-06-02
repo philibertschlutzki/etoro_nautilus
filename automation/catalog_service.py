@@ -158,6 +158,7 @@ async def _fetch_precisions(
 
     batch_size = 50
     timeout    = aiohttp.ClientTimeout(total=15)
+    api_hits   = 0
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for i in range(0, len(etoro_ids), batch_size):
@@ -174,6 +175,7 @@ async def _fetch_precisions(
                         continue
 
                     raw = await resp.json(content_type=None)
+                    log.debug(f"[catalog_service] Raw API response (first 500 chars): {str(raw)[:500]}")
                     items = raw if isinstance(raw, list) else raw.get("instruments", raw.get("items", []))
                     if not isinstance(items, list):
                         continue
@@ -207,6 +209,11 @@ async def _fetch_precisions(
 
                         # Fallback aus Symbolname
                         sym_raw = item.get("internalSymbolFull", item.get("symbol", ""))
+
+                        has_api_prec = (price_prec is not None and size_prec is not None)
+                        if has_api_prec:
+                            api_hits += 1
+
                         fb_p, fb_s = _fallback_precisions(sym_raw)
                         if price_prec is None:
                             price_prec = fb_p
@@ -223,6 +230,9 @@ async def _fetch_precisions(
                 log.warning(f"[catalog_service] Precision-Fetch-Fehler: {e}")
 
             await asyncio.sleep(0.3)
+
+    if len(etoro_ids) > 0 and api_hits == 0:
+        log.warning(f"[catalog_service] Precision-API lieferte 0/{len(etoro_ids)} Instrumente. Dynamischer Precision-Pfad ohne Funktion.")
 
     return result
 
