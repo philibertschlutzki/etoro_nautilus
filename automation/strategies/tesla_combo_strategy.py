@@ -14,8 +14,6 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     sma_period: int = 50
     macd_fast: int = 12
     macd_slow: int = 26

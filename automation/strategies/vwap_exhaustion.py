@@ -28,8 +28,6 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class VwapExhaustionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     deviation_threshold: float = 0.03
 
 
