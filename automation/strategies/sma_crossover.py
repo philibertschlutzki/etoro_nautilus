@@ -10,8 +10,6 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class SmaCrossoverConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     sma_period: int = 5
 
 

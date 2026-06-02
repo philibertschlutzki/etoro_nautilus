@@ -26,8 +26,6 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class DynamicBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     price_breakout_period: int = 10
 
 

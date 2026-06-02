@@ -672,11 +672,31 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
-                        pnls_with_ts.append((pnl, ts, holding_time_ns))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
                             sell_queue.popleft()
+                    if qty > 0:
+                        ts_entry = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
+                        if isinstance(ts_entry, pd.Timestamp):
+                            ts_entry = ts_entry.value
+                        buy_queue.append((qty, price, int(ts_entry)))
+                else:
+                    while qty > 0 and buy_queue:
+                        b_qty, b_price, b_ts = buy_queue[0]
+                        match_qty = min(qty, b_qty)
+                        pnl = match_qty * (price - b_price)
+                        ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
+                        if isinstance(ts, pd.Timestamp):
+                            ts = ts.value
+                        ts = int(ts)
+                        holding_time_ns = ts - b_ts
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        qty -= match_qty
+                        buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
+                        if buy_queue[0][0] <= 1e-9:
+                            buy_queue.popleft()
                     if qty > 0:
                         ts_entry = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts_entry, pd.Timestamp):
@@ -696,27 +716,31 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
-        for pnl, ts, ht in pnls_with_ts:
+        for pnl, ts, ht, m_qty in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
-                oos_holding_times.append(ht)
+                oos_holding_times.append((ht, m_qty))
             else:
                 is_pnls.append(pnl)
-                is_holding_times.append(ht)
+                is_holding_times.append((ht, m_qty))
 
         print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
-        is_metrics = _calculate_stats(is_pnls, is_holds, starting_capital)
-        oos_metrics = _calculate_stats(oos_pnls, oos_holds, starting_capital) if oos_pnls else {
+        is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital)
+        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
             "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         }
 
-        return {
-            "metrics": is_metrics,
-            "oos_metrics": oos_metrics
-        }
+        if oos_start_ns is not None:
+            return {
+                "metrics": is_metrics,
+                "oos_metrics": oos_metrics
+            }
+        else:
+            # Fallback for backwards compatibility if oos isn't requested
+            return is_metrics
     except Exception as e:
         if log_fn:
             log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}")

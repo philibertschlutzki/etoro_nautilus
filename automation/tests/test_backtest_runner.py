@@ -55,8 +55,7 @@ def test_extract_metrics_holding_time():
     metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
 
     assert metrics_result is not None
-    assert "metrics" in metrics_result
-    m = metrics_result["metrics"]
+    m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
 
     # 1 trade closed
     assert m["total_trades"] == 1
@@ -89,7 +88,7 @@ def test_extract_metrics_holding_time_short():
     engine_mock.trader.generate_fills_report.return_value = df_fills
 
     metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
-    m = metrics_result["metrics"]
+    m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
 
     assert m["total_trades"] == 1
     assert m["avg_holding_time_s"] == 100.0
@@ -131,7 +130,7 @@ def test_extract_metrics_weighted_holding_time():
     engine_mock.trader.generate_fills_report.return_value = df_fills
 
     metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
-    m = metrics_result["metrics"]
+    m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
 
     assert m["total_trades"] == 2
     assert m["avg_holding_time_s"] == 18.0

@@ -11,8 +11,6 @@ from nautilus_trader.indicators import RelativeStrengthIndex
 
 
 class TrendPullbackConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     ema_period: int = 200
     rsi_period: int = 14
     rsi_oversold: float = 30.0
