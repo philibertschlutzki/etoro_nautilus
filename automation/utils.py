@@ -53,4 +53,4 @@ def _fallback_precisions(symbol: str) -> tuple[int, int]:
     return 2, 2
 
 
-__all__ = ["_fallback_precisions"]
+__all__ = ["_fallback_precisions", "_CRYPTO_SYMBOLS", "_FRACTIONAL_SYMBOLS"]

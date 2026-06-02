@@ -9,8 +9,6 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class MeanReversionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     keltner_period: int = 20
     keltner_atr_period: int = 20
     keltner_multiplier: float = 2.0

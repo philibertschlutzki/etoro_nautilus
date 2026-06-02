@@ -96,13 +96,6 @@ def test_backtest_trades_generated(tmp_path):
 
     sys.path.append(str(Path(".").absolute()))
 
-    import concurrent.futures
-
-    def run_isolated_worker(*args, **kwargs):
-        with concurrent.futures.ProcessPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(run_single_backtest_worker, *args, **kwargs)
-            return future.result()
-
     res = run_isolated_worker(
         inst_id_str="AAPL.ETORO",
         bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL",
