@@ -1,0 +1,13 @@
+--- automation/backtest_runner.py
++++ automation/backtest_runner.py
+@@ -334,8 +334,9 @@
+                 base_k = k[4:] if k.startswith("oos_") else k
+                 if base_k not in used:
+                     print(f"  ⚠️  Tournament-Kriterium '{k}' ist definiert, aber nicht in eligible_requires_all/any referenziert!")
++            normalized_metric_keys = metric_keys | {k[4:] for k in metric_keys if k.startswith("oos_")}
+             for u in used:
+-                if u not in metric_keys:
++                if u not in normalized_metric_keys:
+                     print(f"  ⚠️  Referenziertes Kriterium '{u}' in eligible_requires_all/any ist nicht definiert!")
+             return cfg
+         except Exception as e:

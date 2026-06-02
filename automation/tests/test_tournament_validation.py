@@ -1,4 +1,9 @@
-from automation.backtest_runner import _is_eligible
+from automation.backtest_runner import load_tournament_config, _is_eligible
+import json
+import tempfile
+import os
+import io
+import sys
 
 def test_oos_eligibility():
     tournament_cfg = {
@@ -35,3 +40,26 @@ def test_oos_eligibility():
 
     metrics["oos_metrics"]["total_trades"] = 10
     assert _is_eligible(metrics, tournament_cfg, check_oos=True), "Should pass with 10 OOS trades"
+
+def test_load_tournament_config_validation(monkeypatch):
+    tournament_cfg = {
+        "oos_min_trades": 5,
+        "eligible_requires_all": ["min_trades"],
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.makedirs(os.path.join(tmpdir, "automation", "config"))
+        cfg_path = os.path.join(tmpdir, "automation", "config", "tournament.json")
+        with open(cfg_path, "w") as f:
+            json.dump(tournament_cfg, f)
+
+        monkeypatch.setattr("automation.backtest_runner._get_project_root", lambda: tmpdir)
+
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+        load_tournament_config(tmpdir)
+        sys.stdout = sys.__stdout__
+
+        output = captured_output.getvalue()
+        assert "ist nicht definiert" not in output
+        assert "ist definiert, aber nicht in" not in output
