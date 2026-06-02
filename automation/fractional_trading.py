@@ -39,32 +39,9 @@ from typing import Any
 
 import aiohttp
 
+from automation.utils import _fallback_precisions
+
 logger = logging.getLogger(__name__)
-
-# ─── Inline Precision-Heuristik (kein adapters/-Import) ──────────────────────
-# Repliziert adapters/instrument_utils.get_size_precision() ohne externen Import.
-# Muss bei Änderungen an instrument_utils.py synchron gehalten werden.
-_CRYPTO_SYMBOLS = frozenset({
-    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
-    "HYPE", "ONDO", "SHIBxM", "AERO", "PEPExM",
-})
-_FRACTIONAL_SYMBOLS = frozenset({
-    "NATGAS", "USDTRY", "USDZAR", "PALL",
-})
-
-
-def _get_size_precision(symbol: str) -> int:
-    """Standalone size_precision — kein adapters/-Import.
-
-    Crypto=8, Forex/Commodities=5, Equity=0.
-    Identische Logik wie adapters/instrument_utils.get_size_precision().
-    """
-    sym = symbol.split(".")[0]
-    if sym in _CRYPTO_SYMBOLS:
-        return 8
-    if sym in _FRACTIONAL_SYMBOLS:
-        return 5
-    return 0
 
 # Persistenter Cache für size_increment-Werte
 _SIZE_INCREMENT_CACHE_PATH = Path(__file__).parent.parent / "data" / "state" / "size_increment_cache.json"
@@ -112,7 +89,7 @@ def get_size_increment(symbol: str, etoro_id: str) -> float:
         return _size_increment_cache[key]
 
     # Default-Werte nach Asset-Klasse (inline, kein adapters/-Import)
-    prec = _get_size_precision(symbol)
+    prec = _fallback_precisions(symbol)[1]
 
     if prec >= 8:
         default = 1e-8   # Crypto
@@ -120,6 +97,7 @@ def get_size_increment(symbol: str, etoro_id: str) -> float:
         default = 1e-5   # Forex/Commodity
     else:
         default = 1.0    # Equity (eToro by-amount Route verhindert den Crash)
+        # Even with prec=2, the lot_size/default increment remains 1.0 for the by-amount route.
 
     _size_increment_cache[key] = default
     return default
@@ -254,11 +232,5 @@ def get_dynamic_size_precision(symbol: str, etoro_id: str) -> int:
     da USD direkt angegeben wird. Diese Funktion wird hauptsächlich für den
     Backtesting-Kontext verwendet.
     """
-    base_prec = _get_size_precision(symbol)  # inline, kein adapters/-Import
-
-    if base_prec == 0:
-        # Equity: by-amount Route → precision auf 8 setzen für interne
-        # Verwaltung, aber make_qty NIEMALS mit < 1.0 Units aufrufen
-        return 0  # Behalte 0 für Nautilus-Kompatibilität; by-amount schützt live
-
+    base_prec = _fallback_precisions(symbol)[1]  # inline, kein adapters/-Import
     return base_prec
