@@ -51,7 +51,6 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         self._log.info(
             f"Starte ComboTrendVwapStrategy auf {self.instrument_id}", LogColor.GREEN
         )
-        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
@@ -183,5 +182,4 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
-        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)

@@ -175,7 +175,6 @@ Alle aktiven Single-Instrument-Strategien erben hiervon. Liefert automatisch:
 class MyStrategy(HourlyStrategyBase):
     def on_start(self):
         super().on_start()          # PFLICHT
-        self.subscribe_quote_ticks(self.instrument_id)  # Zwingend für Live-Bar-Aggregation (INTERNAL)
         self.subscribe_bars(self.bar_type)
     def on_bar(self, bar: Bar):
         if self._check_exits_and_update(bar):
