@@ -114,6 +114,8 @@ async def fetch_precisions_from_api(
 
     # Batch in Gruppen à 50 aufteilen (API-Limit)
     batch_size = 50
+    api_hits = 0
+
     for i in range(0, len(etoro_ids), batch_size):
         batch = etoro_ids[i : i + batch_size]
         ids_param = ",".join(batch)
@@ -131,6 +133,7 @@ async def fetch_precisions_from_api(
                     continue
 
                 raw = await resp.json(content_type=None)
+                log.debug(f"[api_backfiller] Raw API response (first 500 chars): {str(raw)[:500]}")
                 instruments = raw if isinstance(raw, list) else raw.get("instruments", raw.get("items", []))
                 if not isinstance(instruments, list):
                     continue
@@ -168,6 +171,10 @@ async def fetch_precisions_from_api(
                     sym_raw = item.get("internalSymbolFull", item.get("symbolFull", item.get("symbol", "")))
 
                     # Fallback wenn API keine Precision-Felder hat
+                    has_api_prec = (price_prec is not None and size_prec is not None)
+                    if has_api_prec:
+                        api_hits += 1
+
                     fb_price, fb_size = _fallback_precisions(sym_raw)
                     if price_prec is None:
                         price_prec = fb_price
@@ -188,6 +195,9 @@ async def fetch_precisions_from_api(
             log.warning(f"[api_backfiller] Fehler beim Abrufen von Precisions: {e}")
 
         await asyncio.sleep(0.5)  # Rate-Limit respektieren
+
+    if len(etoro_ids) > 0 and api_hits == 0:
+        log.warning(f"[api_backfiller] Precision-API lieferte 0/{len(etoro_ids)} Instrumente. Dynamischer Precision-Pfad ohne Funktion.")
 
     return result
 
