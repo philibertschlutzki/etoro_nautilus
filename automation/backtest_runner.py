@@ -368,7 +368,7 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
     score = total_return / holding_bars
     return score
 
-def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -> bool:
+def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
 
     eligible_requires_all: ALLE Bedingungen müssen erfüllt sein.
@@ -752,7 +752,7 @@ def select_winners(
     # Eligible filtern
     eligible = [
         r for r in all_results
-        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
+        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
     ]
 
     # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)
@@ -846,7 +846,15 @@ def select_winners(
                 "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0,
             }
             agg_metrics = {"oos_metrics": avg_oos}
-            oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True)
+
+            # Use strat_params from the first result matching the winning strategy
+            winner_strat_params = {}
+            for r in eligible:
+                if r["strategy"] == best:
+                    winner_strat_params = r.get("strat_params", {})
+                    break
+
+            oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True, strat_params=winner_strat_params)
 
         aggregate_winner = {
             "strategy":    best,
@@ -876,7 +884,7 @@ def write_tournament_json(
     per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
     eligible_count = sum(
         1 for r in all_results
-        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
+        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
     )
     output = {
         "generated_at":                datetime.now(timezone.utc).isoformat(),
@@ -1152,7 +1160,8 @@ def run_single_backtest_worker(
             "symbol": inst_id_str,
             "strategy": strategy_class_name,
             "metrics": metrics,
-            "oos_metrics": oos_metrics
+            "oos_metrics": oos_metrics,
+            "strat_params": strat.get("params", {})
         }
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
@@ -1448,7 +1457,7 @@ def run_backtest() -> None:
         total_symbols = len(set(r["symbol"] for r in all_results))
         eligible_count = sum(
             1 for r in all_results
-            if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
+            if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
         )
         print(
             f"\n✅ Tournament: {total_symbols} Symbole | "
