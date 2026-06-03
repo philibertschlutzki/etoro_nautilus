@@ -65,18 +65,21 @@ except ImportError:
 
 # ─── Sufficiency Check ────────────────────────────────────────────────────────
 
-def is_symbol_data_sufficient(
+def is_backtest_range_covered(
     symbol: str,
-    min_bars: int = 200,
+    start_ns: int,
     catalog_path: Path = CATALOG_PATH,
 ) -> bool:
-    """Returns True if symbol has >= min_bars rows in its data.parquet."""
+    """Returns True if symbol's data.parquet covers the required backtest range."""
     parquet_file = catalog_path / "data" / "quote_tick" / symbol / "data.parquet"
     if not parquet_file.exists():
         return False
     try:
-        meta = pq.read_metadata(str(parquet_file))
-        return meta.num_rows >= min_bars
+        t = pq.read_table(str(parquet_file), columns=["ts_event"])
+        if len(t) == 0:
+            return False
+        oldest_ts = int(t.column("ts_event").to_pylist()[0])
+        return oldest_ts <= start_ns
     except Exception:
         return False
 
@@ -274,12 +277,12 @@ async def run_historical_fetch(
     user_key: str,
     etoro_id_to_symbol: dict[str, str],
     months: int = 12,
-    min_bars: int = 200,
+    start_ns: int = 0,
     force: bool = False,
 ) -> list[str]:
     """
     Fetches historical data for symbols that are insufficient.
-    Skips symbols where is_symbol_data_sufficient() returns True (unless force=True).
+    Skips symbols where is_backtest_range_covered() returns True (unless force=True).
     Returns list of symbols that were fetched/updated.
     """
     if not api_key or not user_key:
@@ -291,7 +294,7 @@ async def run_historical_fetch(
     to_fetch = {
         eid: sym
         for eid, sym in etoro_id_to_symbol.items()
-        if force or not is_symbol_data_sufficient(sym, min_bars, CATALOG_PATH)
+        if force or not is_backtest_range_covered(sym, start_ns, CATALOG_PATH)
     }
 
     if not to_fetch:
@@ -300,7 +303,7 @@ async def run_historical_fetch(
 
     log.info(
         f"[historical_fetcher] {len(to_fetch)}/{len(etoro_id_to_symbol)} Symbole "
-        f"werden gefetcht (months={months}, min_bars={min_bars})."
+        f"werden gefetcht (months={months}, start_ns={start_ns})."
     )
 
     fetched: list[str] = []
@@ -357,7 +360,7 @@ def main() -> int:
     parser.add_argument("--months", type=int, default=12, help="Anzahl Monate Historie (Standard: 12)")
     parser.add_argument("--symbol", type=str, default=None, help="Nur dieses Symbol fetchen (z.B. TSLA.ETORO)")
     parser.add_argument("--force", action="store_true", help="Auch Symbole mit ausreichend Daten neu fetchen")
-    parser.add_argument("--min-bars", type=int, default=200, help="Mindest-Bars-Schwelle (Standard: 200)")
+    parser.add_argument("--start-ns", type=int, default=0, help="Mindest-Start-Timestamp in ns")
     parser.add_argument("--universe", type=Path, default=UNIVERSE_PATH, help="Pfad zur Universe-JSON")
     args = parser.parse_args()
 
@@ -394,7 +397,7 @@ def main() -> int:
             user_key=user_key,
             etoro_id_to_symbol=etoro_id_map,
             months=args.months,
-            min_bars=args.min_bars,
+            start_ns=args.start_ns,
             force=args.force,
         )
     )
