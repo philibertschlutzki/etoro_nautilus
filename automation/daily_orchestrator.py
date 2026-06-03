@@ -352,7 +352,8 @@ def phase2_data_acquisition(
                 pass
         wf_cfg = bt_cfg.get("walk_forward", {})
         total_days = wf_cfg.get("is_window_days", 90) + (wf_cfg.get("splits", 2) * wf_cfg.get("oos_window_days", 30))
-        start_ns = int((datetime.now(timezone.utc) - timedelta(days=total_days)).timestamp() * 1e9)
+        warmup_days = wf_cfg.get("warmup_days", 60) # adding a buffer for indicators
+        start_ns = int((datetime.now(timezone.utc) - timedelta(days=total_days + warmup_days)).timestamp() * 1e9)
 
         insufficient = [
             item["symbol"]

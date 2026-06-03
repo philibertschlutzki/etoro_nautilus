@@ -75,10 +75,11 @@ def is_backtest_range_covered(
     if not parquet_file.exists():
         return False
     try:
+        import pyarrow.compute as pc
         t = pq.read_table(str(parquet_file), columns=["ts_event"])
         if len(t) == 0:
             return False
-        oldest_ts = int(t.column("ts_event").to_pylist()[0])
+        oldest_ts = int(pc.min(t.column("ts_event")).as_py())
         return oldest_ts <= start_ns
     except Exception:
         return False
@@ -205,10 +206,14 @@ async def _fetch_symbol(
     user_key: str,
     price_prec: int,
     size_prec: int,
+    start_ns: int = 0,
 ) -> bool:
     """Fetches and saves historical candle data for one symbol. Returns True on success."""
     dest_file = QUOTE_TICK_PATH / symbol / "data.parquet"
-    target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
+    if start_ns > 0:
+        target_start = datetime.fromtimestamp(start_ns / 1e9, tz=timezone.utc)
+    else:
+        target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
 
     # Delta-update: iterate backwards from the oldest locally stored timestamp
     current_end_time = datetime.now(timezone.utc)
@@ -334,6 +339,7 @@ async def run_historical_fetch(
                 ok = await _fetch_symbol(
                     session, etoro_id, symbol, months,
                     api_key, user_key, price_prec, size_prec,
+                    start_ns=start_ns,
                 )
                 if ok:
                     fetched.append(symbol)
