@@ -484,6 +484,12 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix:** Unpacking Loop auf `for pnl, ts, ht, m_qty in pnls_with_ts:` korrigieren (4 Variablen).
 **Betroffen:** `automation/backtest_runner.py`
 
+### 🟢 #35 — `compute_tournament_score` konstanter Wert und fehlerhafte Gewinner-Reihenfolge
+**Symptom:** Die Auswahl des Gewinners pro Symbol in `select_winners` hing nur von der Iterationsreihenfolge ab. Alle Strategien erhielten einen Score von `0.0`.
+**Root Cause:** `compute_tournament_score` wurde mit `norm_metrics` aufgerufen, berechnete den Score jedoch auf Basis von `total_return` und `avg_holding_time_s`, welche in `norm_metrics` nicht existierten. Zudem wich die Implementierung von der dokumentierten Spezifikation ab (Composite-Score vs. Haltedauer-Rendite).
+**Fix:** `compute_tournament_score` wurde so umgeschrieben, dass es die Metriken `sortino_ratio`, `profit_factor`, `win_rate` und `max_drawdown` gemäß den Gewichten aus `tournament.json` zu einem Composite-Score aggregiert.
+**Betroffen:** `automation/backtest_runner.py`
+
 ## 17. Conventions für KI-Coding-Agents (Jules)
 
 - **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, behoben).
@@ -535,6 +541,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 | 2026-06-02 | **Issue #103 & Backtest Bug Fixes:** Korrektur der `msgspec.Struct` Vererbungshierarchie (`HourlyStrategyConfig` / `HourlyMeanReversionConfig`) via `kw_only=True` und Verschiebung der Strategie in den inaktiven Block der Dokumentation. Sowie Behebung des Tuple-Unpacking-Fehlers `(holding_time_ns, match_qty)` und der NameErrors (`is_holding_times`) in `extract_metrics` im `backtest_runner`. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/hourly_mean_reversion.py`, `automation/strategies/*.py`, `automation/AGENTS.md`, `automation/backtest_runner.py` |
 | 2026-06-04 | **Issue #135 (Inkonsistenz Mock-Instrumente):** `_normalize_size_precision` in `backtest_runner.py` ist nun asset-bewusst und nutzt `_fallback_precisions(symbol)`. Equities fallen nun korrekterweise auf `2` zurück anstatt pauschal auf `8`. Das behebt die Inkonsistenz zwischen Live-Pfad, Parquet-Katalog und Backtest-Mock für Equities. Da alte Parquet-Daten im Katalog ggf. noch `size_precision=0` tragen, ist nach diesem PR ein `--reset-catalog` Lauf erforderlich, um einen sauberen Zustand zu erzwingen. | `automation/backtest_runner.py`, `automation/tests/test_size_precision_fixes.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #132 (Pitfall #33):** Behebung der Tuple-Arity-Regression in `extract_metrics` (flaches 4-Tupel-`append` vs. 3-Ziel-Entpackung). Der Fehler wurde explizit als Regression von Pitfall #31/#103 gekennzeichnet. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
+| 2026-06-03 | **Issue #134 (Pitfall #35):** Behebung des konstanten 0.0-Scores in `compute_tournament_score` und der reihenfolgeabhängigen Gewinnerauswahl. Die Funktion nutzt nun die dokumentierten Composite-Gewichte. Ein Test zur Sicherstellung der korrekten Sortierung wurde ergänzt. | `automation/backtest_runner.py`, `automation/tests/test_backtest_runner.py`, `automation/AGENTS.md` |
 ---
 
 *Zuletzt aktualisiert: 2026-06-03. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*

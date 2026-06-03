@@ -362,14 +362,12 @@ def load_tournament_config(project_root: str | None = None) -> dict:
 
 
 def compute_tournament_score(metrics: dict, scoring: dict) -> float:
-    # "maximiere total_return / Ø_holding_bars (Rendite pro Haltedauer-Einheit)"
-    # holding time is in seconds, so bars is / 3600
-    avg_holding_time_s = metrics.get("avg_holding_time_s", 0.0)
-    holding_bars = max(avg_holding_time_s / 3600.0, 1.0) # floor to 1 to avoid div by zero
-    total_return = metrics.get("total_return", 0.0)
-
-    score = total_return / holding_bars
-    return score
+    return (
+        metrics.get("sortino_ratio", 0.0) * scoring.get("sortino_weight", 0.4)
+        + metrics.get("profit_factor", 0.0) * scoring.get("profit_factor_weight", 0.3)
+        + metrics.get("win_rate", 0.0)      * scoring.get("win_rate_weight", 0.2)
+        - metrics.get("max_drawdown", 0.0)  * scoring.get("drawdown_penalty_weight", 0.1)
+    )
 
 def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
@@ -821,10 +819,27 @@ def select_winners(
     per_symbol: dict[str, dict] = {}
     for r in eligible:
         sym   = r["symbol"]
-        score = compute_tournament_score(r.get("norm_metrics", r["metrics"]), scoring)
+
+        # Determine if we should use unscaled metrics (fallback if only 1 eligible)
+        metrics_to_score = r.get("norm_metrics")
+        if metrics_to_score is None:
+            metrics_to_score = r["metrics"]
+            # Fallback normalisierung: The best we can do is treat them raw, but they could be skewed.
+            # This is edge-case for len(eligible)==1 where ranking doesn't happen.
+
+        score = compute_tournament_score(metrics_to_score, scoring)
         curr  = per_symbol.get(sym)
-        if curr is None or score > curr.get("_score", float("-inf")):
+
+        if curr is None:
             per_symbol[sym] = {**r, "_score": score}
+        elif score > curr.get("_score", float("-inf")):
+            per_symbol[sym] = {**r, "_score": score}
+        elif abs(score - curr.get("_score", float("-inf"))) < 1e-9:
+            # Tie breaker: fallback to raw total_return if exact composite score match
+            curr_return = curr["metrics"].get("total_return", 0.0)
+            new_return = r["metrics"].get("total_return", 0.0)
+            if new_return > curr_return:
+                per_symbol[sym] = {**r, "_score": score}
 
     per_symbol_winners = {
         sym: {
