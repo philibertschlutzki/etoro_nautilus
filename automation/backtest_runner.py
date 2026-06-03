@@ -1313,23 +1313,25 @@ def run_backtest() -> None:
             sma_period = example_sma.get("params", {}).get("sma_period", "?")
             print(f"✅ Defaults angewandt — SmaCrossoverStrategy: sma_period={sma_period}")
 
-    # --- Parameter-Validierung ---
+    # --- Parameter-Validierung & Walk-Forward Injektion ---
     param_warnings: list[str] = []
+    walk_forward_cfg = global_settings.get("walk_forward")
+
     for strat in strategies_list:
         param_warnings.extend(validate_strategy_params(strat))
+
+        # Einmalige Injektion von _walk_forward_days für den Guard (Issue #121)
+        if walk_forward_cfg:
+            is_days  = walk_forward_cfg.get("is_window_days", 90)
+            oos_days = walk_forward_cfg.get("oos_window_days", 30)
+            splits   = walk_forward_cfg.get("splits", 2)
+            strat["_walk_forward_days"] = is_days + (splits * oos_days)
+
     if param_warnings:
         print("\n⚠️  Parameter-Warnungen:")
         for w in param_warnings:
             print(f"   • {w}")
         print()
-
-    walk_forward_cfg = global_settings.get("walk_forward")
-    if walk_forward_cfg:
-        oos_days = walk_forward_cfg.get("oos_window_days", 30)
-        is_days  = walk_forward_cfg.get("is_window_days", 90)
-        splits   = walk_forward_cfg.get("splits", 2)
-        for strat in strategies_list:
-            strat["_walk_forward_days"] = is_days + splits * oos_days
 
     # --- Zeitraum ---
     start_time_str = global_settings.get("start_time")

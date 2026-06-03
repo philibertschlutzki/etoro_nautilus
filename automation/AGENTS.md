@@ -388,9 +388,9 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 **Fix:** Schreibseite auf `size_precision=2` für Equities angehoben. `regenerate_precision.py` wurde ersatzlos gelöscht. Korrupte Katalogdaten aus der Quelle müssen komplett neu aufgebaut werden (`--reset-catalog`).
 **Betroffen:** `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/daily_orchestrator.py`.
 
-### 🟡 #24 — Datendichte vs. Indikator-Warmup (Walk-Forward OOS-Guard)
+### 🟢 #24 — Datendichte vs. Indikator-Warmup (Walk-Forward OOS-Guard)
 **Symptom:** Backtests rechneten mit 30 Tagen Historie ein 90d+30d Walk-Forward-Fenster, emittierten verzerrte OOS-Metriken und gewannen Turniere ohne Warnung (Issue #105). Strategien mit langen Perioden initialisierten bei kurzen Datenfenstern spät oder gar nicht.
-**Fix:** Guard im `backtest_runner.py` implementiert (überspringt, wenn `span_days < required_days * 0.95`). Die Beschaffungstiefe für den `historical_fetcher` im `daily_orchestrator.py` dynamisch an das Walk-Forward-Fenster (inklusive Puffer) gekoppelt statt fix `min_bars=200`. *Achtung: Guard war inaktiv durch fehlende _walk_forward_days Zuweisung, wird mit Fix für Issue #121 reaktiviert.*
+**Fix:** Guard im `backtest_runner.py` implementiert (überspringt, wenn `span_days < required_days * 0.95`). Die Beschaffungstiefe für den `historical_fetcher` im `daily_orchestrator.py` dynamisch an das Walk-Forward-Fenster (inklusive Puffer) gekoppelt statt fix `min_bars=200`. Die Zuweisung von `_walk_forward_days` wurde in Issue #121 gefixt, um den Guard erfolgreich zu triggern.
 **Betroffen:** `automation/backtest_runner.py`, `automation/daily_orchestrator.py`.
 
 ### 🟢 #15 — `BrokenProcessPool` durch OOM
