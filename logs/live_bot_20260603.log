@@ -4777,3 +4777,4 @@
 2026-06-03T18:40:46.985637041Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Snapshot TTMI.ETORO: MarketOpen=True, AllowBuy=True
 2026-06-03T18:40:46.985644435Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Snapshot VRT.ETORO: MarketOpen=True, AllowBuy=True
 2026-06-03T18:41:05.501720577Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Heartbeat: 60 Ticks verarbeitet.
+2026-06-03T18:41:49.108724390Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Heartbeat: 120 Ticks verarbeitet.
