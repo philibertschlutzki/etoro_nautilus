@@ -71,6 +71,7 @@ class EToroDataClient(LiveMarketDataClient):
         self._ws = None
         self._tick_counter: int = 0
         self._instrument_precision: dict[str, int] = {}  # price precision per eid
+        self._instrument_size_precision: dict[str, int] = {}  # size precision per eid
 
         self.instrument_map: dict[str, InstrumentId] = {}
         for eid in self.instrument_ids:
@@ -113,7 +114,7 @@ class EToroDataClient(LiveMarketDataClient):
                 self.create_task(self._message_loop(), log_msg="message_loop")
                 return
 
-            except Exception as e:
+            except (OSError, asyncio.TimeoutError, websockets.WebSocketException) as e:
                 last_exc = e
                 self._log.warning(
                     f"Verbindungsversuch {attempt}/{_MAX_CONNECT_ATTEMPTS} "
@@ -361,7 +362,7 @@ class EToroDataClient(LiveMarketDataClient):
                 ts = self._clock.timestamp_ns()
 
             price_prec = self._instrument_precision.get(instr_id, 5)
-            size_prec = self._instrument_size_precision.get(instr_id, 0)
+            size_prec = self._instrument_size_precision.get(instr_id, 2)
             tick = QuoteTick(
                 instrument_id=self.instrument_map[instr_id],
                 bid_price=Price(bid, precision=price_prec),
