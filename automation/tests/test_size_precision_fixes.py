@@ -26,6 +26,12 @@ def test_create_mock_instrument_zero_precision_crypto():
     assert inst.size_precision == 8
     assert float(inst.size_increment) == 1e-08
 
+def test_create_mock_instrument_zero_precision_fractional():
+    # NATGAS is a Fractional Commodity, so it falls back to size_precision=5
+    inst = create_mock_instrument("NATGAS.ETORO", price_precision=5, size_precision=0)
+    assert inst.size_precision == 5
+    assert float(inst.size_increment) == 1e-05
+
 from automation.strategies.sma_crossover import SmaCrossoverStrategy
 from automation.strategies.mean_reversion import MeanReversionStrategy
 from automation.strategies.dynamic_breakout import DynamicBreakoutStrategy
