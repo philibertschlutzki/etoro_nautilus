@@ -815,10 +815,27 @@ def select_winners(
     per_symbol: dict[str, dict] = {}
     for r in eligible:
         sym   = r["symbol"]
-        score = compute_tournament_score(r.get("norm_metrics", r["metrics"]), scoring)
+
+        # Determine if we should use unscaled metrics (fallback if only 1 eligible)
+        metrics_to_score = r.get("norm_metrics")
+        if metrics_to_score is None:
+            metrics_to_score = r["metrics"]
+            # Fallback normalisierung: The best we can do is treat them raw, but they could be skewed.
+            # This is edge-case for len(eligible)==1 where ranking doesn't happen.
+
+        score = compute_tournament_score(metrics_to_score, scoring)
         curr  = per_symbol.get(sym)
-        if curr is None or score > curr.get("_score", float("-inf")):
+
+        if curr is None:
             per_symbol[sym] = {**r, "_score": score}
+        elif score > curr.get("_score", float("-inf")):
+            per_symbol[sym] = {**r, "_score": score}
+        elif abs(score - curr.get("_score", float("-inf"))) < 1e-9:
+            # Tie breaker: fallback to raw total_return if exact composite score match
+            curr_return = curr["metrics"].get("total_return", 0.0)
+            new_return = r["metrics"].get("total_return", 0.0)
+            if new_return > curr_return:
+                per_symbol[sym] = {**r, "_score": score}
 
     per_symbol_winners = {
         sym: {

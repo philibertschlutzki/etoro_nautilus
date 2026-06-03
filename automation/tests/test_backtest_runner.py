@@ -210,3 +210,65 @@ def test_select_winners_order_independence():
 
     winner_rev = per_symbol_winners_rev["SYM1"]
     assert winner_rev["strategy"] == "BetterStrategy", f"Expected BetterStrategy, but got {winner_rev['strategy']} when list was reversed."
+
+
+def test_select_winners_tie_breaker():
+    """
+    Tests that select_winners uses total_return as a determinisitic tie-breaker
+    when composite scores are exactly equal.
+    """
+    tournament_cfg = {
+        "min_trades": 20,
+        "min_sortino": 0.0,
+        "min_profit_factor": 1.0,
+        "max_drawdown": 1.0,
+        "min_win_rate": 0.0,
+        "min_total_return": 0.0,
+        "eligible_requires_all": ["min_trades"],
+        "eligible_requires_any": [],
+        "scoring": {
+            "sortino_weight": 0.4,
+            "profit_factor_weight": 0.3,
+            "win_rate_weight": 0.2,
+            "drawdown_penalty_weight": 0.1
+        }
+    }
+
+    # Same base metrics so the rank normalizer will give them identical ranks (1.0 for all)
+    # Therefore the composite score will be exactly the same.
+    # We differentiate only by raw `total_return`.
+    strat_lower_return = {
+        "symbol": "SYM2",
+        "strategy": "LowerReturnStrategy",
+        "metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 2.0,
+            "profit_factor": 2.0,
+            "win_rate": 0.5,
+            "max_drawdown": 0.1,
+            "total_return": 0.2
+        }
+    }
+
+    strat_higher_return = {
+        "symbol": "SYM2",
+        "strategy": "HigherReturnStrategy",
+        "metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 2.0,
+            "profit_factor": 2.0,
+            "win_rate": 0.5,
+            "max_drawdown": 0.1,
+            "total_return": 0.5 # Better tie breaker
+        }
+    }
+
+    # Test lower first
+    all_results = [strat_lower_return, strat_higher_return]
+    per_symbol_winners, _ = select_winners(all_results, tournament_cfg)
+    assert per_symbol_winners["SYM2"]["strategy"] == "HigherReturnStrategy"
+
+    # Test higher first
+    all_results_rev = [strat_higher_return, strat_lower_return]
+    per_symbol_winners_rev, _ = select_winners(all_results_rev, tournament_cfg)
+    assert per_symbol_winners_rev["SYM2"]["strategy"] == "HigherReturnStrategy"
