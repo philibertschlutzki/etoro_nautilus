@@ -722,7 +722,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
-        for pnl, ts, (ht, m_qty) in pnls_with_ts:
+        for pnl, ts, hm_tuple in pnls_with_ts:
+            ht, m_qty = hm_tuple
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
                 oos_holding_times.append((ht, m_qty))
@@ -1331,10 +1332,20 @@ def run_backtest() -> None:
             sma_period = example_sma.get("params", {}).get("sma_period", "?")
             print(f"✅ Defaults angewandt — SmaCrossoverStrategy: sma_period={sma_period}")
 
-    # --- Parameter-Validierung ---
+    # --- Parameter-Validierung & Walk-Forward Injektion ---
     param_warnings: list[str] = []
+    walk_forward_cfg = global_settings.get("walk_forward")
+
     for strat in strategies_list:
         param_warnings.extend(validate_strategy_params(strat))
+
+        # Einmalige Injektion von _walk_forward_days für den Guard (Issue #121)
+        if walk_forward_cfg:
+            is_days  = walk_forward_cfg.get("is_window_days", 90)
+            oos_days = walk_forward_cfg.get("oos_window_days", 30)
+            splits   = walk_forward_cfg.get("splits", 2)
+            strat["_walk_forward_days"] = is_days + (splits * oos_days)
+
     if param_warnings:
         print("\n⚠️  Parameter-Warnungen:")
         for w in param_warnings:
@@ -1458,7 +1469,8 @@ def run_backtest() -> None:
                 walk_forward_cfg = global_settings.get("walk_forward")
                 if walk_forward_cfg and end_ns:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
-                    strat["_oos_start_ns"] = end_ns - (oos_days * 24 * 60 * 60 * 1_000_000_000)
+                    splits   = walk_forward_cfg.get("splits", 2)
+                    strat["_oos_start_ns"]      = end_ns - (splits * oos_days * 24 * 60 * 60 * 1_000_000_000)
 
                 wlf = os.path.join(
                     logs_dir,
