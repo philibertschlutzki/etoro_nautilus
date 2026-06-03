@@ -176,14 +176,14 @@ async def _fetch_precisions(
 
                     raw = await resp.json(content_type=None)
                     log.debug(f"[catalog_service] Raw API response (first 500 chars): {str(raw)[:500]}")
-                    items = raw if isinstance(raw, list) else raw.get("instruments", raw.get("items", []))
+                    items = raw if isinstance(raw, list) else raw.get("instrumentDisplayDatas", raw.get("instruments", raw.get("items", [])))
                     if not isinstance(items, list):
                         continue
 
                     for item in items:
                         if not isinstance(item, dict):
                             continue
-                        eid = str(item.get("instrumentId", item.get("id", "")))
+                        eid = str(item.get("instrumentID", item.get("instrumentId", item.get("id", ""))))
                         if not eid:
                             continue
 
@@ -210,6 +210,20 @@ async def _fetch_precisions(
                         # Fallback aus Symbolname
                         sym_raw = item.get("internalSymbolFull", item.get("symbol", ""))
 
+
+                        # Plausibilitätsprüfung (Sanity Check) für Aktien
+                        if size_prec == 2:
+                            # Falls size_prec=2 ist, sollte es sich laut Fallback-Regeln um ein reines Equity handeln.
+                            # Wenn wir es als Crypto oder Fractional identifizieren, ist das vermutlich falsch (Precision Mismatch).
+                            fb_p_test, fb_s_test = _fallback_precisions(sym_raw)
+                            if fb_s_test != 2:
+                                log.warning(
+                                    f"[catalog_service] "
+                                    f"Plausibilitätswarnung: Instrument {eid} ({sym_raw}) hat size_prec=2 (Equity-Wert), "
+                                    f"wird systemseitig aber als Nicht-Equity mit size_prec={fb_s_test} erwartet. "
+                                    f"Möglicher API-Precision-Konflikt!"
+                                )
+
                         has_api_prec = (price_prec is not None and size_prec is not None)
                         if has_api_prec:
                             api_hits += 1
@@ -233,6 +247,8 @@ async def _fetch_precisions(
 
     if len(etoro_ids) > 0 and api_hits == 0:
         log.warning(f"[catalog_service] Precision-API lieferte 0/{len(etoro_ids)} Instrumente. Dynamischer Precision-Pfad ohne Funktion.")
+        if os.getenv("STRICT_PRECISION_FAIL") == "1":
+            raise RuntimeError(f"[catalog_service] HARD FAIL: API lieferte 0 Precisions für {len(etoro_ids)} Instrumente.")
 
     return result
 
