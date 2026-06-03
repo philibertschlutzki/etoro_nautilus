@@ -16,7 +16,6 @@ from nautilus_trader.indicators import DirectionalMovement
 class AdxAtrMomentumConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     adx_period: int = 14
     ema_period: int = 50
-    atr_period: int = 14
     atr_multiplier: float = 2.0
 
 

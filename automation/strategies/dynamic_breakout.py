@@ -27,6 +27,7 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 class DynamicBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     price_breakout_period: int = 10
+    cooldown_bars: int = 12
 
 
 class DynamicBreakoutStrategy(HourlyStrategyBase):
@@ -51,7 +52,6 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self._log.info(
             f"Starte Dynamic Breakout (Price-Range) auf {self.instrument_id}", LogColor.GREEN
         )
-        self.subscribe_quote_ticks(self.instrument_id)
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
@@ -159,5 +159,4 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
-        self.unsubscribe_quote_ticks(self.instrument_id)
         self.unsubscribe_bars(self.bar_type)

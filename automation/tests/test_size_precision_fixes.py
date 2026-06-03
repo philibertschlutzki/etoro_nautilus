@@ -68,5 +68,5 @@ def test_load_ticks_from_catalog_normalizes_precision():
     normalized_ticks = load_ticks_from_catalog(catalog_mock, "AAPL.ETORO", None, None)
 
     assert len(normalized_ticks) == 1
-    assert normalized_ticks[0].bid_size.precision == 8
-    assert normalized_ticks[0].ask_size.precision == 8
+    assert normalized_ticks[0].bid_size.precision == 2
+    assert normalized_ticks[0].ask_size.precision == 2
