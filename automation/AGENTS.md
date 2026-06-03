@@ -197,13 +197,13 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 | VolatilityBreakoutPumpStrategy | volatility_breakout.py | BB(10,2.0) | 1500 |
 | ComboTrendVwapStrategy | tesla_combo_strategy.py | SMA+MACD+BB+ATR+VWAP | 1500 |
 | VwapExhaustionStrategy | vwap_exhaustion.py | Custom VWAP-Deviation | 1500 |
-| HourlyMeanReversionStrategy | hourly_mean_reversion.py | Keltner(10,1.5) | 1500 |
 
 ### Inaktive Strategien (active=false)
 | Klasse | Grund |
 |--------|-------|
 | TrendPullbackStrategy | 0 FIFO-Schließungen in allen Tests; erbt von HourlyStrategyBase (EMA-Period 200 initialisiert bei kurzen Daten nie) |
 | AdxAtrMomentumStrategy | ADX-Initialisierungsproblem; erbt von HourlyStrategyBase |
+| HourlyMeanReversionStrategy | Aktuell nicht in `strategies.json` registriert. |
 
 **Wichtig:** Die Config-Klassen in `config_class` müssen exakt zu den Feldern passen, die der Backtest spreizt. Die Konfig-Field-Beschreibungen in der alten Root-AGENTS.md waren teils falsch (z.B. `lookback`/`z_score_threshold` für MeanReversion existieren NICHT — die echte Config nutzt `keltner_period`/`keltner_multiplier`). Maßgeblich ist immer der Code der jeweiligen `*Config`-Klasse.
 
@@ -521,7 +521,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 | 2026-05-29 | **Issue #72 (`min_trades` Erhöhung):** Die Schwelle für `min_trades` in der Tournament-Config und den Default-Werten wurde von 4 auf 20 angehoben, um robustere Ratios (Sortino, Profit-Factor) auf Basis einer statistisch tragfähigeren Stichprobe zu gewährleisten. | `automation/config/tournament.json`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-01 | **Issue #102 (Divergierende size_precision-Heuristiken behoben - Pitfall #27):** `get_size_precision` in `adapters/instrument_utils.py` und `fractional_trading.py` entfernt/angepasst, um ausschließlich `automation/utils._fallback_precisions` zu nutzen. Equity size_precision ist nun über Backtest und Live-Adapter konsistent (2). | `automation/adapters/instrument_utils.py`, `automation/fractional_trading.py`, `automation/tests/test_size_precision_fixes.py` |
 | 2026-05-31 | **Refactored HourlyStrategyBase to use HourlyStrategyConfig for optimizable exit parameters (Issue #4):** Replaced hardcoded constants for `atr_period`, `atr_trailing_multiplier`, and `max_bars_in_trade` with a dedicated `HourlyStrategyConfig` class inheriting from `StrategyConfig`. Refactored all active strategies to inherit from `HourlyStrategyConfig` and dynamically utilize these exit parameters from `self.config` to enable algorithmic optimization of holding periods. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/*.py`, `automation/AGENTS.md` |
-| 2026-06-02 | **Issue #106 (Tuning/Strategy Tournament):** Implementierte strategie-spezifische Auswertung für das Tournament-Filter `min_trades`. Statt hartkodierter Strategie-Anpassungen wurde der `backtest_runner` umgebaut, sodass er nun `strat_params` aus den Rückgabe-Payloads der Worker extrahiert und in `_is_eligible()` verwendet. Dadurch können seltene Setup-Strategien (wie `ComboTrendVwapStrategy` und `VwapExhaustionStrategy`) via JSON-Config (`strategies.json` und `strategy_defaults.json`) eigene `min_trades`-Overrides definieren (z.B. 10 statt 20) und erreichen wieder faire Tournament-Platzierungen. Zusätzlich wurde ein Bug im Vererbungsmuster von `HourlyStrategyConfig` (doppelte Klasse) behoben. | `automation/backtest_runner.py`, `automation/config/strategies.json`, `automation/config/strategy_defaults.json`, `automation/strategies/hourly_strategy_base.py`, `automation/AGENTS.md` |
+| 2026-06-02 | **Issue #103 & Backtest Bug Fixes:** Korrektur der `msgspec.Struct` Vererbungshierarchie (`HourlyStrategyConfig` / `HourlyMeanReversionConfig`) via `kw_only=True` und Verschiebung der Strategie in den inaktiven Block der Dokumentation. Sowie Behebung des Tuple-Unpacking-Fehlers `(holding_time_ns, match_qty)` und der NameErrors (`is_holding_times`) in `extract_metrics` im `backtest_runner`. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/hourly_mean_reversion.py`, `automation/strategies/*.py`, `automation/AGENTS.md`, `automation/backtest_runner.py` |
 ---
 
 *Zuletzt aktualisiert: 2026-06-02. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
