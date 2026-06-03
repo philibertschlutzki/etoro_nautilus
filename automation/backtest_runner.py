@@ -722,8 +722,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
-        for pnl, ts, hm_tuple in pnls_with_ts:
-            ht, m_qty = hm_tuple
+        for pnl, ts, ht, m_qty in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
                 oos_holding_times.append((ht, m_qty))
@@ -731,7 +730,6 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 is_pnls.append(pnl)
                 is_holding_times.append((ht, m_qty))
 
-        print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
         is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital)
         oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,

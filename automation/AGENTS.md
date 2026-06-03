@@ -478,6 +478,12 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix:** FIFO-Logik muss immer über das gesamte Datenset (`IS + OOS`) unangetastet iterieren, da sonst offene Queues korrumpieren. Erst *nach* dem FIFO-Matching werden die generierten PnL-Tupel (`pnl, ts_event`) anhand des Cutoffs separiert.
 **Betroffen:** `automation/backtest_runner.py`
 
+### 🔴 #33 — Tuple Unpacking Regression in extract_metrics
+**Symptom:** `total_trades=0` in allen Strategien, leere Backtest-Metriken, keine Tournament-Gewinner.
+**Root Cause:** Regression durch Mismatch der Tuple-Arity. `pnls_with_ts.append` generiert ein flaches 4-Tupel, aber die nachfolgende Loop versucht in 3 Ziele zu entpacken (Fehler in Pitfall #31/#103 entstanden). Der `ValueError` wird stumm gefangen.
+**Fix:** Unpacking Loop auf `for pnl, ts, ht, m_qty in pnls_with_ts:` korrigieren (4 Variablen).
+**Betroffen:** `automation/backtest_runner.py`
+
 ## 17. Conventions für KI-Coding-Agents (Jules)
 
 - **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, behoben).
@@ -523,6 +529,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 | 2026-06-01 | **Issue #102 (Divergierende size_precision-Heuristiken behoben - Pitfall #27):** `get_size_precision` in `adapters/instrument_utils.py` und `fractional_trading.py` entfernt/angepasst, um ausschließlich `automation/utils._fallback_precisions` zu nutzen. Equity size_precision ist nun über Backtest und Live-Adapter konsistent (2). | `automation/adapters/instrument_utils.py`, `automation/fractional_trading.py`, `automation/tests/test_size_precision_fixes.py` |
 | 2026-05-31 | **Refactored HourlyStrategyBase to use HourlyStrategyConfig for optimizable exit parameters (Issue #4):** Replaced hardcoded constants for `atr_period`, `atr_trailing_multiplier`, and `max_bars_in_trade` with a dedicated `HourlyStrategyConfig` class inheriting from `StrategyConfig`. Refactored all active strategies to inherit from `HourlyStrategyConfig` and dynamically utilize these exit parameters from `self.config` to enable algorithmic optimization of holding periods. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/*.py`, `automation/AGENTS.md` |
 | 2026-06-02 | **Issue #103 & Backtest Bug Fixes:** Korrektur der `msgspec.Struct` Vererbungshierarchie (`HourlyStrategyConfig` / `HourlyMeanReversionConfig`) via `kw_only=True` und Verschiebung der Strategie in den inaktiven Block der Dokumentation. Sowie Behebung des Tuple-Unpacking-Fehlers `(holding_time_ns, match_qty)` und der NameErrors (`is_holding_times`) in `extract_metrics` im `backtest_runner`. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/hourly_mean_reversion.py`, `automation/strategies/*.py`, `automation/AGENTS.md`, `automation/backtest_runner.py` |
+| 2026-06-03 | **Issue #132 (Pitfall #33):** Behebung der Tuple-Arity-Regression in `extract_metrics` (flaches 4-Tupel-`append` vs. 3-Ziel-Entpackung). Der Fehler wurde explizit als Regression von Pitfall #31/#103 gekennzeichnet. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 ---
 
-*Zuletzt aktualisiert: 2026-06-02. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-06-03. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
