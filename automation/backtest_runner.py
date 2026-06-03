@@ -722,8 +722,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
-        for pnl, ts, hm_tuple in pnls_with_ts:
-            ht, m_qty = hm_tuple
+        for pnl, ts, ht, m_qty in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
                 oos_holding_times.append((ht, m_qty))
