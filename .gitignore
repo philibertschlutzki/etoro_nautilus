@@ -18,3 +18,7 @@ logs/backtest_2026*
 .vscode/reports/
 reports/
 automation/.env
+
+# Patch artifacts
+*.orig
+*.rej
