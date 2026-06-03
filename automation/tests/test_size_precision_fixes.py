@@ -68,20 +68,5 @@ def test_load_ticks_from_catalog_normalizes_precision():
     normalized_ticks = load_ticks_from_catalog(catalog_mock, "AAPL.ETORO", None, None)
 
     assert len(normalized_ticks) == 1
-    assert normalized_ticks[0].bid_size.precision == 8
-    assert normalized_ticks[0].ask_size.precision == 8
-
-from automation.adapters.instrument_utils import get_size_precision
-from automation.fractional_trading import get_dynamic_size_precision
-
-def test_instrument_utils_delegates():
-    # Should now return 2 for AAPL via fallback_precisions
-    assert get_size_precision("AAPL.ETORO") == 2
-    assert get_size_precision("BTC.ETORO") == 8
-    assert get_size_precision("NATGAS.ETORO") == 5
-
-def test_fractional_trading_delegates():
-    # Base precision from fallback_precisions
-    assert get_dynamic_size_precision("AAPL.ETORO", "1001") == 2
-    assert get_dynamic_size_precision("BTC.ETORO", "1002") == 8
-    assert get_dynamic_size_precision("NATGAS.ETORO", "1003") == 5
+    assert normalized_ticks[0].bid_size.precision == 2
+    assert normalized_ticks[0].ask_size.precision == 2

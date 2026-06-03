@@ -439,10 +439,13 @@ def load_ticks_from_catalog(
             return []
 
         # Normalisiere Tick Precision (Pitfall #14)
-        if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision <= 0:
+        # Verify the meta data precision from Parquet I/O instead of hardcoding `sp = 8`.
+        _, sp_parquet = read_precisions_from_parquet(str(catalog.path), instrument_id_str)
+        sp = _normalize_size_precision(sp_parquet)
+
+        if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision != sp:
             from nautilus_trader.model.data import QuoteTick
             from nautilus_trader.model.objects import Quantity
-            sp = 8
             normalized = []
             for t in ticks:
                 normalized.append(
@@ -450,8 +453,8 @@ def load_ticks_from_catalog(
                         instrument_id=t.instrument_id,
                         bid_price=t.bid_price,
                         ask_price=t.ask_price,
-                        bid_size=Quantity(float(t.bid_size), precision=sp),
-                        ask_size=Quantity(float(t.ask_size), precision=sp),
+                        bid_size=Quantity(t.bid_size.as_double(), precision=sp),
+                        ask_size=Quantity(t.ask_size.as_double(), precision=sp),
                         ts_event=t.ts_event,
                         ts_init=t.ts_init,
                     )
@@ -672,7 +675,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
-                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
@@ -692,7 +695,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - b_ts
-                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
@@ -1054,6 +1057,18 @@ def run_single_backtest_worker(
             return {}
 
         wlog(f"   📥 {len(ticks)} Ticks geladen.")
+
+        # --- Check Data Span for Walk-Forward Window ---
+        required_days = strat.get("_walk_forward_days")
+        if required_days:
+            span_ns = ticks[-1].ts_event - ticks[0].ts_event
+            # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
+            span_ns_val = span_ns.value if hasattr(span_ns, 'value') else int(span_ns)
+            span_days = span_ns_val / (86400 * 1_000_000_000)
+            if span_days < (required_days * 0.95):
+                msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage). Überspringe Backtest."
+                wlog_err(msg)
+                return {"symbol": inst_id_str, "strategy": strategy_class_name, "error": "insufficient_data"}
 
         # --- Engine-Setup ---
         try:

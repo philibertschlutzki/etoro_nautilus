@@ -388,10 +388,10 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 **Fix:** Schreibseite auf `size_precision=2` für Equities angehoben. `regenerate_precision.py` wurde ersatzlos gelöscht. Korrupte Katalogdaten aus der Quelle müssen komplett neu aufgebaut werden (`--reset-catalog`).
 **Betroffen:** `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/daily_orchestrator.py`.
 
-### 🟡 #24 — Datendichte vs. Indikator-Warmup
-**Symptom:** Strategien mit langen Perioden (ComboTrendVwap: SMA50+MACD26; inaktive TrendPullback: EMA200) initialisieren bei kurzen Datenfenstern (z.B. ~480 Ticks/30 Tage) spät oder nie.
-**Fix:** `historical_fetcher` (12M) vor dem Backtest sicherstellen; `min_bars_for_backtest=200` als harte Schwelle prüfen.
-**Betroffen:** Pipeline-Konfiguration.
+### 🟢 #24 — Datendichte vs. Indikator-Warmup (Walk-Forward OOS-Guard)
+**Symptom:** Backtests rechneten mit 30 Tagen Historie ein 90d+30d Walk-Forward-Fenster, emittierten verzerrte OOS-Metriken und gewannen Turniere ohne Warnung (Issue #105). Strategien mit langen Perioden initialisierten bei kurzen Datenfenstern spät oder gar nicht.
+**Fix:** Guard im `backtest_runner.py` implementiert (überspringt, wenn `span_days < required_days * 0.95`). Die Beschaffungstiefe für den `historical_fetcher` im `daily_orchestrator.py` dynamisch an das Walk-Forward-Fenster (inklusive Puffer) gekoppelt statt fix `min_bars=200`.
+**Betroffen:** `automation/backtest_runner.py`, `automation/daily_orchestrator.py`.
 
 ### 🟢 #15 — `BrokenProcessPool` durch OOM
 Worker auf `cpu//2` (max 6) begrenzt, `max_tasks_per_child=1`, expliziter Catch + sequenzieller Fallback. **Behoben** in `backtest_runner.py`.
@@ -497,7 +497,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
-| 2026-06-01 | **Issue 104 (Tournament-OOS-Kriterien False Positive):** Validation-Logik in `load_tournament_config` (`automation/backtest_runner.py`) so angepasst, dass der `oos_`-Prefix für den "ist definiert, aber nicht referenziert"-Check ignoriert wird. Zusätzliche OOS-Tests ergänzt. | `automation/backtest_runner.py`, `automation/tests/test_tournament_validation.py`, `automation/AGENTS.md` |
+| 2026-06-02 | **Issue #105 / Pitfall #24 (Walk-Forward OOS-Guard & Historical Fetcher Integration):** Guard im `backtest_runner.py` implementiert, der sicherstellt, dass die Datenspanne der geladenen Ticks das geforderte Walk-Forward-Fenster (IS+OOS) abdeckt. Die Beschaffungstiefe des `historical_fetcher.py` wurde im `daily_orchestrator.py` dynamisch an die konfigurierte Walk-Forward-Spanne (inkl. Puffer) gekoppelt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/AGENTS.md` |
 | 2026-06-01 | **Issue #84 (FlashCrashReversalStrategy Haltedauer optimieren):** `HourlyStrategyConfig` mit optionalem `profit_target_pct` eingeführt. Exit bei Rückkehr zum Mean (bb.middle) hinzugefügt. Event-Loop Blockaden in Nautilus durch Order-Spamming behoben (`self.cache.orders_open`). Optimierte Default-Parameter für `max_bars_in_trade=16` und `atr_trailing_multiplier=0.75` in `strategy_defaults.json` validiert und dokumentiert. | `automation/strategies/flash_crash_reversal.py`, `automation/strategies/hourly_strategy_base.py`, `automation/config/strategy_defaults.json`, `automation/tests/test_flash_crash_exits.py` |
 | 2026-05-31 | **Issue #80 (KeyError: 'median_sortino' verhindert Tournament-JSON und Live-Deploy):** Konsistente Implementierung der Median-Berechnung (get_median) für die Tournament-Gewinner. Ersetzte den Key `mean_sortino` durch `median_sortino` in `aggregate_winner` (`automation/backtest_runner.py`), um KeyErrors beim Parsen (`daily_orchestrator.py`) in Phase 4 zu beheben. Der Standalone-Grundsatz wurde bewahrt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/AGENTS.md` |
 | 2026-05-31 | **Issue #88 (Overtrading Fix):** Behebung von exzessivem Overtrading in `DynamicBreakout` und `SmaCrossover` Strategien durch Einführung einer `cooldown_bars` (12 Bars) Debounce-Logik in den `on_bar` Methoden. Fehlerhafte Zustandsverwaltung bei Positionswechseln behoben, indem `self.current_signal` gezielt auf den neuen Status (`"BUY"`/`"SELL"`) gesetzt wird statt auf `None`. | `automation/strategies/dynamic_breakout.py`, `automation/strategies/sma_crossover.py`, `automation/tests/test_backtest_trades_generated.py`, `automation/tests/test_precision_mismatch.py`, `automation/AGENTS.md` |

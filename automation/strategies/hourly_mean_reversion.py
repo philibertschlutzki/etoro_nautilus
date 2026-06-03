@@ -9,13 +9,9 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class HourlyMeanReversionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     keltner_period: int = 10
     keltner_atr_period: int = 10
     keltner_multiplier: float = 1.5
-    trade_amount_usd: float = 100.0
-    max_open_positions: int = 1
 
 
 class HourlyMeanReversionStrategy(HourlyStrategyBase):

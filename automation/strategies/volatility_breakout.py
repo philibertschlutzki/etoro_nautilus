@@ -9,8 +9,6 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class VolatilityBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    instrument_id: str
-    bar_type: str
     bb_period: int = 20
     bb_std_dev: float = 2.0
 
