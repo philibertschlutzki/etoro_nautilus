@@ -15,7 +15,14 @@ def test_fallback_precisions_equity():
 def test_create_mock_instrument_zero_precision():
     # Because backtest_runner defaults to 8 for backward compatibility with Nautilus defaults
     # if it's not correctly written in parquet yet.
+    # AAPL is an Equity, so it falls back to size_precision=2
     inst = create_mock_instrument("AAPL.ETORO", price_precision=2, size_precision=0)
+    assert inst.size_precision == 2
+    assert float(inst.size_increment) == 1e-02
+
+def test_create_mock_instrument_zero_precision_crypto():
+    # BTC is a Crypto, so it falls back to size_precision=8
+    inst = create_mock_instrument("BTC.ETORO", price_precision=2, size_precision=0)
     assert inst.size_precision == 8
     assert float(inst.size_increment) == 1e-08
 
