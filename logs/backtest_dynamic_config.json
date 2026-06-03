@@ -46,7 +46,8 @@
       "strategy_module": "automation.strategies.tesla_combo_strategy",
       "strategy_class": "ComboTrendVwapStrategy",
       "config_class": "ComboTrendVwapConfig",
-      "params": {
+      "params": {},
+      "tournament_overrides": {
         "min_trades": 10
       }
     },
@@ -54,7 +55,8 @@
       "strategy_module": "automation.strategies.vwap_exhaustion",
       "strategy_class": "VwapExhaustionStrategy",
       "config_class": "VwapExhaustionConfig",
-      "params": {
+      "params": {},
+      "tournament_overrides": {
         "min_trades": 10
       }
     }

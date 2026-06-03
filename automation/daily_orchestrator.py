@@ -339,7 +339,7 @@ def phase2_data_acquisition(
 
     # 2d. Historical Fetcher für Symbole ohne ausreichende Daten
     try:
-        from automation.historical_fetcher import run_historical_fetch, is_symbol_data_sufficient
+        from automation.historical_fetcher import run_historical_fetch, is_backtest_range_covered
         from automation.api_backfiller import _load_etoro_id_map as _load_id_map_2d
 
         # Dynamically calculate the minimum bars needed based on backtest configuration
@@ -352,16 +352,17 @@ def phase2_data_acquisition(
                 pass
         wf_cfg = bt_cfg.get("walk_forward", {})
         total_days = wf_cfg.get("is_window_days", 90) + (wf_cfg.get("splits", 2) * wf_cfg.get("oos_window_days", 30))
-        min_required_bars = int(total_days * 15)  # includes buffer
+        warmup_days = wf_cfg.get("warmup_days", 60) # adding a buffer for indicators
+        start_ns = int((datetime.now(timezone.utc) - timedelta(days=total_days + warmup_days)).timestamp() * 1e9)
 
         insufficient = [
             item["symbol"]
             for item in universe_result.get("universe", [])
-            if item.get("symbol") and not is_symbol_data_sufficient(item["symbol"], min_bars=min_required_bars)
+            if item.get("symbol") and not is_backtest_range_covered(item["symbol"], start_ns)
         ]
         if insufficient:
             log.info(
-                f"[Phase 2d] {len(insufficient)} Symbole unzureichend (benötigt >= {min_required_bars} Bars) — starte Historical Fetcher ..."
+                f"[Phase 2d] {len(insufficient)} Symbole unzureichend (benötigt Daten bis {start_ns} ns) — starte Historical Fetcher ..."
             )
             etoro_id_map_2d = _load_id_map_2d(UNIVERSE_PATH)
             insufficient_ids = {
@@ -374,7 +375,7 @@ def phase2_data_acquisition(
                         user_key=user_key,
                         etoro_id_to_symbol=insufficient_ids,
                         months=12,
-                        min_bars=min_required_bars,
+                        start_ns=start_ns,
                     )
                 )
                 result["hist_filled"] = hist_filled

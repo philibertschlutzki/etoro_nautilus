@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-06-03T06:00:18.886283+00:00",
+  "generated_at": "2026-06-03T12:34:37.883954+00:00",
   "universe_snapshot": "",
-  "total_symbol_strategy_pairs": 245,
+  "total_symbol_strategy_pairs": 343,
   "eligible_pairs": 0,
   "tournament_criteria": {
     "min_trades": 20,
@@ -124,6 +124,52 @@
     },
     {
       "symbol": "ACN.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "ACN.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "ACN.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -253,6 +299,52 @@
       }
     },
     {
+      "symbol": "ADBE.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "ADBE.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "AG.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -358,6 +450,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "AG.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "AG.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -471,6 +609,52 @@
       }
     },
     {
+      "symbol": "CAT.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CAT.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "CHTR.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -580,6 +764,52 @@
       }
     },
     {
+      "symbol": "CHTR.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CHTR.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "CIEN.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -623,6 +853,26 @@
     },
     {
       "symbol": "CIEN.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CIEN.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -649,26 +899,6 @@
     },
     {
       "symbol": "CIEN.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "price_breakout_period": 10,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "CIEN.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -685,6 +915,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CIEN.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CIEN.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -798,6 +1074,52 @@
       }
     },
     {
+      "symbol": "CMG.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CMG.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "COHR.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -841,6 +1163,26 @@
     },
     {
       "symbol": "COHR.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "COHR.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -867,7 +1209,7 @@
     },
     {
       "symbol": "COHR.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -881,7 +1223,13 @@
       },
       "oos_metrics": {},
       "strat_params": {
-        "price_breakout_period": 10,
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
         "trade_amount_usd": 1500.0
       }
     },
@@ -907,6 +1255,26 @@
       }
     },
     {
+      "symbol": "COHR.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "CPRT.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -923,6 +1291,28 @@
       "oos_metrics": {},
       "strat_params": {
         "sma_period": 5,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CPRT.ETORO",
+      "strategy": "MeanReversionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "keltner_period": 10,
+        "keltner_atr_period": 10,
+        "keltner_multiplier": 1.5,
         "trade_amount_usd": 1500.0
       }
     },
@@ -950,28 +1340,6 @@
         "trade_amount_usd": 1500.0,
         "atr_trailing_multiplier": 0.75,
         "max_bars_in_trade": 16
-      }
-    },
-    {
-      "symbol": "CPRT.ETORO",
-      "strategy": "MeanReversionStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "keltner_period": 10,
-        "keltner_atr_period": 10,
-        "keltner_multiplier": 1.5,
-        "trade_amount_usd": 1500.0
       }
     },
     {
@@ -1016,6 +1384,52 @@
       }
     },
     {
+      "symbol": "CPRT.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CPRT.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "CRM.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -1105,6 +1519,32 @@
     },
     {
       "symbol": "CRM.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CRM.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -1121,6 +1561,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "CRM.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -1214,6 +1674,32 @@
     },
     {
       "symbol": "DOCU.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "DOCU.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -1230,6 +1716,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "DOCU.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -1343,6 +1849,52 @@
       }
     },
     {
+      "symbol": "DUOL.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "DUOL.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "E.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -1432,6 +1984,32 @@
     },
     {
       "symbol": "E.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "E.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -1452,6 +2030,26 @@
       }
     },
     {
+      "symbol": "E.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "EEFT.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -1468,28 +2066,6 @@
       "oos_metrics": {},
       "strat_params": {
         "sma_period": 5,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "EEFT.ETORO",
-      "strategy": "MeanReversionStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "keltner_period": 10,
-        "keltner_atr_period": 10,
-        "keltner_multiplier": 1.5,
         "trade_amount_usd": 1500.0
       }
     },
@@ -1517,6 +2093,28 @@
         "trade_amount_usd": 1500.0,
         "atr_trailing_multiplier": 0.75,
         "max_bars_in_trade": 16
+      }
+    },
+    {
+      "symbol": "EEFT.ETORO",
+      "strategy": "MeanReversionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "keltner_period": 10,
+        "keltner_atr_period": 10,
+        "keltner_multiplier": 1.5,
+        "trade_amount_usd": 1500.0
       }
     },
     {
@@ -1557,6 +2155,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "EEFT.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "EEFT.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -1670,6 +2314,52 @@
       }
     },
     {
+      "symbol": "ESLT.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "ESLT.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "FICO.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -1779,6 +2469,52 @@
       }
     },
     {
+      "symbol": "FICO.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "FICO.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "FISV.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -1868,6 +2604,32 @@
     },
     {
       "symbol": "FISV.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "FISV.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -1884,6 +2646,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "FISV.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -1997,6 +2779,52 @@
       }
     },
     {
+      "symbol": "GLW.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "GLW.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "GOOGL.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -2106,6 +2934,52 @@
       }
     },
     {
+      "symbol": "GOOGL.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "GOOGL.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "GSAT.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -2149,6 +3023,26 @@
     },
     {
       "symbol": "GSAT.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "GSAT.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -2175,26 +3069,6 @@
     },
     {
       "symbol": "GSAT.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "price_breakout_period": 10,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "GSAT.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -2211,6 +3085,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "GSAT.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "GSAT.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -2324,6 +3244,52 @@
       }
     },
     {
+      "symbol": "GTLB.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "GTLB.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "HAL.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -2393,6 +3359,52 @@
     },
     {
       "symbol": "HAL.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "HAL.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "HAL.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -2414,7 +3426,7 @@
     },
     {
       "symbol": "HAL.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "VwapExhaustionStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2428,7 +3440,7 @@
       },
       "oos_metrics": {},
       "strat_params": {
-        "price_breakout_period": 10,
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -2542,6 +3554,52 @@
       }
     },
     {
+      "symbol": "HUBS.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "HUBS.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "INSW.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -2558,28 +3616,6 @@
       "oos_metrics": {},
       "strat_params": {
         "sma_period": 5,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "INSW.ETORO",
-      "strategy": "MeanReversionStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "keltner_period": 10,
-        "keltner_atr_period": 10,
-        "keltner_multiplier": 1.5,
         "trade_amount_usd": 1500.0
       }
     },
@@ -2607,6 +3643,28 @@
         "trade_amount_usd": 1500.0,
         "atr_trailing_multiplier": 0.75,
         "max_bars_in_trade": 16
+      }
+    },
+    {
+      "symbol": "INSW.ETORO",
+      "strategy": "MeanReversionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "keltner_period": 10,
+        "keltner_atr_period": 10,
+        "keltner_multiplier": 1.5,
+        "trade_amount_usd": 1500.0
       }
     },
     {
@@ -2651,6 +3709,52 @@
       }
     },
     {
+      "symbol": "INSW.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "INSW.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "JNJ.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -2740,6 +3844,32 @@
     },
     {
       "symbol": "JNJ.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "JNJ.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -2756,6 +3886,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "JNJ.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -2803,6 +3953,26 @@
     },
     {
       "symbol": "LRCX.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "LRCX.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -2829,7 +3999,7 @@
     },
     {
       "symbol": "LRCX.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -2843,7 +4013,13 @@
       },
       "oos_metrics": {},
       "strat_params": {
-        "price_breakout_period": 10,
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
         "trade_amount_usd": 1500.0
       }
     },
@@ -2865,6 +4041,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "LRCX.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -2974,6 +4170,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "LULU.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "LULU.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -2999,6 +4241,28 @@
     },
     {
       "symbol": "MNDY.ETORO",
+      "strategy": "MeanReversionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "keltner_period": 10,
+        "keltner_atr_period": 10,
+        "keltner_multiplier": 1.5,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "MNDY.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -3025,28 +4289,6 @@
     },
     {
       "symbol": "MNDY.ETORO",
-      "strategy": "MeanReversionStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "keltner_period": 10,
-        "keltner_atr_period": 10,
-        "keltner_multiplier": 1.5,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "MNDY.ETORO",
       "strategy": "DynamicBreakoutStrategy",
       "metrics": {
         "total_trades": 0,
@@ -3062,6 +4304,52 @@
       "oos_metrics": {},
       "strat_params": {
         "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "MNDY.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "MNDY.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -3196,6 +4484,52 @@
       }
     },
     {
+      "symbol": "MTZ.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "MTZ.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "MU.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -3305,6 +4639,52 @@
       }
     },
     {
+      "symbol": "MU.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "MU.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "NOW.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -3394,6 +4774,32 @@
     },
     {
       "symbol": "NOW.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "NOW.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -3410,6 +4816,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "NOW.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -3457,6 +4883,26 @@
     },
     {
       "symbol": "PBR.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "PBR.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -3483,7 +4929,7 @@
     },
     {
       "symbol": "PBR.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -3497,7 +4943,13 @@
       },
       "oos_metrics": {},
       "strat_params": {
-        "price_breakout_period": 10,
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
         "trade_amount_usd": 1500.0
       }
     },
@@ -3519,6 +4971,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "PBR.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -3632,6 +5104,52 @@
       }
     },
     {
+      "symbol": "PINS.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "PINS.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "POWL.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -3741,6 +5259,52 @@
       }
     },
     {
+      "symbol": "POWL.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "POWL.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "SE.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -3757,6 +5321,28 @@
       "oos_metrics": {},
       "strat_params": {
         "sma_period": 5,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "SE.ETORO",
+      "strategy": "MeanReversionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "keltner_period": 10,
+        "keltner_atr_period": 10,
+        "keltner_multiplier": 1.5,
         "trade_amount_usd": 1500.0
       }
     },
@@ -3784,28 +5370,6 @@
         "trade_amount_usd": 1500.0,
         "atr_trailing_multiplier": 0.75,
         "max_bars_in_trade": 16
-      }
-    },
-    {
-      "symbol": "SE.ETORO",
-      "strategy": "MeanReversionStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "keltner_period": 10,
-        "keltner_atr_period": 10,
-        "keltner_multiplier": 1.5,
-        "trade_amount_usd": 1500.0
       }
     },
     {
@@ -3846,6 +5410,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "SE.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "SE.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -3959,6 +5569,52 @@
       }
     },
     {
+      "symbol": "SNAP.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "SNAP.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "SQM.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -4002,6 +5658,26 @@
     },
     {
       "symbol": "SQM.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "SQM.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -4028,7 +5704,7 @@
     },
     {
       "symbol": "SQM.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
+      "strategy": "ComboTrendVwapStrategy",
       "metrics": {
         "total_trades": 0,
         "win_rate": 0.0,
@@ -4042,7 +5718,13 @@
       },
       "oos_metrics": {},
       "strat_params": {
-        "price_breakout_period": 10,
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
         "trade_amount_usd": 1500.0
       }
     },
@@ -4064,6 +5746,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "SQM.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -4177,6 +5879,52 @@
       }
     },
     {
+      "symbol": "STX.US.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "STX.US.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "TEAM.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -4286,6 +6034,52 @@
       }
     },
     {
+      "symbol": "TEAM.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TEAM.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "TSEM.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -4375,6 +6169,32 @@
     },
     {
       "symbol": "TSEM.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TSEM.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -4391,6 +6211,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TSEM.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -4484,6 +6324,32 @@
     },
     {
       "symbol": "TTD.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TTD.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -4500,6 +6366,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TTD.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -4547,6 +6433,26 @@
     },
     {
       "symbol": "TTMI.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TTMI.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -4573,26 +6479,6 @@
     },
     {
       "symbol": "TTMI.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "price_breakout_period": 10,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "TTMI.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -4609,6 +6495,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TTMI.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "TTMI.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -4722,6 +6654,52 @@
       }
     },
     {
+      "symbol": "VLO.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "VLO.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "VRT.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -4765,6 +6743,26 @@
     },
     {
       "symbol": "VRT.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "VRT.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -4791,26 +6789,6 @@
     },
     {
       "symbol": "VRT.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "price_breakout_period": 10,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "VRT.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -4827,6 +6805,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "VRT.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "VRT.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -4940,6 +6964,52 @@
       }
     },
     {
+      "symbol": "WBD.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WBD.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
       "symbol": "WDAY.ETORO",
       "strategy": "SmaCrossoverStrategy",
       "metrics": {
@@ -5029,6 +7099,32 @@
     },
     {
       "symbol": "WDAY.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WDAY.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -5045,6 +7141,26 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WDAY.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -5092,6 +7208,26 @@
     },
     {
       "symbol": "WDC.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WDC.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -5118,26 +7254,6 @@
     },
     {
       "symbol": "WDC.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "price_breakout_period": 10,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "WDC.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -5154,6 +7270,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WDC.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WDC.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -5201,6 +7363,26 @@
     },
     {
       "symbol": "WIX.ETORO",
+      "strategy": "DynamicBreakoutStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "price_breakout_period": 10,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WIX.ETORO",
       "strategy": "FlashCrashReversalStrategy",
       "metrics": {
         "total_trades": 0,
@@ -5227,26 +7409,6 @@
     },
     {
       "symbol": "WIX.ETORO",
-      "strategy": "DynamicBreakoutStrategy",
-      "metrics": {
-        "total_trades": 0,
-        "win_rate": 0.0,
-        "profit_factor": 0.0,
-        "sortino_ratio": 0.0,
-        "calmar_ratio": 0.0,
-        "max_drawdown": 0.0,
-        "total_return": 0.0,
-        "avg_holding_time_s": 0.0,
-        "median_holding_time_s": 0.0
-      },
-      "oos_metrics": {},
-      "strat_params": {
-        "price_breakout_period": 10,
-        "trade_amount_usd": 1500.0
-      }
-    },
-    {
-      "symbol": "WIX.ETORO",
       "strategy": "VolatilityBreakoutPumpStrategy",
       "metrics": {
         "total_trades": 0,
@@ -5263,6 +7425,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WIX.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "WIX.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     },
@@ -5372,6 +7580,52 @@
       "strat_params": {
         "bb_period": 10,
         "bb_std_dev": 2.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "ZS.ETORO",
+      "strategy": "ComboTrendVwapStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "sma_period": 20,
+        "macd_fast": 5,
+        "macd_slow": 13,
+        "macd_signal_period": 9,
+        "bb_period": 10,
+        "bb_std_dev": 2.0,
+        "bb_entry_tolerance": 1.0,
+        "trade_amount_usd": 1500.0
+      }
+    },
+    {
+      "symbol": "ZS.ETORO",
+      "strategy": "VwapExhaustionStrategy",
+      "metrics": {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "max_drawdown": 0.0,
+        "total_return": 0.0,
+        "avg_holding_time_s": 0.0,
+        "median_holding_time_s": 0.0
+      },
+      "oos_metrics": {},
+      "strat_params": {
+        "deviation_threshold": 0.03,
         "trade_amount_usd": 1500.0
       }
     }

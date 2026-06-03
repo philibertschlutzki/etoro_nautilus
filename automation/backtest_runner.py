@@ -22,6 +22,7 @@ from pathlib import Path
 _AUTOMATION_DIR = Path(__file__).resolve().parent.parent
 if str(_AUTOMATION_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOMATION_DIR))
+import inspect
 import json
 import math
 import argparse
@@ -384,13 +385,14 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         win_rate     = metrics.get("oos_metrics", {}).get("win_rate", 0.0)
         total_return = metrics.get("oos_metrics", {}).get("total_return", 0.0)
 
+        t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
         condition_map = {
-            "min_trades":        n_trades     >= tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0)),
-            "min_sortino":       sortino      >= tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0)),
-            "min_profit_factor": pf           >= tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
-            "max_drawdown":      max_dd       <= tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
-            "min_win_rate":      win_rate     >= tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
-            "min_total_return":  total_return >= tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)),
+            "min_trades":        n_trades     >= t_overrides.get("oos_min_trades", t_overrides.get("min_trades", tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0)))),
+            "min_sortino":       sortino      >= t_overrides.get("oos_min_sortino", t_overrides.get("min_sortino", tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0)))),
+            "min_profit_factor": pf           >= t_overrides.get("oos_min_profit_factor", t_overrides.get("min_profit_factor", tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)))),
+            "max_drawdown":      max_dd       <= t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)))),
+            "min_win_rate":      win_rate     >= t_overrides.get("oos_min_win_rate", t_overrides.get("min_win_rate", tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)))),
+            "min_total_return":  total_return >= t_overrides.get("oos_min_total_return", t_overrides.get("min_total_return", tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)))),
         }
     else:
         n_trades     = metrics.get("total_trades", 0)
@@ -400,13 +402,14 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         win_rate     = metrics.get("win_rate", 0.0)
         total_return = metrics.get("total_return", 0.0)
 
+        t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
         condition_map = {
-            "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
-            "min_sortino":       sortino      >= tournament_cfg.get("min_sortino", 0.0),
-            "min_profit_factor": pf           >= tournament_cfg.get("min_profit_factor", 1.0),
-            "max_drawdown":      max_dd       <= tournament_cfg.get("max_drawdown", 1.0),
-            "min_win_rate":      win_rate     >= tournament_cfg.get("min_win_rate", 0.0),
-            "min_total_return":  total_return >= tournament_cfg.get("min_total_return", 0.0),
+            "min_trades":        n_trades     >= t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0)),
+            "min_sortino":       sortino      >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0)),
+            "min_profit_factor": pf           >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
+            "max_drawdown":      max_dd       <= t_overrides.get("max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
+            "min_win_rate":      win_rate     >= t_overrides.get("min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
+            "min_total_return":  total_return >= t_overrides.get("min_total_return", tournament_cfg.get("min_total_return", 0.0)),
         }
 
     # Harte Filter: ALLE müssen erfüllt sein
@@ -660,7 +663,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 except Exception:
                     continue
 
-                if qty <= 0:
+                if math.isnan(qty) or qty <= 0:
                     continue
 
                 is_buy = "BUY" in side_str
@@ -675,7 +678,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
-                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
@@ -695,7 +698,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - b_ts
-                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
@@ -747,7 +750,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             return is_metrics
     except Exception as e:
         if log_fn:
-            log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}")
+            import traceback
+            log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}\n{traceback.format_exc()}")
         return NULL
 
 
@@ -1123,6 +1127,21 @@ def run_single_backtest_worker(
             params["instrument_id"] = inst_id_str
             params["bar_type"]      = bar_type
 
+            # Härtung: Defensives Parsing der Parameter
+            if hasattr(ConfigCls, "__struct_fields__"):
+                valid_keys = set(ConfigCls.__struct_fields__)
+            elif hasattr(ConfigCls, "__dataclass_fields__"):
+                valid_keys = set(ConfigCls.__dataclass_fields__)
+            else:
+                valid_keys = set(inspect.signature(ConfigCls).parameters)
+
+            dropped = {k for k in params if k not in valid_keys}
+            if dropped:
+                wlog(f"   ⚠️ Unbekannte Strategie-Params ignoriert: {sorted(dropped)}")
+                # Auch über das result dict zurückgeben (falls orchestrator das auswertet)
+                strat["_dropped_params"] = list(dropped)
+            params = {k: v for k, v in params.items() if k in valid_keys}
+
             # Fix: trade_amount_usd auf 15% des Startkapitals setzen
             try:
                 test_params = params.copy()
@@ -1361,9 +1380,24 @@ def run_backtest() -> None:
     expected_data_dir = os.path.join(catalog_path, "data")
     os.makedirs(expected_data_dir, exist_ok=True)
 
+    # --- Filter (CLI Flags) ---
+    if args.strategy:
+        strategies_list = [s for s in strategies_list if s.get("strategy_class") == args.strategy]
+        print(f"🎯 CLI Filter aktiv: Nur Strategie '{args.strategy}' wird getestet.")
+        if not strategies_list:
+            log_error(f"⚠️ Strategie '{args.strategy}' in Config nicht gefunden oder inaktiv.")
+            return
+
     # --- Instrumente ---
     instrument_ids = discover_instruments_from_catalog(catalog_path)
-    if not instrument_ids:
+    if args.single_symbol:
+        if args.single_symbol in instrument_ids:
+            instrument_ids = [args.single_symbol]
+            print(f"🎯 CLI Filter aktiv: Nur Symbol '{args.single_symbol}' wird getestet.")
+        else:
+            log_error(f"⚠️ Symbol '{args.single_symbol}' nicht im Catalog {expected_data_dir}/quote_tick gefunden.")
+            return
+    elif not instrument_ids:
         log_error(f"⚠️ Keine Instrumente in {expected_data_dir}/quote_tick vorhanden.")
         return
     print(f"📋 {len(instrument_ids)} Instrumente gefunden.")
