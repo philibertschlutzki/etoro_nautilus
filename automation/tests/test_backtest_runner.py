@@ -56,6 +56,10 @@ def test_extract_metrics_holding_time():
 
     assert metrics_result is not None
     m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
+    assert m.get("total_trades", 0) > 0, (
+        f"Regressions-Fehler: total_trades ist 0. FIFO-Pfad/Entpackung fehlgeschlagen. "
+        f"Metriken-Snapshot: {m}"
+    )
 
     # 1 trade closed
     assert m["total_trades"] == 1
@@ -89,6 +93,10 @@ def test_extract_metrics_holding_time_short():
 
     metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
     m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
+    assert m.get("total_trades", 0) > 0, (
+        f"Regressions-Fehler: total_trades ist 0. FIFO-Pfad/Entpackung fehlgeschlagen. "
+        f"Metriken-Snapshot: {m}"
+    )
 
     assert m["total_trades"] == 1
     assert m["avg_holding_time_s"] == 100.0
@@ -131,6 +139,10 @@ def test_extract_metrics_weighted_holding_time():
 
     metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
     m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
+    assert m.get("total_trades", 0) > 0, (
+        f"Regressions-Fehler: total_trades ist 0. FIFO-Pfad/Entpackung fehlgeschlagen. "
+        f"Metriken-Snapshot: {m}"
+    )
 
     assert m["total_trades"] == 2
     assert m["avg_holding_time_s"] == 18.0

@@ -1,0 +1,31 @@
+name: PR Merge Gate - Test Suite
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -r automation/requirements.txt
+
+      - name: Run fast isolated tests
+        run: |
+          python3 -m pytest automation/tests/test_backtest_runner.py -v --timeout=60
+          python3 -m pytest automation/tests/test_automation_isolation.py -v --timeout=30
