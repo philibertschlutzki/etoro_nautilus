@@ -223,18 +223,22 @@ def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key
             log.error("[Phase 1] API Keys fehlen. Kann Universe nicht automatisch fetchen.")
         else:
             log.info("[Phase 1] Starte automatischen Universe-Fetch...")
-            success = asyncio.run(run_fetch(
-                api_key=api_key,
-                user_key=user_key,
-                output_path=UNIVERSE_PATH,
-                instrument_map_path=INSTRUMENT_MAP_PATH
-            ))
-            if success:
-                log.info("[Phase 1] Auto-Fetch erfolgreich abgeschlossen.")
-                universe_data = _load_universe_file(log)
-                universe_items = universe_data.get("universe", [])
-            else:
-                log.error("[Phase 1] Auto-Fetch fehlgeschlagen.")
+            try:
+                success = asyncio.run(run_fetch(
+                    api_key=api_key,
+                    user_key=user_key,
+                    output_path=UNIVERSE_PATH,
+                    instrument_map_path=INSTRUMENT_MAP_PATH
+                ))
+                if success:
+                    log.info("[Phase 1] Auto-Fetch erfolgreich abgeschlossen.")
+                    universe_data = _load_universe_file(log)
+                    universe_items = universe_data.get("universe", [])
+                else:
+                    log.error("[Phase 1] Auto-Fetch fehlgeschlagen.")
+            except Exception as e:
+                log.error(f"[Phase 1] Fehler beim automatischen Universe-Fetch: {e}")
+                log.warning("[Phase 1] Fallback: Nutze bisheriges (stales) Universum für diesen Lauf.")
 
     # Validieren und deduplizieren
     valid_items:  list[dict] = []
