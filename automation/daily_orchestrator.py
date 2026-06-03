@@ -342,14 +342,26 @@ def phase2_data_acquisition(
         from automation.historical_fetcher import run_historical_fetch, is_symbol_data_sufficient
         from automation.api_backfiller import _load_etoro_id_map as _load_id_map_2d
 
+        # Dynamically calculate the minimum bars needed based on backtest configuration
+        bt_cfg = {}
+        if BACKTEST_CFG.exists():
+            try:
+                with open(str(BACKTEST_CFG), "r", encoding="utf-8") as f:
+                    bt_cfg = json.load(f)
+            except Exception:
+                pass
+        wf_cfg = bt_cfg.get("walk_forward", {})
+        total_days = wf_cfg.get("is_window_days", 90) + (wf_cfg.get("splits", 2) * wf_cfg.get("oos_window_days", 30))
+        min_required_bars = int(total_days * 15)  # includes buffer
+
         insufficient = [
             item["symbol"]
             for item in universe_result.get("universe", [])
-            if item.get("symbol") and not is_symbol_data_sufficient(item["symbol"], min_bars=200)
+            if item.get("symbol") and not is_symbol_data_sufficient(item["symbol"], min_bars=min_required_bars)
         ]
         if insufficient:
             log.info(
-                f"[Phase 2d] {len(insufficient)} Symbole unzureichend — starte Historical Fetcher ..."
+                f"[Phase 2d] {len(insufficient)} Symbole unzureichend (benötigt >= {min_required_bars} Bars) — starte Historical Fetcher ..."
             )
             etoro_id_map_2d = _load_id_map_2d(UNIVERSE_PATH)
             insufficient_ids = {
@@ -362,7 +374,7 @@ def phase2_data_acquisition(
                         user_key=user_key,
                         etoro_id_to_symbol=insufficient_ids,
                         months=12,
-                        min_bars=200,
+                        min_bars=min_required_bars,
                     )
                 )
                 result["hist_filled"] = hist_filled
