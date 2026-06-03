@@ -444,7 +444,7 @@ def load_ticks_from_catalog(
         # Normalisiere Tick Precision (Pitfall #14)
         # Verify the meta data precision from Parquet I/O instead of hardcoding `sp = 8`.
         _, sp_parquet = read_precisions_from_parquet(str(catalog.path), instrument_id_str)
-        sp = _normalize_size_precision(sp_parquet)
+        sp = _normalize_size_precision(sp_parquet, instrument_id_str)
 
         if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision != sp:
             from nautilus_trader.model.data import QuoteTick
@@ -479,12 +479,16 @@ def infer_precision_from_ticks(ticks: list) -> int:
     return int(max(precisions)) if precisions else 2
 
 
-def _normalize_size_precision(sp: int | None) -> int:
+def _normalize_size_precision(sp: int | None, instrument_id_str: str) -> int:
     """
-    Normalizes size_precision: 0 or None -> fallback 8, otherwise keep it.
-    This guarantees consistent fractional order behavior for Equity CFDs.
+    Normalizes size_precision: 0 or None -> fallback to asset-specific default, otherwise keep it.
+    This guarantees consistent fractional order behavior for Equity CFDs (fallback 2) and Crypto (fallback 8).
     """
-    return sp if (sp is not None and sp > 0) else 8
+    if sp is not None and sp > 0:
+        return sp
+    from automation.utils import _fallback_precisions
+    _, fallback_sp = _fallback_precisions(instrument_id_str)
+    return fallback_sp
 
 
 def create_mock_instrument(
@@ -515,7 +519,7 @@ def create_mock_instrument(
     # size_precision=0 stems from Parquet metadata that is incorrect for eToro
     # equity-CFDs (by-amount/fractional semantics). Treat 0 (and None) as "use
     # fractional default". Positive values (e.g. 2/6 for forex/crypto) are honored.
-    sp = _normalize_size_precision(size_precision)
+    sp = _normalize_size_precision(size_precision, instrument_id_str)
     size_increment_val = round(10 ** (-sp), sp) if sp > 0 else 1.0
 
     return Cfd(
@@ -989,7 +993,7 @@ def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str)
     sp_parquet = int(val.decode("utf-8") if isinstance(val, bytes) else val)
 
     # Apply the exact same normalization logic
-    normalized_sp = _normalize_size_precision(sp_parquet)
+    normalized_sp = _normalize_size_precision(sp_parquet, instrument_id)
 
     # If it matches, no I/O needed; return None
     if normalized_sp == sp_parquet:
@@ -1083,7 +1087,7 @@ def run_single_backtest_worker(
                 price_precision = pp_parquet
 
             # Normalize size precision for both ticks AND instrument to prevent mismatch
-            size_precision = _normalize_size_precision(sp_parquet)
+            size_precision = _normalize_size_precision(sp_parquet, inst_id_str)
 
             wlog(
                 f"   🔬 Precisions: price={price_precision} (ticks), "
