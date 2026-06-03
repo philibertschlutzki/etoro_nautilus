@@ -175,7 +175,6 @@ Alle aktiven Single-Instrument-Strategien erben hiervon. Liefert automatisch:
 class MyStrategy(HourlyStrategyBase):
     def on_start(self):
         super().on_start()          # PFLICHT
-        self.subscribe_quote_ticks(self.instrument_id)  # Zwingend für Live-Bar-Aggregation (INTERNAL)
         self.subscribe_bars(self.bar_type)
     def on_bar(self, bar: Bar):
         if self._check_exits_and_update(bar):
@@ -365,6 +364,11 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Adapter in `automation/adapters/` migriert und Isolations-Test entsprechend angepasst. Keine dokumentierte Standalone-Ausnahme mehr.
 **Betroffen:** `automation/momentum_ls_run.py`.
 
+### 🟢 #25 — Tournament-OOS-Kriterien Validation Warning
+**Symptom:** Startup-Validierung meldet, dass `oos_min_trades` und `oos_min_total_return` definiert, aber nicht referenziert sind.
+**Fix:** `load_tournament_config` streicht den `oos_` Prefix bei der Validierung. OOS-Kriterien werden vom Evaluator im `check_oos=True` Zweig genutzt, die Warnung war ein False-Positive.
+**Betroffen:** `automation/backtest_runner.py`.
+
 ### 🟢 #22 — Alle Tournament-Gewinner werden auf MomentumLSSmaStrategy reduziert
 
 ## 18. Order Management & Async State Machine (Neu)
@@ -416,9 +420,9 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 **Symptom:** Die Kommentare/Docstrings in `daily_orchestrator.py` behaupten fälschlicherweise "7 Tage" für das Backtest-Fenster, während der Code korrekterweise `timedelta(days=30)` verwendet.
 **Fix:** Die Kommentare anpassen, um die 30 Tage aus dem Code widerzuspiegeln (noch offen/wird nur dokumentiert).
 
-### 🟡 #27 — Divergierende size_precision-Heuristiken (Equity: utils=2 vs. adapters/fractional=0)
+### 🟢 #27 — Divergierende size_precision-Heuristiken
 **Symptom:** Es existieren drei widersprüchliche Heuristiken für Equity `size_precision`: `automation/utils._fallback_precisions` liefert 2, während `automation/adapters/instrument_utils.get_size_precision` und `automation/fractional_trading._get_size_precision` fälschlicherweise 0 liefern.
-**Fix:** Offene Architektur-Schuld. Diese müssen konsolidiert werden (keine zweite Heuristik einführen!).
+**Fix:** Konsolidiert. `adapters/instrument_utils` und `fractional_trading` nutzen nun ausschließlich `automation/utils._fallback_precisions(symbol)[1]`. Redundante Implementierungen und Sets wurden entfernt.
 
 ### 🟡 KeltnerChannel `atr_period` Mismatch
 **Symptom:** `mean_reversion.py` und `hourly_mean_reversion.py` führen `keltner_atr_period` in der Config, übergeben sie aber nicht an `KeltnerChannel(period=…, k_multiplier=…)`.
@@ -515,7 +519,9 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 | 2026-05-28 | size_precision=8 Fix via PyArrow Schema-Injection implementiert (Pitfall #14). | `automation/backtest_runner.py` |
 | 2026-05-29 | **Issue #72 (`min_trades` Erhöhung):** Die Schwelle für `min_trades` in der Tournament-Config und den Default-Werten wurde von 4 auf 20 angehoben, um robustere Ratios (Sortino, Profit-Factor) auf Basis einer statistisch tragfähigeren Stichprobe zu gewährleisten. | `automation/config/tournament.json`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
+| 2026-06-01 | **Issue #102 (Divergierende size_precision-Heuristiken behoben - Pitfall #27):** `get_size_precision` in `adapters/instrument_utils.py` und `fractional_trading.py` entfernt/angepasst, um ausschließlich `automation/utils._fallback_precisions` zu nutzen. Equity size_precision ist nun über Backtest und Live-Adapter konsistent (2). | `automation/adapters/instrument_utils.py`, `automation/fractional_trading.py`, `automation/tests/test_size_precision_fixes.py` |
 | 2026-05-31 | **Refactored HourlyStrategyBase to use HourlyStrategyConfig for optimizable exit parameters (Issue #4):** Replaced hardcoded constants for `atr_period`, `atr_trailing_multiplier`, and `max_bars_in_trade` with a dedicated `HourlyStrategyConfig` class inheriting from `StrategyConfig`. Refactored all active strategies to inherit from `HourlyStrategyConfig` and dynamically utilize these exit parameters from `self.config` to enable algorithmic optimization of holding periods. | `automation/strategies/hourly_strategy_base.py`, `automation/strategies/*.py`, `automation/AGENTS.md` |
+| 2026-06-02 | **Issue #106 (Tuning/Strategy Tournament):** Implementierte strategie-spezifische Auswertung für das Tournament-Filter `min_trades`. Statt hartkodierter Strategie-Anpassungen wurde der `backtest_runner` umgebaut, sodass er nun `strat_params` aus den Rückgabe-Payloads der Worker extrahiert und in `_is_eligible()` verwendet. Dadurch können seltene Setup-Strategien (wie `ComboTrendVwapStrategy` und `VwapExhaustionStrategy`) via JSON-Config (`strategies.json` und `strategy_defaults.json`) eigene `min_trades`-Overrides definieren (z.B. 10 statt 20) und erreichen wieder faire Tournament-Platzierungen. Zusätzlich wurde ein Bug im Vererbungsmuster von `HourlyStrategyConfig` (doppelte Klasse) behoben. | `automation/backtest_runner.py`, `automation/config/strategies.json`, `automation/config/strategy_defaults.json`, `automation/strategies/hourly_strategy_base.py`, `automation/AGENTS.md` |
 ---
 
 *Zuletzt aktualisiert: 2026-06-02. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*

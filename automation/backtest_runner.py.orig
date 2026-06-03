@@ -334,9 +334,8 @@ def load_tournament_config(project_root: str | None = None) -> dict:
                 base_k = k[4:] if k.startswith("oos_") else k
                 if base_k not in used:
                     print(f"  ⚠️  Tournament-Kriterium '{k}' ist definiert, aber nicht in eligible_requires_all/any referenziert!")
-            normalized_metric_keys = metric_keys | {k[4:] for k in metric_keys if k.startswith("oos_")}
             for u in used:
-                if u not in normalized_metric_keys:
+                if u not in metric_keys:
                     print(f"  ⚠️  Referenziertes Kriterium '{u}' in eligible_requires_all/any ist nicht definiert!")
             return cfg
         except Exception as e:
@@ -370,7 +369,7 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
     score = total_return / holding_bars
     return score
 
-def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None) -> bool:
+def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
 
     eligible_requires_all: ALLE Bedingungen müssen erfüllt sein.
@@ -439,13 +438,10 @@ def load_ticks_from_catalog(
             return []
 
         # Normalisiere Tick Precision (Pitfall #14)
-        # Verify the meta data precision from Parquet I/O instead of hardcoding `sp = 8`.
-        _, sp_parquet = read_precisions_from_parquet(str(catalog.path), instrument_id_str)
-        sp = _normalize_size_precision(sp_parquet)
-
-        if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision != sp:
+        if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision <= 0:
             from nautilus_trader.model.data import QuoteTick
             from nautilus_trader.model.objects import Quantity
+            sp = 8
             normalized = []
             for t in ticks:
                 normalized.append(
@@ -453,8 +449,8 @@ def load_ticks_from_catalog(
                         instrument_id=t.instrument_id,
                         bid_price=t.bid_price,
                         ask_price=t.ask_price,
-                        bid_size=Quantity(t.bid_size.as_double(), precision=sp),
-                        ask_size=Quantity(t.ask_size.as_double(), precision=sp),
+                        bid_size=Quantity(float(t.bid_size), precision=sp),
+                        ask_size=Quantity(float(t.ask_size), precision=sp),
                         ts_event=t.ts_event,
                         ts_init=t.ts_init,
                     )
@@ -675,31 +671,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
-                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
                             sell_queue.popleft()
-                    if qty > 0:
-                        ts_entry = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts_entry, pd.Timestamp):
-                            ts_entry = ts_entry.value
-                        buy_queue.append((qty, price, int(ts_entry)))
-                else:
-                    while qty > 0 and buy_queue:
-                        b_qty, b_price, b_ts = buy_queue[0]
-                        match_qty = min(qty, b_qty)
-                        pnl = match_qty * (price - b_price)
-                        ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts, pd.Timestamp):
-                            ts = ts.value
-                        ts = int(ts)
-                        holding_time_ns = ts - b_ts
-                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
-                        qty -= match_qty
-                        buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
-                        if buy_queue[0][0] <= 1e-9:
-                            buy_queue.popleft()
                     if qty > 0:
                         ts_entry = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts_entry, pd.Timestamp):
@@ -719,31 +695,27 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
-        for pnl, ts, ht, m_qty in pnls_with_ts:
+        for pnl, ts, ht in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
-                oos_holding_times.append((ht, m_qty))
+                oos_holding_times.append(ht)
             else:
                 is_pnls.append(pnl)
-                is_holding_times.append((ht, m_qty))
+                is_holding_times.append(ht)
 
         print(f"is_pnls len: {len(is_pnls)}, oos_pnls len: {len(oos_pnls)}")
-        is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital)
-        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital) if oos_pnls else {
+        is_metrics = _calculate_stats(is_pnls, is_holds, starting_capital)
+        oos_metrics = _calculate_stats(oos_pnls, oos_holds, starting_capital) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
             "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         }
 
-        if oos_start_ns is not None:
-            return {
-                "metrics": is_metrics,
-                "oos_metrics": oos_metrics
-            }
-        else:
-            # Fallback for backwards compatibility if oos isn't requested
-            return is_metrics
+        return {
+            "metrics": is_metrics,
+            "oos_metrics": oos_metrics
+        }
     except Exception as e:
         if log_fn:
             log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}")
@@ -781,7 +753,7 @@ def select_winners(
     # Eligible filtern
     eligible = [
         r for r in all_results
-        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
+        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
     ]
 
     # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)
@@ -875,15 +847,7 @@ def select_winners(
                 "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0,
             }
             agg_metrics = {"oos_metrics": avg_oos}
-
-            # Use strat_params from the first result matching the winning strategy
-            winner_strat_params = {}
-            for r in eligible:
-                if r["strategy"] == best:
-                    winner_strat_params = r.get("strat_params", {})
-                    break
-
-            oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True, strat_params=winner_strat_params)
+            oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True)
 
         aggregate_winner = {
             "strategy":    best,
@@ -913,7 +877,7 @@ def write_tournament_json(
     per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
     eligible_count = sum(
         1 for r in all_results
-        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
+        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
     )
     output = {
         "generated_at":                datetime.now(timezone.utc).isoformat(),
@@ -1058,18 +1022,6 @@ def run_single_backtest_worker(
 
         wlog(f"   📥 {len(ticks)} Ticks geladen.")
 
-        # --- Check Data Span for Walk-Forward Window ---
-        required_days = strat.get("_walk_forward_days")
-        if required_days:
-            span_ns = ticks[-1].ts_event - ticks[0].ts_event
-            # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
-            span_ns_val = span_ns.value if hasattr(span_ns, 'value') else int(span_ns)
-            span_days = span_ns_val / (86400 * 1_000_000_000)
-            if span_days < (required_days * 0.95):
-                msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage). Überspringe Backtest."
-                wlog_err(msg)
-                return {"symbol": inst_id_str, "strategy": strategy_class_name, "error": "insufficient_data"}
-
         # --- Engine-Setup ---
         try:
             # Task 3: price_precision aus Ticks, size_precision aus Parquet-Metadaten
@@ -1201,8 +1153,7 @@ def run_single_backtest_worker(
             "symbol": inst_id_str,
             "strategy": strategy_class_name,
             "metrics": metrics,
-            "oos_metrics": oos_metrics,
-            "strat_params": strat.get("params", {})
+            "oos_metrics": oos_metrics
         }
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
@@ -1498,11 +1449,11 @@ def run_backtest() -> None:
         total_symbols = len(set(r["symbol"] for r in all_results))
         eligible_count = sum(
             1 for r in all_results
-            if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
+            if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg)
         )
         print(
             f"\n✅ Tournament: {total_symbols} Symbole | "
-            f"{eligible_count} eligible Paare | {winner_count} Gewinner-Symbole"
+            f"{eligible_count} eligibel | {winner_count} Gewinner"
         )
         if aggregate_winner:
             print(

@@ -47,6 +47,9 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     atr_trailing_multiplier: float | None = None
     max_bars_in_trade: int | None = None
     profit_target_pct: float | None = None
+    cooldown_bars: int = 12
+
+
 
 
 class HourlyStrategyBase(Strategy):
