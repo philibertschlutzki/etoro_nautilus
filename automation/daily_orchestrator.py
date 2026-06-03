@@ -176,12 +176,16 @@ def emit_json_event(log: logging.Logger, event_type: str, payload: dict) -> None
 # PHASE 1: Universe & Mapping
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def phase1_universe_and_mapping(log: logging.Logger) -> dict:
+def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key: str = "") -> dict:
     """Phase 1: Lädt das Anlage-Universum aus der JSON-Datei.
+    Wenn alt oder fehlend, wird es automatisch über universe_fetcher aktualisiert.
 
     Standalone: Kein Import aus adapters/instrument_map.py.
     Die Universe-Datei (data/universe/momentum_ls.json) ist die einzige Quelle.
     """
+    import asyncio
+    from automation.universe_fetcher import run_fetch
+
     log.info("═" * 60)
     log.info("PHASE 1: Universe & Mapping")
     log.info("═" * 60)
@@ -189,23 +193,48 @@ def phase1_universe_and_mapping(log: logging.Logger) -> dict:
     universe_data  = _load_universe_file(log)
     universe_items = universe_data.get("universe", [])
 
-    if not universe_items:
-        log.warning("[Phase 1] Universe leer — keine Instrumente verfügbar.")
+    needs_fetch = False
 
-    # Stale-Check
-    fetched_at_str = universe_data.get("fetched_at", "")
-    if fetched_at_str:
-        try:
-            fetched_at = datetime.fromisoformat(fetched_at_str)
-            if fetched_at.tzinfo is None:
-                fetched_at = fetched_at.replace(tzinfo=timezone.utc)
-            age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
-            if age_h > 24:
-                log.warning(f"[Phase 1] Universe-Daten sind {age_h:.1f}h alt (> 24h). Bitte neu fetchen.")
+    if not universe_items:
+        log.warning("[Phase 1] Universe leer — erfordert auto-fetch.")
+        needs_fetch = True
+    else:
+        # Stale-Check
+        fetched_at_str = universe_data.get("fetched_at", "")
+        if fetched_at_str:
+            try:
+                fetched_at = datetime.fromisoformat(fetched_at_str)
+                if fetched_at.tzinfo is None:
+                    fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+                age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
+                if age_h > 24:
+                    log.warning(f"[Phase 1] Universe-Daten sind {age_h:.1f}h alt (> 24h). Erfordert auto-fetch.")
+                    needs_fetch = True
+                else:
+                    log.info(f"[Phase 1] Universe-Alter: {age_h:.1f}h — frisch genug.")
+            except ValueError:
+                log.warning("[Phase 1] Konnte Universe-Zeitstempel nicht parsen. Erfordert auto-fetch.")
+                needs_fetch = True
+        else:
+            needs_fetch = True
+
+    if needs_fetch:
+        if not api_key or not user_key:
+            log.error("[Phase 1] API Keys fehlen. Kann Universe nicht automatisch fetchen.")
+        else:
+            log.info("[Phase 1] Starte automatischen Universe-Fetch...")
+            success = asyncio.run(run_fetch(
+                api_key=api_key,
+                user_key=user_key,
+                output_path=UNIVERSE_PATH,
+                instrument_map_path=INSTRUMENT_MAP_PATH
+            ))
+            if success:
+                log.info("[Phase 1] Auto-Fetch erfolgreich abgeschlossen.")
+                universe_data = _load_universe_file(log)
+                universe_items = universe_data.get("universe", [])
             else:
-                log.info(f"[Phase 1] Universe-Alter: {age_h:.1f}h — frisch genug.")
-        except ValueError:
-            log.warning("[Phase 1] Konnte Universe-Zeitstempel nicht parsen.")
+                log.error("[Phase 1] Auto-Fetch fehlgeschlagen.")
 
     # Validieren und deduplizieren
     valid_items:  list[dict] = []
@@ -969,7 +998,7 @@ def main() -> int:
 
     exit_code = 0
     try:
-        universe_result   = phase1_universe_and_mapping(log)
+        universe_result   = phase1_universe_and_mapping(log, api_key=api_key, user_key=user_key)
         data_result       = phase2_data_acquisition(
             log, universe_result, api_key, user_key,
             skip_api_fetch=args.skip_api_fetch,

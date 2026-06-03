@@ -6,6 +6,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import time
+from automation.utils import _fallback_precisions
+
 
 import aiohttp
 from dotenv import load_dotenv
@@ -23,6 +29,46 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+
+# Constants for Metadata
+ETORO_METADATA_URL = "https://api.etorostatic.com/sapi/instrumentsmetadata/V1.1/instruments"
+CACHE_FILE = Path("data/universe/etoro_metadata_cache.json")
+CACHE_TTL_HOURS = 24
+
+def get_etoro_metadata():
+    """Fetch eToro metadata with caching and retries."""
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    if CACHE_FILE.exists():
+        mtime = os.path.getmtime(CACHE_FILE)
+        age_hours = (time.time() - mtime) / 3600
+        if age_hours < CACHE_TTL_HOURS:
+            logger.info(f"Using cached metadata (age: {age_hours:.1f} hours).")
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+    logger.info("Fetching fresh metadata from eToro API...")
+    session = requests.Session()
+    retries = Retry(total=5, backoff_factor=1, status_forcelist=[ 500, 502, 503, 504 ])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+
+    try:
+        response = session.get(ETORO_METADATA_URL, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        return data
+    except Exception as e:
+        logger.error(f"Failed to fetch metadata: {e}")
+        if CACHE_FILE.exists():
+            logger.info("Falling back to stale cache.")
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        return None
 
 def _make_headers(api_key: str, user_key: str) -> dict[str, str]:
     import uuid
@@ -63,10 +109,13 @@ def is_universe_stale(universe_path: Path, max_age_hours: float = 24.0) -> bool:
 async def run_fetch(
     api_key: str,
     user_key: str,
-    username: str,
     output_path: Path,
     instrument_map_path: Path,
 ) -> bool:
+    username = os.getenv("MOMENTUM_LS_USERNAME")
+    if not username:
+        logger.error("Missing required environment variable: MOMENTUM_LS_USERNAME")
+        sys.exit(1)
     """Fetcht das Universe und speichert es. Gibt True bei Erfolg zurück."""
     url = f"https://public-api.etoro.com/api/v1/user-info/people/{username}/portfolio/live"
     headers = _make_headers(api_key, user_key)
@@ -120,8 +169,55 @@ async def run_fetch(
             "raw_name": raw_name
         })
 
-    for uid, info in unknown_instruments.items():
-        logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - occurred {info['count']} times")
+    if unknown_instruments:
+        logger.info(f"Found {len(unknown_instruments)} unknown instrument IDs. Attempting to resolve...")
+        metadata = get_etoro_metadata()
+        if metadata:
+            instruments_list = metadata.get("InstrumentDisplayDatas", [])
+            meta_lookup = {str(item.get("InstrumentID")): item for item in instruments_list}
+
+            with open(instrument_map_path, "r", encoding="utf-8") as f:
+                instrument_map_data = json.load(f)
+
+            if "instruments" not in instrument_map_data:
+                instrument_map_data["instruments"] = {}
+
+            existing_map = instrument_map_data["instruments"]
+            newly_mapped = 0
+
+            for uid, info in unknown_instruments.items():
+                if uid in meta_lookup:
+                    item = meta_lookup[uid]
+                    symbol_full = item.get("SymbolFull")
+                    symbol = f"{symbol_full}.ETORO" if symbol_full else None
+                    asset_class = item.get("AssetClass", "Unknown")
+                    precisions = _fallback_precisions(symbol if symbol else asset_class)
+
+                    existing_map[uid] = {
+                        "symbol": symbol,
+                        "asset_class": asset_class,
+                        "price_precision": precisions[0],
+                        "size_precision": precisions[1]
+                    }
+                    newly_mapped += 1
+                    logger.info(f"Resolved {uid} -> {symbol} ({asset_class})")
+
+                    # Update universe entry on-the-fly
+                    for u in universe:
+                        if u["etoro_id"] == uid:
+                            u["symbol"] = symbol
+                else:
+                    logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - could not resolve in metadata")
+
+            if newly_mapped > 0:
+                with open(instrument_map_path, "w", encoding="utf-8") as f:
+                    json.dump(instrument_map_data, f, indent=2, ensure_ascii=False)
+                logger.info(f"Saved {newly_mapped} new mappings to {instrument_map_path}")
+                known_count += newly_mapped
+        else:
+            logger.error("Could not fetch eToro metadata to resolve unknown instruments.")
+            for uid, info in unknown_instruments.items():
+                logger.warning(f"Unknown instrument ID: {uid} ({info['name']}) - occurred {info['count']} times")
 
     output_data = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -152,12 +248,11 @@ def main():
 
     api_key = os.getenv("ETORO_API_KEY")
     user_key = os.getenv("ETORO_USER_KEY")
-    username = os.getenv("MOMENTUM_LS_USERNAME")
 
     missing = []
     if not api_key: missing.append("ETORO_API_KEY")
     if not user_key: missing.append("ETORO_USER_KEY")
-    if not username: missing.append("MOMENTUM_LS_USERNAME")
+    if not os.getenv("MOMENTUM_LS_USERNAME"): missing.append("MOMENTUM_LS_USERNAME")
 
     if missing:
         logger.error(f"Missing required environment variables: {', '.join(missing)}")
@@ -168,7 +263,6 @@ def main():
     asyncio.run(run_fetch(
         api_key=api_key,
         user_key=user_key,
-        username=username,
         output_path=Path(args.output),
         instrument_map_path=instrument_map_path
     ))
