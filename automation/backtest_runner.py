@@ -22,6 +22,7 @@ from pathlib import Path
 _AUTOMATION_DIR = Path(__file__).resolve().parent.parent
 if str(_AUTOMATION_DIR) not in sys.path:
     sys.path.insert(0, str(_AUTOMATION_DIR))
+import inspect
 import json
 import math
 import argparse
@@ -384,13 +385,14 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         win_rate     = metrics.get("oos_metrics", {}).get("win_rate", 0.0)
         total_return = metrics.get("oos_metrics", {}).get("total_return", 0.0)
 
+        t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
         condition_map = {
-            "min_trades":        n_trades     >= tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0)),
-            "min_sortino":       sortino      >= tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0)),
-            "min_profit_factor": pf           >= tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
-            "max_drawdown":      max_dd       <= tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
-            "min_win_rate":      win_rate     >= tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
-            "min_total_return":  total_return >= tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)),
+            "min_trades":        n_trades     >= t_overrides.get("oos_min_trades", t_overrides.get("min_trades", tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0)))),
+            "min_sortino":       sortino      >= t_overrides.get("oos_min_sortino", t_overrides.get("min_sortino", tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0)))),
+            "min_profit_factor": pf           >= t_overrides.get("oos_min_profit_factor", t_overrides.get("min_profit_factor", tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)))),
+            "max_drawdown":      max_dd       <= t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)))),
+            "min_win_rate":      win_rate     >= t_overrides.get("oos_min_win_rate", t_overrides.get("min_win_rate", tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)))),
+            "min_total_return":  total_return >= t_overrides.get("oos_min_total_return", t_overrides.get("min_total_return", tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)))),
         }
     else:
         n_trades     = metrics.get("total_trades", 0)
@@ -400,13 +402,14 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         win_rate     = metrics.get("win_rate", 0.0)
         total_return = metrics.get("total_return", 0.0)
 
+        t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
         condition_map = {
-            "min_trades":        n_trades     >= tournament_cfg.get("min_trades", 0),
-            "min_sortino":       sortino      >= tournament_cfg.get("min_sortino", 0.0),
-            "min_profit_factor": pf           >= tournament_cfg.get("min_profit_factor", 1.0),
-            "max_drawdown":      max_dd       <= tournament_cfg.get("max_drawdown", 1.0),
-            "min_win_rate":      win_rate     >= tournament_cfg.get("min_win_rate", 0.0),
-            "min_total_return":  total_return >= tournament_cfg.get("min_total_return", 0.0),
+            "min_trades":        n_trades     >= t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0)),
+            "min_sortino":       sortino      >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0)),
+            "min_profit_factor": pf           >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
+            "max_drawdown":      max_dd       <= t_overrides.get("max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
+            "min_win_rate":      win_rate     >= t_overrides.get("min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
+            "min_total_return":  total_return >= t_overrides.get("min_total_return", tournament_cfg.get("min_total_return", 0.0)),
         }
 
     # Harte Filter: ALLE müssen erfüllt sein
@@ -1125,10 +1128,17 @@ def run_single_backtest_worker(
             # Härtung: Defensives Parsing der Parameter
             if hasattr(ConfigCls, "__struct_fields__"):
                 valid_keys = set(ConfigCls.__struct_fields__)
-                dropped = {k for k in params if k not in valid_keys}
-                if dropped:
-                    wlog(f"   ⚠️ Unbekannte Strategie-Params ignoriert: {sorted(dropped)}")
-                params = {k: v for k, v in params.items() if k in valid_keys}
+            elif hasattr(ConfigCls, "__dataclass_fields__"):
+                valid_keys = set(ConfigCls.__dataclass_fields__)
+            else:
+                valid_keys = set(inspect.signature(ConfigCls).parameters)
+
+            dropped = {k for k in params if k not in valid_keys}
+            if dropped:
+                wlog(f"   ⚠️ Unbekannte Strategie-Params ignoriert: {sorted(dropped)}")
+                # Auch über das result dict zurückgeben (falls orchestrator das auswertet)
+                strat["_dropped_params"] = list(dropped)
+            params = {k: v for k, v in params.items() if k in valid_keys}
 
             # Fix: trade_amount_usd auf 15% des Startkapitals setzen
             try:
