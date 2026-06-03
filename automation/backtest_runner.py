@@ -660,7 +660,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 except Exception:
                     continue
 
-                if qty <= 0:
+                if math.isnan(qty) or qty <= 0:
                     continue
 
                 is_buy = "BUY" in side_str
@@ -719,7 +719,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
-        for pnl, ts, ht, m_qty in pnls_with_ts:
+        for pnl, ts, (ht, m_qty) in pnls_with_ts:
             if oos_start_ns is not None and ts >= oos_start_ns:
                 oos_pnls.append(pnl)
                 oos_holding_times.append((ht, m_qty))
@@ -746,7 +746,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             return is_metrics
     except Exception as e:
         if log_fn:
-            log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}")
+            import traceback
+            log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}\n{traceback.format_exc()}")
         return NULL
 
 
@@ -1350,9 +1351,24 @@ def run_backtest() -> None:
     expected_data_dir = os.path.join(catalog_path, "data")
     os.makedirs(expected_data_dir, exist_ok=True)
 
+    # --- Filter (CLI Flags) ---
+    if args.strategy:
+        strategies_list = [s for s in strategies_list if s.get("strategy_class") == args.strategy]
+        print(f"🎯 CLI Filter aktiv: Nur Strategie '{args.strategy}' wird getestet.")
+        if not strategies_list:
+            log_error(f"⚠️ Strategie '{args.strategy}' in Config nicht gefunden oder inaktiv.")
+            return
+
     # --- Instrumente ---
     instrument_ids = discover_instruments_from_catalog(catalog_path)
-    if not instrument_ids:
+    if args.single_symbol:
+        if args.single_symbol in instrument_ids:
+            instrument_ids = [args.single_symbol]
+            print(f"🎯 CLI Filter aktiv: Nur Symbol '{args.single_symbol}' wird getestet.")
+        else:
+            log_error(f"⚠️ Symbol '{args.single_symbol}' nicht im Catalog {expected_data_dir}/quote_tick gefunden.")
+            return
+    elif not instrument_ids:
         log_error(f"⚠️ Keine Instrumente in {expected_data_dir}/quote_tick vorhanden.")
         return
     print(f"📋 {len(instrument_ids)} Instrumente gefunden.")
