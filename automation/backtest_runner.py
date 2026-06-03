@@ -1323,6 +1323,14 @@ def run_backtest() -> None:
             print(f"   • {w}")
         print()
 
+    walk_forward_cfg = global_settings.get("walk_forward")
+    if walk_forward_cfg:
+        oos_days = walk_forward_cfg.get("oos_window_days", 30)
+        is_days  = walk_forward_cfg.get("is_window_days", 90)
+        splits   = walk_forward_cfg.get("splits", 2)
+        for strat in strategies_list:
+            strat["_walk_forward_days"] = is_days + splits * oos_days
+
     # --- Zeitraum ---
     start_time_str = global_settings.get("start_time")
     end_time_str   = global_settings.get("end_time")
@@ -1425,10 +1433,8 @@ def run_backtest() -> None:
                 walk_forward_cfg = global_settings.get("walk_forward")
                 if walk_forward_cfg and end_ns:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
-                    is_days  = walk_forward_cfg.get("is_window_days", 90)
                     splits   = walk_forward_cfg.get("splits", 2)
-                    strat["_oos_start_ns"]      = end_ns - (oos_days * 24 * 60 * 60 * 1_000_000_000)
-                    strat["_walk_forward_days"] = is_days + splits * oos_days
+                    strat["_oos_start_ns"]      = end_ns - (splits * oos_days * 24 * 60 * 60 * 1_000_000_000)
 
                 wlf = os.path.join(
                     logs_dir,
