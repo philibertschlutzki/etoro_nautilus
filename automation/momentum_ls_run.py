@@ -23,7 +23,12 @@ with open("automation/config/instrument_map.json", "r") as f:
     ETORO_INSTRUMENTS = _imap.get("instruments", {})
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
-ETORO_EXECUTION = {"environment": "demo", "dry_run": True, "enable_trailing_stop": False}
+ETORO_EXECUTION = {
+    "environment": os.getenv("ETORO_ENV", "demo"),
+    "dry_run": os.getenv("ETORO_DRY_RUN", "1") == "1",
+    "enable_trailing_stop": os.getenv("ETORO_ENABLE_TSL", "0") == "1"
+}
+
 def _check_live_safety_interlock(log):
     environment = ETORO_EXECUTION.get('environment', 'demo')
     dry_run = ETORO_EXECUTION.get('dry_run', True)
