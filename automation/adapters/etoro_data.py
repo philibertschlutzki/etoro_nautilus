@@ -114,7 +114,13 @@ class EToroDataClient(LiveMarketDataClient):
                 self.create_task(self._message_loop(), log_msg="message_loop")
                 return
 
-            except (OSError, asyncio.TimeoutError, websockets.WebSocketException) as e:
+            except (OSError, asyncio.TimeoutError, websockets.exceptions.WebSocketException) as e:
+                if self._ws is not None:
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
+                    self._ws = None
                 last_exc = e
                 self._log.warning(
                     f"Verbindungsversuch {attempt}/{_MAX_CONNECT_ATTEMPTS} "
@@ -126,6 +132,12 @@ class EToroDataClient(LiveMarketDataClient):
                         f"Warte {delay}s vor nächstem Versuch...", LogColor.BLUE
                     )
                     await asyncio.sleep(delay)
+            except Exception as e:
+                self._log.error(
+                    f"Unerwarteter Fehler (Programmierfehler) beim Verbindungsaufbau: {e}\n{traceback.format_exc()}",
+                    LogColor.RED
+                )
+                os._exit(1)
 
         self._log.error(
             f"WebSocket nach {_MAX_CONNECT_ATTEMPTS} Versuchen nicht erreichbar "
@@ -362,7 +374,7 @@ class EToroDataClient(LiveMarketDataClient):
                 ts = self._clock.timestamp_ns()
 
             price_prec = self._instrument_precision.get(instr_id, 5)
-            size_prec = self._instrument_size_precision.get(instr_id, 2)
+            size_prec = self._instrument_size_precision.get(instr_id) or get_size_precision(instr_id)
             tick = QuoteTick(
                 instrument_id=self.instrument_map[instr_id],
                 bid_price=Price(bid, precision=price_prec),
