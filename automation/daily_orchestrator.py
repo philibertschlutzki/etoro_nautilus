@@ -89,6 +89,7 @@ STRATEGIES_CFG        = AUTOMATION_CFG_DIR / "strategies.json"
 STRATEGY_DEFAULTS_CFG = AUTOMATION_CFG_DIR / "strategy_defaults.json"
 TOURNAMENT_CFG        = AUTOMATION_CFG_DIR / "tournament.json"
 BACKTEST_CFG          = AUTOMATION_CFG_DIR / "backtest.json"
+INSTRUMENT_MAP_PATH   = AUTOMATION_CFG_DIR / "instrument_map.json"
 
 # ─── Logging-Konfiguration ────────────────────────────────────────────────────
 LOG_MAX_BYTES   = 1 * 1024 * 1024   # 1 MB max pro Log-Datei
@@ -184,6 +185,7 @@ def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key
     Die Universe-Datei (data/universe/momentum_ls.json) ist die einzige Quelle.
     """
     import asyncio
+    import aiohttp
     from automation.universe_fetcher import run_fetch
 
     log.info("═" * 60)
@@ -236,8 +238,8 @@ def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key
                     universe_items = universe_data.get("universe", [])
                 else:
                     log.error("[Phase 1] Auto-Fetch fehlgeschlagen.")
-            except Exception as e:
-                log.error(f"[Phase 1] Fehler beim automatischen Universe-Fetch: {e}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                log.error(f"[Phase 1] Fehler beim automatischen Universe-Fetch (Netzwerk/API): {e}")
                 log.warning("[Phase 1] Fallback: Nutze bisheriges (stales) Universum für diesen Lauf.")
 
     # Validieren und deduplizieren
