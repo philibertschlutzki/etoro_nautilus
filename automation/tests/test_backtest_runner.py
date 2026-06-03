@@ -134,3 +134,79 @@ def test_extract_metrics_weighted_holding_time():
 
     assert m["total_trades"] == 2
     assert m["avg_holding_time_s"] == 18.0
+
+from automation.backtest_runner import select_winners
+
+def test_select_winners_order_independence():
+    """
+    Tests that select_winners selects the best strategy based on the composite score,
+    regardless of the iteration order.
+    A regression test for Pitfall #35 (Issue #134) where the winner was always the first
+    eligible strategy because compute_tournament_score returned 0.0.
+    """
+    tournament_cfg = {
+        "min_trades": 20,
+        "min_sortino": 0.0,
+        "min_profit_factor": 1.0,
+        "max_drawdown": 1.0,
+        "min_win_rate": 0.0,
+        "min_total_return": 0.0,
+        "eligible_requires_all": ["min_trades"],
+        "eligible_requires_any": [],
+        "scoring": {
+            "sortino_weight": 0.4,
+            "profit_factor_weight": 0.3,
+            "win_rate_weight": 0.2,
+            "drawdown_penalty_weight": 0.1
+        }
+    }
+
+    # We provide two strategies for SYM1.
+    # We pass the worse strategy first, and the better strategy second.
+    # The scoring is: Sortino (0.4) + PF (0.3) + WinRate (0.2) - MaxDD (0.1)
+
+    # Worse strategy
+    strat_worse = {
+        "symbol": "SYM1",
+        "strategy": "WorseStrategy",
+        "metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 1.0,
+            "profit_factor": 1.1,
+            "win_rate": 0.4,
+            "max_drawdown": 0.2,
+            "total_return": 0.1
+        }
+    }
+
+    # Better strategy
+    strat_better = {
+        "symbol": "SYM1",
+        "strategy": "BetterStrategy",
+        "metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 3.0,
+            "profit_factor": 2.5,
+            "win_rate": 0.7,
+            "max_drawdown": 0.05,
+            "total_return": 0.3
+        }
+    }
+
+    all_results = [strat_worse, strat_better]
+
+    per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
+
+    # SYM1 should be in the winners
+    assert "SYM1" in per_symbol_winners
+
+    # The chosen strategy for SYM1 should be 'BetterStrategy'
+    winner = per_symbol_winners["SYM1"]
+    assert winner["strategy"] == "BetterStrategy", f"Expected BetterStrategy, but got {winner['strategy']}."
+
+    # To be absolutely sure, let's reverse the order and test again
+    all_results_reversed = [strat_better, strat_worse]
+    per_symbol_winners_rev, _ = select_winners(all_results_reversed, tournament_cfg)
+
+    winner_rev = per_symbol_winners_rev["SYM1"]
+    assert winner_rev["strategy"] == "BetterStrategy", f"Expected BetterStrategy, but got {winner_rev['strategy']} when list was reversed."

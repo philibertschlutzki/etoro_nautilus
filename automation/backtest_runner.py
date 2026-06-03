@@ -362,14 +362,12 @@ def load_tournament_config(project_root: str | None = None) -> dict:
 
 
 def compute_tournament_score(metrics: dict, scoring: dict) -> float:
-    # "maximiere total_return / Ø_holding_bars (Rendite pro Haltedauer-Einheit)"
-    # holding time is in seconds, so bars is / 3600
-    avg_holding_time_s = metrics.get("avg_holding_time_s", 0.0)
-    holding_bars = max(avg_holding_time_s / 3600.0, 1.0) # floor to 1 to avoid div by zero
-    total_return = metrics.get("total_return", 0.0)
-
-    score = total_return / holding_bars
-    return score
+    return (
+        metrics.get("sortino_ratio", 0.0) * scoring.get("sortino_weight", 0.4)
+        + metrics.get("profit_factor", 0.0) * scoring.get("profit_factor_weight", 0.3)
+        + metrics.get("win_rate", 0.0)      * scoring.get("win_rate_weight", 0.2)
+        - metrics.get("max_drawdown", 0.0)  * scoring.get("drawdown_penalty_weight", 0.1)
+    )
 
 def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
