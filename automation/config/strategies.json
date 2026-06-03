@@ -50,20 +50,16 @@
       "strategy_module": "automation.strategies.tesla_combo_strategy",
       "strategy_class": "ComboTrendVwapStrategy",
       "config_class": "ComboTrendVwapConfig",
-      "params": {
-        "min_trades": 10
-      },
-      "_note": "Expects fewer trades due to strict entry conditions; lowered min_trades threshold."
+      "params": {},
+      "_note": "Tournament-Schwelle min_trades gehört nach tournament.json, nicht in params."
     },
     {
       "active": true,
       "strategy_module": "automation.strategies.vwap_exhaustion",
       "strategy_class": "VwapExhaustionStrategy",
       "config_class": "VwapExhaustionConfig",
-      "params": {
-        "min_trades": 10
-      },
-      "_note": "Expects fewer trades due to price-deviation logic; lowered min_trades threshold."
+      "params": {},
+      "_note": "Tournament-Schwelle min_trades gehört nach tournament.json, nicht in params."
     },
     {
       "active": false,

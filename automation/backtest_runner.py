@@ -675,7 +675,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
-                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
@@ -695,7 +695,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - b_ts
-                        pnls_with_ts.append((pnl, ts, (holding_time_ns, match_qty)))
+                        pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
@@ -1121,6 +1121,14 @@ def run_single_backtest_worker(
             params = strat.get("params", {}).copy()
             params["instrument_id"] = inst_id_str
             params["bar_type"]      = bar_type
+
+            # Härtung: Defensives Parsing der Parameter
+            if hasattr(ConfigCls, "__struct_fields__"):
+                valid_keys = set(ConfigCls.__struct_fields__)
+                dropped = {k for k in params if k not in valid_keys}
+                if dropped:
+                    wlog(f"   ⚠️ Unbekannte Strategie-Params ignoriert: {sorted(dropped)}")
+                params = {k: v for k, v in params.items() if k in valid_keys}
 
             # Fix: trade_amount_usd auf 15% des Startkapitals setzen
             try:
