@@ -101,9 +101,9 @@ def test_no_identical_strategies(tmp_path):
             if trades > 0:
                 sig = (
                     trades,
-                    round(m.get("win_rate", 0), 4),
-                    round(m.get("profit_factor", 0), 4),
-                    round(m.get("total_return", 0), 4)
+                        round(m.get("win_rate") or 0.0, 4),
+                        round(m.get("profit_factor") or 0.0, 4),
+                        round(m.get("total_return") or 0.0, 4)
                 )
                 if sig in results:
                     pytest.fail(f"Strategies '{strat['strategy_class']}' and '{results[sig]}' produced identical metrics {sig}. Duplicate logic!")

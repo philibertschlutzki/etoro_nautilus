@@ -1295,18 +1295,18 @@ def run_single_backtest_worker(
 
         wlog(
             f"   📊 [IS]  Trades={metrics.get('total_trades', 0):>4} | "
-            f"WinRate={metrics.get('win_rate', 0.0):>6.1%} | "
-            f"PF={metrics.get('profit_factor', 0.0):>6.2f} | "
-            f"Sortino={metrics.get('sortino_ratio', 0.0):>6.2f} | "
-            f"Return={metrics.get('total_return', 0.0):>6.2f}%"
+            f"WinRate={(metrics.get('win_rate') or 0.0):>6.1%} | "
+            f"PF={(metrics.get('profit_factor') or 0.0):>6.2f} | "
+            f"Sortino={(metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+            f"Return={(metrics.get('total_return') or 0.0):>6.2f}%"
         )
         if oos_start_ns is not None:
             wlog(
                 f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0):>4} | "
-                f"WinRate={oos_metrics.get('win_rate', 0.0):>6.1%} | "
-                f"PF={oos_metrics.get('profit_factor', 0.0):>6.2f} | "
-                f"Sortino={oos_metrics.get('sortino_ratio', 0.0):>6.2f} | "
-                f"Return={oos_metrics.get('total_return', 0.0):>6.2f}%"
+                f"WinRate={(oos_metrics.get('win_rate') or 0.0):>6.1%} | "
+                f"PF={(oos_metrics.get('profit_factor') or 0.0):>6.2f} | "
+                f"Sortino={(oos_metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+                f"Return={(oos_metrics.get('total_return') or 0.0):>6.2f}%"
             )
 
         # --- Optional: HTML Tearsheet ---
