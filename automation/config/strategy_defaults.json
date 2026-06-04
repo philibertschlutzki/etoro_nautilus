@@ -3,7 +3,7 @@
     "description": "Default-Parameter pro Strategie f\u00fcr 1h-Candle-Daten (12 Monate History). Perioden auf st\u00fcndliche Aufl\u00f6sung optimiert. Werte in strategies.json haben Vorrang."
   },
   "SmaCrossoverStrategy": {
-    "sma_period": 5,
+    "sma_period": 20,
     "trade_amount_usd": 1500.0
   },
   "MeanReversionStrategy": {
