@@ -116,7 +116,7 @@ def test_strategy_instantiation():
         "strategy_class": "SmaCrossoverStrategy",
         "symbol": "AAPL.ETORO",
         "bar_type": "AAPL.ETORO-1-HOUR-MID-INTERNAL",
-        "params": {"sma_period": 5},
+        "params": {"sma_period": 20},
         "max_open_positions": 1
     }
     sma_strategy = _instantiate_strategy(sma_spec, registry, allocator, 0)
@@ -153,7 +153,7 @@ def test_strategy_instantiation_fails_with_core_objects():
         "strategy_class": "SmaCrossoverStrategy",
         "symbol": InstrumentId.from_str("AAPL.ETORO"), # Intentional typo to trigger failure if object passed
         "bar_type": BarType.from_str("AAPL.ETORO-1-HOUR-MID-INTERNAL"),
-        "params": {"sma_period": 5}
+        "params": {"sma_period": 20}
     }
 
     # Passing Core Objects should fail when creating ConfigClass because ConfigClass expects strings for validation

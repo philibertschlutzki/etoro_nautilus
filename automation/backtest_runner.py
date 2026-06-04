@@ -1436,7 +1436,7 @@ def run_backtest() -> None:
     if strategy_defaults:
         for strat in strategies_list:
             cls_name = strat.get("strategy_class", "?")
-            params_str = ", ".join(f"{k}={v}" for k, v in strat.get("params", {}).items())
+            params_str = ", ".join(f"{k}={v}" for k, v in (strat.get("params") or {}).items())
             print(f"✅ Defaults angewandt — {cls_name}: {params_str}")
 
     # --- Parameter-Validierung & Walk-Forward Injektion ---

@@ -190,7 +190,7 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 ### Aktive Strategien (`strategies.json` active=true)
 | Klasse | Datei | Indikatoren | Default trade_amount_usd |
 |--------|-------|-------------|--------------------------|
-| SmaCrossoverStrategy | sma_crossover.py | SMA(5) | 1500 |
+| SmaCrossoverStrategy | sma_crossover.py | SMA(20) | 1500 |
 | MeanReversionStrategy | mean_reversion.py | Keltner(20,2.0) | 1500 |
 | DynamicBreakoutStrategy | dynamic_breakout.py | Price-Range(10) | 1500 |
 | FlashCrashReversalStrategy | flash_crash_reversal.py | BB(10,2.0)+RSI(7) | 1500 |
@@ -256,7 +256,7 @@ Bei der Umwandlung von Candle zu Tick wird im Backtest nun Zero-Spread-Modeling 
 
 **Engine-Setup pro Job:** `OmsType.NETTING`, `AccountType.MARGIN`, Spread-Modeling (Buy@Ask, Sell@Bid — NautilusTrader-Default mit QuoteTicks). Mock-Instrument via `create_mock_instrument()` als `Cfd(asset_class=EQUITY)`.
 
-**Metriken** (`extract_metrics`): FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Sortino nur ab n ≥ 5 Trades. Tournament-Selektion via `select_winners()`.
+**Metriken** (`extract_metrics`): FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Sortino nur ab n ≥ 5 Round-Trips. Tournament-Selektion via `select_winners()`.
 
 🟢 **Behoben:** `create_mock_instrument` und `run_single_backtest_worker` erzwingen nun eine asset-bewusste Normalisierung der `size_precision` via temporärer PyArrow-Schema-Injection und `_fallback_precisions` (Equities fallen auf 2, Crypto auf 8 zurück). (Pitfall #14 gelöst, Schreibseiten-Persistenz #23 behoben).
 
