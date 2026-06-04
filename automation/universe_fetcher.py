@@ -115,7 +115,7 @@ async def run_fetch(
     username = os.getenv("MOMENTUM_LS_USERNAME")
     if not username:
         logger.error("Missing required environment variable: MOMENTUM_LS_USERNAME")
-        sys.exit(1)
+        raise NameError("Missing required environment variable: MOMENTUM_LS_USERNAME")
     """Fetcht das Universe und speichert es. Gibt True bei Erfolg zurück."""
     url = f"https://public-api.etoro.com/api/v1/user-info/people/{username}/portfolio/live"
     headers = _make_headers(api_key, user_key)
@@ -126,19 +126,23 @@ async def run_fetch(
             async with session.get(url, headers=headers) as resp:
                 if resp.status in (401, 403):
                     logger.error(f"Authentication failed: HTTP {resp.status}. Check ETORO_API_KEY and ETORO_USER_KEY.")
-                    sys.exit(1)
+                    raise aiohttp.ClientResponseError(
+                        resp.request_info, resp.history, status=resp.status, message="Authentication failed"
+                    )
                 elif resp.status != 200:
                     body = await resp.text()
                     logger.error(f"HTTP {resp.status} - {body[:300]}")
-                    sys.exit(1)
+                    raise aiohttp.ClientResponseError(
+                        resp.request_info, resp.history, status=resp.status, message="Non-200 response"
+                    )
 
                 data = await resp.json()
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as e:
         logger.error("Request to eToro API timed out.")
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        sys.exit(1)
+        raise e
+    except aiohttp.ClientError as e:
+        logger.error(f"Network error: {e}")
+        raise e
 
     instrument_map = load_instrument_map(instrument_map_path)
     positions = data.get("clientPortfolio", data).get("positions", [])
