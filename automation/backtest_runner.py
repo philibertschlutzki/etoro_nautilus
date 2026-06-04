@@ -779,7 +779,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 def select_winners(
     all_results: list[dict],
     tournament_cfg: dict | None = None,
-) -> tuple[dict, dict | None]:
+) -> tuple[dict, dict | None, list[str]]:
     """Wählt Gewinner pro Symbol anhand der Tournament-Konfiguration.
 
     Task 5: Robuste Multi-Kriterien-Selektion mit:
@@ -793,12 +793,13 @@ def select_winners(
         tournament_cfg:  Konfig aus tournament.json. Wenn None, wird geladen.
 
     Returns:
-        (per_symbol_winners, aggregate_winner)
+        (per_symbol_winners, aggregate_winner, warnings)
     """
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
     scoring = tournament_cfg.get("scoring", {})
+    warnings_list = []
 
     # Eligible filtern
     eligible = [
@@ -814,7 +815,9 @@ def select_winners(
             max_start = max(start_dates)
             # Threshold: 1 day in nanoseconds
             if max_start - min_start > 86400 * 1_000_000_000:
-                print("⚠️  WARNING: Tournament aggregiert Symbole mit unterschiedlichen Startdaten / Regime-Bias möglich!")
+                msg = "⚠️  WARNING: Tournament aggregiert Symbole mit unterschiedlichen Startdaten / Regime-Bias möglich!"
+                print(msg)
+                warnings_list.append(msg)
 
     # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)
     if eligible:
@@ -943,7 +946,7 @@ def select_winners(
             "oos_eligible": oos_eligible,
         }
 
-    return per_symbol_winners, aggregate_winner
+    return per_symbol_winners, aggregate_winner, warnings_list
 
 
 def write_tournament_json(
@@ -959,7 +962,7 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
-    per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, aggregate_winner, warnings_list = select_winners(all_results, tournament_cfg)
     eligible_count = sum(
         1 for r in all_results
         if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
@@ -972,6 +975,7 @@ def write_tournament_json(
         "tournament_criteria":         tournament_cfg,
         "normalization_method":        "rank_based",
         "normalization_population":    eligible_count,
+        "warnings":                    warnings_list,
         "per_symbol_winners":          per_symbol_winners,
         "aggregate_winner":            aggregate_winner,
         "full_results":                all_results,
@@ -1701,7 +1705,7 @@ def run_backtest() -> None:
 
     # --- Tournament (Task 5: robuste Multi-Kriterien-Selektion) ---
     if args.momentum and all_results:
-        per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
+        per_symbol_winners, aggregate_winner, _ = select_winners(all_results, tournament_cfg)
         winner_count, no_winner_symbols = print_tournament_table(
             all_results, per_symbol_winners, tournament_cfg
         )

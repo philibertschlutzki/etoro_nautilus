@@ -562,4 +562,11 @@ Aktuell nutzt der `daily_orchestrator.py` kein echtes, rollierendes Walk-Forward
 * **Zero-Signal Metric Structures:** Note that extract_metrics must always return the explicit format {"metrics": None, "oos_metrics": None} (or similarly nested dicts) for empty signal generations, otherwise the daily orchestrator aggregation will fail.
 * **Precision Mismatch Handling:** Explicitly warn that instrument-only parameter fixes for precision bugs are insufficient. Any precision adjustments must perfectly align with the actual tick precision of the underlying data. Failure to address this root cause will result in RuntimeError crashes that silently abort the matrix backtest loops.
 * **Log Management:** Local backtest .log and .json files must be kept out of Git tracking to avoid repository bloat and blocked pushes. Always use `git checkout origin/main -- logs/` or explicitly unstage modified log files.
-* **Data Start Alignment (Issue #148):** Backtests with mismatched data start dates are invalid for cross-sectional scoring. The Engine must pre-align all instruments to a common `start_ns` or drop late-starting outliers to avoid selection bias (perfect correlation between winner/no-winner and history length).
+
+### Backtest Data Alignment & Selection Bias Prevention (Rule #148)
+When conducting cross-sectional backtests or strategy tournaments, data sets must be strictly aligned to prevent "selection bias" (e.g., favoring instruments with a shorter, friendlier market regime).
+
+1. **Pre-Flight Alignment:** The orchestrator must pre-calculate a `common_start_ns` across all instruments before starting worker processes.
+2. **The "Late-Starter" Rule:** Do not shrink the entire universe's backtest window to accommodate a recently listed asset (IPO). If an instrument's earliest data point cannot satisfy the `_walk_forward_days` requirement for the planned window, the instrument **MUST BE DROPPED** from the run.
+3. **Engine Enforcement:** The calculated `common_start_ns` must be passed strictly to the data catalog loader so that no pre-window ticks leak into the engine warmup phase.
+4. **Aggregation Gating:** The `select_winners` or aggregation logic must validate the actual `_first_tick_ns` of all results. If it detects a mismatch > 1 day among aggregated metrics, it must throw a warning and append it to the JSON report.

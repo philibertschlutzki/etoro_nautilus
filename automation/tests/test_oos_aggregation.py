@@ -119,7 +119,7 @@ def test_oos_aggregation():
         }
     ]
 
-    per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, aggregate_winner, _ = select_winners(all_results, tournament_cfg)
 
     assert aggregate_winner is not None, "Aggregate winner should be selected"
 
