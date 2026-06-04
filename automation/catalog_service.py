@@ -217,22 +217,32 @@ async def _fetch_precisions(
                             # Wenn wir es als Crypto oder Fractional identifizieren, ist das vermutlich falsch (Precision Mismatch).
                             fb_p_test, fb_s_test = _fallback_precisions(sym_raw)
                             if fb_s_test != 2:
-                                log.warning(
-                                    f"[catalog_service] "
-                                    f"Plausibilitätswarnung: Instrument {eid} ({sym_raw}) hat size_prec=2 (Equity-Wert), "
-                                    f"wird systemseitig aber als Nicht-Equity mit size_prec={fb_s_test} erwartet. "
-                                    f"Möglicher API-Precision-Konflikt!"
+                                error_msg = (
+                                    f"[catalog_service] Plausibilitäts-Fehler: Instrument {eid} ({sym_raw}) hat "
+                                    f"size_prec=2 (Equity-Wert), wird systemseitig aber als Nicht-Equity mit "
+                                    f"size_prec={fb_s_test} erwartet."
                                 )
+                                log.error(error_msg)
+                                if os.getenv("STRICT_PRECISION_FAIL") == "1":
+                                    raise RuntimeError(error_msg)
+                                continue # Überspringe dieses Instrument bei Mismatch
 
                         has_api_prec = (price_prec is not None and size_prec is not None)
                         if has_api_prec:
                             api_hits += 1
 
                         fb_p, fb_s = _fallback_precisions(sym_raw)
-                        if price_prec is None:
-                            price_prec = fb_p
-                        if size_prec is None:
-                            size_prec = fb_s
+
+                        # Verwerfe Instrument, wenn API keine Precision liefert und es sich nicht um einen historisch bekannten Wert handelt
+                        if price_prec is None or size_prec is None:
+                            if fb_s == 2 and fb_p == 2:
+                                log.error(f"[catalog_service] Fehlende/Ungültige Precision für ID {eid} ({sym_raw}) aus API. Überspringe Instrument, um blindes (2,2) Fallback zu verhindern.")
+                                continue
+
+                            if price_prec is None:
+                                price_prec = fb_p
+                            if size_prec is None:
+                                size_prec = fb_s
 
                         result[eid] = (price_prec, size_prec)
                         log.debug(
@@ -245,10 +255,10 @@ async def _fetch_precisions(
 
             await asyncio.sleep(0.3)
 
-    if len(etoro_ids) > 0 and api_hits == 0:
-        log.warning(f"[catalog_service] Precision-API lieferte 0/{len(etoro_ids)} Instrumente. Dynamischer Precision-Pfad ohne Funktion.")
+    if len(etoro_ids) > 0 and api_hits < len(etoro_ids):
+        log.warning(f"[catalog_service] Precision-API lieferte nur {api_hits}/{len(etoro_ids)} Instrumente.")
         if os.getenv("STRICT_PRECISION_FAIL") == "1":
-            raise RuntimeError(f"[catalog_service] HARD FAIL: API lieferte 0 Precisions für {len(etoro_ids)} Instrumente.")
+            raise RuntimeError(f"[catalog_service] HARD FAIL: Partielle oder keine Precisions geliefert ({api_hits}/{len(etoro_ids)}).")
 
     return result
 

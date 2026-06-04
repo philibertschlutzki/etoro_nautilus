@@ -23,7 +23,7 @@ async def test_fetch_precisions_from_api_no_hits(caplog):
     res = await fetch_precisions_from_api(mock_session, ["1", "2"], "api", "user")
 
     # check that a warning is logged
-    assert any("Precision-API lieferte 0/2 Instrumente" in record.message for record in caplog.records)
+    assert any("Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -41,7 +41,7 @@ async def test_fetch_precisions_catalog_no_hits(caplog):
         mock_session.__aenter__.return_value = mock_session
         res = await _fetch_precisions("api", "user", {"1": "AAPL", "2": "GOOG"})
 
-    assert any("Precision-API lieferte 0/2 Instrumente" in record.message for record in caplog.records)
+    assert any("Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
