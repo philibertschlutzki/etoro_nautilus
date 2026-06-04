@@ -336,6 +336,14 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ## 16. Bekannte Pitfalls & offene Bugs
 
+### 🟢 #36 — Precision API Parsing & Datenkorruption (Issue #146)
+**Root Cause:** eToro änderte die API-Struktur (`instruments` -> `instrumentDisplayDatas`). Der alte Parser lieferte 0 Treffer. Das System fiel stumm auf einen blinden `(2, 2)`-Fallback für alle Instrumente zurück (inklusive Krypto/Fractional).
+**Symptom:** Krypto-Parquets wurden mit `size_prec=2` geschrieben. Der Mismatch zwischen Arrow-Metadaten und den generierten i128-Ticks führte unweigerlich zu `RuntimeError`-Abbrüchen im Nautilus-Matrix-Backtest.
+**Lösung & Architektur-Regeln:**
+1. **Strict Partial Fail Drop:** Partielle API-Ausfälle bei der Precision-Abfrage dürfen niemals in einen generischen `=2`-Fallback rutschen. Fehlt die Precision für ein Instrument in der `instrumentDisplayDatas`-Struktur (oder schlägt der int-Cast fehl), muss dieses Instrument zwingend aus dem aktuellen Backfill-Batch ausgeschlossen (geskippt) werden.
+2. **Sanity Check Enforcement (Equities vs. Non-Equities):** Ein Mismatch zwischen dynamisch geparster Precision (z. B. `size_prec=2`) und der durch `_fallback_precisions` erwarteten Precision für Non-Equities (z.B. Krypto, Fractional) ist keine bloße Warnung, sondern führt zum sofortigen Drop des Instruments aus der Schleife (`continue`), bzw. Hard-Fail bei `STRICT_PRECISION_FAIL`.
+3. **Tick & Arrow Meta Synchronization:** Unsaubere Instrument-Precisions führen unmittelbar zu `RuntimeError`-Crashes im Matrix-Backtest. Die Parameterübergabe an `_candles_to_arrow_table` und `_build_arrow_meta` muss 100 % synchron laufen, weshalb falsche oder ratende Metadaten das System nie passieren dürfen.
+
 > **Legende:** 🔴 OFFEN (im aktuellen Code aktiv) · 🟡 TEILWEISE · 🟢 BEHOBEN/dokumentiert
 
 ### 🟢 #14 — `create_mock_instrument` übergeht den eigenen Docstring (Haupt-Bug: 0 Trades)
