@@ -600,9 +600,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         if total_return < 0.005:
             sortino = min(sortino, 2.0)
 
-        # Minimum Downside Observation Gate
-        loss_count = sum(1 for d in down_sq if d > 0)
-        if loss_count < 2 and n < 50:
+        # 4. Minimum Downside Gate
+        neg_trades = sum(1 for r in rets if r < 0)
+        if neg_trades < 2 and n < 50:
             sortino = min(sortino, 2.0)
 
     calmar = (total_return / max_dd) if max_dd > 0 else 0.0
