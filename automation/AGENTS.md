@@ -542,6 +542,17 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 | 2026-06-04 | **Issue #135 (Inkonsistenz Mock-Instrumente):** `_normalize_size_precision` in `backtest_runner.py` ist nun asset-bewusst und nutzt `_fallback_precisions(symbol)`. Equities fallen nun korrekterweise auf `2` zurück anstatt pauschal auf `8`. Das behebt die Inkonsistenz zwischen Live-Pfad, Parquet-Katalog und Backtest-Mock für Equities. Da alte Parquet-Daten im Katalog ggf. noch `size_precision=0` tragen, ist nach diesem PR ein `--reset-catalog` Lauf erforderlich, um einen sauberen Zustand zu erzwingen. | `automation/backtest_runner.py`, `automation/tests/test_size_precision_fixes.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #132 (Pitfall #33):** Behebung der Tuple-Arity-Regression in `extract_metrics` (flaches 4-Tupel-`append` vs. 3-Ziel-Entpackung). Der Fehler wurde explizit als Regression von Pitfall #31/#103 gekennzeichnet. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #134 (Pitfall #35):** Behebung des konstanten 0.0-Scores in `compute_tournament_score` und der reihenfolgeabhängigen Gewinnerauswahl. Die Funktion nutzt nun die dokumentierten Composite-Gewichte. Ein Test zur Sicherstellung der korrekten Sortierung wurde ergänzt. | `automation/backtest_runner.py`, `automation/tests/test_backtest_runner.py`, `automation/AGENTS.md` |
+| 2026-06-03 | **Issue #147 (Fix Overfitting & OOS Gating):** Einführung der harten Train/Test (IS/OOS) Separierung mit verbessertem Logging und striktem OOS-Gating gegen fehlende Trades. Einführung eines `min_expectancy` Thresholds in `tournament.json`, um Sortino-Artefakte ohne Return (wie FlashCrashReversal) auszuschließen. Walk-Forward Architektur (State Bleed) in Phase 5 korrigiert (siehe Architektur-Dokumentation weiter unten). | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/config/tournament.json`, `automation/AGENTS.md` |
+
+## Architektonische Methodik: IS/OOS Split und "State Bleed"
+
+Aktuell nutzt der `daily_orchestrator.py` kein echtes, rollierendes Walk-Forward (`walk_forward_active: false`). Stattdessen basiert das Train/Test (IS/OOS) Splitting auf einem einzelnen, durchgehenden Engine-Run des `backtest_runner.py`. Die Aufteilung erfolgt retrospektiv anhand der Timestamp-Grenze `oos_start_ns` während der Metrik-Extraktion (`extract_metrics`).
+
+**Wichtige Limitationen für Agenten (State Bleed):**
+- **Kein Hard-Reset:** An der IS/OOS-Grenze findet kein Zurücksetzen der Engine statt. Das bedeutet, dass laufende offene Positionen, das angesammelte Account-Guthaben sowie die Historie aller Indikatoren (z.B. aufgewärmte EMAs, RSI-Werte) ungefiltert aus der In-Sample Phase in den Out-of-Sample Zeitraum überfließen ("State Bleed").
+- **Gültigkeit der OOS-Metriken:** OOS-Ergebnisse sind somit methodisch nicht 100% "rein" oder vollständig unabhängig vom In-Sample Lauf. Dieser Kompromiss wird derzeit bewusst akzeptiert, um Backtesting-Overhead und Laufzeiten zu minimieren.
+- Zukünftige Code-Änderungen an Strategien oder Evaluierungs-Metriken müssen diese architektonische Gegebenheit berücksichtigen.
+
 ---
 
 *Zuletzt aktualisiert: 2026-06-03. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*

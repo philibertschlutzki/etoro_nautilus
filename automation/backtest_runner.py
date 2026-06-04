@@ -376,12 +376,20 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
     eligible_requires_any: MINDESTENS EINE Bedingung muss erfüllt sein.
     """
     if check_oos:
-        n_trades     = metrics.get("oos_metrics", {}).get("total_trades", 0)
-        sortino      = metrics.get("oos_metrics", {}).get("sortino_ratio", 0.0)
-        pf           = metrics.get("oos_metrics", {}).get("profit_factor", 0.0)
-        max_dd       = metrics.get("oos_metrics", {}).get("max_drawdown", 1.0)
-        win_rate     = metrics.get("oos_metrics", {}).get("win_rate", 0.0)
-        total_return = metrics.get("oos_metrics", {}).get("total_return", 0.0)
+        oos_metrics = metrics.get("oos_metrics")
+        if not oos_metrics:
+            return False
+
+        n_trades     = oos_metrics.get("total_trades", 0)
+        if n_trades <= 0:
+            return False
+
+        sortino      = oos_metrics.get("sortino_ratio", 0.0)
+        pf           = oos_metrics.get("profit_factor", 0.0)
+        max_dd       = oos_metrics.get("max_drawdown", 1.0)
+        win_rate     = oos_metrics.get("win_rate", 0.0)
+        total_return = oos_metrics.get("total_return", 0.0)
+        expectancy   = total_return / n_trades
 
         t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
         condition_map = {
@@ -391,6 +399,7 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
             "max_drawdown":      max_dd       <= t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)))),
             "min_win_rate":      win_rate     >= t_overrides.get("oos_min_win_rate", t_overrides.get("min_win_rate", tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)))),
             "min_total_return":  total_return >= t_overrides.get("oos_min_total_return", t_overrides.get("min_total_return", tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)))),
+            "min_expectancy":    expectancy   >= t_overrides.get("oos_min_expectancy", t_overrides.get("min_expectancy", tournament_cfg.get("oos_min_expectancy", tournament_cfg.get("min_expectancy", 0.0)))),
         }
     else:
         n_trades     = metrics.get("total_trades", 0)
@@ -399,6 +408,7 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         max_dd       = metrics.get("max_drawdown", 1.0)
         win_rate     = metrics.get("win_rate", 0.0)
         total_return = metrics.get("total_return", 0.0)
+        expectancy   = total_return / n_trades if n_trades > 0 else 0.0
 
         t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
         condition_map = {
@@ -408,6 +418,7 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
             "max_drawdown":      max_dd       <= t_overrides.get("max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
             "min_win_rate":      win_rate     >= t_overrides.get("min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
             "min_total_return":  total_return >= t_overrides.get("min_total_return", tournament_cfg.get("min_total_return", 0.0)),
+            "min_expectancy":    expectancy   >= t_overrides.get("min_expectancy", tournament_cfg.get("min_expectancy", 0.0)),
         }
 
     # Harte Filter: ALLE müssen erfüllt sein
@@ -1237,12 +1248,20 @@ def run_single_backtest_worker(
             oos_metrics = {}
 
         wlog(
-            f"   📊 Trades={metrics.get('total_trades', 0)} | "
-            f"WinRate={metrics.get('win_rate', 0.0):.1%} | "
-            f"PF={metrics.get('profit_factor', 0.0):.2f} | "
-            f"Sortino={metrics.get('sortino_ratio', 0.0):.2f} | "
-            f"Return={metrics.get('total_return', 0.0):.2f}%"
+            f"   📊 [IS]  Trades={metrics.get('total_trades', 0):>4} | "
+            f"WinRate={metrics.get('win_rate', 0.0):>6.1%} | "
+            f"PF={metrics.get('profit_factor', 0.0):>6.2f} | "
+            f"Sortino={metrics.get('sortino_ratio', 0.0):>6.2f} | "
+            f"Return={metrics.get('total_return', 0.0):>6.2f}%"
         )
+        if oos_start_ns is not None:
+            wlog(
+                f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0):>4} | "
+                f"WinRate={oos_metrics.get('win_rate', 0.0):>6.1%} | "
+                f"PF={oos_metrics.get('profit_factor', 0.0):>6.2f} | "
+                f"Sortino={oos_metrics.get('sortino_ratio', 0.0):>6.2f} | "
+                f"Return={oos_metrics.get('total_return', 0.0):>6.2f}%"
+            )
 
         # --- Optional: HTML Tearsheet ---
         if generate_html_report and metrics.get("total_trades", 0) > 0:
