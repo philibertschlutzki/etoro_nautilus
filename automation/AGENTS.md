@@ -498,7 +498,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix:** `compute_tournament_score` wurde so umgeschrieben, dass es die Metriken `sortino_ratio`, `profit_factor`, `win_rate` und `max_drawdown` gemäß den Gewichten aus `tournament.json` zu einem Composite-Score aggregiert.
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🟢 #37 — Profit Factor / Sortino NoneType Artefakte bei Zero-Loss (Issue #150)
+### Pitfall #37: Profit Factor / Sortino NoneType Artefakte bei Zero-Loss (Issue #150)
 **Symptom:** In Backtests mit 100% Win Rate generieren bestimmte Metriken mathematische Artefakte (z.B. Profit Factor = 999.00 und Sortino Ratio = 0.00). Dies verzerrt die Auswertung extrem, wenn die Schwelle für `min_trades` gering ist.
 **Root Cause:** Fallback bei `gross_loss == 0` war ein hardcodierter Wert `999.0` für PF. Beim Sortino Ratio führte `dd_dev <= 0` fälschlicherweise zum Null-Wert anstatt zu einem undefinierten Zustand.
 **Fix:** Der Code wurde so refaktorisiert, dass undefinierte finanzmathematische Zustände korrekt mit `None` abgebildet und im JSON als `null` serialisiert werden. Eine dedizierte Filter-Gating-Logik in `_is_eligible` wirft diese Kandidaten proaktiv ab. Dabei wird das Feld `"rejection_reason": "insufficient/all-win"` in die Payload injiziert, um Transparenz im JSON zu wahren.
