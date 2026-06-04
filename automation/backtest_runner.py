@@ -1036,6 +1036,22 @@ def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str)
     return temp_catalog
 
 
+
+def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
+    NULL = {
+        "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
+        "sortino_ratio": 0.0, "calmar_ratio": 0.0,
+        "max_drawdown": 0.0, "total_return": 0.0,
+        "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+    }
+    return {
+        "symbol": symbol,
+        "strategy": strategy,
+        "metrics": NULL,
+        "oos_metrics": NULL if strat.get("_oos_start_ns") else {},
+        "strat_params": strat.get("params", {})
+    }
+
 def run_single_backtest_worker(
     inst_id_str: str,
     bar_type: str,
@@ -1078,11 +1094,11 @@ def run_single_backtest_worker(
             ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
         except RuntimeError as e:
             wlog_err(f"Tick-Ladefehler: {e}", exc=True)
-            return {}
+            return _empty_result(inst_id_str, strategy_class_name, strat)
 
         if not ticks:
             wlog(f"   ⚠️ 0 Ticks im Zeitraum — überspringe.")
-            return {}
+            return _empty_result(inst_id_str, strategy_class_name, strat)
 
         wlog(f"   📥 {len(ticks)} Ticks geladen.")
 
@@ -1096,7 +1112,9 @@ def run_single_backtest_worker(
             if span_days < (required_days * 0.95):
                 msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage). Überspringe Backtest."
                 wlog_err(msg)
-                return {"symbol": inst_id_str, "strategy": strategy_class_name, "error": "insufficient_data"}
+                res = _empty_result(inst_id_str, strategy_class_name, strat)
+                res["error"] = "insufficient_data"
+                return res
 
         # --- Engine-Setup ---
         try:
@@ -1138,7 +1156,7 @@ def run_single_backtest_worker(
 
         except Exception as e:
             wlog_err(f"Engine-Setup fehlgeschlagen: {e}", exc=True)
-            return {}
+            return _empty_result(inst_id_str, strategy_class_name, strat)
 
         # --- Strategie konfigurieren ---
         try:
@@ -1179,7 +1197,7 @@ def run_single_backtest_worker(
             engine.add_strategy(strategy)
         except Exception as e:
             wlog_err(f"Strategie-Setup fehlgeschlagen: {e}", exc=True)
-            return {}
+            return _empty_result(inst_id_str, strategy_class_name, strat)
 
         # --- Backtest ausführen ---
         try:
@@ -1187,11 +1205,11 @@ def run_single_backtest_worker(
         except RuntimeError as e:
             wlog_err(f"Backtest RuntimeError (wahrscheinlich Precision Mismatch): {e}")
             engine.dispose()
-            return {}
+            return _empty_result(inst_id_str, strategy_class_name, strat)
         except Exception as e:
             wlog_err(f"Backtest gecrasht: {e}", exc=True)
             engine.dispose()
-            return {}
+            return _empty_result(inst_id_str, strategy_class_name, strat)
 
         # --- Metriken extrahieren ---
         oos_start_ns = strat.get("_oos_start_ns", None)
