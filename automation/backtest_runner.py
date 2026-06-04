@@ -806,6 +806,16 @@ def select_winners(
         if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
     ]
 
+    # Issue #148: Data Start Alignment (Tournament Gating)
+    if eligible:
+        start_dates = [r.get("_first_tick_ns") for r in eligible if r.get("_first_tick_ns") is not None]
+        if start_dates:
+            min_start = min(start_dates)
+            max_start = max(start_dates)
+            # Threshold: 1 day in nanoseconds
+            if max_start - min_start > 86400 * 1_000_000_000:
+                print("⚠️  WARNING: Tournament aggregiert Symbole mit unterschiedlichen Startdaten / Regime-Bias möglich!")
+
     # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)
     if eligible:
         def get_ranks(vals, reverse=False):
@@ -1111,7 +1121,10 @@ def run_single_backtest_worker(
             wlog(f"   ⚠️ 0 Ticks im Zeitraum — überspringe.")
             return _empty_result(inst_id_str, strategy_class_name, strat)
 
-        wlog(f"   📥 {len(ticks)} Ticks geladen.")
+        first_tick_ts = ticks[0].ts_event
+        # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
+        first_tick_ns_val = first_tick_ts.value if hasattr(first_tick_ts, 'value') else int(first_tick_ts)
+        wlog(f"   📥 {len(ticks)} Ticks geladen. Erster Tick im Engine: {first_tick_ns_val} ({pd.Timestamp(first_tick_ns_val, unit='ns', tz='UTC').strftime('%Y-%m-%d %H:%M:%S')})")
 
         # --- Check Data Span for Walk-Forward Window ---
         required_days = strat.get("_walk_forward_days")
@@ -1300,7 +1313,8 @@ def run_single_backtest_worker(
             "strategy": strategy_class_name,
             "metrics": metrics,
             "oos_metrics": oos_metrics,
-            "strat_params": strat.get("params", {})
+            "strat_params": strat.get("params", {}),
+            "_first_tick_ns": first_tick_ns_val,
         }
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
@@ -1479,6 +1493,78 @@ def run_backtest() -> None:
         log_error(f"⚠️ Keine Instrumente in {expected_data_dir}/quote_tick vorhanden.")
         return
     print(f"📋 {len(instrument_ids)} Instrumente gefunden.")
+
+    # --- Issue #148: Data Start Alignment (Pre-flight Check) ---
+    print("\n🔍 Analysiere Startdaten der Instrumente (Kohorten-Analyse)...")
+    instrument_start_dates = {}
+    valid_instrument_ids = []
+    max_valid_start_ns = 0
+
+    required_days = 0
+    if walk_forward_cfg:
+        is_days  = walk_forward_cfg.get("is_window_days", 90)
+        oos_days = walk_forward_cfg.get("oos_window_days", 30)
+        splits   = walk_forward_cfg.get("splits", 2)
+        required_days = is_days + (splits * oos_days)
+
+    import pyarrow.parquet as pq
+    import pyarrow.compute as pc
+    from pathlib import Path
+
+    cohorts: dict[str, list[str]] = {}
+
+    for iid in instrument_ids:
+        parquet_file = Path(catalog_path) / "data" / "quote_tick" / iid / "data.parquet"
+        if not parquet_file.exists():
+            continue
+        try:
+            t = pq.read_table(str(parquet_file), columns=["ts_event"])
+            if len(t) > 0:
+                oldest_ts = int(pc.min(t.column("ts_event")).as_py())
+                instrument_start_dates[iid] = oldest_ts
+                dt_str = pd.Timestamp(oldest_ts, unit="ns", tz="UTC").strftime("%Y-%m-%d")
+                cohorts.setdefault(dt_str, []).append(iid)
+            else:
+                continue
+        except Exception:
+            continue
+
+    print("   📊 Identifizierte Startdatum-Kohorten:")
+    for dt_str, syms in sorted(cohorts.items()):
+        print(f"      • {dt_str}: {len(syms)} Symbole")
+
+    if end_ns and required_days > 0:
+        required_ns = required_days * 86400 * 1_000_000_000
+        for iid in instrument_ids:
+            oldest_ts = instrument_start_dates.get(iid)
+            if oldest_ts is None:
+                continue
+
+            # Drop late-starting symbols if they don't fulfill the minimum window
+            # 0.95 factor allows slight gaps
+            if (end_ns - oldest_ts) < (required_ns * 0.95):
+                print(f"   ⚠️ Drop (Spätstarter): {iid} hat unzureichend Daten (Start: {pd.Timestamp(oldest_ts, unit='ns', tz='UTC').strftime('%Y-%m-%d')})")
+            else:
+                valid_instrument_ids.append(iid)
+                if oldest_ts > max_valid_start_ns:
+                    max_valid_start_ns = oldest_ts
+    else:
+        valid_instrument_ids = instrument_ids
+        if instrument_start_dates:
+            max_valid_start_ns = max(instrument_start_dates.values())
+
+    instrument_ids = valid_instrument_ids
+    if not instrument_ids:
+        log_error("⚠️ Keine Instrumente mit ausreichend Daten nach Startdatum-Analyse übrig.")
+        return
+
+    # Align common start ns
+    common_start_ns = max_valid_start_ns
+    if start_ns is None or common_start_ns > start_ns:
+        start_ns = common_start_ns
+        print(f"   ✅ Einheitliches Backtest-Startdatum auf spätestes gültiges Datum gesetzt: {pd.Timestamp(start_ns, unit='ns', tz='UTC').strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        print(f"   ✅ Konfiguriertes Startdatum {pd.Timestamp(start_ns, unit='ns', tz='UTC').strftime('%Y-%m-%d %H:%M:%S')} deckt alle Instrumente ab.")
 
     # --- Metadaten-Normalisierung ---
     print("\n🔍 Prüfe Parquet-Schema-Konsistenz...")
