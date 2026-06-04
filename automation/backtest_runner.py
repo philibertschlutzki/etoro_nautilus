@@ -369,12 +369,20 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
         - metrics.get("max_drawdown", 0.0)  * scoring.get("drawdown_penalty_weight", 0.1)
     )
 
-def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None) -> bool:
+def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
 
     eligible_requires_all: ALLE Bedingungen müssen erfüllt sein.
     eligible_requires_any: MINDESTENS EINE Bedingung muss erfüllt sein.
     """
+    sortino = metrics.get("sortino_ratio") if not check_oos else metrics.get("oos_metrics", {}).get("sortino_ratio")
+    pf = metrics.get("profit_factor") if not check_oos else metrics.get("oos_metrics", {}).get("profit_factor")
+
+    if sortino is None or pf is None:
+        if log_rejections:
+            print(f"⚠️  Rejected: Undefined metrics due to all-win / insufficient loss data for {symbol} - {strategy}")
+        return False
+
     if check_oos:
         oos_metrics = metrics.get("oos_metrics")
         if not oos_metrics:
@@ -568,7 +576,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     profit_factor = (
         (gross_profit / gross_loss) if gross_loss > 0
-        else (999.0 if gross_profit > 0 else 0.0)
+        else (None if gross_profit > 0 else 0.0)
     )
 
     win_rate = wins / n if n > 0 else 0.0
@@ -585,12 +593,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     total_return = cum - 1.0
 
     if n < 5:
-        sortino = 0.0
+        sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
         dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
         mean_ret = sum(rets) / n
-        sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else 0.0
+        sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else None
 
     calmar = (total_return / max_dd) if max_dd > 0 else 0.0
 
@@ -611,8 +619,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     return {
         "total_trades":  n,
         "win_rate":      float(win_rate),
-        "profit_factor": float(profit_factor),
-        "sortino_ratio": float(sortino),
+        "profit_factor": float(profit_factor) if profit_factor is not None else None,
+        "sortino_ratio": float(sortino) if sortino is not None else None,
         "calmar_ratio":  float(calmar),
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
@@ -803,7 +811,14 @@ def select_winners(
     # Eligible filtern
     eligible = [
         r for r in all_results
-        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
+        if r.get("metrics") and _is_eligible(
+            r["metrics"],
+            tournament_cfg,
+            strat_params=r.get("strat_params", {}),
+            symbol=r.get("symbol", "Unknown"),
+            strategy=r.get("strategy", "Unknown"),
+            log_rejections=True
+        )
     ]
 
     # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)

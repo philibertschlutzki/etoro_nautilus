@@ -498,6 +498,12 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix:** `compute_tournament_score` wurde so umgeschrieben, dass es die Metriken `sortino_ratio`, `profit_factor`, `win_rate` und `max_drawdown` gemäß den Gewichten aus `tournament.json` zu einem Composite-Score aggregiert.
 **Betroffen:** `automation/backtest_runner.py`
 
+### 🟢 #36 — Division-by-Zero Artefakte bei all-win Szenarien (Profit Factor & Sortino)
+**Symptom:** In Backtests mit 100% Win Rate generieren bestimmte Metriken mathematische Artefakte (z.B. Profit Factor = 999.00 und Sortino Ratio = 0.00). Dies verzerrt die Auswertung extrem, wenn die Schwelle für `min_trades` gering ist.
+**Root Cause:** Fallback bei `gross_loss == 0` war ein hardcodierter Wert `999.0` für PF. Beim Sortino Ratio führte `dd_dev <= 0` fälschlicherweise zum Null-Wert anstatt zu einem undefinierten Zustand.
+**Fix:** Der Code wurde so refaktorisiert, dass undefinierte finanzmathematische Zustände korrekt mit `None` abgebildet und im JSON als `null` serialisiert werden. Eine dedizierte Filter-Gating-Logik in `_is_eligible` wirft diese Kandidaten proaktiv und mit Logging ab.
+**Betroffen:** `automation/backtest_runner.py`
+
 ## 17. Conventions für KI-Coding-Agents (Jules)
 
 - **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, behoben).
@@ -551,6 +557,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 | 2026-06-03 | **Issue #132 (Pitfall #33):** Behebung der Tuple-Arity-Regression in `extract_metrics` (flaches 4-Tupel-`append` vs. 3-Ziel-Entpackung). Der Fehler wurde explizit als Regression von Pitfall #31/#103 gekennzeichnet. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #134 (Pitfall #35):** Behebung des konstanten 0.0-Scores in `compute_tournament_score` und der reihenfolgeabhängigen Gewinnerauswahl. Die Funktion nutzt nun die dokumentierten Composite-Gewichte. Ein Test zur Sicherstellung der korrekten Sortierung wurde ergänzt. | `automation/backtest_runner.py`, `automation/tests/test_backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #147 (Fix Overfitting & OOS Gating):** Einführung der harten Train/Test (IS/OOS) Separierung mit verbessertem Logging und striktem OOS-Gating gegen fehlende Trades. Einführung eines `min_expectancy` Thresholds in `tournament.json`, um Sortino-Artefakte ohne Return (wie FlashCrashReversal) auszuschließen. Walk-Forward Architektur (State Bleed) in Phase 5 korrigiert (siehe Architektur-Dokumentation weiter unten). | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/config/tournament.json`, `automation/AGENTS.md` |
+| 2026-06-04 | **Issue #150 (Fix Metric Artifacts):** Behoben: Profit Factor und Sortino Ratio gaben 999.0 bzw. 0.0 anstelle von `None` für All-Win Szenarien zurück. Anpassung der Metrik-Auswertung in `_calculate_stats` und Integration eines expliziten Rejection-Gates (Log-Ausgabe) in `_is_eligible`, um Strategien/Symbole mit undefinierten Metriken proaktiv auszuschließen. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 
 ## Architektonische Methodik: IS/OOS Split und "State Bleed"
 
