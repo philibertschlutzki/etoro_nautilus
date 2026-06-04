@@ -126,10 +126,6 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         if qty is None:
             return
 
-        instrument = self.cache.instrument(self.instrument_id)
-        if instrument:
-            qty = instrument.make_qty(round(float(qty), instrument.size_precision))
-
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
@@ -158,10 +154,6 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
-
-        instrument = self.cache.instrument(self.instrument_id)
-        if instrument:
-            qty = instrument.make_qty(round(float(qty), instrument.size_precision))
 
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
