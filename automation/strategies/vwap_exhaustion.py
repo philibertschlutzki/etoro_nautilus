@@ -29,6 +29,7 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 class VwapExhaustionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     deviation_threshold: float = 0.03
+    cooldown_bars: int = 5
 
 
 class VwapExhaustionStrategy(HourlyStrategyBase):
@@ -45,6 +46,8 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.cumulative_volume = 0.0
         self.current_vwap = 0.0
         self.current_day: int | None = None
+        self.current_signal: str | None = None
+        self.bars_since_last_signal: int = 9999
 
     def on_start(self):
         super().on_start()
@@ -54,6 +57,7 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
+        self.bars_since_last_signal += 1
         volume = float(bar.volume)
         close_price = float(bar.close)
         typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
@@ -77,9 +81,11 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         if self.current_vwap <= 0:
             return
 
+        can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
+
         deviation = (close_price - self.current_vwap) / self.current_vwap
 
-        if deviation <= -self.config.deviation_threshold:
+        if deviation <= -self.config.deviation_threshold and self.bars_since_last_signal >= self.config.cooldown_bars and self.current_signal != "BUY":
             self._log.info(
                 f"[{self.instrument_id}] BUY SIGNAL (VWAP Deviation Bottom) | "
                 f"Close: {close_price:.2f} | VWAP: {self.current_vwap:.2f} | "
@@ -88,7 +94,7 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
             )
             self._on_buy_signal(bar)
 
-        elif deviation >= self.config.deviation_threshold:
+        elif deviation >= self.config.deviation_threshold and self.bars_since_last_signal >= self.config.cooldown_bars and self.current_signal != "SELL":
             self._log.info(
                 f"[{self.instrument_id}] SELL SIGNAL (VWAP Deviation Top) | "
                 f"Close: {close_price:.2f} | VWAP: {self.current_vwap:.2f} | "
@@ -100,6 +106,9 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
+        self.current_signal = "BUY"
+        self.bars_since_last_signal = 0
+
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
@@ -107,11 +116,16 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
                 return
             self._close_position(pos)
             return
+
+        if self.cache.orders_open(instrument_id=self.instrument_id):
+            return
+
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
         qty = self._compute_quantity(bar)
         if qty is None:
             return
+
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
@@ -121,6 +135,9 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _on_sell_signal(self, bar: Bar) -> None:
+        self.current_signal = "SELL"
+        self.bars_since_last_signal = 0
+
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
@@ -128,25 +145,20 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
                 return
             self._close_position(pos)
             return
+
+        if self.cache.orders_open(instrument_id=self.instrument_id):
+            return
+
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
         qty = self._compute_quantity(bar)
         if qty is None:
             return
+
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
             quantity=qty,
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(order)
-
-    def _close_position(self, pos) -> None:
-        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=exit_side,
-            quantity=pos.quantity,
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)

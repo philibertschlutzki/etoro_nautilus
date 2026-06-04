@@ -190,7 +190,7 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 ### Aktive Strategien (`strategies.json` active=true)
 | Klasse | Datei | Indikatoren | Default trade_amount_usd |
 |--------|-------|-------------|--------------------------|
-| SmaCrossoverStrategy | sma_crossover.py | SMA(5) | 1500 |
+| SmaCrossoverStrategy | sma_crossover.py | SMA(20) | 1500 |
 | MeanReversionStrategy | mean_reversion.py | Keltner(20,2.0) | 1500 |
 | DynamicBreakoutStrategy | dynamic_breakout.py | Price-Range(10) | 1500 |
 | FlashCrashReversalStrategy | flash_crash_reversal.py | BB(10,2.0)+RSI(7) | 1500 |
@@ -198,12 +198,13 @@ Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`curr
 | ComboTrendVwapStrategy | tesla_combo_strategy.py | SMA+MACD+BB+ATR+VWAP | 1500 |
 | VwapExhaustionStrategy | vwap_exhaustion.py | Custom VWAP-Deviation | 1500 |
 
+| HourlyMeanReversionStrategy | hourly_mean_reversion.py | Keltner-Channel | 1500 |
+
 ### Inaktive Strategien (active=false)
 | Klasse | Grund |
 |--------|-------|
 | TrendPullbackStrategy | 0 FIFO-Schließungen in allen Tests; erbt von HourlyStrategyBase (EMA-Period 200 initialisiert bei kurzen Daten nie) |
 | AdxAtrMomentumStrategy | ADX-Initialisierungsproblem; erbt von HourlyStrategyBase |
-| HourlyMeanReversionStrategy | Aktuell nicht in `strategies.json` registriert. |
 
 **Wichtig:** Die Config-Klassen in `config_class` müssen exakt zu den Feldern passen, die der Backtest spreizt. Die Konfig-Field-Beschreibungen in der alten Root-AGENTS.md waren teils falsch (z.B. `lookback`/`z_score_threshold` für MeanReversion existieren NICHT — die echte Config nutzt `keltner_period`/`keltner_multiplier`). Maßgeblich ist immer der Code der jeweiligen `*Config`-Klasse.
 
@@ -256,7 +257,7 @@ Bei der Umwandlung von Candle zu Tick wird im Backtest nun Zero-Spread-Modeling 
 
 **Engine-Setup pro Job:** `OmsType.NETTING`, `AccountType.MARGIN`, Spread-Modeling (Buy@Ask, Sell@Bid — NautilusTrader-Default mit QuoteTicks). Mock-Instrument via `create_mock_instrument()` als `Cfd(asset_class=EQUITY)`.
 
-**Metriken** (`extract_metrics`): FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Sortino nur ab n ≥ 5 Trades. Tournament-Selektion via `select_winners()`.
+**Metriken** (`extract_metrics`): FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Sortino nur ab n ≥ 5 Round-Trips. Tournament-Selektion via `select_winners()`.
 
 🟢 **Behoben:** `create_mock_instrument` und `run_single_backtest_worker` erzwingen nun eine asset-bewusste Normalisierung der `size_precision` via temporärer PyArrow-Schema-Injection und `_fallback_precisions` (Equities fallen auf 2, Crypto auf 8 zurück). (Pitfall #14 gelöst, Schreibseiten-Persistenz #23 behoben).
 
@@ -335,6 +336,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+
+### 🟢 #38 — Strategy Matrix Execution Mismatch (Issue #152)
+**Symptom:** Das System lud Defaults für 8 Strategien, aber führte nur 7 Strategien im Backtest-Matrix-Loop aus. Die Gesamtanzahl der Jobs lag bei 343 statt den erwarteten 392.
+**Root Cause:** `HourlyMeanReversionStrategy` war in `strategy_defaults.json` definiert, fehlte jedoch in der aktiven `strategies.json` als Ausführungsziel. Zudem fehlte eine Validierung, die sicherstellt, dass definierte Defaults auch tatsächlich als aktive Strategien registriert sind.
+**Fix:** `HourlyMeanReversionStrategy` wurde mit `active=true` zur `strategies.json` hinzugefügt. Zusätzlich wurde eine Laufzeit-Assertion in `automation/backtest_runner.py` implementiert, die das Backend hart abstürzen lässt, wenn die Anzahl der geladenen Defaults nicht exakt mit der Anzahl der auszuführenden aktiven Strategien übereinstimmt. *Jede Strategie, die in den Defaults geladen wird, MUSS zwingend im Execution Loop enthalten sein, es sei denn, sie wird explizit per Bypass übersprungen.*
+**Betroffen:** `automation/backtest_runner.py`, `automation/config/strategies.json`, `automation/AGENTS.md`
 
 ### 🟢 #37 — Sortino Ratio Explosion & Tournament Artefakte (Issue #151)
 **Symptom:** Unrealistisch hohe Sortino-Werte (> 200) führen zu einer fehlerhaften Selektion von Gewinnern im Tournament, wobei oft Low-Yield-Strategien mit minimaler absoluter Rendite bevorzugt werden.
@@ -504,6 +511,13 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix:** `compute_tournament_score` wurde so umgeschrieben, dass es die Metriken `sortino_ratio`, `profit_factor`, `win_rate` und `max_drawdown` gemäß den Gewichten aus `tournament.json` zu einem Composite-Score aggregiert.
 **Betroffen:** `automation/backtest_runner.py`
 
+### Pitfall #37: Profit Factor / Sortino NoneType Artefakte bei Zero-Loss (Issue #150)
+**Symptom:** In Backtests mit 100% Win Rate generieren bestimmte Metriken mathematische Artefakte (z.B. Profit Factor = 999.00 und Sortino Ratio = 0.00). Dies verzerrt die Auswertung extrem, wenn die Schwelle für `min_trades` gering ist.
+**Root Cause:** Fallback bei `gross_loss == 0` war ein hardcodierter Wert `999.0` für PF. Beim Sortino Ratio führte `dd_dev <= 0` fälschlicherweise zum Null-Wert anstatt zu einem undefinierten Zustand.
+**Fix:** Der Code wurde so refaktorisiert, dass undefinierte finanzmathematische Zustände korrekt mit `None` abgebildet und im JSON als `null` serialisiert werden. Eine dedizierte Filter-Gating-Logik in `_is_eligible` wirft diese Kandidaten proaktiv ab. Dabei wird das Feld `"rejection_reason": "insufficient/all-win"` in die Payload injiziert, um Transparenz im JSON zu wahren.
+**Wichtige Architektur-Regel:** Downstream-Systeme in Evaluationen und Formatting müssen stets typensicher entwickelt werden (z. B. `pf if pf is not None else 0.0`), da Metrik-Extraktionen immer `None`-safe verarbeitet werden müssen!
+**Betroffen:** `automation/backtest_runner.py`
+
 ## 17. Conventions für KI-Coding-Agents (Jules)
 
 - **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, behoben).
@@ -526,6 +540,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-04 | **Issue #152 (Strategy Matrix Execution Mismatch):** Hinzufügen der fehlenden `HourlyMeanReversionStrategy` in `strategies.json` und Implementierung eines Assertions-Guards in `backtest_runner.py`, um Inkonsistenzen zwischen konfigurierten Defaults und ausgeführten aktiven Strategien im Matrix-Backtest zukünftig hart abzufangen. | `automation/config/strategies.json`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #151 (Sortino Ratio Winsorizing & Sanity Gates):** Überarbeitung von `_calculate_stats` zur Dämpfung explodierender Sortino-Ratios. Enforces `dd_dev >= 1e-6`, caps Sortino at 50.0, introduces a Sanity-Gate for low returns (`< 0.5%`) and a Minimum Downside Gate (`neg_trades < 2` under 50 trades) unter Beibehaltung der Methodensignatur. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #133 (Regression-Guard):** Test-Härtung (Guard `total_trades > 0` nach Metriken-Entpackung) und PR-Gate für `extract_metrics` eingebaut, um stumme Fehler bei Tuple-Arity-Bugs frühzeitig abzufangen. Konventionserweiterungen eingefügt. | `automation/tests/test_backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #121 (Walk-Forward-Datenguard Toter Code):** Zuweisung von `_walk_forward_days` in `backtest_runner.py` hinzugefügt, da dieser Wert nicht gesetzt wurde und der Guard in `run_single_backtest_worker` nie getriggert hat. Pitfall #24 auf 🟡 gesetzt bis Live-Deploy. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
@@ -578,11 +593,4 @@ Aktuell nutzt der `daily_orchestrator.py` kein echtes, rollierendes Walk-Forward
 * **Zero-Signal Metric Structures:** Note that extract_metrics must always return the explicit format {"metrics": None, "oos_metrics": None} (or similarly nested dicts) for empty signal generations, otherwise the daily orchestrator aggregation will fail.
 * **Precision Mismatch Handling:** Explicitly warn that instrument-only parameter fixes for precision bugs are insufficient. Any precision adjustments must perfectly align with the actual tick precision of the underlying data. Failure to address this root cause will result in RuntimeError crashes that silently abort the matrix backtest loops.
 * **Log Management:** Local backtest .log and .json files must be kept out of Git tracking to avoid repository bloat and blocked pushes. Always use `git checkout origin/main -- logs/` or explicitly unstage modified log files.
-
-### Backtest Data Alignment & Selection Bias Prevention (Rule #148)
-When conducting cross-sectional backtests or strategy tournaments, data sets must be strictly aligned to prevent "selection bias" (e.g., favoring instruments with a shorter, friendlier market regime).
-
-1. **Pre-Flight Alignment:** The orchestrator must pre-calculate a `common_start_ns` across all instruments before starting worker processes.
-2. **The "Late-Starter" Rule:** Do not shrink the entire universe's backtest window to accommodate a recently listed asset (IPO). If an instrument's earliest data point cannot satisfy the `_walk_forward_days` requirement for the planned window, the instrument **MUST BE DROPPED** from the run.
-3. **Engine Enforcement:** The calculated `common_start_ns` must be passed strictly to the data catalog loader so that no pre-window ticks leak into the engine warmup phase.
-4. **Aggregation Gating:** The `select_winners` or aggregation logic must validate the actual `_first_tick_ns` of all results. If it detects a mismatch > 1 day among aggregated metrics, it must throw a warning and append it to the JSON report.
+* **Pitfall #37 (Orphaned Limit Orders via Custom Exits):** Das Überschreiben von Exits in Child-Klassen ohne Beachtung von `orders_open` und dem Async-State der Base-Class führt zu Order-Spamming, Orphaned Limit-Orders und extrem asymmetrischen FIFO-Legs. Strategien müssen auf `self.cache.orders_open` nach Base Exits prüfen und sollten `self._close_position` oder `super()._close_position_base()` richtig delegieren, um Base-Code zu erhalten. (Referenz: Issue #149).

@@ -43,6 +43,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         self.cumulative_typical_volume = 0.0
         self.cumulative_volume = 0.0
         self.current_vwap = 0.0
+        self.bars_since_bb_touch: int = 999
 
     def on_start(self):
         super().on_start()
@@ -82,16 +83,21 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
         close_price = float(bar.close)
 
-        trend_bullish = close_price > self.sma.value
+        trend_bullish = close_price > (self.sma.value * 0.98)
         momentum_bullish = self.macd.value > self.macd_signal.value
         atr_tolerance = self.atr.value * self.config.atr_multiplier
-        entry_trigger = close_price <= (self.bb.lower + atr_tolerance)
+
+        if close_price <= (self.bb.lower + atr_tolerance):
+            self.bars_since_bb_touch = 0
+        else:
+            self.bars_since_bb_touch += 1
+
         vwap_confirmed = self.cumulative_volume > 0 and close_price > self.current_vwap
 
         if (
             trend_bullish
             and momentum_bullish
-            and entry_trigger
+            and self.bars_since_bb_touch <= 5
             and vwap_confirmed
             and self.current_signal != "BUY"
         ):

@@ -10,7 +10,7 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class SmaCrossoverConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    sma_period: int = 5
+    sma_period: int = 20
     cooldown_bars: int = 12
 
 
