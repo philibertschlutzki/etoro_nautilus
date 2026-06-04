@@ -336,6 +336,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ## 16. Bekannte Pitfalls & offene Bugs
 
+### 🟢 #37 — Sortino Ratio Explosion & Tournament Artefakte (Issue #151)
+**Symptom:** Unrealistisch hohe Sortino-Werte (> 200) führen zu einer fehlerhaften Selektion von Gewinnern im Tournament, wobei oft Low-Yield-Strategien mit minimaler absoluter Rendite bevorzugt werden.
+**Root Cause:** Bei einer geringen Anzahl von Trades oder fehlenden Verlusten tendiert die Downside-Deviation (`dd_dev`) gegen null. Die Division im Sortino-Nenner erzeugt mathematisch explodierende Werte (Artefakte), die keine echte Performance widerspiegeln.
+**Fix:** Einführung eines harten Caps (Winsorizing auf max. 50.0), einer Absicherung des Nenners (`max(dd_dev, 1e-6)`), eines Sanity-Gates (Cap auf max. 2.0 bei `total_return < 0.5%`) und eines Minimum-Downside-Gates (Cap auf max. 2.0 bei weniger als 2 echten Verlust-Trades und unter 50 Gesamt-Trades).
+**Betroffen:** `automation/backtest_runner.py`
+
 ### 🟢 #36 — Precision API Parsing & Datenkorruption (Issue #146)
 **Root Cause:** eToro änderte die API-Struktur (`instruments` -> `instrumentDisplayDatas`). Der alte Parser lieferte 0 Treffer. Das System fiel stumm auf einen blinden `(2, 2)`-Fallback für alle Instrumente zurück (inklusive Krypto/Fractional).
 **Symptom:** Krypto-Parquets wurden mit `size_prec=2` geschrieben. Der Mismatch zwischen Arrow-Metadaten und den generierten i128-Ticks führte unweigerlich zu `RuntimeError`-Abbrüchen im Nautilus-Matrix-Backtest.
@@ -520,6 +526,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-04 | **Issue #151 (Sortino Ratio Winsorizing & Sanity Gates):** Überarbeitung von `_calculate_stats` zur Dämpfung explodierender Sortino-Ratios. Enforces `dd_dev >= 1e-6`, caps Sortino at 50.0, introduces a Sanity-Gate for low returns (`< 0.5%`) and a Minimum Downside Gate (`neg_trades < 2` under 50 trades) unter Beibehaltung der Methodensignatur. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #133 (Regression-Guard):** Test-Härtung (Guard `total_trades > 0` nach Metriken-Entpackung) und PR-Gate für `extract_metrics` eingebaut, um stumme Fehler bei Tuple-Arity-Bugs frühzeitig abzufangen. Konventionserweiterungen eingefügt. | `automation/tests/test_backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #121 (Walk-Forward-Datenguard Toter Code):** Zuweisung von `_walk_forward_days` in `backtest_runner.py` hinzugefügt, da dieser Wert nicht gesetzt wurde und der Guard in `run_single_backtest_worker` nie getriggert hat. Pitfall #24 auf 🟡 gesetzt bis Live-Deploy. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-02 | **Issue #105 / Pitfall #24 (Walk-Forward OOS-Guard & Historical Fetcher Integration):** Guard im `backtest_runner.py` implementiert, der sicherstellt, dass die Datenspanne der geladenen Ticks das geforderte Walk-Forward-Fenster (IS+OOS) abdeckt. Die Beschaffungstiefe des `historical_fetcher.py` wurde im `daily_orchestrator.py` dynamisch an die konfigurierte Walk-Forward-Spanne (inkl. Puffer) gekoppelt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/AGENTS.md` |

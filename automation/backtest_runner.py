@@ -589,8 +589,21 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
         dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
+        dd_dev = max(dd_dev, 1e-6)
         mean_ret = sum(rets) / n
-        sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else 0.0
+        sortino = (mean_ret / dd_dev * math.sqrt(252))
+
+        # Cap Sortino to 50.0
+        sortino = min(sortino, 50.0)
+
+        # Sanity Gate: Cap Sortino if total returns are negligible
+        if total_return < 0.005:
+            sortino = min(sortino, 2.0)
+
+        # 4. Minimum Downside Gate
+        neg_trades = sum(1 for r in rets if r < 0)
+        if neg_trades < 2 and n < 50:
+            sortino = min(sortino, 2.0)
 
     calmar = (total_return / max_dd) if max_dd > 0 else 0.0
 
