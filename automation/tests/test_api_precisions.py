@@ -18,12 +18,12 @@ async def test_fetch_precisions_from_api_no_hits(caplog):
     mock_response.json = AsyncMock(return_value={"instruments": [{"instrumentId": "1", "symbol": "AAPL"}]})
 
     mock_session = MagicMock()
-    mock_session.get.return_value.__aenter__.return_value = mock_response
+    mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
 
     res = await fetch_precisions_from_api(mock_session, ["1", "2"], "api", "user")
 
     # check that a warning is logged
-    assert any("Precision-API lieferte 0/2 Instrumente" in record.message for record in caplog.records)
+    assert any("Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -35,10 +35,44 @@ async def test_fetch_precisions_catalog_no_hits(caplog):
     mock_response.json = AsyncMock(return_value={"instruments": [{"instrumentId": "1", "symbol": "AAPL"}]})
 
     mock_session = MagicMock()
-    mock_session.get.return_value.__aenter__.return_value = mock_response
+    mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
 
     with patch("aiohttp.ClientSession", return_value=mock_session):
         mock_session.__aenter__.return_value = mock_session
         res = await _fetch_precisions("api", "user", {"1": "AAPL", "2": "GOOG"})
 
-    assert any("Precision-API lieferte 0/2 Instrumente" in record.message for record in caplog.records)
+    assert any("Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_api_parser_correctness():
+    # Provide a static recorded API-response (Fixture) containing valid instrumentDisplayDatas
+    raw_response = {
+        "instrumentDisplayDatas": [
+            {
+                "instrumentID": 1,
+                "instrumentDisplayName": "Bitcoin",
+                "pricePrecision": 2,
+                "sizePrecision": 5,
+                "symbolFull": "BTC"
+            },
+            {
+                "instrumentID": 2,
+                "instrumentDisplayName": "Apple",
+                "pricePrecision": 2,
+                "sizePrecision": 2,
+                "symbolFull": "AAPL"
+            }
+        ]
+    }
+
+    mock_response = MagicMock()
+    mock_response.status = 200
+    mock_response.json = AsyncMock(return_value=raw_response)
+    mock_session = MagicMock()
+    mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
+
+    res = await fetch_precisions_from_api(mock_session, ["1", "2"], "api", "user")
+
+    # Assert dynamic values are correctly parsed
+    assert res == {"1": (2, 5), "2": (2, 2)}

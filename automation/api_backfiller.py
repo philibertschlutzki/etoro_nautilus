@@ -134,14 +134,14 @@ async def fetch_precisions_from_api(
 
                 raw = await resp.json(content_type=None)
                 log.debug(f"[api_backfiller] Raw API response (first 500 chars): {str(raw)[:500]}")
-                instruments = raw if isinstance(raw, list) else raw.get("instruments", raw.get("items", []))
+                instruments = raw if isinstance(raw, list) else raw.get("instrumentDisplayDatas", raw.get("instruments", raw.get("items", [])))
                 if not isinstance(instruments, list):
                     continue
 
                 for item in instruments:
                     if not isinstance(item, dict):
                         continue
-                    eid = str(item.get("instrumentId", item.get("id", "")))
+                    eid = str(item.get("instrumentID", item.get("instrumentId", item.get("id", ""))))
                     if not eid:
                         continue
 
@@ -171,17 +171,43 @@ async def fetch_precisions_from_api(
                     sym_raw = item.get("internalSymbolFull", item.get("symbolFull", item.get("symbol", "")))
 
                     # Fallback wenn API keine Precision-Felder hat
+
+                    # Plausibilitätsprüfung (Sanity Check) für Aktien
+                    if size_prec == 2:
+                        # Falls size_prec=2 ist, sollte es sich laut Fallback-Regeln um ein reines Equity handeln.
+                        # Wenn wir es als Crypto oder Fractional identifizieren, ist das vermutlich falsch (Precision Mismatch).
+                        fb_p_test, fb_s_test = _fallback_precisions(sym_raw)
+                        if fb_s_test != 2:
+                            error_msg = (
+                                f"[api_backfiller] Plausibilitäts-Fehler: Instrument {eid} ({sym_raw}) hat "
+                                f"size_prec=2 (Equity-Wert), wird systemseitig aber als Nicht-Equity mit "
+                                f"size_prec={fb_s_test} erwartet."
+                            )
+                            log.error(error_msg)
+                            if os.getenv("STRICT_PRECISION_FAIL") == "1":
+                                raise RuntimeError(error_msg)
+                            continue # Überspringe dieses Instrument bei Mismatch
+
                     has_api_prec = (price_prec is not None and size_prec is not None)
                     if has_api_prec:
                         api_hits += 1
 
                     fb_price, fb_size = _fallback_precisions(sym_raw)
-                    if price_prec is None:
-                        price_prec = fb_price
-                        log.debug(f"[api_backfiller] ID {eid}: price_precision via Fallback={price_prec}")
-                    if size_prec is None:
-                        size_prec = fb_size
-                        log.debug(f"[api_backfiller] ID {eid}: size_precision via Fallback={size_prec}")
+
+                    # Verwerfe Instrument, wenn API keine Precision liefert und es sich nicht um einen historisch bekannten Wert (Crypto/Fractional) handelt
+                    # oder wenn der Wert beschädigt war (None) und wir blind =2 setzen würden.
+                    if price_prec is None or size_prec is None:
+                        if fb_size == 2 and fb_price == 2:
+                            # Blindes (2, 2) Fallback für unbekannte Instrumente vermeiden
+                            log.error(f"[api_backfiller] Fehlende/Ungültige Precision für ID {eid} ({sym_raw}) aus API. Überspringe Instrument, um blindes (2,2) Fallback zu verhindern.")
+                            continue
+
+                        if price_prec is None:
+                            price_prec = fb_price
+                            log.debug(f"[api_backfiller] ID {eid}: price_precision via historischem Fallback={price_prec}")
+                        if size_prec is None:
+                            size_prec = fb_size
+                            log.debug(f"[api_backfiller] ID {eid}: size_precision via historischem Fallback={size_prec}")
 
                     result[eid] = (price_prec, size_prec)
                     log.debug(
@@ -196,8 +222,10 @@ async def fetch_precisions_from_api(
 
         await asyncio.sleep(0.5)  # Rate-Limit respektieren
 
-    if len(etoro_ids) > 0 and api_hits == 0:
-        log.warning(f"[api_backfiller] Precision-API lieferte 0/{len(etoro_ids)} Instrumente. Dynamischer Precision-Pfad ohne Funktion.")
+    if len(etoro_ids) > 0 and api_hits < len(etoro_ids):
+        log.warning(f"[api_backfiller] Precision-API lieferte nur {api_hits}/{len(etoro_ids)} Instrumente.")
+        if os.getenv("STRICT_PRECISION_FAIL") == "1":
+            raise RuntimeError(f"[api_backfiller] HARD FAIL: Partielle oder keine Precisions geliefert ({api_hits}/{len(etoro_ids)}).")
 
     return result
 
