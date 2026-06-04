@@ -1413,6 +1413,10 @@ def run_backtest() -> None:
         log_error("⚠️ Keine aktiven Strategien in Config gefunden.")
         return
 
+    # Assert consistency between defaults and active strategies
+    loaded_defaults = [k for k in strategy_defaults.keys() if not k.startswith("_")]
+    assert len(loaded_defaults) == len(strategies_list), f"Mismatch: {len(loaded_defaults)} defaults loaded but {len(strategies_list)} strategies executed."
+
     # Task 2: Strategy-Defaults auf die Strategie-Params anwenden (Overrides behalten Vorrang)
     strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults)
     if strategy_defaults:
