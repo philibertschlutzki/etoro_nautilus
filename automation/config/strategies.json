@@ -2,11 +2,11 @@
   "_schema": {
     "description": "Aktive Strategie-Liste mit optionalen per-Strategie-Parameter-Overrides. Defaults kommen aus strategy_defaults.json; Werte hier haben Vorrang.",
     "fields": {
-      "active": "bool — wenn false, wird die Strategie beim Backtest übersprungen",
+      "active": "bool \u2014 wenn false, wird die Strategie beim Backtest \u00fcbersprungen",
       "strategy_module": "Python-Modul-Pfad der Strategie",
       "strategy_class": "Klassen-Name der Strategie",
       "config_class": "Klassen-Name der Strategie-Konfiguration",
-      "params": "Optionale Parameter-Overrides (merged über strategy_defaults.json)"
+      "params": "Optionale Parameter-Overrides (merged \u00fcber strategy_defaults.json)"
     }
   },
   "strategies": [
@@ -82,6 +82,13 @@
       "config_class": "AdxAtrMomentumConfig",
       "params": {},
       "_note": "Deaktiviert: ADX-Initialisierungsproblem."
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.hourly_mean_reversion",
+      "strategy_class": "HourlyMeanReversionStrategy",
+      "config_class": "HourlyMeanReversionConfig",
+      "params": {}
     }
   ]
 }

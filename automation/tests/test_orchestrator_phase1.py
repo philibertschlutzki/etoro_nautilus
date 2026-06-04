@@ -7,6 +7,11 @@ from unittest.mock import patch, MagicMock
 # The function we are testing
 from automation.daily_orchestrator import phase1_universe_and_mapping, INSTRUMENT_MAP_PATH
 
+@pytest.fixture(autouse=True)
+def mock_instrument_map():
+    with patch("automation.universe_fetcher.load_instrument_map", return_value={}):
+        yield
+
 @pytest.fixture
 def mock_logger():
     return logging.getLogger("test_logger")
