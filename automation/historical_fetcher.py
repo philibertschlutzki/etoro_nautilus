@@ -296,7 +296,6 @@ async def run_historical_fetch(
 
     QUOTE_TICK_PATH.mkdir(parents=True, exist_ok=True)
 
-    # REPARATUR: Reales Startdatum im Voraus berechnen, falls start_ns = 0 oder negativ ist
     if start_ns <= 0:
         target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
         real_start_ns = int(target_start.timestamp() * 1e9)
