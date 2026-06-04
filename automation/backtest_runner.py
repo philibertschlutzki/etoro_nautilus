@@ -383,6 +383,7 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
     if sortino is None or pf is None:
         if log_rejections:
             print(f"⚠️  Rejected: Undefined metrics due to all-win / insufficient loss data for {symbol} - {strategy}")
+            metrics["rejection_reason"] = "insufficient/all-win"
         return False
 
     if check_oos:
