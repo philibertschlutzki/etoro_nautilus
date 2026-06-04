@@ -747,7 +747,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             return NULL
 
         if log_fn:
-            log_fn(f"[Metriken] FIFO-Extraktion: {len(pnls_with_ts)} Trades erfolgreich berechnet.")
+            log_fn(f"[Metriken] FIFO-Extraktion: {len(pnls_with_ts)} Round-Trips erfolgreich berechnet.")
 
         is_pnls = []
         oos_pnls = []
@@ -1434,12 +1434,10 @@ def run_backtest() -> None:
     # Task 2: Strategy-Defaults auf die Strategie-Params anwenden (Overrides behalten Vorrang)
     strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults)
     if strategy_defaults:
-        example_sma = next(
-            (s for s in strategies_list if s.get("strategy_class") == "SmaCrossoverStrategy"), None
-        )
-        if example_sma:
-            sma_period = example_sma.get("params", {}).get("sma_period", "?")
-            print(f"✅ Defaults angewandt — SmaCrossoverStrategy: sma_period={sma_period}")
+        for strat in strategies_list:
+            cls_name = strat.get("strategy_class", "?")
+            params_str = ", ".join(f"{k}={v}" for k, v in strat.get("params", {}).items())
+            print(f"✅ Defaults angewandt — {cls_name}: {params_str}")
 
     # --- Parameter-Validierung & Walk-Forward Injektion ---
     param_warnings: list[str] = []
