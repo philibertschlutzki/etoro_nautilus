@@ -3,18 +3,18 @@
     "description": "Default-Parameter pro Strategie f\u00fcr 1h-Candle-Daten (12 Monate History). Perioden auf st\u00fcndliche Aufl\u00f6sung optimiert. Werte in strategies.json haben Vorrang."
   },
   "SmaCrossoverStrategy": {
-    "sma_period": 20,
-    "trade_amount_usd": 1500.0
+    "sma_period": 5,
+    "trade_amount_pct": 15.0
   },
   "MeanReversionStrategy": {
     "keltner_period": 10,
     "keltner_atr_period": 10,
     "keltner_multiplier": 1.5,
-    "trade_amount_usd": 1500.0
+    "trade_amount_pct": 15.0
   },
   "DynamicBreakoutStrategy": {
     "price_breakout_period": 10,
-    "trade_amount_usd": 1500.0
+    "trade_amount_pct": 15.0
   },
   "FlashCrashReversalStrategy": {
     "bb_period": 10,
@@ -22,14 +22,14 @@
     "rsi_period": 7,
     "rsi_oversold": 30.0,
     "rsi_overbought": 70.0,
-    "trade_amount_usd": 1500.0,
     "atr_trailing_multiplier": 0.75,
-    "max_bars_in_trade": 16
+    "max_bars_in_trade": 16,
+    "trade_amount_pct": 15.0
   },
   "VolatilityBreakoutPumpStrategy": {
     "bb_period": 10,
     "bb_std_dev": 2.0,
-    "trade_amount_usd": 1500.0
+    "trade_amount_pct": 15.0
   },
   "ComboTrendVwapStrategy": {
     "sma_period": 20,
@@ -39,16 +39,16 @@
     "bb_period": 10,
     "bb_std_dev": 2.0,
     "bb_entry_tolerance": 1.0,
-    "trade_amount_usd": 1500.0
+    "trade_amount_pct": 15.0
   },
   "VwapExhaustionStrategy": {
-    "deviation_threshold": 0.015,
-    "trade_amount_usd": 1500.0
+    "deviation_threshold": 0.03,
+    "trade_amount_pct": 15.0
   },
   "HourlyMeanReversionStrategy": {
     "keltner_period": 10,
     "keltner_atr_period": 10,
     "keltner_multiplier": 1.5,
-    "trade_amount_usd": 1500.0
+    "trade_amount_pct": 15.0
   }
 }

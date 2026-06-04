@@ -41,6 +41,33 @@ def test_oos_eligibility():
     metrics["oos_metrics"]["total_trades"] = 10
     assert _is_eligible(metrics, tournament_cfg, check_oos=True), "Should pass with 10 OOS trades"
 
+def test_total_return_eligibility_hard_gate():
+    tournament_cfg = {
+        "min_trades": 20,
+        "min_sortino": 0.3,
+        "min_profit_factor": 1.1,
+        "max_drawdown": 0.30,
+        "min_win_rate": 0.35,
+        "min_total_return": 0.005,
+        "min_expectancy": 0.0005,
+        "eligible_requires_all": ["min_trades", "min_total_return", "min_win_rate", "max_drawdown", "min_expectancy"],
+        "eligible_requires_any": ["min_sortino", "min_profit_factor"]
+    }
+
+    metrics = {
+        "total_trades": 50,
+        "win_rate": 0.60,
+        "max_drawdown": 0.10,
+        "sortino_ratio": 5.0,  # Extremely high
+        "profit_factor": 3.0,  # Extremely high
+        "total_return": 0.001  # < 0.005 (Fails hard gate!)
+    }
+
+    assert not _is_eligible(metrics, tournament_cfg, check_oos=False), "Should reject due to total_return < 0.005 despite high sortino/pf"
+
+    metrics["total_return"] = 0.026  # Pass (also making sure expectancy = 0.026/50 > 0.0005)
+    assert _is_eligible(metrics, tournament_cfg, check_oos=False), "Should pass with total_return > 0.005"
+
 def test_load_tournament_config_validation(monkeypatch):
     tournament_cfg = {
         "oos_min_trades": 5,

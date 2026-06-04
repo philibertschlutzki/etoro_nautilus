@@ -39,6 +39,7 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     instrument_id: str
     bar_type: str
     trade_amount_usd: float = 100.0
+    trade_amount_pct: float | None = None
     max_open_positions: int = 1
     atr_period: int = 14
     atr_trailing_multiplier: float = 1.5
@@ -284,7 +285,12 @@ class HourlyStrategyBase(Strategy):
             balance = self._get_current_balance()
             trade_amount_usd = self.allocator.get_allocation(self.instrument_id, self.cache, balance)
         else:
-            trade_amount_usd = getattr(self.config, "trade_amount_usd", 100.0)
+            trade_amount_pct = getattr(self.config, "trade_amount_pct", None)
+            if trade_amount_pct is not None and trade_amount_pct > 0:
+                balance = self._get_current_balance()
+                trade_amount_usd = balance * (trade_amount_pct / 100.0)
+            else:
+                trade_amount_usd = getattr(self.config, "trade_amount_usd", 100.0)
 
         if trade_amount_usd <= 0:
             return None
