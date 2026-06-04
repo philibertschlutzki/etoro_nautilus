@@ -42,7 +42,7 @@
     "trade_amount_usd": 1500.0
   },
   "VwapExhaustionStrategy": {
-    "deviation_threshold": 0.03,
+    "deviation_threshold": 0.015,
     "trade_amount_usd": 1500.0
   },
   "HourlyMeanReversionStrategy": {
