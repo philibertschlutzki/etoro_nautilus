@@ -1137,7 +1137,7 @@ def run_single_backtest_worker(
             # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
             span_ns_val = span_ns.value if hasattr(span_ns, 'value') else int(span_ns)
             span_days = span_ns_val / (86400 * 1_000_000_000)
-            if span_days < (required_days * 0.95):
+            if span_ns_val < (required_days * 86400 * 1_000_000_000):
                 msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage). Überspringe Backtest."
                 wlog_err(msg)
                 res = _empty_result(inst_id_str, strategy_class_name, strat)
@@ -1512,7 +1512,6 @@ def run_backtest() -> None:
         required_days = is_days + (splits * oos_days)
 
     import pyarrow.parquet as pq
-    import pyarrow.compute as pc
     from pathlib import Path
 
     cohorts: dict[str, list[str]] = {}
@@ -1522,9 +1521,11 @@ def run_backtest() -> None:
         if not parquet_file.exists():
             continue
         try:
-            t = pq.read_table(str(parquet_file), columns=["ts_event"])
-            if len(t) > 0:
-                oldest_ts = int(pc.min(t.column("ts_event")).as_py())
+            pf = pq.ParquetFile(str(parquet_file))
+            if "ts_event" in pf.schema.names:
+                ts_index = pf.schema.names.index("ts_event")
+                # O(1) Zugriff auf die Metadaten-Statistiken der ersten Row Group
+                oldest_ts = int(pf.metadata.row_group(0).column(ts_index).statistics.min)
                 instrument_start_dates[iid] = oldest_ts
                 dt_str = pd.Timestamp(oldest_ts, unit="ns", tz="UTC").strftime("%Y-%m-%d")
                 cohorts.setdefault(dt_str, []).append(iid)
@@ -1544,9 +1545,8 @@ def run_backtest() -> None:
             if oldest_ts is None:
                 continue
 
-            # Drop late-starting symbols if they don't fulfill the minimum window
-            # 0.95 factor allows slight gaps
-            if (end_ns - oldest_ts) < (required_ns * 0.95):
+            # Drop late-starting symbols if they don't fulfill the absolute minimum window
+            if (end_ns - oldest_ts) < required_ns:
                 print(f"   ⚠️ Drop (Spätstarter): {iid} hat unzureichend Daten (Start: {pd.Timestamp(oldest_ts, unit='ns', tz='UTC').strftime('%Y-%m-%d')})")
             else:
                 valid_instrument_ids.append(iid)
