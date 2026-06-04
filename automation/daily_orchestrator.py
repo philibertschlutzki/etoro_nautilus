@@ -241,6 +241,21 @@ def phase1_universe_and_mapping(log: logging.Logger, api_key: str = "", user_key
                 log.warning("[Phase 1] Fallback: Nutze bisheriges (stales) Universum für diesen Lauf.")
 
     # Validieren und deduplizieren
+    # Ensure all symbols from instrument_map are included in the universe
+    from automation.universe_fetcher import load_instrument_map
+    instrument_map = load_instrument_map(Path('automation/config/instrument_map.json'))
+
+    for etoro_id, symbol in instrument_map.items():
+        if symbol is None:
+            continue
+        exists = any(str(u.get("etoro_id")) == etoro_id for u in universe_items)
+        if not exists:
+            universe_items.append({
+                "etoro_id": etoro_id,
+                "symbol": symbol,
+                "raw_name": symbol.split(".")[0]
+            })
+
     valid_items:  list[dict] = []
     unmapped:     list[str]  = []
     seen_symbols: set[str]   = set()
