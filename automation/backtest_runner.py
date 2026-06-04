@@ -362,19 +362,30 @@ def load_tournament_config(project_root: str | None = None) -> dict:
 
 
 def compute_tournament_score(metrics: dict, scoring: dict) -> float:
+    sortino = metrics.get("sortino_ratio")
+    pf = metrics.get("profit_factor")
     return (
-        metrics.get("sortino_ratio", 0.0) * scoring.get("sortino_weight", 0.4)
-        + metrics.get("profit_factor", 0.0) * scoring.get("profit_factor_weight", 0.3)
+        (sortino if sortino is not None else 0.0) * scoring.get("sortino_weight", 0.4)
+        + (pf if pf is not None else 0.0) * scoring.get("profit_factor_weight", 0.3)
         + metrics.get("win_rate", 0.0)      * scoring.get("win_rate_weight", 0.2)
         - metrics.get("max_drawdown", 0.0)  * scoring.get("drawdown_penalty_weight", 0.1)
     )
 
-def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None) -> bool:
+def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
 
     eligible_requires_all: ALLE Bedingungen müssen erfüllt sein.
     eligible_requires_any: MINDESTENS EINE Bedingung muss erfüllt sein.
     """
+    sortino = metrics.get("sortino_ratio") if not check_oos else metrics.get("oos_metrics", {}).get("sortino_ratio")
+    pf = metrics.get("profit_factor") if not check_oos else metrics.get("oos_metrics", {}).get("profit_factor")
+
+    if sortino is None or pf is None:
+        if log_rejections:
+            print(f"⚠️  Rejected: Undefined metrics due to all-win / insufficient loss data for {symbol} - {strategy}")
+            metrics["rejection_reason"] = "insufficient/all-win"
+        return False
+
     if check_oos:
         oos_metrics = metrics.get("oos_metrics")
         if not oos_metrics:
@@ -384,8 +395,6 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         if n_trades <= 0:
             return False
 
-        sortino      = oos_metrics.get("sortino_ratio", 0.0)
-        pf           = oos_metrics.get("profit_factor", 0.0)
         max_dd       = oos_metrics.get("max_drawdown", 1.0)
         win_rate     = oos_metrics.get("win_rate", 0.0)
         total_return = oos_metrics.get("total_return", 0.0)
@@ -403,8 +412,6 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         }
     else:
         n_trades     = metrics.get("total_trades", 0)
-        sortino      = metrics.get("sortino_ratio", 0.0)
-        pf           = metrics.get("profit_factor", 0.0)
         max_dd       = metrics.get("max_drawdown", 1.0)
         win_rate     = metrics.get("win_rate", 0.0)
         total_return = metrics.get("total_return", 0.0)
@@ -568,7 +575,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     profit_factor = (
         (gross_profit / gross_loss) if gross_loss > 0
-        else (999.0 if gross_profit > 0 else 0.0)
+        else (None if gross_profit > 0 else 0.0)
     )
 
     win_rate = wins / n if n > 0 else 0.0
@@ -585,25 +592,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     total_return = cum - 1.0
 
     if n < 5:
-        sortino = 0.0
+        sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
         dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
         dd_dev = max(dd_dev, 1e-6)
         mean_ret = sum(rets) / n
-        sortino = (mean_ret / dd_dev * math.sqrt(252))
-
-        # Cap Sortino to 50.0
-        sortino = min(sortino, 50.0)
-
-        # Sanity Gate: Cap Sortino if total returns are negligible
-        if total_return < 0.005:
-            sortino = min(sortino, 2.0)
-
-        # 4. Minimum Downside Gate
-        neg_trades = sum(1 for r in rets if r < 0)
-        if neg_trades < 2 and n < 50:
-            sortino = min(sortino, 2.0)
+        sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else None
 
     calmar = (total_return / max_dd) if max_dd > 0 else 0.0
 
@@ -624,8 +619,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     return {
         "total_trades":  n,
         "win_rate":      float(win_rate),
-        "profit_factor": float(profit_factor),
-        "sortino_ratio": float(sortino),
+        "profit_factor": float(profit_factor) if profit_factor is not None else None,
+        "sortino_ratio": float(sortino) if sortino is not None else None,
         "calmar_ratio":  float(calmar),
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
@@ -817,7 +812,14 @@ def select_winners(
     # Eligible filtern
     eligible = [
         r for r in all_results
-        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
+        if r.get("metrics") and _is_eligible(
+            r["metrics"],
+            tournament_cfg,
+            strat_params=r.get("strat_params", {}),
+            symbol=r.get("symbol", "Unknown"),
+            strategy=r.get("strategy", "Unknown"),
+            log_rejections=True
+        )
     ]
 
     # Issue #148: Data Start Alignment (Tournament Gating)
@@ -1018,9 +1020,13 @@ def print_tournament_table(
             winner_count += 1
             winning_symbols.add(sym)
         hold_h = m.get('avg_holding_time_s', 0.0) / 3600.0
+
+        sortino_str = f"{m['sortino_ratio']:>7.2f}" if m['sortino_ratio'] is not None else "    N/A"
+        pf_str = f"{m['profit_factor']:>7.2f}" if m['profit_factor'] is not None else "    N/A"
+
         print(
-            f"{sym:<20} | {strat:<30} | {m['sortino_ratio']:>7.2f} | "
-            f"{m['calmar_ratio']:>7.2f} | {m['profit_factor']:>7.2f} | "
+            f"{sym:<20} | {strat:<30} | {sortino_str} | "
+            f"{m['calmar_ratio']:>7.2f} | {pf_str} | "
             f"{m['total_trades']:>6} | {hold_h:>7.1f} | {'✓' if is_winner else ''}"
         )
     return winner_count, sorted(all_symbols - winning_symbols)
