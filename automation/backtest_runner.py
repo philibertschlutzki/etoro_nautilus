@@ -596,6 +596,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
         dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
+        dd_dev = max(dd_dev, 1e-6)
         mean_ret = sum(rets) / n
         sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else None
 
@@ -786,7 +787,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 def select_winners(
     all_results: list[dict],
     tournament_cfg: dict | None = None,
-) -> tuple[dict, dict | None]:
+) -> tuple[dict, dict | None, list[str]]:
     """Wählt Gewinner pro Symbol anhand der Tournament-Konfiguration.
 
     Task 5: Robuste Multi-Kriterien-Selektion mit:
@@ -800,12 +801,13 @@ def select_winners(
         tournament_cfg:  Konfig aus tournament.json. Wenn None, wird geladen.
 
     Returns:
-        (per_symbol_winners, aggregate_winner)
+        (per_symbol_winners, aggregate_winner, warnings)
     """
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
     scoring = tournament_cfg.get("scoring", {})
+    warnings_list = []
 
     # Eligible filtern
     eligible = [
@@ -819,6 +821,18 @@ def select_winners(
             log_rejections=True
         )
     ]
+
+    # Issue #148: Data Start Alignment (Tournament Gating)
+    if eligible:
+        start_dates = [r.get("_first_tick_ns") for r in eligible if r.get("_first_tick_ns") is not None]
+        if start_dates:
+            min_start = min(start_dates)
+            max_start = max(start_dates)
+            # Threshold: 1 day in nanoseconds
+            if max_start - min_start > 86400 * 1_000_000_000:
+                msg = "⚠️  WARNING: Tournament aggregiert Symbole mit unterschiedlichen Startdaten / Regime-Bias möglich!"
+                print(msg)
+                warnings_list.append(msg)
 
     # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)
     if eligible:
@@ -947,7 +961,7 @@ def select_winners(
             "oos_eligible": oos_eligible,
         }
 
-    return per_symbol_winners, aggregate_winner
+    return per_symbol_winners, aggregate_winner, warnings_list
 
 
 def write_tournament_json(
@@ -963,7 +977,7 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
-    per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, aggregate_winner, warnings_list = select_winners(all_results, tournament_cfg)
     eligible_count = sum(
         1 for r in all_results
         if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
@@ -976,6 +990,7 @@ def write_tournament_json(
         "tournament_criteria":         tournament_cfg,
         "normalization_method":        "rank_based",
         "normalization_population":    eligible_count,
+        "warnings":                    warnings_list,
         "per_symbol_winners":          per_symbol_winners,
         "aggregate_winner":            aggregate_winner,
         "full_results":                all_results,
@@ -1129,7 +1144,10 @@ def run_single_backtest_worker(
             wlog(f"   ⚠️ 0 Ticks im Zeitraum — überspringe.")
             return _empty_result(inst_id_str, strategy_class_name, strat)
 
-        wlog(f"   📥 {len(ticks)} Ticks geladen.")
+        first_tick_ts = ticks[0].ts_event
+        # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
+        first_tick_ns_val = first_tick_ts.value if hasattr(first_tick_ts, 'value') else int(first_tick_ts)
+        wlog(f"   📥 {len(ticks)} Ticks geladen. Erster Tick im Engine: {first_tick_ns_val} ({pd.Timestamp(first_tick_ns_val, unit='ns', tz='UTC').strftime('%Y-%m-%d %H:%M:%S')})")
 
         # --- Check Data Span for Walk-Forward Window ---
         required_days = strat.get("_walk_forward_days")
@@ -1138,7 +1156,7 @@ def run_single_backtest_worker(
             # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
             span_ns_val = span_ns.value if hasattr(span_ns, 'value') else int(span_ns)
             span_days = span_ns_val / (86400 * 1_000_000_000)
-            if span_days < (required_days * 0.95):
+            if span_ns_val < (required_days * 86400 * 1_000_000_000):
                 msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage). Überspringe Backtest."
                 wlog_err(msg)
                 res = _empty_result(inst_id_str, strategy_class_name, strat)
@@ -1318,7 +1336,8 @@ def run_single_backtest_worker(
             "strategy": strategy_class_name,
             "metrics": metrics,
             "oos_metrics": oos_metrics,
-            "strat_params": strat.get("params", {})
+            "strat_params": strat.get("params", {}),
+            "_first_tick_ns": first_tick_ns_val,
         }
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
@@ -1418,6 +1437,10 @@ def run_backtest() -> None:
         log_error("⚠️ Keine aktiven Strategien in Config gefunden.")
         return
 
+    # Assert consistency between defaults and active strategies
+    loaded_defaults = [k for k in strategy_defaults.keys() if not k.startswith("_")]
+    assert len(loaded_defaults) == len(strategies_list), f"Mismatch: {len(loaded_defaults)} defaults loaded but {len(strategies_list)} strategies executed."
+
     # Task 2: Strategy-Defaults auf die Strategie-Params anwenden (Overrides behalten Vorrang)
     strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults)
     if strategy_defaults:
@@ -1497,6 +1520,78 @@ def run_backtest() -> None:
         log_error(f"⚠️ Keine Instrumente in {expected_data_dir}/quote_tick vorhanden.")
         return
     print(f"📋 {len(instrument_ids)} Instrumente gefunden.")
+
+    # --- Issue #148: Data Start Alignment (Pre-flight Check) ---
+    print("\n🔍 Analysiere Startdaten der Instrumente (Kohorten-Analyse)...")
+    instrument_start_dates = {}
+    valid_instrument_ids = []
+    max_valid_start_ns = 0
+
+    required_days = 0
+    if walk_forward_cfg:
+        is_days  = walk_forward_cfg.get("is_window_days", 90)
+        oos_days = walk_forward_cfg.get("oos_window_days", 30)
+        splits   = walk_forward_cfg.get("splits", 2)
+        required_days = is_days + (splits * oos_days)
+
+    import pyarrow.parquet as pq
+    from pathlib import Path
+
+    cohorts: dict[str, list[str]] = {}
+
+    for iid in instrument_ids:
+        parquet_file = Path(catalog_path) / "data" / "quote_tick" / iid / "data.parquet"
+        if not parquet_file.exists():
+            continue
+        try:
+            pf = pq.ParquetFile(str(parquet_file))
+            if "ts_event" in pf.schema.names:
+                ts_index = pf.schema.names.index("ts_event")
+                # O(1) Zugriff auf die Metadaten-Statistiken der ersten Row Group
+                oldest_ts = int(pf.metadata.row_group(0).column(ts_index).statistics.min)
+                instrument_start_dates[iid] = oldest_ts
+                dt_str = pd.Timestamp(oldest_ts, unit="ns", tz="UTC").strftime("%Y-%m-%d")
+                cohorts.setdefault(dt_str, []).append(iid)
+            else:
+                continue
+        except Exception:
+            continue
+
+    print("   📊 Identifizierte Startdatum-Kohorten:")
+    for dt_str, syms in sorted(cohorts.items()):
+        print(f"      • {dt_str}: {len(syms)} Symbole")
+
+    if end_ns and required_days > 0:
+        required_ns = required_days * 86400 * 1_000_000_000
+        for iid in instrument_ids:
+            oldest_ts = instrument_start_dates.get(iid)
+            if oldest_ts is None:
+                continue
+
+            # Drop late-starting symbols if they don't fulfill the absolute minimum window
+            if (end_ns - oldest_ts) < required_ns:
+                print(f"   ⚠️ Drop (Spätstarter): {iid} hat unzureichend Daten (Start: {pd.Timestamp(oldest_ts, unit='ns', tz='UTC').strftime('%Y-%m-%d')})")
+            else:
+                valid_instrument_ids.append(iid)
+                if oldest_ts > max_valid_start_ns:
+                    max_valid_start_ns = oldest_ts
+    else:
+        valid_instrument_ids = instrument_ids
+        if instrument_start_dates:
+            max_valid_start_ns = max(instrument_start_dates.values())
+
+    instrument_ids = valid_instrument_ids
+    if not instrument_ids:
+        log_error("⚠️ Keine Instrumente mit ausreichend Daten nach Startdatum-Analyse übrig.")
+        return
+
+    # Align common start ns
+    common_start_ns = max_valid_start_ns
+    if start_ns is None or common_start_ns > start_ns:
+        start_ns = common_start_ns
+        print(f"   ✅ Einheitliches Backtest-Startdatum auf spätestes gültiges Datum gesetzt: {pd.Timestamp(start_ns, unit='ns', tz='UTC').strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        print(f"   ✅ Konfiguriertes Startdatum {pd.Timestamp(start_ns, unit='ns', tz='UTC').strftime('%Y-%m-%d %H:%M:%S')} deckt alle Instrumente ab.")
 
     # --- Metadaten-Normalisierung ---
     print("\n🔍 Prüfe Parquet-Schema-Konsistenz...")
@@ -1633,7 +1728,7 @@ def run_backtest() -> None:
 
     # --- Tournament (Task 5: robuste Multi-Kriterien-Selektion) ---
     if args.momentum and all_results:
-        per_symbol_winners, aggregate_winner = select_winners(all_results, tournament_cfg)
+        per_symbol_winners, aggregate_winner, _ = select_winners(all_results, tournament_cfg)
         winner_count, no_winner_symbols = print_tournament_table(
             all_results, per_symbol_winners, tournament_cfg
         )
