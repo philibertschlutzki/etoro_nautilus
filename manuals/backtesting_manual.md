@@ -126,6 +126,14 @@ positions_df = engine.trader.generate_positions_report()
 positions_df.to_csv("reports/positions_etoro.csv")
 ```
 
+### 4.4 Return-Definition (Total Return)
+
+Der "Total Return" (Gesamtrendite) im Tournament und in den Log-Ausgaben wird als **Compounded Equity-Normalized Return** berechnet.
+
+*   **Berechnung:** Für jeden abgeschlossenen Trade wird der erzielte Profit/Verlust (PnL in USD) durch das Startkapital (`start_capital`) dividiert. Dies ergibt die prozentuale Rendite des Trades bezogen auf die initiale Equity.
+*   **Compounding:** Diese einzelnen Trade-Renditen werden anschließend geometrisch multipliziert (aufgezinst), um den Gesamtwertzuwachs über den Backtest-Zeitraum zu ermitteln (`cum *= (1.0 + r)`).
+*   **Wichtig:** Dies bedeutet, dass die Sizing-Parameter (wie `trade_amount_pct` oder `trade_amount_usd`) so gewählt sein müssen, dass sie relativ zum Startkapital realistische Schwankungen erzeugen. Ist die Positionsgröße mikroskopisch klein im Vergleich zum Startkapital, konvergiert der Total Return gegen 0 %.
+
 ---
 
 ## 5. Warnung: Overfitting & Slippage

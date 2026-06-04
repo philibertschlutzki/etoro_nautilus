@@ -558,6 +558,16 @@ def create_mock_instrument(
 
 
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float) -> dict:
+    """
+    Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
+
+    Total Return Definition:
+    Der `total_return` wird hier als "Compounded Equity-Normalized Return" berechnet.
+    Jeder Trade-PnL (`v`) wird durch das anfängliche Testkapital (`starting_capital`)
+    geteilt, um die prozentuale Rendite des Trades bezogen auf die initiale Equity
+    zu erhalten (`v / starting_capital`). Diese prozentualen Renditen werden dann
+    geometrisch aufgezinst (compounded: `cum *= (1.0 + r)`).
+    """
     import math
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
