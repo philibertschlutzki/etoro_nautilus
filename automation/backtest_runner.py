@@ -1186,9 +1186,11 @@ def run_single_backtest_worker(
             engine.run()
         except RuntimeError as e:
             wlog_err(f"Backtest RuntimeError (wahrscheinlich Precision Mismatch): {e}")
+            engine.dispose()
             return {}
         except Exception as e:
             wlog_err(f"Backtest gecrasht: {e}", exc=True)
+            engine.dispose()
             return {}
 
         # --- Metriken extrahieren ---
