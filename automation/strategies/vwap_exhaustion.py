@@ -47,7 +47,7 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.current_vwap = 0.0
         self.current_day: int | None = None
         self.current_signal: str | None = None
-        self.bars_since_last_signal: int = 0
+        self.bars_since_last_signal: int = 9999
 
     def on_start(self):
         super().on_start()
@@ -85,7 +85,7 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
 
         deviation = (close_price - self.current_vwap) / self.current_vwap
 
-        if deviation <= -self.config.deviation_threshold and (self.current_signal != "BUY" and can_signal):
+        if deviation <= -self.config.deviation_threshold and self.bars_since_last_signal >= self.config.cooldown_bars and self.current_signal != "BUY":
             self._log.info(
                 f"[{self.instrument_id}] BUY SIGNAL (VWAP Deviation Bottom) | "
                 f"Close: {close_price:.2f} | VWAP: {self.current_vwap:.2f} | "
@@ -94,7 +94,7 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
             )
             self._on_buy_signal(bar)
 
-        elif deviation >= self.config.deviation_threshold and (self.current_signal != "SELL" and can_signal):
+        elif deviation >= self.config.deviation_threshold and self.bars_since_last_signal >= self.config.cooldown_bars and self.current_signal != "SELL":
             self._log.info(
                 f"[{self.instrument_id}] SELL SIGNAL (VWAP Deviation Top) | "
                 f"Close: {close_price:.2f} | VWAP: {self.current_vwap:.2f} | "
