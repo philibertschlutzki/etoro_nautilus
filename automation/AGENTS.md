@@ -545,3 +545,9 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 ---
 
 *Zuletzt aktualisiert: 2026-06-03. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+
+## Known Pitfalls & Architecture Notes
+* **Type Casting in API Payloads:** Document the strict necessity of casting variables (e.g., str() vs int()) when matching eToro IDs from the API against the local JSON configurations, as implicit typing will cause silent drop-outs during universe construction.
+* **Zero-Signal Metric Structures:** Note that extract_metrics must always return the explicit format {"metrics": None, "oos_metrics": None} (or similarly nested dicts) for empty signal generations, otherwise the daily orchestrator aggregation will fail.
+* **Precision Mismatch Handling:** Explicitly warn that instrument-only parameter fixes for precision bugs are insufficient. Any precision adjustments must perfectly align with the actual tick precision of the underlying data. Failure to address this root cause will result in RuntimeError crashes that silently abort the matrix backtest loops.
+* **Log Management:** Local backtest .log and .json files must be kept out of Git tracking to avoid repository bloat and blocked pushes. Always use `git checkout origin/main -- logs/` or explicitly unstage modified log files.

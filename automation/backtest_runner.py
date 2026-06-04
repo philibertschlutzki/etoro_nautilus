@@ -630,6 +630,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         except Exception:
             df_fills = pd.DataFrame()
 
+
+
         if df_fills.empty:
             try:
                 df_fills = engine.trader.generate_order_fills_report()
@@ -639,9 +641,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if df_fills.empty:
             if log_fn:
                 log_fn("[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.")
+            if oos_start_ns is not None:
+                return {"metrics": NULL, "oos_metrics": NULL}
             return NULL
-
-        # Fills nach Instrumenten gruppieren
         instrument_fills: dict[str, list] = {}
         for row in df_fills.itertuples():
             iid = str(getattr(row, 'instrument_id', ''))
@@ -711,9 +713,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             ts_entry = ts_entry.value
                         sell_queue.append((qty, price, int(ts_entry)))
 
+
+
         if not pnls_with_ts:
             if log_fn:
                 log_fn("[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.")
+            if oos_start_ns is not None:
+                return {"metrics": NULL, "oos_metrics": NULL}
             return NULL
 
         if log_fn:
@@ -1178,13 +1184,29 @@ def run_single_backtest_worker(
         # --- Backtest ausführen ---
         try:
             engine.run()
+        except RuntimeError as e:
+            wlog_err(f"Backtest RuntimeError (wahrscheinlich Precision Mismatch): {e}")
+            return {}
         except Exception as e:
             wlog_err(f"Backtest gecrasht: {e}", exc=True)
             return {}
 
         # --- Metriken extrahieren ---
         oos_start_ns = strat.get("_oos_start_ns", None)
-        extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, oos_start_ns=oos_start_ns)
+        try:
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, oos_start_ns=oos_start_ns)
+        except Exception as e:
+            wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
+            NULL = {
+                "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
+                "sortino_ratio": 0.0, "calmar_ratio": 0.0,
+                "max_drawdown": 0.0, "total_return": 0.0,
+                "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+            }
+            if oos_start_ns is not None:
+                extracted_data = {"metrics": NULL, "oos_metrics": NULL}
+            else:
+                extracted_data = NULL
 
         # If extraction failed, extract_metrics returns NULL dictionary instead of nested dict
         if "metrics" in extracted_data:

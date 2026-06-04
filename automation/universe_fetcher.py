@@ -169,6 +169,19 @@ async def run_fetch(
             "raw_name": raw_name
         })
 
+
+    # Task: Append missing symbols from instrument_map.json
+    for etoro_id, symbol in instrument_map.items():
+        if symbol is None:
+            continue
+        exists = any(str(u.get("etoro_id", "")) == etoro_id for u in universe)
+        if not exists:
+            universe.append({
+                "etoro_id": etoro_id,
+                "symbol": symbol,
+                "raw_name": symbol.split(".")[0]
+            })
+
     if unknown_instruments:
         logger.info(f"Found {len(unknown_instruments)} unknown instrument IDs. Attempting to resolve...")
         metadata = get_etoro_metadata()
