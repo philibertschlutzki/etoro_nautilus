@@ -296,10 +296,16 @@ async def run_historical_fetch(
 
     QUOTE_TICK_PATH.mkdir(parents=True, exist_ok=True)
 
+    if start_ns <= 0:
+        target_start = datetime.now(timezone.utc) - timedelta(days=30 * months)
+        real_start_ns = int(target_start.timestamp() * 1e9)
+    else:
+        real_start_ns = start_ns
+
     to_fetch = {
         eid: sym
         for eid, sym in etoro_id_to_symbol.items()
-        if force or not is_backtest_range_covered(sym, start_ns, CATALOG_PATH)
+        if force or not is_backtest_range_covered(sym, real_start_ns, CATALOG_PATH)
     }
 
     if not to_fetch:
@@ -339,7 +345,7 @@ async def run_historical_fetch(
                 ok = await _fetch_symbol(
                     session, etoro_id, symbol, months,
                     api_key, user_key, price_prec, size_prec,
-                    start_ns=start_ns,
+                    start_ns=real_start_ns,
                 )
                 if ok:
                     fetched.append(symbol)
