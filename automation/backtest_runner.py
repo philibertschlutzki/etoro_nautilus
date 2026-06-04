@@ -362,9 +362,11 @@ def load_tournament_config(project_root: str | None = None) -> dict:
 
 
 def compute_tournament_score(metrics: dict, scoring: dict) -> float:
+    sortino = metrics.get("sortino_ratio")
+    pf = metrics.get("profit_factor")
     return (
-        metrics.get("sortino_ratio", 0.0) * scoring.get("sortino_weight", 0.4)
-        + metrics.get("profit_factor", 0.0) * scoring.get("profit_factor_weight", 0.3)
+        (sortino if sortino is not None else 0.0) * scoring.get("sortino_weight", 0.4)
+        + (pf if pf is not None else 0.0) * scoring.get("profit_factor_weight", 0.3)
         + metrics.get("win_rate", 0.0)      * scoring.get("win_rate_weight", 0.2)
         - metrics.get("max_drawdown", 0.0)  * scoring.get("drawdown_penalty_weight", 0.1)
     )
@@ -392,8 +394,6 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         if n_trades <= 0:
             return False
 
-        sortino      = oos_metrics.get("sortino_ratio", 0.0)
-        pf           = oos_metrics.get("profit_factor", 0.0)
         max_dd       = oos_metrics.get("max_drawdown", 1.0)
         win_rate     = oos_metrics.get("win_rate", 0.0)
         total_return = oos_metrics.get("total_return", 0.0)
@@ -411,8 +411,6 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
         }
     else:
         n_trades     = metrics.get("total_trades", 0)
-        sortino      = metrics.get("sortino_ratio", 0.0)
-        pf           = metrics.get("profit_factor", 0.0)
         max_dd       = metrics.get("max_drawdown", 1.0)
         win_rate     = metrics.get("win_rate", 0.0)
         total_return = metrics.get("total_return", 0.0)
@@ -1006,9 +1004,13 @@ def print_tournament_table(
             winner_count += 1
             winning_symbols.add(sym)
         hold_h = m.get('avg_holding_time_s', 0.0) / 3600.0
+
+        sortino_str = f"{m['sortino_ratio']:>7.2f}" if m['sortino_ratio'] is not None else "    N/A"
+        pf_str = f"{m['profit_factor']:>7.2f}" if m['profit_factor'] is not None else "    N/A"
+
         print(
-            f"{sym:<20} | {strat:<30} | {m['sortino_ratio']:>7.2f} | "
-            f"{m['calmar_ratio']:>7.2f} | {m['profit_factor']:>7.2f} | "
+            f"{sym:<20} | {strat:<30} | {sortino_str} | "
+            f"{m['calmar_ratio']:>7.2f} | {pf_str} | "
             f"{m['total_trades']:>6} | {hold_h:>7.1f} | {'✓' if is_winner else ''}"
         )
     return winner_count, sorted(all_symbols - winning_symbols)
