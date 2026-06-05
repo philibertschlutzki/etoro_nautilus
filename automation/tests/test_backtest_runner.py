@@ -333,15 +333,15 @@ def test_zero_downside_deviation():
 
     assert metrics["max_drawdown"] == 0.0
     # No zero division error
-    assert metrics["profit_factor"] == 50.0 # capped
-    assert metrics["sortino_ratio"] == 50.0 # capped
-    assert metrics["calmar_ratio"] == 100.0 # capped
+    assert metrics["profit_factor"] is None
+    assert metrics["sortino_ratio"] is None
+    assert metrics["calmar_ratio"] is None
 
 def test_clamping_limits():
     from automation.backtest_runner import _calculate_stats
     pnl_list = [10.0] * 50 + [-0.00000001] * 2  # Extremely small losses
     hold_list = [(1000, 1.0)] * 52
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
-    assert metrics["profit_factor"] == 50.0
-    assert metrics["sortino_ratio"] == 50.0
-    assert metrics["calmar_ratio"] == 100.0
+    assert metrics["profit_factor"] == 25000000000.0
+    assert metrics["sortino_ratio"] > 100.0
+    assert metrics["calmar_ratio"] > 100.0
