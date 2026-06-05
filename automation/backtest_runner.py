@@ -1197,6 +1197,18 @@ def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
         "strat_params": strat.get("params", {})
     }
 
+def check_data_span(ticks: list, required_days: int, span_tolerance_days: float) -> tuple[bool, float, float]:
+    """
+    Überprüft die Datenspanne der Ticks.
+    Gibt (is_sufficient, span_days, required_days) zurück.
+    """
+    span_ns = ticks[-1].ts_event - ticks[0].ts_event
+    span_ns_val = span_ns.value if hasattr(span_ns, 'value') else int(span_ns)
+    span_days = span_ns_val / (86400 * 1_000_000_000)
+    min_required_ns = (required_days - span_tolerance_days) * 86400 * 1_000_000_000
+    return (span_ns_val >= min_required_ns, span_days, required_days)
+
+
 def run_single_backtest_worker(
     inst_id_str: str,
     bar_type: str,
@@ -1208,6 +1220,7 @@ def run_single_backtest_worker(
     generate_html_report: bool,
     reports_dir: str,
     worker_log_file: str,
+    span_tolerance_days: float = 1.0,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -1253,16 +1266,15 @@ def run_single_backtest_worker(
         # --- Check Data Span for Walk-Forward Window ---
         required_days = strat.get("_walk_forward_days")
         if required_days:
-            span_ns = ticks[-1].ts_event - ticks[0].ts_event
-            # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
-            span_ns_val = span_ns.value if hasattr(span_ns, 'value') else int(span_ns)
-            span_days = span_ns_val / (86400 * 1_000_000_000)
-            if span_ns_val < (required_days * 86400 * 1_000_000_000):
-                msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage). Überspringe Backtest."
+            is_sufficient, span_days, _ = check_data_span(ticks, required_days, span_tolerance_days)
+            if not is_sufficient:
+                msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage, Toleranz: {span_tolerance_days} Tage). Überspringe Backtest."
                 wlog_err(msg)
                 res = _empty_result(inst_id_str, strategy_class_name, strat)
                 res["error"] = "insufficient_data"
                 return res
+            elif span_days < required_days:
+                wlog(f"   ⚠️ Knappe Datenspanne, fahre fort: {span_days:.1f} Tage (benötigt: {required_days} Tage, innerhalb der Toleranz von {span_tolerance_days} Tagen).")
 
         # --- Engine-Setup ---
         try:
@@ -1509,7 +1521,8 @@ def run_backtest() -> None:
             print(f"  ⚠️  backtest.json Ladefehler: {_e}")
     spread_modeling = backtest_global_cfg.get("spread_modeling", True)
     fill_model_str  = backtest_global_cfg.get("fill_model", "bid_ask")
-    print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str})")
+    span_tolerance_days = backtest_global_cfg.get("span_tolerance_days", 1.0)
+    print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
     else:
@@ -1787,6 +1800,7 @@ def run_backtest() -> None:
                         inst_id_str, bar_type, strat,
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
+                        span_tolerance_days
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -1909,6 +1923,7 @@ def _run_remaining_sequentially(
         res = run_single_backtest_worker(
             rem_inst, bar_type, rem_strat, catalog_path,
             start_ns, end_ns, start_capital, generate_html, reports_dir, rem_log,
+            span_tolerance_days
         )
         _flush_worker_log(rem_log)
         done_count += 1
