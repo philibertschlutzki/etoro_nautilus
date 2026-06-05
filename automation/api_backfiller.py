@@ -188,26 +188,24 @@ async def fetch_precisions_from_api(
                                 raise RuntimeError(error_msg)
                             continue # Überspringe dieses Instrument bei Mismatch
 
-                    has_api_prec = (price_prec is not None and size_prec is not None)
-                    if has_api_prec:
-                        api_hits += 1
-
                     fb_price, fb_size = _fallback_precisions(sym_raw)
 
-                    # Verwerfe Instrument, wenn API keine Precision liefert und es sich nicht um einen historisch bekannten Wert (Crypto/Fractional) handelt
-                    # oder wenn der Wert beschädigt war (None) und wir blind =2 setzen würden.
+                    # Issue #171: Fehlende API-Precision wird für das vorvalidierte,
+                    # vertrauenswürdige Universe (momentum_ls.json) über die Symbol-Heuristik
+                    # aufgefüllt — KEIN Hard-Reject mehr. Der frühere (2,2)-Drop (ERROR +
+                    # continue) warf gültige Standard-Equities (TSLA, GOOG, NVDA) aus dem
+                    # Backfill und flutete die Phase-2-Logs des Orchestrators.
                     if price_prec is None or size_prec is None:
-                        if fb_size == 2 and fb_price == 2:
-                            # Blindes (2, 2) Fallback für unbekannte Instrumente vermeiden
-                            log.error(f"[api_backfiller] Fehlende/Ungültige Precision für ID {eid} ({sym_raw}) aus API. Überspringe Instrument, um blindes (2,2) Fallback zu verhindern.")
-                            continue
-
                         if price_prec is None:
                             price_prec = fb_price
                             log.debug(f"[api_backfiller] ID {eid}: price_precision via historischem Fallback={price_prec}")
                         if size_prec is None:
                             size_prec = fb_size
                             log.debug(f"[api_backfiller] ID {eid}: size_precision via historischem Fallback={size_prec}")
+
+                    # Wenn wir hier ankommen, haben wir entweder die API-Werte oder
+                    # erfolgreiche Fallbacks für das Trusted Universe. Es gilt als "Hit".
+                    api_hits += 1
 
                     result[eid] = (price_prec, size_prec)
                     log.debug(

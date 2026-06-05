@@ -1375,12 +1375,19 @@ def run_single_backtest_worker(
             metrics = extracted_data
             oos_metrics = {}
 
+        # Handle None cases for profit_factor and sortino_ratio explicitly,
+        # fallback to 0.0 if None
+        pf_val = metrics.get('profit_factor')
+        pf_val = pf_val if pf_val is not None else 0.0
+        sortino_val = metrics.get('sortino_ratio')
+        sortino_val = sortino_val if sortino_val is not None else 0.0
+
         wlog(
             f"   📊 [IS]  Trades={metrics.get('total_trades', 0):>4} | "
-            f"WinRate={(metrics.get('win_rate') or 0.0):>6.1%} | "
-            f"PF={(metrics.get('profit_factor') or 0.0):>6.2f} | "
-            f"Sortino={(metrics.get('sortino_ratio') or 0.0):>6.2f} | "
-            f"Return={(metrics.get('total_return') or 0.0):>6.2f}%"
+            f"WinRate={metrics.get('win_rate', 0.0):>6.1%} | "
+            f"PF={pf_val:>6.2f} | "
+            f"Sortino={sortino_val:>6.2f} | "
+            f"Return={metrics.get('total_return', 0.0):>6.2f}%"
         )
         if oos_start_ns is not None:
             oos_span_days = strat.get("_oos_span_days", 0)
