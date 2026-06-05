@@ -38,7 +38,7 @@ def test_oos_aggregation():
                 "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5
             },
             "oos_metrics": {
-                "total_trades": 5, "sortino_ratio": 1.0, "profit_factor": 1.0,
+                "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0,
                 "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1
             }
         },
@@ -60,7 +60,7 @@ def test_oos_aggregation():
                 "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5
             },
             "oos_metrics": {
-                "total_trades": 5, "sortino_ratio": 1.0, "profit_factor": 1.0,
+                "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0,
                 "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2
             }
         },
