@@ -288,12 +288,14 @@ Installation: `pip install -r automation/requirements.txt` (nautilus_trader≥1.
 
 Ausführung:
 ```bash
-python3 automation/daily_orchestrator.py --skip-api-fetch       # täglich (ZIPs vorhanden)
-python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
-python3 automation/api_backfiller.py --days 7
-python3 automation/historical_fetcher.py --months 12
-python3 automation/catalog_service.py                            # systemd
+python3 -m automation.daily_orchestrator --skip-api-fetch       # täglich (ZIPs vorhanden)
+python3 -m automation.daily_orchestrator --dry-run --skip-api-fetch
+python3 -m automation.api_backfiller --days 7
+python3 -m automation.historical_fetcher --months 12
+python3 -m automation.catalog_service                           # systemd
 ```
+
+Hinweis: Wenn systemd-Unit-Files im Repo existieren, müssen die ExecStart-Anweisungen dort ebenfalls auf `python3 -m automation.catalog_service` aktualisiert werden.
 
 ---
 
@@ -602,3 +604,5 @@ Aktuell nutzt der `daily_orchestrator.py` kein echtes, rollierendes Walk-Forward
 * **Precision Mismatch Handling:** Explicitly warn that instrument-only parameter fixes for precision bugs are insufficient. Any precision adjustments must perfectly align with the actual tick precision of the underlying data. Failure to address this root cause will result in RuntimeError crashes that silently abort the matrix backtest loops.
 * **Log Management:** Local backtest .log and .json files must be kept out of Git tracking to avoid repository bloat and blocked pushes. Always use `git checkout origin/main -- logs/` or explicitly unstage modified log files.
 * **Pitfall #37 (Orphaned Limit Orders via Custom Exits):** Das Überschreiben von Exits in Child-Klassen ohne Beachtung von `orders_open` und dem Async-State der Base-Class führt zu Order-Spamming, Orphaned Limit-Orders und extrem asymmetrischen FIFO-Legs. Strategien müssen auf `self.cache.orders_open` nach Base Exits prüfen und sollten `self._close_position` oder `super()._close_position_base()` richtig delegieren, um Base-Code zu erhalten. (Referenz: Issue #149).
+
+| 2026-06-04 | **Issue #172 (OOS-Gate Propagation & Transparenz):** `aggregate_winner` trägt nun deterministisch `oos_evaluated`/`oos_eligible`/`oos_metrics`/`oos_rejection_reasons`. Phase 5 dreistufig (eligible/failed/not-evaluable) mit präziser Begründung statt „Status unbekannt". `oos_start_ns`-Ableitung vereindeutigt + OOS-Span-Logging. Fail-Closed unverändert, keine Schwellen-Absenkung. Tests für alle drei OOS-Zustände ergänzt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/tests/test_backtest_runner.py`, `automation/tests/test_oos_gate.py`, `automation/AGENTS.md` |
