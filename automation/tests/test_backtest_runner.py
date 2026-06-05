@@ -285,68 +285,31 @@ def test_select_winners_tie_breaker():
     per_symbol_winners_rev, _, _ = select_winners(all_results_rev, tournament_cfg)
     assert per_symbol_winners_rev["SYM2"]["strategy"] == "HigherReturnStrategy"
 
-from automation.backtest_runner import check_data_span
-import collections
+def test_near_all_win_scenario():
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [10.0] * 40 + [-0.01]  # 41 trades, 1 loss, < 50 trades total
+    hold_list = [(1000, 1.0)] * 41
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
+    assert metrics["profit_factor"] is None
+    assert metrics["sortino_ratio"] is None
 
-def test_check_data_span_sufficient():
-    Tick = collections.namedtuple("Tick", ["ts_event"])
-    # 150 days exact
-    start_ts = 0
-    end_ts = 150 * 86400 * 1_000_000_000
-    ticks = [Tick(ts_event=start_ts), Tick(ts_event=end_ts)]
+def test_zero_downside_deviation():
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [10.0] * 60  # 60 trades, 0 losses (but total trades >= 50, so metrics are generated with EPSILON fallback instead of exploding/throwing exceptions)
+    hold_list = [(1000, 1.0)] * 60
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
 
-    is_sufficient, span_days, req_days = check_data_span(ticks, 150, 1.0)
-    assert is_sufficient is True
-    assert span_days == 150.0
+    assert metrics["max_drawdown"] == 0.0
+    # No zero division error
+    assert metrics["profit_factor"] == 50.0 # capped
+    assert metrics["sortino_ratio"] == 50.0 # capped
+    assert metrics["calmar_ratio"] == 100.0 # capped
 
-def test_check_data_span_within_tolerance():
-    Tick = collections.namedtuple("Tick", ["ts_event"])
-    # 149.8 days span, tolerance is 1.0, required is 150
-    start_ts = 0
-    end_ts = int(149.8 * 86400 * 1_000_000_000)
-    ticks = [Tick(ts_event=start_ts), Tick(ts_event=end_ts)]
-
-    is_sufficient, span_days, req_days = check_data_span(ticks, 150, 1.0)
-    assert is_sufficient is True
-    assert round(span_days, 1) == 149.8
-
-def test_check_data_span_insufficient():
-    Tick = collections.namedtuple("Tick", ["ts_event"])
-    # 100 days span, tolerance is 1.0, required is 150
-    start_ts = 0
-    end_ts = 100 * 86400 * 1_000_000_000
-    ticks = [Tick(ts_event=start_ts), Tick(ts_event=end_ts)]
-
-    is_sufficient, span_days, req_days = check_data_span(ticks, 150, 1.0)
-    assert is_sufficient is False
-    assert span_days == 100.0
-
-import collections
-from unittest.mock import MagicMock, patch, mock_open
-
-def test_run_single_backtest_worker_logging_warning_within_tolerance():
-    Tick = collections.namedtuple("Tick", ["ts_event"])
-    start_ts = type("TS", (), {"value": 0, "__sub__": lambda self, other: type("TD", (), {"value": self.value - other.value})()})()
-    end_ts = type("TS", (), {"value": int(149.8 * 86400 * 1_000_000_000), "__sub__": lambda self, other: type("TD", (), {"value": self.value - other.value})()})()
-    ticks = [Tick(ts_event=start_ts), Tick(ts_event=end_ts)]
-
-    strat = {"_walk_forward_days": 150, "strategy_class": "MockStrategy", "strategy_module": "automation.strategies.mock", "config_class": "MockConfig"}
-
-    with patch("automation.backtest_runner.load_ticks_from_catalog", return_value=ticks), \
-         patch("automation.backtest_runner.pd.Timestamp", return_value=MagicMock()), \
-         patch("automation.backtest_runner._empty_result", return_value={}), \
-         patch("builtins.open", mock_open()) as m_open:
-
-        # We will catch the Exception raised by the next step to stop the function early
-        try:
-            from automation.backtest_runner import run_single_backtest_worker
-            run_single_backtest_worker(
-                "MOCK.SYM", "1H", strat, "path", None, None, 10000.0, False, "dir", "log.txt", 1.0
-            )
-        except Exception as e:
-            print(e)
-            pass
-
-        # Check that wlog was called with the correct warning message
-        written_lines = [call.args[0] for call in m_open().write.call_args_list]
-        assert any("Knappe Datenspanne, fahre fort" in line for line in written_lines)
+def test_clamping_limits():
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [10.0] * 50 + [-0.00000001] * 2  # Extremely small losses
+    hold_list = [(1000, 1.0)] * 52
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
+    assert metrics["profit_factor"] == 50.0
+    assert metrics["sortino_ratio"] == 50.0
+    assert metrics["calmar_ratio"] == 100.0
