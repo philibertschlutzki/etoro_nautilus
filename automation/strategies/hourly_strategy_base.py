@@ -295,16 +295,21 @@ class HourlyStrategyBase(Strategy):
         if price <= 0:
             return None
 
+        trade_amount_usd_cfg = getattr(self.config, "trade_amount_usd", None)
+        trade_amount_pct     = getattr(self.config, "trade_amount_pct", None)
+
         if self.allocator is not None:
-            balance = self._get_current_balance()
-            trade_amount_usd = self.allocator.get_allocation(self.instrument_id, self.cache, balance)
+            # A: Live-Allocator hat höchste Prio
+            trade_amount_usd = self.allocator.get_allocation(self.instrument_id, self.cache, self._get_current_balance())
+        elif trade_amount_usd_cfg is not None and trade_amount_usd_cfg > 0:
+            # B: Explizit gesetzter USD-Betrag (z.B. vom Runner injiziert)
+            trade_amount_usd = trade_amount_usd_cfg
+        elif trade_amount_pct is not None and trade_amount_pct > 0:
+            # C: Prozentuales Sizing
+            trade_amount_usd = self._get_current_balance() * (trade_amount_pct / 100.0)
         else:
-            trade_amount_pct = getattr(self.config, "trade_amount_pct", None)
-            if trade_amount_pct is not None and trade_amount_pct > 0:
-                balance = self._get_current_balance()
-                trade_amount_usd = balance * (trade_amount_pct / 100.0)
-            else:
-                trade_amount_usd = getattr(self.config, "trade_amount_usd", 100.0)
+            # D: Default Fallback
+            trade_amount_usd = 100.0
 
         if trade_amount_usd <= 0:
             return None
