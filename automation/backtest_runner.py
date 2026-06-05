@@ -434,14 +434,18 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         "oos_rejection_reasons": reasons
     }
 
-def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
-    """Prüft ob eine Strategie für das Tournament eligibel ist.
+def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
+    """Prüft ob eine Strategie für das Tournament eligibel ist (In-Sample).
 
     eligible_requires_all: ALLE Bedingungen müssen erfüllt sein.
     eligible_requires_any: MINDESTENS EINE Bedingung muss erfüllt sein.
     """
-    sortino = metrics.get("sortino_ratio") if not check_oos else metrics.get("oos_metrics", {}).get("sortino_ratio")
-    pf = metrics.get("profit_factor") if not check_oos else metrics.get("oos_metrics", {}).get("profit_factor")
+    metrics = result.get("metrics", {})
+    if not metrics:
+        return False
+
+    sortino = metrics.get("sortino_ratio")
+    pf = metrics.get("profit_factor")
 
     if sortino is None or pf is None:
         if log_rejections:
@@ -449,47 +453,22 @@ def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, s
             metrics["rejection_reason"] = "insufficient/all-win"
         return False
 
-    if check_oos:
-        oos_metrics = metrics.get("oos_metrics")
-        if not oos_metrics:
-            return False
+    n_trades     = metrics.get("total_trades", 0)
+    max_dd       = metrics.get("max_drawdown", 1.0)
+    win_rate     = metrics.get("win_rate", 0.0)
+    total_return = metrics.get("total_return", 0.0)
+    expectancy   = total_return / n_trades if n_trades > 0 else 0.0
 
-        n_trades     = oos_metrics.get("total_trades", 0)
-        if n_trades <= 0:
-            return False
-
-        max_dd       = oos_metrics.get("max_drawdown", 1.0)
-        win_rate     = oos_metrics.get("win_rate", 0.0)
-        total_return = oos_metrics.get("total_return", 0.0)
-        expectancy   = total_return / n_trades
-
-        t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
-        condition_map = {
-            "min_trades":        n_trades     >= t_overrides.get("oos_min_trades", t_overrides.get("min_trades", tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0)))),
-            "min_sortino":       sortino      >= t_overrides.get("oos_min_sortino", t_overrides.get("min_sortino", tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0)))),
-            "min_profit_factor": pf           >= t_overrides.get("oos_min_profit_factor", t_overrides.get("min_profit_factor", tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)))),
-            "max_drawdown":      max_dd       <= t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0)))),
-            "min_win_rate":      win_rate     >= t_overrides.get("oos_min_win_rate", t_overrides.get("min_win_rate", tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0)))),
-            "min_total_return":  total_return >= t_overrides.get("oos_min_total_return", t_overrides.get("min_total_return", tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0)))),
-            "min_expectancy":    expectancy   >= t_overrides.get("oos_min_expectancy", t_overrides.get("min_expectancy", tournament_cfg.get("oos_min_expectancy", tournament_cfg.get("min_expectancy", 0.0)))),
-        }
-    else:
-        n_trades     = metrics.get("total_trades", 0)
-        max_dd       = metrics.get("max_drawdown", 1.0)
-        win_rate     = metrics.get("win_rate", 0.0)
-        total_return = metrics.get("total_return", 0.0)
-        expectancy   = total_return / n_trades if n_trades > 0 else 0.0
-
-        t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
-        condition_map = {
-            "min_trades":        n_trades     >= t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0)),
-            "min_sortino":       sortino      >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0)),
-            "min_profit_factor": pf           >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
-            "max_drawdown":      max_dd       <= t_overrides.get("max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
-            "min_win_rate":      win_rate     >= t_overrides.get("min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
-            "min_total_return":  total_return >= t_overrides.get("min_total_return", tournament_cfg.get("min_total_return", 0.0)),
-            "min_expectancy":    expectancy   >= t_overrides.get("min_expectancy", tournament_cfg.get("min_expectancy", 0.0)),
-        }
+    t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
+    condition_map = {
+        "min_trades":        n_trades     >= t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0)),
+        "min_sortino":       sortino      >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0)),
+        "min_profit_factor": pf           >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
+        "max_drawdown":      max_dd       <= t_overrides.get("max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
+        "min_win_rate":      win_rate     >= t_overrides.get("min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
+        "min_total_return":  total_return >= t_overrides.get("min_total_return", tournament_cfg.get("min_total_return", 0.0)),
+        "min_expectancy":    expectancy   >= t_overrides.get("min_expectancy", tournament_cfg.get("min_expectancy", 0.0)),
+    }
 
     # Harte Filter: ALLE müssen erfüllt sein
     for cond_name in tournament_cfg.get("eligible_requires_all", []):
@@ -894,13 +873,20 @@ def select_winners(
     # Eligible filtern
     eligible = [
         r for r in all_results
-        if r.get("metrics") and _is_eligible(
-            r["metrics"],
+        if _is_eligible(
+            r,
             tournament_cfg,
             strat_params=r.get("strat_params", {}),
             symbol=r.get("symbol", "Unknown"),
             strategy=r.get("strategy", "Unknown"),
             log_rejections=True
+        ) and (
+            _evaluate_oos_eligibility(
+                r.get("oos_metrics"),
+                tournament_cfg,
+                r.get("strat_params", {})
+            ).get("oos_eligible", False)
+            if r.get("oos_metrics") else True
         )
     ]
 

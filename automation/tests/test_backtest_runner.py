@@ -188,6 +188,14 @@ def test_select_winners_order_independence():
             "win_rate": 0.4,
             "max_drawdown": 0.2,
             "total_return": 0.1
+        },
+        "oos_metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 1.0,
+            "profit_factor": 1.1,
+            "win_rate": 0.4,
+            "max_drawdown": 0.2,
+            "total_return": 0.1
         }
     }
 
@@ -196,6 +204,14 @@ def test_select_winners_order_independence():
         "symbol": "SYM1",
         "strategy": "BetterStrategy",
         "metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 3.0,
+            "profit_factor": 2.5,
+            "win_rate": 0.7,
+            "max_drawdown": 0.05,
+            "total_return": 0.3
+        },
+        "oos_metrics": {
             "total_trades": 25,
             "sortino_ratio": 3.0,
             "profit_factor": 2.5,
@@ -259,6 +275,14 @@ def test_select_winners_tie_breaker():
             "win_rate": 0.5,
             "max_drawdown": 0.1,
             "total_return": 0.2
+        },
+        "oos_metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 2.0,
+            "profit_factor": 2.0,
+            "win_rate": 0.5,
+            "max_drawdown": 0.1,
+            "total_return": 0.2
         }
     }
 
@@ -266,6 +290,14 @@ def test_select_winners_tie_breaker():
         "symbol": "SYM2",
         "strategy": "HigherReturnStrategy",
         "metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 2.0,
+            "profit_factor": 2.0,
+            "win_rate": 0.5,
+            "max_drawdown": 0.1,
+            "total_return": 0.5 # Better tie breaker
+        },
+        "oos_metrics": {
             "total_trades": 25,
             "sortino_ratio": 2.0,
             "profit_factor": 2.0,
