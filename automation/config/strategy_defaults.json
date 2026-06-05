@@ -7,9 +7,9 @@
     "trade_amount_pct": 15.0
   },
   "MeanReversionStrategy": {
-    "keltner_period": 10,
-    "keltner_atr_period": 10,
-    "keltner_multiplier": 1.5,
+    "keltner_period": 20,
+    "keltner_atr_period": 20,
+    "keltner_multiplier": 2.0,
     "trade_amount_pct": 15.0
   },
   "DynamicBreakoutStrategy": {
