@@ -284,3 +284,32 @@ def test_select_winners_tie_breaker():
     all_results_rev = [strat_higher_return, strat_lower_return]
     per_symbol_winners_rev, _, _ = select_winners(all_results_rev, tournament_cfg)
     assert per_symbol_winners_rev["SYM2"]["strategy"] == "HigherReturnStrategy"
+
+def test_near_all_win_scenario():
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [10.0] * 40 + [-0.01]  # 41 trades, 1 loss, < 50 trades total
+    hold_list = [(1000, 1.0)] * 41
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
+    assert metrics["profit_factor"] is None
+    assert metrics["sortino_ratio"] is None
+
+def test_zero_downside_deviation():
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [10.0] * 60  # 60 trades, 0 losses (but total trades >= 50, so metrics are generated with EPSILON fallback instead of exploding/throwing exceptions)
+    hold_list = [(1000, 1.0)] * 60
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
+
+    assert metrics["max_drawdown"] == 0.0
+    # No zero division error
+    assert metrics["profit_factor"] == 50.0 # capped
+    assert metrics["sortino_ratio"] == 50.0 # capped
+    assert metrics["calmar_ratio"] == 100.0 # capped
+
+def test_clamping_limits():
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [10.0] * 50 + [-0.00000001] * 2  # Extremely small losses
+    hold_list = [(1000, 1.0)] * 52
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
+    assert metrics["profit_factor"] == 50.0
+    assert metrics["sortino_ratio"] == 50.0
+    assert metrics["calmar_ratio"] == 100.0

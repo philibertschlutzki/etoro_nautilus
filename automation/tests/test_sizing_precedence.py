@@ -33,6 +33,8 @@ def test_sizing_precedence_usd_over_pct(mocker):
     mock_cache = MagicMock()
     mock_instrument = MagicMock()
     mock_instrument.make_qty.return_value = MagicMock()
+    mock_instrument.size_increment = 1.0
+    mock_instrument.size_precision = 0
     mock_instrument.make_qty.return_value.__float__ = lambda x: 5.0
     mock_cache.instrument.return_value = mock_instrument
     mocker.patch.object(DummyStrategy, "cache", new_callable=mocker.PropertyMock, return_value=mock_cache)
@@ -51,7 +53,7 @@ def test_sizing_precedence_usd_over_pct(mocker):
     assert mock_get_balance.call_count == 0, "_get_current_balance sollte bei explizitem trade_amount_usd nicht aufgerufen werden."
 
     # Verify make_qty was called correctly (500.0 USD / 100.0 Price = 5.0 Units)
-    mock_instrument.make_qty.assert_called_once_with(5.0, round_down=True)
+    mock_instrument.make_qty.assert_called_once_with(5.0)
 
 def test_sizing_precedence_allocator(mocker):
     """
@@ -75,6 +77,8 @@ def test_sizing_precedence_allocator(mocker):
     mock_cache = MagicMock()
     mock_instrument = MagicMock()
     mock_instrument.make_qty.return_value = MagicMock()
+    mock_instrument.size_increment = 1.0
+    mock_instrument.size_precision = 0
     mock_instrument.make_qty.return_value.__float__ = lambda x: 2.0
     mock_cache.instrument.return_value = mock_instrument
     mocker.patch.object(DummyStrategy, "cache", new_callable=mocker.PropertyMock, return_value=mock_cache)
@@ -87,7 +91,7 @@ def test_sizing_precedence_allocator(mocker):
     strategy._compute_quantity(mock_bar)
 
     assert mock_get_balance.call_count == 1
-    mock_instrument.make_qty.assert_called_once_with(2.0, round_down=True)
+    mock_instrument.make_qty.assert_called_once_with(2.0)
 
 def test_sizing_precedence_pct(mocker):
     """
@@ -109,6 +113,8 @@ def test_sizing_precedence_pct(mocker):
     mock_cache = MagicMock()
     mock_instrument = MagicMock()
     mock_instrument.make_qty.return_value = MagicMock()
+    mock_instrument.size_increment = 1.0
+    mock_instrument.size_precision = 0
     mock_instrument.make_qty.return_value.__float__ = lambda x: 10.0
     mock_cache.instrument.return_value = mock_instrument
     mocker.patch.object(DummyStrategy, "cache", new_callable=mocker.PropertyMock, return_value=mock_cache)
@@ -122,4 +128,4 @@ def test_sizing_precedence_pct(mocker):
 
     assert mock_get_balance.call_count == 1
     # 10000 * 0.1 = 1000 / 100 = 10
-    mock_instrument.make_qty.assert_called_once_with(10.0, round_down=True)
+    mock_instrument.make_qty.assert_called_once_with(10.0)

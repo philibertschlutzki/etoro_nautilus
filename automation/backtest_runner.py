@@ -645,11 +645,17 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     wins = sum(1 for v in pnl_list if v > 0)
     gross_profit = sum(v for v in pnl_list if v > 0)
     gross_loss = abs(sum(v for v in pnl_list if v < 0))
+    losses_count = sum(1 for v in pnl_list if v < 0)
 
-    profit_factor = (
-        (gross_profit / gross_loss) if gross_loss > 0
-        else (None if gross_profit > 0 else 0.0)
-    )
+    EPSILON = 1e-9
+    MAX_CAP = 50.0
+    CALMAR_CAP = 100.0
+
+    if losses_count < 2 and n < 50:
+        profit_factor = None
+    else:
+        profit_factor = gross_profit / (gross_loss + EPSILON)
+        profit_factor = min(profit_factor, MAX_CAP)
 
     win_rate = wins / n if n > 0 else 0.0
 
@@ -664,16 +670,18 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     total_return = cum - 1.0
 
-    if n < 5:
+    if n < 5 or (losses_count < 2 and n < 50):
         sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
         dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
-        dd_dev = max(dd_dev, 1e-6)
+        dd_dev = max(dd_dev, 1e-6) + EPSILON
         mean_ret = sum(rets) / n
-        sortino = (mean_ret / dd_dev * math.sqrt(252)) if dd_dev > 0 else None
+        sortino = (mean_ret / dd_dev * math.sqrt(252))
+        sortino = min(sortino, MAX_CAP)
 
-    calmar = (total_return / max_dd) if max_dd > 0 else 0.0
+    calmar = (total_return / (max_dd + EPSILON))
+    calmar = min(calmar, CALMAR_CAP)
 
     import statistics
     if hold_list:

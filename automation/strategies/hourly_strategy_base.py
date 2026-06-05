@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 
 from nautilus_trader.config import StrategyConfig
+import math
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
@@ -316,10 +317,18 @@ class HourlyStrategyBase(Strategy):
         if trade_amount_usd <= 0:
             return None
 
+        if trade_amount_pct is not None and trade_amount_pct > 0 and self.allocator is None and (trade_amount_usd_cfg is None or trade_amount_usd_cfg <= 0):
+             self._log.info(f"[{self.instrument_id}] Calculated sizing: {trade_amount_usd:.2f} USD ({trade_amount_pct}%) from equity {balance:.2f} USD")
+
         units = trade_amount_usd / price
 
         try:
-            qty = instrument.make_qty(units, round_down=True)
+            inc = float(instrument.size_increment)
+            prec = instrument.size_precision
+            # Strictly align with instrument's tick precision and size_increment
+            quantized_units = round(math.floor(units / inc) * inc, prec)
+
+            qty = instrument.make_qty(quantized_units)
             if qty is None or float(qty) == 0:
                  return None
             return qty
