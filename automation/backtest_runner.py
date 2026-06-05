@@ -1401,18 +1401,21 @@ def run_single_backtest_worker(
             metrics = extracted_data
             oos_metrics = {}
 
-        # Handle None cases for profit_factor and sortino_ratio explicitly,
-        # fallback to 0.0 if None
-        pf_val = metrics.get('profit_factor')
-        pf_val = pf_val if pf_val is not None else 0.0
-        sortino_val = metrics.get('sortino_ratio')
-        sortino_val = sortino_val if sortino_val is not None else 0.0
+        def format_metric(m_dict, key, min_trades_req):
+            val = m_dict.get(key)
+            if val is not None:
+                return f"{val:>6.2f}"
+            if m_dict.get('total_trades', 0) < min_trades_req:
+                return f"{'n/a(<min)':>6}"
+            if m_dict.get('losses_count', 0) == 0 or m_dict.get('max_drawdown', 0.0) == 0.0:
+                return f"{'n/a(win)':>6}"
+            return f"{'n/a':>6}"
 
         wlog(
             f"   📊 [IS]  Trades={metrics.get('total_trades', 0):>4} | "
             f"WinRate={metrics.get('win_rate', 0.0):>6.1%} | "
-            f"PF={pf_val:>6.2f} | "
-            f"Sortino={sortino_val:>6.2f} | "
+            f"PF={format_metric(metrics, 'profit_factor', 2)} | "
+            f"Sortino={format_metric(metrics, 'sortino_ratio', 5)} | "
             f"Return={metrics.get('total_return', 0.0):>6.2f}%"
         )
         if oos_start_ns is not None:
@@ -1422,8 +1425,8 @@ def run_single_backtest_worker(
             wlog(
                 f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0):>4} | "
                 f"WinRate={(oos_metrics.get('win_rate') or 0.0):>6.1%} | "
-                f"PF={(oos_metrics.get('profit_factor') or 0.0):>6.2f} | "
-                f"Sortino={(oos_metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+                f"PF={format_metric(oos_metrics, 'profit_factor', 2)} | "
+                f"Sortino={format_metric(oos_metrics, 'sortino_ratio', 5)} | "
                 f"Return={(oos_metrics.get('total_return') or 0.0):>6.2f}%"
             )
 
