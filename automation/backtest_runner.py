@@ -1000,7 +1000,7 @@ def select_winners(
         # Tie-breaker: 1. Max Wins, 2. Max Median Sortino
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
-        best     = max(top, key=lambda s: get_median(sortinos_by_strat[s]))
+        best     = max(top, key=lambda s: get_median([x for x in sortinos_by_strat[s] if x is not None]))
         # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
         best_results = [r.get("oos_metrics", {}) for r in per_symbol.values()
                         if r["strategy"] == best and r.get("oos_metrics") and r.get("oos_metrics").get("total_trades", 0) > 0]
@@ -1051,7 +1051,7 @@ def select_winners(
             "strategy":    best,
             "win_count":   win_counts[best],
             "median_sortino": round(
-                get_median(sortinos_by_strat[best]), 4
+                get_median([x for x in sortinos_by_strat[best] if x is not None]), 4
             ),
             **agg_oos_eval
         }
@@ -1106,6 +1106,15 @@ def print_tournament_table(
     winner_count = 0
     all_symbols: set[str] = set()
     winning_symbols: set[str] = set()
+
+    def format_metric(val, m, min_trades):
+        if val is not None:
+            return f"{val:>7.2f}"
+        if m.get('total_trades', 0) < min_trades:
+            return "n/a(<min)"
+        if m.get('losses_count', 0) == 0 or m.get('max_drawdown', 0.0) == 0.0:
+            return "n/a(win)"
+        return "    n/a"
 
     for r in sorted(all_results, key=lambda x: (x["symbol"], x["strategy"])):
         sym, strat, m = r["symbol"], r["strategy"], r["metrics"]
