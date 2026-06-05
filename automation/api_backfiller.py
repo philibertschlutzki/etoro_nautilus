@@ -220,10 +220,26 @@ async def fetch_precisions_from_api(
 
         await asyncio.sleep(0.5)  # Rate-Limit respektieren
 
+    fallback_count = len(result) - api_hits
+    equity_fallback_count = len(etoro_ids) - len(result)
+
+    if api_hits == 0:
+        log.warning(
+            f"[api_backfiller] Precision-API lieferte keine Felder "
+            f"(0 von {len(etoro_ids)} Instrumenten). API-Endpunkt oder Response-Format "
+            f"möglicherweise geändert."
+        )
+
     if len(etoro_ids) > 0 and api_hits < len(etoro_ids):
-        log.warning(f"[api_backfiller] Precision-API lieferte nur {api_hits}/{len(etoro_ids)} Instrumente.")
         if os.getenv("STRICT_PRECISION_FAIL") == "1":
             raise RuntimeError(f"[api_backfiller] HARD FAIL: Partielle oder keine Precisions geliefert ({api_hits}/{len(etoro_ids)}).")
+
+    log.info(
+        f"[api_backfiller] Precision-Auflösung abgeschlossen: "
+        f"{api_hits} direkt via API, "
+        f"{fallback_count} via Symbol-Fallback (_fallback_precisions), "
+        f"{equity_fallback_count} Equities erhalten (2,2) in run_backfill()."
+    )
 
     return result
 
@@ -514,9 +530,6 @@ async def run_backfill(
         log.info("[api_backfiller] Lade Instrument-Precisions via eToro API …")
         api_precisions = await fetch_precisions_from_api(
             session, etoro_ids, api_key, user_key
-        )
-        log.info(
-            f"[api_backfiller] Precisions via API: {len(api_precisions)}/{len(etoro_ids)} Instrumente."
         )
 
         for etoro_id, symbol in sorted(etoro_id_to_symbol.items(), key=lambda x: x[1]):

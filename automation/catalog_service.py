@@ -255,10 +255,26 @@ async def _fetch_precisions(
 
             await asyncio.sleep(0.3)
 
+    fallback_count = len(result) - api_hits
+    equity_fallback_count = len(etoro_ids) - len(result)
+
+    if api_hits == 0:
+        log.warning(
+            f"[catalog_service] Precision-API lieferte keine Felder "
+            f"(0 von {len(etoro_ids)} Instrumenten). API-Endpunkt oder Response-Format "
+            f"möglicherweise geändert."
+        )
+
     if len(etoro_ids) > 0 and api_hits < len(etoro_ids):
-        log.warning(f"[catalog_service] Precision-API lieferte nur {api_hits}/{len(etoro_ids)} Instrumente.")
         if os.getenv("STRICT_PRECISION_FAIL") == "1":
             raise RuntimeError(f"[catalog_service] HARD FAIL: Partielle oder keine Precisions geliefert ({api_hits}/{len(etoro_ids)}).")
+
+    log.info(
+        f"[catalog_service] Precision-Auflösung abgeschlossen: "
+        f"{api_hits} direkt via API, "
+        f"{fallback_count} via Symbol-Fallback (_fallback_precisions), "
+        f"{equity_fallback_count} Equities erhalten (2,2)."
+    )
 
     return result
 
