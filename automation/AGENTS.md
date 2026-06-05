@@ -343,6 +343,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+- **State/Key Bleed (OOS Gating in `_is_eligible`)**: `oos_metrics` is a sibling key to `metrics` in the backtest result dictionary. Searching for it inside `metrics` (`metrics.get("oos_metrics")`) will silently fail and return `None`, leading to unexpected rejection in tournament gating. Always parse sibling keys directly from the root result dictionary `r`.
 
 ### 🟢 #39 — TypeError in NautilusTrader balances API (Issue #181)
 **Symptom:** Jeder Matrix-Backtest brach beim ersten geschlossenen Bar ab (`TypeError: 'method' object is not iterable`), was zu 0 Trades über alle Symbol/Strategie-Kombinationen führte.
@@ -550,6 +551,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 ---
 
 ## 18. Changelog (Agent-Maintained)
+- Issue #192: Fixed critical error in tournament gating where `_is_eligible` incorrectly attempted to parse `oos_metrics` from inside the `metrics` sub-dictionary (`r["metrics"].get("oos_metrics")`), leading to a KeyError/None fallback and 0 eligible pairs. `_is_eligible` is now strictly for IS gating, and `select_winners` explicitly enforces passing both `_is_eligible(r)` and `_evaluate_oos_eligibility(r.get("oos_metrics"))` before considering a pair eligible.
 
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 

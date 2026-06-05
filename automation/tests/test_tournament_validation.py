@@ -1,4 +1,4 @@
-from automation.backtest_runner import load_tournament_config, _is_eligible
+from automation.backtest_runner import load_tournament_config, _is_eligible, _evaluate_oos_eligibility
 import json
 import tempfile
 import os
@@ -36,10 +36,10 @@ def test_oos_eligibility():
         }
     }
 
-    assert not _is_eligible(metrics, tournament_cfg, check_oos=True), "Should fail with 2 OOS trades"
+    assert not _evaluate_oos_eligibility(metrics["oos_metrics"], tournament_cfg).get("oos_eligible"), "Should fail with 2 OOS trades"
 
     metrics["oos_metrics"]["total_trades"] = 10
-    assert _is_eligible(metrics, tournament_cfg, check_oos=True), "Should pass with 10 OOS trades"
+    assert _evaluate_oos_eligibility(metrics["oos_metrics"], tournament_cfg).get("oos_eligible"), "Should pass with 10 OOS trades"
 
 def test_total_return_eligibility_hard_gate():
     tournament_cfg = {
@@ -63,10 +63,10 @@ def test_total_return_eligibility_hard_gate():
         "total_return": 0.001  # < 0.005 (Fails hard gate!)
     }
 
-    assert not _is_eligible(metrics, tournament_cfg, check_oos=False), "Should reject due to total_return < 0.005 despite high sortino/pf"
+    assert not _is_eligible({'metrics': metrics}, tournament_cfg), "Should reject due to total_return < 0.005 despite high sortino/pf"
 
     metrics["total_return"] = 0.026  # Pass (also making sure expectancy = 0.026/50 > 0.0005)
-    assert _is_eligible(metrics, tournament_cfg, check_oos=False), "Should pass with total_return > 0.005"
+    assert _is_eligible({'metrics': metrics}, tournament_cfg), "Should pass with total_return > 0.005"
 
 def test_load_tournament_config_validation(monkeypatch):
     tournament_cfg = {
