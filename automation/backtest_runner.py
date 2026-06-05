@@ -877,7 +877,7 @@ def select_winners(
                 tournament_cfg,
                 r.get("strat_params", {})
             ).get("oos_eligible", False)
-            if r.get("oos_metrics") is not None else True
+            if r.get("oos_metrics") else True
         )
     ]
 
