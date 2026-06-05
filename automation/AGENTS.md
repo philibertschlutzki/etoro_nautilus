@@ -185,7 +185,12 @@ class MyStrategy(HourlyStrategyBase):
 ### Flat-Lock-Vermeidung (Pitfall #17)
 Nach `_close_position()` beim Drehen einer Position MUSS der Signal-State (`current_signal` / `current_position`) auf `None` zurückgesetzt werden, sonst blockiert der Bar-Guard jeden Neueinstieg dauerhaft. Alle aktiven Strategien setzen dies korrekt um.
 
-`HourlyStrategyBase.__init__(self, config, allocator=None)` nimmt optional einen `MomentumLSAllocator`. Bei gesetztem Allocator löst `on_start()` den Account auf und `_compute_quantity` zieht die Allokation über `get_allocation`. Im Backtest ist `allocator=None` → `config.trade_amount_usd` wird genutzt.
+`HourlyStrategyBase.__init__(self, config, allocator=None)` nimmt optional einen `MomentumLSAllocator`.
+In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende strikte Priorisierung:
+1. **`allocator` (höchste Priorität):** Ist ein Live-Allocator (`MomentumLSAllocator`) vorhanden, wird dieser über `get_allocation()` befragt (nutzt internes `_get_current_balance()`).
+2. **`trade_amount_usd`:** Ist in der `config` explizit ein USD-Betrag > 0 hinterlegt (z. B. dynamisch injiziert durch den Backtest-Runner via `params["trade_amount_usd"]` zur Überschreibung), wird dieser absolute Wert genutzt. `_get_current_balance()` wird hierbei **nicht** aufgerufen.
+3. **`trade_amount_pct`:** Ist ein Prozentwert gesetzt (und kein USD-Betrag injiziert), wird `_get_current_balance()` aufgerufen, um das Risiko basierend auf der aktuellen Balance dynamisch anzupassen.
+4. **`Default`:** Fallback auf feste 100.0 USD.
 
 ### Aktive Strategien (`strategies.json` active=true)
 | Klasse | Datei | Indikatoren | Default trade_amount_usd |
@@ -599,7 +604,7 @@ Aktuell nutzt der `daily_orchestrator.py` kein echtes, rollierendes Walk-Forward
 
 ---
 
-*Zuletzt aktualisiert: 2026-06-04. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-06-05. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
 * **Type Casting in API Payloads:** Document the strict necessity of casting variables (e.g., str() vs int()) when matching eToro IDs from the API against the local JSON configurations, as implicit typing will cause silent drop-outs during universe construction.
@@ -609,3 +614,4 @@ Aktuell nutzt der `daily_orchestrator.py` kein echtes, rollierendes Walk-Forward
 * **Pitfall #37 (Orphaned Limit Orders via Custom Exits):** Das Überschreiben von Exits in Child-Klassen ohne Beachtung von `orders_open` und dem Async-State der Base-Class führt zu Order-Spamming, Orphaned Limit-Orders und extrem asymmetrischen FIFO-Legs. Strategien müssen auf `self.cache.orders_open` nach Base Exits prüfen und sollten `self._close_position` oder `super()._close_position_base()` richtig delegieren, um Base-Code zu erhalten. (Referenz: Issue #149).
 
 | 2026-06-04 | **Issue #172 (OOS-Gate Propagation & Transparenz):** `aggregate_winner` trägt nun deterministisch `oos_evaluated`/`oos_eligible`/`oos_metrics`/`oos_rejection_reasons`. Phase 5 dreistufig (eligible/failed/not-evaluable) mit präziser Begründung statt „Status unbekannt". `oos_start_ns`-Ableitung vereindeutigt + OOS-Span-Logging. Fail-Closed unverändert, keine Schwellen-Absenkung. Tests für alle drei OOS-Zustände ergänzt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/tests/test_backtest_runner.py`, `automation/tests/test_oos_gate.py`, `automation/AGENTS.md` |
+| 2026-06-05 | **Issue #182 (Sizing-Precedence Bug im Backtest):** Behebung der unbeabsichtigten Priorisierung von `%` über `USD` bei gesetzten Defaults. `_compute_quantity` enforcing Hierarchy: `allocator > trade_amount_usd > trade_amount_pct > Default`. Regression-Test ergänzt. §6 `AGENTS.md` aktualisiert. | `automation/strategies/hourly_strategy_base.py`, `automation/tests/test_sizing_precedence.py`, `automation/AGENTS.md` |

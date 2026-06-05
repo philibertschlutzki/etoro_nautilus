@@ -72,7 +72,7 @@ async def test_fetch_precisions_catalog_no_hits(caplog):
         mock_session.__aenter__.return_value = mock_session
         res = await _fetch_precisions("api", "user", {"1": "AAPL", "2": "GOOG"})
 
-    assert any("Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
+    assert any("Precision-API lieferte keine Felder (0 von 2 Instrumenten)" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
