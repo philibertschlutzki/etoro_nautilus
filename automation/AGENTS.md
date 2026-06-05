@@ -590,6 +590,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 | 2026-06-03 | **Issue #147 (Fix Overfitting & OOS Gating):** Einführung der harten Train/Test (IS/OOS) Separierung mit verbessertem Logging und striktem OOS-Gating gegen fehlende Trades. Einführung eines `min_expectancy` Thresholds in `tournament.json`, um Sortino-Artefakte ohne Return (wie FlashCrashReversal) auszuschließen. Walk-Forward Architektur (State Bleed) in Phase 5 korrigiert (siehe Architektur-Dokumentation weiter unten). | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/config/tournament.json`, `automation/AGENTS.md` |
 | 2026-06-05 | **Issue #153 (Fix Position Sizing & Tournament Return Gating):** `trade_amount_pct` zur `HourlyStrategyConfig` hinzugefügt, um Position Sizing dynamisch (prozentual) relativ zur Equity im Backtest und Live-Modus zu berechnen. Statische Beträge (`trade_amount_usd`) wurden abgelöst. Total Return als `Compounded Equity-Normalized Return` dokumentiert. Harter Gate in `tournament.json` implementiert (`min_total_return: 0.005`), um unprofitable Strategien mit hohem Sortino sicher abzuweisen. Regression-Tests mit `total_return`-Guard ergänzt. | `automation/strategies/hourly_strategy_base.py`, `automation/config/strategy_defaults.json`, `automation/config/tournament.json`, `automation/backtest_runner.py`, `manuals/backtesting_manual.md`, `automation/tests/test_tournament_validation.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #171 (Strict (2,2)-Precision-Reject entfernt):** Der harte `(2,2)`-Reject im `None`-Pfad von `fetch_precisions_from_api` (`api_backfiller.py`) wurde entfernt (kein `log.error` + `continue` mehr). Fehlt die API-Precision, füllt der Symbol-Fallback `_fallback_precisions` Standard-Equities (TSLA, GOOG, NVDA) jetzt nahtlos mit `(2,2)` auf, statt sie aus dem Backfill zu werfen. Eliminiert das ERROR-Log-Spam in Phase 2 des `daily_orchestrator` für das vorvalidierte Universe. Der Mismatch-Guard für explizit gelieferte `size_prec=2` bei Non-Equities (Pitfall #36) bleibt unangetastet. Regressions-Test für `(2,2)`-Mapping ergänzt. | `automation/api_backfiller.py`, `automation/AGENTS.md`, `automation/tests/test_api_precisions.py` |
+| 2026-06-05 | **Issue #180 (Improvement Logging):** Unified precision API logging in `api_backfiller.py` and `catalog_service.py` to transparently differentiate between direct API hits, `_fallback_precisions` usage, and equity fallbacks. | `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/AGENTS.md` |
 
 ## Architektonische Methodik: IS/OOS Split und "State Bleed"
 
@@ -602,7 +603,7 @@ Aktuell nutzt der `daily_orchestrator.py` kein echtes, rollierendes Walk-Forward
 
 ---
 
-*Zuletzt aktualisiert: 2026-06-04. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-06-05. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
 * **Type Casting in API Payloads:** Document the strict necessity of casting variables (e.g., str() vs int()) when matching eToro IDs from the API against the local JSON configurations, as implicit typing will cause silent drop-outs during universe construction.
