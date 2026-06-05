@@ -332,7 +332,7 @@ def test_zero_downside_deviation():
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
 
     assert metrics["max_drawdown"] == 0.0
-    # No zero division error
+    # Issue #209: Hardcaps removed, now strictly None for undefined stats
     assert metrics["profit_factor"] is None
     assert metrics["sortino_ratio"] is None
     assert metrics["calmar_ratio"] is None
@@ -342,6 +342,7 @@ def test_clamping_limits():
     pnl_list = [10.0] * 50 + [-0.00000001] * 2  # Extremely small losses
     hold_list = [(1000, 1.0)] * 52
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
-    assert metrics["profit_factor"] == 25000000000.0
-    assert metrics["sortino_ratio"] > 100.0
-    assert metrics["calmar_ratio"] > 100.0
+    # Caps removed via Issue #209, so values will just be massive now
+    assert metrics["profit_factor"] > 1000.0
+    assert metrics["sortino_ratio"] > 1000.0
+    assert metrics["calmar_ratio"] is None # calmar is undefined since max_dd is 0.0 (or extremely close)

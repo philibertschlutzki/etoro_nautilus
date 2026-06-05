@@ -629,7 +629,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     EPSILON = 1e-9
 
-    if gross_loss <= 0.0 or (losses_count < 2 and n < 50):
+    if gross_loss <= 0.0:
+        profit_factor = None
+    elif losses_count < 2 and n < 50:
         profit_factor = None
     else:
         profit_factor = gross_profit / gross_loss
@@ -651,18 +653,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
-        if len(down_sq) == 0:
+        if len(down_sq) == 0 or sum(down_sq) <= 0.0:
             sortino = None
         else:
-            # Removed EPSILON to allow natural undefined states when variance is 0
-            dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
-            if dd_dev <= 0.0:
-                sortino = None
-            else:
-                mean_ret = sum(rets) / n
-                sortino = (mean_ret / dd_dev * math.sqrt(252))
+            # Addition *under* the root as requested by PR review
+            dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
+            dd_dev = max(dd_dev, 1e-6)
+            mean_ret = sum(rets) / n
+            sortino = (mean_ret / dd_dev * math.sqrt(252))
 
-    if max_dd <= 0.0:
+    if max_dd <= 1e-9:
         calmar = None
     else:
         calmar = total_return / max_dd
@@ -707,6 +707,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+        "losses_count": 0,
     }
 
     try:
@@ -829,6 +830,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
             "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+            "losses_count": 0,
         }
 
         if oos_start_ns is not None:
@@ -915,10 +917,10 @@ def select_winners(
                 return [1.0] * len(vals)
             return [(su.index(v)) / (len(su) - 1) for v in vals]
 
-        sortinos = [r["metrics"].get("sortino_ratio", 0.0) for r in eligible]
-        pfs = [r["metrics"].get("profit_factor", 0.0) for r in eligible]
-        wrs = [r["metrics"].get("win_rate", 0.0) for r in eligible]
-        dds = [r["metrics"].get("max_drawdown", 0.0) for r in eligible]
+        sortinos = [(r["metrics"].get("sortino_ratio") or 0.0) for r in eligible]
+        pfs = [(r["metrics"].get("profit_factor") or 0.0) for r in eligible]
+        wrs = [(r["metrics"].get("win_rate") or 0.0) for r in eligible]
+        dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in eligible]
 
         rs = get_ranks(sortinos)
         rp = get_ranks(pfs)
@@ -980,6 +982,7 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
+            vals = [v for v in vals if v is not None]
             sv = sorted(vals)
             n = len(sv)
             if n == 0: return 0.0
@@ -1122,9 +1125,18 @@ def print_tournament_table(
             winning_symbols.add(sym)
         hold_h = m.get('avg_holding_time_s', 0.0) / 3600.0
 
-        sortino_str = format_metric(m.get('sortino_ratio'), m, 5)
-        pf_str = format_metric(m.get('profit_factor'), m, 2)
-        calmar_str = format_metric(m.get('calmar_ratio'), m, 1)
+        def format_metric(val, min_trades_req, is_pf=False):
+            if val is not None:
+                return f"{val:>7.2f}"
+            if m.get('total_trades', 0) < min_trades_req:
+                return f"{'n/a(<min)':>7}"
+            if m.get('losses_count', 0) == 0 or m.get('max_drawdown', 0.0) == 0.0:
+                return f"{'n/a(win)':>7}"
+            return f"{'n/a':>7}"
+
+        sortino_str = format_metric(m['sortino_ratio'], 5)
+        calmar_str = format_metric(m['calmar_ratio'], 5)
+        pf_str = format_metric(m['profit_factor'], 2, is_pf=True)
 
         print(
             f"{sym:<20} | {strat:<30} | {sortino_str} | "
@@ -1189,6 +1201,7 @@ def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+        "losses_count": 0,
     }
     return {
         "symbol": symbol,
@@ -1397,18 +1410,21 @@ def run_single_backtest_worker(
             metrics = extracted_data
             oos_metrics = {}
 
-        # Handle None cases for profit_factor and sortino_ratio explicitly,
-        # fallback to 0.0 if None
-        pf_val = metrics.get('profit_factor')
-        pf_val = pf_val if pf_val is not None else 0.0
-        sortino_val = metrics.get('sortino_ratio')
-        sortino_val = sortino_val if sortino_val is not None else 0.0
+        def format_metric(m_dict, key, min_trades_req):
+            val = m_dict.get(key)
+            if val is not None:
+                return f"{val:>6.2f}"
+            if m_dict.get('total_trades', 0) < min_trades_req:
+                return f"{'n/a(<min)':>6}"
+            if m_dict.get('losses_count', 0) == 0 or m_dict.get('max_drawdown', 0.0) == 0.0:
+                return f"{'n/a(win)':>6}"
+            return f"{'n/a':>6}"
 
         wlog(
             f"   📊 [IS]  Trades={metrics.get('total_trades', 0):>4} | "
             f"WinRate={metrics.get('win_rate', 0.0):>6.1%} | "
-            f"PF={pf_val:>6.2f} | "
-            f"Sortino={sortino_val:>6.2f} | "
+            f"PF={format_metric(metrics, 'profit_factor', 2)} | "
+            f"Sortino={format_metric(metrics, 'sortino_ratio', 5)} | "
             f"Return={metrics.get('total_return', 0.0):>6.2f}%"
         )
         if oos_start_ns is not None:
@@ -1418,8 +1434,8 @@ def run_single_backtest_worker(
             wlog(
                 f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0):>4} | "
                 f"WinRate={(oos_metrics.get('win_rate') or 0.0):>6.1%} | "
-                f"PF={(oos_metrics.get('profit_factor') or 0.0):>6.2f} | "
-                f"Sortino={(oos_metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+                f"PF={format_metric(oos_metrics, 'profit_factor', 2)} | "
+                f"Sortino={format_metric(oos_metrics, 'sortino_ratio', 5)} | "
                 f"Return={(oos_metrics.get('total_return') or 0.0):>6.2f}%"
             )
 
