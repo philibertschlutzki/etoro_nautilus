@@ -625,6 +625,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+        "losses_count": 0,
     }
     if not pnl_list:
         return NULL
@@ -636,14 +637,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     losses_count = sum(1 for v in pnl_list if v < 0)
 
     EPSILON = 1e-9
-    MAX_CAP = 50.0
-    CALMAR_CAP = 100.0
 
-    if losses_count < 2 and n < 50:
+    if gross_loss <= 0.0:
+        profit_factor = None
+    elif losses_count < 2 and n < 50:
         profit_factor = None
     else:
-        profit_factor = gross_profit / (gross_loss + EPSILON)
-        profit_factor = min(profit_factor, MAX_CAP)
+        profit_factor = gross_profit / gross_loss
 
     win_rate = wins / n if n > 0 else 0.0
 
@@ -662,15 +662,19 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
-        # Addition *under* the root as requested by PR review
-        dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
-        dd_dev = max(dd_dev, 1e-6)
-        mean_ret = sum(rets) / n
-        sortino = (mean_ret / dd_dev * math.sqrt(252))
-        sortino = min(sortino, MAX_CAP)
+        if len(down_sq) == 0 or sum(down_sq) <= 0.0:
+            sortino = None
+        else:
+            # Addition *under* the root as requested by PR review
+            dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
+            dd_dev = max(dd_dev, 1e-6)
+            mean_ret = sum(rets) / n
+            sortino = (mean_ret / dd_dev * math.sqrt(252))
 
-    calmar = (total_return / (max_dd + EPSILON))
-    calmar = min(calmar, CALMAR_CAP)
+    if max_dd <= 1e-9:
+        calmar = None
+    else:
+        calmar = total_return / max_dd
 
     import statistics
     if hold_list:
@@ -691,11 +695,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "win_rate":      float(win_rate),
         "profit_factor": float(profit_factor) if profit_factor is not None else None,
         "sortino_ratio": float(sortino) if sortino is not None else None,
-        "calmar_ratio":  float(calmar),
+        "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
         "avg_holding_time_s": float(avg_hold),
         "median_holding_time_s": float(med_hold),
+        "losses_count": losses_count,
     }
 
 
@@ -711,6 +716,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+        "losses_count": 0,
     }
 
     try:
@@ -833,6 +839,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
             "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+            "losses_count": 0,
         }
 
         if oos_start_ns is not None:
@@ -919,10 +926,10 @@ def select_winners(
                 return [1.0] * len(vals)
             return [(su.index(v)) / (len(su) - 1) for v in vals]
 
-        sortinos = [r["metrics"].get("sortino_ratio", 0.0) for r in eligible]
-        pfs = [r["metrics"].get("profit_factor", 0.0) for r in eligible]
-        wrs = [r["metrics"].get("win_rate", 0.0) for r in eligible]
-        dds = [r["metrics"].get("max_drawdown", 0.0) for r in eligible]
+        sortinos = [(r["metrics"].get("sortino_ratio") or 0.0) for r in eligible]
+        pfs = [(r["metrics"].get("profit_factor") or 0.0) for r in eligible]
+        wrs = [(r["metrics"].get("win_rate") or 0.0) for r in eligible]
+        dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in eligible]
 
         rs = get_ranks(sortinos)
         rp = get_ranks(pfs)
@@ -984,6 +991,7 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
+            vals = [v for v in vals if v is not None]
             sv = sorted(vals)
             n = len(sv)
             if n == 0: return 0.0
@@ -1001,7 +1009,7 @@ def select_winners(
         # Tie-breaker: 1. Max Wins, 2. Max Median Sortino
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
-        best     = max(top, key=lambda s: get_median(sortinos_by_strat[s]))
+        best     = max(top, key=lambda s: get_median([x for x in sortinos_by_strat[s] if x is not None]))
         # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
         best_results = [r.get("oos_metrics", {}) for r in per_symbol.values()
                         if r["strategy"] == best and r.get("oos_metrics") and r.get("oos_metrics").get("total_trades", 0) > 0]
@@ -1052,7 +1060,7 @@ def select_winners(
             "strategy":    best,
             "win_count":   win_counts[best],
             "median_sortino": round(
-                get_median(sortinos_by_strat[best]), 4
+                get_median([x for x in sortinos_by_strat[best] if x is not None]), 4
             ),
             **agg_oos_eval
         }
@@ -1063,6 +1071,9 @@ def select_winners(
 def write_tournament_json(
     all_results: list[dict],
     output_path: str,
+    per_symbol_winners: dict,
+    aggregate_winner: dict | None,
+    warnings_list: list[str],
     universe_snapshot: str = "",
     tournament_cfg: dict | None = None,
 ) -> None:
@@ -1073,7 +1084,7 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
-    per_symbol_winners, aggregate_winner, warnings_list = select_winners(all_results, tournament_cfg)
+
     eligible_count = sum(
         1 for r in all_results
         if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
@@ -1108,6 +1119,15 @@ def print_tournament_table(
     all_symbols: set[str] = set()
     winning_symbols: set[str] = set()
 
+    def format_metric(val, m, min_trades):
+        if val is not None:
+            return f"{val:>7.2f}"
+        if m.get('total_trades', 0) < min_trades:
+            return "n/a(<min)"
+        if m.get('losses_count', 0) == 0 or m.get('max_drawdown', 0.0) == 0.0:
+            return "n/a(win)"
+        return "    n/a"
+
     for r in sorted(all_results, key=lambda x: (x["symbol"], x["strategy"])):
         sym, strat, m = r["symbol"], r["strategy"], r["metrics"]
         all_symbols.add(sym)
@@ -1117,12 +1137,22 @@ def print_tournament_table(
             winning_symbols.add(sym)
         hold_h = m.get('avg_holding_time_s', 0.0) / 3600.0
 
-        sortino_str = f"{m['sortino_ratio']:>7.2f}" if m['sortino_ratio'] is not None else "    N/A"
-        pf_str = f"{m['profit_factor']:>7.2f}" if m['profit_factor'] is not None else "    N/A"
+        def format_metric(val, min_trades_req, is_pf=False):
+            if val is not None:
+                return f"{val:>7.2f}"
+            if m.get('total_trades', 0) < min_trades_req:
+                return f"{'n/a(<min)':>7}"
+            if m.get('losses_count', 0) == 0 or m.get('max_drawdown', 0.0) == 0.0:
+                return f"{'n/a(win)':>7}"
+            return f"{'n/a':>7}"
+
+        sortino_str = format_metric(m['sortino_ratio'], 5)
+        calmar_str = format_metric(m['calmar_ratio'], 5)
+        pf_str = format_metric(m['profit_factor'], 2, is_pf=True)
 
         print(
             f"{sym:<20} | {strat:<30} | {sortino_str} | "
-            f"{m['calmar_ratio']:>7.2f} | {pf_str} | "
+            f"{calmar_str} | {pf_str} | "
             f"{m['total_trades']:>6} | {hold_h:>7.1f} | {'✓' if is_winner else ''}"
         )
     return winner_count, sorted(all_symbols - winning_symbols)
@@ -1183,6 +1213,7 @@ def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+        "losses_count": 0,
     }
     return {
         "symbol": symbol,
@@ -1391,18 +1422,21 @@ def run_single_backtest_worker(
             metrics = extracted_data
             oos_metrics = {}
 
-        # Handle None cases for profit_factor and sortino_ratio explicitly,
-        # fallback to 0.0 if None
-        pf_val = metrics.get('profit_factor')
-        pf_val = pf_val if pf_val is not None else 0.0
-        sortino_val = metrics.get('sortino_ratio')
-        sortino_val = sortino_val if sortino_val is not None else 0.0
+        def format_metric(m_dict, key, min_trades_req):
+            val = m_dict.get(key)
+            if val is not None:
+                return f"{val:>6.2f}"
+            if m_dict.get('total_trades', 0) < min_trades_req:
+                return f"{'n/a(<min)':>6}"
+            if m_dict.get('losses_count', 0) == 0 or m_dict.get('max_drawdown', 0.0) == 0.0:
+                return f"{'n/a(win)':>6}"
+            return f"{'n/a':>6}"
 
         wlog(
             f"   📊 [IS]  Trades={metrics.get('total_trades', 0):>4} | "
             f"WinRate={metrics.get('win_rate', 0.0):>6.1%} | "
-            f"PF={pf_val:>6.2f} | "
-            f"Sortino={sortino_val:>6.2f} | "
+            f"PF={format_metric(metrics, 'profit_factor', 2)} | "
+            f"Sortino={format_metric(metrics, 'sortino_ratio', 5)} | "
             f"Return={metrics.get('total_return', 0.0):>6.2f}%"
         )
         if oos_start_ns is not None:
@@ -1412,8 +1446,8 @@ def run_single_backtest_worker(
             wlog(
                 f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0):>4} | "
                 f"WinRate={(oos_metrics.get('win_rate') or 0.0):>6.1%} | "
-                f"PF={(oos_metrics.get('profit_factor') or 0.0):>6.2f} | "
-                f"Sortino={(oos_metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+                f"PF={format_metric(oos_metrics, 'profit_factor', 2)} | "
+                f"Sortino={format_metric(oos_metrics, 'sortino_ratio', 5)} | "
                 f"Return={(oos_metrics.get('total_return') or 0.0):>6.2f}%"
             )
 
@@ -1848,7 +1882,7 @@ def run_backtest() -> None:
 
     # --- Tournament (Task 5: robuste Multi-Kriterien-Selektion) ---
     if args.momentum and all_results:
-        per_symbol_winners, aggregate_winner, _ = select_winners(all_results, tournament_cfg)
+        per_symbol_winners, aggregate_winner, warnings_list = select_winners(all_results, tournament_cfg)
         winner_count, no_winner_symbols = print_tournament_table(
             all_results, per_symbol_winners, tournament_cfg
         )
@@ -1869,7 +1903,7 @@ def run_backtest() -> None:
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
-        write_tournament_json(all_results, tournament_output, tournament_cfg=tournament_cfg)
+        write_tournament_json(all_results, tournament_output, per_symbol_winners, aggregate_winner, warnings_list, tournament_cfg=tournament_cfg)
     elif all_results:
         print(f"\n📊 {len(all_results)} Ergebnisse gesammelt (kein --momentum Flag aktiv)")
 

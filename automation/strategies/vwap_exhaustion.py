@@ -18,6 +18,7 @@ Exit logic (via HourlyStrategyBase):
   - ATR Trailing Stop: 1.5x ATR
   - Time-based exit: 48 bars
 """
+import collections
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
@@ -28,8 +29,9 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class VwapExhaustionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    deviation_threshold: float = 0.03
+    deviation_threshold: float = 0.015
     cooldown_bars: int = 5
+    vwap_period: int = 24
 
 
 class VwapExhaustionStrategy(HourlyStrategyBase):
@@ -42,10 +44,10 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.instrument_id = InstrumentId.from_str(config.instrument_id)
         self.bar_type = BarType.from_str(config.bar_type)
 
-        self.cumulative_vp = 0.0
-        self.cumulative_volume = 0.0
+        self.vwap_queue = collections.deque(maxlen=self.config.vwap_period)
+        self._running_vp = 0.0
+        self._running_vol = 0.0
         self.current_vwap = 0.0
-        self.current_day: int | None = None
         self.current_signal: str | None = None
         self.bars_since_last_signal: int = 9999
 
@@ -62,23 +64,24 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         close_price = float(bar.close)
         typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
 
-        bar_day = bar.ts_event // 86400000000000
-        if self.current_day != bar_day:
-            self.cumulative_vp = 0.0
-            self.cumulative_volume = 0.0
-            self.current_day = bar_day
-
         if volume > 0:
-            self.cumulative_vp += typical_price * volume
-            self.cumulative_volume += volume
+            if len(self.vwap_queue) == self.config.vwap_period:
+                old_vp, old_vol = self.vwap_queue.popleft()
+                self._running_vp -= old_vp
+                self._running_vol -= old_vol
 
-        if self.cumulative_volume > 0:
-            self.current_vwap = self.cumulative_vp / self.cumulative_volume
+            new_vp = typical_price * volume
+            self.vwap_queue.append((new_vp, volume))
+            self._running_vp += new_vp
+            self._running_vol += volume
+
+        if self._running_vol > 0:
+            self.current_vwap = self._running_vp / self._running_vol
 
         if self._check_exits_and_update(bar):
             return
 
-        if self.current_vwap <= 0:
+        if self.current_vwap <= 0 or len(self.vwap_queue) < self.config.vwap_period:
             return
 
         can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
@@ -106,9 +109,6 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
-        self.current_signal = "BUY"
-        self.bars_since_last_signal = 0
-
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
@@ -127,6 +127,9 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         if qty is None:
             return
 
+        self.current_signal = "BUY"
+        self.bars_since_last_signal = 0
+
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
@@ -136,9 +139,6 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _on_sell_signal(self, bar: Bar) -> None:
-        self.current_signal = "SELL"
-        self.bars_since_last_signal = 0
-
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
@@ -157,6 +157,9 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         if qty is None:
             return
 
+        self.current_signal = "SELL"
+        self.bars_since_last_signal = 0
+
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
@@ -164,6 +167,10 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
+
+    def _close_position(self, pos) -> None:
+        super()._close_position(pos)
+        self.current_signal = None
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
 
