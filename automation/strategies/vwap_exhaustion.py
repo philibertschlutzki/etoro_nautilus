@@ -106,9 +106,6 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
-        self.current_signal = "BUY"
-        self.bars_since_last_signal = 0
-
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
@@ -127,6 +124,9 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         if qty is None:
             return
 
+        self.current_signal = "BUY"
+        self.bars_since_last_signal = 0
+
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
@@ -136,9 +136,6 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _on_sell_signal(self, bar: Bar) -> None:
-        self.current_signal = "SELL"
-        self.bars_since_last_signal = 0
-
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
@@ -156,6 +153,9 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
+
+        self.current_signal = "SELL"
+        self.bars_since_last_signal = 0
 
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
