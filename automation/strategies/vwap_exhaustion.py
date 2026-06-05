@@ -45,6 +45,8 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         self.bar_type = BarType.from_str(config.bar_type)
 
         self.vwap_queue = collections.deque(maxlen=self.config.vwap_period)
+        self._running_vp = 0.0
+        self._running_vol = 0.0
         self.current_vwap = 0.0
         self.current_signal: str | None = None
         self.bars_since_last_signal: int = 9999
@@ -63,13 +65,18 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
 
         if volume > 0:
-            self.vwap_queue.append((typical_price * volume, volume))
+            if len(self.vwap_queue) == self.config.vwap_period:
+                old_vp, old_vol = self.vwap_queue.popleft()
+                self._running_vp -= old_vp
+                self._running_vol -= old_vol
 
-        cumulative_vp = sum(vp for vp, v in self.vwap_queue)
-        cumulative_volume = sum(v for vp, v in self.vwap_queue)
+            new_vp = typical_price * volume
+            self.vwap_queue.append((new_vp, volume))
+            self._running_vp += new_vp
+            self._running_vol += volume
 
-        if cumulative_volume > 0:
-            self.current_vwap = cumulative_vp / cumulative_volume
+        if self._running_vol > 0:
+            self.current_vwap = self._running_vp / self._running_vol
 
         if self._check_exits_and_update(bar):
             return

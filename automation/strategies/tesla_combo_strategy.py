@@ -24,6 +24,7 @@ class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     atr_multiplier: float = 0.5
     bb_entry_tolerance: float = 0.001
     cooldown_bars: int = 12
+    allow_short: bool = False
 
 
 class ComboTrendVwapStrategy(HourlyStrategyBase):
@@ -121,7 +122,8 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
             self._on_buy_signal(bar)
 
         elif (
-            trend_bearish
+            self.config.allow_short
+            and trend_bearish
             and momentum_bearish
             and self.bars_since_bb_touch <= 10
             and vwap_bearish_confirmed
