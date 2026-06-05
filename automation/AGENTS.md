@@ -288,12 +288,14 @@ Installation: `pip install -r automation/requirements.txt` (nautilus_trader≥1.
 
 Ausführung:
 ```bash
-python3 automation/daily_orchestrator.py --skip-api-fetch       # täglich (ZIPs vorhanden)
-python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
-python3 automation/api_backfiller.py --days 7
-python3 automation/historical_fetcher.py --months 12
-python3 automation/catalog_service.py                            # systemd
+python3 -m automation.daily_orchestrator --skip-api-fetch       # täglich (ZIPs vorhanden)
+python3 -m automation.daily_orchestrator --dry-run --skip-api-fetch
+python3 -m automation.api_backfiller --days 7
+python3 -m automation.historical_fetcher --months 12
+python3 -m automation.catalog_service                           # systemd
 ```
+
+Hinweis: Wenn systemd-Unit-Files im Repo existieren, müssen die ExecStart-Anweisungen dort ebenfalls auf `python3 -m automation.catalog_service` aktualisiert werden.
 
 ---
 
@@ -336,6 +338,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+
+### 🔴 #39 — Namespace Collision & Falscher Ausführungskontext (ModuleNotFoundError)
+**Symptom:** Import-Fehler (`ModuleNotFoundError: No module named 'automation'`) oder Abstürze in `site-packages/fabric` bei der Ausführung von Skripten.
+**Root Cause:** Die direkte Ausführung via Pfad (`python3 automation/script.py`) manipuliert `sys.path[0]`, wodurch lokale Root-Importe (`from automation...`) scheitern. Entwickler versuchen oft fälschlicherweise, dies durch `pip install automation` zu fixen, was ein veraltetes öffentliches PyPI-Paket installiert und zu `SyntaxError`s führt.
+**Fix:** Pakete deinstallieren (`pip uninstall automation fabric`). Das System erzwingt ab sofort die Modul-Ausführung via `python3 -m automation.<skript>`, wodurch der Python-Pfad im Root-Verzeichnis verankert bleibt.
+**Betroffen:** Alle `.py`-Skripte, systemd-Units und Dokumentationen in `AGENTS.md` (Abschnitt 12).
 
 ### 🟢 #38 — Strategy Matrix Execution Mismatch (Issue #152)
 **Symptom:** Das System lud Defaults für 8 Strategien, aber führte nur 7 Strategien im Backtest-Matrix-Loop aus. Die Gesamtanzahl der Jobs lag bei 343 statt den erwarteten 392.
@@ -540,6 +548,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-04 | **Issue #172 (Namespace Collision & sys.path Fix):** Dokumentierte Startbefehle in Abschnitt 12 auf Modulausführung (`python3 -m automation.<module>`) umgestellt, um das Brechen von absoluten Importen und Konflikte mit dem externen PyPI-Paket "automation" zu unterbinden. Pitfall #39 dokumentiert. | `automation/AGENTS.md`, ggf. systemd Unit-Files |
 | 2026-06-04 | **Issue #152 (Strategy Matrix Execution Mismatch):** Hinzufügen der fehlenden `HourlyMeanReversionStrategy` in `strategies.json` und Implementierung eines Assertions-Guards in `backtest_runner.py`, um Inkonsistenzen zwischen konfigurierten Defaults und ausgeführten aktiven Strategien im Matrix-Backtest zukünftig hart abzufangen. | `automation/config/strategies.json`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #151 (Sortino Ratio Winsorizing & Sanity Gates):** Überarbeitung von `_calculate_stats` zur Dämpfung explodierender Sortino-Ratios. Enforces `dd_dev >= 1e-6`, caps Sortino at 50.0, introduces a Sanity-Gate for low returns (`< 0.5%`) and a Minimum Downside Gate (`neg_trades < 2` under 50 trades) unter Beibehaltung der Methodensignatur. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #133 (Regression-Guard):** Test-Härtung (Guard `total_trades > 0` nach Metriken-Entpackung) und PR-Gate für `extract_metrics` eingebaut, um stumme Fehler bei Tuple-Arity-Bugs frühzeitig abzufangen. Konventionserweiterungen eingefügt. | `automation/tests/test_backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
