@@ -371,6 +371,69 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
         - metrics.get("max_drawdown", 0.0)  * scoring.get("drawdown_penalty_weight", 0.1)
     )
 
+
+
+def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, strat_params: dict = None) -> dict:
+    """Wertet OOS-Metriken strukturiert aus und liefert die 4 OOS-Pflicht-Keys."""
+    if not oos_metrics or oos_metrics.get("total_trades", 0) <= 0:
+        return {
+            "oos_evaluated": False,
+            "oos_eligible": False,
+            "oos_metrics": None,
+            "oos_rejection_reasons": ["oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."]
+        }
+
+    n_trades     = oos_metrics.get("total_trades", 0)
+    max_dd       = oos_metrics.get("max_drawdown", 1.0)
+    win_rate     = oos_metrics.get("win_rate", 0.0)
+    total_return = oos_metrics.get("total_return", 0.0)
+    expectancy   = total_return / n_trades if n_trades > 0 else 0.0
+
+    sortino = oos_metrics.get("sortino_ratio")
+    pf = oos_metrics.get("profit_factor")
+
+    t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
+
+    req_trades   = t_overrides.get("oos_min_trades", t_overrides.get("min_trades", tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0))))
+    req_return   = t_overrides.get("oos_min_total_return", t_overrides.get("min_total_return", tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0))))
+    req_exp      = t_overrides.get("oos_min_expectancy", t_overrides.get("min_expectancy", tournament_cfg.get("oos_min_expectancy", tournament_cfg.get("min_expectancy", 0.0))))
+    req_sortino  = t_overrides.get("oos_min_sortino", t_overrides.get("min_sortino", tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0))))
+    req_pf       = t_overrides.get("oos_min_profit_factor", t_overrides.get("min_profit_factor", tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0))))
+    req_max_dd   = t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0))))
+    req_win_rate = t_overrides.get("oos_min_win_rate", t_overrides.get("min_win_rate", tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0))))
+
+    reasons = []
+    if n_trades < req_trades:
+        reasons.append(f"oos_min_trades: {n_trades} < {req_trades}")
+    if total_return < req_return:
+        reasons.append(f"oos_min_total_return: {total_return:.4f} < {req_return:.4f}")
+    if expectancy < req_exp:
+        reasons.append(f"oos_min_expectancy: {expectancy:.5f} < {req_exp:.5f}")
+    if max_dd > req_max_dd:
+        reasons.append(f"oos_max_drawdown: {max_dd:.4f} > {req_max_dd:.4f}")
+    if win_rate < req_win_rate:
+        reasons.append(f"oos_min_win_rate: {win_rate:.4f} < {req_win_rate:.4f}")
+
+    # None-Sicherheit: Zero-Loss-OOS
+    if req_sortino > 0.0:
+        if sortino is None:
+             reasons.append(f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}")
+        elif sortino < req_sortino:
+             reasons.append(f"oos_min_sortino: {sortino:.4f} < {req_sortino}")
+
+    if req_pf > 0.0:
+        if pf is None:
+             reasons.append(f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}")
+        elif pf < req_pf:
+             reasons.append(f"oos_min_profit_factor: {pf:.4f} < {req_pf}")
+
+    return {
+        "oos_evaluated": True,
+        "oos_eligible": len(reasons) == 0,
+        "oos_metrics": oos_metrics,
+        "oos_rejection_reasons": reasons
+    }
+
 def _is_eligible(metrics: dict, tournament_cfg: dict, check_oos: bool = False, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
     """Prüft ob eine Strategie für das Tournament eligibel ist.
 
@@ -896,15 +959,15 @@ def select_winners(
             if new_return > curr_return:
                 per_symbol[sym] = {**r, "_score": score}
 
-    per_symbol_winners = {
-        sym: {
+    per_symbol_winners = {}
+    for sym, r in per_symbol.items():
+        oos_eval = _evaluate_oos_eligibility(r.get("oos_metrics"), tournament_cfg, r.get("strat_params"))
+        per_symbol_winners[sym] = {
             "strategy": r["strategy"],
-            "metrics":  r["metrics"],
-            "oos_metrics": r.get("oos_metrics", {}),
-            "score":    round(r["_score"], 6),
+            "metrics": r["metrics"],
+            "score": round(r["_score"], 6),
+            **oos_eval
         }
-        for sym, r in per_symbol.items()
-    }
 
     # Aggregierter Gewinner: Strategie mit den meisten Symbol-Siegen
     win_counts: dict[str, int] = {}
@@ -935,23 +998,35 @@ def select_winners(
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
         best     = max(top, key=lambda s: get_median(sortinos_by_strat[s]))
-        oos_eligible = False
-
         # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
         best_results = [r.get("oos_metrics", {}) for r in per_symbol.values()
-                        if r["strategy"] == best and r.get("oos_metrics")]
+                        if r["strategy"] == best and r.get("oos_metrics") and r.get("oos_metrics").get("total_trades", 0) > 0]
 
         if best_results:
             n_res = len(best_results)
+
+            # Handle possible None values in sortino/profit_factor for calculating median
+            sortinos = [oos.get("sortino_ratio") for oos in best_results]
+            sortinos = [s for s in sortinos if s is not None]
+            med_sortino = get_median(sortinos) if sortinos else None
+
+            pfs = [oos.get("profit_factor") for oos in best_results]
+            pfs = [p for p in pfs if p is not None]
+            med_pf = get_median(pfs) if pfs else None
+
+            # Gather span days
+            span_days = [oos.get("oos_span_days", 0) for oos in best_results]
+            med_span = get_median(span_days) if span_days else 0
+
             avg_oos = {
                 "total_trades": sum(oos.get("total_trades", 0) for oos in best_results),
-                "sortino_ratio": get_median([oos.get("sortino_ratio", 0.0) for oos in best_results]),
-                "profit_factor": get_median([oos.get("profit_factor", 0.0) for oos in best_results]),
+                "sortino_ratio": med_sortino,
+                "profit_factor": med_pf,
                 "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
                 "win_rate": get_median([oos.get("win_rate", 0.0) for oos in best_results]),
                 "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0,
+                "oos_span_days": med_span,
             }
-            agg_metrics = {"oos_metrics": avg_oos}
 
             # Use strat_params from the first result matching the winning strategy
             winner_strat_params = {}
@@ -960,7 +1035,14 @@ def select_winners(
                     winner_strat_params = r.get("strat_params", {})
                     break
 
-            oos_eligible = _is_eligible(agg_metrics, tournament_cfg, check_oos=True, strat_params=winner_strat_params)
+            agg_oos_eval = _evaluate_oos_eligibility(avg_oos, tournament_cfg, winner_strat_params)
+        else:
+            agg_oos_eval = {
+                "oos_evaluated": False,
+                "oos_eligible": False,
+                "oos_metrics": None,
+                "oos_rejection_reasons": ["oos_not_evaluable: Kein OOS-Datenmaterial für die Gewinn-Symbole."]
+            }
 
         aggregate_winner = {
             "strategy":    best,
@@ -968,7 +1050,7 @@ def select_winners(
             "median_sortino": round(
                 get_median(sortinos_by_strat[best]), 4
             ),
-            "oos_eligible": oos_eligible,
+            **agg_oos_eval
         }
 
     return per_symbol_winners, aggregate_winner, warnings_list
@@ -1308,12 +1390,15 @@ def run_single_backtest_worker(
             f"Return={metrics.get('total_return', 0.0):>6.2f}%"
         )
         if oos_start_ns is not None:
+            oos_span_days = strat.get("_oos_span_days", 0)
+            if oos_metrics and isinstance(oos_metrics, dict):
+                oos_metrics["oos_span_days"] = oos_span_days
             wlog(
                 f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0):>4} | "
-                f"WinRate={oos_metrics.get('win_rate', 0.0):>6.1%} | "
-                f"PF={oos_metrics.get('profit_factor', 0.0):>6.2f} | "
-                f"Sortino={oos_metrics.get('sortino_ratio', 0.0):>6.2f} | "
-                f"Return={oos_metrics.get('total_return', 0.0):>6.2f}%"
+                f"WinRate={(oos_metrics.get('win_rate') or 0.0):>6.1%} | "
+                f"PF={(oos_metrics.get('profit_factor') or 0.0):>6.2f} | "
+                f"Sortino={(oos_metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+                f"Return={(oos_metrics.get('total_return') or 0.0):>6.2f}%"
             )
 
         # --- Optional: HTML Tearsheet ---
@@ -1676,7 +1761,9 @@ def run_backtest() -> None:
                 if walk_forward_cfg and end_ns:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
                     splits   = walk_forward_cfg.get("splits", 2)
-                    strat["_oos_start_ns"]      = end_ns - (splits * oos_days * 24 * 60 * 60 * 1_000_000_000)
+                    span_days = splits * oos_days
+                    strat["_oos_start_ns"]      = end_ns - (span_days * 24 * 60 * 60 * 1_000_000_000)
+                    strat["_oos_span_days"]     = span_days
 
                 wlf = os.path.join(
                     logs_dir,

@@ -904,10 +904,34 @@ def phase5_live_deployment(
         if not agg:
             log.error("[Phase 5] Kein Aggregat-Sieger im Tournament. Abbruch.")
             return 1
-        if not agg.get("oos_eligible", False):  # Fail-Closed
-            log.warning(f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} erfüllt die Kriterien im jüngsten OOS-Slice nicht (oder Status unbekannt). Kontrollierter Abbruch (kein Live-Deploy).")
+        oos_evaluated = bool(agg.get("oos_evaluated", False))
+        oos_eligible  = bool(agg.get("oos_eligible", False))
+        oos_metrics   = agg.get("oos_metrics")
+        reasons       = agg.get("oos_rejection_reasons") or ["unbekannt (Runner hat keine Begründung geliefert)"]
+
+        if not oos_evaluated:
+            log.warning(
+                f"[Phase 5] OOS-GATE NICHT AUSWERTBAR: Aggregat-Sieger {agg.get('strategy')} — "
+                f"kein/zu wenig OOS-Datenmaterial (oos_metrics={oos_metrics}). "
+                f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
+            )
+            emit_json_event(log, "OOS_GATE_NOT_EVALUABLE", {
+                "strategy": agg.get("strategy"), "oos_metrics": oos_metrics, "reasons": reasons,
+            })
             return 0
-        log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} ist eligibel.")
+
+        if not oos_eligible:
+            log.warning(
+                f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} — "
+                f"verletzte Kriterien: {reasons}; oos_metrics={oos_metrics}. "
+                f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
+            )
+            emit_json_event(log, "OOS_GATE_FAILED", {
+                "strategy": agg.get("strategy"), "reasons": reasons, "oos_metrics": oos_metrics,
+            })
+            return 0
+
+        log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} (oos_metrics={oos_metrics}).")
     except Exception as e:
         log.error(f"[Phase 5] Fehler beim Lesen des OOS-Gates: {e}")
         return 1
