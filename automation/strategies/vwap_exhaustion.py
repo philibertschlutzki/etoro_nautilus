@@ -19,10 +19,10 @@ Exit logic (via HourlyStrategyBase):
   - Time-based exit: 48 bars
 """
 from nautilus_trader.common.enums import LogColor
-from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
+
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
@@ -114,7 +114,8 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position(pos)
+            # KORREKTUR: Aufruf ohne Unterstrich
+            self.close_position(pos)
             return
 
         if self.cache.orders_open(instrument_id=self.instrument_id):
@@ -143,7 +144,8 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position(pos)
+            # KORREKTUR: Aufruf ohne Unterstrich
+            self.close_position(pos)
             return
 
         if self.cache.orders_open(instrument_id=self.instrument_id):
