@@ -159,6 +159,7 @@ async def _fetch_precisions(
     batch_size = 50
     timeout    = aiohttp.ClientTimeout(total=15)
     api_hits   = 0
+    missing_count = 0
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for i in range(0, len(etoro_ids), batch_size):
@@ -243,7 +244,9 @@ async def _fetch_precisions(
                                     f"Equity-Fallback (2,2) wird von run_backfill() angewendet."
                                 )
                                 # Hinweis: Struktur nach Feldern wie leverageList[0].maxLeverage oder tradingData.priceStep untersuchen
-                                log.debug(f"Vollständiger Item-Dump: {json.dumps(item, indent=2)}")
+                                if missing_count < 3:
+                                    log.debug(f"Vollständiger Item-Dump: {json.dumps(item, indent=2)}")
+                                    missing_count += 1
                                 continue
 
                             if price_prec is None:

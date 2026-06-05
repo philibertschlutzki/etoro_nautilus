@@ -115,6 +115,7 @@ async def fetch_precisions_from_api(
     # Batch in Gruppen à 50 aufteilen (API-Limit)
     batch_size = 50
     api_hits = 0
+    missing_count = 0
 
     for i in range(0, len(etoro_ids), batch_size):
         batch = etoro_ids[i : i + batch_size]
@@ -204,7 +205,9 @@ async def fetch_precisions_from_api(
                                 f"Equity-Fallback (2,2) wird von run_backfill() angewendet."
                             )
                             # Hinweis: Struktur nach Feldern wie leverageList[0].maxLeverage oder tradingData.priceStep untersuchen
-                            log.debug(f"Vollständiger Item-Dump: {json.dumps(item, indent=2)}")
+                            if missing_count < 3:
+                                log.debug(f"Vollständiger Item-Dump: {json.dumps(item, indent=2)}")
+                                missing_count += 1
                             continue
 
                         if price_prec is None:
