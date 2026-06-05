@@ -1377,22 +1377,21 @@ def run_single_backtest_worker(
 
         wlog(
             f"   📊 [IS]  Trades={metrics.get('total_trades', 0):>4} | "
-            f"WinRate={metrics.get('win_rate', 0.0):>6.1%} | "
-            f"PF={metrics.get('profit_factor', 0.0):>6.2f} | "
-            f"Sortino={metrics.get('sortino_ratio', 0.0):>6.2f} | "
-            f"Return={metrics.get('total_return', 0.0):>6.2f}%"
+            f"WinRate={(metrics.get('win_rate') or 0.0):>6.1%} | "
+            f"PF={(metrics.get('profit_factor') or 0.0):>6.2f} | "
+            f"Sortino={(metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+            f"Return={(metrics.get('total_return') or 0.0):>6.2f}%"
         )
         if oos_start_ns is not None:
             oos_span_days = strat.get("_oos_span_days", 0)
             if oos_metrics and isinstance(oos_metrics, dict):
                 oos_metrics["oos_span_days"] = oos_span_days
             wlog(
-                f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0) if isinstance(oos_metrics, dict) else 0:>4} | "
-                f"Span={oos_span_days}d | "
-                f"WinRate={oos_metrics.get('win_rate', 0.0) if isinstance(oos_metrics, dict) else 0.0:>6.1%} | "
-                f"PF={oos_metrics.get('profit_factor', 0.0) if isinstance(oos_metrics, dict) and oos_metrics.get('profit_factor') is not None else 0.0:>6.2f} | "
-                f"Sortino={oos_metrics.get('sortino_ratio', 0.0) if isinstance(oos_metrics, dict) and oos_metrics.get('sortino_ratio') is not None else 0.0:>6.2f} | "
-                f"Return={oos_metrics.get('total_return', 0.0) if isinstance(oos_metrics, dict) else 0.0:>6.2f}%"
+                f"   📊 [OOS] Trades={oos_metrics.get('total_trades', 0):>4} | "
+                f"WinRate={(oos_metrics.get('win_rate') or 0.0):>6.1%} | "
+                f"PF={(oos_metrics.get('profit_factor') or 0.0):>6.2f} | "
+                f"Sortino={(oos_metrics.get('sortino_ratio') or 0.0):>6.2f} | "
+                f"Return={(oos_metrics.get('total_return') or 0.0):>6.2f}%"
             )
 
         # --- Optional: HTML Tearsheet ---

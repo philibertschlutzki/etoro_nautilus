@@ -98,6 +98,14 @@ class HourlyStrategyBase(Strategy):
                 self._log.warning("No accounts found in cache on start. Allocation might fail.")
 
     def _get_current_balance(self) -> float:
+        """Liefert das Guthaben in der Quote-Currency des Instruments.
+
+        WICHTIG: NautilusTrader's `Account.balances()` ist eine METHODE
+        (cpdef dict balances(self) -> dict[Currency, AccountBalance]), KEIN
+        Attribut. Der Zugriff via `account.balances` liefert das gebundene
+        Methoden-Objekt (truthy, nicht iterierbar) → `TypeError: 'method'
+        object is not iterable`. Daher die getypten Accessoren nutzen.
+        """
         if not self._account_id:
             accounts = self.cache.accounts()
             if accounts:
@@ -108,20 +116,26 @@ class HourlyStrategyBase(Strategy):
 
         account = self.cache.account(self._account_id)
         instrument = self.cache.instrument(self.instrument_id)
+        if account is None or instrument is None:
+            return 0.0
 
-        if account and account.balances and instrument:
-            balance_list = list(account.balances) if not isinstance(account.balances, list) else account.balances
-            # Check if elements are dict or objects
-            if isinstance(account.balances, dict):
-                balance_obj = account.balances.get(instrument.quote_currency)
-                if balance_obj:
-                    return float(getattr(balance_obj, 'total', balance_obj.free if hasattr(balance_obj, 'free') else 0.0))
-            else:
-                balance_obj = next((b for b in balance_list if getattr(b, 'currency', None) == instrument.quote_currency), None)
-                if balance_obj:
-                    return float(getattr(balance_obj, 'total', balance_obj.free if hasattr(balance_obj, 'free') else 0.0))
+        currency = instrument.quote_currency
 
-        self._log.warning("Could not resolve free balance from cache. Returning 0.0.")
+        try:
+            money = account.balance_total(currency)
+            if money is None:
+                money = account.balance_free(currency)
+            if money is not None:
+                return float(money.as_double())
+        except Exception as e:  # defensiv: niemals raise aus on_bar()-Pfad
+            self._log.warning(
+                f"[{self.instrument_id}] Balance-Auflösung fehlgeschlagen: {e}. Returning 0.0."
+            )
+            return 0.0
+
+        self._log.warning(
+            f"[{self.instrument_id}] Kein Balance-Eintrag für {currency} im Cache. Returning 0.0."
+        )
         return 0.0
 
     def _check_exits_and_update(self, bar: Bar) -> bool:

@@ -339,11 +339,11 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ## 16. Bekannte Pitfalls & offene Bugs
 
-### 🔴 #39 — Namespace Collision & Falscher Ausführungskontext (ModuleNotFoundError)
-**Symptom:** Import-Fehler (`ModuleNotFoundError: No module named 'automation'`) oder Abstürze in `site-packages/fabric` bei der Ausführung von Skripten.
-**Root Cause:** Die direkte Ausführung via Pfad (`python3 automation/script.py`) manipuliert `sys.path[0]`, wodurch lokale Root-Importe (`from automation...`) scheitern. Entwickler versuchen oft fälschlicherweise, dies durch `pip install automation` zu fixen, was ein veraltetes öffentliches PyPI-Paket installiert und zu `SyntaxError`s führt.
-**Fix:** Pakete deinstallieren (`pip uninstall automation fabric`). Das System erzwingt ab sofort die Modul-Ausführung via `python3 -m automation.<skript>`, wodurch der Python-Pfad im Root-Verzeichnis verankert bleibt.
-**Betroffen:** Alle `.py`-Skripte, systemd-Units und Dokumentationen in `AGENTS.md` (Abschnitt 12).
+### 🟢 #39 — TypeError in NautilusTrader balances API (Issue #181)
+**Symptom:** Jeder Matrix-Backtest brach beim ersten geschlossenen Bar ab (`TypeError: 'method' object is not iterable`), was zu 0 Trades über alle Symbol/Strategie-Kombinationen führte.
+**Root Cause:** Die NautilusTrader-API stellt `account.balances` als Methode (`cpdef dict balances(self)`) bereit, nicht als Eigenschaft/Attribut. Die Backtest-Strategien versuchten, die zurückgegebene Methode zu iterieren (`list(account.balances)`). Gleichzeitig stürzte das Formatieren von Metrics mit `None` (z.B. aus all-win Szenarien) ab, da Formatstrings auf `NoneType` nicht anwendbar sind.
+**Fix:** Umstellung auf die typsicheren Methoden `account.balance_total()` und `account.balance_free()` unter Berücksichtigung des `Money`-Rückgabewertes, verpackt in einem try-except Block ohne raises (`AGENTS.md` §14). In den Metriken-Formatstrings `(val or 0.0)` verwendet.
+**Betroffen:** `automation/strategies/hourly_strategy_base.py`, `automation/backtest_runner.py`, `automation/tests/test_strategy_duplication.py`
 
 ### 🟢 #38 — Strategy Matrix Execution Mismatch (Issue #152)
 **Symptom:** Das System lud Defaults für 8 Strategien, aber führte nur 7 Strategien im Backtest-Matrix-Loop aus. Die Gesamtanzahl der Jobs lag bei 343 statt den erwarteten 392.
@@ -548,7 +548,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
-| 2026-06-04 | **Issue #172 (Namespace Collision & sys.path Fix):** Dokumentierte Startbefehle in Abschnitt 12 auf Modulausführung (`python3 -m automation.<module>`) umgestellt, um das Brechen von absoluten Importen und Konflikte mit dem externen PyPI-Paket "automation" zu unterbinden. Pitfall #39 dokumentiert. | `automation/AGENTS.md`, ggf. systemd Unit-Files |
+| 2026-06-04 | **Issue #181 (TypeError in NautilusTrader balances API):** `account.balances` in `_get_current_balance` als Iteration entfernt, da es eine gebundene Methode ist. Umgestellt auf die typsicheren `account.balance_total()` / `account.balance_free()` unter Berücksichtigung des `Money`-Typs. Sanity Check in Formatstrings (für `None`-Metriken) in `backtest_runner.py` eingebaut. Pitfall #39 dokumentiert. | `automation/strategies/hourly_strategy_base.py`, `automation/backtest_runner.py`, `automation/tests/test_strategy_duplication.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #152 (Strategy Matrix Execution Mismatch):** Hinzufügen der fehlenden `HourlyMeanReversionStrategy` in `strategies.json` und Implementierung eines Assertions-Guards in `backtest_runner.py`, um Inkonsistenzen zwischen konfigurierten Defaults und ausgeführten aktiven Strategien im Matrix-Backtest zukünftig hart abzufangen. | `automation/config/strategies.json`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #151 (Sortino Ratio Winsorizing & Sanity Gates):** Überarbeitung von `_calculate_stats` zur Dämpfung explodierender Sortino-Ratios. Enforces `dd_dev >= 1e-6`, caps Sortino at 50.0, introduces a Sanity-Gate for low returns (`< 0.5%`) and a Minimum Downside Gate (`neg_trades < 2` under 50 trades) unter Beibehaltung der Methodensignatur. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-03 | **Issue #133 (Regression-Guard):** Test-Härtung (Guard `total_trades > 0` nach Metriken-Entpackung) und PR-Gate für `extract_metrics` eingebaut, um stumme Fehler bei Tuple-Arity-Bugs frühzeitig abzufangen. Konventionserweiterungen eingefügt. | `automation/tests/test_backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
