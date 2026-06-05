@@ -44,7 +44,7 @@ class SmaCrossoverStrategy(HourlyStrategyBase):
 
         close_price = float(bar.close)
 
-        self._log.info(
+        self._log.debug(
             f"[{self.instrument_id}] BAR GESCHLOSSEN | Close: {close_price:.2f} | "
             f"SMA({self.config.sma_period}): {self.sma.value:.2f}"
         )

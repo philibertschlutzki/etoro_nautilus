@@ -48,7 +48,7 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
         upper_band = self.keltner.upper
         lower_band = self.keltner.lower
 
-        self._log.info(
+        self._log.debug(
             f"[{self.instrument_id}] BAR | Close: {close_price:.2f} | "
             f"Keltner({self.config.keltner_period}): Upper {upper_band:.2f}, Lower {lower_band:.2f}"
         )
