@@ -871,11 +871,14 @@ def select_winners(
             symbol=r.get("symbol", "Unknown"),
             strategy=r.get("strategy", "Unknown"),
             log_rejections=True
-        ) and _evaluate_oos_eligibility(
-            r.get("oos_metrics"),
-            tournament_cfg,
-            r.get("strat_params", {})
-        ).get("oos_eligible", False)
+        ) and (
+            _evaluate_oos_eligibility(
+                r.get("oos_metrics"),
+                tournament_cfg,
+                r.get("strat_params", {})
+            ).get("oos_eligible", False)
+            if r.get("oos_metrics") is not None else True
+        )
     ]
 
     # Issue #148: Data Start Alignment (Tournament Gating)

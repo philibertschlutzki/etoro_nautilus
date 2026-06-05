@@ -194,6 +194,29 @@ def test_select_winners_issue_192_regression():
         }
     })
 
+
+    # Add a negative fixture that fails IS min_sortino but passes OOS
+    all_results.append({
+        "symbol": "AMZN.ETORO",
+        "strategy": "MeanReversionStrategy",
+        "metrics": {
+            "total_trades": 30,
+            "sortino_ratio": 0.1,  # Fails IS min_sortino (0.3)
+            "profit_factor": 1.5,
+            "max_drawdown": 0.1,
+            "win_rate": 0.6,
+            "total_return": 0.1
+        },
+        "oos_metrics": {
+            "total_trades": 25,
+            "sortino_ratio": 0.5,
+            "profit_factor": 1.3,
+            "max_drawdown": 0.1,
+            "win_rate": 0.5,
+            "total_return": 0.05
+        }
+    })
+
     per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
 
     # We expect the valid pairs to pass. We check the number of eligible pairs.
@@ -205,6 +228,7 @@ def test_select_winners_issue_192_regression():
     # Check that AAPL and TSLA are not in winners
     assert "AAPL.ETORO" not in per_symbol_winners
     assert "TSLA.ETORO" not in per_symbol_winners
+    assert "AMZN.ETORO" not in per_symbol_winners
 
     # Check that aggregate winner is one of the valid ones
     assert aggregate_winner is not None
