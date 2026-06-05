@@ -674,8 +674,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
-        dd_dev = math.sqrt(sum(down_sq) / len(down_sq))
-        dd_dev = max(dd_dev, 1e-6) + EPSILON
+        # Addition *under* the root as requested by PR review
+        dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
+        dd_dev = max(dd_dev, 1e-6)
         mean_ret = sum(rets) / n
         sortino = (mean_ret / dd_dev * math.sqrt(252))
         sortino = min(sortino, MAX_CAP)
