@@ -56,7 +56,7 @@ def test_select_winners_oos_structure():
 
     per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
 
-    # Check that aggregate_winner contains the required keys
+    # Check that aggregate_winner is None because it is filtered out by OOS gate
     assert aggregate_winner is None
 
 
@@ -110,4 +110,6 @@ def test_oos_not_evaluated():
     ]
 
     per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
-    assert aggregate_winner is None
+    assert aggregate_winner is not None
+    assert aggregate_winner["oos_evaluated"] is False
+    assert aggregate_winner["oos_eligible"] is False
