@@ -115,6 +115,7 @@ async def fetch_precisions_from_api(
     # Batch in Gruppen à 50 aufteilen (API-Limit)
     batch_size = 50
     api_hits = 0
+    missing_count = 0
 
     for i in range(0, len(etoro_ids), batch_size):
         batch = etoro_ids[i : i + batch_size]
@@ -196,6 +197,19 @@ async def fetch_precisions_from_api(
                     # continue) warf gültige Standard-Equities (TSLA, GOOG, NVDA) aus dem
                     # Backfill und flutete die Phase-2-Logs des Orchestrators.
                     if price_prec is None or size_prec is None:
+                        if fb_size == 2 and fb_price == 2:
+                            # (2,2) ist die korrekte Precision für Equities.
+                            # API liefert derzeit keine Precision-Felder; Fallback in run_backfill() greift.
+                            log.debug(
+                                f"[api_backfiller] Keine API-Precision für ID {eid} ({sym_raw}). "
+                                f"Equity-Fallback (2,2) wird von run_backfill() angewendet."
+                            )
+                            # Hinweis: Struktur nach Feldern wie leverageList[0].maxLeverage oder tradingData.priceStep untersuchen
+                            if missing_count < 3:
+                                log.debug(f"Vollständiger Item-Dump: {json.dumps(item, indent=2)}")
+                                missing_count += 1
+                            continue
+
                         if price_prec is None:
                             price_prec = fb_price
                             log.debug(f"[api_backfiller] ID {eid}: price_precision via historischem Fallback={price_prec}")

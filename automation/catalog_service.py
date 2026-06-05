@@ -159,6 +159,7 @@ async def _fetch_precisions(
     batch_size = 50
     timeout    = aiohttp.ClientTimeout(total=15)
     api_hits   = 0
+    missing_count = 0
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for i in range(0, len(etoro_ids), batch_size):
@@ -236,7 +237,16 @@ async def _fetch_precisions(
                         # Verwerfe Instrument, wenn API keine Precision liefert und es sich nicht um einen historisch bekannten Wert handelt
                         if price_prec is None or size_prec is None:
                             if fb_s == 2 and fb_p == 2:
-                                log.error(f"[catalog_service] Fehlende/Ungültige Precision für ID {eid} ({sym_raw}) aus API. Überspringe Instrument, um blindes (2,2) Fallback zu verhindern.")
+                                # (2,2) ist die korrekte Precision für Equities.
+                                # API liefert derzeit keine Precision-Felder; Fallback in run_backfill() greift.
+                                log.debug(
+                                    f"[catalog_service] Keine API-Precision für ID {eid} ({sym_raw}). "
+                                    f"Equity-Fallback (2,2) wird von run_backfill() angewendet."
+                                )
+                                # Hinweis: Struktur nach Feldern wie leverageList[0].maxLeverage oder tradingData.priceStep untersuchen
+                                if missing_count < 3:
+                                    log.debug(f"Vollständiger Item-Dump: {json.dumps(item, indent=2)}")
+                                    missing_count += 1
                                 continue
 
                             if price_prec is None:

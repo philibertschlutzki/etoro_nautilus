@@ -10,7 +10,7 @@ from automation.catalog_service import _fetch_precisions, log as c_log
 @pytest.mark.asyncio
 async def test_fetch_precisions_from_api_no_hits(caplog):
     # Capture the specific logger used in api_backfiller
-    caplog.set_level(logging.INFO, logger=log.name)
+    caplog.set_level(logging.DEBUG, logger=log.name)
 
     # Mock response without any precisions (Issue #171 Regression Test: shouldn't drop standard equity)
     mock_response = MagicMock()
@@ -23,14 +23,14 @@ async def test_fetch_precisions_from_api_no_hits(caplog):
 
     res = await fetch_precisions_from_api(mock_session, ["1", "2"], "api", "user")
 
-    # Issue #171: TSLA (standard equity) should resolve to (2, 2) and NOT be dropped, even if missing from API
-    assert "1" in res
-    assert res["1"] == (2, 2)
+    # Issue #179 & #171: TSLA (standard equity) resolving to (2, 2) via fallback is handled by the new guard.
+    # It explicitly `continue`s to omit it from `api_precisions` to avoid ERROR spam but relies on `run_backfill()` for the (2,2) fallback.
+    assert "1" not in res
+    assert any("Equity-Fallback (2,2) wird von run_backfill() angewendet" in record.message for record in caplog.records)
 
-    # With the new logging from Issue #180, we expect an INFO log explaining the fallback categories.
-    # We requested 2 IDs ("1", "2") but only provided mock display data for "1".
-    # Therefore, 1 out of 2 instruments was resolved directly.
-    assert any("1 direkt via API" in record.message for record in caplog.records)
+    # We requested 2 IDs ("1", "2"). ID "1" hit the continue guard. ID "2" wasn't returned in the mock.
+    # Therefore, 0 API hits.
+    assert any("Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
 
 @pytest.mark.asyncio
 async def test_fetch_precisions_from_api_mismatch_guard(caplog):

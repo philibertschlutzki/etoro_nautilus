@@ -1,0 +1,1933 @@
+📝 Log-Datei: /app/logs/backtest_2026-06-05_08-09-12.log
+🚨 Fehler-Log: /app/logs/errors_2026-06-05_08-09-12.log
+======================================================================
+📊 Spread-Modeling: True (fill_model=bid_ask)
+   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)
+🏆 Tournament: min_trades=20, min_sortino=0.3, min_pf=1.1
+⚙️  Strategy-Defaults geladen für: SmaCrossoverStrategy, MeanReversionStrategy, DynamicBreakoutStrategy, FlashCrashReversalStrategy, VolatilityBreakoutPumpStrategy, ComboTrendVwapStrategy, VwapExhaustionStrategy, HourlyMeanReversionStrategy
+✅ Defaults angewandt — SmaCrossoverStrategy: sma_period=5, trade_amount_pct=15.0
+✅ Defaults angewandt — MeanReversionStrategy: keltner_period=10, keltner_atr_period=10, keltner_multiplier=1.5, trade_amount_pct=15.0
+✅ Defaults angewandt — DynamicBreakoutStrategy: price_breakout_period=10, trade_amount_pct=15.0
+✅ Defaults angewandt — FlashCrashReversalStrategy: bb_period=10, bb_std_dev=2.0, rsi_period=7, rsi_oversold=30.0, rsi_overbought=70.0, atr_trailing_multiplier=0.75, max_bars_in_trade=16, trade_amount_pct=15.0
+✅ Defaults angewandt — VolatilityBreakoutPumpStrategy: bb_period=10, bb_std_dev=2.0, trade_amount_pct=15.0
+✅ Defaults angewandt — ComboTrendVwapStrategy: sma_period=20, macd_fast=5, macd_slow=13, macd_signal_period=9, bb_period=10, bb_std_dev=2.0, bb_entry_tolerance=1.0, trade_amount_pct=15.0
+✅ Defaults angewandt — VwapExhaustionStrategy: deviation_threshold=0.03, trade_amount_pct=15.0
+✅ Defaults angewandt — HourlyMeanReversionStrategy: keltner_period=10, keltner_atr_period=10, keltner_multiplier=1.5, trade_amount_pct=15.0
+📅 Zeitraum: 2026-01-06 → 2026-06-05
+📋 106 Instrumente gefunden.
+
+🔍 Analysiere Startdaten der Instrumente (Kohorten-Analyse)...
+   📊 Identifizierte Startdatum-Kohorten:
+      • 2025-06-04: 21 Symbole
+      • 2025-06-06: 27 Symbole
+      • 2025-06-10: 54 Symbole
+      • 2025-06-11: 1 Symbole
+      • 2025-09-15: 1 Symbole
+      • 2025-09-18: 1 Symbole
+      • 2025-11-20: 1 Symbole
+   ✅ Konfiguriertes Startdatum 2026-01-06 00:00:00 deckt alle Instrumente ab.
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent.
+
+⏳ Starte 848 Backtest-Jobs (106 × 8 Strategien)...
+🚀 01211.HK.ETORO | SmaCrossoverStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   1/848] 01211.HK.ETORO / SmaCrossoverStrategy
+🚀 01211.HK.ETORO | MeanReversionStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   2/848] 01211.HK.ETORO / MeanReversionStrategy
+🚀 01211.HK.ETORO | DynamicBreakoutStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   3/848] 01211.HK.ETORO / DynamicBreakoutStrategy
+🚀 01211.HK.ETORO | FlashCrashReversalStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   4/848] 01211.HK.ETORO / FlashCrashReversalStrategy
+🚀 01211.HK.ETORO | VolatilityBreakoutPumpStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   5/848] 01211.HK.ETORO / VolatilityBreakoutPumpStrategy
+🚀 01211.HK.ETORO | ComboTrendVwapStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   6/848] 01211.HK.ETORO / ComboTrendVwapStrategy
+🚀 01211.HK.ETORO | VwapExhaustionStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   7/848] 01211.HK.ETORO / VwapExhaustionStrategy
+🚀 01211.HK.ETORO | HourlyMeanReversionStrategy
+   📥 688 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.3 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   8/848] 01211.HK.ETORO / HourlyMeanReversionStrategy
+🚀 ABT.US.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [   9/848] ABT.US.ETORO / SmaCrossoverStrategy
+🚀 ABT.US.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  10/848] ABT.US.ETORO / MeanReversionStrategy
+🚀 ABT.US.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  11/848] ABT.US.ETORO / DynamicBreakoutStrategy
+🚀 ABT.US.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  12/848] ABT.US.ETORO / FlashCrashReversalStrategy
+🚀 ABT.US.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  13/848] ABT.US.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ABT.US.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  14/848] ABT.US.ETORO / ComboTrendVwapStrategy
+🚀 ABT.US.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  15/848] ABT.US.ETORO / VwapExhaustionStrategy
+🚀 ABT.US.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  16/848] ABT.US.ETORO / HourlyMeanReversionStrategy
+🚀 ACN.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  17/848] ACN.ETORO / SmaCrossoverStrategy
+🚀 ACN.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  18/848] ACN.ETORO / MeanReversionStrategy
+🚀 ACN.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  19/848] ACN.ETORO / DynamicBreakoutStrategy
+🚀 ACN.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  20/848] ACN.ETORO / FlashCrashReversalStrategy
+🚀 ACN.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  21/848] ACN.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ACN.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  22/848] ACN.ETORO / ComboTrendVwapStrategy
+🚀 ACN.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  23/848] ACN.ETORO / VwapExhaustionStrategy
+🚀 ACN.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  24/848] ACN.ETORO / HourlyMeanReversionStrategy
+🚀 ADA.ETORO | SmaCrossoverStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  25/848] ADA.ETORO / SmaCrossoverStrategy
+🚀 ADA.ETORO | MeanReversionStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  26/848] ADA.ETORO / MeanReversionStrategy
+🚀 ADA.ETORO | DynamicBreakoutStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  27/848] ADA.ETORO / DynamicBreakoutStrategy
+🚀 ADA.ETORO | FlashCrashReversalStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  28/848] ADA.ETORO / FlashCrashReversalStrategy
+🚀 ADA.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  29/848] ADA.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ADA.ETORO | ComboTrendVwapStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  30/848] ADA.ETORO / ComboTrendVwapStrategy
+🚀 ADA.ETORO | VwapExhaustionStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  31/848] ADA.ETORO / VwapExhaustionStrategy
+🚀 ADA.ETORO | HourlyMeanReversionStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  32/848] ADA.ETORO / HourlyMeanReversionStrategy
+🚀 ADBE.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  33/848] ADBE.ETORO / SmaCrossoverStrategy
+🚀 ADBE.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  34/848] ADBE.ETORO / MeanReversionStrategy
+🚀 ADBE.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  35/848] ADBE.ETORO / DynamicBreakoutStrategy
+🚀 ADBE.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  36/848] ADBE.ETORO / FlashCrashReversalStrategy
+🚀 ADBE.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  37/848] ADBE.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ADBE.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  38/848] ADBE.ETORO / ComboTrendVwapStrategy
+🚀 ADBE.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  39/848] ADBE.ETORO / VwapExhaustionStrategy
+🚀 ADBE.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  40/848] ADBE.ETORO / HourlyMeanReversionStrategy
+🚀 AERO.ETORO | SmaCrossoverStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  41/848] AERO.ETORO / SmaCrossoverStrategy
+🚀 AERO.ETORO | MeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  42/848] AERO.ETORO / MeanReversionStrategy
+🚀 AERO.ETORO | DynamicBreakoutStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  43/848] AERO.ETORO / DynamicBreakoutStrategy
+🚀 AERO.ETORO | FlashCrashReversalStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  44/848] AERO.ETORO / FlashCrashReversalStrategy
+🚀 AERO.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  45/848] AERO.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AERO.ETORO | ComboTrendVwapStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  46/848] AERO.ETORO / ComboTrendVwapStrategy
+🚀 AERO.ETORO | VwapExhaustionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  47/848] AERO.ETORO / VwapExhaustionStrategy
+🚀 AERO.ETORO | HourlyMeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  48/848] AERO.ETORO / HourlyMeanReversionStrategy
+🚀 AG.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  49/848] AG.ETORO / SmaCrossoverStrategy
+🚀 AG.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  50/848] AG.ETORO / MeanReversionStrategy
+🚀 AG.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  51/848] AG.ETORO / DynamicBreakoutStrategy
+🚀 AG.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  52/848] AG.ETORO / FlashCrashReversalStrategy
+🚀 AG.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  53/848] AG.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AG.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  54/848] AG.ETORO / ComboTrendVwapStrategy
+🚀 AG.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  55/848] AG.ETORO / VwapExhaustionStrategy
+🚀 AG.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  56/848] AG.ETORO / HourlyMeanReversionStrategy
+🚀 AMAT.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  57/848] AMAT.ETORO / SmaCrossoverStrategy
+🚀 AMAT.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  58/848] AMAT.ETORO / MeanReversionStrategy
+🚀 AMAT.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  59/848] AMAT.ETORO / DynamicBreakoutStrategy
+🚀 AMAT.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  60/848] AMAT.ETORO / FlashCrashReversalStrategy
+🚀 AMAT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  61/848] AMAT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AMAT.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  62/848] AMAT.ETORO / ComboTrendVwapStrategy
+🚀 AMAT.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  63/848] AMAT.ETORO / VwapExhaustionStrategy
+🚀 AMAT.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  64/848] AMAT.ETORO / HourlyMeanReversionStrategy
+🚀 AMD.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  65/848] AMD.ETORO / SmaCrossoverStrategy
+🚀 AMD.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  66/848] AMD.ETORO / MeanReversionStrategy
+🚀 AMD.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  67/848] AMD.ETORO / DynamicBreakoutStrategy
+🚀 AMD.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  68/848] AMD.ETORO / FlashCrashReversalStrategy
+🚀 AMD.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  69/848] AMD.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AMD.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  70/848] AMD.ETORO / ComboTrendVwapStrategy
+🚀 AMD.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  71/848] AMD.ETORO / VwapExhaustionStrategy
+🚀 AMD.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  72/848] AMD.ETORO / HourlyMeanReversionStrategy
+🚀 AMKR.ETORO | SmaCrossoverStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  73/848] AMKR.ETORO / SmaCrossoverStrategy
+🚀 AMKR.ETORO | MeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  74/848] AMKR.ETORO / MeanReversionStrategy
+🚀 AMKR.ETORO | DynamicBreakoutStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  75/848] AMKR.ETORO / DynamicBreakoutStrategy
+🚀 AMKR.ETORO | FlashCrashReversalStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  76/848] AMKR.ETORO / FlashCrashReversalStrategy
+🚀 AMKR.ETORO | VolatilityBreakoutPumpStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  77/848] AMKR.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AMKR.ETORO | ComboTrendVwapStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  78/848] AMKR.ETORO / ComboTrendVwapStrategy
+🚀 AMKR.ETORO | VwapExhaustionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  79/848] AMKR.ETORO / VwapExhaustionStrategy
+🚀 AMKR.ETORO | HourlyMeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  80/848] AMKR.ETORO / HourlyMeanReversionStrategy
+🚀 ASX.ETORO | SmaCrossoverStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  81/848] ASX.ETORO / SmaCrossoverStrategy
+🚀 ASX.ETORO | MeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  82/848] ASX.ETORO / MeanReversionStrategy
+🚀 ASX.ETORO | DynamicBreakoutStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  83/848] ASX.ETORO / DynamicBreakoutStrategy
+🚀 ASX.ETORO | FlashCrashReversalStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  84/848] ASX.ETORO / FlashCrashReversalStrategy
+🚀 ASX.ETORO | VolatilityBreakoutPumpStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  85/848] ASX.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ASX.ETORO | ComboTrendVwapStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  86/848] ASX.ETORO / ComboTrendVwapStrategy
+🚀 ASX.ETORO | VwapExhaustionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  87/848] ASX.ETORO / VwapExhaustionStrategy
+🚀 ASX.ETORO | HourlyMeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  88/848] ASX.ETORO / HourlyMeanReversionStrategy
+🚀 AVAX.ETORO | SmaCrossoverStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  89/848] AVAX.ETORO / SmaCrossoverStrategy
+🚀 AVAX.ETORO | MeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  90/848] AVAX.ETORO / MeanReversionStrategy
+🚀 AVAX.ETORO | DynamicBreakoutStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  91/848] AVAX.ETORO / DynamicBreakoutStrategy
+🚀 AVAX.ETORO | FlashCrashReversalStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  92/848] AVAX.ETORO / FlashCrashReversalStrategy
+🚀 AVAX.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  93/848] AVAX.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AVAX.ETORO | ComboTrendVwapStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  94/848] AVAX.ETORO / ComboTrendVwapStrategy
+🚀 AVAX.ETORO | VwapExhaustionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  95/848] AVAX.ETORO / VwapExhaustionStrategy
+🚀 AVAX.ETORO | HourlyMeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  96/848] AVAX.ETORO / HourlyMeanReversionStrategy
+🚀 AXON.ETORO | SmaCrossoverStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  97/848] AXON.ETORO / SmaCrossoverStrategy
+🚀 AXON.ETORO | MeanReversionStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  98/848] AXON.ETORO / MeanReversionStrategy
+🚀 AXON.ETORO | DynamicBreakoutStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [  99/848] AXON.ETORO / DynamicBreakoutStrategy
+🚀 AXON.ETORO | FlashCrashReversalStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 100/848] AXON.ETORO / FlashCrashReversalStrategy
+🚀 AXON.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 101/848] AXON.ETORO / VolatilityBreakoutPumpStrategy
+🚀 AXON.ETORO | ComboTrendVwapStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 102/848] AXON.ETORO / ComboTrendVwapStrategy
+🚀 AXON.ETORO | VwapExhaustionStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 103/848] AXON.ETORO / VwapExhaustionStrategy
+🚀 AXON.ETORO | HourlyMeanReversionStrategy
+   📥 1063 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 104/848] AXON.ETORO / HourlyMeanReversionStrategy
+🚀 BTC.ETORO | SmaCrossoverStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 105/848] BTC.ETORO / SmaCrossoverStrategy
+🚀 BTC.ETORO | MeanReversionStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 106/848] BTC.ETORO / MeanReversionStrategy
+🚀 BTC.ETORO | DynamicBreakoutStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 107/848] BTC.ETORO / DynamicBreakoutStrategy
+🚀 BTC.ETORO | FlashCrashReversalStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 108/848] BTC.ETORO / FlashCrashReversalStrategy
+🚀 BTC.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 109/848] BTC.ETORO / VolatilityBreakoutPumpStrategy
+🚀 BTC.ETORO | ComboTrendVwapStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 110/848] BTC.ETORO / ComboTrendVwapStrategy
+🚀 BTC.ETORO | VwapExhaustionStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 111/848] BTC.ETORO / VwapExhaustionStrategy
+🚀 BTC.ETORO | HourlyMeanReversionStrategy
+   📥 1111 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 112/848] BTC.ETORO / HourlyMeanReversionStrategy
+🚀 CAG.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 113/848] CAG.ETORO / SmaCrossoverStrategy
+🚀 CAG.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 114/848] CAG.ETORO / MeanReversionStrategy
+🚀 CAG.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 115/848] CAG.ETORO / DynamicBreakoutStrategy
+🚀 CAG.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 116/848] CAG.ETORO / FlashCrashReversalStrategy
+🚀 CAG.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 117/848] CAG.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CAG.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 118/848] CAG.ETORO / ComboTrendVwapStrategy
+🚀 CAG.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 119/848] CAG.ETORO / VwapExhaustionStrategy
+🚀 CAG.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 120/848] CAG.ETORO / HourlyMeanReversionStrategy
+🚀 CAT.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 121/848] CAT.ETORO / SmaCrossoverStrategy
+🚀 CAT.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 122/848] CAT.ETORO / MeanReversionStrategy
+🚀 CAT.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 123/848] CAT.ETORO / DynamicBreakoutStrategy
+🚀 CAT.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 124/848] CAT.ETORO / FlashCrashReversalStrategy
+🚀 CAT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 125/848] CAT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CAT.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 126/848] CAT.ETORO / ComboTrendVwapStrategy
+🚀 CAT.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 127/848] CAT.ETORO / VwapExhaustionStrategy
+🚀 CAT.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 128/848] CAT.ETORO / HourlyMeanReversionStrategy
+🚀 CCL.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 129/848] CCL.ETORO / SmaCrossoverStrategy
+🚀 CCL.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 130/848] CCL.ETORO / MeanReversionStrategy
+🚀 CCL.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 131/848] CCL.ETORO / DynamicBreakoutStrategy
+🚀 CCL.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 132/848] CCL.ETORO / FlashCrashReversalStrategy
+🚀 CCL.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 133/848] CCL.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CCL.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 134/848] CCL.ETORO / ComboTrendVwapStrategy
+🚀 CCL.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 135/848] CCL.ETORO / VwapExhaustionStrategy
+🚀 CCL.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 136/848] CCL.ETORO / HourlyMeanReversionStrategy
+🚀 CHTR.ETORO | SmaCrossoverStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 137/848] CHTR.ETORO / SmaCrossoverStrategy
+🚀 CHTR.ETORO | MeanReversionStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 138/848] CHTR.ETORO / MeanReversionStrategy
+🚀 CHTR.ETORO | DynamicBreakoutStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 139/848] CHTR.ETORO / DynamicBreakoutStrategy
+🚀 CHTR.ETORO | FlashCrashReversalStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 140/848] CHTR.ETORO / FlashCrashReversalStrategy
+🚀 CHTR.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 141/848] CHTR.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CHTR.ETORO | ComboTrendVwapStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 142/848] CHTR.ETORO / ComboTrendVwapStrategy
+🚀 CHTR.ETORO | VwapExhaustionStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 143/848] CHTR.ETORO / VwapExhaustionStrategy
+🚀 CHTR.ETORO | HourlyMeanReversionStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 144/848] CHTR.ETORO / HourlyMeanReversionStrategy
+🚀 CIEN.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 145/848] CIEN.ETORO / SmaCrossoverStrategy
+🚀 CIEN.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 146/848] CIEN.ETORO / MeanReversionStrategy
+🚀 CIEN.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 147/848] CIEN.ETORO / DynamicBreakoutStrategy
+🚀 CIEN.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 148/848] CIEN.ETORO / FlashCrashReversalStrategy
+🚀 CIEN.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 149/848] CIEN.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CIEN.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 150/848] CIEN.ETORO / ComboTrendVwapStrategy
+🚀 CIEN.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 151/848] CIEN.ETORO / VwapExhaustionStrategy
+🚀 CIEN.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 152/848] CIEN.ETORO / HourlyMeanReversionStrategy
+🚀 CMG.ETORO | SmaCrossoverStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 153/848] CMG.ETORO / SmaCrossoverStrategy
+🚀 CMG.ETORO | MeanReversionStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 154/848] CMG.ETORO / MeanReversionStrategy
+🚀 CMG.ETORO | DynamicBreakoutStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 155/848] CMG.ETORO / DynamicBreakoutStrategy
+🚀 CMG.ETORO | FlashCrashReversalStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 156/848] CMG.ETORO / FlashCrashReversalStrategy
+🚀 CMG.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 157/848] CMG.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CMG.ETORO | ComboTrendVwapStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 158/848] CMG.ETORO / ComboTrendVwapStrategy
+🚀 CMG.ETORO | VwapExhaustionStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 159/848] CMG.ETORO / VwapExhaustionStrategy
+🚀 CMG.ETORO | HourlyMeanReversionStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 160/848] CMG.ETORO / HourlyMeanReversionStrategy
+🚀 COHR.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 161/848] COHR.ETORO / SmaCrossoverStrategy
+🚀 COHR.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 162/848] COHR.ETORO / MeanReversionStrategy
+🚀 COHR.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 163/848] COHR.ETORO / DynamicBreakoutStrategy
+🚀 COHR.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 164/848] COHR.ETORO / FlashCrashReversalStrategy
+🚀 COHR.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 165/848] COHR.ETORO / VolatilityBreakoutPumpStrategy
+🚀 COHR.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 166/848] COHR.ETORO / ComboTrendVwapStrategy
+🚀 COHR.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 167/848] COHR.ETORO / VwapExhaustionStrategy
+🚀 COHR.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 168/848] COHR.ETORO / HourlyMeanReversionStrategy
+🚀 CPRT.ETORO | SmaCrossoverStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 169/848] CPRT.ETORO / SmaCrossoverStrategy
+🚀 CPRT.ETORO | MeanReversionStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 170/848] CPRT.ETORO / MeanReversionStrategy
+🚀 CPRT.ETORO | DynamicBreakoutStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 171/848] CPRT.ETORO / DynamicBreakoutStrategy
+🚀 CPRT.ETORO | FlashCrashReversalStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 172/848] CPRT.ETORO / FlashCrashReversalStrategy
+🚀 CPRT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 173/848] CPRT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CPRT.ETORO | ComboTrendVwapStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 174/848] CPRT.ETORO / ComboTrendVwapStrategy
+🚀 CPRT.ETORO | VwapExhaustionStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 175/848] CPRT.ETORO / VwapExhaustionStrategy
+🚀 CPRT.ETORO | HourlyMeanReversionStrategy
+   📥 1149 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 176/848] CPRT.ETORO / HourlyMeanReversionStrategy
+🚀 CRM.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 177/848] CRM.ETORO / SmaCrossoverStrategy
+🚀 CRM.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 178/848] CRM.ETORO / MeanReversionStrategy
+🚀 CRM.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 179/848] CRM.ETORO / DynamicBreakoutStrategy
+🚀 CRM.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 180/848] CRM.ETORO / FlashCrashReversalStrategy
+🚀 CRM.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 181/848] CRM.ETORO / VolatilityBreakoutPumpStrategy
+🚀 CRM.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 182/848] CRM.ETORO / ComboTrendVwapStrategy
+🚀 CRM.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 183/848] CRM.ETORO / VwapExhaustionStrategy
+🚀 CRM.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 184/848] CRM.ETORO / HourlyMeanReversionStrategy
+🚀 DOCU.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 185/848] DOCU.ETORO / SmaCrossoverStrategy
+🚀 DOCU.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 186/848] DOCU.ETORO / MeanReversionStrategy
+🚀 DOCU.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 187/848] DOCU.ETORO / DynamicBreakoutStrategy
+🚀 DOCU.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 188/848] DOCU.ETORO / FlashCrashReversalStrategy
+🚀 DOCU.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 189/848] DOCU.ETORO / VolatilityBreakoutPumpStrategy
+🚀 DOCU.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 190/848] DOCU.ETORO / ComboTrendVwapStrategy
+🚀 DOCU.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 191/848] DOCU.ETORO / VwapExhaustionStrategy
+🚀 DOCU.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 192/848] DOCU.ETORO / HourlyMeanReversionStrategy
+🚀 DOGE.ETORO | SmaCrossoverStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 193/848] DOGE.ETORO / SmaCrossoverStrategy
+🚀 DOGE.ETORO | MeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 194/848] DOGE.ETORO / MeanReversionStrategy
+🚀 DOGE.ETORO | DynamicBreakoutStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 195/848] DOGE.ETORO / DynamicBreakoutStrategy
+🚀 DOGE.ETORO | FlashCrashReversalStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 196/848] DOGE.ETORO / FlashCrashReversalStrategy
+🚀 DOGE.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 197/848] DOGE.ETORO / VolatilityBreakoutPumpStrategy
+🚀 DOGE.ETORO | ComboTrendVwapStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 198/848] DOGE.ETORO / ComboTrendVwapStrategy
+🚀 DOGE.ETORO | VwapExhaustionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 199/848] DOGE.ETORO / VwapExhaustionStrategy
+🚀 DOGE.ETORO | HourlyMeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 200/848] DOGE.ETORO / HourlyMeanReversionStrategy
+🚀 DUOL.ETORO | SmaCrossoverStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 201/848] DUOL.ETORO / SmaCrossoverStrategy
+🚀 DUOL.ETORO | MeanReversionStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 202/848] DUOL.ETORO / MeanReversionStrategy
+🚀 DUOL.ETORO | DynamicBreakoutStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 203/848] DUOL.ETORO / DynamicBreakoutStrategy
+🚀 DUOL.ETORO | FlashCrashReversalStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 204/848] DUOL.ETORO / FlashCrashReversalStrategy
+🚀 DUOL.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 205/848] DUOL.ETORO / VolatilityBreakoutPumpStrategy
+🚀 DUOL.ETORO | ComboTrendVwapStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 206/848] DUOL.ETORO / ComboTrendVwapStrategy
+🚀 DUOL.ETORO | VwapExhaustionStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 207/848] DUOL.ETORO / VwapExhaustionStrategy
+🚀 DUOL.ETORO | HourlyMeanReversionStrategy
+   📥 1152 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 208/848] DUOL.ETORO / HourlyMeanReversionStrategy
+🚀 E.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 209/848] E.ETORO / SmaCrossoverStrategy
+🚀 E.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 210/848] E.ETORO / MeanReversionStrategy
+🚀 E.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 211/848] E.ETORO / DynamicBreakoutStrategy
+🚀 E.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 212/848] E.ETORO / FlashCrashReversalStrategy
+🚀 E.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 213/848] E.ETORO / VolatilityBreakoutPumpStrategy
+🚀 E.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 214/848] E.ETORO / ComboTrendVwapStrategy
+🚀 E.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 215/848] E.ETORO / VwapExhaustionStrategy
+🚀 E.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 216/848] E.ETORO / HourlyMeanReversionStrategy
+🚀 EEFT.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 217/848] EEFT.ETORO / SmaCrossoverStrategy
+🚀 EEFT.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 218/848] EEFT.ETORO / MeanReversionStrategy
+🚀 EEFT.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 219/848] EEFT.ETORO / DynamicBreakoutStrategy
+🚀 EEFT.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 220/848] EEFT.ETORO / FlashCrashReversalStrategy
+🚀 EEFT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 221/848] EEFT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 EEFT.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 222/848] EEFT.ETORO / ComboTrendVwapStrategy
+🚀 EEFT.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 223/848] EEFT.ETORO / VwapExhaustionStrategy
+🚀 EEFT.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 224/848] EEFT.ETORO / HourlyMeanReversionStrategy
+🚀 ELF.ETORO | SmaCrossoverStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 225/848] ELF.ETORO / SmaCrossoverStrategy
+🚀 ELF.ETORO | MeanReversionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 226/848] ELF.ETORO / MeanReversionStrategy
+🚀 ELF.ETORO | DynamicBreakoutStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 227/848] ELF.ETORO / DynamicBreakoutStrategy
+🚀 ELF.ETORO | FlashCrashReversalStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 228/848] ELF.ETORO / FlashCrashReversalStrategy
+🚀 ELF.ETORO | VolatilityBreakoutPumpStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 229/848] ELF.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ELF.ETORO | ComboTrendVwapStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 230/848] ELF.ETORO / ComboTrendVwapStrategy
+🚀 ELF.ETORO | VwapExhaustionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 231/848] ELF.ETORO / VwapExhaustionStrategy
+🚀 ELF.ETORO | HourlyMeanReversionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 232/848] ELF.ETORO / HourlyMeanReversionStrategy
+🚀 ESLT.ETORO | SmaCrossoverStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 233/848] ESLT.ETORO / SmaCrossoverStrategy
+🚀 ESLT.ETORO | MeanReversionStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 234/848] ESLT.ETORO / MeanReversionStrategy
+🚀 ESLT.ETORO | DynamicBreakoutStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 235/848] ESLT.ETORO / DynamicBreakoutStrategy
+🚀 ESLT.ETORO | FlashCrashReversalStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 236/848] ESLT.ETORO / FlashCrashReversalStrategy
+🚀 ESLT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 237/848] ESLT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ESLT.ETORO | ComboTrendVwapStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 238/848] ESLT.ETORO / ComboTrendVwapStrategy
+🚀 ESLT.ETORO | VwapExhaustionStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 239/848] ESLT.ETORO / VwapExhaustionStrategy
+🚀 ESLT.ETORO | HourlyMeanReversionStrategy
+   📥 821 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 240/848] ESLT.ETORO / HourlyMeanReversionStrategy
+🚀 ETH.ETORO | SmaCrossoverStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 241/848] ETH.ETORO / SmaCrossoverStrategy
+🚀 ETH.ETORO | MeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 242/848] ETH.ETORO / MeanReversionStrategy
+🚀 ETH.ETORO | DynamicBreakoutStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 243/848] ETH.ETORO / DynamicBreakoutStrategy
+🚀 ETH.ETORO | FlashCrashReversalStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 244/848] ETH.ETORO / FlashCrashReversalStrategy
+🚀 ETH.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 245/848] ETH.ETORO / VolatilityBreakoutPumpStrategy
+🚀 ETH.ETORO | ComboTrendVwapStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 246/848] ETH.ETORO / ComboTrendVwapStrategy
+🚀 ETH.ETORO | VwapExhaustionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 247/848] ETH.ETORO / VwapExhaustionStrategy
+🚀 ETH.ETORO | HourlyMeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 248/848] ETH.ETORO / HourlyMeanReversionStrategy
+🚀 FDX.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 249/848] FDX.ETORO / SmaCrossoverStrategy
+🚀 FDX.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 250/848] FDX.ETORO / MeanReversionStrategy
+🚀 FDX.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 251/848] FDX.ETORO / DynamicBreakoutStrategy
+🚀 FDX.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 252/848] FDX.ETORO / FlashCrashReversalStrategy
+🚀 FDX.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 253/848] FDX.ETORO / VolatilityBreakoutPumpStrategy
+🚀 FDX.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 254/848] FDX.ETORO / ComboTrendVwapStrategy
+🚀 FDX.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 255/848] FDX.ETORO / VwapExhaustionStrategy
+🚀 FDX.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 256/848] FDX.ETORO / HourlyMeanReversionStrategy
+🚀 FICO.ETORO | SmaCrossoverStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 257/848] FICO.ETORO / SmaCrossoverStrategy
+🚀 FICO.ETORO | MeanReversionStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 258/848] FICO.ETORO / MeanReversionStrategy
+🚀 FICO.ETORO | DynamicBreakoutStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 259/848] FICO.ETORO / DynamicBreakoutStrategy
+🚀 FICO.ETORO | FlashCrashReversalStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 260/848] FICO.ETORO / FlashCrashReversalStrategy
+🚀 FICO.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 261/848] FICO.ETORO / VolatilityBreakoutPumpStrategy
+🚀 FICO.ETORO | ComboTrendVwapStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 262/848] FICO.ETORO / ComboTrendVwapStrategy
+🚀 FICO.ETORO | VwapExhaustionStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 263/848] FICO.ETORO / VwapExhaustionStrategy
+🚀 FICO.ETORO | HourlyMeanReversionStrategy
+   📥 1137 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 264/848] FICO.ETORO / HourlyMeanReversionStrategy
+🚀 FISV.ETORO | SmaCrossoverStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 265/848] FISV.ETORO / SmaCrossoverStrategy
+🚀 FISV.ETORO | MeanReversionStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 266/848] FISV.ETORO / MeanReversionStrategy
+🚀 FISV.ETORO | DynamicBreakoutStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 267/848] FISV.ETORO / DynamicBreakoutStrategy
+🚀 FISV.ETORO | FlashCrashReversalStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 268/848] FISV.ETORO / FlashCrashReversalStrategy
+🚀 FISV.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 269/848] FISV.ETORO / VolatilityBreakoutPumpStrategy
+🚀 FISV.ETORO | ComboTrendVwapStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 270/848] FISV.ETORO / ComboTrendVwapStrategy
+🚀 FISV.ETORO | VwapExhaustionStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 271/848] FISV.ETORO / VwapExhaustionStrategy
+🚀 FISV.ETORO | HourlyMeanReversionStrategy
+   📥 1150 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 272/848] FISV.ETORO / HourlyMeanReversionStrategy
+🚀 FRO.ETORO | SmaCrossoverStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 273/848] FRO.ETORO / SmaCrossoverStrategy
+🚀 FRO.ETORO | MeanReversionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 274/848] FRO.ETORO / MeanReversionStrategy
+🚀 FRO.ETORO | DynamicBreakoutStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 275/848] FRO.ETORO / DynamicBreakoutStrategy
+🚀 FRO.ETORO | FlashCrashReversalStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 276/848] FRO.ETORO / FlashCrashReversalStrategy
+🚀 FRO.ETORO | VolatilityBreakoutPumpStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 277/848] FRO.ETORO / VolatilityBreakoutPumpStrategy
+🚀 FRO.ETORO | ComboTrendVwapStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 278/848] FRO.ETORO / ComboTrendVwapStrategy
+🚀 FRO.ETORO | VwapExhaustionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 279/848] FRO.ETORO / VwapExhaustionStrategy
+🚀 FRO.ETORO | HourlyMeanReversionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 280/848] FRO.ETORO / HourlyMeanReversionStrategy
+🚀 FSLY.ETORO | SmaCrossoverStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 281/848] FSLY.ETORO / SmaCrossoverStrategy
+🚀 FSLY.ETORO | MeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 282/848] FSLY.ETORO / MeanReversionStrategy
+🚀 FSLY.ETORO | DynamicBreakoutStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 283/848] FSLY.ETORO / DynamicBreakoutStrategy
+🚀 FSLY.ETORO | FlashCrashReversalStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 284/848] FSLY.ETORO / FlashCrashReversalStrategy
+🚀 FSLY.ETORO | VolatilityBreakoutPumpStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 285/848] FSLY.ETORO / VolatilityBreakoutPumpStrategy
+🚀 FSLY.ETORO | ComboTrendVwapStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 286/848] FSLY.ETORO / ComboTrendVwapStrategy
+🚀 FSLY.ETORO | VwapExhaustionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 287/848] FSLY.ETORO / VwapExhaustionStrategy
+🚀 FSLY.ETORO | HourlyMeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 288/848] FSLY.ETORO / HourlyMeanReversionStrategy
+🚀 GEV.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 289/848] GEV.ETORO / SmaCrossoverStrategy
+🚀 GEV.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 290/848] GEV.ETORO / MeanReversionStrategy
+🚀 GEV.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 291/848] GEV.ETORO / DynamicBreakoutStrategy
+🚀 GEV.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 292/848] GEV.ETORO / FlashCrashReversalStrategy
+🚀 GEV.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 293/848] GEV.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GEV.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 294/848] GEV.ETORO / ComboTrendVwapStrategy
+🚀 GEV.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 295/848] GEV.ETORO / VwapExhaustionStrategy
+🚀 GEV.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 296/848] GEV.ETORO / HourlyMeanReversionStrategy
+🚀 GIS.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 297/848] GIS.ETORO / SmaCrossoverStrategy
+🚀 GIS.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 298/848] GIS.ETORO / MeanReversionStrategy
+🚀 GIS.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 299/848] GIS.ETORO / DynamicBreakoutStrategy
+🚀 GIS.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 300/848] GIS.ETORO / FlashCrashReversalStrategy
+🚀 GIS.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 301/848] GIS.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GIS.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 302/848] GIS.ETORO / ComboTrendVwapStrategy
+🚀 GIS.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 303/848] GIS.ETORO / VwapExhaustionStrategy
+🚀 GIS.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 304/848] GIS.ETORO / HourlyMeanReversionStrategy
+🚀 GLW.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 305/848] GLW.ETORO / SmaCrossoverStrategy
+🚀 GLW.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 306/848] GLW.ETORO / MeanReversionStrategy
+🚀 GLW.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 307/848] GLW.ETORO / DynamicBreakoutStrategy
+🚀 GLW.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 308/848] GLW.ETORO / FlashCrashReversalStrategy
+🚀 GLW.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 309/848] GLW.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GLW.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 310/848] GLW.ETORO / ComboTrendVwapStrategy
+🚀 GLW.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 311/848] GLW.ETORO / VwapExhaustionStrategy
+🚀 GLW.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 312/848] GLW.ETORO / HourlyMeanReversionStrategy
+🚀 GOOG.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 313/848] GOOG.ETORO / SmaCrossoverStrategy
+🚀 GOOG.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 314/848] GOOG.ETORO / MeanReversionStrategy
+🚀 GOOG.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 315/848] GOOG.ETORO / DynamicBreakoutStrategy
+🚀 GOOG.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 316/848] GOOG.ETORO / FlashCrashReversalStrategy
+🚀 GOOG.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 317/848] GOOG.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GOOG.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 318/848] GOOG.ETORO / ComboTrendVwapStrategy
+🚀 GOOG.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 319/848] GOOG.ETORO / VwapExhaustionStrategy
+🚀 GOOG.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 320/848] GOOG.ETORO / HourlyMeanReversionStrategy
+🚀 GOOGL.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 321/848] GOOGL.ETORO / SmaCrossoverStrategy
+🚀 GOOGL.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 322/848] GOOGL.ETORO / MeanReversionStrategy
+🚀 GOOGL.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 323/848] GOOGL.ETORO / DynamicBreakoutStrategy
+🚀 GOOGL.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 324/848] GOOGL.ETORO / FlashCrashReversalStrategy
+🚀 GOOGL.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 325/848] GOOGL.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GOOGL.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 326/848] GOOGL.ETORO / ComboTrendVwapStrategy
+🚀 GOOGL.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 327/848] GOOGL.ETORO / VwapExhaustionStrategy
+🚀 GOOGL.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 328/848] GOOGL.ETORO / HourlyMeanReversionStrategy
+🚀 GSAT.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 329/848] GSAT.ETORO / SmaCrossoverStrategy
+🚀 GSAT.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 330/848] GSAT.ETORO / MeanReversionStrategy
+🚀 GSAT.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 331/848] GSAT.ETORO / DynamicBreakoutStrategy
+🚀 GSAT.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 332/848] GSAT.ETORO / FlashCrashReversalStrategy
+🚀 GSAT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 333/848] GSAT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GSAT.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 334/848] GSAT.ETORO / ComboTrendVwapStrategy
+🚀 GSAT.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 335/848] GSAT.ETORO / VwapExhaustionStrategy
+🚀 GSAT.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 336/848] GSAT.ETORO / HourlyMeanReversionStrategy
+🚀 GTLB.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 337/848] GTLB.ETORO / SmaCrossoverStrategy
+🚀 GTLB.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 338/848] GTLB.ETORO / MeanReversionStrategy
+🚀 GTLB.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 339/848] GTLB.ETORO / DynamicBreakoutStrategy
+🚀 GTLB.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 340/848] GTLB.ETORO / FlashCrashReversalStrategy
+🚀 GTLB.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 341/848] GTLB.ETORO / VolatilityBreakoutPumpStrategy
+🚀 GTLB.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 342/848] GTLB.ETORO / ComboTrendVwapStrategy
+🚀 GTLB.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 343/848] GTLB.ETORO / VwapExhaustionStrategy
+🚀 GTLB.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 344/848] GTLB.ETORO / HourlyMeanReversionStrategy
+🚀 HAL.ETORO | SmaCrossoverStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 345/848] HAL.ETORO / SmaCrossoverStrategy
+🚀 HAL.ETORO | MeanReversionStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 346/848] HAL.ETORO / MeanReversionStrategy
+🚀 HAL.ETORO | DynamicBreakoutStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 347/848] HAL.ETORO / DynamicBreakoutStrategy
+🚀 HAL.ETORO | FlashCrashReversalStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 348/848] HAL.ETORO / FlashCrashReversalStrategy
+🚀 HAL.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 349/848] HAL.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HAL.ETORO | ComboTrendVwapStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 350/848] HAL.ETORO / ComboTrendVwapStrategy
+🚀 HAL.ETORO | VwapExhaustionStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 351/848] HAL.ETORO / VwapExhaustionStrategy
+🚀 HAL.ETORO | HourlyMeanReversionStrategy
+   📥 1145 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 352/848] HAL.ETORO / HourlyMeanReversionStrategy
+🚀 HUBS.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 353/848] HUBS.ETORO / SmaCrossoverStrategy
+🚀 HUBS.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 354/848] HUBS.ETORO / MeanReversionStrategy
+🚀 HUBS.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 355/848] HUBS.ETORO / DynamicBreakoutStrategy
+🚀 HUBS.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 356/848] HUBS.ETORO / FlashCrashReversalStrategy
+🚀 HUBS.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 357/848] HUBS.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HUBS.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 358/848] HUBS.ETORO / ComboTrendVwapStrategy
+🚀 HUBS.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 359/848] HUBS.ETORO / VwapExhaustionStrategy
+🚀 HUBS.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 360/848] HUBS.ETORO / HourlyMeanReversionStrategy
+🚀 HUT.ETORO | SmaCrossoverStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 361/848] HUT.ETORO / SmaCrossoverStrategy
+🚀 HUT.ETORO | MeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 362/848] HUT.ETORO / MeanReversionStrategy
+🚀 HUT.ETORO | DynamicBreakoutStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 363/848] HUT.ETORO / DynamicBreakoutStrategy
+🚀 HUT.ETORO | FlashCrashReversalStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 364/848] HUT.ETORO / FlashCrashReversalStrategy
+🚀 HUT.ETORO | VolatilityBreakoutPumpStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 365/848] HUT.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HUT.ETORO | ComboTrendVwapStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 366/848] HUT.ETORO / ComboTrendVwapStrategy
+🚀 HUT.ETORO | VwapExhaustionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 367/848] HUT.ETORO / VwapExhaustionStrategy
+🚀 HUT.ETORO | HourlyMeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 368/848] HUT.ETORO / HourlyMeanReversionStrategy
+🚀 HYPE.ETORO | SmaCrossoverStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 369/848] HYPE.ETORO / SmaCrossoverStrategy
+🚀 HYPE.ETORO | MeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 370/848] HYPE.ETORO / MeanReversionStrategy
+🚀 HYPE.ETORO | DynamicBreakoutStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 371/848] HYPE.ETORO / DynamicBreakoutStrategy
+🚀 HYPE.ETORO | FlashCrashReversalStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 372/848] HYPE.ETORO / FlashCrashReversalStrategy
+🚀 HYPE.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 373/848] HYPE.ETORO / VolatilityBreakoutPumpStrategy
+🚀 HYPE.ETORO | ComboTrendVwapStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 374/848] HYPE.ETORO / ComboTrendVwapStrategy
+🚀 HYPE.ETORO | VwapExhaustionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 375/848] HYPE.ETORO / VwapExhaustionStrategy
+🚀 HYPE.ETORO | HourlyMeanReversionStrategy
+   📥 1110 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 376/848] HYPE.ETORO / HourlyMeanReversionStrategy
+🚀 INSM.ETORO | SmaCrossoverStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 377/848] INSM.ETORO / SmaCrossoverStrategy
+🚀 INSM.ETORO | MeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 378/848] INSM.ETORO / MeanReversionStrategy
+🚀 INSM.ETORO | DynamicBreakoutStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 379/848] INSM.ETORO / DynamicBreakoutStrategy
+🚀 INSM.ETORO | FlashCrashReversalStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 380/848] INSM.ETORO / FlashCrashReversalStrategy
+🚀 INSM.ETORO | VolatilityBreakoutPumpStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 381/848] INSM.ETORO / VolatilityBreakoutPumpStrategy
+🚀 INSM.ETORO | ComboTrendVwapStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 382/848] INSM.ETORO / ComboTrendVwapStrategy
+🚀 INSM.ETORO | VwapExhaustionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 383/848] INSM.ETORO / VwapExhaustionStrategy
+🚀 INSM.ETORO | HourlyMeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 384/848] INSM.ETORO / HourlyMeanReversionStrategy
+🚀 INSW.ETORO | SmaCrossoverStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 385/848] INSW.ETORO / SmaCrossoverStrategy
+🚀 INSW.ETORO | MeanReversionStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 386/848] INSW.ETORO / MeanReversionStrategy
+🚀 INSW.ETORO | DynamicBreakoutStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 387/848] INSW.ETORO / DynamicBreakoutStrategy
+🚀 INSW.ETORO | FlashCrashReversalStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 388/848] INSW.ETORO / FlashCrashReversalStrategy
+🚀 INSW.ETORO | VolatilityBreakoutPumpStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 389/848] INSW.ETORO / VolatilityBreakoutPumpStrategy
+🚀 INSW.ETORO | ComboTrendVwapStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 390/848] INSW.ETORO / ComboTrendVwapStrategy
+🚀 INSW.ETORO | VwapExhaustionStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 391/848] INSW.ETORO / VwapExhaustionStrategy
+🚀 INSW.ETORO | HourlyMeanReversionStrategy
+   📥 815 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 392/848] INSW.ETORO / HourlyMeanReversionStrategy
+🚀 INTU.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 393/848] INTU.ETORO / SmaCrossoverStrategy
+🚀 INTU.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 394/848] INTU.ETORO / MeanReversionStrategy
+🚀 INTU.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 395/848] INTU.ETORO / DynamicBreakoutStrategy
+🚀 INTU.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 396/848] INTU.ETORO / FlashCrashReversalStrategy
+🚀 INTU.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 397/848] INTU.ETORO / VolatilityBreakoutPumpStrategy
+🚀 INTU.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 398/848] INTU.ETORO / ComboTrendVwapStrategy
+🚀 INTU.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 399/848] INTU.ETORO / VwapExhaustionStrategy
+🚀 INTU.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 400/848] INTU.ETORO / HourlyMeanReversionStrategy
+🚀 JAZZ.ETORO | SmaCrossoverStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 401/848] JAZZ.ETORO / SmaCrossoverStrategy
+🚀 JAZZ.ETORO | MeanReversionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 402/848] JAZZ.ETORO / MeanReversionStrategy
+🚀 JAZZ.ETORO | DynamicBreakoutStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 403/848] JAZZ.ETORO / DynamicBreakoutStrategy
+🚀 JAZZ.ETORO | FlashCrashReversalStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 404/848] JAZZ.ETORO / FlashCrashReversalStrategy
+🚀 JAZZ.ETORO | VolatilityBreakoutPumpStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 405/848] JAZZ.ETORO / VolatilityBreakoutPumpStrategy
+🚀 JAZZ.ETORO | ComboTrendVwapStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 406/848] JAZZ.ETORO / ComboTrendVwapStrategy
+🚀 JAZZ.ETORO | VwapExhaustionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 407/848] JAZZ.ETORO / VwapExhaustionStrategy
+🚀 JAZZ.ETORO | HourlyMeanReversionStrategy
+   📥 817 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 408/848] JAZZ.ETORO / HourlyMeanReversionStrategy
+🚀 JNJ.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 409/848] JNJ.ETORO / SmaCrossoverStrategy
+🚀 JNJ.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 410/848] JNJ.ETORO / MeanReversionStrategy
+🚀 JNJ.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 411/848] JNJ.ETORO / DynamicBreakoutStrategy
+🚀 JNJ.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 412/848] JNJ.ETORO / FlashCrashReversalStrategy
+🚀 JNJ.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 413/848] JNJ.ETORO / VolatilityBreakoutPumpStrategy
+🚀 JNJ.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 414/848] JNJ.ETORO / ComboTrendVwapStrategy
+🚀 JNJ.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 415/848] JNJ.ETORO / VwapExhaustionStrategy
+🚀 JNJ.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 416/848] JNJ.ETORO / HourlyMeanReversionStrategy
+🚀 KD.ETORO | SmaCrossoverStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 417/848] KD.ETORO / SmaCrossoverStrategy
+🚀 KD.ETORO | MeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 418/848] KD.ETORO / MeanReversionStrategy
+🚀 KD.ETORO | DynamicBreakoutStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 419/848] KD.ETORO / DynamicBreakoutStrategy
+🚀 KD.ETORO | FlashCrashReversalStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 420/848] KD.ETORO / FlashCrashReversalStrategy
+🚀 KD.ETORO | VolatilityBreakoutPumpStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 421/848] KD.ETORO / VolatilityBreakoutPumpStrategy
+🚀 KD.ETORO | ComboTrendVwapStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 422/848] KD.ETORO / ComboTrendVwapStrategy
+🚀 KD.ETORO | VwapExhaustionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 423/848] KD.ETORO / VwapExhaustionStrategy
+🚀 KD.ETORO | HourlyMeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 424/848] KD.ETORO / HourlyMeanReversionStrategy
+🚀 LQDA.ETORO | SmaCrossoverStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 425/848] LQDA.ETORO / SmaCrossoverStrategy
+🚀 LQDA.ETORO | MeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 426/848] LQDA.ETORO / MeanReversionStrategy
+🚀 LQDA.ETORO | DynamicBreakoutStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 427/848] LQDA.ETORO / DynamicBreakoutStrategy
+🚀 LQDA.ETORO | FlashCrashReversalStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 428/848] LQDA.ETORO / FlashCrashReversalStrategy
+🚀 LQDA.ETORO | VolatilityBreakoutPumpStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 429/848] LQDA.ETORO / VolatilityBreakoutPumpStrategy
+🚀 LQDA.ETORO | ComboTrendVwapStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 430/848] LQDA.ETORO / ComboTrendVwapStrategy
+🚀 LQDA.ETORO | VwapExhaustionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 431/848] LQDA.ETORO / VwapExhaustionStrategy
+🚀 LQDA.ETORO | HourlyMeanReversionStrategy
+   📥 819 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 432/848] LQDA.ETORO / HourlyMeanReversionStrategy
+🚀 LRCX.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 433/848] LRCX.ETORO / SmaCrossoverStrategy
+🚀 LRCX.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 434/848] LRCX.ETORO / MeanReversionStrategy
+🚀 LRCX.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 435/848] LRCX.ETORO / DynamicBreakoutStrategy
+🚀 LRCX.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 436/848] LRCX.ETORO / FlashCrashReversalStrategy
+🚀 LRCX.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 437/848] LRCX.ETORO / VolatilityBreakoutPumpStrategy
+🚀 LRCX.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 438/848] LRCX.ETORO / ComboTrendVwapStrategy
+🚀 LRCX.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 439/848] LRCX.ETORO / VwapExhaustionStrategy
+🚀 LRCX.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 440/848] LRCX.ETORO / HourlyMeanReversionStrategy
+🚀 LULU.ETORO | SmaCrossoverStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 441/848] LULU.ETORO / SmaCrossoverStrategy
+🚀 LULU.ETORO | MeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 442/848] LULU.ETORO / MeanReversionStrategy
+🚀 LULU.ETORO | DynamicBreakoutStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 443/848] LULU.ETORO / DynamicBreakoutStrategy
+🚀 LULU.ETORO | FlashCrashReversalStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 444/848] LULU.ETORO / FlashCrashReversalStrategy
+🚀 LULU.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 445/848] LULU.ETORO / VolatilityBreakoutPumpStrategy
+🚀 LULU.ETORO | ComboTrendVwapStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 446/848] LULU.ETORO / ComboTrendVwapStrategy
+🚀 LULU.ETORO | VwapExhaustionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 447/848] LULU.ETORO / VwapExhaustionStrategy
+🚀 LULU.ETORO | HourlyMeanReversionStrategy
+   📥 1151 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 448/848] LULU.ETORO / HourlyMeanReversionStrategy
+🚀 MNDY.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 449/848] MNDY.ETORO / SmaCrossoverStrategy
+🚀 MNDY.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 450/848] MNDY.ETORO / MeanReversionStrategy
+🚀 MNDY.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 451/848] MNDY.ETORO / DynamicBreakoutStrategy
+🚀 MNDY.ETORO | FlashCrashReversalStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 452/848] MNDY.ETORO / FlashCrashReversalStrategy
+🚀 MNDY.ETORO | VolatilityBreakoutPumpStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 453/848] MNDY.ETORO / VolatilityBreakoutPumpStrategy
+🚀 MNDY.ETORO | ComboTrendVwapStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 454/848] MNDY.ETORO / ComboTrendVwapStrategy
+🚀 MNDY.ETORO | VwapExhaustionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 455/848] MNDY.ETORO / VwapExhaustionStrategy
+🚀 MNDY.ETORO | HourlyMeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 456/848] MNDY.ETORO / HourlyMeanReversionStrategy
+🚀 MRVL.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 457/848] MRVL.ETORO / SmaCrossoverStrategy
+🚀 MRVL.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 458/848] MRVL.ETORO / MeanReversionStrategy
+🚀 MRVL.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 459/848] MRVL.ETORO / DynamicBreakoutStrategy
+🚀 MRVL.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 460/848] MRVL.ETORO / FlashCrashReversalStrategy
+🚀 MRVL.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 461/848] MRVL.ETORO / VolatilityBreakoutPumpStrategy
+🚀 MRVL.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 462/848] MRVL.ETORO / ComboTrendVwapStrategy
+🚀 MRVL.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 463/848] MRVL.ETORO / VwapExhaustionStrategy
+🚀 MRVL.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 464/848] MRVL.ETORO / HourlyMeanReversionStrategy
+🚀 MSTR.ETORO | SmaCrossoverStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 465/848] MSTR.ETORO / SmaCrossoverStrategy
+🚀 MSTR.ETORO | MeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 466/848] MSTR.ETORO / MeanReversionStrategy
+🚀 MSTR.ETORO | DynamicBreakoutStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 467/848] MSTR.ETORO / DynamicBreakoutStrategy
+🚀 MSTR.ETORO | FlashCrashReversalStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 468/848] MSTR.ETORO / FlashCrashReversalStrategy
+🚀 MSTR.ETORO | VolatilityBreakoutPumpStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 469/848] MSTR.ETORO / VolatilityBreakoutPumpStrategy
+🚀 MSTR.ETORO | ComboTrendVwapStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 470/848] MSTR.ETORO / ComboTrendVwapStrategy
+🚀 MSTR.ETORO | VwapExhaustionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 471/848] MSTR.ETORO / VwapExhaustionStrategy
+🚀 MSTR.ETORO | HourlyMeanReversionStrategy
+   📥 1062 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 472/848] MSTR.ETORO / HourlyMeanReversionStrategy
+🚀 MTZ.ETORO | SmaCrossoverStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 473/848] MTZ.ETORO / SmaCrossoverStrategy
+🚀 MTZ.ETORO | MeanReversionStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 474/848] MTZ.ETORO / MeanReversionStrategy
+🚀 MTZ.ETORO | DynamicBreakoutStrategy
+   📥 816 Ticks geladen. Erster Tick im Engine: 1767657600000000000 (2026-01-06 00:00:00)
+[ERROR] INSUFFICIENT DATA: Datenspanne beträgt nur 149.8 Tage (benötigt: ~150 Tage). Überspringe Backtest.
+   [ 475/848] MTZ.ETORO / DynamicBreakoutStrategy

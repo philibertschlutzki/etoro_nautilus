@@ -73,3 +73,108 @@ ModuleNotFoundError: No module named 'requests'
 2026-06-05 05:50:57,837 | ERROR    | orchestrator | [Phase 5] Kein Aggregat-Sieger im Tournament. Abbruch.
 2026-06-05 05:50:57,837 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-06-05T05:50:57.837323+00:00", "exit_code": 1}
 2026-06-05 05:50:57,837 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 1).
+2026-06-05 08:08:33,824 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
+2026-06-05 08:08:33,825 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
+2026-06-05 08:08:33,825 | INFO     | orchestrator | ║  Start: 2026-06-05T08:08:33.825487+00:00                    ║
+2026-06-05 08:08:33,825 | INFO     | orchestrator | ║  DRY-RUN: NEIN                                                 ║
+2026-06-05 08:08:33,825 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
+2026-06-05 08:08:33,825 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
+2026-06-05 08:08:33,825 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-06-05T08:08:33.825778+00:00", "dry_run": false, "skip_api_fetch": true, "version": "2.0", "python": "3.12.13 (main, Mar  6 2026, 16:37:31) [GCC 13.3.0]"}
+2026-06-05 08:08:33,832 | ERROR    | orchestrator | Unerwarteter Fehler: No module named 'requests'
+Traceback (most recent call last):
+  File "/app/automation/daily_orchestrator.py", line 1052, in main
+    universe_result   = phase1_universe_and_mapping(log, api_key=api_key, user_key=user_key)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/automation/daily_orchestrator.py", line 189, in phase1_universe_and_mapping
+    from automation.universe_fetcher import run_fetch
+  File "/app/automation/universe_fetcher.py", line 9, in <module>
+    import requests
+ModuleNotFoundError: No module named 'requests'
+
+2026-06-05 08:08:33,832 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_ERROR", "timestamp_utc": "2026-06-05T08:08:33.832797+00:00", "error": "No module named 'requests'"}
+2026-06-05 08:08:33,832 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-06-05T08:08:33.832935+00:00", "exit_code": 1}
+2026-06-05 08:08:33,833 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 1).
+2026-06-05 08:09:03,710 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
+2026-06-05 08:09:03,710 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
+2026-06-05 08:09:03,710 | INFO     | orchestrator | ║  Start: 2026-06-05T08:09:03.710806+00:00                    ║
+2026-06-05 08:09:03,710 | INFO     | orchestrator | ║  DRY-RUN: NEIN                                                 ║
+2026-06-05 08:09:03,710 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
+2026-06-05 08:09:03,711 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
+2026-06-05 08:09:03,711 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-06-05T08:09:03.711075+00:00", "dry_run": false, "skip_api_fetch": true, "version": "2.0", "python": "3.12.13 (main, Mar  6 2026, 16:37:31) [GCC 13.3.0]"}
+2026-06-05 08:09:04,104 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-05 08:09:04,104 | INFO     | orchestrator | PHASE 1: Universe & Mapping
+2026-06-05 08:09:04,104 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-05 08:09:04,108 | INFO     | orchestrator | [Phase 1] Universe-Alter: 12.1h — frisch genug.
+2026-06-05 08:09:04,113 | INFO     | orchestrator | [Phase 1] 106 eindeutige Instrumente im Universum.
+2026-06-05 08:09:04,113 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "timestamp_utc": "2026-06-05T08:09:04.113881+00:00", "universe_size": 106, "unmapped_count": 0}
+2026-06-05 08:09:04,114 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-05 08:09:04,114 | INFO     | orchestrator | PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)
+2026-06-05 08:09:04,114 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-05 08:09:04,114 | INFO     | orchestrator | [Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.
+2026-06-05 08:09:04,114 | INFO     | orchestrator | [Phase 2c] API-Backfill übersprungen (--skip-api-fetch).
+2026-06-05 08:09:05,094 | INFO     | orchestrator | [Phase 2d] 1 Symbole unzureichend (benötigt Daten bis 1762502944133573888 ns) — starte Historical Fetcher ...
+2026-06-05 08:09:05,096 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 106 Instrumente.
+2026-06-05 08:09:05,097 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-06-05 08:09:05,101 | INFO     | historical_fetcher | [historical_fetcher] 1/1 Symbole werden gefetcht (months=12, start_ns=1762502944133573888).
+2026-06-05 08:09:05,101 | INFO     | historical_fetcher | [historical_fetcher] Lade Instrument-Precisions via eToro API …
+2026-06-05 08:09:05,341 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 15233, 'instrumentDisplayName': 'Elbit Systems Ltd', 'instrumentTypeID': 5, 'exchangeID': 4, 'images': [{'instrumentID': 15233, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/15233/35x35.png'}, {'instrumentID': 15233, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/15233/50x50.png'}, {'instrumentID': 15233, 'width': 150.0, 'height': 150.0, 'uri': 'https://etoro-cdn.etoros
+2026-06-05 08:09:05,342 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 15233 (ESLT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-05 08:09:05,342 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 15233,
+  "instrumentDisplayName": "Elbit Systems Ltd",
+  "instrumentTypeID": 5,
+  "exchangeID": 4,
+  "images": [
+    {
+      "instrumentID": 15233,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/35x35.png"
+    },
+    {
+      "instrumentID": 15233,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/50x50.png"
+    },
+    {
+      "instrumentID": 15233,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/150x150.png"
+    },
+    {
+      "instrumentID": 15233,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/15233_FDE134_2C2C2C.svg",
+      "backgroundColor": "#FDE134",
+      "textColor": "#2C2C2C"
+    }
+  ],
+  "symbolFull": "ESLT",
+  "stocksIndustryID": 6,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-05 08:09:05,844 | WARNING  | api_backfiller | [api_backfiller] Precision-API lieferte nur 0/1 Instrumente.
+2026-06-05 08:09:05,844 | INFO     | historical_fetcher | [historical_fetcher] Precisions via API: 0/1 Instrumente.
+2026-06-05 08:09:05,849 | INFO     | historical_fetcher | [ESLT.ETORO] Delta-Update: Fetch ab 2025-11-19T23:59:59+00:00 rückwärts bis 2025-11-07T08:09:04.133574+00:00
+2026-06-05 08:09:06,148 | DEBUG    | historical_fetcher | [ESLT.ETORO] OneHour: 925 Candles, älteste: 2025-11-20T14:00:00+00:00
+2026-06-05 08:09:07,536 | INFO     | historical_fetcher | [ESLT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-06-05 08:09:07,691 | DEBUG    | historical_fetcher | [ESLT.ETORO] OneDay: 126 Candles, älteste: 2025-11-20T00:00:00+00:00
+2026-06-05 08:09:08,947 | INFO     | historical_fetcher | [ESLT.ETORO] Historische Tiefe für OneDay erreicht.
+2026-06-05 08:09:08,958 | INFO     | historical_fetcher | [ESLT.ETORO] 1051 Candles → speichere (price_prec=2).
+2026-06-05 08:09:08,964 | DEBUG    | historical_fetcher | [api_backfiller] ESLT.ETORO: 2103→1052 Zeilen (-1051 Duplikate)
+2026-06-05 08:09:08,967 | INFO     | historical_fetcher | [api_backfiller] ESLT.ETORO: 1052 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-05 08:09:10,070 | INFO     | historical_fetcher | [historical_fetcher] Fertig: 1 Symbole befüllt.
+2026-06-05 08:09:10,072 | INFO     | orchestrator | [Phase 2d] Historical Fetcher: 1 Symbole befüllt.
+2026-06-05 08:09:10,073 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2D_COMPLETE", "timestamp_utc": "2026-06-05T08:09:10.073228+00:00", "insufficient_count": 1, "hist_filled_count": 1}
+2026-06-05 08:09:10,073 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2_COMPLETE", "timestamp_utc": "2026-06-05T08:09:10.073436+00:00", "merged_instruments": 0, "zips_deleted": 0, "api_filled_count": 0, "hist_filled_count": 1}
+2026-06-05 08:09:10,073 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-05 08:09:10,073 | INFO     | orchestrator | PHASE 3+4: Matrix-Backtesting & Tournament
+2026-06-05 08:09:10,073 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-05 08:09:10,074 | INFO     | orchestrator | [Phase 3] Dynamische Config: /app/logs/backtest_dynamic_config.json
+2026-06-05 08:09:10,075 | INFO     | orchestrator | [Phase 3] Backtest-Kommando: /home/jules/.pyenv/versions/3.12.13/bin/python3 /app/automation/backtest_runner.py --momentum --catalog-path /app/data/nautilus --config /app/logs/backtest_dynamic_config.json --output /app/logs/tournament_2026-06-05.json
+2026-06-05 08:09:10,075 | WARNING  | orchestrator | [Phase 3] Rolling Walk-Forward is not fully implemented. Using single Train/Test split.
+2026-06-05 08:09:10,075 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BACKTEST_START", "timestamp_utc": "2026-06-05T08:09:10.075264+00:00", "start": "2026-01-06T00:00:00Z", "end": "2026-06-05T00:00:00Z", "walk_forward_active": false}
