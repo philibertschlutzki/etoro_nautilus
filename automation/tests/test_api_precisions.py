@@ -27,8 +27,10 @@ async def test_fetch_precisions_from_api_no_hits(caplog):
     assert "1" in res
     assert res["1"] == (2, 2)
 
-    # Check that a warning is logged for missing APIs
-    assert any("Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
+    # Check that a warning is logged for missing APIs. Since TSLA resolved via fallback, it is counted as a hit.
+    # We requested 2 IDs ("1", "2") but only provided mock display data for "1".
+    # Therefore, 1 out of 2 instruments was resolved.
+    assert any("Precision-API lieferte nur 1/2 Instrumente" in record.message for record in caplog.records)
 
 @pytest.mark.asyncio
 async def test_fetch_precisions_from_api_mismatch_guard(caplog):

@@ -188,10 +188,6 @@ async def fetch_precisions_from_api(
                                 raise RuntimeError(error_msg)
                             continue # Überspringe dieses Instrument bei Mismatch
 
-                    has_api_prec = (price_prec is not None and size_prec is not None)
-                    if has_api_prec:
-                        api_hits += 1
-
                     fb_price, fb_size = _fallback_precisions(sym_raw)
 
                     # Issue #171: Fehlende API-Precision wird für das vorvalidierte,
@@ -206,6 +202,10 @@ async def fetch_precisions_from_api(
                         if size_prec is None:
                             size_prec = fb_size
                             log.debug(f"[api_backfiller] ID {eid}: size_precision via historischem Fallback={size_prec}")
+
+                    # Wenn wir hier ankommen, haben wir entweder die API-Werte oder
+                    # erfolgreiche Fallbacks für das Trusted Universe. Es gilt als "Hit".
+                    api_hits += 1
 
                     result[eid] = (price_prec, size_prec)
                     log.debug(
