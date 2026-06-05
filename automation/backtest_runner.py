@@ -1062,6 +1062,9 @@ def select_winners(
 def write_tournament_json(
     all_results: list[dict],
     output_path: str,
+    per_symbol_winners: dict,
+    aggregate_winner: dict | None,
+    warnings_list: list[str],
     universe_snapshot: str = "",
     tournament_cfg: dict | None = None,
 ) -> None:
@@ -1072,7 +1075,7 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
-    per_symbol_winners, aggregate_winner, warnings_list = select_winners(all_results, tournament_cfg)
+
     eligible_count = sum(
         1 for r in all_results
         if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
@@ -1870,7 +1873,7 @@ def run_backtest() -> None:
 
     # --- Tournament (Task 5: robuste Multi-Kriterien-Selektion) ---
     if args.momentum and all_results:
-        per_symbol_winners, aggregate_winner, _ = select_winners(all_results, tournament_cfg)
+        per_symbol_winners, aggregate_winner, warnings_list = select_winners(all_results, tournament_cfg)
         winner_count, no_winner_symbols = print_tournament_table(
             all_results, per_symbol_winners, tournament_cfg
         )
@@ -1891,7 +1894,7 @@ def run_backtest() -> None:
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
-        write_tournament_json(all_results, tournament_output, tournament_cfg=tournament_cfg)
+        write_tournament_json(all_results, tournament_output, per_symbol_winners, aggregate_winner, warnings_list, tournament_cfg=tournament_cfg)
     elif all_results:
         print(f"\n📊 {len(all_results)} Ergebnisse gesammelt (kein --momentum Flag aktiv)")
 
