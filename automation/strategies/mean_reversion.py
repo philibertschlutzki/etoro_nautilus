@@ -35,6 +35,7 @@ class MeanReversionStrategy(HourlyStrategyBase):
         self.keltner_lower = 0.0
 
         self.current_signal = None
+        self.bars_since_last_signal: int = 9999
 
     def on_start(self):
         super().on_start()
@@ -52,6 +53,8 @@ class MeanReversionStrategy(HourlyStrategyBase):
 
         if self._check_exits_and_update(bar):
             return
+
+        self.bars_since_last_signal += 1
 
         if not (self.keltner_ma.initialized and self.keltner_atr.initialized):
             return
@@ -77,14 +80,18 @@ class MeanReversionStrategy(HourlyStrategyBase):
             f"Keltner({self.config.keltner_period}): Upper {upper_band:.2f}, Lower {lower_band:.2f}"
         )
 
-        if close_price < lower_band and self.current_signal != "BUY":
+        can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
+
+        if close_price < lower_band and self.current_signal != "BUY" and can_signal:
             self._log.info(f"[{self.instrument_id}] BUY SIGNAL (Close < Keltner Lower Band)")
             self.current_signal = "BUY"
+            self.bars_since_last_signal = 0
             self._on_buy_signal(bar)
 
-        elif close_price > upper_band and self.current_signal != "SELL":
+        elif close_price > upper_band and self.current_signal != "SELL" and can_signal:
             self._log.info(f"[{self.instrument_id}] SELL SIGNAL (Close > Keltner Upper Band)")
             self.current_signal = "SELL"
+            self.bars_since_last_signal = 0
             self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
