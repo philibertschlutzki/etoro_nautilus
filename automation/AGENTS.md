@@ -350,6 +350,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Umstellung auf die typsicheren Methoden `account.balance_total()` und `account.balance_free()` unter Berücksichtigung des `Money`-Rückgabewertes, verpackt in einem try-except Block ohne raises (`AGENTS.md` §14). In den Metriken-Formatstrings `(val or 0.0)` verwendet.
 **Betroffen:** `automation/strategies/hourly_strategy_base.py`, `automation/backtest_runner.py`, `automation/tests/test_strategy_duplication.py`
 
+### 🟢 #40 — Datenspanne Toleranz / INSUFFICIENT DATA (Issue #193)
+**Symptom:** Etwa 40 % der Backtests wurden wegen geringfügiger Datenunterschreitung (z. B. 149.8 statt 150 Tage) hart verworfen, weil der Data Span Check in `backtest_runner.py` keinen Toleranzpuffer bot.
+**Root Cause:** Die Anforderung `_walk_forward_days` wurde strikt ohne Toleranz validiert, was insbesondere bei letzen Candles, die wenige Stunden vor dem berechneten Endpunkt lagen, zum Abbruch mit "[ERROR] INSUFFICIENT DATA" führte.
+**Fix:** Die Konfigurationsvariable `span_tolerance_days` (Standard 1.0) wurde in `backtest.json` eingeführt und wird nun im Data Span Check (`check_data_span`) berücksichtigt. Minimale Defizite verursachen nun nur noch ein `WARNING`, lassen den Backtest aber passieren.
+**Betroffen:** `automation/backtest_runner.py`, `automation/config/backtest.json`
+
 ### 🟢 #38 — Strategy Matrix Execution Mismatch (Issue #152)
 **Symptom:** Das System lud Defaults für 8 Strategien, aber führte nur 7 Strategien im Backtest-Matrix-Loop aus. Die Gesamtanzahl der Jobs lag bei 343 statt den erwarteten 392.
 **Root Cause:** `HourlyMeanReversionStrategy` war in `strategy_defaults.json` definiert, fehlte jedoch in der aktiven `strategies.json` als Ausführungsziel. Zudem fehlte eine Validierung, die sicherstellt, dass definierte Defaults auch tatsächlich als aktive Strategien registriert sind.
@@ -555,6 +561,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-04 | **Issue #193 (Datenspanne Toleranz):** Einführung von `span_tolerance_days` (Standard: 1.0) in `backtest.json` und Implementierung eines Toleranz-Fensters beim Data Span Check in `backtest_runner.py`. Dies verhindert, dass Backtests (z. B. 149.8 statt 150 Tage) aufgrund minimal fehlender Stunden hart verworfen werden. | `automation/backtest_runner.py`, `automation/config/backtest.json`, `automation/tests/test_backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #181 (TypeError in NautilusTrader balances API):** `account.balances` in `_get_current_balance` als Iteration entfernt, da es eine gebundene Methode ist. Umgestellt auf die typsicheren `account.balance_total()` / `account.balance_free()` unter Berücksichtigung des `Money`-Typs. Sanity Check in Formatstrings (für `None`-Metriken) in `backtest_runner.py` eingebaut. Pitfall #39 dokumentiert. | `automation/strategies/hourly_strategy_base.py`, `automation/backtest_runner.py`, `automation/tests/test_strategy_duplication.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #152 (Strategy Matrix Execution Mismatch):** Hinzufügen der fehlenden `HourlyMeanReversionStrategy` in `strategies.json` und Implementierung eines Assertions-Guards in `backtest_runner.py`, um Inkonsistenzen zwischen konfigurierten Defaults und ausgeführten aktiven Strategien im Matrix-Backtest zukünftig hart abzufangen. | `automation/config/strategies.json`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-04 | **Issue #151 (Sortino Ratio Winsorizing & Sanity Gates):** Überarbeitung von `_calculate_stats` zur Dämpfung explodierender Sortino-Ratios. Enforces `dd_dev >= 1e-6`, caps Sortino at 50.0, introduces a Sanity-Gate for low returns (`< 0.5%`) and a Minimum Downside Gate (`neg_trades < 2` under 50 trades) unter Beibehaltung der Methodensignatur. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
