@@ -470,16 +470,25 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
         "min_expectancy":    expectancy   >= t_overrides.get("min_expectancy", tournament_cfg.get("min_expectancy", 0.0)),
     }
 
+    rejections = []
     # Harte Filter: ALLE müssen erfüllt sein
     for cond_name in tournament_cfg.get("eligible_requires_all", []):
         if not condition_map.get(cond_name, True):
-            return False
+            reason = f"{cond_name} failed"
+            if cond_name == "min_expectancy":
+                reason += f" (value: {expectancy:.6f})"
+            rejections.append(reason)
 
     # Weiche Filter: MINDESTENS EINE muss erfüllt sein
     any_conditions = tournament_cfg.get("eligible_requires_any", [])
     if any_conditions:
         if not any(condition_map.get(c, False) for c in any_conditions):
-            return False
+            rejections.append(f"Requires ANY of {any_conditions} failed")
+
+    if rejections:
+        if log_rejections:
+            print(f"⚠️  Rejected IS: {symbol} - {strategy} | Reasons: {', '.join(rejections)}")
+        return False
 
     return True
 
@@ -1014,7 +1023,7 @@ def select_winners(
             med_span = get_median(span_days) if span_days else 0
 
             avg_oos = {
-                "total_trades": sum(oos.get("total_trades", 0) for oos in best_results),
+                "total_trades": int(sum(oos.get("total_trades", 0) for oos in best_results) / n_res) if n_res > 0 else 0,
                 "sortino_ratio": med_sortino,
                 "profit_factor": med_pf,
                 "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),

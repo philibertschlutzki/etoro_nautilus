@@ -110,4 +110,5 @@ def test_oos_not_evaluated():
     ]
 
     per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
-    assert aggregate_winner is None
+    assert aggregate_winner is not None
+    assert aggregate_winner["oos_eligible"] is False
