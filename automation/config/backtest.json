@@ -9,6 +9,7 @@
       "worker_log_cleanup": "bool \u2014 wenn true, werden Worker-Log-Dateien nach Abschluss gel\u00f6scht",
       "max_workers": "Maximale Anzahl paralleler Worker-Prozesse (null = auto: cpu_count/2, max 6)",
       "min_bars_for_backtest": "Mindestanzahl Bars pro Symbol f\u00fcr einen aussagekr\u00e4ftigen Backtest (=is_symbol_data_sufficient threshold)",
+      "span_tolerance_days": "Toleranz in Tagen für die historische Datenspanne, um knappe Verwerfungen (z. B. 149.8 statt 150) zu vermeiden.",
       "walk_forward": "Walk-Forward Konfiguration (In-Sample, Out-of-Sample, Splits)"
     }
   },
@@ -19,6 +20,7 @@
   "worker_log_cleanup": true,
   "max_workers": null,
   "min_bars_for_backtest": 200,
+  "span_tolerance_days": 1.0,
   "walk_forward": {
     "is_window_days": 90,
     "oos_window_days": 30,

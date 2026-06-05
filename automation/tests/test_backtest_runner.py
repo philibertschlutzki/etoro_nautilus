@@ -284,3 +284,39 @@ def test_select_winners_tie_breaker():
     all_results_rev = [strat_higher_return, strat_lower_return]
     per_symbol_winners_rev, _, _ = select_winners(all_results_rev, tournament_cfg)
     assert per_symbol_winners_rev["SYM2"]["strategy"] == "HigherReturnStrategy"
+
+from automation.backtest_runner import check_data_span
+import collections
+
+def test_check_data_span_sufficient():
+    Tick = collections.namedtuple("Tick", ["ts_event"])
+    # 150 days exact
+    start_ts = 0
+    end_ts = 150 * 86400 * 1_000_000_000
+    ticks = [Tick(ts_event=start_ts), Tick(ts_event=end_ts)]
+
+    is_sufficient, span_days, req_days = check_data_span(ticks, 150, 1.0)
+    assert is_sufficient is True
+    assert span_days == 150.0
+
+def test_check_data_span_within_tolerance():
+    Tick = collections.namedtuple("Tick", ["ts_event"])
+    # 149.8 days span, tolerance is 1.0, required is 150
+    start_ts = 0
+    end_ts = int(149.8 * 86400 * 1_000_000_000)
+    ticks = [Tick(ts_event=start_ts), Tick(ts_event=end_ts)]
+
+    is_sufficient, span_days, req_days = check_data_span(ticks, 150, 1.0)
+    assert is_sufficient is True
+    assert round(span_days, 1) == 149.8
+
+def test_check_data_span_insufficient():
+    Tick = collections.namedtuple("Tick", ["ts_event"])
+    # 100 days span, tolerance is 1.0, required is 150
+    start_ts = 0
+    end_ts = 100 * 86400 * 1_000_000_000
+    ticks = [Tick(ts_event=start_ts), Tick(ts_event=end_ts)]
+
+    is_sufficient, span_days, req_days = check_data_span(ticks, 150, 1.0)
+    assert is_sufficient is False
+    assert span_days == 100.0
