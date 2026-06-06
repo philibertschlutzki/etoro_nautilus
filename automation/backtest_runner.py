@@ -796,8 +796,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         match_qty = min(qty, s_qty)
                         pnl = match_qty * (s_price - price)
                         if commission_bps > 0:
-                            trade_value = match_qty * s_price
-                            pnl -= trade_value * (commission_bps / 10000.0)
+                            # Notional Value = Menge * Preis for both legs (entry and exit)
+                            entry_value = match_qty * s_price
+                            exit_value = match_qty * price
+                            pnl -= (entry_value + exit_value) * (commission_bps / 10000.0)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
@@ -819,8 +821,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         match_qty = min(qty, b_qty)
                         pnl = match_qty * (price - b_price)
                         if commission_bps > 0:
-                            trade_value = match_qty * b_price
-                            pnl -= trade_value * (commission_bps / 10000.0)
+                            # Notional Value = Menge * Preis for both legs (entry and exit)
+                            entry_value = match_qty * b_price
+                            exit_value = match_qty * price
+                            pnl -= (entry_value + exit_value) * (commission_bps / 10000.0)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
@@ -1329,17 +1333,20 @@ def run_single_backtest_worker(
             # Determine asset class for spread
             spread_bps = 0.0
             if spread_bps_by_asset_class:
-                from automation.utils import _CRYPTO_SYMBOLS, _FRACTIONAL_SYMBOLS
-                sym = inst_id_str.split(".")[0]
+                import json
+                instrument_map_path = os.path.join(_get_project_root(), "automation", "config", "instrument_map.json")
                 asset_class_key = "DEFAULT"
-                if sym in _CRYPTO_SYMBOLS or "SHIB" in sym or "PEPE" in sym:
-                    asset_class_key = "CRYPTO"
-                elif sym in _FRACTIONAL_SYMBOLS:
-                    asset_class_key = "COMMODITY"
-                elif sym == "USDZAR" or sym == "USDTRY": # Forex example overrides if needed, using simple heuristic for now
-                    asset_class_key = "FOREX"
-                else:
-                    asset_class_key = "EQUITY" # fallback to equity if not crypto or commodity
+                try:
+                    with open(instrument_map_path, "r", encoding="utf-8") as f:
+                        inst_map = json.load(f).get("instruments", {})
+
+                    # find the asset class by matching the symbol
+                    for _, inst_data in inst_map.items():
+                        if inst_data.get("symbol") == inst_id_str:
+                            asset_class_key = inst_data.get("asset_class", "DEFAULT").upper()
+                            break
+                except Exception as e:
+                    pass
 
                 spread_bps = spread_bps_by_asset_class.get(asset_class_key, spread_bps_by_asset_class.get("DEFAULT", 4.0))
 
