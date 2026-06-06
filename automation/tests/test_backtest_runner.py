@@ -387,3 +387,27 @@ def test_select_winners_sibling_key_access():
 
     assert "GOOD.ETORO" in per_symbol_winners
     assert "BAD.ETORO" not in per_symbol_winners, "The incorrectly structured result shouldn't pass because oos_metrics is missing as a sibling."
+
+def test_tournament_fails_closed_on_none_oos_metrics():
+    """
+    Test that if oos_metrics is missing (None) and require_oos is True (default in tournament),
+    the strategy is strictly rejected (Fail-Closed).
+    """
+    from automation.backtest_runner import select_winners
+    tournament_cfg = {
+        "min_trades": 10,
+        "eligible_requires_all": ["min_trades"],
+        "require_oos": True # explicitly testing the default behavior
+    }
+
+    # Missing oos_metrics entirely (evaluates to None in r.get("oos_metrics"))
+    res_missing_oos = {
+        "symbol": "FAIL.ETORO",
+        "strategy": "StratFail",
+        "metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0}
+    }
+
+    all_results = [res_missing_oos]
+    per_symbol_winners, _, _ = select_winners(all_results, tournament_cfg)
+
+    assert "FAIL.ETORO" not in per_symbol_winners, "Fail-closed safety violated: Strategy missing OOS metrics was allowed."

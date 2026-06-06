@@ -951,6 +951,8 @@ def select_winners(
         )
         # Sibling key access strictly using r.get("oos_metrics")
         oos_metrics = r.get("oos_metrics")
+        require_oos = tournament_cfg.get("require_oos", True)
+
         if oos_metrics is not None:
             oos_eval = _evaluate_oos_eligibility(
                 oos_metrics,
@@ -959,7 +961,8 @@ def select_winners(
             )
             is_oos_eligible = oos_eval.get("oos_eligible", False)
         else:
-            is_oos_eligible = True
+            # VETO FIX: Fail-closed if oos_metrics is missing in a tournament context
+            is_oos_eligible = not require_oos
 
         if is_is_eligible and is_oos_eligible:
             eligible.append(r)
@@ -1153,7 +1156,12 @@ def write_tournament_json(
         # Use r instead of r["metrics"] since _is_eligible takes the full result object
         is_is_eligible = _is_eligible(r, tournament_cfg, strat_params=r.get("strat_params", {}))
         oos_metrics = r.get("oos_metrics")
-        is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False) if oos_metrics is not None else True
+        require_oos = tournament_cfg.get("require_oos", True)
+        if oos_metrics is not None:
+            is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False)
+        else:
+            is_oos_eligible = not require_oos
+
         if is_is_eligible and is_oos_eligible:
             eligible_count += 1
     output = {
@@ -2001,7 +2009,13 @@ def run_backtest() -> None:
                 continue
             is_is_eligible = _is_eligible(r, tournament_cfg, strat_params=r.get("strat_params", {}))
             oos_metrics = r.get("oos_metrics")
-            is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False) if oos_metrics is not None else True
+            require_oos = tournament_cfg.get("require_oos", True)
+
+            if oos_metrics is not None:
+                is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False)
+            else:
+                is_oos_eligible = not require_oos
+
             if is_is_eligible and is_oos_eligible:
                 eligible_count += 1
         print(
