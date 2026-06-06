@@ -255,6 +255,11 @@ class HourlyStrategyBase(Strategy):
         """
         self._exit_atr.handle_bar(bar)
 
+        if getattr(self, "trend_filter_sma", None) is not None:
+            self.trend_filter_sma.handle_bar(bar)
+            if self.trend_filter_sma.initialized:
+                self._trend_filter_ready = True
+
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
 
         if not positions:
