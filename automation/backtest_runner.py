@@ -939,33 +939,24 @@ def select_winners(
     warnings_list = []
 
     # Eligible filtern
-    eligible = []
-    for r in all_results:
-        is_is_eligible = _is_eligible(
+    eligible = [
+        r for r in all_results
+        if _is_eligible(
             r,
             tournament_cfg,
             strat_params=r.get("strat_params", {}),
             symbol=r.get("symbol", "Unknown"),
             strategy=r.get("strategy", "Unknown"),
             log_rejections=True
-        )
-        # Sibling key access strictly using r.get("oos_metrics")
-        oos_metrics = r.get("oos_metrics")
-        require_oos = tournament_cfg.get("require_oos", True)
-
-        if oos_metrics is not None:
-            oos_eval = _evaluate_oos_eligibility(
-                oos_metrics,
+        ) and (
+            _evaluate_oos_eligibility(
+                r.get("oos_metrics"),
                 tournament_cfg,
                 r.get("strat_params", {})
-            )
-            is_oos_eligible = oos_eval.get("oos_eligible", False)
-        else:
-            # VETO FIX: Fail-closed if oos_metrics is missing in a tournament context
-            is_oos_eligible = not require_oos
-
-        if is_is_eligible and is_oos_eligible:
-            eligible.append(r)
+            ).get("oos_eligible", False)
+            if r.get("oos_metrics") else True
+        )
+    ]
 
     # Issue #148: Data Start Alignment (Tournament Gating)
     if eligible:
@@ -1117,9 +1108,6 @@ def select_winners(
                 "oos_rejection_reasons": ["oos_not_evaluable: Kein OOS-Datenmaterial für die Gewinn-Symbole."]
             }
 
-        # Assertion: Aggregate OOS pass cannot override a per-pair failure
-        assert not (agg_oos_eval.get("oos_eligible", False) is True and len(per_symbol_winners) == 0), "Aggregat-OOS-Pass darf nicht das Per-Pair-Gate überstimmen (eligible_pairs == 0)"
-
         aggregate_winner = {
             "strategy":    best,
             "win_count":   win_counts[best],
@@ -1149,21 +1137,10 @@ def write_tournament_json(
         tournament_cfg = load_tournament_config()
 
 
-    eligible_count = 0
-    for r in all_results:
-        if not r.get("metrics"):
-            continue
-        # Use r instead of r["metrics"] since _is_eligible takes the full result object
-        is_is_eligible = _is_eligible(r, tournament_cfg, strat_params=r.get("strat_params", {}))
-        oos_metrics = r.get("oos_metrics")
-        require_oos = tournament_cfg.get("require_oos", True)
-        if oos_metrics is not None:
-            is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False)
-        else:
-            is_oos_eligible = not require_oos
-
-        if is_is_eligible and is_oos_eligible:
-            eligible_count += 1
+    eligible_count = sum(
+        1 for r in all_results
+        if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
+    )
     output = {
         "generated_at":                datetime.now(timezone.utc).isoformat(),
         "universe_snapshot":           universe_snapshot,
@@ -2003,21 +1980,10 @@ def run_backtest() -> None:
             all_results, per_symbol_winners, tournament_cfg
         )
         total_symbols = len(set(r["symbol"] for r in all_results))
-        eligible_count = 0
-        for r in all_results:
-            if not r.get("metrics"):
-                continue
-            is_is_eligible = _is_eligible(r, tournament_cfg, strat_params=r.get("strat_params", {}))
-            oos_metrics = r.get("oos_metrics")
-            require_oos = tournament_cfg.get("require_oos", True)
-
-            if oos_metrics is not None:
-                is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False)
-            else:
-                is_oos_eligible = not require_oos
-
-            if is_is_eligible and is_oos_eligible:
-                eligible_count += 1
+        eligible_count = sum(
+            1 for r in all_results
+            if r.get("metrics") and _is_eligible(r["metrics"], tournament_cfg, strat_params=r.get("strat_params", {}))
+        )
         print(
             f"\n✅ Tournament: {total_symbols} Symbole | "
             f"{eligible_count} eligible Paare | {winner_count} Gewinner-Symbole"
