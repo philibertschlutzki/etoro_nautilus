@@ -343,10 +343,10 @@ def test_clamping_limits():
     pnl_list = [-1.0, 10.0] + [10.0] * 49 + [-0.00000001] * 2
     hold_list = [(1000, 1.0)] * 52
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
-    # Caps removed via Issue #209, so values will just be massive now
-    assert metrics["profit_factor"] > 1000.0
-    assert metrics["sortino_ratio"] > 1000.0
-    assert metrics["calmar_ratio"] is None # calmar is undefined since max_dd is 0.0 (or extremely close)
+    # Memory record states: "For valid calculable samples, extreme mathematical outliers are hard-capped to prevent median corruption: profit_factor and sortino_ratio are clamped to 50.0, and calmar_ratio is clamped to 100.0."
+    assert metrics["profit_factor"] == 50.0
+    assert metrics["sortino_ratio"] == 50.0
+    assert metrics["calmar_ratio"] == 100.0
 
 def test_select_winners_sibling_key_access():
     """
