@@ -704,7 +704,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     }
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, oos_start_ns: int | None = None) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -736,7 +736,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if df_fills.empty:
             if log_fn:
                 log_fn("[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.")
-            if oos_start_ns is not None:
+            if walk_forward_dict and start_ns is not None:
                 return {"metrics": NULL, "oos_metrics": NULL}
             return NULL
         instrument_fills: dict[str, list] = {}
@@ -813,7 +813,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if not pnls_with_ts:
             if log_fn:
                 log_fn("[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.")
-            if oos_start_ns is not None:
+            if walk_forward_dict and start_ns is not None:
                 return {"metrics": NULL, "oos_metrics": NULL}
             return NULL
 
@@ -825,11 +825,30 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
-        for pnl, ts, ht, m_qty in pnls_with_ts:
-            if oos_start_ns is not None and ts >= oos_start_ns:
-                oos_pnls.append(pnl)
-                oos_holding_times.append((ht, m_qty))
-            else:
+        if walk_forward_dict and start_ns is not None:
+            is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
+            oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
+            splits = walk_forward_dict.get("splits", 2)
+
+            for pnl, ts, ht, m_qty in pnls_with_ts:
+                is_oos = False
+                for i in range(splits):
+                    split_is_start_ns = start_ns + i * oos_window_ns
+                    split_oos_start_ns = split_is_start_ns + is_window_ns
+                    split_oos_end_ns = split_oos_start_ns + oos_window_ns
+
+                    if split_oos_start_ns <= ts < split_oos_end_ns:
+                        is_oos = True
+                        break
+
+                if is_oos:
+                    oos_pnls.append(pnl)
+                    oos_holding_times.append((ht, m_qty))
+                else:
+                    is_pnls.append(pnl)
+                    is_holding_times.append((ht, m_qty))
+        else:
+            for pnl, ts, ht, m_qty in pnls_with_ts:
                 is_pnls.append(pnl)
                 is_holding_times.append((ht, m_qty))
 
@@ -842,7 +861,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             "losses_count": 0,
         }
 
-        if oos_start_ns is not None:
+        if walk_forward_dict and start_ns is not None:
             return {
                 "metrics": is_metrics,
                 "oos_metrics": oos_metrics
@@ -1291,9 +1310,20 @@ def run_single_backtest_worker(
 
         # --- Check Data Span for Walk-Forward Window ---
         required_days = strat.get("_walk_forward_days")
+        if strat.get("_walk_forward_dict"):
+            wfd = strat["_walk_forward_dict"]
+            required_days = wfd.get("is_window_days", 90) + (wfd.get("splits", 2) * wfd.get("oos_window_days", 30))
         if required_days:
             is_sufficient, span_days, _ = check_data_span(ticks, required_days, span_tolerance_days)
-            if not is_sufficient:
+            if not is_sufficient and span_days < required_days * 0.95:
+                from automation.utils import emit_json_event
+                import logging
+                log = logging.getLogger("backtest_worker")
+                emit_json_event(log, "WALK_FORWARD_INSUFFICIENT_DATA", {
+                    "symbol": inst_id_str,
+                    "required_days": required_days,
+                    "actual_days": round(span_days, 1)
+                })
                 msg = f"INSUFFICIENT DATA: Datenspanne beträgt nur {span_days:.1f} Tage (benötigt: ~{required_days} Tage, Toleranz: {span_tolerance_days} Tage). Überspringe Backtest."
                 wlog_err(msg)
                 res = _empty_result(inst_id_str, strategy_class_name, strat)
@@ -1398,9 +1428,9 @@ def run_single_backtest_worker(
             return _empty_result(inst_id_str, strategy_class_name, strat)
 
         # --- Metriken extrahieren ---
-        oos_start_ns = strat.get("_oos_start_ns", None)
+        walk_forward_dict = strat.get("_walk_forward_dict", None)
         try:
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, oos_start_ns=oos_start_ns)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -1409,7 +1439,7 @@ def run_single_backtest_worker(
                 "max_drawdown": 0.0, "total_return": 0.0,
                 "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
             }
-            if oos_start_ns is not None:
+            if walk_forward_dict is not None and start_ns is not None:
                 extracted_data = {"metrics": NULL, "oos_metrics": NULL}
             else:
                 extracted_data = NULL
@@ -1439,7 +1469,8 @@ def run_single_backtest_worker(
             f"Sortino={format_metric(metrics, 'sortino_ratio', 5)} | "
             f"Return={metrics.get('total_return', 0.0):>6.2f}%"
         )
-        if oos_start_ns is not None:
+        walk_forward_dict = strat.get("_walk_forward_dict", None)
+        if walk_forward_dict is not None and start_ns is not None:
             oos_span_days = strat.get("_oos_span_days", 0)
             if oos_metrics and isinstance(oos_metrics, dict):
                 oos_metrics["oos_span_days"] = oos_span_days
@@ -1813,7 +1844,7 @@ def run_backtest() -> None:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
                     splits   = walk_forward_cfg.get("splits", 2)
                     span_days = splits * oos_days
-                    strat["_oos_start_ns"]      = end_ns - (span_days * 24 * 60 * 60 * 1_000_000_000)
+                    strat["_walk_forward_dict"] = walk_forward_cfg
                     strat["_oos_span_days"]     = span_days
 
                 wlf = os.path.join(
