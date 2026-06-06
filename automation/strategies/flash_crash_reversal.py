@@ -83,7 +83,7 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -105,7 +105,7 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:

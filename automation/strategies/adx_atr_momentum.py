@@ -121,7 +121,7 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             # State zurücksetzen — ermöglicht Neueinstieg auf nächster Bar (kein Flat-Lock)
             self.current_position = None
             self.entry_price = 0.0
@@ -146,7 +146,7 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             # State zurücksetzen — ermöglicht Neueinstieg auf nächster Bar (kein Flat-Lock)
             self.current_position = None
             self.entry_price = 0.0
@@ -171,16 +171,6 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
         if not positions:
             return
         self._close_position(positions[0])
-
-    def _close_position(self, pos) -> None:
-        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=exit_side,
-            quantity=pos.quantity,
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
 

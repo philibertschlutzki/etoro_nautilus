@@ -66,7 +66,7 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -88,7 +88,7 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -100,16 +100,6 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
             quantity=qty,
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(order)
-
-    def _close_position(self, pos) -> None:
-        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=exit_side,
-            quantity=pos.quantity,
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)

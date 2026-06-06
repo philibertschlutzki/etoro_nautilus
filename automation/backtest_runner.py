@@ -547,16 +547,16 @@ def infer_precision_from_ticks(ticks: list) -> int:
 
 
 def _normalize_size_precision(sp: int | None, instrument_id_str: str) -> int:
-    """
-    Normalizes size_precision: 0 or None -> fallback to asset-specific default, otherwise keep it.
-    This guarantees consistent fractional order behavior for Equity CFDs (fallback 2) and Crypto (fallback 8).
-    """
+    from automation.utils import _fallback_precisions, _CRYPTO_SYMBOLS, _FRACTIONAL_SYMBOLS
+    _, fallback_sp = _fallback_precisions(instrument_id_str)
+
+    sym = instrument_id_str.split(".")[0]
+    if sym in _CRYPTO_SYMBOLS or "SHIB" in sym or "PEPE" in sym or sym in _FRACTIONAL_SYMBOLS:
+        return fallback_sp
+
     if sp is not None and sp > 0:
         return sp
-    from automation.utils import _fallback_precisions
-    _, fallback_sp = _fallback_precisions(instrument_id_str)
     return fallback_sp
-
 
 def create_mock_instrument(
     instrument_id_str: str,
@@ -1837,6 +1837,7 @@ def run_backtest() -> None:
                         inst_id_str, bar_type, strat,
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
+                        span_tolerance_days
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):

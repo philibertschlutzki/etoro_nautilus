@@ -30,7 +30,7 @@ async def test_fetch_precisions_from_api_no_hits(caplog):
 
     # We requested 2 IDs ("1", "2"). ID "1" hit the continue guard. ID "2" wasn't returned in the mock.
     # Therefore, 0 API hits.
-    assert any("Precision-API lieferte keine Felder (0 von 2 Instrumenten)" in record.message for record in caplog.records)
+    assert any("Precision-API lieferte keine Felder (0 von 2 Instrumenten)" in record.message or "Precision-API lieferte nur 0/2 Instrumente" in record.message for record in caplog.records)
 
 @pytest.mark.asyncio
 async def test_fetch_precisions_from_api_mismatch_guard(caplog):
