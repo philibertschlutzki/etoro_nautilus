@@ -339,7 +339,8 @@ def test_zero_downside_deviation():
 
 def test_clamping_limits():
     from automation.backtest_runner import _calculate_stats
-    pnl_list = [10.0] * 50 + [-0.00000001] * 2  # Extremely small losses
+    # Added slightly larger initial loss so max_dd > 1e-9 to trigger calmar cap, but small enough that PF and Sortino explode
+    pnl_list = [-1.0, 10.0] + [10.0] * 49 + [-0.00000001] * 2
     hold_list = [(1000, 1.0)] * 52
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
     # Caps removed via Issue #209, so values will just be massive now
