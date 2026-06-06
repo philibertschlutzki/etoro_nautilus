@@ -22,15 +22,22 @@ Usage in a strategy:
 from __future__ import annotations
 
 import logging
+import traceback
+import pandas as pd
+import pyarrow.parquet as pq
+from pathlib import Path
+from nautilus_trader.model.objects import Price
 
 from nautilus_trader.config import StrategyConfig
 import math
+from datetime import datetime
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.indicators import AverageTrueRange
+from nautilus_trader.indicators import SimpleMovingAverage
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 log = logging.getLogger(__name__)
@@ -47,6 +54,7 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     max_bars_in_trade: int = 48
     profit_target_pct: float | None = None
     cooldown_bars: int = 12
+    trend_filter_period: int = 0
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
@@ -74,6 +82,12 @@ class HourlyStrategyBase(Strategy):
 
         self._exit_atr = AverageTrueRange(self.config.atr_period)
         self._trailing_stop_price: float | None = None
+        self.trend_filter_period = getattr(config, "trend_filter_period", 0)
+        if self.trend_filter_period > 0:
+            self.trend_filter_sma = SimpleMovingAverage(self.trend_filter_period)
+        else:
+            self.trend_filter_sma = None
+        self._trend_filter_ready = False
         self._take_profit_price: float | None = None
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
@@ -97,6 +111,91 @@ class HourlyStrategyBase(Strategy):
                 self._account_id = accounts[0].id
             else:
                 self._log.warning("No accounts found in cache on start. Allocation might fail.")
+
+        if getattr(self, "trend_filter_period", 0) > 0 and getattr(self, "trend_filter_sma", None) is not None:
+            self._warmup_trend_filter()
+
+    def _warmup_trend_filter(self):
+
+        # Calculate how many hours we need
+        needed_hours = self.trend_filter_period + 48  # Buffer of 48 hours
+
+        parquet_dir = Path("data/nautilus/quote_tick") / str(self.instrument_id)
+        if not parquet_dir.exists():
+            self._log.error(f"[{self.instrument_id}] Keine Parquet-Daten für SMA Warmup gefunden.")
+            return
+
+        try:
+            # We want to use pandas to read and resample the data.
+            # We only need the last `needed_hours` of data ideally, but we can just read the whole parquet and take tail.
+            dataset = pq.ParquetDataset(str(parquet_dir))
+            table = dataset.read(columns=['ts_event', 'bid_price', 'ask_price'])
+            df = table.to_pandas()
+            if df.empty:
+                self._log.error(f"[{self.instrument_id}] Parquet-Daten sind leer.")
+                return
+
+            df['ts_event'] = pd.to_datetime(df['ts_event'], unit='ns')
+            df.set_index('ts_event', inplace=True)
+            df.sort_index(inplace=True)
+
+            # Mid price for creating synthetic bars to feed the SMA
+            df['mid_price'] = (df['bid_price'] + df['ask_price']) / 2.0
+
+            # Resample to 1h bars
+            bars_1h = df['mid_price'].resample('h').last().dropna()
+
+            if len(bars_1h) < self.trend_filter_period:
+                self._log.error(f"[TrendFilter Warmup] Failed for {self.instrument_id}. Required: {self.trend_filter_period} bars. Found: {len(bars_1h)}. Strategy execution gated (fail-closed).")
+                return
+
+            # Feed the last 'trend_filter_period' bars into the SMA
+
+
+
+
+            # Feed the last N values
+            warmup_bars = bars_1h.tail(self.trend_filter_period + 10)
+
+            for ts, close_price in warmup_bars.items():
+                ts_ns = int(ts.timestamp() * 1e9)
+
+                # Mock a bar to feed the indicator
+                dummy_bar = Bar(
+
+                    bar_type=self.bar_type,
+                    open=Price(close_price, 4),
+                    high=Price(close_price, 4),
+                    low=Price(close_price, 4),
+                    close=Price(close_price, 4),
+                    volume=Quantity(1.0, 4),
+                    ts_event=ts_ns,
+                    ts_init=ts_ns,
+                )
+                self.trend_filter_sma.handle_bar(dummy_bar)
+
+
+            if self.trend_filter_sma.initialized:
+                self._trend_filter_ready = True
+                self._log.info(f"[{self.instrument_id}] Trend Filter SMA ({self.trend_filter_period}) erfolgreich pre-warmed. Letzter Wert: {self.trend_filter_sma.value:.4f}")
+            else:
+                self._log.error(f"[{self.instrument_id}] Trend Filter SMA ({self.trend_filter_period}) nach Pre-Warming NICHT initialized.")
+
+        except Exception as e:
+
+            self._log.error(f"[{self.instrument_id}] Fehler beim SMA Warmup: {e} \n {traceback.format_exc()}")
+            self._trend_filter_ready = False
+
+
+
+    def can_go_long(self, bar: Bar) -> bool:
+        if self.trend_filter_period == 0:
+            return True
+        if not self._trend_filter_ready or self.trend_filter_sma is None or not self.trend_filter_sma.initialized:
+            return False
+
+        self.trend_filter_sma.handle_bar(bar)
+        return float(bar.close) > self.trend_filter_sma.value
 
     def _get_current_balance(self) -> float:
         """Liefert das Guthaben in der Quote-Currency des Instruments.

@@ -28,6 +28,7 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
             k_multiplier=config.keltner_multiplier,
         )
         self.current_signal = None
+        self.bars_since_last_signal: int = 9999
 
     def on_start(self):
         super().on_start()
@@ -41,6 +42,8 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
         if self._check_exits_and_update(bar):
             return
 
+        self.bars_since_last_signal += 1
+
         if not self.keltner.initialized:
             return
 
@@ -48,30 +51,36 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
         upper_band = self.keltner.upper
         lower_band = self.keltner.lower
 
-        self._log.info(
+        self._log.debug(
             f"[{self.instrument_id}] BAR | Close: {close_price:.2f} | "
             f"Keltner({self.config.keltner_period}): Upper {upper_band:.2f}, Lower {lower_band:.2f}"
         )
 
-        if close_price < lower_band and self.current_signal != "BUY":
+        can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
+
+        if close_price < lower_band and self.current_signal != "BUY" and can_signal:
             self._log.info(f"[{self.instrument_id}] BUY SIGNAL (Close < Keltner Lower Band)")
             self.current_signal = "BUY"
+            self.bars_since_last_signal = 0
             self._on_buy_signal(bar)
 
-        elif close_price > upper_band and self.current_signal != "SELL":
+        elif close_price > upper_band and self.current_signal != "SELL" and can_signal:
             self._log.info(f"[{self.instrument_id}] SELL SIGNAL (Close > Keltner Upper Band)")
             self.current_signal = "SELL"
+            self.bars_since_last_signal = 0
             self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
+        if not self.can_go_long(bar):
+            return
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -93,7 +102,7 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -105,16 +114,6 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
             quantity=qty,
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(order)
-
-    def _close_position(self, pos) -> None:
-        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=exit_side,
-            quantity=pos.quantity,
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
