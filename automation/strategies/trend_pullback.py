@@ -47,7 +47,7 @@ class TrendPullbackStrategy(HourlyStrategyBase):
         ema_val = self.ema.value
         rsi_val = self.rsi.value
 
-        self._log.info(
+        self._log.debug(
             f"[{self.instrument_id}] BAR | Close: {close_price:.2f} | "
             f"EMA({self.config.ema_period}): {ema_val:.2f} | "
             f"RSI({self.config.rsi_period}): {rsi_val:.2f}"

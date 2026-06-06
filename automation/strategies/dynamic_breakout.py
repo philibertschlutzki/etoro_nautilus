@@ -73,7 +73,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         period_high = max(self.high_history)
         period_low = min(self.low_history)
 
-        self._log.info(
+        self._log.debug(
             f"[{self.instrument_id}] BAR GESCHLOSSEN | Close: {close_price:.2f} | "
             f"High({self.config.price_breakout_period}): {period_high:.2f} | "
             f"Low({self.config.price_breakout_period}): {period_low:.2f}"

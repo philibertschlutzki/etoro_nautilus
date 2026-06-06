@@ -7,9 +7,9 @@
     "trade_amount_pct": 15.0
   },
   "MeanReversionStrategy": {
-    "keltner_period": 10,
-    "keltner_atr_period": 10,
-    "keltner_multiplier": 1.5,
+    "keltner_period": 20,
+    "keltner_atr_period": 20,
+    "keltner_multiplier": 2.0,
     "trade_amount_pct": 15.0
   },
   "DynamicBreakoutStrategy": {
@@ -39,10 +39,12 @@
     "bb_period": 10,
     "bb_std_dev": 2.0,
     "bb_entry_tolerance": 1.0,
+    "cooldown_bars": 12,
     "trade_amount_pct": 15.0
   },
   "VwapExhaustionStrategy": {
-    "deviation_threshold": 0.03,
+    "deviation_threshold": 0.015,
+    "vwap_period": 24,
     "trade_amount_pct": 15.0
   },
   "HourlyMeanReversionStrategy": {

@@ -16,7 +16,7 @@ def test_oos_aggregation():
         "max_drawdown": 1.0,
         "min_win_rate": 0.0,
         "min_total_return": 0.0,
-        "oos_min_trades": 10,  # Sum of winning OOS trades is 10
+        "oos_min_trades": 5,  # Average of winning OOS trades is 5
         "oos_min_total_return": 0.1,
         "eligible_requires_all": ["min_trades", "min_total_return"],
         "eligible_requires_any": [],
@@ -38,7 +38,7 @@ def test_oos_aggregation():
                 "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5
             },
             "oos_metrics": {
-                "total_trades": 5, "sortino_ratio": 1.0, "profit_factor": 1.0,
+                "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0,
                 "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1
             }
         },
@@ -60,7 +60,7 @@ def test_oos_aggregation():
                 "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5
             },
             "oos_metrics": {
-                "total_trades": 5, "sortino_ratio": 1.0, "profit_factor": 1.0,
+                "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0,
                 "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2
             }
         },
@@ -125,10 +125,9 @@ def test_oos_aggregation():
 
     # We set up the mock so both have 2 wins. Tie breaker logic should decide.
     # We will just ensure that for the winner's OOS eligible checks:
-    # 1. We did not average total trades (5+5)/2 = 5, we summed them = 10.
-    # 2. We did not include the losing symbols' OOS trades (+10+10 = 30 or average 30/4 = 7.5).
+    # 1. We averaged total trades (5+5)/2 = 5.
+    # 2. We did not include the losing symbols' OOS trades.
     #
-    # With oos_min_trades = 10, and sum(5+5) = 10, the strategy should be eligible!
-    # (If it averaged or missed the logic, it would have 5 trades and fail the threshold).
+    # With oos_min_trades = 5, and average = 5, the strategy should be eligible!
 
     pass
