@@ -666,7 +666,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     elif losses_count < 2 and n < 50:
         profit_factor = None
     else:
-        profit_factor = gross_profit / gross_loss
+        profit_factor = min(gross_profit / gross_loss, 50.0)
 
     win_rate = wins / n if n > 0 else 0.0
 
@@ -692,12 +692,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
             dd_dev = max(dd_dev, 1e-6)
             mean_ret = sum(rets) / n
-            sortino = (mean_ret / dd_dev * math.sqrt(252))
+            sortino = min((mean_ret / dd_dev * math.sqrt(252)), 50.0)
 
     if max_dd <= 1e-9:
         calmar = None
     else:
-        calmar = total_return / max_dd
+        calmar = min(total_return / max_dd, 100.0)
 
     import statistics
     if hold_list:
