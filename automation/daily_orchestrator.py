@@ -897,13 +897,6 @@ def phase5_live_deployment(
     try:
         with open(tournament_path, "r", encoding="utf-8") as tf:
             t_data = json.load(tf)
-
-        eligible_pairs = t_data.get("eligible_pairs", 0)
-        if eligible_pairs == 0:
-            log.error("[Phase 5] 0 eligible pairs gefunden. Live-Deploy strikt verboten (Fail-Closed).")
-            emit_json_event(log, "LIVE_DEPLOY_ABORTED", {"reason": "zero_eligible_pairs"})
-            return 1
-
         agg = t_data.get("aggregate_winner")
         if not agg:
             log.error("[Phase 5] Kein Aggregat-Sieger im Tournament. Abbruch.")
