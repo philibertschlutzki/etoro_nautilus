@@ -498,6 +498,7 @@ def load_ticks_from_catalog(
     instrument_id_str: str,
     start_ns: int | None,
     end_ns: int | None,
+    spread_bps: float = 0.0,
 ) -> list:
     try:
         ticks = catalog.quote_ticks(
@@ -513,18 +514,40 @@ def load_ticks_from_catalog(
         _, sp_parquet = read_precisions_from_parquet(str(catalog.path), instrument_id_str)
         sp = _normalize_size_precision(sp_parquet, instrument_id_str)
 
-        if hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision != sp:
+        needs_normalization = hasattr(ticks[0].bid_size, "precision") and ticks[0].bid_size.precision != sp
+
+        if needs_normalization or spread_bps > 0.0:
             from nautilus_trader.model.data import QuoteTick
-            from nautilus_trader.model.objects import Quantity
+            from nautilus_trader.model.objects import Quantity, Price
+
+            # Determine price precision from parquet to correctly instantiate Price objects
+            pp_parquet, _ = read_precisions_from_parquet(str(catalog.path), instrument_id_str)
+            if hasattr(ticks[0].bid_price, "precision"):
+                 pp = ticks[0].bid_price.precision
+            else:
+                 pp = pp_parquet
+
             normalized = []
             for t in ticks:
+                if spread_bps > 0.0:
+                    mid_price = (t.bid_price.as_double() + t.ask_price.as_double()) / 2.0
+                    half_spread_pct = (spread_bps / 10000.0) / 2.0
+                    new_bid_double = mid_price * (1.0 - half_spread_pct)
+                    new_ask_double = mid_price * (1.0 + half_spread_pct)
+
+                    new_bid = Price(new_bid_double, precision=pp)
+                    new_ask = Price(new_ask_double, precision=pp)
+                else:
+                    new_bid = t.bid_price
+                    new_ask = t.ask_price
+
                 normalized.append(
                     QuoteTick(
                         instrument_id=t.instrument_id,
-                        bid_price=t.bid_price,
-                        ask_price=t.ask_price,
-                        bid_size=Quantity(t.bid_size.as_double(), precision=sp),
-                        ask_size=Quantity(t.ask_size.as_double(), precision=sp),
+                        bid_price=new_bid,
+                        ask_price=new_ask,
+                        bid_size=Quantity(t.bid_size.as_double(), precision=sp) if needs_normalization else t.bid_size,
+                        ask_size=Quantity(t.ask_size.as_double(), precision=sp) if needs_normalization else t.ask_size,
                         ts_event=t.ts_event,
                         ts_init=t.ts_init,
                     )
@@ -704,7 +727,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     }
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -772,6 +795,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         s_qty, s_price, s_ts = sell_queue[0]
                         match_qty = min(qty, s_qty)
                         pnl = match_qty * (s_price - price)
+                        if commission_bps > 0:
+                            # Notional Value = Menge * Preis for both legs (entry and exit)
+                            entry_value = match_qty * s_price
+                            exit_value = match_qty * price
+                            pnl -= (entry_value + exit_value) * (commission_bps / 10000.0)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
@@ -792,6 +820,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         b_qty, b_price, b_ts = buy_queue[0]
                         match_qty = min(qty, b_qty)
                         pnl = match_qty * (price - b_price)
+                        if commission_bps > 0:
+                            # Notional Value = Menge * Preis for both legs (entry and exit)
+                            entry_value = match_qty * b_price
+                            exit_value = match_qty * price
+                            pnl -= (entry_value + exit_value) * (commission_bps / 10000.0)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
@@ -1266,6 +1299,8 @@ def run_single_backtest_worker(
     reports_dir: str,
     worker_log_file: str,
     span_tolerance_days: float = 1.0,
+    commission_bps: float = 0.0,
+    spread_bps_by_asset_class: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -1294,7 +1329,31 @@ def run_single_backtest_worker(
             effective_catalog_path = temp_catalog_dir if temp_catalog_dir else catalog_path
 
             catalog = ParquetDataCatalog(effective_catalog_path)
-            ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns)
+
+            # Determine asset class for spread
+            spread_bps = 0.0
+            if spread_bps_by_asset_class:
+                import json
+                instrument_map_path = os.path.join(_get_project_root(), "automation", "config", "instrument_map.json")
+                asset_class_key = "DEFAULT"
+                try:
+                    with open(instrument_map_path, "r", encoding="utf-8") as f:
+                        inst_map = json.load(f).get("instruments", {})
+
+                    # find the asset class by matching the symbol
+                    for _, inst_data in inst_map.items():
+                        if inst_data.get("symbol") == inst_id_str:
+                            asset_class_key = inst_data.get("asset_class", "DEFAULT").upper()
+                            break
+                except Exception as e:
+                    pass
+
+                spread_bps = spread_bps_by_asset_class.get(asset_class_key, spread_bps_by_asset_class.get("DEFAULT", 4.0))
+
+            if spread_bps > 0.0:
+                wlog(f"   📊 Spread-Modeling: {spread_bps} bps applied to {inst_id_str}")
+
+            ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns, spread_bps)
         except RuntimeError as e:
             wlog_err(f"Tick-Ladefehler: {e}", exc=True)
             return _empty_result(inst_id_str, strategy_class_name, strat)
@@ -1430,7 +1489,7 @@ def run_single_backtest_worker(
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
         try:
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -1582,6 +1641,8 @@ def run_backtest() -> None:
     spread_modeling = backtest_global_cfg.get("spread_modeling", True)
     fill_model_str  = backtest_global_cfg.get("fill_model", "bid_ask")
     span_tolerance_days = backtest_global_cfg.get("span_tolerance_days", 1.0)
+    commission_bps = backtest_global_cfg.get("commission_bps", 0.0)
+    spread_bps_by_asset_class = backtest_global_cfg.get("spread_bps_by_asset_class", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -1860,7 +1921,7 @@ def run_backtest() -> None:
                         inst_id_str, bar_type, strat,
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
-                        span_tolerance_days
+                        span_tolerance_days, commission_bps, spread_bps_by_asset_class
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -1868,7 +1929,7 @@ def run_backtest() -> None:
                         inst_id_str, bar_type, strat,
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
-                        span_tolerance_days
+                        span_tolerance_days, commission_bps, spread_bps_by_asset_class
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -1969,6 +2030,9 @@ def _run_remaining_sequentially(
     all_results: list,
     done_count: int,
     total_jobs: int,
+    span_tolerance_days: float = 1.0,
+    commission_bps: float = 0.0,
+    spread_bps_by_asset_class: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -1984,7 +2048,7 @@ def _run_remaining_sequentially(
         res = run_single_backtest_worker(
             rem_inst, bar_type, rem_strat, catalog_path,
             start_ns, end_ns, start_capital, generate_html, reports_dir, rem_log,
-            span_tolerance_days
+            span_tolerance_days, commission_bps, spread_bps_by_asset_class
         )
         _flush_worker_log(rem_log)
         done_count += 1
