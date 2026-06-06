@@ -3,6 +3,7 @@ from nautilus_trader.model.data import QuoteTick, Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import ExponentialMovingAverage, AverageTrueRange
+from nautilus_trader.indicators import KeltnerChannel
 
 from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
 from automation.momentum_ls_allocator import MomentumLSAllocator
@@ -28,8 +29,7 @@ class MeanReversionStrategy(HourlyStrategyBase):
         self.keltner_atr_period = config.keltner_atr_period
         self.keltner_multiplier = config.keltner_multiplier
 
-        self.keltner_ma = ExponentialMovingAverage(self.keltner_period)
-        self.keltner_atr = AverageTrueRange(self.keltner_atr_period)
+        self.keltner = KeltnerChannel(period=config.keltner_period, k_multiplier=config.keltner_multiplier)
 
         self.keltner_upper = 0.0
         self.keltner_lower = 0.0
@@ -41,8 +41,7 @@ class MeanReversionStrategy(HourlyStrategyBase):
         self._log.info(f"Starte Mean Reversion auf {self.instrument_id}")
 
         # Register indicators for automatic updates and proper warmup
-        self.register_indicator_for_bars(self.bar_type, self.keltner_ma)
-        self.register_indicator_for_bars(self.bar_type, self.keltner_atr)
+
 
         self.subscribe_bars(self.bar_type)
 
@@ -53,24 +52,13 @@ class MeanReversionStrategy(HourlyStrategyBase):
         if self._check_exits_and_update(bar):
             return
 
-        if not (self.keltner_ma.initialized and self.keltner_atr.initialized):
+        self.keltner.handle_bar(bar)
+        if not self.keltner.initialized:
             return
 
-        middle_band = self.keltner_ma.value
-        atr = self.keltner_atr.value
-
-        instrument = self.cache.instrument(self.instrument_id)
-        if instrument is not None:
-            price_prec = instrument.price_precision
-            self.keltner_upper = round(middle_band + (self.keltner_multiplier * atr), price_prec)
-            self.keltner_lower = round(middle_band - (self.keltner_multiplier * atr), price_prec)
-        else:
-            self.keltner_upper = middle_band + (self.keltner_multiplier * atr)
-            self.keltner_lower = middle_band - (self.keltner_multiplier * atr)
-
         close_price = float(bar.close)
-        upper_band = self.keltner_upper
-        lower_band = self.keltner_lower
+        upper_band = self.keltner.upper
+        lower_band = self.keltner.lower
 
         self._log.info(
             f"[{self.instrument_id}] BAR | Close: {close_price:.2f} | "
@@ -90,12 +78,14 @@ class MeanReversionStrategy(HourlyStrategyBase):
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
+        if not self.can_go_long(bar):
+            return
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -117,7 +107,7 @@ class MeanReversionStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position(pos)
+            self._close_position_base(pos)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -129,16 +119,6 @@ class MeanReversionStrategy(HourlyStrategyBase):
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
             quantity=qty,
-            time_in_force=TimeInForce.GTC,
-        )
-        self.submit_order(order)
-
-    def _close_position(self, pos) -> None:
-        exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
-        order = self.order_factory.market(
-            instrument_id=self.instrument_id,
-            order_side=exit_side,
-            quantity=pos.quantity,
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
