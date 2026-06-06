@@ -722,9 +722,6 @@ def phase3_4_backtest_and_tournament(
     log.info(f"[Phase 3] Backtest-Kommando: {' '.join(cmd)}")
 
     wf_active = bool(dynamic_config.get("global_settings", {}).get("walk_forward"))
-    if wf_active:
-        log.warning("[Phase 3] Rolling Walk-Forward is not fully implemented. Using single Train/Test split.")
-        wf_active = False
 
     emit_json_event(log, "BACKTEST_START", {
         "start": dynamic_config.get("global_settings", {}).get("start_time", thirty_days_ago.isoformat()),
