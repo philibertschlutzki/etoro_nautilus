@@ -17,7 +17,7 @@
   },
   "catalog_path": "data/nautilus",
   "start_capital": 10000.0,
-  "commission_bps": 0.0,
+  "commission_bps": 1.0,
   "spread_bps_by_asset_class": {
     "CRYPTO": 15.0,
     "EQUITY": 3.0,

@@ -1,0 +1,40 @@
+📝 Log-Datei: /app/logs/backtest_2026-06-06_15-13-48.log
+🚨 Fehler-Log: /app/logs/errors_2026-06-06_15-13-48.log
+======================================================================
+📊 Spread-Modeling: True (fill_model=bid_ask), Span-Tolerance: 1.0d
+   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)
+🏆 Tournament: min_trades=20, min_sortino=0.3, min_pf=1.1
+⚙️  Strategy-Defaults geladen für: SmaCrossoverStrategy, MeanReversionStrategy, DynamicBreakoutStrategy, FlashCrashReversalStrategy, VolatilityBreakoutPumpStrategy, ComboTrendVwapStrategy, VwapExhaustionStrategy, HourlyMeanReversionStrategy
+⚙️  2 inaktive Strategie(n) übersprungen.
+✅ Defaults angewandt — SmaCrossoverStrategy: sma_period=5, trade_amount_pct=15.0
+✅ Defaults angewandt — MeanReversionStrategy: keltner_period=20, keltner_atr_period=20, keltner_multiplier=2.0, trade_amount_pct=15.0
+✅ Defaults angewandt — DynamicBreakoutStrategy: price_breakout_period=10, trade_amount_pct=15.0
+✅ Defaults angewandt — FlashCrashReversalStrategy: bb_period=10, bb_std_dev=2.0, rsi_period=7, rsi_oversold=30.0, rsi_overbought=70.0, atr_trailing_multiplier=0.75, max_bars_in_trade=16, trade_amount_pct=15.0
+✅ Defaults angewandt — VolatilityBreakoutPumpStrategy: bb_period=10, bb_std_dev=2.0, trade_amount_pct=15.0
+✅ Defaults angewandt — ComboTrendVwapStrategy: sma_period=20, macd_fast=5, macd_slow=13, macd_signal_period=9, bb_period=10, bb_std_dev=2.0, bb_entry_tolerance=1.0, cooldown_bars=12, trade_amount_pct=15.0
+✅ Defaults angewandt — VwapExhaustionStrategy: deviation_threshold=0.015, vwap_period=24, trade_amount_pct=15.0
+✅ Defaults angewandt — HourlyMeanReversionStrategy: keltner_period=10, keltner_atr_period=10, keltner_multiplier=1.5, trade_amount_pct=15.0
+🎯 CLI Filter aktiv: Nur Strategie 'HourlyMeanReversionStrategy' wird getestet.
+🎯 CLI Filter aktiv: Nur Symbol 'TSLA.ETORO' wird getestet.
+📋 1 Instrumente gefunden.
+
+🔍 Analysiere Startdaten der Instrumente (Kohorten-Analyse)...
+   📊 Identifizierte Startdatum-Kohorten:
+      • 2025-06-10: 1 Symbole
+   ✅ Einheitliches Backtest-Startdatum auf spätestes gültiges Datum gesetzt: 2025-06-10 00:00:00
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent.
+
+⏳ Starte 1 Backtest-Jobs (1 × 1 Strategien)...
+🚀 TSLA.ETORO | HourlyMeanReversionStrategy
+   📊 Spread-Modeling: 3.0 bps applied to TSLA.ETORO
+   📥 1225 Ticks geladen. Erster Tick im Engine: 1749513600000000000 (2025-06-10 00:00:00)
+   🔬 Precisions: price=2 (ticks), size=2 (parquet meta, normalized)
+[Metriken] FIFO-Extraktion: 294 Round-Trips erfolgreich berechnet.
+   📊 [IS]  Trades= 294 | WinRate= 11.6% | PF=  0.44 | Sortino= -2.19 | Return= -0.02%
+   [   1/1] TSLA.ETORO / HourlyMeanReversionStrategy
+
+📊 1 Ergebnisse gesammelt (kein --momentum Flag aktiv)
+
+✅ Matrix-Backtest vollständig abgeschlossen!
