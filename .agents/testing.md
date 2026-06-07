@@ -22,24 +22,22 @@ Before starting Phase 1, verify and document the following:
 
 ## Phase 1 — Strategy Verification & Forced Trigger Testing
 
-**Goal:** Every strategy in `/strategies/` executes at least one BUY and one SELL/CLOSE signal within a 10–15 minute live demo run.
+**Goal:** Every strategy in `automation/strategies/` executes at least one BUY and one SELL/CLOSE signal within a 10–15 minute live demo run.
 
 ### Tasks
 
 1. **Audit all strategy files.** Target files (adjust if names differ in repo):
-   - `adx_atr_momentum.py`
-   - `dynamic_breakout.py`
-   - `flash_crash_reversal.py`
-   - `mean_reversion.py`
-   - `sma_crossover.py`
-   - `tesla_combo_strategy.py`
-   - `trend_pullback.py`
-   - `volatility_breakout.py`
-   - `vwap_exhaustion.py`
+   - `automation/strategies/dynamic_breakout.py`
+   - `automation/strategies/flash_crash_reversal.py`
+   - `automation/strategies/mean_reversion.py`
+   - `automation/strategies/sma_crossover.py`
+   - `automation/strategies/tesla_combo_strategy.py`
+   - `automation/strategies/volatility_breakout.py`
+   - `automation/strategies/vwap_exhaustion.py`
 
-2. **Create `/strategies/test_overrides.py`** — a parameter override module that imports the above strategies and patches their default parameters to maximally sensitive values (e.g., SMA periods of 2/3, breakout thresholds of 0.01%, ATR multipliers of 0.1). This file must never modify the original strategy files' defaults; use monkey-patching or dependency injection.
+2. **Use the JSON config system (`automation/config/strategies.json` -> `params`)** to override strategy parameters to maximally sensitive values (e.g., SMA periods of 2/3, breakout thresholds of 0.01%, ATR multipliers of 0.1) instead of monkey-patching legacy files. Do not modify `strategy_defaults.json`.
 
-3. **Create `/dev_scripts/run_live_strategy_test.py`.** This script must:
+3. **Create `automation/tests/run_live_strategy_test.py`.** This script must:
    - Load each strategy with test overrides.
    - Connect to the eToro demo account via the existing data adapter/execution client in the repo.
    - Run each strategy for 10–15 minutes against live tick data.
@@ -63,7 +61,7 @@ Before starting Phase 1, verify and document the following:
 
 ### Tasks
 
-1. **Extend `/dev_scripts/etoro_api_probe.py` and `/dev_scripts/etoro_api_probe_all.py`:**
+1. **Extend `automation/tests/etoro_api_probe.py` and `automation/tests/etoro_api_probe_all.py`:**
    - Add a `DebugHTTPAdapter` (using `requests` `HTTPAdapter` or equivalent) that logs:
      - Full request URL, method, headers, body.
      - HTTP status code, response headers, full JSON response body.
@@ -71,7 +69,7 @@ Before starting Phase 1, verify and document the following:
    - Write all log output to `/logs/api_probe_<YYYY-MM-DD>.jsonl` (one JSON object per line).
    - Do not suppress any HTTP 4xx or 5xx errors; log them with full detail and continue.
 
-2. **Extend `/dev_scripts/etoro_execution_tests_all_orders.py`** to cover the following order types systematically. For each type, log request payload, response, resulting order status, and fill confirmation (or failure reason):
+2. **Extend `automation/tests/etoro_execution_tests_all_orders.py`** to cover the following order types systematically. For each type, log request payload, response, resulting order status, and fill confirmation (or failure reason):
 
    | Order Type | Test Scenario |
    |---|---|
@@ -84,7 +82,7 @@ Before starting Phase 1, verify and document the following:
    | Cancel Open Order | Cancel the pending limit orders created above |
    | Verify Cancellation | Confirm order status is `CANCELLED` via API |
 
-3. **Extend `/dev_scripts/etoro_balance.py` (or equivalent):**
+3. **Extend `automation/tests/etoro_balance.py` (or equivalent):**
    - After every order execution step above, query the account balance endpoint.
    - Assert the returned balance is numerically consistent with the prior balance ± the trade PnL.
    - Log discrepancies as `ERROR` (do not raise, continue testing).
@@ -106,11 +104,10 @@ Before starting Phase 1, verify and document the following:
 
 1. **Real-data backtest (≈1 hour of tick data):**
    - Locate all `.parquet` files under `/data/nautilus/data/quote_tick/` (instruments: BTC, ETH, ADA, TSLA — or whatever is available).
-   - Using `run_backtest.py`, run each strategy against ≈1 hour of tick data per instrument.
-   - If `run_backtest.py` does not exist or is incomplete, create it from the Nautilus backtest engine pattern already present in the repo.
+   - Using `python -m automation.backtest_runner` (or `python -m automation.daily_orchestrator`), run each strategy against ≈1 hour of tick data per instrument.
    - Capture stdout/stderr per run; write to `/logs/phase3_real_backtest_<strategy>_<instrument>.log`.
 
-2. **Synthetic data generator — create `/dev_scripts/generate_synthetic_data.py`:**
+2. **Synthetic data generator — create `automation/tests/generate_synthetic_data.py`:**
    - Generate 6 months of synthetic `QuoteTick` data (bid/ask) using **Geometric Brownian Motion** with configurable drift and volatility parameters.
    - Parameters (configurable via CLI args or constants at top of file):
      - `--instrument` (e.g., `BTC-USD`)
@@ -119,10 +116,10 @@ Before starting Phase 1, verify and document the following:
      - `--freq` (tick frequency in seconds, default: 1)
      - `--mu` (drift, default: 0.0001)
      - `--sigma` (volatility, default: 0.02)
-   - Output: `.parquet` files written to `/data/synthetic/quote_tick/<instrument>/` in the same schema as the real data files (inspect the real parquet schema first with `pandas.read_parquet(...).dtypes`).
+   - Output: `.parquet` files written to `/data/synthetic/quote_tick/<instrument>/` in the same schema as the real data files. **CRITICAL:** Data MUST be strictly encoded as `FixedSizeBinary(16)` (e.g., `round(val * 10**16)`) and PyArrow metadata (`b"size_precision"`, `b"price_precision"`) MUST be injected following the exact pattern in `automation/api_backfiller.py` to prevent Rust FFI aborts.
    - After writing, validate the output by reading it back and asserting row count > 0.
 
-3. **6-month backtest:** Run every strategy against the synthetic 6-month dataset. Use the same `run_backtest.py` entry point. Write per-run logs to `/logs/phase3_synthetic_backtest_<strategy>.log`.
+3. **6-month backtest:** Run every strategy against the synthetic 6-month dataset using `python -m automation.backtest_runner`. The backtest and logs MUST evaluate and report Out-of-Sample (OOS) metrics (e.g., `oos_metrics`, `oos_eligible`) to correctly mirror the Phase 5 `daily_orchestrator` behavior. Write per-run logs to `/logs/phase3_synthetic_backtest_<strategy>.log`.
 
 4. **HTML report validation:** For each backtest run, locate the output HTML tearsheet (check the repo's config for the output path). Validate programmatically:
    - File exists and is non-empty.
@@ -171,6 +168,7 @@ Each report must contain the following sections (no exceptions):
 
 | Metric | Expected | Actual |
 |--------|----------|--------|
+| OOS Eligible | ... | ... |
 | ... | ... | ... |
 
 Include: API latency (ms), slippage (if measurable), error codes encountered.
@@ -202,7 +200,7 @@ Include: API latency (ms), slippage (if measurable), error codes encountered.
 
 2. **Create `manuals/TESTING.md`** with the following structure:
    - **Prerequisites** (Python version, dependencies, API key setup)
-   - **Running the API probe** (`python dev_scripts/etoro_api_probe.py --help`)
+   - **Running the API probe** (`python automation/tests/etoro_api_probe.py --help`)
    - **Running the order execution tests** (exact command, expected output)
    - **Generating synthetic data** (exact command with all flags explained)
    - **Running the full backtest suite** (exact command)
@@ -289,10 +287,10 @@ Upon completion of all phases, verify and report the status of each item:
 [ ] /logs/phase3_synthetic_backtest_*.log (one per strategy)
 [ ] /logs/phase3_report_validation.json
 [ ] /logs/TESTREPORT_*.md (one per strategy + API suite)
-[ ] /dev_scripts/run_live_strategy_test.py
-[ ] /dev_scripts/generate_synthetic_data.py
-[ ] /strategies/test_overrides.py
-[ ] /strategies/OPTIMIZATION_GUIDE.md
+[ ] automation/tests/run_live_strategy_test.py
+[ ] automation/tests/generate_synthetic_data.py
+[ ] automation/config/strategy_defaults.json
+[ ] automation/strategies/OPTIMIZATION_GUIDE.md
 [ ] /manuals/TESTING.md
 [ ] /manuals/deployment.md (updated)
 [ ] /manuals/backtesting_manual.md (updated)
