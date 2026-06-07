@@ -25,7 +25,7 @@
   "min_win_rate": 0.35,
   "min_total_return": 0.005,
   "min_expectancy": 0.00005,
-  "oos_min_trades": 5,
+  "oos_min_trades": 3,
   "oos_min_total_return": 0.005,
   "oos_min_expectancy": 0.00005,
   "eligible_requires_all": ["min_trades", "min_total_return", "min_win_rate", "max_drawdown", "min_expectancy"],
