@@ -1,6 +1,6 @@
-# ☁️ Deployment & Operations Guide: eToro Nautilus
+# Deployment & Operations Guide: eToro Nautilus
 
-Dieses Dokument ist das zentrale Handbuch für die Einrichtung, den Betrieb und die Wartung der eToro Nautilus Plattform auf einer Linux-Instanz. Es ist optimiert für Cloud-VMs mit stark limitierten Ressourcen (wie z. B. eine Google Cloud `e2-micro` mit 1GB RAM) und verwendet eine native Ausführungsumgebung ohne Docker-Overhead.
+Dieses Dokument ist das zentrale Handbuch für die Einrichtung, den Betrieb und die Wartung der eToro Nautilus Plattform auf einer Linux-Instanz. Es ist optimiert für Cloud-VMs mit stark limitierten Ressourcen (wie z. B. eine Google Cloud `e2-micro` mit 1 GB RAM) und verwendet eine native Ausführungsumgebung ohne Docker-Overhead.
 
 ---
 
@@ -8,17 +8,17 @@ Dieses Dokument ist das zentrale Handbuch für die Einrichtung, den Betrieb und 
 
 Die Architektur ist so konzipiert, dass sie ressourcenschonend arbeitet.
 
-*   **Betriebssystem:** Ubuntu 22.04 LTS oder Debian 11/12.
-*   **Hardware:** Mindestens 1 GB RAM (Google Cloud `e2-micro` empfohlen).
-*   **Software:** Python 3.10+, `git`, `systemd`
-*   **Python Dependencies:** `nautilus_trader>=1.226.0`, `websockets`, `aiohttp`, `python-dotenv`, `requests`, `pandas`, `pyarrow`, `plotly`, `pytest`, `pytest-asyncio`.
+- **Betriebssystem:** Ubuntu 22.04 LTS oder Debian 11/12
+- **Hardware:** Mindestens 1 GB RAM (Google Cloud `e2-micro` empfohlen)
+- **Software:** Python 3.10+, `git`, `systemd`
+- **Python-Abhängigkeiten:** `nautilus_trader>=1.226.0`, `websockets`, `aiohttp`, `python-dotenv`, `requests`, `pandas`, `pyarrow`, `plotly`, `pytest`, `pytest-asyncio`
 
-### 1.1. Swap-File Einrichtung (WICHTIG für 1GB RAM VMs)
+### 1.1. Swap-File Einrichtung (WICHTIG für 1 GB RAM VMs)
 
-Da die Instanz lediglich 1GB RAM besitzt, können temporäre Spitzen (z. B. bei der Installation bestimmter pip-Pakete wie `pandas` oder `pyarrow`) zu "Out of Memory" (OOM) Kills führen. Die Einrichtung einer Swap-Datei ist zwingend erforderlich:
+Da die Instanz lediglich 1 GB RAM besitzt, können temporäre Spitzen (z. B. bei der Installation bestimmter pip-Pakete wie `pandas` oder `pyarrow`) zu „Out of Memory" (OOM) Kills führen. Die Einrichtung einer Swap-Datei ist zwingend erforderlich:
 
 ```bash
-# Erstelle eine 2GB Swap-Datei
+# Erstelle eine 2 GB Swap-Datei
 sudo fallocate -l 2G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
@@ -42,7 +42,7 @@ sudo mkdir -p /opt/etoro_nautilus
 sudo mkdir -p /data/nautilus
 
 # Verzeichnisstruktur anlegen
-mkdir -p data/state data/nautilus data/universe logs
+mkdir -p data/state data/nautilus data/universe data/import logs
 ```
 
 ---
@@ -60,10 +60,10 @@ sudo chown -R tradingbot:tradingbot /data/nautilus
 # Virtual Environment erstellen und Pakete installieren
 sudo -u tradingbot python3 -m venv venv
 sudo -u tradingbot ./venv/bin/pip install --upgrade pip
-sudo -u tradingbot ./venv/bin/pip install -r requirements.txt
+sudo -u tradingbot ./venv/bin/pip install -r automation/requirements.txt
 ```
 
-### API-Keys konfigurieren
+### 2.1. API-Keys konfigurieren
 
 Erstelle die `.env`-Datei für die API-Zugangsdaten:
 
@@ -82,80 +82,70 @@ MOMENTUM_LS_USERNAME=USERNAME   # eToro Benutzername des Smart Portfolios
 
 ---
 
-## 3. Prozesssteuerung über `systemd`
+## 3. Prozesssteuerung: 1 systemd-Service + 1 Cron-Job
 
-Wir nutzen eine **Two-Service-Architektur**, um die Datenaufzeichnung strikt von der Handelslogik zu trennen. Dies garantiert, dass ein Problem im Trading-Bot den Datenrekorder nicht stoppt.
+Die Plattform verwendet eine klare Aufgabentrennung:
 
-### Dienst 1: Data-Catalog (`run_catalog.py`)
+- **`automation/catalog_service.py`** läuft als dauerhafter systemd-Service (24/7). Er empfängt Tick-Daten über WebSocket und speichert sie stündlich als ZIP-Dateien unter `data/import/`.
+- **`automation/daily_orchestrator.py`** wird einmal täglich per Cron gestartet. Er führt die komplette 5-Phasen-Pipeline aus (Universe → Daten-Merge → Backtest → Tournament → Live-Bot-Start).
+
+> **Warum kein dauerhafter systemd-Service für den Bot?**
+> Der Trading-Bot hat einen klaren täglichen Lifecycle (starten, handeln, stoppen). Er wird vom Orchestrator gestartet und beendet sich nach dem Trading-Fenster selbst. Ein dauerhafter Service wäre konzeptionell falsch und würde die Pipeline-Logik des Orchestrators umgehen.
+
+### Dienst: Data-Catalog (`automation/catalog_service.py`)
 
 Erstelle `/etc/systemd/system/nautilus-catalog.service`:
 
 ```ini
 [Unit]
-Description=Nautilus eToro Data Catalog Service
-After=network-online.target
+Description=eToro Nautilus Catalog Service
+After=network.target
 
 [Service]
-Type=simple
-User=tradingbot
-Group=tradingbot
+ExecStart=/usr/bin/python3 /opt/etoro_nautilus/automation/catalog_service.py
 WorkingDirectory=/opt/etoro_nautilus
-ExecStart=/opt/etoro_nautilus/venv/bin/python /opt/etoro_nautilus/run_catalog.py
 Restart=always
-RestartSec=10
-Environment=PYTHONUNBUFFERED=1
+RestartSec=5
+EnvironmentFile=/opt/etoro_nautilus/.env
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Dienst 2: Trading-Bot (`run_bot.py`)
+> **Hinweis:** Ersetze `/opt/etoro_nautilus` durch den tatsächlichen Pfad zum Repository auf deiner VM.
 
-Erstelle `/etc/systemd/system/nautilus-bot.service`:
-
-```ini
-[Unit]
-Description=Nautilus eToro Trading Bot
-After=network-online.target nautilus-catalog.service
-
-[Service]
-Type=simple
-User=tradingbot
-Group=tradingbot
-WorkingDirectory=/opt/etoro_nautilus
-ExecStart=/opt/etoro_nautilus/venv/bin/python /opt/etoro_nautilus/run_bot.py
-Restart=always
-RestartSec=10
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-```
-
-
-### Dienst 3 (Optional): Momentum-LS Daily Orchestrator via Cron
-
-Da das Subsystem einen täglichen Workflow hat, kann dieser per Cron automatisiert werden:
-
-```bash
-# Crontab-Eintrag (crontab -e als tradingbot)
-0 6 * * * cd /opt/etoro_nautilus && ./venv/bin/python dev_scripts/momentum_ls_universe.py --output data/universe/momentum_ls.json && ./venv/bin/python dev_scripts/momentum_ls_tournament.py --universe data/universe/momentum_ls.json --output logs/tournament_today.json && ./venv/bin/python dev_scripts/momentum_ls_run.py --tournament logs/tournament_today.json >> logs/daily_run.log 2>&1
-```
-
-### Dienste aktivieren und starten
+### Dienst aktivieren und starten
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable nautilus-catalog.service nautilus-bot.service
+sudo systemctl enable nautilus-catalog.service
 sudo systemctl start nautilus-catalog.service
-sudo systemctl start nautilus-bot.service
+
+# Status prüfen:
+sudo systemctl status nautilus-catalog.service
 ```
+
+### Cron-Job: Tägliche Pipeline (`automation/daily_orchestrator.py`)
+
+Richte den täglichen Orchestrator per Cron ein (täglich um 01:00 UTC):
+
+```bash
+# Crontab bearbeiten (als Benutzer tradingbot):
+sudo -u tradingbot crontab -e
+```
+
+Füge folgenden Eintrag hinzu:
+
+```cron
+0 1 * * * /usr/local/bin/python3 /opt/etoro_nautilus/automation/daily_orchestrator.py --skip-api-fetch >> /opt/etoro_nautilus/logs/cron.log 2>&1
+```
+
+> **Was macht `--skip-api-fetch`?**
+> Der `catalog_service.py` sammelt die Daten bereits fortlaufend als ZIP-Dateien im `data/import/`-Verzeichnis. Der Orchestrator kann diese ZIP-Dateien direkt verarbeiten, ohne nochmals die API abzufragen. Wenn `data/import/` leer ist (z. B. nach einem Server-Neustart), lass `--skip-api-fetch` weg — dann holt der Orchestrator die Daten selbst via `api_backfiller.py`.
 
 ---
 
 ## 4. Operationelle Befehle (Cheatsheet)
-
-Hier sind die wichtigsten Befehle zur Verwaltung und Überwachung deiner VM.
 
 ### Updates & Neustarts
 
@@ -164,41 +154,57 @@ Wenn du Code auf GitHub aktualisiert hast:
 ```bash
 cd /opt/etoro_nautilus
 sudo -u tradingbot git pull origin main
-sudo -u tradingbot ./venv/bin/pip install -r requirements.txt
+sudo -u tradingbot ./venv/bin/pip install -r automation/requirements.txt
 sudo systemctl restart nautilus-catalog.service
-sudo systemctl restart nautilus-bot.service
 ```
 
 ### Service Management
 
 | Aktion | Befehl |
 | :--- | :--- |
-| **Status prüfen** | `sudo systemctl status nautilus-bot` |
-| **Starten / Stoppen** | `sudo systemctl [start/stop] nautilus-bot` |
-| **Neu starten** | `sudo systemctl restart nautilus-bot` |
-| **Daten herunterladen** | `scp "username032@yourserver:/opt/etoro_nautilus/data/archive/*.zip" .` |
+| **Status prüfen** | `sudo systemctl status nautilus-catalog` |
+| **Starten / Stoppen** | `sudo systemctl [start/stop] nautilus-catalog` |
+| **Neu starten** | `sudo systemctl restart nautilus-catalog` |
+| **Daten herunterladen** | `scp "user@server:/opt/etoro_nautilus/data/nautilus" ./data/ -r` |
 
-### Logfile-Analyse (Journalctl)
+### Logfile-Analyse
 
 ```bash
-# Nur Trading-Bot Logs (Echtzeit)
-sudo journalctl -u nautilus-bot.service -f
-
-# Nur Data-Catalog Logs
+# Catalog-Service Logs (Echtzeit)
 sudo journalctl -u nautilus-catalog.service -f
 
 # Fehler der letzten 24 Stunden
-sudo journalctl -u nautilus-bot.service --since "24h" | grep -i "error"
+sudo journalctl -u nautilus-catalog.service --since "24h" | grep -i "error"
+
+# Orchestrator-Log vom heutigen Tag
+tail -f /opt/etoro_nautilus/logs/orchestrator_$(date +%Y%m%d).log
+
+# Live-Bot-Log vom heutigen Tag
+tail -f /opt/etoro_nautilus/logs/live_bot_$(date +%Y%m%d).log
 ```
 
-
-### Momentum-LS Workflow Befehle
+### Momentum-LS Pipeline manuell ausführen
 
 ```bash
-# Manuelle Ausführung des täglichen Workflows
-python3 dev_scripts/momentum_ls_universe.py --output data/universe/momentum_ls.json
-python3 dev_scripts/momentum_ls_tournament.py --universe data/universe/momentum_ls.json --output logs/tournament_today.json
-python3 dev_scripts/momentum_ls_run.py --tournament logs/tournament_today.json --dry-run
+# Täglicher Standard-Run (ZIPs aus data/import/ verwenden):
+python3 automation/daily_orchestrator.py --skip-api-fetch
+
+# Mit API-Backfill (wenn data/import/ leer):
+python3 automation/daily_orchestrator.py
+
+# Dry-Run (kein Bot-Start, sicher zum Testen):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+
+# Einzelne Schritte manuell ausführen:
+python3 automation/universe_fetcher.py
+python3 automation/api_backfiller.py --days 7
+python3 automation/historical_fetcher.py --months 12
+python3 automation/catalog_service.py
+
+# Live-Bot manuell starten (nur wenn Orchestrator nicht läuft):
+python3 automation/momentum_ls_run.py \
+  --universe data/universe/momentum_ls.json \
+  --tournament logs/tournament_$(date +%Y-%m-%d).json
 ```
 
 ### Daten-Management Befehle
@@ -210,81 +216,70 @@ cat data/universe/momentum_ls.json | python3 -m json.tool | head -50
 # State-Datei prüfen (aktive Order-Mappings)
 cat data/state/execution_mapping.json
 
-# Orphan-Positionen schließen (Notfall)
-python3 dev_scripts/etoro_close_orphans.py
-
 # Größe des Datenverzeichnisses prüfen
-du -sh /data/nautilus
+du -sh data/nautilus/
 
 # Anzahl der gespeicherten Parquet-Dateien zählen
-find /data/nautilus -name "*.parquet" | wc -l
-```
+find data/nautilus/ -name "*.parquet" | wc -l
 
+# Instrument-Map prüfen (wie viele Instrumente bekannt sind)
+python3 -c "import json; d=json.load(open('automation/config/instrument_map.json')); print(len(d['instruments']), 'Instrumente')"
+```
 
 ---
 
 ## 5. WebSocket Debugging & Connection Handling
 
-Die asynchrone WebSocket-Verbindung in `adapters/etoro_data.py` ist das kritischste Element des Systems. Hier erfährst du, wie du Verbindungsprobleme identifizierst und behebst.
+Der `automation/catalog_service.py` empfängt Tick-Daten über WebSocket von der eToro-API. Dieser Abschnitt erklärt, wie du Verbindungsprobleme erkennst und behebst.
 
-
-> **Hinweis:** Das System verwendet absichtlich `os._exit(1)` statt `sys.exit()` oder internen asyncio-Reconnects. Dies ist gewollt, um das System vollständig von systemd neu starten zu lassen (`Restart=always`).
+> **Hinweis:** Das System verwendet absichtlich `os._exit(1)` statt internen asyncio-Reconnects. Dies ist gewollt, damit systemd den Prozess vollständig neu startet (`Restart=always`). Ein Neustart ist sauberer als ein halbfertiger Reconnect-Versuch.
 
 ### 5.1. Häufige Probleme erkennen
 
 Achte in den Logs (`journalctl`) auf folgende Indikatoren:
-*   **"Connection dropped" / "WebSocket closed":** Die Verbindung zur eToro-API wurde serverseitig getrennt oder es gab ein Netzwerkproblem.
-*   **"Timeout during event routing":** Ein Event (Tick oder Bar) brauchte zu lange, um in der `etoro_data.py` verarbeitet zu werden, was die Event-Loop blockiert.
-*   **Keine Ticks trotz offener Märkte:** Die Verbindung scheint offen zu sein, aber es fließen keine Daten. Dies deutet oft auf ein stillschweigendes Connection Drop hin.
+
+- **"Connection dropped" / "WebSocket closed":** Die Verbindung zur eToro-API wurde getrennt.
+- **"Timeout during event routing":** Ein Event brauchte zu lange zur Verarbeitung und blockierte die Event-Loop.
+- **Keine Ticks trotz offener Märkte:** Die Verbindung scheint offen, aber es fließen keine Daten (stillschweigendes Connection Drop).
 
 ### 5.2. Debugging-Ansätze
 
-1.  **Loglevel erhöhen:** Stelle sicher, dass die Logs detailliert genug sind. In `etoro_data.py` oder deiner Hauptkonfiguration kannst du das Loglevel des Nautilus Traders auf `DEBUG` setzen, um detaillierte Meldungen der WebSocket-Kommunikation zu erhalten.
-2.  **Ping/Pong Monitoring:** Überprüfe, ob die Keep-Alive Pings erfolgreich gesendet und beantwortet werden. Ein fehlender Pong ist ein sicheres Zeichen für eine tote Verbindung.
-3.  **Timeout Limits anpassen:**
-    *   Wenn deine VM stark ausgelastet ist (CPU > 90%), kann das asynchrone Routing ins Stocken geraten.
-    *   In `adapters/etoro_data.py`, prüfe die Konfiguration der `aiohttp` ClientSession oder der WebSocket-Bibliothek. Erhöhe gegebenenfalls die internen Timeout-Werte (z.B. `ping_interval` oder `ping_timeout`).
-4.  **Reconnect-Logik validieren:**
-    *   Die `etoro_data.py` sollte über eine robuste automatische Reconnect-Schleife verfügen.
-    *   Suche im Code nach dem `try/except`-Block um die Haupt-`receive()`-Schleife. Wenn ein `ConnectionClosedError` auftritt, muss ein Exponential Backoff (z. B. Warten von 2, 4, 8 Sekunden) vor dem nächsten Reconnect-Versuch implementiert sein, um Rate-Limits der eToro-API zu vermeiden.
-5.  **Event-Loop Blockaden:**
-    *   Da Python asynchron arbeitet, darf kein Code in der `on_quote_tick` oder `on_bar` Methode der Strategie (`strategies/...`) "blockieren" (z. B. lange `time.sleep()` oder synchrone Datenbank-Queries).
-    *   Blockiert eine Strategie, stauen sich die WebSocket-Events in der `etoro_data.py` und verursachen Timeout-Fehler.
+1. **Loglevel erhöhen:** Setze das Loglevel des Nautilus Traders auf `DEBUG` für detaillierte WebSocket-Meldungen.
+2. **Ping/Pong Monitoring:** Ein fehlender Pong ist ein sicheres Zeichen für eine tote Verbindung.
+3. **Ressourcen prüfen:** RAM-Auslastung via `free -h`. OOM-Kills stoppen den Prozess stillschweigend.
 
 **Checkliste bei hartnäckigen Drops:**
-- Prüfen, ob `ETORO_API_KEY` noch gültig ist.
-- Prüfen, ob die VM Netzwerkprobleme hat (`ping google.com`).
-- RAM-Auslastung prüfen (`free -h`), da OOM-Kills den Prozess stillschweigend beenden können. (Hier hilft das aktivierte Swap-File!).
+- Prüfen, ob `ETORO_API_KEY` noch gültig ist
+- Prüfen, ob die VM Netzwerkprobleme hat (`ping google.com`)
+- RAM-Auslastung prüfen (`free -h`) — hier hilft das aktivierte Swap-File
 
 ### 5.3. Konnektivität prüfen
-Vor tiefem Debugging sollte immer das Testskript laufen:
+
 ```bash
-python3 dev_scripts/etoro_connectivity_test.py
+# Verbindungstest ohne Risiko:
+python3 -c "from automation.universe_fetcher import is_universe_stale; print('OK')"
 ```
 
 ---
 
 ## 6. Datensicherung & Wartung
 
-*   **Parquet-Daten komprimieren:** Um Platz zu sparen, können viele kleine Dateien zusammengefasst werden.
-    ```bash
-    python3 dev_scripts/compact_parquet.py
-    ```
-*   **State-Dateien sichern:** Bei kritischen Eingriffen.
-    ```bash
-    mkdir -p data/state/backup
-    cp data/state/execution_mapping.json data/state/backup/
-    ```
-*   **Logs rotieren:** Entweder manuell bereinigen oder Logrotate konfigurieren.
-*   **Orphan Positionen:** Werden durch Bugs oder API-Fehler Orders nicht getrackt, können sie mit `python3 dev_scripts/etoro_close_orphans.py` geschlossen werden.
-
+- **State-Dateien sichern:** Bei kritischen Eingriffen.
+  ```bash
+  mkdir -p data/state/backup
+  cp data/state/execution_mapping.json data/state/backup/
+  ```
+- **Logs rotieren:** Entweder manuell bereinigen oder Logrotate konfigurieren.
+- **Instrument-Map aktualisieren:** Bei neuen eToro-Assets die `automation/config/instrument_map.json` aktualisieren (Details: `manuals/new_tickers.md`).
 
 ---
+
 ## Weiterführende Dokumente
-- `manuals/backtesting_manual.md`
-- `manuals/momentum_ls.md`
-- `manuals/new_tickers.md`
-- `manuals/TESTING.md`
+- [`manuals/backtesting_manual.md`](./backtesting_manual.md) — Backtest-Workflow
+- [`manuals/momentum_ls.md`](./momentum_ls.md) — Momentum-LS Pipeline im Detail
+- [`manuals/new_tickers.md`](./new_tickers.md) — Neue Instrumente hinzufügen
+- [`manuals/TESTING.md`](./TESTING.md) — Tests und Verifikation
+- [`manuals/run_bot_manual.md`](./run_bot_manual.md) — Bot-Betrieb und Log-Diagnose
 
 ---
-*Zuletzt aktualisiert: 2026-05-17 — Überprüft gegen Repository-Stand vom 2026-05-14*
+*Zuletzt aktualisiert: 2026-06-07 — Überprüft gegen automation/AGENTS.md*
