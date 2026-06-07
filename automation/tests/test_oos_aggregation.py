@@ -52,4 +52,5 @@ def test_oos_aggregation():
     assert aggregate_winner is not None, "Aggregate winner should be selected"
     assert aggregate_winner["strategy"] == "StrategyA", "StrategyA must be the winner"
     assert aggregate_winner["oos_eligible"] is True, "OOS eligible should be true since average is 5"
-    assert aggregate_winner["oos_metrics"]["total_trades"] == 5
+    assert aggregate_winner["oos_metrics"]["total_trades"] == 10, "Total trades should be the portfolio sum"
+    assert aggregate_winner["oos_metrics"]["aggregation_basis"] == "portfolio_sum_for_trades_and_equal_weight_mean_for_return"

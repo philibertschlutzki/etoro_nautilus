@@ -1078,27 +1078,36 @@ def select_winners(
         if best_results:
             n_res = len(best_results)
 
-            # Handle possible None values in sortino/profit_factor for calculating median
-            sortinos = [oos.get("sortino_ratio") for oos in best_results]
-            sortinos = [s for s in sortinos if s is not None]
+            # Echte Portfolio-Aggregation für Trades und Wins
+            portfolio_total_trades = sum(oos.get("total_trades", 0) for oos in best_results)
+            # Rekonstruktion der absoluten Wins pro Symbol und Aufsummierung
+            portfolio_wins = sum(
+                int(round(oos.get("win_rate", 0.0) * oos.get("total_trades", 0)))
+                for oos in best_results
+            )
+            portfolio_win_rate = portfolio_wins / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
+
+            # Equal-Weight Portfolio Rendite (Arithmetisches Mittel der Einzelrenditen)
+            portfolio_mean_return = sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0
+
+            sortinos = [s for s in (oos.get("sortino_ratio") for oos in best_results) if s is not None]
             med_sortino = get_median(sortinos) if sortinos else None
 
-            pfs = [oos.get("profit_factor") for oos in best_results]
-            pfs = [p for p in pfs if p is not None]
+            pfs = [p for p in (oos.get("profit_factor") for oos in best_results) if p is not None]
             med_pf = get_median(pfs) if pfs else None
 
-            # Gather span days
             span_days = [oos.get("oos_span_days", 0) for oos in best_results]
             med_span = get_median(span_days) if span_days else 0
 
             avg_oos = {
-                "total_trades": int(sum(oos.get("total_trades", 0) for oos in best_results) / n_res) if n_res > 0 else 0,
+                "total_trades": portfolio_total_trades,
                 "sortino_ratio": med_sortino,
                 "profit_factor": med_pf,
                 "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
-                "win_rate": get_median([oos.get("win_rate", 0.0) for oos in best_results]),
-                "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0,
+                "win_rate": portfolio_win_rate,
+                "total_return": portfolio_mean_return,
                 "oos_span_days": med_span,
+                "aggregation_basis": "portfolio_sum_for_trades_and_equal_weight_mean_for_return"
             }
 
             # Use strat_params from the first result matching the winning strategy
