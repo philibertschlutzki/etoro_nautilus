@@ -187,7 +187,8 @@ def test_select_winners_order_independence():
             "profit_factor": 1.1,
             "win_rate": 0.4,
             "max_drawdown": 0.2,
-            "total_return": 0.1
+            "total_return": 0.1,
+            "median_position_notional": 15.0
         },
         "oos_metrics": {
             "total_trades": 25,
@@ -195,7 +196,8 @@ def test_select_winners_order_independence():
             "profit_factor": 1.1,
             "win_rate": 0.4,
             "max_drawdown": 0.2,
-            "total_return": 0.1
+            "total_return": 0.1,
+            "median_position_notional": 15.0
         }
     }
 
@@ -209,7 +211,8 @@ def test_select_winners_order_independence():
             "profit_factor": 2.5,
             "win_rate": 0.7,
             "max_drawdown": 0.05,
-            "total_return": 0.3
+            "total_return": 0.3,
+            "median_position_notional": 15.0
         },
         "oos_metrics": {
             "total_trades": 25,
@@ -217,7 +220,8 @@ def test_select_winners_order_independence():
             "profit_factor": 2.5,
             "win_rate": 0.7,
             "max_drawdown": 0.05,
-            "total_return": 0.3
+            "total_return": 0.3,
+            "median_position_notional": 15.0
         }
     }
 
@@ -274,7 +278,8 @@ def test_select_winners_tie_breaker():
             "profit_factor": 2.0,
             "win_rate": 0.5,
             "max_drawdown": 0.1,
-            "total_return": 0.2
+            "total_return": 0.2,
+            "median_position_notional": 15.0
         },
         "oos_metrics": {
             "total_trades": 25,
@@ -282,7 +287,8 @@ def test_select_winners_tie_breaker():
             "profit_factor": 2.0,
             "win_rate": 0.5,
             "max_drawdown": 0.1,
-            "total_return": 0.2
+            "total_return": 0.2,
+            "median_position_notional": 15.0
         }
     }
 
@@ -295,7 +301,8 @@ def test_select_winners_tie_breaker():
             "profit_factor": 2.0,
             "win_rate": 0.5,
             "max_drawdown": 0.1,
-            "total_return": 0.5 # Better tie breaker
+            "total_return": 0.5, # Better tie breaker
+            "median_position_notional": 15.0
         },
         "oos_metrics": {
             "total_trades": 25,
@@ -303,7 +310,8 @@ def test_select_winners_tie_breaker():
             "profit_factor": 2.0,
             "win_rate": 0.5,
             "max_drawdown": 0.1,
-            "total_return": 0.5 # Better tie breaker
+            "total_return": 0.5, # Better tie breaker
+            "median_position_notional": 15.0
         }
     }
 
@@ -364,8 +372,8 @@ def test_select_winners_sibling_key_access():
     res_correct = {
         "symbol": "GOOD.ETORO",
         "strategy": "StratA",
-        "metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0},
-        "oos_metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0}
+        "metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0, "median_position_notional": 15.0},
+        "oos_metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0, "median_position_notional": 15.0}
     }
 
     # 2. Incorrectly structured result (nested in metrics)
@@ -378,8 +386,8 @@ def test_select_winners_sibling_key_access():
         "metrics": {
             "total_trades": 15,
             "sortino_ratio": 1.0,
-            "profit_factor": 1.0,
-            "oos_metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0}
+            "profit_factor": 1.0, "median_position_notional": 15.0,
+            "oos_metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0, "median_position_notional": 15.0}
         }
     }
 
@@ -405,7 +413,7 @@ def test_tournament_fails_closed_on_none_oos_metrics():
     res_missing_oos = {
         "symbol": "FAIL.ETORO",
         "strategy": "StratFail",
-        "metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0}
+        "metrics": {"total_trades": 15, "sortino_ratio": 1.0, "profit_factor": 1.0, "median_position_notional": 15.0}
     }
 
     all_results = [res_missing_oos]

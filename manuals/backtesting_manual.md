@@ -1,157 +1,212 @@
-# 📊 Backtesting & Tearsheet Manual: Nautilus Trader
+# Backtesting Manual: eToro Nautilus
 
-Dieses Handbuch beschreibt den Workflow, um historische Marktdaten (gesammelt in Parquet-Dateien) für performante, risikofreie Backtests zu nutzen. Es deckt den Prozess von der Konfiguration über die Ausführung bis hin zur Auswertung mittels interaktiver HTML-Tearsheets ab.
+Dieses Handbuch erklärt, wie das Backtesting-System der eToro Nautilus Plattform funktioniert, wie du es konfigurierst und wie du die Ergebnisse auswertest.
+
+> **Wichtig:** In der aktuellen Architektur (v2.0) läuft das Backtesting **nicht** mehr über ein separates Skript, sondern ist fest in die 5-Phasen-Pipeline des `automation/daily_orchestrator.py` integriert (Phase 3+4). Das Modul `automation/backtest_runner.py` übernimmt dabei die eigentliche Ausführung.
 
 ---
 
-## 1. Warum lokales Backtesting?
+## 1. Grundprinzip: Wie läuft das Backtesting?
 
-Der `nautilus-catalog.service` auf der Cloud-VM sammelt 24/7 Tick- und Bar-Daten und speichert sie als hochkomprimierte `.parquet`-Dateien. Da Backtesting-Engines diese historischen Daten komplett in den Arbeitsspeicher (RAM) laden, würde eine kleine Cloud-VM (wie die `e2-micro` mit 1GB RAM) sofort abstürzen. Daher lagern wir den Backtesting-Prozess auf lokale PCs/Laptops aus.
+Ein **Backtest** (dt. "historischer Test") simuliert, wie eine Handelsstrategie in der Vergangenheit abgeschnitten hätte. Das System lädt gespeicherte Tick-Daten (QuoteTicks im Parquet-Format) und lässt die Strategie virtuell handeln — ohne echtes Geld zu riskieren.
 
-### 1.1 Marktdaten herunterladen (VM ➔ Lokal)
+Das **Tournament** (dt. "Turnier") geht einen Schritt weiter: Es lässt alle konfigurierten Strategien für alle Symbole im Universe gegeneinander antreten und wählt automatisch die beste Strategie pro Symbol aus.
 
-Synchronisiere die Marktdaten von deinem Server in dein lokales Projektverzeichnis.
+### Ablauf (integriert in den Orchestrator):
+```
+Phase 3: Matrix-Backtest (N Symbole × M Strategien, parallel)
+        │
+        ▼
+Phase 4: Tournament (Eligibilitätsprüfung + Score-Berechnung)
+        │
+        ▼
+logs/tournament_YYYY-MM-DD.json  ← Enthält Gewinner pro Symbol
+        │
+        ▼
+Phase 5: Live-Bot startet mit diesen Gewinner-Strategien
+```
 
+---
 
-**Via Terminal (SCP):**
+## 2. Daten beschaffen (VM → Lokal)
+
+Der `nautilus-catalog.service` auf der Cloud-VM sammelt 24/7 Tick-Daten. Für lokales Backtesting musst du diese Daten zuerst auf deinen PC herunterladen, da das Laden großer Datensätze die kleine Cloud-VM überlasten würde.
+
+### Option A: Via SCP (Terminal)
 ```bash
-scp -r <user>@<ip>:/data/nautilus ./data/
+scp -r <user>@<server-ip>:/opt/etoro_nautilus/data/nautilus ./data/
 ```
 
-**Daten direkt via eToro API abrufen (Fallback):**
-Falls keine Parquet-Daten von der VM vorhanden sind, können diese per Skript geholt werden:
+### Option B: Via API-Backfill (wenn keine VM-Daten vorhanden)
+```bash
+# Letzte 7 Tage via eToro API laden:
+python3 automation/api_backfiller.py --days 7
+
+# Vollständiger historischer Backfill (12 Monate):
+python3 automation/historical_fetcher.py --months 12
+```
+
+### Datenformat
+Die Daten liegen als Parquet-Dateien unter:
+```
+data/nautilus/data/quote_tick/{SYMBOL}/data.parquet
+```
+Format: `FixedSizeBinary(16)` (FSB16) — Nautilus-natives QuoteTick-Format.
+
+---
+
+## 3. Konfiguration: `automation/config/backtest.json`
+
+Die Backtest-Engine wird über `automation/config/backtest.json` gesteuert. Du musst keinen Python-Code ändern, um Parameter anzupassen.
+
+> **Hinweis:** In früheren Versionen war die Konfiguration unter `backtesting/backtesting_config.json`. Diese Datei ist Legacy. Die aktuelle, verbindliche Konfiguration liegt unter `automation/config/backtest.json`.
+
+**Wichtige Felder:**
+- `catalog_path` — Pfad zum lokalen Daten-Verzeichnis (Standard: `./data/nautilus`)
+- `is_window_days` — Anzahl Tage für den In-Sample-Backtest (trainings-Zeitraum)
+- `oos_window_days` — Anzahl Tage für den Out-of-Sample-Test (Validierungs-Zeitraum)
+- `start_capital` — Startkapital für die Simulation (in USD)
+
+**Weitere Konfigurationsdateien:**
+- `automation/config/strategies.json` — welche Strategien aktiv sind (`active: true/false`)
+- `automation/config/strategy_defaults.json` — Standard-Parameter aller Strategien
+- `automation/config/tournament.json` — Schwellenwerte für Eligibilität und Score-Gewichte
+
+---
+
+## 4. Backtest ausführen
+
+### Vollständiger Lauf via Orchestrator (empfohlen)
 
 ```bash
-# Für ein einzelnes Symbol (z.B. Tesla, 6 Monate)
-python3 dev_scripts/momentum_ls_fetch_candles.py --etoro-id 1111 --symbol TSLA.ETORO --months 6
+# Phasen 1–5: Universe, Daten, Backtest, Tournament, Live-Bot
+python3 automation/daily_orchestrator.py --skip-api-fetch
 
-# Automatisch alle fehlenden Daten für das Momentum-LS Universum laden
-python3 dev_scripts/momentum_ls_fetch_candles_auto.py --universe data/universe/momentum_ls.json
+# Nur Phasen 1–4 (kein Live-Bot-Start):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
 ```
 
+### Nur Backtest + Tournament (manuell)
 
-**Via VS Code:**
-Nutze die "Remote - SSH" Erweiterung, navigiere zu `/data/nautilus` und lade den Ordner per Rechtsklick herunter.
-
----
-
-## 2. Konfiguration des Backtests (`backtesting_config.json`)
-
-Die Backtest-Engine wird über die Datei `backtesting/backtesting_config.json` gesteuert. Sie müssen keinen Python-Code ändern, um Parameter zu optimieren.
-
-Die JSON-Datei ist wie folgt aufgebaut:
-
-*   **Global Settings (`catalog_path`, `start_time`, `end_time`, `start_capital`):** Definieren die Rahmenbedingungen. Achte darauf, dass `catalog_path` auf dein lokales Datenverzeichnis (z.B. `./data/nautilus`) zeigt.
-*   **Backtests (Aktive Strategien):** Eine Liste von Strategien, die simuliert werden sollen.
-    *   `strategy_module` / `strategy_class` / `config_class`: Pfade und Namen der Python-Klassen.
-    *   `instrument_id` / `bar_type`: Das zu testende Asset (z. B. `TSLA.ETORO`).
-    *   `params`: Ein Dictionary mit allen Indikator-Einstellungen. Beispiele:
-        *   `SmaCrossoverStrategy`: `sma_period`
-        *   `TrendPullbackStrategy`: `ema_period`, `rsi_period`, `rsi_oversold`, `rsi_overbought`
-        *   `MeanReversionStrategy`: `keltner_period`, `keltner_atr_period`, `keltner_multiplier`
-
----
-
-## 3. Ausführung und Workflow
-
-### Regulärer Backtest
-
-Starten Sie den Backtest im lokalen Terminal:
+Wenn du nur den Backtest ohne die restliche Pipeline ausführen möchtest:
 
 ```bash
-python3 backtesting/run_backtest.py
+# Dry-Run: führt Phasen 1-4 aus (Backtest + Tournament), startet aber keinen Live-Bot
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
 ```
 
-### Momentum-LS Tournament Backtest
+Das Tournament-Ergebnis wird gespeichert unter:
+```
+logs/tournament_YYYY-MM-DD.json
+```
 
-Statt eines manuellen Backtests lässt das Tournament alle Strategien gegeneinander antreten, um die beste für jedes Symbol zu finden:
+---
+
+## 5. Aktive Strategien
+
+Die folgenden Strategien sind im Matrix-Backtest aktiv (konfigurierbar über `automation/config/strategies.json`):
+
+| Strategie | Beschreibung |
+|-----------|-------------|
+| `SmaCrossoverStrategy` | Einfacher SMA(5)-Crossover |
+| `MeanReversionStrategy` | Keltner-Channel-Reversion |
+| `DynamicBreakoutStrategy` | Price-Range-Breakout |
+| `FlashCrashReversalStrategy` | Bollinger-Band(10) + RSI(7) Reversal |
+| `VolatilityBreakoutPumpStrategy` | Bollinger-Band(10)-Pump-Erkennung |
+| `ComboTrendVwapStrategy` | SMA + MACD + BB + ATR + VWAP |
+| `VwapExhaustionStrategy` | VWAP-Deviation-Erschöpfung |
+
+---
+
+## 6. Tournament-Auswertung: Wer gewinnt?
+
+### Schritt 1: Metriken berechnen
+Nach jedem Backtest-Job berechnet das System folgende Kennzahlen aus den abgeschlossenen Trades:
+
+| Kennzahl | Was bedeutet das? | Mindestanforderung |
+|----------|------------------|-------------------|
+| `total_trades` | Anzahl abgeschlossener Positionen | ≥ 20 |
+| `total_return` | Gesamtrendite (% des Startkapitals) | > 0% |
+| `sortino` | Rendite / Abwärtsrisiko (höher = besser) | ≥ 0.3 |
+| `profit_factor` | Gewinne / Verluste (> 1.0 = profitabel) | ≥ 1.1 |
+| `win_rate` | Anteil gewinnender Trades | — |
+| `max_drawdown` | Größter prozentualer Wertverlust | — |
+
+> **Sortino-Ratio erklärt:** Anders als die Sharpe-Ratio bestraft die Sortino-Ratio nur Abwärts-Volatilität (echte Verlustrisiken), nicht aber Aufwärts-Schwankungen. Sie ist daher eine aussagekräftigere Risikometrik.
+
+### Schritt 2: Eligibilitätsprüfung (muss ALLES erfüllt sein)
+Eine Strategie kommt nur ins Tournament, wenn:
+- `min_trades ≥ 20` — genug Trades für statistische Aussagekraft
+- `total_return > 0%` — im Backtest profitabel
+
+**Plus mindestens EINE dieser Bedingungen:**
+- `min_sortino ≥ 0.3` — ODER
+- `min_profit_factor ≥ 1.1`
+
+### Schritt 3: Score-Berechnung
+```
+Score = sortino × 0.4 + profit_factor × 0.3 + win_rate × 0.2 − max_drawdown × 0.1
+```
+Die Strategie mit dem **höchsten Score** gewinnt für dieses Symbol.
+
+### Schritt 4: OOS-Gate (Sicherheitscheck)
+Bevor der Live-Bot startet, prüft der Orchestrator die Out-of-Sample-Performance des Gesamtgewinners. Ist die OOS-Rendite negativ, blockiert das Gate den Live-Deploy (Sicherheitsprinzip: "Fail-Closed").
+
+---
+
+## 7. Tournament-Ergebnis analysieren
 
 ```bash
-python3 dev_scripts/momentum_ls_tournament.py \
-    --universe data/universe/momentum_ls.json \
-    --output logs/tournament_$(date +%Y-%m-%d).json
+# Alle Gewinner anzeigen:
+python3 -c "
+import json
+d = json.load(open('logs/tournament_$(date +%Y-%m-%d).json'))
+for sym, w in d['per_symbol_winners'].items():
+    print(f\"{sym:<30} {w['strategy']:<35} sortino={w['sortino']:.2f} trades={w['total_trades']}\")
+"
+
+# Aggregierten Gewinner (für alle Symbole gemeinsam) prüfen:
+python3 -c "
+import json
+d = json.load(open('logs/tournament_$(date +%Y-%m-%d).json'))
+ag = d['aggregate_winner']
+print(f\"Winner: {ag['strategy']}, Wins: {ag['win_count']}, Median Sortino: {ag['median_sortino']:.4f}\")
+print(f\"OOS eligible: {ag.get('oos_eligible', 'n/a')}\")
+"
 ```
 
-### Der Optimierungs-Workflow
-
-1.  Öffne `backtesting_config.json` und ändere die Parameter im `params` Block (z. B. den `sma_period`).
-2.  Führe `python backtesting/run_backtest.py` erneut aus.
-3.  Bewerte die generierten Ergebnisse (siehe Kapitel 4).
-4.  Wenn ein Setup profitabel ist, übernimm es in die Live-Konfiguration (`config/setups.py`).
-
-*Tipp bei RAM-Problemen (32GB+):* Nutze die `start_time` und `end_time` in der JSON-Config, um spezifische Zeitfenster (z.B. nur eine Woche) zu testen und RAM zu sparen.
+**Was tun, wenn kein Gewinner gefunden wird?**
+Wenn für ein Symbol keine Strategie die Eligibilitätskriterien erfüllt, wird dieses Symbol **nicht gehandelt** (das ist gewollt, nicht ein Fehler). Im Live-Bot-Log erscheint dann: `No tournament winner for X.ETORO. Skipping.`
 
 ---
 
-## 4. Auswertung: Nautilus Tearsheets
+## 8. Precision-Tabelle (wichtig für korrekte Backtests)
 
-Am Ende eines erfolgreichen Backtests generiert Nautilus Trader automatisch einen umfassenden Performance-Bericht. In Versionen >= 1.226.0 erfolgt dies über die funktionale API, welche eine interaktive HTML-Datei (das "Tearsheet") erstellt.
+Falsche Precision-Einstellungen können zu Fehlern im Backtest führen. Die aktuelle Tabelle:
 
-Der Code in `run_backtest.py` kümmert sich bereits darum:
+| Kategorie | price_precision | size_precision |
+|-----------|----------------|----------------|
+| SHIB / PEPE | 8 | 8 |
+| Krypto (BTC, ETH, …) | 2 | 8 |
+| Forex / Rohstoffe | 5 | 5 |
+| **Aktien (Default)** | **2** | **2** |
 
-```python
-from nautilus_trader.analysis.tearsheet import create_tearsheet
-
-# ... (Engine Setup und Run)
-
-report_filename = os.path.join(reports_dir, f"tearsheet_{inst_id_str}_{strategy_class_name}_{timestamp}.html")
-create_tearsheet(
-    engine=engine,
-    output_path=report_filename,
-    title="eToro Strategie Backtest"
-)
-```
-
-### 4.1 Interpretation des Tearsheets
-
-Öffne die erzeugte HTML-Datei im Browser. Sie enthält Plotly-Charts (inkl. Equity, Drawdown und markierten Order-Fills auf den Candlesticks). Achte auf folgende Metriken:
-
-*   **Sharpe Ratio:** Misst die Rendite im Verhältnis zur Volatilität. (> 1.0 ist gut, > 2.0 exzellent).
-*   **Sortino Ratio:** Bestraft nur Abwärtsvolatilität (echtes Risiko) und ist oft aussagekräftiger als die Sharpe Ratio. (Hauptmetrik im Momentum-LS).
-*   **Max Drawdown:** Der größte prozentuale Wertverlust vom Hoch zum Tief. (> 20-30% ist meist riskant).
-*   **Win-Rate & Profit Factor:** Win-Rate (> 50%) kombiniert mit einem Profit Factor (Bruttogewinn / Bruttoverlust) > 1.5 deutet auf eine robuste Strategie hin.
-
-### 4.2 Interpretation des Tournaments
-Wenn du `momentum_ls_tournament.py` ausgeführt hast, wird eine Tabelle auf der Konsole sowie eine JSON generiert:
-*   **Win?:** Ist in der Tabelle mit einem `✓` markiert, wenn die Strategie der absolute Gewinner für das spezifische Symbol ist.
-*   **Profit Factor Schwelle:** Jede Strategie muss einen PF > 1.5 aufweisen. Wenn keine Strategie dies für ein Symbol schafft, wird das Symbol für diesen Tag nicht gehandelt.
-*   **JSON Output:** Das resultierende JSON listet die Gewinner-Konfigurationen detailliert auf. Diese Datei wird später von `momentum_ls_run.py` eingelesen.
-
-### 4.3 Fallback (CSV Berichte)
-
-Falls die HTML-Generierung fehlschlägt, können rohe CSV-Daten exportiert werden (dies kann im Skript auskommentiert werden):
-
-```python
-positions_df = engine.trader.generate_positions_report()
-positions_df.to_csv("reports/positions_etoro.csv")
-```
-
-### 4.4 Return-Definition (Total Return)
-
-Der "Total Return" (Gesamtrendite) im Tournament und in den Log-Ausgaben wird als **Compounded Equity-Normalized Return** berechnet.
-
-*   **Berechnung:** Für jeden abgeschlossenen Trade wird der erzielte Profit/Verlust (PnL in USD) durch das Startkapital (`start_capital`) dividiert. Dies ergibt die prozentuale Rendite des Trades bezogen auf die initiale Equity.
-*   **Compounding:** Diese einzelnen Trade-Renditen werden anschließend geometrisch multipliziert (aufgezinst), um den Gesamtwertzuwachs über den Backtest-Zeitraum zu ermitteln (`cum *= (1.0 + r)`).
-*   **Wichtig:** Dies bedeutet, dass die Sizing-Parameter (wie `trade_amount_pct` oder `trade_amount_usd`) so gewählt sein müssen, dass sie relativ zum Startkapital realistische Schwankungen erzeugen. Ist die Positionsgröße mikroskopisch klein im Vergleich zum Startkapital, konvergiert der Total Return gegen 0 %.
+> **Hinweis (Pitfall #14 — GELÖST):** `size_precision=2` für Aktien war in früheren Versionen `0`, was zu `ValueError`-Crashes bei kleinen Trade-Beträgen führte. Seit v2.0 ist dies behoben.
 
 ---
 
-## 5. Warnung: Overfitting & Slippage
+## 9. Warnung: Overfitting & Slippage
 
-*   **Overfitting:** Wenn du Parameter extrem lange auf historischen Daten optimierst, passen sie perfekt auf die Vergangenheit, scheitern aber live. Nutze "Out-of-Sample" Tests (Optimiere auf Jan-Okt, teste auf Nov-Dez).
-*   **Slippage:** Offline-Tests gehen oft von perfekten Ausführungen aus. In der Realität schwanken Preise zwischen Ordererteilung und Ausführung. Berücksichtige dies bei deinen Erwartungen.
-
----
-
-## 5. Synthetische Daten
-
-[In Entwicklung]
-
+- **Overfitting:** Wenn Strategieparameter zu lange auf historischen Daten optimiert werden, passen sie zwar gut zur Vergangenheit, scheitern aber im Live-Trading. Empfehlung: Out-of-Sample-Tests nutzen (das System macht dies automatisch über das OOS-Gate).
+- **Slippage:** Backtests gehen von perfekter Order-Ausführung aus. In der Realität schwanken Preise zwischen Signal und Ausführung. Rechne mit etwas schlechteren Live-Ergebnissen.
 
 ---
+
 ## Weiterführende Dokumente
-- `manuals/deployment.md`
-- `manuals/momentum_ls.md`
+- [`manuals/end_to_end_workflow.md`](./end_to_end_workflow.md) — Gesamte 5-Phasen-Pipeline
+- [`manuals/deployment.md`](./deployment.md) — VM-Setup, systemd und Cron
+- [`manuals/momentum_ls.md`](./momentum_ls.md) — Momentum-LS im Detail
+- [`manuals/run_bot_manual.md`](./run_bot_manual.md) — Tournament-Selektion und Log-Diagnose
 
 ---
-*Zuletzt aktualisiert: 2026-05-17 — Überprüft gegen Repository-Stand vom 2026-05-14*
+*Zuletzt aktualisiert: 2026-06-07 — Überprüft gegen automation/AGENTS.md*

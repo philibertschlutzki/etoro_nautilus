@@ -427,6 +427,10 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         elif pf < req_pf:
              reasons.append(f"oos_min_profit_factor: {pf:.4f} < {req_pf}")
 
+    median_notional = oos_metrics.get("median_position_notional", 0.0)
+    if median_notional < 10.0:
+        reasons.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
+
     return {
         "oos_evaluated": True,
         "oos_eligible": len(reasons) == 0,
@@ -484,6 +488,11 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     if any_conditions:
         if not any(condition_map.get(c, False) for c in any_conditions):
             rejections.append(f"Requires ANY of {any_conditions} failed")
+
+    # Hard Gatekeeper: Median Position Notional
+    median_notional = metrics.get("median_position_notional", 0.0)
+    if median_notional < 10.0:
+        rejections.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
 
     if rejections:
         if log_rejections:
@@ -631,7 +640,7 @@ def create_mock_instrument(
 # ---------------------------------------------------------------------------
 
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -649,6 +658,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         "losses_count": 0,
+        "median_position_notional": 0.0,
     }
     if not pnl_list:
         return NULL
@@ -724,6 +734,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "avg_holding_time_s": float(avg_hold),
         "median_holding_time_s": float(med_hold),
         "losses_count": losses_count,
+        "median_position_notional": float(med_notional),
     }
 
 
@@ -740,6 +751,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         "losses_count": 0,
+        "median_position_notional": 0.0,
     }
 
     try:
@@ -770,6 +782,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             instrument_fills.setdefault(iid, []).append(row)
 
         pnls_with_ts = []
+        notionals_with_ts = []
 
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
@@ -795,17 +808,18 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         s_qty, s_price, s_ts = sell_queue[0]
                         match_qty = min(qty, s_qty)
                         pnl = match_qty * (s_price - price)
+                        entry_notional = match_qty * s_price
                         if commission_bps > 0:
                             # Notional Value = Menge * Preis for both legs (entry and exit)
-                            entry_value = match_qty * s_price
                             exit_value = match_qty * price
-                            pnl -= (entry_value + exit_value) * (commission_bps / 10000.0)
+                            pnl -= (entry_notional + exit_value) * (commission_bps / 10000.0)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        notionals_with_ts.append((entry_notional, ts))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
@@ -820,17 +834,18 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         b_qty, b_price, b_ts = buy_queue[0]
                         match_qty = min(qty, b_qty)
                         pnl = match_qty * (price - b_price)
+                        entry_notional = match_qty * b_price
                         if commission_bps > 0:
                             # Notional Value = Menge * Preis for both legs (entry and exit)
-                            entry_value = match_qty * b_price
                             exit_value = match_qty * price
-                            pnl -= (entry_value + exit_value) * (commission_bps / 10000.0)
+                            pnl -= (entry_notional + exit_value) * (commission_bps / 10000.0)
                         ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
                         if isinstance(ts, pd.Timestamp):
                             ts = ts.value
                         ts = int(ts)
                         holding_time_ns = ts - b_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        notionals_with_ts.append((entry_notional, ts))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
@@ -858,12 +873,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
+        is_notionals = []
+        oos_notionals = []
+
         if walk_forward_dict and start_ns is not None:
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
 
-            for pnl, ts, ht, m_qty in pnls_with_ts:
+            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
+                notional, _ts = notionals_with_ts[i]
                 is_oos = False
                 for i in range(splits):
                     split_is_start_ns = start_ns + i * oos_window_ns
@@ -877,21 +896,30 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 if is_oos:
                     oos_pnls.append(pnl)
                     oos_holding_times.append((ht, m_qty))
+                    oos_notionals.append(notional)
                 else:
                     is_pnls.append(pnl)
                     is_holding_times.append((ht, m_qty))
+                    is_notionals.append(notional)
         else:
-            for pnl, ts, ht, m_qty in pnls_with_ts:
+            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
+                notional, _ts = notionals_with_ts[i]
                 is_pnls.append(pnl)
                 is_holding_times.append((ht, m_qty))
+                is_notionals.append(notional)
 
-        is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital)
-        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital) if oos_pnls else {
+        import statistics
+        is_med_notional = statistics.median(is_notionals) if is_notionals else 0.0
+        oos_med_notional = statistics.median(oos_notionals) if oos_notionals else 0.0
+
+        is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital, med_notional=is_med_notional)
+        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital, med_notional=oos_med_notional) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
             "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
             "losses_count": 0,
+            "median_position_notional": 0.0,
         }
 
         if walk_forward_dict and start_ns is not None:
@@ -1085,27 +1113,36 @@ def select_winners(
         if best_results:
             n_res = len(best_results)
 
-            # Handle possible None values in sortino/profit_factor for calculating median
-            sortinos = [oos.get("sortino_ratio") for oos in best_results]
-            sortinos = [s for s in sortinos if s is not None]
+            # Echte Portfolio-Aggregation für Trades und Wins
+            portfolio_total_trades = sum((oos.get("total_trades") or 0) for oos in best_results)
+            # Rekonstruktion der absoluten Wins pro Symbol und Aufsummierung (typsicher)
+            portfolio_wins = sum(
+                int(round((oos.get("win_rate") or 0.0) * (oos.get("total_trades") or 0)))
+                for oos in best_results
+            )
+            portfolio_win_rate = portfolio_wins / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
+
+            # Trade-Weighted Portfolio Rendite
+            portfolio_mean_return = sum((oos.get("total_return") or 0.0) * (oos.get("total_trades") or 0) for oos in best_results) / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
+
+            sortinos = [s for s in (oos.get("sortino_ratio") for oos in best_results) if s is not None]
             med_sortino = get_median(sortinos) if sortinos else None
 
-            pfs = [oos.get("profit_factor") for oos in best_results]
-            pfs = [p for p in pfs if p is not None]
+            pfs = [p for p in (oos.get("profit_factor") for oos in best_results) if p is not None]
             med_pf = get_median(pfs) if pfs else None
 
-            # Gather span days
             span_days = [oos.get("oos_span_days", 0) for oos in best_results]
             med_span = get_median(span_days) if span_days else 0
 
             avg_oos = {
-                "total_trades": int(sum(oos.get("total_trades", 0) for oos in best_results) / n_res) if n_res > 0 else 0,
+                "total_trades": portfolio_total_trades,
                 "sortino_ratio": med_sortino,
                 "profit_factor": med_pf,
                 "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
-                "win_rate": get_median([oos.get("win_rate", 0.0) for oos in best_results]),
-                "total_return": sum(oos.get("total_return", 0.0) for oos in best_results) / n_res if n_res > 0 else 0.0,
+                "win_rate": portfolio_win_rate,
+                "total_return": portfolio_mean_return,
                 "oos_span_days": med_span,
+                "aggregation_basis": "portfolio_sum_for_trades_and_trade_weighted_mean_for_return_and_median_for_ratios"
             }
 
             # Use strat_params from the first result matching the winning strategy
@@ -1115,7 +1152,15 @@ def select_winners(
                     winner_strat_params = r.get("strat_params", {})
                     break
 
-            agg_oos_eval = _evaluate_oos_eligibility(avg_oos, tournament_cfg, winner_strat_params)
+            # Normalize metrics before gating to avoid the "Trade-Sum Trap"
+            avg_oos_for_gate = avg_oos.copy()
+            if n_res > 0:
+                avg_oos_for_gate["total_trades"] = int(portfolio_total_trades / n_res)
+
+            agg_oos_eval = _evaluate_oos_eligibility(avg_oos_for_gate, tournament_cfg, winner_strat_params)
+
+            # Reattach the unnormalized original values for correct logging/metrics
+            agg_oos_eval["oos_metrics"] = avg_oos
         else:
             agg_oos_eval = {
                 "oos_evaluated": False,
@@ -1281,6 +1326,7 @@ def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         "losses_count": 0,
+        "median_position_notional": 0.0,
     }
     return {
         "symbol": symbol,
@@ -1512,6 +1558,8 @@ def run_single_backtest_worker(
                 "sortino_ratio": 0.0, "calmar_ratio": 0.0,
                 "max_drawdown": 0.0, "total_return": 0.0,
                 "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+                "losses_count": 0,
+                "median_position_notional": 0.0,
             }
             if walk_forward_dict is not None and start_ns is not None:
                 extracted_data = {"metrics": NULL, "oos_metrics": NULL}
