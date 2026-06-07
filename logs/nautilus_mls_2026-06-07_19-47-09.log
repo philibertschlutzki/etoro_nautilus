@@ -6356,3 +6356,71 @@
 2026-06-07T17:47:09.870975600Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed POWL.ETORO quotes
 2026-06-07T17:47:09.870976272Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks WDC.ETORO' completed
 2026-06-07T17:47:09.870976552Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed WDC.ETORO quotes
+2026-06-07T17:47:09.870977213Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks PBR.ETORO' completed
+2026-06-07T17:47:09.870977654Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed PBR.ETORO quotes
+2026-06-07T17:47:09.870978305Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks PINS.ETORO' completed
+2026-06-07T17:47:09.870978676Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed PINS.ETORO quotes
+2026-06-07T17:47:09.870979317Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks EEFT.ETORO' completed
+2026-06-07T17:47:09.870979558Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed EEFT.ETORO quotes
+2026-06-07T17:47:09.870980199Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ACN.ETORO' completed
+2026-06-07T17:47:09.870980489Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed ACN.ETORO quotes
+2026-06-07T17:47:09.870981131Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks GTLB.ETORO' completed
+2026-06-07T17:47:09.870981381Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed GTLB.ETORO quotes
+2026-06-07T17:47:09.870982052Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ADBE.ETORO' completed
+2026-06-07T17:47:09.870982313Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed ADBE.ETORO quotes
+2026-06-07T17:47:09.870982944Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks CHTR.ETORO' completed
+2026-06-07T17:47:09.870983154Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed CHTR.ETORO quotes
+2026-06-07T17:47:09.870983806Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks HUBS.ETORO' completed
+2026-06-07T17:47:09.870984607Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed HUBS.ETORO quotes
+2026-06-07T17:47:09.870985248Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks WIX.ETORO' completed
+2026-06-07T17:47:09.870990879Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed WIX.ETORO quotes
+2026-06-07T17:47:09.870991580Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ROP.ZU.ETORO' completed
+2026-06-07T17:47:09.870991901Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed ROP.ZU.ETORO quotes
+2026-06-07T17:47:09.870992522Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks HAL.ETORO' completed
+2026-06-07T17:47:09.870992853Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed HAL.ETORO quotes
+2026-06-07T17:47:09.870993564Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks RHM.DE.ETORO' completed
+2026-06-07T17:47:09.870993754Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed RHM.DE.ETORO quotes
+2026-06-07T17:47:09.870994496Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks PALL.ETORO' completed
+2026-06-07T17:47:09.870995177Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed PALL.ETORO quotes
+2026-06-07T17:47:09.870995969Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks NVS.ETORO' completed
+2026-06-07T17:47:09.870996279Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed NVS.ETORO quotes
+2026-06-07T17:47:09.870997952Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks DOCU.ETORO' completed
+2026-06-07T17:47:09.870998253Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed DOCU.ETORO quotes
+2026-06-07T17:47:09.870998954Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks FSLY.ETORO' completed
+2026-06-07T17:47:09.870999265Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed FSLY.ETORO quotes
+2026-06-07T17:47:09.870999896Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks TSEM.ETORO' completed
+2026-06-07T17:47:09.871000176Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed TSEM.ETORO quotes
+2026-06-07T17:47:09.871000848Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks AG.ETORO' completed
+2026-06-07T17:47:09.871001078Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed AG.ETORO quotes
+2026-06-07T17:47:09.871001759Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks E.ETORO' completed
+2026-06-07T17:47:09.871002431Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed E.ETORO quotes
+2026-06-07T17:47:09.871003162Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks HUT.ETORO' completed
+2026-06-07T17:47:09.871003443Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed HUT.ETORO quotes
+2026-06-07T17:47:09.871004134Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks INSM.ETORO' completed
+2026-06-07T17:47:09.871004465Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed INSM.ETORO quotes
+2026-06-07T17:47:09.871005176Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks INSW.ETORO' completed
+2026-06-07T17:47:09.871005917Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed INSW.ETORO quotes
+2026-06-07T17:47:09.871006558Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks TTMI.ETORO' completed
+2026-06-07T17:47:09.871007110Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed TTMI.ETORO quotes
+2026-06-07T17:47:09.871007771Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ESLT.ETORO' completed
+2026-06-07T17:47:09.871008031Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed ESLT.ETORO quotes
+2026-06-07T17:47:21.854827502Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:23.857528110Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:25.858238043Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:27.858926270Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:29.859768804Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:31.861098042Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:33.862007638Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:35.864342174Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:37.866189742Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:39.867055292Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:41.869623184Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:43.870623357Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:45.871096645Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:47.873417603Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:49.873841548Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:51.873866857Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:53.876460971Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:55.878196028Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:57.878931967Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-07T17:47:59.880988695Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
