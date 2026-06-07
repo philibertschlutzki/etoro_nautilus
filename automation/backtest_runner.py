@@ -782,7 +782,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             instrument_fills.setdefault(iid, []).append(row)
 
         pnls_with_ts = []
-        trade_notionals = []
+        notionals_with_ts = []
 
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
@@ -809,7 +809,6 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         match_qty = min(qty, s_qty)
                         pnl = match_qty * (s_price - price)
                         entry_notional = match_qty * s_price
-                        trade_notionals.append(entry_notional)
                         if commission_bps > 0:
                             # Notional Value = Menge * Preis for both legs (entry and exit)
                             exit_value = match_qty * price
@@ -820,6 +819,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         ts = int(ts)
                         holding_time_ns = ts - s_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        notionals_with_ts.append((entry_notional, ts))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
@@ -835,7 +835,6 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         match_qty = min(qty, b_qty)
                         pnl = match_qty * (price - b_price)
                         entry_notional = match_qty * b_price
-                        trade_notionals.append(entry_notional)
                         if commission_bps > 0:
                             # Notional Value = Menge * Preis for both legs (entry and exit)
                             exit_value = match_qty * price
@@ -846,6 +845,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         ts = int(ts)
                         holding_time_ns = ts - b_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
+                        notionals_with_ts.append((entry_notional, ts))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
@@ -873,12 +873,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_holding_times = []
         oos_holding_times = []
 
+        is_notionals = []
+        oos_notionals = []
+
         if walk_forward_dict and start_ns is not None:
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
 
-            for pnl, ts, ht, m_qty in pnls_with_ts:
+            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
+                notional, _ts = notionals_with_ts[i]
                 is_oos = False
                 for i in range(splits):
                     split_is_start_ns = start_ns + i * oos_window_ns
@@ -892,19 +896,24 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 if is_oos:
                     oos_pnls.append(pnl)
                     oos_holding_times.append((ht, m_qty))
+                    oos_notionals.append(notional)
                 else:
                     is_pnls.append(pnl)
                     is_holding_times.append((ht, m_qty))
+                    is_notionals.append(notional)
         else:
-            for pnl, ts, ht, m_qty in pnls_with_ts:
+            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
+                notional, _ts = notionals_with_ts[i]
                 is_pnls.append(pnl)
                 is_holding_times.append((ht, m_qty))
+                is_notionals.append(notional)
 
         import statistics
-        is_med_notional = statistics.median(trade_notionals) if trade_notionals else 0.0
+        is_med_notional = statistics.median(is_notionals) if is_notionals else 0.0
+        oos_med_notional = statistics.median(oos_notionals) if oos_notionals else 0.0
 
         is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital, med_notional=is_med_notional)
-        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital, med_notional=is_med_notional) if oos_pnls else {
+        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital, med_notional=oos_med_notional) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,

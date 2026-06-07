@@ -429,8 +429,13 @@ class HourlyStrategyBase(Strategy):
         try:
             inc = float(instrument.size_increment)
             prec = instrument.size_precision
-            # Strictly align with instrument's tick precision and size_increment, ensuring at least 'inc'
-            quantized_units = max(inc, round(math.floor(units / inc) * inc, prec))
+            # Strictly align with instrument's tick precision and size_increment
+            quantized_units = round(math.floor(units / inc) * inc, prec)
+
+            # Never artificially inflate the quantity if it falls below the minimum increment threshold
+            if quantized_units <= 0 or quantized_units < inc:
+                self._log.debug(f"[{self.instrument_id}] Quantized units ({quantized_units}) < size increment ({inc}). Skipping trade to prevent risk leveraging.")
+                return None
 
             qty = instrument.make_qty(quantized_units)
             if qty is None or float(qty) == 0:
