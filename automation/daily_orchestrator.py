@@ -401,7 +401,7 @@ def phase2_data_acquisition(
             except Exception:
                 pass
         wf_cfg = bt_cfg.get("walk_forward", {})
-        total_days = wf_cfg.get("is_window_days", 90) + (wf_cfg.get("splits", 2) * wf_cfg.get("oos_window_days", 30))
+        total_days = wf_cfg.get("is_window_days", 120) + (wf_cfg.get("splits", 1) * wf_cfg.get("oos_window_days", 30))
         warmup_days = wf_cfg.get("warmup_days", 60) # adding a buffer for indicators
         start_ns = int((datetime.now(timezone.utc) - timedelta(days=total_days + warmup_days)).timestamp() * 1e9)
 
@@ -802,7 +802,7 @@ def _build_backtest_config(start: datetime, end: datetime, start_capital: float 
 
     wf_cfg = bt_cfg.get("walk_forward")
     if wf_cfg:
-        total_days = wf_cfg.get("is_window_days", 90) + wf_cfg.get("splits", 2) * wf_cfg.get("oos_window_days", 30)
+        total_days = wf_cfg.get("is_window_days", 120) + wf_cfg.get("splits", 1) * wf_cfg.get("oos_window_days", 30)
         start = end - timedelta(days=total_days)
 
     # ── Strategien aus automation/config/strategies.json (nur active=true) ──

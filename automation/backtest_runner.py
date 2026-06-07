@@ -1291,7 +1291,7 @@ def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
         "symbol": symbol,
         "strategy": strategy,
         "metrics": NULL,
-        "oos_metrics": NULL if strat.get("_oos_start_ns") else {},
+        "oos_metrics": NULL if strat.get("_walk_forward_dict") else {},
         "strat_params": strat.get("params", {})
     }
 
