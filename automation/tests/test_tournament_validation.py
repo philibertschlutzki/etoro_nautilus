@@ -32,7 +32,7 @@ def test_oos_eligibility():
             "win_rate": 0.5,
             "max_drawdown": 0.1,
             "sortino_ratio": 1.0,
-            "profit_factor": 1.5
+            "profit_factor": 1.5, "median_position_notional": 15.0
         }
     }
 
@@ -60,7 +60,7 @@ def test_total_return_eligibility_hard_gate():
         "max_drawdown": 0.10,
         "sortino_ratio": 5.0,  # Extremely high
         "profit_factor": 3.0,  # Extremely high
-        "total_return": 0.001  # < 0.005 (Fails hard gate!)
+        "total_return": 0.001, "median_position_notional": 15.0  # < 0.005 (Fails hard gate!)
     }
 
     assert not _is_eligible({'metrics': metrics}, tournament_cfg), "Should reject due to total_return < 0.005 despite high sortino/pf"
