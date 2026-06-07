@@ -766,7 +766,10 @@ def phase3_4_backtest_and_tournament(
             if agg:
                 log.info(
                     f"[Phase 4] Aggregierter Gewinner: {agg['strategy']} "
-                    f"({agg['win_count']} Wins, Median Sortino: {agg['median_sortino']:.2f})"
+                    f"({agg['win_count']} Wins, "
+                    f"Portfolio-Trades: {agg.get('oos_metrics', {}).get('total_trades', 0)}, "
+                    f"Trade-Weighted OOS-Return: {agg.get('oos_metrics', {}).get('total_return', 0.0):.2%}, "
+                    f"Median Sortino: {agg['median_sortino']})"
                 )
             emit_json_event(log, "TOURNAMENT_COMPLETE", {
                 "winner_count":     len(winners),
