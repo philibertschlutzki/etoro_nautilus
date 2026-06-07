@@ -24,8 +24,9 @@
 14. [Error-Handling-Konventionen](#14-error-handling-konventionen)
 15. [Code-Style & Conventions](#15-code-style--conventions)
 16. [Bekannte Pitfalls & offene Bugs](#16-bekannte-pitfalls--offene-bugs)
-17. [Conventions für KI-Coding-Agents (Jules)](#17-conventions-für-ki-coding-agents-jules)
-18. [Changelog (Agent-Maintained)](#18-changelog-agent-maintained)
+17. [Order Management & Async State Machine (Neu)](#17-order-management--async-state-machine-neu)
+18. [Conventions für KI-Coding-Agents (Jules)](#18-conventions-für-ki-coding-agents-jules)
+19. [Changelog (Agent-Maintained)](#19-changelog-agent-maintained)
 
 ---
 
@@ -63,7 +64,7 @@ automation/
 │   ├── backtest.json           # start_capital=10000, spread_modeling, min_bars_for_backtest=200
 │   ├── instrument_map.json     # {etoro_id: {symbol, asset_class, price/size_precision}}
 │   ├── strategies.json         # Aktive Strategie-Liste mit active-Flag
-│   ├── strategy_defaults.json  # Per-Strategie-Defaults (1h-Candle-optimiert, trade_amount_usd=1500)
+│   ├── strategy_defaults.json  # Per-Strategie-Defaults (1h-Candle-optimiert, trade_amount_pct=15.0)
 │   └── tournament.json         # Selektionskriterien (min_trades=20, min_sortino=0.3, min_pf=1.1)
 └── strategies/
     ├── __init__.py
@@ -193,17 +194,17 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 4. **`Default`:** Fallback auf feste 100.0 USD.
 
 ### Aktive Strategien (`strategies.json` active=true)
-| Klasse | Datei | Indikatoren | Default trade_amount_usd |
+| Klasse | Datei | Indikatoren | Default trade_amount_pct |
 |--------|-------|-------------|--------------------------|
-| SmaCrossoverStrategy | sma_crossover.py | SMA(20) | 1500 |
-| MeanReversionStrategy | mean_reversion.py | Keltner(20,2.0) | 1500 |
-| DynamicBreakoutStrategy | dynamic_breakout.py | Price-Range(10) | 1500 |
-| FlashCrashReversalStrategy | flash_crash_reversal.py | BB(10,2.0)+RSI(7) | 1500 |
-| VolatilityBreakoutPumpStrategy | volatility_breakout.py | BB(10,2.0) | 1500 |
-| ComboTrendVwapStrategy | tesla_combo_strategy.py | SMA+MACD+BB+ATR+VWAP | 1500 |
-| VwapExhaustionStrategy | vwap_exhaustion.py | Custom VWAP-Deviation | 1500 |
+| SmaCrossoverStrategy | sma_crossover.py | SMA(20) | 15.0 |
+| MeanReversionStrategy | mean_reversion.py | Keltner(20,2.0) | 15.0 |
+| DynamicBreakoutStrategy | dynamic_breakout.py | Price-Range(10) | 15.0 |
+| FlashCrashReversalStrategy | flash_crash_reversal.py | BB(10,2.0)+RSI(7) | 15.0 |
+| VolatilityBreakoutPumpStrategy | volatility_breakout.py | BB(10,2.0) | 15.0 |
+| ComboTrendVwapStrategy | tesla_combo_strategy.py | SMA+MACD+BB+ATR+VWAP | 15.0 |
+| VwapExhaustionStrategy | vwap_exhaustion.py | Custom VWAP-Deviation | 15.0 |
 
-| HourlyMeanReversionStrategy | hourly_mean_reversion.py | Keltner-Channel | 1500 |
+| HourlyMeanReversionStrategy | hourly_mean_reversion.py | Keltner-Channel | 15.0 |
 
 ### Inaktive Strategien (active=false)
 | Klasse | Grund |
@@ -220,11 +221,12 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 **Merge-Reihenfolge der Strategie-Parameter (niedrig → hoch):**
 1. `strategy_defaults.json` (Basis, 1h-optimiert)
 2. `params` in `strategies.json` (Override)
-3. Vom Backtest-Runner injiziert: `instrument_id`, `bar_type`, ggf. `trade_amount_usd`
+3. Vom Backtest-Runner injiziert: `instrument_id`, `bar_type`
 
-`backtest_runner.py` setzt `trade_amount_usd` auf `max(start_capital × 0.15, 500.0)`, wenn der Wert fehlt oder < 500 ist.
+`trade_amount_pct` ist der neue Standard-Fallback für dynamisches Sizing basierend auf dem verfügbaren Kapital. Falls ein statischer Betrag gewünscht ist, kann `trade_amount_usd` weiterhin explizit gesetzt werden und überschreibt dann die prozentuale Zuweisung.
 
 `tournament.json`: `eligible_requires_all = [min_trades, min_total_return]`, `eligible_requires_any = [min_sortino, min_profit_factor]`. Score = `sortino·0.4 + pf·0.3 + win_rate·0.2 − max_dd·0.1`.
+*Zusatz-Feature:* Mit `tournament_overrides` in `strategies.json` können die globalen Gating-Kriterien aus `tournament.json` für spezifische Strategien individuell überschrieben werden (z. B. geringere `min_trades` für restriktivere Setups).
 
 ---
 
@@ -425,13 +427,6 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ### 🟢 #22 — Alle Tournament-Gewinner werden auf MomentumLSSmaStrategy reduziert
 
-## 18. Order Management & Async State Machine (Neu)
-Alle stündlichen Strategien in `automation/strategies/` müssen für Exit-Bedingungen zwingend die Methoden der `HourlyStrategyBase` nutzen, um Event-Loop-Blockaden und Orphaned Orders zu vermeiden.
-Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
-* Wenn eine Markt-Order (z.B. durch Time-Exit oder Mean-Reversion) platziert werden soll, **müssen** offene Limit-Orders über `self._pending_cancels` getrackt und asynchron storniert werden.
-* Erst wenn die Callbacks (`on_order_canceled`, `on_order_filled`, `on_order_rejected`) das Set `self._pending_cancels` komplett geleert haben und die Position noch teilweise offen ist, feuert die Base-Class `self._execute_market_close()`.
-* Strategien dürfen diesen asynchronen Fluss niemals durch blockierende While-Loops oder eigene Callback-Überschreibungen stören (ausgenommen via `super().on_...`).
-
 **Symptom:** Egal welche Strategie das Tournament pro Symbol gewinnt, live läuft immer SMA(5).
 **Fix:** Dynamische Registry aus `strategies.json`, echte Gewinner-Strategie wird live registriert, Allocator-Hook in `HourlyStrategyBase`, PoC-Dateien entfernt, Live-`bar_type` auf 1h umgestellt (MID-INTERNAL), QuoteTick-Subscription in allen aktiven Strategien.
 **Betroffen:** `automation/momentum_ls_run.py`, `automation/strategies/*.py`.
@@ -460,7 +455,7 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 `round_down=True` verhindert den ValueError NICHT. Zweistufige Absicherung (Pre-Check + try/except) dokumentiert. **Teilweise** umgesetzt — siehe #20/#21 für die verbleibende Inkonsistenz.
 
 
-### 🟢 #25 — Asynchrone Speicherung (Deferred Flush Bug)
+### 🟢 #44 — Asynchrone Speicherung (Deferred Flush Bug)
 **Symptom:** Datenverlust oder Inkonsistenzen beim Schreiben der Puffer.
 **Fix:** Korrektes Flush-Handling implementiert (dokumentiert in `Test_report.md` via `test_do_flush`).
 **Betroffen:** `automation/catalog_service.py`.
@@ -540,14 +535,21 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix:** `compute_tournament_score` wurde so umgeschrieben, dass es die Metriken `sortino_ratio`, `profit_factor`, `win_rate` und `max_drawdown` gemäß den Gewichten aus `tournament.json` zu einem Composite-Score aggregiert.
 **Betroffen:** `automation/backtest_runner.py`
 
-### Pitfall #37: Profit Factor / Sortino NoneType Artefakte bei Zero-Loss (Issue #150 / #209 / #227)
+### 🟢 #43 — Profit Factor / Sortino NoneType Artefakte bei Zero-Loss (Issue #150 / #209 / #227)
 **Symptom:** In Backtests mit 100% Win Rate generieren bestimmte Metriken mathematische Artefakte (z.B. Sortino Ratio = 50.0 oder Profit Factor = 50.0). Dies verzerrt die Aggregat-Mediane und Auswertung extrem, wenn die Werte durch künstliche Caps (`MAX_CAP = 50.0`, `CALMAR_CAP = 100.0`) künstlich hoch gehalten werden. Andererseits explodieren die Werte ohne Caps bei minimalen Verlusten ins Unendliche.
 **Root Cause:** Fallback bei undefinierten Nennern (z.B. `gross_loss == 0`) waren hardcodierte `MAX_CAP`-Werte, die die Scores nach oben verzerrten und echte Resultate verfälschten. Das komplette Entfernen der Caps in #209 führte stattdessen bei minimalen Nennern zu Explosionen.
 **Fix:** Undefinierte finanzmathematische Zustände (All-Win-Szenarien oder <2 Losses bei <50 Trades) erzeugen konsequent `None`. Extreme Werte bei validen Samples werden hart gekappt (Sortino/PF auf 50.0, Calmar auf 100.0). Dies verhindert Median-Verfälschungen bei der Aggregation. Im CLI-Output rendern die None-Werte distinkt als `n/a(win)` oder `n/a(<min)`. Eine dedizierte Filter-Gating-Logik in `_is_eligible` wirft diese None-Kandidaten proaktiv ab.
 **Wichtige Architektur-Regel:** Downstream-Systeme in Evaluationen und Formatting müssen stets typensicher entwickelt werden, da Metrik-Extraktionen immer `None`-safe verarbeitet werden müssen! Die Rankings in `select_winners` nutzen nun `(m.get('metric') or 0.0)`, um die Metrik zu normalisieren.
 **Betroffen:** `automation/backtest_runner.py`
 
-## 17. Conventions für KI-Coding-Agents (Jules)
+## 17. Order Management & Async State Machine (Neu)
+Alle stündlichen Strategien in `automation/strategies/` müssen für Exit-Bedingungen zwingend die Methoden der `HourlyStrategyBase` nutzen, um Event-Loop-Blockaden und Orphaned Orders zu vermeiden.
+Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
+* Wenn eine Markt-Order (z.B. durch Time-Exit oder Mean-Reversion) platziert werden soll, **müssen** offene Limit-Orders über `self._pending_cancels` getrackt und asynchron storniert werden.
+* Erst wenn die Callbacks (`on_order_canceled`, `on_order_filled`, `on_order_rejected`) das Set `self._pending_cancels` komplett geleert haben und die Position noch teilweise offen ist, feuert die Base-Class `self._execute_market_close()`.
+* Strategien dürfen diesen asynchronen Fluss niemals durch blockierende While-Loops oder eigene Callback-Überschreibungen stören (ausgenommen via `super().on_...`).
+
+## 18. Conventions für KI-Coding-Agents (Jules)
 
 - **Standalone-Constraint** (Abschnitt 4) strikt einhalten — Ausnahme nur `momentum_ls_run.py` (Pitfall #19, behoben).
 - Neue Strategien → `automation/strategies/`, von `HourlyStrategyBase` erben, in `strategies.json` registrieren.
@@ -563,7 +565,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 ---
 
-## 18. Changelog (Agent-Maintained)
+## 19. Changelog (Agent-Maintained)
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 
 | Datum | Änderung | Dateien |
