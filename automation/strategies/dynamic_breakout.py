@@ -44,8 +44,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self.high_history: deque = deque(maxlen=config.price_breakout_period)
         self.low_history: deque = deque(maxlen=config.price_breakout_period)
 
-        self.current_signal: str | None = None
-        self.bars_since_last_signal: int = 0
+        self.bars_since_last_signal: int = 9999
 
     def on_start(self):
         super().on_start()
@@ -57,21 +56,23 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
     def on_bar(self, bar: Bar):
         self.bars_since_last_signal += 1
 
-        high = float(bar.high)
-        low = float(bar.low)
-        close_price = float(bar.close)
-
-        self.high_history.append(high)
-        self.low_history.append(low)
-
         if self._check_exits_and_update(bar):
+            # Fall 1: Wir fügen den aktuellen Bar trotzdem am Ende in die History ein,
+            # weil er Teil der Preisentwicklung ist.
+            self.high_history.append(float(bar.high))
+            self.low_history.append(float(bar.low))
             return
 
+        # Historische Werte (OHNE den aktuellen Bar!)
         if len(self.high_history) < self.config.price_breakout_period:
+            self.high_history.append(float(bar.high))
+            self.low_history.append(float(bar.low))
             return
 
         period_high = max(self.high_history)
         period_low = min(self.low_history)
+
+        close_price = float(bar.close)
 
         self._log.debug(
             f"[{self.instrument_id}] BAR GESCHLOSSEN | Close: {close_price:.2f} | "
@@ -79,35 +80,38 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             f"Low({self.config.price_breakout_period}): {period_low:.2f}"
         )
 
-        can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
+        # Signal Logic
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        current_side = positions[0].side if positions else None
+        can_signal = self.bars_since_last_signal >= self.config.cooldown_bars
 
-        if close_price >= period_high and (self.current_signal != "BUY" and can_signal):
+        if close_price >= period_high and current_side != PositionSide.LONG and can_signal:
             self._log.info(
                 f"[{self.instrument_id}] BUY SIGNAL (Price Breakout High)",
                 LogColor.GREEN,
             )
-            self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
-        elif close_price <= period_low and (self.current_signal != "SELL" and can_signal):
+        elif close_price <= period_low and current_side != PositionSide.SHORT and can_signal:
             self._log.info(
                 f"[{self.instrument_id}] SELL SIGNAL (Price Breakout Low)",
                 LogColor.RED,
             )
-            self.current_signal = "SELL"
             self._on_sell_signal(bar)
+
+        # History Contamination Fix: Den aktuellen Bar ERST JETZT der History hinzufügen.
+        self.high_history.append(float(bar.high))
+        self.low_history.append(float(bar.low))
 
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
-        self.bars_since_last_signal = 0
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
             self._close_position_base(pos)
-            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -120,17 +124,16 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             quantity=qty,
             time_in_force=TimeInForce.GTC,
         )
+        self.bars_since_last_signal = 0
         self.submit_order(order)
 
     def _on_sell_signal(self, bar: Bar) -> None:
-        self.bars_since_last_signal = 0
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position_base(pos)
-            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -143,9 +146,14 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             quantity=qty,
             time_in_force=TimeInForce.GTC,
         )
+        self.bars_since_last_signal = 0
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
+
+    def on_position_closed(self, event):
+        super().on_position_closed(event)
+        self.bars_since_last_signal = self.config.cooldown_bars
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
