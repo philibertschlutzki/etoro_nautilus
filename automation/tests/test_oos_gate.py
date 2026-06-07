@@ -220,7 +220,7 @@ def test_select_winners_issue_192_regression():
         }
     })
 
-    per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, aggregate_winner, warnings, _, _ = select_winners(all_results, tournament_cfg)
 
     # We expect the valid pairs to pass. We check the number of eligible pairs.
     # Note: select_winners performs cross-sectional scoring and only returns the top winner per symbol
@@ -322,7 +322,7 @@ def test_aggregate_pass_but_zero_eligible_pairs_asserts():
         }
     })
 
-    per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, aggregate_winner, warnings, _, _ = select_winners(all_results, tournament_cfg)
 
     # It correctly filtered out the pair, so per_symbol_winners should be empty
     assert len(per_symbol_winners) == 0
