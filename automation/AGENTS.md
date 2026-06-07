@@ -345,6 +345,11 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+### 🟢 Issue #263 — Sentinel Metric Distortion in Cross-Sectional Aggregations
+**Symptom:** VwapExhaustion oder andere restriktive Setups zeigen ein Sortino Ratio von exakt 50.00 (Cap-/Sentinel-Wert). Diese Werte fließen in die Median-Berechnung ein und verfälschen die Auswahl des `aggregate_winner` im Turniersystem.
+**Root Cause:** Winsorizing-Caps (50.0) für Sortino und Profit Factor schützten zwar vor Division-by-Zero, fungierten in Folgesystemen jedoch als extrem verzerrende Ausreißer im Median-Pool.
+**Fix:** Die statistische Funktion `get_median` filtert Sentinel-Werte (exakt 50.0) proaktiv heraus, sofern alternative, organische Ratios im Population-Sample existieren. Ratios werden dadurch rein von realen Markt-Kopien angetrieben.
+**Betroffen:** `automation/backtest_runner.py`
 ### 🟢 #45 — Micro Position Sizing & Flat Equity Curves (Issue #254)
 **Symptom:** Strategien haben Plausible Ratios (PF, Sortino), aber generieren ~0% Absolute Return (z.B. -0.04%).
 **Root Cause:** Kollabierendes Position Sizing. Wenn das berechnete Notional bei hohen Kursen / kleinen Increments unter 1 Increment fiel, rundete `math.floor` auf 0 ab, oder das System handelte mit Cent-Beträgen. Das führte zu winzigen absoluten PnLs.
@@ -567,6 +572,8 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Wichtige Architektur-Regel:** Downstream-Systeme in Evaluationen und Formatting müssen stets typensicher entwickelt werden, da Metrik-Extraktionen immer `None`-safe verarbeitet werden müssen! Die Rankings in `select_winners` nutzen nun `(m.get('metric') or 0.0)`, um die Metrik zu normalisieren.
 **Betroffen:** `automation/backtest_runner.py`
 
+
+
 ## 17. Order Management & Async State Machine (Neu)
 Alle stündlichen Strategien in `automation/strategies/` müssen für Exit-Bedingungen zwingend die Methoden der `HourlyStrategyBase` nutzen, um Event-Loop-Blockaden und Orphaned Orders zu vermeiden.
 Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
@@ -596,6 +603,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-07 | **Issue #263 (Eliminierung von Sentinel-Verzerrungen):** Modifikation von `get_median` in `select_winners` zum Ausschluss von gecappten Sentinel-Werten (50.0) aus der Berechnung der Aggregat-Mediane und Tie-Breaker. Verhindert die Verzerrung von Portfolio-Ratios durch All-Win-Artefakte. Update von `AGENTS.md` §16. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #257 (Zweistufige Selektion & OOS-Gating Transparenz):** "Rank first, Gate second" Logik in `select_winners` implementiert. OOS-Fails werden nicht mehr vorzeitig aus der IS-Population für die Rank-Normalisierung gefiltert. Die Selektion iteriert nun pro Symbol über die sortierten Scores und bewertet OOS On-the-Fly. Klarer Logging-Trail (`[OOS-Drop]`) im Terminal ergänzt. Neue Return-Werte für `is_eligible_pairs` und `fully_eligible_pairs` in die JSON-Ausgabe und in den Test-Files übernommen. | `automation/backtest_runner.py`, `automation/tests/*.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #232 (Crypto Precision vs. Market Dynamics):** Untersuchung der extrem negativen Sortino-Werte bei Crypto-Assets (BTC, ETH) abgeschlossen. Es handelt sich *nicht* um einen Bug in der 8-Dezimalstellen-Quantisierung oder im FSB(16)-Encoding. Die negativen Werte (Szenario B) resultieren aus der Kombination von High-Frequency Long-only-Strategien, hohen Krypto-Spreads auf eToro (15 bps) und dem Unvermögen, Shorts zu handeln. Dokumentiert, um künftige Fehlinterpretationen zu vermeiden. | `automation/AGENTS.md` |
 | 2026-06-06 | **Issue #205 (Fix Zero-Spread Artifacts via Dynamic Spreads):** Backtest-Ticks weisen nun einen Asset-Class-spezifischen Spread in Basis-Punkten (`spread_bps_by_asset_class`) auf, der direkt in `load_ticks_from_catalog` rekonstruiert wird, um artifiziell hohe Sortino/PF Metriken zu dämpfen. Zudem wurde `commission_bps` für eine netto FIFO-PnL Extraktion eingebaut. | `automation/backtest_runner.py`, `automation/config/backtest.json`, `automation/AGENTS.md` |

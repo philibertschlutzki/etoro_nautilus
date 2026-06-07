@@ -415,15 +415,18 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         reasons.append(f"oos_min_win_rate: {win_rate:.4f} < {req_win_rate:.4f}")
 
     # None-Sicherheit: Zero-Loss-OOS
+    # Issue #263: Defensives Handling für "Low-Sample"/All-Win-Szenarien
     if req_sortino > 0.0:
         if sortino is None:
-             reasons.append(f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}")
+             if n_trades < req_trades or win_rate <= 0.0:
+                 reasons.append(f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}")
         elif sortino < req_sortino:
              reasons.append(f"oos_min_sortino: {sortino:.4f} < {req_sortino}")
 
     if req_pf > 0.0:
         if pf is None:
-             reasons.append(f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}")
+             if n_trades < req_trades or win_rate <= 0.0:
+                 reasons.append(f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}")
         elif pf < req_pf:
              reasons.append(f"oos_min_profit_factor: {pf:.4f} < {req_pf}")
 
@@ -464,10 +467,26 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     expectancy   = total_return / n_trades if n_trades > 0 else 0.0
 
     t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
+    # Low-Sample / All-Win Defensive Handling
+    req_trades = t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0))
+    sortino_valid = True
+    if sortino is None:
+        if n_trades < req_trades or win_rate <= 0.0:
+            sortino_valid = False
+    else:
+        sortino_valid = sortino >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0))
+
+    pf_valid = True
+    if pf is None:
+        if n_trades < req_trades or win_rate <= 0.0:
+            pf_valid = False
+    else:
+        pf_valid = pf >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0))
+
     condition_map = {
-        "min_trades":        n_trades     >= t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0)),
-        "min_sortino":       sortino      >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0)),
-        "min_profit_factor": pf           >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
+        "min_trades":        n_trades     >= req_trades,
+        "min_sortino":       sortino_valid,
+        "min_profit_factor": pf_valid,
         "max_drawdown":      max_dd       <= t_overrides.get("max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
         "min_win_rate":      win_rate     >= t_overrides.get("min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
         "min_total_return":  total_return >= t_overrides.get("min_total_return", tournament_cfg.get("min_total_return", 0.0)),
@@ -997,6 +1016,9 @@ def select_winners(
     # 2. Normalisierung der Metriken über alle IS-eligiblen Ergebnisse
     if is_eligible_population:
         def get_ranks(vals, reverse=False):
+            non_sentinels = [v for v in vals if v != 50.0]
+            if len(non_sentinels) == 0:
+                return [1.0] * len(vals)
             su = sorted(list(set(vals)), reverse=reverse)
             if len(su) <= 1:
                 return [1.0] * len(vals)
@@ -1087,8 +1109,14 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
+            # Filter out None and sentinel cap values (50.0) to prevent statistical distortion
             vals = [v for v in vals if v is not None]
-            sv = sorted(vals)
+            non_sentinel_vals = [v for v in vals if v != 50.0]
+
+            # Use non-sentinel values if available, fallback to full list if all are sentinels
+            target_vals = non_sentinel_vals if non_sentinel_vals else vals
+
+            sv = sorted(target_vals)
             n = len(sv)
             if n == 0: return 0.0
             if n % 2 == 1: return sv[n//2]
