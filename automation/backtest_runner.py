@@ -1161,6 +1161,7 @@ def write_tournament_json(
         "generated_at":                datetime.now(timezone.utc).isoformat(),
         "universe_snapshot":           universe_snapshot,
         "total_symbol_strategy_pairs": len(all_results),
+        "eligible_pairs":              fully_eligible_count,
         "is_eligible_pairs":           is_eligible_count,
         "fully_eligible_pairs":        fully_eligible_count,
         "tournament_criteria":         tournament_cfg,
