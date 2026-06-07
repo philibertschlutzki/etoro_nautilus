@@ -1,78 +1,134 @@
 # Anforderungsspezifikation: Automatisierung der Momentum-LS Smart Portfolio Integration
 
-
 ---
-**Implementierungsstand (Stand: 2026-05-17)**
+**Implementierungsstand (Stand: 2026-06-07)**
 
 | Phase | Status |
 |-------|--------|
-| Phase 1: Daily Orchestrator | ⬜ Ausstehend |
+| Phase 1: Daily Orchestrator | ✅ Umgesetzt (`automation/daily_orchestrator.py`) |
 | Phase 2: Dynamisches Mapping | ✅ Umgesetzt |
 | Phase 3: Auto-Fetch fehlender Daten | ✅ Umgesetzt |
-| Phase 4: Logging & Alerting | ⬜ Ausstehend |
+| Phase 4: Logging & Alerting | ✅ Umgesetzt (`automation/log_manager.py`) |
 
-*(Status anhand des tatsächlichen Code-Stands im Repository)*
+*(Status anhand des tatsächlichen Code-Stands im Repository — alle Phasen vollständig implementiert)*
+
 ---
 
 ## 1. Einleitung & Zielsetzung
-Ziel dieses Projekts ist die Überführung der derzeit manuell getriebenen „Momentum-LS Smart Portfolio Integration“ in einen vollständig automatisierten, fehlertoleranten Workflow (Set-and-Forget). Das System soll künftig in der Lage sein, Portfolio-Umschichtungen (Rebalancing) durch eToro selbstständig zu erkennen, neue Finanzinstrumente dynamisch zuzuordnen, fehlende historische Daten nachzuladen und das tägliche Strategie-Turnier sowie den Live-Bot autonom zu starten.
 
-## 2. Detaillierte Anforderungen nach Umsetzungsphasen
+Ziel dieses Projekts war die Überführung der manuell getriebenen „Momentum-LS Smart Portfolio Integration" in einen vollständig automatisierten, fehlertoleranten Workflow ("Set-and-Forget"). Das System erkennt Portfolio-Umschichtungen (Rebalancing) durch eToro selbstständig, ordnet neue Finanzinstrumente dynamisch zu, lädt fehlende historische Daten nach und startet das tägliche Strategie-Turnier sowie den Live-Bot autonom.
 
-### Phase 1: Der "Daily Orchestrator" (Master-Skript)
+**Alle vier Phasen sind vollständig umgesetzt.** Der Einstiegspunkt ist:
+```bash
+python3 automation/daily_orchestrator.py --skip-api-fetch
+```
+
+---
+
+## 2. Detaillierte Anforderungen und Umsetzungsstatus
+
+### Phase 1: Der "Daily Orchestrator" (Master-Skript) ✅
+
 **Ziel:** Zusammenführung der sequentiellen Einzelschritte in einen überwachten, robusten Gesamtprozess.
 
-* **REQ-1.1:** Es muss ein neues Master-Skript erstellt werden (präferiert `run_daily_orchestrator.py` anstelle eines reinen Bash-Skripts für besseres Error-Handling und Cross-Platform-Kompatibilität).
-* **REQ-1.2:** Das Skript ruft nacheinander die Teilprozesse auf: 
-    1. `momentum_ls_universe.py`
-    2. (Neu) Daten-Abgleich und Auto-Fetch (siehe Phase 3)
-    3. `momentum_ls_tournament.py`
-    4. `momentum_ls_run.py`
-* **REQ-1.3:** Strikte Abhängigkeitsprüfung: Jeder Schritt muss seinen Exit-Code (0 für Success, >0 für Error) an das Master-Skript übergeben. Schlägt ein Schritt fehl, wird die Kette sofort abgebrochen.
-* **REQ-1.4:** Der Orchestrator muss so konzipiert sein, dass er problemlos in einen Scheduler (Linux Cronjob oder Windows Task Scheduler) eingehängt werden kann (z.B. Ausführung täglich um 06:00 UTC).
+**Umgesetzt als:** `automation/daily_orchestrator.py`
 
-### Phase 2: Dynamisches Mapping neuer eToro-Assets (Auto-Discovery)
-**Ziel:** Abschaffung der hartcodierten eToro-IDs und Automatisierung der Asset-Erkennung. **(Umgesetzt)**
+Die 5-Phasen-Pipeline läuft vollautomatisch:
+1. Universe & Mapping (`universe_fetcher.py`)
+2. Multi-ZIP-Import + Merge + API-Backfill (`api_backfiller.py`)
+3. Matrix-Backtest (`backtest_runner.py`)
+4. Tournament (beste Strategie pro Symbol)
+5. Live Deployment (`momentum_ls_run.py`)
 
-* **REQ-2.1:** Die Datei `adapters/instrument_map.py` wird durch `dev_scripts/auto_map_insturments.py` aktualisiert.
-* **REQ-2.2:** Das Skript gleicht die fehlenden IDs aus `momentum_ls.json` mit der eToro-Metadaten-API ab.
-* **REQ-2.3:** Unbekannte IDs werden über die eToro API abgefragt, um ihr Ticker-Symbol zu ermitteln (z.B. `ADA`).
-* **REQ-2.4:** Das neu gefundene Asset wird in das Format `SYMBOL.ETORO` konvertiert und **automatisch persistent** in die `adapters/instrument_map.py` geschrieben.
+Strikte Abhängigkeitsprüfung: Schlägt ein Schritt fehl, wird die Pipeline sofort abgebrochen.
 
-### Phase 3: Automatischer Download fehlender Historien-Daten
-**Ziel:** Gewährleistung, dass für das Backtesting-Turnier lückenlose Parquet-Daten aller (auch neu hinzugekommener) Assets vorliegen. **(Umgesetzt)**
+**Cron-Integration:**
+```cron
+0 1 * * * /usr/local/bin/python3 /path/to/etoro_nautilus/automation/daily_orchestrator.py --skip-api-fetch >> /path/to/etoro_nautilus/logs/cron.log 2>&1
+```
 
-* **REQ-3.1:** Das Skript `dev_scripts/momentum_ls_fetch_candles_auto.py` liest die generierte Datei `data/universe/momentum_ls.json` ein.
-* **REQ-3.2:** Für jedes enthaltene Symbol prüft das System, ob das Verzeichnis `data/nautilus/data/quote_tick/<SYMBOL>/` existiert und lädt fehlende Parquet-Daten in einem Delta-Update Modus herunter.
-* **REQ-3.3:** Das Skript triggert automatisch den Download via `fetch_candles_chunk` und konsolidiert die Ergebnisse über verschiedene Timeframes.
-* **REQ-3.4:** Erst wenn **alle** Symbole aus dem aktuellen Universum verifiziert und ihre Daten heruntergeladen wurden, darf Schritt 3 (Das Turnier) gestartet werden.
+**CLI-Optionen:**
+```bash
+# Täglicher Standard-Run:
+python3 automation/daily_orchestrator.py --skip-api-fetch
 
-### Phase 4: Logging, Alerting & Error-Handling
-**Ziel:** Transparenz und sofortige Alarmierung bei kritischen Systemzuständen.
+# Mit API-Backfill (wenn data/import/ leer):
+python3 automation/daily_orchestrator.py
 
-* **REQ-4.1:** Alle `print()`-Ausgaben der Sub-Skripte müssen durch ein standardisiertes Python `logging`-Modul ersetzt oder in rotierende Logfiles (`logs/daily_run_<DATE>.log`) umgeleitet werden.
-* **REQ-4.2:** Integration eines Webhook-Alertings (z.B. Telegram, Discord oder Slack).
-* **REQ-4.3:** Es müssen Alarme gesendet werden bei:
-    * Kritischen Fehlern (z.B. eToro API nicht erreichbar, Token abgelaufen).
-    * Daten-Fehlern (Historische Daten konnten nicht geladen werden).
-    * Turnier-Fehlern (Keine einzige Strategie erreicht einen Profit Factor > 1.5).
-* **REQ-4.4:** (Optional) Nach erfolgreichem Durchlauf sendet das System eine Zusammenfassungsnachricht mit der Tabelle der Turnier-Gewinner und den neuen Kapitalallokationen.
-
-## 3. Akzeptanzkriterien (Definition of Done)
-* [x] Ein neues Asset im eToro Portfolio führt nicht mehr zum Abbruch oder zu einem manuellen Eingriff, sondern wird erkannt, geloggt, heruntergeladen und im Turnier berücksichtigt (via `auto_map_insturments.py` und `momentum_ls_fetch_candles_auto.py`).
-* [ ] Das Gesamtsystem kann über einen einzigen Befehl (z.B. `python orchestrator.py`) gestartet werden und arbeitet alle Schritte sequentiell ab.
-* [ ] Ein Fehlschlag (z.B. kein Internet) führt zum sicheren Abbruch des Workflows und feuert einen Alarm.
-* [x] Alle Änderungen sind rückwärtskompatibel zum bestehenden Nautilus-Framework.
-
-## 4. Empfohlene Umsetzungsreihenfolge
-1. **Woche 1:** Umsetzung Phase 2 (Dynamisches Mapping JSON + Auto-Discovery in `momentum_ls_universe.py`). Dies löst das dringendste Problem.
-2. **Woche 2:** Umsetzung Phase 1 & 3 (Master Orchestrator + Auto-Fetch der Daten).
-3. **Woche 3:** Umsetzung Phase 4 (Error Handling, Webhooks und finale Tests auf einem Server / in einer CI/CD Pipeline).
-
+# Dry-Run (kein Live-Bot-Start):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+```
 
 ---
+
+### Phase 2: Dynamisches Mapping neuer eToro-Assets (Auto-Discovery) ✅
+
+**Ziel:** Abschaffung der hartcodierten eToro-IDs und Automatisierung der Asset-Erkennung.
+
+**Umgesetzt als:** `automation/config/instrument_map.json` (JSON-Konfiguration, nicht mehr als Python-Datei)
+
+> **Hinweis für Bestandsnutzer:** Die frühere `adapters/instrument_map.py` ist Legacy. Die aktuelle Mapping-Tabelle liegt ausschließlich unter `automation/config/instrument_map.json`.
+
+Das System gleicht fehlende IDs aus `momentum_ls.json` mit der eToro-Metadaten-API ab und ergänzt die `instrument_map.json` automatisch. Unbekannte Assets werden erkannt, ihr Ticker-Symbol ermittelt und im Format `SYMBOL.ETORO` eingetragen.
+
+---
+
+### Phase 3: Automatischer Download fehlender Historien-Daten ✅
+
+**Ziel:** Lückenlose Parquet-Daten aller Assets für das Backtesting-Tournament.
+
+**Umgesetzt als:** `automation/api_backfiller.py` und `automation/historical_fetcher.py`
+
+```bash
+# 7-Tage-Delta-Update:
+python3 automation/api_backfiller.py --days 7
+
+# 12-Monate-Deep-Backfill (Erstbefüllung):
+python3 automation/historical_fetcher.py --months 12
+```
+
+Im Orchestrator läuft Phase 2 automatisch ab: ZIPs werden gemergt, Lücken erkannt und via API-Backfill gefüllt. Erst wenn alle Symbole verifiziert sind, startet der Matrix-Backtest (Phase 3).
+
+---
+
+### Phase 4: Logging, Alerting & Error-Handling ✅
+
+**Ziel:** Transparenz und Alarmierung bei kritischen Systemzuständen.
+
+**Umgesetzt als:** `automation/log_manager.py`
+
+Das Logging-System arbeitet mit strukturierten JSON-Events (LLM-optimiert) neben menschenlesbaren Log-Einträgen:
+
+```
+[JSON_EVENT] {"event_type": "ORCHESTRATOR_START", ...}
+[JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "universe_size": N, ...}
+[JSON_EVENT] {"event_type": "TOURNAMENT_COMPLETE", "winner_count": N, ...}
+[JSON_EVENT] {"event_type": "BOT_STARTED", "pid": N, ...}
+[JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "exit_code": 0}
+```
+
+**Log-Dateien:**
+- `logs/orchestrator_YYYYMMDD.log` — Pipeline-Status
+- `logs/live_bot_YYYYMMDD.log` — Bot-Laufzeit
+- `logs/tournament_YYYY-MM-DD.json` — Turnier-Vollresultat
+
+---
+
+## 3. Akzeptanzkriterien (Definition of Done) — alle erfüllt ✅
+
+- [x] Ein neues Asset im eToro Portfolio führt nicht mehr zum Abbruch oder manuellen Eingriff — es wird erkannt, gemappt, heruntergeladen und im Turnier berücksichtigt.
+- [x] Das Gesamtsystem startet über einen einzigen Befehl (`python3 automation/daily_orchestrator.py`) und arbeitet alle Schritte sequentiell ab.
+- [x] Ein Fehlschlag (z. B. kein Internet) führt zum sicheren Abbruch der Pipeline.
+- [x] Alle Änderungen sind rückwärtskompatibel zum bestehenden Nautilus-Framework.
+- [x] Strukturiertes Logging für maschinelle Auswertung und Diagnose.
+
+---
+
 ## Weiterführende Dokumente
-- `manuals/momentum_ls.md`
+- [`manuals/momentum_ls.md`](./momentum_ls.md) — Momentum-LS Pipeline im Detail
+- [`manuals/end_to_end_workflow.md`](./end_to_end_workflow.md) — Vollständiger 5-Phasen-Workflow
+- [`manuals/deployment.md`](./deployment.md) — VM-Setup, systemd und Cron
+- [`manuals/run_bot_manual.md`](./run_bot_manual.md) — Tournament-Selektion und Log-Diagnose
 
 ---
-*Zuletzt aktualisiert: 2026-05-17 — Überprüft gegen Repository-Stand vom 2026-05-14*
+*Zuletzt aktualisiert: 2026-06-07 — Überprüft gegen automation/AGENTS.md*

@@ -209,8 +209,8 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 ### Inaktive Strategien (active=false)
 | Klasse | Grund |
 |--------|-------|
-| TrendPullbackStrategy | 0 FIFO-Schließungen in allen Tests; erbt von HourlyStrategyBase (EMA-Period 200 initialisiert bei kurzen Daten nie) |
-| AdxAtrMomentumStrategy | ADX-Initialisierungsproblem; erbt von HourlyStrategyBase |
+| TrendPullbackStrategy | (Status: Inaktiv / Maintenance) 0 FIFO-Schließungen in allen Tests; erbt von HourlyStrategyBase (EMA-Period 200 initialisiert bei kurzen Daten nie) |
+| AdxAtrMomentumStrategy | (Status: Inaktiv / Maintenance) ADX-Initialisierungsproblem; erbt von HourlyStrategyBase |
 
 **Wichtig:** Die Config-Klassen in `config_class` müssen exakt zu den Feldern passen, die der Backtest spreizt. Die Konfig-Field-Beschreibungen in der alten Root-AGENTS.md waren teils falsch (z.B. `lookback`/`z_score_threshold` für MeanReversion existieren NICHT — die echte Config nutzt `keltner_period`/`keltner_multiplier`). Maßgeblich ist immer der Code der jeweiligen `*Config`-Klasse.
 
@@ -354,6 +354,17 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 3. **Konstante Floor:** Der eToro Trade-Floor ($11.00) ist fest über `MIN_TRADE_USD` im Strategy-Layer für alle Sub- und Base-Classes dokumentiert und abzusichern.
 
 - **State/Key Bleed (OOS Gating in `_is_eligible`)**: `oos_metrics` is a sibling key (Geschwister-Key) to `metrics` in the backtest result dictionary. Searching for it inside `metrics` (`metrics.get("oos_metrics")`) will silently fail and return `None`, leading to unexpected rejection in tournament gating. Da `oos_metrics` auf derselben Ebene wie `metrics` liegt und nicht tief verschachtelt ist, muss dieser Fehler bei zukünftigen Aggregations-Modulen von vornherein ausgeschlossen werden. Always parse sibling keys directly from the root result dictionary `r`.
+
+### 🟢 #45 — Aggregate Metric Statistical Artifacts (Issue #255)
+**Symptom:** In der Turnierauswertung ergab `win_rate * total_trades` keinen ganzzahligen Wert. Die OOS-Rendite wirkte im Vergleich zu Einzel-Symbolen inkonsistent, und das OOS-Gate wurde durch die aufsummierten Trades ausgehebelt (Trade-Sum Trap).
+**Root Cause:** Die Aggregation vermischte arithmetische Mittelwerte (für Trades) mit Medians (für Win-Rates). Dies zerstörte die zugrundeliegende mathematische Identität der Einzel-Backtests und erzeugte "Frankenstein-Metriken". Edge-Cases in Zero-Loss Backtests lieferten zudem `None`, was bei nicht typsicherem Unpacking zu Laufzeitfehlern führen konnte.
+**Fix (Architektur-Regel):** Die Metrik-Aggregation (`select_winners`) erzwingt nun streng eine hybride, aber mathematisch konsistente Struktur (`portfolio_sum_for_trades_and_trade_weighted_mean_for_return_and_median_for_ratios`).
+1. **Volumen (Trades, Wins):** Werden absolut aufsummiert. Das Unpacking erfolgt typsicher via `(oos.get("total_trades") or 0)`, um TypeErrors bei `None`-Werten auszuschließen.
+2. **Rendite:** Wird als kapitalgewichteter (Trade-Weighted) Return berechnet, um das Portfolio-Volumen real abzubilden.
+3. **Risiko-Ratios (Sortino, PF):** Werden zwingend als Median (via `get_median()`) beibehalten, da Nenner-Abweichungen eine Aufsummierung verbieten.
+4. **OOS-Gating (Trade-Sum Trap):** Um zu verhindern, dass die Portfolio-Trade-Summe die `oos_min_trades`-Schwelle (die eigentlich pro Symbol gilt) trivialerweise überschreitet, wird das aggregierte Dictionary (`avg_oos`) *ausschließlich für das Gate* intern normalisiert (`total_trades / n_res`), bevor es an `_evaluate_oos_eligibility` übergeben wird. In den Logs und im JSON verbleiben die wahren Portfolio-Summen.
+**WICHTIG für Agenten:** Dieser hybride Aggregations-Zustand ist gewollt. Versuche nicht, ihn als "Inkonsistenz" zu reparieren, indem du Ratios durchschneidest oder Trades normalisierst (außerhalb des Gates).
+**Betroffen:** `automation/backtest_runner.py`, `automation/daily_orchestrator.py`
 
 ### 🟢 #42 — Crypto: Degenerated Sortino & Profit Factor Metrics (Issue #232)
 **Symptom:** Nahezu alle Crypto-Assets (BTC, ETH, XRP etc.) weisen in Backtests über unterschiedlichste Strategien hinweg stark negative Sortino-Werte (z.B. -12.99) und einen Profit Factor von 0.00 auf, gepaart mit extrem schlechten Win-Rates.

@@ -1,184 +1,196 @@
-# 🎯 Neue Instrumente hinzufügen
+# Neue Instrumente hinzufügen
 
-Diese Anleitung erklärt Schritt für Schritt, wie du neben den bereits konfigurierten Märkten (z. B. Tesla) weitere Aktien oder Instrumente in den Bot einbinden kannst.
+Diese Anleitung erklärt Schritt für Schritt, wie du neue Aktien, Kryptowährungen oder andere Instrumente in das System einbindest.
 
+---
 
+## Überblick: Wie das System Instrumente verarbeitet
 
-
-
-
-
-
-
-## Überblick: Die Architektur der Marktdaten
-
-Bevor wir loslegen, hier ein kurzer Überblick, wie der Bot Instrumente verarbeitet:
+Bevor wir loslegen, hier ein Überblick der aktuellen Architektur:
 
 ```text
-dev_scripts/auto_map_insturments.py  ← Automatisiertes Auto-Discovery (Bevorzugt)
-get_instruments_id.py                ← Manuelles Hilfsskript
+automation/universe_fetcher.py          ← Lädt Portfolio-Symbole + Auto-Discovery
         │
         ▼
-adapters/instrument_map.py           ← Zentrale Tabelle: Verknüpft eToro-ID ↔ Nautilus-Symbol
+automation/config/instrument_map.json   ← Zentrale Tabelle: eToro-ID ↔ Nautilus-Symbol
         │
         ▼
-dev_scripts/momentum_ls_universe.py  ← Momentum-LS Smart Portfolio Integration
-dev_scripts/momentum_ls_allocator.py ← Dynamische Kapitalscheiben Zuweisung
+automation/backtest_runner.py           ← Matrix-Backtest aller Strategien
         │
         ▼
-config/setups.py                     ← Definiert, welche Aktie mit welcher Strategie (ohne Momentum-LS) läuft
+automation/config/strategies.json       ← Welche Strategien aktiv sind
         │
         ▼
-run_bot.py                           ← Startet den Bot (liest die Konfiguration automatisch)
+automation/momentum_ls_run.py           ← Startet den Live-Bot mit Tournament-Ergebnissen
 ```
 
-Für jedes neue Instrument müssen **zwei zentrale Dateien** angepasst werden:
-1.  `adapters/instrument_map.py` (Zentrale Registrierung)
-2.  `config/setups.py` (Strategie-Zuweisung)
+> **Hinweis:** Die frühere `adapters/instrument_map.py` und `config/setups.py` sind Legacy. Das gesamte `automation/`-Paket ist eigenständig — alle Konfiguration liegt ausschließlich unter `automation/config/`.
 
+---
 
+## Schritt 1: eToro Instrument-ID herausfinden
 
+Jedes Instrument auf eToro hat eine interne numerische ID. Das System benötigt diese ID, um das richtige WebSocket-Feed zu abonnieren.
 
-## Schritt 1: eToro Instrument-ID herausfinden (Auto-Discovery)
+### Option A: Automatisch via Universe-Fetcher (empfohlen)
 
-Der empfohlene Weg, neue IDs hinzuzufügen, ist die Nutzung des Auto-Discovery Skripts für Momentum-LS:
+Wenn das neue Instrument bereits Teil des eToro Smart Portfolios ist (das du über `MOMENTUM_LS_USERNAME` verfolgst), wird es automatisch erkannt:
 
 ```bash
-python3 dev_scripts/auto_map_insturments.py
+python3 automation/universe_fetcher.py
 ```
-Dieses Skript gleicht die `momentum_ls.json` mit der eToro-API ab und fügt unbekannte Symbole automatisch der `instrument_map.py` hinzu.
 
-**Alternativ (Manuell):**
-1.  Öffne das Hilfsskript `dev_scripts/get_instruments_id.py`.
-2.  Ganz am Ende der Datei findest du den Aufruf (ändere den String zum gewünschten Ticker):
-    ```python
-    if __name__ == "__main__":
-        get_etoro_instrument_id("NVDA")
-    ```
-3.  Führe das Skript aus:
-    ```bash
-    python3 dev_scripts/get_instruments_id.py
-    ```
-4.  Notiere dir die ausgegebene ID (z.B. `2254`).
+Das Skript fragt die eToro-API ab, findet neue IDs und fügt sie automatisch zur `automation/config/instrument_map.json` hinzu. Danach ist das Instrument sofort im System bekannt.
 
+### Option B: Manuell herausfinden
+
+Wenn das Instrument **nicht** im verfolgten Smart Portfolio ist:
+
+1. Öffne `dev_scripts/get_instruments_id.py`
+2. Suche am Ende der Datei den Testaufruf und ändere den Ticker:
+   ```python
+   if __name__ == "__main__":
+       get_etoro_instrument_id("NVDA")  # ← Ticker anpassen
+   ```
+3. Führe das Skript aus:
+   ```bash
+   python3 dev_scripts/get_instruments_id.py
+   ```
+4. Notiere dir die ausgegebene ID (z. B. `2254`).
+
+---
 
 ## Schritt 2: Instrument in der Map registrieren
 
-Öffne die Datei `adapters/instrument_map.py`. Füge deine neu ermittelte ID und das dazugehörige Nautilus-Symbol als neues Key-Value-Paar in das Dictionary ein.
+Öffne `automation/config/instrument_map.json`. Füge die neue ID und das dazugehörige Symbol hinzu.
 
 **Beispiel für Nvidia (ID: 2254):**
 
-```python
-ETORO_INSTRUMENTS = {
+```json
+{
+  "instruments": {
     "1111": "TSLA.ETORO",
     "1":    "EURUSD.ETORO",
-    "2254": "NVDA.ETORO",   # ← Neuer Eintrag
+    "2254": "NVDA.ETORO"
+  }
 }
 ```
 
+> **Pflichtformat:** Der Wert (das Nautilus-Symbol) muss immer mit `.ETORO` enden (z. B. `NVDA.ETORO`). Dies ist für die interne Routing-Logik der Nautilus-Engine zwingend erforderlich.
 
-> ⚠️ **Wichtig:** Für Kryptowährungen muss das Symbol zusätzlich in `_CRYPTO_SYMBOLS` in `adapters/etoro_data.py` eingetragen werden (als frozenset).
-
-> ⚠️ **Wichtig:** Der Value (das Nautilus-Symbol) muss immer mit dem Suffix `.ETORO` enden (z. B. `NVDA.ETORO`), da dies für die interne Verkaufsplatz-Zuweisung der Nautilus-Engine (`Venue("ETORO")`) zwingend erforderlich ist.
-
----
-
-
-### Schritt 2.5: Price Precision
-
-Die Preisgenauigkeit (Dezimalstellen) wird automatisch auf Basis von Regeln in der `Equity` Initialisierung gesetzt.
-
-| Symbol enthält | `price_precision` | Beispiele |
-|----------------|-------------------|-----------|
-| `SHIB` oder `PEPE` | 8 | SHIBxM, PEPExM |
-| `BTC` oder `ETH` | 2 | BTC, ETH |
-| Alle anderen | 5 | TSLA, ADA, SOL |
-
-*Hinweis: Wenn ein Symbol nicht in dieses Standardraster passt, musst du die Logik in `_register_instruments()` im eToro Adapter anpassen.*
-
+> **Kryptowährungen:** Für Krypto-Symbole muss das Symbol zusätzlich in der internen `_CRYPTO_SYMBOLS`-Liste des eToro-Adapters eingetragen sein (Details in `automation/AGENTS.md`).
 
 ---
 
-## Schritt 3: Strategie konfigurieren (`setups.py`)
+## Schritt 2.5: Price Precision verstehen
 
-Öffne die Datei `config/setups.py`. Hier befindet sich das Array `ACTIVE_BOTS`, in dem die laufenden Strategien definiert sind.
+Die Preisgenauigkeit (Dezimalstellen) wird automatisch gesetzt — du musst in der Regel nichts tun:
 
-Füge einen neuen Dictionary-Block für dein neues Instrument hinzu:
+| Instrument-Kategorie | price_precision | size_precision |
+|---------------------|----------------|----------------|
+| SHIB / PEPE | 8 | 8 |
+| Krypto (BTC, ETH, …) | 2 | 8 |
+| Forex / Rohstoffe (NATGAS, PALL, …) | 5 | 5 |
+| **Aktien (Default)** | **2** | **2** |
 
-```python
-ACTIVE_BOTS = [
-    {
-        "strategy_class": "SmaCrossoverStrategy",
-        "etoro_id": "1111",
-        "symbol": "TSLA.ETORO",
-        "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL",
-        "params": {
-            "fast_sma": 5,
-            "slow_sma": 10
-        }
-    },
-    # ← Neuer Block für NVDA
-    {
-        "strategy_class": "SmaCrossoverStrategy", # oder eine andere Strategie
-        "etoro_id": "2254",                       # Die eToro ID aus Schritt 1
-        "symbol": "NVDA.ETORO",                   # Muss mit instrument_map.py übereinstimmen
-        "bar_type": "NVDA.ETORO-1-MINUTE-MID-INTERNAL", # Nautilus Bar-Typ (z.B. 1-MINUTE, 1-HOUR)
-        "params": {
-            "fast_sma": 10,
-            "slow_sma": 20                      # Deine optimierten Parameter
-        }
-    },
-]
-```
+> **Hinweis (Pitfall #14 — GELÖST):** In früheren Versionen war `size_precision` für Aktien auf `0` gesetzt. Seit v2.0 ist `size_precision=2` der Standard für Aktien, was Fractional Shares korrekt unterstützt.
 
-### Parameter-Erklärung:
-*   `etoro_id`: Muss ein String sein.
-*   `bar_type`: Format ist immer `<SYMBOL>-<ZEITRAHMEN>-MID-INTERNAL`. Passe den Zeitrahmen (`1-MINUTE`, `1-HOUR` etc.) an die Anforderungen deiner Strategie an.
+Wenn ein Symbol nicht ins Standardraster passt, kann die Precision manuell in `automation/config/instrument_map.json` überschrieben werden.
 
 ---
 
-## Schritt 4: Überprüfung und Neustart
+## Schritt 3: Historische Daten laden
 
-Nachdem du die Änderungen gespeichert hast, starte den Bot neu.
+Für das Tournament werden historische Tick-Daten benötigt. Nach dem Eintragen in die Map:
 
 ```bash
-python run_bot.py
+# Letzte 7 Tage via API laden:
+python3 automation/api_backfiller.py --days 7
+
+# Vollständiger historischer Backfill (12 Monate, für neue Symbole empfohlen):
+python3 automation/historical_fetcher.py --months 12
 ```
 
-Beobachte die Konsolenausgabe. Du solltest Meldungen sehen, dass das neue Instrument registriert und erfolgreich abonniert wurde:
-
-```text
-✅ Strategie registriert: SMA_NVDA.ETORO_1
-...
-Abonniert: ['instrument:1111', 'instrument:2254']
+Die Daten werden gespeichert unter:
 ```
-
-### Fehlerbehebung
-*   **Keine Ticks empfangen?** Prüfe, ob die regulären Handelszeiten des Marktes geöffnet sind.
-*   **ID nicht gefunden Fehler?** Stelle sicher, dass die `etoro_id` in `setups.py` exakt als String mit dem Key in `instrument_map.py` übereinstimmt (keine Leerzeichen).
+data/nautilus/data/quote_tick/{SYMBOL}/data.parquet
+```
 
 ---
 
-## Sonderfall: Momentum-LS Integration (neu)
+## Schritt 4: Strategie konfigurieren
 
-Wenn ein neues Instrument auch in das Momentum-LS-Turnier aufgenommen werden soll, ist der Prozess noch einfacher:
+Die aktiven Strategien und ihre Parameter werden in `automation/config/strategies.json` verwaltet:
+
+```json
+{
+  "strategies": [
+    {
+      "name": "MeanReversionStrategy",
+      "active": true,
+      "params": {
+        "keltner_period": 20,
+        "keltner_multiplier": 2.0
+      }
+    }
+  ]
+}
+```
+
+Standard-Parameter für alle Strategien: `automation/config/strategy_defaults.json`
+
+> **Hinweis:** Du musst keine neuen Strategie-Einträge für neue Instrumente anlegen. Das Tournament testet **alle** aktiven Strategien automatisch gegen **alle** Symbole im Universe.
+
+---
+
+## Schritt 5: Überprüfung
+
+Führe einen Dry-Run aus, um sicherzustellen, dass das neue Instrument korrekt erkannt wird:
 
 ```bash
-# 1. Universe neu laden (enthält automatisch neue Portfolio-Assets)
-python3 dev_scripts/momentum_ls_universe.py --output data/universe/momentum_ls.json
+# Universe neu laden (enthält das neue Instrument):
+python3 automation/universe_fetcher.py
 
-# 2. Historische Daten holen (ID und Symbol entsprechend anpassen)
-python3 dev_scripts/momentum_ls_fetch_candles.py --etoro-id NEW_ID --symbol NEWSYM.ETORO --months 6
-
-# 3. Turnier neu ausführen
-python3 dev_scripts/momentum_ls_tournament.py --universe data/universe/momentum_ls.json --output logs/tournament_today.json
+# Dry-Run: Backtest + Tournament (kein Bot-Start, kein Risiko):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
 ```
 
+Prüfe im Orchestrator-Log, ob das neue Symbol im Tournament erscheint:
+```bash
+tail -f logs/orchestrator_$(date +%Y%m%d).log | grep "NVDA"
+```
 
 ---
+
+## Sonderfall: Momentum-LS Integration (vollautomatisch)
+
+Wenn das neue Instrument im verfolgten eToro Smart Portfolio ist, läuft der gesamte Prozess **automatisch** im nächsten täglichen Cron-Run ab:
+
+1. `universe_fetcher.py` erkennt das neue Asset
+2. `instrument_map.json` wird aktualisiert
+3. `api_backfiller.py` lädt fehlende Daten
+4. Das Tournament nimmt das Symbol automatisch auf
+5. Der Live-Bot handelt das neue Instrument (wenn eine Strategie die Kriterien erfüllt)
+
+Kein manueller Eingriff nötig.
+
+---
+
+## Fehlerbehebung
+
+| Problem | Lösung |
+|---------|--------|
+| `KeyError: 'NVDA.ETORO' not in instrument_map` | eToro-ID in `automation/config/instrument_map.json` eintragen |
+| `No parquet data for NVDA.ETORO` | `python3 automation/historical_fetcher.py --months 12` ausführen |
+| `No tournament winner for NVDA.ETORO` | Keine Strategie hat die Eligibilitätskriterien erfüllt — mehr Daten laden oder Schwellenwerte in `tournament.json` prüfen |
+| `ID nicht gefunden` | Prüfe, ob die eToro-ID als **String** (nicht Integer) in der JSON-Datei steht (z. B. `"2254"`, nicht `2254`) |
+
+---
+
 ## Weiterführende Dokumente
-- `manuals/momentum_ls.md`
-- `manuals/deployment.md`
+- [`manuals/momentum_ls.md`](./momentum_ls.md) — Momentum-LS Pipeline
+- [`manuals/deployment.md`](./deployment.md) — VM-Setup und Systemkonfiguration
+- [`automation/AGENTS.md`](../automation/AGENTS.md) — Autoritative Architektur-Dokumentation
 
 ---
-*Zuletzt aktualisiert: 2026-05-17 — Überprüft gegen Repository-Stand vom 2026-05-14*
+*Zuletzt aktualisiert: 2026-06-07 — Überprüft gegen automation/AGENTS.md*

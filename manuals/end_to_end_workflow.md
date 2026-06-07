@@ -1,139 +1,209 @@
-# 🔄 End-to-End Workflow & Pipeline
+# End-to-End Workflow & Pipeline
 
-Dieses Handbuch dokumentiert den vollständigen Lifecycle einer algorithmischen Trading-Strategie innerhalb der **eToro Nautilus Plattform** – von der Datengenerierung bis zur Ausführung mit echtem Kapital.
+Dieses Handbuch dokumentiert den vollständigen Lifecycle einer algorithmischen Trading-Strategie innerhalb der **eToro Nautilus Plattform** – von der Datenbeschaffung über den Backtest bis zum Live-Trading mit echtem Kapital.
 
-Das System folgt einer strikten 4-Phasen-Pipeline:
-1. **Data Collection & Universe Mapping**
-2. **Backtesting & Fine-Tuning**
-3. **Demo Testing ($10k)**
-4. **Live Deployment**
+Das System folgt einer strikten **5-Phasen-Pipeline**, die vom Master-Orchestrator `automation/daily_orchestrator.py` vollautomatisch ausgeführt wird:
 
-## 🏗️ Architektur-Synergien
+| Phase | Was passiert | Skript/Modul |
+|-------|-------------|-------------|
+| 1 | Universe & Mapping | `automation/universe_fetcher.py` |
+| 2 | Multi-ZIP-Import + Merge + API-Backfill | `automation/api_backfiller.py` |
+| 3 | Matrix-Backtest | `automation/backtest_runner.py` |
+| 4 | Tournament (beste Strategie pro Symbol) | `automation/backtest_runner.py` |
+| 5 | Live Deployment | `automation/momentum_ls_run.py` |
 
-Das System bietet zwei Hauptwege für das Live-Trading, welche sich architektonisch ergänzen:
-
-*   **Der "Set-and-Forget" Route (Momentum-LS Orchestrator):** Skripte wie `dev_scripts/momentum_ls_run.py` implementieren eine vollautomatisierte Pipeline (Universum filtern -> Turnier -> Allokation -> Live Node). Dies stellt die Zielarchitektur für zukünftige Skalierung dar.
-*   **Der Manuelle Route (Single-Bot Setup):** `run_bot.py` in Kombination mit `config/setups.py` ermöglicht hochspezifisches Fine-Tuning und die Ausführung einzelner fokussierter Strategien. Dieser Weg ist ideal für das Debugging, Forward-Testing neuer Strategien oder spezialisierte Einzel-Assets (z.B. Tesla).
-
----
-
-## Phase 1: Data Collection & Universe Mapping
-
-Bevor ein Backtest durchgeführt werden kann, müssen historische Preisdaten generiert werden. Die Plattform nutzt Nautilus Parquet-Dateien, die im Verzeichnis `data/nautilus/` gespeichert werden.
-
-### Automatisierte Datengewinnung (Momentum-LS Pipeline)
-
-Für Strategien, die auf einem dynamischen Universum operieren, erfolgt die Datengewinnung in zwei Schritten:
-
-1.  **Universum Filtern:**
-    Führe das Skript zur Bestimmung des aktuellen Anlage-Universums aus (z.B. basierend auf eToro Smart Portfolios).
-    ```bash
-    python3 dev_scripts/momentum_ls_universe.py
-    ```
-    *Resultat:* Erzeugt oder aktualisiert die Datei `data/universe/momentum_ls.json`.
-
-2.  **Candles / Ticks Fetchen:**
-    Das Auto-Fetch-Skript liest das generierte Universum aus und lädt die entsprechenden historischen Daten herunter.
-    ```bash
-    python3 dev_scripts/momentum_ls_fetch_candles_auto.py
-    ```
-    *Resultat:* Speichert die Marktdaten als QuoteTicks im Parquet-Format ab.
-
-> **💡 Usability-Optimierung (Backlog):** Aktuell erfordert dieser Prozess das sequentielle Ausführen zweier separater Skripte. Zukünftige Updates sollen diese Schritte in eine einheitliche Data-Pipeline integrieren (z.B. via `make fetch-data`).
+> **Eigenständiges Paket:** Das `automation/`-Verzeichnis ist vollständig in sich geschlossen. Es gibt keine Imports aus `adapters/`, `config/` (Root) oder `strategies/` (Root) — diese sind Legacy und archiviert. Alle Konfiguration liegt unter `automation/config/`.
 
 ---
 
-## Phase 2: Backtesting, Fine-Tuning & Critical System Limits
+## Architektur-Überblick
 
-Sobald die Parquet-Daten im `catalog_path` vorliegen, wird die Backtesting-Engine verwendet, um die Strategien zu evaluieren.
-
-### Konfiguration und Ausführung
-
-1.  **Konfigurieren:** Passe die Strategie-Parameter und Global Settings in `backtesting/backtesting_config.json` an.
-2.  **Ausführen:**
-    ```bash
-    python3 backtesting/run_backtest.py --htmlreport
-    ```
-    Dies führt die Tests parallel aus und generiert Tearsheets im `reports/`-Ordner zur visuellen Auswertung.
-
-### ⚠️ KRITISCH - Pitfall #14 (Fractional Equities Limitation)
-
-Beim Backtesting und Live-Trading von eToro-Aktien (Equities) gibt es eine fundamentale Einschränkung im aktuellen Framework:
-
-*   **Das Problem:** eToro erlaubt für Aktien den Handel von Bruchteilen (Fractional Shares) **nur** über den "By-Amount"-Endpunkt (USD-Betrag). Unser aktueller `etoro_execution.py` Adapter unterstützt jedoch derzeit nur den **"By-Units"** Fallback (Anzahl der Aktien) für diverse Operationen (z.B. Shorting oder komplexe Schließungen). Da der "By-Units" Endpunkt bei Equities strikt auf ganzen Zahlen besteht, **muss `size_precision` für Equities in `instrument_utils.py` auf `0` erzwungen werden.**
-*   **Der Crash (`ValueError`):** Wenn `trade_amount_usd` kleiner als der Preis für eine einzelne Aktie ist (z.B. 100$ Einsatz bei einer 450$ Tesla Aktie), berechnet Nautilus eine Quantity von `< 1`. Da `size_precision=0`, rundet Cython dies auf `0` ab und wirft einen harten `ValueError`, was den Worker-Prozess zum Absturz bringt.
-*   **Die Notlösung:** Alle Strategien implementieren in `_compute_quantity()` einen Pre-Check (`if units < float(instrument.size_increment): return None`), der Trades überspringt, wenn das Kapital nicht für mindestens 1 volle Aktie reicht.
-
-### 🚀 Feature Roadmap (Fractional Equities Refactoring)
-
-Um diese Limitierung aufzuheben und Fractional Equities in Nautilus nutzbar zu machen, **MUSS** das Framework in Zukunft wie folgt refaktoriert werden:
-
-1.  **Rewrite des `etoro_execution.py` Adapters:** Die primäre Order-Logik muss von "By-Units" auf "By-Amount" (Investition in USD) umgeschrieben werden, da eToro Bruchstück-Aktien ausschließlich über diesen Endpunkt zuverlässig abwickelt.
-2.  **Quantity Abstraction:** Nautilus rechnet intern strikt in Units. Es muss eine Abstraktionsschicht geschaffen werden, die Nautilus "vorgaukelt", es handle in Units, während der Adapter im Hintergrund die korrekten "By-Amount" Payloads an eToro sendet und den tatsächlichen Fill-Preis zurück in Units für Nautilus übersetzt.
-3.  **Anpassung `size_precision`:** Sobald der Adapter By-Amount vollständig unterstützt, kann `size_precision` für Equities in `adapters/instrument_utils.py` von `0` auf `5` (oder den eToro Standard) angehoben werden.
-
----
-
-## Phase 3: Demo Testing ($10,000)
-
-Erfolgreiche Strategien aus dem Backtest werden zunächst im eToro Demo-Konto (Papertrading) validiert.
-
-### Parameter Mapping
-
-Übertrage die profitablen Parameter aus dem Backtest-Tearsheet in das `ACTIVE_BOTS` Dictionary in `config/setups.py`:
-
-```python
-"MyWinningBot": {
-    "strategy_class": "TrendPullbackStrategy",
-    "etoro_id": "1111",
-    "symbol": "TSLA.ETORO",
-    "bar_type": "TSLA.ETORO-1-MINUTE-MID-INTERNAL",
-    "params": {
-        "ema_period": 50,
-        "rsi_pullback_level": 40.0
-    },
-    "trade_amount_usd": 100.0,
-    "max_open_positions": 1,
-}
+```text
+automation/universe_fetcher.py
+        │
+        ▼  data/universe/momentum_ls.json
+automation/catalog_service.py (24/7) ─► data/import/*.zip
+        │
+        ▼
+automation/daily_orchestrator.py  ← DER MASTER-ORCHESTRATOR
+  Phase 1: Universe laden + Mapping aktualisieren
+  Phase 2: ZIPs mergen + fehlende Daten via api_backfiller.py nachholen
+  Phase 3: Matrix-Backtest via backtest_runner.py starten
+  Phase 4: Tournament: beste Strategie pro Symbol ermitteln
+  Phase 5: Live-Bot via momentum_ls_run.py starten
+        │
+        ▼
+  logs/tournament_YYYY-MM-DD.json  ←  Turnier-Ergebnis
+  momentum_ls_run.py (Live-Bot)    ←  nutzt Tournament-Ergebnis
 ```
 
-### Strikte Isolation (Safety by API-Key)
+---
 
-Das System verfügt über eine strikte Isolation zwischen Demo- und Echtgeld-Konten. Ein manueller "Reset" der Konten ist nicht nötig.
-Die Trennung erfolgt ausschließlich über die Konfiguration:
+## Phase 1: Universe & Mapping
 
-1.  **API Keys:** Nutze die **Demo API Keys** in deiner `.env` Datei.
-2.  **Environment Flag:** Stelle sicher, dass in `config/setups.py` das Demo-Environment konfiguriert ist:
-    ```python
-    ETORO_EXECUTION = {
-        "environment": "demo",
-        "dry_run": False,
-        "enable_trailing_stop": True,
-    }
-    ```
+**Was passiert hier?**
+Das System lädt die aktuellen Bestandteile des eToro Smart Portfolios (`MOMENTUM_LS_USERNAME` in `.env`) und ordnet jedem eToro-internen Instrument eine Nautilus-kompatible Symbol-Bezeichnung zu (z. B. `TSLA.ETORO`). Das Ergebnis wird in `data/universe/momentum_ls.json` gespeichert.
 
-Starte den Bot mit `python3 run_bot.py`. Der Bot läuft nun isoliert gegen das virtuelle $10k Portfolio.
+**Warum ist das wichtig?**
+Ohne ein aktuelles Universe weiß der Bot nicht, welche Instrumente er handeln soll. Ist die Datei älter als 24 Stunden, warnt das System (`Universe data is stale`).
+
+**Manuell ausführen:**
+```bash
+python3 automation/universe_fetcher.py
+# Ergebnis: data/universe/momentum_ls.json (aktualisiert)
+```
+
+**Konfiguration:** Die Mapping-Tabelle `eToro-ID → Nautilus-Symbol` liegt in `automation/config/instrument_map.json`. Neue Instrumente werden hier eingetragen (Details: `manuals/new_tickers.md`).
 
 ---
 
-## Phase 4: Live Deployment
+## Phase 2: Daten beschaffen (Multi-ZIP-Import + API-Backfill)
 
-Wenn die Strategie im Demo-Modus profitabel und stabil läuft, erfolgt der Wechsel zum Live-Trading (Echtgeld).
+**Was passiert hier?**
+Der `catalog_service.py` läuft 24/7 und sammelt Tick-Daten als ZIP-Dateien im Verzeichnis `data/import/`. In Phase 2 werden diese ZIPs importiert und mit den bestehenden Parquet-Daten zusammengeführt (Merge). Fehlen Daten für bestimmte Zeiträume, füllt der `api_backfiller.py` diese Lücken automatisch auf.
 
-### Safety Interlocks (Echtgeld-Schutzmechanismen)
+**Parquet-Format:** Die Daten werden als `FixedSizeBinary(16)` QuoteTicks im Format `data/nautilus/data/quote_tick/{symbol}/data.parquet` gespeichert.
 
-Um fatale Fehler durch versehentliches Echtgeld-Trading zu verhindern, ist eine harte "Safety Interlock" Kaskade in `run_bot.py` integriert. **Alle** folgenden Bedingungen müssen erfüllt sein, sonst bricht der Start ab (`sys.exit(1)`):
+**Wichtige Schalter für den Orchestrator:**
 
-1.  `ETORO_EXECUTION["environment"] = "real"` (in `config/setups.py`)
-2.  `ETORO_EXECUTION["dry_run"] = False` (in `config/setups.py`)
-3.  `.env` Datei enthält die korrekten, realen eToro API- und User-Keys.
-4.  `.env` Datei enthält die explizite Bestätigungs-Variable: `ETORO_CONFIRM_LIVE=1`
+```bash
+# Standard-Run (ZIPs aus data/import/ verwenden):
+python3 automation/daily_orchestrator.py --skip-api-fetch
 
-### Systemd Process Separation
+# Mit API-Backfill (wenn data/import/ leer ist):
+python3 automation/daily_orchestrator.py
+```
 
-Auf der Produktions-VM dürfen Live-Trading und Datengenerierung nicht im selben Prozess laufen, um Latenzen oder Crashes gegenseitig zu isolieren.
+**Manueller API-Backfill:**
+```bash
+# Letzte 7 Tage via API nachholen:
+python3 automation/api_backfiller.py --days 7
 
-*   `run_bot.py` (Die Handelslogik) läuft als eigener systemd Service.
-*   `run_catalog.py` (Das passive Parquet-Recording) läuft als separater systemd Service.
+# Vollständiger historischer Backfill (12 Monate):
+python3 automation/historical_fetcher.py --months 12
+```
 
-Weitere Details zur Konfiguration der Linux-VM, Swap-Space und systemd-Diensten findest du im [☁️ Deployment & Operations Guide (`manuals/deployment.md`)](./deployment.md).
+---
+
+## Phase 3+4: Matrix-Backtest & Tournament
+
+**Was passiert hier?**
+Das System testet **alle** aktiven Strategien gegen **alle** Symbole im Universe. Dies ergibt eine Matrix aus `N Symbolen × M Strategien` Backtest-Jobs, die parallel ausgeführt werden (bis zu 6 CPU-Kerne).
+
+**Konfiguration:** `automation/config/backtest.json` (Zeitfenster, Spread-Modellierung).
+
+Das **Tournament** bestimmt danach für jedes Symbol die beste Strategie anhand dieser Regeln:
+
+### Eligibilitätsprüfung (muss ALLES erfüllt sein):
+- `min_trades ≥ 20` — statistisch ausreichend viele Trades
+- `total_return > 0%` — profitabel im Test-Zeitraum
+
+### Plus mindestens EINE dieser Bedingungen:
+- `min_sortino ≥ 0.3` — gutes Risiko-Rendite-Verhältnis
+- `min_profit_factor ≥ 1.1` — Gewinne überwiegen Verluste
+
+### Score-Berechnung (Gewinner hat höchsten Score):
+```
+Score = sortino × 0.4 + profit_factor × 0.3 + win_rate × 0.2 − max_drawdown × 0.1
+```
+
+**Tournament-Konfiguration:** `automation/config/tournament.json`
+
+**Ergebnis:** `logs/tournament_YYYY-MM-DD.json` mit den Gewinner-Strategien pro Symbol.
+
+**Manuell ausführen (Dry-Run, kein Bot-Start):**
+```bash
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+```
+
+---
+
+## Phase 5: Live Deployment
+
+**Was passiert hier?**
+Der Orchestrator startet `automation/momentum_ls_run.py` als getrennten Subprocess. Dieser liest das Tournament-Ergebnis, konfiguriert eine Strategie-Instanz pro Gewinner-Symbol und verbindet sich via WebSocket mit der eToro-API.
+
+### Safety Interlock (Echtgeld-Schutzmechanismen)
+
+Um versehentliches Echtgeld-Trading zu verhindern, gibt es eine harte Sicherheitssperre. **Alle drei** der folgenden Bedingungen müssen erfüllt sein — sonst bricht der Bot mit `sys.exit(1)` ab:
+
+1. `environment == 'real'` (in den Bot-Einstellungen)
+2. `dry_run == False`
+3. Umgebungsvariable `ETORO_CONFIRM_LIVE=1` in der `.env`-Datei gesetzt
+
+> **Merke:** Fehlt `ETORO_CONFIRM_LIVE=1` in der `.env`, startet der Bot nur im Dry-Run-Modus — er empfängt Daten und berechnet Signale, schickt aber **keine** echten Orders.
+
+### Live-Bot manuell starten
+
+```bash
+# Voraussetzung: ETORO_CONFIRM_LIVE=1 in .env gesetzt
+python3 automation/momentum_ls_run.py \
+  --universe data/universe/momentum_ls.json \
+  --tournament logs/tournament_$(date +%Y-%m-%d).json
+```
+
+---
+
+## Precision-Tabelle (aktuell, v2.0)
+
+Die Preisgenauigkeit (Dezimalstellen bei Kauf/Verkauf) wird automatisch gesetzt:
+
+| Instrument-Kategorie | price_precision | size_precision |
+|---------------------|----------------|----------------|
+| SHIB / PEPE | 8 | 8 |
+| Krypto (BTC, ETH, …) | 2 | 8 |
+| Forex / Rohstoffe (NATGAS, PALL, …) | 5 | 5 |
+| **Aktien (Default)** | **2** | **2** |
+
+> **Hinweis (Pitfall #14 — GELÖST):** In früheren Versionen war `size_precision` für Aktien auf `0` gesetzt, was zu `ValueError`-Crashes führte, wenn der Trade-Betrag kleiner als der Preis einer vollen Aktie war. Seit v2.0 ist `size_precision=2` für Aktien der Standard — Fractional Shares werden korrekt unterstützt.
+
+---
+
+## Komplette Pipeline auf einen Blick
+
+```bash
+# === TÄGLICHER STANDARD-LAUF (vollautomatisch) ===
+python3 automation/daily_orchestrator.py --skip-api-fetch
+
+# === EINZELNE PHASEN MANUELL ===
+
+# Phase 1: Universe aktualisieren
+python3 automation/universe_fetcher.py
+
+# Phase 2a: ZIP-Daten aus data/import/ mergen (passiert automatisch via Orchestrator)
+# Phase 2b: API-Backfill wenn ZIPs fehlen
+python3 automation/api_backfiller.py --days 7
+
+# Phase 2c: Historische Daten (Erstbefüllung)
+python3 automation/historical_fetcher.py --months 12
+
+# Phase 3+4: Backtest + Tournament (Dry-Run, kein Bot-Start)
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+
+# Phase 5: Live-Bot manuell starten
+python3 automation/momentum_ls_run.py \
+  --universe data/universe/momentum_ls.json \
+  --tournament logs/tournament_$(date +%Y-%m-%d).json
+
+# === CATALOG SERVICE (24/7, separat via systemd) ===
+python3 automation/catalog_service.py
+```
+
+---
+
+## Warnung: Overfitting & Slippage
+
+- **Overfitting:** Wenn Parameter extrem lange auf historischen Daten optimiert werden, passen sie zwar gut zur Vergangenheit, scheitern aber live. Verwende "Out-of-Sample" Tests: Optimiere auf Januar–Oktober, teste auf November–Dezember.
+- **Slippage:** In der Realität schwanken Preise zwischen Ordererteilung und Ausführung. Backtests gehen von perfekter Ausführung aus — rechne mit schlechteren Live-Ergebnissen.
+
+---
+
+## Weiterführende Dokumente
+- [`manuals/deployment.md`](./deployment.md) — Einrichtung der VM, systemd-Service und Cron
+- [`manuals/backtesting_manual.md`](./backtesting_manual.md) — Backtest-Konfiguration und Auswertung
+- [`manuals/momentum_ls.md`](./momentum_ls.md) — Momentum-LS Pipeline im Detail
+- [`manuals/new_tickers.md`](./new_tickers.md) — Neue Instrumente hinzufügen
+- [`manuals/run_bot_manual.md`](./run_bot_manual.md) — Bot-Betrieb, Log-Diagnose und Notfallmaßnahmen
+
+---
+*Zuletzt aktualisiert: 2026-06-07 — Überprüft gegen automation/AGENTS.md*
