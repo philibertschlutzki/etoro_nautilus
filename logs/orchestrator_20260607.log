@@ -1,0 +1,854 @@
+2026-06-07 11:23:19,938 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
+2026-06-07 11:23:19,939 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
+2026-06-07 11:23:19,939 | INFO     | orchestrator | ║  Start: 2026-06-07T09:23:19.939139+00:00                    ║
+2026-06-07 11:23:19,939 | INFO     | orchestrator | ║  DRY-RUN: NEIN                                                 ║
+2026-06-07 11:23:19,939 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
+2026-06-07 11:23:19,939 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
+2026-06-07 11:23:19,939 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-06-07T09:23:19.939261+00:00", "dry_run": false, "skip_api_fetch": false, "version": "2.0", "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]"}
+2026-06-07 11:23:19,973 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:23:19,973 | INFO     | orchestrator | PHASE 1: Universe & Mapping
+2026-06-07 11:23:19,973 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:23:19,973 | INFO     | orchestrator | [Phase 1] Universe-Alter: 19.4h — frisch genug.
+2026-06-07 11:23:19,975 | INFO     | orchestrator | [Phase 1] 106 eindeutige Instrumente im Universum.
+2026-06-07 11:23:19,975 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "timestamp_utc": "2026-06-07T09:23:19.975549+00:00", "universe_size": 106, "unmapped_count": 0}
+2026-06-07 11:23:19,975 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:23:19,975 | INFO     | orchestrator | PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)
+2026-06-07 11:23:19,975 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:23:19,975 | INFO     | orchestrator | [Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.
+2026-06-07 11:23:19,976 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 106 Instrumente.
+2026-06-07 11:23:19,976 | INFO     | orchestrator | [Phase 2c] API-Backfill für 106 Symbole …
+2026-06-07 11:23:19,976 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-06-07 11:23:19,976 | INFO     | api_backfiller | [api_backfiller] Starte Backfill: 2026-05-31 → 2026-06-07 | 106 Instrumente
+2026-06-07 11:23:19,976 | INFO     | api_backfiller | [api_backfiller] Lade Instrument-Precisions via eToro API …
+2026-06-07 11:23:20,065 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 1012, 'instrumentDisplayName': 'Caterpillar', 'instrumentTypeID': 5, 'exchangeID': 5, 'images': [{'instrumentID': 1012, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/cat/50x50.png'}, {'instrumentID': 1012, 'width': 150.0, 'height': 150.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/cat/150x150.png'}, {'instrumentID': 1012, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/ma
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1012 (CAT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 1012,
+  "instrumentDisplayName": "Caterpillar",
+  "instrumentTypeID": 5,
+  "exchangeID": 5,
+  "images": [
+    {
+      "instrumentID": 1012,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/50x50.png"
+    },
+    {
+      "instrumentID": 1012,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/150x150.png"
+    },
+    {
+      "instrumentID": 1012,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/35x35.png"
+    },
+    {
+      "instrumentID": 1012,
+      "width": 90.0,
+      "height": 90.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/90x90.png"
+    },
+    {
+      "instrumentID": 1012,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1012/1012_2C2C2C_F7F7F7.svg",
+      "backgroundColor": "#2C2C2C",
+      "textColor": "#F7F7F7"
+    }
+  ],
+  "symbolFull": "CAT",
+  "stocksIndustryID": 6,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1102 (PBR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 1102,
+  "instrumentDisplayName": "Petroleo Brasileiro SA Petrobras-ADR",
+  "instrumentTypeID": 5,
+  "exchangeID": 5,
+  "images": [
+    {
+      "instrumentID": 1102,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/35x35.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/50x50.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 80.0,
+      "height": 80.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/80x80.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 90.0,
+      "height": 90.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/90x90.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/150x150.png"
+    },
+    {
+      "instrumentID": 1102,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1102/1102_00853F_F7F7F7.svg",
+      "backgroundColor": "#00853F",
+      "textColor": "#F7F7F7"
+    }
+  ],
+  "symbolFull": "PBR",
+  "stocksIndustryID": 1,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1115 (NOK). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 1115,
+  "instrumentDisplayName": "Nokia Oyj-ADR",
+  "instrumentTypeID": 5,
+  "exchangeID": 5,
+  "images": [
+    {
+      "instrumentID": 1115,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/35x35.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/50x50.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 80.0,
+      "height": 80.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/80x80.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 90.0,
+      "height": 90.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/90x90.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/150x150.png"
+    },
+    {
+      "instrumentID": 1115,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1115/1115_124191_F7F7F7.svg",
+      "backgroundColor": "#124191",
+      "textColor": "#F7F7F7"
+    }
+  ],
+  "symbolFull": "NOK",
+  "stocksIndustryID": 8,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1129 (WDC). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1130 (MU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1138 (FDX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1184 (PINS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1341 (GEV). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1484 (PYPL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1585 (GIS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1586 (CAG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1687 (GLW). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1706 (AMAT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1832 (AMD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1865 (FISV). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1905 (MTZ). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1906 (LRCX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1914 (INTU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1945 (CMG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4067 (GSAT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4260 (NOW). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4263 (WDAY). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4309 (LULU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4356 (STX.US). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4358 (MRVL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4399 (TTD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4421 (CIEN). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4482 (TME). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5491 (ASX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5657 (SMTC). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5960 (SE). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5967 (CPRT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6071 (AXON). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6094 (COHR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6434 (GOOGL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6473 (MSTR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,066 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6549 (TER). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6681 (ELF). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6705 (FRO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6844 (NVO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6940 (SQM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 7852 (AMKR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 7930 (LQDA). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8604 (KD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8637 (DUOL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8867 (VRT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9271 (MNDY). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9814 (POWL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 10476 (SEI.US). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,067 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 14310 (NTSK). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 22, 'instrumentDisplayName': 'Natural Gas (Non Expiry)', 'instrumentTypeID': 2, 'exchangeID': 2, 'images': [{'instrumentID': 22, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/natgas/35x35.png'}, {'instrumentID': 22, 'width': 80.0, 'height': 80.0}, {'instrumentID': 22, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/natgas/50x50.png'}, {'instrumentID': 22, 'width': 150.0,
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 22: price_precision via historischem Fallback=5
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 22: size_precision via historischem Fallback=5
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 22 (NATGAS): price_prec=5, size_prec=5
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 42: price_precision via historischem Fallback=5
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 42: size_precision via historischem Fallback=5
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 42 (USDZAR): price_prec=5, size_prec=5
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 62: price_precision via historischem Fallback=5
+2026-06-07 11:23:20,705 | DEBUG    | api_backfiller | [api_backfiller] ID 62: size_precision via historischem Fallback=5
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 62 (USDTRY): price_prec=5, size_prec=5
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1002 (GOOG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1022 (JNJ). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1111 (TSLA). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1126 (ADBE). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1137 (NVDA). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1160 (WIX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1402 (ROP.ZU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1450 (ACN). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1497 (VLO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1531 (HAL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1552 (ABT.US). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1704 (CHTR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1839 (CRM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1979 (SNAP). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 2380 (01211.HK). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 2587 (RHM.DE). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 3208: price_precision via historischem Fallback=5
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 3208: size_precision via historischem Fallback=5
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 3208 (PALL): price_prec=5, size_prec=5
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4074 (HUBS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4087 (JAZZ). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4194 (ZTS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4232 (NVS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4272 (CCL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4286 (TEAM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4398 (DOCU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4403 (ZS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5045 (FSLY). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5635 (EEFT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6270 (RIOT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6552 (TSEM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6584 (AG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6700 (XPEV). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 7991 (PLTR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8585 (GTLB). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8611 (WBD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8638 (E). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8671 (HUT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9077 (FICO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9119 (INSM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9517 (INSW). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9803 (TTMI). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 15233 (ESLT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100000: price_precision via historischem Fallback=2
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100000: size_precision via historischem Fallback=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100000 (BTC): price_prec=2, size_prec=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100001: price_precision via historischem Fallback=2
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100001: size_precision via historischem Fallback=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100001 (ETH): price_prec=2, size_prec=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100003: price_precision via historischem Fallback=2
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100003: size_precision via historischem Fallback=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100003 (XRP): price_prec=2, size_prec=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100017: price_precision via historischem Fallback=2
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100017: size_precision via historischem Fallback=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100017 (ADA): price_prec=2, size_prec=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100043: price_precision via historischem Fallback=2
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100043: size_precision via historischem Fallback=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100043 (DOGE): price_prec=2, size_prec=8
+2026-06-07 11:23:20,706 | DEBUG    | api_backfiller | [api_backfiller] ID 100063: price_precision via historischem Fallback=2
+2026-06-07 11:23:20,707 | DEBUG    | api_backfiller | [api_backfiller] ID 100063: size_precision via historischem Fallback=8
+2026-06-07 11:23:20,707 | DEBUG    | api_backfiller | [api_backfiller] ID 100063 (SOL): price_prec=2, size_prec=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 100080, 'instrumentDisplayName': 'Shiba (in millions)', 'instrumentTypeID': 10, 'exchangeID': 8, 'images': [{'instrumentID': 100080, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/100080/35x35.png'}, {'instrumentID': 100080, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/100080/50x50.png'}, {'instrumentID': 100080, 'width': 150.0, 'height': 150.0, 'uri': 'https://etoro-c
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100080: price_precision via historischem Fallback=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100080: size_precision via historischem Fallback=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100080 (SHIBxM): price_prec=8, size_prec=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100085: price_precision via historischem Fallback=2
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100085: size_precision via historischem Fallback=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100085 (AVAX): price_prec=2, size_prec=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100303: price_precision via historischem Fallback=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100303: size_precision via historischem Fallback=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100303 (PEPExM): price_prec=8, size_prec=8
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100323: price_precision via historischem Fallback=2
+2026-06-07 11:23:21,264 | DEBUG    | api_backfiller | [api_backfiller] ID 100323: size_precision via historischem Fallback=8
+2026-06-07 11:23:21,265 | DEBUG    | api_backfiller | [api_backfiller] ID 100323 (ONDO): price_prec=2, size_prec=8
+2026-06-07 11:23:21,265 | DEBUG    | api_backfiller | [api_backfiller] ID 100421: price_precision via historischem Fallback=2
+2026-06-07 11:23:21,265 | DEBUG    | api_backfiller | [api_backfiller] ID 100421: size_precision via historischem Fallback=8
+2026-06-07 11:23:21,265 | DEBUG    | api_backfiller | [api_backfiller] ID 100421 (AERO): price_prec=2, size_prec=8
+2026-06-07 11:23:21,265 | DEBUG    | api_backfiller | [api_backfiller] ID 100446: price_precision via historischem Fallback=2
+2026-06-07 11:23:21,265 | DEBUG    | api_backfiller | [api_backfiller] ID 100446: size_precision via historischem Fallback=8
+2026-06-07 11:23:21,265 | DEBUG    | api_backfiller | [api_backfiller] ID 100446 (HYPE): price_prec=2, size_prec=8
+2026-06-07 11:23:21,766 | INFO     | api_backfiller | [api_backfiller] Precision-Auflösung abgeschlossen: 16 direkt via API, 0 via Symbol-Fallback (_fallback_precisions), 90 Equities erhalten (2,2) in run_backfill().
+2026-06-07 11:23:22,054 | DEBUG    | api_backfiller | [api_backfiller] 01211.HK.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:22,116 | INFO     | api_backfiller | [api_backfiller] 01211.HK.ETORO: 30 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:22,121 | DEBUG    | api_backfiller | [api_backfiller] 01211.HK.ETORO: 1271→1241 Zeilen (-30 Duplikate)
+2026-06-07 11:23:22,124 | INFO     | api_backfiller | [api_backfiller] 01211.HK.ETORO: 1241 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:23,229 | DEBUG    | api_backfiller | [api_backfiller] ABT.US.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:23,294 | INFO     | api_backfiller | [api_backfiller] ABT.US.ETORO: 115 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:23,297 | DEBUG    | api_backfiller | [api_backfiller] ABT.US.ETORO: 1339→1224 Zeilen (-115 Duplikate)
+2026-06-07 11:23:23,299 | INFO     | api_backfiller | [api_backfiller] ABT.US.ETORO: 1224 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:24,406 | DEBUG    | api_backfiller | [api_backfiller] ACN.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:24,465 | INFO     | api_backfiller | [api_backfiller] ACN.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:24,469 | DEBUG    | api_backfiller | [api_backfiller] ACN.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:23:24,470 | INFO     | api_backfiller | [api_backfiller] ACN.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:25,687 | INFO     | api_backfiller | [api_backfiller] ADA.ETORO: 168 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:23:25,690 | DEBUG    | api_backfiller | [api_backfiller] ADA.ETORO: 1530→1382 Zeilen (-148 Duplikate)
+2026-06-07 11:23:25,691 | INFO     | api_backfiller | [api_backfiller] ADA.ETORO: 1382 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:23:26,800 | DEBUG    | api_backfiller | [api_backfiller] ADBE.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:26,866 | INFO     | api_backfiller | [api_backfiller] ADBE.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:26,869 | DEBUG    | api_backfiller | [api_backfiller] ADBE.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:23:26,870 | INFO     | api_backfiller | [api_backfiller] ADBE.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:28,049 | INFO     | api_backfiller | [api_backfiller] AERO.ETORO: 168 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:23:28,053 | DEBUG    | api_backfiller | [api_backfiller] AERO.ETORO: 1529→1381 Zeilen (-148 Duplikate)
+2026-06-07 11:23:28,054 | INFO     | api_backfiller | [api_backfiller] AERO.ETORO: 1381 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:23:29,163 | DEBUG    | api_backfiller | [api_backfiller] AG.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:29,225 | INFO     | api_backfiller | [api_backfiller] AG.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:29,229 | DEBUG    | api_backfiller | [api_backfiller] AG.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:23:29,231 | INFO     | api_backfiller | [api_backfiller] AG.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:30,340 | DEBUG    | api_backfiller | [api_backfiller] AMAT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:30,410 | INFO     | api_backfiller | [api_backfiller] AMAT.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:30,415 | DEBUG    | api_backfiller | [api_backfiller] AMAT.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:23:30,417 | INFO     | api_backfiller | [api_backfiller] AMAT.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:31,526 | DEBUG    | api_backfiller | [api_backfiller] AMD.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:31,587 | INFO     | api_backfiller | [api_backfiller] AMD.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:31,592 | DEBUG    | api_backfiller | [api_backfiller] AMD.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:23:31,593 | INFO     | api_backfiller | [api_backfiller] AMD.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:32,700 | DEBUG    | api_backfiller | [api_backfiller] AMKR.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:32,767 | INFO     | api_backfiller | [api_backfiller] AMKR.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:32,771 | DEBUG    | api_backfiller | [api_backfiller] AMKR.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:23:32,772 | INFO     | api_backfiller | [api_backfiller] AMKR.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:33,876 | DEBUG    | api_backfiller | [api_backfiller] ASX.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:33,944 | INFO     | api_backfiller | [api_backfiller] ASX.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:33,949 | DEBUG    | api_backfiller | [api_backfiller] ASX.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:23:33,951 | INFO     | api_backfiller | [api_backfiller] ASX.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:35,118 | INFO     | api_backfiller | [api_backfiller] AVAX.ETORO: 168 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:23:35,123 | DEBUG    | api_backfiller | [api_backfiller] AVAX.ETORO: 1529→1381 Zeilen (-148 Duplikate)
+2026-06-07 11:23:35,125 | INFO     | api_backfiller | [api_backfiller] AVAX.ETORO: 1381 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:23:36,234 | DEBUG    | api_backfiller | [api_backfiller] AXON.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:36,299 | INFO     | api_backfiller | [api_backfiller] AXON.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:36,304 | DEBUG    | api_backfiller | [api_backfiller] AXON.ETORO: 1342→1226 Zeilen (-116 Duplikate)
+2026-06-07 11:23:36,306 | INFO     | api_backfiller | [api_backfiller] AXON.ETORO: 1226 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:37,482 | INFO     | api_backfiller | [api_backfiller] BTC.ETORO: 167 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:23:37,485 | DEBUG    | api_backfiller | [api_backfiller] BTC.ETORO: 1529→1382 Zeilen (-147 Duplikate)
+2026-06-07 11:23:37,486 | INFO     | api_backfiller | [api_backfiller] BTC.ETORO: 1382 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:23:38,595 | DEBUG    | api_backfiller | [api_backfiller] CAG.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:38,671 | INFO     | api_backfiller | [api_backfiller] CAG.ETORO: 110 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:38,675 | DEBUG    | api_backfiller | [api_backfiller] CAG.ETORO: 1333→1223 Zeilen (-110 Duplikate)
+2026-06-07 11:23:38,676 | INFO     | api_backfiller | [api_backfiller] CAG.ETORO: 1223 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:39,783 | DEBUG    | api_backfiller | [api_backfiller] CAT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:39,845 | INFO     | api_backfiller | [api_backfiller] CAT.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:39,848 | DEBUG    | api_backfiller | [api_backfiller] CAT.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:23:39,850 | INFO     | api_backfiller | [api_backfiller] CAT.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:40,960 | DEBUG    | api_backfiller | [api_backfiller] CCL.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:41,031 | INFO     | api_backfiller | [api_backfiller] CCL.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:41,036 | DEBUG    | api_backfiller | [api_backfiller] CCL.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:23:41,038 | INFO     | api_backfiller | [api_backfiller] CCL.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:42,145 | DEBUG    | api_backfiller | [api_backfiller] CHTR.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:42,225 | INFO     | api_backfiller | [api_backfiller] CHTR.ETORO: 115 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:42,229 | DEBUG    | api_backfiller | [api_backfiller] CHTR.ETORO: 1429→1314 Zeilen (-115 Duplikate)
+2026-06-07 11:23:42,231 | INFO     | api_backfiller | [api_backfiller] CHTR.ETORO: 1314 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:43,336 | DEBUG    | api_backfiller | [api_backfiller] CIEN.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:43,398 | INFO     | api_backfiller | [api_backfiller] CIEN.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:43,403 | DEBUG    | api_backfiller | [api_backfiller] CIEN.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:23:43,404 | INFO     | api_backfiller | [api_backfiller] CIEN.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:44,511 | DEBUG    | api_backfiller | [api_backfiller] CMG.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:44,578 | INFO     | api_backfiller | [api_backfiller] CMG.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:44,582 | DEBUG    | api_backfiller | [api_backfiller] CMG.ETORO: 1431→1315 Zeilen (-116 Duplikate)
+2026-06-07 11:23:44,583 | INFO     | api_backfiller | [api_backfiller] CMG.ETORO: 1315 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:45,691 | DEBUG    | api_backfiller | [api_backfiller] COHR.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:45,763 | INFO     | api_backfiller | [api_backfiller] COHR.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:45,765 | DEBUG    | api_backfiller | [api_backfiller] COHR.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:23:45,766 | INFO     | api_backfiller | [api_backfiller] COHR.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:46,871 | DEBUG    | api_backfiller | [api_backfiller] CPRT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:46,931 | INFO     | api_backfiller | [api_backfiller] CPRT.ETORO: 114 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:46,934 | DEBUG    | api_backfiller | [api_backfiller] CPRT.ETORO: 1428→1314 Zeilen (-114 Duplikate)
+2026-06-07 11:23:46,935 | INFO     | api_backfiller | [api_backfiller] CPRT.ETORO: 1314 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:48,041 | DEBUG    | api_backfiller | [api_backfiller] CRM.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:48,103 | INFO     | api_backfiller | [api_backfiller] CRM.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:48,106 | DEBUG    | api_backfiller | [api_backfiller] CRM.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:23:48,107 | INFO     | api_backfiller | [api_backfiller] CRM.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:49,213 | DEBUG    | api_backfiller | [api_backfiller] DOCU.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:49,301 | INFO     | api_backfiller | [api_backfiller] DOCU.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:49,306 | DEBUG    | api_backfiller | [api_backfiller] DOCU.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:23:49,307 | INFO     | api_backfiller | [api_backfiller] DOCU.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:50,475 | INFO     | api_backfiller | [api_backfiller] DOGE.ETORO: 167 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:23:50,478 | DEBUG    | api_backfiller | [api_backfiller] DOGE.ETORO: 1528→1381 Zeilen (-147 Duplikate)
+2026-06-07 11:23:50,479 | INFO     | api_backfiller | [api_backfiller] DOGE.ETORO: 1381 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:23:51,588 | DEBUG    | api_backfiller | [api_backfiller] DUOL.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:51,649 | INFO     | api_backfiller | [api_backfiller] DUOL.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:51,653 | DEBUG    | api_backfiller | [api_backfiller] DUOL.ETORO: 1433→1317 Zeilen (-116 Duplikate)
+2026-06-07 11:23:51,654 | INFO     | api_backfiller | [api_backfiller] DUOL.ETORO: 1317 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:52,761 | DEBUG    | api_backfiller | [api_backfiller] E.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:52,816 | INFO     | api_backfiller | [api_backfiller] E.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:52,819 | DEBUG    | api_backfiller | [api_backfiller] E.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:23:52,820 | INFO     | api_backfiller | [api_backfiller] E.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:53,928 | DEBUG    | api_backfiller | [api_backfiller] EEFT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:53,991 | INFO     | api_backfiller | [api_backfiller] EEFT.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:53,996 | DEBUG    | api_backfiller | [api_backfiller] EEFT.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:23:53,998 | INFO     | api_backfiller | [api_backfiller] EEFT.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:55,105 | DEBUG    | api_backfiller | [api_backfiller] ELF.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:55,208 | INFO     | api_backfiller | [api_backfiller] ELF.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:55,212 | DEBUG    | api_backfiller | [api_backfiller] ELF.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:23:55,214 | INFO     | api_backfiller | [api_backfiller] ELF.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:56,321 | DEBUG    | api_backfiller | [api_backfiller] ESLT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:56,386 | INFO     | api_backfiller | [api_backfiller] ESLT.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:56,390 | DEBUG    | api_backfiller | [api_backfiller] ESLT.ETORO: 1095→1060 Zeilen (-35 Duplikate)
+2026-06-07 11:23:56,391 | INFO     | api_backfiller | [api_backfiller] ESLT.ETORO: 1060 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:57,564 | INFO     | api_backfiller | [api_backfiller] ETH.ETORO: 168 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:23:57,567 | DEBUG    | api_backfiller | [api_backfiller] ETH.ETORO: 1529→1381 Zeilen (-148 Duplikate)
+2026-06-07 11:23:57,568 | INFO     | api_backfiller | [api_backfiller] ETH.ETORO: 1381 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:23:58,675 | DEBUG    | api_backfiller | [api_backfiller] FDX.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:58,738 | INFO     | api_backfiller | [api_backfiller] FDX.ETORO: 104 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:58,741 | DEBUG    | api_backfiller | [api_backfiller] FDX.ETORO: 1328→1224 Zeilen (-104 Duplikate)
+2026-06-07 11:23:58,742 | INFO     | api_backfiller | [api_backfiller] FDX.ETORO: 1224 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:23:59,847 | DEBUG    | api_backfiller | [api_backfiller] FICO.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:23:59,917 | INFO     | api_backfiller | [api_backfiller] FICO.ETORO: 98 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:23:59,921 | DEBUG    | api_backfiller | [api_backfiller] FICO.ETORO: 1395→1297 Zeilen (-98 Duplikate)
+2026-06-07 11:23:59,922 | INFO     | api_backfiller | [api_backfiller] FICO.ETORO: 1297 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:01,027 | DEBUG    | api_backfiller | [api_backfiller] FISV.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:01,096 | INFO     | api_backfiller | [api_backfiller] FISV.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:01,099 | DEBUG    | api_backfiller | [api_backfiller] FISV.ETORO: 1431→1315 Zeilen (-116 Duplikate)
+2026-06-07 11:24:01,100 | INFO     | api_backfiller | [api_backfiller] FISV.ETORO: 1315 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:02,207 | DEBUG    | api_backfiller | [api_backfiller] FRO.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:02,275 | INFO     | api_backfiller | [api_backfiller] FRO.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:02,279 | DEBUG    | api_backfiller | [api_backfiller] FRO.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:02,280 | INFO     | api_backfiller | [api_backfiller] FRO.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:03,385 | DEBUG    | api_backfiller | [api_backfiller] FSLY.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:03,447 | INFO     | api_backfiller | [api_backfiller] FSLY.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:03,450 | DEBUG    | api_backfiller | [api_backfiller] FSLY.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:03,451 | INFO     | api_backfiller | [api_backfiller] FSLY.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:04,557 | DEBUG    | api_backfiller | [api_backfiller] GEV.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:04,621 | INFO     | api_backfiller | [api_backfiller] GEV.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:04,624 | DEBUG    | api_backfiller | [api_backfiller] GEV.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:04,625 | INFO     | api_backfiller | [api_backfiller] GEV.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:05,729 | DEBUG    | api_backfiller | [api_backfiller] GIS.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:05,792 | INFO     | api_backfiller | [api_backfiller] GIS.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:05,794 | DEBUG    | api_backfiller | [api_backfiller] GIS.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:05,795 | INFO     | api_backfiller | [api_backfiller] GIS.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:06,901 | DEBUG    | api_backfiller | [api_backfiller] GLW.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:06,967 | INFO     | api_backfiller | [api_backfiller] GLW.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:06,970 | DEBUG    | api_backfiller | [api_backfiller] GLW.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:24:06,971 | INFO     | api_backfiller | [api_backfiller] GLW.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:08,077 | DEBUG    | api_backfiller | [api_backfiller] GOOG.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:08,139 | INFO     | api_backfiller | [api_backfiller] GOOG.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:08,141 | DEBUG    | api_backfiller | [api_backfiller] GOOG.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:08,142 | INFO     | api_backfiller | [api_backfiller] GOOG.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:09,247 | DEBUG    | api_backfiller | [api_backfiller] GOOGL.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:09,310 | INFO     | api_backfiller | [api_backfiller] GOOGL.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:09,313 | DEBUG    | api_backfiller | [api_backfiller] GOOGL.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:24:09,314 | INFO     | api_backfiller | [api_backfiller] GOOGL.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:10,420 | DEBUG    | api_backfiller | [api_backfiller] GSAT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:10,489 | INFO     | api_backfiller | [api_backfiller] GSAT.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:10,492 | DEBUG    | api_backfiller | [api_backfiller] GSAT.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:10,493 | INFO     | api_backfiller | [api_backfiller] GSAT.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:11,599 | DEBUG    | api_backfiller | [api_backfiller] GTLB.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:11,661 | INFO     | api_backfiller | [api_backfiller] GTLB.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:11,664 | DEBUG    | api_backfiller | [api_backfiller] GTLB.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:11,666 | INFO     | api_backfiller | [api_backfiller] GTLB.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:12,772 | DEBUG    | api_backfiller | [api_backfiller] HAL.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:12,836 | INFO     | api_backfiller | [api_backfiller] HAL.ETORO: 111 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:12,838 | DEBUG    | api_backfiller | [api_backfiller] HAL.ETORO: 1421→1310 Zeilen (-111 Duplikate)
+2026-06-07 11:24:12,839 | INFO     | api_backfiller | [api_backfiller] HAL.ETORO: 1310 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:13,945 | DEBUG    | api_backfiller | [api_backfiller] HUBS.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:14,004 | INFO     | api_backfiller | [api_backfiller] HUBS.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:14,006 | DEBUG    | api_backfiller | [api_backfiller] HUBS.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:14,007 | INFO     | api_backfiller | [api_backfiller] HUBS.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:15,112 | DEBUG    | api_backfiller | [api_backfiller] HUT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:15,168 | INFO     | api_backfiller | [api_backfiller] HUT.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:15,171 | DEBUG    | api_backfiller | [api_backfiller] HUT.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:15,172 | INFO     | api_backfiller | [api_backfiller] HUT.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:16,335 | INFO     | api_backfiller | [api_backfiller] HYPE.ETORO: 168 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:24:16,337 | DEBUG    | api_backfiller | [api_backfiller] HYPE.ETORO: 1432→1284 Zeilen (-148 Duplikate)
+2026-06-07 11:24:16,338 | INFO     | api_backfiller | [api_backfiller] HYPE.ETORO: 1284 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:24:17,443 | DEBUG    | api_backfiller | [api_backfiller] INSM.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:17,507 | INFO     | api_backfiller | [api_backfiller] INSM.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:17,510 | DEBUG    | api_backfiller | [api_backfiller] INSM.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:17,511 | INFO     | api_backfiller | [api_backfiller] INSM.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:18,617 | DEBUG    | api_backfiller | [api_backfiller] INSW.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:18,683 | INFO     | api_backfiller | [api_backfiller] INSW.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:18,686 | DEBUG    | api_backfiller | [api_backfiller] INSW.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:18,687 | INFO     | api_backfiller | [api_backfiller] INSW.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:19,793 | DEBUG    | api_backfiller | [api_backfiller] INTU.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:19,856 | INFO     | api_backfiller | [api_backfiller] INTU.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:19,858 | DEBUG    | api_backfiller | [api_backfiller] INTU.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:19,859 | INFO     | api_backfiller | [api_backfiller] INTU.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:20,962 | DEBUG    | api_backfiller | [api_backfiller] JAZZ.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:21,019 | INFO     | api_backfiller | [api_backfiller] JAZZ.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:21,021 | DEBUG    | api_backfiller | [api_backfiller] JAZZ.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:21,022 | INFO     | api_backfiller | [api_backfiller] JAZZ.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:22,129 | DEBUG    | api_backfiller | [api_backfiller] JNJ.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:22,199 | INFO     | api_backfiller | [api_backfiller] JNJ.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:22,203 | DEBUG    | api_backfiller | [api_backfiller] JNJ.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:24:22,204 | INFO     | api_backfiller | [api_backfiller] JNJ.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:23,311 | DEBUG    | api_backfiller | [api_backfiller] KD.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:23,373 | INFO     | api_backfiller | [api_backfiller] KD.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:23,377 | DEBUG    | api_backfiller | [api_backfiller] KD.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:23,378 | INFO     | api_backfiller | [api_backfiller] KD.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:24,484 | DEBUG    | api_backfiller | [api_backfiller] LQDA.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:24,551 | INFO     | api_backfiller | [api_backfiller] LQDA.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:24,554 | DEBUG    | api_backfiller | [api_backfiller] LQDA.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:24,555 | INFO     | api_backfiller | [api_backfiller] LQDA.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:25,661 | DEBUG    | api_backfiller | [api_backfiller] LRCX.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:25,724 | INFO     | api_backfiller | [api_backfiller] LRCX.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:25,728 | DEBUG    | api_backfiller | [api_backfiller] LRCX.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:24:25,729 | INFO     | api_backfiller | [api_backfiller] LRCX.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:26,834 | DEBUG    | api_backfiller | [api_backfiller] LULU.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:26,895 | INFO     | api_backfiller | [api_backfiller] LULU.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:26,898 | DEBUG    | api_backfiller | [api_backfiller] LULU.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:24:26,899 | INFO     | api_backfiller | [api_backfiller] LULU.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:28,002 | DEBUG    | api_backfiller | [api_backfiller] MNDY.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:28,060 | INFO     | api_backfiller | [api_backfiller] MNDY.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:28,062 | DEBUG    | api_backfiller | [api_backfiller] MNDY.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:28,063 | INFO     | api_backfiller | [api_backfiller] MNDY.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:29,169 | DEBUG    | api_backfiller | [api_backfiller] MRVL.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:29,240 | INFO     | api_backfiller | [api_backfiller] MRVL.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:29,243 | DEBUG    | api_backfiller | [api_backfiller] MRVL.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:29,244 | INFO     | api_backfiller | [api_backfiller] MRVL.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:30,351 | DEBUG    | api_backfiller | [api_backfiller] MSTR.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:30,416 | INFO     | api_backfiller | [api_backfiller] MSTR.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:30,419 | DEBUG    | api_backfiller | [api_backfiller] MSTR.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:30,420 | INFO     | api_backfiller | [api_backfiller] MSTR.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:31,528 | DEBUG    | api_backfiller | [api_backfiller] MTZ.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:31,584 | INFO     | api_backfiller | [api_backfiller] MTZ.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:31,588 | DEBUG    | api_backfiller | [api_backfiller] MTZ.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:31,589 | INFO     | api_backfiller | [api_backfiller] MTZ.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:32,695 | DEBUG    | api_backfiller | [api_backfiller] MU.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:32,750 | INFO     | api_backfiller | [api_backfiller] MU.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:32,753 | DEBUG    | api_backfiller | [api_backfiller] MU.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:24:32,754 | INFO     | api_backfiller | [api_backfiller] MU.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:33,919 | INFO     | api_backfiller | [api_backfiller] NATGAS.ETORO: 115 Candles konvertiert (price_prec=5, size_prec=5).
+2026-06-07 11:24:33,922 | DEBUG    | api_backfiller | [api_backfiller] NATGAS.ETORO: 1351→1236 Zeilen (-115 Duplikate)
+2026-06-07 11:24:33,923 | INFO     | api_backfiller | [api_backfiller] NATGAS.ETORO: 1236 Zeilen gespeichert (price_prec=5, size_prec=5) → data.parquet
+2026-06-07 11:24:35,031 | DEBUG    | api_backfiller | [api_backfiller] NOK.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:35,109 | INFO     | api_backfiller | [api_backfiller] NOK.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:35,113 | DEBUG    | api_backfiller | [api_backfiller] NOK.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:35,115 | INFO     | api_backfiller | [api_backfiller] NOK.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:36,223 | DEBUG    | api_backfiller | [api_backfiller] NOW.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:36,288 | INFO     | api_backfiller | [api_backfiller] NOW.ETORO: 110 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:36,291 | DEBUG    | api_backfiller | [api_backfiller] NOW.ETORO: 1420→1310 Zeilen (-110 Duplikate)
+2026-06-07 11:24:36,292 | INFO     | api_backfiller | [api_backfiller] NOW.ETORO: 1310 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:37,399 | DEBUG    | api_backfiller | [api_backfiller] NTSK.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:37,466 | INFO     | api_backfiller | [api_backfiller] NTSK.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:37,469 | DEBUG    | api_backfiller | [api_backfiller] NTSK.ETORO: 1212→1177 Zeilen (-35 Duplikate)
+2026-06-07 11:24:37,470 | INFO     | api_backfiller | [api_backfiller] NTSK.ETORO: 1177 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:38,577 | DEBUG    | api_backfiller | [api_backfiller] NVDA.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:38,641 | INFO     | api_backfiller | [api_backfiller] NVDA.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:38,644 | DEBUG    | api_backfiller | [api_backfiller] NVDA.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:38,645 | INFO     | api_backfiller | [api_backfiller] NVDA.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:39,750 | DEBUG    | api_backfiller | [api_backfiller] NVO.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:39,813 | INFO     | api_backfiller | [api_backfiller] NVO.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:39,816 | DEBUG    | api_backfiller | [api_backfiller] NVO.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:39,817 | INFO     | api_backfiller | [api_backfiller] NVO.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:40,924 | DEBUG    | api_backfiller | [api_backfiller] NVS.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:40,983 | INFO     | api_backfiller | [api_backfiller] NVS.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:40,986 | DEBUG    | api_backfiller | [api_backfiller] NVS.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:40,987 | INFO     | api_backfiller | [api_backfiller] NVS.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:42,160 | INFO     | api_backfiller | [api_backfiller] ONDO.ETORO: 168 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:24:42,163 | DEBUG    | api_backfiller | [api_backfiller] ONDO.ETORO: 1529→1381 Zeilen (-148 Duplikate)
+2026-06-07 11:24:42,164 | INFO     | api_backfiller | [api_backfiller] ONDO.ETORO: 1381 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:24:43,553 | INFO     | api_backfiller | [api_backfiller] PALL.ETORO: 35 Candles konvertiert (price_prec=5, size_prec=5).
+2026-06-07 11:24:43,556 | DEBUG    | api_backfiller | [api_backfiller] PALL.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:43,557 | INFO     | api_backfiller | [api_backfiller] PALL.ETORO: 1244 Zeilen gespeichert (price_prec=5, size_prec=5) → data.parquet
+2026-06-07 11:24:44,664 | DEBUG    | api_backfiller | [api_backfiller] PBR.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:44,732 | INFO     | api_backfiller | [api_backfiller] PBR.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:44,735 | DEBUG    | api_backfiller | [api_backfiller] PBR.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:44,736 | INFO     | api_backfiller | [api_backfiller] PBR.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:45,923 | INFO     | api_backfiller | [api_backfiller] PEPExM.ETORO: 168 Candles konvertiert (price_prec=8, size_prec=8).
+2026-06-07 11:24:45,926 | DEBUG    | api_backfiller | [api_backfiller] PEPExM.ETORO: 1529→1381 Zeilen (-148 Duplikate)
+2026-06-07 11:24:45,927 | INFO     | api_backfiller | [api_backfiller] PEPExM.ETORO: 1381 Zeilen gespeichert (price_prec=8, size_prec=8) → data.parquet
+2026-06-07 11:24:47,035 | DEBUG    | api_backfiller | [api_backfiller] PINS.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:47,102 | INFO     | api_backfiller | [api_backfiller] PINS.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:47,105 | DEBUG    | api_backfiller | [api_backfiller] PINS.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:47,106 | INFO     | api_backfiller | [api_backfiller] PINS.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:48,214 | DEBUG    | api_backfiller | [api_backfiller] PLTR.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:48,272 | INFO     | api_backfiller | [api_backfiller] PLTR.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:48,275 | DEBUG    | api_backfiller | [api_backfiller] PLTR.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:48,276 | INFO     | api_backfiller | [api_backfiller] PLTR.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:49,382 | DEBUG    | api_backfiller | [api_backfiller] POWL.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:49,451 | INFO     | api_backfiller | [api_backfiller] POWL.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:49,454 | DEBUG    | api_backfiller | [api_backfiller] POWL.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:49,455 | INFO     | api_backfiller | [api_backfiller] POWL.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:50,560 | DEBUG    | api_backfiller | [api_backfiller] PYPL.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:50,631 | INFO     | api_backfiller | [api_backfiller] PYPL.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:50,633 | DEBUG    | api_backfiller | [api_backfiller] PYPL.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:50,634 | INFO     | api_backfiller | [api_backfiller] PYPL.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:51,740 | DEBUG    | api_backfiller | [api_backfiller] RHM.DE.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:51,808 | INFO     | api_backfiller | [api_backfiller] RHM.DE.ETORO: 45 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:51,810 | DEBUG    | api_backfiller | [api_backfiller] RHM.DE.ETORO: 1297→1252 Zeilen (-45 Duplikate)
+2026-06-07 11:24:51,812 | INFO     | api_backfiller | [api_backfiller] RHM.DE.ETORO: 1252 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:52,919 | DEBUG    | api_backfiller | [api_backfiller] RIOT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:52,980 | INFO     | api_backfiller | [api_backfiller] RIOT.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:52,983 | DEBUG    | api_backfiller | [api_backfiller] RIOT.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:24:52,984 | INFO     | api_backfiller | [api_backfiller] RIOT.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:54,088 | DEBUG    | api_backfiller | [api_backfiller] ROP.ZU.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:54,150 | INFO     | api_backfiller | [api_backfiller] ROP.ZU.ETORO: 45 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:54,153 | DEBUG    | api_backfiller | [api_backfiller] ROP.ZU.ETORO: 1292→1247 Zeilen (-45 Duplikate)
+2026-06-07 11:24:54,154 | INFO     | api_backfiller | [api_backfiller] ROP.ZU.ETORO: 1247 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:55,258 | DEBUG    | api_backfiller | [api_backfiller] SE.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:55,321 | INFO     | api_backfiller | [api_backfiller] SE.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:55,323 | DEBUG    | api_backfiller | [api_backfiller] SE.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:24:55,324 | INFO     | api_backfiller | [api_backfiller] SE.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:56,430 | DEBUG    | api_backfiller | [api_backfiller] SEI.US.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:56,492 | INFO     | api_backfiller | [api_backfiller] SEI.US.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:56,495 | DEBUG    | api_backfiller | [api_backfiller] SEI.US.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:56,496 | INFO     | api_backfiller | [api_backfiller] SEI.US.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:57,665 | INFO     | api_backfiller | [api_backfiller] SHIBxM.ETORO: 168 Candles konvertiert (price_prec=8, size_prec=8).
+2026-06-07 11:24:57,668 | DEBUG    | api_backfiller | [api_backfiller] SHIBxM.ETORO: 1530→1382 Zeilen (-148 Duplikate)
+2026-06-07 11:24:57,669 | INFO     | api_backfiller | [api_backfiller] SHIBxM.ETORO: 1382 Zeilen gespeichert (price_prec=8, size_prec=8) → data.parquet
+2026-06-07 11:24:58,775 | DEBUG    | api_backfiller | [api_backfiller] SMTC.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:24:58,841 | INFO     | api_backfiller | [api_backfiller] SMTC.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:24:58,844 | DEBUG    | api_backfiller | [api_backfiller] SMTC.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:24:58,845 | INFO     | api_backfiller | [api_backfiller] SMTC.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:24:59,951 | DEBUG    | api_backfiller | [api_backfiller] SNAP.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:00,023 | INFO     | api_backfiller | [api_backfiller] SNAP.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:00,026 | DEBUG    | api_backfiller | [api_backfiller] SNAP.ETORO: 1433→1317 Zeilen (-116 Duplikate)
+2026-06-07 11:25:00,027 | INFO     | api_backfiller | [api_backfiller] SNAP.ETORO: 1317 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:01,211 | INFO     | api_backfiller | [api_backfiller] SOL.ETORO: 168 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:25:01,214 | DEBUG    | api_backfiller | [api_backfiller] SOL.ETORO: 1529→1381 Zeilen (-148 Duplikate)
+2026-06-07 11:25:01,215 | INFO     | api_backfiller | [api_backfiller] SOL.ETORO: 1381 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:25:02,322 | DEBUG    | api_backfiller | [api_backfiller] SQM.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:02,397 | INFO     | api_backfiller | [api_backfiller] SQM.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:02,400 | DEBUG    | api_backfiller | [api_backfiller] SQM.ETORO: 1309→1274 Zeilen (-35 Duplikate)
+2026-06-07 11:25:02,401 | INFO     | api_backfiller | [api_backfiller] SQM.ETORO: 1274 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:03,507 | DEBUG    | api_backfiller | [api_backfiller] STX.US.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:03,597 | INFO     | api_backfiller | [api_backfiller] STX.US.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:03,601 | DEBUG    | api_backfiller | [api_backfiller] STX.US.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:25:03,602 | INFO     | api_backfiller | [api_backfiller] STX.US.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:04,708 | DEBUG    | api_backfiller | [api_backfiller] TEAM.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:04,770 | INFO     | api_backfiller | [api_backfiller] TEAM.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:04,774 | DEBUG    | api_backfiller | [api_backfiller] TEAM.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:25:04,775 | INFO     | api_backfiller | [api_backfiller] TEAM.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:05,880 | DEBUG    | api_backfiller | [api_backfiller] TER.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:05,950 | INFO     | api_backfiller | [api_backfiller] TER.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:05,952 | DEBUG    | api_backfiller | [api_backfiller] TER.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:25:05,953 | INFO     | api_backfiller | [api_backfiller] TER.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:07,057 | DEBUG    | api_backfiller | [api_backfiller] TME.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:07,120 | INFO     | api_backfiller | [api_backfiller] TME.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:07,123 | DEBUG    | api_backfiller | [api_backfiller] TME.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:25:07,124 | INFO     | api_backfiller | [api_backfiller] TME.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:08,229 | DEBUG    | api_backfiller | [api_backfiller] TSEM.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:08,294 | INFO     | api_backfiller | [api_backfiller] TSEM.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:08,296 | DEBUG    | api_backfiller | [api_backfiller] TSEM.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:25:08,297 | INFO     | api_backfiller | [api_backfiller] TSEM.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:09,404 | DEBUG    | api_backfiller | [api_backfiller] TSLA.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:09,594 | INFO     | api_backfiller | [api_backfiller] TSLA.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:09,597 | DEBUG    | api_backfiller | [api_backfiller] TSLA.ETORO: 1341→1225 Zeilen (-116 Duplikate)
+2026-06-07 11:25:09,598 | INFO     | api_backfiller | [api_backfiller] TSLA.ETORO: 1225 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:10,704 | DEBUG    | api_backfiller | [api_backfiller] TTD.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:10,793 | INFO     | api_backfiller | [api_backfiller] TTD.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:10,796 | DEBUG    | api_backfiller | [api_backfiller] TTD.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:25:10,797 | INFO     | api_backfiller | [api_backfiller] TTD.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:11,903 | DEBUG    | api_backfiller | [api_backfiller] TTMI.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:11,968 | INFO     | api_backfiller | [api_backfiller] TTMI.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:11,970 | DEBUG    | api_backfiller | [api_backfiller] TTMI.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:25:11,971 | INFO     | api_backfiller | [api_backfiller] TTMI.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:13,183 | INFO     | api_backfiller | [api_backfiller] USDTRY.ETORO: 120 Candles konvertiert (price_prec=5, size_prec=5).
+2026-06-07 11:25:13,186 | DEBUG    | api_backfiller | [api_backfiller] USDTRY.ETORO: 1360→1240 Zeilen (-120 Duplikate)
+2026-06-07 11:25:13,187 | INFO     | api_backfiller | [api_backfiller] USDTRY.ETORO: 1240 Zeilen gespeichert (price_prec=5, size_prec=5) → data.parquet
+2026-06-07 11:25:14,354 | INFO     | api_backfiller | [api_backfiller] USDZAR.ETORO: 120 Candles konvertiert (price_prec=5, size_prec=5).
+2026-06-07 11:25:14,356 | DEBUG    | api_backfiller | [api_backfiller] USDZAR.ETORO: 1360→1240 Zeilen (-120 Duplikate)
+2026-06-07 11:25:14,357 | INFO     | api_backfiller | [api_backfiller] USDZAR.ETORO: 1240 Zeilen gespeichert (price_prec=5, size_prec=5) → data.parquet
+2026-06-07 11:25:15,461 | DEBUG    | api_backfiller | [api_backfiller] VLO.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:15,522 | INFO     | api_backfiller | [api_backfiller] VLO.ETORO: 107 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:15,524 | DEBUG    | api_backfiller | [api_backfiller] VLO.ETORO: 1412→1305 Zeilen (-107 Duplikate)
+2026-06-07 11:25:15,525 | INFO     | api_backfiller | [api_backfiller] VLO.ETORO: 1305 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:16,631 | DEBUG    | api_backfiller | [api_backfiller] VRT.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:16,697 | INFO     | api_backfiller | [api_backfiller] VRT.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:16,700 | DEBUG    | api_backfiller | [api_backfiller] VRT.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:25:16,701 | INFO     | api_backfiller | [api_backfiller] VRT.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:17,808 | DEBUG    | api_backfiller | [api_backfiller] WBD.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:17,867 | INFO     | api_backfiller | [api_backfiller] WBD.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:17,870 | DEBUG    | api_backfiller | [api_backfiller] WBD.ETORO: 1433→1317 Zeilen (-116 Duplikate)
+2026-06-07 11:25:17,871 | INFO     | api_backfiller | [api_backfiller] WBD.ETORO: 1317 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:18,978 | DEBUG    | api_backfiller | [api_backfiller] WDAY.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:19,066 | INFO     | api_backfiller | [api_backfiller] WDAY.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:19,069 | DEBUG    | api_backfiller | [api_backfiller] WDAY.ETORO: 1431→1315 Zeilen (-116 Duplikate)
+2026-06-07 11:25:19,070 | INFO     | api_backfiller | [api_backfiller] WDAY.ETORO: 1315 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:20,179 | DEBUG    | api_backfiller | [api_backfiller] WDC.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:20,246 | INFO     | api_backfiller | [api_backfiller] WDC.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:20,249 | DEBUG    | api_backfiller | [api_backfiller] WDC.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:25:20,250 | INFO     | api_backfiller | [api_backfiller] WDC.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:21,357 | DEBUG    | api_backfiller | [api_backfiller] WIX.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:21,421 | INFO     | api_backfiller | [api_backfiller] WIX.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:21,424 | DEBUG    | api_backfiller | [api_backfiller] WIX.ETORO: 1308→1273 Zeilen (-35 Duplikate)
+2026-06-07 11:25:21,426 | INFO     | api_backfiller | [api_backfiller] WIX.ETORO: 1273 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:22,535 | DEBUG    | api_backfiller | [api_backfiller] XPEV.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:22,608 | INFO     | api_backfiller | [api_backfiller] XPEV.ETORO: 35 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:22,610 | DEBUG    | api_backfiller | [api_backfiller] XPEV.ETORO: 1279→1244 Zeilen (-35 Duplikate)
+2026-06-07 11:25:22,611 | INFO     | api_backfiller | [api_backfiller] XPEV.ETORO: 1244 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:23,790 | INFO     | api_backfiller | [api_backfiller] XRP.ETORO: 167 Candles konvertiert (price_prec=2, size_prec=8).
+2026-06-07 11:25:23,794 | DEBUG    | api_backfiller | [api_backfiller] XRP.ETORO: 1528→1381 Zeilen (-147 Duplikate)
+2026-06-07 11:25:23,795 | INFO     | api_backfiller | [api_backfiller] XRP.ETORO: 1381 Zeilen gespeichert (price_prec=2, size_prec=8) → data.parquet
+2026-06-07 11:25:24,900 | DEBUG    | api_backfiller | [api_backfiller] ZS.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:24,970 | INFO     | api_backfiller | [api_backfiller] ZS.ETORO: 116 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:24,973 | DEBUG    | api_backfiller | [api_backfiller] ZS.ETORO: 1432→1316 Zeilen (-116 Duplikate)
+2026-06-07 11:25:24,975 | INFO     | api_backfiller | [api_backfiller] ZS.ETORO: 1316 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:26,082 | DEBUG    | api_backfiller | [api_backfiller] ZTS.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-07 11:25:26,148 | INFO     | api_backfiller | [api_backfiller] ZTS.ETORO: 115 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-07 11:25:26,151 | DEBUG    | api_backfiller | [api_backfiller] ZTS.ETORO: 1338→1223 Zeilen (-115 Duplikate)
+2026-06-07 11:25:26,152 | INFO     | api_backfiller | [api_backfiller] ZTS.ETORO: 1223 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:27,255 | INFO     | api_backfiller | [api_backfiller] Backfill abgeschlossen: 106 Symbole befüllt.
+2026-06-07 11:25:27,257 | INFO     | orchestrator | [Phase 2c] API-Backfill: 106 Symbole befüllt.
+2026-06-07 11:25:27,335 | INFO     | orchestrator | [Phase 2d] 1 Symbole unzureichend (benötigt Daten bis 1762680327265656064 ns) — starte Historical Fetcher ...
+2026-06-07 11:25:27,336 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 106 Instrumente.
+2026-06-07 11:25:27,336 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-06-07 11:25:27,336 | INFO     | historical_fetcher | [historical_fetcher] 1/1 Symbole werden gefetcht (months=12, start_ns=1762680327265656064).
+2026-06-07 11:25:27,337 | INFO     | historical_fetcher | [historical_fetcher] Lade Instrument-Precisions via eToro API …
+2026-06-07 11:25:27,458 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 15233, 'instrumentDisplayName': 'Elbit Systems Ltd', 'instrumentTypeID': 5, 'exchangeID': 4, 'images': [{'instrumentID': 15233, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/15233/35x35.png'}, {'instrumentID': 15233, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/15233/50x50.png'}, {'instrumentID': 15233, 'width': 150.0, 'height': 150.0, 'uri': 'https://etoro-cdn.etoros
+2026-06-07 11:25:27,459 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 15233 (ESLT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-07 11:25:27,459 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 15233,
+  "instrumentDisplayName": "Elbit Systems Ltd",
+  "instrumentTypeID": 5,
+  "exchangeID": 4,
+  "images": [
+    {
+      "instrumentID": 15233,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/35x35.png"
+    },
+    {
+      "instrumentID": 15233,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/50x50.png"
+    },
+    {
+      "instrumentID": 15233,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/150x150.png"
+    },
+    {
+      "instrumentID": 15233,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/15233/15233_FDE134_2C2C2C.svg",
+      "backgroundColor": "#FDE134",
+      "textColor": "#2C2C2C"
+    }
+  ],
+  "symbolFull": "ESLT",
+  "stocksIndustryID": 6,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-07 11:25:27,960 | DEBUG    | api_backfiller | [api_backfiller] Precision-API lieferte keine Felder (0 von 1 Instrumenten), aber alle wurden als Equities abgefangen. Dies ist das erwartete Verhalten.
+2026-06-07 11:25:27,960 | INFO     | api_backfiller | [api_backfiller] Precision-Auflösung abgeschlossen: 0 direkt via API, 0 via Symbol-Fallback (_fallback_precisions), 1 Equities erhalten (2,2) in run_backfill().
+2026-06-07 11:25:27,961 | INFO     | historical_fetcher | [historical_fetcher] Precisions via API/Fallback: 0 geladen (restliche via Standard-Equity-Fallback).
+2026-06-07 11:25:27,965 | INFO     | historical_fetcher | [ESLT.ETORO] Delta-Update: Fetch ab 2025-11-19T23:59:59+00:00 rückwärts bis 2025-11-09T09:25:27.265656+00:00
+2026-06-07 11:25:28,154 | DEBUG    | historical_fetcher | [ESLT.ETORO] OneHour: 932 Candles, älteste: 2025-11-20T14:00:00+00:00
+2026-06-07 11:25:29,371 | INFO     | historical_fetcher | [ESLT.ETORO] Historische Tiefe für OneHour erreicht.
+2026-06-07 11:25:29,447 | DEBUG    | historical_fetcher | [ESLT.ETORO] OneDay: 127 Candles, älteste: 2025-11-20T00:00:00+00:00
+2026-06-07 11:25:30,625 | INFO     | historical_fetcher | [ESLT.ETORO] Historische Tiefe für OneDay erreicht.
+2026-06-07 11:25:30,628 | INFO     | historical_fetcher | [ESLT.ETORO] 1059 Candles → speichere (price_prec=2).
+2026-06-07 11:25:30,632 | DEBUG    | historical_fetcher | [api_backfiller] ESLT.ETORO: 2119→1060 Zeilen (-1059 Duplikate)
+2026-06-07 11:25:30,633 | INFO     | historical_fetcher | [api_backfiller] ESLT.ETORO: 1060 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-07 11:25:31,735 | INFO     | historical_fetcher | [historical_fetcher] Fertig: 1 Symbole befüllt.
+2026-06-07 11:25:31,737 | INFO     | orchestrator | [Phase 2d] Historical Fetcher: 1 Symbole befüllt.
+2026-06-07 11:25:31,738 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2D_COMPLETE", "timestamp_utc": "2026-06-07T09:25:31.737965+00:00", "insufficient_count": 1, "hist_filled_count": 1}
+2026-06-07 11:25:31,738 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2_COMPLETE", "timestamp_utc": "2026-06-07T09:25:31.738095+00:00", "merged_instruments": 0, "zips_deleted": 0, "api_filled_count": 106, "hist_filled_count": 1}
+2026-06-07 11:25:31,738 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:25:31,738 | INFO     | orchestrator | PHASE 3+4: Matrix-Backtesting & Tournament
+2026-06-07 11:25:31,738 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:25:31,742 | INFO     | orchestrator | [Phase 3] Dynamische Config: /home/user/etoro_nautilus/logs/backtest_dynamic_config.json
+2026-06-07 11:25:31,742 | INFO     | orchestrator | [Phase 3] Backtest-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/backtest_runner.py --momentum --catalog-path /home/user/etoro_nautilus/data/nautilus --config /home/user/etoro_nautilus/logs/backtest_dynamic_config.json --output /home/user/etoro_nautilus/logs/tournament_2026-06-07.json
+2026-06-07 11:25:31,742 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BACKTEST_START", "timestamp_utc": "2026-06-07T09:25:31.742354+00:00", "start": "2026-01-08T00:00:00Z", "end": "2026-06-07T00:00:00Z", "walk_forward_active": true}
+2026-06-07 11:28:00,204 | INFO     | orchestrator | [Phase 3] Backtest beendet (Exit-Code: 0).
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | VolatilityBreakoutPumpStrategy |   -4.13 |   -0.93 |    0.35 |    156 |     9.3 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | VwapExhaustionStrategy         |    2.62 |    0.68 |    1.35 |     52 |     8.0 | ✓
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | ComboTrendVwapStrategy         | n/a(<min) |   -1.00 |    0.00 |      2 |     3.0 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | DynamicBreakoutStrategy        |   -1.15 |   -0.59 |    0.75 |    396 |     5.4 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | FlashCrashReversalStrategy     |    5.34 |    6.46 |    2.48 |    212 |     6.2 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | HourlyMeanReversionStrategy    |   15.71 |   18.26 |    4.46 |    236 |     8.7 | ✓
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | MeanReversionStrategy          | n/a(<min) | n/a(<min) | n/a(<min) |      2 |    17.0 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | SmaCrossoverStrategy           |   -6.15 |   -1.00 |    0.14 |    222 |     6.9 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | VolatilityBreakoutPumpStrategy |   -5.21 |   -0.95 |    0.28 |    188 |     8.6 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | VwapExhaustionStrategy         |    1.78 |    0.93 |    1.39 |     44 |    12.4 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | ComboTrendVwapStrategy         | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | DynamicBreakoutStrategy        |   -3.95 |   -1.00 |    0.29 |    398 |     5.3 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | FlashCrashReversalStrategy     |    5.40 |    3.80 |    2.45 |    210 |     5.9 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | HourlyMeanReversionStrategy    |    6.83 |    6.24 |    2.22 |    212 |     8.7 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | MeanReversionStrategy          | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | SmaCrossoverStrategy           |   -5.95 |   -0.99 |    0.21 |    216 |     8.1 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | VolatilityBreakoutPumpStrategy |   -6.05 |   -1.00 |    0.23 |    192 |     7.6 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | VwapExhaustionStrategy         |   -1.45 |   -0.44 |    0.75 |     40 |    12.6 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | ComboTrendVwapStrategy         | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,736 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | DynamicBreakoutStrategy        |  -10.87 |   -1.00 |    0.00 |    468 |     2.7 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | FlashCrashReversalStrategy     |  -10.74 |   -1.00 |    0.00 |    142 |     9.5 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | HourlyMeanReversionStrategy    |  -10.74 |   -1.00 |    0.02 |    126 |    12.2 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | MeanReversionStrategy          | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | SmaCrossoverStrategy           |  -10.74 |   -1.00 |    0.00 |    150 |    10.9 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | VolatilityBreakoutPumpStrategy |  -10.73 |   -1.00 |    0.00 |    134 |    10.9 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | VwapExhaustionStrategy         |  -11.03 |   -1.00 |    0.00 |     22 |    11.0 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | ComboTrendVwapStrategy         | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | DynamicBreakoutStrategy        |    0.59 |    0.31 |    1.14 |    426 |     3.1 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | FlashCrashReversalStrategy     |    2.50 |    1.78 |    1.63 |    140 |     6.7 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | HourlyMeanReversionStrategy    |    0.55 |    0.34 |    1.12 |    112 |     9.4 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | MeanReversionStrategy          | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | SmaCrossoverStrategy           |    0.62 |    0.34 |    1.11 |    158 |    10.3 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | VolatilityBreakoutPumpStrategy |   -0.13 |   -0.06 |    0.98 |    112 |     9.3 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | VwapExhaustionStrategy         |   -0.50 |   -0.18 |    0.93 |     32 |     7.1 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | ComboTrendVwapStrategy         | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | DynamicBreakoutStrategy        |   -4.47 |   -1.00 |    0.09 |    432 |     2.6 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | FlashCrashReversalStrategy     |    2.17 |    1.53 |    1.77 |    132 |     8.4 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | HourlyMeanReversionStrategy    |   -0.33 |   -0.14 |    0.94 |    128 |     9.9 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | MeanReversionStrategy          | n/a(<min) |   -1.00 |    0.00 |      2 |    14.0 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | SmaCrossoverStrategy           |   -4.53 |   -0.91 |    0.37 |    176 |     9.4 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | VolatilityBreakoutPumpStrategy |   -6.01 |   -0.99 |    0.08 |    122 |     9.0 | 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | VwapExhaustionStrategy         |    4.10 |    1.29 |    2.14 |     28 |    10.7 | ✓
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ✅ Tournament: 106 Symbole | 105 eligible Paare | 51 Gewinner-Symbole
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] 🏆 HourlyMeanReversionStrategy — 21 Wins, Median Sortino: 12.8345
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ⚠️  Ohne eindeutigen Gewinner: 01211.HK.ETORO, ABT.US.ETORO, ADA.ETORO, AERO.ETORO, AMAT.ETORO, AMD.ETORO, AVAX.ETORO, BTC.ETORO, CAG.ETORO, CAT.ETORO, CCL.ETORO, CPRT.ETORO, CRM.ETORO, DOGE.ETORO, DUOL.ETORO, ETH.ETORO, FDX.ETORO, FICO.ETORO, FISV.ETORO, GEV.ETORO, GIS.ETORO, GLW.ETORO, GOOG.ETORO, GOOGL.ETORO, HYPE.ETORO, INTU.ETORO, JNJ.ETORO, LRCX.ETORO, LULU.ETORO, MRVL.ETORO, MSTR.ETORO, MU.ETORO, NATGAS.ETORO, NOW.ETORO, NVDA.ETORO, ONDO.ETORO, PEPExM.ETORO, PLTR.ETORO, PYPL.ETORO, RIOT.ETORO, SHIBxM.ETORO, SNAP.ETORO, SOL.ETORO, STX.US.ETORO, TEAM.ETORO, TER.ETORO, TSLA.ETORO, TTD.ETORO, USDTRY.ETORO, USDZAR.ETORO, VLO.ETORO, WBD.ETORO, XPEV.ETORO, XRP.ETORO, ZS.ETORO
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] 📄 Tournament-Ergebnisse gespeichert: /home/user/etoro_nautilus/logs/tournament_2026-06-07.json
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-06-07 11:28:03,737 | DEBUG    | orchestrator |   [BT-LOG] ✅ Matrix-Backtest vollständig abgeschlossen!
+2026-06-07 11:28:03,899 | INFO     | orchestrator | [Phase 4] Tournament: 51 Gewinner.
+2026-06-07 11:28:03,899 | INFO     | orchestrator | [Phase 4] Aggregierter Gewinner: HourlyMeanReversionStrategy (21 Wins, Median Sortino: 12.83)
+2026-06-07 11:28:03,899 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "TOURNAMENT_COMPLETE", "timestamp_utc": "2026-06-07T09:28:03.899616+00:00", "winner_count": 51, "aggregate_winner": {"strategy": "HourlyMeanReversionStrategy", "win_count": 21, "median_sortino": 12.8345, "oos_evaluated": true, "oos_eligible": true, "oos_metrics": {"total_trades": 51, "sortino_ratio": 11.23605177869209, "profit_factor": 2.9454162105755795, "max_drawdown": 0.005236786778389924, "win_rate": 0.5416666666666666, "total_return": 0.032288441450217024, "oos_span_days": 30}, "oos_rejection_reasons": []}, "path": "/home/user/etoro_nautilus/logs/tournament_2026-06-07.json"}
+2026-06-07 11:28:03,900 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:28:03,900 | INFO     | orchestrator | PHASE 5: Live Deployment & Bot-Start
+2026-06-07 11:28:03,900 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:28:03,903 | INFO     | orchestrator | [Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger HourlyMeanReversionStrategy (oos_metrics={'total_trades': 51, 'sortino_ratio': 11.23605177869209, 'profit_factor': 2.9454162105755795, 'max_drawdown': 0.005236786778389924, 'win_rate': 0.5416666666666666, 'total_return': 0.032288441450217024, 'oos_span_days': 30}).
+2026-06-07 11:28:03,904 | INFO     | orchestrator | [Phase 5] Bot-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/momentum_ls_run.py --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json --tournament /home/user/etoro_nautilus/logs/tournament_2026-06-07.json
+2026-06-07 11:28:03,904 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_START_INITIATED", "timestamp_utc": "2026-06-07T09:28:03.904125+00:00", "cmd": ["/home/user/etoro_nautilus/venv/bin/python3", "/home/user/etoro_nautilus/automation/momentum_ls_run.py", "--universe", "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "--tournament", "/home/user/etoro_nautilus/logs/tournament_2026-06-07.json"], "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260607.log", "tournament": "/home/user/etoro_nautilus/logs/tournament_2026-06-07.json", "universe": "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "dry_run": false}
+2026-06-07 11:28:03,904 | INFO     | orchestrator | [Phase 5] Trading-Bot gestartet (PID: 60240).
+2026-06-07 11:28:03,904 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_STARTED", "timestamp_utc": "2026-06-07T09:28:03.904919+00:00", "pid": 60240, "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260607.log"}
+2026-06-07 11:28:03,905 | INFO     | orchestrator | [Phase 5] PID gespeichert: /home/user/etoro_nautilus/logs/live_bot.pid
+2026-06-07 11:28:03,905 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:28:03,905 | INFO     | orchestrator | ORCHESTRATOR ERFOLGREICH ABGESCHLOSSEN
+2026-06-07 11:28:03,905 | INFO     | orchestrator |   Bot läuft als PID 60240
+2026-06-07 11:28:03,905 | INFO     | orchestrator |   Bot-Log: /home/user/etoro_nautilus/logs/live_bot_20260607.log
+2026-06-07 11:28:03,905 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-07 11:28:03,905 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-06-07T09:28:03.905629+00:00", "exit_code": 0}
+2026-06-07 11:28:03,905 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
