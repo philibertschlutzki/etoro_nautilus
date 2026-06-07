@@ -1135,6 +1135,7 @@ def select_winners(
                 "win_rate": portfolio_win_rate,
                 "total_return": portfolio_mean_return,
                 "oos_span_days": med_span,
+                "median_position_notional": get_median([oos.get("median_position_notional", 0.0) for oos in best_results]),
                 "aggregation_basis": "portfolio_sum_for_trades_and_trade_weighted_mean_for_return_and_median_for_ratios"
             }
 
