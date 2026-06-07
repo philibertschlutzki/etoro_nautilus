@@ -6,7 +6,8 @@
       "strategy_module": "Python-Modul-Pfad der Strategie",
       "strategy_class": "Klassen-Name der Strategie",
       "config_class": "Klassen-Name der Strategie-Konfiguration",
-      "params": "Optionale Parameter-Overrides (merged \u00fcber strategy_defaults.json)"
+      "params": "Optionale Parameter-Overrides (merged \u00fcber strategy_defaults.json)",
+      "tournament_overrides": "Dict \u2014 optionale Overrides f\u00fcr Tournament-Kriterien (z.B. min_expectancy: float, min_trades: int)"
     }
   },
   "strategies": [
