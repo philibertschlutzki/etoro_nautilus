@@ -57,9 +57,9 @@ Run this checklist **immediately after reading AGENTS.md for the first time, and
 
 ### Architecture (Section 3)
 
-- [ ] Does `run_bot.py` actually contain the flow chart shown?
-- [ ] Are `run_bot.py` and `run_catalog.py` truly independent processes (no shared state)?
-- [ ] Verify that `run_bot.py` calls `node.build()` and `node.run()` in that order
+- [ ] Does `automation.momentum_ls_run` actually contain the flow chart shown?
+- [ ] Are `automation.momentum_ls_run` and `automation.catalog_service` / `automation.daily_orchestrator` truly independent processes (no shared state)?
+- [ ] Verify that `automation.momentum_ls_run` calls `node.build()` and `node.run()` in that order
 - [ ] Verify that both bots call `os._exit(1)` on WebSocket errors
 
 ### Adapter Layer (Section 5)
@@ -72,6 +72,7 @@ Run this checklist **immediately after reading AGENTS.md for the first time, and
 - [ ] Confirm that the WebSocket subscribe topics are `"instrument:{eid}"` format
 
 #### EToroExecutionClient (5.2)
+- [ ] Check `automation/adapters/etoro_execution.py` (or migrated location)
 - [ ] Verify REST base URLs for demo/real are correct in code
 - [ ] Check that all 4 required HTTP headers are present in `_make_headers()`
 - [ ] Confirm that market open uses `Amount` (USD) when quote available, `AmountInUnits` as fallback
@@ -110,15 +111,15 @@ Pick 2–3 existing strategies and spot-check:
 
 ### Configuration (Section 7)
 
-- [ ] Verify that every bot in `ACTIVE_BOTS` has a matching `etoro_id` in `ETORO_INSTRUMENTS`
-- [ ] Check that every bot's `symbol` matches the value in `ETORO_INSTRUMENTS` for that `etoro_id`
-- [ ] Verify that `STRATEGY_REGISTRY` in `run_bot.py` contains the correct module paths and class names
+- [ ] Verify that every strategy configuration in `automation/config/strategies.json` is accurate
+- [ ] Check that `automation/config/backtest.json` matches required backtesting formats
+- [ ] Verify that strategy registration dynamically maps paths based on `automation/config/strategies.json`
 - [ ] Confirm that `ETORO_EXECUTION` has keys: `"environment"`, `"dry_run"`, `"enable_trailing_stop"`
-- [ ] Verify that `ETORO_API_TEST` is only used in dev_scripts, not in `run_bot.py`
+- [ ] Verify that `ETORO_API_TEST` is only used in dev_scripts, not in `automation.momentum_ls_run`
 
 ### Safety (Section 12)
 
-- [ ] Verify that `_check_live_safety_interlock()` in `run_bot.py` checks all three conditions
+- [ ] Verify that `_check_live_safety_interlock()` in `automation.momentum_ls_run` checks all three conditions
 - [ ] Confirm that `ETORO_CONFIRM_LIVE` env var is required (not optional)
 - [ ] Check that dry_run mode skips REST POST but still generates events
 - [ ] Verify that `os._exit(1)` (not `sys.exit()`) is used in all critical error paths
