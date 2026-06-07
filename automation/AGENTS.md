@@ -345,6 +345,14 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+### 🟢 #45 — Micro Position Sizing & Flat Equity Curves (Issue #254)
+**Symptom:** Strategien haben Plausible Ratios (PF, Sortino), aber generieren ~0% Absolute Return (z.B. -0.04%).
+**Root Cause:** Kollabierendes Position Sizing. Wenn das berechnete Notional bei hohen Kursen / kleinen Increments unter 1 Increment fiel, rundete `math.floor` auf 0 ab, oder das System handelte mit Cent-Beträgen. Das führte zu winzigen absoluten PnLs.
+**Fix & Constraints (Kritische Architektur-Regeln):**
+1. **Arity / 4-Tupel Constraint:** Die Arity (Länge) des `pnls_with_ts` Tupels in `backtest_runner.py` ist ein heiliges Architektur-Konstrukt (4-Tupel). Es darf nicht für neue Metriken (wie Notional) aufgebläht werden, da sonst das Unpacking in Downstream-Systemen oder Tests (Referenz Pitfall #33) unwiderruflich bricht. Zusätzliche Per-Trade-Metadaten sind in separaten, synchron laufenden Listen zu sammeln (z.B. `notionals_with_ts`).
+2. **Kein Hebeln durch min/max:** `make_qty` darf niemals das zugewiesene Risiko/Notional künstlich über `max(inc, ...)` nach oben hebeln. Fällt das Kapital unter das Minimal-Instrumenten-Increment, muss hart fail-closed via `return None` reagiert werden.
+3. **Konstante Floor:** Der eToro Trade-Floor ($11.00) ist fest über `MIN_TRADE_USD` im Strategy-Layer für alle Sub- und Base-Classes dokumentiert und abzusichern.
+
 - **State/Key Bleed (OOS Gating in `_is_eligible`)**: `oos_metrics` is a sibling key (Geschwister-Key) to `metrics` in the backtest result dictionary. Searching for it inside `metrics` (`metrics.get("oos_metrics")`) will silently fail and return `None`, leading to unexpected rejection in tournament gating. Da `oos_metrics` auf derselben Ebene wie `metrics` liegt und nicht tief verschachtelt ist, muss dieser Fehler bei zukünftigen Aggregations-Modulen von vornherein ausgeschlossen werden. Always parse sibling keys directly from the root result dictionary `r`.
 
 ### 🟢 #42 — Crypto: Degenerated Sortino & Profit Factor Metrics (Issue #232)
@@ -570,6 +578,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-08 | **Issue #254 (Zero-Return Bug / Micro Position Sizing):** Behoben: Position-Sizing in `HourlyStrategyBase` auf einen harten `$11.00` eToro-Mindestbetrag begrenzt. Quantisierung garantiert nun immer mindestens `1 × size_increment`. In `backtest_runner.py` wurde die `median_position_notional` Berechnung implementiert, und ein harter Gatekeeper (`< 10.0`) schützt nun vor degenerierten Sizing-Resultaten. | `automation/strategies/hourly_strategy_base.py`, `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #232 (Crypto Precision vs. Market Dynamics):** Untersuchung der extrem negativen Sortino-Werte bei Crypto-Assets (BTC, ETH) abgeschlossen. Es handelt sich *nicht* um einen Bug in der 8-Dezimalstellen-Quantisierung oder im FSB(16)-Encoding. Die negativen Werte (Szenario B) resultieren aus der Kombination von High-Frequency Long-only-Strategien, hohen Krypto-Spreads auf eToro (15 bps) und dem Unvermögen, Shorts zu handeln. Dokumentiert, um künftige Fehlinterpretationen zu vermeiden. | `automation/AGENTS.md` |
 | 2026-06-06 | **Issue #205 (Fix Zero-Spread Artifacts via Dynamic Spreads):** Backtest-Ticks weisen nun einen Asset-Class-spezifischen Spread in Basis-Punkten (`spread_bps_by_asset_class`) auf, der direkt in `load_ticks_from_catalog` rekonstruiert wird, um artifiziell hohe Sortino/PF Metriken zu dämpfen. Zudem wurde `commission_bps` für eine netto FIFO-PnL Extraktion eingebaut. | `automation/backtest_runner.py`, `automation/config/backtest.json`, `automation/AGENTS.md` |
 | 2026-06-05 | **Issue #210 (Fix Bimodal Strategy Distribution):** `VwapExhaustionStrategy` von täglichem VWAP-Reset auf Rolling VWAP (deque, 24 Bars) umgestellt und `deviation_threshold` auf 1.5% gesenkt. `ComboTrendVwapStrategy` um einen 12-Bar Cooldown-Guard erweitert und das BB-Touch-Fenster auf 10 Bars entspannt. Verhindert Tournament-Ausschlüsse durch < min_trades sowie massives Overtrading. | `automation/strategies/vwap_exhaustion.py`, `automation/strategies/tesla_combo_strategy.py`, `automation/config/strategy_defaults.json` |

@@ -402,21 +402,26 @@ class HourlyStrategyBase(Strategy):
             # A: Live-Allocator hat höchste Prio
             balance = self._get_current_balance()
             trade_amount_usd = self.allocator.get_allocation(self.instrument_id, self.cache, balance)
-        elif trade_amount_usd_cfg is not None and trade_amount_usd_cfg > 0:
-            # B: Explizit gesetzter USD-Betrag (z.B. vom Runner injiziert)
+        elif trade_amount_usd_cfg is not None and trade_amount_usd_cfg > 0 and trade_amount_usd_cfg != 100.0:
+            # B: Explizit gesetzter USD-Betrag (z.B. vom Runner injiziert, aber nicht der Default)
             trade_amount_usd = trade_amount_usd_cfg
         elif trade_amount_pct is not None and trade_amount_pct > 0:
             # C: Prozentuales Sizing
             balance = self._get_current_balance()
             trade_amount_usd = balance * (trade_amount_pct / 100.0)
+        elif trade_amount_usd_cfg is not None and trade_amount_usd_cfg > 0:
+            # D: Explizit gesetzter Default USD-Betrag
+            trade_amount_usd = trade_amount_usd_cfg
         else:
-            # D: Default Fallback
+            # E: Hard Fallback
             trade_amount_usd = 100.0
 
-        if trade_amount_usd <= 0:
+        MIN_TRADE_USD = 11.0
+        if trade_amount_usd < MIN_TRADE_USD:
+            self._log.debug(f"[{self.instrument_id}] Trade amount {trade_amount_usd:.2f} USD < MIN_TRADE_USD ({MIN_TRADE_USD:.2f}). Skipping.")
             return None
 
-        if trade_amount_pct is not None and trade_amount_pct > 0 and self.allocator is None and (trade_amount_usd_cfg is None or trade_amount_usd_cfg <= 0):
+        if trade_amount_pct is not None and trade_amount_pct > 0 and self.allocator is None and (trade_amount_usd_cfg is None or trade_amount_usd_cfg <= 0 or trade_amount_usd_cfg == 100.0):
              self._log.info(f"[{self.instrument_id}] Calculated sizing: {trade_amount_usd:.2f} USD ({trade_amount_pct}%) from equity {balance:.2f} USD")
 
         units = trade_amount_usd / price
@@ -426,6 +431,11 @@ class HourlyStrategyBase(Strategy):
             prec = instrument.size_precision
             # Strictly align with instrument's tick precision and size_increment
             quantized_units = round(math.floor(units / inc) * inc, prec)
+
+            # Never artificially inflate the quantity if it falls below the minimum increment threshold
+            if quantized_units <= 0 or quantized_units < inc:
+                self._log.debug(f"[{self.instrument_id}] Quantized units ({quantized_units}) < size increment ({inc}). Skipping trade to prevent risk leveraging.")
+                return None
 
             qty = instrument.make_qty(quantized_units)
             if qty is None or float(qty) == 0:
