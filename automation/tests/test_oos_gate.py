@@ -129,95 +129,61 @@ def test_select_winners_issue_192_regression():
         {"symbol": "CAT.ETORO", "strategy": "FlashCrashReversalStrategy"}
     ]
 
+    # Helper: valid IS metrics dict (median_position_notional >= 10 required by Issue #254 gate)
+    def _valid_is(sortino=0.5):
+        return {
+            "total_trades": 30,
+            "sortino_ratio": sortino,
+            "profit_factor": 1.5,
+            "max_drawdown": 0.1,
+            "win_rate": 0.6,
+            "total_return": 0.1,
+            "median_position_notional": 50.0,
+        }
+
+    def _valid_oos(trades=25, sortino=0.4):
+        return {
+            "total_trades": trades,
+            "sortino_ratio": sortino,
+            "profit_factor": 1.3,
+            "max_drawdown": 0.1,
+            "win_rate": 0.5,
+            "total_return": 0.05,
+            "median_position_notional": 50.0,
+        }
+
     all_results = []
     # Add valid pairs
     for p in pairs:
         all_results.append({
             "symbol": p["symbol"],
             "strategy": p["strategy"],
-            "metrics": {
-                "total_trades": 30,
-                "sortino_ratio": 0.5,
-                "profit_factor": 1.5,
-                "max_drawdown": 0.1,
-                "win_rate": 0.6,
-                "total_return": 0.1
-            },
-            "oos_metrics": {
-                "total_trades": 25,
-                "sortino_ratio": 0.4,
-                "profit_factor": 1.3,
-                "max_drawdown": 0.1,
-                "win_rate": 0.5,
-                "total_return": 0.05
-            }
+            "metrics": _valid_is(),
+            "oos_metrics": _valid_oos(),
         })
 
     # Add a negative fixture that fails OOS min_trades
     all_results.append({
         "symbol": "AAPL.ETORO",
         "strategy": "MeanReversionStrategy",
-        "metrics": {
-            "total_trades": 30,
-            "sortino_ratio": 0.5,
-            "profit_factor": 1.5,
-            "max_drawdown": 0.1,
-            "win_rate": 0.6,
-            "total_return": 0.1
-        },
-        "oos_metrics": {
-            "total_trades": 10,  # Fails min_trades (20)
-            "sortino_ratio": 0.4,
-            "profit_factor": 1.3,
-            "max_drawdown": 0.1,
-            "win_rate": 0.5,
-            "total_return": 0.05
-        }
+        "metrics": _valid_is(),
+        "oos_metrics": _valid_oos(trades=10),  # Fails oos_min_trades (20)
     })
 
     # Add a negative fixture that fails OOS min_sortino
     all_results.append({
         "symbol": "TSLA.ETORO",
         "strategy": "MeanReversionStrategy",
-        "metrics": {
-            "total_trades": 30,
-            "sortino_ratio": 0.5,
-            "profit_factor": 1.5,
-            "max_drawdown": 0.1,
-            "win_rate": 0.6,
-            "total_return": 0.1
-        },
-        "oos_metrics": {
-            "total_trades": 25,
-            "sortino_ratio": 0.1,  # Fails min_sortino (0.3)
-            "profit_factor": 1.3,
-            "max_drawdown": 0.1,
-            "win_rate": 0.5,
-            "total_return": 0.05
-        }
+        "metrics": _valid_is(),
+        "oos_metrics": _valid_oos(sortino=0.1),  # Fails oos_min_sortino (0.3)
     })
-
 
     # Add a negative fixture that fails IS min_sortino but passes OOS
     all_results.append({
         "symbol": "AMZN.ETORO",
         "strategy": "MeanReversionStrategy",
-        "metrics": {
-            "total_trades": 30,
-            "sortino_ratio": 0.1,  # Fails IS min_sortino (0.3)
-            "profit_factor": 1.5,
-            "max_drawdown": 0.1,
-            "win_rate": 0.6,
-            "total_return": 0.1
-        },
-        "oos_metrics": {
-            "total_trades": 25,
-            "sortino_ratio": 0.5,
-            "profit_factor": 1.3,
-            "max_drawdown": 0.1,
-            "win_rate": 0.5,
-            "total_return": 0.05
-        }
+        "metrics": _valid_is(sortino=0.1),  # Fails IS min_sortino (0.3)
+        "oos_metrics": _valid_oos(),
     })
 
     per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
@@ -310,15 +276,17 @@ def test_aggregate_pass_but_zero_eligible_pairs_asserts():
             "profit_factor": 1.5,
             "max_drawdown": 0.1,
             "win_rate": 0.6,
-            "total_return": 0.1
+            "total_return": 0.1,
+            "median_position_notional": 50.0,
         },
         "oos_metrics": {
-            "total_trades": 5, # fails oos_min_trades
+            "total_trades": 5,  # fails oos_min_trades
             "sortino_ratio": 1.0,
             "profit_factor": 1.5,
             "max_drawdown": 0.1,
             "win_rate": 0.6,
-            "total_return": 0.1
+            "total_return": 0.1,
+            "median_position_notional": 50.0,
         }
     })
 
