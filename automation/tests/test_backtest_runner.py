@@ -227,7 +227,7 @@ def test_select_winners_order_independence():
 
     all_results = [strat_worse, strat_better]
 
-    per_symbol_winners, aggregate_winner, _ = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, aggregate_winner, _, _, _ = select_winners(all_results, tournament_cfg)
 
     # SYM1 should be in the winners
     assert "SYM1" in per_symbol_winners
@@ -238,7 +238,7 @@ def test_select_winners_order_independence():
 
     # To be absolutely sure, let's reverse the order and test again
     all_results_reversed = [strat_better, strat_worse]
-    per_symbol_winners_rev, _, _ = select_winners(all_results_reversed, tournament_cfg)
+    per_symbol_winners_rev, _, _, _, _ = select_winners(all_results_reversed, tournament_cfg)
 
     winner_rev = per_symbol_winners_rev["SYM1"]
     assert winner_rev["strategy"] == "BetterStrategy", f"Expected BetterStrategy, but got {winner_rev['strategy']} when list was reversed."
@@ -317,12 +317,12 @@ def test_select_winners_tie_breaker():
 
     # Test lower first
     all_results = [strat_lower_return, strat_higher_return]
-    per_symbol_winners, _, _ = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, _, _, _, _ = select_winners(all_results, tournament_cfg)
     assert per_symbol_winners["SYM2"]["strategy"] == "HigherReturnStrategy"
 
     # Test higher first
     all_results_rev = [strat_higher_return, strat_lower_return]
-    per_symbol_winners_rev, _, _ = select_winners(all_results_rev, tournament_cfg)
+    per_symbol_winners_rev, _, _, _, _ = select_winners(all_results_rev, tournament_cfg)
     assert per_symbol_winners_rev["SYM2"]["strategy"] == "HigherReturnStrategy"
 
 def test_near_all_win_scenario():
@@ -392,7 +392,7 @@ def test_select_winners_sibling_key_access():
     }
 
     all_results = [res_correct, res_incorrect]
-    per_symbol_winners, _, _ = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, _, _, _, _ = select_winners(all_results, tournament_cfg)
 
     assert "GOOD.ETORO" in per_symbol_winners
     assert "BAD.ETORO" not in per_symbol_winners, "The incorrectly structured result shouldn't pass because oos_metrics is missing as a sibling."
@@ -417,6 +417,6 @@ def test_tournament_fails_closed_on_none_oos_metrics():
     }
 
     all_results = [res_missing_oos]
-    per_symbol_winners, _, _ = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, _, _, _, _ = select_winners(all_results, tournament_cfg)
 
     assert "FAIL.ETORO" not in per_symbol_winners, "Fail-closed safety violated: Strategy missing OOS metrics was allowed."

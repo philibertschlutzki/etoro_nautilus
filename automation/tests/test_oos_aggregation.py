@@ -49,7 +49,7 @@ def test_oos_aggregation():
         }
     ]
 
-    per_symbol_winners, aggregate_winner, warnings = select_winners(all_results, tournament_cfg)
+    per_symbol_winners, aggregate_winner, warnings, _, _ = select_winners(all_results, tournament_cfg)
     assert aggregate_winner is not None, "Aggregate winner should be selected"
     assert aggregate_winner["strategy"] == "StrategyA", "StrategyA must be the winner"
     assert aggregate_winner["oos_eligible"] is True, "OOS eligible should be true since average is 10"

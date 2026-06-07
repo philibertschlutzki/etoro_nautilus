@@ -944,7 +944,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 def select_winners(
     all_results: list[dict],
     tournament_cfg: dict | None = None,
-) -> tuple[dict, dict | None, list[str]]:
+) -> tuple[dict, dict | None, list[str], int, int]:
     """Wählt Gewinner pro Symbol anhand der Tournament-Konfiguration.
 
     Task 5: Robuste Multi-Kriterien-Selektion mit:
@@ -958,7 +958,7 @@ def select_winners(
         tournament_cfg:  Konfig aus tournament.json. Wenn None, wird geladen.
 
     Returns:
-        (per_symbol_winners, aggregate_winner, warnings)
+        (per_symbol_winners, aggregate_winner, warnings, is_eligible_count, fully_eligible_count)
     """
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
@@ -966,8 +966,8 @@ def select_winners(
     scoring = tournament_cfg.get("scoring", {})
     warnings_list = []
 
-    # Eligible filtern
-    eligible = []
+    # 1. IS-Eligibility filtern
+    is_eligible_population = []
     for r in all_results:
         is_is_eligible = _is_eligible(
             r,
@@ -977,27 +977,14 @@ def select_winners(
             strategy=r.get("strategy", "Unknown"),
             log_rejections=True
         )
-        # Sibling key access strictly using r.get("oos_metrics")
-        oos_metrics = r.get("oos_metrics")
-        require_oos = tournament_cfg.get("require_oos", True)
+        if is_is_eligible:
+            is_eligible_population.append(r)
 
-        if oos_metrics is not None:
-            oos_eval = _evaluate_oos_eligibility(
-                oos_metrics,
-                tournament_cfg,
-                r.get("strat_params", {})
-            )
-            is_oos_eligible = oos_eval.get("oos_eligible", False)
-        else:
-            # VETO FIX: Fail-closed if oos_metrics is missing in a tournament context
-            is_oos_eligible = not require_oos
-
-        if is_is_eligible and is_oos_eligible:
-            eligible.append(r)
+    is_eligible_count = len(is_eligible_population)
 
     # Issue #148: Data Start Alignment (Tournament Gating)
-    if eligible:
-        start_dates = [r.get("_first_tick_ns") for r in eligible if r.get("_first_tick_ns") is not None]
+    if is_eligible_population:
+        start_dates = [r.get("_first_tick_ns") for r in is_eligible_population if r.get("_first_tick_ns") is not None]
         if start_dates:
             min_start = min(start_dates)
             max_start = max(start_dates)
@@ -1007,25 +994,25 @@ def select_winners(
                 print(msg)
                 warnings_list.append(msg)
 
-    # Normalisierung der Metriken über alle eligiblen Ergebnisse (Task D)
-    if eligible:
+    # 2. Normalisierung der Metriken über alle IS-eligiblen Ergebnisse
+    if is_eligible_population:
         def get_ranks(vals, reverse=False):
             su = sorted(list(set(vals)), reverse=reverse)
             if len(su) <= 1:
                 return [1.0] * len(vals)
             return [(su.index(v)) / (len(su) - 1) for v in vals]
 
-        sortinos = [(r["metrics"].get("sortino_ratio") or 0.0) for r in eligible]
-        pfs = [(r["metrics"].get("profit_factor") or 0.0) for r in eligible]
-        wrs = [(r["metrics"].get("win_rate") or 0.0) for r in eligible]
-        dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in eligible]
+        sortinos = [(r["metrics"].get("sortino_ratio") or 0.0) for r in is_eligible_population]
+        pfs = [(r["metrics"].get("profit_factor") or 0.0) for r in is_eligible_population]
+        wrs = [(r["metrics"].get("win_rate") or 0.0) for r in is_eligible_population]
+        dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in is_eligible_population]
 
         rs = get_ranks(sortinos)
         rp = get_ranks(pfs)
         rw = get_ranks(wrs)
         rd = get_ranks(dds)
 
-        for i, r in enumerate(eligible):
+        for i, r in enumerate(is_eligible_population):
             r["norm_metrics"] = {
                 "sortino_ratio": rs[i],
                 "profit_factor": rp[i],
@@ -1033,46 +1020,66 @@ def select_winners(
                 "max_drawdown": rd[i]
             }
 
-    # Besten pro Symbol via composite Score auswählen
-    per_symbol: dict[str, dict] = {}
-    for r in eligible:
-        sym   = r["symbol"]
+            metrics_to_score = r.get("norm_metrics")
+            if metrics_to_score is None:
+                metrics_to_score = r["metrics"]
+            r["_score"] = compute_tournament_score(metrics_to_score, scoring)
 
-        # Determine if we should use unscaled metrics (fallback if only 1 eligible)
-        metrics_to_score = r.get("norm_metrics")
-        if metrics_to_score is None:
-            metrics_to_score = r["metrics"]
-            # Fallback normalisierung: The best we can do is treat them raw, but they could be skewed.
-            # This is edge-case for len(eligible)==1 where ranking doesn't happen.
+    # 3. Per-Symbol OOS-Gating (Der Entscheidungs-Trail)
+    fully_eligible_count = 0
+    require_oos = tournament_cfg.get("require_oos", True)
 
-        score = compute_tournament_score(metrics_to_score, scoring)
-        curr  = per_symbol.get(sym)
+    # Pre-evaluate all to get the true fully_eligible_count
+    for r in is_eligible_population:
+        oos_metrics = r.get("oos_metrics")
+        if oos_metrics is not None:
+            oos_eval = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {}))
+        else:
+            is_oos_eligible = not require_oos
+            oos_eval = {
+                "oos_evaluated": False,
+                "oos_eligible": is_oos_eligible,
+                "oos_metrics": None,
+                "oos_rejection_reasons": ["oos_metrics fehlt"] if not is_oos_eligible else []
+            }
+        r["_oos_eval"] = oos_eval
+        if oos_eval.get("oos_eligible", False):
+            fully_eligible_count += 1
 
-        if curr is None:
-            per_symbol[sym] = {**r, "_score": score}
-        elif score > curr.get("_score", float("-inf")):
-            per_symbol[sym] = {**r, "_score": score}
-        elif abs(score - curr.get("_score", float("-inf"))) < 1e-9:
-            # Tie breaker: fallback to raw total_return if exact composite score match
-            curr_return = curr["metrics"].get("total_return", 0.0)
-            new_return = r["metrics"].get("total_return", 0.0)
-            if new_return > curr_return:
-                per_symbol[sym] = {**r, "_score": score}
+    grouped_by_symbol = {}
+    for r in is_eligible_population:
+        sym = r["symbol"]
+        grouped_by_symbol.setdefault(sym, []).append(r)
 
     per_symbol_winners = {}
-    for sym, r in per_symbol.items():
-        oos_eval = _evaluate_oos_eligibility(r.get("oos_metrics"), tournament_cfg, r.get("strat_params"))
-        per_symbol_winners[sym] = {
-            "strategy": r["strategy"],
-            "metrics": r["metrics"],
-            "score": round(r["_score"], 6),
-            **oos_eval
-        }
+    for sym, candidates in grouped_by_symbol.items():
+        candidates_sorted = sorted(
+            candidates,
+            key=lambda c: (c.get("_score", float("-inf")), c["metrics"].get("total_return", 0.0)),
+            reverse=True
+        )
+
+        for r in candidates_sorted:
+            strat = r["strategy"]
+            score = r.get("_score", 0.0)
+            oos_eval = r["_oos_eval"]
+
+            if oos_eval.get("oos_eligible", False):
+                per_symbol_winners[sym] = {
+                    "strategy": strat,
+                    "metrics": r["metrics"],
+                    "score": round(score, 6),
+                    **oos_eval
+                }
+                break  # Winner found, move to next symbol
+            else:
+                reasons = ", ".join(oos_eval.get("oos_rejection_reasons", []))
+                print(f"  [OOS-Drop] {sym} | {strat} (Score: {score:.4f}) verworfen: {reasons}")
 
     # Aggregierter Gewinner: Strategie mit den meisten Symbol-Siegen
     win_counts: dict[str, int] = {}
     sortinos_by_strat: dict[str, list] = {}
-    for r in per_symbol.values():
+    for r in per_symbol_winners.values():
         s = r["strategy"]
         win_counts[s] = win_counts.get(s, 0) + 1
         sortinos_by_strat.setdefault(s, []).append(r["metrics"]["sortino_ratio"])
@@ -1100,7 +1107,7 @@ def select_winners(
         top      = [s for s, w in win_counts.items() if w == max_wins]
         best     = max(top, key=lambda s: get_median([x for x in sortinos_by_strat[s] if x is not None]))
         # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
-        best_results = [r.get("oos_metrics", {}) for r in per_symbol.values()
+        best_results = [r.get("oos_metrics", {}) for r in per_symbol_winners.values()
                         if r["strategy"] == best and r.get("oos_metrics") and r.get("oos_metrics").get("total_trades", 0) > 0]
 
         if best_results:
@@ -1141,7 +1148,7 @@ def select_winners(
 
             # Use strat_params from the first result matching the winning strategy
             winner_strat_params = {}
-            for r in eligible:
+            for r in is_eligible_population:
                 if r["strategy"] == best:
                     winner_strat_params = r.get("strat_params", {})
                     break
@@ -1175,7 +1182,7 @@ def select_winners(
             **agg_oos_eval
         }
 
-    return per_symbol_winners, aggregate_winner, warnings_list
+    return per_symbol_winners, aggregate_winner, warnings_list, is_eligible_count, fully_eligible_count
 
 
 def write_tournament_json(
@@ -1184,6 +1191,8 @@ def write_tournament_json(
     per_symbol_winners: dict,
     aggregate_winner: dict | None,
     warnings_list: list[str],
+    is_eligible_count: int,
+    fully_eligible_count: int,
     universe_snapshot: str = "",
     tournament_cfg: dict | None = None,
 ) -> None:
@@ -1194,30 +1203,16 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
-
-    eligible_count = 0
-    for r in all_results:
-        if not r.get("metrics"):
-            continue
-        # Use r instead of r["metrics"] since _is_eligible takes the full result object
-        is_is_eligible = _is_eligible(r, tournament_cfg, strat_params=r.get("strat_params", {}))
-        oos_metrics = r.get("oos_metrics")
-        require_oos = tournament_cfg.get("require_oos", True)
-        if oos_metrics is not None:
-            is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False)
-        else:
-            is_oos_eligible = not require_oos
-
-        if is_is_eligible and is_oos_eligible:
-            eligible_count += 1
     output = {
         "generated_at":                datetime.now(timezone.utc).isoformat(),
         "universe_snapshot":           universe_snapshot,
         "total_symbol_strategy_pairs": len(all_results),
-        "eligible_pairs":              eligible_count,
+        "eligible_pairs":              fully_eligible_count,
+        "is_eligible_pairs":           is_eligible_count,
+        "fully_eligible_pairs":        fully_eligible_count,
         "tournament_criteria":         tournament_cfg,
         "normalization_method":        "rank_based",
-        "normalization_population":    eligible_count,
+        "normalization_population":    is_eligible_count,
         "warnings":                    warnings_list,
         "per_symbol_winners":          per_symbol_winners,
         "aggregate_winner":            aggregate_winner,
@@ -2044,29 +2039,14 @@ def run_backtest() -> None:
 
     # --- Tournament (Task 5: robuste Multi-Kriterien-Selektion) ---
     if args.momentum and all_results:
-        per_symbol_winners, aggregate_winner, warnings_list = select_winners(all_results, tournament_cfg)
+        per_symbol_winners, aggregate_winner, warnings_list, is_eligible_count, fully_eligible_count = select_winners(all_results, tournament_cfg)
         winner_count, no_winner_symbols = print_tournament_table(
             all_results, per_symbol_winners, tournament_cfg
         )
         total_symbols = len(set(r["symbol"] for r in all_results))
-        eligible_count = 0
-        for r in all_results:
-            if not r.get("metrics"):
-                continue
-            is_is_eligible = _is_eligible(r, tournament_cfg, strat_params=r.get("strat_params", {}))
-            oos_metrics = r.get("oos_metrics")
-            require_oos = tournament_cfg.get("require_oos", True)
-
-            if oos_metrics is not None:
-                is_oos_eligible = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {})).get("oos_eligible", False)
-            else:
-                is_oos_eligible = not require_oos
-
-            if is_is_eligible and is_oos_eligible:
-                eligible_count += 1
         print(
             f"\n✅ Tournament: {total_symbols} Symbole | "
-            f"{eligible_count} eligible Paare | {winner_count} Gewinner-Symbole"
+            f"{is_eligible_count} IS-taugliche Paare | {fully_eligible_count} voll taugliche Paare (IS+OOS) | {winner_count} Gewinner-Symbole"
         )
         if aggregate_winner:
             print(
@@ -2076,7 +2056,16 @@ def run_backtest() -> None:
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
-        write_tournament_json(all_results, tournament_output, per_symbol_winners, aggregate_winner, warnings_list, tournament_cfg=tournament_cfg)
+        write_tournament_json(
+            all_results,
+            tournament_output,
+            per_symbol_winners,
+            aggregate_winner,
+            warnings_list,
+            is_eligible_count,
+            fully_eligible_count,
+            tournament_cfg=tournament_cfg
+        )
     elif all_results:
         print(f"\n📊 {len(all_results)} Ergebnisse gesammelt (kein --momentum Flag aktiv)")
 
