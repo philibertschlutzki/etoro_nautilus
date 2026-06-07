@@ -194,6 +194,7 @@ class HourlyStrategyBase(Strategy):
         if not self._trend_filter_ready or self.trend_filter_sma is None or not self.trend_filter_sma.initialized:
             return False
 
+        self.trend_filter_sma.handle_bar(bar)
         return float(bar.close) > self.trend_filter_sma.value
 
     def _get_current_balance(self) -> float:
@@ -253,11 +254,6 @@ class HourlyStrategyBase(Strategy):
         gating thresholds.
         """
         self._exit_atr.handle_bar(bar)
-
-        if getattr(self, "trend_filter_sma", None) is not None:
-            self.trend_filter_sma.handle_bar(bar)
-            if self.trend_filter_sma.initialized:
-                self._trend_filter_ready = True
 
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
 
@@ -364,11 +360,6 @@ class HourlyStrategyBase(Strategy):
 
     def on_order_canceled(self, event) -> None:
         self._log.info(f"[{self.instrument_id}] OrderCanceled: {event}")
-        if hasattr(self, "current_signal"):
-            self.current_signal = None
-        if hasattr(self, "bars_since_last_signal"):
-            self.bars_since_last_signal = 9999
-
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
             if not self._pending_cancels:
@@ -389,11 +380,6 @@ class HourlyStrategyBase(Strategy):
 
     def on_order_rejected(self, event) -> None:
         self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
-        if hasattr(self, "current_signal"):
-            self.current_signal = None
-        if hasattr(self, "bars_since_last_signal"):
-            self.bars_since_last_signal = 9999
-
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
             if not self._pending_cancels:
