@@ -190,6 +190,10 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
 
+    def on_position_closed(self, event) -> None:
+        super().on_position_closed(event)
+        self.current_signal = None
+
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
         self.unsubscribe_bars(self.bar_type)

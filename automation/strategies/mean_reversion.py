@@ -48,6 +48,7 @@ class MeanReversionStrategy(HourlyStrategyBase):
 
 
     def on_bar(self, bar: Bar):
+        self.bars_since_last_signal += 1
         # Indicators are automatically updated via `register_indicator_for_bars`
 
         if self._check_exits_and_update(bar):
@@ -129,6 +130,10 @@ class MeanReversionStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
+
+    def on_position_closed(self, event) -> None:
+        super().on_position_closed(event)
+        self.current_signal = None
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
