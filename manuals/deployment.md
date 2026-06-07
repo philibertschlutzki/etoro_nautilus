@@ -60,7 +60,7 @@ sudo chown -R tradingbot:tradingbot /data/nautilus
 # Virtual Environment erstellen und Pakete installieren
 sudo -u tradingbot python3 -m venv venv
 sudo -u tradingbot ./venv/bin/pip install --upgrade pip
-sudo -u tradingbot ./venv/bin/pip install -r requirements.txt
+sudo -u tradingbot ./venv/bin/pip install -r automation/requirements.txt
 ```
 
 ### 2.1. API-Keys konfigurieren
@@ -86,11 +86,11 @@ MOMENTUM_LS_USERNAME=USERNAME   # eToro Benutzername des Smart Portfolios
 
 Die Plattform verwendet eine klare Aufgabentrennung:
 
-- **`automation/catalog_service.py`** läuft als dauerhafter systemd-Service (24/7). Er empfängt Tick-Daten über WebSocket und speichert sie stündlich als ZIP-Dateien.
+- **`automation/catalog_service.py`** läuft als dauerhafter systemd-Service (24/7). Er empfängt Tick-Daten über WebSocket und speichert sie stündlich als ZIP-Dateien unter `data/import/`.
 - **`automation/daily_orchestrator.py`** wird einmal täglich per Cron gestartet. Er führt die komplette 5-Phasen-Pipeline aus (Universe → Daten-Merge → Backtest → Tournament → Live-Bot-Start).
 
 > **Warum kein dauerhafter systemd-Service für den Bot?**
-> Der Trading-Bot hat einen klaren täglichen Lifecycle (starten, handeln, stoppen). Er wird vom Orchestrator gestartet und beendet sich nach dem Trading-Fenster selbst. Ein dauerhafter Service wäre falsch.
+> Der Trading-Bot hat einen klaren täglichen Lifecycle (starten, handeln, stoppen). Er wird vom Orchestrator gestartet und beendet sich nach dem Trading-Fenster selbst. Ein dauerhafter Service wäre konzeptionell falsch und würde die Pipeline-Logik des Orchestrators umgehen.
 
 ### Dienst: Data-Catalog (`automation/catalog_service.py`)
 
@@ -154,7 +154,7 @@ Wenn du Code auf GitHub aktualisiert hast:
 ```bash
 cd /opt/etoro_nautilus
 sudo -u tradingbot git pull origin main
-sudo -u tradingbot ./venv/bin/pip install -r requirements.txt
+sudo -u tradingbot ./venv/bin/pip install -r automation/requirements.txt
 sudo systemctl restart nautilus-catalog.service
 ```
 
