@@ -18,6 +18,8 @@ def test_phase5_oos_eligible():
     with tempfile.NamedTemporaryFile("w", delete=False) as tf:
         json.dump({
             "eligible_pairs": 1,
+            "fully_eligible_pairs": 1,
+            "per_symbol_winners": {"SYM1": {}},
             "aggregate_winner": {
                 "strategy": "MeanReversionStrategy",
                 "oos_evaluated": True,
@@ -50,6 +52,8 @@ def test_phase5_oos_not_evaluable():
     with tempfile.NamedTemporaryFile("w", delete=False) as tf:
         json.dump({
             "eligible_pairs": 1,
+            "fully_eligible_pairs": 1,
+            "per_symbol_winners": {"SYM1": {}},
             "aggregate_winner": {
                 "strategy": "MeanReversionStrategy",
                 "oos_evaluated": False,
@@ -76,6 +80,8 @@ def test_phase5_oos_failed():
     with tempfile.NamedTemporaryFile("w", delete=False) as tf:
         json.dump({
             "eligible_pairs": 1,
+            "fully_eligible_pairs": 1,
+            "per_symbol_winners": {"SYM1": {}},
             "aggregate_winner": {
                 "strategy": "MeanReversionStrategy",
                 "oos_evaluated": True,
@@ -205,13 +211,15 @@ def test_select_winners_issue_192_regression():
 
 def test_phase5_zero_eligible_pairs_aborts():
     """
-    Test that if eligible_pairs == 0, Phase 5 aborts cleanly (fail-closed)
+    Test that if fully_eligible_pairs == 0 or winner_count == 0, Phase 5 aborts cleanly (fail-closed)
     and does not trigger BOT_START_INITIATED or BOT_STARTED.
     """
     log = setup_logger()
     with tempfile.NamedTemporaryFile("w", delete=False) as tf:
         json.dump({
-            "eligible_pairs": 0,
+            "eligible_pairs": 1,
+            "fully_eligible_pairs": 0,
+            "per_symbol_winners": {},
             "aggregate_winner": {
                 "strategy": "MeanReversionStrategy",
                 "oos_evaluated": True,
@@ -237,7 +245,7 @@ def test_phase5_zero_eligible_pairs_aborts():
         assert res == 1 # Aborts with error code 1
 
         # Verify LIVE_DEPLOY_ABORTED is emitted
-        mock_emit.assert_any_call(log, "LIVE_DEPLOY_ABORTED", {"reason": "zero_eligible_pairs"})
+        mock_emit.assert_any_call(log, "LIVE_DEPLOY_ABORTED", {"reason": "zero_fully_eligible_pairs", "fully_eligible_pairs": 0, "winner_count": 0})
 
         # Verify BOT_START_INITIATED is NOT emitted
         calls = [c[0][1] for c in mock_emit.call_args_list]

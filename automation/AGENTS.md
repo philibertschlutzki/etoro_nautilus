@@ -278,7 +278,10 @@ Bei der Umwandlung von Candle zu Tick wird im Backtest nun Zero-Spread-Modeling 
 - Allocator-Injektion erfolgt via `HourlyStrategyBase`.
 - Der Live-`bar_type` ist zwingend `{symbol}-1-HOUR-MID-INTERNAL`, da eToro nur QuoteTicks streamt.
 
-Safety-Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`. Stale-Check: Prüft ob Universe-Daten älter als 24 Stunden sind.
+Safety-Interlock: Zweistufiges Fail-Closed-Verhalten:
+1. **Per-Pair Check:** Es wird zwingend geprüft, ob `fully_eligible_pairs > 0` und `winner_count > 0`. Falls nicht, bricht die Phase hart ab (`LIVE_DEPLOY_ABORTED`).
+2. **Aggregat-OOS Evaluierung:** Danach muss der Aggregat-Gewinner ein gültiges und bestandenes OOS-Ergebnis vorweisen (`oos_evaluated` und `oos_eligible` == `True`).
+Zusätzlicher Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`. Stale-Check: Prüft ob Universe-Daten älter als 24 Stunden sind.
 
 ---
 
@@ -596,6 +599,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-07 | **Issue #273:** Hard Per-Pair Safety Gate in Phase 5 implementiert. Prüft und loggt fully_eligible_pairs und winner_count vor Bot-Start, um stumme Aggregat-Bypasses bei leeren Turnieren zu verhindern. JSON-Events erweitert. | `automation/daily_orchestrator.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #257 (Zweistufige Selektion & OOS-Gating Transparenz):** "Rank first, Gate second" Logik in `select_winners` implementiert. OOS-Fails werden nicht mehr vorzeitig aus der IS-Population für die Rank-Normalisierung gefiltert. Die Selektion iteriert nun pro Symbol über die sortierten Scores und bewertet OOS On-the-Fly. Klarer Logging-Trail (`[OOS-Drop]`) im Terminal ergänzt. Neue Return-Werte für `is_eligible_pairs` und `fully_eligible_pairs` in die JSON-Ausgabe und in den Test-Files übernommen. | `automation/backtest_runner.py`, `automation/tests/*.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #232 (Crypto Precision vs. Market Dynamics):** Untersuchung der extrem negativen Sortino-Werte bei Crypto-Assets (BTC, ETH) abgeschlossen. Es handelt sich *nicht* um einen Bug in der 8-Dezimalstellen-Quantisierung oder im FSB(16)-Encoding. Die negativen Werte (Szenario B) resultieren aus der Kombination von High-Frequency Long-only-Strategien, hohen Krypto-Spreads auf eToro (15 bps) und dem Unvermögen, Shorts zu handeln. Dokumentiert, um künftige Fehlinterpretationen zu vermeiden. | `automation/AGENTS.md` |
 | 2026-06-06 | **Issue #205 (Fix Zero-Spread Artifacts via Dynamic Spreads):** Backtest-Ticks weisen nun einen Asset-Class-spezifischen Spread in Basis-Punkten (`spread_bps_by_asset_class`) auf, der direkt in `load_ticks_from_catalog` rekonstruiert wird, um artifiziell hohe Sortino/PF Metriken zu dämpfen. Zudem wurde `commission_bps` für eine netto FIFO-PnL Extraktion eingebaut. | `automation/backtest_runner.py`, `automation/config/backtest.json`, `automation/AGENTS.md` |
