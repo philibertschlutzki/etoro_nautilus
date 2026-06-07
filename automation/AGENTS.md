@@ -114,7 +114,7 @@ daily_orchestrator.py — 5 Phasen:
     Phase 5  Live Deployment (Detached Subprocess → momentum_ls_run.py)
 ```
 
-**Backtest-Fenster:** Dynamisch. `daily_orchestrator.py` berechnet das Fenster dynamisch anhand der Walk-Forward-Konfiguration (`start = end - timedelta(days=total_days)`).
+**Backtest-Fenster:** Dynamisch. `daily_orchestrator.py` berechnet das Fenster dynamisch anhand der relevanten Variablen aus der `backtest.json` (`is_window_days`, `oos_window_days`, `splits`). Die Berechnung lautet: `total_days = is_window_days + (splits * oos_window_days)` gefolgt von `start = end - timedelta(days=total_days)`.
 
 ---
 

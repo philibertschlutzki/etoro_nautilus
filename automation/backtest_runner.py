@@ -1194,7 +1194,7 @@ def print_tournament_table(
     all_symbols: set[str] = set()
     winning_symbols: set[str] = set()
 
-    min_trades_req = tournament_cfg.get("min_trades", 20) if tournament_cfg else 20
+    global_min_trades_req = tournament_cfg.get("min_trades", 20) if tournament_cfg else 20
 
     for r in sorted(all_results, key=lambda x: (x["symbol"], x["strategy"])):
         sym, strat, m = r["symbol"], r["strategy"], r["metrics"]
@@ -1205,6 +1205,10 @@ def print_tournament_table(
             winning_symbols.add(sym)
         hold_h = m.get('avg_holding_time_s', 0.0) / 3600.0
 
+        strat_params = r.get("strat_params", {})
+        t_overrides = strat_params.get("tournament_overrides", {})
+        strat_min_trades = t_overrides.get("min_trades", global_min_trades_req)
+
         def format_metric(val, req_trades):
             if val is not None:
                 return f"{val:>7.2f}"
@@ -1214,9 +1218,9 @@ def print_tournament_table(
                 return f"{'n/a(win)':>7}"
             return f"{'n/a':>7}"
 
-        sortino_str = format_metric(m['sortino_ratio'], min_trades_req)
-        calmar_str = format_metric(m['calmar_ratio'], min_trades_req)
-        pf_str = format_metric(m['profit_factor'], min_trades_req)
+        sortino_str = format_metric(m['sortino_ratio'], strat_min_trades)
+        calmar_str = format_metric(m['calmar_ratio'], strat_min_trades)
+        pf_str = format_metric(m['profit_factor'], strat_min_trades)
 
         print(
             f"{sym:<20} | {strat:<30} | {sortino_str} | "
