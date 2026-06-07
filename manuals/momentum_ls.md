@@ -1,128 +1,210 @@
 # Momentum-LS Smart Portfolio Integration
 
-## Overview
-The Momentum-LS integration is a top-level orchestrator that dynamically fetches the current symbol universe from a specific eToro Smart Portfolio, backtests all available strategies against that universe to pick the optimal strategy per symbol, and automatically manages dynamic capital allocation when running the live system.
+## Überblick
+
+Die Momentum-LS Integration ist ein vollautomatischer Orchestrator, der dynamisch das aktuelle Symbol-Universum eines eToro Smart Portfolios abruft, alle verfügbaren Strategien im Backtest gegeneinander antreten lässt (Tournament), die beste Strategie pro Symbol auswählt und schließlich den Live-Trading-Bot startet.
 
 ```text
-momentum_ls_universe.py     ← Holt Portfolio-Symbole von eToro Smart Portfolio
+automation/universe_fetcher.py      ← Holt Portfolio-Symbole von eToro Smart Portfolio
         │
-        ▼ data/universe/momentum_ls.json
-momentum_ls_fetch_candles.py ← Lädt fehlende historische Parquet-Daten
+        ▼  data/universe/momentum_ls.json
+automation/api_backfiller.py        ← Lädt fehlende Tick-Daten (7 Tage)
+automation/historical_fetcher.py    ← Deep Backfill (12 Monate)
         │
-        ▼ data/nautilus/data/quote_tick/
-momentum_ls_tournament.py   ← Backtest aller Strategien, Auswahl des Gewinners
+        ▼  data/nautilus/data/quote_tick/
+automation/backtest_runner.py       ← Matrix-Backtest aller Strategien, Tournament
         │
-        ▼ logs/tournament_YYYY-MM-DD.json
-momentum_ls_run.py          ← Startet Live-Bot mit Gewinner-Konfiguration
+        ▼  logs/tournament_YYYY-MM-DD.json
+automation/momentum_ls_run.py       ← Startet Live-Bot mit Gewinner-Konfiguration
         │
         ▼
-MomentumLSAllocator         ← Dynamische Kapitalzuteilung pro Instrument
+MomentumLSAllocator                 ← Dynamische Kapitalzuteilung pro Instrument
 ```
 
-## Prerequisites
-- Standard Python 3.10+ virtual environment.
-- Required dependencies installed via `pip install -r requirements.txt`.
-- `.env` file populated with:
-  ```env
-  ETORO_API_KEY=your_key
-  ETORO_USER_KEY=your_user_key
-  MOMENTUM_LS_USERNAME=etoro_username_of_the_smart_portfolio
-  ETORO_CONFIRM_LIVE=1  # Required ONLY if environment='real' and dry_run=False
-  ```
-  *(Hinweis: Der `MOMENTUM_LS_USERNAME` ist der eToro-Benutzername des Smart Portfolios, z.B. "OutSmartNSDQ")*
-
-## Daily Workflow
-The workflow enforces a strict sequential dependency. You **must** run these steps in order, otherwise the tournament will fail or produce incomplete results.
-
-### Step 1: Fetch the Current Universe
-This script retrieves the current holdings of the Smart Portfolio and resolves their eToro internal IDs to Nautilus-compatible symbols.
+**Alle Schritte werden automatisch vom Master-Orchestrator ausgeführt:**
 ```bash
-python3 dev_scripts/momentum_ls_universe.py --output data/universe/momentum_ls.json
+python3 automation/daily_orchestrator.py --skip-api-fetch
 ```
-**Erfolg:** Erstellt `data/universe/momentum_ls.json` mit allen gefundenen Symbolen.
+
+---
+
+## Voraussetzungen
+
+- Python 3.10+ mit aktiviertem Virtual Environment.
+- Abhängigkeiten installiert: `pip install -r automation/requirements.txt`
+- `.env`-Datei im Projekt-Root:
+  ```env
+  ETORO_API_KEY=dein_api_key
+  ETORO_USER_KEY=dein_user_key
+  MOMENTUM_LS_USERNAME=etoro_username_des_smart_portfolios
+  ETORO_CONFIRM_LIVE=1  # NUR setzen, wenn Live-Trading mit echtem Geld gewünscht
+  ```
+  > **Hinweis:** `MOMENTUM_LS_USERNAME` ist der öffentliche eToro-Benutzername des Smart Portfolios (z. B. "OutSmartNSDQ"), nicht dein eigener Benutzername.
+
+---
+
+## Tagesablauf (tägliche Pipeline)
+
+Der Ablauf folgt einer strikten sequentiellen Abhängigkeit. Die Schritte bauen aufeinander auf.
+
+### Schritt 1: Universe aktualisieren
+
+Holt die aktuellen Bestandteile des Smart Portfolios und ordnet die eToro-internen IDs den Nautilus-kompatiblen Symbolen zu (z. B. `TSLA.ETORO`).
+
+```bash
+python3 automation/universe_fetcher.py
+```
+
+**Ergebnis:** `data/universe/momentum_ls.json` wird erstellt oder aktualisiert.
 **Fehler:** Bei `Universe data is stale` diesen Schritt erneut ausführen.
 
-### Step 2: Ensure Historical Data Exists
-The backtest tournament evaluates the past 6 months of tick data. Check your `data/nautilus/data/quote_tick/` directory. If any new tickers were added to the universe that you do not have Parquet data for, you must fetch the fallback candles:
-```bash
-# Example for ADA.ETORO
-python3 dev_scripts/momentum_ls_fetch_candles.py --etoro-id 100017 --symbol ADA.ETORO --months 6
-```
-*(If the eToro API returns no data, check the `instrumentId` mapping or your API keys).*
+> **Mapping-Tabelle:** Die Zuordnung `eToro-ID → Symbol` liegt in `automation/config/instrument_map.json`. Details zum Hinzufügen neuer Instrumente: `manuals/new_tickers.md`.
 
-### Step 2b: Automated Data Fetch (Neu)
-Anstatt jedes Symbol einzeln abzufragen, lade automatisch alle fehlenden Daten für das gesamte Universum herunter:
-```bash
-python3 dev_scripts/momentum_ls_fetch_candles_auto.py --universe data/universe/momentum_ls.json
-```
+---
 
-### Step 3: Run the Backtest Tournament
-The tournament **requires** the universe JSON and the historical Parquet data to exist. It ranks all implemented strategies for each symbol using the Sortino ratio (primary), Calmar ratio (secondary), and a Profit Factor > 1.5.
-```bash
-python3 dev_scripts/momentum_ls_tournament.py \
-    --universe data/universe/momentum_ls.json \
-    --output logs/tournament_$(date +%Y-%m-%d).json
-```
-**Erfolg:** Erstellt ein JSON-File mit den Siegern und gibt eine Tabelle in der Konsole aus.
-**Fehler:** Bei `Simulation failed for [Symbol]` das Parquet-Schema prüfen.
+### Schritt 2: Historische Tick-Daten sicherstellen
 
-### Step 4: Launch the Live Bot
-The orchestrator ties everything together. It reads the universe, parses the tournament winners, sets up the `MomentumLSAllocator` for dynamic sizing, and launches the Nautilus engine.
-```bash
-# Trockenlauf (Testet das Setup, platziert keine echten Orders)
-python3 dev_scripts/momentum_ls_run.py --tournament logs/tournament_today.json --dry-run
+Das Tournament benötigt historische Tick-Daten der letzten Wochen/Monate. Prüfe, ob `data/nautilus/data/quote_tick/` für alle Symbole im Universe Daten enthält.
 
-# Live-Modus (Erfordert ETORO_CONFIRM_LIVE=1 in .env)
-python3 dev_scripts/momentum_ls_run.py --tournament logs/tournament_today.json
+**Fehlende Daten automatisch laden:**
+```bash
+# Letzte 7 Tage via API:
+python3 automation/api_backfiller.py --days 7
+
+# Vollständiger historischer Backfill (Erstbefüllung, 12 Monate):
+python3 automation/historical_fetcher.py --months 12
 ```
 
+> **Hinweis:** Im Orchestrator (`daily_orchestrator.py`) läuft dieser Schritt automatisch ab. Bei manuellem Betrieb muss er explizit ausgeführt werden.
 
-## MomentumLSAllocator
-Der Allocator ist das Herzstück des Kapitalmanagements und wird in `momentum_ls_run.py` initialisiert.
-*   **No-Interference-Regel:** Wenn eine Position für ein Instrument bereits offen ist, allokiert der Allocator genau `0` Kapital für dieses Instrument, bis die Position geschlossen wird.
-*   **Dynamische Kapitalscheiben:** Das verfügbare Gesamtkapital wird gleichmäßig in "Slices" (Scheiben) auf alle Symbole ohne aktive Position aufgeteilt. So passt sich die Positionsgröße an das wachsende oder schrumpfende Universum an.
+---
 
+### Schritt 3: Matrix-Backtest + Tournament
 
-## Safety & Dry-Run
-Beim Starten des Live-Bots gibt es strikte Sicherheitsmechanismen:
-*   **`--dry-run` Flag:** Startet die Execution Engine, platziert aber keine echten Orders. HTTP-Requests an eToro werden geblockt. Dies ist der empfohlene Weg, um die Integration zu testen.
-*   **Safety Interlock:** Um reale Orders zu platzieren, muss in der `config/setups.py` `environment == 'real'` gesetzt sein, das Skript muss ohne `--dry-run` gestartet werden, UND die Umgebungsvariable `ETORO_CONFIRM_LIVE=1` muss zwingend in der `.env` gesetzt sein. Fehlt diese Variable, bricht der Bot sofort mit `sys.exit(1)` ab.
+Das Tournament testet alle aktiven Strategien gegen alle Symbole und wählt die beste Kombination aus.
 
-## Interpreting Tournament Output
-The tournament outputs both a JSON file and a printed console table:
-- **Sortino**: Primary ranking metric.
-- **Calmar**: Secondary tie-breaker metric.
-- **PF (Profit Factor)**: Strategies with a PF <= 1.5 are automatically disqualified. Wenn **alle** Strategien für ein Symbol durchfallen, wird dieses Symbol nicht gehandelt.
-- **Win?**: Checked (`✓`) if the strategy is the absolute winner for that specific symbol. The live runner will automatically configure the bot using this strategy.
-Das JSON-Output (`logs/tournament_*.json`) enthält das genaue Parameter-Dictionary für jede Gewinner-Strategie.
+```bash
+# Wird automatisch vom Orchestrator ausgeführt.
+# Manuell (Dry-Run, kein Live-Bot-Start):
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
+```
 
-## Adding a New Instrument
-Wenn das eToro Smart Portfolio ein neues Asset hinzufügt:
-1. Das neue Asset wird vom Skript in Schritt 1 möglicherweise nicht direkt erkannt.
-2. Führe `python3 dev_scripts/auto_map_insturments.py` aus. Dieses Skript entdeckt fehlende IDs und fügt sie automatisch zu `adapters/instrument_map.py` hinzu.
-3. Führe Schritt 1 (`momentum_ls_universe.py`) erneut aus.
-4. Führe Schritt 2b (`momentum_ls_fetch_candles_auto.py`) aus, um die historischen Daten zu laden.
-5. Führe das Turnier (Schritt 3) erneut aus.
+**Ergebnis:** `logs/tournament_YYYY-MM-DD.json` mit den Gewinner-Strategien pro Symbol.
+
+**Eligibilitätskriterien (alle müssen erfüllt sein):**
+- `min_trades ≥ 20` — statistische Mindestbasis
+- `total_return > 0%` — profitabel im Backtest
+
+**Plus mindestens EINE dieser Bedingungen:**
+- `min_sortino ≥ 0.3` — ODER
+- `min_profit_factor ≥ 1.1`
+
+**Score-Formel:** `sortino×0.4 + profit_factor×0.3 + win_rate×0.2 − max_drawdown×0.1`
+
+---
+
+### Schritt 4: Live-Bot starten
+
+Der Orchestrator startet den Bot automatisch nach erfolgreichem Tournament. Für einen manuellen Start:
+
+```bash
+# Dry-Run (keine echten Orders — zum Testen empfohlen):
+python3 automation/momentum_ls_run.py \
+  --universe data/universe/momentum_ls.json \
+  --tournament logs/tournament_$(date +%Y-%m-%d).json
+
+# Live-Modus (erfordert ETORO_CONFIRM_LIVE=1 in .env):
+python3 automation/momentum_ls_run.py \
+  --universe data/universe/momentum_ls.json \
+  --tournament logs/tournament_$(date +%Y-%m-%d).json
+```
+
+---
+
+## MomentumLSAllocator: Dynamische Kapitalzuteilung
+
+Der Allocator teilt das verfügbare Kapital dynamisch auf alle Symbole im Universe auf.
+
+- **No-Interference-Regel:** Für ein Symbol mit einer bereits offenen Position wird `0` Kapital allokiert — der Allocator greift nicht in laufende Positionen ein.
+- **Dynamische Scheiben (Slices):** Das verfügbare Gesamtkapital wird gleichmäßig auf alle Symbole ohne aktive Position aufgeteilt. Wenn das Universe wächst oder schrumpft, passt sich die Positionsgröße automatisch an.
+- **Mindest-Floor:** Allokationen unter $11 werden nicht ausgeführt (eToro-Minimum).
+
+---
+
+## Safety Interlock (Echtgeld-Schutzmechanismus)
+
+Um versehentliches Echtgeld-Trading zu verhindern, müssen **alle drei** Bedingungen erfüllt sein:
+
+1. `environment == 'real'`
+2. `dry_run == False`
+3. `ETORO_CONFIRM_LIVE=1` in der `.env`-Datei
+
+Fehlt eine dieser Bedingungen: `sys.exit(1)` — der Bot startet nicht. Dies verhindert, dass ein falsch konfigurierter Bot echte Orders platziert.
+
+---
+
+## Tournament-Ergebnis interpretieren
+
+Das JSON-Output `logs/tournament_YYYY-MM-DD.json` enthält:
+
+```python
+# Schnellauswertung:
+python3 -c "
+import json
+d = json.load(open('logs/tournament_$(date +%Y-%m-%d).json'))
+for sym, w in d['per_symbol_winners'].items():
+    print(f\"{sym:<30} {w['strategy']:<35} sortino={w['sortino']:.2f}\")
+"
+```
+
+- Symbole **ohne** Gewinner-Eintrag werden nicht gehandelt (keine Strategie hat die Schwellenwerte erreicht)
+- `PF=999` ist ein Artefakt aus Runs ohne einen einzigen Verlust-Trade — wird im Tournament penalisiert
+- Der "Aggregat-Gewinner" ist die Strategie mit den meisten Symbol-Wins (wird für alle Symbole ohne spezifischen Gewinner eingesetzt)
+
+---
+
+## Neue Instrumente hinzufügen
+
+Wenn das eToro Smart Portfolio ein neues Asset enthält:
+
+1. **Universe neu laden:**
+   ```bash
+   python3 automation/universe_fetcher.py
+   ```
+   Das neue Asset wird erkannt und in `data/universe/momentum_ls.json` aufgenommen.
+
+2. **Instrument-Map aktualisieren** (falls das Symbol noch nicht bekannt ist):
+   Trage es in `automation/config/instrument_map.json` ein. Details: `manuals/new_tickers.md`.
+
+3. **Historische Daten laden:**
+   ```bash
+   python3 automation/api_backfiller.py --days 7
+   # oder für vollständigen Backfill:
+   python3 automation/historical_fetcher.py --months 12
+   ```
+
+4. **Orchestrator neu starten** — das neue Symbol wird automatisch ins Tournament aufgenommen.
+
+---
 
 ## Troubleshooting
-- **No valid symbols to trade after cross-referencing...**
-  - Usually means none of the symbols passed the PF > 1.5 test, OR your parquet data directory is completely empty. Ensure Step 2b was run.
-- **Simulation failed for [Symbol]...**
-  - Indicates the historical parquet data is malformed or the strategy config is strictly rejecting the default parameters. Check the logs for exact errors. (Nutze `read_parquet.py`).
-- **Universe data is stale...**
-  - `dev_scripts/momentum_ls_run.py` will warn if the `fetched_at` timestamp is older than 24 hours. Ensure you run Step 1 daily.
-- **MomentumLSAllocator: zero allocation...**
-  - Dies bedeutet, dass die No-Interference-Regel aktiv ist, da bereits eine Position existiert.
-- **Tournament läuft, aber Bot startet nicht...**
-  - Prüfe, ob `--dry-run` entfernt wurde und `ETORO_CONFIRM_LIVE=1` in der `.env` gesetzt ist.
-- **Connectivity-Fehler...**
-  - Führe das Diagnose-Skript aus: `python3 dev_scripts/etoro_connectivity_test.py`.
+
+| Problem | Ursache | Lösung |
+|---------|---------|--------|
+| `No valid symbols to trade after cross-referencing` | Keine Strategie erreichte PF > 1.1 / Sortino > 0.3, oder Parquet-Daten fehlen | Schritt 2 ausführen, dann Schritt 3 wiederholen |
+| `Simulation failed for [Symbol]` | Parquet-Daten defekt oder Strategie-Konfiguration fehlerhaft | Logs auf `ERROR` prüfen, Daten neu laden |
+| `Universe data is stale` | `fetched_at` in `momentum_ls.json` älter als 24 Stunden | `python3 automation/universe_fetcher.py` ausführen |
+| `MomentumLSAllocator: zero allocation` | No-Interference-Regel aktiv (Position bereits offen) | Normales Verhalten — kein Fehler |
+| `Tournament läuft, aber Bot startet nicht` | `--dry-run` Flag aktiv, oder `ETORO_CONFIRM_LIVE` nicht gesetzt | Prüfe `.env` und CLI-Argumente |
 
 ---
+
 ## Weiterführende Dokumente
-- `manuals/deployment.md`
-- `manuals/TESTING.md`
-- `manuals/feature_automation_LS.md`
+- [`manuals/deployment.md`](./deployment.md) — VM-Setup, systemd und Cron
+- [`manuals/TESTING.md`](./TESTING.md) — Tests und Verifikation
+- [`manuals/feature_automation_LS.md`](./feature_automation_LS.md) — Implementierungsstatus
+- [`manuals/new_tickers.md`](./new_tickers.md) — Neue Instrumente hinzufügen
+- [`manuals/run_bot_manual.md`](./run_bot_manual.md) — Tournament-Selektion und Log-Diagnose
 
 ---
-*Zuletzt aktualisiert: 2026-05-17 — Überprüft gegen Repository-Stand vom 2026-05-14*
+*Zuletzt aktualisiert: 2026-06-07 — Überprüft gegen automation/AGENTS.md*
