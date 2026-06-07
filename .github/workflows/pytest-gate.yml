@@ -25,7 +25,79 @@ jobs:
         run: |
           pip install -r automation/requirements.txt
 
-      - name: Run fast isolated tests
-        run: |
-          python3 -m pytest automation/tests/test_backtest_runner.py -v --timeout=60
-          python3 -m pytest automation/tests/test_automation_isolation.py -v --timeout=30
+      # ── Tier 1: Architecture & Isolation (must never break) ──────────────────
+      - name: Architecture isolation (Standalone-Prinzip §4)
+        run: python3 -m pytest automation/tests/test_automation_isolation.py -v --timeout=30
+
+      # ── Tier 2: Data pipeline & encoding (FSB16, precision) ──────────────────
+      - name: FSB16 roundtrip encoding (§9, Pitfall #29)
+        run: python3 -m pytest automation/tests/test_fsb16_roundtrip.py -v --timeout=60
+
+      - name: Precision fallback logic (§8, Pitfalls #14/#23/#27/#36)
+        run: python3 -m pytest automation/tests/test_size_precision_fixes.py automation/tests/test_api_precisions.py -v --timeout=30
+
+      - name: Precision mismatch in backtest (Pitfall #36)
+        run: python3 -m pytest automation/tests/test_precision_mismatch.py -v --timeout=120
+
+      # ── Tier 3: Core backtest engine (backtest_runner.py) ────────────────────
+      - name: Backtest runner core metrics & scoring (§10, §13)
+        run: python3 -m pytest automation/tests/test_backtest_runner.py -v --timeout=120
+
+      - name: Backtest bar type (1-HOUR, Pitfall #28)
+        run: python3 -m pytest automation/tests/test_backtest_runner_bar_type.py -v --timeout=120
+
+      - name: Backtest trades generated — no zero-trade silent failure (§18)
+        run: python3 -m pytest automation/tests/test_backtest_trades_generated.py -v --timeout=120
+
+      - name: Balance crash regression (Pitfall #39)
+        run: python3 -m pytest automation/tests/test_balance_crash_regression.py -v --timeout=120
+
+      - name: Strategy uniqueness — no degenerate duplicate metrics (§13)
+        run: python3 -m pytest automation/tests/test_strategy_duplication.py -v --timeout=180
+
+      # ── Tier 4: Tournament & OOS gating ─────────────────────────────────────
+      - name: Tournament config validation (§7, §10)
+        run: python3 -m pytest automation/tests/test_tournament_validation.py -v --timeout=30
+
+      - name: OOS gate — fail-closed live deployment (§11, §13, Pitfall #45)
+        run: python3 -m pytest automation/tests/test_oos_gate.py -v --timeout=120
+
+      - name: OOS aggregation math (Pitfall #45 / Issue #255)
+        run: python3 -m pytest automation/tests/test_oos_aggregation.py -v --timeout=60
+
+      - name: OOS result structure — sibling key rule (Pitfall #45 / Issue #172)
+        run: python3 -m pytest automation/tests/test_issue_172.py -v --timeout=30
+
+      # ── Tier 5: Strategy layer (§6) ──────────────────────────────────────────
+      - name: Position sizing precedence (§6, Issue #182)
+        run: python3 -m pytest automation/tests/test_sizing_precedence.py -v --timeout=30
+
+      - name: Keltner ATR period parameter wiring (§6, AGENTS.md KeltnerChannel fix)
+        run: python3 -m pytest automation/tests/test_keltner_atr_period.py -v --timeout=120
+
+      - name: Flash crash reversal exits (§6, Issue #84)
+        run: python3 -m pytest automation/tests/test_flash_crash_exits.py -v --timeout=30
+
+      - name: VWAP exhaustion state mutation safety (§6, Pitfall #41 / Issue #211)
+        run: python3 -m pytest automation/tests/test_vwap_exhaustion_state.py -v --timeout=30
+
+      # ── Tier 6: Live path (§11, §5.7) ────────────────────────────────────────
+      - name: Live strategy mapping & registry (§11, Pitfall #22)
+        run: python3 -m pytest automation/tests/test_live_strategy_mapping.py -v --timeout=30
+
+      - name: Live execution safety defaults — demo mode & trend filter (§11)
+        run: python3 -m pytest automation/tests/test_live_execution_defaults.py -v --timeout=60
+
+      - name: Live allocator — no-interference & dollar floor (§5.7)
+        run: python3 -m pytest automation/tests/test_allocator.py automation/tests/test_live_allocator_smoke.py -v --timeout=30
+
+      # ── Tier 7: Infrastructure (§5.1, §5.9) ──────────────────────────────────
+      - name: Catalog service — os._exit convention & flush (§5.1)
+        run: python3 -m pytest automation/tests/test_catalog_service.py -v --timeout=60
+
+      - name: Log manager — JSON events & cleanup (§5.9)
+        run: python3 -m pytest automation/tests/test_log_manager.py -v --timeout=30
+
+      # ── Tier 8: Orchestrator & phase 1 ───────────────────────────────────────
+      - name: Orchestrator phase 1 — universe fetch & stale check (§5.2, §3)
+        run: python3 -m pytest automation/tests/test_orchestrator_phase1.py -v --timeout=30

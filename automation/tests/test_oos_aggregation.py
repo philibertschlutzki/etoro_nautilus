@@ -21,30 +21,31 @@ def test_oos_aggregation():
         }
     }
 
+    # median_position_notional >= 10 required by Issue #254 gatekeeper in _is_eligible
     all_results = [
         {
             "symbol": "SYM1",
             "strategy": "StrategyA",
-            "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5 },
-            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1 }
+            "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
+            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1, "median_position_notional": 50.0 }
         },
         {
             "symbol": "SYM1",
             "strategy": "StrategyB",
-            "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5 },
-            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1 }
+            "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
+            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1, "median_position_notional": 50.0 }
         },
         {
             "symbol": "SYM2",
             "strategy": "StrategyA",
-            "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5 },
-            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2 }
+            "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
+            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2, "median_position_notional": 50.0 }
         },
         {
             "symbol": "SYM2",
             "strategy": "StrategyB",
-            "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5 },
-            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2 }
+            "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
+            "oos_metrics": { "total_trades": 10, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2, "median_position_notional": 50.0 }
         }
     ]
 
