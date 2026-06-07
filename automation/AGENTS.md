@@ -114,7 +114,7 @@ daily_orchestrator.py — 5 Phasen:
     Phase 5  Live Deployment (Detached Subprocess → momentum_ls_run.py)
 ```
 
-**Backtest-Fenster:** 30 Tage (`today_midnight_UTC − 30d → today_midnight_UTC`). Hinweis: Der Changelog nennt teils „7-Tage", der aktuelle Code (`phase3_4_backtest_and_tournament`) verwendet `timedelta(days=30)`.
+**Backtest-Fenster:** Dynamisch. `daily_orchestrator.py` berechnet das Fenster dynamisch anhand der relevanten Variablen aus der `backtest.json` (`is_window_days`, `oos_window_days`, `splits`). Die Berechnung lautet: `total_days = is_window_days + (splits * oos_window_days)` gefolgt von `start = end - timedelta(days=total_days)`.
 
 ---
 
@@ -470,17 +470,13 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 **Fix:** Absicherung des `temp_catalog_dir` Cleanups durch einen harten `try/finally`-Block (via `patch_try_finally.py`).
 **Betroffen:** `automation/backtest_runner.py`.
 
-### 🟡 Docstrings in `daily_orchestrator.py` vs. Code
-**Symptom:** Die Kommentare/Docstrings in `daily_orchestrator.py` behaupten fälschlicherweise "7 Tage" für das Backtest-Fenster, während der Code korrekterweise `timedelta(days=30)` verwendet.
-**Fix:** Die Kommentare anpassen, um die 30 Tage aus dem Code widerzuspiegeln (noch offen/wird nur dokumentiert).
-
 ### 🟢 #27 — Divergierende size_precision-Heuristiken
 **Symptom:** Es existieren drei widersprüchliche Heuristiken für Equity `size_precision`: `automation/utils._fallback_precisions` liefert 2, während `automation/adapters/instrument_utils.get_size_precision` und `automation/fractional_trading._get_size_precision` fälschlicherweise 0 liefern.
 **Fix:** Konsolidiert. `adapters/instrument_utils` und `fractional_trading` nutzen nun ausschließlich `automation/utils._fallback_precisions(symbol)[1]`. Redundante Implementierungen und Sets wurden entfernt.
 
-### 🟡 KeltnerChannel `atr_period` Mismatch
-**Symptom:** `mean_reversion.py` und `hourly_mean_reversion.py` führen `keltner_atr_period` in der Config, übergeben sie aber nicht an `KeltnerChannel(period=…, k_multiplier=…)`.
-**Fix:** Parameter korrekt übergeben (noch offen/wird nur dokumentiert).
+### 🟢 KeltnerChannel `atr_period` Mismatch
+**Symptom:** `mean_reversion.py` und `hourly_mean_reversion.py` führten `keltner_atr_period` in der Config, übergaben sie aber nicht an `KeltnerChannel(period=…, k_multiplier=…)`.
+**Fix:** Parameter korrekt übergeben. Die `MeanReversionStrategy` wurde standardisiert (gemäß Changelog Issue #213 vom 2026-06-05).
 
 ### 🟢 #28 — Backtest BarType Diskrepanz (0 Trades / 0 Gewinner)
 **Symptom:** Backtest liefert `Trades=0` für alle Strategien/Symbole, obwohl der Live-Pfad läuft.
@@ -532,10 +528,10 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix:** FIFO-Logik muss immer über das gesamte Datenset (`IS + OOS`) unangetastet iterieren, da sonst offene Queues korrumpieren. Erst *nach* dem FIFO-Matching werden die generierten PnL-Tupel (`pnl, ts_event`) anhand des Cutoffs separiert.
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🔴 #33 — Tuple Unpacking Regression in extract_metrics
+### 🟢 #33 — Tuple Unpacking Regression in extract_metrics
 **Symptom:** `total_trades=0` in allen Strategien, leere Backtest-Metriken, keine Tournament-Gewinner.
-**Root Cause:** Regression durch Mismatch der Tuple-Arity. `pnls_with_ts.append` generiert ein flaches 4-Tupel, aber die nachfolgende Loop versucht in 3 Ziele zu entpacken (Fehler in Pitfall #31/#103 entstanden). Der `ValueError` wird stumm gefangen.
-**Fix:** Unpacking Loop auf `for pnl, ts, ht, m_qty in pnls_with_ts:` korrigieren (4 Variablen).
+**Root Cause:** Regression durch Mismatch der Tuple-Arity. `pnls_with_ts.append` generierte ein flaches 4-Tupel, aber die nachfolgende Loop versuchte in 3 Ziele zu entpacken.
+**Fix:** Unpacking Loop wurde auf `for pnl, ts, ht, m_qty in pnls_with_ts:` korrigiert (4 Variablen entpackt). Referenz: Issue #132.
 **Betroffen:** `automation/backtest_runner.py`
 
 ### 🟢 #35 — `compute_tournament_score` konstanter Wert und fehlerhafte Gewinner-Reihenfolge
@@ -568,8 +564,6 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 ---
 
 ## 18. Changelog (Agent-Maintained)
-- Issue #192: Fixed critical error in tournament gating where `_is_eligible` incorrectly attempted to parse `oos_metrics` from inside the `metrics` sub-dictionary (`r["metrics"].get("oos_metrics")`), leading to a KeyError/None fallback and 0 eligible pairs. `_is_eligible` is now strictly for IS gating, and `select_winners` explicitly enforces passing both `_is_eligible(r)` and `_evaluate_oos_eligibility(r.get("oos_metrics"))` before considering a pair eligible.
-
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 
 | Datum | Änderung | Dateien |
@@ -618,8 +612,6 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 | 2026-06-05 | **Issue #179 (False Alarm Bug Data-Pipeline):** Log-Spam für fehlende API-Precisions bei korrekten Equities behoben. Es wurde dokumentiert, dass die eToro API derzeit beim Endpoint `instruments` keine Precision-Felder für Equities zurückgibt und der Fallback auf `(2,2)` funktional korrekt ist. Statt `ERROR`-Logs werden nun `DEBUG`-Meldungen mit einem Response-Dump zur weiteren Analyse generiert. Pitfall #36 Guard für Non-Equities bleibt weiterhin aktiv. | `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/AGENTS.md` |
 | 2026-06-06 | **Issue #206 (Real Rolling Walk-Forward):** Implementierung des echten Rolling Walk-Forward und OOS-Gating-Fixes. Strikte Evaluierung der benötigten Datenspanne und retrospektiver rollierender Split in `extract_metrics` integriert, während das 'State Bleed'-Paradigma zur Performanceoptimierung erhalten bleibt. Fehlerhafter Fallback im Orchestrator entfernt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #231 (False Positive API Warning):** Herabstufung der 'Keine Felder'-Warnung auf DEBUG in `api_backfiller.py`, wenn der Batch ausschließlich aus erwarteten Equities besteht. Log-Ausgabe in `historical_fetcher.py` für bessere Transparenz angepasst. Pitfall #36 Guards bleiben strikt erhalten. | `automation/api_backfiller.py`, `automation/historical_fetcher.py`, `automation/AGENTS.md` |
-| 2026-06-06 | **Issue #206 (Real Rolling Walk-Forward):** Implementierung des echten Rolling Walk-Forward und OOS-Gating-Fixes. Strikte Evaluierung der benötigten Datenspanne und retrospektiver rollierender Split in `extract_metrics` integriert, während das 'State Bleed'-Paradigma zur Performanceoptimierung erhalten bleibt. Fehlerhafter Fallback im Orchestrator entfernt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/AGENTS.md` |
-| 2026-06-06 | **Issue #206 (Real Rolling Walk-Forward):** Implementierung des echten Rolling Walk-Forward und OOS-Gating-Fixes. Strikte Evaluierung der benötigten Datenspanne und retrospektiver rollierender Split in `extract_metrics` integriert, während das 'State Bleed'-Paradigma zur Performanceoptimierung erhalten bleibt. Fehlerhafter Fallback im Orchestrator entfernt. | `automation/backtest_runner.py`, `automation/daily_orchestrator.py`, `automation/AGENTS.md` |
 
 ## Architektonische Methodik: IS/OOS Split und "State Bleed"
 
