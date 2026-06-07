@@ -332,8 +332,8 @@ async def run_historical_fetch(
             api_precisions = {}
 
         log.info(
-            f"[historical_fetcher] Precisions via API: "
-            f"{len(api_precisions)}/{len(etoro_ids)} Instrumente."
+            f"[historical_fetcher] Precisions via API/Fallback: "
+            f"{len(api_precisions)} geladen (restliche via Standard-Equity-Fallback)."
         )
 
         for etoro_id, symbol in sorted(to_fetch.items(), key=lambda x: x[1]):

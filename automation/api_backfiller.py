@@ -237,12 +237,19 @@ async def fetch_precisions_from_api(
     fallback_count = len(result) - api_hits
     equity_fallback_count = len(etoro_ids) - len(result)
 
-    if api_hits == 0:
-        log.warning(
-            f"[api_backfiller] Precision-API lieferte keine Felder "
-            f"(0 von {len(etoro_ids)} Instrumenten). API-Endpunkt oder Response-Format "
-            f"möglicherweise geändert."
-        )
+    if api_hits == 0 and len(etoro_ids) > 0:
+        if equity_fallback_count == len(etoro_ids):
+            log.debug(
+                f"[api_backfiller] Precision-API lieferte keine Felder "
+                f"(0 von {len(etoro_ids)} Instrumenten), aber alle wurden als Equities abgefangen. "
+                f"Dies ist das erwartete Verhalten."
+            )
+        else:
+            log.warning(
+                f"[api_backfiller] Precision-API lieferte keine Felder "
+                f"(0 von {len(etoro_ids)} Instrumenten). API-Endpunkt oder Response-Format "
+                f"möglicherweise geändert."
+            )
 
     if len(etoro_ids) > 0 and api_hits < len(etoro_ids):
         if os.getenv("STRICT_PRECISION_FAIL") == "1":
