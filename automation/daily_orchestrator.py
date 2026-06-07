@@ -695,6 +695,12 @@ def phase3_4_backtest_and_tournament(
     log.info("═" * 60)
 
     today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Rollback to Friday end-of-day (Saturday 00:00:00 UTC) if today is Saturday (5) or Sunday (6)
+    # If today is Saturday (5), we are already at Saturday 00:00:00 UTC, which is Friday EOD.
+    # If today is Sunday (6), we need to roll back to Saturday 00:00:00 UTC, so subtract 1 day.
+    if today_midnight.weekday() == 6:
+        today_midnight -= timedelta(days=1)
+
     thirty_days_ago = today_midnight - timedelta(days=30)
 
     # Start time is calculated inside _build_backtest_config based on WF settings
