@@ -1715,11 +1715,20 @@ def run_backtest() -> None:
 
     # --- Tournament-Config (Task 5) ---
     tournament_cfg = load_tournament_config(_project_root)
-    print(
-        f"🏆 Tournament: min_trades={tournament_cfg.get('min_trades')}, "
-        f"min_sortino={tournament_cfg.get('min_sortino')}, "
-        f"min_pf={tournament_cfg.get('min_profit_factor')}"
-    )
+    req_all = tournament_cfg.get('eligible_requires_all', [])
+    req_any = tournament_cfg.get('eligible_requires_any', [])
+
+    print("🏆 Tournament Configuration:")
+    print(f"   [ALL REQUIRED] {req_all}")
+    for k in req_all:
+        print(f"      • {k}: {tournament_cfg.get(k, 'N/A')}")
+
+    print(f"   [ANY REQUIRED] {req_any}")
+    for k in req_any:
+        print(f"      • {k}: {tournament_cfg.get(k, 'N/A')}")
+
+    if "oos_min_trades" in tournament_cfg or "oos_min_total_return" in tournament_cfg or "oos_min_expectancy" in tournament_cfg:
+        print(f"   [OOS DEFAULTS] min_trades: {tournament_cfg.get('oos_min_trades')}, min_return: {tournament_cfg.get('oos_min_total_return')}, min_expectancy: {tournament_cfg.get('oos_min_expectancy')}")
 
     # --- Strategie-Defaults laden (Task 2) ---
     strategy_defaults = load_strategy_defaults(_project_root)
