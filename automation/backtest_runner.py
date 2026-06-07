@@ -406,26 +406,26 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     if n_trades < req_trades:
         reasons.append(f"oos_min_trades: {n_trades} < {req_trades}")
     if total_return < req_return:
-        reasons.append(f"oos_min_total_return: {total_return:.4f} < {req_return:.4f}")
+        reasons.append(f"oos_min_total_return: {total_return:.5f} < {req_return:.5f}")
     if expectancy < req_exp:
         reasons.append(f"oos_min_expectancy: {expectancy:.5f} < {req_exp:.5f}")
     if max_dd > req_max_dd:
-        reasons.append(f"oos_max_drawdown: {max_dd:.4f} > {req_max_dd:.4f}")
+        reasons.append(f"oos_max_drawdown: {max_dd:.5f} > {req_max_dd:.5f}")
     if win_rate < req_win_rate:
-        reasons.append(f"oos_min_win_rate: {win_rate:.4f} < {req_win_rate:.4f}")
+        reasons.append(f"oos_min_win_rate: {win_rate:.5f} < {req_win_rate:.5f}")
 
     # None-Sicherheit: Zero-Loss-OOS
     if req_sortino > 0.0:
         if sortino is None:
              reasons.append(f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}")
         elif sortino < req_sortino:
-             reasons.append(f"oos_min_sortino: {sortino:.4f} < {req_sortino}")
+             reasons.append(f"oos_min_sortino: {sortino:.5f} < {req_sortino}")
 
     if req_pf > 0.0:
         if pf is None:
              reasons.append(f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}")
         elif pf < req_pf:
-             reasons.append(f"oos_min_profit_factor: {pf:.4f} < {req_pf}")
+             reasons.append(f"oos_min_profit_factor: {pf:.5f} < {req_pf}")
 
     median_notional = oos_metrics.get("median_position_notional", 0.0)
     if median_notional < 10.0:
@@ -453,8 +453,25 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
 
     if sortino is None or pf is None:
         if log_rejections:
-            print(f"⚠️  Rejected: Undefined metrics due to all-win / insufficient loss data for {symbol} - {strategy}")
-            metrics["rejection_reason"] = "insufficient/all-win"
+            n = metrics.get("total_trades", 0)
+            losses_count = metrics.get("losses_count", 0)
+            win_rate = metrics.get("win_rate", 0.0)
+
+            if n == 0:
+                reason = "no trades executed"
+            elif win_rate == 0.0:
+                reason = "all-loss"
+            elif losses_count == 0:
+                reason = "all-win (no losses)"
+            elif n < 5:
+                reason = f"insufficient sample (n={n})"
+            elif losses_count < 2 and n < 50:
+                reason = f"insufficient loss data (losses={losses_count} for n={n})"
+            else:
+                reason = "undefined metrics"
+
+            print(f"⚠️  Rejected: {reason} for {symbol} - {strategy}")
+            metrics["rejection_reason"] = reason
         return False
 
     n_trades     = metrics.get("total_trades", 0)
@@ -1251,10 +1268,10 @@ def print_tournament_table(
         strat_min_trades = t_overrides.get("min_trades", global_min_trades_req)
 
         def format_metric(val, req_trades):
-            if val is not None:
-                return f"{val:>7.2f}"
             if m.get('total_trades', 0) < req_trades:
                 return f"{'n/a(<min)':>7}"
+            if val is not None:
+                return f"{val:>7.2f}"
             if m.get('losses_count', 0) == 0 or m.get('max_drawdown', 0.0) == 0.0:
                 return f"{'n/a(win)':>7}"
             return f"{'n/a':>7}"
@@ -1576,11 +1593,11 @@ def run_single_backtest_worker(
             oos_metrics = {}
 
         def format_metric(m_dict, key, min_trades_req):
+            if m_dict.get('total_trades', 0) < min_trades_req:
+                return f"{'n/a(<min)':>6}"
             val = m_dict.get(key)
             if val is not None:
                 return f"{val:>6.2f}"
-            if m_dict.get('total_trades', 0) < min_trades_req:
-                return f"{'n/a(<min)':>6}"
             if m_dict.get('losses_count', 0) == 0 or m_dict.get('max_drawdown', 0.0) == 0.0:
                 return f"{'n/a(win)':>6}"
             return f"{'n/a':>6}"
