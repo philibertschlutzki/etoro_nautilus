@@ -27,17 +27,15 @@ Before starting Phase 1, verify and document the following:
 ### Tasks
 
 1. **Audit all strategy files.** Target files (adjust if names differ in repo):
-   - `automation/strategies/adx_atr_momentum.py`
    - `automation/strategies/dynamic_breakout.py`
    - `automation/strategies/flash_crash_reversal.py`
    - `automation/strategies/mean_reversion.py`
    - `automation/strategies/sma_crossover.py`
    - `automation/strategies/tesla_combo_strategy.py`
-   - `automation/strategies/trend_pullback.py`
    - `automation/strategies/volatility_breakout.py`
    - `automation/strategies/vwap_exhaustion.py`
 
-2. **Use `automation/config/strategy_defaults.json`** to override strategy parameters to maximally sensitive values (e.g., SMA periods of 2/3, breakout thresholds of 0.01%, ATR multipliers of 0.1) instead of monkey-patching legacy files.
+2. **Use the JSON config system (`automation/config/strategies.json` -> `params`)** to override strategy parameters to maximally sensitive values (e.g., SMA periods of 2/3, breakout thresholds of 0.01%, ATR multipliers of 0.1) instead of monkey-patching legacy files. Do not modify `strategy_defaults.json`.
 
 3. **Create `automation/tests/run_live_strategy_test.py`.** This script must:
    - Load each strategy with test overrides.
@@ -118,10 +116,10 @@ Before starting Phase 1, verify and document the following:
      - `--freq` (tick frequency in seconds, default: 1)
      - `--mu` (drift, default: 0.0001)
      - `--sigma` (volatility, default: 0.02)
-   - Output: `.parquet` files written to `/data/synthetic/quote_tick/<instrument>/` in the same schema as the real data files (inspect the real parquet schema first with `pandas.read_parquet(...).dtypes`).
+   - Output: `.parquet` files written to `/data/synthetic/quote_tick/<instrument>/` in the same schema as the real data files. **CRITICAL:** Data MUST be strictly encoded as `FixedSizeBinary(16)` (e.g., `round(val * 10**16)`) and PyArrow metadata (`b"size_precision"`, `b"price_precision"`) MUST be injected following the exact pattern in `automation/api_backfiller.py` to prevent Rust FFI aborts.
    - After writing, validate the output by reading it back and asserting row count > 0.
 
-3. **6-month backtest:** Run every strategy against the synthetic 6-month dataset. Use `python -m automation.backtest_runner` or `python -m automation.daily_orchestrator` as the entry point. Write per-run logs to `/logs/phase3_synthetic_backtest_<strategy>.log`.
+3. **6-month backtest:** Run every strategy against the synthetic 6-month dataset using `python -m automation.backtest_runner`. The backtest and logs MUST evaluate and report Out-of-Sample (OOS) metrics (e.g., `oos_metrics`, `oos_eligible`) to correctly mirror the Phase 5 `daily_orchestrator` behavior. Write per-run logs to `/logs/phase3_synthetic_backtest_<strategy>.log`.
 
 4. **HTML report validation:** For each backtest run, locate the output HTML tearsheet (check the repo's config for the output path). Validate programmatically:
    - File exists and is non-empty.
@@ -170,6 +168,7 @@ Each report must contain the following sections (no exceptions):
 
 | Metric | Expected | Actual |
 |--------|----------|--------|
+| OOS Eligible | ... | ... |
 | ... | ... | ... |
 
 Include: API latency (ms), slippage (if measurable), error codes encountered.

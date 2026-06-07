@@ -23,9 +23,9 @@
 1. **Identify the relevant section(s)** of AGENTS.md for your task.
    - Adding a strategy? → Section 11 + Section 6
    - Debugging WebSocket issues? → Section 5.1 + Section 8
-   - Changing order flow? → Section 9 + Section 5.2
+   - Changing order flow? → Section 18 + Section 5.8
    - Adding a Momentum-LS strategy? → Section 5.6 + Section 6
-   - Debugging the daily orchestrator? → Section 14
+   - Debugging the daily orchestrator? → Section 5.6
 
 
 2. **Re-read the section(s)** carefully. Pay special attention to:
@@ -68,7 +68,7 @@ Run this checklist **immediately after reading AGENTS.md for the first time, and
 - [ ] Confirm that `_HEARTBEAT_INTERVAL = 60` in the code
 - [ ] Verify the price precision rules for SHIB/PEPE/BTC/ETH/others match `_register_instruments()`
 - [ ] Check that `_CRYPTO_SYMBOLS` is a frozenset (immutable)
-- [ ] Verify that `size_precision=0` is hardcoded for all instruments
+- [ ] Verify that precision logic strictly uses `automation/utils._fallback_precisions` (e.g., `size_precision=2` for Equities, 8 for Crypto)
 - [ ] Confirm that the WebSocket subscribe topics are `"instrument:{eid}"` format
 
 #### EToroExecutionClient (5.2)
@@ -117,14 +117,14 @@ Pick 2–3 existing strategies and spot-check:
 - [ ] Confirm that `ETORO_EXECUTION` has keys: `"environment"`, `"dry_run"`, `"enable_trailing_stop"`
 - [ ] Verify that `ETORO_API_TEST` is only used in dev_scripts, not in `automation.momentum_ls_run`
 
-### Safety (Section 12)
+### Live Deployment & Safety (Section 11)
 
 - [ ] Verify that `_check_live_safety_interlock()` in `automation.momentum_ls_run` checks all three conditions
 - [ ] Confirm that `ETORO_CONFIRM_LIVE` env var is required (not optional)
 - [ ] Check that dry_run mode skips REST POST but still generates events
 - [ ] Verify that `os._exit(1)` (not `sys.exit()`) is used in all critical error paths
 
-### Development Scripts (Section 14)
+### Testing & Validierung (Section 13)
 
 - [ ] Confirm that all dev scripts load `.env` via `load_dotenv()`
 - [ ] Verify that `etoro_execution_test.py` requires manual confirmation (not auto-run)
@@ -272,10 +272,10 @@ cache.positions_open(instrument_id=...) for per-instrument caps instead."
 ### Scenario 3: You're Modifying the Order Execution Flow
 
 ```
-1. Read Section 9 (Order Lifecycle) + Section 5.2 (EToroExecutionClient)
+1. Read Section 18 (Order Management) + Section 5.2 (EToroExecutionClient)
 2. Trace through the order flow diagrams
 3. Verify the timing expectations (_poll_for_fill, reconciliation)
-4. If you change the flow, update both Section 9 and Section 5.2
+4. If you change the flow, update both Section 18 and Section 5.2
 5. Add changelog entry with rationale for the change
 6. Run dev_scripts/etoro_execution_tests_all_orders.py to verify
 7. Update AGENTS.md with any new discoveries (timing, edge cases, etc.)
@@ -403,7 +403,7 @@ When reviewing or updating AGENTS.md, check that:
 - [ ] If I changed the codebase behavior, I have updated AGENTS.md
 - [ ] I have added appropriate changelog entries to Section 18
 - [ ] My changelog entries are clear and specific (not vague)
-- [ ] I have cross-referenced my changes (e.g., if updating Section 5.2, also check Section 9)
+- [ ] I have cross-referenced my changes (e.g., if updating Section 5.2, also check Section 18)
 
 ---
 
