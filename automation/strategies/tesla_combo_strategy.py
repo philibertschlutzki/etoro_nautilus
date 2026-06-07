@@ -22,8 +22,8 @@ class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     bb_std_dev: float = 2.0
     atr_period: int = 14
     atr_multiplier: float = 0.5
-    bb_entry_tolerance: int = 24
-    cooldown_bars: int = 4
+    bb_entry_tolerance: float = 0.001
+    cooldown_bars: int = 12
     allow_short: bool = False
 
 
@@ -106,7 +106,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         if (
             trend_bullish
             and momentum_bullish
-            and self.bars_since_bb_touch <= self.config.bb_entry_tolerance
+            and self.bars_since_bb_touch <= 10
             and vwap_confirmed
             and self.current_signal != "BUY"
             and self.bars_since_last_signal >= self.config.cooldown_bars
@@ -118,13 +118,14 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
                 f"BB lower: {self.bb.lower:.2f} | VWAP: {self.current_vwap:.2f}",
                 LogColor.GREEN,
             )
+            self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
         elif (
             self.config.allow_short
             and trend_bearish
             and momentum_bearish
-            and self.bars_since_bb_touch <= self.config.bb_entry_tolerance
+            and self.bars_since_bb_touch <= 10
             and vwap_bearish_confirmed
             and self.current_signal != "SELL"
             and self.bars_since_last_signal >= self.config.cooldown_bars
@@ -136,6 +137,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
                 f"BB upper: {self.bb.upper:.2f} | VWAP: {self.current_vwap:.2f}",
                 LogColor.RED,
             )
+            self.current_signal = "SELL"
             self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
@@ -154,7 +156,6 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
-        self.current_signal = "BUY"
         self.bars_since_last_signal = 0
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -178,7 +179,6 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
-        self.current_signal = "SELL"
         self.bars_since_last_signal = 0
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -189,12 +189,6 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
-
-
-    def on_position_closed(self, event) -> None:
-        super().on_position_closed(event)
-        self.current_signal = None
-        self.bars_since_last_signal = 9999
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
