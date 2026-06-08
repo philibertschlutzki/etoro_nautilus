@@ -70,6 +70,43 @@ def test_total_return_eligibility_hard_gate():
     metrics["total_return"] = 0.026  # Pass (also making sure expectancy = 0.026/50 > 0.0005)
     assert _is_eligible({'metrics': metrics}, tournament_cfg), "Should pass with total_return > 0.005"
 
+def test_rejection_reasons_in_is_eligible():
+    tournament_cfg = {}
+    metrics = {
+        "sortino_ratio": None,
+        "profit_factor": None,
+        "total_trades": 0,
+        "losses_count": 0,
+        "win_rate": 0.0
+    }
+
+    _is_eligible({'metrics': metrics}, tournament_cfg, log_rejections=True)
+    assert metrics.get("rejection_reason") == "no trades executed"
+
+    metrics["total_trades"] = 10
+    metrics["win_rate"] = 0.0
+    metrics["losses_count"] = 10
+    _is_eligible({'metrics': metrics}, tournament_cfg, log_rejections=True)
+    assert metrics.get("rejection_reason") == "all-loss"
+
+    metrics["total_trades"] = 10
+    metrics["win_rate"] = 1.0
+    metrics["losses_count"] = 0
+    _is_eligible({'metrics': metrics}, tournament_cfg, log_rejections=True)
+    assert metrics.get("rejection_reason") == "all-win (no losses)"
+
+    metrics["total_trades"] = 4
+    metrics["win_rate"] = 0.5
+    metrics["losses_count"] = 2
+    _is_eligible({'metrics': metrics}, tournament_cfg, log_rejections=True)
+    assert metrics.get("rejection_reason") == "insufficient sample (n=4)"
+
+    metrics["total_trades"] = 10
+    metrics["win_rate"] = 0.9
+    metrics["losses_count"] = 1
+    _is_eligible({'metrics': metrics}, tournament_cfg, log_rejections=True)
+    assert metrics.get("rejection_reason") == "insufficient loss data (losses=1 for n=10)"
+
 def test_load_tournament_config_validation(monkeypatch):
     tournament_cfg = {
         "oos_min_trades": 5,
