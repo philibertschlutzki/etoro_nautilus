@@ -92,7 +92,8 @@ def test_single_worker_bar_type_hour(tmp_path):
         start_capital=1000.0,
         generate_html_report=False,
         reports_dir=str(tmp_path / "reports"),
-        worker_log_file=str(tmp_path / "worker_bar_type.log")
+        worker_log_file=str(tmp_path / "worker_bar_type.log"),
+        span_tolerance_days=3.0
     )
 
     # Assert that metrics are returned and it did not crash returning {}

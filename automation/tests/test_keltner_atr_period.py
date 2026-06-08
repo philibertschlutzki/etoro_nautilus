@@ -113,6 +113,7 @@ def test_keltner_atr_period_effect(tmp_path):
         generate_html_report=False,
         reports_dir=str(tmp_path / "reports"),
         worker_log_file=str(tmp_path / "worker.log"),
+        span_tolerance_days=3.0,
     )
 
     strat_5 = {
@@ -138,6 +139,7 @@ def test_keltner_atr_period_effect(tmp_path):
         generate_html_report=False,
         reports_dir=str(tmp_path / "reports_5"),
         worker_log_file=str(tmp_path / "worker_5.log"),
+        span_tolerance_days=3.0
     )
 
     assert res_20 != {}, "Worker crashed and returned empty dict for atr_period=20"

@@ -93,7 +93,8 @@ def test_no_identical_strategies(tmp_path):
             start_capital=10000.0,
             generate_html_report=False,
             reports_dir=str(tmp_path / "reports"),
-            worker_log_file=str(tmp_path / "worker.log")
+            worker_log_file=str(tmp_path / "worker.log"),
+        span_tolerance_days=3.0
         )
         if "metrics" in res:
             m = res["metrics"]

@@ -87,6 +87,7 @@ def test_balance_crash_regression(tmp_path):
         generate_html_report=False,
         reports_dir=str(tmp_path / "reports"),
         worker_log_file=str(tmp_path / "worker.log"),
+        span_tolerance_days=3.0,
     )
 
     assert res != {}, "Worker ist abgestürzt (möglicherweise durch TypeError)"
