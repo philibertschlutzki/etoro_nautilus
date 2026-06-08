@@ -979,6 +979,26 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             "median_position_notional": 0.0,
         }
 
+        # Issue #303: Export raw OOS trade records for chronological portfolio aggregation
+        oos_trade_records = []
+        if oos_pnls:
+            # Reconstruct tuples of (pnl, ts, ht, m_qty, notional) for portfolio merging
+            # They were processed in the same order as oos_pnls
+            _oos_idx = 0
+            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
+                notional, _ts = notionals_with_ts[i]
+                is_oos = False
+                for j in range(splits):
+                    split_is_start_ns = start_ns + j * oos_window_ns
+                    split_oos_start_ns = split_is_start_ns + is_window_ns
+                    split_oos_end_ns = split_oos_start_ns + oos_window_ns
+                    if split_oos_start_ns <= ts < split_oos_end_ns:
+                        is_oos = True
+                        break
+                if is_oos:
+                    oos_trade_records.append((pnl, ts, ht, m_qty, notional))
+        oos_metrics["_oos_trade_records"] = oos_trade_records
+
         if walk_forward_dict and start_ns is not None:
             return {
                 "metrics": is_metrics,
@@ -1207,6 +1227,25 @@ def select_winners(
         if best_results:
             n_res = len(best_results)
 
+            # Issue #303: Chronological Portfolio Aggregation
+            # Collect all _oos_trade_records and sort them by timestamp
+            portfolio_trades = []
+            for oos in best_results:
+                records = oos.get("_oos_trade_records", [])
+                portfolio_trades.extend(records)
+
+            # Sort strictly by timestamp (ts is index 1 in the tuple)
+            portfolio_trades.sort(key=lambda x: x[1])
+
+            # Reconstruct the lists for _calculate_stats
+            # tuple is: (pnl, ts, ht, m_qty, notional)
+            portfolio_pnls = [tr[0] for tr in portfolio_trades]
+            portfolio_holds = [(tr[2], tr[3]) for tr in portfolio_trades]
+            portfolio_notionals = [tr[4] for tr in portfolio_trades]
+
+            import statistics
+            portfolio_med_notional = statistics.median(portfolio_notionals) if portfolio_notionals else 0.0
+
             # Echte Portfolio-Aggregation für Trades und Wins
             portfolio_total_trades = sum((oos.get("total_trades") or 0) for oos in best_results)
             # Rekonstruktion der absoluten Wins pro Symbol und Aufsummierung (typsicher)
@@ -1219,25 +1258,31 @@ def select_winners(
             # Trade-Weighted Portfolio Rendite
             portfolio_mean_return = sum((oos.get("total_return") or 0.0) * (oos.get("total_trades") or 0) for oos in best_results) / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
 
-            sortinos = [s for s in (oos.get("sortino_ratio") for oos in best_results) if s is not None]
-            med_sortino = get_median(sortinos) if sortinos else None
-
-            pfs = [p for p in (oos.get("profit_factor") for oos in best_results) if p is not None]
-            med_pf = get_median(pfs) if pfs else None
-
             span_days = [oos.get("oos_span_days", 0) for oos in best_results]
             med_span = get_median(span_days) if span_days else 0
 
+            # We must use a constant starting_capital here, assuming 100k or default 1.0 (though _calculate_stats uses returns = v/starting_capital).
+            # To get accurate ratios, we need the original starting_capital used during the run.
+            # Assuming 100_000.0 is the default. We can extract it from the first result's `strat_params` or use a constant since relative differences apply.
+            # Best effort to extract the original starting capital or default to 100k
+            starting_capital = 100_000.0
+            if is_eligible_population:
+                starting_capital = is_eligible_population[0].get("strat_params", {}).get("starting_capital", 100_000.0)
+
+
+            # Calculate the true portfolio metrics from chronologically ordered trades
+            portfolio_metrics = _calculate_stats(portfolio_pnls, portfolio_holds, starting_capital, med_notional=portfolio_med_notional)
+
             avg_oos = {
                 "total_trades": portfolio_total_trades,
-                "sortino_ratio": med_sortino,
-                "profit_factor": med_pf,
-                "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
+                "sortino_ratio": portfolio_metrics.get("sortino_ratio"),
+                "profit_factor": portfolio_metrics.get("profit_factor"),
+                "max_drawdown": portfolio_metrics.get("max_drawdown", 1.0),
                 "win_rate": portfolio_win_rate,
                 "total_return": portfolio_mean_return,
                 "oos_span_days": med_span,
-                "median_position_notional": get_median([oos.get("median_position_notional", 0.0) for oos in best_results]),
-                "aggregation_basis": "portfolio_sum_for_trades_and_count_ratio_for_win_rate_and_trade_weighted_mean_for_return_and_median_for_risk_ratios"
+                "median_position_notional": portfolio_metrics.get("median_position_notional", 0.0),
+                "aggregation_basis": "portfolio_equity_curve"
             }
 
             # Use strat_params from the first result matching the winning strategy
@@ -1275,6 +1320,13 @@ def select_winners(
             ),
             **agg_oos_eval
         }
+
+    # Clean up _oos_trade_records to prevent memory/JSON bloat
+    for r in per_symbol_winners.values():
+        if "oos_metrics" in r and r["oos_metrics"]:
+            r["oos_metrics"].pop("_oos_trade_records", None)
+    if aggregate_winner and "oos_metrics" in aggregate_winner and aggregate_winner["oos_metrics"]:
+        aggregate_winner["oos_metrics"].pop("_oos_trade_records", None)
 
     return per_symbol_winners, aggregate_winner, warnings_list, is_eligible_count, fully_eligible_count
 
