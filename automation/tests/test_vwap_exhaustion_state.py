@@ -22,7 +22,7 @@ def _make_strategy(mocker_cache: MagicMock) -> VwapExhaustionStrategy:
     )
     strategy = VwapExhaustionStrategy(config=config)
     strategy.submit_order = MagicMock()
-    strategy.close_position = MagicMock()
+    strategy._close_position_base = MagicMock()
     strategy._compute_quantity = MagicMock()
     return strategy
 
@@ -39,7 +39,7 @@ def test_vwap_exhaustion_early_return_no_state_mutation():
     )
     strategy = VwapExhaustionStrategy(config=config)
     strategy.submit_order = MagicMock()
-    strategy.close_position = MagicMock()
+    strategy._close_position_base = MagicMock()
     strategy._compute_quantity = MagicMock()
 
     bar = MagicMock(spec=Bar)
@@ -82,15 +82,15 @@ def test_vwap_exhaustion_early_return_no_state_mutation():
         # Szenario 3: Flip-Close (Gegenposition)
         mock_cache.positions_open.return_value = [short_pos]
         strategy._on_buy_signal(bar)
-        strategy.close_position.assert_called_once_with(short_pos)
+        strategy._close_position_base.assert_called_once_with(short_pos)
         assert strategy.current_signal is None
         assert strategy.bars_since_last_signal == 9999
 
-        strategy.close_position.reset_mock()
+        strategy._close_position_base.reset_mock()
 
         mock_cache.positions_open.return_value = [long_pos]
         strategy._on_sell_signal(bar)
-        strategy.close_position.assert_called_once_with(long_pos)
+        strategy._close_position_base.assert_called_once_with(long_pos)
         assert strategy.current_signal is None
         assert strategy.bars_since_last_signal == 9999
 
