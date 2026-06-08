@@ -1,5 +1,5 @@
 {
-  "fetched_at": "2026-06-07T17:42:30.403290+00:00",
+  "fetched_at": "2026-06-08T19:57:10.108219+00:00",
   "username": "momentum-LS",
   "universe": [
     {
@@ -513,101 +513,6 @@
       "raw_name": "Unknown"
     },
     {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "7930",
-      "symbol": "LQDA.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
       "etoro_id": "1706",
       "symbol": "AMAT.ETORO",
       "raw_name": "Unknown"
@@ -730,6 +635,101 @@
     {
       "etoro_id": "1945",
       "symbol": "CMG.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "7930",
+      "symbol": "LQDA.ETORO",
       "raw_name": "Unknown"
     },
     {
@@ -738,31 +738,6 @@
       "raw_name": "Unknown"
     },
     {
-      "etoro_id": "8637",
-      "symbol": "DUOL.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "8637",
-      "symbol": "DUOL.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "8637",
-      "symbol": "DUOL.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "8637",
-      "symbol": "DUOL.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "8637",
-      "symbol": "DUOL.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
       "etoro_id": "8604",
       "symbol": "KD.ETORO",
       "raw_name": "Unknown"
@@ -820,6 +795,31 @@
     {
       "etoro_id": "4399",
       "symbol": "TTD.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "8637",
+      "symbol": "DUOL.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "8637",
+      "symbol": "DUOL.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "8637",
+      "symbol": "DUOL.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "8637",
+      "symbol": "DUOL.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "8637",
+      "symbol": "DUOL.ETORO",
       "raw_name": "Unknown"
     },
     {
@@ -1553,6 +1553,46 @@
       "raw_name": "Unknown"
     },
     {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1184",
+      "symbol": "PINS.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
       "etoro_id": "1585",
       "symbol": "GIS.ETORO",
       "raw_name": "Unknown"
@@ -1560,46 +1600,6 @@
     {
       "etoro_id": "1585",
       "symbol": "GIS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1184",
-      "symbol": "PINS.ETORO",
       "raw_name": "Unknown"
     },
     {
@@ -1743,26 +1743,6 @@
       "raw_name": "Unknown"
     },
     {
-      "etoro_id": "1450",
-      "symbol": "ACN.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1450",
-      "symbol": "ACN.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1450",
-      "symbol": "ACN.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
-      "etoro_id": "1450",
-      "symbol": "ACN.ETORO",
-      "raw_name": "Unknown"
-    },
-    {
       "etoro_id": "8585",
       "symbol": "GTLB.ETORO",
       "raw_name": "Unknown"
@@ -1770,6 +1750,26 @@
     {
       "etoro_id": "8585",
       "symbol": "GTLB.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1450",
+      "symbol": "ACN.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1450",
+      "symbol": "ACN.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1450",
+      "symbol": "ACN.ETORO",
+      "raw_name": "Unknown"
+    },
+    {
+      "etoro_id": "1450",
+      "symbol": "ACN.ETORO",
       "raw_name": "Unknown"
     },
     {

@@ -1,0 +1,514 @@
+2026-06-08 21:57:08,558 | INFO     | orchestrator | ╔════════════════════════════════════════════════════════════╗
+2026-06-08 21:57:08,558 | INFO     | orchestrator | ║  eToro Nautilus — Daily Orchestrator v2.0                  ║
+2026-06-08 21:57:08,558 | INFO     | orchestrator | ║  Start: 2026-06-08T19:57:08.558376+00:00                    ║
+2026-06-08 21:57:08,558 | INFO     | orchestrator | ║  DRY-RUN: NEIN                                                 ║
+2026-06-08 21:57:08,558 | INFO     | orchestrator | ║  Standalone: Kein adapters/-Import                        ║
+2026-06-08 21:57:08,558 | INFO     | orchestrator | ╚════════════════════════════════════════════════════════════╝
+2026-06-08 21:57:08,558 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_START", "timestamp_utc": "2026-06-08T19:57:08.558492+00:00", "dry_run": false, "skip_api_fetch": false, "version": "2.0", "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]"}
+2026-06-08 21:57:08,638 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 21:57:08,638 | INFO     | orchestrator | PHASE 1: Universe & Mapping
+2026-06-08 21:57:08,638 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 21:57:08,638 | WARNING  | orchestrator | [Phase 1] Universe-Daten sind 26.2h alt (> 24h). Erfordert auto-fetch.
+2026-06-08 21:57:08,638 | INFO     | orchestrator | [Phase 1] Starte automatischen Universe-Fetch...
+2026-06-08 21:57:08,638 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-06-08 21:57:10,110 | INFO     | automation.universe_fetcher | Total positions: 458
+2026-06-08 21:57:10,110 | INFO     | automation.universe_fetcher | Known symbols: 413
+2026-06-08 21:57:10,110 | INFO     | automation.universe_fetcher | Unknown symbols: 0 unique, 0 total
+2026-06-08 21:57:10,110 | INFO     | automation.universe_fetcher | Saved to /home/user/etoro_nautilus/data/universe/momentum_ls.json
+2026-06-08 21:57:10,111 | INFO     | orchestrator | [Phase 1] Auto-Fetch erfolgreich abgeschlossen.
+2026-06-08 21:57:10,114 | INFO     | orchestrator | [Phase 1] 106 eindeutige Instrumente im Universum.
+2026-06-08 21:57:10,114 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE1_COMPLETE", "timestamp_utc": "2026-06-08T19:57:10.114231+00:00", "universe_size": 106, "unmapped_count": 0}
+2026-06-08 21:57:10,114 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 21:57:10,114 | INFO     | orchestrator | PHASE 2: Datenbeschaffung (Multi-ZIP, Merge, API-Backfill)
+2026-06-08 21:57:10,114 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 21:57:10,114 | INFO     | orchestrator | [Phase 2a] Keine ZIP-Dateien in data/import/ gefunden.
+2026-06-08 21:57:10,115 | INFO     | api_backfiller | [api_backfiller] Universe geladen: 106 Instrumente.
+2026-06-08 21:57:10,115 | INFO     | orchestrator | [Phase 2c] API-Backfill für 106 Symbole …
+2026-06-08 21:57:10,115 | DEBUG    | asyncio | Using selector: EpollSelector
+2026-06-08 21:57:10,115 | INFO     | api_backfiller | [api_backfiller] Starte Backfill: 2026-06-01 → 2026-06-08 | 106 Instrumente
+2026-06-08 21:57:10,115 | INFO     | api_backfiller | [api_backfiller] Lade Instrument-Precisions via eToro API …
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 1012, 'instrumentDisplayName': 'Caterpillar', 'instrumentTypeID': 5, 'exchangeID': 5, 'images': [{'instrumentID': 1012, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/cat/50x50.png'}, {'instrumentID': 1012, 'width': 150.0, 'height': 150.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/cat/150x150.png'}, {'instrumentID': 1012, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/ma
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1012 (CAT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 1012,
+  "instrumentDisplayName": "Caterpillar",
+  "instrumentTypeID": 5,
+  "exchangeID": 5,
+  "images": [
+    {
+      "instrumentID": 1012,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/50x50.png"
+    },
+    {
+      "instrumentID": 1012,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/150x150.png"
+    },
+    {
+      "instrumentID": 1012,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/35x35.png"
+    },
+    {
+      "instrumentID": 1012,
+      "width": 90.0,
+      "height": 90.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/cat/90x90.png"
+    },
+    {
+      "instrumentID": 1012,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1012/1012_2C2C2C_F7F7F7.svg",
+      "backgroundColor": "#2C2C2C",
+      "textColor": "#F7F7F7"
+    }
+  ],
+  "symbolFull": "CAT",
+  "stocksIndustryID": 6,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1102 (PBR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 1102,
+  "instrumentDisplayName": "Petroleo Brasileiro SA Petrobras-ADR",
+  "instrumentTypeID": 5,
+  "exchangeID": 5,
+  "images": [
+    {
+      "instrumentID": 1102,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/35x35.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/50x50.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 80.0,
+      "height": 80.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/80x80.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 90.0,
+      "height": 90.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/90x90.png"
+    },
+    {
+      "instrumentID": 1102,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/pbr/150x150.png"
+    },
+    {
+      "instrumentID": 1102,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1102/1102_00853F_F7F7F7.svg",
+      "backgroundColor": "#00853F",
+      "textColor": "#F7F7F7"
+    }
+  ],
+  "symbolFull": "PBR",
+  "stocksIndustryID": 1,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1115 (NOK). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | Vollständiger Item-Dump: {
+  "instrumentID": 1115,
+  "instrumentDisplayName": "Nokia Oyj-ADR",
+  "instrumentTypeID": 5,
+  "exchangeID": 5,
+  "images": [
+    {
+      "instrumentID": 1115,
+      "width": 35.0,
+      "height": 35.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/35x35.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 50.0,
+      "height": 50.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/50x50.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 80.0,
+      "height": 80.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/80x80.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 90.0,
+      "height": 90.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/90x90.png"
+    },
+    {
+      "instrumentID": 1115,
+      "width": 150.0,
+      "height": 150.0,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/nok/150x150.png"
+    },
+    {
+      "instrumentID": 1115,
+      "uri": "https://etoro-cdn.etorostatic.com/market-avatars/1115/1115_124191_F7F7F7.svg",
+      "backgroundColor": "#124191",
+      "textColor": "#F7F7F7"
+    }
+  ],
+  "symbolFull": "NOK",
+  "stocksIndustryID": 8,
+  "priceSource": "NASDAQ",
+  "hasExpirationDate": false,
+  "isInternalInstrument": false,
+  "distributionType": 5
+}
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1129 (WDC). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1130 (MU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1138 (FDX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1184 (PINS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1341 (GEV). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1484 (PYPL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1585 (GIS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1586 (CAG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1687 (GLW). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1706 (AMAT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1832 (AMD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1865 (FISV). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1905 (MTZ). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,228 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1906 (LRCX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1914 (INTU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1945 (CMG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4067 (GSAT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4260 (NOW). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4263 (WDAY). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4309 (LULU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4356 (STX.US). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4358 (MRVL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4399 (TTD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4421 (CIEN). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4482 (TME). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5491 (ASX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5657 (SMTC). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5960 (SE). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5967 (CPRT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6071 (AXON). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6094 (COHR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6434 (GOOGL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6473 (MSTR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6549 (TER). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6681 (ELF). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6705 (FRO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6844 (NVO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6940 (SQM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 7852 (AMKR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 7930 (LQDA). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8604 (KD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8637 (DUOL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8867 (VRT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9271 (MNDY). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9814 (POWL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 10476 (SEI.US). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,229 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 14310 (NTSK). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,810 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 22, 'instrumentDisplayName': 'Natural Gas (Non Expiry)', 'instrumentTypeID': 2, 'exchangeID': 2, 'images': [{'instrumentID': 22, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/natgas/35x35.png'}, {'instrumentID': 22, 'width': 80.0, 'height': 80.0}, {'instrumentID': 22, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/natgas/50x50.png'}, {'instrumentID': 22, 'width': 150.0,
+2026-06-08 21:57:10,810 | DEBUG    | api_backfiller | [api_backfiller] ID 22: price_precision via historischem Fallback=5
+2026-06-08 21:57:10,810 | DEBUG    | api_backfiller | [api_backfiller] ID 22: size_precision via historischem Fallback=5
+2026-06-08 21:57:10,810 | DEBUG    | api_backfiller | [api_backfiller] ID 22 (NATGAS): price_prec=5, size_prec=5
+2026-06-08 21:57:10,810 | DEBUG    | api_backfiller | [api_backfiller] ID 42: price_precision via historischem Fallback=5
+2026-06-08 21:57:10,810 | DEBUG    | api_backfiller | [api_backfiller] ID 42: size_precision via historischem Fallback=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] ID 42 (USDZAR): price_prec=5, size_prec=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] ID 62: price_precision via historischem Fallback=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] ID 62: size_precision via historischem Fallback=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] ID 62 (USDTRY): price_prec=5, size_prec=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1002 (GOOG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1022 (JNJ). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1111 (TSLA). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1126 (ADBE). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1137 (NVDA). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1160 (WIX). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1402 (ROP.ZU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1450 (ACN). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1497 (VLO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1531 (HAL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1552 (ABT.US). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1704 (CHTR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1839 (CRM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 1979 (SNAP). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 2380 (01211.HK). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 2587 (RHM.DE). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] ID 3208: price_precision via historischem Fallback=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] ID 3208: size_precision via historischem Fallback=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] ID 3208 (PALL): price_prec=5, size_prec=5
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4074 (HUBS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4087 (JAZZ). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4194 (ZTS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4232 (NVS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4272 (CCL). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4286 (TEAM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4398 (DOCU). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 4403 (ZS). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5045 (FSLY). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 5635 (EEFT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6270 (RIOT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6552 (TSEM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6584 (AG). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 6700 (XPEV). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,811 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 7991 (PLTR). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8585 (GTLB). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8611 (WBD). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8638 (E). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 8671 (HUT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9077 (FICO). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9119 (INSM). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9517 (INSW). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 9803 (TTMI). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] Keine API-Precision für ID 15233 (ESLT). Equity-Fallback (2,2) wird von run_backfill() angewendet.
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100000: price_precision via historischem Fallback=2
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100000: size_precision via historischem Fallback=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100000 (BTC): price_prec=2, size_prec=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100001: price_precision via historischem Fallback=2
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100001: size_precision via historischem Fallback=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100001 (ETH): price_prec=2, size_prec=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100003: price_precision via historischem Fallback=2
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100003: size_precision via historischem Fallback=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100003 (XRP): price_prec=2, size_prec=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100017: price_precision via historischem Fallback=2
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100017: size_precision via historischem Fallback=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100017 (ADA): price_prec=2, size_prec=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100043: price_precision via historischem Fallback=2
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100043: size_precision via historischem Fallback=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100043 (DOGE): price_prec=2, size_prec=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100063: price_precision via historischem Fallback=2
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100063: size_precision via historischem Fallback=8
+2026-06-08 21:57:10,812 | DEBUG    | api_backfiller | [api_backfiller] ID 100063 (SOL): price_prec=2, size_prec=8
+2026-06-08 21:57:11,443 | DEBUG    | api_backfiller | [api_backfiller] Raw API response (first 500 chars): {'instrumentDisplayDatas': [{'instrumentID': 100080, 'instrumentDisplayName': 'Shiba (in millions)', 'instrumentTypeID': 10, 'exchangeID': 8, 'images': [{'instrumentID': 100080, 'width': 35.0, 'height': 35.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/100080/35x35.png'}, {'instrumentID': 100080, 'width': 50.0, 'height': 50.0, 'uri': 'https://etoro-cdn.etorostatic.com/market-avatars/100080/50x50.png'}, {'instrumentID': 100080, 'width': 150.0, 'height': 150.0, 'uri': 'https://etoro-c
+2026-06-08 21:57:11,443 | DEBUG    | api_backfiller | [api_backfiller] ID 100080: price_precision via historischem Fallback=8
+2026-06-08 21:57:11,443 | DEBUG    | api_backfiller | [api_backfiller] ID 100080: size_precision via historischem Fallback=8
+2026-06-08 21:57:11,443 | DEBUG    | api_backfiller | [api_backfiller] ID 100080 (SHIBxM): price_prec=8, size_prec=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100085: price_precision via historischem Fallback=2
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100085: size_precision via historischem Fallback=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100085 (AVAX): price_prec=2, size_prec=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100303: price_precision via historischem Fallback=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100303: size_precision via historischem Fallback=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100303 (PEPExM): price_prec=8, size_prec=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100323: price_precision via historischem Fallback=2
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100323: size_precision via historischem Fallback=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100323 (ONDO): price_prec=2, size_prec=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100421: price_precision via historischem Fallback=2
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100421: size_precision via historischem Fallback=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100421 (AERO): price_prec=2, size_prec=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100446: price_precision via historischem Fallback=2
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100446: size_precision via historischem Fallback=8
+2026-06-08 21:57:11,444 | DEBUG    | api_backfiller | [api_backfiller] ID 100446 (HYPE): price_prec=2, size_prec=8
+2026-06-08 21:57:11,945 | INFO     | api_backfiller | [api_backfiller] Precision-Auflösung abgeschlossen: 16 direkt via API, 0 via Symbol-Fallback (_fallback_precisions), 90 Equities erhalten (2,2) in run_backfill().
+2026-06-08 21:57:12,121 | DEBUG    | api_backfiller | [api_backfiller] 01211.HK.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-08 21:57:12,204 | INFO     | api_backfiller | [api_backfiller] 01211.HK.ETORO: 30 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-08 21:57:12,208 | DEBUG    | api_backfiller | [api_backfiller] 01211.HK.ETORO: 1247→1217 Zeilen (-30 Duplikate)
+2026-06-08 21:57:12,209 | INFO     | api_backfiller | [api_backfiller] 01211.HK.ETORO: 1217 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-08 21:57:13,314 | DEBUG    | api_backfiller | [api_backfiller] ABT.US.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,317 | DEBUG    | api_backfiller | [api_backfiller] ACN.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,319 | DEBUG    | api_backfiller | [api_backfiller] ADA.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,321 | DEBUG    | api_backfiller | [api_backfiller] ADBE.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,323 | DEBUG    | api_backfiller | [api_backfiller] AERO.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,324 | DEBUG    | api_backfiller | [api_backfiller] AG.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,325 | DEBUG    | api_backfiller | [api_backfiller] AMAT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,326 | DEBUG    | api_backfiller | [api_backfiller] AMD.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,328 | DEBUG    | api_backfiller | [api_backfiller] AMKR.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,329 | DEBUG    | api_backfiller | [api_backfiller] ASX.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,330 | DEBUG    | api_backfiller | [api_backfiller] AVAX.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,331 | DEBUG    | api_backfiller | [api_backfiller] AXON.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,332 | DEBUG    | api_backfiller | [api_backfiller] BTC.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,333 | DEBUG    | api_backfiller | [api_backfiller] CAG.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,334 | DEBUG    | api_backfiller | [api_backfiller] CAT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,335 | DEBUG    | api_backfiller | [api_backfiller] CCL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,336 | DEBUG    | api_backfiller | [api_backfiller] CHTR.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,338 | DEBUG    | api_backfiller | [api_backfiller] CIEN.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,339 | DEBUG    | api_backfiller | [api_backfiller] CMG.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,340 | DEBUG    | api_backfiller | [api_backfiller] COHR.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,341 | DEBUG    | api_backfiller | [api_backfiller] CPRT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,342 | DEBUG    | api_backfiller | [api_backfiller] CRM.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,343 | DEBUG    | api_backfiller | [api_backfiller] DOCU.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,344 | DEBUG    | api_backfiller | [api_backfiller] DOGE.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,345 | DEBUG    | api_backfiller | [api_backfiller] DUOL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,346 | DEBUG    | api_backfiller | [api_backfiller] E.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,347 | DEBUG    | api_backfiller | [api_backfiller] EEFT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,348 | DEBUG    | api_backfiller | [api_backfiller] ELF.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,349 | DEBUG    | api_backfiller | [api_backfiller] ESLT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,351 | DEBUG    | api_backfiller | [api_backfiller] ETH.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,352 | DEBUG    | api_backfiller | [api_backfiller] FDX.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,353 | DEBUG    | api_backfiller | [api_backfiller] FICO.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,354 | DEBUG    | api_backfiller | [api_backfiller] FISV.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,355 | DEBUG    | api_backfiller | [api_backfiller] FRO.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,356 | DEBUG    | api_backfiller | [api_backfiller] FSLY.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,357 | DEBUG    | api_backfiller | [api_backfiller] GEV.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,358 | DEBUG    | api_backfiller | [api_backfiller] GIS.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,359 | DEBUG    | api_backfiller | [api_backfiller] GLW.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,360 | DEBUG    | api_backfiller | [api_backfiller] GOOG.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,361 | DEBUG    | api_backfiller | [api_backfiller] GOOGL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,362 | DEBUG    | api_backfiller | [api_backfiller] GSAT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,363 | DEBUG    | api_backfiller | [api_backfiller] GTLB.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,364 | DEBUG    | api_backfiller | [api_backfiller] HAL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,365 | DEBUG    | api_backfiller | [api_backfiller] HUBS.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,366 | DEBUG    | api_backfiller | [api_backfiller] HUT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,367 | DEBUG    | api_backfiller | [api_backfiller] HYPE.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,368 | DEBUG    | api_backfiller | [api_backfiller] INSM.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,369 | DEBUG    | api_backfiller | [api_backfiller] INSW.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,370 | DEBUG    | api_backfiller | [api_backfiller] INTU.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,371 | DEBUG    | api_backfiller | [api_backfiller] JAZZ.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,372 | DEBUG    | api_backfiller | [api_backfiller] JNJ.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,373 | DEBUG    | api_backfiller | [api_backfiller] KD.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,374 | DEBUG    | api_backfiller | [api_backfiller] LQDA.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,375 | DEBUG    | api_backfiller | [api_backfiller] LRCX.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,376 | DEBUG    | api_backfiller | [api_backfiller] LULU.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,377 | DEBUG    | api_backfiller | [api_backfiller] MNDY.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,377 | DEBUG    | api_backfiller | [api_backfiller] MRVL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,378 | DEBUG    | api_backfiller | [api_backfiller] MSTR.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,379 | DEBUG    | api_backfiller | [api_backfiller] MTZ.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,381 | DEBUG    | api_backfiller | [api_backfiller] MU.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,382 | DEBUG    | api_backfiller | [api_backfiller] NATGAS.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,383 | DEBUG    | api_backfiller | [api_backfiller] NOK.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,384 | DEBUG    | api_backfiller | [api_backfiller] NOW.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,385 | DEBUG    | api_backfiller | [api_backfiller] NTSK.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,386 | DEBUG    | api_backfiller | [api_backfiller] NVDA.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,387 | DEBUG    | api_backfiller | [api_backfiller] NVO.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,389 | DEBUG    | api_backfiller | [api_backfiller] NVS.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,390 | DEBUG    | api_backfiller | [api_backfiller] ONDO.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,392 | DEBUG    | api_backfiller | [api_backfiller] PALL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,393 | DEBUG    | api_backfiller | [api_backfiller] PBR.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,394 | DEBUG    | api_backfiller | [api_backfiller] PEPExM.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,395 | DEBUG    | api_backfiller | [api_backfiller] PINS.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,396 | DEBUG    | api_backfiller | [api_backfiller] PLTR.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,397 | DEBUG    | api_backfiller | [api_backfiller] POWL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,398 | DEBUG    | api_backfiller | [api_backfiller] PYPL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:13,399 | DEBUG    | api_backfiller | [api_backfiller] RHM.DE.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-08 21:57:13,492 | INFO     | api_backfiller | [api_backfiller] RHM.DE.ETORO: 45 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-08 21:57:13,495 | DEBUG    | api_backfiller | [api_backfiller] RHM.DE.ETORO: 1286→1241 Zeilen (-45 Duplikate)
+2026-06-08 21:57:13,497 | INFO     | api_backfiller | [api_backfiller] RHM.DE.ETORO: 1241 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-08 21:57:14,603 | DEBUG    | api_backfiller | [api_backfiller] RIOT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:14,606 | DEBUG    | api_backfiller | [api_backfiller] ROP.ZU.ETORO: Precision-Fallback price_prec=2, size_prec=2
+2026-06-08 21:57:14,689 | INFO     | api_backfiller | [api_backfiller] ROP.ZU.ETORO: 45 Candles konvertiert (price_prec=2, size_prec=2).
+2026-06-08 21:57:14,693 | DEBUG    | api_backfiller | [api_backfiller] ROP.ZU.ETORO: 1281→1236 Zeilen (-45 Duplikate)
+2026-06-08 21:57:14,694 | INFO     | api_backfiller | [api_backfiller] ROP.ZU.ETORO: 1236 Zeilen gespeichert (price_prec=2, size_prec=2) → data.parquet
+2026-06-08 21:57:15,798 | DEBUG    | api_backfiller | [api_backfiller] SE.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,801 | DEBUG    | api_backfiller | [api_backfiller] SEI.US.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,804 | DEBUG    | api_backfiller | [api_backfiller] SHIBxM.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,806 | DEBUG    | api_backfiller | [api_backfiller] SMTC.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,808 | DEBUG    | api_backfiller | [api_backfiller] SNAP.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,810 | DEBUG    | api_backfiller | [api_backfiller] SOL.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,811 | DEBUG    | api_backfiller | [api_backfiller] SQM.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,812 | DEBUG    | api_backfiller | [api_backfiller] STX.US.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,813 | DEBUG    | api_backfiller | [api_backfiller] TEAM.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,816 | DEBUG    | api_backfiller | [api_backfiller] TER.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,818 | DEBUG    | api_backfiller | [api_backfiller] TME.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,819 | DEBUG    | api_backfiller | [api_backfiller] TSEM.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,820 | DEBUG    | api_backfiller | [api_backfiller] TSLA.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,821 | DEBUG    | api_backfiller | [api_backfiller] TTD.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,823 | DEBUG    | api_backfiller | [api_backfiller] TTMI.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,825 | DEBUG    | api_backfiller | [api_backfiller] USDTRY.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,826 | DEBUG    | api_backfiller | [api_backfiller] USDZAR.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,828 | DEBUG    | api_backfiller | [api_backfiller] VLO.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,829 | DEBUG    | api_backfiller | [api_backfiller] VRT.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,830 | DEBUG    | api_backfiller | [api_backfiller] WBD.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,831 | DEBUG    | api_backfiller | [api_backfiller] WDAY.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,833 | DEBUG    | api_backfiller | [api_backfiller] WDC.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,834 | DEBUG    | api_backfiller | [api_backfiller] WIX.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,835 | DEBUG    | api_backfiller | [api_backfiller] XPEV.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,836 | DEBUG    | api_backfiller | [api_backfiller] XRP.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,837 | DEBUG    | api_backfiller | [api_backfiller] ZS.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,838 | DEBUG    | api_backfiller | [api_backfiller] ZTS.ETORO: Daten aktuell (Lücke 1.0h) — überspringe.
+2026-06-08 21:57:15,839 | INFO     | api_backfiller | [api_backfiller] Backfill abgeschlossen: 3 Symbole befüllt.
+2026-06-08 21:57:15,840 | INFO     | orchestrator | [Phase 2c] API-Backfill: 3 Symbole befüllt.
+2026-06-08 21:57:15,880 | INFO     | historical_fetcher | [NTSK.ETORO] Inception-Bound-Check erfolgreich: Volle historische Tiefe (2025-09-18) liegt vor.
+2026-06-08 21:57:15,908 | INFO     | historical_fetcher | [ESLT.ETORO] Inception-Bound-Check erfolgreich: Volle historische Tiefe (2025-11-20) liegt vor.
+2026-06-08 21:57:15,916 | INFO     | orchestrator | [Phase 2d] Alle Symbole haben ausreichend Daten — Historical Fetcher übersprungen.
+2026-06-08 21:57:15,917 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2D_COMPLETE", "timestamp_utc": "2026-06-08T19:57:15.917074+00:00", "insufficient_count": 0, "hist_filled_count": 0}
+2026-06-08 21:57:15,917 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "PHASE2_COMPLETE", "timestamp_utc": "2026-06-08T19:57:15.917207+00:00", "merged_instruments": 0, "zips_deleted": 0, "api_filled_count": 3, "hist_filled_count": 0}
+2026-06-08 21:57:15,917 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 21:57:15,917 | INFO     | orchestrator | PHASE 3+4: Matrix-Backtesting & Tournament
+2026-06-08 21:57:15,917 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 21:57:15,918 | INFO     | orchestrator | [Phase 3] Dynamische Config: /home/user/etoro_nautilus/logs/backtest_dynamic_config.json
+2026-06-08 21:57:15,918 | INFO     | orchestrator | [Phase 3] Backtest-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/backtest_runner.py --momentum --catalog-path /home/user/etoro_nautilus/data/nautilus --config /home/user/etoro_nautilus/logs/backtest_dynamic_config.json --output /home/user/etoro_nautilus/logs/tournament_2026-06-08.json
+2026-06-08 21:57:15,918 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BACKTEST_START", "timestamp_utc": "2026-06-08T19:57:15.918719+00:00", "start": "2026-01-09T00:00:00Z", "end": "2026-06-08T00:00:00Z", "walk_forward_active": true}
+2026-06-08 21:59:55,385 | INFO     | orchestrator | [Phase 3] Backtest beendet (Exit-Code: 0).
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | VolatilityBreakoutPumpStrategy |   -4.34 |   -0.99 |    0.38 |    152 |     9.8 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WDC.ETORO            | VwapExhaustionStrategy         |   -1.13 |   -0.36 |    0.81 |    458 |     3.9 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | ComboTrendVwapStrategy         |   -6.51 |   -1.00 |    0.12 |    106 |     8.6 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | DynamicBreakoutStrategy        |   -3.49 |   -1.00 |    0.26 |    284 |     7.8 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | FlashCrashReversalStrategy     |   12.88 |    8.32 |    3.94 |    178 |     5.0 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | HourlyMeanReversionStrategy    |    9.07 |    7.13 |    2.90 |    282 |     7.6 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | MeanReversionStrategy          |   16.46 |   31.87 |    4.12 |    278 |     6.5 | ✓
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | SmaCrossoverStrategy           |   -6.26 |   -0.99 |    0.13 |    222 |     7.0 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | VolatilityBreakoutPumpStrategy |   -5.44 |   -0.96 |    0.26 |    190 |     8.7 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] WIX.ETORO            | VwapExhaustionStrategy         |   -1.38 |   -0.62 |    0.72 |    524 |     6.2 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | ComboTrendVwapStrategy         |   -6.95 |   -1.00 |    0.09 |     56 |     8.3 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | DynamicBreakoutStrategy        |   -5.52 |   -0.99 |    0.18 |    288 |     7.5 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | FlashCrashReversalStrategy     |   13.80 |    7.66 |    3.70 |    176 |     5.8 | ✓
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | HourlyMeanReversionStrategy    |    0.59 |    0.33 |    1.09 |    282 |     7.6 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | MeanReversionStrategy          |   -0.57 |   -0.19 |    0.92 |    276 |     6.7 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | SmaCrossoverStrategy           |   -6.47 |   -0.99 |    0.17 |    220 |     8.2 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | VolatilityBreakoutPumpStrategy |   -6.52 |   -1.00 |    0.19 |    196 |     7.6 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XPEV.ETORO           | VwapExhaustionStrategy         |   -2.36 |   -0.87 |    0.56 |    362 |     7.8 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | ComboTrendVwapStrategy         | n/a(<min) | n/a(<min) | n/a(<min) |      6 |    10.2 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | DynamicBreakoutStrategy        |  -10.56 |   -1.00 |    0.01 |    276 |     8.8 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | FlashCrashReversalStrategy     |  -10.84 |   -1.00 |    0.00 |    124 |     9.5 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | HourlyMeanReversionStrategy    |  -11.01 |   -1.00 |    0.00 |    270 |     8.8 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | MeanReversionStrategy          |  -11.04 |   -1.00 |    0.00 |    262 |     8.8 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | SmaCrossoverStrategy           |  -10.80 |   -1.00 |    0.00 |    148 |    11.6 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | VolatilityBreakoutPumpStrategy |  -10.74 |   -1.00 |    0.00 |    136 |    11.2 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] XRP.ETORO            | VwapExhaustionStrategy         |  -11.18 |   -1.00 |    0.00 |    460 |     4.5 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | ComboTrendVwapStrategy         |   -0.49 |   -0.07 |    0.94 |     28 |     7.7 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | DynamicBreakoutStrategy        |   -1.29 |   -0.53 |    0.75 |    308 |     6.1 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | FlashCrashReversalStrategy     |    3.90 |    1.41 |    1.89 |    108 |     6.5 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | HourlyMeanReversionStrategy    |   -3.55 |   -0.99 |    0.28 |    302 |     5.9 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | MeanReversionStrategy          |   -1.28 |   -0.75 |    0.70 |    298 |     5.9 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | SmaCrossoverStrategy           |   -0.68 |   -0.38 |    0.89 |    148 |    11.4 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | VolatilityBreakoutPumpStrategy |   -1.67 |   -0.59 |    0.72 |    110 |     9.8 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZS.ETORO             | VwapExhaustionStrategy         |   -2.13 |   -0.94 |    0.52 |    484 |     4.0 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | ComboTrendVwapStrategy         |   -6.93 |   -1.00 |    0.07 |     76 |     6.6 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | DynamicBreakoutStrategy        |   -4.54 |   -0.97 |    0.13 |    320 |     5.4 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | FlashCrashReversalStrategy     |    0.50 |    0.28 |    1.17 |    180 |     5.5 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | HourlyMeanReversionStrategy    |   -1.73 |   -1.00 |    0.23 |    312 |     5.4 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | MeanReversionStrategy          |   -1.47 |   -1.00 |    0.51 |    304 |     5.7 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | SmaCrossoverStrategy           |   -4.92 |   -1.00 |    0.33 |    174 |     9.0 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | VolatilityBreakoutPumpStrategy |   -5.93 |   -0.99 |    0.08 |    116 |     9.2 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ZTS.ETORO            | VwapExhaustionStrategy         |   -0.36 |   -0.28 |    0.88 |    356 |     3.9 | 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] ✅ Tournament: 106 Symbole | 84 IS-taugliche Paare | 50 voll taugliche Paare (IS+OOS) | 40 Gewinner-Symbole
+2026-06-08 22:00:01,115 | DEBUG    | orchestrator |   [BT-LOG] 🏆 FlashCrashReversalStrategy — 39 Wins, Median Sortino: 19.1056
+2026-06-08 22:00:01,116 | DEBUG    | orchestrator |   [BT-LOG] ⚠️  Ohne eindeutigen Gewinner: 01211.HK.ETORO, ABT.US.ETORO, ACN.ETORO, ADA.ETORO, ADBE.ETORO, AERO.ETORO, AMAT.ETORO, AMD.ETORO, AVAX.ETORO, AXON.ETORO, BTC.ETORO, CAG.ETORO, CAT.ETORO, CCL.ETORO, CHTR.ETORO, CMG.ETORO, CPRT.ETORO, CRM.ETORO, DOGE.ETORO, DUOL.ETORO, ETH.ETORO, FICO.ETORO, FISV.ETORO, GEV.ETORO, GIS.ETORO, GLW.ETORO, GOOG.ETORO, GOOGL.ETORO, GSAT.ETORO, HYPE.ETORO, INTU.ETORO, JNJ.ETORO, KD.ETORO, LRCX.ETORO, LULU.ETORO, MRVL.ETORO, MSTR.ETORO, MU.ETORO, NATGAS.ETORO, NOW.ETORO, NVDA.ETORO, NVO.ETORO, ONDO.ETORO, PEPExM.ETORO, PLTR.ETORO, PYPL.ETORO, RIOT.ETORO, ROP.ZU.ETORO, SHIBxM.ETORO, SNAP.ETORO, SOL.ETORO, STX.US.ETORO, TEAM.ETORO, TER.ETORO, TME.ETORO, TSLA.ETORO, TTD.ETORO, USDTRY.ETORO, USDZAR.ETORO, VLO.ETORO, WBD.ETORO, WDAY.ETORO, WDC.ETORO, XRP.ETORO, ZS.ETORO, ZTS.ETORO
+2026-06-08 22:00:01,116 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-06-08 22:00:01,116 | DEBUG    | orchestrator |   [BT-LOG] 📄 Tournament-Ergebnisse gespeichert: /home/user/etoro_nautilus/logs/tournament_2026-06-08.json
+2026-06-08 22:00:01,116 | DEBUG    | orchestrator |   [BT-LOG] 
+2026-06-08 22:00:01,116 | DEBUG    | orchestrator |   [BT-LOG] ✅ Matrix-Backtest vollständig abgeschlossen!
+2026-06-08 22:00:01,398 | INFO     | orchestrator | [Phase 4] Tournament: 40 Gewinner.
+2026-06-08 22:00:01,398 | INFO     | orchestrator | [Phase 4] Aggregierter Gewinner: FlashCrashReversalStrategy (39 Wins, Portfolio-Trades: 1594, Trade-Weighted OOS-Return: 3.20%, In-Sample Median Sortino: 19.1056)
+2026-06-08 22:00:01,398 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "TOURNAMENT_COMPLETE", "timestamp_utc": "2026-06-08T20:00:01.398307+00:00", "winner_count": 40, "aggregate_winner": {"strategy": "FlashCrashReversalStrategy", "win_count": 39, "median_sortino": 19.1056, "oos_evaluated": true, "oos_eligible": true, "oos_metrics": {"total_trades": 1594, "sortino_ratio": 16.418882080714777, "profit_factor": 5.42237166334932, "max_drawdown": 0.003968329391738078, "win_rate": 0.5846925972396487, "total_return": 0.03202205405226974, "oos_span_days": 30, "median_position_notional": 746.5634, "aggregation_basis": "portfolio_equity_curve"}, "oos_rejection_reasons": []}, "median_is_sortino": 19.1056, "path": "/home/user/etoro_nautilus/logs/tournament_2026-06-08.json"}
+2026-06-08 22:00:01,401 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 22:00:01,401 | INFO     | orchestrator | PHASE 5: Live Deployment & Bot-Start
+2026-06-08 22:00:01,401 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 22:00:01,437 | INFO     | orchestrator | [Phase 5] Per-Pair-Eligible Check: 50 fully eligible pairs found (Winners: 40).
+2026-06-08 22:00:01,437 | INFO     | orchestrator | [Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger FlashCrashReversalStrategy (Aggregate Out-of-Sample Sortino: 16.418882080714777, Portfolio DD: 0.003968329391738078).
+2026-06-08 22:00:01,437 | INFO     | orchestrator | [Phase 5] Bot-Kommando: /home/user/etoro_nautilus/venv/bin/python3 /home/user/etoro_nautilus/automation/momentum_ls_run.py --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json --tournament /home/user/etoro_nautilus/logs/tournament_2026-06-08.json
+2026-06-08 22:00:01,437 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_START_INITIATED", "timestamp_utc": "2026-06-08T20:00:01.437745+00:00", "cmd": ["/home/user/etoro_nautilus/venv/bin/python3", "/home/user/etoro_nautilus/automation/momentum_ls_run.py", "--universe", "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "--tournament", "/home/user/etoro_nautilus/logs/tournament_2026-06-08.json"], "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260608.log", "tournament": "/home/user/etoro_nautilus/logs/tournament_2026-06-08.json", "universe": "/home/user/etoro_nautilus/data/universe/momentum_ls.json", "dry_run": false, "aggregate_oos_sortino": 16.418882080714777, "fully_eligible_pairs": 50, "winner_count": 40}
+2026-06-08 22:00:01,438 | INFO     | orchestrator | [Phase 5] Trading-Bot gestartet (PID: 74771).
+2026-06-08 22:00:01,438 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "BOT_STARTED", "timestamp_utc": "2026-06-08T20:00:01.438453+00:00", "pid": 74771, "log_file": "/home/user/etoro_nautilus/logs/live_bot_20260608.log"}
+2026-06-08 22:00:01,438 | INFO     | orchestrator | [Phase 5] PID gespeichert: /home/user/etoro_nautilus/logs/live_bot.pid
+2026-06-08 22:00:01,438 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 22:00:01,438 | INFO     | orchestrator | ORCHESTRATOR ERFOLGREICH ABGESCHLOSSEN
+2026-06-08 22:00:01,438 | INFO     | orchestrator |   Bot läuft als PID 74771
+2026-06-08 22:00:01,438 | INFO     | orchestrator |   Bot-Log: /home/user/etoro_nautilus/logs/live_bot_20260608.log
+2026-06-08 22:00:01,438 | INFO     | orchestrator | ════════════════════════════════════════════════════════════
+2026-06-08 22:00:01,442 | INFO     | orchestrator | [JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", "timestamp_utc": "2026-06-08T20:00:01.442261+00:00", "exit_code": 0}
+2026-06-08 22:00:01,442 | INFO     | orchestrator | Orchestrator beendet (Exit-Code: 0).
