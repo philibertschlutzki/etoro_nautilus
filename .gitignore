@@ -6,7 +6,7 @@ __pycache__/
 # Trading Daten & Logs
 #logs/*
 !logs/.gitkeep
-#logs/backtest_2026*
+logs/backtest_2026*
 #data/*
 
 # API Keys & Secrets
