@@ -1454,7 +1454,7 @@ def run_single_backtest_worker(
     generate_html_report: bool,
     reports_dir: str,
     worker_log_file: str,
-    span_tolerance_days: float = 1.0,
+    span_tolerance_days: float,
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
 ) -> dict:
@@ -1798,7 +1798,7 @@ def run_backtest() -> None:
             print(f"  ⚠️  backtest.json Ladefehler: {_e}")
     spread_modeling = backtest_global_cfg.get("spread_modeling", True)
     fill_model_str  = backtest_global_cfg.get("fill_model", "bid_ask")
-    span_tolerance_days = backtest_global_cfg.get("span_tolerance_days", 1.0)
+    span_tolerance_days = backtest_global_cfg.get("span_tolerance_days", 3.0)
     commission_bps = backtest_global_cfg.get("commission_bps", 0.0)
     spread_bps_by_asset_class = backtest_global_cfg.get("spread_bps_by_asset_class", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
@@ -2213,7 +2213,7 @@ def _run_remaining_sequentially(
     all_results: list,
     done_count: int,
     total_jobs: int,
-    span_tolerance_days: float = 1.0,
+    span_tolerance_days: float,
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
 ) -> None:
