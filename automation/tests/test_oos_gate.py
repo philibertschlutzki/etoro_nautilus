@@ -72,7 +72,9 @@ def test_phase5_oos_not_evaluable():
         mock_emit.assert_called_with(log, "OOS_GATE_NOT_EVALUABLE", {
             "strategy": "MeanReversionStrategy",
             "oos_metrics": None,
-            "reasons": ["oos_not_evaluable"]
+            "reasons": ["oos_not_evaluable"],
+            "fully_eligible_pairs": 1,
+            "winner_count": 1
         })
 
 def test_phase5_oos_failed():
@@ -100,7 +102,9 @@ def test_phase5_oos_failed():
         mock_emit.assert_called_with(log, "OOS_GATE_FAILED", {
             "strategy": "MeanReversionStrategy",
             "reasons": ["oos_min_trades: 2 < 5"],
-            "oos_metrics": {"total_trades": 2}
+            "oos_metrics": {"total_trades": 2},
+            "fully_eligible_pairs": 1,
+            "winner_count": 1
         })
 
 from automation.backtest_runner import select_winners

@@ -933,6 +933,7 @@ def phase5_live_deployment(
             )
             emit_json_event(log, "OOS_GATE_NOT_EVALUABLE", {
                 "strategy": agg.get("strategy"), "oos_metrics": oos_metrics, "reasons": reasons,
+                "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
             return 0
 
@@ -944,6 +945,7 @@ def phase5_live_deployment(
             )
             emit_json_event(log, "OOS_GATE_FAILED", {
                 "strategy": agg.get("strategy"), "reasons": reasons, "oos_metrics": oos_metrics,
+                "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
             return 0
 
