@@ -86,8 +86,16 @@ def _build_bots_config(
         if not winner:
             continue
 
-        strat_class_name = winner["strategy"]
+        # Type-safe casting für etoro_id um Mismatches zu vermeiden
         etoro_id = symbol_to_etoro_id.get(symbol)
+        if etoro_id:
+            etoro_id = str(etoro_id)
+
+        if winner.get("oos_eligible") is not True or winner.get("oos_evaluated") is not True:
+            logger.info(f"[OOS-DEPLOY-REJECT] Skipping symbol {symbol} because winner strategy {winner.get('strategy')} failed the OOS-Eligibility Gate.")
+            continue
+
+        strat_class_name = winner["strategy"]
 
         if not etoro_id:
             continue
