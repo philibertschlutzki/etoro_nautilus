@@ -928,6 +928,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_notionals = []
         oos_notionals = []
 
+        oos_trade_records = []
+
         if walk_forward_dict and start_ns is not None:
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
@@ -949,6 +951,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     oos_pnls.append(pnl)
                     oos_holding_times.append((ht, m_qty))
                     oos_notionals.append(notional)
+                    oos_trade_records.append((pnl, ts, ht, m_qty, notional))
                 else:
                     is_pnls.append(pnl)
                     is_holding_times.append((ht, m_qty))
@@ -975,6 +978,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         }
 
         if walk_forward_dict and start_ns is not None:
+            if oos_trade_records:
+                oos_metrics["_oos_trade_records"] = oos_trade_records
             return {
                 "metrics": is_metrics,
                 "oos_metrics": oos_metrics
@@ -1174,45 +1179,26 @@ def select_winners(
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
         best     = max(top, key=lambda s: get_median([x for x in sortinos_by_strat[s] if x is not None]))
-        # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
+        # Finde alle OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
         best_results = [r.get("oos_metrics", {}) for r in per_symbol_winners.values()
                         if r["strategy"] == best and r.get("oos_metrics") and r.get("oos_metrics").get("total_trades", 0) > 0]
 
         if best_results:
             n_res = len(best_results)
 
-            # Echte Portfolio-Aggregation für Trades und Wins
-            portfolio_total_trades = sum((oos.get("total_trades") or 0) for oos in best_results)
-            # Rekonstruktion der absoluten Wins pro Symbol und Aufsummierung (typsicher)
-            portfolio_wins = sum(
-                int(round((oos.get("win_rate") or 0.0) * (oos.get("total_trades") or 0)))
-                for oos in best_results
-            )
-            portfolio_win_rate = portfolio_wins / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
+            portfolio_oos_trades = []
+            for oos in best_results:
+                portfolio_oos_trades.extend(oos.get("_oos_trade_records", []))
 
-            # Trade-Weighted Portfolio Rendite
-            portfolio_mean_return = sum((oos.get("total_return") or 0.0) * (oos.get("total_trades") or 0) for oos in best_results) / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
+            # Chronologische Sortierung nach ts_event (Index 1)
+            portfolio_oos_trades.sort(key=lambda x: x[1])
 
-            sortinos = [s for s in (oos.get("sortino_ratio") for oos in best_results) if s is not None]
-            med_sortino = get_median(sortinos) if sortinos else None
+            portfolio_pnls = [x[0] for x in portfolio_oos_trades]
+            portfolio_holding_times = [(x[2], x[3]) for x in portfolio_oos_trades]
+            portfolio_notionals = [x[4] for x in portfolio_oos_trades]
 
-            pfs = [p for p in (oos.get("profit_factor") for oos in best_results) if p is not None]
-            med_pf = get_median(pfs) if pfs else None
-
-            span_days = [oos.get("oos_span_days", 0) for oos in best_results]
-            med_span = get_median(span_days) if span_days else 0
-
-            avg_oos = {
-                "total_trades": portfolio_total_trades,
-                "sortino_ratio": med_sortino,
-                "profit_factor": med_pf,
-                "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
-                "win_rate": portfolio_win_rate,
-                "total_return": portfolio_mean_return,
-                "oos_span_days": med_span,
-                "median_position_notional": get_median([oos.get("median_position_notional", 0.0) for oos in best_results]),
-                "aggregation_basis": "portfolio_sum_for_trades_and_count_ratio_for_win_rate_and_trade_weighted_mean_for_return_and_median_for_risk_ratios"
-            }
+            import statistics
+            portfolio_med_notional = statistics.median(portfolio_notionals) if portfolio_notionals else 0.0
 
             # Use strat_params from the first result matching the winning strategy
             winner_strat_params = {}
@@ -1221,10 +1207,20 @@ def select_winners(
                     winner_strat_params = r.get("strat_params", {})
                     break
 
+            # Retrieve starting capital from params to compute actual portfolio stats
+            # Assuming starting_capital = 10000.0 if not available (should be parsed from config but default works for normalized returns)
+            starting_capital = winner_strat_params.get("starting_capital", 10000.0)
+
+            avg_oos = _calculate_stats(portfolio_pnls, portfolio_holding_times, starting_capital, med_notional=portfolio_med_notional)
+
+            span_days = [oos.get("oos_span_days", 0) for oos in best_results]
+            avg_oos["oos_span_days"] = statistics.median(span_days) if span_days else 0
+            avg_oos["aggregation_basis"] = "portfolio_equity_curve_from_chronologically_merged_trades"
+
             # Normalize metrics before gating to avoid the "Trade-Sum Trap"
             avg_oos_for_gate = avg_oos.copy()
             if n_res > 0:
-                avg_oos_for_gate["total_trades"] = int(portfolio_total_trades / n_res)
+                avg_oos_for_gate["total_trades"] = int(avg_oos["total_trades"] / n_res)
 
             agg_oos_eval = _evaluate_oos_eligibility(avg_oos_for_gate, tournament_cfg, winner_strat_params)
 
