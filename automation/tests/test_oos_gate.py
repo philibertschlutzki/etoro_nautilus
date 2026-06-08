@@ -73,6 +73,7 @@ def test_phase5_oos_not_evaluable():
             "strategy": "MeanReversionStrategy",
             "oos_metrics": None,
             "reasons": ["oos_not_evaluable"],
+            "aggregate_oos_sortino": None,
             "fully_eligible_pairs": 1,
             "winner_count": 1
         })
@@ -103,6 +104,7 @@ def test_phase5_oos_failed():
             "strategy": "MeanReversionStrategy",
             "reasons": ["oos_min_trades: 2 < 5"],
             "oos_metrics": {"total_trades": 2},
+            "aggregate_oos_sortino": None,
             "fully_eligible_pairs": 1,
             "winner_count": 1
         })
