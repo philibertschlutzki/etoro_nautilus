@@ -366,10 +366,14 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ### 🟢 #45 — Aggregate Metric Statistical Artifacts (Issue #255)
 **Symptom:** In der Turnierauswertung ergab `win_rate * total_trades` keinen ganzzahligen Wert. Die OOS-Rendite wirkte im Vergleich zu Einzel-Symbolen inkonsistent, und das OOS-Gate wurde durch die aufsummierten Trades ausgehebelt (Trade-Sum Trap).
 **Root Cause:** Die Aggregation vermischte arithmetische Mittelwerte (für Trades) mit Medians (für Win-Rates). Dies zerstörte die zugrundeliegende mathematische Identität der Einzel-Backtests und erzeugte "Frankenstein-Metriken". Edge-Cases in Zero-Loss Backtests lieferten zudem `None`, was bei nicht typsicherem Unpacking zu Laufzeitfehlern führen konnte.
-**Fix (Architektur-Regel):** Die Metrik-Aggregation (`select_winners`) erzwingt nun streng eine hybride, aber mathematisch konsistente Struktur (`portfolio_sum_for_trades_and_trade_weighted_mean_for_return_and_median_for_ratios`).
+**Fix (Architektur-Regel):** Die Metrik-Aggregation (`select_winners`) erzwingt nun streng eine hybride, aber mathematisch konsistente Struktur (`portfolio_sum_for_trades_and_count_ratio_for_win_rate_and_trade_weighted_mean_for_return_and_median_for_risk_ratios`).
 1. **Volumen (Trades, Wins):** Werden absolut aufsummiert. Das Unpacking erfolgt typsicher via `(oos.get("total_trades") or 0)`, um TypeErrors bei `None`-Werten auszuschließen.
+   - `total_trades`: Absolute Summe aller Trades über das Portfolio.
+   - `win_rate`: Absolute Portfolio-Wins dividiert durch absolute Portfolio-Trades (Count-Ratio).
 2. **Rendite:** Wird als kapitalgewichteter (Trade-Weighted) Return berechnet, um das Portfolio-Volumen real abzubilden.
+   - `total_return`: Kapitalgewichteter (Trade-Weighted) Mittelwert.
 3. **Risiko-Ratios (Sortino, PF):** Werden zwingend als Median (via `get_median()`) beibehalten, da Nenner-Abweichungen eine Aufsummierung verbieten.
+   - `sortino_ratio` / `profit_factor` / `max_drawdown`: Median-Ermittlung zur Vermeidung von Nenner-Verzerrungen.
 4. **OOS-Gating (Trade-Sum Trap):** Um zu verhindern, dass die Portfolio-Trade-Summe die `oos_min_trades`-Schwelle (die eigentlich pro Symbol gilt) trivialerweise überschreitet, wird das aggregierte Dictionary (`avg_oos`) *ausschließlich für das Gate* intern normalisiert (`total_trades / n_res`), bevor es an `_evaluate_oos_eligibility` übergeben wird. In den Logs und im JSON verbleiben die wahren Portfolio-Summen.
 **WICHTIG für Agenten:** Dieser hybride Aggregations-Zustand ist gewollt. Versuche nicht, ihn als "Inkonsistenz" zu reparieren, indem du Ratios durchschneidest oder Trades normalisierst (außerhalb des Gates).
 **Betroffen:** `automation/backtest_runner.py`, `automation/daily_orchestrator.py`
@@ -606,6 +610,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-08 | **Issue #275:** Präzisierung der 'aggregation_basis'-Beschreibung in backtest_runner.py und AGENTS.md zur Beseitigung missverständlicher Ratio-Mischungen. Count-Ratio-Konsistenztest in test_oos_aggregation.py integriert. | `automation/backtest_runner.py`, `automation/AGENTS.md`, `automation/tests/test_oos_aggregation.py` |
 | 2026-06-07 | **Issue #263 (Eliminierung von Sentinel-Verzerrungen):** Modifikation von `get_median` in `select_winners` zum Ausschluss von gecappten Sentinel-Werten (50.0) aus der Berechnung der Aggregat-Mediane und Tie-Breaker. Verhindert die Verzerrung von Portfolio-Ratios durch All-Win-Artefakte. Update von `AGENTS.md` §16. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #273:** Hard Per-Pair Safety Gate in Phase 5 implementiert. Prüft und loggt fully_eligible_pairs und winner_count vor Bot-Start, um stumme Aggregat-Bypasses bei leeren Turnieren zu verhindern. JSON-Events erweitert. | `automation/daily_orchestrator.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #257 (Zweistufige Selektion & OOS-Gating Transparenz):** "Rank first, Gate second" Logik in `select_winners` implementiert. OOS-Fails werden nicht mehr vorzeitig aus der IS-Population für die Rank-Normalisierung gefiltert. Die Selektion iteriert nun pro Symbol über die sortierten Scores und bewertet OOS On-the-Fly. Klarer Logging-Trail (`[OOS-Drop]`) im Terminal ergänzt. Neue Return-Werte für `is_eligible_pairs` und `fully_eligible_pairs` in die JSON-Ausgabe und in den Test-Files übernommen. | `automation/backtest_runner.py`, `automation/tests/*.py`, `automation/AGENTS.md` |
