@@ -360,6 +360,8 @@ class HourlyStrategyBase(Strategy):
 
     def on_order_canceled(self, event) -> None:
         self._log.info(f"[{self.instrument_id}] OrderCanceled: {event}")
+        if getattr(self, "current_signal", None) is not None and not self.cache.positions_open(instrument_id=self.instrument_id):
+             self.current_signal = None
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
             if not self._pending_cancels:
@@ -380,6 +382,8 @@ class HourlyStrategyBase(Strategy):
 
     def on_order_rejected(self, event) -> None:
         self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
+        if getattr(self, "current_signal", None) is not None and not self.cache.positions_open(instrument_id=self.instrument_id):
+             self.current_signal = None
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
             if not self._pending_cancels:
