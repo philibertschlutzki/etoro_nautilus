@@ -460,3 +460,44 @@ def test_calculate_stats_drawdown_calculation_basis():
 
     expected_dd = 0.05
     assert math.isclose(stats["max_drawdown"], expected_dd, rel_tol=1e-5), "Drawdown calculation must strictly follow FIFO closed trade realized PnLs"
+
+def test_check_data_span():
+    from automation.backtest_runner import check_data_span
+
+    class MockTick:
+        def __init__(self, ts_event):
+            self.ts_event = ts_event
+
+    # Test 1: exact span required_days - span_tolerance_days + epsilon
+    required_days = 150
+    span_tolerance_days = 3.0
+    epsilon = 0.01
+
+    # 86400 * 1_000_000_000 is 1 day in ns
+    day_in_ns = 86400 * 1_000_000_000
+
+    # Span needs to be (150 - 3.0 + 0.01) days
+    target_span_days = required_days - span_tolerance_days + epsilon
+    target_span_ns = int(target_span_days * day_in_ns)
+
+    ticks_sufficient = [
+        MockTick(0),
+        MockTick(target_span_ns)
+    ]
+
+    is_sufficient, span_days, req_days = check_data_span(ticks_sufficient, required_days, span_tolerance_days)
+    assert is_sufficient is True
+    assert req_days == required_days
+
+    # Test 2: exact span required_days - span_tolerance_days - epsilon
+    target_span_days_insufficient = required_days - span_tolerance_days - epsilon
+    target_span_ns_insufficient = int(target_span_days_insufficient * day_in_ns)
+
+    ticks_insufficient = [
+        MockTick(0),
+        MockTick(target_span_ns_insufficient)
+    ]
+
+    is_sufficient, span_days, req_days = check_data_span(ticks_insufficient, required_days, span_tolerance_days)
+    assert is_sufficient is False
+    assert req_days == required_days

@@ -1871,7 +1871,7 @@ def run_backtest() -> None:
         oos_days = walk_forward_cfg.get("oos_window_days", 30)
         splits   = walk_forward_cfg.get("splits", 2)
         required_days = is_days + (splits * oos_days)
-        _span_tol = global_settings.get("span_tolerance_days", 1.0)
+        _span_tol = span_tolerance_days
         print(f"   • Effective Data Span Required: {required_days - _span_tol:.1f} days (Required: {required_days}, Max Allowed Deficit: {_span_tol})")
 
     for strat in strategies_list:

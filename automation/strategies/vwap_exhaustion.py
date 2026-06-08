@@ -114,8 +114,7 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            # KORREKTUR: Aufruf ohne Unterstrich
-            self.close_position(pos)
+            self._close_position_base(pos)
             return
 
         if self.cache.orders_open(instrument_id=self.instrument_id):
@@ -144,8 +143,7 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            # KORREKTUR: Aufruf ohne Unterstrich
-            self.close_position(pos)
+            self._close_position_base(pos)
             return
 
         if self.cache.orders_open(instrument_id=self.instrument_id):
@@ -168,11 +166,11 @@ class VwapExhaustionStrategy(HourlyStrategyBase):
         )
         self.submit_order(order)
 
-    def _close_position(self, pos) -> None:
-        super()._close_position(pos)
-        self.current_signal = None
-
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
+
+    def on_position_closed(self, event) -> None:
+        super().on_position_closed(event)
+        self.current_signal = None
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")

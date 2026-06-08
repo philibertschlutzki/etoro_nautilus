@@ -121,17 +121,11 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
         )
         self.submit_order(order)
 
-    def _close_position(self, pos) -> None:
-        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
-        if open_orders:
-            for order in open_orders:
-                self._pending_cancels.add(order.client_order_id)
-                self.cancel_order(order)
-            return
-
-        self._execute_market_close(pos)
-
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
+
+    def on_position_closed(self, event) -> None:
+        super().on_position_closed(event)
+        self.current_signal = None
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")

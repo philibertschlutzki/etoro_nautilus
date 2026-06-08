@@ -40,9 +40,9 @@ def test_build_bots_config():
 
     tournament_data = {
         "per_symbol_winners": {
-            "AAPL.ETORO": {"strategy": "MeanReversionStrategy"},
-            "TSLA.ETORO": {"strategy": "UnknownStrategy"},
-            "INVALID.ETORO": {"strategy": "MeanReversionStrategy"}
+            "AAPL.ETORO": {"strategy": "MeanReversionStrategy", "oos_evaluated": True, "oos_eligible": True},
+            "TSLA.ETORO": {"strategy": "UnknownStrategy", "oos_evaluated": True, "oos_eligible": True},
+            "INVALID.ETORO": {"strategy": "MeanReversionStrategy", "oos_evaluated": True, "oos_eligible": True}
         }
     }
 
