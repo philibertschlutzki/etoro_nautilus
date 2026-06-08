@@ -5264,3 +5264,158 @@
 2026-06-08T20:00:02.653998571Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks DOCU.ETORO' completed
 2026-06-08T20:00:02.653998892Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed DOCU.ETORO quotes
 2026-06-08T20:00:02.653999563Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks FSLY.ETORO' completed
+2026-06-08T20:00:02.654000194Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed FSLY.ETORO quotes
+2026-06-08T20:00:02.654000815Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks TSEM.ETORO' completed
+2026-06-08T20:00:02.654001046Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed TSEM.ETORO quotes
+2026-06-08T20:00:02.654001697Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks AG.ETORO' completed
+2026-06-08T20:00:02.654002418Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed AG.ETORO quotes
+2026-06-08T20:00:02.654003060Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks XPEV.ETORO' completed
+2026-06-08T20:00:02.654004222Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed XPEV.ETORO quotes
+2026-06-08T20:00:02.654004873Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks E.ETORO' completed
+2026-06-08T20:00:02.654005174Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed E.ETORO quotes
+2026-06-08T20:00:02.654005855Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks HUT.ETORO' completed
+2026-06-08T20:00:02.654006226Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed HUT.ETORO quotes
+2026-06-08T20:00:02.654006937Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks INSM.ETORO' completed
+2026-06-08T20:00:02.654007268Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed INSM.ETORO quotes
+2026-06-08T20:00:02.654007909Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks INSW.ETORO' completed
+2026-06-08T20:00:02.654008340Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed INSW.ETORO quotes
+2026-06-08T20:00:02.654008991Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks TTMI.ETORO' completed
+2026-06-08T20:00:02.654009432Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed TTMI.ETORO quotes
+2026-06-08T20:00:02.654010083Z [DEBUG] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Coroutine 'subscribe: quote_ticks ESLT.ETORO' completed
+2026-06-08T20:00:02.654010313Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed ESLT.ETORO quotes
+2026-06-08T20:00:14.638839857Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:16.640567401Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:18.642079762Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:20.643200311Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:22.643907987Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:24.645866650Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:26.646711752Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:28.646996209Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:30.649961151Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:32.651270645Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:34.652077244Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:36.653007108Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:38.654351782Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:40.655991464Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:42.657020889Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:44.658397437Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:46.659867911Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:48.661435753Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:50.663167525Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:52.664062021Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:54.665824109Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:56.667810554Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:00:58.670243107Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:00.671054886Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:02.671461681Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:04.673569642Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:06.675291747Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:08.675673100Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:10.677013642Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:12.678787006Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:14.680121392Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:16.682694555Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:18.683043868Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:20.684111042Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:22.685111746Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:24.687595214Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:26.687910921Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:28.690083538Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:30.692018635Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:32.693014875Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:34.695098432Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:36.697214858Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:38.698010127Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:40.700002877Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:42.701097536Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:44.701739781Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:46.703979134Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:48.705764817Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:52.707777754Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:54.709052925Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:56.709698202Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:01:58.711879342Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:00.713730785Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:02.714284901Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:04.716495266Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:06.718103471Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:08.719402502Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:10.722089539Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:12.724042564Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:14.725000967Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:16.727011355Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:18.729758703Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:20.730797990Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:22.732011932Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:24.734307157Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:26.734645353Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:28.736089050Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:30.738968768Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:32.739883489Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:34.742059534Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:36.744080541Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:38.745798803Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:40.748322329Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:42.749620105Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:44.750104623Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:46.752640158Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:48.753119450Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:50.754446575Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:52.757057233Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:54.759868098Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:56.761229668Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:02:58.763422410Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:00.764636403Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:04.767019867Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:06.769334631Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:10.771757931Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:12.772167087Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:14.773300218Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:16.775851161Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:18.776701954Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:20.777627797Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:22.779471592Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:24.781387165Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:26.781745741Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:28.784046343Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:30.786313868Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:32.787088773Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:34.789259967Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:36.791404759Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:38.792309332Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:40.794502451Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:42.794515394Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:44.795683130Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:46.796902466Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:48.799513527Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:50.799868526Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:52.802084646Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:54.804409490Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:56.805184579Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:03:58.807383224Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:00.808339172Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:02.810363298Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:04.812757849Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:06.814113875Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:08.814372474Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:10.816711466Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:12.818739428Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:14.819408441Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:16.821970904Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:18.825044193Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:20.826387683Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:22.827328703Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:24.829095694Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:26.829668045Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:28.831883600Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:30.834241384Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:32.834775881Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:34.837039557Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:36.838874551Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:38.840110931Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:40.842075384Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:42.842994304Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:44.844265528Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:46.845430254Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:48.846568132Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
+2026-06-08T20:04:50.847524870Z [DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
