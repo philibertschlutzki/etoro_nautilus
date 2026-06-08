@@ -1271,6 +1271,17 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
+    oos_not_evaluable_pairs = 0
+    oos_failed_pairs = 0
+
+    for r in all_results:
+        oos_eval = r.get("_oos_eval")
+        if oos_eval:
+            if not oos_eval.get("oos_evaluated", False):
+                oos_not_evaluable_pairs += 1
+            elif not oos_eval.get("oos_eligible", False):
+                oos_failed_pairs += 1
+
     output = {
         "generated_at":                datetime.now(timezone.utc).isoformat(),
         "universe_snapshot":           universe_snapshot,
@@ -1278,6 +1289,8 @@ def write_tournament_json(
         "eligible_pairs":              fully_eligible_count,
         "is_eligible_pairs":           is_eligible_count,
         "fully_eligible_pairs":        fully_eligible_count,
+        "oos_not_evaluable_pairs":     oos_not_evaluable_pairs,
+        "oos_failed_pairs":            oos_failed_pairs,
         "tournament_criteria":         tournament_cfg,
         "normalization_method":        "rank_based",
         "normalization_population":    is_eligible_count,
@@ -2129,9 +2142,22 @@ def run_backtest() -> None:
             all_results, per_symbol_winners, tournament_cfg
         )
         total_symbols = len(set(r["symbol"] for r in all_results))
+
+        oos_not_evaluable_count = 0
+        oos_failed_count = 0
+        for r in all_results:
+            oos_eval = r.get("_oos_eval")
+            if oos_eval:
+                if not oos_eval.get("oos_evaluated", False):
+                    oos_not_evaluable_count += 1
+                elif not oos_eval.get("oos_eligible", False):
+                    oos_failed_count += 1
+
         print(
             f"\n✅ Tournament: {total_symbols} Symbole | "
-            f"{is_eligible_count} IS-taugliche Paare | {fully_eligible_count} voll taugliche Paare (IS+OOS) | {winner_count} Gewinner-Symbole"
+            f"{is_eligible_count} IS-taugliche Paare | {fully_eligible_count} voll taugliche Paare (IS+OOS) | "
+            f"{oos_failed_count} OOS-fehlgeschlagene Paare | {oos_not_evaluable_count} OOS-nicht-evaluierbare Paare | "
+            f"{winner_count} Gewinner-Symbole"
         )
         if aggregate_winner:
             print(
