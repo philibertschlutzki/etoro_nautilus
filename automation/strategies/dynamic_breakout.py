@@ -167,8 +167,8 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             # Bei einem Reversal wollen wir die Cooldown-Bars NICHT überspringen!
             self.bars_since_last_signal = 0
         else:
-            # Regulärer Stop-Out -> Sofort wieder bereit für den nächsten echten Ausbruch
-            self.bars_since_last_signal = self.config.cooldown_bars
+            # Regulärer Stop-Out -> Cooldown MUSS eingehalten werden
+            self.bars_since_last_signal = 0
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
