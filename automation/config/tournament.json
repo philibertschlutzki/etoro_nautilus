@@ -25,6 +25,7 @@
   "min_win_rate": 0.35,
   "min_total_return": 0.005,
   "min_expectancy": 0.00005,
+  "k_shrinkage": 20.0,
   "oos_min_trades": 3,
   "oos_min_total_return": 0.005,
   "oos_min_expectancy": 0.00005,

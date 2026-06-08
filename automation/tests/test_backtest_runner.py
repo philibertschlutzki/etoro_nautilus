@@ -353,10 +353,10 @@ def test_clamping_limits():
     pnl_list = [-1.0, 10.0] + [10.0] * 49 + [-0.00000001] * 2
     hold_list = [(1000, 1.0)] * 52
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
-    # Caps were reinstated according to safety rules (max 50.0 for PF and Sortino, Calmar None/100.0)
+    # Caps were reinstated according to safety rules (max 50.0 for PF and Sortino, Calmar 50.0 per Issue #288)
     assert metrics["profit_factor"] == 50.0
     assert metrics["sortino_ratio"] == 50.0
-    assert metrics["calmar_ratio"] == 100.0
+    assert metrics["calmar_ratio"] == 50.0
 
 def test_select_winners_sibling_key_access():
     """
