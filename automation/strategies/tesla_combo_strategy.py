@@ -118,7 +118,6 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
                 f"BB lower: {self.bb.lower:.2f} | VWAP: {self.current_vwap:.2f}",
                 LogColor.GREEN,
             )
-            self.current_signal = "BUY"
             self._on_buy_signal(bar)
 
         elif (
@@ -137,7 +136,6 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
                 f"BB upper: {self.bb.upper:.2f} | VWAP: {self.current_vwap:.2f}",
                 LogColor.RED,
             )
-            self.current_signal = "SELL"
             self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
@@ -156,6 +154,8 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
+
+        self.current_signal = "BUY"
         self.bars_since_last_signal = 0
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -179,6 +179,8 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
+
+        self.current_signal = "SELL"
         self.bars_since_last_signal = 0
         order = self.order_factory.market(
             instrument_id=self.instrument_id,

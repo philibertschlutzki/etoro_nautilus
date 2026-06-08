@@ -71,14 +71,10 @@ class MeanReversionStrategy(HourlyStrategyBase):
 
         if close_price < lower_band and self.current_signal != "BUY" and can_signal:
             self._log.info(f"[{self.instrument_id}] BUY SIGNAL (Close < Keltner Lower Band)")
-            self.current_signal = "BUY"
-            self.bars_since_last_signal = 0
             self._on_buy_signal(bar)
 
         elif close_price > upper_band and self.current_signal != "SELL" and can_signal:
             self._log.info(f"[{self.instrument_id}] SELL SIGNAL (Close > Keltner Upper Band)")
-            self.current_signal = "SELL"
-            self.bars_since_last_signal = 0
             self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
@@ -99,6 +95,9 @@ class MeanReversionStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
+
+        self.current_signal = "BUY"
+        self.bars_since_last_signal = 0
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.BUY,
@@ -121,6 +120,9 @@ class MeanReversionStrategy(HourlyStrategyBase):
         qty = self._compute_quantity(bar)
         if qty is None:
             return
+
+        self.current_signal = "SELL"
+        self.bars_since_last_signal = 0
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
