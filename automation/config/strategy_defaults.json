@@ -43,7 +43,7 @@
     "trade_amount_pct": 15.0
   },
   "VwapExhaustionStrategy": {
-    "deviation_threshold": 0.008,
+    "deviation_threshold": 0.015,
     "vwap_period": 24,
     "trade_amount_pct": 15.0
   },

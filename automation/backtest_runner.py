@@ -715,6 +715,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     EPSILON = 1e-9
 
+    # Floor `gross_loss` at EPSILON implicitly to protect against division-by-zero, but logic captures it via count.
     if gross_loss <= 0.0:
         profit_factor = None
     elif losses_count < 2 and n < 50:
@@ -743,6 +744,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             sortino = None
         else:
             # Addition *under* the root as requested by PR review
+            # Floor dd_dev at 1e-6 to strictly protect against division-by-zero on micro downside deviations.
             dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
             dd_dev = max(dd_dev, 1e-6)
             mean_ret = sum(rets) / n
@@ -752,10 +754,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             else:
                 sortino = min(sortino_raw, 50.0)
 
+    # Floor max_dd at 1e-9 to protect against division-by-zero when computing calmar.
     if max_dd <= 1e-9:
         calmar = None
     else:
-        calmar = min(total_return / max_dd, 100.0)
+        calmar = min(total_return / max_dd, 50.0)
 
     import statistics
     if hold_list:
@@ -930,8 +933,6 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_notionals = []
         oos_notionals = []
 
-        oos_trade_records = []
-
         if walk_forward_dict and start_ns is not None:
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
@@ -953,7 +954,6 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     oos_pnls.append(pnl)
                     oos_holding_times.append((ht, m_qty))
                     oos_notionals.append(notional)
-                    oos_trade_records.append((pnl, ts, ht, m_qty, notional))
                 else:
                     is_pnls.append(pnl)
                     is_holding_times.append((ht, m_qty))
@@ -980,8 +980,6 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         }
 
         if walk_forward_dict and start_ns is not None:
-            if oos_trade_records:
-                oos_metrics["_oos_trade_records"] = oos_trade_records
             return {
                 "metrics": is_metrics,
                 "oos_metrics": oos_metrics
@@ -1056,11 +1054,11 @@ def select_winners(
     # 2. Normalisierung der Metriken über alle IS-eligiblen Ergebnisse
     if is_eligible_population:
         def get_ranks(vals, reverse=False):
-            # Issue #263: Handle None/All-Win scenarios logically as highest values (50.0)
-            # instead of letting `(m.get('sortino_ratio') or 0.0)` push them to the bottom.
-            # Convert any None/0.0 fallback that actually corresponds to an All-Win (which we know
-            # if we see 0.0 here but the actual metric was None) to 50.0 in the caller,
-            # but here we just process the vals correctly.
+            # Issue #263 / #288: Handle None/All-Win scenarios logically.
+            # Convert any None/0.0 fallback that actually corresponds to an All-Win
+            # to a scaled sentinel value in the caller, but here we process the vals correctly.
+            # We filter out exactly 50.0 to prevent hard caps from contaminating the distribution.
+            # We don't filter the scaled sentinels since they represent legitimate rank differences.
             non_sentinels = [v for v in vals if v != 50.0]
             if len(non_sentinels) == 0:
                 return [1.0] * len(vals)
@@ -1069,10 +1067,22 @@ def select_winners(
                 return [1.0] * len(vals)
             return [(su.index(v)) / (len(su) - 1) for v in vals]
 
-        # Issue #263: None-Values in sortino/pf (All-Win scenarios) must be treated as absolute top-tier (50.0)
-        # for ranking purposes, otherwise the `or 0.0` fallback degrades them below mediocre strategies.
-        sortinos = [(r["metrics"].get("sortino_ratio") if r["metrics"].get("sortino_ratio") is not None else 50.0) for r in is_eligible_population]
-        pfs = [(r["metrics"].get("profit_factor") if r["metrics"].get("profit_factor") is not None else 50.0) for r in is_eligible_population]
+        # Issue #288: Introduce Sample-Size Shrinkage logic for `None` (All-Win) sentinels.
+        # We must protect genuine empirical ratios from being degraded by dynamic sentinels.
+        def get_sentinel(n_trades, population_ratios):
+            # 1. Scale sentinel based on sample size confidence
+            scaled = min(50.0, max(2.0, 50.0 * (n_trades / 50.0)))
+            # 2. Prevent dynamic sentinel from outranking the highest genuine organic ratio
+            organic_ratios = [v for v in population_ratios if v is not None and v != 50.0]
+            if organic_ratios:
+                return min(scaled, max(organic_ratios))
+            return scaled
+
+        raw_sortinos = [r["metrics"].get("sortino_ratio") for r in is_eligible_population]
+        raw_pfs = [r["metrics"].get("profit_factor") for r in is_eligible_population]
+
+        sortinos = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_sortinos)) for i, r in enumerate(raw_sortinos)]
+        pfs = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_pfs)) for i, r in enumerate(raw_pfs)]
         wrs = [(r["metrics"].get("win_rate") or 0.0) for r in is_eligible_population]
         dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in is_eligible_population]
 
@@ -1080,6 +1090,8 @@ def select_winners(
         rp = get_ranks(pfs)
         rw = get_ranks(wrs)
         rd = get_ranks(dds)
+
+        k_shrinkage = tournament_cfg.get("k_shrinkage", 20.0) # Parameter for score damping
 
         for i, r in enumerate(is_eligible_population):
             r["norm_metrics"] = {
@@ -1092,7 +1104,13 @@ def select_winners(
             metrics_to_score = r.get("norm_metrics")
             if metrics_to_score is None:
                 metrics_to_score = r["metrics"]
-            r["_score"] = compute_tournament_score(metrics_to_score, scoring)
+
+            raw_score = compute_tournament_score(metrics_to_score, scoring)
+            n_trades = r["metrics"].get("total_trades", 0)
+
+            # Apply shrinkage to composite score based on total_trades
+            damped_score = raw_score * (n_trades / (n_trades + k_shrinkage))
+            r["_score"] = damped_score
 
     # 3. Per-Symbol OOS-Gating (Der Entscheidungs-Trail)
     fully_eligible_count = 0
@@ -1156,7 +1174,8 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
-            # Filter out None and sentinel cap values (50.0) to prevent statistical distortion
+            # Issue #288 / #263: Filter out None and exactly 50.0 hard caps to prevent distortion.
+            # Scaled sentinels (< 50.0) are deliberately kept to reflect sample size significance.
             vals = [v for v in vals if v is not None]
             non_sentinel_vals = [v for v in vals if v != 50.0]
 
@@ -1181,26 +1200,45 @@ def select_winners(
         max_wins = max(win_counts.values())
         top      = [s for s, w in win_counts.items() if w == max_wins]
         best     = max(top, key=lambda s: get_median([x for x in sortinos_by_strat[s] if x is not None]))
-        # Finde alle OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
+        # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
         best_results = [r.get("oos_metrics", {}) for r in per_symbol_winners.values()
                         if r["strategy"] == best and r.get("oos_metrics") and r.get("oos_metrics").get("total_trades", 0) > 0]
 
         if best_results:
             n_res = len(best_results)
 
-            portfolio_oos_trades = []
-            for oos in best_results:
-                portfolio_oos_trades.extend(oos.get("_oos_trade_records", []))
+            # Echte Portfolio-Aggregation für Trades und Wins
+            portfolio_total_trades = sum((oos.get("total_trades") or 0) for oos in best_results)
+            # Rekonstruktion der absoluten Wins pro Symbol und Aufsummierung (typsicher)
+            portfolio_wins = sum(
+                int(round((oos.get("win_rate") or 0.0) * (oos.get("total_trades") or 0)))
+                for oos in best_results
+            )
+            portfolio_win_rate = portfolio_wins / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
 
-            # Chronologische Sortierung nach ts_event (Index 1)
-            portfolio_oos_trades.sort(key=lambda x: x[1])
+            # Trade-Weighted Portfolio Rendite
+            portfolio_mean_return = sum((oos.get("total_return") or 0.0) * (oos.get("total_trades") or 0) for oos in best_results) / portfolio_total_trades if portfolio_total_trades > 0 else 0.0
 
-            portfolio_pnls = [x[0] for x in portfolio_oos_trades]
-            portfolio_holding_times = [(x[2], x[3]) for x in portfolio_oos_trades]
-            portfolio_notionals = [x[4] for x in portfolio_oos_trades]
+            sortinos = [s for s in (oos.get("sortino_ratio") for oos in best_results) if s is not None]
+            med_sortino = get_median(sortinos) if sortinos else None
 
-            import statistics
-            portfolio_med_notional = statistics.median(portfolio_notionals) if portfolio_notionals else 0.0
+            pfs = [p for p in (oos.get("profit_factor") for oos in best_results) if p is not None]
+            med_pf = get_median(pfs) if pfs else None
+
+            span_days = [oos.get("oos_span_days", 0) for oos in best_results]
+            med_span = get_median(span_days) if span_days else 0
+
+            avg_oos = {
+                "total_trades": portfolio_total_trades,
+                "sortino_ratio": med_sortino,
+                "profit_factor": med_pf,
+                "max_drawdown": get_median([oos.get("max_drawdown", 1.0) for oos in best_results]),
+                "win_rate": portfolio_win_rate,
+                "total_return": portfolio_mean_return,
+                "oos_span_days": med_span,
+                "median_position_notional": get_median([oos.get("median_position_notional", 0.0) for oos in best_results]),
+                "aggregation_basis": "portfolio_sum_for_trades_and_count_ratio_for_win_rate_and_trade_weighted_mean_for_return_and_median_for_risk_ratios"
+            }
 
             # Use strat_params from the first result matching the winning strategy
             winner_strat_params = {}
@@ -1209,20 +1247,10 @@ def select_winners(
                     winner_strat_params = r.get("strat_params", {})
                     break
 
-            # Retrieve starting capital from params to compute actual portfolio stats
-            # Assuming starting_capital = 10000.0 if not available (should be parsed from config but default works for normalized returns)
-            starting_capital = winner_strat_params.get("starting_capital", 10000.0)
-
-            avg_oos = _calculate_stats(portfolio_pnls, portfolio_holding_times, starting_capital, med_notional=portfolio_med_notional)
-
-            span_days = [oos.get("oos_span_days", 0) for oos in best_results]
-            avg_oos["oos_span_days"] = statistics.median(span_days) if span_days else 0
-            avg_oos["aggregation_basis"] = "portfolio_equity_curve_from_chronologically_merged_trades"
-
             # Normalize metrics before gating to avoid the "Trade-Sum Trap"
             avg_oos_for_gate = avg_oos.copy()
             if n_res > 0:
-                avg_oos_for_gate["total_trades"] = int(avg_oos["total_trades"] / n_res)
+                avg_oos_for_gate["total_trades"] = int(portfolio_total_trades / n_res)
 
             agg_oos_eval = _evaluate_oos_eligibility(avg_oos_for_gate, tournament_cfg, winner_strat_params)
 
@@ -1269,17 +1297,6 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
-    oos_not_evaluable_pairs = 0
-    oos_failed_pairs = 0
-
-    for r in all_results:
-        oos_eval = r.get("_oos_eval")
-        if oos_eval:
-            if not oos_eval.get("oos_evaluated", False):
-                oos_not_evaluable_pairs += 1
-            elif not oos_eval.get("oos_eligible", False):
-                oos_failed_pairs += 1
-
     output = {
         "generated_at":                datetime.now(timezone.utc).isoformat(),
         "universe_snapshot":           universe_snapshot,
@@ -1287,8 +1304,6 @@ def write_tournament_json(
         "eligible_pairs":              fully_eligible_count,
         "is_eligible_pairs":           is_eligible_count,
         "fully_eligible_pairs":        fully_eligible_count,
-        "oos_not_evaluable_pairs":     oos_not_evaluable_pairs,
-        "oos_failed_pairs":            oos_failed_pairs,
         "tournament_criteria":         tournament_cfg,
         "normalization_method":        "rank_based",
         "normalization_population":    is_eligible_count,
@@ -1806,6 +1821,9 @@ def run_backtest() -> None:
     for k in req_any:
         print(f"      • {k}: {tournament_cfg.get(k, 'N/A')}")
 
+    if "k_shrinkage" in tournament_cfg:
+        print(f"   [SHRINKAGE FACTOR] {tournament_cfg.get('k_shrinkage')}")
+
     if "oos_min_trades" in tournament_cfg or "oos_min_total_return" in tournament_cfg or "oos_min_expectancy" in tournament_cfg:
         print(f"   [OOS DEFAULTS] min_trades: {tournament_cfg.get('oos_min_trades')}, min_return: {tournament_cfg.get('oos_min_total_return')}, min_expectancy: {tournament_cfg.get('oos_min_expectancy')}")
 
@@ -1855,7 +1873,7 @@ def run_backtest() -> None:
         oos_days = walk_forward_cfg.get("oos_window_days", 30)
         splits   = walk_forward_cfg.get("splits", 2)
         required_days = is_days + (splits * oos_days)
-        _span_tol = global_settings.get("span_tolerance_days", 1.0)
+        _span_tol = span_tolerance_days
         print(f"   • Effective Data Span Required: {required_days - _span_tol:.1f} days (Required: {required_days}, Max Allowed Deficit: {_span_tol})")
 
     for strat in strategies_list:
@@ -2140,22 +2158,9 @@ def run_backtest() -> None:
             all_results, per_symbol_winners, tournament_cfg
         )
         total_symbols = len(set(r["symbol"] for r in all_results))
-
-        oos_not_evaluable_count = 0
-        oos_failed_count = 0
-        for r in all_results:
-            oos_eval = r.get("_oos_eval")
-            if oos_eval:
-                if not oos_eval.get("oos_evaluated", False):
-                    oos_not_evaluable_count += 1
-                elif not oos_eval.get("oos_eligible", False):
-                    oos_failed_count += 1
-
         print(
             f"\n✅ Tournament: {total_symbols} Symbole | "
-            f"{is_eligible_count} IS-taugliche Paare | {fully_eligible_count} voll taugliche Paare (IS+OOS) | "
-            f"{oos_failed_count} OOS-fehlgeschlagene Paare | {oos_not_evaluable_count} OOS-nicht-evaluierbare Paare | "
-            f"{winner_count} Gewinner-Symbole"
+            f"{is_eligible_count} IS-taugliche Paare | {fully_eligible_count} voll taugliche Paare (IS+OOS) | {winner_count} Gewinner-Symbole"
         )
         if aggregate_winner:
             print(
