@@ -4247,3 +4247,4 @@
 2026-06-08T16:54:37.427621426Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed TTMI.ETORO quotes
 2026-06-08T16:54:37.427622237Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Subscribed ESLT.ETORO quotes
 2026-06-08T16:54:47.980348764Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Heartbeat: 60 Ticks verarbeitet.
+2026-06-08T16:55:08.879301850Z [INFO] eToro-Momentum-LS.DataClient-ETORO_WS_CLIENT: Heartbeat: 120 Ticks verarbeitet.
