@@ -115,7 +115,8 @@ def test_single_worker_precision_mismatch(tmp_path):
         start_capital=1000.0,
         generate_html_report=False,
         reports_dir=str(tmp_path / "reports"),
-        worker_log_file=str(tmp_path / "worker.log")
+        worker_log_file=str(tmp_path / "worker.log"),
+        span_tolerance_days=3.0
     )
 
     # Assert that metrics are returned and it did not crash returning {}

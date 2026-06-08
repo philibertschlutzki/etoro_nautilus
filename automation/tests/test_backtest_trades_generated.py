@@ -146,6 +146,7 @@ def test_backtest_trades_generated(tmp_path):
             generate_html_report=False,
             reports_dir=str(tmp_path / "reports"),
             worker_log_file=str(tmp_path / f"worker_{strat['strategy_class']}.log"),
+            span_tolerance_days=3.0
         )
 
         assert res != {}, f"Worker crashed for {strat['strategy_class']} and returned {{}}"
