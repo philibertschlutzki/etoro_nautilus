@@ -129,3 +129,39 @@ def test_load_tournament_config_validation(monkeypatch):
         output = captured_output.getvalue()
         assert "ist nicht definiert" not in output
         assert "ist definiert, aber nicht in" not in output
+
+def test_zero_trades_no_micro_sizing_rejection(capfd):
+    """
+    Test that when total_trades == 0, the Micro-Sizing rejection reason
+    is not appended to the rejection list, avoiding the 0.0 value artifact.
+    """
+    tournament_cfg = {
+        "min_trades": 10,
+        "eligible_requires_all": ["min_trades"],
+    }
+
+    metrics = {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "sortino_ratio": 0.0,
+        "profit_factor": 0.0,
+        "total_return": 0.0,
+        "median_position_notional": 0.0,
+    }
+
+    # Wir setzen sortino_ratio und profit_factor explizit auf 0.0 statt None,
+    # um das early return bei None zu umgehen und sicherzustellen, dass die
+    # Rejection-Logik am Ende der Funktion erreicht wird.
+    result = {'metrics': metrics}
+
+    is_eligible = _is_eligible(result, tournament_cfg, log_rejections=True)
+
+    assert not is_eligible, "Should be rejected because min_trades (0 < 10) failed"
+
+    # Check the standard output
+    out, _ = capfd.readouterr()
+
+    # We expect min_trades failed, but NOT Micro-Sizing
+    assert "min_trades failed" in out, "Should reject due to min_trades"
+    assert "Micro-Sizing" not in out, "Micro-Sizing rejection should NOT be present when total_trades == 0"

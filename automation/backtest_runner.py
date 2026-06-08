@@ -526,9 +526,10 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
             rejections.append(f"Requires ANY of {any_conditions} failed")
 
     # Hard Gatekeeper: Median Position Notional
-    median_notional = metrics.get("median_position_notional", 0.0)
-    if median_notional < 10.0:
-        rejections.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
+    if n_trades > 0:
+        median_notional = metrics.get("median_position_notional", 0.0)
+        if median_notional < 10.0:
+            rejections.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
 
     if rejections:
         if log_rejections:
