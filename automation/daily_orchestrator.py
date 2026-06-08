@@ -775,11 +775,12 @@ def phase3_4_backtest_and_tournament(
                     f"({agg['win_count']} Wins, "
                     f"Portfolio-Trades: {agg.get('oos_metrics', {}).get('total_trades', 0)}, "
                     f"Trade-Weighted OOS-Return: {agg.get('oos_metrics', {}).get('total_return', 0.0):.2%}, "
-                    f"Median Sortino: {agg['median_sortino']})"
+                    f"In-Sample Median Sortino: {agg['median_sortino']})"
                 )
             emit_json_event(log, "TOURNAMENT_COMPLETE", {
                 "winner_count":     len(winners),
                 "aggregate_winner": agg,
+                "median_is_sortino": agg.get("median_sortino") if agg else None,
                 "path":             str(TOURNAMENT_PATH),
             })
         except Exception as e:
@@ -931,14 +932,17 @@ def phase5_live_deployment(
         oos_metrics   = agg.get("oos_metrics")
         reasons       = agg.get("oos_rejection_reasons") or ["unbekannt (Runner hat keine Begründung geliefert)"]
 
+        agg_oos_sortino = oos_metrics.get("sortino_ratio") if oos_metrics else None
+
         if not oos_evaluated:
             log.warning(
                 f"[Phase 5] OOS-GATE NICHT AUSWERTBAR: Aggregat-Sieger {agg.get('strategy')} — "
-                f"kein/zu wenig OOS-Datenmaterial (oos_metrics={oos_metrics}). "
+                f"kein/zu wenig OOS-Datenmaterial (Aggregate Out-of-Sample Sortino: {agg_oos_sortino}). "
                 f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
             )
             emit_json_event(log, "OOS_GATE_NOT_EVALUABLE", {
                 "strategy": agg.get("strategy"), "oos_metrics": oos_metrics, "reasons": reasons,
+                "aggregate_oos_sortino": agg_oos_sortino,
                 "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
             return 0
@@ -946,16 +950,17 @@ def phase5_live_deployment(
         if not oos_eligible:
             log.warning(
                 f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} — "
-                f"verletzte Kriterien: {reasons}; oos_metrics={oos_metrics}. "
+                f"verletzte Kriterien: {reasons}; Aggregate Out-of-Sample Sortino: {agg_oos_sortino}. "
                 f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
             )
             emit_json_event(log, "OOS_GATE_FAILED", {
                 "strategy": agg.get("strategy"), "reasons": reasons, "oos_metrics": oos_metrics,
+                "aggregate_oos_sortino": agg_oos_sortino,
                 "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
             return 0
 
-        log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} (oos_metrics={oos_metrics}).")
+        log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} (Aggregate Out-of-Sample Sortino: {agg_oos_sortino}).")
     except Exception as e:
         log.error(f"[Phase 5] Fehler beim Lesen des OOS-Gates: {e}")
         return 1
@@ -983,6 +988,7 @@ def phase5_live_deployment(
         "tournament": tournament_path,
         "universe":   str(UNIVERSE_PATH),
         "dry_run":    dry_run,
+        "aggregate_oos_sortino": agg_oos_sortino,
         "fully_eligible_pairs": fully_eligible_pairs,
         "winner_count": winner_count,
     })

@@ -430,9 +430,10 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         elif pf < req_pf:
              reasons.append(f"oos_min_profit_factor: {pf:.5f} < {req_pf}")
 
-    median_notional = oos_metrics.get("median_position_notional", 0.0)
-    if median_notional < 10.0:
-        reasons.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
+    if n_trades > 0:
+        median_notional = oos_metrics.get("median_position_notional", 0.0)
+        if median_notional < 10.0:
+            reasons.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
 
     return {
         "oos_evaluated": True,
@@ -526,9 +527,10 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
             rejections.append(f"Requires ANY of {any_conditions} failed")
 
     # Hard Gatekeeper: Median Position Notional
-    median_notional = metrics.get("median_position_notional", 0.0)
-    if median_notional < 10.0:
-        rejections.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
+    if n_trades > 0:
+        median_notional = metrics.get("median_position_notional", 0.0)
+        if median_notional < 10.0:
+            rejections.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
 
     if rejections:
         if log_rejections:
@@ -713,6 +715,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     EPSILON = 1e-9
 
+    # Floor `gross_loss` at EPSILON implicitly to protect against division-by-zero, but logic captures it via count.
     if gross_loss <= 0.0:
         profit_factor = None
     elif losses_count < 2 and n < 50:
@@ -741,6 +744,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             sortino = None
         else:
             # Addition *under* the root as requested by PR review
+            # Floor dd_dev at 1e-6 to strictly protect against division-by-zero on micro downside deviations.
             dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
             dd_dev = max(dd_dev, 1e-6)
             mean_ret = sum(rets) / n
@@ -750,10 +754,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             else:
                 sortino = min(sortino_raw, 50.0)
 
+    # Floor max_dd at 1e-9 to protect against division-by-zero when computing calmar.
     if max_dd <= 1e-9:
         calmar = None
     else:
-        calmar = min(total_return / max_dd, 100.0)
+        calmar = min(total_return / max_dd, 50.0)
 
     import statistics
     if hold_list:
@@ -1049,11 +1054,11 @@ def select_winners(
     # 2. Normalisierung der Metriken über alle IS-eligiblen Ergebnisse
     if is_eligible_population:
         def get_ranks(vals, reverse=False):
-            # Issue #263: Handle None/All-Win scenarios logically as highest values (50.0)
-            # instead of letting `(m.get('sortino_ratio') or 0.0)` push them to the bottom.
-            # Convert any None/0.0 fallback that actually corresponds to an All-Win (which we know
-            # if we see 0.0 here but the actual metric was None) to 50.0 in the caller,
-            # but here we just process the vals correctly.
+            # Issue #263 / #288: Handle None/All-Win scenarios logically.
+            # Convert any None/0.0 fallback that actually corresponds to an All-Win
+            # to a scaled sentinel value in the caller, but here we process the vals correctly.
+            # We filter out exactly 50.0 to prevent hard caps from contaminating the distribution.
+            # We don't filter the scaled sentinels since they represent legitimate rank differences.
             non_sentinels = [v for v in vals if v != 50.0]
             if len(non_sentinels) == 0:
                 return [1.0] * len(vals)
@@ -1062,10 +1067,22 @@ def select_winners(
                 return [1.0] * len(vals)
             return [(su.index(v)) / (len(su) - 1) for v in vals]
 
-        # Issue #263: None-Values in sortino/pf (All-Win scenarios) must be treated as absolute top-tier (50.0)
-        # for ranking purposes, otherwise the `or 0.0` fallback degrades them below mediocre strategies.
-        sortinos = [(r["metrics"].get("sortino_ratio") if r["metrics"].get("sortino_ratio") is not None else 50.0) for r in is_eligible_population]
-        pfs = [(r["metrics"].get("profit_factor") if r["metrics"].get("profit_factor") is not None else 50.0) for r in is_eligible_population]
+        # Issue #288: Introduce Sample-Size Shrinkage logic for `None` (All-Win) sentinels.
+        # We must protect genuine empirical ratios from being degraded by dynamic sentinels.
+        def get_sentinel(n_trades, population_ratios):
+            # 1. Scale sentinel based on sample size confidence
+            scaled = min(50.0, max(2.0, 50.0 * (n_trades / 50.0)))
+            # 2. Prevent dynamic sentinel from outranking the highest genuine organic ratio
+            organic_ratios = [v for v in population_ratios if v is not None and v != 50.0]
+            if organic_ratios:
+                return min(scaled, max(organic_ratios))
+            return scaled
+
+        raw_sortinos = [r["metrics"].get("sortino_ratio") for r in is_eligible_population]
+        raw_pfs = [r["metrics"].get("profit_factor") for r in is_eligible_population]
+
+        sortinos = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_sortinos)) for i, r in enumerate(raw_sortinos)]
+        pfs = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_pfs)) for i, r in enumerate(raw_pfs)]
         wrs = [(r["metrics"].get("win_rate") or 0.0) for r in is_eligible_population]
         dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in is_eligible_population]
 
@@ -1073,6 +1090,8 @@ def select_winners(
         rp = get_ranks(pfs)
         rw = get_ranks(wrs)
         rd = get_ranks(dds)
+
+        k_shrinkage = tournament_cfg.get("k_shrinkage", 20.0) # Parameter for score damping
 
         for i, r in enumerate(is_eligible_population):
             r["norm_metrics"] = {
@@ -1085,7 +1104,13 @@ def select_winners(
             metrics_to_score = r.get("norm_metrics")
             if metrics_to_score is None:
                 metrics_to_score = r["metrics"]
-            r["_score"] = compute_tournament_score(metrics_to_score, scoring)
+
+            raw_score = compute_tournament_score(metrics_to_score, scoring)
+            n_trades = r["metrics"].get("total_trades", 0)
+
+            # Apply shrinkage to composite score based on total_trades
+            damped_score = raw_score * (n_trades / (n_trades + k_shrinkage))
+            r["_score"] = damped_score
 
     # 3. Per-Symbol OOS-Gating (Der Entscheidungs-Trail)
     fully_eligible_count = 0
@@ -1149,7 +1174,8 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
-            # Filter out None and sentinel cap values (50.0) to prevent statistical distortion
+            # Issue #288 / #263: Filter out None and exactly 50.0 hard caps to prevent distortion.
+            # Scaled sentinels (< 50.0) are deliberately kept to reflect sample size significance.
             vals = [v for v in vals if v is not None]
             non_sentinel_vals = [v for v in vals if v != 50.0]
 
@@ -1795,6 +1821,9 @@ def run_backtest() -> None:
     for k in req_any:
         print(f"      • {k}: {tournament_cfg.get(k, 'N/A')}")
 
+    if "k_shrinkage" in tournament_cfg:
+        print(f"   [SHRINKAGE FACTOR] {tournament_cfg.get('k_shrinkage')}")
+
     if "oos_min_trades" in tournament_cfg or "oos_min_total_return" in tournament_cfg or "oos_min_expectancy" in tournament_cfg:
         print(f"   [OOS DEFAULTS] min_trades: {tournament_cfg.get('oos_min_trades')}, min_return: {tournament_cfg.get('oos_min_total_return')}, min_expectancy: {tournament_cfg.get('oos_min_expectancy')}")
 
@@ -1844,7 +1873,7 @@ def run_backtest() -> None:
         oos_days = walk_forward_cfg.get("oos_window_days", 30)
         splits   = walk_forward_cfg.get("splits", 2)
         required_days = is_days + (splits * oos_days)
-        _span_tol = global_settings.get("span_tolerance_days", 1.0)
+        _span_tol = span_tolerance_days
         print(f"   • Effective Data Span Required: {required_days - _span_tol:.1f} days (Required: {required_days}, Max Allowed Deficit: {_span_tol})")
 
     for strat in strategies_list:
