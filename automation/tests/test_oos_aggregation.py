@@ -56,4 +56,11 @@ def test_oos_aggregation():
     assert aggregate_winner["oos_metrics"]["total_trades"] == 20, "Total trades should be the portfolio sum"
     assert aggregate_winner["oos_metrics"]["win_rate"] == 0.5, "Win rate should be reconstructed correctly"
     assert aggregate_winner["oos_metrics"]["total_return"] == 0.15, "Total return should be trade-weighted"
-    assert aggregate_winner["oos_metrics"]["aggregation_basis"] == "portfolio_sum_for_trades_and_trade_weighted_mean_for_return_and_median_for_ratios"
+    assert aggregate_winner["oos_metrics"]["aggregation_basis"] == "portfolio_sum_for_trades_and_count_ratio_for_win_rate_and_trade_weighted_mean_for_return_and_median_for_risk_ratios"
+
+    # Verifiziere die Konsistenz der Count-Ratio (Anzahl Wins passt mathematisch zur aggregierten Win-Rate)
+    total_trades = aggregate_winner["oos_metrics"]["total_trades"]
+    win_rate = aggregate_winner["oos_metrics"]["win_rate"]
+    # Berechne die erwarteten absoluten Gewinne basierend auf den Rohdaten (5 Wins aus SYM1 + 5 Wins aus SYM2 = 10)
+    expected_total_wins = 10
+    assert round(win_rate * total_trades) == expected_total_wins
