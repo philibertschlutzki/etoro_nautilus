@@ -45,6 +45,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self.low_history: deque = deque(maxlen=config.price_breakout_period)
 
         self.bars_since_last_signal: int = 9999
+        self._reversal_in_progress: bool = False
 
     def on_start(self):
         super().on_start()
@@ -106,11 +107,15 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
     # ── Order helpers ──────────────────────────────────────────────────────────
 
     def _on_buy_signal(self, bar: Bar) -> None:
+        if self._reversal_in_progress:
+            return
+
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
+            self._reversal_in_progress = True
             self._close_position_base(pos)
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -128,11 +133,15 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     def _on_sell_signal(self, bar: Bar) -> None:
+        if self._reversal_in_progress:
+            return
+
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
         if positions:
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
+            self._reversal_in_progress = True
             self._close_position_base(pos)
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -153,7 +162,13 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
 
     def on_position_closed(self, event):
         super().on_position_closed(event)
-        self.bars_since_last_signal = self.config.cooldown_bars
+        if self._reversal_in_progress:
+            self._reversal_in_progress = False
+            # Bei einem Reversal wollen wir die Cooldown-Bars NICHT überspringen!
+            self.bars_since_last_signal = 0
+        else:
+            # Regulärer Stop-Out -> Sofort wieder bereit für den nächsten echten Ausbruch
+            self.bars_since_last_signal = self.config.cooldown_bars
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
