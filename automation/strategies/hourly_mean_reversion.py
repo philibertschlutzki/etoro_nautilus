@@ -56,7 +56,7 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
             f"Keltner({self.config.keltner_period}): Upper {upper_band:.2f}, Lower {lower_band:.2f}"
         )
 
-        can_signal = self.bars_since_last_signal >= self.config.cooldown_bars
+        can_signal = self.current_signal is None or self.bars_since_last_signal >= self.config.cooldown_bars
 
         if close_price < lower_band and self.current_signal != "BUY" and can_signal:
             self._log.info(f"[{self.instrument_id}] BUY SIGNAL (Close < Keltner Lower Band)")
@@ -119,11 +119,6 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
         self.submit_order(order)
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
-
-    def on_position_closed(self, event) -> None:
-        super().on_position_closed(event)
-        self.current_signal = None
-        self.bars_since_last_signal = 0
 
     def on_stop(self):
         self._log.info(f"Strategie auf {self.instrument_id} gestoppt.")
