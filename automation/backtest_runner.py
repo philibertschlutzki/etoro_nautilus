@@ -1488,7 +1488,7 @@ def run_single_backtest_worker(
             required_days = wfd.get("is_window_days", 90) + (wfd.get("splits", 2) * wfd.get("oos_window_days", 30))
         if required_days:
             is_sufficient, span_days, _ = check_data_span(ticks, required_days, span_tolerance_days)
-            if not is_sufficient and span_days < required_days * 0.95:
+            if not is_sufficient:
                 from automation.utils import emit_json_event
                 import logging
                 log = logging.getLogger("backtest_worker")
@@ -1503,7 +1503,7 @@ def run_single_backtest_worker(
                 res["error"] = "insufficient_data"
                 return res
             elif span_days < required_days:
-                wlog(f"   ⚠️ Knappe Datenspanne, fahre fort: {span_days:.1f} Tage (benötigt: {required_days} Tage, innerhalb der Toleranz von {span_tolerance_days} Tagen).")
+                wlog(f"   ⚠️ Knappe Datenspanne, fahre fort: {span_days:.1f} Tage (benötigt: {required_days} Tage, Defizit von {required_days - span_days:.1f} Tagen liegt innerhalb der Toleranz von {span_tolerance_days} Tagen).")
 
         # --- Engine-Setup ---
         try:
@@ -1822,6 +1822,14 @@ def run_backtest() -> None:
     # --- Parameter-Validierung & Walk-Forward Injektion ---
     param_warnings: list[str] = []
     walk_forward_cfg = global_settings.get("walk_forward")
+
+    if walk_forward_cfg:
+        is_days  = walk_forward_cfg.get("is_window_days", 90)
+        oos_days = walk_forward_cfg.get("oos_window_days", 30)
+        splits   = walk_forward_cfg.get("splits", 2)
+        required_days = is_days + (splits * oos_days)
+        _span_tol = global_settings.get("span_tolerance_days", 1.0)
+        print(f"   • Effective Data Span Required: {required_days - _span_tol:.1f} days (Required: {required_days}, Max Allowed Deficit: {_span_tol})")
 
     for strat in strategies_list:
         param_warnings.extend(validate_strategy_params(strat))
