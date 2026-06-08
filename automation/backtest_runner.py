@@ -1052,11 +1052,11 @@ def select_winners(
     # 2. Normalisierung der Metriken über alle IS-eligiblen Ergebnisse
     if is_eligible_population:
         def get_ranks(vals, reverse=False):
-            # Issue #263: Handle None/All-Win scenarios logically as highest values (50.0)
-            # instead of letting `(m.get('sortino_ratio') or 0.0)` push them to the bottom.
-            # Convert any None/0.0 fallback that actually corresponds to an All-Win (which we know
-            # if we see 0.0 here but the actual metric was None) to 50.0 in the caller,
-            # but here we just process the vals correctly.
+            # Issue #263 / #288: Handle None/All-Win scenarios logically.
+            # Convert any None/0.0 fallback that actually corresponds to an All-Win
+            # to a scaled sentinel value in the caller, but here we process the vals correctly.
+            # We filter out exactly 50.0 to prevent hard caps from contaminating the distribution.
+            # We don't filter the scaled sentinels since they represent legitimate rank differences.
             non_sentinels = [v for v in vals if v != 50.0]
             if len(non_sentinels) == 0:
                 return [1.0] * len(vals)
@@ -1165,7 +1165,8 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
-            # Filter out None and sentinel cap values (50.0) to prevent statistical distortion
+            # Issue #288 / #263: Filter out None and exactly 50.0 hard caps to prevent distortion.
+            # Scaled sentinels (< 50.0) are deliberately kept to reflect sample size significance.
             vals = [v for v in vals if v is not None]
             non_sentinel_vals = [v for v in vals if v != 50.0]
 
