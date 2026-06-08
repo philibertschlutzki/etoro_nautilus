@@ -331,7 +331,9 @@ def test_near_all_win_scenario():
     hold_list = [(1000, 1.0)] * 41
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
     assert metrics["profit_factor"] is None
-    assert metrics["sortino_ratio"] is None
+    # Now sortino_ratio will not be None since we changed the gate for 1 loss
+    assert metrics["sortino_ratio"] is not None
+    assert metrics["sortino_ratio"] <= 2.0
 
 def test_zero_downside_deviation():
     from automation.backtest_runner import _calculate_stats
@@ -420,3 +422,41 @@ def test_tournament_fails_closed_on_none_oos_metrics():
     per_symbol_winners, _, _, _, _ = select_winners(all_results, tournament_cfg)
 
     assert "FAIL.ETORO" not in per_symbol_winners, "Fail-closed safety violated: Strategy missing OOS metrics was allowed."
+
+def test_calculate_stats_low_sample_one_loss_sortino():
+    from automation.backtest_runner import _calculate_stats
+    # Create exactly 18 trades, with exactly 1 loss
+    # n=18, losses_count=1
+    pnl_list = [10.0] * 17 + [-5.0]
+
+    # Calculate stats with some starting capital
+    stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0)
+
+    # n < 50 and losses_count == 1 => sortino should be calculated and capped at 2.0
+    assert stats["sortino_ratio"] is not None
+    assert stats["sortino_ratio"] <= 2.0
+
+def test_calculate_stats_drawdown_calculation_basis():
+    from automation.backtest_runner import _calculate_stats
+    import math
+
+    # We provide a set of realized PnLs that mimic a specific curve
+    # 1. win $1000 -> 10%
+    # 2. lose $500 -> -5% based on original, but compounded:
+    # starting: 10000
+    # after 1: 11000 (ret 0.1) -> peak 1.1
+    # after 2: 10500 (ret -0.05) -> cum 1.1 * 0.95 = 1.045
+    # drawdown here: (1.1 - 1.045) / 1.1 = 0.05 / 1.1 = 0.0454545...
+    #
+    # Wait, the ret is v / starting_capital, so:
+    # r1 = 1000 / 10000 = 0.1. cum = 1.1. peak = 1.1
+    # r2 = -500 / 10000 = -0.05. cum = 1.1 * 0.95 = 1.045
+    # DD = (1.1 - 1.045) / 1.1 = 0.05 / 1.1 = 0.045454545
+
+    pnl_list = [1000.0, -500.0, 2000.0]
+    # after 3: r3 = 2000 / 10000 = 0.2. cum = 1.045 * 1.2 = 1.254. peak = 1.254
+
+    stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0)
+
+    expected_dd = 0.05
+    assert math.isclose(stats["max_drawdown"], expected_dd, rel_tol=1e-5), "Drawdown calculation must strictly follow FIFO closed trade realized PnLs"
