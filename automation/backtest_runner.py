@@ -430,9 +430,10 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         elif pf < req_pf:
              reasons.append(f"oos_min_profit_factor: {pf:.5f} < {req_pf}")
 
-    median_notional = oos_metrics.get("median_position_notional", 0.0)
-    if median_notional < 10.0:
-        reasons.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
+    if n_trades > 0:
+        median_notional = oos_metrics.get("median_position_notional", 0.0)
+        if median_notional < 10.0:
+            reasons.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
 
     return {
         "oos_evaluated": True,

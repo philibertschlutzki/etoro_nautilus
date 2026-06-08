@@ -165,3 +165,20 @@ def test_zero_trades_no_micro_sizing_rejection(capfd):
     # We expect min_trades failed, but NOT Micro-Sizing
     assert "min_trades failed" in out, "Should reject due to min_trades"
     assert "Micro-Sizing" not in out, "Micro-Sizing rejection should NOT be present when total_trades == 0"
+
+    # Test Out-of-Sample path
+    oos_metrics = {
+        "total_trades": 0,
+        "win_rate": 0.0,
+        "max_drawdown": 0.0,
+        "sortino_ratio": 0.0,
+        "profit_factor": 0.0,
+        "total_return": 0.0,
+        "median_position_notional": 0.0,
+    }
+    # Note: _evaluate_oos_eligibility has an early exit for total_trades <= 0.
+    oos_result = _evaluate_oos_eligibility(oos_metrics, tournament_cfg)
+    assert not oos_result["oos_eligible"]
+    # The reasons list should NOT have Micro-Sizing
+    reasons = " ".join(oos_result["oos_rejection_reasons"])
+    assert "Micro-Sizing" not in reasons, "Micro-Sizing rejection should NOT be present in OOS when total_trades == 0"
