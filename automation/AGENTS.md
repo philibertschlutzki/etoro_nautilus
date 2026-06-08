@@ -348,6 +348,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+### 🟢 Issue #276 — Verfälschung von Risk-Metriken (Sortino-Caps & Drawdown-Basis) und Spread-Nachkalibrierung
+**Symptom:** Strategien mit exakt einem Verlust und einer sehr geringen Tradeanzahl (<50) ruinierten die Turniermathematik durch ungedeckelte Sortino-Ratios, während gleichzeitig Drawdowns systematisch unterschätzt wurden.
+**Root Cause:** `_calculate_stats` wertete Szenarien mit `losses_count < 2` pauschal zu `None` aus, was downstream (in #263) zu perfekten 50.0-Ausreißern hochskaliert wurde. Zudem basierte der berechnete Drawdown rein auf der realisierten FIFO-PnL-Kurve der geschlossenen Trades (ohne Berücksichtigung intra-trade Exkursionen). Der Equity-Spread in eToro war mit 3 bps zu optimistisch angesetzt.
+**Fix:** Sortino-Capping auf hart `2.0` für 1-Loss Low-Sample Szenarien (<50 Trades). Drawdown-Basis (Realized FIFO PnL) explizit im Code als architektonische Entscheidung dokumentiert. Der eToro Equity Spread in `backtest.json` wurde auf konservativere 8.0 bps nachkalibriert, um artifizielle Profitabilität zu mindern.
+**Betroffen:** `automation/backtest_runner.py`, `automation/config/backtest.json`
+
 ### 🟢 Issue #263 — Sentinel Metric Distortion in Cross-Sectional Aggregations
 **Symptom:** VwapExhaustion oder andere restriktive Setups zeigen ein Sortino Ratio von exakt 50.00 (Cap-/Sentinel-Wert). Diese Werte fließen in die Median-Berechnung ein und verfälschen die Auswahl des `aggregate_winner` im Turniersystem.
 **Root Cause:** Winsorizing-Caps (50.0) für Sortino und Profit Factor schützten zwar vor Division-by-Zero, fungierten in Folgesystemen jedoch als extrem verzerrende Ausreißer im Median-Pool.
@@ -673,7 +679,7 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 
 ---
 
-*Zuletzt aktualisiert: 2026-06-07. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-06-08. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
 * **Pitfall #43 (Metrics Rendering und Rejection Reasons):** Die String-Repräsentationen `"all-loss"`, `"all-win (no losses)"`, `"insufficient sample (n=...)"` und `"insufficient loss data"` sind feste Bestandteile der Systemarchitektur und werden verwendet, um OOS-/IS-Abweisungen granulär zu differenzieren. Fließkommawerte im OOS-Log werden mit hoher Präzision (`:.5f`) formatiert, um logische Paradoxa bei Rundungsfehlern (z. B. `0.0050 < 0.0050`) zu vermeiden. Bei zu geringen Trade-Anzahlen wird die Metrik-Rückgabe (`n/a(<min)`) priorisiert vor `None`-Checks gerendert.
@@ -707,5 +713,6 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 | 2026-06-06 | **Issue #194 (Sizing Bug & Impossible Risk Metrics Guards):** Fixed sizing calculation bug causing microscopic returns by strictly quantizing quantity to align with tick precision and size_increment in `HourlyStrategyBase._compute_quantity`. Introduced `EPSILON = 1e-9` in risk metric denominators. Enforced sample size minimums for near-all-win situations (`losses_count < 2 and n < 50`) to return `None` in `backtest_runner.py._calculate_stats`. | `automation/strategies/hourly_strategy_base.py`, `automation/backtest_runner.py`, `automation/tests/test_backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-06 | **Issue #207 (Fix Tournament Expectancy Gating & IS Transparenz):** Absenkung von `min_expectancy` auf `0.00005`, neues Logging der Ablehnungsgründe in `_is_eligible()` sowie Cooldown-Logik für Mean-Reversion. Bugfix in `test_oos_aggregation.py` für `total_trades` Average-Calculation. | `automation/config/tournament.json`, `automation/backtest_runner.py`, `automation/strategies/mean_reversion.py`, `automation/strategies/hourly_mean_reversion.py`, `automation/AGENTS.md` |
 | 2026-06-07 | **Issue #274 (Metrics Rendering, Precise Rejection Reasons & OOS Log Precision):** Fix für `_is_eligible` eingeführt, um bei fehlenden Metriken genaue Ablehnungsgründe (z.B. `"all-loss"`, `"all-win"`) zu ermitteln anstatt pauschalem Text. In `format_metric` der Tabellenausgaben wird jetzt die Limitprüfung für Trade-Anzahl zuerst ausgeführt, um bei sehr wenigen Trades das korrekte `"n/a(<min)"` anstelle irreführender Float-Werte auszugeben. In `_evaluate_oos_eligibility` wird das OOS-Log für Fließkommazahlen auf 5 Nachkommastellen (`:.5f`) erhöht, um bei Fehlermeldungen logische Rundungsparadoxien zu vermeiden. Pitfall #43 dokumentiert. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
+| 2026-06-08 | **Issue #276 (Verfälschung von Risk-Metriken & Spread-Nachkalibrierung):** Behebung eines OOS-Gate-Leaks, bei dem Low-Sample Strategien mit exakt 1 Verlust falsche (unendliche) Sortino-Werte erhielten. Einführung eines harten Caps (2.0) für diese Ausreißer. Dokumentation der Realized FIFO-PnL-Basis für Drawdown-Berechnungen (vs. MtM). Erhöhung des eToro Equity-Spreads in `backtest.json` von 3.0 auf 8.0 bps zur Eindämmung künstlicher Renditen. | `automation/backtest_runner.py`, `automation/config/backtest.json`, `automation/AGENTS.md`, `automation/tests/test_backtest_runner.py` |
 * **Live-Trading Safety Rule:** Zero OOS-eligible pairs MUST strictly prevent any live deployment. The aggregate OOS pass cannot override a per-pair failure.
 * **Data Structure Rule:** The `oos_metrics` object is a sibling key to `metrics` in backtest results, never nested. Always access via `r.get('oos_metrics')`.

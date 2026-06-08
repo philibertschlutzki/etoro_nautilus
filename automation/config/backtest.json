@@ -20,7 +20,7 @@
   "commission_bps": 1.0,
   "spread_bps_by_asset_class": {
     "CRYPTO": 15.0,
-    "EQUITY": 3.0,
+    "EQUITY": 8.0,
     "FOREX": 1.5,
     "COMMODITY": 5.0,
     "DEFAULT": 4.0

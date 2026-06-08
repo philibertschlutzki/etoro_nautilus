@@ -686,6 +686,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     geteilt, um die prozentuale Rendite des Trades bezogen auf die initiale Equity
     zu erhalten (`v / starting_capital`). Diese prozentualen Renditen werden dann
     geometrisch aufgezinst (compounded: `cum *= (1.0 + r)`).
+
+    Drawdown-Basis:
+    Der `max_drawdown` basiert rein auf der realisierten FIFO-PnL-Kurve geschlossener Trades.
+    Er wird nicht auf einer kontinuierlichen Mark-to-Market (MtM) Equity-Kurve berechnet.
+    Das bedeutet, dass Intra-Trade-Drawdowns (Floating Drawdowns) systematisch unterschätzt
+    bzw. ignoriert werden, was zu hochgradig optimistischen Calmar-Ratios führen kann.
     """
     import math
     NULL = {
@@ -727,7 +733,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     total_return = cum - 1.0
 
-    if n < 5 or (losses_count < 2 and n < 50):
+    if n < 5 or losses_count == 0:
         sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
@@ -738,7 +744,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
             dd_dev = max(dd_dev, 1e-6)
             mean_ret = sum(rets) / n
-            sortino = min((mean_ret / dd_dev * math.sqrt(252)), 50.0)
+            sortino_raw = mean_ret / dd_dev * math.sqrt(252)
+            if losses_count == 1 and n < 50:
+                sortino = min(sortino_raw, 2.0)
+            else:
+                sortino = min(sortino_raw, 50.0)
 
     if max_dd <= 1e-9:
         calmar = None
@@ -780,6 +790,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
     Korrektur: Nutzt trader.generate_fills_report() statt des fehlerhaften Cache-Zugriffs.
     Unterstützt robustes FIFO-Position-Matching über DataFrames.
+
+    Hinweis zum Drawdown:
+    Der in den extrahierten Metriken berechnete `max_drawdown` (via `_calculate_stats`) basiert
+    ausschließlich auf der realisierten FIFO-PnL-Kurve der geschlossenen Trades und nicht
+    auf der kontinuierlichen Mark-to-Market (MtM) Equity. Intra-Trade Drawdowns bleiben
+    hierbei unberücksichtigt.
     """
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
