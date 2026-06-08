@@ -87,12 +87,41 @@ def test_backtest_trades_generated(tmp_path):
     table = table.replace_schema_metadata(meta)
     pq.write_table(table, str(parquet_file))
 
-    strat = {
-        "strategy_class": "DynamicBreakoutStrategy",
-        "strategy_module": "automation.strategies.dynamic_breakout",
-        "config_class": "DynamicBreakoutConfig",
-        "params": {}
-    }
+    strats_to_test = [
+        {
+            "strategy_class": "DynamicBreakoutStrategy",
+            "strategy_module": "automation.strategies.dynamic_breakout",
+            "config_class": "DynamicBreakoutConfig",
+            "params": {}
+        },
+        {
+            "strategy_class": "MeanReversionStrategy",
+            "strategy_module": "automation.strategies.mean_reversion",
+            "config_class": "MeanReversionConfig",
+            "params": {
+                "cooldown_bars": 1,
+                "keltner_period": 10,
+                "keltner_atr_period": 10,
+                "keltner_multiplier": 0.5
+            }
+        },
+        {
+            "strategy_class": "ComboTrendVwapStrategy",
+            "strategy_module": "automation.strategies.tesla_combo_strategy",
+            "config_class": "ComboTrendVwapConfig",
+            "params": {
+                "cooldown_bars": 1,
+                "sma_period": 10,
+                "bb_period": 10,
+                "atr_period": 10,
+                "macd_fast": 5,
+                "macd_slow": 10,
+                "macd_signal_period": 5,
+                "bb_std_dev": 0.5,
+                "allow_short": True
+            }
+        }
+    ]
 
     sys.path.append(str(Path(".").absolute()))
 
@@ -105,23 +134,31 @@ def test_backtest_trades_generated(tmp_path):
             future = executor.submit(run_single_backtest_worker, *args, **kwargs)
             return future.result()
 
-    res = run_isolated_worker(
-        inst_id_str="AAPL.ETORO",
-        bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL",
-        strat=strat,
-        catalog_path=str(catalog_path),
-        start_ns=None,
-        end_ns=None,
-        start_capital=1000.0,
-        generate_html_report=False,
-        reports_dir=str(tmp_path / "reports"),
-        worker_log_file=str(tmp_path / "worker.log"),
-    )
+    for strat in strats_to_test:
+        res = run_isolated_worker(
+            inst_id_str="AAPL.ETORO",
+            bar_type="AAPL.ETORO-1-HOUR-MID-INTERNAL",
+            strat=strat,
+            catalog_path=str(catalog_path),
+            start_ns=None,
+            end_ns=None,
+            start_capital=1000.0,
+            generate_html_report=False,
+            reports_dir=str(tmp_path / "reports"),
+            worker_log_file=str(tmp_path / f"worker_{strat['strategy_class']}.log"),
+        )
 
-    assert res != {}, "Worker crashed and returned {}"
-    assert "symbol" in res
-    assert res["symbol"] == "AAPL.ETORO"
+        assert res != {}, f"Worker crashed for {strat['strategy_class']} and returned {{}}"
+        assert "symbol" in res
+        assert res["symbol"] == "AAPL.ETORO"
 
-    # Assert total_trades > 0 to verify correct prices caused trade execution
-    metrics = res.get("metrics", {})
-    assert metrics.get("total_trades", 0) > 0, "No trades were generated! Price encoding might still be 0.0"
+        # Assert total_trades > 0 to verify correct prices caused trade execution
+        metrics = res.get("metrics", {})
+        total_trades = metrics.get("total_trades", 0)
+
+        # The prompt asked to ensure the newly fixed ones get > 20, but the existing DynamicBreakout
+        # may not generate > 20 on this synthetic dataset. Thus we check > 0 for DynamicBreakout, and > 20 for the newly fixed ones.
+        if strat['strategy_class'] == "DynamicBreakoutStrategy":
+             assert total_trades > 0, f"Only {total_trades} trades were generated for {strat['strategy_class']}! Expected > 0"
+        else:
+             assert total_trades > 20, f"Only {total_trades} trades were generated for {strat['strategy_class']}! Expected > 20"
