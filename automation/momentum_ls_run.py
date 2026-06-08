@@ -86,6 +86,10 @@ def _build_bots_config(
         if not winner:
             continue
 
+        if not winner.get("oos_eligible", False) or not winner.get("oos_evaluated", False):
+            logger.info(f"[OOS-DEPLOY-REJECT] Skipping symbol {symbol} because winner strategy {winner.get('strategy')} failed the OOS-Eligibility Gate.")
+            continue
+
         strat_class_name = winner["strategy"]
         etoro_id = symbol_to_etoro_id.get(symbol)
 
