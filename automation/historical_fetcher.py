@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -37,6 +38,7 @@ CATALOG_PATH = PROJECT_ROOT / "data" / "nautilus"
 QUOTE_TICK_PATH = CATALOG_PATH / "data" / "quote_tick"
 UNIVERSE_PATH = PROJECT_ROOT / "data" / "universe" / "momentum_ls.json"
 ENV_FILE = PROJECT_ROOT / ".env"
+INCEPTION_CACHE_PATH = PROJECT_ROOT / "data" / "state" / "inception_bounds.json"
 
 _BASE_URL = "https://public-api.etoro.com/api/v1/market-data"
 _CANDLES_URL = f"{_BASE_URL}/instruments/{{etoro_id}}/history/candles/desc/{{interval}}/{{count}}"
@@ -63,6 +65,34 @@ except ImportError:
     )
 
 
+# ─── Cache Helpers ────────────────────────────────────────────────────────────
+
+def _load_inception_bounds() -> dict[str, int]:
+    """Liest die JSON-Datei mit Inception-Bounds."""
+    if not INCEPTION_CACHE_PATH.exists():
+        return {}
+    try:
+        with open(INCEPTION_CACHE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        log.warning(f"Fehler beim Laden von {INCEPTION_CACHE_PATH}: {e}")
+        return {}
+
+def _save_inception_bound(symbol: str, ts_ns: int) -> None:
+    """Speichert den Inception-Zeitstempel atomar ab."""
+    bounds = _load_inception_bounds()
+    bounds[symbol] = ts_ns
+    INCEPTION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = INCEPTION_CACHE_PATH.with_suffix(".tmp.json")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(bounds, f, indent=2)
+        os.replace(tmp_path, INCEPTION_CACHE_PATH)
+    except Exception as e:
+        log.warning(f"Fehler beim Speichern von {INCEPTION_CACHE_PATH} für {symbol}: {e}")
+        if tmp_path.exists():
+            tmp_path.unlink()
+
 # ─── Sufficiency Check ────────────────────────────────────────────────────────
 
 def is_backtest_range_covered(
@@ -80,6 +110,14 @@ def is_backtest_range_covered(
         if len(t) == 0:
             return False
         oldest_ts = int(pc.min(t.column("ts_event")).as_py())
+
+        # NEU: Inception-Bounds prüfen
+        bounds = _load_inception_bounds()
+        if symbol in bounds:
+            if oldest_ts <= bounds[symbol]:
+                log.info(f"[{symbol}] Inception-Bound-Check erfolgreich: Volle historische Tiefe ({datetime.fromtimestamp(oldest_ts/1e9, tz=timezone.utc).date()}) liegt vor.")
+                return True
+
         return oldest_ts <= start_ns
     except Exception:
         return False
@@ -262,6 +300,14 @@ async def _fetch_symbol(
             log.info(f"[{symbol}] Ziel-Startdatum mit {interval} erreicht.")
             break
 
+    # Wenn die Schleifen beendet wurden, wir aber das target_start nicht erreicht haben,
+    # ist das Instrument jünger als das angeforderte Backtest-Warmup-Fenster.
+    if current_end_time > target_start:
+        final_oldest_ns = _get_oldest_ts_ns(dest_file)
+        if final_oldest_ns is not None:
+            _save_inception_bound(symbol, final_oldest_ns)
+            log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
+
     if not all_candles:
         log.warning(f"[{symbol}] Keine Candles gefunden — überspringe.")
         return False
@@ -272,7 +318,16 @@ async def _fetch_symbol(
         return False
 
     log.info(f"[{symbol}] {len(table)} Candles → speichere (price_prec={price_prec}).")
-    return _merge_and_save(log, table, symbol, price_prec, size_prec)
+    res = _merge_and_save(log, table, symbol, price_prec, size_prec)
+
+    # Nach dem erfolgreichen Speichern nochmal Inception-Bound prüfen
+    if res and current_end_time > target_start:
+        final_oldest_ns = _get_oldest_ts_ns(dest_file)
+        if final_oldest_ns is not None:
+            _save_inception_bound(symbol, final_oldest_ns)
+            log.info(f"[{symbol}] Maximale historische Tiefe aufgezeichnet. Inception-Bound im Cache registriert: {datetime.fromtimestamp(final_oldest_ns/1e9, tz=timezone.utc).isoformat()}")
+
+    return res
 
 
 # ─── Main Async Function ──────────────────────────────────────────────────────

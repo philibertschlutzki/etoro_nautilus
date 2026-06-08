@@ -907,10 +907,19 @@ def phase5_live_deployment(
         with open(tournament_path, "r", encoding="utf-8") as tf:
             t_data = json.load(tf)
 
-        eligible_pairs = t_data.get("eligible_pairs", 0)
-        if eligible_pairs == 0:
-            log.error("[Phase 5] 0 eligible pairs gefunden. Live-Deploy strikt verboten (Fail-Closed).")
-            emit_json_event(log, "LIVE_DEPLOY_ABORTED", {"reason": "zero_eligible_pairs"})
+        fully_eligible_pairs = t_data.get("fully_eligible_pairs", 0)
+        winners = t_data.get("per_symbol_winners", {})
+        winner_count = len(winners)
+
+        log.info(f"[Phase 5] Per-Pair-Eligible Check: {fully_eligible_pairs} fully eligible pairs found (Winners: {winner_count}).")
+
+        if fully_eligible_pairs == 0 or winner_count == 0:
+            log.error("[Phase 5] 0 fully eligible per-pair assets gefunden. Live-Deploy strikt verboten (Per-Pair Fail-Closed).")
+            emit_json_event(log, "LIVE_DEPLOY_ABORTED", {
+                "reason": "zero_fully_eligible_pairs",
+                "fully_eligible_pairs": fully_eligible_pairs,
+                "winner_count": winner_count
+            })
             return 1
 
         agg = t_data.get("aggregate_winner")
@@ -930,6 +939,7 @@ def phase5_live_deployment(
             )
             emit_json_event(log, "OOS_GATE_NOT_EVALUABLE", {
                 "strategy": agg.get("strategy"), "oos_metrics": oos_metrics, "reasons": reasons,
+                "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
             return 0
 
@@ -941,6 +951,7 @@ def phase5_live_deployment(
             )
             emit_json_event(log, "OOS_GATE_FAILED", {
                 "strategy": agg.get("strategy"), "reasons": reasons, "oos_metrics": oos_metrics,
+                "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
             return 0
 
@@ -972,6 +983,8 @@ def phase5_live_deployment(
         "tournament": tournament_path,
         "universe":   str(UNIVERSE_PATH),
         "dry_run":    dry_run,
+        "fully_eligible_pairs": fully_eligible_pairs,
+        "winner_count": winner_count,
     })
 
     if dry_run:

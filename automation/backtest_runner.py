@@ -406,26 +406,29 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     if n_trades < req_trades:
         reasons.append(f"oos_min_trades: {n_trades} < {req_trades}")
     if total_return < req_return:
-        reasons.append(f"oos_min_total_return: {total_return:.4f} < {req_return:.4f}")
+        reasons.append(f"oos_min_total_return: {total_return:.5f} < {req_return:.5f}")
     if expectancy < req_exp:
         reasons.append(f"oos_min_expectancy: {expectancy:.5f} < {req_exp:.5f}")
     if max_dd > req_max_dd:
-        reasons.append(f"oos_max_drawdown: {max_dd:.4f} > {req_max_dd:.4f}")
+        reasons.append(f"oos_max_drawdown: {max_dd:.5f} > {req_max_dd:.5f}")
     if win_rate < req_win_rate:
-        reasons.append(f"oos_min_win_rate: {win_rate:.4f} < {req_win_rate:.4f}")
+        reasons.append(f"oos_min_win_rate: {win_rate:.5f} < {req_win_rate:.5f}")
 
     # None-Sicherheit: Zero-Loss-OOS
+    # Issue #263: Defensives Handling für "Low-Sample"/All-Win-Szenarien
     if req_sortino > 0.0:
         if sortino is None:
-             reasons.append(f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}")
+             if n_trades < req_trades or win_rate <= 0.0:
+                 reasons.append(f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}")
         elif sortino < req_sortino:
-             reasons.append(f"oos_min_sortino: {sortino:.4f} < {req_sortino}")
+             reasons.append(f"oos_min_sortino: {sortino:.5f} < {req_sortino}")
 
     if req_pf > 0.0:
         if pf is None:
-             reasons.append(f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}")
+             if n_trades < req_trades or win_rate <= 0.0:
+                 reasons.append(f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}")
         elif pf < req_pf:
-             reasons.append(f"oos_min_profit_factor: {pf:.4f} < {req_pf}")
+             reasons.append(f"oos_min_profit_factor: {pf:.5f} < {req_pf}")
 
     median_notional = oos_metrics.get("median_position_notional", 0.0)
     if median_notional < 10.0:
@@ -453,8 +456,25 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
 
     if sortino is None or pf is None:
         if log_rejections:
-            print(f"⚠️  Rejected: Undefined metrics due to all-win / insufficient loss data for {symbol} - {strategy}")
-            metrics["rejection_reason"] = "insufficient/all-win"
+            n = metrics.get("total_trades", 0)
+            losses_count = metrics.get("losses_count", 0)
+            win_rate = metrics.get("win_rate", 0.0)
+
+            if n == 0:
+                reason = "no trades executed"
+            elif win_rate == 0.0:
+                reason = "all-loss"
+            elif losses_count == 0:
+                reason = "all-win (no losses)"
+            elif n < 5:
+                reason = f"insufficient sample (n={n})"
+            elif losses_count < 2 and n < 50:
+                reason = f"insufficient loss data (losses={losses_count} for n={n})"
+            else:
+                reason = "undefined metrics"
+
+            print(f"⚠️  Rejected: {reason} for {symbol} - {strategy}")
+            metrics["rejection_reason"] = reason
         return False
 
     n_trades     = metrics.get("total_trades", 0)
@@ -464,10 +484,26 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     expectancy   = total_return / n_trades if n_trades > 0 else 0.0
 
     t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
+    # Low-Sample / All-Win Defensive Handling
+    req_trades = t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0))
+    sortino_valid = True
+    if sortino is None:
+        if n_trades < req_trades or win_rate <= 0.0:
+            sortino_valid = False
+    else:
+        sortino_valid = sortino >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0))
+
+    pf_valid = True
+    if pf is None:
+        if n_trades < req_trades or win_rate <= 0.0:
+            pf_valid = False
+    else:
+        pf_valid = pf >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0))
+
     condition_map = {
-        "min_trades":        n_trades     >= t_overrides.get("min_trades", tournament_cfg.get("min_trades", 0)),
-        "min_sortino":       sortino      >= t_overrides.get("min_sortino", tournament_cfg.get("min_sortino", 0.0)),
-        "min_profit_factor": pf           >= t_overrides.get("min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0)),
+        "min_trades":        n_trades     >= req_trades,
+        "min_sortino":       sortino_valid,
+        "min_profit_factor": pf_valid,
         "max_drawdown":      max_dd       <= t_overrides.get("max_drawdown", tournament_cfg.get("max_drawdown", 1.0)),
         "min_win_rate":      win_rate     >= t_overrides.get("min_win_rate", tournament_cfg.get("min_win_rate", 0.0)),
         "min_total_return":  total_return >= t_overrides.get("min_total_return", tournament_cfg.get("min_total_return", 0.0)),
@@ -997,13 +1033,23 @@ def select_winners(
     # 2. Normalisierung der Metriken über alle IS-eligiblen Ergebnisse
     if is_eligible_population:
         def get_ranks(vals, reverse=False):
+            # Issue #263: Handle None/All-Win scenarios logically as highest values (50.0)
+            # instead of letting `(m.get('sortino_ratio') or 0.0)` push them to the bottom.
+            # Convert any None/0.0 fallback that actually corresponds to an All-Win (which we know
+            # if we see 0.0 here but the actual metric was None) to 50.0 in the caller,
+            # but here we just process the vals correctly.
+            non_sentinels = [v for v in vals if v != 50.0]
+            if len(non_sentinels) == 0:
+                return [1.0] * len(vals)
             su = sorted(list(set(vals)), reverse=reverse)
             if len(su) <= 1:
                 return [1.0] * len(vals)
             return [(su.index(v)) / (len(su) - 1) for v in vals]
 
-        sortinos = [(r["metrics"].get("sortino_ratio") or 0.0) for r in is_eligible_population]
-        pfs = [(r["metrics"].get("profit_factor") or 0.0) for r in is_eligible_population]
+        # Issue #263: None-Values in sortino/pf (All-Win scenarios) must be treated as absolute top-tier (50.0)
+        # for ranking purposes, otherwise the `or 0.0` fallback degrades them below mediocre strategies.
+        sortinos = [(r["metrics"].get("sortino_ratio") if r["metrics"].get("sortino_ratio") is not None else 50.0) for r in is_eligible_population]
+        pfs = [(r["metrics"].get("profit_factor") if r["metrics"].get("profit_factor") is not None else 50.0) for r in is_eligible_population]
         wrs = [(r["metrics"].get("win_rate") or 0.0) for r in is_eligible_population]
         dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in is_eligible_population]
 
@@ -1087,8 +1133,14 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
+            # Filter out None and sentinel cap values (50.0) to prevent statistical distortion
             vals = [v for v in vals if v is not None]
-            sv = sorted(vals)
+            non_sentinel_vals = [v for v in vals if v != 50.0]
+
+            # Use non-sentinel values if available, fallback to full list if all are sentinels
+            target_vals = non_sentinel_vals if non_sentinel_vals else vals
+
+            sv = sorted(target_vals)
             n = len(sv)
             if n == 0: return 0.0
             if n % 2 == 1: return sv[n//2]
@@ -1143,7 +1195,7 @@ def select_winners(
                 "total_return": portfolio_mean_return,
                 "oos_span_days": med_span,
                 "median_position_notional": get_median([oos.get("median_position_notional", 0.0) for oos in best_results]),
-                "aggregation_basis": "portfolio_sum_for_trades_and_trade_weighted_mean_for_return_and_median_for_ratios"
+                "aggregation_basis": "portfolio_sum_for_trades_and_count_ratio_for_win_rate_and_trade_weighted_mean_for_return_and_median_for_risk_ratios"
             }
 
             # Use strat_params from the first result matching the winning strategy
@@ -1251,10 +1303,10 @@ def print_tournament_table(
         strat_min_trades = t_overrides.get("min_trades", global_min_trades_req)
 
         def format_metric(val, req_trades):
-            if val is not None:
-                return f"{val:>7.2f}"
             if m.get('total_trades', 0) < req_trades:
                 return f"{'n/a(<min)':>7}"
+            if val is not None:
+                return f"{val:>7.2f}"
             if m.get('losses_count', 0) == 0 or m.get('max_drawdown', 0.0) == 0.0:
                 return f"{'n/a(win)':>7}"
             return f"{'n/a':>7}"
@@ -1576,11 +1628,11 @@ def run_single_backtest_worker(
             oos_metrics = {}
 
         def format_metric(m_dict, key, min_trades_req):
+            if m_dict.get('total_trades', 0) < min_trades_req:
+                return f"{'n/a(<min)':>6}"
             val = m_dict.get(key)
             if val is not None:
                 return f"{val:>6.2f}"
-            if m_dict.get('total_trades', 0) < min_trades_req:
-                return f"{'n/a(<min)':>6}"
             if m_dict.get('losses_count', 0) == 0 or m_dict.get('max_drawdown', 0.0) == 0.0:
                 return f"{'n/a(win)':>6}"
             return f"{'n/a':>6}"
