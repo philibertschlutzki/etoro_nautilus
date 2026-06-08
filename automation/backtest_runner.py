@@ -1066,14 +1066,21 @@ def select_winners(
             return [(su.index(v)) / (len(su) - 1) for v in vals]
 
         # Issue #288: Introduce Sample-Size Shrinkage logic for `None` (All-Win) sentinels.
-        # Instead of blindly assigning 50.0 to any strategy with `None` risk ratios,
-        # scale it based on the number of trades to penalize micro-samples.
-        def get_sentinel(n_trades):
-            # Scale sentinel value. E.g. at 20 trades it's 20.0, at 50 trades it's 50.0.
-            return min(50.0, max(2.0, 50.0 * (n_trades / 50.0)))
+        # We must protect genuine empirical ratios from being degraded by dynamic sentinels.
+        def get_sentinel(n_trades, population_ratios):
+            # 1. Scale sentinel based on sample size confidence
+            scaled = min(50.0, max(2.0, 50.0 * (n_trades / 50.0)))
+            # 2. Prevent dynamic sentinel from outranking the highest genuine organic ratio
+            organic_ratios = [v for v in population_ratios if v is not None and v != 50.0]
+            if organic_ratios:
+                return min(scaled, max(organic_ratios))
+            return scaled
 
-        sortinos = [(r["metrics"].get("sortino_ratio") if r["metrics"].get("sortino_ratio") is not None else get_sentinel(r["metrics"].get("total_trades", 0))) for r in is_eligible_population]
-        pfs = [(r["metrics"].get("profit_factor") if r["metrics"].get("profit_factor") is not None else get_sentinel(r["metrics"].get("total_trades", 0))) for r in is_eligible_population]
+        raw_sortinos = [r["metrics"].get("sortino_ratio") for r in is_eligible_population]
+        raw_pfs = [r["metrics"].get("profit_factor") for r in is_eligible_population]
+
+        sortinos = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_sortinos)) for i, r in enumerate(raw_sortinos)]
+        pfs = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_pfs)) for i, r in enumerate(raw_pfs)]
         wrs = [(r["metrics"].get("win_rate") or 0.0) for r in is_eligible_population]
         dds = [(r["metrics"].get("max_drawdown") or 0.0) for r in is_eligible_population]
 
@@ -1082,7 +1089,7 @@ def select_winners(
         rw = get_ranks(wrs)
         rd = get_ranks(dds)
 
-        k_shrinkage = 20.0 # Parameter for score damping
+        k_shrinkage = tournament_cfg.get("k_shrinkage", 20.0) # Parameter for score damping
 
         for i, r in enumerate(is_eligible_population):
             r["norm_metrics"] = {
@@ -1811,6 +1818,9 @@ def run_backtest() -> None:
     print(f"   [ANY REQUIRED] {req_any}")
     for k in req_any:
         print(f"      • {k}: {tournament_cfg.get(k, 'N/A')}")
+
+    if "k_shrinkage" in tournament_cfg:
+        print(f"   [SHRINKAGE FACTOR] {tournament_cfg.get('k_shrinkage')}")
 
     if "oos_min_trades" in tournament_cfg or "oos_min_total_return" in tournament_cfg or "oos_min_expectancy" in tournament_cfg:
         print(f"   [OOS DEFAULTS] min_trades: {tournament_cfg.get('oos_min_trades')}, min_return: {tournament_cfg.get('oos_min_total_return')}, min_expectancy: {tournament_cfg.get('oos_min_expectancy')}")
