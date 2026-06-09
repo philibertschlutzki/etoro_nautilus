@@ -70,10 +70,6 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             )
             self.current_signal = "SELL"
             self._on_sell_signal(bar)
-            self.current_signal = None
-
-        elif self.current_signal == "SELL":
-            self.current_signal = None
 
     # ── Order helpers ──────────────────────────────────────────────────────────
 
@@ -84,7 +80,6 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             if pos.side == PositionSide.LONG:
                 return
             self._close_position_base(pos)
-            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -106,7 +101,6 @@ class FlashCrashReversalStrategy(HourlyStrategyBase):
             if pos.side == PositionSide.SHORT:
                 return
             self._close_position_base(pos)
-            self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
