@@ -45,7 +45,9 @@ def test_phase5_oos_eligible():
             res = phase5_live_deployment(log, {}, tournament_result, dry_run=True)
 
         assert res == 0 # Dry run should return 0
-        mock_emit.assert_called_with(log, "BOT_START_INITIATED", mock.ANY)
+
+        # Verify whitelist generation event instead of BOT_START_INITIATED because bot start is now skipped when dry run = True
+        mock_emit.assert_any_call(log, "DEPLOYMENT_WHITELIST_GENERATED", mock.ANY)
 
 def test_phase5_oos_not_evaluable():
     log = setup_logger()

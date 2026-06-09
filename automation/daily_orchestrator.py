@@ -991,6 +991,11 @@ def phase5_live_deployment(
             "rejected_pairs_count": len(winners) - len(whitelisted_winners),
             "whitelist_path": str(whitelist_path)
         })
+
+        if len(whitelisted_winners) == 0:
+            log.warning("[Phase 5] Whitelist ist leer (kein Symbol hat sein individuelles OOS-Gate bestanden). Live-Deploy abgebrochen.")
+            return 0
+
         tournament_path = str(whitelist_path)
         # --- END WHITELIST GENERATION ---
     except Exception as e:
