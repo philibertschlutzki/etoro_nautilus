@@ -348,6 +348,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+
+### 🟢 Pitfall #52 — Active/Inactive Filter vs. Defaults Assertion Crash (Issue #311)
+**Symptom:** Orchestrator crasht vor dem Backtest mit `AssertionError: Mismatch: 8 defaults loaded but 6 strategies executed.`.
+**Root Cause:** Der Guard aus Pitfall #38 nutzte einen strikten Längenvergleich (`len(defaults) == len(strategies)`). Wenn in der `strategies.json` Strategien regulär auf `active: false` gesetzt wurden, schrumpfte die zu exekutierende Liste. Der Guard crashte das System, da er nicht zwischen absichtlich deaktivierten Strategien und echten Mismatches unterschied.
+**Fix:** Umstellung auf eine Set-basierte Assertion (`issubset`). Es wird nun nur noch geprüft, ob alle *aktiven* Strategien einen Eintrag in den Defaults besitzen. Überzählige Defaults von inaktiven Strategien werden sicher ignoriert. Zur Prävention wird in der CI-Pipeline (`pytest-gate.yml`) nun standardmäßig `python3 -m automation.backtest_runner --dry-run` ausgeführt.
+
 ### 🟢 Issue #276 — Verfälschung von Risk-Metriken (Sortino-Caps & Drawdown-Basis) und Spread-Nachkalibrierung
 **Symptom:** Strategien mit exakt einem Verlust und einer sehr geringen Tradeanzahl (<50) ruinierten die Turniermathematik durch ungedeckelte Sortino-Ratios, während gleichzeitig Drawdowns systematisch unterschätzt wurden.
 **Root Cause:** `_calculate_stats` wertete Szenarien mit `losses_count < 2` pauschal zu `None` aus, was downstream (in #263) zu perfekten 50.0-Ausreißern hochskaliert wurde. Zudem basierte der berechnete Drawdown rein auf der realisierten FIFO-PnL-Kurve der geschlossenen Trades (ohne Berücksichtigung intra-trade Exkursionen). Der Equity-Spread in eToro war mit 3 bps zu optimistisch angesetzt.
@@ -620,6 +626,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-09 | **Issue #311 (Pitfall #52 - Active/Inactive Config Crash):** Längen-Assertion in `backtest_runner.py` durch Set-Prüfung ersetzt, um Abstürze bei `active: false` gesetzten Strategien zu verhindern. `--dry-run` in GitHub Actions Workflow integriert, um Config-Mismatches direkt in der CI abzufangen. | `automation/backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-09 | **Issue #308 (0-Trade Micro-Sizing Artifact Fix):** Hard Short-Circuit in `_is_eligible` bei 0 Trades implementiert, um kaskadierende Rejection-Artefakte und irreführendes Logging zu stoppen. | `automation/backtest_runner.py`, `automation/tests/test_tournament_validation.py` |
 | 2026-06-08 | **Issue #293 (Gate-Scope vs. Deployment-Scope & Observability):** Behobene Ambiguität bei Sortino-Metriken im `daily_orchestrator.py` durch explizite Log- und Event-Namen (In-Sample Median vs. Aggregate OOS). `OOS-DEPLOY-REJECT` Check in `momentum_ls_run.py` eingebaut, der nicht OOS-evaluierte oder gescheiterte Strategie-Zuweisungen auf Symbol-Ebene hart aussortiert. | `automation/daily_orchestrator.py`, `automation/momentum_ls_run.py`, `automation/AGENTS.md` |
 | 2026-06-08 | **Issue #261 (Inception-Bounds für junge Instrumente):** Caching-System für `inception_bounds.json` im `historical_fetcher.py` integriert, um Endlosschleifen bei jungen Instrumenten zu verhindern. `is_backtest_range_covered` bypass-logik bei voller Historie ergänzt. Design-Notiz in AGENTS.md hinzugefügt. | `automation/historical_fetcher.py`, `automation/AGENTS.md`, `automation/tests/test_historical_fetcher.py` |
