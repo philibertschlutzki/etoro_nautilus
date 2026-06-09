@@ -290,7 +290,7 @@ Fehlt eine Bedingung, läuft der Bot automatisch im **Dry-Run** (keine echten Or
 
 ```bash
 # Vollständige Test-Suite (Unit-Tests des automation-Pakets)
-pytest -v
+pytest automation/tests/ -v
 
 # Pre-Flight (schnelle Import-/Konfig-Verifikation)
 python3 -c "from automation.backtest_runner import read_precisions_from_parquet; print('OK')"

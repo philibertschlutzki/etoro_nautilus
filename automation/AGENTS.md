@@ -294,7 +294,7 @@ Zusätzlicher Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_C
 | `MOMENTUM_LS_USERNAME` | Ja (nur fetch) | universe_fetcher.py |
 | `ETORO_CONFIRM_LIVE` | nur Live | momentum_ls_run.py Safety-Interlock |
 
-Installation: `pip install -r automation/requirements.txt` (nautilus_trader≥1.200, aiohttp, websockets, pyarrow≥16, pandas, pytest). systemd-Unit für `catalog_service.py` mit `Restart=always`, `RestartSec=5`.
+Installation: `pip install -r automation/requirements.txt` (nautilus_trader>=1.226.0, aiohttp, websockets, pyarrow≥16, pandas, pytest). systemd-Unit für `catalog_service.py` mit `Restart=always`, `RestartSec=5`.
 
 Ausführung:
 ```bash
@@ -311,7 +311,7 @@ Hinweis: Wenn systemd-Unit-Files im Repo existieren, müssen die ExecStart-Anwei
 
 ## 13. Testing & Validierung
 
-Tests in `tests/` (bzw. `automation/tests/`), Ausführung via `pytest`. Kein Test darf aus `adapters/`/`config/`/`strategies/` (Root) importieren. Naming: immer `_fallback_precisions` (mit Underscore).
+Tests in `automation/tests/`, Ausführung via `pytest`. Kein Test darf aus `adapters/`/`config/`/`strategies/` (Root) importieren. Naming: immer `_fallback_precisions` (mit Underscore).
 
 Zusätzlich stellen Roundtrip-Tests und Tests auf `total_trades > 0` ab sofort sicher, dass echte Fills generiert werden und nicht nur auf "keinen Crash" geprüft wird.
 
@@ -378,10 +378,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
    - `win_rate`: Absolute Portfolio-Wins dividiert durch absolute Portfolio-Trades (Count-Ratio).
 2. **Rendite:** Wird als kapitalgewichteter (Trade-Weighted) Return berechnet, um das Portfolio-Volumen real abzubilden.
    - `total_return`: Kapitalgewichteter (Trade-Weighted) Mittelwert.
-3. **Risiko-Ratios (Sortino, PF):** Werden zwingend als Median (via `get_median()`) beibehalten, da Nenner-Abweichungen eine Aufsummierung verbieten.
-   - `sortino_ratio` / `profit_factor` / `max_drawdown`: Median-Ermittlung zur Vermeidung von Nenner-Verzerrungen.
+3. **Risiko-Ratios (Sortino, PF) & Max Drawdown:**
+   - `sortino_ratio` / `profit_factor`: Werden zwingend als Median (via `get_median()`) beibehalten, da Nenner-Abweichungen eine Aufsummierung verbieten.
+   - `max_drawdown`: Wird **nicht** als Median ermittelt, sondern exakt aus der gemergten OOS-Equity-Kurve (chronologisch gemergte OOS-Einzeltrades des `aggregate_winner`) berechnet, um Drawdown-Glättung zu vermeiden.
 4. **OOS-Gating (Trade-Sum Trap):** Um zu verhindern, dass die Portfolio-Trade-Summe die `oos_min_trades`-Schwelle (die eigentlich pro Symbol gilt) trivialerweise überschreitet, wird das aggregierte Dictionary (`avg_oos`) *ausschließlich für das Gate* intern normalisiert (`total_trades / n_res`), bevor es an `_evaluate_oos_eligibility` übergeben wird. In den Logs und im JSON verbleiben die wahren Portfolio-Summen.
-**WICHTIG für Agenten:** Dieser hybride Aggregations-Zustand ist gewollt. Versuche nicht, ihn als "Inkonsistenz" zu reparieren, indem du Ratios durchschneidest oder Trades normalisierst (außerhalb des Gates).
+**Schutz-Klausel:** Der Datenfluss über `_oos_trade_records` (temporäre Weitergabe zur Equity-Kurven-Berechnung, `.pop()` vor dem Export) ist ein kritisch geschützter Pfad. Er darf unter keinen Umständen bei zukünftigen Refactorings als "Bloat" wegoptimiert werden.
+**WICHTIG für Agenten:** Dieser hybride Aggregations-Zustand (Volumen-Summe, Trade-gewichtete Rendite, Ratio-Median für Sortino/PF, echte Equity-Kurve für Max Drawdown) ist gewollt. Versuche nicht, diese restliche hybride Struktur als "Inkonsistenz" zu reparieren.
 **Betroffen:** `automation/backtest_runner.py`, `automation/daily_orchestrator.py`
 
 ### 🟢 #42 — Crypto: Degenerated Sortino & Profit Factor Metrics (Issue #232)

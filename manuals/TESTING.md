@@ -79,17 +79,17 @@ Das Repository verwendet `pytest` für automatisierte Modul- und Funktionstests.
 
 ```bash
 # Alle Unit Tests ausführen
-python3 -m pytest tests/ -v
+python3 -m pytest automation/tests/ -v
 ```
 
 Einzelne Test-Dateien:
 ```bash
-python3 -m pytest tests/test_etoro_execution.py -v
-python3 -m pytest tests/test_execution.py -v
-python3 -m pytest tests/test_momentum_ls_allocator.py -v
-python3 -m pytest tests/test_stop_loss_payload.py -v
-python3 -m pytest tests/test_tournament_metrics.py -v
-python3 -m pytest tests/test_universe_fetcher.py -v
+python3 -m pytest automation/tests/test_etoro_execution.py -v
+python3 -m pytest automation/tests/test_execution.py -v
+python3 -m pytest automation/tests/test_momentum_ls_allocator.py -v
+python3 -m pytest automation/tests/test_stop_loss_payload.py -v
+python3 -m pytest automation/tests/test_tournament_metrics.py -v
+python3 -m pytest automation/tests/test_universe_fetcher.py -v
 ```
 
 Alle Tests respektieren das Standalone-Prinzip des `automation/`-Pakets (geprüft via AST in `test_automation_isolation.py`).
