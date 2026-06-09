@@ -1,164 +1,162 @@
-# Neue Instrumente hinzufügen (v2.1)
+# Neue Instrumente / Ticker hinzufügen
 
-Diese Anleitung erklärt detailliert, wie du neue Aktien, Kryptowährungen oder andere Instrumente in das eToro-Nautilus System einbindest. 
+> **Version 2.2 · Stand 2026-06-09 · Sprache: Deutsch**
+>
+> Diese Anleitung beschreibt, wie ein neues Symbol (Aktie, Krypto, Forex, Rohstoff) in die Pipeline aufgenommen wird — vom automatischen Normalfall bis zu den beiden Ausnahmen, die manuelle Eingriffe erfordern.
 
-Besonderes Augenmerk liegt auf **Kryptowährungen** und **Instrumenten außerhalb des verfolgten Smart Portfolios**, da diese manuelle Schritte erfordern, um Fehler im Rust-Backend zu vermeiden.
+> **Changelog 2.2 (2026-06-09):** Korrektur gemäß [`DOC_CLEANUP_ISSUES.md`](../DOC_CLEANUP_ISSUES.md) **DOC-3** — kanonische Instrument-Quelle ist `automation/config/instrument_map.json` (nicht die Legacy-`automation/adapters/instrument_map.py`). Eintragsformat, Pre-Flight-Checks und Troubleshooting entsprechend aktualisiert.
 
 ---
 
 ## Inhaltsverzeichnis
-1. [Der Standardfall: Vollautomatische Integration (Smart Portfolio)](#1-der-standardfall-vollautomatische-integration)
-2. [Ausnahme A: Assets außerhalb des Smart Portfolios manuell hinzufügen](#2-ausnahme-a-assets-außerhalb-des-smart-portfolios-manuell-hinzufügen)
-3. [Ausnahme B: Kryptowährungen einbinden (Kritisch!)](#3-ausnahme-b-kryptowährungen-einbinden-kritisch)
-4. [Schritt-für-Schritt: Datenbeschaffung & Backtest](#4-schritt-für-schritt-datenbeschaffung--backtest)
-5. [Häufige Fehlerquellen (Troubleshooting)](#5-häufige-fehlerquellen-troubleshooting)
+
+1. [Standardfall: automatische Integration](#1-standardfall-automatische-integration)
+2. [Ausnahme A — manuelles Asset (Mapping fehlt)](#2-ausnahme-a--manuelles-asset-mapping-fehlt)
+3. [Ausnahme B — Krypto (kritisch!)](#3-ausnahme-b--krypto-kritisch)
+4. [Datenbeschaffung & Backtest](#4-datenbeschaffung--backtest)
+5. [Troubleshooting](#5-troubleshooting)
 
 ---
 
-## 1. Der Standardfall: Vollautomatische Integration
+## 1. Standardfall: automatische Integration
 
-Wenn das neue Instrument bereits Teil des eToro Smart Portfolios ist (das du über `MOMENTUM_LS_USERNAME` in der `.env` verfolgst), musst du **nichts** manuell tun.
+Im Regelfall ist **kein** manueller Eingriff nötig. Gehört das Symbol zum Universum des konfigurierten eToro Smart Portfolios, wird es automatisch aufgenommen:
 
-Der tägliche Orchestrator (`automation/daily_orchestrator.py`) erledigt alles automatisch:
-1. **Phase 1:** `universe_fetcher.py` erkennt das neue Asset und trägt es ein.
-2. **Phase 2d:** Der Orchestrator merkt, dass historische Daten fehlen und führt automatisch den `historical_fetcher.py` aus.
-3. **Phase 3-5:** Das Asset wird sofort ins Tournament aufgenommen und bei Erfolg live gehandelt.
+1. `universe_fetcher.py` liest das Smart Portfolio und schreibt das Symbol nach `data/universe/momentum_ls.json`.
+2. Existiert für die eToro-ID bereits ein Eintrag in `automation/config/instrument_map.json`, wird das Symbol korrekt auf das Nautilus-Symbol gemappt.
+3. `catalog_service.py` / der Backfill sammeln die Tick-Daten, die nächste Orchestrator-Phase nimmt das Symbol in den Matrix-Backtest auf.
 
----
-
-## 2. Ausnahme A: Assets außerhalb des Smart Portfolios manuell hinzufügen
-
-Wenn du ein Instrument handeln oder backtesten möchtest, das **nicht** im kopierten Smart Portfolio enthalten ist, schlägt die automatische Erkennung fehl. Du musst das Instrument dem System manuell bekannt machen.
-
-### Schritt 1: eToro Instrument-ID herausfinden
-Jedes Asset auf eToro hat eine eindeutige numerische ID. Diese ist für die API zwingend erforderlich.
-
-1. Öffne die Datei `dev_scripts/get_instruments_id.py` in deinem Code-Editor.
-2. Suche ganz am Ende der Datei den Testaufruf und trage den gewünschten Ticker (z. B. "AAPL") ein:
-   ```python
-   if __name__ == "__main__":
-       get_etoro_instrument_id("AAPL")  # ← Deinen gewünschten Ticker hier eintragen
-
-```
-
-3. Öffne dein Terminal im Projekt-Root-Verzeichnis und führe das Skript aus:
 ```bash
-python3 dev_scripts/get_instruments_id.py
-
+python3 automation/universe_fetcher.py          # Universe aktualisieren
+# Prüfen, ob das neue Symbol erschienen ist:
+python3 -c "import json; u=json.load(open('data/universe/momentum_ls.json')); print(u['universe'])"
 ```
 
+Erscheint das Symbol im Universum **und** ist die eToro-ID in `instrument_map.json` bekannt, ist nichts weiter zu tun → weiter mit [Kapitel 4](#4-datenbeschaffung--backtest).
 
-4. Das Terminal gibt nun die ID aus (z. B. `1001`). Notiere dir diese Zahl.
+---
 
-### Schritt 2: Instrument in der Instrument-Map registrieren
+## 2. Ausnahme A — manuelles Asset (Mapping fehlt)
 
-Die zentrale Zuordnung zwischen eToro-ID und dem Nautilus-System passiert in der Datei `automation/adapters/instrument_map.py`.
+Fehlt die eToro-ID in der Instrument-Map, muss der Eintrag **manuell** ergänzt werden.
 
-1. Öffne die Datei `automation/adapters/instrument_map.py`.
-2. Füge die neue ID und das Symbol im Dictionary `ETORO_INSTRUMENTS` hinzu.
+> ✅ **Kanonische Quelle (DOC-3):** Die Laufzeit-Instrument-Map ist die JSON-Datei **`automation/config/instrument_map.json`**. Sie wird zur Laufzeit über `d['instruments']` gelesen (so auch in `README.md`, `AGENTS.md`, `deployment.md`, `TESTING.md` und allen Pre-Flight-Checks). Trage neue Instrumente **hier** ein — **nicht** in der Legacy-Datei `automation/adapters/instrument_map.py`.
 
-**Wichtige technische Syntaxregels:**
+### 2.1 Eintragsformat
 
-* **String-Zwang für IDs:** Die eToro ID muss als String (in Anführungszeichen) definiert werden (z. B. `"1001"`), da sie als Schlüssel im Dictionary dient.
-* **Suffix-Zwang:** Das Nautilus-Symbol **muss** zwingend auf `.ETORO` enden (z. B. `"AAPL.ETORO"`), um ein korrektes Routing innerhalb der Execution-Engine zu gewährleisten.
-* **Komma-Regel:** Jede Zeile im Python-Dictionary muss mit einem Komma abgeschlossen werden.
+Die JSON-Struktur ist ein Objekt unter dem Schlüssel `instruments`, indiziert nach **eToro-ID** (String):
 
-*Beispiel:*
-
-```python
-ETORO_INSTRUMENTS = {
-    "1111": "TSLA.ETORO",
-    "1012": "CAT.ETORO",
-    "1001": "AAPL.ETORO",  # ← Neues Instrument manuell hinzugefügt
+```json
+{
+  "instruments": {
+    "1001": {
+      "symbol": "AAPL.ETORO",
+      "asset_class": "EQUITY",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "2042": {
+      "symbol": "NATGAS.ETORO",
+      "asset_class": "COMMODITY",
+      "price_precision": 5,
+      "size_precision": 5
+    }
+  }
 }
-
 ```
 
-Nachdem du die Datei gespeichert hast, fahre mit [Abschnitt 4](https://www.google.com/search?q=%234-schritt-f%C3%BCr-schritt-datenbeschaffung--backtest) fort.
+| Feld | Bedeutung | Hinweis |
+|------|-----------|---------|
+| Schlüssel (`"1001"`) | eToro-Instrument-ID | als String |
+| `symbol` | Nautilus-Symbol | Konvention `<TICKER>.ETORO` |
+| `asset_class` | `EQUITY` / `CRYPTO` / `FOREX` / `COMMODITY` | steuert Spread-Modell (`spread_bps_by_asset_class`) |
+| `price_precision` | Nachkommastellen Preis | siehe Precision-Tabelle unten |
+| `size_precision` | Nachkommastellen Ordergröße | **Aktien = 2, Krypto = 8** |
 
----
+### 2.2 Precision-Referenz
 
-## 3. Ausnahme B: Kryptowährungen einbinden (Kritisch!)
+| Kategorie | price_precision | size_precision |
+|-----------|-----------------|----------------|
+| SHIB / PEPE (Meme-Coins) | 8 | 8 |
+| Crypto (BTC, ETH, SOL, …) | 2 | **8** |
+| Forex / Rohstoffe | 5 | 5 |
+| **Aktien (Default)** | **2** | **2** |
 
-Kryptowährungen (wie BTC, ETH, SOL, SHIBxM) sind ein extremer Sonderfall. eToro behandelt Krypto im Order-Routing und bei den minimalen Lot-Sizes (Nachkommastellen bzw. `size_precision`) fundamental anders als Aktien.
+> ℹ️ Die Werte in `instrument_map.json` haben **Vorrang** vor der Fallback-Heuristik `automation/utils._fallback_precisions`. Der Fallback greift nur, wenn weder API noch Parquet-Metadaten noch die JSON-Map eine Precision liefern. Details zum Fallback und zum FSB(16)-Format: [`automation_manual.md`](automation_manual.md), Kapitel 3.
 
-> ⚠️ **ACHTUNG:** Wenn ein Krypto-Asset nicht explizit registriert wird, wendet das System die Standard-Aktien-Heuristik (`size_precision=2`) an. Das führt unweigerlich zu **Fatalen Crashes im Rust-Backend** von Nautilus, wenn eine Order über z. B. `0.00005 BTC` platziert werden soll.
-
-### Schritt 1: ID und Map registrieren (wie bei Aktien)
-
-Führe zuerst die Schritte aus Abschnitt 2 aus, um die ID herauszufinden und sie in das `ETORO_INSTRUMENTS`-Dictionary in `automation/adapters/instrument_map.py` einzutragen (z. B. `"100063": "SOL.ETORO"`).
-
-### Schritt 2: In Krypto-Set der Hilfsfunktionen eintragen
-
-Das System ermittelt die Nachkommastellen über `automation/utils.py`. Hier muss das Basis-Symbol hinterlegt werden.
-
-1. Öffne die Datei `automation/utils.py`.
-2. Suche nach der Variable `_CRYPTO_SYMBOLS` (ein `frozenset`).
-3. Füge das **Basis-Symbol** (ohne das Suffix `.ETORO`) der Menge hinzu.
-
-*Beispiel:*
-
-```python
-_CRYPTO_SYMBOLS = frozenset({
-    "BTC", "ETH", "ADA", "DOGE", "SOL", "XRP", "AVAX",
-    "HYPE", "ONDO", "SHIBxM", "AERO", "PEPExM",
-    "BONK",  # ← Neues Krypto-Basis-Symbol hinzugefügt
-})
-
-```
-
-### Schritt 3: Die Price Precision verstehen (Die Fallback-Regeln)
-
-Über die interne Funktion `_fallback_precisions(symbol)` steuert das System die Nachkommastellen automatisch, falls die eToro-API oder Parquet-Metadaten unvollständig sind:
-
-* **Normale Kryptowährungen (BTC, ETH, SOL etc.):** Werden automatisch mit einer Preiskonformität von `price_precision=2` und einer Positionsgrößenkonformität von `size_precision=8` eingestuft.
-* **Meme-Coins (SHIB, PEPE etc.):** Da diese Token Bruchteile von Cents kosten, greift eine Namensprüfung (`"SHIB" in sym or "PEPE" in sym`), welche die Precision hart auf `price_precision=8` und `size_precision=8` forciert. Wenn du einen neuen Meme-Coin einpflegst, stelle sicher, dass sein Symbol entweder "SHIB" oder "PEPE" enthält oder erweitere die `if`-Bedingung in `automation/utils.py`.
-
----
-
-## 4. Schritt-für-Schritt: Datenbeschaffung & Backtest
-
-Egal ob manuell hinzugefügte Aktie oder Krypto – nachdem die Code-Einträge gemacht sind, benötigt das System historische Marktdaten.
-
-### Historische Daten laden
-
-Obwohl der `daily_orchestrator.py` fehlende Daten in Phase 2d selbst bemerkt, ist es bei manuellen Setups dringend empfohlen, den initialen Download einmal selbst anzustoßen, um Syntax- oder API-Fehler sofort im Terminal zu sehen.
-
-Öffne dein Terminal und führe aus:
+### 2.3 Eintrag verifizieren
 
 ```bash
+python3 -c "import json; d=json.load(open('automation/config/instrument_map.json')); print(len(d['instruments']), 'Instrumente'); print(d['instruments'].get('1001'))"
+```
+
+> ℹ️ **Hinweis zur Legacy-`.py` (DOC-3):** Falls `automation/adapters/instrument_map.py` (Dict `ETORO_INSTRUMENTS`) im Repo noch existiert, ist sie historisch der **Generator** der JSON gewesen. Sie ist **nicht** mehr die Laufzeitquelle. Ob sie als JSON-Generator erhalten bleibt (mit explizitem Regenerations-Schritt) oder entfernt wird, ist über Issue **DOC-3** zu klären. Trage produktiv ausschließlich in die JSON ein.
+
+---
+
+## 3. Ausnahme B — Krypto (kritisch!)
+
+> ⚠️ **Pflichtschritt für jedes neue Krypto-Asset.** Wird ein Krypto-Symbol nicht zusätzlich in `_CRYPTO_SYMBOLS` (`automation/utils.py`) registriert, greift im Fallback-Pfad fälschlich die **Aktien-Heuristik** (`size_precision=2`). Folge: Das Rust-Backend lehnt fraktionale Krypto-Orders wie `0.00005 BTC` ab → **Crash**.
+
+Auch wenn die JSON-Map korrekt `size_precision=8` enthält, ist der `_CRYPTO_SYMBOLS`-Eintrag als **Absicherung des Fallback-Pfads** erforderlich (z. B. wenn die JSON-Precision für ein Symbol einmal fehlt).
+
+```python
+# automation/utils.py
+_CRYPTO_SYMBOLS = frozenset({
+    "BTC", "ETH", "SOL", "ADA", "DOT", "AVAX",
+    "LINK",   # ← neues Krypto-Asset hier ergänzen
+})
+```
+
+Reihenfolge der Fallback-Heuristik beachten (Meme-Coins werden per Substring **vor** dem Set geprüft):
+
+| Symbol-Muster | (price, size) |
+|---------------|---------------|
+| enthält `SHIB` oder `PEPE` | `(8, 8)` |
+| in `_CRYPTO_SYMBOLS` | `(2, 8)` |
+| Forex / Commodity | `(5, 5)` |
+| sonst (Default) | `(2, 2)` |
+
+Nach Änderungen an Precision oder `_CRYPTO_SYMBOLS` gilt: **`--reset-catalog` ist zwingend**, da ältere Parquets noch falsche `size_precision`-Metadaten tragen können.
+
+```bash
+python3 automation/daily_orchestrator.py --reset-catalog
+```
+
+---
+
+## 4. Datenbeschaffung & Backtest
+
+Sobald Mapping (und ggf. Krypto-Registrierung) stehen, müssen historische Daten vorhanden sein, bevor das Symbol im Turnier auftauchen kann.
+
+```bash
+# Tiefer Erst-Backfill (Monate) für ein frisch aufgenommenes Symbol
 python3 automation/historical_fetcher.py --months 12
 
+# Kurzer Lückenschluss der letzten Tage
+python3 automation/api_backfiller.py --days 7
+
+# Dry-Run der Pipeline (Phasen 1–4, KEIN Live-Bot) zur Kontrolle
+python3 automation/daily_orchestrator.py --dry-run --skip-api-fetch
 ```
 
-Das Skript lädt nun die Tick-Daten für alle in `instrument_map.py` registrierten Symbole, verpackt sie als `FixedSizeBinary(16)` Parquet-Dateien und legt sie unter `data/nautilus/data/quote_tick/{SYMBOL}/data.parquet` ab.
-
-### Dry-Run testen
-
-Um sicherzugehen, dass die Engine fehlerfrei mit dem neuen Asset umgehen kann, starte den Orchestrator im "Trockenlauf" (Dry-Run). Es werden keine echten Orders platziert.
-
-```bash
-python3 automation/daily_orchestrator.py --dry-run
-
-```
-
-Prüfe das angelegte Log (`logs/orchestrator_YYYYMMDD.log`), ob dein neues Symbol im Bereich "Phase 3+4: Matrix-Backtesting & Tournament" sauber verarbeitet wurde.
+Das Backtest-Fenster ist **dynamisch** (~150 Tage bei Standardwerten `is_window_days=120` / `oos_window_days=30`). Liegt für das neue Symbol nicht genügend Historie vor (außerhalb `span_tolerance_days=3.0`), wird es im Backtest übersprungen — dann zuerst den Backfill vervollständigen. Methodik: [`automation_manual.md`](automation_manual.md), Kapitel 4.
 
 ---
 
-## 5. Häufige Fehlerquellen (Troubleshooting)
+## 5. Troubleshooting
 
-Wenn dein Instrument nicht gehandelt wird, obwohl es hinzugefügt wurde:
+| Symptom | Ursache | Maßnahme |
+|---------|---------|----------|
+| Symbol erscheint nicht im Universum | gehört nicht zum Smart Portfolio, oder `universe_fetcher` nicht gelaufen | `python3 automation/universe_fetcher.py`; Smart-Portfolio-Zugehörigkeit prüfen |
+| **`KeyError` beim Instrument-Lookup** (eToro-ID nicht gefunden) | eToro-ID fehlt in `automation/config/instrument_map.json` | Eintrag gemäß [Kapitel 2.1](#21-eintragsformat) ergänzen und mit dem Pre-Flight-Check verifizieren |
+| Rust-Backend-Crash bei Krypto-Order (`0.00005 …`) | Krypto-Symbol nicht in `_CRYPTO_SYMBOLS`, Aktien-Heuristik greift | Symbol in `_CRYPTO_SYMBOLS` ([Kapitel 3](#3-ausnahme-b--krypto-kritisch)) ergänzen; `--reset-catalog` |
+| `ValueError` / Order rundet auf 0 (Aktie) | `size_precision=0` aus altem Parquet/Fallback | JSON-Eintrag auf `size_precision=2` setzen; `--reset-catalog` |
+| Symbol wird im Backtest übersprungen | zu wenig Historie (außerhalb `span_tolerance_days=3.0`) | `historical_fetcher.py --months 12` ausführen |
+| Falsche Spread-Annahme im Backtest | `asset_class` im JSON-Eintrag falsch/fehlt | `asset_class` korrekt setzen (`EQUITY`/`CRYPTO`/`FOREX`/`COMMODITY`) |
 
-| Problem | Ursache & Lösung |
-| --- | --- |
-| **`KeyError: 'AAPL.ETORO' not in ETORO_INSTRUMENTS`** | Du hast die eToro-ID nicht in `automation/adapters/instrument_map.py` eingetragen oder das `.ETORO` Suffix beim Symbol vergessen. |
-| **`No parquet data for AAPL.ETORO`** | Du hast vergessen, die historischen Daten zu laden. Führe manuell `python3 automation/historical_fetcher.py --months 12` aus. |
-| **Asset wird im Tournament ignoriert** | Keine Sorge, das ist oft kein Bug! Das Instrument hat schlichtweg die harten Out-of-Sample (OOS) Gating-Kriterien (z. B. Sortino-Ratio, Max Drawdown) in der Konfiguration nicht bestanden. Es wird erst live gehandelt, wenn das System es als sicher und profitabel einstuft. |
-| **Rust-Backend Crash bei Krypto (`Decimal Precision Error`)** | Du hast ein Krypto-Asset hinzugefügt, es aber nicht in die `_CRYPTO_SYMBOLS` Liste in `automation/utils.py` eingetragen. Das System versucht, Orders mit Aktien-Precision (`size_precision=2`) abzusenden, was fehlschlägt. |
-| **SyntaxError beim Start des Bots** | Du hast wahrscheinlich ein Komma oder ein Anführungszeichen in `automation/adapters/instrument_map.py` falsch gesetzt. Python verzeiht keine unvollständigen Dictionaries. |
+> ℹ️ **Hinweis (DOC-3):** Eine veraltete Fehlermeldung wie `KeyError: <ID> not in ETORO_INSTRUMENTS` deutet darauf hin, dass noch ein Code-Pfad gegen die Legacy-`instrument_map.py` läuft. Die Laufzeitquelle ist `instrument_map.json`; abweichende Pfade sind über Issue DOC-3 zu bereinigen.
 
 ---
 
-*Zuletzt aktualisiert für Orchestrator v2.0+ und Nautilus-Integration.*
----
+*Anleitung v2.2 erstellt am 2026-06-09. Kanonische Instrument-Quelle: `automation/config/instrument_map.json`. Bei strukturellen Änderungen mit [`automation/AGENTS.md`](../automation/AGENTS.md) synchron halten.*
