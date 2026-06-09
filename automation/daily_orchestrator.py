@@ -687,7 +687,6 @@ def _ensure_metadata(existing_meta: dict, symbol: str) -> dict:
 
 def phase3_4_backtest_and_tournament(
     log: logging.Logger,
-    dry_run: bool = False,
 ) -> dict:
     """Phase 3 & 4: Matrix-Backtesting + Tournament (mit dynamischem Fenster)."""
     log.info("═" * 60)
@@ -735,11 +734,6 @@ def phase3_4_backtest_and_tournament(
         "walk_forward_active": wf_active,
     })
 
-    if dry_run:
-        log.info("[Phase 3] DRY-RUN: Backtest übersprungen.")
-        _create_dummy_tournament(log)
-        return {"tournament_path": str(TOURNAMENT_PATH), "dry_run": True}
-
     try:
         with open(str(bt_log_path), "w", encoding="utf-8") as bt_log_f:
             proc = subprocess.run(
@@ -786,7 +780,7 @@ def phase3_4_backtest_and_tournament(
         except Exception as e:
             log.error(f"[Phase 4] Fehler beim Lesen des Tournament-Ergebnisses: {e}")
 
-    return {"tournament_path": str(TOURNAMENT_PATH), "dry_run": False}
+    return {"tournament_path": str(TOURNAMENT_PATH)}
 
 
 def _build_backtest_config(start: datetime, end: datetime, start_capital: float | None = None) -> dict:
@@ -891,7 +885,7 @@ def phase5_live_deployment(
     log: logging.Logger,
     universe_result: dict,
     tournament_result: dict,
-    dry_run: bool = False,
+    no_deploy: bool = False,
 ) -> int:
     """Phase 5: Safety-Interlocks, Bot als Detached Subprocess starten."""
     log.info("═" * 60)
@@ -1024,14 +1018,19 @@ def phase5_live_deployment(
         "log_file":   str(bot_log),
         "tournament": tournament_path,
         "universe":   str(UNIVERSE_PATH),
-        "dry_run":    dry_run,
+        "no_deploy":  no_deploy,
         "aggregate_oos_sortino": aggregate_oos_sortino,
         "fully_eligible_pairs": fully_eligible_pairs,
         "winner_count": winner_count,
     })
 
-    if dry_run:
-        log.info("[Phase 5] DRY-RUN: Bot-Subprocess übersprungen.")
+    if no_deploy:
+        log.info("[Phase 5] --no-deploy: Live-Deploy unterbunden (Phase 1–4 vollständig ausgeführt).")
+        emit_json_event(log, "LIVE_DEPLOY_SKIPPED_NO_DEPLOY", {
+            "strategy": agg.get("strategy"),
+            "fully_eligible_pairs": fully_eligible_pairs,
+            "winner_count": winner_count,
+        })
         return 0
 
     try:
@@ -1067,15 +1066,20 @@ def phase5_live_deployment(
 # HAUPT-EINSTIEGSPUNKT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def main() -> int:
-    """Führt alle 5 Phasen sequentiell aus."""
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Erstellt und gibt den ArgumentParser für den Orchestrator zurück."""
     parser = argparse.ArgumentParser(
         description="eToro Nautilus — Täglicher End-to-End-Orchestrator v2.0"
     )
-    parser.add_argument("--dry-run",        action="store_true", help="Kein echter Bot-Start.")
+    parser.add_argument("--no-deploy",      action="store_true", help="Führt Phase 1–4 vollständig aus (echter Backtest), unterbindet ausschließlich Phase 5 (Live-Deploy).")
     parser.add_argument("--skip-api-fetch", action="store_true", help="API-Backfill überspringen.")
     parser.add_argument("--reset-catalog", action="store_true",
         help="Löscht data/nautilus/data/quote_tick/ vollständig vor Phase 2 (einmalig).")
+    return parser
+
+def main() -> int:
+    """Haupt-Pipeline: 5 Phasen sequentiell ausführen."""
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     load_dotenv(str(ENV_FILE))
@@ -1100,12 +1104,12 @@ def main() -> int:
     log.info("╔" + "═" * 60 + "╗")
     log.info("║  eToro Nautilus — Daily Orchestrator v2.0                  ║")
     log.info(f"║  Start: {datetime.now(timezone.utc).isoformat():<51} ║")
-    log.info(f"║  DRY-RUN: {'JA' if args.dry_run else 'NEIN':<52} ║")
+    log.info(f"║  NO-DEPLOY: {'JA' if args.no_deploy else 'NEIN':<50} ║")
     log.info("║  Standalone: Kein adapters/-Import                        ║")
     log.info("╚" + "═" * 60 + "╝")
 
     emit_json_event(log, "ORCHESTRATOR_START", {
-        "dry_run":        args.dry_run,
+        "no_deploy":      args.no_deploy,
         "skip_api_fetch": args.skip_api_fetch,
         "version":        "2.0",
         "python":         sys.version,
@@ -1123,9 +1127,9 @@ def main() -> int:
             log, universe_result, api_key, user_key,
             skip_api_fetch=args.skip_api_fetch,
         )
-        tournament_result = phase3_4_backtest_and_tournament(log, dry_run=args.dry_run)
+        tournament_result = phase3_4_backtest_and_tournament(log)
         exit_code         = phase5_live_deployment(
-            log, universe_result, tournament_result, dry_run=args.dry_run
+            log, universe_result, tournament_result, no_deploy=args.no_deploy
         )
 
     except KeyboardInterrupt:
