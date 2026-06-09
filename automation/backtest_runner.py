@@ -714,6 +714,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     losses_count = sum(1 for v in pnl_list if v < 0)
 
     EPSILON = 1e-9
+    DENOMINATOR_FLOOR = 1e-6
+    RATIO_CAP = 50.0
 
     # Floor `gross_loss` at EPSILON implicitly to protect against division-by-zero, but logic captures it via count.
     if gross_loss <= 0.0:
@@ -721,7 +723,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     elif losses_count < 2 and n < 50:
         profit_factor = None
     else:
-        profit_factor = min(gross_profit / gross_loss, 50.0)
+        profit_factor = min(gross_profit / max(gross_loss, DENOMINATOR_FLOOR), RATIO_CAP)
 
     win_rate = wins / n if n > 0 else 0.0
 
@@ -746,19 +748,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             # Addition *under* the root as requested by PR review
             # Floor dd_dev at 1e-6 to strictly protect against division-by-zero on micro downside deviations.
             dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
-            dd_dev = max(dd_dev, 1e-6)
+            dd_dev = max(dd_dev, DENOMINATOR_FLOOR)
             mean_ret = sum(rets) / n
             sortino_raw = mean_ret / dd_dev * math.sqrt(252)
-            if losses_count == 1 and n < 50:
-                sortino = min(sortino_raw, 2.0)
-            else:
-                sortino = min(sortino_raw, 50.0)
+            sortino = min(sortino_raw, RATIO_CAP)
 
-    # Floor max_dd at 1e-9 to protect against division-by-zero when computing calmar.
-    if max_dd <= 1e-9:
+    # Floor max_dd at DENOMINATOR_FLOOR to protect against division-by-zero when computing calmar.
+    if max_dd <= 0.0:
         calmar = None
     else:
-        calmar = min(total_return / max_dd, 50.0)
+        calmar = min(total_return / max(max_dd, DENOMINATOR_FLOOR), RATIO_CAP)
 
     import statistics
     if hold_list:
@@ -1098,8 +1097,21 @@ def select_winners(
                 return min(scaled, max(organic_ratios))
             return scaled
 
-        raw_sortinos = [r["metrics"].get("sortino_ratio") for r in is_eligible_population]
-        raw_pfs = [r["metrics"].get("profit_factor") for r in is_eligible_population]
+        k_shrinkage = tournament_cfg.get("k_shrinkage", 20.0) # Parameter for score damping
+
+        def apply_shrinkage(raw_val, baseline, n_trades):
+            if raw_val is None:
+                return None
+            return baseline + (raw_val - baseline) * (n_trades / (n_trades + k_shrinkage))
+
+        raw_sortinos = [
+            apply_shrinkage(r["metrics"].get("sortino_ratio"), 0.0, r["metrics"].get("total_trades", 0))
+            for r in is_eligible_population
+        ]
+        raw_pfs = [
+            apply_shrinkage(r["metrics"].get("profit_factor"), 1.0, r["metrics"].get("total_trades", 0))
+            for r in is_eligible_population
+        ]
 
         sortinos = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_sortinos)) for i, r in enumerate(raw_sortinos)]
         pfs = [(r if r is not None else get_sentinel(is_eligible_population[i]["metrics"].get("total_trades", 0), raw_pfs)) for i, r in enumerate(raw_pfs)]
@@ -1110,8 +1122,6 @@ def select_winners(
         rp = get_ranks(pfs)
         rw = get_ranks(wrs)
         rd = get_ranks(dds)
-
-        k_shrinkage = tournament_cfg.get("k_shrinkage", 20.0) # Parameter for score damping
 
         for i, r in enumerate(is_eligible_population):
             r["norm_metrics"] = {
