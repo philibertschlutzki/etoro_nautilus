@@ -1,7 +1,3 @@
-Hier ist das konsolidierte, technisch detaillierte und vollständig überarbeitete Handbuch für die Infrastruktur im `automation/`-Ordner. Es vereint die Konzepte des Datenflusses (Shift-Left Data Quality), des Continuous Cataloging, des API-Backfillings, der Tournament-Logik (Matrix-Backtest) sowie des Live-Deployments mit dem integrierten Risikoschutz.
-
----
-
 # Automation & Portfolio Integration — Technisches Handbuch v2.0
 
 > **Letzte Aktualisierung:** 2026-06-09
