@@ -1,8 +1,3 @@
-Hier ist die vollständig überarbeitete, technisch absolut präzise und für Anfänger optimierte Version deines Handbuchs. Jedes Thema wurde in ein eigenes, klares Kapitel unterteilt, und alle fachlichen Details wurden exakt auf die Standalone-Pipeline-Architektur (v2.0) deines eToro Nautilus-Systems abgestimmt.
-
----
-
-```markdown
 # Strategie-Optimierung: Das End-to-End Handbuch für Anfänger und Operatoren
 
 > **Dateiname:** manuals/strategie_optimierung.md  
