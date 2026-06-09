@@ -40,6 +40,9 @@ jobs:
         run: python3 -m pytest automation/tests/test_precision_mismatch.py -v --timeout=120
 
       # ── Tier 3: Core backtest engine (backtest_runner.py) ────────────────────
+      - name: Orchestrator CLI args (--no-deploy vs dry-run)
+        run: python3 -m pytest automation/tests/test_orchestrator_cli.py -v --timeout=30
+
       - name: Backtest runner core metrics & scoring (§10, §13)
         run: python3 -m pytest automation/tests/test_backtest_runner.py -v --timeout=120
 

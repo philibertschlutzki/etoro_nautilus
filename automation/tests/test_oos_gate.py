@@ -42,7 +42,7 @@ def test_phase5_oos_eligible():
         mock_script = pathlib.Path("fake_script.py")
 
         with patch('pathlib.Path.exists', return_value=True):
-            res = phase5_live_deployment(log, {}, tournament_result, dry_run=True)
+                res = phase5_live_deployment(log, {}, tournament_result, no_deploy=True)
 
         assert res == 0 # Dry run should return 0
 
@@ -69,7 +69,7 @@ def test_phase5_oos_not_evaluable():
     tournament_result = {"tournament_path": tournament_path}
 
     with patch('automation.daily_orchestrator.emit_json_event') as mock_emit:
-        res = phase5_live_deployment(log, {}, tournament_result, dry_run=True)
+        res = phase5_live_deployment(log, {}, tournament_result, no_deploy=True)
         assert res == 0
         mock_emit.assert_called_with(log, "OOS_GATE_NOT_EVALUABLE", {
             "strategy": "MeanReversionStrategy",
@@ -101,7 +101,7 @@ def test_phase5_oos_failed():
     tournament_result = {"tournament_path": tournament_path}
 
     with patch('automation.daily_orchestrator.emit_json_event') as mock_emit:
-        res = phase5_live_deployment(log, {}, tournament_result, dry_run=True)
+        res = phase5_live_deployment(log, {}, tournament_result, no_deploy=True)
         assert res == 0
         mock_emit.assert_called_with(log, "OOS_GATE_FAILED", {
             "strategy": "MeanReversionStrategy",
@@ -250,7 +250,7 @@ def test_phase5_zero_eligible_pairs_aborts():
         # mock bot_script.exists()
         from pathlib import Path
         with patch('pathlib.Path.exists', return_value=True):
-            res = phase5_live_deployment(log, {}, tournament_result, dry_run=False)
+                res = phase5_live_deployment(log, {}, tournament_result, no_deploy=False)
 
         assert res == 1 # Aborts with error code 1
 
