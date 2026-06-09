@@ -1945,6 +1945,10 @@ def run_backtest() -> None:
     missing_defaults = active_classes - set(loaded_defaults)
     assert not missing_defaults, f"Mismatch: Aktive Strategien {missing_defaults} fehlen in strategy_defaults.json."
 
+    orphaned_defaults = set(loaded_defaults) - active_classes
+    if orphaned_defaults:
+        print(f"ℹ️ {len(orphaned_defaults)} Defaults ignoriert (Strategien inaktiv): {list(orphaned_defaults)}")
+
     # Task 2: Strategy-Defaults auf die Strategie-Params anwenden (Overrides behalten Vorrang)
     strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults)
     if strategy_defaults:
