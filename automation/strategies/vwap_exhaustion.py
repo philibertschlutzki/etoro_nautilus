@@ -29,8 +29,8 @@ from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
 class VwapExhaustionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
-    deviation_threshold: float = 0.015
-    cooldown_bars: int = 5
+    deviation_threshold: float = 0.008
+    cooldown_bars: int = 3
     vwap_period: int = 24
 
 

@@ -912,14 +912,20 @@ def phase5_live_deployment(
         winners = t_data.get("per_symbol_winners", {})
         winner_count = len(winners)
 
+        oos_not_evaluable_pairs = t_data.get("oos_not_evaluable_pairs", 0)
+        oos_failed_pairs = t_data.get("oos_failed_pairs", 0)
+
         log.info(f"[Phase 5] Per-Pair-Eligible Check: {fully_eligible_pairs} fully eligible pairs found (Winners: {winner_count}).")
+        log.info(f"[Phase 5] OOS-GATE Statistics: {oos_not_evaluable_pairs} Pairs rejected due to trade shortage, {oos_failed_pairs} Pairs failed performance.")
 
         if fully_eligible_pairs == 0 or winner_count == 0:
             log.error("[Phase 5] 0 fully eligible per-pair assets gefunden. Live-Deploy strikt verboten (Per-Pair Fail-Closed).")
             emit_json_event(log, "LIVE_DEPLOY_ABORTED", {
                 "reason": "zero_fully_eligible_pairs",
                 "fully_eligible_pairs": fully_eligible_pairs,
-                "winner_count": winner_count
+                "winner_count": winner_count,
+                "oos_not_evaluable_pairs": oos_not_evaluable_pairs,
+                "oos_failed_pairs": oos_failed_pairs
             })
             return 1
 

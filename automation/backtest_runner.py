@@ -1359,10 +1359,29 @@ def write_tournament_json(
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
+    # Count OOS not evaluable and OOS failed pairs
+    oos_not_evaluable_pairs = 0
+    oos_failed_pairs = 0
+
+    for r in all_results:
+        # Check if the pair passed IS gating (has _oos_eval)
+        oos_eval = r.get("_oos_eval")
+        if oos_eval is not None:
+            # We only count OOS rejections, not those that were not IS eligible
+            if not oos_eval.get("oos_evaluated", False) and not oos_eval.get("oos_eligible", False):
+                # Distinguish based on rejection reason or evaluated flag
+                # If oos_evaluated is False, it's not evaluable (trade shortage / missing data)
+                oos_not_evaluable_pairs += 1
+            elif oos_eval.get("oos_evaluated", False) and not oos_eval.get("oos_eligible", False):
+                # Evaluated but failed (performance criteria not met)
+                oos_failed_pairs += 1
+
     output = {
         "generated_at":                datetime.now(timezone.utc).isoformat(),
         "universe_snapshot":           universe_snapshot,
         "total_symbol_strategy_pairs": len(all_results),
+        "oos_not_evaluable_pairs":     oos_not_evaluable_pairs,
+        "oos_failed_pairs":            oos_failed_pairs,
         "eligible_pairs":              fully_eligible_count,
         "is_eligible_pairs":           is_eligible_count,
         "fully_eligible_pairs":        fully_eligible_count,
