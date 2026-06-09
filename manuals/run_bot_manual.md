@@ -1,470 +1,311 @@
-# Operations Manual: Nautilus Trader Live-Bot (eToro)
-`run_bot_manual.md` — Technische Dokumentation für manuellen Betrieb, Systemwartung und Log-Diagnose.
+Hier ist das vollständig überarbeitete und erweiterte Operations Manual. Die Struktur wurde speziell für den ressourceneffizienten Standalone-Betrieb auf einem Raspberry Pi mit 2 GB RAM optimiert, indem das rechen- und speicherintensive Matrix-Backtesting komplett entkoppelt wird. Jedes Thema ist in einem eigenen, logisch aufeinander aufbauenden Kapitel detailliert beschrieben.
 
 ---
 
-## Inhaltsverzeichnis
+# Operations Manual: Standalone-Betrieb des Nautilus Trader Live-Bots auf dem Raspberry Pi (eToro)
 
-1. [Systemarchitektur & Laufzeitumgebung](#1-systemarchitektur--laufzeitumgebung)
-2. [Tournament-Selektion: Wie Gewinner entstehen](#2-tournament-selektion-wie-gewinner-entstehen)
-3. [Log-Monitoring-Guide](#3-log-monitoring-guide)
-4. [Diagnose häufiger Log-Muster](#4-diagnose-häufiger-log-muster)
-5. [Prozessmanagement & Live-Monitoring](#5-prozessmanagement--live-monitoring)
-6. [Essentielle Wartungsskripte](#6-essentielle-wartungsskripte)
-7. [State Management & Emergency Operations](#7-state-management--emergency-operations)
+`run_bot_manual_pi.md` — Technische Dokumentation für den speichereffizienten Live-Betrip ohne lokales Backtesting.
 
 ---
 
-## 1. Systemarchitektur & Laufzeitumgebung
+## 1. Systemarchitektur & Ressourcen-Optimierung (2GB RAM)
 
-Der Live-Trading-Bot und die Teilsysteme zur Marktdaten-Aggregierung operieren auf einer dedizierten VM. Alle manuellen Interaktionen setzen die Aktivierung des isolierten Python Virtual Environments voraus.
+Der Betrieb eines algorithmischen Handelssystems auf einem Einplatinencomputer wie dem Raspberry Pi mit 2 GB RAM erfordert eine strikte Trennung von ressourcenintensiven Entwicklungsarbeiten und der schlanken Live-Ausführung. Während das Matrix-Backtesting (Phase 3) und die Tournament-Gewinnerermittlung (Phase 4) aufgrund ihres hohen Speicherbedarfs und der parallelen CPU-Auslastung auf einer separaten Hochleistungs-Workstation oder einem größeren VPS stattfinden müssen, läuft auf dem Raspberry Pi ausschließlich die schlanke Live-Execution-Engine.
+
+### Speicherreduktion (Shift-Left Prinzip)
+
+Um Out-of-Memory (OOM) Abstürze auf dem Raspberry Pi zu verhindern, wird der `daily_orchestrator.py` im Standalone-Modus betrieben. Es werden keine historischen Candlesticks im RAM aggregiert und keine parallelen Simulations-Subprozesse gestartet. Die Live-Engine lädt die Gewinner-Strategien statisch aus einer vordefinierten Konfigurationsstruktur und verarbeitet eingehende WebSocket-Marktdatenzustände sequentiell über den Rust-Core von Nautilus Trader.
+
+### Aktivierung der isolierten Laufzeitumgebung
+
+Alle Befehle, Skripte und Systemd-Units setzen die Aktivierung der isolierten virtuellen Python-Umgebung voraus, um Versionskonflikte mit dem globalen Betriebssystem zu verhindern.
 
 ```bash
 cd /home/user/etoro_nautilus
 source venv/bin/activate
-```
 
-### Systemkomponenten im Überblick
-
-| Komponente | Skript | Verantwortlichkeit |
-|---|---|---|
-| Orchestrator | `automation/daily_orchestrator.py` | End-to-End-Pipeline (5 Phasen) |
-| API-Backfiller | `automation/api_backfiller.py` | 7-Tage-Lückenfüllung via REST |
-| Historical Fetcher | `automation/historical_fetcher.py` | Deep Backfill bis 12 Monate |
-| Backtest Runner | `automation/backtest_runner.py` | Matrix-Backtest + Tournament |
-| Live Bot | `automation/momentum_ls_run.py` | Live-Execution via NautilusTrader |
-| Catalog Service | `automation/catalog_service.py` | 24/7 WebSocket Tick-Sammlung |
-
----
-
-## 2. Tournament-Selektion: Wie Gewinner entstehen
-
-Der Tournament-Prozess läuft in **Phase 3+4** des Orchestrators als separater Subprocess (`automation/backtest_runner.py`). Er bestimmt vollautomatisch, welche Strategie für welches Instrument live deployt wird.
-
-### 2.1 Eingabe: Das Backtesting-Universum
-
-Der Backtest läuft über ein **Zeitfenster von 30 Tagen** (konfigurierbar über `automation/config/backtest.json`: `is_window_days` + `oos_window_days`). Jedes Instrument × jede Strategie bildet einen eigenen **Backtest-Job**, der parallel über `ProcessPoolExecutor(max_workers=min(cpu//2, 6))` abgearbeitet wird.
-
-**Aktive Strategien** (aus `automation/config/strategies.json`, `active=true`):
-- `SmaCrossoverStrategy` — SMA(5)-Crossover
-- `MeanReversionStrategy` — Keltner-Channel-Reversion
-- `DynamicBreakoutStrategy` — Price-Range-Breakout
-- `FlashCrashReversalStrategy` — BB(10) + RSI(7) Reversal
-- `VolatilityBreakoutPumpStrategy` — BB(10)-Pump
-- `ComboTrendVwapStrategy` — SMA + MACD + BB + ATR + VWAP
-- `VwapExhaustionStrategy` — VWAP-Deviation
-
-### 2.2 Metriken-Extraktion pro Job
-
-Nach der Backtest-Engine wird `extract_metrics()` aufgerufen. Der Prozess:
-
-1. **FIFO-Matching** über alle generierten Fills (Entry/Exit-Paare werden via FIFO zugeordnet).
-2. **IS/OOS-Split:** Die PnL-Tupel `(pnl, ts_event, holding_time, match_qty)` werden anhand des konfigurierten `oos_start_ns`-Cutoffs aufgeteilt. Das FIFO-Matching läuft zwingend über das **gesamte** Dataset, erst danach erfolgt der Split — andernfalls würden offene Queues korrumpieren (Pitfall #32).
-3. **Kennzahlenberechnung** aus den IS-PnLs:
-
-| Kennzahl | Berechnung | Mindestanforderung |
-|---|---|---|
-| `total_trades` | Anzahl geschlossener Positionen | ≥ 20 |
-| `total_return` | Σ PnL / start_capital × 100 | > 0 % |
-| `sortino` | Ø(PnL) / Std(neg. PnL) × √(Jahresperioden) | ≥ 0.3 (any) |
-| `profit_factor` | Σ(Gewinne) / Σ(Verluste) | ≥ 1.1 (any) |
-| `win_rate` | Gewinner / total_trades | — |
-| `max_drawdown` | Max. kumulativer Rückgang | — |
-
-> **Wichtig:** Sortino wird nur berechnet, wenn n ≥ 5 Trades mit negativem PnL vorhanden sind. Bei `PF=999` handelt es sich um einen Artefakt aus Runs ohne Verluste — diese werden im Tournament penalisiert.
-
-### 2.3 Eligibilitätsprüfung (Doppeltes Gate)
-
-Ein Instrument-Strategie-Paar gilt als **eligible**, wenn **alle** der folgenden Bedingungen erfüllt sind:
-
-```
-eligible_requires_all:
-    min_trades       >= 20     ← statistische Mindestbasis
-    min_total_return  > 0 %    ← profitabel im IS-Fenster
-
-eligible_requires_any:
-    min_sortino      >= 0.3   ← ODER
-    min_profit_factor >= 1.1   ← risikoadjustierte Qualität
-```
-
-Diese Konfiguration liegt in `automation/config/tournament.json`.
-
-### 2.4 Score-Berechnung & Gewinnerselektion
-
-Pro Symbol wird der **Score** aller eligiblen Strategien berechnet:
-
-```
-Score = sortino × 0.4
-      + profit_factor × 0.3
-      + win_rate × 0.2
-      - max_drawdown × 0.1
-```
-
-Die Strategie mit dem **höchsten Score** gewinnt für dieses Symbol. Bei Gleichstand entscheidet der `sortino`-Wert.
-
-### 2.5 Aggregierter Gewinner & OOS-Gate
-
-Nach der Per-Symbol-Selektion wird ein **aggregierter Gewinner** ermittelt:
-- Strategie mit den **meisten Symbol-Wins** gewinnt
-- Tie-Break: **Median Sortino** über alle Wins
-
-**OOS-Gate (Phase 5):** Bevor der Bot gestartet wird, prüft der Orchestrator die OOS-Performance des aggregierten Gewinners. Ist die OOS-Rendite negativ (`oos_return < 0`), blockiert das Gate den Live-Deploy (Fail-Closed).
-
-### 2.6 Beispiel aus dem aktuellen Run (2026-06-03)
-
-```
-49 Symbole getestet × 7 Strategien = 343 Backtest-Jobs
-→ 47 eligible Paare (min_trades ≥ 20 + return > 0)
-→ 22 Gewinner-Symbole (die restlichen haben keine eligiblen Strategien)
-→ MeanReversionStrategy: 19 Wins, Median Sortino: 9.04
-→ OOS-Gate: BESTANDEN → Bot-Start
-```
-
-Die 27 Symbole ohne Gewinner (CPRT, WDAY, FISV etc.) werden im Live-Bot **übersprungen** — daher die WARNING-Zeilen `No tournament winner for X.ETORO. Skipping.` zu Beginn des Bot-Logs.
-
----
-
-## 3. Log-Monitoring-Guide
-
-### 3.1 Übersicht aller relevanten Log-Dateien
-
-| Log-Datei | Erzeugt von | Inhalt | Kritikalität |
-|---|---|---|---|
-| `logs/orchestrator_YYYYMMDD.log` | `automation/daily_orchestrator.py` | Phasen-Status, JSON-Events, Backtest-Summary | **Hoch** |
-| `logs/live_bot_YYYYMMDD.log` | `automation/momentum_ls_run.py` | Strategie-Registrierung, WS-Status, Order-Events | **Hoch** |
-| `logs/tournament_YYYY-MM-DD.json` | `automation/backtest_runner.py` | Vollständige Metriken aller IS/OOS-Jobs | **Mittel** |
-| `logs/backtest_*.log` | `automation/backtest_runner.py` | Subprocess-Output des Matrix-Backtests | **Mittel** |
-| `logs/live_bot.pid` | `automation/momentum_ls_run.py` | Aktuelle PID des laufenden Bots | Referenz |
-
-### 3.2 Orchestrator-Log: Was zu beachten ist
-
-**Kritische JSON-Events** (immer prüfen):
-
-```
-[JSON_EVENT] {"event_type": "ORCHESTRATOR_START", ...}     ← Startbedingungen
-[JSON_EVENT] {"event_type": "PHASE1_COMPLETE", ...}        ← universe_size, unmapped_count
-[JSON_EVENT] {"event_type": "PHASE2_COMPLETE", ...}        ← api_filled_count
-[JSON_EVENT] {"event_type": "TOURNAMENT_COMPLETE", ...}    ← winner_count, aggregate_winner
-[JSON_EVENT] {"event_type": "BOT_STARTED", ...}            ← PID des Live-Bots
-[JSON_EVENT] {"event_type": "ORCHESTRATOR_EXIT", ...}      ← exit_code: 0 = OK
-```
-
-**Alarmsignale im Orchestrator-Log:**
-
-| Muster | Bedeutung | Aktion |
-|---|---|---|
-| `[Phase 1] Universe-Daten sind Xh alt (> 24h)` | Universe-Fetch schlägt fehl oder nie gelaufen | `automation/universe_fetcher.py` manuell ausführen |
-| `Backtest beendet (Exit-Code: ≠ 0)` | Backtest-Subprocess gecrasht | `logs/backtest_*.log` analysieren |
-| `OOS-GATE GESCHEITERT` | Aggregate-Winner OOS negativ | Kein Live-Deployment; Daten prüfen |
-| `Precision-API lieferte 0/N Instrumente` | eToro-API antwortet nicht korrekt | Fallback aktiv, aber API-Konnektivität prüfen |
-| `exit_code: 1` im ORCHESTRATOR_EXIT | Pipeline fehlgeschlagen | Log vollständig auf `ERROR`-Zeilen durchsuchen |
-
-### 3.3 Live-Bot-Log: Was zu beachten ist
-
-Der Live-Bot-Log enthält zwei verschachtelte Log-Streams mit unterschiedlichem Format:
-
-```
-# Python-Logger (automation/momentum_ls_run.py):
-2026-06-03 17:11:40,416 [INFO] Strategie registriert: MLS_MeanReversionStrategy_ESLT.ETORO_0
-
-# NautilusTrader Rust-Core (nanosekunden-präzise):
-2026-06-03T15:11:40.416267481Z [INFO] eToro-Momentum-LS.MLS_MeanReversionStrategy_ESLT.ETORO_0: READY
-```
-
-**Kritische Sequenz beim Start — muss in dieser Reihenfolge erscheinen:**
-
-```
-1. TradingNode: STARTING
-2. DataClient-ETORO_WS_CLIENT: RUNNING
-3. ExecClient-ETORO: RUNNING
-4. DataClient-ETORO_WS_CLIENT: WebSocket verbunden. Authentifiziere...
-5. ExecClient-ETORO: Connected
-6. TradingNode: Awaiting execution state reconciliation (30.0s timeout)...
-7. ExecEngine: Reconciliation for ETORO succeeded
-8. TradingNode: RUNNING
-9. DataClient-ETORO_WS_CLIENT: Subscribed SYMBOL.ETORO quotes  ← für jedes Instrument
-```
-
-**Alarmsignale im Live-Bot-Log:**
-
-| Muster | Bedeutung | Aktion |
-|---|---|---|
-| `⚠️ DRY-RUN MODE: no real orders will be sent.` | `ETORO_CONFIRM_LIVE` nicht gesetzt | Siehe Abschnitt 4.1 |
-| `WebSocket Verbindungsversuch N/5` | WS-Reconnect läuft | Ab Versuch 5 → `os._exit(1)` → systemd-Restart |
-| `Reconciliation for ETORO failed` | Order-State inkonsistent | Bot stoppen, `execution_mapping.json` prüfen |
-| `Universe data is stale (fetched_at > 24 hours ago)` | Universe zu alt | Bot läuft weiter aber mit veralteten Symbolen |
-| `No tournament winner for X. Skipping.` | Normal für Symbole ohne Gewinner | Nur kritisch wenn **alle** Symbole übersprungen |
-| `Fatal Python error: Aborted` | Rust-Engine FFI-Crash | Signatur-Konflikt (Pitfall #30); Code prüfen |
-
-**Gesunde laufende Bot-Signale** (erwartetes Rauschen):
-
-```
-Heartbeat: N Ticks verarbeitet.          ← alle ~15s, zeigt WebSocket-Aktivität
-Snapshot SYMBOL.ETORO: MarketOpen=True   ← beim Start, zeigt Marktdaten-Empfang
-Aggregator for X is currently in use     ← beim Start, KEIN Fehler (Abschnitt 4.2)
-Checking in-flight orders status         ← alle 2s, KEIN Fehler (Abschnitt 4.3)
-```
-
-### 3.4 Tournament-JSON: Manuelle Auswertung
-
-```bash
-# Alle Gewinner anzeigen:
-python3 -c "
-import json
-d = json.load(open('logs/tournament_2026-06-03.json'))
-for sym, w in d['per_symbol_winners'].items():
-    print(f\"{sym:<30} {w['strategy']:<35} sortino={w['sortino']:.2f} trades={w['total_trades']}\")
-"
-
-# Aggregierten Gewinner prüfen:
-python3 -c "
-import json
-d = json.load(open('logs/tournament_2026-06-03.json'))
-ag = d['aggregate_winner']
-print(f\"Winner: {ag['strategy']}, Wins: {ag['win_count']}, Median Sortino: {ag['median_sortino']:.4f}\")
-print(f\"OOS eligible: {ag.get('oos_eligible', 'n/a')}\")
-"
 ```
 
 ---
 
-## 4. Diagnose häufiger Log-Muster
+## 2. Vorbereitung der Konfigurationsdateien (Workstation → Pi)
 
-### 4.1 DRY-RUN MODE: no real orders will be sent
+Bevor der Bot auf dem Raspberry Pi gestartet werden kann, müssen die Ergebnisse deiner lokalen Strategie-Optimierung auf den Pi übertragen werden. Der Pi führt diese Berechnungen **nicht** selbst aus.
 
-**Log-Eintrag:**
-```
-2026-06-03T15:11:40.743626983Z [INFO] eToro-Momentum-LS.ExecClient-ETORO: ⚠️  DRY-RUN MODE: no real orders will be sent.
-```
+### Erforderliche Transfer-Artefakte
 
-**Ursache:** Der eToro-Execution-Client prüft das Safety-Interlock in `automation/momentum_ls_run.py`. Dieser vergleicht:
+Du musst exakt zwei Dateien von deiner Workstation auf den Raspberry Pi kopieren (z. B. via `scp` oder SFTP):
 
-```python
-# Safety-Interlock in automation/momentum_ls_run.py:
-if not (environment == 'real' and dry_run == False and os.getenv('ETORO_CONFIRM_LIVE') == '1'):
-    sys.exit(1)  # oder: dry_run wird True gesetzt
-```
+1. **`data/universe/momentum_ls.json`**: Enthält das aktuelle Asset-Universum und die eToro Instrument-IDs.
+2. **`logs/tournament_YYYY-MM-DD.json`**: Das Resultat deines lokalen Optimierungs-Runs. Der Live-Bot liest hieraus ab, welche Strategie für welches Symbol die höchste risikoadjustierte Qualität (Composite Score) erzielt hat.
 
-Der Orchestrator selbst kann ohne `--dry-run` laufen, aber wenn die **Umgebungsvariable `ETORO_CONFIRM_LIVE`** nicht auf `'1'` gesetzt ist, startet der ExecClient im Dry-Run-Modus. Der Bot läuft technisch vollständig — alle Strategien empfangen Bars, berechnen Signale, und loggen Orders — aber **kein einziger HTTP-Request** wird an die eToro-Order-API gesendet.
+### Synchronisations-Befehl (Beispiel von Workstation ausführen)
 
-**Behebung:**
 ```bash
-# In der .env Datei setzen:
-ETORO_CONFIRM_LIVE=1
+scp data/universe/momentum_ls.json user@raspberrypi:/home/user/etoro_nautilus/data/universe/
+scp logs/tournament_$(date +%Y-%m-%d).json user@raspberrypi:/home/user/etoro_nautilus/logs/
 
-# Dann Bot neu starten:
-kill -15 $(cat logs/live_bot.pid)
-python3 automation/momentum_ls_run.py \
-  --universe data/universe/momentum_ls.json \
-  --tournament logs/tournament_$(date +%Y-%m-%d).json
 ```
 
-> **Vorsicht:** Erst nach vollständiger Verifikation des Tournament-Outputs, Datenintegrität und WebSocket-Stabilität setzen.
+### Überprüfung der Importe auf dem Pi
 
----
+Stelle sicher, dass die Dateien am korrekten Ort liegen und lesbar sind:
 
-### 4.2 Aggregator currently in use — Massenwarnungen
-
-**Log-Muster:**
-```
-[WARN] eToro-Momentum-LS.DataEngine: Aggregator for EEFT.ETORO-1-HOUR-MID-INTERNAL is currently in use, subscription can't be started.
-... (mehrfach für dasselbe Symbol)
-```
-
-**Ursache:** NautilusTrader's `DataEngine` erstellt pro Bar-Typ **genau einen** Aggregator. Wenn sich mehrere Strategie-Instanzen für denselben Bar-Typ registrieren, erzeugt die erste Instanz den Aggregator. Alle weiteren erhalten diese WARN.
-
-**Dies ist kein Fehler.** Alle Strategien empfangen die Bar-Events. Der WARN ist rein informativ.
-
-**Monitoring-Befehl:**
 ```bash
-grep "Aggregator for" logs/live_bot_$(date +%Y%m%d).log \
-  | sed 's/.*Aggregator for \(.*\) is.*/\1/' \
-  | sort | uniq -c | sort -rn | head -20
+ls -l /home/user/etoro_nautilus/data/universe/momentum_ls.json
+ls -l /home/user/etoro_nautilus/logs/tournament_$(date +%Y-%m-%d).json
+
 ```
 
 ---
 
-### 4.3 Checking in-flight orders status
+## 3. Konfiguration der eToro-API & Umgebungsvariablen
 
-**Log-Muster:**
+Die Steuerung von Sicherheitsverriegelungen und API-Zugangsdaten erfolgt über Umgebungsvariablen. Auf dem Raspberry Pi wird hierzu eine restriktive `.env`-Datei im Projektwurzelverzeichnis hinterlegt.
+
+### Erstellen und Editieren der `.env`
+
+```bash
+nano /home/user/etoro_nautilus/.env
+
 ```
-[DEBUG] eToro-Momentum-LS.ExecEngine: Checking in-flight orders status
-... (alle 2 Sekunden)
+
+### Erforderlicher Inhalt der `.env`-Datei
+
+```ini
+# eToro API-Konnektivität
+ETORO_API_KEY=dein_erhaltener_api_key_hier
+ETORO_USER_KEY=dein_erhaltener_user_key_hier
+
+# Sicherheits-Interlock für den Echtzeithandel
+# 0 = Dry-Run-Modus (Simulation auf Live-Daten, keine echten Orders)
+# 1 = Live-Trading-Modus (Echte Kapitalausführung auf eToro)
+ETORO_CONFIRM_LIVE=0
+
+# System-Integrität
+STRICT_PRECISION_FAIL=1
+
 ```
 
-**Ursache:** Die `ExecEngine` überwacht Orders, die an die eToro-API gesendet wurden, aber noch keine Bestätigung erhalten haben. Konfiguration: `inflight_check_interval_ms = 2000`.
-
-**Dies ist normales NautilusTrader-Verhalten** — Teil des Order Lifecycle Managements. Keine Aktion erforderlich.
+> **Sicherheitshinweis für Einsteiger:** Belasse `ETORO_CONFIRM_LIVE` bei der Ersteinrichtung zwingend auf `0`. Schalte den Wert erst auf `1`, wenn der Bot im systemd-Hintergrunddienst über mindestens 24 Stunden fehlerfrei und ohne WebSocket-Verbindungsabrisse im Dry-Run-Modus operiert hat.
 
 ---
 
-## 5. Prozessmanagement & Live-Monitoring
+## 4. Manueller Bot-Start im Standalone-Modus
 
-### 5.1 PID-Tracking & Statusüberwachung
+Der manuelle Start dient primär der ersten Validierung der WebSocket-Verbindungen, der eToro-Authentifizierung und dem fehlerfreien Einlesen der Tournament-Ergebnisse. Hierbei wird das Backtesting explizit übersprungen.
 
-```bash
-# PID des laufenden Bots ermitteln:
-cat /home/user/etoro_nautilus/logs/live_bot.pid
+### Der Standalone-Startbefehl
 
-# Prozessstatus prüfen:
-ps -p $(cat /home/user/etoro_nautilus/logs/live_bot.pid) -o pid,stat,etime,cmd
-```
-
-### 5.2 Live-Log-Monitoring
+Führe den Bot unter direkter Übergabe der importierten Tournament-Ergebnisse und des Universums aus:
 
 ```bash
-# Live-Bot-Log (Haupt-Monitoring-Stream):
-tail -f /home/user/etoro_nautilus/logs/live_bot_$(date +%Y%m%d).log
-
-# Nur Warnungen und Fehler:
-tail -f /home/user/etoro_nautilus/logs/live_bot_$(date +%Y%m%d).log \
-  | grep -E "\[WARN\]|\[ERROR\]|\[CRIT\]"
-
-# Nur Order-relevante Events:
-tail -f /home/user/etoro_nautilus/logs/live_bot_$(date +%Y%m%d).log \
-  | grep -E "SUBMIT|FILLED|REJECTED|CANCELED|DRY-RUN"
-
-# Orchestrator-Log:
-tail -f /home/user/etoro_nautilus/logs/orchestrator_$(date +%Y%m%d).log
-```
-
-### 5.3 Ressourcenüberwachung
-
-```bash
-# CPU/RAM des Bot-Prozesses:
-top -p $(cat /home/user/etoro_nautilus/logs/live_bot.pid)
-
-# Netzwerkverbindungen zur eToro-WS:
-ss -tnp | grep $(cat /home/user/etoro_nautilus/logs/live_bot.pid)
-```
-
----
-
-## 6. Essentielle Wartungsskripte
-
-### 6.1 Universe-Aktualisierung
-
-Das Universe muss täglich aktualisiert werden. Ein Timestamp älter als 24 Stunden führt zur WARNING `Universe data is stale`.
-
-```bash
-python3 automation/universe_fetcher.py
-# Aktualisiert: data/universe/momentum_ls.json
-```
-
-### 6.2 Vollständiger täglicher Orchestrator-Lauf
-
-```bash
-# Standard-Lauf (ZIPs bereits vorhanden):
-python3 automation/daily_orchestrator.py --skip-api-fetch
-
-# Mit API-Fetch und Universe-Update:
-python3 automation/daily_orchestrator.py
-
-# Dry-Run (kein Bot-Start, kein Live-Trading):
-python3 automation/daily_orchestrator.py --dry-run
-```
-
-### 6.3 Isolierter Manueller Bot-Start
-
-```bash
-# Mit aktuellem Tournament:
-export ETORO_CONFIRM_LIVE=1
 python3 automation/momentum_ls_run.py \
   --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json \
   --tournament /home/user/etoro_nautilus/logs/tournament_$(date +%Y-%m-%d).json
 
-# Dry-Run (kein ETORO_CONFIRM_LIVE erforderlich):
-python3 automation/momentum_ls_run.py \
-  --universe data/universe/momentum_ls.json \
-  --tournament logs/tournament_$(date +%Y-%m-%d).json
 ```
 
-### 6.4 Daten-Integrität prüfen
+### Erwartete Initialisierungssequenz im Terminal
+
+Achte penibel darauf, dass die folgenden Zeilen beim Start in genau dieser Reihenfolge ohne Fehlermeldung ausgegeben werden:
+
+```
+1. [INFO] Lade Tournament-Gewinner aus logs/tournament_2026-06-09.json...
+2. [INFO] Strategie registriert: MLS_MeanReversionStrategy_TSLA.ETORO_0
+3. TradingNode: STARTING
+4. DataClient-ETORO_WS_CLIENT: RUNNING
+5. ExecClient-ETORO: RUNNING
+6. DataClient-ETORO_WS_CLIENT: WebSocket verbunden. Authentifiziere...
+7. ExecClient-ETORO: Connected
+8. ExecEngine: Reconciliation for ETORO succeeded
+9. TradingNode: RUNNING
+10. DataClient-ETORO_WS_CLIENT: Subscribed TSLA.ETORO quotes
+
+```
+
+Wenn am Ende der Sequenz `TradingNode: RUNNING` erscheint, arbeitet die Engine stabil. Du kannst den manuellen Prozess nun mit der Tastenkombination `STRG + C` beenden, um mit der Einrichtung des automatisierten Hintergrunddienstes fortzufahren.
+
+---
+
+## 5. Automatisierung mittels systemd-Hintergrunddienst
+
+Für den unbeaufsichtigten 24/7-Betrieb auf dem Raspberry Pi wird die Ausführung an das Linux-Init-System `systemd` übergeben. Dies garantiert, dass der Bot nach unerwarteten Verbindungsabbrüchen, API-Timeouts oder einem Neustart des Pi automatisch reorganisiert und neu gestartet wird.
+
+### Erstellen der systemd-Service-Unit
+
+Erstelle eine neue Service-Datei mit Root-Rechten:
 
 ```bash
-# API-Backfill (letzte 7 Tage):
-python3 automation/api_backfiller.py --days 7
+sudo nano /etc/systemd/system/nautilus-bot.service
 
-# Historical Fetcher (12 Monate Deep Backfill):
-python3 automation/historical_fetcher.py --months 12
+```
 
-# Pre-Flight-Check:
-python3 -c "from automation.backtest_runner import read_precisions_from_parquet; print('OK')"
-python3 -c "from automation.universe_fetcher import is_universe_stale; print('OK')"
-python3 -c "import json; d=json.load(open('automation/config/instrument_map.json')); print(len(d['instruments']), 'Instrumente')"
+### Konfiguration der Service-Unit
+
+Füge den folgenden Block ein. Passe den Benutzernamen (`user`) an dein tatsächliches Pfadprofil an:
+
+```ini
+[Unit]
+Description=Nautilus Trader Live-Bot Standalone auf eToro
+After=network.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/home/user/etoro_nautilus
+Environment=PYTHONPATH=/home/user/etoro_nautilus
+ExecStart=/home/user/etoro_nautilus/venv/bin/python3 automation/momentum_ls_run.py --universe /home/user/etoro_nautilus/data/universe/momentum_ls.json --tournament /home/user/etoro_nautilus/logs/tournament_current.json
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/user/etoro_nautilus/logs/systemd_bot.log
+StandardError=append:/home/user/etoro_nautilus/logs/systemd_bot.err
+
+[Install]
+WantedBy=multi-user.target
+
+```
+
+### Wichtiger Kniff für den automatischen Tageswechsel
+
+Da der Pfad oben auf eine statische Datei verweist, erstellen wir auf dem Pi einen symbolischen Link (Symlink) namens `tournament_current.json`. Dieser zeigt immer auf das aktuellste importierte Turnier-Ergebnis. So muss die systemd-Unit bei einem Datumswechsel nie modifiziert werden:
+
+```bash
+ln -sf /home/user/etoro_nautilus/logs/tournament_2026-06-09.json /home/user/etoro_nautilus/logs/tournament_current.json
+
+```
+
+### Dienst aktivieren und starten
+
+```bash
+# Systemd-Konfiguration neu laden
+sudo systemctl daemon-reload
+
+# Automatischen Start bei Boot aktivieren
+sudo systemctl enable nautilus-bot.service
+
+# Bot jetzt im Hintergrund starten
+sudo systemctl start nautilus-bot.service
+
 ```
 
 ---
 
-## 7. State Management & Emergency Operations
+## 6. Live-Log-Monitoring & Diagnose
 
-### 7.1 Graceful Shutdown
+Da der Bot unsichtbar im Hintergrund operiert, ist das regelmäßige Auslesen der Log-Streams die einzige Kontrollinstanz für den fehlerfreien Betrieb.
 
-Ein unkontrollierter Abbruch (z. B. `kill -9`) kann das Order-Mapping im eToro-Adapter korrumpieren.
+### Echtzeit-Überwachung des Haupt-Streams
 
-```bash
-# Korrekter Shutdown via SIGTERM:
-kill -15 $(cat /home/user/etoro_nautilus/logs/live_bot.pid)
-
-# Verifizierung: Im Live-Bot-Log muss erscheinen:
-# TradingNode: STOPPING
-# ExecClient-ETORO: Disconnected
-# TradingNode: STOPPED
-```
-
-### 7.2 Behebung von API Rate-Limits & WebSocket-Disconnects
-
-1. **Bot stoppen:** `kill -15 $(cat logs/live_bot.pid)`
-2. **Cooldown:** Mindestens 15 Minuten warten
-3. **State-Datei prüfen:** `data/state/execution_mapping.json` auf verwaiste Orders prüfen
-4. **Neustart:** `python3 automation/daily_orchestrator.py` oder manueller Bot-Start
-
-### 7.3 Bot reagiert nicht auf SIGTERM
+Mit diesem Befehl siehst du jede Preisaktualisierung und jede Order-Generierung live im Terminal ein:
 
 ```bash
-# Sanfter Versuch mit SIGHUP:
-kill -1 $(cat /home/user/etoro_nautilus/logs/live_bot.pid)
-sleep 10
-
-# Falls kein Effekt, kontrollierter SIGKILL:
-kill -9 $(cat /home/user/etoro_nautilus/logs/live_bot.pid)
-
-# Danach zwingend: State-Konsistenz prüfen und alle offenen Positionen
-# manuell auf der eToro-Plattform verifizieren.
-```
-
-### 7.4 Rust FFI Abort (Fatal Python error: Aborted)
-
-Wenn der Bot mit `Fatal Python error: Aborted` crasht:
-
-- **Ursache:** NautilusTrader Rust-Engine crasht, wenn ein Python-Worker unsauber stirbt, bevor `engine.dispose()` aufgerufen wurde (Pitfall #30)
-- **Massnahme:** Git-Log auf kürzliche Änderungen an `automation/backtest_runner.py` prüfen, besonders `run_single_backtest_worker`
-
-### 7.5 Quick-Reference: Wichtige Pfade
+tail -f /home/user/etoro_nautilus/logs/live_bot_$(date +%Y%m%d).log
 
 ```
-Konfig:
-  automation/config/backtest.json          ← Backtest-Fenster, Spread-Modeling
-  automation/config/tournament.json        ← Eligibilitätskriterien, Score-Gewichte
-  automation/config/strategy_defaults.json ← Strategie-Defaults (ATR, max_bars)
-  automation/config/instrument_map.json    ← Symbol → price/size_precision
 
-State:
-  data/state/execution_mapping.json        ← eToro-Order-IDs ↔ Nautilus-Mapping
-  data/state/live_bot.pid                  ← Aktuelle Bot-PID (Kopie)
-  data/state/size_increment_cache.json     ← Precision-Cache
+### Filterung nach Fehlern und Warnungen
 
-Daten:
-  data/universe/momentum_ls.json           ← Universe-Snapshot + fetched_at
-  data/nautilus/data/quote_tick/           ← FSB(16) QuoteTick-Parquet-Dateien
-  data/import/                             ← ZIP-Drop-Zone (auto-gelöscht nach Merge)
+Unterdrücke das normale Marktdatenrauschen, um kritische Systemereignisse zu prüfen:
 
-Logs:
-  logs/orchestrator_YYYYMMDD.log           ← Pipeline-Hauptlog
-  logs/live_bot_YYYYMMDD.log              ← Bot-Laufzeit-Log
-  logs/tournament_YYYY-MM-DD.json          ← Tournament-Vollresultat
-  logs/live_bot.pid                        ← Aktuelle PID
+```bash
+tail -f /home/user/etoro_nautilus/logs/live_bot_$(date +%Y%m%d).log | grep -E "\[WARN\]|\[ERROR\]|\[CRIT\]"
+
+```
+
+### Überwachung des systemd-Prozessstatus
+
+Falls der Bot unerwartet stoppt, liefert der Status-Befehl den exakten Linux-Exit-Code:
+
+```bash
+sudo systemctl status nautilus-bot.service
+
 ```
 
 ---
-*Zuletzt aktualisiert: 2026-06-07 — Überprüft gegen automation/AGENTS.md*
+
+## 7. Diagnose häufiger Log-Muster auf dem Pi
+
+Beim Betrieb auf dem Raspberry Pi können spezifische Meldungen in den Logs auftreten. Hier erfährst du, was sie bedeuten und wie du reagieren musst.
+
+### Muster A: `⚠️ DRY-RUN MODE: no real orders will be sent.`
+
+* **Bedeutung:** Der Bot läuft im Simulationsmodus. Signale werden berechnet, aber es wird kein echtes Geld bewegt.
+* **Ursache:** Die Variable `ETORO_CONFIRM_LIVE=1` fehlt in deiner `.env`-Datei oder wurde nicht korrekt geladen.
+* **Lösung:** Wenn du den Bot scharf schalten möchtest, editiere deine `.env` (siehe Kapitel 3), setze den Wert auf `1` und starte den Hintergrunddienst neu:
+```bash
+sudo systemctl restart nautilus-bot.service
+
+```
+
+
+
+### Muster B: `Massenwarnungen: Aggregator for X is currently in use`
+
+* **Bedeutung:** `[WARN] eToro-Momentum-LS.DataEngine: Aggregator for ... is currently in use, subscription can't be started.`
+* **Ursache:** Dies ist **kein Fehler** und kein Grund zur Sorge. NautilusTrader erstellt pro Bar-Typ (z. B. 1-Stunden-Kerze) genau einen Daten-Aggregator. Wenn sich mehrere deiner optimierten Strategien für dasselbe Symbol registrieren, erzeugt die erste Instanz den Aggregator. Alle nachfolgenden Instanzen geben diese informative Warnung aus. Alle Strategien erhalten die Daten trotzdem fehlerfrei.
+
+### Muster C: `No tournament winner for X.ETORO. Skipping.`
+
+* **Bedeutung:** Das Asset wird heute im Live-Bot nicht gehandelt.
+* **Ursache:** Völlig normales Verhalten für Symbole, die in deinem lokalen Backtest auf der Workstation die Mindestkriterien (z. B. mindestens 20 Trades oder positive Rendite) nicht erfüllt haben. Der Bot überspringt diese Assets beim Start gezielt, um dein Kapital zu schützen.
+
+---
+
+## 8. State Management & Notfall-Abschaltung (Emergency Operations)
+
+Im Live-Handel können unvorhergesehene Ereignisse (z. B. extreme Marktereignisse oder API-Ausfälle bei eToro) ein schnelles und kontrolliertes Eingreifen erforderlich machen.
+
+### 8.1 Der Graceful Shutdown (Kontrolliertes Beenden)
+
+Niemals darf der Bot-Prozess hart mittels `kill -9` abgebrochen werden. Ein unkontrollierter Abbruch führt dazu, dass die lokale State-Datei `data/state/execution_mapping.json` korrumpiert. Der Bot verliert dadurch die Zuordnung darüber, welche offene Position auf eToro zu welcher lokalen Strategie gehört.
+
+**Korrekter, sanfter Abbruch:**
+
+```bash
+sudo systemctl stop nautilus-bot.service
+
+```
+
+*Auswirkung:* Der systemd-Dienst sendet ein `SIGTERM`-Signal an den Python- und Rust-Core. Die Engine wartet ausstehende Order-Bestätigungen ab, trennt die WebSocket-Verbindung sauber vom eToro-Server und schreibt den aktuellen Positions-Zustand konsistent auf die SD-Karte des Pi.
+
+### 8.2 Der absolute Notfall-Stopp (Hard Kill)
+
+Sollte der Bot auf ein `SIGTERM` (Stop-Befehl) über mehr als 30 Sekunden nicht reagieren (z. B. bei einem lokalen Thread-Lock), muss der Prozess erzwungen beendet werden:
+
+```bash
+# Prozess hart beenden
+sudo kill -9 $(cat /home/user/etoro_nautilus/logs/live_bot.pid)
+
+# Dienst im systemd zurücksetzen
+sudo systemctl stop nautilus-bot.service
+
+```
+
+> **CRITICAL OPERATIONAL REQUIREMENT:** Nach einem harten `kill -9` musst du dich **zwingend** sofort über den Webbrowser oder die mobile App auf der eToro-Plattform einloggen. Überprüfe alle offenen Positionen manuell gegen deine Risikoparameter und schließe sie gegebenenfalls von Hand, da die lokale Status-Integrität des Bots für diesen Tag nicht mehr garantiert ist.
+
+---
+
+## 9. Quick-Reference: Wichtige Pfade auf dem Raspberry Pi
+
+Für die tägliche Wartung findest du hier alle relevanten Pfade und Verzeichnisse auf einen Blick:
+
+```
+Projekt-Wurzelverzeichnis:
+  /home/user/etoro_nautilus/
+
+Konfigurations- und Importdaten:
+  .env                                      ← API-Keys & Sicherheits-Interlock (LIVE/DRY)
+  data/universe/momentum_ls.json           ← Das von der Workstation importierte Asset-Universum
+  logs/tournament_current.json             ← Symlink auf das aktive optimierte Tournament-Ergebnis
+
+Lokale State-Überwachung (Wichtig für Integrität):
+  data/state/execution_mapping.json        ← Live-Verknüpfung eToro-Order-IDs ↔ Nautilus-Bot
+  logs/live_bot.pid                        ← Aktuelle Prozess-ID des laufenden Hintergrund-Bots
+
+Log-Dateien für die Fehleranalyse:
+  logs/live_bot_YYYYMMDD.log              ← Haupt-Monitoring-Stream der Handelsstrategien
+  logs/systemd_bot.log                     ← Standard-Konsolenausgabe des systemd-Dienstes
+  logs/systemd_bot.err                     ← System-Fehlermeldungen und Python-Crash-Dumps
+
+```
