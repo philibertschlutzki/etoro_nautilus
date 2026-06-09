@@ -163,7 +163,7 @@ def test_zero_trades_no_micro_sizing_rejection(capfd):
     out, _ = capfd.readouterr()
 
     # We expect min_trades failed, but NOT Micro-Sizing
-    assert "min_trades failed" in out, "Should reject due to min_trades"
+    assert "no trades executed" in out, "Should reject explicitly because no trades executed"
     assert "Micro-Sizing" not in out, "Micro-Sizing rejection should NOT be present when total_trades == 0"
 
     # Test Out-of-Sample path
