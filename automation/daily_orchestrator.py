@@ -775,12 +775,12 @@ def phase3_4_backtest_and_tournament(
                     f"({agg['win_count']} Wins, "
                     f"Portfolio-Trades: {agg.get('oos_metrics', {}).get('total_trades', 0)}, "
                     f"Trade-Weighted OOS-Return: {agg.get('oos_metrics', {}).get('total_return', 0.0):.2%}, "
-                    f"In-Sample Median Sortino: {agg['median_sortino']})"
+                    f"In-Sample Median Sortino: {agg.get('median_is_sortino')})"
                 )
             emit_json_event(log, "TOURNAMENT_COMPLETE", {
                 "winner_count":     len(winners),
                 "aggregate_winner": agg,
-                "median_is_sortino": agg.get("median_sortino") if agg else None,
+                "median_is_sortino": agg.get("median_is_sortino") if agg else None,
                 "path":             str(TOURNAMENT_PATH),
             })
         except Exception as e:
@@ -938,18 +938,18 @@ def phase5_live_deployment(
         oos_metrics   = agg.get("oos_metrics")
         reasons       = agg.get("oos_rejection_reasons") or ["unbekannt (Runner hat keine Begründung geliefert)"]
 
-        agg_oos_sortino = oos_metrics.get("sortino_ratio") if oos_metrics else None
+        aggregate_oos_sortino = oos_metrics.get("sortino_ratio") if oos_metrics else None
         agg_oos_dd = oos_metrics.get("max_drawdown") if oos_metrics else None
 
         if not oos_evaluated:
             log.warning(
                 f"[Phase 5] OOS-GATE NICHT AUSWERTBAR: Aggregat-Sieger {agg.get('strategy')} — "
-                f"kein/zu wenig OOS-Datenmaterial (Aggregate Out-of-Sample Sortino: {agg_oos_sortino}, Portfolio DD: {agg_oos_dd}). "
+                f"kein/zu wenig OOS-Datenmaterial (Aggregate Out-of-Sample Sortino: {aggregate_oos_sortino}, Portfolio DD: {agg_oos_dd}). "
                 f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
             )
             emit_json_event(log, "OOS_GATE_NOT_EVALUABLE", {
                 "strategy": agg.get("strategy"), "oos_metrics": oos_metrics, "reasons": reasons,
-                "aggregate_oos_sortino": agg_oos_sortino,
+                "aggregate_oos_sortino": aggregate_oos_sortino,
                 "aggregate_oos_max_drawdown": agg_oos_dd,
                 "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
@@ -958,18 +958,46 @@ def phase5_live_deployment(
         if not oos_eligible:
             log.warning(
                 f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} — "
-                f"verletzte Kriterien: {reasons}; Aggregate Out-of-Sample Sortino: {agg_oos_sortino}, Portfolio DD: {agg_oos_dd}. "
+                f"verletzte Kriterien: {reasons}; Aggregate Out-of-Sample Sortino: {aggregate_oos_sortino}, Portfolio DD: {agg_oos_dd}. "
                 f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
             )
             emit_json_event(log, "OOS_GATE_FAILED", {
                 "strategy": agg.get("strategy"), "reasons": reasons, "oos_metrics": oos_metrics,
-                "aggregate_oos_sortino": agg_oos_sortino,
+                "aggregate_oos_sortino": aggregate_oos_sortino,
                 "aggregate_oos_max_drawdown": agg_oos_dd,
                 "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
             })
             return 0
 
-        log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} (Aggregate Out-of-Sample Sortino: {agg_oos_sortino}, Portfolio DD: {agg_oos_dd}).")
+        log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} (Aggregate Out-of-Sample Sortino: {aggregate_oos_sortino}, Portfolio DD: {agg_oos_dd}).")
+
+        # --- WHITELIST GENERATION ---
+        whitelisted_winners = {}
+        for symbol, winner in winners.items():
+            if winner.get("oos_eligible") is True and winner.get("oos_evaluated") is True:
+                whitelisted_winners[symbol] = winner
+            else:
+                log.info(f"[Phase 5] OOS-DEPLOY-REJECT: Symbol {symbol} (Strategy {winner.get('strategy')}) did not pass its individual OOS-Eligibility Gate.")
+
+        whitelist_payload = dict(t_data)
+        whitelist_payload["per_symbol_winners"] = whitelisted_winners
+
+        whitelist_path = PROJECT_ROOT / "data" / "state" / "whitelist_tournament.json"
+        with open(whitelist_path, "w", encoding="utf-8") as wf:
+            json.dump(whitelist_payload, wf, indent=4)
+
+        emit_json_event(log, "DEPLOYMENT_WHITELIST_GENERATED", {
+            "whitelisted_pairs_count": len(whitelisted_winners),
+            "rejected_pairs_count": len(winners) - len(whitelisted_winners),
+            "whitelist_path": str(whitelist_path)
+        })
+
+        if len(whitelisted_winners) == 0:
+            log.warning("[Phase 5] Whitelist ist leer (kein Symbol hat sein individuelles OOS-Gate bestanden). Live-Deploy abgebrochen.")
+            return 0
+
+        tournament_path = str(whitelist_path)
+        # --- END WHITELIST GENERATION ---
     except Exception as e:
         log.error(f"[Phase 5] Fehler beim Lesen des OOS-Gates: {e}")
         return 1
@@ -997,7 +1025,7 @@ def phase5_live_deployment(
         "tournament": tournament_path,
         "universe":   str(UNIVERSE_PATH),
         "dry_run":    dry_run,
-        "aggregate_oos_sortino": agg_oos_sortino,
+        "aggregate_oos_sortino": aggregate_oos_sortino,
         "fully_eligible_pairs": fully_eligible_pairs,
         "winner_count": winner_count,
     })
