@@ -375,7 +375,8 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
 
 def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, strat_params: dict = None) -> dict:
     """Wertet OOS-Metriken strukturiert aus und liefert die 4 OOS-Pflicht-Keys."""
-    if not oos_metrics or oos_metrics.get("total_trades", 0) <= 0:
+    n_trades = oos_metrics.get("total_trades", 0) if oos_metrics else 0
+    if n_trades <= 0:
         return {
             "oos_evaluated": False,
             "oos_eligible": False,
@@ -383,7 +384,7 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             "oos_rejection_reasons": ["oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."]
         }
 
-    n_trades     = oos_metrics.get("total_trades", 0)
+
     max_dd       = oos_metrics.get("max_drawdown", 1.0)
     win_rate     = oos_metrics.get("win_rate", 0.0)
     total_return = oos_metrics.get("total_return", 0.0)
@@ -451,6 +452,14 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     metrics = result.get("metrics", {})
     if not metrics:
         return False
+    n_trades = metrics.get("total_trades", 0)
+    if n_trades <= 0:
+        if log_rejections:
+            reason = "no trades executed"
+            print(f"⚠️  Rejected IS: {symbol} - {strategy} | Reasons: {reason}")
+            metrics["rejection_reason"] = reason
+        return False
+
 
     sortino = metrics.get("sortino_ratio")
     pf = metrics.get("profit_factor")
@@ -461,9 +470,7 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
             losses_count = metrics.get("losses_count", 0)
             win_rate = metrics.get("win_rate", 0.0)
 
-            if n == 0:
-                reason = "no trades executed"
-            elif win_rate == 0.0:
+            if win_rate == 0.0:
                 reason = "all-loss"
             elif losses_count == 0:
                 reason = "all-win (no losses)"
@@ -478,7 +485,6 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
             metrics["rejection_reason"] = reason
         return False
 
-    n_trades     = metrics.get("total_trades", 0)
     max_dd       = metrics.get("max_drawdown", 1.0)
     win_rate     = metrics.get("win_rate", 0.0)
     total_return = metrics.get("total_return", 0.0)
