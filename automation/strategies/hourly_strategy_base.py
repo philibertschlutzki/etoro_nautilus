@@ -55,6 +55,7 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     profit_target_pct: float | None = None
     cooldown_bars: int = 12
     trend_filter_period: int = 0
+    max_daily_trades: int | None = 5
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
@@ -102,6 +103,8 @@ class HourlyStrategyBase(Strategy):
             self._atr_trailing_multiplier = DEFAULT_ATR_TRAILING_MULTIPLIER
 
         self._profit_target_pct = getattr(config, "profit_target_pct", None)
+        self._daily_trades: int = 0
+        self._current_day: int | None = None
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
@@ -253,6 +256,11 @@ class HourlyStrategyBase(Strategy):
         and the Walk-Forward/Out-of-Sample live execution, maintaining the statistical integrity of the
         gating thresholds.
         """
+        current_day = pd.Timestamp(bar.ts_init).day
+        if self._current_day != current_day:
+            self._current_day = current_day
+            self._daily_trades = 0
+
         self._exit_atr.handle_bar(bar)
 
         positions = self.cache.positions_open(instrument_id=self.instrument_id)
@@ -402,6 +410,13 @@ class HourlyStrategyBase(Strategy):
         trade_amount_usd_cfg = getattr(self.config, "trade_amount_usd", None)
         trade_amount_pct = getattr(self.config, "trade_amount_pct", None)
 
+        max_daily = getattr(self.config, "max_daily_trades", None)
+        if max_daily is not None and self._daily_trades >= max_daily:
+            self._log.warning(
+                f"[{self.instrument_id}] Sanity Guard blockiert Entry: {self._daily_trades} Trades an diesem Tag erreicht (Limit: {max_daily})."
+            )
+            return None
+
         if self.allocator is not None:
             # A: Live-Allocator hat höchste Prio
             balance = self._get_current_balance()
@@ -458,7 +473,8 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_price = None
         self._trailing_stop_side = None
         self._take_profit_price = None
-        self._log.info(f"[{self.instrument_id}] PositionOpened: {event}")
+        self._daily_trades += 1
+        self._log.info(f"[{self.instrument_id}] PositionOpened: {event} (Trade {self._daily_trades} today)")
 
         # Submit native limit order for profit target
         if self._profit_target_pct is not None:

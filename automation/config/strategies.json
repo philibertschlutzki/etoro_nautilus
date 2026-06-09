@@ -19,18 +19,20 @@
       "params": {}
     },
     {
-      "active": true,
+      "active": false,
       "strategy_module": "automation.strategies.mean_reversion",
       "strategy_class": "MeanReversionStrategy",
       "config_class": "MeanReversionConfig",
-      "params": {}
+      "params": {},
+      "_note": "Deaktiviert: Whipsaw-Anfälligkeit / Overtrading"
     },
     {
-      "active": true,
+      "active": false,
       "strategy_module": "automation.strategies.dynamic_breakout",
       "strategy_class": "DynamicBreakoutStrategy",
       "config_class": "DynamicBreakoutConfig",
-      "params": {}
+      "params": {},
+      "_note": "Deaktiviert: Whipsaw-Anfälligkeit / Overtrading"
     },
     {
       "active": true,

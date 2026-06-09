@@ -123,6 +123,7 @@ class HourlyMeanReversionStrategy(HourlyStrategyBase):
     def on_position_closed(self, event) -> None:
         super().on_position_closed(event)
         self.current_signal = None
+        # Wichtig: Zwingend auf 0 setzen, um Whipsaw/Overtrading zu verhindern
         self.bars_since_last_signal = 0
 
     def on_stop(self):
