@@ -164,6 +164,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
         super().on_position_closed(event)
         self._reversal_in_progress = False
         # Egal ob Reversal oder regulärer Stop-Out -> Cooldown MUSS eingehalten werden
+        # Wichtig: Zwingend auf 0 setzen, um Whipsaw/Overtrading zu verhindern
         self.bars_since_last_signal = 0
 
     def on_stop(self):
