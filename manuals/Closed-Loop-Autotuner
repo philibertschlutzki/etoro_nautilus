@@ -628,3 +628,4 @@ Da Rechenpower vorhanden ist und gegen das **volle Universum** getestet wird, en
 ---
 
 *Kernbotschaft (unverändert): Der Optimierer ist Standard — der Wert liegt in der Trennung von Strategie-Parametern (optimierbar) und Risiko-Gates (eingefroren), im nie gesehenen Holdout gegen Meta-Overfitting und in der lückenlos nachvollziehbaren Manifest-Config. Ohne diese drei findet der Loop nicht die besten Einstellungen, sondern die besten Wege, die eigene Metrik zu täuschen.*
+---
