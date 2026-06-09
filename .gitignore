@@ -22,3 +22,4 @@ automation/.env
 # Patch artifacts
 *.orig
 *.rej
+logs/

@@ -101,3 +101,7 @@ jobs:
       # ── Tier 8: Orchestrator & phase 1 ───────────────────────────────────────
       - name: Orchestrator phase 1 — universe fetch & stale check (§5.2, §3)
         run: python3 -m pytest automation/tests/test_orchestrator_phase1.py -v --timeout=30
+
+      # ── Tier 9: Config & Dry-Run ─────────────────────────────────────────────
+      - name: Backtest runner config dry-run (Pitfall #52)
+        run: python3 -m automation.backtest_runner --dry-run --config automation/config/strategies.json

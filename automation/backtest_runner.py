@@ -1941,7 +1941,9 @@ def run_backtest() -> None:
 
     # Assert consistency between defaults and active strategies
     loaded_defaults = [k for k in strategy_defaults.keys() if not k.startswith("_")]
-    assert len(loaded_defaults) == len(strategies_list), f"Mismatch: {len(loaded_defaults)} defaults loaded but {len(strategies_list)} strategies executed."
+    active_classes = {s.get("strategy_class") for s in strategies_list}
+    missing_defaults = active_classes - set(loaded_defaults)
+    assert not missing_defaults, f"Mismatch: Aktive Strategien {missing_defaults} fehlen in strategy_defaults.json."
 
     # Task 2: Strategy-Defaults auf die Strategie-Params anwenden (Overrides behalten Vorrang)
     strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults)
