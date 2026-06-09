@@ -43,8 +43,9 @@
     "trade_amount_pct": 15.0
   },
   "VwapExhaustionStrategy": {
-    "deviation_threshold": 0.015,
+    "deviation_threshold": 0.008,
     "vwap_period": 24,
+    "cooldown_bars": 3,
     "trade_amount_pct": 15.0
   },
   "HourlyMeanReversionStrategy": {

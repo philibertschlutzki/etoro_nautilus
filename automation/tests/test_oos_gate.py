@@ -253,7 +253,7 @@ def test_phase5_zero_eligible_pairs_aborts():
         assert res == 1 # Aborts with error code 1
 
         # Verify LIVE_DEPLOY_ABORTED is emitted
-        mock_emit.assert_any_call(log, "LIVE_DEPLOY_ABORTED", {"reason": "zero_fully_eligible_pairs", "fully_eligible_pairs": 0, "winner_count": 0})
+        mock_emit.assert_any_call(log, "LIVE_DEPLOY_ABORTED", {"reason": "zero_fully_eligible_pairs", "fully_eligible_pairs": 0, "winner_count": 0, "oos_not_evaluable_pairs": 0, "oos_failed_pairs": 0})
 
         # Verify BOT_START_INITIATED is NOT emitted
         calls = [c[0][1] for c in mock_emit.call_args_list]
