@@ -218,6 +218,14 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 
 ## 7. Konfigurationssystem (automation/config/)
 
+### 7.5 Optimizer Configuration (`optimizer.json`) & Reward Function (Zero-Hardcoding)
+The optimizer is designed with a strict zero-hardcoding policy. The reward function (in `automation/optimizer/reward.py`) computes a scalar fitness score by drawing *all* weights and constants dynamically from configuration files:
+- Penalty weights (`penalty_overfit_weight`, `penalty_dd_weight`), bonus weights (`bonus_coverage_weight`), and specific absolute caps (`sortino_clip_abs`, `penalty_unevaluable_oos`) are loaded from `automation/config/optimizer.json`.
+- Risk caps (like `max_drawdown`) are loaded dynamically from `automation/config/tournament.json`.
+
+There are no magic numbers embedded in the reward logic.
+
+
 **Merge-Reihenfolge der Strategie-Parameter (niedrig → hoch):**
 1. `strategy_defaults.json` (Basis, 1h-optimiert)
 2. `params` in `strategies.json` (Override)
@@ -626,6 +634,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-09 | **Phase 1b: Optimizer Runner & Reward Engine:** `runner.py` (Subprozess-Aufruf, Env-Isolation, timeout=10800), `parsing.py` (Fold-Median, None-safe), `reward.py` (vollständig konfiguriert nach Zero-Hardcoding Prinzipien). | `automation/optimizer/*`, `automation/config/optimizer.json`, `automation/AGENTS.md` |
 | 2026-06-09 | **Issue #311 (Pitfall #52 - Active/Inactive Config Crash):** Längen-Assertion in `backtest_runner.py` durch Set-Prüfung ersetzt, um Abstürze bei `active: false` gesetzten Strategien zu verhindern. `--dry-run` in GitHub Actions Workflow integriert, um Config-Mismatches direkt in der CI abzufangen. | `automation/backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-09 | **Issue #308 (0-Trade Micro-Sizing Artifact Fix):** Hard Short-Circuit in `_is_eligible` bei 0 Trades implementiert, um kaskadierende Rejection-Artefakte und irreführendes Logging zu stoppen. | `automation/backtest_runner.py`, `automation/tests/test_tournament_validation.py` |
 | 2026-06-08 | **Issue #293 (Gate-Scope vs. Deployment-Scope & Observability):** Behobene Ambiguität bei Sortino-Metriken im `daily_orchestrator.py` durch explizite Log- und Event-Namen (In-Sample Median vs. Aggregate OOS). `OOS-DEPLOY-REJECT` Check in `momentum_ls_run.py` eingebaut, der nicht OOS-evaluierte oder gescheiterte Strategie-Zuweisungen auf Symbol-Ebene hart aussortiert. | `automation/daily_orchestrator.py`, `automation/momentum_ls_run.py`, `automation/AGENTS.md` |

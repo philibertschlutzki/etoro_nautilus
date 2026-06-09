@@ -105,3 +105,7 @@ jobs:
       # ── Tier 9: Config & Dry-Run ─────────────────────────────────────────────
       - name: Backtest runner config dry-run (Pitfall #52)
         run: python3 -m automation.backtest_runner --dry-run --config automation/config/strategies.json
+
+      # ── Tier 10: Optimizer ───────────────────────────────────────────────────
+      - name: Optimizer Runner & Parser Tests
+        run: python3 -m pytest automation/tests/test_optimizer_runner.py automation/tests/test_optimizer_reward_parser.py -v --timeout=30

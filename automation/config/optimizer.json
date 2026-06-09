@@ -1,0 +1,7 @@
+{
+  "penalty_overfit_weight": 2.0,
+  "penalty_dd_weight": 1.0,
+  "bonus_coverage_weight": 0.5,
+  "penalty_unevaluable_oos": -100.0,
+  "sortino_clip_abs": 10.0
+}
