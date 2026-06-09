@@ -18,6 +18,14 @@ class MeanReversionConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
 class MeanReversionStrategy(HourlyStrategyBase):
     """
     Mean Reversion / Keltner Channel Strategie mit ATR Trailing Stop und 48h Time-Exit.
+
+    Architektur-Hinweis (Diskrepanz zu HourlyMeanReversionStrategy):
+    Diese Strategie verwendet engere Parameter (Defaults: 20/20/2.0) verglichen mit
+    HourlyMeanReversion (10/10/1.5). Dies führt in Kombination mit den Entry-Bedingungen
+    (Schließen außerhalb des 2.0-Multiplikators) zu einer viel höheren Frequenz
+    (ca. 1500 Trades vs. 150 Trades), häufigeren ATR-Stop-Auslösungen und einem
+    aggressiveren Overtrading-Profil, weshalb sie standardmäßig im Turnier
+    deaktiviert sein sollte.
     """
 
     def __init__(self, config: MeanReversionConfig, allocator: MomentumLSAllocator | None = None):
@@ -136,6 +144,7 @@ class MeanReversionStrategy(HourlyStrategyBase):
     def on_position_closed(self, event) -> None:
         super().on_position_closed(event)
         self.current_signal = None
+        # Wichtig: Zwingend auf 0 setzen, um Whipsaw/Overtrading zu verhindern
         self.bars_since_last_signal = 0
 
     def on_stop(self):
