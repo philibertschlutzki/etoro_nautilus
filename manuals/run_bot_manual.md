@@ -1,7 +1,3 @@
-Hier ist das vollständig überarbeitete und erweiterte Operations Manual. Die Struktur wurde speziell für den ressourceneffizienten Standalone-Betrieb auf einem Raspberry Pi mit 2 GB RAM optimiert, indem das rechen- und speicherintensive Matrix-Backtesting komplett entkoppelt wird. Jedes Thema ist in einem eigenen, logisch aufeinander aufbauenden Kapitel detailliert beschrieben.
-
----
-
 # Operations Manual: Standalone-Betrieb des Nautilus Trader Live-Bots auf dem Raspberry Pi (eToro)
 
 `run_bot_manual_pi.md` — Technische Dokumentation für den speichereffizienten Live-Betrip ohne lokales Backtesting.
