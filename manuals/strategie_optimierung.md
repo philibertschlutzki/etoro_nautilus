@@ -183,5 +183,3 @@ Deine Parameter-Optimierung gilt als statistisch erfolgreich und freigabe-bereit
 3. Die Anzahl der abgedeckten Instrumente (`win_count`) stabil geblieben oder gestiegen ist, da weniger Symbole aufgrund restriktiver Filter übersprungen wurden.
 
 Wenn alle drei Bedingungen zutreffen, sind die modifizierten JSON-Konfigurationen produktionsbereit und können mittels Git committet und auf das produktive Cloud-VPS-System übertragen werden.
-
-```
