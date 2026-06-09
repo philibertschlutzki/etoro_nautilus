@@ -1325,7 +1325,7 @@ def select_winners(
         aggregate_winner = {
             "strategy":    best,
             "win_count":   win_counts[best],
-            "median_sortino": round(
+            "median_is_sortino": round(
                 get_median([x for x in sortinos_by_strat[best] if x is not None]), 4
             ),
             **agg_oos_eval
@@ -2247,7 +2247,7 @@ def run_backtest() -> None:
             print(
                 f"🏆 {aggregate_winner['strategy']} — "
                 f"{aggregate_winner['win_count']} Wins, "
-                f"Median Sortino: {aggregate_winner['median_sortino']}"
+                f"Median IS Sortino: {aggregate_winner['median_is_sortino']}"
             )
         if no_winner_symbols:
             print(f"⚠️  Ohne eindeutigen Gewinner: {', '.join(no_winner_symbols)}")
