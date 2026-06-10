@@ -26,19 +26,19 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         cfg_path = Path("automation/config/tournament.json")
         with open(cfg_path, 'r', encoding='utf-8') as f:
             tournament_cfg = json.load(f)
-            risk_dd_cap = tournament_cfg.get("max_drawdown", 0.3)
+            risk_dd_cap = tournament_cfg["max_drawdown"]
 
-    penalty_unevaluable_oos = weights.get("penalty_unevaluable_oos", -10.0)
+    penalty_unevaluable_oos = weights["penalty_unevaluable_oos"]
 
     if not m.oos_evaluated or m.oos_sortino is None:
         return penalty_unevaluable_oos
 
-    sortino_clip_abs = weights.get("sortino_clip_abs", 5.0)
+    sortino_clip_abs = weights["sortino_clip_abs"]
     base = max(-sortino_clip_abs, min(sortino_clip_abs, m.oos_sortino))
 
-    penalty_overfit_weight = weights.get("penalty_overfit_weight", 0.5)
-    penalty_dd_weight = weights.get("penalty_dd_weight", 8.0)
-    bonus_coverage_weight = weights.get("bonus_coverage_weight", 1.0)
+    penalty_overfit_weight = weights["penalty_overfit_weight"]
+    penalty_dd_weight = weights["penalty_dd_weight"]
+    bonus_coverage_weight = weights["bonus_coverage_weight"]
 
     overfit_gap = max(0.0, m.is_sortino_median - base)
     dd_excess = max(0.0, m.oos_max_drawdown - risk_dd_cap)
