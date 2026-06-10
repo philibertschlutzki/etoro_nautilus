@@ -1,0 +1,41 @@
+{
+  "_schema": {
+    "description": "Globale Backtest-Einstellungen. catalog_path ist relativ zu PROJECT_ROOT. Wird von daily_orchestrator.py und backtest_runner.py gelesen.",
+    "fields": {
+      "catalog_path": "Pfad zum Nautilus-Datenkatalog (relativ zu PROJECT_ROOT)",
+      "start_capital": "Start-Kapital in USD f\u00fcr jeden Backtest-Run",
+      "spread_modeling": "bool \u2014 wenn true, werden Buy-Orders zum ask_price und Sell-Orders zum bid_price gef\u00fcllt (realistischere Simulation). NautilusTrader Default-Verhalten mit QuoteTicks.",
+      "fill_model": "F\u00fcll-Modell: 'bid_ask' (Buy@Ask, Sell@Bid) oder 'mid' (beide @ Midprice)",
+      "worker_log_cleanup": "bool \u2014 wenn true, werden Worker-Log-Dateien nach Abschluss gel\u00f6scht",
+      "max_workers": "Maximale Anzahl paralleler Worker-Prozesse (null = auto: cpu_count/2, max 6)",
+      "min_bars_for_backtest": "Mindestanzahl Bars pro Symbol f\u00fcr einen aussagekr\u00e4ftigen Backtest (=is_symbol_data_sufficient threshold)",
+      "span_tolerance_days": "Toleranz in Tagen f\u00fcr die historische Datenspanne, um knappe Verwerfungen (z. B. 149.8 statt 150) zu vermeiden.",
+      "walk_forward": "Walk-Forward Konfiguration (In-Sample, Out-of-Sample, Splits)",
+      "commission_bps": "Kommission pro Trade (Round-Trip) in Basispunkten (bps)",
+      "spread_bps_by_asset_class": "Dynamische Tick-Weitung pro Asset Class in Basispunkten (bps), um Zero-Spread Artefakte zu vermeiden",
+      "holdout_days": "Anzahl der Holdout-Tage f\u00fcr Out-of-Sample Validierung nach der Optimierung."
+    }
+  },
+  "catalog_path": "data/nautilus",
+  "start_capital": 10000.0,
+  "commission_bps": 1.0,
+  "spread_bps_by_asset_class": {
+    "CRYPTO": 15.0,
+    "EQUITY": 8.0,
+    "FOREX": 1.5,
+    "COMMODITY": 5.0,
+    "DEFAULT": 4.0
+  },
+  "spread_modeling": true,
+  "fill_model": "bid_ask",
+  "worker_log_cleanup": true,
+  "max_workers": null,
+  "min_bars_for_backtest": 200,
+  "span_tolerance_days": 3.0,
+  "walk_forward": {
+    "is_window_days": 120,
+    "oos_window_days": 30,
+    "splits": 1,
+    "holdout_days": 45
+  }
+}
