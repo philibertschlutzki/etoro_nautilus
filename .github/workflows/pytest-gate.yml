@@ -116,3 +116,6 @@ jobs:
       # ── Tier 10: Optimizer ──────────────────────────────────────────────────
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
+
+      - name: Optimizer Runner, Parser and Configured Reward
+        run: python3 -m pytest automation/tests/test_optimizer_runner.py automation/tests/test_optimizer_reward_parser.py -q

@@ -223,6 +223,7 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 - **`optimizer.json`**:
   Konfiguriert die Hyperparameter-Optimierung.
   Keys: `n_trials`, `n_startup_trials`, `seed`, `penalty_overfit_weight`, `penalty_dd_weight`, `bonus_coverage_weight`, `penalty_unevaluable_oos`, `sortino_clip_abs`.
+  Dynamische Reward-Gewichtung (Zero-Hardcoding): Gewichte (`penalty_overfit_weight`, `penalty_dd_weight`, etc.) werden direkt aus `optimizer.json` gelesen, das `max_drawdown`-Cap (DD-Cap) aus `tournament.json`.
 
 - **`backtest.json` (Erweiterung)**:
   `walk_forward.holdout_days`: Anzahl der Holdout-Tage für Out-of-Sample Validierung nach der Optimierung.
@@ -641,6 +642,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-10 | **Auftrag 1b:** runner.py (Subprozess-Aufruf, Env-Isolation, timeout=10800), parsing.py (Fold-Median, None-safe), reward.py (vollständig konfiguriert). | `automation/optimizer/runner.py`, `automation/optimizer/parsing.py`, `automation/optimizer/reward.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Auftrag 1a:** `holdout_days` in `backtest.json`; `optimizer.json`; Optimizer-Paket (`manifest`/`resolve`/`trial_config`) mit injizierbarem `now` für deterministische Window-Berechnung. | `automation/config/backtest.json`, `automation/config/optimizer.json`, `automation/optimizer/`, `automation/AGENTS.md` |
 | 2026-06-09 | `0a: --dry-run restlos entfernt; --no-deploy eingeführt; Phase 3 läuft immer real; Event LIVE_DEPLOY_SKIPPED_NO_DEPLOY.` | `automation/daily_orchestrator.py`, `automation/tests/test_orchestrator_cli.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-09 | **Issue #311 (Pitfall #52 - Active/Inactive Config Crash):** Längen-Assertion in `backtest_runner.py` durch Set-Prüfung ersetzt, um Abstürze bei `active: false` gesetzten Strategien zu verhindern. `--dry-run` in GitHub Actions Workflow integriert, um Config-Mismatches direkt in der CI abzufangen. | `automation/backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
