@@ -1,0 +1,650 @@
+{
+  "_schema": {
+    "description": "eToro Instrument-ID zu Nautilus-Symbol-Map. Einzige Source of Truth für automation/. Generiert aus adapters/instrument_map.py.",
+    "key": "eToro numeric instrument ID (string)",
+    "fields": {
+      "symbol": "Nautilus InstrumentId string (SYMBOL.VENUE)",
+      "asset_class": "equity | crypto | forex | commodity",
+      "price_precision": "int — aus automation/utils._fallback_precisions",
+      "size_precision": "int — aus automation/utils._fallback_precisions"
+    }
+  },
+  "instruments": {
+    "22": {
+      "symbol": "NATGAS.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "42": {
+      "symbol": "USDZAR.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "62": {
+      "symbol": "USDTRY.ETORO",
+      "asset_class": "forex",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "1012": {
+      "symbol": "CAT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1022": {
+      "symbol": "JNJ.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1102": {
+      "symbol": "PBR.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1111": {
+      "symbol": "TSLA.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1126": {
+      "symbol": "ADBE.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1129": {
+      "symbol": "WDC.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1130": {
+      "symbol": "MU.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1137": {
+      "symbol": "NVDA.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1160": {
+      "symbol": "WIX.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1184": {
+      "symbol": "PINS.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1402": {
+      "symbol": "ROP.ZU.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1450": {
+      "symbol": "ACN.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1497": {
+      "symbol": "VLO.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1531": {
+      "symbol": "HAL.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1687": {
+      "symbol": "GLW.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1704": {
+      "symbol": "CHTR.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1839": {
+      "symbol": "CRM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1865": {
+      "symbol": "FISV.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1905": {
+      "symbol": "MTZ.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1906": {
+      "symbol": "LRCX.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1945": {
+      "symbol": "CMG.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1979": {
+      "symbol": "SNAP.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "2380": {
+      "symbol": "01211.HK.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "2587": {
+      "symbol": "RHM.DE.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "3208": {
+      "symbol": "PALL.ETORO",
+      "asset_class": "commodity",
+      "price_precision": 5,
+      "size_precision": 5
+    },
+    "4067": {
+      "symbol": "GSAT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4074": {
+      "symbol": "HUBS.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4232": {
+      "symbol": "NVS.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4260": {
+      "symbol": "NOW.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4263": {
+      "symbol": "WDAY.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4286": {
+      "symbol": "TEAM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4309": {
+      "symbol": "LULU.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4356": {
+      "symbol": "STX.US.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4398": {
+      "symbol": "DOCU.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4399": {
+      "symbol": "TTD.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4403": {
+      "symbol": "ZS.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4421": {
+      "symbol": "CIEN.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5045": {
+      "symbol": "FSLY.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5635": {
+      "symbol": "EEFT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5960": {
+      "symbol": "SE.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5967": {
+      "symbol": "CPRT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6094": {
+      "symbol": "COHR.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6270": {
+      "symbol": "RIOT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6434": {
+      "symbol": "GOOGL.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6552": {
+      "symbol": "TSEM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6584": {
+      "symbol": "AG.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6700": {
+      "symbol": "XPEV.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6940": {
+      "symbol": "SQM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "7991": {
+      "symbol": "PLTR.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8585": {
+      "symbol": "GTLB.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8611": {
+      "symbol": "WBD.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8637": {
+      "symbol": "DUOL.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8638": {
+      "symbol": "E.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8671": {
+      "symbol": "HUT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8867": {
+      "symbol": "VRT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9077": {
+      "symbol": "FICO.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9119": {
+      "symbol": "INSM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9271": {
+      "symbol": "MNDY.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9517": {
+      "symbol": "INSW.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9803": {
+      "symbol": "TTMI.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9814": {
+      "symbol": "POWL.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "15233": {
+      "symbol": "ESLT.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "100000": {
+      "symbol": "BTC.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100001": {
+      "symbol": "ETH.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100003": {
+      "symbol": "XRP.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100017": {
+      "symbol": "ADA.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100043": {
+      "symbol": "DOGE.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100063": {
+      "symbol": "SOL.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100080": {
+      "symbol": "SHIBxM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 8,
+      "size_precision": 8
+    },
+    "100085": {
+      "symbol": "AVAX.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100303": {
+      "symbol": "PEPExM.ETORO",
+      "asset_class": "equity",
+      "price_precision": 8,
+      "size_precision": 8
+    },
+    "100323": {
+      "symbol": "ONDO.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100421": {
+      "symbol": "AERO.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "100446": {
+      "symbol": "HYPE.ETORO",
+      "asset_class": "equity",
+      "price_precision": 2,
+      "size_precision": 8
+    },
+    "6473": {
+      "symbol": "MSTR.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1832": {
+      "symbol": "AMD.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6549": {
+      "symbol": "TER.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6071": {
+      "symbol": "AXON.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1914": {
+      "symbol": "INTU.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5657": {
+      "symbol": "SMTC.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10476": {
+      "symbol": "SEI.US.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1115": {
+      "symbol": "NOK.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4482": {
+      "symbol": "TME.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "7930": {
+      "symbol": "LQDA.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1706": {
+      "symbol": "AMAT.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6705": {
+      "symbol": "FRO.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8604": {
+      "symbol": "KD.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1341": {
+      "symbol": "GEV.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1138": {
+      "symbol": "FDX.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "7852": {
+      "symbol": "AMKR.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5491": {
+      "symbol": "ASX.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6681": {
+      "symbol": "ELF.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6844": {
+      "symbol": "NVO.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4358": {
+      "symbol": "MRVL.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1484": {
+      "symbol": "PYPL.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1586": {
+      "symbol": "CAG.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1585": {
+      "symbol": "GIS.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "14310": {
+      "symbol": "NTSK.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1552": {
+      "symbol": "ABT.US.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4272": {
+      "symbol": "CCL.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4087": {
+      "symbol": "JAZZ.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4194": {
+      "symbol": "ZTS.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1002": {
+      "symbol": "GOOG.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    }
+  }
+}
