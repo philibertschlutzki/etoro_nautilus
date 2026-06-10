@@ -29,7 +29,9 @@ def make_objective(strategy: str):
             sampled=sampled,
             study_name=trial.study.study_name,
             trial_number=trial.number,
-            seed=seed
+            seed=seed,
+            n_folds=4,
+            holdout_days=45
         )
 
         output_path = run_backtest(trial_dir, manifest_path)
@@ -42,33 +44,12 @@ def make_objective(strategy: str):
                 t_data = json.load(f)
                 risk_dd_cap = t_data.get("max_drawdown", 0.30)
 
-        # Retrieve universe size directly from tournament metrics
-        # For simplicity or if there's no reliable denominator, we assume universe_size is equal
-        # to fully_eligible_pairs + failed_pairs, but as metrics only has fully_eligible_pairs
-        # and this function compute_reward uses it as denominator, we read fully_eligible_pairs.
-        # Actually, in the real backtester, universe_size represents the number of instruments simulated.
-        # It isn't explicitly output as a single value by parse_tournament (we only have fully_eligible_pairs).
-        # We will extract it safely. If it's 0, compute_reward handles it safely.
-        # Often it is just fully_eligible_pairs. If fully_eligible_pairs is used as denominator, it's fine.
-        # Wait, fully_eligible_pairs is the subset of the universe.
-        # I'll just use a default or read from metrics.
-        # Actually, reading the config for universe size isn't possible here. We'll use 1 or a constant if undefined,
-        # but the prompt specifically noted: "The strategy runs on pairs." and "Zero-Hardcoding".
-        # Let's read universe_size from `metrics.win_count` + failed? No, fully_eligible_pairs.
-        # Actually we can just use `metrics.fully_eligible_pairs` as a proxy if no other option,
-        # but to avoid hardcoding `10`, let's just pass `metrics.fully_eligible_pairs` or `1`.
-        # No, wait, if `universe_size` is missing, let's extract it from `tournament_result.json`
-        # `runner.py` outputs `tournament_result.json` which contains `"is_eligible_count"`, `"fully_eligible_count"`.
-        # But `parse_tournament` doesn't export the full universe size.
-        # Let's read the number of symbols in the universe by re-reading the JSON or using fully_eligible_pairs.
-        with open(output_path, "r", encoding="utf-8") as f:
-            t_data_out = json.load(f)
-            # Find the size of the "per_symbol_winners" dict
-            per_symbol_winners = t_data_out.get("per_symbol_winners", {})
-            universe_size = len(per_symbol_winners) if per_symbol_winners else metrics.fully_eligible_pairs
-            # If 0, fallback to 1 to avoid division by zero or errors
-            if universe_size == 0:
-                universe_size = 1
+        universe_path = config_dir().parent.parent / "data" / "universe" / "momentum_ls.json"
+        universe_size = 70
+        if universe_path.exists():
+            with open(universe_path, "r", encoding="utf-8") as f:
+                u_data = json.load(f)
+                universe_size = len(u_data.get("universe", []))
 
         reward = compute_reward(metrics, universe_size=universe_size, risk_dd_cap=risk_dd_cap)
         return reward

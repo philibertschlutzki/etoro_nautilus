@@ -1,0 +1,97 @@
+{
+  "_schema": {
+    "description": "Aktive Strategie-Liste mit optionalen per-Strategie-Parameter-Overrides. Defaults kommen aus strategy_defaults.json; Werte hier haben Vorrang.",
+    "fields": {
+      "active": "bool \u2014 wenn false, wird die Strategie beim Backtest \u00fcbersprungen",
+      "strategy_module": "Python-Modul-Pfad der Strategie",
+      "strategy_class": "Klassen-Name der Strategie",
+      "config_class": "Klassen-Name der Strategie-Konfiguration",
+      "params": "Optionale Parameter-Overrides (merged \u00fcber strategy_defaults.json)",
+      "tournament_overrides": "Dict \u2014 optionale Overrides f\u00fcr Tournament-Kriterien (z.B. min_expectancy: float, min_trades: int)"
+    }
+  },
+  "strategies": [
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.sma_crossover",
+      "strategy_class": "SmaCrossoverStrategy",
+      "config_class": "SmaCrossoverConfig",
+      "params": {}
+    },
+    {
+      "active": false,
+      "strategy_module": "automation.strategies.mean_reversion",
+      "strategy_class": "MeanReversionStrategy",
+      "config_class": "MeanReversionConfig",
+      "params": {},
+      "_note": "Deaktiviert: Whipsaw-Anfälligkeit / Overtrading"
+    },
+    {
+      "active": false,
+      "strategy_module": "automation.strategies.dynamic_breakout",
+      "strategy_class": "DynamicBreakoutStrategy",
+      "config_class": "DynamicBreakoutConfig",
+      "params": {},
+      "_note": "Deaktiviert: Whipsaw-Anfälligkeit / Overtrading"
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.flash_crash_reversal",
+      "strategy_class": "FlashCrashReversalStrategy",
+      "config_class": "FlashCrashReversalConfig",
+      "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.volatility_breakout",
+      "strategy_class": "VolatilityBreakoutPumpStrategy",
+      "config_class": "VolatilityBreakoutConfig",
+      "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.tesla_combo_strategy",
+      "strategy_class": "ComboTrendVwapStrategy",
+      "config_class": "ComboTrendVwapConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 10
+      },
+      "_note": "Expects fewer trades due to strict entry conditions; lowered min_trades threshold."
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.vwap_exhaustion",
+      "strategy_class": "VwapExhaustionStrategy",
+      "config_class": "VwapExhaustionConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 10
+      },
+      "_note": "Expects fewer trades due to price-deviation logic; lowered min_trades threshold."
+    },
+    {
+      "active": false,
+      "strategy_module": "automation.strategies.trend_pullback",
+      "strategy_class": "TrendPullbackStrategy",
+      "config_class": "TrendPullbackConfig",
+      "params": {},
+      "_note": "Deaktiviert: 0 FIFO-Schliessungen in allen Tests."
+    },
+    {
+      "active": false,
+      "strategy_module": "automation.strategies.adx_atr_momentum",
+      "strategy_class": "AdxAtrMomentumStrategy",
+      "config_class": "AdxAtrMomentumConfig",
+      "params": {},
+      "_note": "Deaktiviert: ADX-Initialisierungsproblem."
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.hourly_mean_reversion",
+      "strategy_class": "HourlyMeanReversionStrategy",
+      "config_class": "HourlyMeanReversionConfig",
+      "params": {}
+    }
+  ]
+}
