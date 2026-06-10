@@ -46,6 +46,8 @@ Das `automation/`-Paket ist ein **vollständig isoliertes, autonomes Daten- und 
 
 ## 2. Repository-Struktur (automation/)
 
+- **`automation/optimizer/`**: Paket für Closed-Loop-Hyperparameter-Optimierung. Submodule umfassen `manifest`, `resolve`, `trial_config`, `runner`, `parsing`, `reward`, `spaces`, `confirm`, `run_optimization`.
+
 ```text
 automation/
 ├── __init__.py                 # Public API via lazy __getattr__ (run_backfill, run_fetch, …)
@@ -217,6 +219,13 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 ---
 
 ## 7. Konfigurationssystem (automation/config/)
+
+- **`optimizer.json`**:
+  Konfiguriert die Hyperparameter-Optimierung.
+  Keys: `n_trials`, `n_startup_trials`, `seed`, `penalty_overfit_weight`, `penalty_dd_weight`, `bonus_coverage_weight`, `penalty_unevaluable_oos`, `sortino_clip_abs`.
+
+- **`backtest.json` (Erweiterung)**:
+  `walk_forward.holdout_days`: Anzahl der Holdout-Tage für Out-of-Sample Validierung nach der Optimierung.
 
 **Merge-Reihenfolge der Strategie-Parameter (niedrig → hoch):**
 1. `strategy_defaults.json` (Basis, 1h-optimiert)
@@ -632,6 +641,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-10 | **Auftrag 1a:** `holdout_days` in `backtest.json`; `optimizer.json`; Optimizer-Paket (`manifest`/`resolve`/`trial_config`) mit injizierbarem `now` für deterministische Window-Berechnung. | `automation/config/backtest.json`, `automation/config/optimizer.json`, `automation/optimizer/`, `automation/AGENTS.md` |
 | 2026-06-09 | `0a: --dry-run restlos entfernt; --no-deploy eingeführt; Phase 3 läuft immer real; Event LIVE_DEPLOY_SKIPPED_NO_DEPLOY.` | `automation/daily_orchestrator.py`, `automation/tests/test_orchestrator_cli.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-09 | **Issue #311 (Pitfall #52 - Active/Inactive Config Crash):** Längen-Assertion in `backtest_runner.py` durch Set-Prüfung ersetzt, um Abstürze bei `active: false` gesetzten Strategien zu verhindern. `--dry-run` in GitHub Actions Workflow integriert, um Config-Mismatches direkt in der CI abzufangen. | `automation/backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-09 | **Issue #308 (0-Trade Micro-Sizing Artifact Fix):** Hard Short-Circuit in `_is_eligible` bei 0 Trades implementiert, um kaskadierende Rejection-Artefakte und irreführendes Logging zu stoppen. | `automation/backtest_runner.py`, `automation/tests/test_tournament_validation.py` |
