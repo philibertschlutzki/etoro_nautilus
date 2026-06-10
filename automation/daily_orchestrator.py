@@ -28,7 +28,7 @@ Führt 5 Phasen sequentiell und fehlerresistent aus:
   nach erfolgreichem Merge gelöscht.
 
 Verwendung:
-  python3 automation/daily_orchestrator.py [--dry-run] [--skip-api-fetch]
+  python3 automation/daily_orchestrator.py [--skip-api-fetch]
   python3 automation/daily_orchestrator.py --help
 
 Wichtig:
@@ -863,7 +863,7 @@ def _create_dummy_tournament(log: logging.Logger) -> None:
         "per_symbol_winners":          {},
         "aggregate_winner":            None,
         "full_results":                [],
-        "_note": "Dummy-Tournament (dry-run oder kein Backtest-Datenmaterial).",
+        "_note": "Dummy-Tournament (kein Backtest-Datenmaterial).",
     }
     TOURNAMENT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(str(TOURNAMENT_PATH), "w", encoding="utf-8") as f:
