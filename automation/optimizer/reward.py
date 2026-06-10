@@ -18,12 +18,14 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
               + coverage*bonus_coverage_weight"""
 
     if weights is None:
-        cfg_path = Path("automation/config/optimizer.json")
+        from automation.optimizer.trial_config import config_dir
+        cfg_path = config_dir() / "optimizer.json"
         with open(cfg_path, 'r', encoding='utf-8') as f:
             weights = json.load(f)
 
     if risk_dd_cap is None:
-        cfg_path = Path("automation/config/tournament.json")
+        from automation.optimizer.trial_config import config_dir
+        cfg_path = config_dir() / "tournament.json"
         with open(cfg_path, 'r', encoding='utf-8') as f:
             tournament_cfg = json.load(f)
             risk_dd_cap = tournament_cfg["max_drawdown"]

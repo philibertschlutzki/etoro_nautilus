@@ -76,6 +76,8 @@ def build_trial(
     tournament_file = base_cfg / "tournament.json"
     t_hash = sha256_file(tournament_file) if tournament_file.exists() else "unknown"
 
+    catalog_path = config_dir().parent / "data" / "nautilus"
+
     manifest_payload = {
         "manifest_version": "1.0",
         "provenance": {
@@ -88,7 +90,8 @@ def build_trial(
         "global_settings": {
             "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_time": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "seed": seed
+            "seed": seed,
+            "catalog_path": str(catalog_path)
         },
         "strategies": [
             {
