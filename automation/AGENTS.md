@@ -374,17 +374,10 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 - Bei `walk_forward.splits > 1` exportiert `aggregate_winner.oos_fold_sortinos` die Pro-Fold-OOS-Sortinos als Liste (Basis des robusten Median-Rewards).
 - Param-Auflösung und Fold-Sortino-Sammlung MÜSSEN als reine, testbare Funktionen (`resolve_strategy_params`, `collect_oos_fold_sortinos`) vorliegen.
 
-### Optimizer / `backtest_runner.py` — Config-Contract
-
-- `backtest_runner.py` liest Strategien + Parameter **ausschließlich** aus der via `--config` übergebenen Manifest-Datei. `strategies[].params` sind vollständig aufgelöst und autoritativ; **kein** erneutes Mergen aus `strategy_defaults.json`, sobald `manifest_version` gesetzt ist.
-- `backtest_runner.py` respektiert `ETORO_CONFIG_DIR` (Quelle der eingefrorenen `tournament.json`) und `ETORO_LOGS_DIR`; Ergebnisse ausschließlich nach `--output`.
-- Bei `walk_forward.splits > 1` exportiert `aggregate_winner.oos_fold_sortinos` die Pro-Fold-OOS-Sortinos als Liste (Basis des robusten Median-Rewards).
-- Param-Auflösung und Fold-Sortino-Sammlung MÜSSEN als reine, testbare Funktionen (`resolve_strategy_params`, `collect_oos_fold_sortinos`) vorliegen.
-
-### 🟢 Pitfall #53 — `--dry-run` entfernt / `--no-deploy` eingeführt
+### 🟢 Pitfall #50 — `--dry-run` entfernt / `--no-deploy` eingeführt
 `--dry-run` übersprang Phase 3 und schrieb ein Dummy-Tournament — irreführend, ersatzlos entfernt. Ersatz: `--no-deploy` führt Phase 1–4 vollständig aus und unterbindet ausschließlich Phase 5. Phase 3 läuft ab sofort IMMER real; `_create_dummy_tournament` ist nur noch No-Data-Fallback (`not TOURNAMENT_PATH.exists()`). Operator-Validierung: `python3 automation/daily_orchestrator.py --no-deploy --skip-api-fetch`.
 
-### 🟢 Pitfall #52 — Active/Inactive Filter vs. Defaults Assertion Crash (Issue #311)
+### 🟢 Pitfall #51 — Active/Inactive Filter vs. Defaults Assertion Crash (Issue #311)
 **Symptom:** Orchestrator crasht vor dem Backtest mit `AssertionError: Mismatch: 8 defaults loaded but 6 strategies executed.`.
 **Root Cause:** Der Guard aus Pitfall #38 nutzte einen strikten Längenvergleich (`len(defaults) == len(strategies)`). Wenn in der `strategies.json` Strategien regulär auf `active: false` gesetzt wurden, schrumpfte die zu exekutierende Liste. Der Guard crashte das System, da er nicht zwischen absichtlich deaktivierten Strategien und echten Mismatches unterschied.
 **Fix:** Umstellung auf eine Set-basierte Assertion (`issubset`). Es wird nun nur noch geprüft, ob alle *aktiven* Strategien einen Eintrag in den Defaults besitzen. Überzählige Defaults von inaktiven Strategien werden sicher ignoriert. Zur Prävention wird in der CI-Pipeline (`pytest-gate.yml`) nun standardmäßig `python3 -m automation.backtest_runner --dry-run` ausgeführt.
@@ -400,7 +393,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Root Cause:** Winsorizing-Caps (50.0) für Sortino und Profit Factor schützten zwar vor Division-by-Zero, fungierten in Folgesystemen jedoch als extrem verzerrende Ausreißer im Median-Pool.
 **Fix:** Die statistische Funktion `get_median` filtert Sentinel-Werte (exakt 50.0) proaktiv heraus, sofern alternative, organische Ratios im Population-Sample existieren. Ratios werden dadurch rein von realen Markt-Kopien angetrieben.
 **Betroffen:** `automation/backtest_runner.py`
-### 🟢 #45 — Micro Position Sizing & Flat Equity Curves (Issue #254)
+### 🟢 Pitfall #45 — Micro Position Sizing & Flat Equity Curves (Issue #254)
 **Symptom:** Strategien haben Plausible Ratios (PF, Sortino), aber generieren ~0% Absolute Return (z.B. -0.04%).
 **Root Cause:** Kollabierendes Position Sizing. Wenn das berechnete Notional bei hohen Kursen / kleinen Increments unter 1 Increment fiel, rundete `math.floor` auf 0 ab, oder das System handelte mit Cent-Beträgen. Das führte zu winzigen absoluten PnLs.
 **Fix & Constraints (Kritische Architektur-Regeln):**
@@ -410,7 +403,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 - **State/Key Bleed (OOS Gating in `_is_eligible`)**: `oos_metrics` is a sibling key (Geschwister-Key) to `metrics` in the backtest result dictionary. Searching for it inside `metrics` (`metrics.get("oos_metrics")`) will silently fail and return `None`, leading to unexpected rejection in tournament gating. Da `oos_metrics` auf derselben Ebene wie `metrics` liegt und nicht tief verschachtelt ist, muss dieser Fehler bei zukünftigen Aggregations-Modulen von vornherein ausgeschlossen werden. Always parse sibling keys directly from the root result dictionary `r`.
 
-### 🟢 #54 — Aggregate Metric Statistical Artifacts (Issue #255)
+### 🟢 Pitfall #52 — Aggregate Metric Statistical Artifacts (Issue #255)
 **Symptom:** In der Turnierauswertung ergab `win_rate * total_trades` keinen ganzzahligen Wert. Die OOS-Rendite wirkte im Vergleich zu Einzel-Symbolen inkonsistent, und das OOS-Gate wurde durch die aufsummierten Trades ausgehebelt (Trade-Sum Trap).
 **Root Cause:** Die Aggregation vermischte arithmetische Mittelwerte (für Trades) mit Medians (für Win-Rates). Dies zerstörte die zugrundeliegende mathematische Identität der Einzel-Backtests und erzeugte "Frankenstein-Metriken". Edge-Cases in Zero-Loss Backtests lieferten zudem `None`, was bei nicht typsicherem Unpacking zu Laufzeitfehlern führen konnte.
 **Fix (Architektur-Regel):** Die Metrik-Aggregation (`select_winners`) erzwingt nun streng eine hybride, aber mathematisch konsistente Struktur (`portfolio_sum_for_trades_and_count_ratio_for_win_rate_and_trade_weighted_mean_for_return_and_median_for_risk_ratios`).
@@ -427,12 +420,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **WICHTIG für Agenten:** Dieser hybride Aggregations-Zustand (Volumen-Summe, Trade-gewichtete Rendite, Ratio-Median für Sortino/PF, echte Equity-Kurve für Max Drawdown) ist gewollt. Versuche nicht, diese restliche hybride Struktur als "Inkonsistenz" zu reparieren.
 **Betroffen:** `automation/backtest_runner.py`, `automation/daily_orchestrator.py`
 
-### 🟢 #42 — Crypto: Degenerated Sortino & Profit Factor Metrics (Issue #232)
+### 🟢 Pitfall #42 — Crypto: Degenerated Sortino & Profit Factor Metrics (Issue #232)
 **Symptom:** Nahezu alle Crypto-Assets (BTC, ETH, XRP etc.) weisen in Backtests über unterschiedlichste Strategien hinweg stark negative Sortino-Werte (z.B. -12.99) und einen Profit Factor von 0.00 auf, gepaart mit extrem schlechten Win-Rates.
 **Root Cause:** Dies ist **kein** Bug im Position Sizing (Precision 8) oder FSB(16) Encoding. Das Sizing (`make_qty`) funktioniert für kleinste Krypto-Bruchstücke fehlerfrei. Das Verhalten ist ein rein legitimer, marktbedingter Effekt (Szenario B). Die Long-only-Ausrichtung der aktuellen Strategien in Kombination mit eToros weiten Crypto-Spreads (15 bps) und hohen Volatilitäten in Down-Märkten führt mathematisch korrekt zu diesem Ausverkauf der Metriken. Da eToro REAL-Shorts ablehnt, filtern wir diese Instrumente auf Basis ihrer Performance ganz natürlich organisch im OOS-Gate heraus.
 **Fix:** Kein Fix notwendig, es handelt sich um intendiertes Marktverhalten. Zukünftige Evaluatoren dürfen hierbei nicht auf einen vermeintlichen Precision-Mangel rückschließen.
 
-### 🟢 #41 — Zero-Spread in Synthetic Ticks
+### 🟢 Pitfall #41 — Zero-Spread in Synthetic Ticks
 **Symptom:** Backtesting führt zu physikalisch unplausiblen Ergebnissen (z.B. Max-Drawdown < 1 % bei hunderten Trades), da die synthetischen 1-Stunden-QuoteTicks einen Zero-Spread aufweisen und somit Ausführungen im Backtest de facto kostenfrei zum Midprice erfolgen. Dies bläht Risk-Metriken (Sortino, PF) artifiziell auf.
 **Root Cause:** Beim Umwandeln von stündlichen Kerzen in Ticks entsteht kein natürlicher Bid/Ask Spread, wodurch `fill_model="bid_ask"` ins Leere greift. Ein reiner Order-Fill-Workaround genügt nicht, da die Ticks direkt im Katalog-Ladezyklus die Engine beliefern.
 **Fix:** Implementierung einer dynamischen `spread_bps_by_asset_class` Parameter in `backtest.json`. `load_ticks_from_catalog` weitet nun aktiv Bid- und Ask-Preise anhand dieser BPS-Konfiguration direkt beim Lesen aus den Parquet-Metadaten. Ergänzend wurde eine statische FIFO-Kommission (`commission_bps`) im PnL-Matching-Prozess hinzugefügt.
@@ -444,31 +437,31 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Umstellung auf "Rank first, Gate second". Die Metrik-Normalisierung findet auf der gesamten IS-tauglichen Population statt. Anschließend wird pro Symbol absteigend nach Score iteriert, bis der erste Kandidat das OOS-Gate besteht. Vollständiges Logging des OOS-Decision-Trails im Terminal (`[OOS-Drop]`) hinzugefügt.
 **Betroffen:** `automation/backtest_runner.py`, `automation/tests/*.py`
 
-### 🟢 #39 — TypeError in NautilusTrader balances API (Issue #181)
+### 🟢 Pitfall #39 — TypeError in NautilusTrader balances API (Issue #181)
 **Symptom:** Jeder Matrix-Backtest brach beim ersten geschlossenen Bar ab (`TypeError: 'method' object is not iterable`), was zu 0 Trades über alle Symbol/Strategie-Kombinationen führte.
 **Root Cause:** Die NautilusTrader-API stellt `account.balances` als Methode (`cpdef dict balances(self)`) bereit, nicht als Eigenschaft/Attribut. Die Backtest-Strategien versuchten, die zurückgegebene Methode zu iterieren (`list(account.balances)`). Gleichzeitig stürzte das Formatieren von Metrics mit `None` (z.B. aus all-win Szenarien) ab, da Formatstrings auf `NoneType` nicht anwendbar sind.
 **Fix:** Umstellung auf die typsicheren Methoden `account.balance_total()` und `account.balance_free()` unter Berücksichtigung des `Money`-Rückgabewertes, verpackt in einem try-except Block ohne raises (`AGENTS.md` §14). In den Metriken-Formatstrings `(val or 0.0)` verwendet.
 **Betroffen:** `automation/strategies/hourly_strategy_base.py`, `automation/backtest_runner.py`, `automation/tests/test_strategy_duplication.py`
 
-### 🟢 #40 — Datenspanne Toleranz / INSUFFICIENT DATA (Issue #193, Issue #271)
+### 🟢 Pitfall #40 — Datenspanne Toleranz / INSUFFICIENT DATA (Issue #193, Issue #271)
 **Symptom:** Etwa 40 % der Backtests wurden wegen geringfügiger Datenunterschreitung (z. B. 149.8 statt 150 Tage) hart verworfen. An Wochenenden führte dies bei Equity/Forex trotz Toleranz zum Abbruch (z.B. 148.3 statt 150), da die Toleranz durch einen Hardcoded-Guard überschrieben wurde.
 **Root Cause:** Die Anforderung `_walk_forward_days` wurde initial strikt ohne Toleranz validiert. Später wurde ein widersprüchlicher Hard-Guard (`required_days * 0.95`) eingeführt, der die `span_tolerance_days` stumm überschrieb. Zudem zog der Orchestrator an Wochenenden das Fenster bis Sonntag auf, obwohl freitags die letzten Equity-Daten vorliegen.
 **Fix:** Die Konfigurationsvariable `span_tolerance_days` (Standard 3.0) ist nun die absolute "Single Source of Truth" in `check_data_span`. Der 0.95-Hard-Guard wurde entfernt. Der Orchestrator rollt nun am Wochenende den Endpunkt mathematisch korrekt auf Freitag Mitternacht zurück.
 **Betroffen:** `automation/backtest_runner.py`, `automation/config/backtest.json`, `automation/daily_orchestrator.py`
 
-### 🟢 #38 — Strategy Matrix Execution Mismatch (Issue #152)
+### 🟢 Pitfall #38 — Strategy Matrix Execution Mismatch (Issue #152)
 **Symptom:** Das System lud Defaults für 8 Strategien, aber führte nur 7 Strategien im Backtest-Matrix-Loop aus. Die Gesamtanzahl der Jobs lag bei 343 statt den erwarteten 392.
 **Root Cause:** `HourlyMeanReversionStrategy` war in `strategy_defaults.json` definiert, fehlte jedoch in der aktiven `strategies.json` als Ausführungsziel. Zudem fehlte eine Validierung, die sicherstellt, dass definierte Defaults auch tatsächlich als aktive Strategien registriert sind.
 **Fix:** `HourlyMeanReversionStrategy` wurde mit `active=true` zur `strategies.json` hinzugefügt. Zusätzlich wurde eine Laufzeit-Assertion in `automation/backtest_runner.py` implementiert, die das Backend hart abstürzen lässt, wenn die Anzahl der geladenen Defaults nicht exakt mit der Anzahl der auszuführenden aktiven Strategien übereinstimmt. *Jede Strategie, die in den Defaults geladen wird, MUSS zwingend im Execution Loop enthalten sein, es sei denn, sie wird explizit per Bypass übersprungen.*
 **Betroffen:** `automation/backtest_runner.py`, `automation/config/strategies.json`, `automation/AGENTS.md`
 
-### 🟢 #37 — Sortino Ratio Explosion & Tournament Artefakte (Issue #151)
+### 🟢 Pitfall #37 — Sortino Ratio Explosion & Tournament Artefakte (Issue #151)
 **Symptom:** Unrealistisch hohe Sortino-Werte (> 200) führen zu einer fehlerhaften Selektion von Gewinnern im Tournament, wobei oft Low-Yield-Strategien mit minimaler absoluter Rendite bevorzugt werden.
 **Root Cause:** Bei einer geringen Anzahl von Trades oder fehlenden Verlusten tendiert die Downside-Deviation (`dd_dev`) gegen null. Die Division im Sortino-Nenner erzeugt mathematisch explodierende Werte (Artefakte), die keine echte Performance widerspiegeln.
 **Fix:** Einführung eines harten Caps (Winsorizing auf max. 50.0), einer Absicherung des Nenners (`max(dd_dev, 1e-6)`), eines Sanity-Gates (Cap auf max. 2.0 bei `total_return < 0.5%`) und eines Minimum-Downside-Gates (Cap auf max. 2.0 bei weniger als 2 echten Verlust-Trades und unter 50 Gesamt-Trades).
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🟢 #36 — Precision API Parsing & Datenkorruption (Issue #146)
+### 🟢 Pitfall #36 — Precision API Parsing & Datenkorruption (Issue #146)
 * **Hinweis (Issue #179 / Issue #231):** Die eToro API liefert beim Endpoint `instruments` derzeit oftmals **keine Precision-Felder für reine Equities**. Dies ist ein bekanntes Limit der API, weshalb das fehlende Feld für Equities kein Fehler ist. Der in `_fallback_precisions` verwendete Standard-Fallback auf `(2,2)` ist funktional korrekt und fängt dieses Verhalten sicher ab. False-Positive-Warnungen in `api_backfiller.py` bei Batch-Requests, die ausschließlich aus Equities bestehen, wurden zu `DEBUG` herabgestuft, um irrelevante Warnungen im `historical_fetcher` zu vermeiden.
 **Root Cause:** eToro änderte die API-Struktur (`instruments` -> `instrumentDisplayDatas`). Der alte Parser lieferte 0 Treffer. Das System fiel stumm auf einen blinden `(2, 2)`-Fallback für alle Instrumente zurück (inklusive Krypto/Fractional).
 **Symptom:** Krypto-Parquets wurden mit `size_prec=2` geschrieben. Der Mismatch zwischen Arrow-Metadaten und den generierten i128-Ticks führte unweigerlich zu `RuntimeError`-Abbrüchen im Nautilus-Matrix-Backtest.
@@ -480,13 +473,13 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 > **Legende:** 🔴 OFFEN (im aktuellen Code aktiv) · 🟡 TEILWEISE · 🟢 BEHOBEN/dokumentiert
 
-### 🟢 #14 — `create_mock_instrument` übergeht den eigenen Docstring (Haupt-Bug: 0 Trades)
+### 🟢 Pitfall #14 — `create_mock_instrument` übergeht den eigenen Docstring (Haupt-Bug: 0 Trades)
 **Symptom:** Backtest liefert über alle Symbole × Strategien `Trades=0`, `0 eligibel`, `0 Gewinner`. Logs zeigen `size=0 (parquet meta)`.
 **Root Cause:** `backtest_runner.py:create_mock_instrument` dokumentiert „`size_precision`: Ignoriert — immer 8", implementiert aber `sp = size_precision if size_precision is not None else 8`. Der aktive Aufrufer (`run_single_backtest_worker`) übergibt `size_precision=sp_parquet`, wobei `sp_parquet=0` aus den Parquet-Metadaten stammt (`read_precisions_from_parquet`). Da `0 is not None`, schlägt die 0 durch → `size_increment=1.0` → ganzzahlige Order-Größe → bei Aktienkursen > `trade_amount_usd` rundet `make_qty()` auf 0 → jedes Signal verworfen.
 **Fix:** `sp = size_precision if (size_precision is not None and size_precision > 0) else 8`.
 **Betroffen:** `automation/backtest_runner.py`.
 
-### 🟢 #20 — Drei divergierende `_compute_quantity`-Implementierungen
+### 🟢 Pitfall #20 — Drei divergierende `_compute_quantity`-Implementierungen
 **Symptom:** Inkonsistentes Verhalten je nach Strategie-Basisklasse; teils stille Signal-Verwerfung.
 **Root Cause:** Drei unterschiedliche Implementierungen:
 1. `hourly_strategy_base.py` nutzt `instrument.make_qty(units, round_down=True)` und greift nicht auf `lot_size` zu.
@@ -495,63 +488,63 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Fix:** Eine einzige Implementierung in `HourlyStrategyBase`, die `make_qty` selbst über `size_precision` entscheiden lässt, statt manuell gegen `lot_size`/`size_increment` zu prüfen. Doppelimplementierungen entfernen.
 **Betroffen:** `automation/strategies/hourly_strategy_base.py`, `momentum_ls_base.py`, `adx_atr_momentum.py`, `trend_pullback.py`.
 
-### 🟢 #21 — `safe_compute_quantity` ist toter Code
+### 🟢 Pitfall #21 — `safe_compute_quantity` ist toter Code
 **Symptom:** Die als Pitfall-#14-Fix gedachte Funktion in `fractional_trading.py` wird von keiner Strategie aufgerufen; der dokumentierte Schutz greift im Backtest nicht.
 **Fix:** Die ungenutzte Funktion `safe_compute_quantity` wurde vollständig aus der Codebasis und den Tests entfernt. Die Logik ist nun alleinig in `HourlyStrategyBase.make_qty` konsolidiert (siehe #20).
 **Betroffen:** `automation/fractional_trading.py`.
 
-### 🟢 #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
+### 🟢 Pitfall #19 — `momentum_ls_run.py` verletzt das Standalone-Prinzip
 **Symptom:** Live-Pfad ist nicht hermetisch.
 **Root Cause:** `from archive.adapters.etoro_data import …` und `from archive.adapters.etoro_config import …`. `automation/` soll laut Abschnitt 4 keine externen Importe haben.
 **Fix:** Adapter in `automation/adapters/` migriert und Isolations-Test entsprechend angepasst. Keine dokumentierte Standalone-Ausnahme mehr.
 **Betroffen:** `automation/momentum_ls_run.py`.
 
-### 🟢 #25 — Tournament-OOS-Kriterien Validation Warning
+### 🟢 Pitfall #25 — Tournament-OOS-Kriterien Validation Warning
 **Symptom:** Startup-Validierung meldet, dass `oos_min_trades` und `oos_min_total_return` definiert, aber nicht referenziert sind.
 **Fix:** `load_tournament_config` streicht den `oos_` Prefix bei der Validierung. OOS-Kriterien werden vom Evaluator im `check_oos=True` Zweig genutzt, die Warnung war ein False-Positive.
 **Betroffen:** `automation/backtest_runner.py`.
 
-### 🟢 #22 — Alle Tournament-Gewinner werden auf MomentumLSSmaStrategy reduziert
+### 🟢 Pitfall #22 — Alle Tournament-Gewinner werden auf MomentumLSSmaStrategy reduziert
 
 **Symptom:** Egal welche Strategie das Tournament pro Symbol gewinnt, live läuft immer SMA(5).
 **Fix:** Dynamische Registry aus `strategies.json`, echte Gewinner-Strategie wird live registriert, Allocator-Hook in `HourlyStrategyBase`, PoC-Dateien entfernt, Live-`bar_type` auf 1h umgestellt (MID-INTERNAL), QuoteTick-Subscription in allen aktiven Strategien.
 **Betroffen:** `automation/momentum_ls_run.py`, `automation/strategies/*.py`.
 
-### 🟢 #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
+### 🟢 Pitfall #23 — `size_precision=0` wird an der Quelle persistiert (Live + Catalog)
 **Symptom:** Selbst nach Fix von #14 bleiben Live-Metadaten kaputt.
 **Root Cause:** `catalog_service.py` (ZIP-Metadaten), `api_backfiller._build_arrow_meta` und `utils._fallback_precisions` schreiben für Equities `size_precision=0`. `daily_orchestrator._ensure_metadata` übernimmt diese.
 **Fix:** Schreibseite auf `size_precision=2` für Equities angehoben. `regenerate_precision.py` wurde ersatzlos gelöscht. Korrupte Katalogdaten aus der Quelle müssen komplett neu aufgebaut werden (`--reset-catalog`).
 **Betroffen:** `automation/utils.py`, `automation/api_backfiller.py`, `automation/catalog_service.py`, `automation/daily_orchestrator.py`.
 
-### 🟢 #24 — Datendichte vs. Indikator-Warmup (Walk-Forward OOS-Guard)
+### 🟢 Pitfall #24 — Datendichte vs. Indikator-Warmup (Walk-Forward OOS-Guard)
 **Symptom:** Backtests rechneten mit 30 Tagen Historie ein 90d+30d Walk-Forward-Fenster, emittierten verzerrte OOS-Metriken und gewannen Turniere ohne Warnung (Issue #105). Strategien mit langen Perioden initialisierten bei kurzen Datenfenstern spät oder gar nicht.
 **Fix:** Guard im `backtest_runner.py` implementiert (überspringt, wenn `span_days < required_days * 0.95`). Die Beschaffungstiefe für den `historical_fetcher` im `daily_orchestrator.py` dynamisch an das Walk-Forward-Fenster (inklusive Puffer) gekoppelt statt fix `min_bars=200`. Die Zuweisung von `_walk_forward_days` wurde in Issue #121 gefixt, um den Guard erfolgreich zu triggern.
 **Betroffen:** `automation/backtest_runner.py`, `automation/daily_orchestrator.py`.
 
-### 🟢 #15 — `BrokenProcessPool` durch OOM
+### 🟢 Pitfall #15 — `BrokenProcessPool` durch OOM
 Worker auf `cpu//2` (max 6) begrenzt, `max_tasks_per_child=1`, expliziter Catch + sequenzieller Fallback. **Behoben** in `backtest_runner.py`.
 
-### 🟢 #16 — PyArrow 24+ `BinaryView` → Nautilus Rust-Panic
+### 🟢 Pitfall #16 — PyArrow 24+ `BinaryView` → Nautilus Rust-Panic
 Alle Quellen schreiben jetzt `pa.binary(16)` (= FixedSizeBinary(16)) nativ; Migration entfällt. **Behoben** (Shift-Left).
 
-### 🟢 #17 — Flat-Lock nach Reverse Entry
+### 🟢 Pitfall #17 — Flat-Lock nach Reverse Entry
 Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben** in allen aktiven Strategien.
 
-### 🟢 #18 — `make_qty` ValueError bei Equities
+### 🟢 Pitfall #18 — `make_qty` ValueError bei Equities
 `round_down=True` verhindert den ValueError NICHT. Zweistufige Absicherung (Pre-Check + try/except) dokumentiert. **Teilweise** umgesetzt — siehe #20/#21 für die verbleibende Inkonsistenz.
 
 
-### 🟢 #44 — Asynchrone Speicherung (Deferred Flush Bug)
+### 🟢 Pitfall #44 — Asynchrone Speicherung (Deferred Flush Bug)
 **Symptom:** Datenverlust oder Inkonsistenzen beim Schreiben der Puffer.
 **Fix:** Korrektes Flush-Handling implementiert (dokumentiert in `Test_report.md` via `test_do_flush`).
 **Betroffen:** `automation/catalog_service.py`.
 
-### 🟢 #26 — Fehlendes Cleanup temporärer Verzeichnisse
+### 🟢 Pitfall #26 — Fehlendes Cleanup temporärer Verzeichnisse
 **Symptom:** Mögliche Dateisystem-Müllansammlung bei fehlerhaftem Backtest-Abbruch.
 **Fix:** Absicherung des `temp_catalog_dir` Cleanups durch einen harten `try/finally`-Block (via `patch_try_finally.py`).
 **Betroffen:** `automation/backtest_runner.py`.
 
-### 🟢 #27 — Divergierende size_precision-Heuristiken
+### 🟢 Pitfall #27 — Divergierende size_precision-Heuristiken
 **Symptom:** Es existieren drei widersprüchliche Heuristiken für Equity `size_precision`: `automation/utils._fallback_precisions` liefert 2, während `automation/adapters/instrument_utils.get_size_precision` und `automation/fractional_trading._get_size_precision` fälschlicherweise 0 liefern.
 **Fix:** Konsolidiert. `adapters/instrument_utils` und `fractional_trading` nutzen nun ausschließlich `automation/utils._fallback_precisions(symbol)[1]`. Redundante Implementierungen und Sets wurden entfernt.
 
@@ -559,13 +552,13 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 **Symptom:** `mean_reversion.py` und `hourly_mean_reversion.py` führten `keltner_atr_period` in der Config, übergaben sie aber nicht an `KeltnerChannel(period=…, k_multiplier=…)`.
 **Fix:** Parameter korrekt übergeben. Die `MeanReversionStrategy` wurde standardisiert (gemäß Changelog Issue #213 vom 2026-06-05).
 
-### 🟢 #28 — Backtest BarType Diskrepanz (0 Trades / 0 Gewinner)
+### 🟢 Pitfall #28 — Backtest BarType Diskrepanz (0 Trades / 0 Gewinner)
 **Symptom:** Backtest liefert `Trades=0` für alle Strategien/Symbole, obwohl der Live-Pfad läuft.
 **Root Cause:** Die Backtest-Engine nutzte hardcoded `1-MINUTE-MID-INTERNAL`, während historische Daten stündlich (1-HOUR) gestreamt werden und die Strategien (`HourlyStrategyBase`) für Stunden-Bars konfiguriert sind. Minuten-Bars wurden zwar aggregiert, aber bei stündlichen Quelldaten entstehen kaum bewegte Bars; zudem feuerte der 48-Bar-Time-Exit nach 48 Minuten statt 48 Stunden.
 **Fix:** Hardcoded `1-MINUTE-MID-INTERNAL` in `backtest_runner.py` durch `1-HOUR-MID-INTERNAL` ersetzt.
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🟢 #29 — FSB(16) Encoding Error (0 Trades)
+### 🟢 Pitfall #29 — FSB(16) Encoding Error (0 Trades)
 **Symptom:** 0 Trades im Backtest.
 **Root Cause:** Falsche `10^precision`-Skalierung beim FSB16-Encoding statt `10^16`. Unentdeckt geblieben, weil der custom-Encoder nie von Nautilus nativ gelesen wurde.
 **Fix:** Encoder in `_serde.py` auf `10^16` Skalierung geändert.
@@ -591,37 +584,37 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 
 
-### 🟢 #30 — Rust Engine FFI Abort bei Signaturänderungen
+### 🟢 Pitfall #30 — Rust Engine FFI Abort bei Signaturänderungen
 **Symptom:** Subprozesse crashen mit `Fatal Python error: Aborted` aus `nautilus_trader.system.kernel.py __init__`.
 **Root Cause:** Die Nautilus Rust-Engine crasht unweigerlich, wenn ein Python-Worker aufgrund unhandled Exceptions (wie `TypeError` bei inkonsistenten Funktionssignaturen) unsauber stirbt, bevor `engine.dispose()` gerufen wird. Dies trat auf, als `run_single_backtest_worker` ein neues Positionsargument erhielt, das in Multiprocessing-Pools und Tests nicht überall übergeben wurde.
 **Fix:** Niemals die Signatur des Workers für Backtest-Konfigurationen ändern. Externe Variablen (wie Walk-Forward Splits) werden stattdessen in das `strat`-Dictionary injiziert (z.B. `strat["_walk_forward_dict"]`) und im Worker dynamisch per `.get()` ausgelesen.
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🟢 #31 — Metrik-Dictionary Nesting Bug
+### 🟢 Pitfall #31 — Metrik-Dictionary Nesting Bug
 **Symptom:** Tests schlagen fehl, weil keine Trades ausgewiesen werden (`total_trades = 0`), obwohl Trades stattfinden.
 **Root Cause:** `extract_metrics` wurde erweitert, um `{"metrics": {...}, "oos_metrics": {...}}` zurückzugeben. Der Worker hat diese Struktur ungeprüft weitergegeben, was zu einer doppelten Verschachtelung führte (z.B. `res["metrics"]["metrics"]["total_trades"]`). Tests suchten auf der falschen Ebene.
 **Fix:** Explizites Unpacking im Worker via `extracted_data.get("metrics")` und Fail-Safe-Fallback auf flache Dictionaries, falls die Extraktion fehlschlägt. Assertions für Trades müssen zwingend auf `> 0` bleiben, um stille Logik-Fehler sofort abzufangen.
 **Betroffen:** `automation/backtest_runner.py`, `automation/tests/test_backtest_runner_bar_type.py`
 
-### 🟢 #32 — Queue-Korruption bei Zeitfenster-Splits
+### 🟢 Pitfall #32 — Queue-Korruption bei Zeitfenster-Splits
 **Symptom:** PnL-Werte sind in einem bestimmten Zeitfenster fehlerhaft oder leer.
 **Root Cause:** Die FIFO-Position-Matching-Schleife wurde aufgrund eines Zeitstempel-Cutoffs vorzeitig unterbrochen.
 **Fix:** FIFO-Logik muss immer über das gesamte Datenset (`IS + OOS`) unangetastet iterieren, da sonst offene Queues korrumpieren. Erst *nach* dem FIFO-Matching werden die generierten PnL-Tupel (`pnl, ts_event`) anhand des Cutoffs separiert.
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🟢 #33 — Tuple Unpacking Regression in extract_metrics
+### 🟢 Pitfall #33 — Tuple Unpacking Regression in extract_metrics
 **Symptom:** `total_trades=0` in allen Strategien, leere Backtest-Metriken, keine Tournament-Gewinner.
 **Root Cause:** Regression durch Mismatch der Tuple-Arity. `pnls_with_ts.append` generierte ein flaches 4-Tupel, aber die nachfolgende Loop versuchte in 3 Ziele zu entpacken.
 **Fix:** Unpacking Loop wurde auf `for pnl, ts, ht, m_qty in pnls_with_ts:` korrigiert (4 Variablen entpackt). Referenz: Issue #132.
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🟢 #35 — `compute_tournament_score` konstanter Wert und fehlerhafte Gewinner-Reihenfolge
+### 🟢 Pitfall #35 — `compute_tournament_score` konstanter Wert und fehlerhafte Gewinner-Reihenfolge
 **Symptom:** Die Auswahl des Gewinners pro Symbol in `select_winners` hing nur von der Iterationsreihenfolge ab. Alle Strategien erhielten einen Score von `0.0`.
 **Root Cause:** `compute_tournament_score` wurde mit `norm_metrics` aufgerufen, berechnete den Score jedoch auf Basis von `total_return` und `avg_holding_time_s`, welche in `norm_metrics` nicht existierten. Zudem wich die Implementierung von der dokumentierten Spezifikation ab (Composite-Score vs. Haltedauer-Rendite).
 **Fix:** `compute_tournament_score` wurde so umgeschrieben, dass es die Metriken `sortino_ratio`, `profit_factor`, `win_rate` und `max_drawdown` gemäß den Gewichten aus `tournament.json` zu einem Composite-Score aggregiert.
 **Betroffen:** `automation/backtest_runner.py`
 
-### 🟢 #43 — Profit Factor / Sortino NoneType Artefakte bei Zero-Loss (Issue #150 / #209 / #227)
+### 🟢 Pitfall #43 — Profit Factor / Sortino NoneType Artefakte bei Zero-Loss (Issue #150 / #209 / #227)
 **Symptom:** In Backtests mit 100% Win Rate generieren bestimmte Metriken mathematische Artefakte (z.B. Sortino Ratio = 50.0 oder Profit Factor = 50.0). Dies verzerrt die Aggregat-Mediane und Auswertung extrem, wenn die Werte durch künstliche Caps (`MAX_CAP = 50.0`, `CALMAR_CAP = 100.0`) künstlich hoch gehalten werden. Andererseits explodieren die Werte ohne Caps bei minimalen Verlusten ins Unendliche.
 **Root Cause:** Fallback bei undefinierten Nennern (z.B. `gross_loss == 0`) waren hardcodierte `MAX_CAP`-Werte, die die Scores nach oben verzerrten und echte Resultate verfälschten. Das komplette Entfernen der Caps in #209 führte stattdessen bei minimalen Nennern zu Explosionen.
 **Fix:** Undefinierte finanzmathematische Zustände (All-Win-Szenarien oder <2 Losses bei <50 Trades) erzeugen konsequent `None`. Extreme Werte bei validen Samples werden hart gekappt (Sortino/PF auf 50.0, Calmar auf 100.0). Dies verhindert Median-Verfälschungen bei der Aggregation. Im CLI-Output rendern die None-Werte distinkt als `n/a(win)` oder `n/a(<min)`. Eine dedizierte Filter-Gating-Logik in `_is_eligible` wirft diese None-Kandidaten proaktiv ab.
@@ -632,7 +625,7 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 
 
-### Pitfall #55: Optimizer-Storage ausschließlich SQLite
+### Pitfall #53: Optimizer-Storage ausschließlich SQLite
 **Symptom:** Unklarheit über Datenhaltung und fehlende PR-Promotion.
 **Ursache/Lösung:** Optimizer-Storage ausschließlich SQLite. Optimizer verändert tournament.json NIE und startet NIE Phase 5; Promotion nur per PR.
 ## 17. Order Management & Async State Machine (Neu)
@@ -672,12 +665,10 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 |-------|----------|---------|
 | 2026-06-10 | **Doku-Nachtrag 0b (Verifikations-Finding P1):** Config-Contract-Block in Kap. 16 wörtlich ergänzt; Verhalten von `oos_fold_sortinos` in Kap. 10 dokumentiert (wann gesetzt, Reihenfolge, None-Handling). | `automation/AGENTS.md` |
 | 2026-06-10 | **Pitfall-Nummern-Bereinigung (Verifikations-Finding P2):** Duplikate (insb. #50) entkoppelt — erste Instanz behält die Nummer, distincte Folge-Pitfalls auf #54+ umnummeriert, exakte Dubletten entfernt. Rein redaktionell, Pitfall-Inhalte unverändert; Querverweise verifiziert. | `automation/AGENTS.md` |
-| 2026-06-10 | **Doku-Nachtrag 0b (Verifikations-Finding P1):** Config-Contract-Block in Kap. 16 wörtlich ergänzt; Verhalten von `oos_fold_sortinos` in Kap. 10 dokumentiert (wann gesetzt, Reihenfolge, None-Handling). | `automation/AGENTS.md` |
-| 2026-06-10 | **Pitfall-Nummern-Bereinigung (Verifikations-Finding P2):** Duplikate (insb. #50) entkoppelt — erste Instanz behält die Nummer, distincte Folge-Pitfalls auf #54+ umnummeriert, exakte Dubletten entfernt. Rein redaktionell, Pitfall-Inhalte unverändert; Querverweise verifiziert. | `automation/AGENTS.md` |
 | 2026-06-10 | **Auftrag 1b:** runner.py (Subprozess-Aufruf, Env-Isolation, timeout=10800), parsing.py (Fold-Median, None-safe), reward.py (vollständig konfiguriert). | `automation/optimizer/runner.py`, `automation/optimizer/parsing.py`, `automation/optimizer/reward.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Auftrag 1a:** `holdout_days` in `backtest.json`; `optimizer.json`; Optimizer-Paket (`manifest`/`resolve`/`trial_config`) mit injizierbarem `now` für deterministische Window-Berechnung. | `automation/config/backtest.json`, `automation/config/optimizer.json`, `automation/optimizer/`, `automation/AGENTS.md` |
 | 2026-06-09 | `0a: --dry-run restlos entfernt; --no-deploy eingeführt; Phase 3 läuft immer real; Event LIVE_DEPLOY_SKIPPED_NO_DEPLOY.` | `automation/daily_orchestrator.py`, `automation/tests/test_orchestrator_cli.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
-| 2026-06-09 | **Issue #311 (Pitfall #52 - Active/Inactive Config Crash):** Längen-Assertion in `backtest_runner.py` durch Set-Prüfung ersetzt, um Abstürze bei `active: false` gesetzten Strategien zu verhindern. `--dry-run` in GitHub Actions Workflow integriert, um Config-Mismatches direkt in der CI abzufangen. | `automation/backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
+| 2026-06-09 | **Issue #311 (Pitfall #51 - Active/Inactive Config Crash):** Längen-Assertion in `backtest_runner.py` durch Set-Prüfung ersetzt, um Abstürze bei `active: false` gesetzten Strategien zu verhindern. `--dry-run` in GitHub Actions Workflow integriert, um Config-Mismatches direkt in der CI abzufangen. | `automation/backtest_runner.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-09 | **Issue #308 (0-Trade Micro-Sizing Artifact Fix):** Hard Short-Circuit in `_is_eligible` bei 0 Trades implementiert, um kaskadierende Rejection-Artefakte und irreführendes Logging zu stoppen. | `automation/backtest_runner.py`, `automation/tests/test_tournament_validation.py` |
 | 2026-06-08 | **Issue #293 (Gate-Scope vs. Deployment-Scope & Observability):** Behobene Ambiguität bei Sortino-Metriken im `daily_orchestrator.py` durch explizite Log- und Event-Namen (In-Sample Median vs. Aggregate OOS). `OOS-DEPLOY-REJECT` Check in `momentum_ls_run.py` eingebaut, der nicht OOS-evaluierte oder gescheiterte Strategie-Zuweisungen auf Symbol-Ebene hart aussortiert. | `automation/daily_orchestrator.py`, `automation/momentum_ls_run.py`, `automation/AGENTS.md` |
 | 2026-06-08 | **Issue #261 (Inception-Bounds für junge Instrumente):** Caching-System für `inception_bounds.json` im `historical_fetcher.py` integriert, um Endlosschleifen bei jungen Instrumenten zu verhindern. `is_backtest_range_covered` bypass-logik bei voller Historie ergänzt. Design-Notiz in AGENTS.md hinzugefügt. | `automation/historical_fetcher.py`, `automation/AGENTS.md`, `automation/tests/test_historical_fetcher.py` |
@@ -746,13 +737,13 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 *Zuletzt aktualisiert: 2026-06-08. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
-* **Pitfall #61 (Metrics Rendering und Rejection Reasons):** Die String-Repräsentationen `"all-loss"`, `"all-win (no losses)"`, `"insufficient sample (n=...)"` und `"insufficient loss data"` sind feste Bestandteile der Systemarchitektur und werden verwendet, um OOS-/IS-Abweisungen granulär zu differenzieren. Fließkommawerte im OOS-Log werden mit hoher Präzision (`:.5f`) formatiert, um logische Paradoxa bei Rundungsfehlern (z. B. `0.0050 < 0.0050`) zu vermeiden. Bei zu geringen Trade-Anzahlen wird die Metrik-Rückgabe (`n/a(<min)`) priorisiert vor `None`-Checks gerendert.
-* **Pitfall #56 (State-Mutation vor Early-Returns / Signal-Desync):** Strategien müssen ihren Signal-State (`current_signal`, `bars_since_last_signal`) zwingend erst NACH allen Guard-Checks und direkt vor `submit_order` setzen. Wenn der State vor einem Early-Return gesetzt wird, entsteht ein Desync (Agent blockiert Folge-Signale, obwohl keine Order ausgeführt wurde). Siehe Issue #211.
+* **Pitfall #54 (Metrics Rendering und Rejection Reasons):** Die String-Repräsentationen `"all-loss"`, `"all-win (no losses)"`, `"insufficient sample (n=...)"` und `"insufficient loss data"` sind feste Bestandteile der Systemarchitektur und werden verwendet, um OOS-/IS-Abweisungen granulär zu differenzieren. Fließkommawerte im OOS-Log werden mit hoher Präzision (`:.5f`) formatiert, um logische Paradoxa bei Rundungsfehlern (z. B. `0.0050 < 0.0050`) zu vermeiden. Bei zu geringen Trade-Anzahlen wird die Metrik-Rückgabe (`n/a(<min)`) priorisiert vor `None`-Checks gerendert.
+* **Pitfall #55 (State-Mutation vor Early-Returns / Signal-Desync):** Strategien müssen ihren Signal-State (`current_signal`, `bars_since_last_signal`) zwingend erst NACH allen Guard-Checks und direkt vor `submit_order` setzen. Wenn der State vor einem Early-Return gesetzt wird, entsteht ein Desync (Agent blockiert Folge-Signale, obwohl keine Order ausgeführt wurde). Siehe Issue #211.
 * **Type Casting in API Payloads:** Document the strict necessity of casting variables (e.g., str() vs int()) when matching eToro IDs from the API against the local JSON configurations, as implicit typing will cause silent drop-outs during universe construction.
 * **Zero-Signal Metric Structures:** Note that extract_metrics must always return the explicit format {"metrics": None, "oos_metrics": None} (or similarly nested dicts) for empty signal generations, otherwise the daily orchestrator aggregation will fail.
 * **Precision Mismatch Handling:** Explicitly warn that instrument-only parameter fixes for precision bugs are insufficient. Any precision adjustments must perfectly align with the actual tick precision of the underlying data. Failure to address this root cause will result in RuntimeError crashes that silently abort the matrix backtest loops.
 * **Log Management:** Local backtest .log and .json files must be kept out of Git tracking to avoid repository bloat and blocked pushes. Always use `git checkout origin/main -- logs/` or explicitly unstage modified log files.
-* **Pitfall #57 (Orphaned Limit Orders & State Locks via Custom Exits - Issue #307):** Das Überschreiben von Exits (z.B. `def _close_position`) in Child-Klassen ohne Beachtung von `orders_open` und dem Async-State der Base-Class führt zu Order-Spamming, Orphaned Limit-Orders und AttributeError-Crashes bei Aufrufen wie `super()._close_position(pos)`. Strategien dürfen `_close_position` nicht überschreiben, sondern müssen `self._close_position_base()` aus der Basisklasse nutzen, um den korrekten asynchronen Bereinigungsfluss beizubehalten. Zusätzlich führt ein asynchroner State-Lock (Einfrieren der Strategie) auf, wenn `current_signal` nicht im asynchronen `on_position_closed`-Callback bereinigt wird, sondern synchron im Signal-Handler. (Referenz: Issue #149, #290, #307).
+* **Pitfall #56 (Orphaned Limit Orders & State Locks via Custom Exits - Issue #307):** Das Überschreiben von Exits (z.B. `def _close_position`) in Child-Klassen ohne Beachtung von `orders_open` und dem Async-State der Base-Class führt zu Order-Spamming, Orphaned Limit-Orders und AttributeError-Crashes bei Aufrufen wie `super()._close_position(pos)`. Strategien dürfen `_close_position` nicht überschreiben, sondern müssen `self._close_position_base()` aus der Basisklasse nutzen, um den korrekten asynchronen Bereinigungsfluss beizubehalten. Zusätzlich führt ein asynchroner State-Lock (Einfrieren der Strategie) auf, wenn `current_signal` nicht im asynchronen `on_position_closed`-Callback bereinigt wird, sondern synchron im Signal-Handler. (Referenz: Issue #149, #290, #307).
 * **Pitfall #46 (Observability & Hidden Gates):**
   * **Symptom:** Rejection-Logs (z. B. `min_win_rate failed`) verweisen auf Schwellen, die im Startup-Header nie erwähnt wurden. Backtests brechen mit Warnungen ab, deren Werte mathematisch nicht zum deklarierten Limit passen.
   * **Root Cause:** Hardcodierte Print-Statements für die Konfiguration, die neu hinzugefügte Parameter (wie Expectancy oder Drawdown) verschwiegen haben. Oder hardcodierte Guards im Code (wie `0.95 * required_days`), die konfigurierte Toleranzen (wie `span_tolerance_days`) stumm überstimmen.
@@ -767,7 +758,7 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
   * **Symptom:** Der `daily_orchestrator.py` ruft jeden Tag den `historical_fetcher.py` für Instrumente auf, die jünger sind als die benötigte In-Sample Spanne (z.B. Listing am 20.11., gefordert ab 09.11.). Dies verlangsamt die Pipeline drastisch und erzeugt Endlosschleifen.
   * **Root Cause:** `is_backtest_range_covered` prüft strikt gegen das errechnete Datum (`start_ns`), unabhängig davon, ob die API überhaupt ältere Ticks liefert. Da die ältesten Ticks > `start_ns` sind, schlägt die Validierung ewig fehl.
   * **Lösung:** Implementierung eines Caches (`inception_bounds.json`) in `data/state/`. Stößt der Fetcher auf sein historisches Limit (API liefert keine neuen Candles mehr, aber Ziel nicht erreicht), speichert er den ältesten bekannten Timestamp als Inception Bound atomar ab. Zukünftige Aufrufe von `is_backtest_range_covered` erkennen dies und melden "vollständige Abdeckung" für das Symbol.
-* **Pitfall #50 — Alternation Lock & Cooldown Bypass Trap in Mean Reversion/Breakout:**
+* **Pitfall #57 — Alternation Lock & Cooldown Bypass Trap in Mean Reversion/Breakout:**
   * **Symptom:** Extremes Overtrading und unkontrollierte Whipsaw-Re-Entries in `DynamicBreakoutStrategy` und `MeanReversionStrategy`, die zu defizitären Kaskaden führen, sowie eine 10×-Trade-Diskrepanz zwischen `MeanReversionStrategy` und `HourlyMeanReversionStrategy`.
   * **Root Cause:** Ein Logik-Fehler im `can_signal` Guard (ein `or`-Bypass) hebelte in der Keltner-Strategie den Cooldown nach Exits aus. Die `HourlyMeanReversionStrategy` implementierte zudem kein `on_position_closed`, wodurch der State `current_signal` einfror und künstlich eine Alternierung erzwang. Bei der Breakout-Strategie setzte `on_position_closed` den Cooldown-Zähler falsch zurück, sodass sofort wieder eingestiegen werden konnte.
   * **Lösung:** Cooldowns als harte AND-Bedingungen umgesetzt. `on_position_closed` in allen Klassen synchronisiert, sodass `bars_since_last_signal` auf 0 zurückgesetzt wird und ein echter Cooldown nach Stop-Outs/Exits erzwungen wird.
@@ -818,7 +809,7 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 * **Trade-off Constraint:** Configurations in `strategy_defaults.json` (such as `deviation_threshold` for mean-reversion strategies) MUST be strictly calibrated against the `oos_min_trades` tournament gating requirement relative to the Out-of-Sample evaluation window (e.g., 30 days). If thresholds are too tight (e.g., 0.015 instead of 0.008 for VWAP), the mathematical possibility of passing the OOS gate falls to zero because the strategy naturally produces too few signals within the OOS span to be statistically evaluable. This results in false-positive "fail" states.
 | 2026-06-08 | **Issue #305 (Consistent Capping Policy & Raw Ratio Sample-Size Shrinkage):** Vereinheitlichte das Capping für alle Ratio-Metriken (Sortino, Profit Factor, Calmar) in `_calculate_stats` auf exakt `50.0`. Um Division-by-Zero zu verhindern, wurde für alle Nenner (Downside-Dev, Gross Loss, Max Drawdown) ein `DENOMINATOR_FLOOR = 1e-6` eingeführt. Zusätzlich wird nun in `select_winners` eine asymptotische Dämpfungsfunktion (Shrinkage) auf die Raw-Ratios basierend auf `n_trades` und `k_shrinkage` angewendet, *bevor* die Rankings berechnet werden. Dabei wird die Sortino Ratio in Richtung Baseline `0.0` und der Profit Factor in Richtung Baseline `1.0` gedämpft: `Damped_Ratio = Baseline + (Raw_Ratio - Baseline) * (n_trades / (n_trades + k_shrinkage))`. Dies verhindert, dass kleine Sample-Sizes durch Rauschen ungedämpfte Outlier produzieren und die Turnier-Selektion dominieren. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 
-### Pitfall #51: Gate-Scope vs. Deployment-Scope (Mismatch Prevention)
+### Pitfall #60: Gate-Scope vs. Deployment-Scope (Mismatch Prevention)
 - **Symptom:** Ein notorischer Einzel-Verlierer könnte fälschlicherweise live geschaltet werden, weil er innerhalb seines isolierten Symbols als lokaler Gewinner hervorging oder Teil eines Turniers war, das auf Aggregat-Ebene (Portfolio-Level) das OOS-Gate bestand, obwohl die spezifische Strategie das OOS-Gate nie individuell bestanden hat.
 - **Root Cause:** Der Orchestrator (Phase 5) validierte standardmäßig das *aggregierte* OOS-Gate (Portfolio-Level). `momentum_ls_run.py` deployt jedoch die *individuellen per-Symbol-Gewinner*. Wenn das Aggregat-Gate bestanden wurde, wurde bisher die gesamte State-Datei übergeben, ohne isolierte OOS-Verlierer auf Symbol-Ebene strikt herauszufiltern.
 - **Fix/Rule:**
