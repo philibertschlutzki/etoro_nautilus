@@ -23,7 +23,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r automation/requirements.txt
+          pip install -r automation/requirements.txt mypy
+
+      # ── Tier 0: Static Type Analysis ──────────────────
+      - name: Static type checking for backtest runner (Pitfall #61)
+        run: mypy automation/backtest_runner.py --ignore-missing-imports
 
       # ── Tier 1: Architecture & Isolation (must never break) ──────────────────
       - name: Architecture isolation (Standalone-Prinzip §4)
