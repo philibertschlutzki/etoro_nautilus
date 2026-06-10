@@ -51,7 +51,7 @@ if not ENV_FILE.exists():
     ENV_FILE = _THIS_DIR.parent / ".env"
 load_dotenv(str(ENV_FILE))
 
-def read_precisions_from_parquet(parquet_path: str | Path, instrument_id: str = None) -> tuple[int, int]:
+def read_precisions_from_parquet(parquet_path: str | Path, instrument_id: str | None = None) -> tuple[int, int]:
     try:
         # Check if parquet_path is a directory and instrument_id is provided
         if instrument_id and (Path(parquet_path) / "data").exists():
@@ -103,7 +103,7 @@ try:
     _HAS_TEARSHEET = True
 except ImportError:
     _HAS_TEARSHEET = False
-    def create_tearsheet(*args, **kwargs):
+    def create_tearsheet(*args: Any, **kwargs: Any) -> Any:
         raise ImportError("nautilus_trader.analysis.tearsheet not available in this version.")
 
 # ─── Precision-Heuristik aus automation.utils (kein adapters/-Import) ────────
@@ -387,7 +387,7 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
 
 
 
-def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, strat_params: dict = None) -> dict:
+def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, strat_params: dict | None = None) -> dict:
     """Wertet OOS-Metriken strukturiert aus und liefert die 4 OOS-Pflicht-Keys."""
     n_trades = oos_metrics.get("total_trades", 0) if oos_metrics else 0
     if n_trades <= 0:
@@ -398,6 +398,9 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             "oos_rejection_reasons": ["oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."]
         }
 
+
+    if oos_metrics is None:
+        oos_metrics = {}
 
     max_dd       = oos_metrics.get("max_drawdown", 1.0)
     win_rate     = oos_metrics.get("win_rate", 0.0)
@@ -1033,7 +1036,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     fold_metrics = None
                 per_fold_oos_list.append(fold_metrics)
 
-            oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+            oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos([m for m in per_fold_oos_list if m is not None])
 
         oos_trade_records = []
         if oos_pnls:
@@ -1116,10 +1119,10 @@ def select_winners(
 
     # Issue #148: Data Start Alignment (Tournament Gating)
     if is_eligible_population:
-        start_dates = [r.get("_first_tick_ns") for r in is_eligible_population if r.get("_first_tick_ns") is not None]
-        if start_dates:
-            min_start = min(start_dates)
-            max_start = max(start_dates)
+        start_dates_int = [int(r.get("_first_tick_ns")) for r in is_eligible_population if r.get("_first_tick_ns") is not None] # type: ignore
+        if start_dates_int:
+            min_start = min(start_dates_int)
+            max_start = max(start_dates_int)
             # Threshold: 1 day in nanoseconds
             if max_start - min_start > 86400 * 1_000_000_000:
                 msg = "⚠️  WARNING: Tournament aggregiert Symbole mit unterschiedlichen Startdaten / Regime-Bias möglich!"
@@ -1219,7 +1222,7 @@ def select_winners(
         if oos_eval.get("oos_eligible", False):
             fully_eligible_count += 1
 
-    grouped_by_symbol = {}
+    grouped_by_symbol: dict[str, list[dict]] = {}
     for r in is_eligible_population:
         sym = r["symbol"]
         grouped_by_symbol.setdefault(sym, []).append(r)
@@ -1288,7 +1291,7 @@ def select_winners(
         best     = max(top, key=lambda s: get_median([x for x in sortinos_by_strat[s] if x is not None]))
         # Nur OOS-Metriken der Symbole, bei denen die Strategie tatsächlich gewonnen hat
         best_results = [r.get("oos_metrics", {}) for r in per_symbol_winners.values()
-                        if r["strategy"] == best and r.get("oos_metrics") and r.get("oos_metrics").get("total_trades", 0) > 0]
+                        if r["strategy"] == best and r.get("oos_metrics") is not None and r.get("oos_metrics", {}).get("total_trades", 0) > 0]
 
         if best_results:
             n_res = len(best_results)
@@ -1400,7 +1403,7 @@ def select_winners(
                             fold_metrics = None
                         per_fold_oos_list.append(fold_metrics)
 
-                    agg_oos_eval["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+                    agg_oos_eval["oos_fold_sortinos"] = collect_oos_fold_sortinos([m for m in per_fold_oos_list if m is not None])
 
         else:
 
@@ -2164,19 +2167,19 @@ def run_backtest() -> None:
         print(f"      • {dt_str}: {len(syms)} Symbole")
 
     if end_ns and required_days > 0:
-        required_ns = required_days * 86400 * 1_000_000_000
+        required_ns: int = int(required_days * 86400 * 1_000_000_000)
         for iid in instrument_ids:
-            oldest_ts = instrument_start_dates.get(iid)
-            if oldest_ts is None:
+            req_oldest_ts: int | None = instrument_start_dates.get(iid)
+            if req_oldest_ts is None:
                 continue
 
             # Drop late-starting symbols if they don't fulfill the absolute minimum window
-            if (end_ns - oldest_ts) < required_ns:
-                print(f"   ⚠️ Drop (Spätstarter): {iid} hat unzureichend Daten (Start: {pd.Timestamp(oldest_ts, unit='ns', tz='UTC').strftime('%Y-%m-%d')})")
+            if (end_ns - req_oldest_ts) < required_ns:
+                print(f"   ⚠️ Drop (Spätstarter): {iid} hat unzureichend Daten (Start: {pd.Timestamp(req_oldest_ts, unit='ns', tz='UTC').strftime('%Y-%m-%d')})")
             else:
                 valid_instrument_ids.append(iid)
-                if oldest_ts > max_valid_start_ns:
-                    max_valid_start_ns = oldest_ts
+                if req_oldest_ts > max_valid_start_ns:
+                    max_valid_start_ns = req_oldest_ts
     else:
         valid_instrument_ids = instrument_ids
         if instrument_start_dates:
@@ -2313,7 +2316,7 @@ def run_backtest() -> None:
                     _use_mp = False
                     _run_remaining_sequentially(
                         futures, future, strategies_list, catalog_path,
-                        start_ns, end_ns, start_capital, args.htmlreport,
+                        start_ns, end_ns, span_tolerance_days, start_capital, args.htmlreport,
                         reports_dir, all_results, done_count, total_jobs,
                     )
                     break
@@ -2383,18 +2386,18 @@ def _flush_worker_log(worker_log_file: str) -> None:
 
 def _run_remaining_sequentially(
     futures: dict,
-    failed_future,
+    failed_future: Any,
     strategies_list: list,
     catalog_path: str,
     start_ns: int | None,
     end_ns: int | None,
+    span_tolerance_days: float,
     start_capital: float,
     generate_html: bool,
     reports_dir: str,
     all_results: list,
     done_count: int,
     total_jobs: int,
-    span_tolerance_days: float,
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
 ) -> None:
