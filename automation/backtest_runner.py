@@ -264,6 +264,13 @@ def _get_project_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 
+
+def config_dir() -> Path:
+    return Path(os.environ.get("ETORO_CONFIG_DIR", str(Path(_get_project_root()) / "automation" / "config")))
+
+def logs_dir() -> Path:
+    return Path(os.environ.get("ETORO_LOGS_DIR", str(Path(_get_project_root()) / "logs")))
+
 def load_strategy_defaults(project_root: str | None = None) -> dict:
     """Lädt strategy_defaults.json aus automation/config/.
 
@@ -274,7 +281,7 @@ def load_strategy_defaults(project_root: str | None = None) -> dict:
         Dict {ClassName: {param: default_value, ...}}
     """
     root = project_root or _get_project_root()
-    defaults_path = os.path.join(root, "automation", "config", "strategy_defaults.json")
+    defaults_path = str(config_dir() / "strategy_defaults.json")
     if os.path.exists(defaults_path):
         try:
             with open(defaults_path, "r", encoding="utf-8") as f:
@@ -286,7 +293,14 @@ def load_strategy_defaults(project_root: str | None = None) -> dict:
     return {}
 
 
-def apply_strategy_defaults(strategies: list[dict], defaults: dict) -> list[dict]:
+
+def resolve_strategy_params(strategy_entry: dict, defaults: dict, *, is_manifest: bool) -> dict:
+    """is_manifest=True  ⇒ params verbatim (KEIN Defaults-Merge).
+       is_manifest=False ⇒ Legacy: {**defaults, **params}."""
+    params = dict(strategy_entry.get("params") or {})
+    return params if is_manifest else {**defaults, **params}
+
+def apply_strategy_defaults(strategies: list[dict], defaults: dict, is_manifest: bool = False) -> list[dict]:
     """Merged strategy_defaults.json mit Strategie-Params aus der Config.
 
     Merge-Reihenfolge (niedrig → hoch Priorität):
@@ -304,7 +318,7 @@ def apply_strategy_defaults(strategies: list[dict], defaults: dict) -> list[dict
     for strat in strategies:
         class_name    = strat.get("strategy_class", "")
         class_defaults = defaults.get(class_name, {})
-        merged_params  = {**class_defaults, **strat.get("params", {})}
+        merged_params  = resolve_strategy_params(strat, class_defaults, is_manifest=is_manifest)
         result.append({**strat, "params": merged_params})
     return result
 
@@ -320,7 +334,7 @@ def load_tournament_config(project_root: str | None = None) -> dict:
         Tournament-Konfigurations-Dict.
     """
     root = project_root or _get_project_root()
-    cfg_path = os.path.join(root, "automation", "config", "tournament.json")
+    cfg_path = str(config_dir() / "tournament.json")
     if os.path.exists(cfg_path):
         try:
             with open(cfg_path, "r", encoding="utf-8") as f:
@@ -684,6 +698,11 @@ def create_mock_instrument(
 # ---------------------------------------------------------------------------
 
 
+
+def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
+    """Extrahiert je Fold den OOS-Sortino (Reihenfolge erhalten, None-sicher übersprungen)."""
+    return [float(f["sortino_ratio"]) for f in per_fold_oos if f is not None and f.get("sortino_ratio") is not None]
+
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
@@ -985,6 +1004,37 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         }
 
         # Issue #303: Export raw OOS trade records for chronological portfolio aggregation
+        per_fold_oos_list = []
+        if walk_forward_dict and start_ns is not None:
+            is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
+            oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
+            splits = walk_forward_dict.get("splits", 2)
+
+            for j in range(splits):
+                split_is_start_ns = start_ns + j * oos_window_ns
+                split_oos_start_ns = split_is_start_ns + is_window_ns
+                split_oos_end_ns = split_oos_start_ns + oos_window_ns
+
+                fold_pnls = []
+                fold_holds = []
+                fold_notionals = []
+
+                for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
+                    if split_oos_start_ns <= ts < split_oos_end_ns:
+                        fold_pnls.append(pnl)
+                        fold_holds.append((ht, m_qty))
+                        fold_notionals.append(notionals_with_ts[i][0])
+
+                import statistics
+                fold_med_notional = statistics.median(fold_notionals) if fold_notionals else 0.0
+                if fold_pnls:
+                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional)
+                else:
+                    fold_metrics = None
+                per_fold_oos_list.append(fold_metrics)
+
+            oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+
         oos_trade_records = []
         if oos_pnls:
             # Reconstruct tuples of (pnl, ts, ht, m_qty, notional) for portfolio merging
@@ -1314,10 +1364,46 @@ def select_winners(
                 avg_oos_for_gate["total_trades"] = int(portfolio_total_trades / n_res)
 
             agg_oos_eval = _evaluate_oos_eligibility(avg_oos_for_gate, tournament_cfg, winner_strat_params)
-
             # Reattach the unnormalized original values for correct logging/metrics
             agg_oos_eval["oos_metrics"] = avg_oos
+
+            # Task 0b: Extract per-fold OOS sortinos for the aggregate winner
+            if is_eligible_population:
+                start_ns = is_eligible_population[0].get("_first_tick_ns")
+                walk_forward_dict = winner_strat_params.get("_walk_forward_dict", {})
+                if walk_forward_dict and start_ns is not None:
+                    is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
+                    oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
+                    splits = walk_forward_dict.get("splits", 2)
+
+                    per_fold_oos_list = []
+                    for j in range(splits):
+                        split_is_start_ns = start_ns + j * oos_window_ns
+                        split_oos_start_ns = split_is_start_ns + is_window_ns
+                        split_oos_end_ns = split_oos_start_ns + oos_window_ns
+
+                        fold_pnls = []
+                        fold_holds = []
+                        fold_notionals = []
+
+                        for (pnl, ts, ht, m_qty, notional) in portfolio_trades:
+                            if split_oos_start_ns <= ts < split_oos_end_ns:
+                                fold_pnls.append(pnl)
+                                fold_holds.append((ht, m_qty))
+                                fold_notionals.append(notional)
+
+                        import statistics
+                        fold_med_notional = statistics.median(fold_notionals) if fold_notionals else 0.0
+                        if fold_pnls:
+                            fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional)
+                        else:
+                            fold_metrics = None
+                        per_fold_oos_list.append(fold_metrics)
+
+                    agg_oos_eval["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+
         else:
+
             agg_oos_eval = {
                 "oos_evaluated": False,
                 "oos_eligible": False,
@@ -1577,7 +1663,7 @@ def run_single_backtest_worker(
             spread_bps = 0.0
             if spread_bps_by_asset_class:
                 import json
-                instrument_map_path = os.path.join(_get_project_root(), "automation", "config", "instrument_map.json")
+                instrument_map_path = str(config_dir() / "instrument_map.json")
                 asset_class_key = "DEFAULT"
                 try:
                     with open(instrument_map_path, "r", encoding="utf-8") as f:
@@ -1854,12 +1940,13 @@ def run_backtest() -> None:
 
     _script_dir   = os.path.dirname(os.path.abspath(__file__))
     _project_root = os.path.dirname(_script_dir)
-    logs_dir      = os.path.join(_project_root, "logs")
-    os.makedirs(logs_dir, exist_ok=True)
+    logs_dir_path = logs_dir()
+    logs_dir_str = str(logs_dir_path)
+    os.makedirs(logs_dir_str, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_file  = os.path.join(logs_dir, f"backtest_{timestamp}.log")
-    error_log_file = os.path.join(logs_dir, f"errors_{timestamp}.log")
+    log_file  = os.path.join(logs_dir_str, f"backtest_{timestamp}.log")
+    error_log_file = os.path.join(logs_dir_str, f"errors_{timestamp}.log")
 
     sys.stdout = DualLogger(log_file)
     sys.stderr = DualLogger(log_file)
@@ -1876,7 +1963,7 @@ def run_backtest() -> None:
 
     # --- backtest.json (Task 4: Spread-Modeling-Flag) ---
     backtest_global_cfg = {}
-    _bt_cfg_path = os.path.join(_project_root, "automation", "config", "backtest.json")
+    _bt_cfg_path = str(config_dir() / "backtest.json")
     if os.path.exists(_bt_cfg_path):
         try:
             with open(_bt_cfg_path, "r", encoding="utf-8") as _f:
@@ -1950,7 +2037,8 @@ def run_backtest() -> None:
         print(f"ℹ️ {len(orphaned_defaults)} Defaults ignoriert (Strategien inaktiv): {list(orphaned_defaults)}")
 
     # Task 2: Strategy-Defaults auf die Strategie-Params anwenden (Overrides behalten Vorrang)
-    strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults)
+    is_manifest = config_data.get("manifest_version") is not None
+    strategies_list = apply_strategy_defaults(strategies_list, strategy_defaults, is_manifest=is_manifest)
     if strategy_defaults:
         for strat in strategies_list:
             cls_name = strat.get("strategy_class", "?")

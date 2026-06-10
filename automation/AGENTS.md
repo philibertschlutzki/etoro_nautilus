@@ -624,7 +624,10 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 ---
 
-## 19. Changelog (Agent-Maintained)
+## 19. Changelog
+
+- **Phase 0b:** ETORO_CONFIG_DIR/ETORO_LOGS_DIR env isolation implemented; Manifest-Contract (no re-merge if manifest_version is set); oos_fold_sortinos export added for aggregate winners.
+ (Agent-Maintained)
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 
 | Datum | Änderung | Dateien |
