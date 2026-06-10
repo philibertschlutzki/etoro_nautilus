@@ -319,6 +319,14 @@ Hinweis: Wenn systemd-Unit-Files im Repo existieren, müssen die ExecStart-Anwei
 
 ---
 
+
+
+## 12.5 Sicherheits-Leitplanken (Optimizer)
+* Kein Live-Deploy aus dem Optimierer (Runner-Direktaufruf, Phase 5 nie betreten).
+* Risiko-Gates eingefroren (tournament.json 1:1 kopiert, nie variiert).
+* Holdout unberührt (keine Optimierungs-Auswertung sieht ihn).
+* Human-in-the-Loop (Promotion nur per PR; Holdout-Ergebnis + Overfit-Gap im Review).
+* Plausibilitäts-Wächter (Trials mit absurden Metriken werden markiert, nicht als Sieger gewertet).
 ## 13. Testing & Validierung
 
 Tests in `automation/tests/`, Ausführung via `pytest`. Kein Test darf aus `adapters/`/`config/`/`strategies/` (Root) importieren. Naming: immer `_fallback_precisions` (mit Underscore).
@@ -608,6 +616,11 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 
 
 
+
+
+### Pitfall #55: Optimizer-Storage ausschließlich SQLite
+**Symptom:** Unklarheit über Datenhaltung und fehlende PR-Promotion.
+**Ursache/Lösung:** Optimizer-Storage ausschließlich SQLite. Optimizer verändert tournament.json NIE und startet NIE Phase 5; Promotion nur per PR.
 ## 17. Order Management & Async State Machine (Neu)
 Alle stündlichen Strategien in `automation/strategies/` müssen für Exit-Bedingungen zwingend die Methoden der `HourlyStrategyBase` nutzen, um Event-Loop-Blockaden und Orphaned Orders zu vermeiden.
 Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
@@ -635,6 +648,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 ---
 
 ## 19. Changelog
+| 2026-06-10 | **1c:** Optuna-Loop (SQLite, TPE, Warm-Start), Holdout-Confirmation, PR-Proposal-Export. Autotuner V2 abgeschlossen. | `automation/optimizer/` |
 
 - **Phase 0b:** ETORO_CONFIG_DIR/ETORO_LOGS_DIR env isolation implemented; Manifest-Contract (no re-merge if manifest_version is set); oos_fold_sortinos export added for aggregate winners.
  (Agent-Maintained)
