@@ -35,7 +35,7 @@ def test_phase5_oos_eligible():
     with patch('subprocess.Popen') as mock_popen, \
          patch('automation.daily_orchestrator.emit_json_event') as mock_emit, \
          patch('automation.daily_orchestrator.PROJECT_ROOT') as mock_root, \
-         patch('automation.daily_orchestrator.LOGS_DIR', new=pathlib.Path(tempfile.mkdtemp())):
+         patch('os.environ', {'ETORO_LOGS_DIR': tempfile.mkdtemp()}):
 
         # mock bot_script.exists()
         from pathlib import Path
@@ -245,7 +245,7 @@ def test_phase5_zero_eligible_pairs_aborts():
     with patch('subprocess.Popen') as mock_popen, \
          patch('automation.daily_orchestrator.emit_json_event') as mock_emit, \
          patch('automation.daily_orchestrator.PROJECT_ROOT') as mock_root, \
-         patch('automation.daily_orchestrator.LOGS_DIR', new=pathlib.Path(tempfile.mkdtemp())):
+         patch('os.environ', {'ETORO_LOGS_DIR': tempfile.mkdtemp()}):
 
         # mock bot_script.exists()
         from pathlib import Path

@@ -78,18 +78,22 @@ CATALOG_PATH     = PROJECT_ROOT / "data" / "nautilus"
 QUOTE_TICK_PATH  = CATALOG_PATH / "data" / "quote_tick"
 IMPORT_PATH      = PROJECT_ROOT / "data" / "import"
 UNIVERSE_PATH    = PROJECT_ROOT / "data" / "universe" / "momentum_ls.json"
-LOGS_DIR         = PROJECT_ROOT / "logs"
+def logs_dir() -> Path:
+    return Path(os.environ.get("ETORO_LOGS_DIR", str(PROJECT_ROOT / "logs")))
+
 REPORTS_DIR      = PROJECT_ROOT / "reports"
-TOURNAMENT_PATH  = LOGS_DIR / f"tournament_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.json"
+TOURNAMENT_PATH  = logs_dir() / f"tournament_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.json"
 ENV_FILE         = PROJECT_ROOT / ".env"
 
 # ─── Automation-Config-Pfade (neues Config-Root ab Task 1) ───────────────────
-AUTOMATION_CFG_DIR    = PROJECT_ROOT / "automation" / "config"
-STRATEGIES_CFG        = AUTOMATION_CFG_DIR / "strategies.json"
-STRATEGY_DEFAULTS_CFG = AUTOMATION_CFG_DIR / "strategy_defaults.json"
-TOURNAMENT_CFG        = AUTOMATION_CFG_DIR / "tournament.json"
-BACKTEST_CFG          = AUTOMATION_CFG_DIR / "backtest.json"
-INSTRUMENT_MAP_PATH   = AUTOMATION_CFG_DIR / "instrument_map.json"
+def config_dir() -> Path:
+    return Path(os.environ.get("ETORO_CONFIG_DIR", str(PROJECT_ROOT / "automation" / "config")))
+
+STRATEGIES_CFG        = config_dir() / "strategies.json"
+STRATEGY_DEFAULTS_CFG = config_dir() / "strategy_defaults.json"
+TOURNAMENT_CFG        = config_dir() / "tournament.json"
+BACKTEST_CFG          = config_dir() / "backtest.json"
+INSTRUMENT_MAP_PATH   = config_dir() / "instrument_map.json"
 
 # ─── Logging-Konfiguration ────────────────────────────────────────────────────
 LOG_MAX_BYTES   = 1 * 1024 * 1024   # 1 MB max pro Log-Datei
@@ -119,9 +123,9 @@ def _get_price_precision(symbol: str) -> int:
 
 def _setup_orchestrator_logging() -> logging.Logger:
     """Richtet strukturiertes, LLM-freundliches Logging für den Orchestrator ein."""
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    logs_dir().mkdir(parents=True, exist_ok=True)
     today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    log_path  = LOGS_DIR / f"orchestrator_{today_str}.log"
+    log_path  = logs_dir() / f"orchestrator_{today_str}.log"
 
     file_handler = logging.handlers.RotatingFileHandler(
         str(log_path),
@@ -706,14 +710,14 @@ def phase3_4_backtest_and_tournament(
     pass
 
     dynamic_config   = _build_backtest_config(thirty_days_ago, today_midnight, start_capital=None)
-    dynamic_cfg_path = LOGS_DIR / "backtest_dynamic_config.json"
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    dynamic_cfg_path = logs_dir() / "backtest_dynamic_config.json"
+    logs_dir().mkdir(parents=True, exist_ok=True)
     with open(str(dynamic_cfg_path), "w", encoding="utf-8") as f:
         json.dump(dynamic_config, f, indent=2, ensure_ascii=False)
     log.info(f"[Phase 3] Dynamische Config: {dynamic_cfg_path}")
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    bt_log_path = LOGS_DIR / f"backtest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
+    bt_log_path = logs_dir() / f"backtest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
 
     cmd = [
         sys.executable,
@@ -997,8 +1001,8 @@ def phase5_live_deployment(
         return 1
 
     today_str  = datetime.now(timezone.utc).strftime("%Y%m%d")
-    bot_log    = LOGS_DIR / f"live_bot_{today_str}.log"
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    bot_log    = logs_dir() / f"live_bot_{today_str}.log"
+    logs_dir().mkdir(parents=True, exist_ok=True)
 
     bot_script = PROJECT_ROOT / "automation" / "momentum_ls_run.py"
     if not bot_script.exists():
@@ -1046,7 +1050,7 @@ def phase5_live_deployment(
         log.info(f"[Phase 5] Trading-Bot gestartet (PID: {proc.pid}).")
         emit_json_event(log, "BOT_STARTED", {"pid": proc.pid, "log_file": str(bot_log)})
 
-        pid_file = LOGS_DIR / "live_bot.pid"
+        pid_file = logs_dir() / "live_bot.pid"
         pid_file.write_text(str(proc.pid), encoding="utf-8")
         log.info(f"[Phase 5] PID gespeichert: {pid_file}")
 
@@ -1115,7 +1119,7 @@ def main() -> int:
         "python":         sys.version,
     })
 
-    cleanup_old_logs(LOGS_DIR)
+    cleanup_old_logs(logs_dir())
 
     if not api_key or not user_key:
         log.warning("ETORO_API_KEY oder ETORO_USER_KEY fehlen — API-Backfill wird übersprungen.")
