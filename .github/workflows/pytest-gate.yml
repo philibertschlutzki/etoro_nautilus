@@ -119,3 +119,6 @@ jobs:
 
       - name: Optimizer Runner, Parser and Configured Reward
         run: python3 -m pytest automation/tests/test_optimizer_runner.py automation/tests/test_optimizer_reward_parser.py -q
+
+      - name: Optimizer Loop, Holdout and DB
+        run: python3 -m pytest automation/tests/test_optimizer_loop.py -q
