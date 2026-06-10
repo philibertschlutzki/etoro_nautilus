@@ -116,7 +116,17 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     study.optimize(make_objective(strategy), n_trials=n_trials, n_jobs=n_jobs)
     return study
 
-def run(strategy: str):
-    study = optimize(strategy)
+def run(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
+    study = optimize(strategy, n_trials=n_trials, n_jobs=n_jobs)
     holdout_res = confirm_on_holdout(study, strategy)
     export_proposal(study, strategy, holdout_res)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Run Hyperparameter Optimization")
+    parser.add_argument("--strategy", type=str, required=True, help="Strategy class name to optimize")
+    parser.add_argument("--n-trials", type=int, default=None, help="Number of trials (overrides config)")
+    parser.add_argument("--n-jobs", type=int, default=1, help="Number of parallel worker jobs")
+
+    args = parser.parse_args()
+    run(strategy=args.strategy, n_trials=args.n_trials, n_jobs=args.n_jobs)

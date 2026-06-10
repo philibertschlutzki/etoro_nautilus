@@ -313,6 +313,7 @@ python3 -m automation.daily_orchestrator --dry-run --skip-api-fetch
 python3 -m automation.api_backfiller --days 7
 python3 -m automation.historical_fetcher --months 12
 python3 -m automation.catalog_service                           # systemd
+python3 -m automation.optimizer.run_optimization --strategy SmaCrossoverStrategy  # Optimizer Start
 ```
 
 Hinweis: Wenn systemd-Unit-Files im Repo existieren, müssen die ExecStart-Anweisungen dort ebenfalls auf `python3 -m automation.catalog_service` aktualisiert werden.
@@ -370,6 +371,11 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ### Optimizer / `backtest_runner.py` — Config-Contract
 
 - `backtest_runner.py` liest Strategien + Parameter **ausschließlich** aus der via `--config` übergebenen Manifest-Datei. `strategies[].params` sind vollständig aufgelöst und autoritativ; **kein** erneutes Mergen aus `strategy_defaults.json`, sobald `manifest_version` gesetzt ist.
+
+### 🟢 Pitfall #61 — Optimizer Manifest Contract & Catalog Path
+**Symptom:** Subprozesse crashen sofort mit `ValueError` ("catalog_path is missing") beim Start von `run_backtest`.
+**Root Cause:** Der `backtest_runner.py` verlässt sich im Strict-Manifest-Mode zwingend darauf, dass alle notwendigen Abhängigkeiten in `global_settings` verankert sind. Das dynamisch geschriebene Manifest (`experiment_manifest.json`) von Optuna in `trial_config.py` ließ das Feld `catalog_path` fallen.
+**Fix:** Das Feld `catalog_path` wird jetzt in `build_trial` dynamisch aus der `backtest.json` des Config-Sets aufgelöst und mit einem wasserdichten Fallback versehen (z.B. relativ zu `WORK` / Projekt-Root) in die `experiment_manifest.json` übernommen.
 - `backtest_runner.py` respektiert `ETORO_CONFIG_DIR` (Quelle der eingefrorenen `tournament.json`) und `ETORO_LOGS_DIR`; Ergebnisse ausschließlich nach `--output`.
 - Bei `walk_forward.splits > 1` exportiert `aggregate_winner.oos_fold_sortinos` die Pro-Fold-OOS-Sortinos als Liste (Basis des robusten Median-Rewards).
 - Param-Auflösung und Fold-Sortino-Sammlung MÜSSEN als reine, testbare Funktionen (`resolve_strategy_params`, `collect_oos_fold_sortinos`) vorliegen.
@@ -663,6 +669,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-10 | **Fix Bugfix-Sprint Optimizer (B1, B2, B3):** B1: Manifest Contract in `trial_config.py` repariert (dynamischer `catalog_path` Fallback implementiert) plus Doku Pitfall #61; B2: CLI Entry in `run_optimization.py` via `argparse` hinzugefügt; B3: Suchräume für alle in `AGENTS.md` gelisteten aktiven Strategien in `spaces.py` hinzugefügt. | `automation/optimizer/trial_config.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Doku-Nachtrag 0b (Verifikations-Finding P1):** Config-Contract-Block in Kap. 16 wörtlich ergänzt; Verhalten von `oos_fold_sortinos` in Kap. 10 dokumentiert (wann gesetzt, Reihenfolge, None-Handling). | `automation/AGENTS.md` |
 | 2026-06-10 | **Pitfall-Nummern-Bereinigung (Verifikations-Finding P2):** Duplikate (insb. #50) entkoppelt — erste Instanz behält die Nummer, distincte Folge-Pitfalls auf #54+ umnummeriert, exakte Dubletten entfernt. Rein redaktionell, Pitfall-Inhalte unverändert; Querverweise verifiziert. | `automation/AGENTS.md` |
 | 2026-06-10 | **Auftrag 1b:** runner.py (Subprozess-Aufruf, Env-Isolation, timeout=10800), parsing.py (Fold-Median, None-safe), reward.py (vollständig konfiguriert). | `automation/optimizer/runner.py`, `automation/optimizer/parsing.py`, `automation/optimizer/reward.py`, `automation/AGENTS.md` |
