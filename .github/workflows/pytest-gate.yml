@@ -41,6 +41,9 @@ jobs:
 
       # ── Tier 3: Core backtest engine (backtest_runner.py) ────────────────────
 
+      - name: Worker Lazy Imports Execution (Pitfall #63)
+        run: python3 -m pytest automation/tests/test_worker_lazy_imports.py -v --timeout=30
+
       - name: Runner Env-Isolation & Manifest Contract
         run: python3 -m pytest automation/tests/test_runner_env_isolation.py automation/tests/test_runner_manifest_contract.py automation/tests/test_runner_fold_sortinos.py -v --timeout=30
 

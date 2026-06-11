@@ -1331,9 +1331,20 @@ def select_winners(
             # To get accurate ratios, we need the original starting_capital used during the run.
             # Assuming 100_000.0 is the default. We can extract it from the first result's `strat_params` or use a constant since relative differences apply.
             # Best effort to extract the original starting capital or default to 100k
-            starting_capital = 100_000.0
+            starting_capital = None
             if is_eligible_population:
-                starting_capital = is_eligible_population[0].get("strat_params", {}).get("starting_capital", 100_000.0)
+                starting_capital = is_eligible_population[0].get("start_capital") or is_eligible_population[0].get("strat_params", {}).get("starting_capital")
+
+            if starting_capital is None:
+                try:
+                    bt_cfg_path = str(config_dir() / "backtest.json")
+                    if os.path.exists(bt_cfg_path):
+                        starting_capital = load_config(bt_cfg_path).get("start_capital", 100_000.0)
+                except Exception:
+                    starting_capital = 100_000.0
+
+            if starting_capital is None:
+                starting_capital = 100_000.0
 
 
             # Calculate the true portfolio metrics from chronologically ordered trades
@@ -1587,7 +1598,7 @@ def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str)
 
 
 
-def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
+def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float = 100000.0) -> dict:
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
@@ -1601,7 +1612,8 @@ def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
         "strategy": strategy,
         "metrics": NULL,
         "oos_metrics": NULL if strat.get("_walk_forward_dict") else {},
-        "strat_params": strat.get("params", {})
+        "strat_params": strat.get("params", {}),
+        "start_capital": start_capital
     }
 
 def check_data_span(ticks: list, required_days: int, span_tolerance_days: float) -> tuple[bool, float, float]:
@@ -1644,9 +1656,14 @@ def run_single_backtest_worker(
             full += f"\n{traceback.format_exc()}"
         wlog(full)
 
-    strategy_class_name = strat["strategy_class"]
-    module_name         = strat["strategy_module"]
-    config_class_name   = strat["config_class"]
+    strategy_class_name = strat.get("strategy_class", "UnknownStrategy")
+    module_name         = strat.get("strategy_module")
+    config_class_name   = strat.get("config_class")
+
+    if not module_name or not config_class_name:
+        msg = f"Fehlende Metadaten ('strategy_module' oder 'config_class') für Strategie {strategy_class_name}."
+        wlog_err(msg)
+        return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
     wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
@@ -1704,7 +1721,7 @@ def run_single_backtest_worker(
         if required_days:
             is_sufficient, span_days, _ = check_data_span(ticks, required_days, span_tolerance_days)
             if not is_sufficient:
-                from automation.utils import emit_json_event
+                from automation.log_manager import emit_execution_event as emit_json_event
                 import logging
                 log = logging.getLogger("backtest_worker")
                 emit_json_event(log, "WALK_FORWARD_INSUFFICIENT_DATA", {
@@ -1760,7 +1777,7 @@ def run_single_backtest_worker(
 
         except Exception as e:
             wlog_err(f"Engine-Setup fehlgeschlagen: {e}", exc=True)
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
         # --- Strategie konfigurieren ---
         try:
@@ -1801,7 +1818,7 @@ def run_single_backtest_worker(
             engine.add_strategy(strategy)
         except Exception as e:
             wlog_err(f"Strategie-Setup fehlgeschlagen: {e}", exc=True)
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
         # --- Backtest ausführen ---
         try:
@@ -1809,11 +1826,11 @@ def run_single_backtest_worker(
         except RuntimeError as e:
             wlog_err(f"Backtest RuntimeError (wahrscheinlich Precision Mismatch): {e}")
             engine.dispose()
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
         except Exception as e:
             wlog_err(f"Backtest gecrasht: {e}", exc=True)
             engine.dispose()
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
@@ -1910,6 +1927,7 @@ def run_single_backtest_worker(
             "metrics": metrics,
             "oos_metrics": oos_metrics,
             "strat_params": strat.get("params", {}),
+            "start_capital": start_capital,
             "_first_tick_ns": first_tick_ns_val,
         }
     finally:
@@ -2259,6 +2277,7 @@ def run_backtest() -> None:
             bar_type    = inst["bar_type"]
 
             for strat in strategies_list:
+                safe_strat_class = strat.get("strategy_class", "UnknownStrategy")
                 walk_forward_cfg = global_settings.get("walk_forward")
                 if walk_forward_cfg and end_ns:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
@@ -2270,7 +2289,7 @@ def run_backtest() -> None:
                 wlf = os.path.join(
                     logs_dir_str,
                     f"worker_{inst_id_str.replace('.', '_')}"
-                    f"_{strat['strategy_class']}_{timestamp}.log"
+                    f"_{safe_strat_class}_{timestamp}.log"
                 )
                 _worker_log_files.append(wlf)
 
@@ -2405,7 +2424,7 @@ def _run_remaining_sequentially(
     }
     for _, (rem_inst, rem_strat_name, rem_log) in remaining.items():
         rem_strat = next(
-            (s for s in strategies_list if s["strategy_class"] == rem_strat_name), None
+            (s for s in strategies_list if s.get("strategy_class", "UnknownStrategy") == rem_strat_name), None
         )
         if rem_strat is None:
             continue
