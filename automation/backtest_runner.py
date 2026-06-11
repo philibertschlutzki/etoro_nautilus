@@ -1331,9 +1331,20 @@ def select_winners(
             # To get accurate ratios, we need the original starting_capital used during the run.
             # Assuming 100_000.0 is the default. We can extract it from the first result's `strat_params` or use a constant since relative differences apply.
             # Best effort to extract the original starting capital or default to 100k
-            starting_capital = 100_000.0
+            starting_capital = None
             if is_eligible_population:
-                starting_capital = is_eligible_population[0].get("strat_params", {}).get("starting_capital", 100_000.0)
+                starting_capital = is_eligible_population[0].get("start_capital") or is_eligible_population[0].get("strat_params", {}).get("starting_capital")
+
+            if starting_capital is None:
+                try:
+                    bt_cfg_path = str(config_dir() / "backtest.json")
+                    if os.path.exists(bt_cfg_path):
+                        starting_capital = load_config(bt_cfg_path).get("start_capital", 100_000.0)
+                except Exception:
+                    starting_capital = 100_000.0
+
+            if starting_capital is None:
+                starting_capital = 100_000.0
 
 
             # Calculate the true portfolio metrics from chronologically ordered trades
@@ -1910,6 +1921,7 @@ def run_single_backtest_worker(
             "metrics": metrics,
             "oos_metrics": oos_metrics,
             "strat_params": strat.get("params", {}),
+            "start_capital": start_capital,
             "_first_tick_ns": first_tick_ns_val,
         }
     finally:
