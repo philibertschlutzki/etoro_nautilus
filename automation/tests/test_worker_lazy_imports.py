@@ -21,23 +21,31 @@ def test_worker_lazy_import_no_exception():
                 DummyTick(86400 * 1_000_000_000) # 1 day span
             ]
 
-            # This should not raise any exceptions.
-            result = run_single_backtest_worker(
-                inst_id_str="BTC.ETORO",
-                bar_type="1-HOUR",
-                strat={"name": "test", "strategy_module": "automation.strategies.mock", "strategy_class": "MockStrategy", "config_class": "MockConfig", "params": {}, "_walk_forward_days": 90},
-                catalog_path="/tmp/mock_catalog",
-                start_ns=0,
-                end_ns=None,
-                start_capital=10000,
-                generate_html_report=False,
-                reports_dir="/tmp/reports",
-                worker_log_file="/tmp/worker_log.log",
-                span_tolerance_days=3.0,
-                commission_bps=0.0,
-                spread_bps_by_asset_class=None
-            )
+            with unittest.mock.patch('automation.log_manager.emit_execution_event') as mock_emit:
+                # This should not raise any exceptions.
+                result = run_single_backtest_worker(
+                    inst_id_str="BTC.ETORO",
+                    bar_type="1-HOUR",
+                    strat={"name": "test", "strategy_module": "automation.strategies.mock", "strategy_class": "MockStrategy", "config_class": "MockConfig", "params": {}, "_walk_forward_days": 90},
+                    catalog_path="/tmp/mock_catalog",
+                    start_ns=0,
+                    end_ns=None,
+                    start_capital=10000,
+                    generate_html_report=False,
+                    reports_dir="/tmp/reports",
+                    worker_log_file="/tmp/worker_log.log",
+                    span_tolerance_days=3.0,
+                    commission_bps=0.0,
+                    spread_bps_by_asset_class=None
+                )
 
-            # verify that the result reflects the skipped execution
-            assert "error" in result
-            assert result["error"] == "insufficient_data"
+                # verify that the result reflects the skipped execution
+                assert "error" in result
+                assert result["error"] == "insufficient_data"
+
+                # verify that emit_execution_event was called correctly
+                mock_emit.assert_called_once()
+                args, kwargs = mock_emit.call_args
+                assert args[1] == "WALK_FORWARD_INSUFFICIENT_DATA"
+                assert "symbol" in args[2]
+                assert args[2]["symbol"] == "BTC.ETORO"

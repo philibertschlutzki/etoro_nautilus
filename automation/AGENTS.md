@@ -351,6 +351,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 - Instrument nicht im Cache → log + `return None` aus `_compute_quantity()`.
 - Immer `if qty is None: return` nach `_compute_quantity()`.
 - Niemals `raise` in `on_bar()`/`on_quote_tick()`.
+- Beim Auslösen von JSON-Execution-Events MUSS `emit_execution_event` aus `automation.log_manager` verwendet werden, wie in Pitfall #63 beschrieben. Lazy Imports (z.B. in Workern) müssen zudem explizit durch Execution-Tests abgedeckt sein.
 - HTTP 429 → `Retry-After` respektieren; Timeout → Retry mit Backoff.
 - Worker-Crash im Backtest → `BrokenProcessPool`-Catch → sequenzieller Fallback.
 
@@ -549,7 +550,7 @@ Worker auf `cpu//2` (max 6) begrenzt, `max_tasks_per_child=1`, expliziter Catch 
 **Root Cause:** Ein Lazy Import (z. B. `from automation.utils import emit_json_event`) schlug fehl, weil die Methode nach einem Refactoring verlegt wurde, dieser Codepfad jedoch nie auf Worker-Ebene durch AST-Isolation-Tests abgedeckt war, da Lazy Imports erst zur Laufzeit aufgelöst werden.
 **Fix/Rule:**
 1. Lazy Imports in Multiprozess-Workern müssen zwingend durch gezielte Execution-Tests (End-to-End) abgedeckt sein (wie in `test_worker_lazy_imports.py`).
-2. Jeder Pfad, der einen Lazy Import enthält, muss per Mocking durchlaufen und evaluiert werden.
+2. Jeder Pfad, der einen Lazy Import enthält, muss per Mocking durchlaufen und evaluiert werden. Jeder Lazy Import innerhalb einer Subprozess-Worker-Funktion MUSS zwingend durch einen Testpfad abgedeckt sein, der die Laufzeit-Exekution dieser Zeile erzwingt und die tatsächliche Ausführung des Loggings mockt und verifiziert.
 
 ### 🟢 Pitfall #16 — PyArrow 24+ `BinaryView` → Nautilus Rust-Panic
 Alle Quellen schreiben jetzt `pa.binary(16)` (= FixedSizeBinary(16)) nativ; Migration entfällt. **Behoben** (Shift-Left).
@@ -670,6 +671,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 - Neue Strategien → `automation/strategies/`, von `HourlyStrategyBase` erben, in `strategies.json` registrieren.
 - Neue Instrumente → `automation/config/instrument_map.json`.
 - Precisions IMMER über `automation/utils._fallback_precisions` bzw. API — keine zweite Heuristik einführen.
+- Lazy Imports in isolierten Prozessen müssen per Execution-Tests gedeckt sein (vgl. Pitfall #63 und `test_worker_lazy_imports.py`).
 - `os._exit(1)`-Konvention für WebSocket-Fehler beibehalten.
 - Subprocess-stdout/stderr immer in eine Log-Datei umleiten.
 - Vor jedem Commit: Pre-Flight-Checks (Abschnitt 13) und `pytest` laufen lassen.
@@ -841,7 +843,7 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 * **Trade-off Constraint:** Configurations in `strategy_defaults.json` (such as `deviation_threshold` for mean-reversion strategies) MUST be strictly calibrated against the `oos_min_trades` tournament gating requirement relative to the Out-of-Sample evaluation window (e.g., 30 days). If thresholds are too tight (e.g., 0.015 instead of 0.008 for VWAP), the mathematical possibility of passing the OOS gate falls to zero because the strategy naturally produces too few signals within the OOS span to be statistically evaluable. This results in false-positive "fail" states.
 | 2026-06-08 | **Issue #305 (Consistent Capping Policy & Raw Ratio Sample-Size Shrinkage):** Vereinheitlichte das Capping für alle Ratio-Metriken (Sortino, Profit Factor, Calmar) in `_calculate_stats` auf exakt `50.0`. Um Division-by-Zero zu verhindern, wurde für alle Nenner (Downside-Dev, Gross Loss, Max Drawdown) ein `DENOMINATOR_FLOOR = 1e-6` eingeführt. Zusätzlich wird nun in `select_winners` eine asymptotische Dämpfungsfunktion (Shrinkage) auf die Raw-Ratios basierend auf `n_trades` und `k_shrinkage` angewendet, *bevor* die Rankings berechnet werden. Dabei wird die Sortino Ratio in Richtung Baseline `0.0` und der Profit Factor in Richtung Baseline `1.0` gedämpft: `Damped_Ratio = Baseline + (Raw_Ratio - Baseline) * (n_trades / (n_trades + k_shrinkage))`. Dies verhindert, dass kleine Sample-Sizes durch Rauschen ungedämpfte Outlier produzieren und die Turnier-Selektion dominieren. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Optimizer Handbuch Bugfix:** Aktualisierung von manuals/run_optimizer.md. Die veraltete Warnung (Abschnitt 0) und Empfehlungen für manuelle Code-Änderungen (Abschnitt 5.4, 9.1) wurden entfernt, da Bugs B1-B4 im Code bereits behoben wurden. Die Fehler-Referenzen im Fehlerkatalog und in der Diskrepanz-Tabelle (Abschnitt 10) wurden auf 'Behoben' gesetzt. | `manuals/run_optimizer.md`, `automation/AGENTS.md` |
-| 2026-06-11 | **Bugfix Issue #354 / Pitfall #63 (Lazy Import Crash):** Behebung eines `ImportError` Absturzes im Backtest-Worker-Prozess durch fehlerhaften Lazy Import von `emit_json_event` in `run_single_backtest_worker`. Korrektur des Pfades auf `automation.log_manager.emit_execution_event` und Einführung eines gezielten Execution-Tests (`test_worker_lazy_imports.py`) inklusive CI-Integration (Tier 3), um sicherzustellen, dass in Edge-Cases angestoßene Lazy Imports in Workern fehlerfrei aufgelöst werden. Pitfall #63 dokumentiert. | `automation/backtest_runner.py`, `automation/tests/test_worker_lazy_imports.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
+| 2026-06-11 | **Bugfix Issue #354 / Pitfall #63 (Lazy Import Crash):** Behebung eines `ImportError` Absturzes im Backtest-Worker-Prozess durch fehlerhaften Lazy Import von `emit_json_event` in `run_single_backtest_worker`. Korrektur des Pfades auf `automation.log_manager.emit_execution_event` und Einführung eines gezielten Execution-Tests (`automation/tests/test_worker_lazy_imports.py`) inklusive CI-Integration (Tier 3), um sicherzustellen, dass in Edge-Cases angestoßene Lazy Imports in Workern fehlerfrei aufgelöst werden. Pitfall #63 dokumentiert. | `automation/backtest_runner.py`, `automation/tests/test_worker_lazy_imports.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 
 ### Pitfall #60: Gate-Scope vs. Deployment-Scope (Mismatch Prevention)
 - **Symptom:** Ein notorischer Einzel-Verlierer könnte fälschlicherweise live geschaltet werden, weil er innerhalb seines isolierten Symbols als lokaler Gewinner hervorging oder Teil eines Turniers war, das auf Aggregat-Ebene (Portfolio-Level) das OOS-Gate bestand, obwohl die spezifische Strategie das OOS-Gate nie individuell bestanden hat.
