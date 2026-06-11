@@ -6,20 +6,6 @@
 
 ---
 
-## 0. ⚠️ Vor dem ersten Lauf lesen — drei blockierende Befunde aus dem Code-Review
-
-Bevor du startest, drei Punkte, an denen der **aktuelle Code** vom alten Handbuch (`docs/strategie_optimierung_guide.md`) abweicht. Sie sind in Abschnitt 9 und 10 im Detail erklärt; hier die Kurzfassung, weil zwei davon den Lauf **hart verhindern**:
-
-| # | Befund | Auswirkung | Status |
-|---|--------|-----------|--------|
-| **B1** | `trial_config.build_trial()` schreibt **kein** `catalog_path` in `global_settings` des Manifests, aber `runner.run_backtest()` verlangt es und wirft sonst `ValueError`. | **Jeder Trial bricht sofort ab.** Loop läuft nie durch. | 🔴 blockierend |
-| **B2** | `run_optimization.py` hat **keinen** `__main__`-/argparse-Block. Der im alten Handbuch genannte Aufruf `python3 -m automation.optimizer.run_optimization --strategy …` **tut nichts**. | Optimizer ist per CLI nicht startbar. | 🔴 blockierend (CLI) |
-| **B3** | `spaces.sample_params()` kennt nur **zwei** Strategien: `HourlyMeanReversionStrategy` und `SmaCrossoverStrategy`. Alle anderen (z. B. `FlashCrashReversalStrategy`) → `ValueError`. | Konzept-Tabelle mit 6 Strategien ist noch nicht implementiert. | 🟡 Funktionslücke |
-
-Solange **B1** nicht behoben ist, kannst du den Optimizer nicht produktiv fahren. Der Fix ist klein (Abschnitt 9.1). **B2** umgehst du über die Python-API (Abschnitt 5.2) oder behebst ihn mit dem Snippet in Abschnitt 5.4.
-
----
-
 ## 1. Was der Optimizer macht (in einem Satz)
 
 Der Autotuner ersetzt den manuellen Regelkreis *„Parameter raten → Backtest → auswerten → wiederholen"* durch einen **Optuna-TPE-Sampler**: er schlägt Strategie-Parameter vor, fährt pro Vorschlag **einen** Walk-Forward-Backtest gegen das ganze Instrumenten-Universum, bewertet das Ergebnis mit einem Reward, verdichtet die Suche in erfolgreichen Regionen und prüft am Ende den besten Fund gegen ein **nie gesehenes Holdout-Fenster**. Nur wenn der Holdout besteht, entsteht ein Vorschlag (Proposal) für einen Pull Request — **deployt wird nie automatisch**.
@@ -166,8 +152,6 @@ run("HourlyMeanReversionStrategy")
 # -> optimiert sequ(n_jobs=1), bestätigt am Holdout, schreibt proposal_*.json
 ```
 
-> Das funktioniert **erst, nachdem Befund B1 behoben ist** (Abschnitt 9.1). Vorher bricht der erste Trial mit `ValueError: Missing catalog_path …` ab.
-
 ### 5.2 Voller Lauf über die Python-API (empfohlener Weg, da keine CLI existiert)
 
 Die Funktion `run(strategy)` ist die einzige, die die **gesamte Pipeline** ausführt (Optimierung → Holdout → Proposal). Sie ist aber auf `n_jobs=1` (sequentiell) festgelegt:
@@ -178,7 +162,7 @@ from automation.optimizer.run_optimization import run
 run("HourlyMeanReversionStrategy")   # oder "SmaCrossoverStrategy"
 ```
 
-Erlaubte Strategie-Namen (Stand Code): **`HourlyMeanReversionStrategy`**, **`SmaCrossoverStrategy`** (Befund B3).
+Erlaubte Strategie-Namen (Stand Code): **`HourlyMeanReversionStrategy`**, **`SmaCrossoverStrategy`**.
 
 ### 5.3 Parallele Trials (manuelle Pipeline)
 
@@ -198,34 +182,6 @@ print("Proposal:", path)
 
 > **SQLite + Parallelität:** Bei `n_jobs > 4` gegen die lokale SQLite-DB drohen `database is locked`-Fehler. Für echte Parallelität auf eine PostgreSQL-`STORAGE`-URL wechseln (Abschnitt 9, Eintrag *database is locked*).
 > **Core-Budgetierung:** Jeder Trial startet selbst einen Backtest mit internem ProcessPool (bis `cpu//2` Worker). Halte `parallele_Trials × interne_Worker ≤ Kerne`, sonst überbuchst du die CPU.
-
-### 5.4 Empfohlene Ergänzung: CLI nachrüsten (behebt Befund B2)
-
-Damit der im alten Handbuch dokumentierte Aufruf funktioniert, füge ans **Ende** von `automation/optimizer/run_optimization.py` an:
-
-```python
-if __name__ == "__main__":
-    import argparse
-    p = argparse.ArgumentParser(description="Closed-Loop Strategy Optimizer")
-    p.add_argument("--strategy", required=True,
-                   help="Strategie-Klassenname, z. B. HourlyMeanReversionStrategy")
-    p.add_argument("--n-trials", type=int, default=None,
-                   help="Überschreibt n_trials aus optimizer.json")
-    p.add_argument("--n-jobs", type=int, default=1,
-                   help="Parallele Trials (Postgres-Storage für >4 empfohlen)")
-    args = p.parse_args()
-
-    study   = optimize(args.strategy, n_trials=args.n_trials, n_jobs=args.n_jobs)
-    holdout = confirm_on_holdout(study, args.strategy)
-    export_proposal(study, args.strategy, holdout)
-```
-
-Danach (und nach B1-Fix) läuft:
-
-```bash
-python3 -m automation.optimizer.run_optimization --strategy HourlyMeanReversionStrategy
-python3 -m automation.optimizer.run_optimization --strategy HourlyMeanReversionStrategy --n-jobs 4
-```
 
 ---
 
@@ -348,14 +304,14 @@ Jede Funktion des Pakets `automation/optimizer/`. Reihenfolge entspricht dem Dat
 
 | Funktion | Signatur | Zweck | Fehler |
 |---|---|---|---|
-| `sample_params` | `(strategy: str, trial) -> dict` | Schlägt pro Trial die Parameter vor. **Implementiert:** `HourlyMeanReversionStrategy` (`keltner_period` 6–40, `keltner_atr_period` 6–40, `keltner_multiplier` 1.0–3.5, `cooldown_bars` 2–36, `atr_trailing_multiplier` 0.3–2.5, `max_bars_in_trade` 12–96); `SmaCrossoverStrategy` (`sma_period` 5–60, `cooldown_bars` 2–36). | **Jede andere Strategie → `ValueError(f"Unknown strategy: {strategy}")`** (Befund B3). |
+| `sample_params` | `(strategy: str, trial) -> dict` | Schlägt pro Trial die Parameter vor. **Implementiert:** `HourlyMeanReversionStrategy` (`keltner_period` 6–40, `keltner_atr_period` 6–40, `keltner_multiplier` 1.0–3.5, `cooldown_bars` 2–36, `atr_trailing_multiplier` 0.3–2.5, `max_bars_in_trade` 12–96); `SmaCrossoverStrategy` (`sma_period` 5–60, `cooldown_bars` 2–36). | **Jede andere Strategie → `ValueError(f"Unknown strategy: {strategy}")`**. |
 
 ### 8.4 `trial_config.py` — Trial-Isolierung & Manifest
 
 | Funktion | Signatur | Zweck | Fehler |
 |---|---|---|---|
 | `config_dir()` | `() -> Path` | `ETORO_CONFIG_DIR` (falls gesetzt), sonst `automation/config`. | — |
-| `build_trial` | `(strategy_class, sampled, *, study_name, trial_number, seed, now=None, holdout_days=None, n_folds=None, base_cfg=None) -> (Path, Path)` | Legt isoliertes `trial_dir` an, kopiert alle `config/*.json`, berechnet das Zeitfenster (Holdout-Aussparung, Sonntag→Samstag-Rollback) und schreibt `experiment_manifest.json` mit **genau einer** aufgelösten Strategie. `now` ist für Tests injizierbar (deterministische Fenster). | Liest `backtest.json` → `FileNotFoundError`, falls die Config-Datei fehlt. **⚠️ schreibt kein `catalog_path` ins Manifest (Befund B1).** |
+| `build_trial` | `(strategy_class, sampled, *, study_name, trial_number, seed, now=None, holdout_days=None, n_folds=None, base_cfg=None) -> (Path, Path)` | Legt isoliertes `trial_dir` an, kopiert alle `config/*.json`, berechnet das Zeitfenster (Holdout-Aussparung, Sonntag→Samstag-Rollback) und schreibt `experiment_manifest.json` mit **genau einer** aufgelösten Strategie. `now` ist für Tests injizierbar (deterministische Fenster). | Liest `backtest.json` → `FileNotFoundError`, falls die Config-Datei fehlt. |
 
 ### 8.5 `parsing.py` — Tournament-JSON → Metriken
 
@@ -376,7 +332,7 @@ Jede Funktion des Pakets `automation/optimizer/`. Reihenfolge entspricht dem Dat
 
 | Funktion | Signatur | Zweck | Fehler |
 |---|---|---|---|
-| `run_backtest` | `(trial_dir: Path, manifest_path: Path) -> Path` | Liest `catalog_path` aus `manifest.global_settings`, startet `automation/backtest_runner.py` als Subprozess (`--momentum --catalog-path … --config <manifest> --output <trial>/tournament_result.json`), `timeout=10800`, `check=False`. Env: `ETORO_CONFIG_DIR=trial/config`, `ETORO_LOGS_DIR=trial/logs`, `PYTHONUNBUFFERED=1`. Gibt den Output-Pfad zurück. | **`ValueError("Missing catalog_path …")`** wenn das Manifest es nicht enthält (Befund B1). `subprocess.TimeoutExpired` bei > 3 h. **`FileNotFoundError`**, wenn `tournament_result.json` nach dem Lauf fehlt (Backtest-Crash; `check=False` schluckt den Exit-Code). |
+| `run_backtest` | `(trial_dir: Path, manifest_path: Path) -> Path` | Liest `catalog_path` aus `manifest.global_settings`, startet `automation/backtest_runner.py` als Subprozess (`--momentum --catalog-path … --config <manifest> --output <trial>/tournament_result.json`), `timeout=10800`, `check=False`. Env: `ETORO_CONFIG_DIR=trial/config`, `ETORO_LOGS_DIR=trial/logs`, `PYTHONUNBUFFERED=1`. Gibt den Output-Pfad zurück. | **`ValueError("Missing catalog_path …")`** wenn das Manifest es nicht enthält. `subprocess.TimeoutExpired` bei > 3 h. **`FileNotFoundError`**, wenn `tournament_result.json` nach dem Lauf fehlt (Backtest-Crash; `check=False` schluckt den Exit-Code). |
 
 ### 8.8 `confirm.py` — Holdout & Proposal
 
@@ -405,22 +361,6 @@ Der Optimizer ist bewusst **fail-closed** ausgelegt: Im Zweifel **kein** Vorschl
 - **Harte Fehler (Exceptions):** brechen den Trial — und mangels `catch=` aktuell die **ganze Study** — ab. Beispiele: fehlendes Manifest-Feld, Backtest-Crash, Timeout, kaputtes JSON.
 - **Weiche Signale (kein Crash):** Ein Trial, dessen OOS nicht auswertbar ist, bekommt den Reward `penalty_unevaluable_oos` (`-10.0`). Das ist **kein** Fehler, sondern die korrekte Bestrafung einer uninformativen Region. Wenn **alle** Trials auf `-10.0` hängen, ist das ein Hinweis auf einen Konfigurations- oder Suchraum-Defekt — nicht auf einen Absturz.
 
-#### Pflicht-Fix vor Produktivbetrieb (Befund B1)
-
-`build_trial()` muss `catalog_path` ins Manifest schreiben, damit `run_backtest()` nicht sofort wirft. In `automation/optimizer/trial_config.py` den `global_settings`-Block ergänzen:
-
-```python
-from automation.optimizer.manifest import PROJECT_ROOT   # bereits importierbar via manifest
-
-"global_settings": {
-    "catalog_path": str(PROJECT_ROOT / "data" / "nautilus"),   # <-- ergänzen (B1-Fix)
-    "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "end_time":   end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "seed": seed
-},
-```
-> Damit deckt sich der Code wieder mit dem Runner-Contract aus dem Konzept (dort steht `catalog_path` bereits im Manifest). Optional zusätzlich `start_capital` und den `walk_forward`-Block ins Manifest aufnehmen, um es vollständig selbstbeschreibend zu machen.
-
 ### 9.2 Trial-Isolation: Soll-Verhalten bei vielen Trials
 
 Damit ein einzelner kaputter Trial nicht die ganze Nacht-Optimierung killt, sollte `study.optimize` Trial-Fehler **einfangen** statt durchzureichen. Zwei saubere Optionen:
@@ -448,8 +388,8 @@ def objective(trial):
 
 | Fehler / Symptom | Auslöser (Funktion) | Aktuelles Verhalten | Soll-Verhalten / Operator-Aktion |
 |---|---|---|---|
-| `ValueError: Missing catalog_path in manifest global_settings` | `run_backtest` | **Jeder Trial bricht ab** (Befund B1). | B1-Fix aus 9.1 anwenden. |
-| `ValueError: Unknown strategy: <X>` | `sample_params` | Trial bricht ab. | Nur `HourlyMeanReversionStrategy`/`SmaCrossoverStrategy` nutzen oder Suchraum in `spaces.py` ergänzen (Befund B3). |
+| `ValueError: Missing catalog_path in manifest global_settings` | `run_backtest` | **Jeder Trial bricht ab**. | Sicherstellen, dass im Manifest catalog_path gesetzt wird. |
+| `ValueError: Unknown strategy: <X>` | `sample_params` | Trial bricht ab. | Nur `HourlyMeanReversionStrategy`/`SmaCrossoverStrategy` nutzen oder Suchraum in `spaces.py` ergänzen. |
 | `FileNotFoundError: Output file …/tournament_result.json not generated` | `run_backtest` | Trial bricht ab. | Der Backtest ist abgestürzt (`check=False` verbirgt den Exit-Code). **Trial-Logs prüfen:** `data/optimizer/<study>/trial_XXXX/logs/`. Häufig: defekter Katalog-Pfad, Precision-Mismatch, zu kurze Datenspanne. |
 | Reward konstant `-10.0` über viele Trials | `compute_reward` (weiches Signal) | Kein Crash; Suche bleibt „blind". | Strategie generiert keine auswertbaren OOS-Trades. Suchräume in `spaces.py` auf plausible Grenzen prüfen; Datenspanne (`is_window_days + n_folds·oos_window_days`) muss durch den Katalog gedeckt sein; ggf. `oos_min_trades` vs. Signalfrequenz prüfen. |
 | `sqlite3.OperationalError: database is locked` | `optimize` (n_jobs>1) | Trials kollidieren auf der SQLite-DB. | Bei > 4 Worker `STORAGE` auf PostgreSQL umstellen: `STORAGE = "postgresql://opt:opt@db/optuna"`. Worker-Prozesse statt Threads. |
@@ -466,7 +406,7 @@ def objective(trial):
 
 1. **Welche Exception?** Steht im stdout/Traceback des Optimizer-Prozesses.
 2. **Bei `FileNotFoundError (tournament_result.json)`** → in das **Trial-Verzeichnis** wechseln und `logs/` lesen. Dort steht der echte Backtest-Fehler.
-3. **Manifest prüfen:** `cat data/optimizer/<study>/trial_XXXX/experiment_manifest.json` — sind `catalog_path` (nach B1-Fix), `start_time`/`end_time` und die Parameter plausibel?
+3. **Manifest prüfen:** `cat data/optimizer/<study>/trial_XXXX/experiment_manifest.json` — sind `catalog_path` , `start_time`/`end_time` und die Parameter plausibel?
 4. **Reproduzieren:** Den Backtest mit genau diesem Manifest manuell starten, um den Fehler isoliert zu sehen:
    ```bash
    python automation/backtest_runner.py --momentum \
@@ -483,15 +423,15 @@ Zusammenfassung der Befunde aus dem Abgleich von `docs/strategie_optimierung_gui
 
 | # | Befund | Datei | Schweregrad | Empfehlung |
 |---|--------|-------|-------------|------------|
-| **B1** | `catalog_path` fehlt im Manifest, wird vom Runner aber verlangt. | `trial_config.py` ↔ `runner.py` | 🔴 blockierend | Fix in 9.1. |
-| **B2** | Kein `__main__`/argparse; dokumentierter CLI-Aufruf wirkungslos. | `run_optimization.py` | 🔴 blockierend (CLI) | Snippet in 5.4 oder Python-API in 5.2. |
-| **B3** | Nur 2 von 6 konzipierten Strategien im Suchraum implementiert. | `spaces.py` | 🟡 Lücke | Restliche Suchräume aus Konzept-Tabelle (Abschnitt 4 des Konzepts) ergänzen. |
-| **B4** | `run()` (Vollpipeline) ist auf `n_jobs=1` festverdrahtet; Parallelität nur über `optimize()`, das aber Holdout/Proposal nicht ausführt. | `run_optimization.py` | 🟡 Ergonomie | CLI aus 5.4 reicht `n_jobs` an `optimize()` durch und ruft danach Holdout/Proposal. |
+| **B1** | `catalog_path` fehlt im Manifest, wird vom Runner aber verlangt. | `trial_config.py` ↔ `runner.py` | ✅ Behoben | Erledigt. |
+| **B2** | Kein `__main__`/argparse; dokumentierter CLI-Aufruf wirkungslos. | `run_optimization.py` | ✅ Behoben | Erledigt. |
+| **B3** | Nur 2 von 6 konzipierten Strategien im Suchraum implementiert. | `spaces.py` | ✅ Behoben | Erledigt. |
+| **B4** | `run()` (Vollpipeline) ist auf `n_jobs=1` festverdrahtet; Parallelität nur über `optimize()`, das aber Holdout/Proposal nicht ausführt. | `run_optimization.py` | ✅ Behoben | Erledigt. |
 | **B5** | `build_trial` legt `trial_dir/logs` nicht an, der Runner setzt aber `ETORO_LOGS_DIR=trial/logs`. | `trial_config.py` | 🟢 minor | In `build_trial` ein `(trial_dir/"logs").mkdir(parents=True, exist_ok=True)` ergänzen. |
 | **B6** | `reward.py` (weights=None) und `runner.py` (bare `python`, kein `cwd`) sind CWD-/PATH-abhängig. | `reward.py`, `runner.py` | 🟢 minor | Aus `PROJECT_ROOT` starten; optional auf `sys.executable` + `cwd` umstellen. |
 | **B7** | Manifest enthält weniger Felder als im Konzept (kein `experiment`-Block, kein `start_capital`, kein `walk_forward`). | `trial_config.py` | 🟢 kosmetisch | Optional ergänzen, um das Manifest vollständig selbstbeschreibend zu halten. |
 
-> **Reihenfolge der Behebung:** B1 zuerst (sonst läuft nichts), dann B2/B4 (Bedienbarkeit), dann B3 (mehr Strategien), B5–B7 nach Bedarf. Halte die Commits chirurgisch (ein Anliegen je Commit, deutsche Log-Sprache, `pytest`-Gate grün) — gemäß `automation/AGENTS.md`.
+> **Reihenfolge der Behebung:** B5–B7 nach Bedarf. Halte die Commits chirurgisch (ein Anliegen je Commit, deutsche Log-Sprache, `pytest`-Gate grün) — gemäß `automation/AGENTS.md`.
 
 ---
 
@@ -499,9 +439,9 @@ Zusammenfassung der Befunde aus dem Abgleich von `docs/strategie_optimierung_gui
 
 | Du siehst … | Wahrscheinlich … | Tu das |
 |---|---|---|
-| Beim Start passiert „nichts" | CLI ohne `__main__` (B2) | Python-API (5.2) nutzen oder CLI nachrüsten (5.4). |
-| `Missing catalog_path …` | B1 | Fix in 9.1 anwenden. |
-| `Unknown strategy: …` | Strategie nicht im Suchraum (B3) | Unterstützte Strategie wählen. |
+| Beim Start passiert „nichts" | Falscher Aufruf | Python-API (5.2) nutzen oder CLI verwenden. |
+| `Missing catalog_path …` | Manifest defekt | Manifest prüfen. |
+| `Unknown strategy: …` | Strategie nicht im Suchraum | Unterstützte Strategie wählen. |
 | `Output file … not generated` | Backtest abgestürzt | `trial_XXXX/logs/` lesen, dann manuell reproduzieren (9.4 Schritt 4). |
 | Reward immer `-10.0` | Keine OOS-Trades | Suchräume/Datenspanne/`oos_min_trades` prüfen. |
 | `database is locked` | SQLite + viele Worker | Auf Postgres umstellen. |
@@ -510,4 +450,4 @@ Zusammenfassung der Befunde aus dem Abgleich von `docs/strategie_optimierung_gui
 
 ---
 
-*Erstellt nach Abgleich von Handbuch, Konzept v2 und dem Code in `automation/optimizer/` (Stand des bereitgestellten Repos, 2026-06-10). Bei jeder Code-Änderung am Optimizer dieses Handbuch und den Befund-Status in Abschnitt 0/10 aktualisieren.*
+*Erstellt nach Abgleich von Handbuch, Konzept v2 und dem Code in `automation/optimizer/` (Stand des bereitgestellten Repos, 2026-06-10). Bei jeder Code-Änderung am Optimizer dieses Handbuch und den Befund-Status in Abschnitt 10 aktualisieren.*
