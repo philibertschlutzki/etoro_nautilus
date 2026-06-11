@@ -2268,7 +2268,7 @@ def run_backtest() -> None:
                     strat["_oos_span_days"]     = span_days
 
                 wlf = os.path.join(
-                    logs_dir,
+                    logs_dir_str,
                     f"worker_{inst_id_str.replace('.', '_')}"
                     f"_{strat['strategy_class']}_{timestamp}.log"
                 )
