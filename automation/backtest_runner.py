@@ -1598,7 +1598,7 @@ def _get_normalized_catalog_path(original_catalog_path: str, instrument_id: str)
 
 
 
-def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
+def _empty_result(symbol: str, strategy: str, strat: dict, start_capital: float = 100000.0) -> dict:
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
@@ -1612,7 +1612,8 @@ def _empty_result(symbol: str, strategy: str, strat: dict) -> dict:
         "strategy": strategy,
         "metrics": NULL,
         "oos_metrics": NULL if strat.get("_walk_forward_dict") else {},
-        "strat_params": strat.get("params", {})
+        "strat_params": strat.get("params", {}),
+        "start_capital": start_capital
     }
 
 def check_data_span(ticks: list, required_days: int, span_tolerance_days: float) -> tuple[bool, float, float]:
@@ -1771,7 +1772,7 @@ def run_single_backtest_worker(
 
         except Exception as e:
             wlog_err(f"Engine-Setup fehlgeschlagen: {e}", exc=True)
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
         # --- Strategie konfigurieren ---
         try:
@@ -1812,7 +1813,7 @@ def run_single_backtest_worker(
             engine.add_strategy(strategy)
         except Exception as e:
             wlog_err(f"Strategie-Setup fehlgeschlagen: {e}", exc=True)
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
         # --- Backtest ausführen ---
         try:
@@ -1820,11 +1821,11 @@ def run_single_backtest_worker(
         except RuntimeError as e:
             wlog_err(f"Backtest RuntimeError (wahrscheinlich Precision Mismatch): {e}")
             engine.dispose()
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
         except Exception as e:
             wlog_err(f"Backtest gecrasht: {e}", exc=True)
             engine.dispose()
-            return _empty_result(inst_id_str, strategy_class_name, strat)
+            return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
