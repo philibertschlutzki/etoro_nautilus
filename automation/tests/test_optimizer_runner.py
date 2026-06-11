@@ -1,6 +1,7 @@
 import json, types
 from pathlib import Path
 import pytest
+import optuna
 from automation.optimizer import runner
 
 def _make_trial(tmp_path):
@@ -38,5 +39,5 @@ def test_run_backtest_missing_output_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.subprocess, "run",
                         lambda *a, **k: types.SimpleNamespace(returncode=1))  # erzeugt KEINE Datei
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(optuna.TrialPruned):
         runner.run_backtest(trial_dir, mp)

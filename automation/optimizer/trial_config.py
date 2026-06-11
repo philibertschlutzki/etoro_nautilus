@@ -75,6 +75,18 @@ def build_trial(
 
     resolved_params = resolve_params(strategy_class, sampled, base_cfg)
 
+    strategy_module = ""
+    config_class = ""
+    strats_path = base_cfg / "strategies.json"
+    if strats_path.exists():
+        with open(strats_path, "r", encoding="utf-8") as f:
+            strats_data = json.load(f)
+            for s in strats_data.get("strategies", []):
+                if s.get("strategy_class") == strategy_class:
+                    strategy_module = s.get("strategy_module", "")
+                    config_class = s.get("config_class", "")
+                    break
+
     # Resolve catalog_path from config or fallback to default
     catalog_path = bt_data.get("catalog_path", str(WORK.parent.parent.parent / "data" / "nautilus" / "data"))
 
@@ -103,6 +115,8 @@ def build_trial(
         "strategies": [
             {
                 "strategy_class": strategy_class,
+                "strategy_module": strategy_module,
+                "config_class": config_class,
                 "params": resolved_params,
                 "active": True
             }
