@@ -1,0 +1,49 @@
+📝 Log-Datei: /home/user/etoro_nautilus/logs/backtest_2026-06-11_07-46-25.log
+🚨 Fehler-Log: /home/user/etoro_nautilus/logs/errors_2026-06-11_07-46-25.log
+======================================================================
+📊 Spread-Modeling: True (fill_model=bid_ask), Span-Tolerance: 3.0d
+   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)
+  ⚠️  Tournament-Kriterium 'k_shrinkage' ist definiert, aber nicht in eligible_requires_all/any referenziert!
+🏆 Tournament Configuration:
+   [ALL REQUIRED] ['min_trades', 'min_total_return', 'min_win_rate', 'max_drawdown', 'min_expectancy']
+      • min_trades: 20
+      • min_total_return: 0.005
+      • min_win_rate: 0.35
+      • max_drawdown: 0.3
+      • min_expectancy: 5e-05
+   [ANY REQUIRED] ['min_sortino', 'min_profit_factor']
+      • min_sortino: 0.3
+      • min_profit_factor: 1.1
+   [SHRINKAGE FACTOR] 20.0
+   [OOS DEFAULTS] min_trades: 3, min_return: 0.005, min_expectancy: 5e-05
+⚙️  Strategy-Defaults geladen für: SmaCrossoverStrategy, MeanReversionStrategy, DynamicBreakoutStrategy, FlashCrashReversalStrategy, VolatilityBreakoutPumpStrategy, ComboTrendVwapStrategy, VwapExhaustionStrategy, HourlyMeanReversionStrategy
+ℹ️ 2 Defaults ignoriert (Strategien inaktiv): ['DynamicBreakoutStrategy', 'MeanReversionStrategy']
+✅ Defaults angewandt — SmaCrossoverStrategy: sma_period=5, trade_amount_pct=15.0
+✅ Defaults angewandt — FlashCrashReversalStrategy: bb_period=10, bb_std_dev=2.0, rsi_period=7, rsi_oversold=30.0, rsi_overbought=70.0, atr_trailing_multiplier=0.75, max_bars_in_trade=16, trade_amount_pct=15.0
+✅ Defaults angewandt — VolatilityBreakoutPumpStrategy: bb_period=10, bb_std_dev=2.0, trade_amount_pct=15.0
+✅ Defaults angewandt — ComboTrendVwapStrategy: sma_period=20, macd_fast=5, macd_slow=13, macd_signal_period=9, bb_period=10, bb_std_dev=2.0, bb_entry_tolerance=1.0, cooldown_bars=12, trade_amount_pct=15.0
+✅ Defaults angewandt — VwapExhaustionStrategy: deviation_threshold=0.008, vwap_period=24, cooldown_bars=3, trade_amount_pct=15.0
+✅ Defaults angewandt — HourlyMeanReversionStrategy: keltner_period=10, keltner_atr_period=10, keltner_multiplier=1.5, trade_amount_pct=15.0
+   • Effective Data Span Required: 147.0 days (Required: 150, Max Allowed Deficit: 3.0)
+📅 Zeitraum: 2026-01-12 → 2026-06-11
+📋 106 Instrumente gefunden.
+
+🔍 Analysiere Startdaten der Instrumente (Kohorten-Analyse)...
+   📊 Identifizierte Startdatum-Kohorten:
+      • 2025-11-13: 41 Symbole
+      • 2025-11-14: 64 Symbole
+      • 2025-11-20: 1 Symbole
+   ✅ Konfiguriertes Startdatum 2026-01-12 00:00:00 deckt alle Instrumente ab.
+
+🔍 Prüfe Parquet-Schema-Konsistenz...
+  ✅ Alle Schemas konsistent.
+
+⏳ Starte 636 Backtest-Jobs (106 × 6 Strategien)...
+Traceback (most recent call last):
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 2427, in <module>
+    run_backtest()
+  File "/home/user/etoro_nautilus/automation/backtest_runner.py", line 2270, in run_backtest
+    wlf = os.path.join(
+          ^^^^^^^^^^^^^
+  File "<frozen posixpath>", line 76, in join
+TypeError: expected str, bytes or os.PathLike object, not function

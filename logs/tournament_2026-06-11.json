@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-06-11T05:46:25.889312+00:00",
+  "universe_snapshot": "dummy",
+  "total_symbol_strategy_pairs": 0,
+  "eligible_pairs": 0,
+  "per_symbol_winners": {},
+  "aggregate_winner": null,
+  "full_results": [],
+  "_note": "Dummy-Tournament (kein Backtest-Datenmaterial)."
+}
