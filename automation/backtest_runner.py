@@ -1716,7 +1716,7 @@ def run_single_backtest_worker(
         if required_days:
             is_sufficient, span_days, _ = check_data_span(ticks, required_days, span_tolerance_days)
             if not is_sufficient:
-                from automation.utils import emit_json_event
+                from automation.log_manager import emit_execution_event as emit_json_event
                 import logging
                 log = logging.getLogger("backtest_worker")
                 emit_json_event(log, "WALK_FORWARD_INSUFFICIENT_DATA", {
