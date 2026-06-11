@@ -60,6 +60,7 @@ def test_oos_aggregation():
         {
             "symbol": "SYM1",
             "strategy": "StrategyA",
+            "start_capital": 100000.0,
             "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
             "oos_metrics": {
                 "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.1, "max_drawdown": 0.1, "win_rate": 0.5, "total_return": 0.1, "median_position_notional": 50.0,
@@ -69,12 +70,14 @@ def test_oos_aggregation():
         {
             "symbol": "SYM1",
             "strategy": "StrategyB",
+            "start_capital": 100000.0,
             "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
             "oos_metrics": { "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1, "median_position_notional": 50.0, "_oos_trade_records": [] }
         },
         {
             "symbol": "SYM2",
             "strategy": "StrategyA",
+            "start_capital": 100000.0,
             "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
             "oos_metrics": {
                 "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.8, "max_drawdown": 0.09, "win_rate": 0.25, "total_return": 0.2, "median_position_notional": 50.0,
@@ -84,6 +87,7 @@ def test_oos_aggregation():
         {
             "symbol": "SYM2",
             "strategy": "StrategyB",
+            "start_capital": 100000.0,
             "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
             "oos_metrics": { "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2, "median_position_notional": 50.0, "_oos_trade_records": [] }
         }
