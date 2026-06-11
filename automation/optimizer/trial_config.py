@@ -66,6 +66,9 @@ def build_trial(
     trial_cfg_dir = trial_dir / "config"
     trial_cfg_dir.mkdir(parents=True, exist_ok=True)
 
+    # NEU: Logs-Verzeichnis für den Backtest-Subprozess anlegen (Fix Issue #346)
+    (trial_dir / "logs").mkdir(parents=True, exist_ok=True)
+
     # Copy all JSON files from base_cfg
     for p in base_cfg.glob("*.json"):
         shutil.copy2(p, trial_cfg_dir / p.name)

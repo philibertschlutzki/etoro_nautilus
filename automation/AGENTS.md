@@ -376,6 +376,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 **Symptom:** Subprozesse crashen sofort mit `ValueError` ("catalog_path is missing") beim Start von `run_backtest`.
 **Root Cause:** Der `backtest_runner.py` verlässt sich im Strict-Manifest-Mode zwingend darauf, dass alle notwendigen Abhängigkeiten in `global_settings` verankert sind. Das dynamisch geschriebene Manifest (`experiment_manifest.json`) von Optuna in `trial_config.py` ließ das Feld `catalog_path` fallen.
 **Fix:** Das Feld `catalog_path` wird jetzt in `build_trial` dynamisch aus der `backtest.json` des Config-Sets aufgelöst und mit einem wasserdichten Fallback versehen (z.B. relativ zu `WORK` / Projekt-Root) in die `experiment_manifest.json` übernommen.
+
+### 🟢 Pitfall #62 — Optimizer Trial Log Directory Missing (Issue #346)
+**Symptom:** Backtest-Subprozesse im Optimizer protokollieren keine Logs in den jeweiligen Trial-Ordnern oder werfen FileNotFoundError-Fehler im Log-Manager.
+**Root Cause:** Die `build_trial` Funktion in `trial_config.py` erstellte zwar den `config`-Ordner, vergaß aber den `logs`-Ordner. Da der Subprozess-Runner (`runner.py`) jedoch strikt `ETORO_LOGS_DIR=trial/logs` erzwingt, liefen die Log-Handler ins Leere.
+**Fix:** Das `logs`-Verzeichnis wird nun explizit via `(trial_dir / "logs").mkdir(parents=True, exist_ok=True)` in `build_trial` vor dem Start des Runners initialisiert.
+**Betroffen:** `automation/optimizer/trial_config.py`
 - `backtest_runner.py` respektiert `ETORO_CONFIG_DIR` (Quelle der eingefrorenen `tournament.json`) und `ETORO_LOGS_DIR`; Ergebnisse ausschließlich nach `--output`.
 - Bei `walk_forward.splits > 1` exportiert `aggregate_winner.oos_fold_sortinos` die Pro-Fold-OOS-Sortinos als Liste (Basis des robusten Median-Rewards).
 - Param-Auflösung und Fold-Sortino-Sammlung MÜSSEN als reine, testbare Funktionen (`resolve_strategy_params`, `collect_oos_fold_sortinos`) vorliegen.
@@ -669,6 +675,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-11 | **Issue #346 (Pitfall #62 - Befund B5):** Fehlendes `logs`-Verzeichnis in `build_trial` ergänzt, um FileNotFoundError im Subprozess-Logging des Optimizers zu beheben, wenn `ETORO_LOGS_DIR` gesetzt wird. | `automation/optimizer/trial_config.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Fix Bugfix-Sprint Optimizer (B1, B2, B3):** B1: Manifest Contract in `trial_config.py` repariert (dynamischer `catalog_path` Fallback implementiert) plus Doku Pitfall #61; B2: CLI Entry in `run_optimization.py` via `argparse` hinzugefügt; B3: Suchräume für alle in `AGENTS.md` gelisteten aktiven Strategien in `spaces.py` hinzugefügt. | `automation/optimizer/trial_config.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Doku-Nachtrag 0b (Verifikations-Finding P1):** Config-Contract-Block in Kap. 16 wörtlich ergänzt; Verhalten von `oos_fold_sortinos` in Kap. 10 dokumentiert (wann gesetzt, Reihenfolge, None-Handling). | `automation/AGENTS.md` |
 | 2026-06-10 | **Pitfall-Nummern-Bereinigung (Verifikations-Finding P2):** Duplikate (insb. #50) entkoppelt — erste Instanz behält die Nummer, distincte Folge-Pitfalls auf #54+ umnummeriert, exakte Dubletten entfernt. Rein redaktionell, Pitfall-Inhalte unverändert; Querverweise verifiziert. | `automation/AGENTS.md` |
