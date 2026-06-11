@@ -1,0 +1,59 @@
+{
+  "global_settings": {
+    "catalog_path": "/home/user/etoro_nautilus/data/nautilus",
+    "start_time": "2026-01-12T00:00:00Z",
+    "end_time": "2026-06-11T00:00:00Z",
+    "start_capital": 10000.0,
+    "walk_forward": {
+      "is_window_days": 120,
+      "oos_window_days": 30,
+      "splits": 1,
+      "holdout_days": 45
+    },
+    "_note": "Dynamisch generiert — Fenster: 2026-01-12 bis 2026-06-11 (Midnight UTC). Config-Root: automation/config/. Quellen: catalog_service.py (stündliche ZIPs) + api_backfiller.py + historical_fetcher.py. Alle Daten als FSB(16)."
+  },
+  "strategies": [
+    {
+      "strategy_module": "automation.strategies.sma_crossover",
+      "strategy_class": "SmaCrossoverStrategy",
+      "config_class": "SmaCrossoverConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.flash_crash_reversal",
+      "strategy_class": "FlashCrashReversalStrategy",
+      "config_class": "FlashCrashReversalConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.volatility_breakout",
+      "strategy_class": "VolatilityBreakoutPumpStrategy",
+      "config_class": "VolatilityBreakoutConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.tesla_combo_strategy",
+      "strategy_class": "ComboTrendVwapStrategy",
+      "config_class": "ComboTrendVwapConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 10
+      }
+    },
+    {
+      "strategy_module": "automation.strategies.vwap_exhaustion",
+      "strategy_class": "VwapExhaustionStrategy",
+      "config_class": "VwapExhaustionConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 10
+      }
+    },
+    {
+      "strategy_module": "automation.strategies.hourly_mean_reversion",
+      "strategy_class": "HourlyMeanReversionStrategy",
+      "config_class": "HourlyMeanReversionConfig",
+      "params": {}
+    }
+  ]
+}
