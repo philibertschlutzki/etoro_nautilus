@@ -1,17 +1,17 @@
 {
   "manifest_version": "1.0",
   "provenance": {
-    "git_commit": "8342729",
+    "git_commit": "844b313",
     "data_snapshot_sha256": "unknown_catalog_missing",
     "frozen_tournament_sha256": "f4d73bc5de52d6dfe0156dab18e569c1c53d483491f17c2e78ac93facc981833",
     "study_name": "s",
     "trial_number": 1
   },
   "global_settings": {
-    "catalog_path": "/app/automation/data/nautilus",
-    "start_time": "2025-08-25T00:00:00Z",
+    "start_time": "2024-12-23T00:00:00Z",
     "end_time": "2026-04-22T00:00:00Z",
-    "seed": 42
+    "seed": 42,
+    "catalog_path": "/app/data/nautilus"
   },
   "strategies": [
     {

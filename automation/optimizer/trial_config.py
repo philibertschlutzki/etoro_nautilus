@@ -76,13 +76,13 @@ def build_trial(
     resolved_params = resolve_params(strategy_class, sampled, base_cfg)
 
     # Resolve catalog_path from config or fallback to default
-    catalog_path = bt_data.get("catalog_path", str(WORK.parent.parent.parent / "data" / "nautilus" / "data"))
+    raw_catalog_path = bt_data.get("catalog_path", "data/nautilus")
+    # WORK is PROJECT_ROOT / "data" / "optimizer", so WORK.parent.parent is PROJECT_ROOT
+    catalog_path = (WORK.parent.parent / raw_catalog_path).resolve()
 
     # Manifest payload
     tournament_file = base_cfg / "tournament.json"
     t_hash = sha256_file(tournament_file) if tournament_file.exists() else "unknown"
-
-    catalog_path = config_dir().parent / "data" / "nautilus"
 
     manifest_payload = {
         "manifest_version": "1.0",
@@ -94,7 +94,6 @@ def build_trial(
             "trial_number": trial_number
         },
         "global_settings": {
-            "catalog_path": catalog_path,
             "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_time": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "seed": seed,
