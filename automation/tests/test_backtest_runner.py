@@ -501,3 +501,150 @@ def test_check_data_span():
     is_sufficient, span_days, req_days = check_data_span(ticks_insufficient, required_days, span_tolerance_days)
     assert is_sufficient is False
     assert req_days == required_days
+
+from unittest.mock import patch, ANY
+import concurrent.futures
+
+def test_broken_pool_fallback_passes_arguments():
+    """
+    Testet den Fallback-Mechanismus in `run_backtest`, wenn der ProcessPoolExecutor abstürzt.
+    Es wird geprüft, dass `_run_remaining_sequentially` mit den korrekten Argumenten aufgerufen wird,
+    ohne dass ein TypeError durch fehlende Argumente entsteht (Issue Regression Test).
+    """
+    from automation.backtest_runner import run_backtest, _BrokenPool
+    import automation.backtest_runner as br
+    from concurrent.futures.process import BrokenProcessPool
+
+    # Mock as_completed to throw _BrokenPool immediately
+    def mock_as_completed(futures):
+        yield list(futures.keys())[0]  # yield one future to trigger the loop
+        raise _BrokenPool("Simulated Pool Crash")
+
+    class DummyFuture:
+        def result(self):
+            raise _BrokenPool("Simulated Pool Crash")
+
+    with patch('automation.backtest_runner.ProcessPoolExecutor') as MockExecutor, \
+         patch('automation.backtest_runner.as_completed') as mock_as_completed_patch, \
+         patch('automation.backtest_runner._run_remaining_sequentially') as mock_run_seq, \
+         patch('automation.backtest_runner.sys.argv', ['backtest_runner.py', '--config', 'automation/config/backtest.json']):
+
+        # Setup mocks
+        mock_executor_instance = MockExecutor.return_value
+        dummy_future = DummyFuture()
+        mock_executor_instance.submit.return_value = dummy_future
+
+        def generator_yielding_future(futures):
+            yield dummy_future
+
+        mock_as_completed_patch.side_effect = generator_yielding_future
+
+        # Create dummy config files for run_backtest if needed or just patch load logic
+        from io import StringIO
+        import json
+        import builtins
+
+        original_open = builtins.open
+
+        def mock_open_file(filename, *args, **kwargs):
+            if isinstance(filename, str) and "strategies.json" in filename:
+                return StringIO(json.dumps({"strategies": [{"active": True, "strategy_module": "automation.strategies.mean_reversion", "strategy_class": "MeanReversionStrategy", "config_class": "MeanReversionConfig", "params": {}}]}))
+            if isinstance(filename, str) and "backtest.json" in filename:
+                return StringIO(json.dumps({
+                    "global_settings": {
+                        "spread_modeling": False,
+                        "span_tolerance_days": 5.0,
+                        "commission_bps": 2.5,
+                        "spread_bps_by_asset_class": {"CRYPTO": 10.0}
+                    },
+                    "strategies": [
+                        {
+                            "active": True,
+                            "strategy_module": "automation.strategies.mean_reversion",
+                            "strategy_class": "MeanReversionStrategy",
+                            "config_class": "MeanReversionConfig",
+                            "params": {}
+                        }
+                    ]
+                }))
+            return original_open(filename, *args, **kwargs)
+
+        with patch('builtins.open', side_effect=mock_open_file), patch('os.path.exists', return_value=True):
+
+            # Call run_backtest with a small configuration to run the loop quickly
+            # To avoid the test getting stuck or requiring lots of mocked file I/O, we patch further down
+            with patch('automation.backtest_runner.normalize_parquet_metadata', return_value=False), \
+                 patch('automation.backtest_runner.ParquetDataCatalog'), \
+                 patch('automation.backtest_runner.Path.glob', return_value=['dummy_path/AAPL.NASDAQ-1-HOUR-MID-INTERNAL.parquet']), \
+                 patch('automation.backtest_runner.read_precisions_from_parquet', return_value=(2, 2)), \
+                 patch('automation.backtest_runner.datetime') as mock_dt, \
+                 patch('automation.backtest_runner.os.makedirs'), \
+                 patch('builtins.print'), \
+                 patch('argparse.ArgumentParser.parse_args') as mock_args, \
+                 patch('automation.backtest_runner.discover_instruments_from_catalog', return_value=['AAPL.NASDAQ']):
+
+                 mock_dt.now.return_value.strftime.return_value = "dummy"
+                 mock_args.return_value.config = "automation/config/backtest.json"
+                 mock_args.return_value.htmlreport = False
+                 mock_args.return_value.output = None
+                 mock_args.return_value.dry_run = False
+                 mock_args.return_value.strategy = None
+                 mock_args.return_value.instrument = None
+                 mock_args.return_value.single_symbol = None
+                 mock_args.return_value.catalog_path = "dummy_catalog_path"
+                 mock_args.return_value.catalog = "dummy_catalog_path"
+
+                 # run it
+                 run_backtest()
+
+                 # Verify that _run_remaining_sequentially was called
+                 assert mock_run_seq.called
+
+                 # Verify it was called with the correct signature (at least 15 parameters)
+                 # args = (futures, future, strategies_list, catalog_path, start_ns, end_ns, start_capital, args.htmlreport, reports_dir, all_results, done_count, total_jobs, span_tolerance_days, commission_bps, spread_bps_by_asset_class)
+                 called_args, called_kwargs = mock_run_seq.call_args
+                 assert len(called_args) == 15
+
+                 # Check the specific added variables
+                 span_tolerance_days = called_args[12]
+                 commission_bps = called_args[13]
+                 spread_bps_by_asset_class = called_args[14]
+
+                 # The values should match our mocked config
+                 assert isinstance(span_tolerance_days, float)
+                 assert isinstance(commission_bps, float)
+                 assert isinstance(spread_bps_by_asset_class, dict)
+
+def test_broken_pool_fallback_call_signature():
+    """
+    Regression Test für Issue #331 (Pitfall #30 / P1-Defect):
+    Validiert, dass der Fallback-Aufruf bei einem `_BrokenPool`-Crash
+    exakt mit der Signatur von _run_remaining_sequentially übereinstimmt
+    und kein TypeError durch fehlende Argumente geworfen wird.
+    """
+    from automation.backtest_runner import _run_remaining_sequentially
+    from unittest.mock import MagicMock
+    import pytest
+
+    # Simuliere die exakten 15 Parameter, die im Fallback-Catch-Block übergeben werden
+    try:
+        # Dummy-Werte, die die Logik nicht ausführen, da strategies_list=[] und futures={}
+        _run_remaining_sequentially(
+            futures={},
+            failed_future=MagicMock(),
+            strategies_list=[],
+            catalog_path="dummy/path",
+            start_ns=0,
+            end_ns=1000,
+            start_capital=10000.0,
+            generate_html=False,
+            reports_dir="reports",
+            all_results=[],
+            done_count=0,
+            total_jobs=1,
+            span_tolerance_days=3.0,         # Hinzugefügt in Issue #331
+            commission_bps=0.0,              # Hinzugefügt in Issue #331
+            spread_bps_by_asset_class={}     # Hinzugefügt in Issue #331
+        )
+    except TypeError as e:
+        pytest.fail(f"Regression Issue #331: TypeError im Fallback-Aufruf bei vollständiger Signatur: {e}")

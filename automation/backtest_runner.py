@@ -2334,6 +2334,7 @@ def run_backtest() -> None:
                         futures, future, strategies_list, catalog_path,
                         start_ns, end_ns, start_capital, args.htmlreport,
                         reports_dir, all_results, done_count, total_jobs,
+                        span_tolerance_days, commission_bps, spread_bps_by_asset_class
                     )
                     break
                 except Exception as e:
