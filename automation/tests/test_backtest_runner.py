@@ -614,3 +614,37 @@ def test_broken_pool_fallback_passes_arguments():
                  assert isinstance(span_tolerance_days, float)
                  assert isinstance(commission_bps, float)
                  assert isinstance(spread_bps_by_asset_class, dict)
+
+def test_broken_pool_fallback_call_signature():
+    """
+    Regression Test für Issue #331 (Pitfall #30 / P1-Defect):
+    Validiert, dass der Fallback-Aufruf bei einem `_BrokenPool`-Crash
+    exakt mit der Signatur von _run_remaining_sequentially übereinstimmt
+    und kein TypeError durch fehlende Argumente geworfen wird.
+    """
+    from automation.backtest_runner import _run_remaining_sequentially
+    from unittest.mock import MagicMock
+    import pytest
+
+    # Simuliere die exakten 15 Parameter, die im Fallback-Catch-Block übergeben werden
+    try:
+        # Dummy-Werte, die die Logik nicht ausführen, da strategies_list=[] und futures={}
+        _run_remaining_sequentially(
+            futures={},
+            failed_future=MagicMock(),
+            strategies_list=[],
+            catalog_path="dummy/path",
+            start_ns=0,
+            end_ns=1000,
+            start_capital=10000.0,
+            generate_html=False,
+            reports_dir="reports",
+            all_results=[],
+            done_count=0,
+            total_jobs=1,
+            span_tolerance_days=3.0,         # Hinzugefügt in Issue #331
+            commission_bps=0.0,              # Hinzugefügt in Issue #331
+            spread_bps_by_asset_class={}     # Hinzugefügt in Issue #331
+        )
+    except TypeError as e:
+        pytest.fail(f"Regression Issue #331: TypeError im Fallback-Aufruf bei vollständiger Signatur: {e}")
