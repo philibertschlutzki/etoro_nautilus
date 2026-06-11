@@ -34,10 +34,12 @@ def run_backtest(trial_dir: Path, manifest_path: Path) -> Path:
         "--output", str(output_path)
     ]
 
-    result = subprocess.run(argv, env=env, timeout=10800, check=False)
+    result = subprocess.run(argv, env=env, timeout=10800, check=False, capture_output=True, text=True)
 
     if result.returncode != 0 or not output_path.exists():
         print(f"Subprocess crashed with return code {result.returncode}, skipping trial...")
+        if result.stderr:
+            print(f"Subprocess stderr:\n{result.stderr}")
         raise optuna.TrialPruned("Backtest runner failed to generate output.")
 
     return output_path

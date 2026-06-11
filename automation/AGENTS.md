@@ -829,6 +829,17 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 | 2026-06-11 | **Bugfix Issue #339:** `TypeError` in `backtest_runner.py` behoben. Bei der Pfad-Erzeugung für Worker-Logs wird nun die Variable `logs_dir_str` anstatt der Funktion `logs_dir` genutzt. | `automation/backtest_runner.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Issue #312 (Portfolio OOS Capital Mismatch Fix):** `start_capital` wird nun vom Worker an das Turniersystem durchgereicht. Behebt den Scaling-Faktor-Bug (10x) bei der portfoliobasierten Drawdown- und Return-Aggregation für das Phase-5-Gate. | `automation/backtest_runner.py`, `automation/tests/test_oos_aggregation.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Bugfix `KeyError: 'strategy_module'` und Optuna FileNotFoundError:** 1) In `backtest_runner.py` wird nun `.get()` verwendet und ein `ValueError` ausgelöst, wenn `strategy_module` fehlt. 2) In `trial_config.py` liest `build_trial` nun das `strategy_module` sowie `config_class` aus `strategies.json` aus und speichert diese in das erzeugte Manifest. 3) In `runner.py` prüft `run_backtest` nun den Subprozess-Returncode und fängt Abstürze mit `optuna.TrialPruned` statt `FileNotFoundError` ab. | `automation/backtest_runner.py`, `automation/optimizer/trial_config.py`, `automation/optimizer/runner.py`, `automation/tests/test_optimizer_runner.py`, `automation/AGENTS.md` |
+> ### PR #353: Optuna Subprocess Isolation & Metadata Injection
+>
+>
+> **Date:** 2026-06-11
+> **Context:** Optuna optimizations crashed entirely when the underlying `backtest_runner.py` subprocess failed (e.g., due to missing `strategy_module` keys).
+> **Architectural Decisions (DO NOT REVERT):**
+> 1. **Trial Pruning over Hard Crashes:** In `automation/optimizer/runner.py`, if a subprocess exits with `returncode != 0` or fails to generate `tournament_result.json`, the exception is caught and `optuna.TrialPruned` is raised. Optuna must *never* crash entirely due to a single bad trial configuration.
+> 2. **Explicit Manifest Injection:** The trial config generator (`trial_config.py`) MUST explicitly inject `strategy_module` and `config_class` from the base `strategies.json` into the generated trial manifest. The backtest runner requires these for dynamic `importlib` loading.
+> 3. **Defensive Runner Instantiation:** `backtest_runner.py` uses `.get()` for meta-keys and explicitly returns `_empty_result()` instead of throwing `TypeErrors` if import parameters are missing.
+>
+>
 
 ### Architectural Dependency: Strategy Parameters and OOS Gating
 * **Trade-off Constraint:** Configurations in `strategy_defaults.json` (such as `deviation_threshold` for mean-reversion strategies) MUST be strictly calibrated against the `oos_min_trades` tournament gating requirement relative to the Out-of-Sample evaluation window (e.g., 30 days). If thresholds are too tight (e.g., 0.015 instead of 0.008 for VWAP), the mathematical possibility of passing the OOS gate falls to zero because the strategy naturally produces too few signals within the OOS span to be statistically evaluable. This results in false-positive "fail" states.

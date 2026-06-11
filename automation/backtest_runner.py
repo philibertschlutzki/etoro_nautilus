@@ -1656,12 +1656,14 @@ def run_single_backtest_worker(
             full += f"\n{traceback.format_exc()}"
         wlog(full)
 
-    strategy_class_name = strat.get("strategy_class")
+    strategy_class_name = strat.get("strategy_class", "UnknownStrategy")
     module_name         = strat.get("strategy_module")
     config_class_name   = strat.get("config_class")
 
-    if not module_name:
-        raise ValueError(f"Missing 'strategy_module' in configuration for {strategy_class_name}")
+    if not module_name or not config_class_name:
+        msg = f"Fehlende Metadaten ('strategy_module' oder 'config_class') für Strategie {strategy_class_name}."
+        wlog_err(msg)
+        return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
     wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
