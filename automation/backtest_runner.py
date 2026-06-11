@@ -1656,9 +1656,14 @@ def run_single_backtest_worker(
             full += f"\n{traceback.format_exc()}"
         wlog(full)
 
-    strategy_class_name = strat["strategy_class"]
-    module_name         = strat["strategy_module"]
-    config_class_name   = strat["config_class"]
+    strategy_class_name = strat.get("strategy_class", "UnknownStrategy")
+    module_name         = strat.get("strategy_module")
+    config_class_name   = strat.get("config_class")
+
+    if not module_name or not config_class_name:
+        msg = f"Fehlende Metadaten ('strategy_module' oder 'config_class') für Strategie {strategy_class_name}."
+        wlog_err(msg)
+        return _empty_result(inst_id_str, strategy_class_name, strat, start_capital)
 
     wlog(f"\n🚀 {inst_id_str} | {strategy_class_name}")
 
@@ -2272,6 +2277,7 @@ def run_backtest() -> None:
             bar_type    = inst["bar_type"]
 
             for strat in strategies_list:
+                safe_strat_class = strat.get("strategy_class", "UnknownStrategy")
                 walk_forward_cfg = global_settings.get("walk_forward")
                 if walk_forward_cfg and end_ns:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
@@ -2283,7 +2289,7 @@ def run_backtest() -> None:
                 wlf = os.path.join(
                     logs_dir_str,
                     f"worker_{inst_id_str.replace('.', '_')}"
-                    f"_{strat['strategy_class']}_{timestamp}.log"
+                    f"_{safe_strat_class}_{timestamp}.log"
                 )
                 _worker_log_files.append(wlf)
 
@@ -2417,7 +2423,7 @@ def _run_remaining_sequentially(
     }
     for _, (rem_inst, rem_strat_name, rem_log) in remaining.items():
         rem_strat = next(
-            (s for s in strategies_list if s["strategy_class"] == rem_strat_name), None
+            (s for s in strategies_list if s.get("strategy_class", "UnknownStrategy") == rem_strat_name), None
         )
         if rem_strat is None:
             continue

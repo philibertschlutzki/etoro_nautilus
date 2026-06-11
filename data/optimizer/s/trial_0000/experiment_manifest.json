@@ -16,6 +16,8 @@
   "strategies": [
     {
       "strategy_class": "SmaCrossoverStrategy",
+      "strategy_module": "automation.strategies.sma_crossover",
+      "config_class": "SmaCrossoverConfig",
       "params": {
         "sma_period": 8,
         "trade_amount_pct": 15.0
