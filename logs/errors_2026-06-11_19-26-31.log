@@ -1,4 +1,4 @@
-[2026-06-11 18:04:32] ❌ Worker HYPE.ETORO/SmaCrossoverStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
+[2026-06-11 19:27:46] ❌ Worker HYPE.ETORO/SmaCrossoverStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 concurrent.futures.process._RemoteTraceback: 
 """
 Traceback (most recent call last):
@@ -23,7 +23,7 @@ Traceback (most recent call last):
     raise self._exception
 ImportError: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 
-[2026-06-11 18:04:33] ❌ Worker HYPE.ETORO/FlashCrashReversalStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
+[2026-06-11 19:27:46] ❌ Worker HYPE.ETORO/FlashCrashReversalStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 concurrent.futures.process._RemoteTraceback: 
 """
 Traceback (most recent call last):
@@ -48,7 +48,7 @@ Traceback (most recent call last):
     raise self._exception
 ImportError: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 
-[2026-06-11 18:04:33] ❌ Worker HYPE.ETORO/VolatilityBreakoutPumpStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
+[2026-06-11 19:27:46] ❌ Worker HYPE.ETORO/VolatilityBreakoutPumpStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 concurrent.futures.process._RemoteTraceback: 
 """
 Traceback (most recent call last):
@@ -73,7 +73,7 @@ Traceback (most recent call last):
     raise self._exception
 ImportError: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 
-[2026-06-11 18:04:33] ❌ Worker HYPE.ETORO/ComboTrendVwapStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
+[2026-06-11 19:27:47] ❌ Worker HYPE.ETORO/ComboTrendVwapStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 concurrent.futures.process._RemoteTraceback: 
 """
 Traceback (most recent call last):
@@ -98,7 +98,7 @@ Traceback (most recent call last):
     raise self._exception
 ImportError: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 
-[2026-06-11 18:04:33] ❌ Worker HYPE.ETORO/VwapExhaustionStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
+[2026-06-11 19:27:47] ❌ Worker HYPE.ETORO/VwapExhaustionStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 concurrent.futures.process._RemoteTraceback: 
 """
 Traceback (most recent call last):
@@ -123,7 +123,7 @@ Traceback (most recent call last):
     raise self._exception
 ImportError: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 
-[2026-06-11 18:04:33] ❌ Worker HYPE.ETORO/HourlyMeanReversionStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
+[2026-06-11 19:27:47] ❌ Worker HYPE.ETORO/HourlyMeanReversionStrategy: cannot import name 'emit_json_event' from 'automation.utils' (/home/user/etoro_nautilus/automation/utils.py)
 concurrent.futures.process._RemoteTraceback: 
 """
 Traceback (most recent call last):
