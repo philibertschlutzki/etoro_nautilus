@@ -2324,6 +2324,10 @@ def run_backtest() -> None:
                     result = future.result()
                     if result and result.get("metrics"):
                         all_results.append(result)
+                except (ImportError, SyntaxError, NameError, TypeError) as e:
+                    log_error(f"🚨 FATAL: Systemischer Python-Fehler in Worker {inst_id_str}/{strat_name}: {e}", exc=True)
+                    log_error("Backtest wird hart abgebrochen, um fehlerhaftes Live-Deployment zu verhindern (Fail-Fast).")
+                    sys.exit(1)
                 except _BrokenPool:
                     log_error(
                         f"💥 Worker-Pool abgestürzt bei {inst_id_str}/{strat_name}. "

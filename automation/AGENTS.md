@@ -368,6 +368,12 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ## 16. Bekannte Pitfalls & offene Bugs
 
+### 🟢 Pitfall #355 — Silent Worker Crash Swallowing (Fail-Fast vs Resilience)
+**Symptom:** Der Orchestrator meldet "[Phase 3] Backtest beendet (Exit-Code: 0)" und startet das Live-Deployment, obwohl im Hintergrund Worker-Prozesse aufgrund fundamentaler Python-Fehler (z.B. `ImportError`) abgestürzt sind.
+**Root Cause:** In `automation/backtest_runner.py` fing eine pauschale `try/except Exception`-Resilience-Schleife während der Future-Auswertung (`future.result()`) alle Fehler stumm ab, um marktbedingte Einzelfehler abzufangen. Dadurch wurde ein systemischer Fehler maskiert, was zu einer leeren Metrik und einem unberechtigten Exit-Code 0 führte.
+**Regel:** Resilience-Schleifen dürfen **niemals** fundamentale Code-Exceptions (`ImportError`, `SyntaxError`, `NameError`, `TypeError`) maskieren. In solchen Fällen muss ein Fail-Fast erzwungen werden (`sys.exit(1)`), damit die CI/CD- oder Orchestrator-Pipeline abbricht und fehlerhafter Code nicht ins Live-Deployment rutscht.
+**Betroffen:** `automation/backtest_runner.py`
+
 ### Optimizer / `backtest_runner.py` — Config-Contract
 
 - `backtest_runner.py` liest Strategien + Parameter **ausschließlich** aus der via `--config` übergebenen Manifest-Datei. `strategies[].params` sind vollständig aufgelöst und autoritativ; **kein** erneutes Mergen aus `strategy_defaults.json`, sobald `manifest_version` gesetzt ist.
@@ -683,6 +689,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-11 | **Issue #355 (Pitfall #355 - Silent Worker Crash Swallowing):** Fail-Fast in `backtest_runner.py` implementiert, damit fundamentale systemische Fehler (z.B. ImportError) nicht stumm verschluckt werden und das Live-Deployment hart abbrechen. | `automation/backtest_runner.py`, `automation/tests/test_backtest_fatal_worker_crash.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Issue #346 (Pitfall #62 - Befund B5):** Fehlendes `logs`-Verzeichnis in `build_trial` ergänzt, um FileNotFoundError im Subprozess-Logging des Optimizers zu beheben, wenn `ETORO_LOGS_DIR` gesetzt wird. | `automation/optimizer/trial_config.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Fix Bugfix-Sprint Optimizer (B1, B2, B3):** B1: Manifest Contract in `trial_config.py` repariert (dynamischer `catalog_path` Fallback implementiert) plus Doku Pitfall #61; B2: CLI Entry in `run_optimization.py` via `argparse` hinzugefügt; B3: Suchräume für alle in `AGENTS.md` gelisteten aktiven Strategien in `spaces.py` hinzugefügt. | `automation/optimizer/trial_config.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Doku-Nachtrag 0b (Verifikations-Finding P1):** Config-Contract-Block in Kap. 16 wörtlich ergänzt; Verhalten von `oos_fold_sortinos` in Kap. 10 dokumentiert (wann gesetzt, Reihenfolge, None-Handling). | `automation/AGENTS.md` |
