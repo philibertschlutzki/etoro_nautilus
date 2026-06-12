@@ -106,7 +106,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         if (
             trend_bullish
             and momentum_bullish
-            and self.bars_since_bb_touch <= 10
+            and self.bars_since_bb_touch <= 24  # Geändert von 10 auf 24
             and vwap_confirmed
             and self.current_signal != "BUY"
             and self.bars_since_last_signal >= self.config.cooldown_bars
@@ -124,7 +124,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
             self.config.allow_short
             and trend_bearish
             and momentum_bearish
-            and self.bars_since_bb_touch <= 10
+            and self.bars_since_bb_touch <= 24  # Geändert von 10 auf 24
             and vwap_bearish_confirmed
             and self.current_signal != "SELL"
             and self.bars_since_last_signal >= self.config.cooldown_bars

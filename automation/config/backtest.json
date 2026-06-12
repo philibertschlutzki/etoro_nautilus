@@ -33,9 +33,9 @@
   "min_bars_for_backtest": 200,
   "span_tolerance_days": 3.0,
   "walk_forward": {
-    "is_window_days": 30,
-    "oos_window_days": 10,
-    "splits": 1,
-    "holdout_days": 10
+    "is_window_days": 180,
+    "oos_window_days": 45,
+    "splits": 4,
+    "holdout_days": 45
   }
 }
