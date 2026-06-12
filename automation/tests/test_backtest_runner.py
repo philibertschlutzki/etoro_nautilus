@@ -580,6 +580,7 @@ def test_broken_pool_fallback_passes_arguments():
                  patch('automation.backtest_runner.datetime') as mock_dt, \
                  patch('automation.backtest_runner.os.makedirs'), \
                  patch('builtins.print'), \
+                 patch('automation.backtest_runner.DualLogger'), \
                  patch('argparse.ArgumentParser.parse_args') as mock_args, \
                  patch('automation.backtest_runner.discover_instruments_from_catalog', return_value=['AAPL.NASDAQ']):
 
