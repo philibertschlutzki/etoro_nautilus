@@ -328,6 +328,8 @@ Hinweis: Wenn systemd-Unit-Files im Repo existieren, müssen die ExecStart-Anwei
 * Holdout unberührt (keine Optimierungs-Auswertung sieht ihn).
 * Human-in-the-Loop (Promotion nur per PR; Holdout-Ergebnis + Overfit-Gap im Review).
 * Plausibilitäts-Wächter (Trials mit absurden Metriken werden markiert, nicht als Sieger gewertet).
+* **Reward-Shaping-Guardrail (Issue #357/#358-Folge):** Das Shaping nicht-evaluierbarer Trials darf ausschließlich `oos_total_trades` (Volumen-Proxy) verwenden — niemals den Holdout, niemals die OOS-Sortino-Magnitude. Die Invariante `penalty_unevaluable_oos + unevaluable_shaping_span < evaluable_reward_floor` MUSS per Test erzwungen bleiben: kein nicht-passierender Trial darf je als `best_trial` selektierbar sein. Dies verhindert Gate-Gaming (das OOS-Gate bleibt Pflicht für `evaluable`) und Meta-Overfitting (Confirm-/Holdout-Phase bleibt unberührt). DO NOT REMOVE die Floor-Clamp oder die Ordnungsinvariante.
+
 ## 13. Testing & Validierung
 
 Tests in `automation/tests/`, Ausführung via `pytest`. Kein Test darf aus `adapters/`/`config/`/`strategies/` (Root) importieren. Naming: immer `_fallback_precisions` (mit Underscore).
@@ -368,6 +370,7 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+
 
 ### 🟢 Pitfall #355 — Silent Worker Crash Swallowing (Fail-Fast vs Resilience)
 **Symptom:** Der Orchestrator meldet "[Phase 3] Backtest beendet (Exit-Code: 0)" und startet das Live-Deployment, obwohl im Hintergrund Worker-Prozesse aufgrund fundamentaler Python-Fehler (z.B. `ImportError`) abgestürzt sind.
