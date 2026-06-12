@@ -7,7 +7,7 @@ __pycache__/
 #logs/*
 !logs/.gitkeep
 logs/backtest_2026*
-data/nautilus/data*
+data/nautilus/
 
 # API Keys & Secrets
 *.env
