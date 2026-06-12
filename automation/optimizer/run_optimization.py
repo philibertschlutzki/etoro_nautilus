@@ -118,7 +118,12 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     study_name = f"study_{strategy}"
 
     if n_jobs > 1 and seed is not None:
-        logging.getLogger("optimizer").warning("Seed gesetzt, aber n_jobs>1 ⇒ Trial-Reihenfolge/Sampling nicht reproduzierbar. Für reproduzierbare Läufe --n-jobs 1 verwenden.")
+        from automation.log_manager import emit_execution_event
+        emit_execution_event(logging.getLogger("optimizer"), "optimizer_parallel_seed_warning", {
+            "n_jobs": n_jobs,
+            "seed": seed,
+            "message": "Seed gesetzt, aber n_jobs>1 ⇒ Trial-Reihenfolge/Sampling nicht reproduzierbar. Für reproduzierbare Läufe --n-jobs 1 verwenden."
+        })
 
     sampler = build_sampler({"n_startup_trials": n_startup_trials, "seed": seed})
 
@@ -158,6 +163,9 @@ if __name__ == "__main__":
     parser.add_argument("--deterministic", action="store_true", help="Force n_jobs=1 for reproducibility")
 
     args = parser.parse_args()
+
+    if args.deterministic and args.n_jobs > 1:
+        parser.error("--deterministic and --n-jobs > 1 are mutually exclusive. Please use only one.")
 
     n_jobs = args.n_jobs
     if args.deterministic:
