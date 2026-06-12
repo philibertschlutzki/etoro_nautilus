@@ -567,6 +567,12 @@ def test_broken_pool_fallback_passes_arguments():
                         }
                     ]
                 }))
+            # Catch dummy logs requested by the runner's logging setup or error log handling
+            if isinstance(filename, str) and "errors_dummy.log" in filename:
+                return StringIO()
+            if isinstance(filename, str) and "backtest_dummy.log" in filename:
+                return StringIO()
+
             return original_open(filename, *args, **kwargs)
 
         with patch('builtins.open', side_effect=mock_open_file), patch('os.path.exists', return_value=True):
