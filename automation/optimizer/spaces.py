@@ -17,10 +17,19 @@ def sample_params(strategy: str, trial) -> dict:
         fast = trial.suggest_int("macd_fast", 8, 20)
         gap = trial.suggest_int("macd_gap", 6, 20)
         return {
-            "vwap_window": trial.suggest_int("vwap_window", 10, 50),
+            # Korrigierter Name für den Config-Empfänger
+            "macd_signal_period": trial.suggest_int("macd_signal_period", 5, 15),
             "macd_fast": fast,
             "macd_slow": fast + gap,
-            "macd_signal": trial.suggest_int("macd_signal", 5, 15),
+            
+            # WICHTIG: Die primären Entry-Konditionen für Optuna freigeben
+            "sma_period": trial.suggest_int("sma_period", 20, 100),
+            "bb_period": trial.suggest_int("bb_period", 10, 40),
+            "bb_std_dev": trial.suggest_float("bb_std_dev", 1.0, 2.5),
+            "atr_period": trial.suggest_int("atr_period", 7, 21),
+            "atr_multiplier": trial.suggest_float("atr_multiplier", 0.1, 1.5),
+            
+            # Trade-Management
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 120),

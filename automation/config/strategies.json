@@ -54,13 +54,11 @@
       "strategy_class": "ComboTrendVwapStrategy",
       "config_class": "ComboTrendVwapConfig",
       "params": {
-        "bb_std_dev": 1.5,
-        "atr_multiplier": 0.8
+        "allow_short": true
       },
       "tournament_overrides": {
         "min_trades": 5
-      },
-      "_note": "Expects fewer trades due to strict entry conditions; lowered min_trades threshold."
+      }
     },
     {
       "active": true,
