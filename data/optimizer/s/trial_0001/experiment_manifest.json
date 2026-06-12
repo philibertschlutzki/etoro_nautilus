@@ -1,7 +1,7 @@
 {
   "manifest_version": "1.0",
   "provenance": {
-    "git_commit": "65358b8",
+    "git_commit": "e53bee5",
     "data_snapshot_sha256": "unknown_catalog_missing",
     "frozen_tournament_sha256": "f4d73bc5de52d6dfe0156dab18e569c1c53d483491f17c2e78ac93facc981833",
     "study_name": "s",
