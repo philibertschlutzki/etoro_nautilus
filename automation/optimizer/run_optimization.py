@@ -4,14 +4,22 @@ from pathlib import Path
 from automation.optimizer.manifest import WORK, catalog_fingerprint
 from automation.optimizer.spaces import sample_params
 from automation.optimizer.trial_config import build_trial, config_dir
-from automation.optimizer.runner import run_backtest
+from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
-from automation.optimizer.confirm import confirm_on_holdout, export_proposal
+from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
+from automation.log_manager import emit_execution_event
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
 
-def make_objective(strategy: str):
+def make_objective(
+    strategy: str,
+    *,
+    run_backtest=run_backtest,
+    build_trial=build_trial,
+    parse_tournament=parse_tournament,
+    compute_reward=compute_reward
+):
     def objective(trial):
         sampled = sample_params(strategy, trial)
         trial.set_user_attr("sampled_params", sampled)
@@ -34,8 +42,11 @@ def make_objective(strategy: str):
             holdout_days=45
         )
 
-        output_path = run_backtest(trial_dir, manifest_path)
-        metrics = parse_tournament(output_path)
+        try:
+            output_path = run_backtest(trial_dir, manifest_path)
+            metrics = parse_tournament(output_path)
+        except BacktestRunError as e:
+            raise optuna.TrialPruned(f"Subprocess failed: {e}")
 
         tournament_path = cfg_dir / "tournament.json"
         risk_dd_cap = 0.30
@@ -52,6 +63,18 @@ def make_objective(strategy: str):
                 universe_size = len(u_data.get("universe", []))
 
         reward = compute_reward(metrics, universe_size=universe_size, risk_dd_cap=risk_dd_cap)
+
+        outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
+        import logging
+        emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
+            "trial_number": trial.number,
+            "reward": reward,
+            "oos_evaluated": metrics.oos_evaluated,
+            "oos_total_trades": metrics.oos_total_trades,
+            "fully_eligible_pairs": metrics.fully_eligible_pairs,
+            "outcome": outcome
+        })
+
         return reward
     return objective
 
@@ -94,11 +117,20 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     study.set_user_attr("data_snapshot_sha256", catalog_fingerprint())
 
-    study.optimize(make_objective(strategy), n_trials=n_trials, n_jobs=n_jobs)
+    study.optimize(
+        make_objective(strategy),
+        n_trials=n_trials,
+        n_jobs=n_jobs,
+        catch=(json.JSONDecodeError, OSError)
+    )
     return study
 
 def run(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     study = optimize(strategy, n_trials=n_trials, n_jobs=n_jobs)
+    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if not completed:
+        export_no_viable_proposal(study, strategy)
+        return
     holdout_res = confirm_on_holdout(study, strategy)
     export_proposal(study, strategy, holdout_res)
 

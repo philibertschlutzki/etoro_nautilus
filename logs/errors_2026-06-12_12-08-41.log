@@ -1,0 +1,10 @@
+[2026-06-12 12:08:41] 🚨 FATAL: Systemischer Python-Fehler in Worker AAPL.NASDAQ/SmaCrossoverStrategy: Simulated Fatal ImportError in Worker
+Traceback (most recent call last):
+  File "/app/automation/backtest_runner.py", line 2324, in run_backtest
+    result = future.result()
+             ^^^^^^^^^^^^^^^
+  File "/app/automation/tests/test_backtest_fatal_worker_crash.py", line 17, in result
+    raise ImportError("Simulated Fatal ImportError in Worker")
+ImportError: Simulated Fatal ImportError in Worker
+
+[2026-06-12 12:08:41] Backtest wird hart abgebrochen, um fehlerhaftes Live-Deployment zu verhindern (Fail-Fast).

@@ -62,7 +62,17 @@ def test_holdout_pass_and_reject(tmp_path, monkeypatch):
     # passing case
     monkeypatch.setattr(ro, "run_backtest", _fake_backtest_factory(1.2, 0.1))
 
-    study = ro.optimize("SmaCrossoverStrategy", n_trials=2)
+    # We must patch the confirm module's run_backtest as well since it doesn't use the ro reference directly.
+    # Actually `confirm.confirm_on_holdout` allows injecting run_backtest via arguments
+
+    # Needs to be a valid study with at least one COMPLETE trial to access `study.best_trial`.
+    # Let's create a dummy study and dummy best_trial.
+    study = optuna.create_study(direction="maximize")
+    study.add_trial(optuna.trial.create_trial(
+        params={"sma_period": 10, "cooldown_bars": 5},
+        distributions={"sma_period": optuna.distributions.IntDistribution(5, 100), "cooldown_bars": optuna.distributions.IntDistribution(5, 100)},
+        value=1.5,
+    ))
 
     res = confirm.confirm_on_holdout(
         study, "SmaCrossoverStrategy",

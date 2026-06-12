@@ -39,5 +39,5 @@ def test_run_backtest_missing_output_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(runner.subprocess, "run",
                         lambda *a, **k: types.SimpleNamespace(returncode=1, stderr="Test error trace"))  # erzeugt KEINE Datei
 
-    with pytest.raises(optuna.TrialPruned):
+    with pytest.raises(runner.BacktestRunError):
         runner.run_backtest(trial_dir, mp)
