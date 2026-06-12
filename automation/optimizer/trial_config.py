@@ -23,6 +23,7 @@ def build_trial(
     now: dt.datetime | None = None,
     holdout_days: int | None = None,
     n_folds: int | None = None,
+    oos_window_days_override: int | None = None,
     base_cfg: Path | None = None
 ) -> tuple[Path, Path]:
     """
@@ -49,7 +50,7 @@ def build_trial(
         n_folds = wf.get("splits", 1)
 
     is_window_days = wf.get("is_window_days", 120)
-    oos_window_days = wf.get("oos_window_days", 30)
+    oos_window_days = oos_window_days_override if oos_window_days_override is not None else wf.get("oos_window_days", 30)
 
     # Calculate dates
     # Midnight of `now`
@@ -72,6 +73,20 @@ def build_trial(
     # Copy all JSON files from base_cfg
     for p in base_cfg.glob("*.json"):
         shutil.copy2(p, trial_cfg_dir / p.name)
+
+    bt_trial_path = trial_cfg_dir / "backtest.json"
+    if bt_trial_path.exists():
+        with open(bt_trial_path, "r", encoding="utf-8") as f:
+            bt_trial = json.load(f)
+        bt_trial["walk_forward"] = {
+            "is_window_days": is_window_days,
+            "oos_window_days": oos_window_days,   # override-aware
+            "splits": n_folds,
+            "holdout_days": holdout_days,
+            "walk_forward_active": True,
+        }
+        with open(bt_trial_path, "w", encoding="utf-8") as f:
+            json.dump(bt_trial, f, indent=4)
 
     resolved_params = resolve_params(strategy_class, sampled, base_cfg)
 

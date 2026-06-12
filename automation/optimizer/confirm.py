@@ -29,6 +29,14 @@ def confirm_on_holdout(
             opt_data = json.load(f)
             seed = opt_data.get("seed", 42)
 
+    # Holdout-Länge aus Config lesen (Zero-Hardcoding)
+    bt_path = cfg_dir / "backtest.json"
+    holdout_days_val = 45
+    if bt_path.exists():
+        with open(bt_path, "r", encoding="utf-8") as f:
+            bt_data = json.load(f)
+            holdout_days_val = bt_data.get("walk_forward", {}).get("holdout_days", 45)
+
     # Erzeuge Holdout-Trial mit holdout_days=0 und n_folds=1
     trial_dir, manifest_path = build_trial(
         strategy_class=strategy,
@@ -37,7 +45,8 @@ def confirm_on_holdout(
         trial_number=best_trial.number,
         seed=seed,
         holdout_days=0,
-        n_folds=1
+        n_folds=1,
+        oos_window_days_override=holdout_days_val
     )
 
     # Subprozess/Backtest ausführen
