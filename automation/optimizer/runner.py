@@ -2,7 +2,9 @@ import json
 import subprocess
 from pathlib import Path
 import os
-import optuna
+
+class BacktestRunError(RuntimeError):
+    """Subprocess-Backtest fehlgeschlagen (returncode != 0 oder kein Output)."""
 
 def run_backtest(trial_dir: Path, manifest_path: Path) -> Path:
     """Ruft backtest_runner.py als Subprozess (check=False, timeout=10800).
@@ -38,8 +40,9 @@ def run_backtest(trial_dir: Path, manifest_path: Path) -> Path:
 
     if result.returncode != 0 or not output_path.exists():
         print(f"Subprocess crashed with return code {result.returncode}, skipping trial...")
+        stderr_tail = result.stderr if result.stderr else "No stderr"
         if result.stderr:
             print(f"Subprocess stderr:\n{result.stderr}")
-        raise optuna.TrialPruned("Backtest runner failed to generate output.")
+        raise BacktestRunError(stderr_tail)
 
     return output_path

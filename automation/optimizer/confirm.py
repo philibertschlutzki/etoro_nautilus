@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from automation.optimizer.trial_config import build_trial, config_dir
-from automation.optimizer.runner import run_backtest
+from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.manifest import WORK
 
@@ -41,8 +41,16 @@ def confirm_on_holdout(
     )
 
     # Subprozess/Backtest ausführen
-    output_path = run_backtest(trial_dir, manifest_path)
-    metrics = parse_tournament(output_path)
+    try:
+        output_path = run_backtest(trial_dir, manifest_path)
+        metrics = parse_tournament(output_path)
+    except BacktestRunError:
+        return {
+            "passed": False,
+            "metrics": {},
+            "trial_dir": str(trial_dir),
+            "reason": "holdout_subprocess_failed"
+        }
 
     tournament_path = cfg_dir / "tournament.json"
     risk_dd_cap = 0.30  # Fallback
@@ -70,6 +78,27 @@ def confirm_on_holdout(
         },
         "trial_dir": str(trial_dir)
     }
+
+
+def export_no_viable_proposal(study, strategy: str) -> Path:
+    """
+    Exportiert ein Proposal mit status="NO_VIABLE_TRIAL", falls alle Trials gepruned wurden.
+    """
+    payload = {
+        "strategy": strategy,
+        "status": "NO_VIABLE_TRIAL",
+        "reward": None,
+        "proposed_params_override": {},
+        "note": "No valid trial found due to data coverage or OOS gating rejection.",
+        "holdout": None
+    }
+
+    out_path = WORK / f"proposal_{strategy}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    return out_path
 
 
 def export_proposal(study, strategy: str, holdout: dict) -> Path:
