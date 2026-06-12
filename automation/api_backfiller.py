@@ -177,7 +177,7 @@ async def fetch_precisions_from_api(
                     if size_prec == 2:
                         # Falls size_prec=2 ist, sollte es sich laut Fallback-Regeln um ein reines Equity handeln.
                         # Wenn wir es als Crypto oder Fractional identifizieren, ist das vermutlich falsch (Precision Mismatch).
-                        fb_p_test, fb_s_test = _fallback_precisions(sym_raw)
+                        fb_p_test, fb_s_test = _fallback_precisions(str(sym_raw))
                         if fb_s_test != 2:
                             error_msg = (
                                 f"[api_backfiller] Plausibilitäts-Fehler: Instrument {eid} ({sym_raw}) hat "
@@ -189,7 +189,7 @@ async def fetch_precisions_from_api(
                                 raise RuntimeError(error_msg)
                             continue # Überspringe dieses Instrument bei Mismatch
 
-                    fb_price, fb_size = _fallback_precisions(sym_raw)
+                    fb_price, fb_size = _fallback_precisions(str(sym_raw))
 
                     # Issue #171: Fehlende API-Precision wird für das vorvalidierte,
                     # vertrauenswürdige Universe (momentum_ls.json) über die Symbol-Heuristik
@@ -569,7 +569,7 @@ async def run_backfill(
             if etoro_id in api_precisions:
                 price_prec, size_prec = api_precisions[etoro_id]
             else:
-                price_prec, size_prec = _fallback_precisions(symbol)
+                price_prec, size_prec = _fallback_precisions(symbol or "")
                 log.debug(
                     f"[api_backfiller] {symbol}: Precision-Fallback "
                     f"price_prec={price_prec}, size_prec={size_prec}"
