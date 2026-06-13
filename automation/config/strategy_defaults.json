@@ -40,9 +40,8 @@
     "bb_std_dev": 2.0,
     "bb_entry_tolerance": 1.0,
     "cooldown_bars": 12,
-    "trade_amount_pct": 15.0,
-    "trend_tolerance_pct": 0.02,
-    "bb_touch_window": 24
+    "vwap_period": 20,
+    "trade_amount_pct": 15.0
   },
   "VwapExhaustionStrategy": {
     "deviation_threshold": 0.008,
