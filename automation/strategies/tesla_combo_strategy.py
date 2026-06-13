@@ -25,8 +25,6 @@ class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     bb_entry_tolerance: float = 0.001
     cooldown_bars: int = 12
     allow_short: bool = False
-    trend_tolerance_pct: float = 0.02
-    bb_touch_window: int = 24
 
 
 class ComboTrendVwapStrategy(HourlyStrategyBase):
@@ -89,11 +87,11 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
         close_price = float(bar.close)
 
-        trend_bullish = close_price > (self.sma.value * (1.0 - self.config.trend_tolerance_pct))
+        trend_bullish = close_price > (self.sma.value * 0.98)
         momentum_bullish = self.macd.value > self.macd_signal.value
         atr_tolerance = self.atr.value * self.config.atr_multiplier
 
-        trend_bearish = close_price < (self.sma.value * (1.0 + self.config.trend_tolerance_pct))
+        trend_bearish = close_price < (self.sma.value * 1.02)
         momentum_bearish = self.macd.value < self.macd_signal.value
 
         if close_price <= (self.bb.lower + atr_tolerance) or close_price >= (self.bb.upper - atr_tolerance):
@@ -108,7 +106,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         if (
             trend_bullish
             and momentum_bullish
-            and self.bars_since_bb_touch <= self.config.bb_touch_window
+            and self.bars_since_bb_touch <= 24  # Geändert von 10 auf 24
             and vwap_confirmed
             and self.current_signal != "BUY"
             and self.bars_since_last_signal >= self.config.cooldown_bars
@@ -126,7 +124,7 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
             self.config.allow_short
             and trend_bearish
             and momentum_bearish
-            and self.bars_since_bb_touch <= self.config.bb_touch_window
+            and self.bars_since_bb_touch <= 24  # Geändert von 10 auf 24
             and vwap_bearish_confirmed
             and self.current_signal != "SELL"
             and self.bars_since_last_signal >= self.config.cooldown_bars
