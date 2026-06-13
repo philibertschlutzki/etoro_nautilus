@@ -180,7 +180,7 @@ path    = export_proposal(study, strat, holdout)
 print("Proposal:", path)
 ```
 
-> **SQLite + Parallelität:** Bei `n_jobs > 4` gegen die lokale SQLite-DB drohen `database is locked`-Fehler. Dies wurde durch einen Timeout-Mechanismus entschärft (Pitfall #68). Seed-Reproduzierbarkeit ist bei `n_jobs > 1` jedoch nicht gegeben. Für deterministische Läufe `--deterministic` (erzwingt `n_jobs=1`) verwenden.
+> **SQLite + Parallelität:** Bei `n_jobs > 4` gegen die lokale SQLite-DB drohen `database is locked`-Fehler. Für echte Parallelität auf eine PostgreSQL-`STORAGE`-URL wechseln (Abschnitt 9, Eintrag *database is locked*).
 > **Core-Budgetierung:** Jeder Trial startet selbst einen Backtest mit internem ProcessPool (bis `cpu//2` Worker). Halte `parallele_Trials × interne_Worker ≤ Kerne`, sonst überbuchst du die CPU.
 
 ---
@@ -347,7 +347,7 @@ Jede Funktion des Pakets `automation/optimizer/`. Reihenfolge entspricht dem Dat
 |---|---|---|---|
 | `STORAGE` | Konstante | `sqlite:///…/studies.db`. Für echte Parallelität auf Postgres umstellen. | — |
 | `make_objective` | `(strategy: str) -> objective` | Liefert Optunas Zielfunktion: `sample_params` → `build_trial` → `run_backtest` → `parse_tournament` → `universe_size` ermitteln → `compute_reward`. `universe_size` = Anzahl Einträge in `per_symbol_winners` (Fallback `fully_eligible_pairs`, dann `1`). | Jede Exception in `objective` **stoppt standardmäßig die ganze Study** (Optuna ohne `catch=`). Siehe Abschnitt 9 (Trial-Isolation). |
-| `optimize` | `(strategy: str, n_trials: int\|None=None, n_jobs: int=1) -> study` | Erzeugt `TPESampler(multivariate=True, group=True, n_startup_trials, seed)`, legt Study mit `load_if_exists=True` an (Warm-Start), protokolliert `data_snapshot_sha256`, ruft `study.optimize(...)`. | — (behoben durch Timeout, Pitfall #68) |
+| `optimize` | `(strategy: str, n_trials: int\|None=None, n_jobs: int=1) -> study` | Erzeugt `TPESampler(multivariate=True, group=True, n_startup_trials, seed)`, legt Study mit `load_if_exists=True` an (Warm-Start), protokolliert `data_snapshot_sha256`, ruft `study.optimize(...)`. | `sqlite3.OperationalError: database is locked` bei `n_jobs>1` auf SQLite. |
 | `run` | `(strategy: str) -> None` | **Vollpipeline:** `optimize` → `confirm_on_holdout` → `export_proposal`. ⚠️ festverdrahtet auf `n_jobs=1`. | Reicht alle obigen Fehler durch. |
 
 ---
@@ -392,7 +392,7 @@ def objective(trial):
 | `ValueError: Unknown strategy: <X>` | `sample_params` | Trial bricht ab. | Nur `HourlyMeanReversionStrategy`/`SmaCrossoverStrategy` nutzen oder Suchraum in `spaces.py` ergänzen. |
 | `FileNotFoundError: Output file …/tournament_result.json not generated` | `run_backtest` | Trial bricht ab. | Der Backtest ist abgestürzt (`check=False` verbirgt den Exit-Code). **Trial-Logs prüfen:** `data/optimizer/<study>/trial_XXXX/logs/`. Häufig: defekter Katalog-Pfad, Precision-Mismatch, zu kurze Datenspanne. |
 | Reward konstant `-10.0` über viele Trials | `compute_reward` (weiches Signal) | Kein Crash; Suche bleibt „blind". | Strategie generiert keine auswertbaren OOS-Trades. Suchräume in `spaces.py` auf plausible Grenzen prüfen; Datenspanne (`is_window_days + n_folds·oos_window_days`) muss durch den Katalog gedeckt sein; ggf. `oos_min_trades` vs. Signalfrequenz prüfen. |
-| `sqlite3.OperationalError: database is locked` | `optimize` (n_jobs>1) | Trials kollidieren auf der SQLite-DB. | Behoben (Timeout 60s, Pitfall #68). Falls das Problem bei exzessiven `n_jobs` zurückkehrt: Auf PostgreSQL umstellen oder `n_jobs` verringern. |
+| `sqlite3.OperationalError: database is locked` | `optimize` (n_jobs>1) | Trials kollidieren auf der SQLite-DB. | Bei > 4 Worker `STORAGE` auf PostgreSQL umstellen: `STORAGE = "postgresql://opt:opt@db/optuna"`. Worker-Prozesse statt Threads. |
 | `subprocess.TimeoutExpired` (nach 10800 s) | `run_backtest` | Trial bricht ab. | Backtest > 3 h: Universe/`splits` reduzieren oder Timeout in `runner.py` erhöhen. |
 | `KeyError: 'penalty_unevaluable_oos'` (o. ä.) | `compute_reward` | Trial bricht ab. | `optimizer.json` vervollständigen — **alle** Reward-Keys aus Abschnitt 4.1 müssen vorhanden sein. |
 | `KeyError: 'max_drawdown'` | `compute_reward` (nur wenn `risk_dd_cap=None`) | Trial bricht ab. | `tournament.json` muss `max_drawdown` enthalten. (Im Normalpfad übergibt der Orchestrator `risk_dd_cap` mit `.get(..., 0.30)`-Fallback, daher latent.) |
@@ -444,7 +444,7 @@ Zusammenfassung der Befunde aus dem Abgleich von `docs/strategie_optimierung_gui
 | `Unknown strategy: …` | Strategie nicht im Suchraum | Unterstützte Strategie wählen. |
 | `Output file … not generated` | Backtest abgestürzt | `trial_XXXX/logs/` lesen, dann manuell reproduzieren (9.4 Schritt 4). |
 | Reward immer `-10.0` | Keine OOS-Trades | Suchräume/Datenspanne/`oos_min_trades` prüfen. |
-| `database is locked` | SQLite + extrem viele Worker | `n_jobs` verringern. (Sollte dank 60s-Timeout aus Pitfall #68 nicht mehr auftreten). |
+| `database is locked` | SQLite + viele Worker | Auf Postgres umstellen. |
 | `FileNotFoundError: optimizer.json` | Falsches Arbeitsverzeichnis | Aus `PROJECT_ROOT` starten. |
 | Lauf stirbt beim ersten Fehler | Kein `catch=` | Trial-Isolation (9.2). |
 

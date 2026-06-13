@@ -46,6 +46,21 @@ def test_null_fully_eligible_pairs(tmp_path):
     m = parse_tournament(_write(tmp_path, {"fully_eligible_pairs": None, "aggregate_winner": None}))
     assert m.fully_eligible_pairs == 0
 
+def test_is_activity_metrics_parsing(tmp_path):
+    p = _write(tmp_path, {
+        "fully_eligible_pairs": 2,
+        "aggregate_winner": None,
+        "full_results": [
+            {"metrics": {"total_trades": 10}},
+            {"metrics": {"total_trades": 25}},
+            {"metrics": {}},
+            {}
+        ]
+    })
+    m = parse_tournament(p)
+    assert m.is_total_trades == 35
+    assert m.is_max_trades == 25
+
 def test_happy_path_regression(tmp_path):
     p = _write(tmp_path, {"fully_eligible_pairs": 5, "aggregate_winner": {
         "oos_evaluated": True, "oos_eligible": True, "win_count": 4,

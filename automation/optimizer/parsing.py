@@ -13,6 +13,8 @@ class TournamentMetrics:
     oos_total_trades: int
     win_count: int
     fully_eligible_pairs: int
+    is_total_trades: int
+    is_max_trades: int
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -44,6 +46,14 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
 
+    is_total_trades = 0
+    is_max_trades = 0
+    full_results = data.get("full_results") or []
+    if full_results and isinstance(full_results, list):
+        trades_list = [r.get("metrics", {}).get("total_trades", 0) for r in full_results if isinstance(r, dict)]
+        is_total_trades = sum(trades_list)
+        is_max_trades = max(trades_list) if trades_list else 0
+
     return TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
         oos_eligible=bool(oos_eligible),
@@ -52,5 +62,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_max_drawdown=float(oos_max_drawdown) if oos_max_drawdown is not None else 0.0,
         oos_total_trades=int(oos_total_trades) if oos_total_trades is not None else 0,
         win_count=int(win_count) if win_count is not None else 0,
-        fully_eligible_pairs=int(fully_eligible_pairs) if fully_eligible_pairs is not None else 0
+        fully_eligible_pairs=int(fully_eligible_pairs) if fully_eligible_pairs is not None else 0,
+        is_total_trades=int(is_total_trades),
+        is_max_trades=int(is_max_trades)
     )

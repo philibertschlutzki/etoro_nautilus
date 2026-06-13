@@ -29,9 +29,6 @@ def sample_params(strategy: str, trial) -> dict:
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 0.1, 1.5),
             
-            "trend_tolerance_pct": trial.suggest_float("trend_tolerance_pct", 0.0, 0.10),
-            "bb_touch_window": trial.suggest_int("bb_touch_window", 6, 96),
-
             # Trade-Management
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),
