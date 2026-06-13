@@ -13,6 +13,8 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase, Hourl
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
+import collections
+
 class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     sma_period: int = 50
     macd_fast: int = 12
@@ -25,8 +27,7 @@ class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     bb_entry_tolerance: float = 0.001
     cooldown_bars: int = 12
     allow_short: bool = False
-    trend_tolerance_pct: float = 0.02
-    bb_touch_window: int = 24
+    vwap_period: int = 20
 
 
 class ComboTrendVwapStrategy(HourlyStrategyBase):
@@ -45,8 +46,9 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
         self.current_signal: str | None = None
         self.bars_since_last_signal: int = 999
-        self.cumulative_typical_volume = 0.0
-        self.cumulative_volume = 0.0
+        self.vwap_queue = collections.deque(maxlen=self.config.vwap_period)
+        self._running_vp = 0.0
+        self._running_vol = 0.0
         self.current_vwap = 0.0
         self.bars_since_bb_touch: int = 999
 
@@ -62,11 +64,19 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
         volume = float(bar.volume)
 
-        self.cumulative_typical_volume += typical_price * volume
-        self.cumulative_volume += volume
+        if volume > 0:
+            if len(self.vwap_queue) == self.config.vwap_period:
+                old_vp, old_vol = self.vwap_queue.popleft()
+                self._running_vp -= old_vp
+                self._running_vol -= old_vol
 
-        if self.cumulative_volume > 0:
-            self.current_vwap = self.cumulative_typical_volume / self.cumulative_volume
+            new_vp = typical_price * volume
+            self.vwap_queue.append((new_vp, volume))
+            self._running_vp += new_vp
+            self._running_vol += volume
+
+        if self._running_vol > 0:
+            self.current_vwap = self._running_vp / self._running_vol
 
         self.sma.handle_bar(bar)
         self.macd.handle_bar(bar)
@@ -89,11 +99,11 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
         close_price = float(bar.close)
 
-        trend_bullish = close_price > (self.sma.value * (1.0 - self.config.trend_tolerance_pct))
+        trend_bullish = close_price > (self.sma.value * 0.98)
         momentum_bullish = self.macd.value > self.macd_signal.value
         atr_tolerance = self.atr.value * self.config.atr_multiplier
 
-        trend_bearish = close_price < (self.sma.value * (1.0 + self.config.trend_tolerance_pct))
+        trend_bearish = close_price < (self.sma.value * 1.02)
         momentum_bearish = self.macd.value < self.macd_signal.value
 
         if close_price <= (self.bb.lower + atr_tolerance) or close_price >= (self.bb.upper - atr_tolerance):
@@ -101,25 +111,25 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         else:
             self.bars_since_bb_touch += 1
 
-        vwap_confirmed = self.cumulative_volume > 0 and close_price > self.current_vwap
+        vwap_ready = len(self.vwap_queue) == self.config.vwap_period
 
-        vwap_bearish_confirmed = self.cumulative_volume > 0 and close_price < self.current_vwap
+        vwap_confirmed = vwap_ready and self._running_vol > 0 and close_price > self.current_vwap
+
+        vwap_bearish_confirmed = vwap_ready and self._running_vol > 0 and close_price < self.current_vwap
 
         if (
             trend_bullish
             and momentum_bullish
-            and self.bars_since_bb_touch <= self.config.bb_touch_window
+            and self.bars_since_bb_touch <= 24  # Geändert von 10 auf 24
             and vwap_confirmed
             and self.current_signal != "BUY"
             and self.bars_since_last_signal >= self.config.cooldown_bars
         ):
             self._log.info(
                 f"[{self.instrument_id}] BUY SIGNAL ComboTrendVWAP | "
-                f"Close: {close_price:.2f} | SMA({self.config.sma_period}): {self.sma.value:.2f} "
-                f"(Tol: {self.config.trend_tolerance_pct:.3f}) | "
+                f"Close: {close_price:.2f} | SMA({self.config.sma_period}): {self.sma.value:.2f} | "
                 f"MACD: {self.macd.value:.4f} / {self.macd_signal.value:.4f} | "
-                f"BB lower: {self.bb.lower:.2f} (Touch: {self.bars_since_bb_touch}/{self.config.bb_touch_window}) | "
-                f"VWAP: {self.current_vwap:.2f}",
+                f"BB lower: {self.bb.lower:.2f} | VWAP: {self.current_vwap:.2f}",
                 LogColor.GREEN,
             )
             self._on_buy_signal(bar)
@@ -128,18 +138,16 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
             self.config.allow_short
             and trend_bearish
             and momentum_bearish
-            and self.bars_since_bb_touch <= self.config.bb_touch_window
+            and self.bars_since_bb_touch <= 24  # Geändert von 10 auf 24
             and vwap_bearish_confirmed
             and self.current_signal != "SELL"
             and self.bars_since_last_signal >= self.config.cooldown_bars
         ):
             self._log.info(
                 f"[{self.instrument_id}] SELL SIGNAL ComboTrendVWAP | "
-                f"Close: {close_price:.2f} | SMA({self.config.sma_period}): {self.sma.value:.2f} "
-                f"(Tol: {self.config.trend_tolerance_pct:.3f}) | "
+                f"Close: {close_price:.2f} | SMA({self.config.sma_period}): {self.sma.value:.2f} | "
                 f"MACD: {self.macd.value:.4f} / {self.macd_signal.value:.4f} | "
-                f"BB upper: {self.bb.upper:.2f} (Touch: {self.bars_since_bb_touch}/{self.config.bb_touch_window}) | "
-                f"VWAP: {self.current_vwap:.2f}",
+                f"BB upper: {self.bb.upper:.2f} | VWAP: {self.current_vwap:.2f}",
                 LogColor.RED,
             )
             self._on_sell_signal(bar)
