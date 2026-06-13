@@ -1,5 +1,8 @@
 import json
 import optuna
+import logging
+import warnings
+from optuna.exceptions import ExperimentalWarning
 from pathlib import Path
 from automation.optimizer.manifest import WORK, catalog_fingerprint
 from automation.optimizer.spaces import sample_params
@@ -11,6 +14,20 @@ from automation.optimizer.confirm import confirm_on_holdout, export_proposal, ex
 from automation.log_manager import emit_execution_event
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
+
+def build_storage(url: str):
+    return optuna.storages.RDBStorage(
+        url=url,
+        engine_kwargs={"connect_args": {"timeout": 60}, "pool_pre_ping": True},
+    )
+
+def build_sampler(cfg):
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=ExperimentalWarning)
+        return optuna.samplers.TPESampler(
+            multivariate=True, group=True,
+            n_startup_trials=cfg["n_startup_trials"], seed=cfg["seed"],
+        )
 
 def make_objective(
     strategy: str,
@@ -100,16 +117,19 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     study_name = f"study_{strategy}"
 
-    sampler = optuna.samplers.TPESampler(
-        multivariate=True,
-        group=True,
-        n_startup_trials=n_startup_trials,
-        seed=seed
-    )
+    if n_jobs > 1 and seed is not None:
+        from automation.log_manager import emit_execution_event
+        emit_execution_event(logging.getLogger("optimizer"), "optimizer_parallel_seed_warning", {
+            "n_jobs": n_jobs,
+            "seed": seed,
+            "message": "Seed gesetzt, aber n_jobs>1 ⇒ Trial-Reihenfolge/Sampling nicht reproduzierbar. Für reproduzierbare Läufe --n-jobs 1 verwenden."
+        })
+
+    sampler = build_sampler({"n_startup_trials": n_startup_trials, "seed": seed})
 
     study = optuna.create_study(
         study_name=study_name,
-        storage=STORAGE,
+        storage=build_storage(STORAGE),
         direction="maximize",
         sampler=sampler,
         load_if_exists=True
@@ -140,6 +160,15 @@ if __name__ == "__main__":
     parser.add_argument("--strategy", type=str, required=True, help="Strategy class name to optimize")
     parser.add_argument("--n-trials", type=int, default=None, help="Number of trials (overrides config)")
     parser.add_argument("--n-jobs", type=int, default=1, help="Number of parallel worker jobs")
+    parser.add_argument("--deterministic", action="store_true", help="Force n_jobs=1 for reproducibility")
 
     args = parser.parse_args()
-    run(strategy=args.strategy, n_trials=args.n_trials, n_jobs=args.n_jobs)
+
+    if args.deterministic and args.n_jobs > 1:
+        parser.error("--deterministic and --n-jobs > 1 are mutually exclusive. Please use only one.")
+
+    n_jobs = args.n_jobs
+    if args.deterministic:
+        n_jobs = 1
+
+    run(strategy=args.strategy, n_trials=args.n_trials, n_jobs=n_jobs)
