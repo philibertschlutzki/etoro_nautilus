@@ -228,6 +228,9 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 - **`backtest.json` (Erweiterung)**:
   `walk_forward.holdout_days`: Anzahl der Holdout-Tage für Out-of-Sample Validierung nach der Optimierung.
 
+- **ComboTrendVwapConfig Flags**:
+  Die Parameter `require_vwap_confirmation` und `require_bb_touch` in der `ComboTrendVwapStrategy` erlauben es dem Optimierer, die Konjunktions-Logik (4-fach-UND-Bedingung) flexibel zu steuern, um die Entry-Frequenz anzupassen, ohne die statischen Turnier-Mindestkriterien zu verändern.
+
 **Merge-Reihenfolge der Strategie-Parameter (niedrig → hoch):**
 1. `strategy_defaults.json` (Basis, 1h-optimiert)
 2. `params` in `strategies.json` (Override)
@@ -273,6 +276,10 @@ Da alle Quellen bereits FSB(16) liefern, entfällt im Orchestrator jede Typ-Migr
 Bei der Umwandlung von Candle zu Tick wird im Backtest nun Zero-Spread-Modeling (bid=ask=close, Buy@Ask=Sell@Bid=Close) genutzt. Die Live-Ticks im `catalog_service` behalten allerdings den realen Spread.
 
 **Engine-Setup pro Job:** `OmsType.NETTING`, `AccountType.MARGIN`, Spread-Modeling (Buy@Ask, Sell@Bid — NautilusTrader-Default mit QuoteTicks). Mock-Instrument via `create_mock_instrument()` als `Cfd(asset_class=EQUITY)`.
+
+**Spaces (Optuna Parameter Sampling)**:
+- Suchräume in `automation/optimizer/spaces.py` definieren, welche Parameter von Optuna pro Strategie angepasst werden.
+- Bei der `ComboTrendVwapStrategy` sampelt der Optimierer unter anderem kategoriale Variablen für `require_vwap_confirmation` und `require_bb_touch`, um die Stringenz der Entry-Konjunktionen anpassbar zu machen.
 
 **Metriken** (`extract_metrics`): FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Sortino nur ab n ≥ 5 Round-Trips. Tournament-Selektion via `select_winners()`.
 
@@ -707,6 +714,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-14 | **Konjunktions-Schalter zur Combo-Strategie hinzugefügt.** | `automation/strategies/tesla_combo_strategy.py`, `automation/config/strategy_defaults.json`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Issue #355 (Pitfall #355 - Silent Worker Crash Swallowing):** Fail-Fast in `backtest_runner.py` implementiert, damit fundamentale systemische Fehler (z.B. ImportError) nicht stumm verschluckt werden und das Live-Deployment hart abbrechen. | `automation/backtest_runner.py`, `automation/tests/test_backtest_fatal_worker_crash.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Issue #346 (Pitfall #62 - Befund B5):** Fehlendes `logs`-Verzeichnis in `build_trial` ergänzt, um FileNotFoundError im Subprozess-Logging des Optimizers zu beheben, wenn `ETORO_LOGS_DIR` gesetzt wird. | `automation/optimizer/trial_config.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Fix Bugfix-Sprint Optimizer (B1, B2, B3):** B1: Manifest Contract in `trial_config.py` repariert (dynamischer `catalog_path` Fallback implementiert) plus Doku Pitfall #61; B2: CLI Entry in `run_optimization.py` via `argparse` hinzugefügt; B3: Suchräume für alle in `AGENTS.md` gelisteten aktiven Strategien in `spaces.py` hinzugefügt. | `automation/optimizer/trial_config.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
