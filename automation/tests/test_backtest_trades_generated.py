@@ -41,10 +41,11 @@ def test_backtest_trades_generated(tmp_path):
     import time
     base_ts = int(time.time() * 1e9) - 100 * 3600 * 1_000_000_000
 
-    # Generate ~100 oscillating points so an SMA crosses over multiple times
-    for i in range(100):
-        # Oscillate around 100.0 with a sin wave amplitude 5
-        price_val = 100.0 + 5.0 * math.sin(i * 0.5)
+    # Generate 500 oscillating points so an SMA crosses over multiple times
+    for i in range(500):
+        # Oscillate around 100.0 with a sin wave amplitude 10.0 to create large swings
+        # This ensures the SMA and price diverge enough that 10% tolerance catches more entries than 2%
+        price_val = 100.0 + i * 0.5 + 10.0 * math.sin(i * 0.5)
         qty_val = 1.0
 
         bid_prices.append(encode_price_fsb16(price_val, price_prec))
@@ -118,7 +119,25 @@ def test_backtest_trades_generated(tmp_path):
                 "macd_slow": 10,
                 "macd_signal_period": 5,
                 "bb_std_dev": 0.5,
-                "allow_short": True
+                "allow_short": True,
+                "trend_tolerance_pct": 0.02
+            }
+        },
+        {
+            "strategy_class": "ComboTrendVwapStrategy",
+            "strategy_module": "automation.strategies.tesla_combo_strategy",
+            "config_class": "ComboTrendVwapConfig",
+            "params": {
+                "cooldown_bars": 1,
+                "sma_period": 10,
+                "bb_period": 10,
+                "atr_period": 10,
+                "macd_fast": 5,
+                "macd_slow": 10,
+                "macd_signal_period": 5,
+                "bb_std_dev": 0.5,
+                "allow_short": True,
+                "trend_tolerance_pct": 0.10
             }
         }
     ]
@@ -134,6 +153,7 @@ def test_backtest_trades_generated(tmp_path):
             future = executor.submit(run_single_backtest_worker, *args, **kwargs)
             return future.result()
 
+    results_by_strat = []
     for strat in strats_to_test:
         res = run_isolated_worker(
             inst_id_str="AAPL.ETORO",
@@ -163,3 +183,10 @@ def test_backtest_trades_generated(tmp_path):
              assert total_trades > 0, f"Only {total_trades} trades were generated for {strat['strategy_class']}! Expected > 0"
         else:
              assert total_trades > 20, f"Only {total_trades} trades were generated for {strat['strategy_class']}! Expected > 20"
+
+        results_by_strat.append(total_trades)
+
+    # Regression Test Gate: trades(tolerance=0.10) > trades(tolerance=0.02)
+    trades_0_02 = results_by_strat[2]
+    trades_0_10 = results_by_strat[3]
+    assert trades_0_10 >= trades_0_02, f"Expected higher tolerance (0.10) to generate at least as many trades as (0.02), got {trades_0_10} vs {trades_0_02}"
