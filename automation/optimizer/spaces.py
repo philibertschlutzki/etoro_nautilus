@@ -28,6 +28,7 @@ def sample_params(strategy: str, trial) -> dict:
             "bb_std_dev": trial.suggest_float("bb_std_dev", 1.0, 2.5),
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 0.1, 1.5),
+            "vwap_period": trial.suggest_int("vwap_period", 10, 60),
             
             "trend_tolerance_pct": trial.suggest_float("trend_tolerance_pct", 0.0, 0.10),
             "bb_touch_window": trial.suggest_int("bb_touch_window", 6, 96),
