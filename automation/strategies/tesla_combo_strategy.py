@@ -13,6 +13,8 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase, Hourl
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
+import collections
+
 class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     sma_period: int = 50
     macd_fast: int = 12
@@ -25,6 +27,7 @@ class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     bb_entry_tolerance: float = 0.001
     cooldown_bars: int = 12
     allow_short: bool = False
+    vwap_period: int = 20
 
 
 class ComboTrendVwapStrategy(HourlyStrategyBase):
@@ -43,8 +46,9 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
         self.current_signal: str | None = None
         self.bars_since_last_signal: int = 999
-        self.cumulative_typical_volume = 0.0
-        self.cumulative_volume = 0.0
+        self.vwap_queue = collections.deque(maxlen=self.config.vwap_period)
+        self._running_vp = 0.0
+        self._running_vol = 0.0
         self.current_vwap = 0.0
         self.bars_since_bb_touch: int = 999
 
@@ -60,11 +64,19 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         typical_price = (float(bar.high) + float(bar.low) + float(bar.close)) / 3.0
         volume = float(bar.volume)
 
-        self.cumulative_typical_volume += typical_price * volume
-        self.cumulative_volume += volume
+        if volume > 0:
+            if len(self.vwap_queue) == self.config.vwap_period:
+                old_vp, old_vol = self.vwap_queue.popleft()
+                self._running_vp -= old_vp
+                self._running_vol -= old_vol
 
-        if self.cumulative_volume > 0:
-            self.current_vwap = self.cumulative_typical_volume / self.cumulative_volume
+            new_vp = typical_price * volume
+            self.vwap_queue.append((new_vp, volume))
+            self._running_vp += new_vp
+            self._running_vol += volume
+
+        if self._running_vol > 0:
+            self.current_vwap = self._running_vp / self._running_vol
 
         self.sma.handle_bar(bar)
         self.macd.handle_bar(bar)
@@ -99,9 +111,11 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
         else:
             self.bars_since_bb_touch += 1
 
-        vwap_confirmed = self.cumulative_volume > 0 and close_price > self.current_vwap
+        vwap_ready = len(self.vwap_queue) == self.config.vwap_period
 
-        vwap_bearish_confirmed = self.cumulative_volume > 0 and close_price < self.current_vwap
+        vwap_confirmed = vwap_ready and self._running_vol > 0 and close_price > self.current_vwap
+
+        vwap_bearish_confirmed = vwap_ready and self._running_vol > 0 and close_price < self.current_vwap
 
         if (
             trend_bullish

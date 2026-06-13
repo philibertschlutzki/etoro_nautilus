@@ -28,6 +28,8 @@ def test_warns_when_seed_and_parallel(monkeypatch, caplog):
 
     import automation.optimizer.run_optimization
     monkeypatch.setattr(automation.optimizer.run_optimization, "emit_execution_event", mock_emit)
+    import automation.log_manager
+    monkeypatch.setattr(automation.log_manager, "emit_execution_event", mock_emit)
 
     import builtins
     original_open = builtins.open
