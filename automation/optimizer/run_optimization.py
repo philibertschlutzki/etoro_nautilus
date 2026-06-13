@@ -72,6 +72,9 @@ def make_objective(
             "oos_evaluated": metrics.oos_evaluated,
             "oos_total_trades": metrics.oos_total_trades,
             "fully_eligible_pairs": metrics.fully_eligible_pairs,
+            "win_count": metrics.win_count,
+            "is_total_trades": metrics.is_total_trades,
+            "is_max_trades": metrics.is_max_trades,
             "outcome": outcome
         })
 
