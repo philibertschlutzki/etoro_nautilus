@@ -567,6 +567,11 @@ def test_broken_pool_fallback_passes_arguments():
                         }
                     ]
                 }))
+            if isinstance(filename, str) and '.log' in filename:
+                import io
+                class DummyFile(io.StringIO):
+                    def close(self): pass
+                return DummyFile()
             return original_open(filename, *args, **kwargs)
 
         with patch('builtins.open', side_effect=mock_open_file), patch('os.path.exists', return_value=True):

@@ -45,6 +45,11 @@ def test_run_backtest_fatal_error_aborts(monkeypatch):
                         }
                     ]
                 }))
+            if isinstance(filename, str) and ".log" in filename:
+                import io
+                class DummyFile(io.StringIO):
+                    def close(self): pass
+                return DummyFile()
             return original_open(filename, *args, **kwargs)
 
         original_listdir = os.listdir

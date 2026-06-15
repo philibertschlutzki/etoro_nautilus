@@ -103,6 +103,13 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     study_name = f"study_{strategy}"
 
+    if seed is not None and n_jobs > 1:
+        import logging
+        logger = logging.getLogger("optimizer")
+        msg = f"n_jobs>1 ({n_jobs}) und seed ({seed}) gesetzt! Läufe sind nicht reproduzierbar."
+        logger.warning(msg)
+        emit_execution_event(logger, "optimizer_parallel_seed_warning", {"message": msg})
+
     sampler = optuna.samplers.TPESampler(
         multivariate=True,
         group=True,
