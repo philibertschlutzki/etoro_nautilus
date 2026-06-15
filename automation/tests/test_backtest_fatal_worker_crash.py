@@ -32,24 +32,15 @@ def test_run_backtest_fatal_error_aborts(monkeypatch):
 
         original_open = builtins.open
         def mock_open_file(filename, *args, **kwargs):
-            if isinstance(filename, str) and ("strategies.json" in filename or "backtest.json" in filename or "dummy.json" in filename):
-                return StringIO(json.dumps({
-                    "global_settings": {"spread_modeling": False, "span_tolerance_days": 5.0, "tournament": {"n_workers": 2}},
-                    "strategies": [
-                        {
-                            "active": True,
-                            "strategy_class": "SmaCrossoverStrategy",
-                            "config_class": "TestConfig",
-                            "symbols": ["AAPL.NASDAQ"],
-                            "params": {}
-                        }
-                    ]
-                }))
-            if isinstance(filename, str) and ".log" in filename:
-                import io
-                class DummyFile(io.StringIO):
-                    def close(self): pass
-                return DummyFile()
+            if isinstance(filename, str):
+                if "strategies.json" in filename or "backtest.json" in filename or "dummy.json" in filename:
+                    return StringIO(json.dumps({
+                        "global_settings": {"spread_modeling": False, "span_tolerance_days": 5.0, "tournament": {"n_workers": 2}},
+                        "strategies": [{"active": True, "strategy_class": "SmaCrossoverStrategy", "config_class": "TestConfig", "symbols": ["AAPL.NASDAQ"], "params": {}}]
+                    }))
+                if ".log" in filename:
+                    from unittest.mock import MagicMock
+                    return MagicMock() # Verhindert den I/O-Crash durch den Logger
             return original_open(filename, *args, **kwargs)
 
         original_listdir = os.listdir

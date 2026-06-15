@@ -546,7 +546,15 @@ def test_broken_pool_fallback_passes_arguments():
 
         original_open = builtins.open
 
+        class DummyFile:
+            def write(self, s): pass
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc_val, exc_tb): pass
+            def close(self): pass
+
         def mock_open_file(filename, *args, **kwargs):
+            if isinstance(filename, str) and ("backtest_dummy.log" in filename or "errors_dummy.log" in filename or "backtest_" in filename):
+                return DummyFile()
             if isinstance(filename, str) and "strategies.json" in filename:
                 return StringIO(json.dumps({"strategies": [{"active": True, "strategy_module": "automation.strategies.mean_reversion", "strategy_class": "MeanReversionStrategy", "config_class": "MeanReversionConfig", "params": {}}]}))
             if isinstance(filename, str) and "backtest.json" in filename:
