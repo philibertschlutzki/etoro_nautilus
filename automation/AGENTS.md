@@ -238,6 +238,12 @@ In `_compute_quantity` greift bei der Bestimmung des Positions-Sizings folgende 
 `tournament.json`: `eligible_requires_all = [min_trades, min_total_return]`, `eligible_requires_any = [min_sortino, min_profit_factor]`. Score = `sortino·0.4 + pf·0.3 + win_rate·0.2 − max_dd·0.1`.
 *Zusatz-Feature:* Mit `tournament_overrides` in `strategies.json` können die globalen Gating-Kriterien aus `tournament.json` für spezifische Strategien individuell überschrieben werden (z. B. geringere `min_trades` für restriktivere Setups).
 
+**`ComboTrendVwapConfig` — Konjunktions-Schalter (OPT-02/03):**
+- `require_vwap_confirmation: bool = True` — wenn `False`, entfällt die VWAP-Bestätigungs-Bedingung aus dem Entry-Gate.
+- `require_bb_touch: bool = True` — wenn `False`, entfällt die BB-Touch-Fenster-Bedingung (`bars_since_bb_touch <= bb_touch_window`).
+- **Default `True`** → verhaltensneutral gegenüber dem Zustand vor Einführung dieser Schalter (Regressionssicherheit).
+- Beide Schalter werden in `spaces.py` via `suggest_categorical(..., [True, False])` durch Optuna kategorial gesucht. Damit kann der Optimierer die Konjunktionsstruktur selbst auflockern — ohne dass `tournament.json`-Gates verändert werden (Gate-Gaming-Verbot gem. §12).
+
 ---
 
 ## 8. Precision-Logik (zentral)
@@ -275,6 +281,8 @@ Bei der Umwandlung von Candle zu Tick wird im Backtest nun Zero-Spread-Modeling 
 **Engine-Setup pro Job:** `OmsType.NETTING`, `AccountType.MARGIN`, Spread-Modeling (Buy@Ask, Sell@Bid — NautilusTrader-Default mit QuoteTicks). Mock-Instrument via `create_mock_instrument()` als `Cfd(asset_class=EQUITY)`.
 
 **Metriken** (`extract_metrics`): FIFO-Matching über `generate_fills_report()` (Fallback `generate_order_fills_report()`). Sortino nur ab n ≥ 5 Round-Trips. Tournament-Selektion via `select_winners()`.
+
+**Entry-Frequenz `ComboTrendVwapStrategy`:** Mit `require_vwap_confirmation=False` und/oder `require_bb_touch=False` steigt `fully_eligible_pairs` messbar, da die 4-fach-UND-Konjunktion auf 2–3 Bedingungen reduziert wird (Diagnose ISSUE-OPT-01). Die `tournament.json`-Gates (`min_trades`) bleiben unverändert (Gate-Gaming-Verbot).
 
 🟢 **Behoben:** `create_mock_instrument` und `run_single_backtest_worker` erzwingen nun eine asset-bewusste Normalisierung der `size_precision` via temporärer PyArrow-Schema-Injection und `_fallback_precisions` (Equities fallen auf 2, Crypto auf 8 zurück). (Pitfall #14 gelöst, Schreibseiten-Persistenz #23 behoben).
 
@@ -695,6 +703,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 - **Tupel-Arity Koppelung:** Erzeugung (`pnls_with_ts.append(...)`) und Konsum (`for ... in pnls_with_ts`) der Trade-Tupel sind als gekoppeltes Paar zu behandeln: Ändert sich die Arity der erzeugten Tupel, MUSS die Entpackung im selben Commit angepasst werden.
 - **total_trades Guards:** Assertions auf `total_trades > 0` in den Test-Suites dürfen unter keinen Umständen gelockert oder entfernt werden.
 - **Observability Gate-Regel:** Jeder PR, der neue Gating-Parameter (z. B. in `tournament.json` oder `strategies.json`) einführt, MUSS zwingend die Startup-Log-Ausgabe in `backtest_runner.py` um diese Parameter erweitern. PRs ohne Header-Update für neue Gates werden als 'unvollständig' abgelehnt. Dies gilt als strikte Vorgabe zur Vermeidung von "Hidden Gates" und als Blocker für Merges.
+- **Konjunktions-Schalter in `ComboTrendVwapConfig`:** `require_vwap_confirmation` und `require_bb_touch` sind boolesche Flags, die Optuna erlauben, einzelne Entry-Bedingungen kategorial abzuwählen (Werte: `[True, False]`). Default `True` = verhaltensneutral. Neue Strategieparameter dieser Art MÜSSEN als Klassenfeld mit Default `True` in der Config-Klasse eingeführt werden, in `strategy_defaults.json` mit dem Default dokumentiert und in `spaces.py` via `suggest_categorical` freigegeben werden. Die `tournament.json`-Gates dürfen zur Frequenz-Erhöhung NICHT verändert werden (Gate-Gaming-Verbot §12).
 
 ---
 
@@ -707,6 +716,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-16 | **Konjunktions-Schalter zur Combo-Strategie (ISSUE-OPT-01):** `require_vwap_confirmation` und `require_bb_touch` als boolesche Config-Felder (Default: `True`) in `ComboTrendVwapConfig` eingeführt. `on_bar` (Long- und Short-Zweig) nutzt jetzt `vwap_ok`/`vwap_bearish_ok`/`bb_ok`-Guards statt fest verdrahteter UND-Glieder. `bb_touch_window` als explizites Config-Feld (war hardcoded `24`). Beide Schalter in `spaces.py` via `suggest_categorical([True, False])` für Optuna freigegeben. `strategy_defaults.json` und AGENTS.md §7/§10/§18 aktualisiert. | `automation/strategies/tesla_combo_strategy.py`, `automation/config/strategy_defaults.json`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Issue #355 (Pitfall #355 - Silent Worker Crash Swallowing):** Fail-Fast in `backtest_runner.py` implementiert, damit fundamentale systemische Fehler (z.B. ImportError) nicht stumm verschluckt werden und das Live-Deployment hart abbrechen. | `automation/backtest_runner.py`, `automation/tests/test_backtest_fatal_worker_crash.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Issue #346 (Pitfall #62 - Befund B5):** Fehlendes `logs`-Verzeichnis in `build_trial` ergänzt, um FileNotFoundError im Subprozess-Logging des Optimizers zu beheben, wenn `ETORO_LOGS_DIR` gesetzt wird. | `automation/optimizer/trial_config.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **Fix Bugfix-Sprint Optimizer (B1, B2, B3):** B1: Manifest Contract in `trial_config.py` repariert (dynamischer `catalog_path` Fallback implementiert) plus Doku Pitfall #61; B2: CLI Entry in `run_optimization.py` via `argparse` hinzugefügt; B3: Suchräume für alle in `AGENTS.md` gelisteten aktiven Strategien in `spaces.py` hinzugefügt. | `automation/optimizer/trial_config.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
