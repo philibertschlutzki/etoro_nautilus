@@ -303,6 +303,32 @@ Zusätzlicher Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_C
 
 ---
 
+**Symptom:** Strategie-Instanzen, die über `strategies.json` geladen werden (oder im Live-Betrieb via Allocator), stürzen beim Start ab, wenn neue Parameter (wie `require_vwap_confirmation`) nicht explizit in der Datei stehen und die Pydantic/Dataclass-Validierung fehlschlägt.
+**Root Cause:** Config-Klassen wie `ComboTrendVwapConfig` definieren zwar Typen, aber wenn das zugrundeliegende Framework (Nautilus `StrategyConfig`) oder das Parsing keine Defaults für fehlende Keys liefert, kommt es zum Absturz.
+**Fix (Architektur-Regel):** Die `__struct_fields__` bzw. Pydantic-ähnliche Validierung wird abgesichert, indem bei Konfigurationsklassen stets `kw_only=True` und explizite Typ-Defaults (z.B. `= True`) direkt in der Klassen-Definition verankert werden (wie in `ComboTrendVwapConfig`). Der `backtest_runner.py` füllt über `apply_strategy_defaults` fehlende Werte auf. Das ist durch `test_live_execution_defaults.py` abgedeckt.
+
+**Symptom:** Strategie-Instanzen, die über `strategies.json` geladen werden (oder im Live-Betrieb via Allocator), stürzen beim Start ab, wenn neue Parameter (wie `require_vwap_confirmation`) nicht explizit in der Datei stehen und die Pydantic/Dataclass-Validierung fehlschlägt.
+**Root Cause:** Config-Klassen wie `ComboTrendVwapConfig` definieren zwar Typen, aber wenn das zugrundeliegende Framework (Nautilus `StrategyConfig`) oder das Parsing keine Defaults für fehlende Keys liefert, kommt es zum Absturz.
+**Fix (Architektur-Regel):** Die `__struct_fields__` bzw. Pydantic-ähnliche Validierung wird abgesichert, indem bei Konfigurationsklassen stets `kw_only=True` und explizite Typ-Defaults (z.B. `= True`) direkt in der Klassen-Definition verankert werden (wie in `ComboTrendVwapConfig`). Der `backtest_runner.py` füllt über `apply_strategy_defaults` fehlende Werte auf. Das ist durch `test_live_execution_defaults.py` abgedeckt.
+
+**Symptom:** Strategie-Instanzen, die über `strategies.json` geladen werden (oder im Live-Betrieb via Allocator), stürzen beim Start ab, wenn neue Parameter (wie `require_vwap_confirmation`) nicht explizit in der Datei stehen und die Pydantic/Dataclass-Validierung fehlschlägt.
+**Root Cause:** Config-Klassen wie `ComboTrendVwapConfig` definieren zwar Typen, aber wenn das zugrundeliegende Framework (Nautilus `StrategyConfig`) oder das Parsing keine Defaults für fehlende Keys liefert, kommt es zum Absturz.
+**Fix (Architektur-Regel):** Die `__struct_fields__` bzw. Pydantic-ähnliche Validierung wird abgesichert, indem bei Konfigurationsklassen stets `kw_only=True` und explizite Typ-Defaults (z.B. `= True`) direkt in der Klassen-Definition verankert werden (wie in `ComboTrendVwapConfig`). Der `backtest_runner.py` füllt über `apply_strategy_defaults` fehlende Werte auf. Das ist durch `test_live_execution_defaults.py` abgedeckt.
+
+**Symptom:** Strategie-Instanzen, die über `strategies.json` geladen werden (oder im Live-Betrieb via Allocator), stürzen beim Start ab, wenn neue Parameter (wie `require_vwap_confirmation`) nicht explizit in der Datei stehen und die Pydantic/Dataclass-Validierung fehlschlägt.
+**Root Cause:** Config-Klassen wie `ComboTrendVwapConfig` definieren zwar Typen, aber wenn das zugrundeliegende Framework (Nautilus `StrategyConfig`) oder das Parsing keine Defaults für fehlende Keys liefert, kommt es zum Absturz.
+**Fix (Architektur-Regel):** Die `__struct_fields__` bzw. Pydantic-ähnliche Validierung wird abgesichert, indem bei Konfigurationsklassen stets `kw_only=True` und explizite Typ-Defaults (z.B. `= True`) direkt in der Klassen-Definition verankert werden (wie in `ComboTrendVwapConfig`). Der `backtest_runner.py` füllt über `apply_strategy_defaults` fehlende Werte auf. Das ist durch `test_live_execution_defaults.py` abgedeckt.
+
+**Symptom:** Strategie-Instanzen, die über `strategies.json` geladen werden (oder im Live-Betrieb via Allocator), stürzen beim Start ab, wenn neue Parameter (wie `require_vwap_confirmation`) nicht explizit in der Datei stehen und die Pydantic/Dataclass-Validierung fehlschlägt.
+**Root Cause:** Config-Klassen wie `ComboTrendVwapConfig` definieren zwar Typen, aber wenn das zugrundeliegende Framework (Nautilus `StrategyConfig`) oder das Parsing keine Defaults für fehlende Keys liefert, kommt es zum Absturz.
+**Fix (Architektur-Regel):** Die `__struct_fields__` bzw. Pydantic-ähnliche Validierung wird abgesichert, indem bei Konfigurationsklassen stets `kw_only=True` und explizite Typ-Defaults (z.B. `= True`) direkt in der Klassen-Definition verankert werden (wie in `ComboTrendVwapConfig`). Der `backtest_runner.py` füllt über `apply_strategy_defaults` fehlende Werte auf. Das ist durch `test_live_execution_defaults.py` abgedeckt.
+
+
+### 🟢 Pitfall #69 — Config Fallbacks via kwargs (Issue #OPT-01)
+**Symptom:** Strategie-Instanzen, die über `strategies.json` geladen werden (oder im Live-Betrieb via Allocator), stürzen beim Start ab, wenn neue Parameter (wie `require_vwap_confirmation`) nicht explizit in der Datei stehen und die Pydantic/Dataclass-Validierung fehlschlägt.
+**Root Cause:** Config-Klassen wie `ComboTrendVwapConfig` definieren zwar Typen, aber wenn das zugrundeliegende Framework (Nautilus `StrategyConfig`) oder das Parsing keine Defaults für fehlende Keys liefert, kommt es zum Absturz.
+**Fix (Architektur-Regel):** Die `__struct_fields__` bzw. Pydantic-ähnliche Validierung wird abgesichert, indem bei Konfigurationsklassen stets `kw_only=True` und explizite Typ-Defaults (z.B. `= True`) direkt in der Klassen-Definition verankert werden (wie in `ComboTrendVwapConfig`). Der `backtest_runner.py` füllt über `apply_strategy_defaults` fehlende Werte auf. Das ist durch `test_live_execution_defaults.py` abgedeckt.
+
 ## 12. Umgebungs-Setup (.env, requirements, systemd)
 
 | Variable | Pflicht | Verwendet von |
@@ -327,8 +353,6 @@ python3 -m automation.optimizer.run_optimization --strategy SmaCrossoverStrategy
 Hinweis: Wenn systemd-Unit-Files im Repo existieren, müssen die ExecStart-Anweisungen dort ebenfalls auf `python3 -m automation.catalog_service` aktualisiert werden.
 
 ---
-
-
 
 ## 12.5 Sicherheits-Leitplanken (Optimizer)
 * Kein Live-Deploy aus dem Optimierer (Runner-Direktaufruf, Phase 5 nie betreten).
@@ -378,7 +402,6 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
-
 
 ### 🟢 Pitfall #355 — Silent Worker Crash Swallowing (Fail-Fast vs Resilience)
 **Symptom:** Der Orchestrator meldet "[Phase 3] Backtest beendet (Exit-Code: 0)" und startet das Live-Deployment, obwohl im Hintergrund Worker-Prozesse aufgrund fundamentaler Python-Fehler (z.B. `ImportError`) abgestürzt sind.
@@ -584,7 +607,6 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 ### 🟢 Pitfall #18 — `make_qty` ValueError bei Equities
 `round_down=True` verhindert den ValueError NICHT. Zweistufige Absicherung (Pre-Check + try/except) dokumentiert. **Teilweise** umgesetzt — siehe #20/#21 für die verbleibende Inkonsistenz.
 
-
 ### 🟢 Pitfall #44 — Asynchrone Speicherung (Deferred Flush Bug)
 **Symptom:** Datenverlust oder Inkonsistenzen beim Schreiben der Puffer.
 **Fix:** Korrektes Flush-Handling implementiert (dokumentiert in `Test_report.md` via `test_do_flush`).
@@ -626,14 +648,11 @@ Signal-State wird nach `_close_position()` auf `None` zurückgesetzt. **Behoben*
 
 ---
 
-
 ### Walk-Forward Evaluation & OOS Gate (Phase 5)
 Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit Out-of-Sample (OOS) Gating.
 - Das erweiterte historische Datenfenster wird dynamisch über `automation/config/backtest.json` definiert (z.B. `is_window_days=60`, `oos_window_days=7`).
 - Während des Backtests generiert Nautilus PnLs über das gesamte Fenster. Die `extract_metrics` Funktion teilt die PnLs via Zeitstempel (`split_oos_start_ns` berechnet aus `_walk_forward_dict`) in `is_pnls` und `oos_pnls` ohne den Nautilus Rust Core zu beeinträchtigen.
 - `daily_orchestrator.py` wertet in Phase 5 die `aggregate_winner` Performance aus. Wenn die OOS-Rendite negativ ist (Gate failed), wird das Live-Deployment des Bots gestoppt.
-
-
 
 ### 🟢 Pitfall #30 — Rust Engine FFI Abort bei Signaturänderungen
 **Symptom:** Subprozesse crashen mit `Fatal Python error: Aborted` aus `nautilus_trader.system.kernel.py __init__`.
@@ -669,12 +688,9 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Symptom:** In Backtests mit 100% Win Rate generieren bestimmte Metriken mathematische Artefakte (z.B. Sortino Ratio = 50.0 oder Profit Factor = 50.0). Dies verzerrt die Aggregat-Mediane und Auswertung extrem, wenn die Werte durch künstliche Caps (`MAX_CAP = 50.0`, `CALMAR_CAP = 100.0`) künstlich hoch gehalten werden. Andererseits explodieren die Werte ohne Caps bei minimalen Verlusten ins Unendliche.
 **Root Cause:** Fallback bei undefinierten Nennern (z.B. `gross_loss == 0`) waren hardcodierte `MAX_CAP`-Werte, die die Scores nach oben verzerrten und echte Resultate verfälschten. Das komplette Entfernen der Caps in #209 führte stattdessen bei minimalen Nennern zu Explosionen.
 **Fix:** Undefinierte finanzmathematische Zustände (All-Win-Szenarien oder <2 Losses bei <50 Trades) erzeugen konsequent `None`. Extreme Werte bei validen Samples werden hart gekappt (Sortino/PF auf 50.0, Calmar auf 100.0). Dies verhindert Median-Verfälschungen bei der Aggregation. Im CLI-Output rendern die None-Werte distinkt als `n/a(win)` oder `n/a(<min)`. Eine dedizierte Filter-Gating-Logik in `_is_eligible` wirft diese None-Kandidaten proaktiv ab.
+**Diagnostic Artifact:** Wenn durch das Aufweichen von Konjunktionsschaltern (wie `require_vwap_confirmation=False`) die Frequenz getestet wird, kann dies in Low-Volume-Fenstern (Zero-Loss) dazu führen, dass der PF als `999` (bzw. gecappt auf max float) ausgegeben wird. Dies darf nicht als statistischer Outlier verworfen werden, sondern ist ein erwartetes Artefakt eines Zero-Loss-Frequenztests.
 **Wichtige Architektur-Regel:** Downstream-Systeme in Evaluationen und Formatting müssen stets typensicher entwickelt werden, da Metrik-Extraktionen immer `None`-safe verarbeitet werden müssen! Die Rankings in `select_winners` nutzen nun `(m.get('metric') or 0.0)`, um die Metrik zu normalisieren.
 **Betroffen:** `automation/backtest_runner.py`
-
-
-
-
 
 ### Pitfall #53: Optimizer-Storage ausschließlich SQLite
 **Symptom:** Unklarheit über Datenhaltung und fehlende PR-Promotion.
@@ -704,6 +720,8 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 - **total_trades Guards:** Assertions auf `total_trades > 0` in den Test-Suites dürfen unter keinen Umständen gelockert oder entfernt werden.
 - **Observability Gate-Regel:** Jeder PR, der neue Gating-Parameter (z. B. in `tournament.json` oder `strategies.json`) einführt, MUSS zwingend die Startup-Log-Ausgabe in `backtest_runner.py` um diese Parameter erweitern. PRs ohne Header-Update für neue Gates werden als 'unvollständig' abgelehnt. Dies gilt als strikte Vorgabe zur Vermeidung von "Hidden Gates" und als Blocker für Merges.
 - **Konjunktions-Schalter in `ComboTrendVwapConfig`:** `require_vwap_confirmation` und `require_bb_touch` sind boolesche Flags, die Optuna erlauben, einzelne Entry-Bedingungen kategorial abzuwählen (Werte: `[True, False]`). Default `True` = verhaltensneutral. Neue Strategieparameter dieser Art MÜSSEN als Klassenfeld mit Default `True` in der Config-Klasse eingeführt werden, in `strategy_defaults.json` mit dem Default dokumentiert und in `spaces.py` via `suggest_categorical` freigegeben werden. Die `tournament.json`-Gates dürfen zur Frequenz-Erhöhung NICHT verändert werden (Gate-Gaming-Verbot §12).
+- **Gate-Gaming vs. Statistische Signifikanz (§12):** Wenn Entry-Bedingungen (wie VWAP oder BB-Touch) über Schalter aufgeweicht werden, steigt die Frequenz, aber die statistische Qualität (Sortino, Profit Factor) kann sinken. Der Optimierer darf dies nicht ausnutzen, um schwache Strategien durch das Frequenz-Gate zu schmuggeln. In solchen Fällen MUSS künftig (in `tournament.json` oder via `tournament_overrides`) ein strengeres `min_sortino` oder `min_profit_factor` angelegt werden, um das Rauschen der minderwertigeren Entries abzufangen.
+- **Optuna Study Invalidation:** Da `bb_touch_window` nun scharfgeschaltet ist, werden alte Studien zu `ComboTrendVwapStrategy` inkonsistent (Typ S Strategie-Logik-Änderung). Vor einer erneuten HPO-Runde MUSS die alte SQLite-Datenbank gelöscht werden (`rm -f data/optimizer/studies.db`). Dies ist im Changelog deklariert.
 
 ---
 
@@ -716,6 +734,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-16 | **Konjunktions-Schalter zur Combo-Strategie (ISSUE-OPT-01):** `require_vwap_confirmation` und `require_bb_touch` als boolesche Config-Felder (Default: `True`) in `ComboTrendVwapConfig` eingeführt. `on_bar` (Long- und Short-Zweig) nutzt jetzt `vwap_ok`/`vwap_bearish_ok`/`bb_ok`-Guards statt fest verdrahteter UND-Glieder. `bb_touch_window` als explizites Config-Feld (war hardcoded `24`). Beide Schalter in `spaces.py` via `suggest_categorical([True, False])` für Optuna freigegeben. `strategy_defaults.json` und AGENTS.md §7/§10/§18 aktualisiert. **Achtung: Dies ist eine Typ S Änderung. Bisherige Optuna Studien für ComboTrendVwapStrategy sind nun invalide und müssen gelöscht werden.** | `automation/strategies/tesla_combo_strategy.py`, `automation/config/strategy_defaults.json`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-06-16 | **Konjunktions-Schalter zur Combo-Strategie (ISSUE-OPT-01):** `require_vwap_confirmation` und `require_bb_touch` als boolesche Config-Felder (Default: `True`) in `ComboTrendVwapConfig` eingeführt. `on_bar` (Long- und Short-Zweig) nutzt jetzt `vwap_ok`/`vwap_bearish_ok`/`bb_ok`-Guards statt fest verdrahteter UND-Glieder. `bb_touch_window` als explizites Config-Feld (war hardcoded `24`). Beide Schalter in `spaces.py` via `suggest_categorical([True, False])` für Optuna freigegeben. `strategy_defaults.json` und AGENTS.md §7/§10/§18 aktualisiert. | `automation/strategies/tesla_combo_strategy.py`, `automation/config/strategy_defaults.json`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Issue #355 (Pitfall #355 - Silent Worker Crash Swallowing):** Fail-Fast in `backtest_runner.py` implementiert, damit fundamentale systemische Fehler (z.B. ImportError) nicht stumm verschluckt werden und das Live-Deployment hart abbrechen. | `automation/backtest_runner.py`, `automation/tests/test_backtest_fatal_worker_crash.py`, `automation/AGENTS.md` |
 | 2026-06-11 | **Issue #346 (Pitfall #62 - Befund B5):** Fehlendes `logs`-Verzeichnis in `build_trial` ergänzt, um FileNotFoundError im Subprozess-Logging des Optimizers zu beheben, wenn `ETORO_LOGS_DIR` gesetzt wird. | `automation/optimizer/trial_config.py`, `automation/AGENTS.md` |
