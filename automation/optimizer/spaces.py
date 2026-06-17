@@ -33,6 +33,10 @@ def sample_params(strategy: str, trial) -> dict:
             "trend_tolerance_pct": trial.suggest_float("trend_tolerance_pct", 0.0, 0.10),
             "bb_touch_window": trial.suggest_int("bb_touch_window", 6, 96),
 
+            # Konjunktions-Schalter: erlauben dem Optimizer, einzelne Entry-Bedingungen abzuwählen
+            "require_vwap_confirmation": trial.suggest_categorical("require_vwap_confirmation", [True, False]),
+            "require_bb_touch": trial.suggest_categorical("require_bb_touch", [True, False]),
+
             # Trade-Management
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),

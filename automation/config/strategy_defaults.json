@@ -39,9 +39,12 @@
     "bb_period": 10,
     "bb_std_dev": 2.0,
     "bb_entry_tolerance": 1.0,
+    "bb_touch_window": 24,
     "cooldown_bars": 12,
     "vwap_period": 20,
-    "trade_amount_pct": 15.0
+    "trade_amount_pct": 15.0,
+    "require_vwap_confirmation": true,
+    "require_bb_touch": true
   },
   "VwapExhaustionStrategy": {
     "deviation_threshold": 0.008,
