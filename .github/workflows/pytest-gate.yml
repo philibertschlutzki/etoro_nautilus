@@ -94,6 +94,9 @@ jobs:
       - name: VWAP exhaustion state mutation safety (§6, Pitfall #41 / Issue #211)
         run: python3 -m pytest automation/tests/test_vwap_exhaustion_state.py -v --timeout=30
 
+      - name: ComboTrendVwap conjunction switches (§6/§7, ISSUE-OPT-373)
+        run: python3 -m pytest automation/tests/test_combo_conjunction_switches.py -v --timeout=30
+
       # ── Tier 6: Live path (§11, §5.7) ────────────────────────────────────────
       - name: Live strategy mapping & registry (§11, Pitfall #22)
         run: python3 -m pytest automation/tests/test_live_strategy_mapping.py -v --timeout=30
