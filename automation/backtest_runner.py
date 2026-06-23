@@ -1677,6 +1677,17 @@ def check_data_span(ticks: list, required_days: int, span_tolerance_days: float)
     return (span_ns_val >= min_required_ns, span_days, required_days)
 
 
+def _format_backtest_window(first_tick_ns: int, last_tick_ns: int) -> str:
+    """Issue #403: formatiert das *tatsaechliche* Daten-Zeitfenster eines Backtests
+    (Start-Tick bis End-Tick + Spanne in Tagen) fuer das Worker-Log. Rein funktional und
+    damit deterministisch testbar (vorher fehlte das Enddatum/die Dauer komplett — man sah
+    nur den ersten Tick)."""
+    span_days = (last_tick_ns - first_tick_ns) / (86400 * 1_000_000_000)
+    start = pd.Timestamp(first_tick_ns, unit='ns', tz='UTC').strftime('%Y-%m-%d')
+    end = pd.Timestamp(last_tick_ns, unit='ns', tz='UTC').strftime('%Y-%m-%d')
+    return f"📅 Backtest-Zeitfenster: {start} bis {end} ({span_days:.1f} Tage)"
+
+
 def run_single_backtest_worker(
     inst_id_str: str,
     bar_type: str,
@@ -1761,6 +1772,10 @@ def run_single_backtest_worker(
         # Falls isinstance(ts_event, pd.Timestamp) oder int (pandas fallback)
         first_tick_ns_val = first_tick_ts.value if hasattr(first_tick_ts, 'value') else int(first_tick_ts)
         wlog(f"   📥 {len(ticks)} Ticks geladen. Erster Tick im Engine: {first_tick_ns_val} ({pd.Timestamp(first_tick_ns_val, unit='ns', tz='UTC').strftime('%Y-%m-%d %H:%M:%S')})")
+        # Issue #403: Enddatum + Gesamtdauer explizit loggen (vorher nur erster Tick sichtbar).
+        last_tick_ts = ticks[-1].ts_event
+        last_tick_ns_val = last_tick_ts.value if hasattr(last_tick_ts, 'value') else int(last_tick_ts)
+        wlog("   " + _format_backtest_window(first_tick_ns_val, last_tick_ns_val))
 
         # --- Check Data Span for Walk-Forward Window ---
         required_days = strat.get("_walk_forward_days")

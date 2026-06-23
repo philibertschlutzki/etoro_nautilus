@@ -17,7 +17,7 @@ from automation.optimizer import bounds
 from automation.optimizer.gate import is_symbol_tunable
 from automation.optimizer.trial_config import config_dir
 from automation.optimizer.manifest import WORK
-from automation.optimizer.run_optimization import optimize_symbol as _optimize_symbol, load_global_best
+from automation.optimizer.run_optimization import optimize_symbol as _optimize_symbol, load_global_best, log_active_config
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 
 
@@ -245,6 +245,13 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
+
+    # Issue #403: Config-Quellen + Kern-Schwellen einmalig offenlegen, bevor der Sweep in die
+    # (subprocess-stummen) iterativen Trials uebergeht.
+    log_active_config(f"per-symbol sweep · tier={args.tier}",
+                      extra={"n_jobs": args.n_jobs,
+                             "strategien": len(strategies),
+                             "symbole": "all" if symbols is None else len(symbols)})
 
     proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=args.n_jobs)
     for p in proposals:
