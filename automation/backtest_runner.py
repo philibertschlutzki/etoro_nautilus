@@ -2491,6 +2491,44 @@ def _run_remaining_sequentially(
             all_results.append(res)
 
 
+def run_backtest_inprocess(manifest_path, output_path):
+    """A4.9: importierbarer, In-Process-Backtest-Entry (kein Subprozess-Spawn).
+
+    Führt denselben Matrix-/Tournament-Flow wie das CLI aus, indem `run_backtest()` mit einem
+    konstruierten `argv` aufgerufen wird (kein `python automation/backtest_runner.py`-Spawn +
+    Import pro Trial mehr). Fachliche Fehler werden als Exceptions geworfen (der Aufrufer wandelt
+    sie in `optuna.TrialPruned`), fundamentale Fehler (ImportError) propagieren (Fail-Fast).
+
+    Trade-off (siehe Kap. 16): Die Fault-Isolation des *äußeren* Prozesses entfällt; globaler
+    Modul-State im Hauptprozess wird je Aufruf von `run_backtest()` neu initialisiert. Die
+    eigentlichen Per-(Symbol,Strategie)-Backtests laufen weiterhin in einem internen
+    `ProcessPoolExecutor` (frische Worker je Job) — Per-Job-State-Isolation bleibt also erhalten.
+    """
+    from pathlib import Path as _Path
+    manifest = json.loads(_Path(manifest_path).read_text("utf-8"))
+    catalog_path = manifest.get("global_settings", {}).get("catalog_path")
+    if not catalog_path:
+        raise ValueError("Missing catalog_path in manifest global_settings")
+
+    argv = [
+        "backtest_runner.py", "--momentum",
+        "--catalog-path", str(catalog_path),
+        "--config", str(manifest_path),
+        "--output", str(output_path),
+    ]
+    _old_argv = sys.argv
+    try:
+        sys.argv = argv
+        run_backtest()
+    finally:
+        sys.argv = _old_argv
+
+    out = _Path(output_path)
+    if not out.exists():
+        raise RuntimeError(f"In-process backtest produced no output: {out}")
+    return out
+
+
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
