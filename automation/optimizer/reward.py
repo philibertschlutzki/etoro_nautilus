@@ -70,8 +70,23 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         if oos_min_trades is None:
             oos_min_trades = _read_oos_min_trades()
 
+        # OOS trade progress (existing signal).
         trade_progress = min(1.0, m.oos_total_trades / max(1, oos_min_trades))
-        shaping = weights["unevaluable_shaping_span"] * trade_progress
+
+        # ISSUE-OPT-375: while no symbol is IS-eligible, oos_total_trades is flat 0, so the
+        # penalty is a flat plateau and TPE has no gradient toward the eligibility threshold.
+        # Couple the shaping to IS activity (sum of IS trades across the universe) as well, so
+        # "almost eligible" becomes distinguishable from "never eligible". shaping_trade_target
+        # lives in optimizer.json (zero-hardcoding); if absent, behaviour is the legacy OOS-only path.
+        progress = trade_progress
+        shaping_trade_target = weights.get("shaping_trade_target")
+        if shaping_trade_target:
+            activity = min(1.0, m.is_total_trades / max(1, int(shaping_trade_target)))
+            progress = max(progress, activity)
+
+        # Floor invariant: progress ∈ [0, 1] ⇒ shaping ≤ unevaluable_shaping_span, hence every
+        # unevaluable trial stays ≤ penalty + span, strictly below the evaluable floor below.
+        shaping = weights["unevaluable_shaping_span"] * progress
         return penalty_unevaluable_oos + shaping
 
     sortino_clip_abs = weights["sortino_clip_abs"]

@@ -11,7 +11,8 @@
       "penalty_unevaluable_oos": "Strafe, wenn OOS nicht auswertbar ist.",
       "sortino_clip_abs": "Maximaler absoluter Wert f\u00fcr die Sortino Ratio beim Capping.",
       "unevaluable_shaping_span": "Spanne f\u00fcr das Reward-Shaping von nicht-evaluierbaren Trials (z. B. 0.25).",
-      "evaluable_floor_epsilon": "Kleines Epsilon, um zu garantieren, dass evaluierbare Trials immer besser als nicht-evaluierbare sind."
+      "evaluable_floor_epsilon": "Kleines Epsilon, um zu garantieren, dass evaluierbare Trials immer besser als nicht-evaluierbare sind.",
+      "shaping_trade_target": "Summe der IS-Trades \u00fcber das Universum, bei der das IS-Aktivit\u00e4ts-Shaping nicht-evaluierbarer Trials saturiert (ISSUE-OPT-375). Konservativ w\u00e4hlen: rein zur Gradientenbildung Richtung Eligibility, \u00e4ndert nie die Floor-Invariante (Shaping bleibt <= unevaluable_shaping_span)."
     }
   },
   "n_trials": 100,
@@ -23,5 +24,6 @@
   "penalty_unevaluable_oos": -10.0,
   "sortino_clip_abs": 5.0,
   "unevaluable_shaping_span": 0.25,
-  "evaluable_floor_epsilon": 0.001
+  "evaluable_floor_epsilon": 0.001,
+  "shaping_trade_target": 50
 }
