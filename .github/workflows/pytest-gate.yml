@@ -104,6 +104,9 @@ jobs:
       - name: Live strategy mapping & registry (§11, Pitfall #22)
         run: python3 -m pytest automation/tests/test_live_strategy_mapping.py -v --timeout=30
 
+      - name: Live instrument_overrides wiring — matrix + momentum-LS (A4.8)
+        run: python3 -m pytest automation/tests/test_live_instrument_override.py -v --timeout=30
+
       - name: Live execution safety defaults — demo mode & trend filter (§11)
         run: python3 -m pytest automation/tests/test_live_execution_defaults.py -v --timeout=60
 

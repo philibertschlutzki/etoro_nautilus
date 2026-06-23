@@ -2313,6 +2313,14 @@ def run_backtest() -> None:
 
             for strat in strategies_list:
                 safe_strat_class = strat.get("strategy_class", "UnknownStrategy")
+                # A4.8: legacy/Matrix per-symbol Override-Auflösung an der Call-Site. Nur der
+                # Nicht-Manifest-Pfad und nur, wenn für DIESES Symbol ein Override existiert ⇒
+                # sonst bit-identische Params wie heute (HI-2). reine Funktion aus A4.1.
+                if not is_manifest and (strat.get("instrument_overrides") or {}).get(inst_id_str):
+                    strat = {**strat, "params": resolve_strategy_params(
+                        strat, {}, is_manifest=False, instrument=inst_id_str)}
+                    self_log = f"Applying micro-tuning override for {inst_id_str} / {safe_strat_class}"
+                    print(f"   🎯 {self_log}")
                 # ISSUE-OPT-374: reuse the manifest-authoritative walk_forward_cfg resolved above
                 # (manifest global_settings, else backtest.json fallback) for fold injection.
                 if walk_forward_cfg and end_ns:

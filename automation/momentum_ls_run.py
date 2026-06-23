@@ -106,12 +106,21 @@ def _build_bots_config(
         # Merge params
         strat_defaults = defaults.get(strat_class_name, {})
         strat_override = {}
+        strat_instr_overrides = {}
         for s in strategies_raw:
             if s.get("strategy_class") == strat_class_name:
                 strat_override = s.get("params", {})
+                strat_instr_overrides = s.get("instrument_overrides") or {}
                 break
 
         merged_params = {**strat_defaults, **strat_override}
+
+        # A4.8: symbol-spezifische instrument_overrides für den Live-Gewinner anwenden.
+        # Precedence defaults < params < instrument_overrides[symbol]. Ohne Override für dieses
+        # Symbol bleibt merged_params bit-identisch zum Ist-Zustand (HI-2). Reine Funktion bleibt rein.
+        sym_override = strat_instr_overrides.get(symbol)
+        if sym_override:
+            merged_params = {**merged_params, **sym_override}
 
         # Remove trade_amount_usd
         if "trade_amount_usd" in merged_params:
