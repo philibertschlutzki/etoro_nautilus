@@ -181,6 +181,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     ``optimize_symbol``/``confirm`` sind injizierbar (Default: echte Implementierungen) —
     so bleibt der Dispatch ohne echten Backtest testbar (HI-7). ``n_jobs`` steuert parallele
     *Studies* (je eigene SQLite-Datei), niemals n_jobs>1 innerhalb einer Study.
+
+    Issue #400: ``n_jobs > 1`` verteilt die Paare jetzt tatsaechlich ueber einen
+    ``ThreadPoolExecutor`` (vorher wurde der Parameter ignoriert / strikt sequenziell). Die
+    Ausgabereihenfolge bleibt deterministisch (``executor.map`` bewahrt die Eingabereihenfolge);
+    fuer ``n_jobs <= 1`` bleibt der Pfad bit-identisch sequenziell.
     """
     if optimize_symbol is None:
         optimize_symbol = _optimize_symbol
@@ -194,12 +199,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config)
 
-    proposals: list[Path] = []
-    for strategy, symbol, _reason in pairs:
+    # Issue #400: jedes Paar ist eine eigene Study mit eigener SQLite-Datei (optimize_symbol
+    # erzwingt intern n_jobs=1, Pitfall #68); die Paare sind daher unabhaengig und ueber n_jobs
+    # Worker parallelisierbar (Ansatz 4). ThreadPoolExecutor statt ProcessPool, weil (1) der
+    # eigentliche Backtest als Subprozess laeuft (run_backtest) und die GIL freigibt → echte
+    # Nebenlaeufigkeit fuer diesen IO-/Subprozess-gebundenen Workload, und (2) die injizierbaren
+    # optimize_symbol/confirm (HI-7) ohne Pickling nutzbar bleiben.
+    def _run_pair(pair: tuple[str, str, str]) -> Path:
+        strategy, symbol, _reason = pair
         study = optimize_symbol(strategy, symbol)
         global_params = load_global_best(strategy, config_dir())
         promotion = confirm(study, strategy, symbol, global_params)
-        proposals.append(export_symbol_proposal(study, strategy, symbol, promotion))
+        return export_symbol_proposal(study, strategy, symbol, promotion)
+
+    if n_jobs and n_jobs > 1 and len(pairs) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(n_jobs, len(pairs))) as executor:
+            proposals = list(executor.map(_run_pair, pairs))
+    else:
+        proposals = [_run_pair(p) for p in pairs]
     return proposals
 
 
