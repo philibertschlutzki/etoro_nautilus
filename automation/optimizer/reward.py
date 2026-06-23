@@ -40,6 +40,10 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
                         bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
        risk_dd_cap=None ⇒ aus tournament.json (max_drawdown).
        Falls not m.oos_evaluated oder m.oos_sortino is None: Unevaluable-Pfad (Penalty + Shaping).
+       ISSUE #401: Ist ein OOS-Sample evaluated ∧ eligible, aber oos_sortino is None
+       (Zero-Loss / n < sortino_min_trades), UND weights['oos_sortino_fallback'] == 'total_return',
+       wird statt des Penalty-Pfades der geclippte oos_total_return als evaluable Base genutzt
+       (Flat-Reward-Landscape-Fix). Fehlt der Schluessel ⇒ unveraenderter Legacy-Penalty-Pfad.
 
        universe_size > 1 (und reward_mode != 'per_symbol') ⇒ Coverage-Pfad (bit-identisch, A4.3/HI-2):
          reward = base - overfit_gap*penalty_overfit_weight - dd_excess*penalty_dd_weight
@@ -72,7 +76,22 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
 
     penalty_unevaluable_oos = weights["penalty_unevaluable_oos"]
 
-    if not m.oos_evaluated or m.oos_sortino is None:
+    # ISSUE #401 — Zero-Loss/Sub-Threshold-Sortino-Fallback (Flat-Reward-Landscape-Fix).
+    # Ein OOS-Sample, das gehandelt UND jedes (eingefrorene) OOS-Risiko-Gate bestanden hat
+    # (oos_evaluated ∧ oos_eligible), dessen Sortino aber mathematisch undefiniert ist
+    # (losses_count == 0 oder n < sortino_min_trades ⇒ oos_sortino is None), darf NICHT auf
+    # den flachen Unevaluable-Floor (−9.75) kollabieren — das nivelliert die TPE-Reward-
+    # Landschaft (Zero-Gradient). Deklarativ gegated ueber optimizer.json['oos_sortino_fallback']
+    # (Zero-Hardcoding); fehlt der Schluessel ⇒ unveraenderter Legacy-Penalty-Pfad. Der Reward-
+    # WERT bleibt rein performance-basiert (geclippter OOS-total_return), nie das Gate-Flag —
+    # damit kein Gate-Gaming (Falle 2); Micro-Sizing-/Risiko-Gates (Pitfall #58) bleiben ueber
+    # oos_eligible wirksam.
+    base_source = m.oos_sortino
+    if (m.oos_evaluated and m.oos_eligible and m.oos_sortino is None
+            and weights.get("oos_sortino_fallback") == "total_return"):
+        base_source = m.oos_total_return
+
+    if not m.oos_evaluated or base_source is None:
         # Avoid IO if possible:
         oos_min_trades = None
         if weights is not None and "oos_min_trades" in weights:
@@ -103,7 +122,7 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         return penalty_unevaluable_oos + shaping
 
     sortino_clip_abs = weights["sortino_clip_abs"]
-    base = max(-sortino_clip_abs, min(sortino_clip_abs, m.oos_sortino))
+    base = max(-sortino_clip_abs, min(sortino_clip_abs, base_source))
 
     penalty_overfit_weight = weights["penalty_overfit_weight"]
     penalty_dd_weight = weights["penalty_dd_weight"]

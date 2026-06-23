@@ -365,7 +365,7 @@ def load_tournament_config(project_root: str | None = None) -> dict:
             req_all = set(cfg.get("eligible_requires_all", []))
             req_any = set(cfg.get("eligible_requires_any", []))
             used = req_all | req_any
-            metric_keys = {k for k in cfg.keys() if k not in ("eligible_requires_all", "eligible_requires_any", "scoring")}
+            metric_keys = {k for k in cfg.keys() if k not in ("eligible_requires_all", "eligible_requires_any", "scoring", "sortino_min_trades")}
             for k in metric_keys:
                 base_k = k[4:] if k.startswith("oos_") else k
                 if base_k not in used:
@@ -724,7 +724,30 @@ def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
     """Extrahiert je Fold den OOS-Sortino (Reihenfolge erhalten, None-sicher übersprungen)."""
     return [float(f["sortino_ratio"]) for f in per_fold_oos if f is not None and f.get("sortino_ratio") is not None]
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0) -> dict:
+_sortino_min_trades_cache: int | None = None
+
+def _read_sortino_min_trades() -> int:
+    """Issue #401 (Zero-Hardcoding): Mindest-Round-Trips fuer die Sortino-Berechnung aus
+    tournament.json['sortino_min_trades']. Gecached (Hot-Path, je Worker-Subprozess konstant,
+    da ETORO_CONFIG_DIR fix). Fehlt der Schluessel oder ist die Datei unlesbar ⇒ Legacy-Default
+    5 (rueckwaertskompatibel, Fail-Safe)."""
+    global _sortino_min_trades_cache
+    if _sortino_min_trades_cache is not None:
+        return _sortino_min_trades_cache
+    val = 5
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_min_trades")
+            if raw is not None:
+                val = int(raw)
+    except (OSError, ValueError, TypeError):
+        val = 5
+    _sortino_min_trades_cache = val
+    return val
+
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -784,7 +807,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     total_return = cum - 1.0
 
-    if n < 5 or losses_count == 0:
+    # Issue #401: 'n < 5' war hartcodiert (Zero-Hardcoding-Verstoss + Mismatch zu oos_min_trades);
+    # jetzt deklarativ aus tournament.json['sortino_min_trades'] (Default 5). losses_count == 0
+    # bleibt None (Zero-Loss ⇒ keine Downside-Deviation, Issue #209) und wird im Reward ueber
+    # optimizer.json['oos_sortino_fallback'] aufgefangen, statt hier einen Sortino zu fabrizieren.
+    min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
+    if n < min_trades_sortino or losses_count == 0:
         sortino = None
     else:
         down_sq = [min(r, 0.0) ** 2 for r in rets]
