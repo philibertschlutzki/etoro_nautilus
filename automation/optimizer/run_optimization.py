@@ -1,4 +1,6 @@
 import json
+import os
+import logging
 import optuna
 from pathlib import Path
 from automation.optimizer.manifest import WORK, catalog_fingerprint
@@ -133,6 +135,43 @@ def _sanitize(symbol: str) -> str:
     return symbol.replace(".", "_")
 
 
+def resolve_storage(*, study_name: str, base_cfg: Path | None = None) -> str:
+    """Storage-URL-Auflösung (A4.7, optional). Priorität:
+       ENV `ETORO_OPTUNA_STORAGE` > optimizer.json['storage_url'] (falls nicht null)
+       > f'sqlite:///{WORK}/sweep/{study_name}.db' (Default).
+
+    **SQLite bleibt strikter Default**; Postgres o. ä. ist reines Opt-In für echte
+    Multi-Maschinen-Parallelität (mehrere Hosts gegen *eine* Study) und weicht die
+    „ausschließlich SQLite"-Leitplanke (Pitfall #53) bewusst, dokumentiert und begrenzt auf.
+    Bei einer non-SQLite-URL wird eine Warnung geloggt (Determinismus pro Study nur bei
+    n_jobs=1). Eine via ENV übergebene URL wird **verbatim** genutzt (Fail-Fast: ungültige
+    URIs scheitern beim `create_study`-Connect, statt still auf SQLite zurückzufallen)."""
+    env_url = os.environ.get("ETORO_OPTUNA_STORAGE")
+    if env_url:
+        url = env_url
+    else:
+        if base_cfg is None:
+            base_cfg = config_dir()
+        url = None
+        optimizer_path = base_cfg / "optimizer.json"
+        if optimizer_path.exists():
+            try:
+                with open(optimizer_path, "r", encoding="utf-8") as f:
+                    url = (json.load(f) or {}).get("storage_url")
+            except (OSError, ValueError):
+                url = None
+        if not url:
+            url = f"sqlite:///{WORK / 'sweep' / (study_name + '.db')}"
+
+    if not url.startswith("sqlite"):
+        logging.getLogger("optimizer").warning(
+            "Non-SQLite Optuna-Storage '%s' — Determinismus pro Study nur bei n_jobs=1 "
+            "garantiert; parallele Writes lockern die SQLite-Leitplanke (Pitfall #53) bewusst auf.",
+            url,
+        )
+    return url
+
+
 def load_global_best(strategy: str, base_cfg: Path) -> dict:
     """Quelle des globalen Optimums (Warm-Start-Samen, Gate 2):
        proposal_{strategy}.json['proposed_params_override'] falls vorhanden UND status
@@ -234,7 +273,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     sweep_dir = WORK / "sweep"
     sweep_dir.mkdir(parents=True, exist_ok=True)
     if storage is None:
-        storage = f"sqlite:///{sweep_dir / (study_name + '.db')}"
+        storage = resolve_storage(study_name=study_name)   # A4.7: SQLite-Default, ENV/JSON-Opt-in
 
     sampler = optuna.samplers.TPESampler(
         multivariate=True,

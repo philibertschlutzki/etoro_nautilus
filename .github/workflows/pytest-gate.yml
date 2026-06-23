@@ -150,6 +150,9 @@ jobs:
       - name: Optimizer sweep meta-orchestrator — enumeration/dispatch (A4.6)
         run: python3 -m pytest automation/tests/test_sweep_enumeration.py -q
 
+      - name: Optimizer configurable storage URL resolution (A4.7)
+        run: python3 -m pytest automation/tests/test_storage_url_resolution.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 
