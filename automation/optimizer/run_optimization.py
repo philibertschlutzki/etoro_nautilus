@@ -1,8 +1,17 @@
 import json
 import os
 import logging
+import warnings
 import optuna
 from pathlib import Path
+
+# Issue #402: Optuna wirft pro Sampler-Instanziierung ExperimentalWarnings fuer die bewusst
+# genutzten TPESampler-Features `multivariate`/`group`. In einem Sweep ueber viele Symbole
+# spammt das den Terminal zu. Gezielt NUR diese Warn-Kategorie unterdruecken — Optunas native
+# Per-Trial-INFO-Logs (Reward-Werte; im Sweep via make_symbol_objective die einzige Per-Trial-
+# Rueckmeldung, vgl. Issue #401) bleiben bewusst erhalten (KEIN globales set_verbosity(ERROR),
+# um die Observability aus Issue #403 nicht zu untergraben).
+warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
 from automation.optimizer.manifest import WORK, catalog_fingerprint
 from automation.optimizer.spaces import sample_params
 from automation.optimizer.trial_config import build_trial, config_dir
