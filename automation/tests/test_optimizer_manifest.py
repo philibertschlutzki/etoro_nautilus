@@ -60,6 +60,27 @@ def test_build_trial_sunday_rollback(tmp_path):
     m = json.loads(Path(mpath).read_text("utf-8"))
     assert m["global_settings"]["end_time"] == "2026-04-22T00:00:00Z"   # 2026-06-06 − 45 Tage
 
+# --- build_trial: self-describing manifest (ISSUE-OPT-374) -----------------
+def test_build_trial_manifest_is_self_describing():
+    """Manifest carries walk_forward (splits == n_folds) and start_capital in global_settings,
+    so the walk-forward geometry no longer depends on the backtest.json side-channel."""
+    now = dt.datetime(2026, 6, 10, 15, 0, tzinfo=UTC)   # Mittwoch
+    n_folds = 4
+    _, mpath = trial_config.build_trial(
+        "SmaCrossoverStrategy", {"sma_period": 8},
+        study_name="s_selfdesc", trial_number=0, seed=42,
+        now=now, holdout_days=45, n_folds=n_folds)
+    gs = json.loads(Path(mpath).read_text("utf-8"))["global_settings"]
+
+    assert "walk_forward" in gs, "manifest must be self-describing (walk_forward present)"
+    assert gs["walk_forward"]["splits"] == n_folds
+    for key in ("is_window_days", "oos_window_days", "holdout_days"):
+        assert isinstance(gs["walk_forward"][key], int)
+
+    assert "start_capital" in gs, "manifest must be self-describing (start_capital present)"
+    assert isinstance(gs["start_capital"], (int, float))
+    assert gs["start_capital"] > 0
+
 # --- Standalone-Prinzip ---------------------------------------------------
 def test_no_forbidden_imports():
     for p in Path("automation/optimizer").glob("*.py"):

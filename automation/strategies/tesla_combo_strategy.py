@@ -24,7 +24,6 @@ class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     bb_std_dev: float = 2.0
     atr_period: int = 14
     atr_multiplier: float = 0.5
-    bb_entry_tolerance: float = 0.001
     bb_touch_window: int = 24
     cooldown_bars: int = 12
     allow_short: bool = False

@@ -1,8 +1,10 @@
 import json
+import hashlib
 from pathlib import Path
 from automation.optimizer.trial_config import build_trial, config_dir
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
+from automation.optimizer.reward import compute_reward
 from automation.optimizer.manifest import WORK
 
 def confirm_on_holdout(
@@ -87,6 +89,155 @@ def confirm_on_holdout(
         },
         "trial_dir": str(trial_dir)
     }
+
+
+def _metrics_dict(m) -> dict:
+    """Serialisierbare Teilmenge der Holdout-Metriken (analog confirm_on_holdout)."""
+    return {
+        "oos_sortino": m.oos_sortino,
+        "oos_max_drawdown": m.oos_max_drawdown,
+        "oos_evaluated": m.oos_evaluated,
+        "oos_eligible": m.oos_eligible,
+        "oos_total_trades": m.oos_total_trades,
+    }
+
+
+def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
+                                *, run_backtest=run_backtest, build_trial=build_trial):
+    """Führt einen Holdout-Backtest für genau `symbol` mit `params` aus und parst die Metriken.
+
+    Wie confirm_on_holdout (holdout_days=0, n_folds=1, oos_window_days_override=holdout_days),
+    aber single-symbol (instruments=[symbol]) und mit beliebigem Param-Vektor — so lassen sich
+    der symbol-getunte und der globale Vektor auf demselben, nie-optimierten Holdout vergleichen.
+    """
+    cfg_dir = config_dir()
+    seed = 42
+    optimizer_path = cfg_dir / "optimizer.json"
+    if optimizer_path.exists():
+        with open(optimizer_path, "r", encoding="utf-8") as f:
+            seed = (json.load(f) or {}).get("seed", 42)
+
+    holdout_days_cfg = 45
+    backtest_path = cfg_dir / "backtest.json"
+    if backtest_path.exists():
+        with open(backtest_path, "r", encoding="utf-8") as f:
+            holdout_days_cfg = (json.load(f) or {}).get("walk_forward", {}).get("holdout_days", 45)
+
+    # Deterministischer Discriminator, damit symbol- und global-Lauf nicht in dasselbe trial_dir schreiben.
+    tag = hashlib.sha1(json.dumps(params or {}, sort_keys=True, default=str).encode()).hexdigest()[:8]
+    study_name = f"confirm_{strategy}_{symbol.replace('.', '_')}_{tag}"
+
+    trial_dir, manifest_path = build_trial(
+        strategy_class=strategy,
+        sampled=params,
+        study_name=study_name,
+        trial_number=0,
+        seed=seed,
+        holdout_days=0,
+        n_folds=1,
+        oos_window_days_override=holdout_days_cfg,
+        instruments=[symbol],
+    )
+    output_path = run_backtest(trial_dir, manifest_path)
+    return parse_tournament(output_path)
+
+
+def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_params: dict,
+                                 *, run_backtest=run_backtest, build_trial=build_trial) -> dict:
+    """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
+
+    Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
+    ungesehenen Holdout (a) das Holdout-Gate selbst besteht UND (b) das globale Baseline um
+    `promotion_margin` (optimizer.json) schlägt.
+
+    **Verbindliche Design-Entscheidung:** Der Vergleichs-Score ist die *rohe* risikoadjustierte
+    Performance — `compute_reward(..., universe_size=1)` OHNE `sampled`/`global_params` ⇒
+    `param_pen = 0`. param_pen ist ein Such-Regularisierer, kein Performance-Maß, und würde den
+    fairen Edge-Test verzerren.
+
+    Rückfrage-Klärung: Fällt der globale Vektor im Holdout durch das Risk-Cap, liefert
+    compute_reward dennoch einen (entsprechend niedrigen) endlichen R_global; ein symbol-getunter
+    Vektor, der das Holdout-Gate selbst besteht und R_global + Marge schlägt, gilt damit als Edge.
+
+    status ∈ {'READY_FOR_PR', 'REJECTED_NO_EDGE_OVER_GLOBAL', 'REJECTED_ON_HOLDOUT'}.
+    """
+    best_trial = study.best_trial
+    symbol_params = best_trial.user_attrs.get("sampled_params", best_trial.params)
+
+    m_symbol = _holdout_metrics_for_params(strategy, symbol, symbol_params,
+                                           run_backtest=run_backtest, build_trial=build_trial)
+    m_global = _holdout_metrics_for_params(strategy, symbol, global_params,
+                                           run_backtest=run_backtest, build_trial=build_trial)
+
+    # Rohe risikoadjustierte Performance (Per-Symbol-Pfad, KEIN param_pen).
+    R_symbol = compute_reward(m_symbol, universe_size=1)
+    R_global = compute_reward(m_global, universe_size=1)
+
+    cfg_dir = config_dir()
+    risk_dd_cap = 0.30
+    tournament_path = cfg_dir / "tournament.json"
+    if tournament_path.exists():
+        with open(tournament_path, "r", encoding="utf-8") as f:
+            risk_dd_cap = (json.load(f) or {}).get("max_drawdown", 0.30)
+
+    promotion_margin = 0.10
+    optimizer_path = cfg_dir / "optimizer.json"
+    if optimizer_path.exists():
+        with open(optimizer_path, "r", encoding="utf-8") as f:
+            promotion_margin = (json.load(f) or {}).get("promotion_margin", 0.10)
+
+    holdout_passed = (
+        m_symbol.oos_evaluated and m_symbol.oos_eligible
+        and (m_symbol.oos_sortino if m_symbol.oos_sortino is not None else -9.0) > 0.0
+        and (m_symbol.oos_max_drawdown if m_symbol.oos_max_drawdown is not None else 1.0) <= risk_dd_cap
+    )
+
+    promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
+
+    if not holdout_passed:
+        status = "REJECTED_ON_HOLDOUT"
+    elif promote:
+        status = "READY_FOR_PR"
+    else:
+        status = "REJECTED_NO_EDGE_OVER_GLOBAL"
+
+    return {
+        "promote": promote,
+        "status": status,
+        "R_symbol": R_symbol,
+        "R_global": R_global,
+        "promotion_margin": promotion_margin,
+        "holdout_passed": bool(holdout_passed),
+        "metrics_symbol": _metrics_dict(m_symbol),
+        "metrics_global": _metrics_dict(m_global),
+        "symbol_params": symbol_params,
+    }
+
+
+def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -> Path:
+    """Schreibt data/optimizer/proposal_{strategy}_{symbol}.json. Schreibt NIE in strategies.json —
+    Promotion erfolgt ausschließlich per menschlich freigegebenem PR (HI-3)."""
+    payload = {
+        "strategy": strategy,
+        "symbol": symbol,
+        "status": promotion["status"],
+        "reward": study.best_value,
+        "proposed_instrument_override": promotion["symbol_params"],
+        "R_symbol": promotion["R_symbol"],
+        "R_global": promotion["R_global"],
+        "promotion_margin": promotion["promotion_margin"],
+        "holdout": {
+            "symbol": promotion["metrics_symbol"],
+            "global": promotion["metrics_global"],
+        },
+    }
+
+    out_path = WORK / f"proposal_{strategy}_{symbol}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    return out_path
 
 
 def export_no_viable_proposal(study, strategy: str) -> Path:

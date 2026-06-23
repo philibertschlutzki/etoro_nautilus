@@ -47,6 +47,9 @@ jobs:
       - name: Runner Env-Isolation & Manifest Contract
         run: python3 -m pytest automation/tests/test_runner_env_isolation.py automation/tests/test_runner_manifest_contract.py automation/tests/test_runner_fold_sortinos.py -v --timeout=30
 
+      - name: Runner universe restriction — restrict_universe (A4.2)
+        run: python3 -m pytest automation/tests/test_runner_instrument_filter.py -v --timeout=30
+
       - name: Orchestrator CLI args (--no-deploy vs dry-run)
         run: python3 -m pytest automation/tests/test_orchestrator_cli.py -v --timeout=30
 
@@ -94,9 +97,15 @@ jobs:
       - name: VWAP exhaustion state mutation safety (§6, Pitfall #41 / Issue #211)
         run: python3 -m pytest automation/tests/test_vwap_exhaustion_state.py -v --timeout=30
 
+      - name: ComboTrendVwap conjunction switches (§6/§7, ISSUE-OPT-373)
+        run: python3 -m pytest automation/tests/test_combo_conjunction_switches.py -v --timeout=30
+
       # ── Tier 6: Live path (§11, §5.7) ────────────────────────────────────────
       - name: Live strategy mapping & registry (§11, Pitfall #22)
         run: python3 -m pytest automation/tests/test_live_strategy_mapping.py -v --timeout=30
+
+      - name: Live instrument_overrides wiring — matrix + momentum-LS (A4.8)
+        run: python3 -m pytest automation/tests/test_live_instrument_override.py -v --timeout=30
 
       - name: Live execution safety defaults — demo mode & trend filter (§11)
         run: python3 -m pytest automation/tests/test_live_execution_defaults.py -v --timeout=60
@@ -120,6 +129,36 @@ jobs:
         run: python3 -m automation.backtest_runner --dry-run --config automation/config/strategies.json
 
       # ── Tier 10: Optimizer ──────────────────────────────────────────────────
+      - name: Optimizer numeric search-space bounds extractor (A4.0)
+        run: python3 -m pytest automation/tests/test_optimizer_bounds.py -q
+
+      - name: Optimizer instrument_overrides resolution (A4.1)
+        run: python3 -m pytest automation/tests/test_resolve_instrument_override.py -q
+
+      - name: Optimizer manifest instruments filter (A4.2)
+        run: python3 -m pytest automation/tests/test_trial_instruments_manifest.py -q
+
+      - name: Optimizer per-symbol reward — param_pen / coverage drop (A4.3)
+        run: python3 -m pytest automation/tests/test_reward_per_symbol.py -q
+
+      - name: Optimizer Gate 1 — data sufficiency is_symbol_tunable (A4.4)
+        run: python3 -m pytest automation/tests/test_symbol_tunable_gate.py -q
+
+      - name: Optimizer single-symbol study + Gate 2 warm-start (A4.5a)
+        run: python3 -m pytest automation/tests/test_optimize_symbol.py -q
+
+      - name: Optimizer Gate 3 — per-symbol promotion margin (A4.5b)
+        run: python3 -m pytest automation/tests/test_per_symbol_promotion.py -q
+
+      - name: Optimizer sweep meta-orchestrator — enumeration/dispatch (A4.6)
+        run: python3 -m pytest automation/tests/test_sweep_enumeration.py -q
+
+      - name: Optimizer configurable storage URL resolution (A4.7)
+        run: python3 -m pytest automation/tests/test_storage_url_resolution.py -q
+
+      - name: Optimizer in-process backtest entry + fault isolation (A4.9)
+        run: python3 -m pytest automation/tests/test_inprocess_backtest_entry.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 

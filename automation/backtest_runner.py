@@ -294,11 +294,32 @@ def load_strategy_defaults(project_root: str | None = None) -> dict:
 
 
 
-def resolve_strategy_params(strategy_entry: dict, defaults: dict, *, is_manifest: bool) -> dict:
-    """is_manifest=True  ⇒ params verbatim (KEIN Defaults-Merge).
-       is_manifest=False ⇒ Legacy: {**defaults, **params}."""
+def resolve_strategy_params(strategy_entry: dict, defaults: dict, *, is_manifest: bool,
+                            instrument: str | None = None) -> dict:
+    """is_manifest=True  ⇒ params verbatim (KEIN Defaults-Merge, KEIN Override) — Pitfall #61 bleibt strikt.
+       is_manifest=False ⇒ {**defaults, **params, **instrument_overrides.get(instrument, {})}
+                           wenn instrument != None, sonst Legacy {**defaults, **params} (unverändert, A4.1)."""
     params = dict(strategy_entry.get("params") or {})
-    return params if is_manifest else {**defaults, **params}
+    if is_manifest:
+        return params
+    merged = {**defaults, **params}
+    if instrument is not None:
+        overrides = strategy_entry.get("instrument_overrides") or {}
+        merged.update(overrides.get(instrument) or {})
+    return merged
+
+def restrict_universe(universe: list[str], instruments: list[str] | None) -> list[str]:
+    """A4.2: manifest-getriebene Universum-Restriktion (`global_settings.instruments`).
+
+    instruments falsy (None/[]) ⇒ `universe` unverändert (Reihenfolge erhalten).
+    sonst ⇒ Schnittmenge unter Beibehaltung der `universe`-Reihenfolge. Unbekannte Symbole
+    (nicht im Katalog) werden still gedroppt — der Backtest crasht NICHT sofort.
+    """
+    if not instruments:
+        return universe
+    allowed = set(instruments)
+    return [s for s in universe if s in allowed]
+
 
 def apply_strategy_defaults(strategies: list[dict], defaults: dict, is_manifest: bool = False) -> list[dict]:
     """Merged strategy_defaults.json mit Strategie-Params aus der Config.
@@ -2065,14 +2086,19 @@ def run_backtest() -> None:
 
     # --- Parameter-Validierung & Walk-Forward Injektion ---
     param_warnings: list[str] = []
-    walk_forward_cfg = global_settings.get("walk_forward")
+    # ISSUE-OPT-374: the self-describing manifest (global_settings.walk_forward) is the
+    # authoritative source; fall back to the trial's backtest.json side-channel only if absent.
+    _wf_manifest = global_settings.get("walk_forward")
+    walk_forward_cfg = _wf_manifest or backtest_global_cfg.get("walk_forward")
 
     if walk_forward_cfg:
+        _wf_source = "manifest (global_settings)" if _wf_manifest else "backtest.json (side-channel)"
         is_days  = walk_forward_cfg.get("is_window_days", 90)
         oos_days = walk_forward_cfg.get("oos_window_days", 30)
         splits   = walk_forward_cfg.get("splits", 2)
         required_days = is_days + (splits * oos_days)
         _span_tol = span_tolerance_days
+        print(f"   • Walk-Forward Quelle: {_wf_source}")
         print(f"   • Effective Data Span Required: {required_days - _span_tol:.1f} days (Required: {required_days}, Max Allowed Deficit: {_span_tol})")
 
     for strat in strategies_list:
@@ -2103,7 +2129,10 @@ def run_backtest() -> None:
     if bt_start and bt_end:
         print(f"📅 Zeitraum: {bt_start.date()} → {bt_end.date()}")
 
-    start_capital = global_settings.get("start_capital", 100_000.0)
+    # ISSUE-OPT-374: prefer the self-describing manifest, fall back to backtest.json.
+    start_capital = global_settings.get("start_capital")
+    if start_capital is None:
+        start_capital = backtest_global_cfg.get("start_capital", 100_000.0)
     catalog_path = args.catalog_path or global_settings.get("catalog_path", "./data/nautilus")
 
     # --- Dry-Run: Zeige Konfiguration und exit (Task 2 Acceptance Criterion) ---
@@ -2129,6 +2158,12 @@ def run_backtest() -> None:
 
     # --- Instrumente ---
     instrument_ids = discover_instruments_from_catalog(catalog_path)
+    # A4.2: manifest-getriebene Universum-Restriktion (global_settings.instruments). Falsy ⇒ volles Universum.
+    _instruments_filter = global_settings.get("instruments")
+    if _instruments_filter:
+        _before = len(instrument_ids)
+        instrument_ids = restrict_universe(instrument_ids, _instruments_filter)
+        print(f"🎯 Manifest-Filter global_settings.instruments aktiv: {_before} → {len(instrument_ids)} Symbol(e) {sorted(_instruments_filter)}")
     if args.single_symbol:
         if args.single_symbol in instrument_ids:
             instrument_ids = [args.single_symbol]
@@ -2278,7 +2313,16 @@ def run_backtest() -> None:
 
             for strat in strategies_list:
                 safe_strat_class = strat.get("strategy_class", "UnknownStrategy")
-                walk_forward_cfg = global_settings.get("walk_forward")
+                # A4.8: legacy/Matrix per-symbol Override-Auflösung an der Call-Site. Nur der
+                # Nicht-Manifest-Pfad und nur, wenn für DIESES Symbol ein Override existiert ⇒
+                # sonst bit-identische Params wie heute (HI-2). reine Funktion aus A4.1.
+                if not is_manifest and (strat.get("instrument_overrides") or {}).get(inst_id_str):
+                    strat = {**strat, "params": resolve_strategy_params(
+                        strat, {}, is_manifest=False, instrument=inst_id_str)}
+                    self_log = f"Applying micro-tuning override for {inst_id_str} / {safe_strat_class}"
+                    print(f"   🎯 {self_log}")
+                # ISSUE-OPT-374: reuse the manifest-authoritative walk_forward_cfg resolved above
+                # (manifest global_settings, else backtest.json fallback) for fold injection.
                 if walk_forward_cfg and end_ns:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
                     splits   = walk_forward_cfg.get("splits", 2)
@@ -2445,6 +2489,44 @@ def _run_remaining_sequentially(
         print(f"   [{done_count:>4}/{total_jobs}] (seq) {rem_inst} / {rem_strat_name}")
         if res and res.get("metrics"):
             all_results.append(res)
+
+
+def run_backtest_inprocess(manifest_path, output_path):
+    """A4.9: importierbarer, In-Process-Backtest-Entry (kein Subprozess-Spawn).
+
+    Führt denselben Matrix-/Tournament-Flow wie das CLI aus, indem `run_backtest()` mit einem
+    konstruierten `argv` aufgerufen wird (kein `python automation/backtest_runner.py`-Spawn +
+    Import pro Trial mehr). Fachliche Fehler werden als Exceptions geworfen (der Aufrufer wandelt
+    sie in `optuna.TrialPruned`), fundamentale Fehler (ImportError) propagieren (Fail-Fast).
+
+    Trade-off (siehe Kap. 16): Die Fault-Isolation des *äußeren* Prozesses entfällt; globaler
+    Modul-State im Hauptprozess wird je Aufruf von `run_backtest()` neu initialisiert. Die
+    eigentlichen Per-(Symbol,Strategie)-Backtests laufen weiterhin in einem internen
+    `ProcessPoolExecutor` (frische Worker je Job) — Per-Job-State-Isolation bleibt also erhalten.
+    """
+    from pathlib import Path as _Path
+    manifest = json.loads(_Path(manifest_path).read_text("utf-8"))
+    catalog_path = manifest.get("global_settings", {}).get("catalog_path")
+    if not catalog_path:
+        raise ValueError("Missing catalog_path in manifest global_settings")
+
+    argv = [
+        "backtest_runner.py", "--momentum",
+        "--catalog-path", str(catalog_path),
+        "--config", str(manifest_path),
+        "--output", str(output_path),
+    ]
+    _old_argv = sys.argv
+    try:
+        sys.argv = argv
+        run_backtest()
+    finally:
+        sys.argv = _old_argv
+
+    out = _Path(output_path)
+    if not out.exists():
+        raise RuntimeError(f"In-process backtest produced no output: {out}")
+    return out
 
 
 if __name__ == "__main__":

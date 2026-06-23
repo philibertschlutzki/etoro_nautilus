@@ -24,7 +24,9 @@ def build_trial(
     holdout_days: int | None = None,
     n_folds: int | None = None,
     oos_window_days_override: int | None = None,
-    base_cfg: Path | None = None
+    base_cfg: Path | None = None,
+    instruments: list[str] | None = None,
+    copy_config: bool = True,
 ) -> tuple[Path, Path]:
     """
     Erzeugt isoliertes trial_dir; kopiert config_dir()-Inhalt nach trial_dir/config;
@@ -52,6 +54,18 @@ def build_trial(
     is_window_days = wf.get("is_window_days", 120)
     oos_window_days = oos_window_days_override if oos_window_days_override is not None else wf.get("oos_window_days", 30)
 
+    # Self-describing manifest (ISSUE-OPT-374): the effective walk-forward geometry and
+    # start_capital must travel inside the manifest's global_settings, not only via the
+    # copied backtest.json side-channel. Built once and reused for both sinks (DRY).
+    start_capital = bt_data.get("start_capital", 10000.0)
+    wf_settings = {
+        "is_window_days": is_window_days,
+        "oos_window_days": oos_window_days,
+        "splits": n_folds,
+        "holdout_days": holdout_days,
+        "walk_forward_active": True,
+    }
+
     # Calculate dates
     # Midnight of `now`
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -70,24 +84,23 @@ def build_trial(
     # NEU: Logs-Verzeichnis für den Backtest-Subprozess anlegen (Fix Issue #346)
     (trial_dir / "logs").mkdir(parents=True, exist_ok=True)
 
-    # Copy all JSON files from base_cfg
-    for p in base_cfg.glob("*.json"):
-        shutil.copy2(p, trial_cfg_dir / p.name)
+    # A4.9 Config-Sharing: copy_config=False überspringt die Pro-Trial-Kopie (spart 40k+ Kopien
+    # pro Sweep). Erlaubt, weil das Manifest seit ISSUE-OPT-374 self-describing ist (walk_forward
+    # + start_capital in global_settings); der Aufrufer stellt eine eingefrorene Study-config/ via
+    # ETORO_CONFIG_DIR bereit. Default True ⇒ bit-identisches Verhalten (Kopie pro Trial).
+    if copy_config:
+        # Copy all JSON files from base_cfg
+        for p in base_cfg.glob("*.json"):
+            shutil.copy2(p, trial_cfg_dir / p.name)
 
-    # Harmonisierung: Nach dem Kopieren Config überschreiben, um Sizing/Splitting zu synchronisieren
-    copied_bt_path = trial_cfg_dir / "backtest.json"
-    if copied_bt_path.exists():
-        with open(copied_bt_path, "r", encoding="utf-8") as f:
-            copied_bt_data = json.load(f)
-        copied_bt_data["walk_forward"] = {
-            "is_window_days": is_window_days,
-            "oos_window_days": oos_window_days,
-            "splits": n_folds,
-            "holdout_days": holdout_days,
-            "walk_forward_active": True,
-        }
-        with open(copied_bt_path, "w", encoding="utf-8") as f:
-            json.dump(copied_bt_data, f, indent=2)
+        # Harmonisierung: Nach dem Kopieren Config überschreiben, um Sizing/Splitting zu synchronisieren
+        copied_bt_path = trial_cfg_dir / "backtest.json"
+        if copied_bt_path.exists():
+            with open(copied_bt_path, "r", encoding="utf-8") as f:
+                copied_bt_data = json.load(f)
+            copied_bt_data["walk_forward"] = dict(wf_settings)
+            with open(copied_bt_path, "w", encoding="utf-8") as f:
+                json.dump(copied_bt_data, f, indent=2)
 
     resolved_params = resolve_params(strategy_class, sampled, base_cfg)
 
@@ -125,7 +138,9 @@ def build_trial(
             "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_time": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "seed": seed,
-            "catalog_path": str(catalog_path)
+            "catalog_path": str(catalog_path),
+            "start_capital": start_capital,
+            "walk_forward": dict(wf_settings),
         },
         "strategies": [
             {
@@ -137,6 +152,11 @@ def build_trial(
             }
         ]
     }
+
+    # A4.2: manifest-getriebene Single-/Multi-Symbol-Restriktion. instruments=None ⇒ Schlüssel
+    # wird NICHT geschrieben (rückwärtskompatibel, volles Universum).
+    if instruments is not None:
+        manifest_payload["global_settings"]["instruments"] = list(instruments)
 
     manifest_path = trial_dir / "experiment_manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
