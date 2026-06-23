@@ -147,6 +147,9 @@ jobs:
       - name: Optimizer Gate 3 — per-symbol promotion margin (A4.5b)
         run: python3 -m pytest automation/tests/test_per_symbol_promotion.py -q
 
+      - name: Optimizer sweep meta-orchestrator — enumeration/dispatch (A4.6)
+        run: python3 -m pytest automation/tests/test_sweep_enumeration.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 
