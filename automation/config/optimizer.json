@@ -15,7 +15,10 @@
       "shaping_trade_target": "Summe der IS-Trades \u00fcber das Universum, bei der das IS-Aktivit\u00e4ts-Shaping nicht-evaluierbarer Trials saturiert (ISSUE-OPT-375). Konservativ w\u00e4hlen: rein zur Gradientenbildung Richtung Eligibility, \u00e4ndert nie die Floor-Invariante (Shaping bleibt <= unevaluable_shaping_span).",
       "lambda_reg": "A4.3 \u2014 St\u00e4rke der Shrinkage-Strafe param_pen im Per-Symbol-Reward (universe_size==1). param_pen = lambda_reg * normalized_param_distance(sampled, global_params). KALIBRIERUNG: konservativ w\u00e4hlen \u2014 sehr gro\u00dfe param_pen kollabieren Trials auf den Floor (TPE unterscheidet geflorte Trials nicht); nahe dem globalen Optimum bleibt der Gradient erhalten.",
       "promotion_margin": "A4.5b \u2014 Marge, die der symbol-getunte Vektor das globale Baseline auf dem ungesehenen Holdout schlagen muss, damit ein instrument_override promotet wird (Gate 3).",
-      "reward_mode": "A4.3 \u2014 'auto' (Per-Symbol-Reward nur bei universe_size==1) | 'per_symbol' (erzwingt den Per-Symbol-Pfad auch bei universe_size>1)."
+      "reward_mode": "A4.3 \u2014 'auto' (Per-Symbol-Reward nur bei universe_size==1) | 'per_symbol' (erzwingt den Per-Symbol-Pfad auch bei universe_size>1).",
+      "gate1_buffer_days": "A4.4 \u2014 Puffer (Tage) \u00fcber IS + splits*OOS + Holdout, den die Symbol-Historie zus\u00e4tzlich abdecken muss (Gate 1 Daten-Suffizienz).",
+      "min_bars_per_param": "A4.4 \u2014 Mindestverh\u00e4ltnis available_bars / n_params (Anti-Overfit-Heuristik in Gate 1).",
+      "min_oos_bars_per_fold": "A4.4 \u2014 Mindest-Bar-Zahl je OOS-Fold (oos_window_days * bars_per_day), damit ein Fold statistisch aussagekr\u00e4ftig ist (Gate 1)."
     }
   },
   "n_trials": 100,
@@ -31,5 +34,8 @@
   "shaping_trade_target": 50,
   "lambda_reg": 0.25,
   "promotion_margin": 0.10,
-  "reward_mode": "auto"
+  "reward_mode": "auto",
+  "gate1_buffer_days": 30,
+  "min_bars_per_param": 200,
+  "min_oos_bars_per_fold": 500
 }
