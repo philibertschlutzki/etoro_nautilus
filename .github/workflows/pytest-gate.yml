@@ -144,6 +144,9 @@ jobs:
       - name: Optimizer single-symbol study + Gate 2 warm-start (A4.5a)
         run: python3 -m pytest automation/tests/test_optimize_symbol.py -q
 
+      - name: Optimizer Gate 3 — per-symbol promotion margin (A4.5b)
+        run: python3 -m pytest automation/tests/test_per_symbol_promotion.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 
