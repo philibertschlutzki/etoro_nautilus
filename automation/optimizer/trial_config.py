@@ -52,6 +52,18 @@ def build_trial(
     is_window_days = wf.get("is_window_days", 120)
     oos_window_days = oos_window_days_override if oos_window_days_override is not None else wf.get("oos_window_days", 30)
 
+    # Self-describing manifest (ISSUE-OPT-374): the effective walk-forward geometry and
+    # start_capital must travel inside the manifest's global_settings, not only via the
+    # copied backtest.json side-channel. Built once and reused for both sinks (DRY).
+    start_capital = bt_data.get("start_capital", 10000.0)
+    wf_settings = {
+        "is_window_days": is_window_days,
+        "oos_window_days": oos_window_days,
+        "splits": n_folds,
+        "holdout_days": holdout_days,
+        "walk_forward_active": True,
+    }
+
     # Calculate dates
     # Midnight of `now`
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -79,13 +91,7 @@ def build_trial(
     if copied_bt_path.exists():
         with open(copied_bt_path, "r", encoding="utf-8") as f:
             copied_bt_data = json.load(f)
-        copied_bt_data["walk_forward"] = {
-            "is_window_days": is_window_days,
-            "oos_window_days": oos_window_days,
-            "splits": n_folds,
-            "holdout_days": holdout_days,
-            "walk_forward_active": True,
-        }
+        copied_bt_data["walk_forward"] = dict(wf_settings)
         with open(copied_bt_path, "w", encoding="utf-8") as f:
             json.dump(copied_bt_data, f, indent=2)
 
@@ -125,7 +131,9 @@ def build_trial(
             "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "end_time": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "seed": seed,
-            "catalog_path": str(catalog_path)
+            "catalog_path": str(catalog_path),
+            "start_capital": start_capital,
+            "walk_forward": dict(wf_settings),
         },
         "strategies": [
             {

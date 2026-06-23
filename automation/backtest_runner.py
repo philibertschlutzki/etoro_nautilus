@@ -2065,14 +2065,19 @@ def run_backtest() -> None:
 
     # --- Parameter-Validierung & Walk-Forward Injektion ---
     param_warnings: list[str] = []
-    walk_forward_cfg = global_settings.get("walk_forward")
+    # ISSUE-OPT-374: the self-describing manifest (global_settings.walk_forward) is the
+    # authoritative source; fall back to the trial's backtest.json side-channel only if absent.
+    _wf_manifest = global_settings.get("walk_forward")
+    walk_forward_cfg = _wf_manifest or backtest_global_cfg.get("walk_forward")
 
     if walk_forward_cfg:
+        _wf_source = "manifest (global_settings)" if _wf_manifest else "backtest.json (side-channel)"
         is_days  = walk_forward_cfg.get("is_window_days", 90)
         oos_days = walk_forward_cfg.get("oos_window_days", 30)
         splits   = walk_forward_cfg.get("splits", 2)
         required_days = is_days + (splits * oos_days)
         _span_tol = span_tolerance_days
+        print(f"   • Walk-Forward Quelle: {_wf_source}")
         print(f"   • Effective Data Span Required: {required_days - _span_tol:.1f} days (Required: {required_days}, Max Allowed Deficit: {_span_tol})")
 
     for strat in strategies_list:
@@ -2103,7 +2108,10 @@ def run_backtest() -> None:
     if bt_start and bt_end:
         print(f"📅 Zeitraum: {bt_start.date()} → {bt_end.date()}")
 
-    start_capital = global_settings.get("start_capital", 100_000.0)
+    # ISSUE-OPT-374: prefer the self-describing manifest, fall back to backtest.json.
+    start_capital = global_settings.get("start_capital")
+    if start_capital is None:
+        start_capital = backtest_global_cfg.get("start_capital", 100_000.0)
     catalog_path = args.catalog_path or global_settings.get("catalog_path", "./data/nautilus")
 
     # --- Dry-Run: Zeige Konfiguration und exit (Task 2 Acceptance Criterion) ---
@@ -2278,7 +2286,8 @@ def run_backtest() -> None:
 
             for strat in strategies_list:
                 safe_strat_class = strat.get("strategy_class", "UnknownStrategy")
-                walk_forward_cfg = global_settings.get("walk_forward")
+                # ISSUE-OPT-374: reuse the manifest-authoritative walk_forward_cfg resolved above
+                # (manifest global_settings, else backtest.json fallback) for fold injection.
                 if walk_forward_cfg and end_ns:
                     oos_days = walk_forward_cfg.get("oos_window_days", 30)
                     splits   = walk_forward_cfg.get("splits", 2)
