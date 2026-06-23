@@ -145,4 +145,3 @@ except Exception as e:
 
 Sind diese Punkte erfüllt, kannst du deine Änderungen (die angepasste `strategies.json`) ins Git-Repository pushen und live nehmen!
 
-```
