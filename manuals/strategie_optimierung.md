@@ -1,4 +1,3 @@
-```markdown
 # Strategie-Optimierung: Das End-to-End Handbuch für Anfänger und Operatoren
 
 > **Dateiname:** manuals/strategie_optimierung.md  
