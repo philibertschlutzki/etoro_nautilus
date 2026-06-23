@@ -294,11 +294,19 @@ def load_strategy_defaults(project_root: str | None = None) -> dict:
 
 
 
-def resolve_strategy_params(strategy_entry: dict, defaults: dict, *, is_manifest: bool) -> dict:
-    """is_manifest=True  ⇒ params verbatim (KEIN Defaults-Merge).
-       is_manifest=False ⇒ Legacy: {**defaults, **params}."""
+def resolve_strategy_params(strategy_entry: dict, defaults: dict, *, is_manifest: bool,
+                            instrument: str | None = None) -> dict:
+    """is_manifest=True  ⇒ params verbatim (KEIN Defaults-Merge, KEIN Override) — Pitfall #61 bleibt strikt.
+       is_manifest=False ⇒ {**defaults, **params, **instrument_overrides.get(instrument, {})}
+                           wenn instrument != None, sonst Legacy {**defaults, **params} (unverändert, A4.1)."""
     params = dict(strategy_entry.get("params") or {})
-    return params if is_manifest else {**defaults, **params}
+    if is_manifest:
+        return params
+    merged = {**defaults, **params}
+    if instrument is not None:
+        overrides = strategy_entry.get("instrument_overrides") or {}
+        merged.update(overrides.get(instrument) or {})
+    return merged
 
 def apply_strategy_defaults(strategies: list[dict], defaults: dict, is_manifest: bool = False) -> list[dict]:
     """Merged strategy_defaults.json mit Strategie-Params aus der Config.

@@ -126,6 +126,9 @@ jobs:
       - name: Optimizer numeric search-space bounds extractor (A4.0)
         run: python3 -m pytest automation/tests/test_optimizer_bounds.py -q
 
+      - name: Optimizer instrument_overrides resolution (A4.1)
+        run: python3 -m pytest automation/tests/test_resolve_instrument_override.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 

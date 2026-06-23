@@ -7,6 +7,7 @@
       "strategy_class": "Klassen-Name der Strategie",
       "config_class": "Klassen-Name der Strategie-Konfiguration",
       "params": "Optionale Parameter-Overrides (merged \u00fcber strategy_defaults.json)",
+      "instrument_overrides": "Optional (A4.1) \u2014 symbol-spezifische Parameter-Overrides { \"<SYMBOL.ETORO>\": { \"<param>\": <value> } }; pro Symbol nur die zu \u00fcberschreibenden Keys. Precedence: strategy_defaults < params < instrument_overrides[symbol] < sampled. Wird NUR im Legacy/Matrix-Pfad (is_manifest=False) und nur bei gesetztem instrument angewandt; im Manifest-Pfad niemals (Pitfall #61). Promotion ausschlie\u00dflich per menschlich freigegebenem PR (A4.5b).",
       "tournament_overrides": "Dict \u2014 optionale Overrides f\u00fcr Tournament-Kriterien (z.B. min_expectancy: float, min_trades: int)"
     }
   },
