@@ -141,6 +141,9 @@ jobs:
       - name: Optimizer Gate 1 — data sufficiency is_symbol_tunable (A4.4)
         run: python3 -m pytest automation/tests/test_symbol_tunable_gate.py -q
 
+      - name: Optimizer single-symbol study + Gate 2 warm-start (A4.5a)
+        run: python3 -m pytest automation/tests/test_optimize_symbol.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 
