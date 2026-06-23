@@ -47,6 +47,9 @@ jobs:
       - name: Runner Env-Isolation & Manifest Contract
         run: python3 -m pytest automation/tests/test_runner_env_isolation.py automation/tests/test_runner_manifest_contract.py automation/tests/test_runner_fold_sortinos.py -v --timeout=30
 
+      - name: Runner universe restriction — restrict_universe (A4.2)
+        run: python3 -m pytest automation/tests/test_runner_instrument_filter.py -v --timeout=30
+
       - name: Orchestrator CLI args (--no-deploy vs dry-run)
         run: python3 -m pytest automation/tests/test_orchestrator_cli.py -v --timeout=30
 
@@ -128,6 +131,9 @@ jobs:
 
       - name: Optimizer instrument_overrides resolution (A4.1)
         run: python3 -m pytest automation/tests/test_resolve_instrument_override.py -q
+
+      - name: Optimizer manifest instruments filter (A4.2)
+        run: python3 -m pytest automation/tests/test_trial_instruments_manifest.py -q
 
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q

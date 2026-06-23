@@ -24,7 +24,8 @@ def build_trial(
     holdout_days: int | None = None,
     n_folds: int | None = None,
     oos_window_days_override: int | None = None,
-    base_cfg: Path | None = None
+    base_cfg: Path | None = None,
+    instruments: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """
     Erzeugt isoliertes trial_dir; kopiert config_dir()-Inhalt nach trial_dir/config;
@@ -145,6 +146,11 @@ def build_trial(
             }
         ]
     }
+
+    # A4.2: manifest-getriebene Single-/Multi-Symbol-Restriktion. instruments=None ⇒ Schlüssel
+    # wird NICHT geschrieben (rückwärtskompatibel, volles Universum).
+    if instruments is not None:
+        manifest_payload["global_settings"]["instruments"] = list(instruments)
 
     manifest_path = trial_dir / "experiment_manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:

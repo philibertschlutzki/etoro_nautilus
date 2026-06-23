@@ -308,6 +308,19 @@ def resolve_strategy_params(strategy_entry: dict, defaults: dict, *, is_manifest
         merged.update(overrides.get(instrument) or {})
     return merged
 
+def restrict_universe(universe: list[str], instruments: list[str] | None) -> list[str]:
+    """A4.2: manifest-getriebene Universum-Restriktion (`global_settings.instruments`).
+
+    instruments falsy (None/[]) ⇒ `universe` unverändert (Reihenfolge erhalten).
+    sonst ⇒ Schnittmenge unter Beibehaltung der `universe`-Reihenfolge. Unbekannte Symbole
+    (nicht im Katalog) werden still gedroppt — der Backtest crasht NICHT sofort.
+    """
+    if not instruments:
+        return universe
+    allowed = set(instruments)
+    return [s for s in universe if s in allowed]
+
+
 def apply_strategy_defaults(strategies: list[dict], defaults: dict, is_manifest: bool = False) -> list[dict]:
     """Merged strategy_defaults.json mit Strategie-Params aus der Config.
 
@@ -2145,6 +2158,12 @@ def run_backtest() -> None:
 
     # --- Instrumente ---
     instrument_ids = discover_instruments_from_catalog(catalog_path)
+    # A4.2: manifest-getriebene Universum-Restriktion (global_settings.instruments). Falsy ⇒ volles Universum.
+    _instruments_filter = global_settings.get("instruments")
+    if _instruments_filter:
+        _before = len(instrument_ids)
+        instrument_ids = restrict_universe(instrument_ids, _instruments_filter)
+        print(f"🎯 Manifest-Filter global_settings.instruments aktiv: {_before} → {len(instrument_ids)} Symbol(e) {sorted(_instruments_filter)}")
     if args.single_symbol:
         if args.single_symbol in instrument_ids:
             instrument_ids = [args.single_symbol]
