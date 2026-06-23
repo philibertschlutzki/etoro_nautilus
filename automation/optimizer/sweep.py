@@ -22,15 +22,33 @@ from automation.optimizer.confirm import confirm_per_symbol_promotion as _confir
 
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
-    """Symbol-Universum aus data/universe/momentum_ls.json (wie run_optimization es liest)."""
+    """Symbol-Universum aus data/universe/momentum_ls.json (robust gegen Dicts)."""
     if base_cfg is None:
         base_cfg = config_dir()
     universe_path = base_cfg.parent.parent / "data" / "universe" / "momentum_ls.json"
+    
     if universe_path.exists():
         try:
             with open(universe_path, "r", encoding="utf-8") as f:
                 data = json.load(f) or {}
-            return list(data.get("universe", []))
+            
+            raw_universe = data.get("universe", [])
+            
+            # Falls das Universum als Dict definiert wurde (z.B. {"TSLA.ETORO": {...}})
+            if isinstance(raw_universe, dict):
+                return list(raw_universe.keys())
+            
+            # Falls es eine Liste ist: Entweder reine Strings übernehmen oder das 'symbol'-Feld extrahieren
+            parsed_symbols = []
+            for item in raw_universe:
+                if isinstance(item, str):
+                    parsed_symbols.append(item)
+                elif isinstance(item, dict):
+                    sym = item.get("symbol") or item.get("id")
+                    if sym:
+                        parsed_symbols.append(sym)
+            return parsed_symbols
+        
         except (OSError, ValueError):
             return []
     return []
