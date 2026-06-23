@@ -14,8 +14,10 @@ def sample_params(strategy: str, trial) -> dict:
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
         }
     elif strategy == "ComboTrendVwapStrategy":
-        fast = trial.suggest_int("macd_fast", 8, 20)
-        gap = trial.suggest_int("macd_gap", 6, 20)
+        # Konzept §4 alignment (ISSUE-OPT-377): macd_fast 3–14, macd_gap 4–26
+        # ⇒ macd_slow = fast + gap (Gap garantiert fast < slow für den MACD-Indikator).
+        fast = trial.suggest_int("macd_fast", 3, 14)
+        gap = trial.suggest_int("macd_gap", 4, 26)
         return {
             # Korrigierter Name für den Config-Empfänger
             "macd_signal_period": trial.suggest_int("macd_signal_period", 5, 15),
