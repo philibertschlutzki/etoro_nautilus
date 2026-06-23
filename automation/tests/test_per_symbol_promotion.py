@@ -12,13 +12,26 @@ from automation.optimizer import run_optimization as ro, confirm
 from automation.optimizer import trial_config
 
 
+def _cfg_dir(tmp_path):
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(exist_ok=True)
+    # Provide necessary mock configs
+    with open(cfg_dir / "optimizer.json", "w", encoding="utf-8") as f:
+        json.dump({"promotion_margin": 0.10, "penalty_unevaluable_oos": -10, "unevaluable_shaping_span": 0.25, "sortino_clip_abs": 5.0, "penalty_overfit_weight": 0.5, "penalty_dd_weight": 8.0, "bonus_coverage_weight": 1.0, "evaluable_floor_epsilon": 0.001, "lambda_reg": 0.25}, f)
+    with open(cfg_dir / "tournament.json", "w", encoding="utf-8") as f:
+        json.dump({"max_drawdown": 0.30}, f)
+    with open(cfg_dir / "backtest.json", "w", encoding="utf-8") as f:
+        json.dump({"walk_forward": {"holdout_days": 45}}, f)
+    return cfg_dir
+
 def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(ro, "WORK", tmp_path)
     monkeypatch.setattr(confirm, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
-    monkeypatch.setattr(ro, "config_dir", lambda: Path("automation/config"))
-    monkeypatch.setattr(confirm, "config_dir", lambda: Path("automation/config"))
-    monkeypatch.setattr(trial_config, "config_dir", lambda: Path("automation/config"))
+    monkeypatch.setattr(ro, "config_dir", lambda: _cfg_dir(tmp_path))
+    monkeypatch.setattr(confirm, "config_dir", lambda: _cfg_dir(tmp_path))
+    monkeypatch.setattr(trial_config, "config_dir", lambda: _cfg_dir(tmp_path))
+
 
 
 def _factory_by_params(tuned_keyvals, sortino_tuned, sortino_global, dd=0.05):
