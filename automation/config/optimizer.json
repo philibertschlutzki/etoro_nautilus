@@ -12,7 +12,10 @@
       "sortino_clip_abs": "Maximaler absoluter Wert f\u00fcr die Sortino Ratio beim Capping.",
       "unevaluable_shaping_span": "Spanne f\u00fcr das Reward-Shaping von nicht-evaluierbaren Trials (z. B. 0.25).",
       "evaluable_floor_epsilon": "Kleines Epsilon, um zu garantieren, dass evaluierbare Trials immer besser als nicht-evaluierbare sind.",
-      "shaping_trade_target": "Summe der IS-Trades \u00fcber das Universum, bei der das IS-Aktivit\u00e4ts-Shaping nicht-evaluierbarer Trials saturiert (ISSUE-OPT-375). Konservativ w\u00e4hlen: rein zur Gradientenbildung Richtung Eligibility, \u00e4ndert nie die Floor-Invariante (Shaping bleibt <= unevaluable_shaping_span)."
+      "shaping_trade_target": "Summe der IS-Trades \u00fcber das Universum, bei der das IS-Aktivit\u00e4ts-Shaping nicht-evaluierbarer Trials saturiert (ISSUE-OPT-375). Konservativ w\u00e4hlen: rein zur Gradientenbildung Richtung Eligibility, \u00e4ndert nie die Floor-Invariante (Shaping bleibt <= unevaluable_shaping_span).",
+      "lambda_reg": "A4.3 \u2014 St\u00e4rke der Shrinkage-Strafe param_pen im Per-Symbol-Reward (universe_size==1). param_pen = lambda_reg * normalized_param_distance(sampled, global_params). KALIBRIERUNG: konservativ w\u00e4hlen \u2014 sehr gro\u00dfe param_pen kollabieren Trials auf den Floor (TPE unterscheidet geflorte Trials nicht); nahe dem globalen Optimum bleibt der Gradient erhalten.",
+      "promotion_margin": "A4.5b \u2014 Marge, die der symbol-getunte Vektor das globale Baseline auf dem ungesehenen Holdout schlagen muss, damit ein instrument_override promotet wird (Gate 3).",
+      "reward_mode": "A4.3 \u2014 'auto' (Per-Symbol-Reward nur bei universe_size==1) | 'per_symbol' (erzwingt den Per-Symbol-Pfad auch bei universe_size>1)."
     }
   },
   "n_trials": 100,
@@ -25,5 +28,8 @@
   "sortino_clip_abs": 5.0,
   "unevaluable_shaping_span": 0.25,
   "evaluable_floor_epsilon": 0.001,
-  "shaping_trade_target": 50
+  "shaping_trade_target": 50,
+  "lambda_reg": 0.25,
+  "promotion_margin": 0.10,
+  "reward_mode": "auto"
 }

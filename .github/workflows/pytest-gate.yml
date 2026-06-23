@@ -135,6 +135,9 @@ jobs:
       - name: Optimizer manifest instruments filter (A4.2)
         run: python3 -m pytest automation/tests/test_trial_instruments_manifest.py -q
 
+      - name: Optimizer per-symbol reward — param_pen / coverage drop (A4.3)
+        run: python3 -m pytest automation/tests/test_reward_per_symbol.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 

@@ -33,16 +33,29 @@ def _read_oos_min_trades() -> int:
         _oos_min_trades_cache = 3
         return 3
 def compute_reward(m: "TournamentMetrics", universe_size: int,
-                   weights: dict | None = None, risk_dd_cap: float | None = None) -> float:
+                   weights: dict | None = None, risk_dd_cap: float | None = None,
+                   *, sampled: dict | None = None, global_params: dict | None = None,
+                   strategy: str | None = None) -> float:
     """weights=None  ⇒ aus optimizer.json (penalty_overfit_weight, penalty_dd_weight,
                         bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
        risk_dd_cap=None ⇒ aus tournament.json (max_drawdown).
-       Falls not m.oos_evaluated oder m.oos_sortino is None: return penalty_unevaluable_oos.
-       base = clip(oos_sortino, -sortino_clip_abs, +sortino_clip_abs)
-       overfit_gap = max(0, is_sortino_median - base); dd_excess = max(0, oos_max_drawdown - risk_dd_cap)
-       coverage = win_count / max(1, universe_size)
-       return base - overfit_gap*penalty_overfit_weight - dd_excess*penalty_dd_weight
-              + coverage*bonus_coverage_weight"""
+       Falls not m.oos_evaluated oder m.oos_sortino is None: Unevaluable-Pfad (Penalty + Shaping).
+
+       universe_size > 1 (und reward_mode != 'per_symbol') ⇒ Coverage-Pfad (bit-identisch, A4.3/HI-2):
+         reward = base - overfit_gap*penalty_overfit_weight - dd_excess*penalty_dd_weight
+                  + coverage*bonus_coverage_weight ; coverage = win_count / max(1, universe_size).
+
+       universe_size == 1 ODER weights['reward_mode'] == 'per_symbol' ⇒ Per-Symbol-Pfad (A4.3):
+         KEIN Coverage-Term, dafür Shrinkage-Strafe param_pen Richtung global:
+         param_pen = lambda_reg * normalized_param_distance(sampled, global_params,
+                                  bounds.extract_numeric_bounds(strategy))
+                     falls (sampled and global_params and strategy), sonst 0.0.
+         reward = base - overfit_gap*penalty_overfit_weight - dd_excess*penalty_dd_weight - param_pen.
+
+       base = clip(oos_sortino, ±sortino_clip_abs); overfit_gap = max(0, is_sortino_median - base);
+       dd_excess = max(0, oos_max_drawdown - risk_dd_cap).
+       floor = penalty_unevaluable_oos + unevaluable_shaping_span + evaluable_floor_epsilon;
+       return max(reward, floor)  # Ordnungsinvariante: evaluable >= floor > unevaluable."""
 
     if weights is None:
         from automation.optimizer.trial_config import config_dir
@@ -99,12 +112,29 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     overfit_gap = max(0.0, m.is_sortino_median - base)
     dd_excess = max(0.0, m.oos_max_drawdown - risk_dd_cap)
 
-    coverage = m.win_count / max(1, universe_size)
+    floor = penalty_unevaluable_oos + weights["unevaluable_shaping_span"] + weights["evaluable_floor_epsilon"]
 
+    # A4.3: per-symbol reward path. The coverage term (win_count/universe_size) degenerates
+    # when the universe is a single symbol, so drop it and add a shrinkage penalty toward the
+    # global optimum instead (Gate 2 in reward space). Triggered by universe_size == 1, or
+    # explicitly via reward_mode == 'per_symbol'.
+    reward_mode = weights.get("reward_mode", "auto")
+    if universe_size == 1 or reward_mode == "per_symbol":
+        param_pen = 0.0
+        if sampled and global_params and strategy:
+            from automation.optimizer import bounds
+            b = bounds.extract_numeric_bounds(strategy)
+            param_pen = weights["lambda_reg"] * bounds.normalized_param_distance(sampled, global_params, b)
+        reward = (base
+                  - overfit_gap * penalty_overfit_weight
+                  - dd_excess * penalty_dd_weight
+                  - param_pen)
+        return max(reward, floor)
+
+    # Coverage path (universe_size > 1) — bit-identical to the pre-A4.3 behaviour.
+    coverage = m.win_count / max(1, universe_size)
     reward = (base
               - overfit_gap * penalty_overfit_weight
               - dd_excess * penalty_dd_weight
               + coverage * bonus_coverage_weight)
-
-    floor = penalty_unevaluable_oos + weights["unevaluable_shaping_span"] + weights["evaluable_floor_epsilon"]
     return max(reward, floor)
