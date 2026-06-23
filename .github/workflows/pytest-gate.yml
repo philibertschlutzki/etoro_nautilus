@@ -123,6 +123,9 @@ jobs:
         run: python3 -m automation.backtest_runner --dry-run --config automation/config/strategies.json
 
       # ── Tier 10: Optimizer ──────────────────────────────────────────────────
+      - name: Optimizer numeric search-space bounds extractor (A4.0)
+        run: python3 -m pytest automation/tests/test_optimizer_bounds.py -q
+
       - name: Optimizer Configuration and Manifest Rules
         run: python3 -m pytest automation/tests/test_optimizer_manifest.py -q
 
