@@ -15,6 +15,10 @@ class TournamentMetrics:
     fully_eligible_pairs: int
     is_total_trades: int
     is_max_trades: int
+    # Issue #401: OOS-total_return als evaluable Reward-Fallback, wenn der Sortino
+    # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
+    # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
+    oos_total_return: float = 0.0
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -45,6 +49,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
+    # Issue #401: evaluable Reward-Fallback fuer Zero-Loss/Sub-Threshold-Sortino.
+    oos_total_return = oos_metrics.get("total_return")
 
     is_total_trades = 0
     is_max_trades = 0
@@ -64,5 +70,6 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         win_count=int(win_count) if win_count is not None else 0,
         fully_eligible_pairs=int(fully_eligible_pairs) if fully_eligible_pairs is not None else 0,
         is_total_trades=int(is_total_trades),
-        is_max_trades=int(is_max_trades)
+        is_max_trades=int(is_max_trades),
+        oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0
     )

@@ -1,8 +1,17 @@
 import json
 import os
 import logging
+import warnings
 import optuna
 from pathlib import Path
+
+# Issue #402: Optuna wirft pro Sampler-Instanziierung ExperimentalWarnings fuer die bewusst
+# genutzten TPESampler-Features `multivariate`/`group`. In einem Sweep ueber viele Symbole
+# spammt das den Terminal zu. Gezielt NUR diese Warn-Kategorie unterdruecken — Optunas native
+# Per-Trial-INFO-Logs (Reward-Werte; im Sweep via make_symbol_objective die einzige Per-Trial-
+# Rueckmeldung, vgl. Issue #401) bleiben bewusst erhalten (KEIN globales set_verbosity(ERROR),
+# um die Observability aus Issue #403 nicht zu untergraben).
+warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
 from automation.optimizer.manifest import WORK, catalog_fingerprint
 from automation.optimizer.spaces import sample_params
 from automation.optimizer.trial_config import build_trial, config_dir
@@ -13,6 +22,39 @@ from automation.optimizer.confirm import confirm_on_holdout, export_proposal, ex
 from automation.log_manager import emit_execution_event
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
+
+
+def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict | None = None) -> None:
+    """Issue #403 — strukturierter Startup-Header: legt offen, AUS WELCHEN Dateien die aktiven
+    Konfigurationen stammen und welche Kern-Schwellen gelten, BEVOR der Lauf in die (bei
+    ``capture_output=True`` stummen) iterativen Optuna-Trials uebergeht. Reines stdout
+    (Operator-Terminal), defensiv gegen fehlende/kaputte JSONs. Gemeinsam genutzt von der
+    globalen Optimierung (``run``) und dem Per-Symbol-Sweep (``sweep.main``)."""
+    if base_cfg is None:
+        base_cfg = config_dir()
+
+    def _safe(p: Path) -> dict:
+        try:
+            return json.loads(p.read_text("utf-8")) if p.exists() else {}
+        except (OSError, ValueError):
+            return {}
+
+    opt = _safe(base_cfg / "optimizer.json")
+    tour = _safe(base_cfg / "tournament.json")
+    print("=" * 60)
+    print(f"⚙️  Aktive Konfiguration ({context})")
+    print(f"   Verzeichnis        : {base_cfg}")
+    for name in ("optimizer.json", "tournament.json", "strategies.json", "backtest.json"):
+        p = base_cfg / name
+        print(f"   {name:<18}: {p}{'' if p.exists() else '  (FEHLT)'}")
+    print(f"   Schwellen (opt)    : n_trials={opt.get('n_trials')}, n_startup_trials={opt.get('n_startup_trials')}, "
+          f"seed={opt.get('seed')}, oos_sortino_fallback={opt.get('oos_sortino_fallback')}")
+    print(f"   Schwellen (tourn.) : oos_min_trades={tour.get('oos_min_trades')}, "
+          f"sortino_min_trades={tour.get('sortino_min_trades')}, max_drawdown={tour.get('max_drawdown')}")
+    if extra:
+        for k, v in extra.items():
+            print(f"   {str(k):<18}: {v}")
+    print("=" * 60)
 
 def make_objective(
     strategy: str,
@@ -307,6 +349,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
 
 
 def run(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
+    log_active_config(f"global optimize · {strategy}", extra={"n_jobs": n_jobs, "n_trials_override": n_trials})
     study = optimize(strategy, n_trials=n_trials, n_jobs=n_jobs)
     completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
     if not completed:
