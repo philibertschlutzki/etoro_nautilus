@@ -3,6 +3,7 @@ import os
 import logging
 import warnings
 import optuna
+from functools import partial
 from pathlib import Path
 
 # Issue #402: Optuna wirft pro Sampler-Instanziierung ExperimentalWarnings fuer die bewusst
@@ -55,6 +56,53 @@ def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict
         for k, v in extra.items():
             print(f"   {str(k):<18}: {v}")
     print("=" * 60)
+
+def floor_plateau_callback(study, trial, *, weights: dict | None = None,
+                           n_startup_trials: int | None = None, eps: float = 1e-6,
+                           logger: logging.Logger | None = None) -> None:
+    """Issue #409 (P2) — Fail-Loud-Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
+
+    Optuna-Callback (Signatur ``(study, trial)``; ``weights``/``n_startup_trials``/``logger`` sind
+    rein fuer Tests/DI und werden in Produktion aus der Config gebunden). Sobald nach
+    ``n_startup_trials`` ALLE abgeschlossenen Trials am Unevaluable-Floor kleben
+    (``abs(value - floor) < eps``), wird EINMAL pro Study laut gewarnt — statt den Sweep als teuren
+    Zufallsgenerator (Zero-Gradient, ``Best is trial 0`` bewegt sich nie) weiterlaufen zu lassen.
+
+    Der Floor wird aus der Config abgeleitet: ``penalty_unevaluable_oos + unevaluable_shaping_span``
+    (die saturierte Obergrenze des Unevaluable-Zweigs, exakt die −9.75-Signatur). Warnung ist reine
+    Observability — sie aendert NIE eine Reward-/Promotion-Entscheidung."""
+    if weights is None:
+        cfg_path = config_dir() / "optimizer.json"
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                weights = json.load(f) or {}
+        except (OSError, ValueError):
+            weights = {}
+    if n_startup_trials is None:
+        n_startup_trials = int(weights.get("n_startup_trials", 16))
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+
+    if "penalty_unevaluable_oos" not in weights or "unevaluable_shaping_span" not in weights:
+        return
+    floor = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
+
+    completed = [t for t in study.trials
+                 if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
+    if len(completed) < max(1, int(n_startup_trials)):
+        return
+    if study.user_attrs.get("floor_plateau_warned"):
+        return
+    if all(abs(t.value - floor) < eps for t in completed):
+        study.set_user_attr("floor_plateau_warned", True)
+        logger.warning(
+            "🚨 Floor-Plateau erkannt: alle %d abgeschlossenen Trials kleben am Unevaluable-Floor "
+            "(%.4f). Der TPE-Sampler hat keinen Gradienten — das Symbol ist vermutlich strukturell "
+            "unevaluable (Pitfall #75: OOS erzeugt nie evaluierbare Trades). Pruefe Daten-Suffizienz "
+            "und Gates; verwirf ggf. die stale Study (rm data/optimizer/sweep/*.db).",
+            len(completed), floor,
+        )
+
 
 def make_objective(
     strategy: str,
@@ -134,10 +182,11 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     conf_n_trials = 100
     n_startup_trials = 16
     seed = 42
+    opt_data: dict = {}
 
     if optimizer_path.exists():
         with open(optimizer_path, "r", encoding="utf-8") as f:
-            opt_data = json.load(f)
+            opt_data = json.load(f) or {}
             conf_n_trials = opt_data.get("n_trials", conf_n_trials)
             n_startup_trials = opt_data.get("n_startup_trials", n_startup_trials)
             seed = opt_data.get("seed", seed)
@@ -164,11 +213,14 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     study.set_user_attr("data_snapshot_sha256", catalog_fingerprint())
 
+    # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
+    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
     study.optimize(
         make_objective(strategy),
         n_trials=n_trials,
         n_jobs=n_jobs,
-        catch=(json.JSONDecodeError, OSError)
+        catch=(json.JSONDecodeError, OSError),
+        callbacks=[floor_guard]
     )
     return study
 
@@ -338,6 +390,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
        Das globale `optimize`/`make_objective` bleibt unverändert."""
     cfg_dir = config_dir()
     conf_n_trials, n_startup_trials, seed = 100, 16, 42
+    opt_data: dict = {}
     optimizer_path = cfg_dir / "optimizer.json"
     if optimizer_path.exists():
         with open(optimizer_path, "r", encoding="utf-8") as f:
@@ -380,8 +433,11 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         strategy, symbol, global_best,
         run_backtest=run_backtest, build_trial=build_trial,
     )
+    # Issue #409 — Fail-Loud-Guard: warnt, sobald nach n_startup_trials alle Trials am
+    # Unevaluable-Floor kleben (Pitfall #75). Config einmalig gebunden (kein Per-Trial-IO).
+    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
     study.optimize(objective, n_trials=n_trials, n_jobs=1,
-                   catch=(json.JSONDecodeError, OSError))
+                   catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
     return study
 
 
