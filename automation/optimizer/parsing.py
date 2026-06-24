@@ -19,6 +19,10 @@ class TournamentMetrics:
     # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
     # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
     oos_total_return: float = 0.0
+    # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
+    # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
+    is_best_total_return: float = 0.0
+    is_best_win_rate: float = 0.0
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -64,11 +68,21 @@ def parse_tournament(path: Path) -> TournamentMetrics:
 
     is_total_trades = 0
     is_max_trades = 0
+    is_best_total_return = 0.0
+    is_best_win_rate = 0.0
     full_results = data.get("full_results") or []
     if full_results and isinstance(full_results, list):
         trades_list = [r.get("metrics", {}).get("total_trades", 0) for r in full_results if isinstance(r, dict)]
         is_total_trades = sum(trades_list)
         is_max_trades = max(trades_list) if trades_list else 0
+        # Issue #407: beste IS-Rendite/-Trefferquote als Gate-Naehe-Signal (None-safe; negative
+        # Rendite traegt 0 bei, da der Reward sie spaeter ohnehin auf [0,1] clippt).
+        returns_list = [(r.get("metrics") or {}).get("total_return") or 0.0
+                        for r in full_results if isinstance(r, dict)]
+        winrates_list = [(r.get("metrics") or {}).get("win_rate") or 0.0
+                         for r in full_results if isinstance(r, dict)]
+        is_best_total_return = max(returns_list) if returns_list else 0.0
+        is_best_win_rate = max(winrates_list) if winrates_list else 0.0
 
     return TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
@@ -81,5 +95,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         fully_eligible_pairs=int(fully_eligible_pairs) if fully_eligible_pairs is not None else 0,
         is_total_trades=int(is_total_trades),
         is_max_trades=int(is_max_trades),
-        oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0
+        oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
+        is_best_total_return=float(is_best_total_return),
+        is_best_win_rate=float(is_best_win_rate)
     )
