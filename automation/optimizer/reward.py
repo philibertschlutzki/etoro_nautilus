@@ -32,6 +32,33 @@ def _read_oos_min_trades() -> int:
     except ValueError:
         _oos_min_trades_cache = 3
         return 3
+
+
+def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
+    """Issue #407 — kontinuierlicher Eligibility-Gradient fuer unevaluable Trials.
+
+    Selbst wenn ein Symbol im OOS nie evaluiert wird (oos_total_trades==0, Pitfall #75), liefert
+    die IS-Performance ein normiertes Naehe-Signal zum Gate: ein Symbol mit hohem IS-total_return /
+    IS-win_rate ist 'fast eligible' und soll hoeher bewertet werden als eines, das nie performt.
+
+    Jede Komponente wird gegen ihren Target (``shaping_return_target`` / ``shaping_winrate_target``,
+    Zero-Hardcoding) auf ``[0, 1]`` normiert und geclippt; negative IS-Rendite traegt 0 bei. Das
+    Ergebnis ist der Mittelwert der aktiven Komponenten ⇒ stets ``∈ [0, 1]``. Fehlen beide Targets
+    ⇒ ``0.0`` (Legacy-Verhalten). Der Wert ist rein performance-basiert (kein Gate-Flag) ⇒ kein
+    Gate-Gaming; durch die ``[0, 1]``-Bindung bleibt das Shaping hart durch ``unevaluable_shaping_span``
+    gedeckelt (Anti-Gate-Gaming-Invariante: unevaluable < evaluable-Floor)."""
+    components = []
+    return_target = weights.get("shaping_return_target")
+    if return_target:
+        components.append(min(1.0, max(0.0, m.is_best_total_return) / float(return_target)))
+    winrate_target = weights.get("shaping_winrate_target")
+    if winrate_target:
+        components.append(min(1.0, max(0.0, m.is_best_win_rate) / float(winrate_target)))
+    if not components:
+        return 0.0
+    return sum(components) / len(components)
+
+
 def compute_reward(m: "TournamentMetrics", universe_size: int,
                    weights: dict | None = None, risk_dd_cap: float | None = None,
                    *, sampled: dict | None = None, global_params: dict | None = None,
@@ -111,10 +138,27 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         # "almost eligible" becomes distinguishable from "never eligible". shaping_trade_target
         # lives in optimizer.json (zero-hardcoding); if absent, behaviour is the legacy OOS-only path.
         progress = trade_progress
-        shaping_trade_target = weights.get("shaping_trade_target")
+        # Issue #406 (Pitfall #75, Defekt 2): shaping_trade_target=50 ist universe-skaliert
+        # (~70 Symbole). Im Per-Symbol-Pfad (universe_size==1 ODER reward_mode=='per_symbol') ist
+        # is_total_trades die Fold-Summe EINES Symbols (≫ 50) ⇒ activity saettigt sofort auf 1.0
+        # ⇒ Zero-Gradient genau im Bedarfsfall. Dort den dedizierten, groesseren
+        # per_symbol_shaping_trade_target nutzen (Fallback auf shaping_trade_target, wenn absent).
+        reward_mode_uneval = weights.get("reward_mode", "auto")
+        if universe_size == 1 or reward_mode_uneval == "per_symbol":
+            shaping_trade_target = (weights.get("per_symbol_shaping_trade_target")
+                                    or weights.get("shaping_trade_target"))
+        else:
+            shaping_trade_target = weights.get("shaping_trade_target")
         if shaping_trade_target:
             activity = min(1.0, m.is_total_trades / max(1, int(shaping_trade_target)))
             progress = max(progress, activity)
+
+        # Issue #407 — kontinuierlicher Eligibility-Gradient: die normierte Gate-Naehe (IS-
+        # Performance) hebt 'fast eligible' ueber 'nie eligible', auch wenn weder OOS- noch IS-
+        # Trade-Aktivitaet allein einen Gradienten liefern. Additiv und gebunden: _gate_proximity
+        # ∈ [0,1], also bleibt progress ∈ [0,1] ⇒ Shaping hart durch unevaluable_shaping_span
+        # gedeckelt (Anti-Gate-Gaming-Invariante).
+        progress = max(progress, _gate_proximity(m, weights))
 
         # Floor invariant: progress ∈ [0, 1] ⇒ shaping ≤ unevaluable_shaping_span, hence every
         # unevaluable trial stays ≤ penalty + span, strictly below the evaluable floor below.
