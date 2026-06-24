@@ -287,8 +287,28 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             with open(tournament_path, "r", encoding="utf-8") as f:
                 risk_dd_cap = (json.load(f) or {}).get("max_drawdown", 0.30)
 
-        return compute_reward(metrics, universe_size=1, risk_dd_cap=risk_dd_cap,
-                              sampled=sampled, global_params=global_params, strategy=strategy)
+        reward = compute_reward(metrics, universe_size=1, risk_dd_cap=risk_dd_cap,
+                                sampled=sampled, global_params=global_params, strategy=strategy)
+
+        # Issue #404 (P0) — Per-Symbol-Telemetrie. Der Sweep emittierte bislang KEIN strukturiertes
+        # Per-Trial-Event (nur Optunas native INFO-Zeile, vgl. #402), wodurch der Unevaluable-Floor-
+        # Kollaps (Pitfall #75) forensisch unsichtbar blieb. `oos_eligible` trennt den IS-Drop
+        # (Symbol nie IS-eligible ⇒ kein OOS evaluiert) vom OOS-Drop (OOS evaluiert, aber durchs
+        # Gate gefallen); `is_total_trades`/`is_max_trades` machen die Shaping-Saettigung sichtbar.
+        outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
+        emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
+            "symbol": symbol,
+            "trial_number": trial.number,
+            "reward": reward,
+            "oos_evaluated": metrics.oos_evaluated,
+            "oos_eligible": metrics.oos_eligible,
+            "oos_total_trades": metrics.oos_total_trades,
+            "oos_total_return": metrics.oos_total_return,
+            "is_total_trades": metrics.is_total_trades,
+            "is_max_trades": metrics.is_max_trades,
+            "outcome": outcome,
+        })
+        return reward
     return objective
 
 
