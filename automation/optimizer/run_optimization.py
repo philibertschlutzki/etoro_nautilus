@@ -248,6 +248,19 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
     return {}
 
 
+def _classify_trial_rejection(metrics) -> str:
+    """Issue #408 — kategorisiert, WARUM ein Per-Symbol-Trial nicht promotebar ist, fuer die modale
+    Aggregation im Proposal (confirm._dominant_rejection). Trennt den IS-Drop ('oos_not_evaluated':
+    das Symbol erzeugte nie evaluierbare OOS-Trades — die Pitfall-#75-Signatur) vom OOS-Drop
+    ('oos_gate_rejected': OOS evaluiert, aber durchs Eligibility-Gate gefallen) und vom Pass
+    ('none'). Bewusst grob & stabil, damit die Reasons ueber Trials hinweg aggregierbar bleiben."""
+    if metrics.oos_evaluated and metrics.oos_eligible:
+        return "none"
+    if not metrics.oos_evaluated:
+        return "oos_not_evaluated"
+    return "oos_gate_rejected"
+
+
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial):
     """Wie make_objective, aber single-symbol: build_trial(instruments=[symbol]) und
@@ -296,6 +309,10 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # (Symbol nie IS-eligible ⇒ kein OOS evaluiert) vom OOS-Drop (OOS evaluiert, aber durchs
         # Gate gefallen); `is_total_trades`/`is_max_trades` machen die Shaping-Saettigung sichtbar.
         outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
+        # Issue #408 — modale Gate-Drop-Reason: pro Trial die kategorisierte Rejection-Reason
+        # persistieren, damit confirm._dominant_rejection sie ueber die Study aggregieren kann.
+        rejection_reason = _classify_trial_rejection(metrics)
+        trial.set_user_attr("rejection_reason", rejection_reason)
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,

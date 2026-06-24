@@ -1,5 +1,6 @@
 import json
 import hashlib
+from collections import Counter
 from pathlib import Path
 from automation.optimizer.trial_config import build_trial, config_dir
 from automation.optimizer.runner import run_backtest, BacktestRunError
@@ -214,6 +215,20 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     }
 
 
+def _dominant_rejection(study) -> str | None:
+    """Issue #408 — modale Per-Trial-Rejection-Reason ueber alle Trials der Study (Counter).
+
+    Macht im Proposal sichtbar, WARUM ein Symbol nicht promotet wurde. Klebt z. B. jeder Trial auf
+    'oos_not_evaluated', ist das die Pitfall-#75-Signatur (das Symbol erzeugte nie evaluierbare
+    OOS-Trades). Trials ohne `rejection_reason` (Legacy/gepruned) werden ignoriert; gibt es keine,
+    ist die Reason `None`."""
+    reasons = [t.user_attrs.get("rejection_reason") for t in study.trials
+               if t.user_attrs.get("rejection_reason")]
+    if not reasons:
+        return None
+    return Counter(reasons).most_common(1)[0][0]
+
+
 def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -> Path:
     """Schreibt data/optimizer/proposal_{strategy}_{symbol}.json. Schreibt NIE in strategies.json —
     Promotion erfolgt ausschließlich per menschlich freigegebenem PR (HI-3)."""
@@ -226,6 +241,9 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         "R_symbol": promotion["R_symbol"],
         "R_global": promotion["R_global"],
         "promotion_margin": promotion["promotion_margin"],
+        # Issue #408 — modale Gate-Drop-Reason ueber alle Trials (Observability; aendert NIE die
+        # Promotion-Entscheidung selbst, die ausschliesslich ueber das Holdout-Gate faellt).
+        "dominant_rejection": _dominant_rejection(study),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],
