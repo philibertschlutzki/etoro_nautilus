@@ -1,8 +1,13 @@
 import json
 import os
 import logging
+import sqlite3
+import statistics
+import threading
+import time
 import warnings
 import optuna
+import sqlalchemy.exc
 from functools import partial
 from pathlib import Path
 
@@ -23,6 +28,54 @@ from automation.optimizer.confirm import confirm_on_holdout, export_proposal, ex
 from automation.log_manager import emit_execution_event
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
+
+# Issue #411 — Optuna/SQLite `create_all`-DDL-Race. `RDBStorage.__init__` ruft
+# `models.BaseModel.metadata.create_all(self.engine)` (check-then-create, TOCTOU). Zwei Worker, die
+# dieselbe FRISCHE SQLite-Datei quasi-gleichzeitig oeffnen, setzen beide `CREATE TABLE studies` ab —
+# der zweite crasht mit `table studies already exists`. `load_if_exists=True` schuetzt NICHT (greift
+# erst auf Study-Row-Ebene, NACH dem Schema-Bootstrap). Ein prozessweiter Lock serialisiert den
+# `create_study`-Aufruf; der Schema-Check dauert nur Millisekunden ⇒ kein relevanter Durchsatz-
+# Verlust, aber die `create_all`-Kollision ist ausgeschlossen.
+_study_lock = threading.Lock()
+
+
+def _create_study_with_retry(*, study_name: str, storage: str, sampler=None,
+                             direction: str = "maximize"):
+    """Issue #411 — `optuna.create_study` serialisiert (``_study_lock``) und gegen die DDL-Race-
+    Exception ``table studies already exists`` GENAU EINMAL retried.
+
+    Kein blindes ``except Exception`` (Fail-Fast, Pitfall #66): ausschliesslich die exakte
+    Race-Signatur (``"already exists"`` in einer ``sqlite3``/``sqlalchemy`` ``OperationalError``)
+    wird abgefangen; jeder andere Fehler propagiert hart. Beim Retry existiert das Schema garantiert
+    ⇒ ``load_if_exists=True`` laedt die Study sauber."""
+    def _create():
+        kwargs = dict(study_name=study_name, storage=storage, direction=direction,
+                      load_if_exists=True)
+        if sampler is not None:
+            kwargs["sampler"] = sampler
+        return optuna.create_study(**kwargs)
+
+    with _study_lock:
+        try:
+            return _create()
+        except (sqlite3.OperationalError, sqlalchemy.exc.OperationalError) as e:
+            if "already exists" not in str(e):
+                raise  # kein Schema-Race → propagieren (Fail-Fast)
+            # Schema-Race verloren → Schema existiert jetzt sicher → erneut laden.
+            return _create()
+
+
+def _preinit_study_storage(study_name: str, *, base_cfg: Path | None = None) -> None:
+    """Issue #411 — erzwingt den RDBStorage-Schema-Bootstrap (``create_all``) EINMAL und seriell im
+    aufrufenden (Haupt-)Thread, BEVOR mehrere Worker dieselbe (frische) Study-Datei oeffnen. Damit
+    trifft jeder nachfolgende Worker garantiert den ``exists``-Pfad (kein DDL-Race). Idempotent:
+    laeuft das Schema/die Study schon, ist es ein No-Op (``load_if_exists``). Aufzurufen pro
+    EINDEUTIGEM ``study_name`` (Eindeutigkeit ist Vorbedingung, vgl. #412/Pitfall #77)."""
+    storage = resolve_storage(study_name=study_name, base_cfg=base_cfg)
+    # resolve_storage liefert nur die URL; das per-Study-SQLite-Verzeichnis muss existieren.
+    if storage.startswith("sqlite:///"):
+        Path(storage[len("sqlite:///"):]).parent.mkdir(parents=True, exist_ok=True)
+    _create_study_with_retry(study_name=study_name, storage=storage)
 
 
 def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict | None = None) -> None:
@@ -60,17 +113,21 @@ def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None) -> None:
-    """Issue #409 (P2) — Fail-Loud-Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
+    """Issue #409/#413 (P2) — Fail-Loud-Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
 
     Optuna-Callback (Signatur ``(study, trial)``; ``weights``/``n_startup_trials``/``logger`` sind
-    rein fuer Tests/DI und werden in Produktion aus der Config gebunden). Sobald nach
-    ``n_startup_trials`` ALLE abgeschlossenen Trials am Unevaluable-Floor kleben
-    (``abs(value - floor) < eps``), wird EINMAL pro Study laut gewarnt — statt den Sweep als teuren
-    Zufallsgenerator (Zero-Gradient, ``Best is trial 0`` bewegt sich nie) weiterlaufen zu lassen.
+    rein fuer Tests/DI und werden in Produktion aus der Config gebunden). Warnt EINMAL pro Study,
+    sobald der Sweep fuer ein Symbol nichts Promotbares erzeugt — statt ihn als teuren
+    Zufallsgenerator (Zero-Gradient) weiterlaufen zu lassen. Reine Observability — aendert NIE eine
+    Reward-/Promotion-Entscheidung.
 
-    Der Floor wird aus der Config abgeleitet: ``penalty_unevaluable_oos + unevaluable_shaping_span``
-    (die saturierte Obergrenze des Unevaluable-Zweigs, exakt die −9.75-Signatur). Warnung ist reine
-    Observability — sie aendert NIE eine Reward-/Promotion-Entscheidung."""
+    Issue #413 — PRIMAERER Indikator ist ``oos_evaluated`` (Per-Trial-User-Attr aus
+    ``make_symbol_objective``), NICHT die Reward-Wert-Gleichheit: Da #406/#407 unevaluable Trials
+    ABSICHTLICH unter −9.75 verteilen (Gradient), ist das alte Praedikat ``all(abs(value−floor)<eps)``
+    im v3-Shaping-Regime strukturell unerfuellbar (toter Code, der den realen Sub-Floor-Bereich
+    −9.85…−9.93 nie trifft). Der Guard feuert jetzt, wenn KEIN abgeschlossener Trial je evaluable war.
+    Fehlt das User-Attr (alte Studies / globaler ``make_objective``-Pfad), greift der Legacy-Wert-Guard
+    (Floor = ``penalty_unevaluable_oos + unevaluable_shaping_span``) — kein False-Positive."""
     if weights is None:
         cfg_path = config_dir() / "optimizer.json"
         try:
@@ -83,16 +140,33 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     if logger is None:
         logger = logging.getLogger("optimizer")
 
-    if "penalty_unevaluable_oos" not in weights or "unevaluable_shaping_span" not in weights:
-        return
-    floor = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
-
     completed = [t for t in study.trials
                  if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
     if len(completed) < max(1, int(n_startup_trials)):
         return
     if study.user_attrs.get("floor_plateau_warned"):
         return
+
+    # Issue #413 — evaluable-basierter Primaer-Guard. Tragen die Trials das oos_evaluated-Attr, ist
+    # „kein Trial je evaluable" der korrekte Kollaps-Indikator (unabhaengig vom geshapeten Reward-Wert).
+    evaluated_flags = [getattr(t, "user_attrs", {}).get("oos_evaluated") for t in completed]
+    if any(f is not None for f in evaluated_flags):
+        if all(f is False for f in evaluated_flags):
+            study.set_user_attr("floor_plateau_warned", True)
+            logger.warning(
+                "🚨 Floor-Plateau erkannt: kein evaluable Trial nach %d Trials — das Symbol erzeugt "
+                "nie evaluierbare OOS-Trades (Pitfall #75-Klasse). Pruefe Daten-Suffizienz, "
+                "OOS-Trade-Frequenz und Micro-Sizing-/min_trades-Gate. Per-Symbol-Tuning fuer dieses "
+                "Symbol ist derzeit ein No-Op.",
+                len(completed),
+            )
+        return
+
+    # Legacy-Fallback (kein oos_evaluated-Attr, z. B. alte Studies / globaler make_objective-Pfad):
+    # bisheriges Wert-Gleichheits-Praedikat am konstanten Unevaluable-Floor (−9.75).
+    if "penalty_unevaluable_oos" not in weights or "unevaluable_shaping_span" not in weights:
+        return
+    floor = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
     if all(abs(t.value - floor) < eps for t in completed):
         study.set_user_attr("floor_plateau_warned", True)
         logger.warning(
@@ -173,11 +247,13 @@ def make_objective(
             holdout_days=45
         )
 
+        _t0 = time.perf_counter()
         try:
             output_path = run_backtest(trial_dir, manifest_path)
             metrics = parse_tournament(output_path)
         except BacktestRunError as e:
             raise optuna.TrialPruned(f"Subprocess failed: {e}")
+        backtest_ms = round((time.perf_counter() - _t0) * 1000)  # Issue #415 — Wall-Clock
 
         tournament_path = cfg_dir / "tournament.json"
         risk_dd_cap = 0.30
@@ -199,6 +275,7 @@ def make_objective(
         import logging
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "trial_number": trial.number,
+            "backtest_ms": backtest_ms,
             "reward": reward,
             "oos_evaluated": metrics.oos_evaluated,
             "oos_total_trades": metrics.oos_total_trades,
@@ -355,6 +432,32 @@ def _classify_trial_rejection(metrics) -> str:
     return "oos_gate_rejected"
 
 
+def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
+    """Issue #415 — Per-Study-Timing-/Evaluierbarkeits-Summary nach ``study.optimize``.
+
+    Defensiv gegen Test-Doubles (``DummyStudy`` ohne ``trials``/``best_value``): jeder Zugriff ist
+    ``getattr``-/try-gekapselt, sodass die Summary nie den Lauf crasht. Aggregiert die per-Trial
+    ``backtest_ms`` (User-Attr) zu Total/Median und zaehlt evaluable Trials (``oos_evaluated``)."""
+    trials = list(getattr(study, "trials", None) or [])
+    durs = [v for t in trials
+            if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
+    evaluable = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
+    try:
+        best_value = study.best_value
+    except Exception:
+        best_value = None
+    emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
+        "study_name": getattr(study, "study_name", None),
+        "symbol": symbol,
+        "n_trials": len(trials),
+        "evaluable_trials": evaluable,
+        "best_value": best_value,
+        "backtest_ms_total": sum(durs) if durs else 0,
+        "backtest_ms_median": int(statistics.median(durs)) if durs else None,
+        "wallclock_s": round(time.perf_counter() - study_t0),
+    })
+
+
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial):
     """Wie make_objective, aber single-symbol: build_trial(instruments=[symbol]) und
@@ -382,11 +485,16 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             instruments=[symbol],
         )
 
+        # Issue #415 — Per-Trial-Wall-Clock. perf_counter UM den run_backtest-Aufruf herum (statt via
+        # timings-Out-Param), damit ALLE bestehenden run_backtest-Mocks (Signatur
+        # ``(trial_dir, manifest_path)``) unveraendert funktionieren (Signatur-Kompat, Pitfall #33).
+        _t0 = time.perf_counter()
         try:
             output_path = run_backtest(trial_dir, manifest_path)
             metrics = parse_tournament(output_path)
         except BacktestRunError as e:
             raise optuna.TrialPruned(f"Subprocess failed: {e}")
+        backtest_ms = round((time.perf_counter() - _t0) * 1000)
 
         tournament_path = cfg_dir / "tournament.json"
         risk_dd_cap = 0.30
@@ -407,9 +515,15 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # persistieren, damit confirm._dominant_rejection sie ueber die Study aggregieren kann.
         rejection_reason = _classify_trial_rejection(metrics)
         trial.set_user_attr("rejection_reason", rejection_reason)
+        # Issue #415 — backtest_ms als User-Attr fuer die Per-Study-Aggregation (optimize_symbol).
+        trial.set_user_attr("backtest_ms", backtest_ms)
+        # Issue #413 — oos_evaluated als User-Attr: Grundlage des evaluable-basierten Floor-Guards
+        # (floor_plateau_callback) UND der `evaluable_trials`-Zaehlung im Per-Study-Summary (#415).
+        trial.set_user_attr("oos_evaluated", bool(metrics.oos_evaluated))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
+            "backtest_ms": backtest_ms,
             "reward": reward,
             "oos_evaluated": metrics.oos_evaluated,
             "oos_eligible": metrics.oos_eligible,
@@ -418,6 +532,13 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "is_total_trades": metrics.is_total_trades,
             "is_max_trades": metrics.is_max_trades,
             "outcome": outcome,
+            # Issue #416 — Schluessel-Kennzahlen fuer die Per-Trial-Fehleranalyse zusaetzlich ins
+            # strukturierte Event heben: Daten-Zeitfenster (None, falls die JSON keinen Block traegt)
+            # und die kategorisierte Gate-Drop-Reason (#408).
+            "rejection_reason": rejection_reason,
+            "data_window_start": metrics.data_window_start,
+            "data_window_end": metrics.data_window_end,
+            "data_window_days": metrics.data_window_days,
         })
         return reward
     return objective
@@ -430,6 +551,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
        (universe_size==1 ⇒ Per-Symbol-Reward), Warm-Start am globalen Optimum (Gate 2 via
        study.enqueue_trial). n_jobs=1 wird erzwungen (SQLite-Reproduzierbarkeit, Pitfall #68).
        Das globale `optimize`/`make_objective` bleibt unverändert."""
+    study_t0 = time.perf_counter()  # Issue #415 — Per-Study-Wall-Clock
     cfg_dir = config_dir()
     conf_n_trials, n_startup_trials, seed = 100, 16, 42
     opt_data: dict = {}
@@ -456,13 +578,9 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         seed=seed,
     )
 
-    study = optuna.create_study(
-        study_name=study_name,
-        storage=storage,
-        direction="maximize",
-        sampler=sampler,
-        load_if_exists=True,
-    )
+    # Issue #411 — serialisiert + DDL-Race-fest (table studies already exists). Ersetzt das nackte
+    # optuna.create_study, das bei zwei Workern auf derselben frischen SQLite-Datei crasht.
+    study = _create_study_with_retry(study_name=study_name, storage=storage, sampler=sampler)
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
@@ -483,6 +601,8 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
     study.optimize(objective, n_trials=n_trials, n_jobs=1,
                    catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
+    # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
+    _emit_study_summary(study, symbol, study_t0)
     return study
 
 

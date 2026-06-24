@@ -23,6 +23,12 @@ class TournamentMetrics:
     # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
     is_best_total_return: float = 0.0
     is_best_win_rate: float = 0.0
+    # Issue #416: tatsaechliches Daten-Zeitfenster des Backtests (aus dem optionalen ``data_window``-
+    # Block der tournament_result.json), gehoben ins optimizer_trial_completed-Event fuer die
+    # Per-Trial-Fehleranalyse. None, wenn der Block fehlt (rueckwaertskompatibel).
+    data_window_start: str | None = None
+    data_window_end: str | None = None
+    data_window_days: float | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -84,6 +90,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         is_best_total_return = max(returns_list) if returns_list else 0.0
         is_best_win_rate = max(winrates_list) if winrates_list else 0.0
 
+    # Issue #416 — optionales Daten-Zeitfenster (None-safe; fehlt der Block ⇒ alle Felder None).
+    dw = data.get("data_window") or {}
+    dw_start = dw.get("start")
+    dw_end = dw.get("end")
+    dw_days = dw.get("days")
+
     return TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
         oos_eligible=bool(oos_eligible),
@@ -97,5 +109,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         is_max_trades=int(is_max_trades),
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
         is_best_total_return=float(is_best_total_return),
-        is_best_win_rate=float(is_best_win_rate)
+        is_best_win_rate=float(is_best_win_rate),
+        data_window_start=str(dw_start) if dw_start is not None else None,
+        data_window_end=str(dw_end) if dw_end is not None else None,
+        data_window_days=float(dw_days) if dw_days is not None else None,
     )
