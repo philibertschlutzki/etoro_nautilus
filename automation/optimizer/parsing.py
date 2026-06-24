@@ -30,6 +30,16 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     fully_eligible_pairs = data.get("fully_eligible_pairs") or 0
     agg = data.get("aggregate_winner") or {}
 
+    # Issue #405 — Per-Symbol-Evaluierbarkeit vom Gewinner-Status entkoppeln (Pitfall #75,
+    # Defekt 1). Im Single-Symbol-Sweep bleibt `aggregate_winner` null, solange das Symbol das
+    # volle Tournament-Gate (IS-eligible ∧ OOS-eligible) fuer KEINE Parametrisierung klaert —
+    # die Per-Symbol-OOS-Resultate existieren aber. Fehlt der Aggregat-Gewinner, der
+    # `single_symbol_oos`-Block (von write_tournament_json geschrieben) aber vorhanden, leite die
+    # OOS-Metriken daraus ab. Rein additiv: bei vorhandenem aggregate_winner (Praezedenz) oder in
+    # Multi-Symbol-Laeufen (kein Block) ist dieser Pfad inaktiv ⇒ bit-identisch.
+    if not agg and data.get("single_symbol_oos"):
+        agg = data["single_symbol_oos"]
+
     oos_evaluated = agg.get("oos_evaluated") or False
     oos_eligible = agg.get("oos_eligible") or False
     win_count = agg.get("win_count") or 0

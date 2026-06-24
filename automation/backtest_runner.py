@@ -1493,6 +1493,55 @@ def select_winners(
     return per_symbol_winners, aggregate_winner, warnings_list, is_eligible_count, fully_eligible_count
 
 
+def _build_single_symbol_oos(all_results: list[dict]) -> dict | None:
+    """Issue #405 — entkoppelt die Per-Symbol-OOS-Evaluierbarkeit vom Tournament-Gewinner-Status.
+
+    Im Single-Symbol-Sweep (universe_size==1) bleibt ``aggregate_winner`` ``null``, solange das
+    Symbol das volle Gate-Stack (IS-eligible ∧ OOS-eligible) fuer KEINE Parametrisierung klaert
+    (Pitfall #75, Defekt 1) — die Per-Symbol-OOS-Resultate (``_oos_eval``, ``oos_metrics``)
+    existieren aber. Dieser Block spiegelt sie — UNGEACHTET des Gewinner-Status — in der Struktur
+    eines ``aggregate_winner``, sodass ``parse_tournament`` ``oos_evaluated``/``oos_metrics``
+    daraus ableiten kann, wenn kein Aggregat-Gewinner vorliegt.
+
+    Aktiv NUR fuer genau ein Symbol (Multi-Symbol-Laeufe ⇒ ``None`` ⇒ bit-identisch). Gibt es kein
+    IS-eligibles Resultat (kein ``_oos_eval``), wird ebenfalls ``None`` zurueckgegeben — der Lauf
+    bleibt ehrlich unevaluable (kein erfundener OOS-Record). Bei mehreren Kandidaten wird der
+    OOS-staerkste gewaehlt: (oos_eligible, oos_evaluated, _score)."""
+    symbols = {r.get("symbol") for r in all_results}
+    if len(symbols) != 1:
+        return None
+
+    evaluated = [r for r in all_results if isinstance(r.get("_oos_eval"), dict)]
+    if not evaluated:
+        return None
+
+    def _rank(r: dict):
+        ev = r["_oos_eval"]
+        return (
+            1 if ev.get("oos_eligible") else 0,
+            1 if ev.get("oos_evaluated") else 0,
+            r.get("_score", float("-inf")),
+        )
+
+    best = max(evaluated, key=_rank)
+    oos_eval = best["_oos_eval"]
+    raw_oos = best.get("oos_metrics") or oos_eval.get("oos_metrics") or {}
+    # JSON-Hygiene: interne Trade-Records nicht durchreichen (analog Cleanup fuer den Aggregat-Block).
+    oos_metrics = {k: v for k, v in raw_oos.items() if k != "_oos_trade_records"}
+    is_metrics = best.get("metrics") or {}
+
+    return {
+        "strategy": best.get("strategy"),
+        "oos_evaluated": bool(oos_eval.get("oos_evaluated", False)),
+        "oos_eligible": bool(oos_eval.get("oos_eligible", False)),
+        "oos_rejection_reasons": oos_eval.get("oos_rejection_reasons", []),
+        "oos_metrics": oos_metrics,
+        "oos_fold_sortinos": oos_metrics.get("oos_fold_sortinos") or [],
+        "median_is_sortino": is_metrics.get("sortino_ratio"),
+        "win_count": 1 if oos_eval.get("oos_eligible") else 0,
+    }
+
+
 def write_tournament_json(
     all_results: list[dict],
     output_path: str,
@@ -1545,6 +1594,15 @@ def write_tournament_json(
         "aggregate_winner":            aggregate_winner,
         "full_results":                all_results,
     }
+
+    # Issue #405 — Single-Symbol-Pfad (universe_size==1): den Per-Symbol-OOS-Block beilegen, damit
+    # parse_tournament die Evaluierbarkeit aus den tatsaechlichen OOS-Resultaten ableiten kann,
+    # selbst wenn das Symbol kein Aggregat-Gewinner wurde (Pitfall #75). Multi-Symbol-Laeufe
+    # erhalten KEINEN Block ⇒ Output bit-identisch.
+    single_symbol_oos = _build_single_symbol_oos(all_results)
+    if single_symbol_oos is not None:
+        output["single_symbol_oos"] = single_symbol_oos
+
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
