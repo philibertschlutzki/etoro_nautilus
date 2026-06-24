@@ -104,6 +104,45 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
         )
 
 
+def _check_reward_semantics_version(study, opt_data: dict,
+                                    logger: logging.Logger | None = None) -> None:
+    """Issue #410 (P3) — Reward-Semantik-Versionierung & Study-Hygiene.
+
+    Die Fixes #404–#407 aendern die Reward-Semantik des Per-Symbol-Pfads. Reward-Werte
+    verschiedener Semantik-Versionen sind NICHT vergleichbar: eine geladene Study, die noch alte
+    Floor-Trials (Pitfall #75, konstanter −9.75) enthaelt, wuerde diese mit neuen, gradientenreichen
+    Trials mischen und den TPE-Sampler verwirren.
+
+    Frische Studies (keine Trials) werden mit ``optimizer.json['reward_semantics_version']``
+    gestempelt. Traegt eine geladene Study eine andere (oder gar keine) Version, obwohl sie bereits
+    Trials akkumuliert hat, wird laut gewarnt mit dem Hinweis, die stale DB zu loeschen. Fehlt der
+    Config-Key, ist die Pruefung ein No-Op (Rueckwaerts-Kompat). Reine Hygiene/Observability —
+    veraendert keine Reward-/Promotion-Entscheidung."""
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+    current = opt_data.get("reward_semantics_version")
+    if current is None:
+        return  # Versionierung nicht konfiguriert -> No-Op
+
+    existing = study.user_attrs.get("reward_semantics_version")
+    has_trials = len(study.trials) > 0
+
+    if existing == current:
+        return
+    if existing is None and not has_trials:
+        study.set_user_attr("reward_semantics_version", current)
+        return
+
+    logger.warning(
+        "♻️ Reward-Semantik-Versionskonflikt: die geladene Study wurde unter Version %s "
+        "akkumuliert, aktuell ist Version %s (Fixes #404–#410). Reward-Werte verschiedener Versionen "
+        "sind NICHT vergleichbar — alte Floor-Trials (Pitfall #75, −9.75) wuerden den TPE-Sampler "
+        "verfaelschen. Loesche die stale Study und starte neu: rm data/optimizer/sweep/*.db "
+        "(globaler Lauf: studies.db).",
+        existing if existing is not None else "unversioniert", current,
+    )
+
+
 def make_objective(
     strategy: str,
     *,
@@ -212,6 +251,9 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     )
 
     study.set_user_attr("data_snapshot_sha256", catalog_fingerprint())
+
+    # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
+    _check_reward_semantics_version(study, opt_data)
 
     # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
     floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
@@ -421,6 +463,9 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         sampler=sampler,
         load_if_exists=True,
     )
+
+    # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
+    _check_reward_semantics_version(study, opt_data)
 
     # Gate 2 — Warm-Start am globalen Optimum (nur wenn nicht leer).
     global_best = load_global_best(strategy, cfg_dir)

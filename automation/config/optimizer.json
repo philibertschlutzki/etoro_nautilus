@@ -23,7 +23,8 @@
       "gate1_buffer_days": "A4.4 \u2014 Puffer (Tage) \u00fcber IS + splits*OOS + Holdout, den die Symbol-Historie zus\u00e4tzlich abdecken muss (Gate 1 Daten-Suffizienz).",
       "min_bars_per_param": "A4.4 \u2014 Mindestverh\u00e4ltnis available_bars / n_params (Anti-Overfit-Heuristik in Gate 1).",
       "min_oos_bars_per_fold": "A4.4 \u2014 Mindest-Bar-Zahl je OOS-Fold (oos_window_days * bars_per_day), damit ein Fold statistisch aussagekr\u00e4ftig ist (Gate 1).",
-      "storage_url": "A4.7 (optional) \u2014 Optuna-Storage-URL f\u00fcr Per-Symbol-Studies. null \u21d2 SQLite-Default ({WORK}/sweep/{study}.db). Reines Opt-In f\u00fcr echte Multi-Maschinen-Parallelit\u00e4t (z. B. PostgreSQL); weicht die SQLite-Leitplanke (Pitfall #53) bewusst auf. ENV ETORO_OPTUNA_STORAGE hat Vorrang. Bei non-SQLite nur n_jobs=1 deterministisch."
+      "storage_url": "A4.7 (optional) \u2014 Optuna-Storage-URL f\u00fcr Per-Symbol-Studies. null \u21d2 SQLite-Default ({WORK}/sweep/{study}.db). Reines Opt-In f\u00fcr echte Multi-Maschinen-Parallelit\u00e4t (z. B. PostgreSQL); weicht die SQLite-Leitplanke (Pitfall #53) bewusst auf. ENV ETORO_OPTUNA_STORAGE hat Vorrang. Bei non-SQLite nur n_jobs=1 deterministisch.",
+      "reward_semantics_version": "Issue #410 (Pitfall #75) \u2014 monoton steigende Versionsnummer der Reward-Semantik. Wird beim Anlegen einer frischen Study als user_attr gestempelt. Traegt eine geladene Study eine ALTE/keine Version, obwohl sie schon Trials hat, warnt der Optimizer laut (alte Floor-Trials sind mit der neuen Semantik nicht vergleichbar \u21d2 stale DB loeschen). v3 = Fixes #404\u2013#407 (Per-Symbol-Evaluierbarkeit entkoppelt, kontextsensitives Shaping, Gate-Proximity-Gradient)."
     }
   },
   "n_trials": 100,
@@ -47,5 +48,6 @@
   "gate1_buffer_days": 30,
   "min_bars_per_param": 200,
   "min_oos_bars_per_fold": 500,
-  "storage_url": null
+  "storage_url": null,
+  "reward_semantics_version": 3
 }
