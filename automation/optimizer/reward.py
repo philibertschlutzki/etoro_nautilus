@@ -111,7 +111,17 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         # "almost eligible" becomes distinguishable from "never eligible". shaping_trade_target
         # lives in optimizer.json (zero-hardcoding); if absent, behaviour is the legacy OOS-only path.
         progress = trade_progress
-        shaping_trade_target = weights.get("shaping_trade_target")
+        # Issue #406 (Pitfall #75, Defekt 2): shaping_trade_target=50 ist universe-skaliert
+        # (~70 Symbole). Im Per-Symbol-Pfad (universe_size==1 ODER reward_mode=='per_symbol') ist
+        # is_total_trades die Fold-Summe EINES Symbols (≫ 50) ⇒ activity saettigt sofort auf 1.0
+        # ⇒ Zero-Gradient genau im Bedarfsfall. Dort den dedizierten, groesseren
+        # per_symbol_shaping_trade_target nutzen (Fallback auf shaping_trade_target, wenn absent).
+        reward_mode_uneval = weights.get("reward_mode", "auto")
+        if universe_size == 1 or reward_mode_uneval == "per_symbol":
+            shaping_trade_target = (weights.get("per_symbol_shaping_trade_target")
+                                    or weights.get("shaping_trade_target"))
+        else:
+            shaping_trade_target = weights.get("shaping_trade_target")
         if shaping_trade_target:
             activity = min(1.0, m.is_total_trades / max(1, int(shaping_trade_target)))
             progress = max(progress, activity)
