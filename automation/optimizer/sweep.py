@@ -10,15 +10,25 @@ only through separate studies (each its own SQLite file via optimize_symbol), ne
 ``n_jobs>1`` inside a single study.
 """
 import argparse
+import collections
 import json
+import logging
+import time
 from pathlib import Path
 
 from automation.optimizer import bounds
 from automation.optimizer.gate import is_symbol_tunable
 from automation.optimizer.trial_config import config_dir
 from automation.optimizer.manifest import WORK
-from automation.optimizer.run_optimization import optimize_symbol as _optimize_symbol, load_global_best, log_active_config
+from automation.optimizer.run_optimization import (
+    optimize_symbol as _optimize_symbol,
+    load_global_best,
+    log_active_config,
+    _sanitize,
+    _preinit_study_storage,
+)
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
+from automation.log_manager import setup_bot_logging, emit_execution_event
 
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
@@ -35,9 +45,10 @@ def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
             raw_universe = data.get("universe", [])
             
             # Falls das Universum als Dict definiert wurde (z.B. {"TSLA.ETORO": {...}})
+            # Dict-Keys sind bereits eindeutig ⇒ kein Dedup noetig.
             if isinstance(raw_universe, dict):
                 return list(raw_universe.keys())
-            
+
             # Falls es eine Liste ist: Entweder reine Strings übernehmen oder das 'symbol'-Feld extrahieren
             parsed_symbols = []
             for item in raw_universe:
@@ -47,7 +58,11 @@ def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
                     sym = item.get("symbol") or item.get("id")
                     if sym:
                         parsed_symbols.append(sym)
-            return parsed_symbols
+            # Issue #412/#415 — order-preserving Dedup: doppelte Universe-Eintraege (z. B. WDAY.ETORO
+            # zweimal) wuerden sonst doppelte (strategy, symbol)-Paare erzeugen, mehrere Worker auf
+            # dieselbe per-Study-SQLite-Datei kollabieren (Reproduzierbarkeit kaputt, Pitfall #68) und
+            # den DDL-Race #411 ausloesen. Eindeutigkeit ist eine harte Vorbedingung (Pitfall #77).
+            return list(dict.fromkeys(parsed_symbols))
         
         except (OSError, ValueError):
             return []
@@ -160,7 +175,21 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
             if ok:
                 pairs.append((strategy, symbol, "OK"))
-    return pairs
+
+    # Issue #412 — order-preserving Dedup der (strategy, symbol)-Tripel. Selbst wenn die Symbol-
+    # Liste schon dedupliziert ist (load_symbol_universe), schuetzt dies gegen Duplikate aus einer
+    # direkt uebergebenen ``symbols``-Liste. Doppelte Paare wuerden mehrere Worker auf denselben
+    # ``study_name`` (= dieselbe SQLite-Datei) verteilen ⇒ #411-DDL-Race + Reproduzierbarkeits-
+    # Verlust (Pitfall #77). Die Erst-Vorkommens-Reihenfolge bleibt erhalten (deterministische
+    # Proposal-Reihenfolge, Bezug #400).
+    seen: set[tuple[str, str]] = set()
+    unique: list[tuple[str, str, str]] = []
+    for strat, sym, reason in pairs:
+        key = (strat, sym)
+        if key not in seen:
+            seen.add(key)
+            unique.append((strat, sym, reason))
+    return unique
 
 
 def _load_gate_config() -> dict:
@@ -187,6 +216,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     Ausgabereihenfolge bleibt deterministisch (``executor.map`` bewahrt die Eingabereihenfolge);
     fuer ``n_jobs <= 1`` bleibt der Pfad bit-identisch sequenziell.
     """
+    sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
+    # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
+    # Fake (HI-7-Tests) wird der Schema-Pre-Init uebersprungen — ein Fake-optimize_symbol beruehrt
+    # keine SQLite-Datei, also gibt es nichts zu bootstrappen (kein Storage-Seiteneffekt im Test).
+    using_real_optimize = optimize_symbol is None
     if optimize_symbol is None:
         optimize_symbol = _optimize_symbol
     if confirm is None:
@@ -198,6 +232,27 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config)
+
+    # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).
+    # enumerate_tunable_pairs dedupliziert bereits; diese Assertion ist der Guertel-und-Hosentraeger-
+    # Schutz, falls eine kuenftige Aenderung (oder ein injizierter Paar-Set im Test) doch zwei Paare
+    # auf denselben ``study_name`` abbilden wuerde — die wuerden dieselbe SQLite-Datei nebenlaeufig
+    # beschreiben (#411/#412, Pitfall #76/#77).
+    study_names = [f"study_{s}_{_sanitize(sym)}" for s, sym, _ in pairs]
+    dupes = [n for n, c in collections.Counter(study_names).items() if c > 1]
+    if dupes:
+        raise ValueError(
+            "Doppelte Study-Namen im Sweep (wuerden dieselbe SQLite-Datei nebenlaeufig "
+            f"beschreiben, vgl. #411/#412): {dupes}"
+        )
+
+    # Issue #411 — Schema-Pre-Init: pro EINDEUTIGEM study_name die RDBStorage-Datei einmal seriell
+    # (im Hauptthread, VOR dem Pool) anlegen, sodass jeder Worker garantiert den „exists"-Pfad trifft
+    # (kein `create_all`-DDL-Race). Idempotent. Nur im echten Storage-Pfad — injizierte Fakes
+    # (HI-7) brauchen keinen Bootstrap.
+    if using_real_optimize:
+        for study_name in dict.fromkeys(study_names):
+            _preinit_study_storage(study_name)
 
     # Issue #400: jedes Paar ist eine eigene Study mit eigener SQLite-Datei (optimize_symbol
     # erzwingt intern n_jobs=1, Pitfall #68); die Paare sind daher unabhaengig und ueber n_jobs
@@ -218,6 +273,23 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             proposals = list(executor.map(_run_pair, pairs))
     else:
         proposals = [_run_pair(p) for p in pairs]
+
+    # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
+    # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne
+    # Log-Parsing). Zeitdauer-Pflicht §18: jeder Lauf-Pfad weist seine Wall-Clock aus.
+    n_strats = len({s for s, _, _ in pairs})
+    n_syms = len({sym for _, sym, _ in pairs})
+    wallclock_s = round(time.perf_counter() - sweep_t0)
+    emit_execution_event(logging.getLogger("optimizer"), "sweep_completed", {
+        "pairs": len(pairs),
+        "strategies": n_strats,
+        "symbols": n_syms,
+        "n_jobs": n_jobs,
+        "wallclock_s": wallclock_s,
+    })
+    mins, secs = divmod(int(wallclock_s), 60)
+    print(f"✅ Sweep fertig: {len(pairs)} Paare, {n_strats} Strategien × {n_syms} Symbole, "
+          f"n_jobs={n_jobs}, Gesamtlaufzeit {mins}m{secs:02d}s.")
     return proposals
 
 
@@ -236,6 +308,13 @@ def _resolve_strategies(arg: str) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> list[Path]:
+    # Issue #414 — Logging EINMALIG initialisieren, BEVOR irgendetwas geloggt wird. Sonst hat
+    # getLogger("optimizer") im Standalone-Pfad keinen Handler und Pythons lastResort verwirft alle
+    # INFO-`[JSON_EVENT]` (#404-Telemetrie) — nur WARNING+ erreicht stderr. setup_bot_logging haengt
+    # einen File- (DEBUG → rotierende JSONL) UND einen Stream-Handler (INFO) an und setzt
+    # propagate=False (kollidiert NICHT mit Optunas eigenem Logger; KEIN set_verbosity, Pitfall #74).
+    setup_bot_logging("optimizer")
+
     parser = argparse.ArgumentParser(description="Per-symbol micro-tuning sweep (Ansatz 4). Never enters Phase 5.")
     parser.add_argument("--strategies", default="all", help="'all' (aktive aus strategies.json) oder Komma-Liste")
     parser.add_argument("--symbols", default="all", help="'all' (Universum) oder Komma-Liste")
