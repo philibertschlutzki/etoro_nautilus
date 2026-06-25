@@ -645,6 +645,126 @@
       "asset_class": "Unknown",
       "price_precision": 2,
       "size_precision": 2
+    },
+    "2485": {
+      "symbol": "ENLT.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9506": {
+      "symbol": "MOD.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5997": {
+      "symbol": "ARWR.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9646": {
+      "symbol": "FORM.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "8632": {
+      "symbol": "UPST.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4046": {
+      "symbol": "DPZ.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6662": {
+      "symbol": "CVE.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6459": {
+      "symbol": "LSCC.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6804": {
+      "symbol": "ONTO.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1886": {
+      "symbol": "Z.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "1042": {
+      "symbol": "NKE.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6916": {
+      "symbol": "RBLX.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6314": {
+      "symbol": "AXSM.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6168": {
+      "symbol": "COIN.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "2483": {
+      "symbol": "MBLY.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "9484": {
+      "symbol": "VSH.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "10151": {
+      "symbol": "ATRO.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "4336": {
+      "symbol": "TEVA.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "5505": {
+      "symbol": "CHWY.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
+    },
+    "6870": {
+      "symbol": "TD.ETORO",
+      "asset_class": "Unknown",
+      "price_precision": 2,
+      "size_precision": 2
     }
   }
 }
