@@ -170,3 +170,6 @@ jobs:
 
       - name: Optimizer concurrency/dedup/logging/timing/subprocess-logs/floor-guard (Issues #411-#416)
         run: python3 -m pytest automation/tests/test_issue_411_storage_ddl_race.py automation/tests/test_issue_412_pair_dedup.py automation/tests/test_issue_413_floor_guard_v3.py automation/tests/test_issue_414_sweep_logging.py automation/tests/test_issue_415_backtest_timing.py automation/tests/test_issue_416_subprocess_logs.py -q
+
+      - name: OOS-split/reward-floor/search-space/data-window/walk-forward-history (Issues #441-#448)
+        run: python3 -m pytest automation/tests/test_issue_448_oos_split.py automation/tests/test_issue_447_floor_separation.py automation/tests/test_issue_445_walkforward_history.py automation/tests/test_issue_444_data_window.py automation/tests/test_search_space_binding.py -q
