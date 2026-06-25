@@ -862,6 +862,40 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     }
 
 
+def _fill_ts_ns(f) -> int:
+    """Issue #448 (Pitfall #80) — robuste, *fail-loud* Extraktion des Fill-Zeitstempels in
+    absoluten Epoch-Nanosekunden.
+
+    Lese-Reihenfolge: ``ts_event`` (``generate_fills_report``) → ``ts_last`` (der
+    ``generate_order_fills_report``-Fallback hat **kein** ``ts_event``, sondern ``ts_last``!) →
+    ``ts_init``. Ein ``pd.Timestamp`` wird via ``.value`` zu ns; ein roher int bleibt int.
+
+    KRITISCH: Fehlen ALLE drei Felder (oder sind sie ``NaN``/``NaT``), wird hart geworfen
+    (``ValueError``) — **niemals** still auf ``0`` defaulten. Ein ``ts==0`` schiebt jeden
+    Round-Trip vor ``start_ns + is_window`` und klassifiziert ihn als In-Sample ⇒ struktureller
+    OOS=0-Kollaps über alle Symbole/Strategien (Pitfall #75 Defekt A / #80). Der frühere stille
+    ``getattr(f, 'ts_event', getattr(f, 'ts_init', 0))`` verbarg genau diese Domänen-Divergenz.
+    """
+    for attr in ("ts_event", "ts_last", "ts_init"):
+        raw = getattr(f, attr, None)
+        if raw is None:
+            continue
+        # Skalar-NaN/NaT-Guard (deckt float NaN, pd.NaT, np.datetime64('NaT') einheitlich ab).
+        try:
+            if bool(pd.isna(raw)):
+                continue
+        except (TypeError, ValueError):
+            pass
+        if isinstance(raw, pd.Timestamp):
+            return int(raw.value)
+        return int(raw)
+    raise ValueError(
+        "Fill ohne verwertbares ts_event/ts_last/ts_init — Walk-Forward-Split nicht möglich "
+        "(Pitfall #80). Der Fills-Report liefert keine Zeitstempel-Spalte; ein stiller 0-Default "
+        "würde jeden Round-Trip als In-Sample klassifizieren (struktureller OOS-Kollaps)."
+    )
+
+
 def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0) -> dict:
     """
     Extrahiert Tournament-Metriken.
@@ -916,7 +950,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
-            sorted_fills = sorted(f_list, key=lambda x: getattr(x, 'ts_event', getattr(x, 'ts_init', 0)))
+            sorted_fills = sorted(f_list, key=_fill_ts_ns)
             buy_queue: deque[tuple[float, float, int]] = deque()  # (Stückzahl, Preis, Timestamp)
             sell_queue: deque[tuple[float, float, int]] = deque() # (Stückzahl, Preis, Timestamp)
 
@@ -943,10 +977,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             # Notional Value = Menge * Preis for both legs (entry and exit)
                             exit_value = match_qty * price
                             pnl -= (entry_notional + exit_value) * (commission_bps / 10000.0)
-                        ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts, pd.Timestamp):
-                            ts = ts.value
-                        ts = int(ts)
+                        ts = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         holding_time_ns = ts - s_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         notionals_with_ts.append((entry_notional, ts))
@@ -955,10 +986,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         if sell_queue[0][0] <= 1e-9:
                             sell_queue.popleft()
                     if qty > 0:
-                        ts_entry = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts_entry, pd.Timestamp):
-                            ts_entry = ts_entry.value
-                        buy_queue.append((qty, price, int(ts_entry)))
+                        ts_entry = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
+                        buy_queue.append((qty, price, ts_entry))
                 else:
                     while qty > 0 and buy_queue:
                         b_qty, b_price, b_ts = buy_queue[0]
@@ -969,10 +998,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                             # Notional Value = Menge * Preis for both legs (entry and exit)
                             exit_value = match_qty * price
                             pnl -= (entry_notional + exit_value) * (commission_bps / 10000.0)
-                        ts = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts, pd.Timestamp):
-                            ts = ts.value
-                        ts = int(ts)
+                        ts = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         holding_time_ns = ts - b_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         notionals_with_ts.append((entry_notional, ts))
@@ -981,10 +1007,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         if buy_queue[0][0] <= 1e-9:
                             buy_queue.popleft()
                     if qty > 0:
-                        ts_entry = getattr(f, 'ts_event', getattr(f, 'ts_init', 0))
-                        if isinstance(ts_entry, pd.Timestamp):
-                            ts_entry = ts_entry.value
-                        sell_queue.append((qty, price, int(ts_entry)))
+                        ts_entry = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
+                        sell_queue.append((qty, price, ts_entry))
 
 
 
@@ -997,6 +1021,30 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         if log_fn:
             log_fn(f"[Metriken] FIFO-Extraktion: {len(pnls_with_ts)} Round-Trips erfolgreich berechnet.")
+
+        # Issue #448/#444 — beobachtete Fill-ts-Spanne (min/max der Round-Trip-Exit-ts über alle
+        # Instrumente). Wird in die Worker-/Tournament-Telemetrie gehoben (data_window.fill_ts_*),
+        # damit ein OOS-Domänen-Defekt (Fills außerhalb von [start_ns, end_ns]) ohne Ad-hoc-
+        # Diagnose-Logzeile sichtbar wird (Pitfall #80).
+        _all_fill_ts = [t[1] for t in pnls_with_ts]
+        fill_ts_min = min(_all_fill_ts) if _all_fill_ts else None
+        fill_ts_max = max(_all_fill_ts) if _all_fill_ts else None
+
+        # Issue #448 (Pitfall #80) — Plausibilitäts-Assertion gegen den stillen OOS=0-Kollaps.
+        # Im Walk-Forward-Modus MÜSSEN die Fills in der absoluten Epoch-ns-Domäne des Fensters
+        # liegen. `fill_ts_max < start_ns` (ALLE Round-Trips lägen vor Fensterbeginn) oder
+        # `fill_ts_min <= 0` (Garbage-/0-Timestamp) ist für valide Daten unmöglich und wäre die
+        # Signatur einer Zeitstempel-Domänen-Divergenz (Hypothese A/B). Fail-loud statt stiller
+        # IS-Klassifizierung — verhindert künftige Regressionen dieser Klasse.
+        if walk_forward_dict and start_ns is not None and fill_ts_max is not None:
+            if fill_ts_min <= 0 or fill_ts_max < start_ns:
+                raise ValueError(
+                    f"Implausible Fill-Zeitstempel-Domäne (Pitfall #80): "
+                    f"fill_ts∈[{fill_ts_min}, {fill_ts_max}], start_ns={start_ns}. "
+                    f"Alle Round-Trips lägen vor dem Fensterbeginn ⇒ struktureller OOS=0-Kollaps. "
+                    f"Vermutliche Ursache: Fill-ts aus falscher Clock-Domäne oder fehlendes "
+                    f"ts_event/ts_last (siehe _fill_ts_ns)."
+                )
 
         is_pnls = []
         oos_pnls = []
@@ -1014,8 +1062,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
                 notional, _ts = notionals_with_ts[i]
                 is_oos = False
-                for i in range(splits):
-                    split_is_start_ns = start_ns + i * oos_window_ns
+                # Issue #443 — innere Fold-Schleife heißt `fold` (nicht `i`), um die äußere
+                # Enumerate-Variable nicht zu überschreiben (Loop-Var-Shadowing-Footgun).
+                for fold in range(splits):
+                    split_is_start_ns = start_ns + fold * oos_window_ns
                     split_oos_start_ns = split_is_start_ns + is_window_ns
                     split_oos_end_ns = split_oos_start_ns + oos_window_ns
 
@@ -1059,8 +1109,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
 
-            for j in range(splits):
-                split_is_start_ns = start_ns + j * oos_window_ns
+            for fold in range(splits):  # Issue #443 — einheitlicher Fold-Index `fold`
+                split_is_start_ns = start_ns + fold * oos_window_ns
                 split_oos_start_ns = split_is_start_ns + is_window_ns
                 split_oos_end_ns = split_oos_start_ns + oos_window_ns
 
@@ -1092,8 +1142,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
                 notional, _ts = notionals_with_ts[i]
                 is_oos = False
-                for j in range(splits):
-                    split_is_start_ns = start_ns + j * oos_window_ns
+                for fold in range(splits):  # Issue #443 — einheitlicher Fold-Index `fold`
+                    split_is_start_ns = start_ns + fold * oos_window_ns
                     split_oos_start_ns = split_is_start_ns + is_window_ns
                     split_oos_end_ns = split_oos_start_ns + oos_window_ns
                     if split_oos_start_ns <= ts < split_oos_end_ns:
@@ -1106,7 +1156,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if walk_forward_dict and start_ns is not None:
             return {
                 "metrics": is_metrics,
-                "oos_metrics": oos_metrics
+                "oos_metrics": oos_metrics,
+                # Issue #444/#448 — beobachtete Fill-ts-Spanne für die data_window-Telemetrie.
+                "_fill_ts_min": fill_ts_min,
+                "_fill_ts_max": fill_ts_max,
             }
         else:
             # Fallback for backwards compatibility if oos isn't requested
@@ -1115,6 +1168,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if log_fn:
             import traceback
             log_fn(f"[Metriken-Fehler] FIFO-Verarbeitung fehlgeschlagen: {e}\n{traceback.format_exc()}")
+        # Issue #448 — formgleicher Rückgabewert: im Walk-Forward-Modus das nested NULL-Dict, sonst
+        # das flache NULL (der Worker behandelt beide, aber Formgleichheit hält die Telemetrie sauber).
+        if walk_forward_dict and start_ns is not None:
+            return {"metrics": NULL, "oos_metrics": NULL, "_fill_ts_min": None, "_fill_ts_max": None}
         return NULL
 
 
@@ -1552,10 +1609,18 @@ def write_tournament_json(
     fully_eligible_count: int,
     universe_snapshot: str = "",
     tournament_cfg: dict | None = None,
+    *,
+    start_ns: int | None = None,
+    end_ns: int | None = None,
 ) -> None:
     """Schreibt Tournament-Ergebnisse als JSON.
 
     Task 5: Jeder Gewinner-Eintrag enthält jetzt ein 'score'-Feld.
+
+    Issue #444: ``start_ns``/``end_ns`` (re-anchored Fenster) sind optional; sind sie gesetzt
+    ODER liefert mindestens ein Worker eine Fill-ts-Spanne, wird ein ``data_window``-Block mit
+    ``start``/``end``/``days`` und ``fill_ts_min``/``fill_ts_max`` geschrieben (Telemetrie-Lücke
+    aus #416 geschlossen). Fehlen beide ⇒ kein Block (rückwärtskompatibel).
     """
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
@@ -1602,6 +1667,26 @@ def write_tournament_json(
     single_symbol_oos = _build_single_symbol_oos(all_results)
     if single_symbol_oos is not None:
         output["single_symbol_oos"] = single_symbol_oos
+
+    # Issue #444 — data_window-Block (Telemetrie-Lücke aus #416, die Schreib-Seite fehlte). Weist
+    # das TATSÄCHLICH evaluierte Fenster (nach Re-Anchoring) plus die beobachtete Fill-ts-Spanne
+    # über alle Worker aus. parse_tournament liest start/end/days bereits; fill_ts_min/max macht
+    # OOS-Domänen-Defekte (Pitfall #80) direkt in der Telemetrie sichtbar.
+    _fill_mins = [r.get("_fill_ts_min") for r in all_results if r.get("_fill_ts_min") is not None]
+    _fill_maxs = [r.get("_fill_ts_max") for r in all_results if r.get("_fill_ts_max") is not None]
+    fill_ts_min = min(_fill_mins) if _fill_mins else None
+    fill_ts_max = max(_fill_maxs) if _fill_maxs else None
+    if start_ns is not None or end_ns is not None or fill_ts_min is not None:
+        _day_ns = 86400 * 1_000_000_000
+        output["data_window"] = {
+            "start_ns": start_ns,
+            "end_ns":   end_ns,
+            "start":    pd.Timestamp(start_ns, unit="ns", tz="UTC").isoformat() if start_ns else None,
+            "end":      pd.Timestamp(end_ns,   unit="ns", tz="UTC").isoformat() if end_ns   else None,
+            "days":     round((end_ns - start_ns) / _day_ns, 1) if (start_ns and end_ns) else None,
+            "fill_ts_min": fill_ts_min,
+            "fill_ts_max": fill_ts_max,
+        }
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
@@ -1981,6 +2066,11 @@ def run_single_backtest_worker(
             metrics = extracted_data
             oos_metrics = {}
 
+        # Issue #444 — beobachtete Fill-ts-Spanne aus extract_metrics nach oben reichen (für den
+        # data_window-Block der tournament_result.json). None, wenn keine Round-Trips/kein WF-Modus.
+        fill_ts_min = extracted_data.get("_fill_ts_min") if isinstance(extracted_data, dict) else None
+        fill_ts_max = extracted_data.get("_fill_ts_max") if isinstance(extracted_data, dict) else None
+
         def format_metric(m_dict, key, min_trades_req):
             if m_dict.get('total_trades', 0) < min_trades_req:
                 return f"{'n/a(<min)':>6}"
@@ -2051,6 +2141,11 @@ def run_single_backtest_worker(
             "strat_params": strat.get("params", {}),
             "start_capital": start_capital,
             "_first_tick_ns": first_tick_ns_val,
+            # Issue #444 — tatsächlich geladenes Fenster + beobachtete Fill-ts-Spanne pro Worker;
+            # write_tournament_json aggregiert daraus den data_window-Block.
+            "_last_tick_ns": last_tick_ns_val,
+            "_fill_ts_min": fill_ts_min,
+            "_fill_ts_max": fill_ts_max,
         }
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
@@ -2530,7 +2625,9 @@ def run_backtest() -> None:
             warnings_list,
             is_eligible_count,
             fully_eligible_count,
-            tournament_cfg=tournament_cfg
+            tournament_cfg=tournament_cfg,
+            start_ns=start_ns,  # Issue #444 — re-anchored Fenster für den data_window-Block
+            end_ns=end_ns,
         )
     elif all_results:
         print(f"\n📊 {len(all_results)} Ergebnisse gesammelt (kein --momentum Flag aktiv)")

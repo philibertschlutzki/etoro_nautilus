@@ -29,6 +29,11 @@ class TournamentMetrics:
     data_window_start: str | None = None
     data_window_end: str | None = None
     data_window_days: float | None = None
+    # Issue #444/#448 — beobachtete Fill-ts-Spanne (Epoch-ns) aus dem data_window-Block. Macht
+    # einen OOS-Domänen-Defekt (Fills außerhalb von [start_ns, end_ns], Pitfall #80) ohne Ad-hoc-
+    # Diagnose direkt sichtbar. None, wenn der Block (oder die Felder) fehlen (rückwärtskompatibel).
+    fill_ts_min: int | None = None
+    fill_ts_max: int | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -95,6 +100,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     dw_start = dw.get("start")
     dw_end = dw.get("end")
     dw_days = dw.get("days")
+    dw_fill_min = dw.get("fill_ts_min")
+    dw_fill_max = dw.get("fill_ts_max")
 
     return TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
@@ -113,4 +120,6 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         data_window_start=str(dw_start) if dw_start is not None else None,
         data_window_end=str(dw_end) if dw_end is not None else None,
         data_window_days=float(dw_days) if dw_days is not None else None,
+        fill_ts_min=int(dw_fill_min) if dw_fill_min is not None else None,
+        fill_ts_max=int(dw_fill_max) if dw_fill_max is not None else None,
     )

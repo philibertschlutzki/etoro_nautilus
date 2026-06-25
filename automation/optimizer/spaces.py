@@ -45,31 +45,41 @@ def sample_params(strategy: str, trial) -> dict:
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 120),
         }
     elif strategy == "FlashCrashReversalStrategy":
+        # Issue #446 — `vol_surge_multiplier` ENTFERNT (Phantom-Tuning): kein Volumen-Pfad in der
+        # Strategie und 1h-Bars haben `volume=1.0`. Stattdessen die ECHTEN Entry-Felder
+        # `bb_period`/`bb_std_dev` (die BB-Crash-Schwelle) tunbar machen — dadurch beeinflusst das
+        # Sampling die Round-Trip-Zahl nachweislich. `rsi_overbought` bleibt bewusst fix (Exit-Gate).
         return {
+            "bb_period": trial.suggest_int("bb_period", 10, 40),
+            "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 3.0),
             "rsi_period": trial.suggest_int("rsi_period", 2, 14),
             "rsi_oversold": trial.suggest_int("rsi_oversold", 10, 30),
-            "vol_surge_multiplier": trial.suggest_float("vol_surge_multiplier", 2.0, 6.0),
             "atr_period": trial.suggest_int("atr_period", 5, 20),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 6, 48),
         }
     elif strategy == "VolatilityBreakoutPumpStrategy":
+        # Issue #446 — `bb_std` → `bb_std_dev` (echter Config-Feldname). `vol_window`/`vol_threshold`
+        # ENTFERNT (Phantom-Tuning): die Strategie hat keinen Volumen-Pfad, und synthetische 1h-Bars
+        # tragen konstant `volume=1.0` (hourly_strategy_base.py:174) — ein Volumen-Filter feuert nie
+        # (gleiche Architekturentscheidung wie dynamic_breakout/vwap_exhaustion). Getunt werden nur
+        # die echten BB-Entry-Felder + Trade-Management.
         return {
             "bb_period": trial.suggest_int("bb_period", 10, 40),
-            "bb_std": trial.suggest_float("bb_std", 1.5, 3.0),
-            "vol_window": trial.suggest_int("vol_window", 5, 20),
-            "vol_threshold": trial.suggest_float("vol_threshold", 1.5, 4.0),
+            "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 3.0),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 72),
         }
     elif strategy == "VwapExhaustionStrategy":
+        # Issue #446 — `vwap_window` → `vwap_period` (echter Config-Feldname). `rsi_period`/
+        # `rsi_extreme` ENTFERNT (Phantom-Tuning): VwapExhaustion ist bewusst „Price-Deviation only"
+        # und besitzt KEINEN RSI-Indikator (siehe Modul-Docstring). Getunt werden nur die echten
+        # Felder.
         return {
-            "vwap_window": trial.suggest_int("vwap_window", 10, 50),
+            "vwap_period": trial.suggest_int("vwap_period", 10, 50),
             "deviation_threshold": trial.suggest_float("deviation_threshold", 0.005, 0.03),
-            "rsi_period": trial.suggest_int("rsi_period", 2, 14),
-            "rsi_extreme": trial.suggest_int("rsi_extreme", 10, 30),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 6, 48),

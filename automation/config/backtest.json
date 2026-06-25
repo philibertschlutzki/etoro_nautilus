@@ -10,10 +10,11 @@
       "max_workers": "Maximale Anzahl paralleler Worker-Prozesse (null = auto: cpu_count/2, max 6)",
       "min_bars_for_backtest": "Mindestanzahl Bars pro Symbol f\u00fcr einen aussagekr\u00e4ftigen Backtest (=is_symbol_data_sufficient threshold)",
       "span_tolerance_days": "Toleranz in Tagen f\u00fcr die historische Datenspanne, um knappe Verwerfungen (z. B. 149.8 statt 150) zu vermeiden.",
-      "walk_forward": "Walk-Forward Konfiguration (In-Sample, Out-of-Sample, Splits)",
-      "commission_bps": "Kommission pro Trade (Round-Trip) in Basispunkten (bps)",
+      "walk_forward": "Walk-Forward Konfiguration (In-Sample, Out-of-Sample, Splits, Holdout, data_history_days)",
+      "commission_bps": "Kommission pro Round-Trip in Basispunkten (bps)",
       "spread_bps_by_asset_class": "Dynamische Tick-Weitung pro Asset Class in Basispunkten (bps), um Zero-Spread Artefakte zu vermeiden",
-      "holdout_days": "Anzahl der Holdout-Tage f\u00fcr Out-of-Sample Validierung nach der Optimierung."
+      "holdout_days": "Anzahl der Holdout-Tage f\u00fcr Out-of-Sample Validierung nach der Optimierung.",
+      "data_history_days": "Issue #445 \u2014 dokumentierte/erwartete Mindest-Datenhistorie pro Symbol in Tagen (Single Source of Truth, deckungsgleich mit strategy_defaults.json._schema). MUSS \u2265 is_window_days + splits\u00d7oos_window_days + holdout_days sein (sonst f\u00e4llt build_trial fail-loud). 450 = ~15 Monate: deckt die validierte Geometrie (180 + 4\u00d745 + 45 = 405 Tage) plus Gate-1-Puffer (gate1_buffer_days=30 \u2192 435) ab. catalog_service akkumuliert Ticks 24/7 \u00fcber den initialen historical_fetcher-Backfill hinaus."
     }
   },
   "catalog_path": "data/nautilus",
@@ -36,6 +37,7 @@
     "is_window_days": 180,
     "oos_window_days": 45,
     "splits": 4,
-    "holdout_days": 45
+    "holdout_days": 45,
+    "data_history_days": 450
   }
 }

@@ -54,6 +54,23 @@ def build_trial(
     is_window_days = wf.get("is_window_days", 120)
     oos_window_days = oos_window_days_override if oos_window_days_override is not None else wf.get("oos_window_days", 30)
 
+    # Issue #445 — Fail-Loud-Startup-Assertion: die Walk-Forward-Geometrie darf die dokumentierte
+    # Datenhistorie nicht übersteigen (Single Source of Truth = walk_forward.data_history_days).
+    # Sonst zehrt das Holdout-Fenster die Reserve auf, und der Spätstarter-Filter (backtest_runner)
+    # verwirft alle Symbole erst spät und still ("Keine Instrumente"). Hier früh & erklärend abbrechen.
+    # No-Op, wenn data_history_days fehlt (z. B. minimale Inline-Test-Configs) ⇒ rückwärtskompatibel.
+    data_history_days = wf.get("data_history_days")
+    if data_history_days is not None:
+        required_total = is_window_days + n_folds * oos_window_days + holdout_days
+        if required_total > data_history_days:
+            raise ValueError(
+                f"Walk-Forward-Geometrie übersteigt die dokumentierte Datenhistorie (Issue #445): "
+                f"is_window {is_window_days} + splits {n_folds} × oos {oos_window_days} + holdout "
+                f"{holdout_days} = {required_total} Tage > data_history_days {data_history_days}. "
+                f"Reduziere die Geometrie ODER erhöhe backtest.json.walk_forward.data_history_days "
+                f"(und beschaffe entsprechend mehr Katalog-Historie)."
+            )
+
     # Self-describing manifest (ISSUE-OPT-374): the effective walk-forward geometry and
     # start_capital must travel inside the manifest's global_settings, not only via the
     # copied backtest.json side-channel. Built once and reused for both sinks (DRY).
