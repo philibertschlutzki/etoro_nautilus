@@ -97,8 +97,10 @@ def test_sampled_switches_survive_struct_filter_and_build_config():
 
     Mirrors the defensive ``__struct_fields__`` filtering in
     ``backtest_runner.run_single_backtest_worker`` so the test reflects the real
-    parameter pipeline (sampled → filter → config), where sampling-only artifacts
-    such as ``trend_tolerance_pct`` are dropped while the switches survive.
+    parameter pipeline (sampled → filter → config). The only remaining sampling-only
+    artifact is ``macd_gap`` (translated to ``macd_slow`` inside spaces, never returned).
+    Issue #446: ``trend_tolerance_pct`` is now a *real*, wired config field (no longer a
+    dropped phantom), so it must be a recognised struct key.
     """
     trial = optuna.trial.FixedTrial(
         _full_sample(require_vwap_confirmation=False, require_bb_touch=False)
@@ -108,9 +110,11 @@ def test_sampled_switches_survive_struct_filter_and_build_config():
     valid_keys = set(ComboTrendVwapConfig.__struct_fields__)
     for name in SWITCHES:
         assert name in valid_keys, f"{name} must be a recognised struct field"
-    # Sampling artifacts that are not config fields must be dropped by the filter.
-    assert "macd_gap" not in sampled  # translated to macd_slow by spaces
-    assert "trend_tolerance_pct" not in valid_keys
+    # macd_gap stays a sampling-only artifact (translated to macd_slow, not returned).
+    assert "macd_gap" not in sampled
+    # Issue #446 — trend_tolerance_pct is now a wired config field and must bind.
+    assert "trend_tolerance_pct" in valid_keys
+    assert "trend_tolerance_pct" in sampled
 
     filtered = {k: v for k, v in sampled.items() if k in valid_keys}
     cfg = ComboTrendVwapConfig(**_REQUIRED, **filtered)

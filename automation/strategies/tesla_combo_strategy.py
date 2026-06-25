@@ -30,6 +30,10 @@ class ComboTrendVwapConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     vwap_period: int = 20
     require_vwap_confirmation: bool = True
     require_bb_touch: bool = True
+    # Issue #446 — zuvor gesampelt, aber weder Config-Feld noch verdrahtet (Phantom). Jetzt echtes
+    # Feld: Toleranzband um die SMA für die Trend-Gates. Default 0.02 reproduziert exakt das frühere
+    # Hardcoding (close > sma*0.98 bzw. close < sma*1.02).
+    trend_tolerance_pct: float = 0.02
 
 
 class ComboTrendVwapStrategy(HourlyStrategyBase):
@@ -101,11 +105,14 @@ class ComboTrendVwapStrategy(HourlyStrategyBase):
 
         close_price = float(bar.close)
 
-        trend_bullish = close_price > (self.sma.value * 0.98)
+        # Issue #446 — Trend-Toleranzband aus dem (jetzt verdrahteten) Config-Feld statt hartem
+        # 0.98/1.02. Default 0.02 ⇒ verhaltensidentisch zur bisherigen Logik.
+        trend_tol = self.config.trend_tolerance_pct
+        trend_bullish = close_price > (self.sma.value * (1.0 - trend_tol))
         momentum_bullish = self.macd.value > self.macd_signal.value
         atr_tolerance = self.atr.value * self.config.atr_multiplier
 
-        trend_bearish = close_price < (self.sma.value * 1.02)
+        trend_bearish = close_price < (self.sma.value * (1.0 + trend_tol))
         momentum_bearish = self.macd.value < self.macd_signal.value
 
         if close_price <= (self.bb.lower + atr_tolerance) or close_price >= (self.bb.upper - atr_tolerance):

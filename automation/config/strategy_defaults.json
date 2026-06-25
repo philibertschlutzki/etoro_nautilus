@@ -1,6 +1,6 @@
 {
   "_schema": {
-    "description": "Default-Parameter pro Strategie f\u00fcr 1h-Candle-Daten (12 Monate History). Perioden auf st\u00fcndliche Aufl\u00f6sung optimiert. Werte in strategies.json haben Vorrang."
+    "description": "Default-Parameter pro Strategie f\u00fcr 1h-Candle-Daten (~15 Monate / \u2265450 Tage History; Single Source of Truth = backtest.json.walk_forward.data_history_days). Issue #445: Die Walk-Forward-Geometrie (is_window 180 + splits 4 \u00d7 oos 45 + holdout 45 = 405 Tage, plus Gate-1-Puffer 30 = 435) verlangt mehr als die fr\u00fcher dokumentierten 12 Monate; catalog_service akkumuliert Ticks 24/7 \u00fcber den initialen historical_fetcher-Backfill hinaus. Perioden auf st\u00fcndliche Aufl\u00f6sung optimiert. Werte in strategies.json haben Vorrang."
   },
   "SmaCrossoverStrategy": {
     "sma_period": 5,
