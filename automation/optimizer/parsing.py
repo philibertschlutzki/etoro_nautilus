@@ -34,6 +34,12 @@ class TournamentMetrics:
     # Diagnose direkt sichtbar. None, wenn der Block (oder die Felder) fehlen (rückwärtskompatibel).
     fill_ts_min: int | None = None
     fill_ts_max: int | None = None
+    # Issue #449 (Pitfall #82) — OOS-Abdeckungsgrenze + Flag. oos_covered=False ⇒ die Daten reichen
+    # nicht bis in das früheste OOS-Sub-Fenster ⇒ oos_total_trades=0 ist strukturell (Datenabdeckung),
+    # nicht parameterbedingt. oos_coverage_gap_days = Abstand fill_ts_max → OOS-Grenze in Tagen.
+    oos_window_start_ns: int | None = None
+    oos_covered: bool | None = None
+    oos_coverage_gap_days: float | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -102,6 +108,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     dw_days = dw.get("days")
     dw_fill_min = dw.get("fill_ts_min")
     dw_fill_max = dw.get("fill_ts_max")
+    # Issue #449 — OOS-Abdeckungs-Telemetrie (None-safe, rückwärtskompatibel).
+    dw_oos_start = dw.get("oos_window_start_ns")
+    dw_oos_covered = dw.get("oos_covered")
+    dw_oos_gap = dw.get("oos_coverage_gap_days")
 
     return TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
@@ -122,4 +132,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         data_window_days=float(dw_days) if dw_days is not None else None,
         fill_ts_min=int(dw_fill_min) if dw_fill_min is not None else None,
         fill_ts_max=int(dw_fill_max) if dw_fill_max is not None else None,
+        oos_window_start_ns=int(dw_oos_start) if dw_oos_start is not None else None,
+        oos_covered=bool(dw_oos_covered) if dw_oos_covered is not None else None,
+        oos_coverage_gap_days=float(dw_oos_gap) if dw_oos_gap is not None else None,
     )

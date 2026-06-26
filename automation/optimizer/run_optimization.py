@@ -112,7 +112,8 @@ def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict
 
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
-                           logger: logging.Logger | None = None) -> None:
+                           logger: logging.Logger | None = None,
+                           stop_on_plateau: bool = False) -> None:
     """Issue #409/#413 (P2) — Fail-Loud-Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
 
     Optuna-Callback (Signatur ``(study, trial)``; ``weights``/``n_startup_trials``/``logger`` sind
@@ -160,6 +161,17 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "Symbol ist derzeit ein No-Op.",
                 len(completed),
             )
+            # Issue #450 (Pitfall #83) — bei erkanntem Plateau die Study aktiv stoppen statt die
+            # restlichen ~84 Trials als Zero-Gradient-Zufallsgenerator weiterlaufen zu lassen
+            # (≈30 min verschwendete Compute pro voller Sweep-Runde). Opt-in (nur Produktion bindet
+            # stop_on_plateau=True); Unit-Tests mit Fake-Study bleiben unberührt.
+            if stop_on_plateau:
+                _stop = getattr(study, "stop", None)
+                if callable(_stop):
+                    try:
+                        _stop()
+                    except Exception:  # Study nicht in optimize()-Kontext → Warnung genügt
+                        pass
         return
 
     # Legacy-Fallback (kein oos_evaluated-Attr, z. B. alte Studies / globaler make_objective-Pfad):
@@ -176,6 +188,14 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             "und Gates; verwirf ggf. die stale Study (rm data/optimizer/sweep/*.db).",
             len(completed), floor,
         )
+        # Issue #450 (Pitfall #83) — siehe oben: aktiv stoppen statt weiterlaufen (opt-in).
+        if stop_on_plateau:
+            _stop = getattr(study, "stop", None)
+            if callable(_stop):
+                try:
+                    _stop()
+                except Exception:
+                    pass
 
 
 def _check_reward_semantics_version(study, opt_data: dict,
@@ -283,7 +303,12 @@ def make_objective(
             "win_count": metrics.win_count,
             "is_total_trades": metrics.is_total_trades,
             "is_max_trades": metrics.is_max_trades,
-            "outcome": outcome
+            "outcome": outcome,
+            # Issue #449 (Pitfall #82) — OOS-Abdeckungs-Diagnose auch im Multi-Symbol-Event.
+            "fill_ts_max": metrics.fill_ts_max,
+            "oos_window_start_ns": metrics.oos_window_start_ns,
+            "oos_covered": metrics.oos_covered,
+            "oos_coverage_gap_days": metrics.oos_coverage_gap_days,
         })
 
         return reward
@@ -333,7 +358,7 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     _check_reward_semantics_version(study, opt_data)
 
     # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
-    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
+    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials, stop_on_plateau=True)
     study.optimize(
         make_objective(strategy),
         n_trials=n_trials,
@@ -539,6 +564,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "data_window_start": metrics.data_window_start,
             "data_window_end": metrics.data_window_end,
             "data_window_days": metrics.data_window_days,
+            # Issue #449 (Pitfall #82) — die diagnostisch entscheidenden Zahlen, die bisher vor der
+            # Operator-Konsole verloren gingen: erreicht fill_ts_max die früheste OOS-Grenze? Bei
+            # oos_covered=False ist OOS=0 strukturell (H2-Datenabdeckung), NICHT parameterbedingt —
+            # damit ist der Floor-Plateau-Grund auf einen Blick eindeutig.
+            "fill_ts_max": metrics.fill_ts_max,
+            "oos_window_start_ns": metrics.oos_window_start_ns,
+            "oos_covered": metrics.oos_covered,
+            "oos_coverage_gap_days": metrics.oos_coverage_gap_days,
         })
         return reward
     return objective
@@ -598,7 +631,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     )
     # Issue #409 — Fail-Loud-Guard: warnt, sobald nach n_startup_trials alle Trials am
     # Unevaluable-Floor kleben (Pitfall #75). Config einmalig gebunden (kein Per-Trial-IO).
-    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
+    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials, stop_on_plateau=True)
     study.optimize(objective, n_trials=n_trials, n_jobs=1,
                    catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
     # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.

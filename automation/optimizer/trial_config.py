@@ -13,6 +13,35 @@ def config_dir() -> Path:
     # Default to automation/config from WORK parent
     return WORK.parent.parent / "automation" / "config"
 
+
+def compute_walk_forward_window(
+    *,
+    now: dt.datetime,
+    holdout_days: int,
+    is_window_days: int,
+    oos_window_days: int,
+    n_folds: int,
+) -> tuple[dt.datetime, dt.datetime]:
+    """Issue #451 — EINZIGE Quelle der Walk-Forward-Fenster-Arithmetik (Pitfall #84).
+
+    Bisher lebte diese Berechnung ausschließlich inline in ``build_trial``. Das Sweep-Gate-1-
+    Preflight (#449) braucht exakt dieselbe Grenze, um zu prüfen, ob die Daten bis ins OOS-Sub-
+    Fenster reichen. Eine zweite, parallele Implementierung wäre genau die Divergenz-Footgun, die
+    diese Bug-Klasse (start_ns für Laden ≠ start_ns für Split) überhaupt erst erzeugt — deshalb
+    teilen sich beide Aufrufer diese eine reine Funktion.
+
+    Regel (unverändert ggü. dem alten Inline-Code):
+      end   = Mitternacht(now); wenn Sonntag → −1 Tag; dann − holdout_days
+      start = end − (is_window_days + n_folds * oos_window_days)
+    """
+    end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if end.weekday() == 6:  # Sonntag → Samstag
+        end -= dt.timedelta(days=1)
+    end -= dt.timedelta(days=holdout_days)
+    start = end - dt.timedelta(days=is_window_days + n_folds * oos_window_days)
+    return start, end
+
+
 def build_trial(
     strategy_class: str,
     sampled: dict,
@@ -83,15 +112,15 @@ def build_trial(
         "walk_forward_active": True,
     }
 
-    # Calculate dates
-    # Midnight of `now`
-    end = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # If Sunday (weekday() == 6), rollback to Saturday
-    if end.weekday() == 6:
-        end -= dt.timedelta(days=1)
-
-    end -= dt.timedelta(days=holdout_days)
-    start = end - dt.timedelta(days=is_window_days + n_folds * oos_window_days)
+    # Calculate dates — Issue #451: delegiert an die geteilte reine Funktion (Single Source of
+    # Truth), die auch das Sweep-Gate-1-Preflight nutzt. Verhindert Divergenz der Fenster-Grenzen.
+    start, end = compute_walk_forward_window(
+        now=now,
+        holdout_days=holdout_days,
+        is_window_days=is_window_days,
+        oos_window_days=oos_window_days,
+        n_folds=n_folds,
+    )
 
     # Setup directories
     trial_dir = WORK / study_name / f"trial_{trial_number:04d}"
