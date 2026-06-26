@@ -13,6 +13,41 @@ def config_dir() -> Path:
     # Default to automation/config from WORK parent
     return WORK.parent.parent / "automation" / "config"
 
+
+def compute_walk_forward_window(
+    *,
+    now: dt.datetime,
+    holdout_days: int,
+    is_window_days: int,
+    oos_window_days: int,
+    n_folds: int,
+) -> tuple[dt.datetime, dt.datetime]:
+    """Issue #457 (Pitfall #84) — die EINZIGE Quelle der Walk-Forward-Fenster-Arithmetik.
+
+    Rein (kein I/O, kein globaler State, deterministisch). Berechnet das (start, end)-Fenster,
+    das ``build_trial`` ins Manifest schreibt UND das das #455-OOS-Erreichbarkeits-Preflight
+    (``sweep``) braucht. Zwei parallele Inline-Implementierungen derselben Grenze waeren eine
+    eingebaute Divergenz-Falle zwischen „start_ns fuers Daten-Laden" und „start_ns fuer den Split"
+    (genau die Wurzel der OOS=0-Bug-Familie, Pitfall #80/#82) — deshalb NIE inline nachbauen,
+    immer ueber diese Funktion.
+
+    Geometrie (verifiziert gegen das real beobachtete Sweep-Log, ``now=2026-06-25`` ⇒
+    ``start=2025-05-16``, ``end=2026-05-11``):
+      * ``end`` = Mitternacht(``now``); faellt ``now`` auf einen Sonntag (``weekday()==6``),
+        rollt ``end`` VOR dem Holdout-Abzug auf Samstag zurueck.
+      * ``end`` -= ``holdout_days``.
+      * ``start`` = ``end`` − (``is_window_days`` + ``n_folds`` × ``oos_window_days``) Tage.
+
+    Die frueheste OOS-Sub-Fenster-Grenze (fold=0) ist damit ``start + is_window_days``.
+    """
+    end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Sonntag (weekday() == 6) → Samstag, BEVOR holdout abgezogen wird.
+    if end.weekday() == 6:
+        end -= dt.timedelta(days=1)
+    end -= dt.timedelta(days=holdout_days)
+    start = end - dt.timedelta(days=is_window_days + n_folds * oos_window_days)
+    return start, end
+
 def build_trial(
     strategy_class: str,
     sampled: dict,
@@ -83,15 +118,16 @@ def build_trial(
         "walk_forward_active": True,
     }
 
-    # Calculate dates
-    # Midnight of `now`
-    end = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    # If Sunday (weekday() == 6), rollback to Saturday
-    if end.weekday() == 6:
-        end -= dt.timedelta(days=1)
-
-    end -= dt.timedelta(days=holdout_days)
-    start = end - dt.timedelta(days=is_window_days + n_folds * oos_window_days)
+    # Calculate dates — Issue #457: an die geteilte, reine Fenster-Funktion delegieren (Single
+    # Source of Truth). KEINE Inline-Datums-Arithmetik mehr hier; das Sweep-Preflight (#455) nutzt
+    # exakt dieselbe Grenze, sodass „start fuers Laden" und „start fuer den Split" nie divergieren.
+    start, end = compute_walk_forward_window(
+        now=now,
+        holdout_days=holdout_days,
+        is_window_days=is_window_days,
+        oos_window_days=oos_window_days,
+        n_folds=n_folds,
+    )
 
     # Setup directories
     trial_dir = WORK / study_name / f"trial_{trial_number:04d}"

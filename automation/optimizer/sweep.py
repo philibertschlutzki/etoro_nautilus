@@ -16,9 +16,11 @@ import logging
 import time
 from pathlib import Path
 
+import datetime as dt
+
 from automation.optimizer import bounds
-from automation.optimizer.gate import is_symbol_tunable
-from automation.optimizer.trial_config import config_dir
+from automation.optimizer.gate import is_symbol_tunable, data_reaches_oos_window
+from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
 from automation.optimizer.manifest import WORK
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
@@ -145,19 +147,92 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
     return out
 
 
+def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
+    """Issue #455 — jüngster ``ts_event`` (Epoch-ns) je Symbol aus den Parquet-Row-Group-Statistiken.
+
+    Reines Telemetrie-Read: materialisiert KEINE Ticks, liest nur die ``max``-Statistik der
+    ``ts_event``-Spalte je Row-Group (O(#row_groups)). Liefert ``None`` bei fehlender Datei/Spalte
+    oder Lesefehler — dann bleibt das OOS-Erreichbarkeits-Preflight für dieses Symbol **fail-open**
+    (kein Skip). Im CI-Test gemockt (HI-7), analog zu ``count_available_bars``."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+
+    out: dict[str, int | None] = {}
+    for sym in symbols:
+        newest: int | None = None
+        pq_file = Path(catalog_path) / "data" / "quote_tick" / sym / "data.parquet"
+        if pq_file.exists():
+            try:
+                import pyarrow.parquet as pq
+                pf = pq.ParquetFile(str(pq_file))
+                if "ts_event" in pf.schema.names:
+                    idx = pf.schema.names.index("ts_event")
+                    for rg in range(pf.metadata.num_row_groups):
+                        st = pf.metadata.row_group(rg).column(idx).statistics
+                        hi = int(st.max)
+                        newest = hi if newest is None else max(newest, hi)
+            except Exception:
+                newest = None
+        out[sym] = newest
+    return out
+
+
+def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None) -> int | None:
+    """Issue #455/#457 — die früheste OOS-Sub-Fenster-Grenze (Epoch-ns) für das Sweep-Preflight.
+
+    Bezieht ``start`` aus der GETEILTEN ``compute_walk_forward_window`` (Single Source of Truth,
+    #457) und addiert ``is_window_days`` — exakt die Grenze, gegen die der jüngste Tick je Symbol
+    geprüft wird. ``None``, wenn die Walk-Forward-Geometrie unvollständig ist (⇒ Preflight fail-open).
+    """
+    wf = config.get("walk_forward") or {}
+    needed = ("is_window_days", "oos_window_days", "splits", "holdout_days")
+    if not all(k in wf for k in needed):
+        return None
+    if now is None:
+        now = dt.datetime.now(dt.timezone.utc)
+    start, _end = compute_walk_forward_window(
+        now=now,
+        holdout_days=wf["holdout_days"],
+        is_window_days=wf["is_window_days"],
+        oos_window_days=wf["oos_window_days"],
+        n_folds=wf["splits"],
+    )
+    oos_boundary = start + dt.timedelta(days=wf["is_window_days"])
+    # Mitternacht-UTC ⇒ ganzzahlige Sekunden ⇒ exakte ns ohne Float-Drift.
+    return int(oos_boundary.timestamp()) * 1_000_000_000
+
+
 def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                             *, tier: str, available_bars: dict[str, int],
-                            config: dict) -> list[tuple[str, str, str]]:
+                            config: dict, latest_ts: dict[str, int | None] | None = None,
+                            oos_window_start_ns: int | None = None,
+                            logger: logging.Logger | None = None) -> list[tuple[str, str, str]]:
     """Enumeriert (strategy, symbol, 'OK')-Tripel.
 
     1. Symbol-Liste = ``symbols`` or ``load_symbol_universe()``.
     2. Tier: 'deployable' (nur Tier-A-Gewinner pro Strategie), 'refine' (Platzhalter, P3),
        'all' (Kreuzprodukt strategies × Symbole).
     3. Gate 1: ``is_symbol_tunable(...)`` muss True sein.
+    4. Issue #455 — OOS-Erreichbarkeits-Preflight: Erreicht der jüngste Tick eines Symbols
+       (``latest_ts[symbol]``) die früheste OOS-Grenze (``oos_window_start_ns``) NICHT, wird das
+       Symbol mit ``OOS_WINDOW_UNREACHABLE`` + WARN-Zeile übersprungen — VOR dem Sweep, statt 100
+       strukturell nutzlose Trials zu fahren (Pitfall #82). **Vollständig fail-open**: fehlen
+       ``latest_ts`` oder ``oos_window_start_ns`` (Default ``None``), bleibt das Preflight aus und
+       das Verhalten ist bit-identisch zum Ist-Zustand (beide Symbole behalten).
     Ausgeschlossene Paare sind NICHT enthalten.
     """
     syms = symbols if symbols else load_symbol_universe()
     winners = load_tier_a_winners() if tier == "deployable" else {}
+    log = logger or logging.getLogger("optimizer")
 
     pairs: list[tuple[str, str, str]] = []
     for strategy in strategies:
@@ -173,8 +248,21 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
         for symbol in candidate_syms:
             ok, _reason = is_symbol_tunable(
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
-            if ok:
-                pairs.append((strategy, symbol, "OK"))
+            if not ok:
+                continue
+            # Issue #455 — OOS-Erreichbarkeits-Preflight (fail-open bei fehlender Telemetrie).
+            newest_ns = latest_ts.get(symbol) if latest_ts else None
+            reachable, oos_reason = data_reaches_oos_window(newest_ns, oos_window_start_ns)
+            if not reachable:
+                gap_days = round((oos_window_start_ns - newest_ns) / (86400 * 1_000_000_000), 1)
+                log.warning(
+                    "⏭️  %s/%s übersprungen (%s, Pitfall #82): jüngster Tick liegt %s Tage VOR der "
+                    "frühesten OOS-Grenze ⇒ jedes OOS-Sub-Fenster bliebe leer (oos_total_trades=0, "
+                    "strukturell). Katalog-H2 auffrischen (Backfill), dann erneut tunen.",
+                    strategy, symbol, oos_reason, gap_days,
+                )
+                continue
+            pairs.append((strategy, symbol, "OK"))
 
     # Issue #412 — order-preserving Dedup der (strategy, symbol)-Tripel. Selbst wenn die Symbol-
     # Liste schon dedupliziert ist (load_symbol_universe), schuetzt dies gegen Duplikate aus einer
@@ -230,8 +318,14 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     config = _load_gate_config()
     available_bars = count_available_bars(syms)
 
+    # Issue #455 — OOS-Erreichbarkeits-Preflight vorbereiten: jüngster Tick je Symbol + die geteilte
+    # OOS-Grenze (#457, compute_walk_forward_window). Beide fail-open (None) ⇒ kein Skip.
+    latest_ts = latest_ts_by_symbol(syms)
+    oos_window_start_ns = compute_oos_window_start_ns(config)
+
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
-                                    available_bars=available_bars, config=config)
+                                    available_bars=available_bars, config=config,
+                                    latest_ts=latest_ts, oos_window_start_ns=oos_window_start_ns)
 
     # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).
     # enumerate_tunable_pairs dedupliziert bereits; diese Assertion ist der Guertel-und-Hosentraeger-

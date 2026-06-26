@@ -110,16 +110,37 @@ def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict
             print(f"   {str(k):<18}: {v}")
     print("=" * 60)
 
+def _stop_study_safely(study, logger: logging.Logger) -> None:
+    """Issue #456 — ``study.stop()`` crash-sicher aufrufen. Eine Study AUSSERHALB eines aktiven
+    ``optimize()``-Kontexts (oder ein Test-Double ohne ``stop``) darf nicht zum Crash führen — die
+    bereits emittierte Plateau-Warnung genügt dann. Idempotent über ``getattr`` + ``try/except``."""
+    stop = getattr(study, "stop", None)
+    if stop is None:
+        return
+    try:
+        stop()
+    except Exception:  # pragma: no cover - defensiver Schutz außerhalb optimize()
+        logger.debug("study.stop() außerhalb eines optimize()-Kontexts ignoriert (Issue #456).")
+
+
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
-                           logger: logging.Logger | None = None) -> None:
-    """Issue #409/#413 (P2) — Fail-Loud-Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
+                           logger: logging.Logger | None = None,
+                           stop_on_plateau: bool = False) -> None:
+    """Issue #409/#413/#456 (P1/P2) — Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
 
-    Optuna-Callback (Signatur ``(study, trial)``; ``weights``/``n_startup_trials``/``logger`` sind
-    rein fuer Tests/DI und werden in Produktion aus der Config gebunden). Warnt EINMAL pro Study,
-    sobald der Sweep fuer ein Symbol nichts Promotbares erzeugt — statt ihn als teuren
-    Zufallsgenerator (Zero-Gradient) weiterlaufen zu lassen. Reine Observability — aendert NIE eine
-    Reward-/Promotion-Entscheidung.
+    Optuna-Callback (Signatur ``(study, trial)``; ``weights``/``n_startup_trials``/``logger``/
+    ``stop_on_plateau`` sind rein fuer Tests/DI und werden in Produktion aus der Config gebunden).
+    Warnt EINMAL pro Study, sobald der Sweep fuer ein Symbol nichts Promotbares erzeugt — statt ihn
+    als teuren Zufallsgenerator (Zero-Gradient) weiterlaufen zu lassen.
+
+    Issue #456 — ``stop_on_plateau`` (Opt-in, Default ``False``): Ist es ``True`` und ein Plateau
+    erkannt, ruft der Guard ZUSAETZLICH ``study.stop()`` (in BEIDEN Zweigen, crash-sicher), sodass
+    die als aussichtslos erkannte Suche nicht die restlichen ~84 Trials verschwendet (~30 min pro
+    Floor-Symbol). Die **Produktion bindet ``True``**; der Default ``False`` haelt alle Bestands-
+    Tests mit Fake-Study (ohne ``.stop()``) unveraendert gruen. **Observability-Invariante bleibt:**
+    der Guard aendert weiterhin NIE eine Reward- oder Promotion-Entscheidung — er beendet lediglich
+    eine bereits als aussichtslos erkannte Suche frueher.
 
     Issue #413 — PRIMAERER Indikator ist ``oos_evaluated`` (Per-Trial-User-Attr aus
     ``make_symbol_objective``), NICHT die Reward-Wert-Gleichheit: Da #406/#407 unevaluable Trials
@@ -160,6 +181,9 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "Symbol ist derzeit ein No-Op.",
                 len(completed),
             )
+            # Issue #456 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
+            if stop_on_plateau:
+                _stop_study_safely(study, logger)
         return
 
     # Legacy-Fallback (kein oos_evaluated-Attr, z. B. alte Studies / globaler make_objective-Pfad):
@@ -176,6 +200,9 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             "und Gates; verwirf ggf. die stale Study (rm data/optimizer/sweep/*.db).",
             len(completed), floor,
         )
+        # Issue #456 — auch im Legacy-Wert-Zweig die aussichtslose Suche frueh beenden (Opt-in).
+        if stop_on_plateau:
+            _stop_study_safely(study, logger)
 
 
 def _check_reward_semantics_version(study, opt_data: dict,
@@ -283,7 +310,12 @@ def make_objective(
             "win_count": metrics.win_count,
             "is_total_trades": metrics.is_total_trades,
             "is_max_trades": metrics.is_max_trades,
-            "outcome": outcome
+            "outcome": outcome,
+            # Issue #455 — OOS-Abdeckungs-Telemetrie auch im globalen Pfad surfacen (BEIDE Events).
+            "fill_ts_max": metrics.fill_ts_max,
+            "oos_window_start_ns": metrics.oos_window_start_ns,
+            "oos_covered": metrics.oos_covered,
+            "oos_coverage_gap_days": metrics.oos_coverage_gap_days,
         })
 
         return reward
@@ -333,7 +365,9 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     _check_reward_semantics_version(study, opt_data)
 
     # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
-    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
+    # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
+    floor_guard = partial(floor_plateau_callback, weights=opt_data,
+                          n_startup_trials=n_startup_trials, stop_on_plateau=True)
     study.optimize(
         make_objective(strategy),
         n_trials=n_trials,
@@ -432,6 +466,61 @@ def _classify_trial_rejection(metrics) -> str:
     return "oos_gate_rejected"
 
 
+# Issue #453 — Prefix → dezidierte Enum-Kategorie. Die Reason-Strings stammen aus
+# backtest_runner._evaluate_oos_eligibility (z. B. "oos_max_drawdown: 0.5 > 0.3"); längere Prefixe
+# zuerst, damit "oos_min_total_return" nicht fälschlich von "oos_min_t..." geschluckt wird.
+_OOS_REASON_PREFIX_MAP: tuple[tuple[str, str], ...] = (
+    ("oos_min_total_return", "REJECT_OOS_MIN_TOTAL_RETURN"),
+    ("oos_min_trades", "REJECT_OOS_MIN_TRADES"),
+    ("oos_min_expectancy", "REJECT_OOS_MIN_EXPECTANCY"),
+    ("oos_max_drawdown", "REJECT_OOS_MAX_DRAWDOWN"),
+    ("oos_min_win_rate", "REJECT_OOS_MIN_WIN_RATE"),
+    ("oos_min_sortino", "REJECT_OOS_MIN_SORTINO"),
+    ("oos_min_profit_factor", "REJECT_OOS_MIN_PROFIT_FACTOR"),
+    ("Micro-Sizing", "REJECT_OOS_MICRO_SIZING"),
+    ("oos_not_evaluable", "REJECT_OOS_NOT_EVALUABLE"),
+)
+
+
+def _map_oos_reason(reason: str) -> str:
+    """Issue #453 — eine konkrete OOS-Reason-Zeile auf ihre dezidierte Enum-Kategorie abbilden."""
+    for prefix, code in _OOS_REASON_PREFIX_MAP:
+        if reason.startswith(prefix):
+            return code
+    return "REJECT_OOS_OTHER"
+
+
+def _classify_is_rejection_detail(metrics) -> str:
+    """Issue #453 — granulare, aggregierbare Ablehnungs-Kategorie (feiner als _classify_trial_rejection).
+
+    Löst den Catch-All ``oos_not_evaluated`` in die TATSÄCHLICHE Ursache auf, sodass systematisches
+    Auto-Tuning (Bezug #403/#408) den DATENseitigen Drop (OOS-Fenster nicht abgedeckt, #455) vom
+    STRATEGIEseitigen (abgedeckt, aber inaktiv) und vom konkreten OOS-Gate-Drop (Drawdown, Win-Rate,
+    Trades …) unterscheiden kann. Rein klassifizierend — ändert KEINE Reward-/Promotion-Entscheidung.
+
+    Kategorien:
+      * ``NONE``                          — evaluiert & eligible (kein Drop).
+      * ``REJECT_OOS_WINDOW_UNREACHABLE`` — OOS=0 + ``oos_covered is False`` (H2-Katalog, #455).
+      * ``REJECT_OOS_INACTIVE``           — OOS=0, aber ``oos_covered is True`` (Strategie handelt
+                                            im OOS-Fenster nicht — strategieseitig, separat zu lösen).
+      * ``REJECT_OOS_NOT_EVALUATED``      — OOS=0, Abdeckung unbekannt (Legacy/keine #455-Telemetrie).
+      * ``REJECT_OOS_<GATE>``             — evaluiert, aber durchs konkrete Eligibility-Gate gefallen.
+    """
+    if metrics.oos_evaluated and metrics.oos_eligible:
+        return "NONE"
+    if not metrics.oos_evaluated:
+        covered = getattr(metrics, "oos_covered", None)
+        if covered is False:
+            return "REJECT_OOS_WINDOW_UNREACHABLE"
+        if covered is True:
+            return "REJECT_OOS_INACTIVE"
+        return "REJECT_OOS_NOT_EVALUATED"
+    reasons = getattr(metrics, "oos_rejection_reasons", ()) or ()
+    if reasons:
+        return _map_oos_reason(reasons[0])
+    return "REJECT_OOS_GATE"
+
+
 def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
     """Issue #415 — Per-Study-Timing-/Evaluierbarkeits-Summary nach ``study.optimize``.
 
@@ -515,6 +604,10 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # persistieren, damit confirm._dominant_rejection sie ueber die Study aggregieren kann.
         rejection_reason = _classify_trial_rejection(metrics)
         trial.set_user_attr("rejection_reason", rejection_reason)
+        # Issue #453 — granulare, dezidierte Rejection-Kategorie (löst 'oos_not_evaluated' in die
+        # tatsächliche Ursache auf) zusätzlich persistieren — für die modale Proposal-Aggregation.
+        is_rejection_detail = _classify_is_rejection_detail(metrics)
+        trial.set_user_attr("is_rejection_detail", is_rejection_detail)
         # Issue #415 — backtest_ms als User-Attr fuer die Per-Study-Aggregation (optimize_symbol).
         trial.set_user_attr("backtest_ms", backtest_ms)
         # Issue #413 — oos_evaluated als User-Attr: Grundlage des evaluable-basierten Floor-Guards
@@ -539,6 +632,18 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "data_window_start": metrics.data_window_start,
             "data_window_end": metrics.data_window_end,
             "data_window_days": metrics.data_window_days,
+            # Issue #455 (Pitfall #82) — OOS-Abdeckungs-Telemetrie an die Operator-Konsole heben.
+            # oos_covered=False ⇒ der Floor-Grund ist auf einen Blick DATENseitig (H2-Katalog zu
+            # dünn/stale), nicht parameterseitig — die einzige diagnostisch relevante Zahl, die
+            # bislang vor der Konsole verworfen wurde.
+            "fill_ts_max": metrics.fill_ts_max,
+            "oos_window_start_ns": metrics.oos_window_start_ns,
+            "oos_covered": metrics.oos_covered,
+            "oos_coverage_gap_days": metrics.oos_coverage_gap_days,
+            # Issue #453 — granulare Rejection-Kategorie + die konkreten OOS-Gate-Verletzungen
+            # ins strukturierte Event heben (Observability; ändert keine Entscheidung).
+            "is_rejection_detail": is_rejection_detail,
+            "oos_rejection_reasons": list(metrics.oos_rejection_reasons),
         })
         return reward
     return objective
@@ -598,7 +703,10 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     )
     # Issue #409 — Fail-Loud-Guard: warnt, sobald nach n_startup_trials alle Trials am
     # Unevaluable-Floor kleben (Pitfall #75). Config einmalig gebunden (kein Per-Trial-IO).
-    floor_guard = partial(floor_plateau_callback, weights=opt_data, n_startup_trials=n_startup_trials)
+    # Issue #456 — Produktion bindet stop_on_plateau=True: die als aussichtslos erkannte
+    # Per-Symbol-Study früh beenden (spart ~84 nutzlose Trials, ~30 min pro Floor-Symbol).
+    floor_guard = partial(floor_plateau_callback, weights=opt_data,
+                          n_startup_trials=n_startup_trials, stop_on_plateau=True)
     study.optimize(objective, n_trials=n_trials, n_jobs=1,
                    catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
     # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.

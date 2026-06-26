@@ -26,6 +26,7 @@
 16. [Bekannte Pitfalls & offene Bugs](#16-bekannte-pitfalls--offene-bugs)
 17. [Order Management & Async State Machine (Neu)](#17-order-management--async-state-machine-neu)
 18. [Conventions für KI-Coding-Agents (Jules)](#18-conventions-für-ki-coding-agents-jules)
+18.5. [Agent-Rollen, System-Prompts & Interaktionsprotokolle (Enterprise / Security-Audit-Grade)](#185-agent-rollen-system-prompts--interaktionsprotokolle-enterprise--security-audit-grade)
 19. [Changelog (Agent-Maintained)](#19-changelog-agent-maintained)
 
 ---
@@ -780,6 +781,26 @@ Die Backtest-Orchestrierung unterstützt nun eine Walk-Forward-Validierung mit O
 **Fix/Regel:** Single Source of Truth = `*Config`-Felder. **Ein Parameter darf nur gesampelt werden, wenn er als Config-Feld existiert.** Renames in `spaces.py`; Phantom-Volumen-/RSI-Keys entfernt; `trend_tolerance_pct` als Feld ergänzt + im Trend-Gate verdrahtet; FlashCrash sampelt jetzt die echten Entry-Felder `bb_period`/`bb_std_dev`. Die zentrale Regressions-Assertion `test_search_space_binding.py::test_sampled_params_bind_to_config` prüft für JEDE aktive Strategie `set(sample_params(s)) ⊆ set(Config.__struct_fields__)` und fängt jeden künftigen Drift fail-fast ab. Die vollständige Soll-Vorgabe steht in `automation/OPTIMIZER_PARAMETER_REFERENZ.md`.
 **Betroffen:** `automation/optimizer/spaces.py`, `automation/strategies/tesla_combo_strategy.py` (`trend_tolerance_pct`-Feld + Verdrahtung); Tests `automation/tests/test_search_space_binding.py`, `automation/tests/test_combo_conjunction_switches.py` (veraltete „dropped"-Assertion korrigiert); Doku `automation/OPTIMIZER_PARAMETER_REFERENZ.md`.
 
+### 🟢 Pitfall #82 — OOS-Abdeckungs-Blindstelle: Katalog erreicht das OOS-Fenster nicht ⇒ struktureller OOS=0 [BEHOBEN: GH-#455 (P0)]
+**Symptom:** Nach dem `_fill_ts_ns`-Fix (#448/#80) läuft der In-Sample-Backtest sauber (100+ Round-Trips), trotzdem ist `oos_evaluated: false` / `oos_total_trades: 0` über **alle** Strategien für ein Symbol (z. B. `TSLA.ETORO`); Reward klebt am Unevaluable-Floor (−9.90…−9.93), „Floor-Plateau erkannt" nach 16 Trials, `Best is trial 0` bewegt sich nie. Sechs strukturell verschiedene Strategien können nicht zufällig alle exakt am Tag 180 aufhören zu handeln.
+**Root Cause:** **Daten-/telemetrieseitig, NICHT logisch** — IS/OOS-Split (`extract_metrics`) und `check_data_span` sind beide korrekt. Die Walk-Forward-Geometrie verankert die früheste OOS-Sub-Fenster-Grenze (fold=0) bei `start_ns + is_window_ns`. Reichen die Katalogdaten in der zweiten Fensterhälfte nur als dünner/staler Endpunkt (typisch nach `catalog_service`-Ausfall mit partiellem Backfill, der nur Randticks hinterlässt), liegen ALLE realen Fills in `[start, start+is_window]` ⇒ jedes OOS-Sub-Fenster erhält **null** Fills ⇒ `oos_total_trades=0` strukturell, parameter-unabhängig. **Zwei bestehende Guards verfehlen das:** (1) die #448-Plausibilitäts-Assertion prüft nur die UNTERE Kante (`fill_ts_max < start_ns`), nicht die OOS-Abdeckungs-Kante (`fill_ts_max < start_ns + is_window_ns`); (2) `check_data_span` validiert nur die Spannweite (`last − first ≥ required`), nicht Dichte/Aktualität in H2. Entscheidend: die einzige diagnostisch relevante Zahl — `fill_ts_max` gegen die OOS-Grenze — wurde vor der Operator-Konsole verworfen.
+**Fix/Regel:** (1) **Telemetrie (die eigentliche Entblockung):** `extract_metrics` berechnet `oos_window_start_ns = start_ns + is_window_ns` und `oos_covered = (fill_ts_max ≥ oos_window_start_ns)`; durchgereicht über `run_single_backtest_worker` → `write_tournament_json` (`data_window`: `oos_window_start_ns`, `oos_window_start` ISO, `oos_covered`, `oos_coverage_gap_days`) → `parse_tournament`/`TournamentMetrics` → BEIDE `optimizer_trial_completed`-Events. Bei `oos_covered=false` ist der Floor-Grund auf einen Blick **datenseitig**. (2) **WARN statt `raise`** in `extract_metrics`: die Abdeckungs-Verletzung wird als sichtbare Logzeile gemeldet — ein `raise` würde über die NULL-Rückgabe genau diese Telemetrie verschlucken. (3) **Gate-1-Preflight:** reine Funktion `gate.data_reaches_oos_window(newest_ns, oos_window_start_ns)` + `sweep.latest_ts_by_symbol` (jüngster `ts_event` je Symbol aus Parquet-Row-Group-Statistiken); `enumerate_tunable_pairs` überspringt ein Symbol, dessen jüngster Tick die früheste OOS-Grenze nicht erreicht (`OOS_WINDOW_UNREACHABLE` + WARN), VOR dem Sweep statt 100 nutzlose Trials. **Vollständig fail-open:** fehlt Tick-Telemetrie oder Geometrie, bleibt das Preflight aus (bit-identisch).
+**Invariante:** Die OOS-Abdeckungs-Telemetrie (`oos_covered`) ist reine Diagnose und ändert **NIE** eine Reward-/Promotion-Entscheidung. Das Preflight ist fail-open (kein stiller Skip bei fehlender Telemetrie). Bei `oos_covered=false` ist die Ursache der H2-Katalog (Backfill 2025-11 → heute nötig), nicht die Parametrisierung.
+**Betroffen:** `automation/backtest_runner.py` (`extract_metrics`, `run_single_backtest_worker`, `write_tournament_json`), `automation/optimizer/parsing.py`, `automation/optimizer/gate.py` (`data_reaches_oos_window`), `automation/optimizer/sweep.py` (`latest_ts_by_symbol`, `compute_oos_window_start_ns`, Preflight), `automation/optimizer/run_optimization.py` (beide Trial-Events); Tests `automation/tests/test_issue_449_oos_coverage.py`.
+
+### 🟢 Pitfall #83 — Floor-Plateau-Guard warnt nur, stoppt die aussichtslose Study nicht ⇒ verschwendete Compute [BEHOBEN: GH-#456 (P1)]
+**Symptom:** Nach „🚨 Floor-Plateau erkannt" (alle Trials unevaluable, #75/#82-Klasse) läuft die Study dennoch bis `n_trials=100` weiter. Der TPE-Sampler hat keinen Gradienten (jeder Trial unevaluable) und erzeugt nur teures Rauschen; pro Symbol verfallen ~84 Trials nutzlos (~30 min pro Floor-Symbol über einen `--symbols all`-Sweep).
+**Root Cause:** `floor_plateau_callback` (#409, evaluable-basiert seit #413) war **reine Observability**: setzt das User-Attr `floor_plateau_warned` und loggt eine WARN-Zeile, ruft aber **nie** `study.stop()` — obwohl bereits nach `n_startup_trials` feststeht, dass nichts Promotbares mehr kommt.
+**Fix/Regel:** Opt-in-Parameter `stop_on_plateau: bool = False`. Bei `True` ruft der Guard in **beiden** Plateau-Zweigen (evaluable-basiert UND Legacy-Wert) `study.stop()` — crash-sicher über `getattr(study, "stop", None)` + `try/except` (eine Study außerhalb eines `optimize()`-Kontexts crasht nicht). Die **Produktion** bindet `stop_on_plateau=True` in beiden `partial(floor_plateau_callback, …)`-Stellen (`optimize`, `optimize_symbol`); die **Default-Signatur bleibt `False`**, sodass alle Bestands-Tests mit Fake-Study (ohne `.stop()`) unverändert grün bleiben.
+**Invariante:** Die **Observability-Invariante bleibt erhalten** — der Guard ändert weiterhin NIE eine Reward- oder Promotion-Entscheidung; er beendet lediglich eine bereits als aussichtslos erkannte Suche früher. Ist ≥1 Trial evaluable, wird NIE gestoppt.
+**Betroffen:** `automation/optimizer/run_optimization.py` (`floor_plateau_callback`-Signatur + `_stop_study_safely` + zwei `study.stop()`-Zweige; zwei `partial`-Bindungen); Tests `automation/tests/test_issue_449_oos_coverage.py` (`test_plateau_*`).
+
+### 🟢 Pitfall #84 — Walk-Forward-Fenster-Arithmetik dupliziert ⇒ Divergenz-Footgun [BEHOBEN: GH-#457 (P2)]
+**Symptom/Risiko:** Latentes Risiko, **kein** akutes Fehlverhalten. Die Fenster-Berechnung (`end = Mitternacht(now)`; Sonntag → −1 Tag; `− holdout_days`; `start = end − (is_window + splits·oos)`) lebte ausschließlich inline in `build_trial`. Das #455-OOS-Preflight braucht **exakt dieselbe** OOS-Grenze (`start + is_window`); ein Nachbau erzeugte genau die Divergenz-Klasse zwischen „`start_ns` fürs Daten-Laden" und „`start_ns` für den Split", die der Wurzel der OOS=0-Bug-Familie entspricht (#80/#82).
+**Fix/Regel:** Neue reine Funktion `trial_config.compute_walk_forward_window(*, now, holdout_days, is_window_days, oos_window_days, n_folds) -> (start, end)` als **EINZIGE** Quelle der Fenster-Arithmetik. `build_trial` delegiert (bit-identisch); das Sweep-Preflight (`sweep.compute_oos_window_start_ns`) bezieht die OOS-Grenze aus derselben Funktion. **Regel: Fenster-Grenzen NIE inline nachbauen — immer `compute_walk_forward_window`.** Verifiziert gegen das real beobachtete Fenster (`now=2026-06-25` ⇒ `start=2025-05-16`, `end=2026-05-11`), inkl. Sonntag-Rollback.
+**Invariante:** Es existiert genau EINE Implementierung der Walk-Forward-Fenster-Grenzen. Jede neue Stelle, die die Grenze braucht, MUSS `compute_walk_forward_window` aufrufen statt die Arithmetik zu kopieren.
+**Betroffen:** `automation/optimizer/trial_config.py` (`compute_walk_forward_window`; `build_trial` delegiert), `automation/optimizer/sweep.py` (`compute_oos_window_start_ns`); Tests `automation/tests/test_issue_449_oos_coverage.py` (`test_window_*`, `test_build_trial_uses_shared_window`).
+
 ### Pitfall #53: Optimizer-Storage — SQLite-Default, Postgres-Opt-in (A4.7)
 **Symptom:** Unklarheit über Datenhaltung und fehlende PR-Promotion.
 **Ursache/Lösung:** **SQLite für Single-Node** ist der strikte Default (per-Study-Datei `{WORK}/sweep/{study}.db`). **Postgres (o. ä.) nur für explizite parallele Sweeps** über mehrere Maschinen gegen *eine* Study — reines Opt-In via `optimizer.json['storage_url']` oder ENV `ETORO_OPTUNA_STORAGE` (ENV hat Vorrang), aufgelöst durch `run_optimization.resolve_storage`. Diese Aufweichung der „ausschließlich SQLite"-Leitplanke ist **bewusst, dokumentiert und begrenzt**: bei non-SQLite-URL ist Determinismus pro Study nur bei `n_jobs=1` garantiert (Warnung wird geloggt; Pitfall #68 bleibt für SQLite gültig). Eine ENV-URL wird verbatim genutzt (Fail-Fast bei ungültiger URI statt stillem SQLite-Fallback). Der Optimizer verändert `tournament.json` NIE und startet NIE Phase 5; Promotion nur per PR.
@@ -817,6 +838,132 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 - **Sampling↔Config-Bindungs-Pflicht (Issue #446, Pitfall #81):** Ein in `spaces.py` gesampelter Parameter MUSS als Feld im zugehörigen `*Config`-Struct existieren (Single Source of Truth). Phantom-Keys werden vom Worker still verworfen. Neue/geänderte Suchräume MÜSSEN `test_search_space_binding.py` grün halten; volumenbasierte Filter sind im Backtest tot (`volume=1.0`) und werden NICHT verdrahtet, sondern entfernt. `OPTIMIZER_PARAMETER_REFERENZ.md` ist mitzupflegen.
 - **Kein Loop-Variablen-Shadowing (Issue #443):** Innere Fold-Schleifen in `extract_metrics` heißen `fold` (nicht `i`/`j`), damit sie die äußere `enumerate`-Variable nicht überschreiben. Neue Schleifen in dieser Funktion MÜSSEN diese Konvention einhalten.
 - **Walk-Forward-Geometrie ≤ Datenhistorie (Issue #445):** `is_window + splits×oos + holdout` MUSS ≤ `backtest.json.walk_forward.data_history_days` sein (= dieselbe Annahme wie `strategy_defaults.json._schema`). `build_trial` erzwingt dies fail-loud. Wer die Geometrie ändert, MUSS `data_history_days` und die `_schema`-Beschreibung konsistent mitführen.
+- **Fenster-Arithmetik Single Source of Truth (Issue #457, Pitfall #84):** Die Walk-Forward-Fenster-Grenzen (`start`, `end`, OOS-Grenze `start + is_window`) werden AUSSCHLIESSLICH über `trial_config.compute_walk_forward_window(...)` berechnet. Inline-Nachbau der Datums-Arithmetik (`now − holdout`, Sonntag-Rollback, `start = end − (is_window + splits·oos)`) ist VERBOTEN — er erzeugt die Divergenz-Klasse zwischen „start fürs Laden" und „start für den Split" (#80/#82-Wurzel). Jede neue Stelle, die eine Fenster-Grenze braucht (Sweep-Preflight, Backfill-Heuristiken), MUSS diese Funktion aufrufen.
+- **OOS-Abdeckungs-Telemetrie & WARN-statt-`raise` (Issue #455, Pitfall #82):** Eine OOS-Abdeckungs-Verletzung (`fill_ts_max < start_ns + is_window_ns`) wird in `extract_metrics` als WARN-Logzeile gemeldet und als `oos_covered=false`-Telemetrie durchgereicht (`data_window` → `TournamentMetrics` → BEIDE `optimizer_trial_completed`-Events) — **niemals** als `raise` (das verschluckt über die NULL-Rückgabe genau die Diagnose). Die harte Vorab-Abweisung gehört ausschließlich ins Gate-1-Preflight (`gate.data_reaches_oos_window`, fail-open). Wer die OOS-Telemetrie-Kette ändert, MUSS alle vier Felder (`fill_ts_max`, `oos_window_start_ns`, `oos_covered`, `oos_coverage_gap_days`) in BEIDEN Events erhalten.
+- **Floor-Plateau-Stop nur Opt-in & Observability-neutral (Issue #456, Pitfall #83):** `floor_plateau_callback(stop_on_plateau=True)` darf `study.stop()` aufrufen, aber NUR crash-sicher (`getattr` + `try/except`) und NUR als Compute-Ersparnis — es ändert NIE eine Reward-/Promotion-Entscheidung. Die Default-Signatur bleibt `stop_on_plateau=False` (Bestands-Tests mit Fake-Study ohne `.stop()` müssen grün bleiben). Die Produktion bindet `True` in beiden `partial`-Stellen.
+- **Granulare Rejection-Observability (Issue #453):** Der Catch-All `oos_not_evaluated` wird in dezidierte, aggregierbare Kategorien aufgelöst (`run_optimization._classify_is_rejection_detail` / `_map_oos_reason`): `REJECT_OOS_WINDOW_UNREACHABLE` (datenseitig, #455) vs. `REJECT_OOS_INACTIVE` (strategieseitig) vs. konkretes Gate (`REJECT_OOS_MAX_DRAWDOWN`, `REJECT_OOS_MIN_TRADES`, …). Pro Trial als `is_rejection_detail`-User-Attr persistieren, ins Event heben, modal ins Proposal (`confirm._dominant_is_rejection_detail` → `proposal["is_rejection_detail"]`) schreiben. Reine Observability — ändert KEINE Entscheidung. Hinweis: Die Proposal-Serialisierung liegt in `confirm.export_symbol_proposal` (NICHT in `_serde.py`, das ausschließlich die Nautilus-FSB16-Encodierung kapselt).
+
+---
+
+## 18.5 Agent-Rollen, System-Prompts & Interaktionsprotokolle (Enterprise / Security-Audit-Grade)
+
+> **Zweck.** Diese Sektion ist die **eine unmissverständliche Referenz** für *welcher Agent darf was,
+> auf Basis welchen System-Prompts, mit welcher Autoritäts-Grenze, und über welches exakte Protokoll
+> er mit dem Trading-System interagiert.* Sie ist so geschrieben, dass ein Security-Audit jede
+> Zuständigkeit, jede Vertrauensgrenze und jeden Datenfluss-Vertrag gegen den Code verifizieren kann.
+> **Begründende Quellen** (`.agents/`, normativ): `JULES_SYSTEM_PROMPT.md` (System-Prompt des
+> Coding-Agents), `Integration_Guide.md` (eToro-API-Integration), `API_docs_etoro.md` (API-Vertrag,
+> Rate-Limits, Auth), `testing.md` (Test-/Verifikations-Protokoll).
+
+### 18.5.1 Agent-Taxonomie — zwei disjunkte Klassen
+
+Im Repository existieren **zwei** klar getrennte Agenten-Klassen. Sie dürfen **nie** vermischt werden:
+
+1. **Coding-Agent** (Jules / Claude Code) — der KI-Software-Engineer, der die Codebasis pflegt.
+   Kein Laufzeit-Bestandteil des Trading-Systems. Autoritativer System-Prompt:
+   `.agents/JULES_SYSTEM_PROMPT.md`.
+2. **Automatisierungs-Agenten** — die autonomen Laufzeit-Komponenten der Trading-Pipeline. Jede ist
+   ein Prozess mit **fest begrenzter Autorität** (bounded authority). Genau **eine** davon
+   (`momentum_ls_run`, Phase 5) berührt jemals den Broker.
+
+### 18.5.2 Rollen, Zuständigkeiten & Autoritäts-Grenzen (verbindliche Matrix)
+
+| Agent | Rolle / Zuständigkeit | Input (liest) | Output (schreibt) | Autoritäts-Grenze — DARF NIEMALS |
+|-------|----------------------|---------------|-------------------|----------------------------------|
+| **Coding-Agent (Jules)** | Verify/Improve/Enforce/Document der Codebasis; chirurgische, test-gesicherte Fixes | AGENTS.md, Code, Issues | Code-/Config-/Doku-PRs, Changelog-Eintrag | Live deployen; Holdout sehen/ändern; Risiko-Gates lockern; `strategies.json` direkt promoten; Hardcodings einführen |
+| **`universe_fetcher`** | Smart-Portfolio-Universum bestimmen | eToro-Smart-Portfolio-API | `data/universe/momentum_ls.json` | Handeln; Katalog schreiben |
+| **`catalog_service`** | 24/7-Marktdaten-Ingestion (WebSocket) | eToro-Quote-Stream | `data/nautilus/.../*.parquet` (FSB16) | Handeln; Strategien werten |
+| **`daily_orchestrator`** | 5-Phasen-Dirigent (Universe→Import→Backtest→Tournament→Deploy) | Configs, Katalog | Tournament-JSON, Detached-Phase-5-Start | Phase 5 starten OHNE bestandenes OOS-Gate (fail-closed, Pitfall #45) |
+| **`backtest_runner` (Worker, Subprozess)** | Isolierter Backtest + Tournament-Evaluierung pro `(strategy, symbol)` | `experiment_manifest.json`, Katalog | `tournament_result.json` | Andere Trials/Prozesse beeinflussen (Fault-Isolation); Live-Orders |
+| **`optimizer/sweep` + `run_optimization`** | Per-Symbol-HPO (Ansatz 4), TPE über getrennte SQLite-Studies | Configs, Worker-Output | Optuna-Study (SQLite), Trial-Events | Phase 5 betreten; `n_jobs>1` *innerhalb* einer Study; `strategies.json` schreiben; `tournament.json` variieren |
+| **`confirm`** | Gate 3 — Holdout-Edge-Test gegen globalen Baseline | best_trial, Holdout-Backtest | `proposal_{strategy}_{symbol}.json` | `strategies.json` schreiben; Promotion ohne bestandenes Holdout |
+| **`momentum_ls_run` (Phase 5)** | Live-Execution gegen den Broker | freigegebene `strategies.json`/`instrument_overrides` | Broker-Orders, Live-Logs | Parameter ohne menschlich gemergten PR übernehmen |
+
+**Invariante (Gewaltenteilung):** Der gesamte Optimierungs-Stack (`sweep`/`run_optimization`/`confirm`)
+schreibt **ausschließlich** `proposal_*.json` und betritt **nie** Phase 5 (HARD INVARIANT in `sweep.py`:
+kein `subprocess.Popen`, kein `strategies.json`-Write). Der einzige Schreibpfad in die Produktiv-Config
+ist ein **menschlich gemergter PR** (HI-3, §12.5 „Human-in-the-Loop").
+
+### 18.5.3 System-Prompt-Vertrag des Coding-Agents (`.agents/JULES_SYSTEM_PROMPT.md`)
+
+Der Coding-Agent operiert unter einem **nicht verhandelbaren** Protokoll (Auszug, normativ in der Datei):
+- **AGENTS.md ist Single Source of Truth.** Vor jeder Aufgabe die relevanten Sektionen lesen; bei
+  Diskrepanz zuerst AGENTS.md korrigieren, dann coden.
+- **Verify → Improve → Enforce → Document.** Jede `automation/`-Änderung erhält einen Changelog-Eintrag
+  (Datum, Beschreibung, Dateien) in §19.
+- **Chirurgische Fixes, test-gesichert.** Vor jedem Commit: Pre-Flight (§13) + `pytest`.
+- **Autoritäts-Grenze = die der Tabelle oben:** nur Code/Doku/Config; nie Live, nie Holdout, nie
+  Gate-Lockerung, nie Hardcoding.
+
+### 18.5.4 Interaktionsprotokoll — die Promotion-Pipeline als Kette unveränderlicher Artefakte
+
+Jeder Pfeil ist ein **Datenfluss-Vertrag** (wer schreibt, wer liest, welches Artefakt). Jedes Artefakt
+ist selbstbeschreibend und provenienz-gestempelt, sodass jeder Schritt unabhängig auditierbar ist:
+
+```
+universe_fetcher ──► data/universe/momentum_ls.json {fetched_at, universe[]}
+catalog_service  ──► data/nautilus/.../*.parquet     (FSB16, b"price_precision"/b"size_precision")
+config (optimizer/tournament/backtest/strategies.json)
+        │  eingefroren pro Study (ETORO_CONFIG_DIR)
+        ▼
+build_trial      ──► experiment_manifest.json {manifest_version:"1.0",
+        │              provenance:{git_commit, data_snapshot_sha256, frozen_tournament_sha256},
+        │              global_settings:{start_time,end_time,seed,walk_forward,…}, strategies:[…]}
+        ▼
+run_backtest (Subprozess, isoliert)
+        ▼
+tournament_result.json {full_results[], single_symbol_oos, aggregate_winner,
+        │   data_window:{start,end,fill_ts_min/max, oos_window_start_ns, oos_covered, …}}  ← #444/#455
+        ▼
+parse_tournament ──► TournamentMetrics ──► compute_reward ──► Optuna-Study (SQLite, per Symbol)
+        ▼
+confirm_per_symbol_promotion (Gate 3: Holdout-Edge > global + margin)
+        ▼
+proposal_{strategy}_{symbol}.json {status ∈ READY_FOR_PR | REJECTED_NO_EDGE_OVER_GLOBAL |
+        │   REJECTED_ON_HOLDOUT, dominant_rejection, is_rejection_detail, R_symbol, R_global}
+        ▼
+  ── MENSCHLICHER PR-REVIEW (HI-3) ──►  strategies.json / instrument_overrides
+        ▼
+momentum_ls_run (Phase 5) ──► Broker (live)
+```
+
+**Das 3-Gate-Modell** (jede Promotion durchläuft alle drei, in Reihenfolge):
+- **Gate 1 — Daten-Suffizienz & OOS-Erreichbarkeit** (`gate.is_symbol_tunable` + `gate.data_reaches_oos_window`,
+  #455): genug Historie für das ganze Walk-Forward-Korridor UND jüngster Tick erreicht die früheste
+  OOS-Grenze (`compute_walk_forward_window` → `start + is_window`). Fail-open bei fehlender Telemetrie.
+- **Gate 2 — Warm-Start am globalen Optimum** (`load_global_best` → `study.enqueue_trial`): der
+  symbol-getunte Vektor startet beim globalen Baseline (Anti-Overfit-Anker, Shrinkage `lambda_reg`).
+- **Gate 3 — Holdout-Edge** (`confirm_per_symbol_promotion`): der symbol-getunte Vektor MUSS auf dem
+  nie-optimierten Holdout (a) das Holdout-Gate selbst bestehen UND (b) den globalen Vektor um
+  `promotion_margin` schlagen. Sonst `REJECTED_*`. Der Holdout bleibt von der Optimierung unberührt.
+
+### 18.5.5 Observability-Vertrag (strukturierte Events)
+
+Alle Laufzeit-Agenten emittieren LLM-/Audit-parsbare Events über `log_manager.emit_execution_event`
+(`[JSON_EVENT] {…}`-Hülle). **Invariante: Observability ändert NIE eine Entscheidung** (kein Event-Feld
+fließt je in Reward/Promotion zurück). Zentrale Events:
+- `optimizer_trial_completed` — pro Trial; trägt seit #404 die Per-Symbol-Telemetrie, seit #455 die
+  OOS-Abdeckung (`fill_ts_max`, `oos_window_start_ns`, `oos_covered`, `oos_coverage_gap_days`), seit
+  #453 die granulare Kategorie (`is_rejection_detail`, `oos_rejection_reasons`).
+- `optimizer_study_completed` / `sweep_completed` — Timing (`wallclock_s`) + Evaluierbarkeit
+  (`evaluable_trials`). Zeitdauer-Pflicht §18.
+- Logging MUSS am Entrypoint einmalig initialisiert sein (`setup_bot_logging`, Pitfall #78), sonst
+  werden INFO-`[JSON_EVENT]` verworfen.
+
+### 18.5.6 Security-Audit-Checkliste (jede Leitplanke → ihr erzwingender Test/Code)
+
+| Leitplanke (Zusicherung) | Erzwungen durch | Verifizierbar via |
+|--------------------------|-----------------|-------------------|
+| Kein Live-Deploy aus dem Optimizer | HARD INVARIANT in `sweep.py` (kein `subprocess.Popen`) | Code-Review + `test_automation_isolation.py` |
+| Risiko-Gates eingefroren (`tournament.json` nie variiert) | Optimizer liest, schreibt nie | §12.5 + Code-Review |
+| Holdout unberührt | `confirm` nutzt separaten `holdout_days=0`-Lauf | `test_holdout_window.py`, `test_per_symbol_promotion.py` |
+| Human-in-the-Loop (Promotion nur per PR) | `confirm` schreibt nur `proposal_*.json` | `test_issue_408/451`, Code-Review |
+| Reward-Floor-Ordnungsinvariante (unevaluable < evaluable) | `compute_reward`-Floor-Clamp | `test_issue_447_floor_separation.py`, `test_issue_452_reward_distance.py` |
+| Zero-Hardcoding (Schwellen aus Config) | Config-derivierte Werte (HI-6) | `CODE_AUDIT_ZERO_HARDCODING.md` + Review |
+| Fill-`ts` fail-loud (kein stiller OOS=0) | `_fill_ts_ns` + Plausibilitäts-Assertion | `test_issue_448_oos_split.py` |
+| OOS-Abdeckung sichtbar (kein stiller Floor-Kollaps) | `oos_covered`-Telemetrie + Preflight | `test_issue_449_oos_coverage.py` |
+| Rate-Limit-Konformität (eToro-API) | `adapters/etoro_rate_limiter.py` | `.agents/API_docs_etoro.md`, `Integration_Guide.md` |
+| Per-Study-Parallelität reproduzierbar | Paar-Dedup + Schema-Pre-Init + Fail-Fast | `test_issue_411/412`, Pitfall #76/#77 |
 
 ---
 
@@ -829,6 +976,7 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-26 | **IMPLEMENTIERUNG GitHub-Issues #451–#457 (OOS-Abdeckung, Reward-Gradient, Observability, Plateau-Stop, Fenster-SSOT).** Sieben verzahnte Optimizer-Fixes, alle test-gesichert (volle automation-Suite lokal grün: 386 passed). **#455 (P0, Pitfall #82) — OOS-Abdeckungs-Blindstelle:** Wurzel = der Katalog erreicht die früheste OOS-Sub-Fenster-Grenze (`start+is_window`) nicht (dünner/staler H2 nach `catalog_service`-Ausfall) ⇒ `oos_total_trades=0` strukturell über alle Strategien (TSLA-Signatur). Fix: `extract_metrics` berechnet `oos_window_start_ns`/`oos_covered` (WARN statt `raise`), durchgereicht über `write_tournament_json` (`data_window`) → `parse_tournament` → BEIDE Trial-Events; reine fail-open `gate.data_reaches_oos_window` + `sweep.latest_ts_by_symbol`/`compute_oos_window_start_ns` + Preflight-Skip (`OOS_WINDOW_UNREACHABLE`) VOR dem Sweep. **#452/#454 (Bug) — Reward-Gradient:** evaluiert-aber-nicht-eligible OOS-Trials nicht mehr auf den Flat-Floor clampen, sondern kontinuierliche, quadratische, config-gewichtete Distanz-Penalty (`constraint_distance_penalty_weight`, neue OOS-`win_rate`/`profit_factor` in `TournamentMetrics`) — near-miss > katastrophal, aber strikt unter dem Evaluable-Floor (Anti-Gate-Gaming bleibt). **#453 (Feature) — granulare Rejection-Observability:** Catch-All `oos_not_evaluated` aufgelöst in dezidierte Kategorien (`_classify_is_rejection_detail`/`_map_oos_reason`: `REJECT_OOS_WINDOW_UNREACHABLE` datenseitig vs. `REJECT_OOS_INACTIVE` strategieseitig vs. konkretes Gate); pro Trial als `is_rejection_detail`-User-Attr + Event, modal ins Proposal (`confirm._dominant_is_rejection_detail`). **#451 (Bug) — 100%-Rejection-Diagnose:** Root-Cause ist NICHT ein zu strenges IS-Gate (Boolean-Logik in `gate.py` korrekt, separat gepinnt), sondern die OOS-Abdeckung (#455); der 502-IS-Trades/OOS=0-Fall wird jetzt eindeutig als `REJECT_OOS_WINDOW_UNREACHABLE` diagnostiziert. **#456 (P1, Pitfall #83) — Plateau-Stop:** `floor_plateau_callback(stop_on_plateau=True)` ruft `study.stop()` (beide Zweige, crash-sicher via `getattr`+`try/except`); Produktion bindet `True`, Default bleibt `False` (Bestands-Tests grün); Observability-Invariante erhalten. **#457 (P2, Pitfall #84) — Fenster-SSOT:** reine `trial_config.compute_walk_forward_window` als EINZIGE Quelle der Fenster-Arithmetik; `build_trial` delegiert (bit-identisch); Sweep-Preflight nutzt dieselbe Grenze (verifiziert `now=2026-06-25` ⇒ `start=2025-05-16`/`end=2026-05-11`). **Hinweis #453:** Proposal-Serialisierung liegt in `confirm.py` (nicht `_serde.py`, FSB16-only) — Intent statt fehlerhafter Datei-Referenz umgesetzt. AGENTS.md: Pitfalls #82/#83/#84, §18-Konventionen (Fenster-SSOT, OOS-WARN, Plateau-Opt-in, Rejection-Granularität), neue §18.5 (Agent-Rollen/System-Prompts/Interaktionsprotokolle, Security-Audit-Checkliste). | `automation/optimizer/reward.py`, `automation/optimizer/parsing.py`, `automation/optimizer/gate.py`, `automation/optimizer/sweep.py`, `automation/optimizer/trial_config.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/confirm.py`, `automation/backtest_runner.py`, `automation/config/optimizer.json`, `automation/tests/test_issue_449_oos_coverage.py`, `automation/tests/test_issue_451_gate_diagnosis.py`, `automation/tests/test_issue_452_reward_distance.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-25 | **IMPLEMENTIERUNG GitHub-Issues #441–#448 (Per-Symbol-Optimizer-Forensik 2026-06-24).** Sechs Code-/Config-Defekte + zwei Doku-Deliverables, alle test-gesichert (volle automation-Suite lokal grün: 351 passed). **#448 (P0, Pitfall #80) — struktureller OOS=0:** Wurzel = stiller Fill-`ts`-Fallback `getattr(f,'ts_event',getattr(f,'ts_init',0))` (a) `0`-Default ⇒ jeder Round-Trip als In-Sample; (b) Fallback-Report `generate_order_fills_report` hat `ts_last`, kein `ts_event`. Fix: `_fill_ts_ns` (fail-loud, `ts_event→ts_last→ts_init`) als einzige Lesestelle + Plausibilitäts-Assertion (`fill_ts_max<start_ns ∨ fill_ts_min≤0 ⇒ ValueError`). Reproduktion 142 uniforme Exits ⇒ IS=72/OOS=70. Pitfall #75 → 🟢. **#447 (P1) — Reward-Floor:** Floor-Separations- (`unevaluable_max=−9.75 < evaluable_min=−9.749`) und Saturations-Invariante (`reward(is=target)==reward(is=10·target)`) formal test-fixiert (Code war bereits korrekt). **#446 (P1, Pitfall #81) — Sampling↔Config:** Renames `bb_std→bb_std_dev`/`vwap_window→vwap_period`; Phantom-Volumen-/RSI-Keys entfernt (1h-Bars haben `volume=1.0`, VwapExhaustion hat kein RSI); `trend_tolerance_pct` in Combo verdrahtet; FlashCrash sampelt jetzt `bb_period`/`bb_std_dev`; zentrale Bindungs-Assertion `test_search_space_binding.py`. **#445 (P1) — Walk-Forward-Historie:** validierte Geometrie (180/45/4/45=405) behalten, ehrliche `data_history_days=450` (~15 Monate) deklariert (SSOT mit `strategy_defaults._schema`), Fail-Loud-Startup-Assertion in `build_trial`. **#444 (P2) — data_window:** Schreib-Seite ergänzt (`write_tournament_json` schreibt `data_window` inkl. `fill_ts_min/max`; Worker/`extract_metrics` liefern die Spanne); Round-Trip-Test. **#443 (P3) — Loop-Var-Shadowing:** innere Fold-Schleifen `i/j`→`fold` (verhaltensneutral). **#442/#441 (Doku):** `OPTIMIZER_PARAMETER_REFERENZ.md` (korrigierte Suchräume aller aktiven Strategien) neu; AGENTS.md: Pitfall #75 → 🟢, neue Pitfalls #80/#81, §18-Konventionen (Fill-`ts` fail-loud, Bindungs-Pflicht, kein Loop-Shadowing, Geometrie≤Historie). | `automation/backtest_runner.py`, `automation/optimizer/spaces.py`, `automation/optimizer/parsing.py`, `automation/optimizer/trial_config.py`, `automation/strategies/tesla_combo_strategy.py`, `automation/config/backtest.json`, `automation/config/strategy_defaults.json`, `automation/OPTIMIZER_PARAMETER_REFERENZ.md`, `automation/tests/test_issue_448_oos_split.py`, `automation/tests/test_issue_447_floor_separation.py`, `automation/tests/test_issue_445_walkforward_history.py`, `automation/tests/test_issue_444_data_window.py`, `automation/tests/test_search_space_binding.py`, `automation/tests/test_combo_conjunction_switches.py`, `automation/AGENTS.md` |
 | 2026-06-24 | **IMPLEMENTIERUNG GitHub-Issues #415–#423 (= interne #411–#416 Code + #417 Doku); Pitfalls #76–#79 → 🟢 BEHOBEN.** Die in der Forensik (Eintrag unten) als OFFEN dokumentierten Defekte sind jetzt chirurgisch implementiert UND test-gesichert (lokal grün: optimizer/sweep/runner-Suite 154 passed). **#411/#416-GH-#417 (DDL-Race, Pitfall #76):** prozessweiter `_study_lock` + `_create_study_with_retry` (genau EIN Retry nur auf `"already exists"`, sonst Fail-Fast Pitfall #66) + serielles `_preinit_study_storage` vor dem Pool; Test mit echtem SQLite & 8 Threads. **#412/GH-#415+#418 (Paar-Dedup, Pitfall #77):** order-preserving Dedup in `load_symbol_universe` & `enumerate_tunable_pairs` + Fail-Fast-`ValueError` bei kollidierendem `study_name`. **#413/GH-#419 (Floor-Guard v3):** `floor_plateau_callback` evaluable-basiert (`oos_evaluated`-User-Attr) statt Wert-Gleichheit; Legacy-Wert-Guard als Fallback; `make_symbol_objective` setzt `oos_evaluated`-Attr. **Defekt A (0 evaluable Trials) bleibt offen** (erfordert realen Katalog-Sweep, `data/` gitignored) ⇒ Pitfall #75 bleibt 🟡. **#414/GH-#420 (Logging-Init, Pitfall #78):** `setup_bot_logging("optimizer")` als erste Anweisung in `sweep.main()`. **#415/GH-#421 (Zeitdauer, Pitfall #79):** Wall-Clock in `run_backtest` (beide Modi, optionaler `timings`-Out-Param ⇒ signatur-kompat); `backtest_ms` im Per-Trial-Event; neue `optimizer_study_completed`/`sweep_completed`-Events + Konsolen-Schlusszeile. **#416/GH-#422 (Subprozess-Logs, Pitfall #79):** `_persist_subprocess_logs` schreibt stdout/stderr pro Trial nach `trial_dir/logs/` (auch im Erfolgsfall); `data_window_*`/`rejection_reason` zusätzlich im Event. CI-Gate um die neuen Tests erweitert. | `automation/optimizer/run_optimization.py`, `automation/optimizer/runner.py`, `automation/optimizer/sweep.py`, `automation/optimizer/parsing.py`, `automation/tests/test_issue_411_storage_ddl_race.py`, `automation/tests/test_issue_412_pair_dedup.py`, `automation/tests/test_issue_413_floor_guard_v3.py`, `automation/tests/test_issue_414_sweep_logging.py`, `automation/tests/test_issue_415_backtest_timing.py`, `automation/tests/test_issue_416_subprocess_logs.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
 | 2026-06-24 | **Forensik Sweep-Log (`--tier all --n-jobs 6`) + Issues #411–#417.** Sechs Defekte + AGENTS.md-Härtung aus der Analyse zweier Sweep-Logs. **#411 (P0)** Optuna/SQLite `create_all`-DDL-Race (`table studies already exists`) crasht den Sweep — `load_if_exists` schützt den Schema-Bootstrap NICHT; Fix: serialisiertes `_preinit_study_storage` + Retry (Pitfall #76). **#412 (P0)** doppelte `(strategy,symbol)`-Paare kollabieren N Worker auf eine Study (`…_WDAY_ETORO` Trial 499 bei n_trials=100), zerstören Reproduzierbarkeit (Pitfall #68) und lösen #411 aus; Fix: order-preserving Dedup in `load_symbol_universe`/`enumerate_tunable_pairs` + Fail-Fast-Assertion (Pitfall #77). **#413 (P1)** Floor-Kollaps besteht empirisch fort: alle Trials unevaluable (−9.85…−9.93 ⊂ [−10.0,−9.75)), 0 evaluable; `floor_plateau_callback` (#409) ist im v3-Shaping-Regime toter Code (Wert-Gleichheits-Prädikat trifft geshapete Sub-Floor-Werte nie) → Ersatz durch evaluable-basierten Guard; Pitfall #75 auf 🟡 TEILWEISE reklassifiziert. **#414 (P1)** Sweep-Entrypoint initialisiert kein Logging ⇒ #404-`[JSON_EVENT]`-Telemetrie (INFO) wird stumm verworfen; Fix: `setup_bot_logging("optimizer")` in `sweep.main()` (Pitfall #78). **#415 (P1)** Backtest-Zeitdauer wird nirgends ausgewiesen; Fix: Wall-Clock in `run_backtest` (beide Modi) + `backtest_ms` + `optimizer_study_completed`/`sweep_completed`-Summaries (Pitfall #79). **#416 (P2)** `run_backtest` verschluckt stdout/stderr im Erfolgsfall; Fix: pro Trial nach `trial_dir/logs/` persistieren (Pitfall #79). **#417 (P2)** AGENTS.md wasserdicht: #75 reklassifiziert + empirischer Nachtrag, #409-Bullet als ⚠️ ineffektiv markiert, #72-Parallel-Safety-Vorbedingung ergänzt, Pitfalls #76–#79 angelegt, §18 um Zeitdauer-/Logging-Init-/Eindeutigkeits-Pflicht erweitert. **Pitfall-Nummern kollisionsfrei (höchste #79).** | `automation/optimizer/run_optimization.py`, `automation/optimizer/runner.py`, `automation/optimizer/sweep.py`, `automation/config/` (Universe-Hygiene), `automation/tests/test_issue_411_storage_ddl_race.py`, `…_412_pair_dedup.py`, `…_413_floor_guard_v3.py`, `…_414_sweep_logging.py`, `…_415_backtest_timing.py`, `…_416_subprocess_logs.py`, `automation/AGENTS.md` |

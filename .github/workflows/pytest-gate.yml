@@ -173,3 +173,6 @@ jobs:
 
       - name: OOS-split/reward-floor/search-space/data-window/walk-forward-history (Issues #441-#448)
         run: python3 -m pytest automation/tests/test_issue_448_oos_split.py automation/tests/test_issue_447_floor_separation.py automation/tests/test_issue_445_walkforward_history.py automation/tests/test_issue_444_data_window.py automation/tests/test_search_space_binding.py -q
+
+      - name: OOS-coverage/plateau-stop/window-SSOT/reward-distance/rejection-diagnosis (Issues #451-#457)
+        run: python3 -m pytest automation/tests/test_issue_449_oos_coverage.py automation/tests/test_issue_451_gate_diagnosis.py automation/tests/test_issue_452_reward_distance.py -q

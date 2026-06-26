@@ -9,29 +9,146 @@ if TYPE_CHECKING:
 
 
 _oos_min_trades_cache: int | None = None
+_tournament_cfg_cache: dict | None = None
+
+
+def _read_tournament_cfg() -> dict:
+    global _tournament_cfg_cache
+    if _tournament_cfg_cache is not None:
+        return _tournament_cfg_cache
+
+    try:
+        from automation.optimizer.trial_config import config_dir
+        cfg_path = config_dir() / "tournament.json"
+        if not cfg_path.exists():
+            _tournament_cfg_cache = {}
+            return {}
+        with open(cfg_path, 'r', encoding='utf-8') as f:
+            data = json.load(f) or {}
+            _tournament_cfg_cache = data
+            return data
+    except OSError:
+        _tournament_cfg_cache = {}
+        return {}
+    except ValueError:
+        _tournament_cfg_cache = {}
+        return {}
+
 
 def _read_oos_min_trades() -> int:
     global _oos_min_trades_cache
     if _oos_min_trades_cache is not None:
         return _oos_min_trades_cache
 
-    try:
-        from automation.optimizer.trial_config import config_dir
-        cfg_path = config_dir() / "tournament.json"
-        if not cfg_path.exists():
-            _oos_min_trades_cache = 3
-            return 3
-        with open(cfg_path, 'r', encoding='utf-8') as f:
-            import json
-            tournament_cfg = json.load(f)
-            _oos_min_trades_cache = tournament_cfg.get("oos_min_trades", 3)
-            return _oos_min_trades_cache
-    except OSError:
-        _oos_min_trades_cache = 3
-        return 3
-    except ValueError:
-        _oos_min_trades_cache = 3
-        return 3
+    tournament_cfg = _read_tournament_cfg()
+    _oos_min_trades_cache = tournament_cfg.get("oos_min_trades", 3)
+    return _oos_min_trades_cache
+
+
+def _cfg_value(weights: dict, tournament_cfg: dict | None, key: str, default=None):
+    """Issue #452 — Constraint-Schwelle aufloesen: erst aus ``weights`` (optimizer.json/DI),
+    dann aus der ``tournament.json``-Config, sonst ``default``. So bleibt die Distanz-Penalty
+    rein deklarativ (Zero-Hardcoding, HI-6) und an dieselben Gates gebunden, die ueber
+    ``oos_eligible`` entscheiden."""
+    if key in weights:
+        return weights[key]
+    if tournament_cfg and key in tournament_cfg:
+        return tournament_cfg[key]
+    return default
+
+
+def _shortfall_distance(actual: float, target: float | None) -> float:
+    """Quadratische, auf den Target normierte Unterschreitungs-Distanz ∈ [0, ∞).
+    0.0, wenn ``actual >= target`` (oder kein/nicht-positiver Target). Quadratisch, damit
+    ein knapp verfehltes Gate (kleiner Gap) einen deutlich kleineren Penalty traegt als ein
+    katastrophal verfehltes — genau der Gradient, den TPE braucht (Issue #452)."""
+    if target is None or target <= 0.0:
+        return 0.0
+    gap = max(0.0, float(target) - float(actual))
+    return (gap / float(target)) ** 2
+
+
+def _excess_distance(actual: float, cap: float | None) -> float:
+    """Quadratische, auf den Cap normierte Ueberschreitungs-Distanz (z. B. Drawdown > max).
+    0.0, wenn ``actual <= cap`` (oder kein/nicht-positiver Cap)."""
+    if cap is None or cap <= 0.0:
+        return 0.0
+    gap = max(0.0, float(actual) - float(cap))
+    return (gap / float(cap)) ** 2
+
+
+def _any_condition_distance(m: "TournamentMetrics", weights: dict,
+                            tournament_cfg: dict | None) -> float:
+    """Distanz fuer die ``eligible_requires_any``-Klausel (Sortino ODER Profit-Factor).
+    Erfuellt der bessere der beiden Quotienten sein Gate (ratio >= 1), ist die Distanz 0;
+    sonst quadratisch im Rest-Gap des BESTEN Kandidaten — eine knapp verfehlte ANY-Bedingung
+    darf nicht doppelt so hart bestraft werden wie eine knapp verfehlte ALL-Bedingung."""
+    ratios = []
+    req_sortino = _cfg_value(weights, tournament_cfg, "oos_min_sortino",
+                             _cfg_value(weights, tournament_cfg, "min_sortino"))
+    if req_sortino and req_sortino > 0.0 and m.oos_sortino is not None:
+        ratios.append(max(0.0, m.oos_sortino) / float(req_sortino))
+
+    req_pf = _cfg_value(weights, tournament_cfg, "oos_min_profit_factor",
+                        _cfg_value(weights, tournament_cfg, "min_profit_factor"))
+    if req_pf and req_pf > 0.0 and m.oos_profit_factor is not None:
+        ratios.append(max(0.0, m.oos_profit_factor) / float(req_pf))
+
+    if not ratios:
+        return 0.0
+    return max(0.0, 1.0 - min(1.0, max(ratios))) ** 2
+
+
+def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
+                                 risk_dd_cap: float | None,
+                                 tournament_cfg: dict | None) -> float:
+    """Issue #452 — kontinuierliche Distanzstrafe fuer OOS-Constraint-Verletzungen.
+
+    Nur evaluiert-aber-nicht-eligible Trials nutzen diesen Pfad. Die Strafe ist rein metrisch
+    (keine Gate-Flags als Reward), quadratisch in der Ziel-Distanz und config-gewichtet. Dadurch
+    unterscheidet TPE wieder 'knapp gescheitert' von 'katastrophal gescheitert', ohne die
+    Rang-Invariante aufzuweichen: failed Trials bleiben unter dem Evaluable-Floor."""
+    req_trades = _cfg_value(weights, tournament_cfg, "oos_min_trades",
+                            _cfg_value(weights, tournament_cfg, "min_trades"))
+    req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return",
+                            _cfg_value(weights, tournament_cfg, "min_total_return"))
+    req_expectancy = _cfg_value(weights, tournament_cfg, "oos_min_expectancy",
+                                _cfg_value(weights, tournament_cfg, "min_expectancy"))
+    req_win_rate = _cfg_value(weights, tournament_cfg, "oos_min_win_rate",
+                              _cfg_value(weights, tournament_cfg, "min_win_rate"))
+
+    expectancy = 0.0
+    if m.oos_total_trades > 0:
+        expectancy = m.oos_total_return / m.oos_total_trades
+
+    distances = [
+        _shortfall_distance(float(m.oos_total_trades), req_trades),
+        _shortfall_distance(m.oos_total_return, req_return),
+        _shortfall_distance(expectancy, req_expectancy),
+        _shortfall_distance(m.oos_win_rate, req_win_rate),
+        _excess_distance(m.oos_max_drawdown, risk_dd_cap),
+        _any_condition_distance(m, weights, tournament_cfg),
+    ]
+    raw_distance = sum(d for d in distances if d > 0.0)
+    if raw_distance <= 0.0:
+        return 0.0
+    return raw_distance * float(weights.get("constraint_distance_penalty_weight",
+                                            weights["unevaluable_shaping_span"]))
+
+
+def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
+                               risk_dd_cap: float | None,
+                               tournament_cfg: dict | None) -> float:
+    """Issue #452 — Reward fuer evaluiert-aber-nicht-eligible OOS-Trials.
+
+    Verankert knapp UNTER der Unevaluable-Decke (``penalty_unevaluable_oos + span``) und zieht die
+    kontinuierliche Distanzstrafe ab. Damit gilt strikt: jeder Constraint-Failure < Evaluable-Floor
+    (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming), aber
+    near-miss bleibt fuer TPE von katastrophal unterscheidbar (Gradient statt Flat-Floor)."""
+    unevaluable_ceiling = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
+    penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
+    epsilon = min(weights["evaluable_floor_epsilon"], 1e-9)
+    return unevaluable_ceiling - epsilon - penalty
 
 
 def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
@@ -62,7 +179,7 @@ def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
 def compute_reward(m: "TournamentMetrics", universe_size: int,
                    weights: dict | None = None, risk_dd_cap: float | None = None,
                    *, sampled: dict | None = None, global_params: dict | None = None,
-                   strategy: str | None = None) -> float:
+                   strategy: str | None = None, tournament_cfg: dict | None = None) -> float:
     """weights=None  ⇒ aus optimizer.json (penalty_overfit_weight, penalty_dd_weight,
                         bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
        risk_dd_cap=None ⇒ aus tournament.json (max_drawdown).
@@ -71,6 +188,11 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
        (Zero-Loss / n < sortino_min_trades), UND weights['oos_sortino_fallback'] == 'total_return',
        wird statt des Penalty-Pfades der geclippte oos_total_return als evaluable Base genutzt
        (Flat-Reward-Landscape-Fix). Fehlt der Schluessel ⇒ unveraenderter Legacy-Penalty-Pfad.
+       ISSUE #452: Ist ein OOS-Sample evaluated, aber NICHT eligible (durchs OOS-Gate gefallen),
+       greift _constraint_failure_reward: eine kontinuierliche, quadratische, config-gewichtete
+       Distanzstrafe (constraint_distance_penalty_weight) statt Flat-Floor-Clamping — knapp verfehlt
+       > katastrophal verfehlt (TPE-Gradient), aber strikt unter dem Evaluable-Floor (kein Gate-
+       Gaming). tournament_cfg (optional) liefert die OOS-Schwellen ohne erneutes Datei-IO.
 
        universe_size > 1 (und reward_mode != 'per_symbol') ⇒ Coverage-Pfad (bit-identisch, A4.3/HI-2):
          reward = base - overfit_gap*penalty_overfit_weight - dd_excess*penalty_dd_weight
@@ -88,18 +210,19 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
        floor = penalty_unevaluable_oos + unevaluable_shaping_span + evaluable_floor_epsilon;
        return max(reward, floor)  # Ordnungsinvariante: evaluable >= floor > unevaluable."""
 
+    loaded_tournament_cfg = tournament_cfg
+
     if weights is None:
         from automation.optimizer.trial_config import config_dir
         cfg_path = config_dir() / "optimizer.json"
         with open(cfg_path, 'r', encoding='utf-8') as f:
             weights = json.load(f)
+        loaded_tournament_cfg = _read_tournament_cfg()
 
     if risk_dd_cap is None:
-        from automation.optimizer.trial_config import config_dir
-        cfg_path = config_dir() / "tournament.json"
-        with open(cfg_path, 'r', encoding='utf-8') as f:
-            tournament_cfg = json.load(f)
-            risk_dd_cap = tournament_cfg["max_drawdown"]
+        if loaded_tournament_cfg is None:
+            loaded_tournament_cfg = _read_tournament_cfg()
+        risk_dd_cap = loaded_tournament_cfg["max_drawdown"]
 
     penalty_unevaluable_oos = weights["penalty_unevaluable_oos"]
 
@@ -117,6 +240,14 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     if (m.oos_evaluated and m.oos_eligible and m.oos_sortino is None
             and weights.get("oos_sortino_fallback") == "total_return"):
         base_source = m.oos_total_return
+
+    # Issue #452 — evaluiert, aber durchs OOS-Eligibility-Gate gefallen: KEIN Flat-Floor-Clamp,
+    # sondern eine kontinuierliche, config-gewichtete Distanzstrafe (near-miss > katastrophal),
+    # die strikt unter dem Evaluable-Floor bleibt. Steht VOR dem Unevaluable-Pfad, weil ein
+    # evaluiertes-aber-ineligibles Sample (oos_evaluated=True) sonst je nach Sortino-Definiertheit
+    # mal in den Evaluable-, mal in den Unevaluable-Pfad fiele (inkonsistenter Gradient).
+    if m.oos_evaluated and not m.oos_eligible:
+        return _constraint_failure_reward(m, weights, risk_dd_cap, loaded_tournament_cfg)
 
     if not m.oos_evaluated or base_source is None:
         # Avoid IO if possible:
