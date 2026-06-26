@@ -229,6 +229,19 @@ def _dominant_rejection(study) -> str | None:
     return Counter(reasons).most_common(1)[0][0]
 
 
+def _dominant_is_rejection_detail(study) -> str | None:
+    """Issue #453 — modale GRANULARE Ablehnungs-Kategorie (``is_rejection_detail``-User-Attr) über
+    alle Trials. Wo ``_dominant_rejection`` nur grob 'oos_not_evaluated' liefert, macht dies die
+    tatsächliche dominante Ursache sichtbar (z. B. ``REJECT_OOS_WINDOW_UNREACHABLE`` ⇒ Katalog-H2
+    auffrischen statt Parameter tunen; ``REJECT_OOS_MAX_DRAWDOWN`` ⇒ Risiko-Constraint). Trials ohne
+    das Attr (Legacy/gepruned) werden ignoriert; gibt es keine, ist die Kategorie ``None``."""
+    details = [t.user_attrs.get("is_rejection_detail") for t in study.trials
+               if t.user_attrs.get("is_rejection_detail")]
+    if not details:
+        return None
+    return Counter(details).most_common(1)[0][0]
+
+
 def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -> Path:
     """Schreibt data/optimizer/proposal_{strategy}_{symbol}.json. Schreibt NIE in strategies.json —
     Promotion erfolgt ausschließlich per menschlich freigegebenem PR (HI-3)."""
@@ -244,6 +257,9 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # Issue #408 — modale Gate-Drop-Reason ueber alle Trials (Observability; aendert NIE die
         # Promotion-Entscheidung selbst, die ausschliesslich ueber das Holdout-Gate faellt).
         "dominant_rejection": _dominant_rejection(study),
+        # Issue #453 — granularere, dezidierte dominante Ablehnungs-Kategorie (löst den Catch-All
+        # 'oos_not_evaluated' in die tatsächliche, handlungsleitende Ursache auf).
+        "is_rejection_detail": _dominant_is_rejection_detail(study),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],

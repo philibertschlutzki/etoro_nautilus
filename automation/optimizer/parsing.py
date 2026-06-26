@@ -19,6 +19,10 @@ class TournamentMetrics:
     # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
     # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
     oos_total_return: float = 0.0
+    # Issue #452: OOS-Distanzmetriken fuer kontinuierliche Constraint-Penalties bei
+    # evaluierten, aber nicht eligiblen Trials. Defaults halten bestehende Tests/Fixtures stabil.
+    oos_win_rate: float = 0.0
+    oos_profit_factor: float | None = None
     # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
     # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
     is_best_total_return: float = 0.0
@@ -34,6 +38,17 @@ class TournamentMetrics:
     # Diagnose direkt sichtbar. None, wenn der Block (oder die Felder) fehlen (rückwärtskompatibel).
     fill_ts_min: int | None = None
     fill_ts_max: int | None = None
+    # Issue #455 (Pitfall #82) — OOS-Abdeckungs-Telemetrie. Die früheste OOS-Sub-Fenster-Grenze
+    # (``start_ns + is_window_ns``) und ob die realen Fills sie erreichen. ``oos_covered=False``
+    # macht einen strukturellen OOS=0-Kollaps auf einen Blick DATENseitig statt parameterseitig
+    # erkennbar (dünner/staler H2-Katalog). None, wenn der Block (oder die Felder) fehlen.
+    oos_window_start_ns: int | None = None
+    oos_covered: bool | None = None
+    oos_coverage_gap_days: float | None = None
+    # Issue #453 — granulare OOS-Eligibility-Ablehnungsgründe (z. B. "oos_max_drawdown: 0.5 > 0.3").
+    # Aus dem single_symbol_oos/aggregate_winner-Block; leeres Tuple, wenn keiner vorliegt
+    # (immutable Default ⇒ kein mutable-default-Footgun). Macht den OOS-Gate-Drop pro Trial konkret.
+    oos_rejection_reasons: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -58,6 +73,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_evaluated = agg.get("oos_evaluated") or False
     oos_eligible = agg.get("oos_eligible") or False
     win_count = agg.get("win_count") or 0
+    # Issue #453 — konkrete OOS-Ablehnungsgründe (None-safe ⇒ leeres Tuple).
+    oos_rejection_reasons = tuple(agg.get("oos_rejection_reasons") or ())
 
     # is_sortino_median fallback logic
     is_sortino_median = agg.get("median_is_sortino")
@@ -76,6 +93,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_total_trades = oos_metrics.get("total_trades") or 0
     # Issue #401: evaluable Reward-Fallback fuer Zero-Loss/Sub-Threshold-Sortino.
     oos_total_return = oos_metrics.get("total_return")
+    # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.
+    oos_win_rate = oos_metrics.get("win_rate")
+    oos_profit_factor = oos_metrics.get("profit_factor")
 
     is_total_trades = 0
     is_max_trades = 0
@@ -102,6 +122,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     dw_days = dw.get("days")
     dw_fill_min = dw.get("fill_ts_min")
     dw_fill_max = dw.get("fill_ts_max")
+    # Issue #455 — OOS-Abdeckungs-Felder (None-safe, rückwärtskompatibel zu Pre-#455-JSONs).
+    dw_oos_start = dw.get("oos_window_start_ns")
+    dw_oos_covered = dw.get("oos_covered")
+    dw_oos_gap = dw.get("oos_coverage_gap_days")
 
     return TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
@@ -115,6 +139,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         is_total_trades=int(is_total_trades),
         is_max_trades=int(is_max_trades),
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
+        oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else 0.0,
+        oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,
         is_best_total_return=float(is_best_total_return),
         is_best_win_rate=float(is_best_win_rate),
         data_window_start=str(dw_start) if dw_start is not None else None,
@@ -122,4 +148,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         data_window_days=float(dw_days) if dw_days is not None else None,
         fill_ts_min=int(dw_fill_min) if dw_fill_min is not None else None,
         fill_ts_max=int(dw_fill_max) if dw_fill_max is not None else None,
+        oos_window_start_ns=int(dw_oos_start) if dw_oos_start is not None else None,
+        oos_covered=bool(dw_oos_covered) if dw_oos_covered is not None else None,
+        oos_coverage_gap_days=float(dw_oos_gap) if dw_oos_gap is not None else None,
+        oos_rejection_reasons=oos_rejection_reasons,
     )

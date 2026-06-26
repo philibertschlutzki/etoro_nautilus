@@ -51,3 +51,27 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
         return (False, "OOS_FOLD_TOO_SHORT")
 
     return (True, "OK")
+
+
+def data_reaches_oos_window(newest_ns: int | None,
+                            oos_window_start_ns: int | None) -> tuple[bool, str]:
+    """Issue #455 (Pitfall #82) — Gate-1-OOS-Erreichbarkeits-Vorprüfung (rein, I/O-frei).
+
+    Ein (strategy, symbol)-Paar ist nur dann OOS-auswertbar, wenn der **jüngste** verfügbare Tick
+    die **früheste** OOS-Sub-Fenster-Grenze (``start_ns + is_window_ns``, fold=0) erreicht. Liegt
+    der jüngste Tick davor (dünner/staler H2-Katalog), erhält JEDES OOS-Sub-Fenster null Fills ⇒
+    ``oos_total_trades=0`` strukturell, parameter-unabhängig, über alle Strategien. Solche Symbole
+    sollen VOR dem Sweep übersprungen werden, statt 100 nutzlose Trials zu fahren.
+
+    Returns ``(ok, reason)``:
+      * ``(True, "OK")``                    — jüngster Tick erreicht die OOS-Grenze.
+      * ``(False, "OOS_WINDOW_UNREACHABLE")`` — jüngster Tick liegt vor der OOS-Grenze.
+      * ``(True, "OOS_PREFLIGHT_UNAVAILABLE")`` — **fail-open**: fehlt die Tick-Telemetrie
+        (``newest_ns is None``) ODER die Geometrie (``oos_window_start_ns is None``), wird NICHT
+        übersprungen — das Preflight bleibt aus und das Verhalten ist bit-identisch zum Ist-Zustand.
+    """
+    if newest_ns is None or oos_window_start_ns is None:
+        return (True, "OOS_PREFLIGHT_UNAVAILABLE")
+    if int(newest_ns) >= int(oos_window_start_ns):
+        return (True, "OK")
+    return (False, "OOS_WINDOW_UNREACHABLE")

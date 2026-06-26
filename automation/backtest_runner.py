@@ -936,7 +936,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             if log_fn:
                 log_fn("[Metriken] Keine Fills oder ausgeführten Orders im Report dokumentiert.")
             if walk_forward_dict and start_ns is not None:
-                return {"metrics": NULL, "oos_metrics": NULL}
+                return {"metrics": NULL, "oos_metrics": NULL,
+                        "_oos_window_start_ns": None, "_oos_covered": None}
             return NULL
         instrument_fills: dict[str, list] = {}
         for row in df_fills.itertuples():
@@ -1016,7 +1017,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             if log_fn:
                 log_fn("[Metriken] Fills vorhanden, jedoch keine Trade-Schließungen (FIFO) generiert.")
             if walk_forward_dict and start_ns is not None:
-                return {"metrics": NULL, "oos_metrics": NULL}
+                return {"metrics": NULL, "oos_metrics": NULL,
+                        "_oos_window_start_ns": None, "_oos_covered": None}
             return NULL
 
         if log_fn:
@@ -1045,6 +1047,33 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     f"Vermutliche Ursache: Fill-ts aus falscher Clock-Domäne oder fehlendes "
                     f"ts_event/ts_last (siehe _fill_ts_ns)."
                 )
+
+        # Issue #455 (Pitfall #82) — OOS-Abdeckungs-Telemetrie. Die früheste OOS-Sub-Fenster-Grenze
+        # (fold=0) ist start_ns + is_window_ns. Erreichen die realen Fills (fill_ts_max) diese Grenze
+        # NICHT, erhält jedes OOS-Sub-Fenster null Fills ⇒ oos_total_trades=0 strukturell, parameter-
+        # unabhängig über alle Strategien (dünner/staler H2-Katalog nach catalog_service-Ausfall).
+        # Wir REICHEN das als Telemetrie durch und WARNEN sichtbar — bewusst KEIN raise: ein raise
+        # würde über die NULL-Rückgabe genau die Telemetrie (oos_covered) verschlucken, die den
+        # Operator DATENseitig statt parameterseitig diagnostizieren lässt. Die harte Vorab-Abweisung
+        # gehört ins Gate-1-Preflight (sweep.enumerate_tunable_pairs), nicht in diese Mess-Funktion.
+        oos_window_start_ns = None
+        oos_covered = None
+        if walk_forward_dict and start_ns is not None:
+            _is_window_ns_cov = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
+            oos_window_start_ns = start_ns + _is_window_ns_cov
+            oos_covered = fill_ts_max is not None and fill_ts_max >= oos_window_start_ns
+            if not oos_covered and log_fn:
+                if fill_ts_max is not None:
+                    _gap_days = round((oos_window_start_ns - fill_ts_max) / (86400 * 1_000_000_000), 1)
+                    log_fn(
+                        f"[OOS-Abdeckung] ⚠️ fill_ts_max liegt {_gap_days} Tage VOR der frühesten "
+                        f"OOS-Grenze (start_ns + is_window, Pitfall #82). Kein Trade ist "
+                        f"OOS-klassifizierbar ⇒ oos_total_trades=0 strukturell. Ursache ist "
+                        f"DATENseitig (dünner/staler H2-Katalog), nicht parameterseitig — Katalog "
+                        f"für die zweite Fensterhälfte auffrischen (Backfill), dann erneut tunen."
+                    )
+                else:
+                    log_fn("[OOS-Abdeckung] ⚠️ Keine Fills im Fenster — OOS-Abdeckung nicht gegeben (Pitfall #82).")
 
         is_pnls = []
         oos_pnls = []
@@ -1160,6 +1189,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 # Issue #444/#448 — beobachtete Fill-ts-Spanne für die data_window-Telemetrie.
                 "_fill_ts_min": fill_ts_min,
                 "_fill_ts_max": fill_ts_max,
+                # Issue #455 — OOS-Abdeckungs-Grenze + ob die Fills sie erreichen.
+                "_oos_window_start_ns": oos_window_start_ns,
+                "_oos_covered": oos_covered,
             }
         else:
             # Fallback for backwards compatibility if oos isn't requested
@@ -1171,7 +1203,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #448 — formgleicher Rückgabewert: im Walk-Forward-Modus das nested NULL-Dict, sonst
         # das flache NULL (der Worker behandelt beide, aber Formgleichheit hält die Telemetrie sauber).
         if walk_forward_dict and start_ns is not None:
-            return {"metrics": NULL, "oos_metrics": NULL, "_fill_ts_min": None, "_fill_ts_max": None}
+            return {"metrics": NULL, "oos_metrics": NULL, "_fill_ts_min": None, "_fill_ts_max": None,
+                    "_oos_window_start_ns": None, "_oos_covered": None}
         return NULL
 
 
@@ -1676,8 +1709,21 @@ def write_tournament_json(
     _fill_maxs = [r.get("_fill_ts_max") for r in all_results if r.get("_fill_ts_max") is not None]
     fill_ts_min = min(_fill_mins) if _fill_mins else None
     fill_ts_max = max(_fill_maxs) if _fill_maxs else None
+    # Issue #455 — OOS-Abdeckungs-Grenze aggregieren. oos_window_start_ns ist über alle Worker
+    # identisch (hängt nur an start_ns + is_window), daher genügt der erste Nicht-None-Wert. Die
+    # Coverage wird auf Aggregat-Ebene gegen den globalen fill_ts_max neu bestimmt (ein einziger
+    # Worker mit OOS-Fills genügt, damit das Paar OOS-abgedeckt ist).
+    _oos_starts = [r.get("_oos_window_start_ns") for r in all_results if r.get("_oos_window_start_ns") is not None]
+    oos_window_start_ns = _oos_starts[0] if _oos_starts else None
     if start_ns is not None or end_ns is not None or fill_ts_min is not None:
         _day_ns = 86400 * 1_000_000_000
+        if oos_window_start_ns is not None and fill_ts_max is not None:
+            oos_covered = fill_ts_max >= oos_window_start_ns
+            oos_coverage_gap_days = (round((oos_window_start_ns - fill_ts_max) / _day_ns, 1)
+                                     if not oos_covered else 0.0)
+        else:
+            oos_covered = None
+            oos_coverage_gap_days = None
         output["data_window"] = {
             "start_ns": start_ns,
             "end_ns":   end_ns,
@@ -1686,6 +1732,13 @@ def write_tournament_json(
             "days":     round((end_ns - start_ns) / _day_ns, 1) if (start_ns and end_ns) else None,
             "fill_ts_min": fill_ts_min,
             "fill_ts_max": fill_ts_max,
+            # Issue #455 — OOS-Abdeckung: Grenze (ISO + ns), Flag und Lücke in Tagen. oos_covered=False
+            # ⇒ struktureller OOS=0-Kollaps ist DATENseitig (H2-Katalog), nicht parameterseitig.
+            "oos_window_start_ns": oos_window_start_ns,
+            "oos_window_start": (pd.Timestamp(oos_window_start_ns, unit="ns", tz="UTC").isoformat()
+                                 if oos_window_start_ns is not None else None),
+            "oos_covered": oos_covered,
+            "oos_coverage_gap_days": oos_coverage_gap_days,
         }
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -2070,6 +2123,9 @@ def run_single_backtest_worker(
         # data_window-Block der tournament_result.json). None, wenn keine Round-Trips/kein WF-Modus.
         fill_ts_min = extracted_data.get("_fill_ts_min") if isinstance(extracted_data, dict) else None
         fill_ts_max = extracted_data.get("_fill_ts_max") if isinstance(extracted_data, dict) else None
+        # Issue #455 — OOS-Abdeckungs-Telemetrie analog nach oben reichen.
+        oos_window_start_ns = extracted_data.get("_oos_window_start_ns") if isinstance(extracted_data, dict) else None
+        oos_covered = extracted_data.get("_oos_covered") if isinstance(extracted_data, dict) else None
 
         def format_metric(m_dict, key, min_trades_req):
             if m_dict.get('total_trades', 0) < min_trades_req:
@@ -2146,6 +2202,9 @@ def run_single_backtest_worker(
             "_last_tick_ns": last_tick_ns_val,
             "_fill_ts_min": fill_ts_min,
             "_fill_ts_max": fill_ts_max,
+            # Issue #455 — OOS-Abdeckungs-Grenze + Coverage-Flag pro Worker.
+            "_oos_window_start_ns": oos_window_start_ns,
+            "_oos_covered": oos_covered,
         }
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
