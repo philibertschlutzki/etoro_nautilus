@@ -356,9 +356,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # optimize_symbol/confirm (HI-7) ohne Pickling nutzbar bleiben.
     def _run_pair(pair: tuple[str, str, str]) -> Path:
         strategy, symbol, _reason = pair
-        study = optimize_symbol(strategy, symbol)
+        newest_ns = latest_ts.get(symbol) if latest_ts else None
+        study = optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns)
         global_params = load_global_best(strategy, config_dir())
-        promotion = confirm(study, strategy, symbol, global_params)
+        promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns)
         return export_symbol_proposal(study, strategy, symbol, promotion)
 
     if n_jobs and n_jobs > 1 and len(pairs) > 1:
