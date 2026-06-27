@@ -301,7 +301,7 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         "dominant_rejection": _dominant_rejection(study),
         # Issue #453 — granularere, dezidierte dominante Ablehnungs-Kategorie (löst den Catch-All
         # 'oos_not_evaluated' in die tatsächliche, handlungsleitende Ursache auf).
-        "is_rejection_detail": promotion.get("is_rejection_detail_override", _dominant_is_rejection_detail(study)),
+        "is_rejection_detail": promotion.get("is_rejection_detail_override") or _dominant_is_rejection_detail(study),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],
