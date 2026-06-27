@@ -1,3 +1,4 @@
+import datetime as dt
 import json
 import hashlib
 from collections import Counter
@@ -104,7 +105,8 @@ def _metrics_dict(m) -> dict:
 
 
 def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
-                                *, run_backtest=run_backtest, build_trial=build_trial):
+                                *, run_backtest=run_backtest, build_trial=build_trial,
+                                catalog_newest_ns: int | None = None):
     """Führt einen Holdout-Backtest für genau `symbol` mit `params` aus und parst die Metriken.
 
     Wie confirm_on_holdout (holdout_days=0, n_folds=1, oos_window_days_override=holdout_days),
@@ -138,13 +140,16 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
         n_folds=1,
         oos_window_days_override=holdout_days_cfg,
         instruments=[symbol],
+        catalog_newest_ns=catalog_newest_ns,
     )
     output_path = run_backtest(trial_dir, manifest_path)
     return parse_tournament(output_path)
 
 
+
 def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_params: dict,
-                                 *, run_backtest=run_backtest, build_trial=build_trial) -> dict:
+                                 *, run_backtest=run_backtest, build_trial=build_trial,
+                                 catalog_newest_ns: int | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
@@ -162,13 +167,50 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
 
     status ∈ {'READY_FOR_PR', 'REJECTED_NO_EDGE_OVER_GLOBAL', 'REJECTED_ON_HOLDOUT'}.
     """
+    cfg_dir = config_dir()
+    backtest_path = cfg_dir / "backtest.json"
+    wf_cfg = {}
+    if backtest_path.exists():
+        with open(backtest_path, "r", encoding="utf-8") as f:
+            wf_cfg = (json.load(f) or {}).get("walk_forward", {})
+
+    is_window_days = wf_cfg.get("is_window_days", 120)
+    holdout_days = wf_cfg.get("holdout_days", 45)
+
+    if catalog_newest_ns is not None:
+        now = dt.datetime.now(dt.timezone.utc)
+        from automation.optimizer.trial_config import compute_walk_forward_window
+        _, holdout_start = compute_walk_forward_window(
+            now=now,
+            holdout_days=holdout_days,
+            is_window_days=is_window_days,
+            oos_window_days=30,
+            n_folds=1,
+            catalog_newest_ns=catalog_newest_ns,
+        )
+        oos_lo_ns = int((holdout_start + dt.timedelta(days=is_window_days)).timestamp() * 1_000_000_000)
+        if catalog_newest_ns < oos_lo_ns:
+            return {
+                "promote": False,
+                "status": "REJECTED_ON_HOLDOUT",
+                "is_rejection_detail_override": "REJECT_HOLDOUT_UNREACHABLE",
+                "symbol_params": {},
+                "R_symbol": 0.0,
+                "R_global": 0.0,
+                "promotion_margin": 0.0,
+                "metrics_symbol": {},
+                "metrics_global": {}
+            }
+
     best_trial = study.best_trial
     symbol_params = best_trial.user_attrs.get("sampled_params", best_trial.params)
 
     m_symbol = _holdout_metrics_for_params(strategy, symbol, symbol_params,
-                                           run_backtest=run_backtest, build_trial=build_trial)
+                                           run_backtest=run_backtest, build_trial=build_trial,
+                                           catalog_newest_ns=catalog_newest_ns)
     m_global = _holdout_metrics_for_params(strategy, symbol, global_params,
-                                           run_backtest=run_backtest, build_trial=build_trial)
+                                           run_backtest=run_backtest, build_trial=build_trial,
+                                           catalog_newest_ns=catalog_newest_ns)
 
     # Rohe risikoadjustierte Performance (Per-Symbol-Pfad, KEIN param_pen).
     R_symbol = compute_reward(m_symbol, universe_size=1)
@@ -259,7 +301,7 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         "dominant_rejection": _dominant_rejection(study),
         # Issue #453 — granularere, dezidierte dominante Ablehnungs-Kategorie (löst den Catch-All
         # 'oos_not_evaluated' in die tatsächliche, handlungsleitende Ursache auf).
-        "is_rejection_detail": _dominant_is_rejection_detail(study),
+        "is_rejection_detail": promotion.get("is_rejection_detail_override", _dominant_is_rejection_detail(study)),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],

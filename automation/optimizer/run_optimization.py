@@ -548,7 +548,8 @@ def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
 
 
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
-                          *, run_backtest=run_backtest, build_trial=build_trial):
+                          *, run_backtest=run_backtest, build_trial=build_trial,
+                          catalog_newest_ns: int | None = None):
     """Wie make_objective, aber single-symbol: build_trial(instruments=[symbol]) und
        compute_reward(universe_size=1, sampled, global_params, strategy) (Per-Symbol-Reward
        mit param_pen Richtung global_params, A4.3)."""
@@ -572,6 +573,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             n_folds=4,
             holdout_days=45,
             instruments=[symbol],
+            catalog_newest_ns=catalog_newest_ns,
         )
 
         # Issue #415 — Per-Trial-Wall-Clock. perf_counter UM den run_backtest-Aufruf herum (statt via
@@ -650,7 +652,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
 
 
 def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
-                    *, storage: str | None = None):
+                    *, storage: str | None = None, catalog_newest_ns: int | None = None):
     """Single-Symbol-Variante von `optimize`: eigene benannte SQLite-Study unter
        {WORK}/sweep/study_{strategy}_{_sanitize(symbol)}.db, Manifest mit instruments=[symbol]
        (universe_size==1 ⇒ Per-Symbol-Reward), Warm-Start am globalen Optimum (Gate 2 via
@@ -700,6 +702,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     objective = make_symbol_objective(
         strategy, symbol, global_best,
         run_backtest=run_backtest, build_trial=build_trial,
+        catalog_newest_ns=catalog_newest_ns,
     )
     # Issue #409 — Fail-Loud-Guard: warnt, sobald nach n_startup_trials alle Trials am
     # Unevaluable-Floor kleben (Pitfall #75). Config einmalig gebunden (kein Per-Trial-IO).

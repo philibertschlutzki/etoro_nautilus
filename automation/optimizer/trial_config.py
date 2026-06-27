@@ -21,6 +21,7 @@ def compute_walk_forward_window(
     is_window_days: int,
     oos_window_days: int,
     n_folds: int,
+    catalog_newest_ns: int | None = None,
 ) -> tuple[dt.datetime, dt.datetime]:
     """Issue #457 (Pitfall #84) — die EINZIGE Quelle der Walk-Forward-Fenster-Arithmetik.
 
@@ -41,6 +42,10 @@ def compute_walk_forward_window(
     Die frueheste OOS-Sub-Fenster-Grenze (fold=0) ist damit ``start + is_window_days``.
     """
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if catalog_newest_ns is not None:
+        catalog_dt = dt.datetime.fromtimestamp(catalog_newest_ns / 1_000_000_000, tz=dt.timezone.utc)
+        catalog_end = catalog_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = min(end, catalog_end)
     # Sonntag (weekday() == 6) → Samstag, BEVOR holdout abgezogen wird.
     if end.weekday() == 6:
         end -= dt.timedelta(days=1)
@@ -62,6 +67,7 @@ def build_trial(
     base_cfg: Path | None = None,
     instruments: list[str] | None = None,
     copy_config: bool = True,
+    catalog_newest_ns: int | None = None,
 ) -> tuple[Path, Path]:
     """
     Erzeugt isoliertes trial_dir; kopiert config_dir()-Inhalt nach trial_dir/config;
@@ -127,6 +133,7 @@ def build_trial(
         is_window_days=is_window_days,
         oos_window_days=oos_window_days,
         n_folds=n_folds,
+        catalog_newest_ns=catalog_newest_ns,
     )
 
     # Setup directories
