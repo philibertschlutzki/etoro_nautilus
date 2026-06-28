@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -65,8 +66,7 @@ def _shortfall_distance(actual: float, target: float | None) -> float:
     if target is None or target <= 0.0:
         return 0.0
     gap = max(0.0, float(target) - float(actual))
-    target_scale = max(float(target), 0.05)
-    return (gap / target_scale) ** 2
+    return (gap / float(target)) ** 2
 
 
 def _excess_distance(actual: float, cap: float | None) -> float:
@@ -151,12 +151,18 @@ def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
 
     penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
 
-    # Penalty darf den Reward maximal bis auf die unevaluable_ceiling (-9.75) drücken.
-    # Startpunkt ist knapp unter dem evaluable_floor (-9.749).
+    # Die Penalty muss asymptotisch komprimiert werden, da das Band zwischen
+    # evaluable_floor (-9.749) und unevaluable_ceiling (-9.75) mit z.B. 0.001 extrem schmal ist.
+    # Wir nutzen math.tanh(), um [0, ∞) monoton auf [0, 1) abzubilden.
     ceiling_offset = 1e-9
-    raw_failure_reward = evaluable_floor - ceiling_offset - penalty
+    available_span = weights["evaluable_floor_epsilon"] - ceiling_offset
+    if available_span <= 0:
+        available_span = 1e-6 # Fallback, sollte evaluable_floor_epsilon mikroskopisch sein
 
-    return max(float(unevaluable_ceiling), raw_failure_reward)
+    compressed_penalty = available_span * math.tanh(penalty)
+
+    # Startpunkt ist knapp unter dem evaluable_floor
+    return evaluable_floor - ceiling_offset - compressed_penalty
 
 
 def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:

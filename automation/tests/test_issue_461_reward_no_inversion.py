@@ -110,3 +110,6 @@ def test_reward_no_inversion_property():
     assert r_eligible >= evaluable_floor, f"r_eligible={r_eligible} < {evaluable_floor}"
     assert r_eligible > r_near_miss, f"r_eligible={r_eligible} <= r_near_miss={r_near_miss}"
     assert r_eligible > r_far_miss, f"r_eligible={r_eligible} <= r_far_miss={r_far_miss}"
+
+    # Assert 4: Gradient preservation
+    assert r_near_miss > r_far_miss, f"r_near_miss={r_near_miss} <= r_far_miss={r_far_miss}"
