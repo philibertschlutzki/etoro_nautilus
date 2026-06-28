@@ -51,5 +51,7 @@
     "drawdown_penalty_weight": 0.1
   },
   "return_penalty_scale": 0.1,
-  "oos_min_win_rate": 0.25
+  "oos_min_win_rate": 0.25,
+  "oos_min_sortino": 0.3,
+  "oos_min_profit_factor": 1.1
 }

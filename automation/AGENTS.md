@@ -1219,12 +1219,12 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 ### 🟢 Pitfall #88 — Leakage in OOS Window durch Indikator-Lookback [BEHOBEN: GH-#466]
 **Symptom:** Time-Series-Splits in `backtest_runner.py` generieren eine kontiguierliche OOS-Union, bei der der Start des OOS-Folds exakt auf das Ende des IS-Folds fällt, was zu Leakage durch Indikator-Lookbacks führt.
 **Root Cause:** Fehlende Embargo-Periode (Purge/Embargo). Indikatoren, die im OOS-Fenster berechnet werden, beziehen IS-Daten mit ein.
-**Fix/Regel:** `embargo_period_days` aus `walk_forward_dict` (Default 0) in die Berechnung des `split_oos_start_ns` integriert. OOS-Start = IS-Start + IS-Window + Embargo-Period.
+**Fix/Regel:** `embargo_period_days` aus `walk_forward_dict` (Default 0) in die Berechnung des `split_oos_start_ns` integriert. OOS-Start = IS-Start + IS-Window + Embargo-Period. Diese mengentheoretische Invariante (Lookback_Window ∩ IS_Period = ∅) schreibt den Embargo-Mechanismus vor.
 
 ### 🟢 Pitfall #89 — Semantics Guard Posterior-Korruption [BEHOBEN: GH-#468]
 **Symptom:** Optuna mischt Trials aus alten und neuen Reward-Semantiken, was den TPE-Sampler korrumpiert und die Suche divergiert.
 **Root Cause:** `_check_reward_semantics_version` hat bisher nur geloggt, den Lauf aber nicht abgebrochen.
-**Fix/Regel:** Zwingender Fail-Loud (`ValueError`) bei `existing < current` mit bestehenden Trials. Jede Code-Änderung der Penalty-/Distanz-Logik erfordert den Bump der `reward_semantics_version` in `optimizer.json`.
+**Fix/Regel:** Zwingender Fail-Loud (`ValueError`) bei `existing < current` mit bestehenden Trials. Jede Modifikation an der mathematischen Distanz-Kalkulation, Penalty-Gewichtung oder Gate-Logik erfordert einen zwingenden Bump der `reward_semantics_version` in der `optimizer.json`.
 
 ### 🟢 Pitfall #87 — Holdout-Abdeckungs-Blindstelle: Katalog erreicht Holdout-Slice nicht ⇒ struktureller Reject [BEHOBEN: GH-#462]
 **Symptom:** Symbole bestehen Preflight und fahren 100 Trials, fallen aber deterministisch am leeren Holdout (REJECT_OOS_INACTIVE / REJECTED_ON_HOLDOUT). Compute wird nutzlos verbrannt.

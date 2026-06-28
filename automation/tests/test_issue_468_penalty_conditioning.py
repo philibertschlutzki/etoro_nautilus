@@ -30,7 +30,7 @@ def test_constraint_distance_penalty_isolation():
         "unevaluable_shaping_span": 0.25
     }
     tournament_cfg = {
-        "oos_min_trades": 10,
+        "oos_min_trades": 10, "oos_min_sortino": 0.3, "oos_min_profit_factor": 1.1,
         "min_trades": 50,
         "oos_min_total_return": 0.05,
         "min_total_return": 0.10,

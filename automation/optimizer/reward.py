@@ -66,8 +66,10 @@ def _shortfall_distance(actual: float, target: float | None, scale: float | None
     Issue #467: `scale` erlaubt die Entkopplung der Penalty-Krümmung vom Gate-Threshold."""
     if target is None or target <= 0.0:
         return 0.0
+    if scale is not None and scale <= 0.0:
+        raise ValueError("scale must be strictly positive to prevent ZeroDivisionError")
     gap = max(0.0, float(target) - float(actual))
-    denominator = float(scale) if scale is not None and scale > 0.0 else float(target)
+    denominator = float(scale) if scale is not None else float(target)
     return (gap / denominator) ** 2
 
 
@@ -116,6 +118,9 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
     req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return")
     req_expectancy = _cfg_value(weights, tournament_cfg, "oos_min_expectancy")
     req_win_rate = _cfg_value(weights, tournament_cfg, "oos_min_win_rate")
+
+    if None in (req_trades, req_return, req_expectancy, req_win_rate):
+        raise ValueError("Missing strict OOS configuration parameters in tournament.json")
 
     return_penalty_scale = _cfg_value(weights, tournament_cfg, "return_penalty_scale")
 

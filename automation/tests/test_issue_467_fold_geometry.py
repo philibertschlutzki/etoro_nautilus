@@ -1,6 +1,35 @@
 import pytest
 from datetime import datetime, timezone
 import json
+import sys
+import unittest.mock as mock
+
+sys.modules["pyarrow"] = mock.MagicMock()
+sys.modules["pyarrow.parquet"] = mock.MagicMock()
+sys.modules["pyarrow.dataset"] = mock.MagicMock()
+sys.modules["pyarrow.compute"] = mock.MagicMock()
+sys.modules["nautilus_trader.model.data"] = mock.MagicMock()
+sys.modules["nautilus_trader.core.datetime"] = mock.MagicMock()
+
+try:
+    import pandas
+except ImportError:
+    sys.modules["pandas"] = mock.MagicMock()
+
+try:
+    import dotenv
+except ImportError:
+    sys.modules["dotenv"] = mock.MagicMock()
+
+# Mock to bypass other potential imports like automation.catalog_service
+sys.modules["automation.catalog_service"] = mock.MagicMock()
+sys.modules["nautilus_trader.common.component"] = mock.MagicMock()
+sys.modules["nautilus_trader.config"] = mock.MagicMock()
+
+try:
+    from automation.backtest_runner import _extract_metrics
+except Exception:
+    pass
 
 def test_embargo_logic_mocked_in_extract_metrics():
     """
