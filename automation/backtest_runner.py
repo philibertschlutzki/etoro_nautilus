@@ -747,7 +747,8 @@ def _read_sortino_min_trades() -> int:
     _sortino_min_trades_cache = val
     return val
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None) -> dict:
+
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -798,34 +799,76 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     rets = [v / starting_capital for v in pnl_list]
     cum = 1.0
-    peak = 1.0
-    max_dd = 0.0
     for r in rets:
         cum *= (1.0 + r)
-        peak = max(peak, cum)
-        max_dd = max(max_dd, (peak - cum) / peak)
-
     total_return = cum - 1.0
+
+    if mtm_series is not None and not mtm_series.empty:
+        import numpy as np
+        import pandas as pd
+        cumulative_max = mtm_series.cummax()
+        drawdown = (mtm_series - cumulative_max) / cumulative_max.replace(0, np.nan)
+        max_dd = abs(drawdown.min())
+        if pd.isna(max_dd): max_dd = 0.0
+
+        # Zwingende Isolation (High-Water Mark darf nicht vom IS-Fenster vererbt werden)
+        cumulative_max = mtm_series.cummax()
+        # Aber halt, cummax() startet neu am Anfang der Sliced Serie!
+        # Falls es eine Series ist, passt cummax() für die aktuell übergebene Sektion.
+
+        # Ableitung der per-Period Returns
+        # Erster Return darf kein NaN-Artefakt erzeugen, dropna() erledigt das
+        period_rets = mtm_series.pct_change().dropna()
+
+        # Heterogenität des Sortino-Skalars (Dynamische Auflösung statt globalem Hardcoding)
+        # Wir berechnen die effektive Frequenz der Datenreihe:
+        span_years = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds() / (365.25 * 86400) if len(mtm_series) > 1 else 0.0
+        if span_years > 0:
+            annualization_factor = len(period_rets) / span_years
+        else:
+            annualization_factor = 252.0 # fallback
+        min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
+
+        if n < min_trades_sortino or losses_count == 0 or period_rets.empty:
+            sortino = None
+        else:
+            downside_rets = period_rets[period_rets < 0]
+            dd_dev = downside_rets.std()
+            if pd.isna(dd_dev) or dd_dev <= 0:
+                sortino = None
+            else:
+                mean_ret = period_rets.mean()
+                sortino_raw = (mean_ret / dd_dev) * math.sqrt(annualization_factor)
+                sortino = min(sortino_raw, RATIO_CAP)
+    else:
+        peak = 1.0
+        max_dd = 0.0
+        cum_tmp = 1.0
+        for r in rets:
+            cum_tmp *= (1.0 + r)
+            peak = max(peak, cum_tmp)
+            max_dd = max(max_dd, (peak - cum_tmp) / peak)
 
     # Issue #401: 'n < 5' war hartcodiert (Zero-Hardcoding-Verstoss + Mismatch zu oos_min_trades);
     # jetzt deklarativ aus tournament.json['sortino_min_trades'] (Default 5). losses_count == 0
     # bleibt None (Zero-Loss ⇒ keine Downside-Deviation, Issue #209) und wird im Reward ueber
     # optimizer.json['oos_sortino_fallback'] aufgefangen, statt hier einen Sortino zu fabrizieren.
-    min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
-    if n < min_trades_sortino or losses_count == 0:
-        sortino = None
-    else:
-        down_sq = [min(r, 0.0) ** 2 for r in rets]
-        if len(down_sq) == 0 or sum(down_sq) <= 0.0:
+    if mtm_series is None or mtm_series.empty:
+        min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
+        if n < min_trades_sortino or losses_count == 0:
             sortino = None
         else:
-            # Addition *under* the root as requested by PR review
-            # Floor dd_dev at 1e-6 to strictly protect against division-by-zero on micro downside deviations.
-            dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
-            dd_dev = max(dd_dev, DENOMINATOR_FLOOR)
-            mean_ret = sum(rets) / n
-            sortino_raw = mean_ret / dd_dev * math.sqrt(252)
-            sortino = min(sortino_raw, RATIO_CAP)
+            down_sq = [min(r, 0.0) ** 2 for r in rets]
+            if len(down_sq) == 0 or sum(down_sq) <= 0.0:
+                sortino = None
+            else:
+                # Addition *under* the root as requested by PR review
+                # Floor dd_dev at 1e-6 to strictly protect against division-by-zero on micro downside deviations.
+                dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
+                dd_dev = max(dd_dev, DENOMINATOR_FLOOR)
+                mean_ret = sum(rets) / n
+                sortino_raw = mean_ret / dd_dev * math.sqrt(252.0) # Legacy Fallback
+                sortino = min(sortino_raw, RATIO_CAP)
 
     # Floor max_dd at DENOMINATOR_FLOOR to protect against division-by-zero when computing calmar.
     if max_dd <= 0.0:
@@ -896,7 +939,51 @@ def _fill_ts_ns(f) -> int:
     )
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0) -> dict:
+
+from nautilus_trader.common.actor import Actor
+from nautilus_trader.model.data import Bar
+import pandas as pd
+
+class PortfolioMonitor(Actor):
+    def __init__(self, bar_type: str):
+        super().__init__()
+        from nautilus_trader.model.data import BarType
+        self.bar_type = BarType.from_str(bar_type)
+        self.equity_curve = []
+
+    def on_start(self):
+        self.subscribe_bars(self.bar_type)
+
+    def on_bar(self, bar: Bar):
+        try:
+            eq = None
+            if hasattr(self.portfolio, 'account'):
+                # In NautilusTrader v1.229.0, margin_balance() might only be realized capital.
+                # To guarantee we capture floating PnL (Issue #465), we explicitly add the sum of unrealized PnLs
+                base_eq = self.portfolio.account.margin_balance().as_double() if hasattr(self.portfolio.account, 'margin_balance') else self.portfolio.account.balance().as_double()
+                floating_pnl = sum(pos.unrealized_pnl().as_double() if callable(pos.unrealized_pnl) else float(pos.unrealized_pnl) for pos in self.portfolio.positions()) if hasattr(self.portfolio, 'positions') else 0.0
+                eq = base_eq + floating_pnl
+            elif hasattr(self.portfolio, 'equity'):
+                if callable(self.portfolio.equity):
+                    eq = self.portfolio.equity().as_double()
+                else:
+                    eq = float(self.portfolio.equity)
+            if eq is not None:
+                self.equity_curve.append((bar.ts_event, eq))
+        except Exception:
+            pass
+
+    def get_equity_series(self) -> pd.Series:
+        if not self.equity_curve:
+            return pd.Series(dtype=float)
+        df = pd.DataFrame(self.equity_curve, columns=["ts", "equity"])
+        df["ts"] = pd.to_datetime(df["ts"], unit="ns")
+        df.set_index("ts", inplace=True)
+        # Drop duplicate timestamps, keeping the last recorded equity for the timestamp
+        df = df[~df.index.duplicated(keep='last')]
+        return df["equity"]
+
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -1121,8 +1208,20 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_med_notional = statistics.median(is_notionals) if is_notionals else 0.0
         oos_med_notional = statistics.median(oos_notionals) if oos_notionals else 0.0
 
-        is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital, med_notional=is_med_notional)
-        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital, med_notional=oos_med_notional) if oos_pnls else {
+        is_mtm = None
+        oos_mtm = None
+        if mtm_series is not None and not mtm_series.empty and walk_forward_dict and start_ns is not None:
+            # Slicing the mtm_series
+            is_start_dt = pd.to_datetime(start_ns, unit="ns")
+            oos_start_dt = pd.to_datetime(start_ns + is_window_ns, unit="ns")
+            oos_end_dt = pd.to_datetime(start_ns + is_window_ns + oos_window_ns * splits, unit="ns")
+            is_mtm = mtm_series.loc[is_start_dt:oos_start_dt]
+            oos_mtm = mtm_series.loc[oos_start_dt:oos_end_dt]
+        elif mtm_series is not None and not mtm_series.empty:
+            is_mtm = mtm_series
+
+        is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital, med_notional=is_med_notional, mtm_series=is_mtm)
+        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital, med_notional=oos_med_notional, mtm_series=oos_mtm) if oos_pnls else {
             "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
             "sortino_ratio": 0.0, "calmar_ratio": 0.0,
             "max_drawdown": 0.0, "total_return": 0.0,
@@ -1155,8 +1254,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
                 import statistics
                 fold_med_notional = statistics.median(fold_notionals) if fold_notionals else 0.0
+                fold_mtm = None
+                if mtm_series is not None and not mtm_series.empty:
+                    split_oos_start_dt = pd.to_datetime(split_oos_start_ns, unit="ns")
+                    split_oos_end_dt = pd.to_datetime(split_oos_end_ns, unit="ns")
+                    fold_mtm = mtm_series.loc[split_oos_start_dt:split_oos_end_dt]
                 if fold_pnls:
-                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional)
+                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, mtm_series=fold_mtm)
                 else:
                     fold_metrics = None
                 per_fold_oos_list.append(fold_metrics)
@@ -1546,6 +1650,7 @@ def select_winners(
 
                         import statistics
                         fold_med_notional = statistics.median(fold_notionals) if fold_notionals else 0.0
+                        # The portfolio aggregate per fold cannot easily have an aggregated MtM curve without combining time series from multiple runs. We'll pass None for the MtM series here.
                         if fold_pnls:
                             fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional)
                         else:
@@ -2084,6 +2189,9 @@ def run_single_backtest_worker(
 
         # --- Backtest ausführen ---
         try:
+            mtm_monitor = PortfolioMonitor(bar_type)
+            engine.add_actor(mtm_monitor)
+
             engine.run()
         except RuntimeError as e:
             wlog_err(f"Backtest RuntimeError (wahrscheinlich Precision Mismatch): {e}")
@@ -2097,7 +2205,7 @@ def run_single_backtest_worker(
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
         try:
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series())
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
