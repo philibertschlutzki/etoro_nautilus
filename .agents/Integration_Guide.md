@@ -350,6 +350,15 @@ Reference Section 11 for the checklist."
 
 ---
 
+## Optimizer Invariants
+
+* **Walk-Forward Geometry (Pitfall #85):** `compute_walk_forward_window` MUST clamp `end` to `min(now, catalog_newest)`. Implementation of a `REJECT_HOLDOUT_UNREACHABLE` Assertion. An empty holdout indicates a data error, not a strategy error.
+* **Reward-Shaping Constraints (Pitfall #86):** Constraint-Failure-Rewards MUST be strictly bounded downwards via Band-Clamp. Invariant: `failure ≥ best_unevaluable`. Upon reward changes, `reward_semantics_version` must be incremented.
+* **Anker-Divergenz (Pitfall #87):** `oos_covered` does not imply OOS-Trades. Derivation exclusively via invariant assertion between telemetry and per-symbol counter (`oos_anchor_divergence`).
+* **Annualisierung/Equity (Pitfall #88):** Drawdown, Calmar, and Total Return MUST be calculated from time-indexed MtM-Equity (not trade-ordered). Annualization via `√(Periods/Year)` respectively `√(Trades/Year)`. Hardcoding of `252` is strictly forbidden.
+
+---
+
 ## FAQ
 
 **Q: What if Jules finds AGENTS.md is wrong?**

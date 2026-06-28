@@ -273,6 +273,13 @@ Parse the actual backtest metrics from the log files or HTML reports generated i
 
 ---
 
+## Methodological Constraints and Pitfalls
+
+* **Pitfall #85 (Holdout-Starvation):** `compute_walk_forward_window` MUST clamp `end` to `min(now, catalog_newest)`. Implementation of a `REJECT_HOLDOUT_UNREACHABLE` Assertion. An empty holdout indicates a data error, not a strategy error.
+* **Pitfall #86 (Reward-Inversion):** Constraint-Failure-Rewards MUST be strictly bounded downwards via Band-Clamp. Invariant: `failure ≥ best_unevaluable`. Upon reward changes, `reward_semantics_version` must be incremented.
+* **Pitfall #87 (Anker-Divergenz):** `oos_covered` does not imply OOS-Trades. Derivation exclusively via invariant assertion between telemetry and per-symbol counter (`oos_anchor_divergence`).
+* **Pitfall #88 (Annualisierung/Equity):** Drawdown, Calmar, and Total Return MUST be calculated from time-indexed MtM-Equity (not trade-ordered). Annualization via `√(Periods/Year)` respectively `√(Trades/Year)`. Hardcoding of `252` is strictly forbidden.
+
 ## Final Deliverables Checklist
 
 Upon completion of all phases, verify and report the status of each item:

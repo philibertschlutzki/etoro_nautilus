@@ -137,6 +137,10 @@ Pick 3 pitfalls and verify they still apply:
 1. **PnL Envelope Unwrapping** — Check `_fetch_account_balance()` and `_reconcile_via_pnl()` for `data.get("clientPortfolio", data)`
 2. **Limit Order ID vs. Token** — Verify that `_cancel_order_async()` has the PnL fallback logic
 3. **Size Precision** — Confirm that no instrument uses `size_precision != 0`
+4. **Pitfall #85 (Holdout-Starvation):** `compute_walk_forward_window` MUST clamp `end` to `min(now, catalog_newest)`. Implementation of a `REJECT_HOLDOUT_UNREACHABLE` Assertion. An empty holdout indicates a data error, not a strategy error.
+5. **Pitfall #86 (Reward-Inversion):** Constraint-Failure-Rewards MUST be strictly bounded downwards via Band-Clamp. Invariant: `failure ≥ best_unevaluable`. Upon reward changes, `reward_semantics_version` must be incremented.
+6. **Pitfall #87 (Anker-Divergenz):** `oos_covered` does not imply OOS-Trades. Derivation exclusively via invariant assertion between telemetry and per-symbol counter (`oos_anchor_divergence`).
+7. **Pitfall #88 (Annualisierung/Equity):** Drawdown, Calmar, and Total Return MUST be calculated from time-indexed MtM-Equity (not trade-ordered). Annualization via `√(Periods/Year)` respectively `√(Trades/Year)`. Hardcoding of `252` is strictly forbidden.
 
 ### automation/ Standalone Constraints
 
