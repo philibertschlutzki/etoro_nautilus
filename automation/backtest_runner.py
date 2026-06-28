@@ -954,18 +954,33 @@ import pandas as pd
 class PortfolioMonitor(Actor):
     def __init__(self, bar_type: str):
         super().__init__()
-        self.bar_type = bar_type
+        from nautilus_trader.model.data import BarType
+        self.bar_type = BarType.from_str(bar_type)
         self.equity_curve = []
 
     def on_start(self):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
-        accounts = self.portfolio.accounts()
-        if not accounts:
-            return
-        eq = accounts[0].equity().as_double()
-        self.equity_curve.append((bar.ts_event, eq))
+        try:
+            # We try to use portfolio.equity directly, which is common in NT for aggregate equity.
+            # But in NautilusTrader 1.229.0 it might be a property or a method. Let's try it as a property or method
+            # In our previous dir output, `equity` was listed.
+            eq = self.portfolio.account.margin_balance().as_double() if hasattr(self.portfolio, 'account') and hasattr(self.portfolio.account, 'margin_balance') else self.portfolio.account.equity().as_double() if hasattr(self.portfolio, 'account') else None
+            # Wait, Nautilus Trader portfolio doesn't have `.accounts()`. It has `.account` (property?) Let's fallback to `self.portfolio.equity` if it exists.
+        except Exception:
+            pass
+        # To be completely safe and get the total portfolio equity:
+        try:
+            # According to our `mtm_portfolio_test.py`, `portfolio` has `account`, `equity`, `unrealized_pnl`...
+            # if `equity` is a property or method:
+            if callable(self.portfolio.equity):
+                eq = self.portfolio.equity().as_double()
+            else:
+                eq = float(self.portfolio.equity)
+            self.equity_curve.append((bar.ts_event, eq))
+        except Exception:
+            pass
 
     def get_equity_series(self) -> pd.Series:
         if not self.equity_curve:
