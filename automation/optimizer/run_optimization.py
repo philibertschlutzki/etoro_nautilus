@@ -234,14 +234,17 @@ def _check_reward_semantics_version(study, opt_data: dict,
         study.set_user_attr("reward_semantics_version", current)
         return
 
-    logger.warning(
-        "♻️ Reward-Semantik-Versionskonflikt: die geladene Study wurde unter Version %s "
-        "akkumuliert, aktuell ist Version %s (Fixes #404–#410). Reward-Werte verschiedener Versionen "
-        "sind NICHT vergleichbar — alte Floor-Trials (Pitfall #75, −9.75) wuerden den TPE-Sampler "
-        "verfaelschen. Loesche die stale Study und starte neu: rm data/optimizer/sweep/*.db "
-        "(globaler Lauf: studies.db).",
-        existing if existing is not None else "unversioniert", current,
-    )
+    # Issue #468 — Harter Fail-Loud-Mechanismus bei Posterior-Korruption.
+    msg = (f"Reward-Semantik-Versionskonflikt: die geladene Study wurde unter Version {existing if existing is not None else 'unversioniert'} "
+           f"akkumuliert, aktuell ist Version {current}. Reward-Werte verschiedener Versionen "
+           f"sind NICHT vergleichbar. Dies führt zu Posterior-Korruption im TPE-Sampler. "
+           f"Bitte löschen Sie die obsolete Study-Datenbank (*.db) und starten Sie neu.")
+
+    if has_trials:
+        if existing is None or existing < current:
+            raise ValueError(msg)
+
+    logger.warning("♻️ %s", msg)
 
 
 def make_objective(
