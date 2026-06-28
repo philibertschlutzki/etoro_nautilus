@@ -748,27 +748,6 @@ def _read_sortino_min_trades() -> int:
     return val
 
 
-def _read_annualization_factor() -> float:
-    import json
-    from pathlib import Path
-    try:
-        from automation.optimizer.trial_config import config_dir
-        cfg_path = config_dir() / "optimizer.json"
-        if cfg_path.exists():
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                raw = json.load(f).get("annualization_periods_per_year")
-                if raw is not None:
-                    return float(raw)
-        cfg_path2 = config_dir() / "tournament.json"
-        if cfg_path2.exists():
-            with open(cfg_path2, "r", encoding="utf-8") as f:
-                raw = json.load(f).get("annualization_periods_per_year")
-                if raw is not None:
-                    return float(raw)
-    except Exception:
-        pass
-    return 252.0
-
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
@@ -832,8 +811,22 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         max_dd = abs(drawdown.min())
         if pd.isna(max_dd): max_dd = 0.0
 
+        # Zwingende Isolation (High-Water Mark darf nicht vom IS-Fenster vererbt werden)
+        cumulative_max = mtm_series.cummax()
+        # Aber halt, cummax() startet neu am Anfang der Sliced Serie!
+        # Falls es eine Series ist, passt cummax() für die aktuell übergebene Sektion.
+
+        # Ableitung der per-Period Returns
+        # Erster Return darf kein NaN-Artefakt erzeugen, dropna() erledigt das
         period_rets = mtm_series.pct_change().dropna()
-        annualization_factor = _read_annualization_factor()
+
+        # Heterogenität des Sortino-Skalars (Dynamische Auflösung statt globalem Hardcoding)
+        # Wir berechnen die effektive Frequenz der Datenreihe:
+        span_years = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds() / (365.25 * 86400) if len(mtm_series) > 1 else 0.0
+        if span_years > 0:
+            annualization_factor = len(period_rets) / span_years
+        else:
+            annualization_factor = 252.0 # fallback
         min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
 
         if n < min_trades_sortino or losses_count == 0 or period_rets.empty:
@@ -874,7 +867,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
                 dd_dev = max(dd_dev, DENOMINATOR_FLOOR)
                 mean_ret = sum(rets) / n
-                sortino_raw = mean_ret / dd_dev * math.sqrt(_read_annualization_factor())
+                sortino_raw = mean_ret / dd_dev * math.sqrt(252.0) # Legacy Fallback
                 sortino = min(sortino_raw, RATIO_CAP)
 
     # Floor max_dd at DENOMINATOR_FLOOR to protect against division-by-zero when computing calmar.

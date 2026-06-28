@@ -1259,3 +1259,14 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 **Betroffen:** `automation/optimizer/trial_config.py`, `automation/optimizer/confirm.py`
 
 | 2026-06-28 | **Issue #464 & #465 (MtM Drawdown & Sortino Dimensionality):** Architektur-Shift von event-basierter (Exit-TS) PnL-Akkumulation zu zeitsynchroner Mark-to-Market (MtM) Equity-Kurve mittels In-Flight `PortfolioMonitor` Actor. `max_drawdown` und `calmar_ratio` nutzen nun die kontinuierliche MtM-Serie. Annualisierungsparameter (`annualization_periods_per_year`) in `optimizer.json` eingeführt zur Dimensionskonsistenz der Sortino Ratio, was Hardcoding auf 252 abschafft. `reward_semantics_version` erhöht. | `automation/backtest_runner.py`, `automation/config/optimizer.json`, `automation/AGENTS.md`, `automation/tests/test_issue_465_mtm_drawdown.py`, `automation/tests/test_issue_464_sortino_dimension.py` |
+
+
+
+| Komponente | Zwingender Dokumentationsinhalt |
+| -- | -- |
+| **Drawdown-Semantik** | Explizite Streichung der alten Definition ("Realized FIFO PnL"). Neue Definition: "Bar-resolved Mark-to-Market (MtM) Equity inklusive Floating Drawdowns offener sowie chronologisch überlappender Trades". |
+| **Score Invalidation** | Explizite Dokumentation des Bumps der `reward_semantics_version`. Zwingende Handlungsanweisung an den Operator: Löschung alter SQLite-Datenbanken (`rm -f data/optimizer/studies.db`), da alte Realized-Drawdown-Metriken strukturell inkompatibel zum neuen MtM-Regime sind. |
+| **Config Parameter** | Der Annualisierungsskalierungsfaktor (Sortino) wird dynamisch pro Instrument berechnet. |
+| **Performance-Profil** | Deklaration des `PortfolioMonitor` Actors als integraler Core-Bestandteil der Backtest-Engine-Laufzeit. |
+
+| 2026-06-28 | **Hotfix CI Precision Mismatch:** PortfolioMonitor Actor Typecast für `BarType` hinzugefügt und Equity-Read-Methode auf `margin_balance` (NautilusTrader 1.229.0 kompatibel) aktualisiert, um TypeError Abstürze im isolierten Worker-Thread zu beheben. | `automation/backtest_runner.py` |
