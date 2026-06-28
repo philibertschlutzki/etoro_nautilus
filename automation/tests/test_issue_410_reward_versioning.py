@@ -59,19 +59,24 @@ def test_fresh_study_is_stamped_no_warning():
     assert not _warned(recs)
 
 
-def test_old_version_warns():
+def test_old_version_with_trials_raises():
+    """Issue #468/#469 — der Versions-Guard ist seit #468 FAIL-LOUD (nicht mehr nur WARN): eine
+    geladene Study mit ÄLTERER Semantik-Version UND bereits akkumulierten Trials muss den Lauf
+    hart abbrechen (ValueError), damit inkompatible historische Trials die TPE-Posterior nicht
+    kontaminieren (Blockade des Ladens inkompatibler Trials, #469-Invariante)."""
     lg, recs = _capturing_logger("test410b")
     s = _FakeStudy(attrs={"reward_semantics_version": 2}, n_trials=10)
-    ro._check_reward_semantics_version(s, CUR, logger=lg)
-    assert _warned(recs)
+    with pytest.raises(ValueError, match="Reward-Semantik"):
+        ro._check_reward_semantics_version(s, CUR, logger=lg)
 
 
-def test_unversioned_study_with_trials_warns():
-    """Pre-Versioning-Study mit akkumulierten Trials unbekannter (aelterer) Semantik ⇒ Warnung."""
+def test_unversioned_study_with_trials_raises():
+    """Pre-Versioning-Study mit akkumulierten Trials unbekannter (aelterer) Semantik ⇒ fail-loud
+    (Issue #468/#469): unversioniert + Trials ist nicht von „alt & inkompatibel" unterscheidbar."""
     lg, recs = _capturing_logger("test410c")
     s = _FakeStudy(n_trials=5)   # kein Versions-Attr, aber bereits Trials
-    ro._check_reward_semantics_version(s, CUR, logger=lg)
-    assert _warned(recs)
+    with pytest.raises(ValueError, match="Reward-Semantik"):
+        ro._check_reward_semantics_version(s, CUR, logger=lg)
 
 
 def test_current_version_no_warning():
@@ -90,17 +95,20 @@ def test_no_version_configured_is_noop():
     assert "reward_semantics_version" not in s.user_attrs
 
 
-def test_warns_mentions_deleting_dbs():
+def test_conflict_message_mentions_deleting_dbs():
+    """Die fail-loud-Meldung bleibt aktionsleitend: Hinweis, die stale Study-DB (.db) zu löschen."""
     lg, recs = _capturing_logger("test410f")
     s = _FakeStudy(attrs={"reward_semantics_version": 1}, n_trials=3)
-    ro._check_reward_semantics_version(s, CUR, logger=lg)
-    msg = _warned(recs)[0].getMessage()
-    assert ".db" in msg   # actionable: hint to delete the stale DB
+    with pytest.raises(ValueError, match=r"\.db"):
+        ro._check_reward_semantics_version(s, CUR, logger=lg)
 
 
 def test_shipped_config_has_reward_semantics_version():
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
-    assert cfg.get("reward_semantics_version") == 4
+    v = cfg.get("reward_semantics_version")
+    # Monoton steigende Versionsnummer (Issue #410/#468): muss gesetzt, integer & schema-dokumentiert
+    # sein. Bewusst >= statt == (forward-kompatibel zu künftigen Reward-Semantik-Bumps).
+    assert isinstance(v, int) and v >= 4
     assert "reward_semantics_version" in cfg["_schema"]["fields"]
 
 
@@ -129,5 +137,8 @@ def _fake_backtest(trial_dir, manifest_path):
 def test_optimize_symbol_stamps_fresh_study(tmp_path, monkeypatch):
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(ro, "run_backtest", _fake_backtest)
+    # Die frische Study muss exakt mit der ausgelieferten Version gestempelt werden (dynamisch
+    # gelesen ⇒ robust gegen künftige Bumps).
+    expected = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))["reward_semantics_version"]
     study = ro.optimize_symbol("SmaCrossoverStrategy", "ZZZ.ETORO", n_trials=1)
-    assert study.user_attrs.get("reward_semantics_version") == 4
+    assert study.user_attrs.get("reward_semantics_version") == expected

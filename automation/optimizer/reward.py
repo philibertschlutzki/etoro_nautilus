@@ -273,6 +273,14 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     # evaluiertes-aber-ineligibles Sample (oos_evaluated=True) sonst je nach Sortino-Definiertheit
     # mal in den Evaluable-, mal in den Unevaluable-Pfad fiele (inkonsistenter Gradient).
     if m.oos_evaluated and not m.oos_eligible:
+        # Issue #467/#468 (strikte OOS-Isolation): _constraint_distance_penalty verlangt die
+        # OOS-Schwellen (oos_min_*) und wirft fail-loud, wenn sie fehlen. Wird compute_reward mit
+        # explizitem ``weights``, aber ohne ``tournament_cfg`` aufgerufen (DI-/confirm-Pfade,
+        # universe_size==1), bleibt loaded_tournament_cfg sonst None ⇒ die kanonischen oos_min_*
+        # aus tournament.json wären unsichtbar und der Lauf crashte statt zu bewerten. Hier die
+        # Single-Source-of-Truth-Config nachladen (idempotent, gecached), bevor die Strafe greift.
+        if loaded_tournament_cfg is None:
+            loaded_tournament_cfg = _read_tournament_cfg()
         return _constraint_failure_reward(m, weights, risk_dd_cap, loaded_tournament_cfg)
 
     if not m.oos_evaluated or base_source is None:

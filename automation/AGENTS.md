@@ -861,6 +861,131 @@ Limit-Exits (wie z.B. das native Profit-Target) werden **asynchron** verwaltet.
 
 ---
 
+## AUDIT #470 — Verifizierte mathematische Invarianten (#460–#469): HARTE AXIOME
+
+> **Status:** Forensik-Audit #470 hat die Root-Cause-Fixes #460–#469 gegen Code, Git-Historie und
+> die ausgeführte Test-Suite verifiziert. Die folgenden Invarianten sind **nicht verhandelbar**.
+> Ein Agent, der eine davon aufweicht, führt eine bekannte, teuer reproduzierte Fehlklasse zurück
+> in die Optimierungs-Pipeline. **Jede Änderung an `reward.py`, `gate.py`, `backtest_runner.py`
+> (Metriken/Splits), `trial_config.py`, `confirm.py` oder den `config/*.json`-Gates MUSS diese
+> Axiome erhalten und die genannten Guard-Tests grün halten.**
+
+### Nummerierungs-Abgleich (Issue-Nummer ↔ Test-Datei ↔ Pitfall)
+
+Die Test-Dateinamen liegen **+1** über der realen GitHub-Issue-Nummer (Konvention des Issue-Autors).
+Maßgeblich für Agenten ist die **Test-Datei** (= die Audit-#470-Nummerierung):
+
+| Audit-/Test-Nr. | Thema | reale GH-Issue | Guard-Test |
+| -- | -- | -- | -- |
+| #460 | Holdout-Starvation / Anchor-Clamp | #460 | `test_issue_460_holdout_reachability.py` |
+| #461 | Reward-Inversion (bounded penalty) | #461 | `test_issue_461_reward_no_inversion.py` |
+| #462 | Gate-1 Holdout-Reachability-Preflight | #462 | `test_issue_462_gate_holdout_reach.py` |
+| #463 | Telemetry/Anchor-Divergenz | #463 | `test_issue_463_anchor_invariant.py` |
+| #464 | Sortino-Dimensionalität (√Perioden) | #464 | `test_issue_464_sortino_dimension.py` |
+| #466 | Total-Return-Compounding (MtM) | **#465** | `test_issue_466_portfolio_return.py` |
+| #467 | Fold-Geometrie (rolling, kein Single-Split) | **#466** | `test_issue_467_fold_geometry.py` |
+| #468 | OOS-Gate-Konditionierung (Penalty-Skala) | **#467** | `test_issue_468_penalty_conditioning.py` |
+| #469 | Reward-Semantics-Versionsguard (fail-loud) | **#468** | `test_issue_469_semantics_guard.py` |
+
+### Axiom A1 (#460) — `now` ist an den Katalog gebunden, nie an die nackte Wanduhr
+`compute_walk_forward_window(..., catalog_newest_ns=…)` clampt `end = min(midnight(now), catalog_end)`
+VOR Wochenend-Rollback und Holdout-Abzug. Per-Symbol-Pfade (`optimize_symbol`, `confirm_per_symbol_promotion`,
+`_holdout_metrics_for_params`) MÜSSEN `catalog_newest_ns` durchreichen. **Verbot:** kein Fenster-`end`
+aus `now` ohne Clamp; kein Holdout-Slice, dessen OOS-Startgrenze hinter dem jüngsten Tick liegt
+(`confirm` muss `REJECT_HOLDOUT_UNREACHABLE` fail-loud zurückgeben). Leerer Holdout = **Daten**-Befund,
+nie Strategie-Befund. (Pitfall #85.)
+
+### Axiom A2 (#461) — Constraint-Failure-Reward ist nach unten beschränkt
+`_constraint_failure_reward` komprimiert die Distanzstrafe asymptotisch (`available_span · tanh(penalty/scale)`)
+und gibt `max(unevaluable_ceiling, …)` zurück. Strikte Ordnung: `eligible > near-miss > far-miss ≥
+unevaluable_ceiling (−9.75) > unevaluable_shaping_band`. **Zwei Invarianten gelten gemeinsam:**
+(1) `failure < evaluable_floor` (kein Gate-Gaming) UND (2) `failure ≥ bestes-unevaluable` ⇒ „mehr
+OOS-Information macht einen Trial NIE strikt schlechter" (keine Inversion, TPE flieht OOS-Aktivität nicht).
+**Verbot:** keine unbeschränkte (lineare/quadratische) Penalty, die unter `unevaluable_ceiling` durchschlägt.
+(Pitfall #86; Guard: `test_issue_461_reward_no_inversion.py`.)
+
+### Axiom A3 (#462) — Preflight prüft Holdout-Erreichbarkeit, nicht nur Fold-0
+`gate.data_reaches_holdout_window` + `sweep.compute_holdout_window_reach_target_ns` überspringen ein Symbol
+VOR dem Sweep, wenn der jüngste Tick die geforderte Holdout-Coverage-Grenze nicht erreicht. Fail-open bei
+fehlender Telemetrie. **Verbot:** Preflight, das ausschließlich `start_ns + is_window` (Fold-0-OOS) prüft.
+(Pitfall #87.)
+
+### Axiom A4 (#463) — `oos_covered` ist notwendig, nicht hinreichend; Boundaries sind SSOT
+Die Invariante `oos_covered ∧ (fill_ts_max ∈ OOS-Union) ⇒ oos_total_trades ≥ 1` wird in `parse_tournament`
+geprüft; jede Verletzung setzt `oos_anchor_divergence=True`. **Alle** Split-Boundaries leiten sich aus dem
+durchgereichten `start_ns` ab (siehe Axiom A7). **Verbot:** dynamisches Re-Anchoring der OOS-Grenzen aus
+Runtime-Ticks (`_first_tick_ns`/`_last_tick_ns`); aus `oos_covered` auf OOS-Trades schließen.
+(Pitfall #87-Klasse / „ARCHITECTURAL INVARIANT: Walk-Forward Boundary Anchoring"; Guards:
+`test_issue_463_anchor_invariant.py` inkl. AST-Gate gegen `_first_tick_ns`.)
+
+### Axiom A5 (#464/#465/#466) — Dimensionale & Equity-Konsistenz der Risiko-/Return-Kennzahlen
+Risiko-/Return-Metriken, die ins **OOS-Gate UND** in den **Reward** fließen, MÜSSEN aus einer
+**zeitindizierten MtM-Equity-Kurve** (`PortfolioMonitor.get_equity_series`) abgeleitet werden:
+- **Sortino (#464):** `mean(period_rets)/downside_std · √(Perioden/Jahr)`, wobei `period_rets`
+  ZEITBASIERTE Returns der Equity-Kurve (`pct_change`) sind und der Annualisierungsfaktor dynamisch aus
+  dem realen Zeitspann stammt (`len(period_rets)/span_years`). **`√252` (oder jede Konstante) darf NIEMALS
+  auf Trade-sequentielle Per-Trade-Returns angewandt werden.**
+- **Drawdown/Calmar (#465):** aus der MtM-Equity-Kurve (`cummax`-Drawdown), nie aus der Trade-geordneten
+  realisierten PnL (sonst Intra-Trade-/Floating-Drawdown blind, exit-sortierungsabhängig).
+- **Total Return (#466, reale Issue #465):** `equity_end/equity_start − 1` aus der MtM-Kurve, NICHT
+  sequentielles Aufzinsen `Π(1 + pnl_i/C0)` (unterstellt 100 % Kapitaleinsatz je Trade ⇒ verzerrt Gate
+  und — via #461 — die dominante Penalty bei paralleler/fraktionaler Allokation).
+
+Der `_calculate_stats`-Fallback OHNE `mtm_series` (Trade-geordnete PnL + `√252`) ist ein **reiner Legacy-/
+Direkt-Unit-Pfad** und darf NIE die OOS-Gate-/Reward-Metriken speisen. **Bekannte Restgrenze (dokumentiert,
+nicht aufzuweichen):** Die *Multi-Symbol-Aggregat*-Pfade in `select_winners` (`portfolio_metrics`,
+Aggregat-per-Fold) besitzen noch KEINE rekonstruierte kombinierte Equity-Kurve und nutzen den Trade-PnL-
+Fallback; der **per-Symbol-Sweep** (`single_symbol_oos`, der #460–#469-Fokus) ist MtM-konform. Wer den
+Aggregat-Pfad ins Gate hebt, MUSS zuerst eine summierte zeitindizierte Equity-Kurve rekonstruieren.
+**Re-Kalibrierungspflicht:** Eine Umstellung der `total_return`-Semantik erfordert eine Neu-Kalibrierung
+von `oos_min_total_return` + Bump von `reward_semantics_version`. (Pitfall #88; Guards:
+`test_issue_464_sortino_dimension.py`, `test_issue_465_mtm_drawdown.py`, `test_issue_466_portfolio_return.py`.)
+
+### Axiom A6 (#467) — `splits=N` erzeugt N echte rollende Folds, keine Degeneration
+Die Fold-Geometrie ist ein **rollender** Walk-Forward: `is_start = start_ns + fold·oos_window` (IS rollt je
+Fold um genau ein OOS-Fenster vor) mit Purge/Embargo `oos_start = is_start + is_window + embargo`. Damit ist
+die Degeneration zu EINEM singulären, kontiguierlichen IS/OOS-Block ausgeschlossen und Lookback-Leakage
+über die IS/OOS-Grenze verhindert. **Verbot:** Inline-Nachbau dieser Arithmetik — siehe Axiom A7.
+(Pitfall #88-Leakage; Guard: `test_issue_467_fold_geometry.py`.)
+
+### Axiom A7 (#467/#463) — Fold-Geometrie ist Single Source of Truth: `compute_fold_boundaries`
+`backtest_runner.compute_fold_boundaries(start_ns, walk_forward_dict)` ist die **EINZIGE** Quelle der
+`(is_start, oos_start, oos_end)`-Tripel. Sämtliche Split-Stellen (Worker per-Trade-Klassifikation, Worker
+per-Fold-Sortinos, `oos_trade_records`, Aggregat-per-Fold) MÜSSEN sie nutzen. Vier parallele Inline-Kopien
+sind eine eingebaute Divergenz-Falle — exakt analog zu `compute_walk_forward_window` für die äußere
+Fenster-Grenze. **Verbot:** `split_*_ns = start_ns + fold·… `-Arithmetik irgendwo inline reproduzieren.
+
+### Axiom A8 (#468) — OOS-Gate-Konditionierung: Penalty-Krümmung ≠ Gate-Schwelle, strikte OOS-Isolation
+Der Return-Shortfall wird an einer **robusten Skala** (`return_penalty_scale`) normiert, NICHT an der
+winzigen Gate-Schwelle `oos_min_total_return` (sonst wird die Schwelle zum Penalty-Verstärker, schlecht
+konditioniert). `_shortfall_distance(..., scale)` entkoppelt Eligibility-Schwelle und Penalty-Gradient.
+**Strikte OOS-Isolation:** Alle im OOS-Pfad genutzten Schwellen sind explizit `oos_*`-gekeyt
+(`oos_min_trades`, `oos_min_total_return`, `oos_min_expectancy`, `oos_min_win_rate`, `oos_min_sortino`,
+`oos_min_profit_factor`) — **kein stiller Fallback auf IS-`min_*`**. `_constraint_distance_penalty` wirft
+fail-loud, wenn die OOS-Keys fehlen; `compute_reward` lädt dafür `tournament.json` nach, falls mit
+explizitem `weights`, aber ohne `tournament_cfg` aufgerufen. **Verbot:** IS-Schwellen im OOS-Gate;
+`scale ≤ 0` (ZeroDivision). (Pitfall #88-Konditionierung; Guard: `test_issue_468_penalty_conditioning.py`.)
+
+### Axiom A9 (#469) — Reward-Semantics-Version: fail-loud gegen Posterior-Korruption
+`_check_reward_semantics_version` bricht **fail-loud** (`ValueError`) ab, wenn eine geladene Study eine
+ältere/fehlende Version trägt UND bereits Trials hat (`existing < current ∨ existing is None`, mit
+`has_trials`). Das blockiert das Laden inkompatibler historischer Trials in die TPE-Posterior. **Pflicht:**
+**Jede** Änderung an Distanz-Kalkulation, Penalty-Gewichtung, Annualisierung, Equity-Ableitung oder Gate-
+Logik (Axiome A2/A5/A8) erzwingt einen Bump von `reward_semantics_version` in `optimizer.json` UND das
+Löschen stale Studies (`rm -f data/optimizer/sweep/*.db data/optimizer/studies.db`). **Verbot:** WARN-statt-
+`raise` bei `existing < current ∧ has_trials`. (Pitfall #89; Guard: `test_issue_469_semantics_guard.py`.)
+
+### Test-Hygiene-Axiom — keine prozessweite `sys.modules`-Mutation in Tests
+Test-Module dürfen `sys.modules` **nicht** auf Modul-Ebene irreversibel mit `MagicMock` überschreiben
+(z. B. `sys.modules["pyarrow"] = MagicMock()`). pytest importiert ALLE Test-Module während der Collection,
+bevor irgendein Test läuft ⇒ eine solche Mutation verseucht die gesamte Suite (Audit #470 fand so 10
+fremde Tests gekippt) und bricht den Tautologie-freien Vertrag. Heavy-Deps (`pyarrow`, `nautilus_trader`)
+sind installiert; reine Helfer (`compute_fold_boundaries`, `_calculate_stats`) werden DIREKT importiert und
+getestet, nicht inline nachgebaut. **Verbot:** Tautologische Tests, die nur lokale Inline-Arithmetik gegen
+sich selbst prüfen statt der Produktionsfunktion.
+
+---
+
 ## 18.5 Agent-Rollen, System-Prompts & Interaktionsprotokolle (Enterprise / Security-Audit-Grade)
 
 > **Zweck.** Diese Sektion ist die **eine unmissverständliche Referenz** für *welcher Agent darf was,
@@ -992,6 +1117,7 @@ fließt je in Reward/Promotion zurück). Zentrale Events:
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-06-28 | **AUDIT #470 — Strikte Verifikation #460–#469 + Härtung.** Code-/Git-/Test-Audit der Root-Cause-Fixes. **Befunde & Remediation:** (1) #467-Testdatei mutierte `sys.modules` (pyarrow/nautilus MagicMock) prozessweit ⇒ 10 fremde Tests gekippt + Selbstbruch + tautologischer Test; ersetzt durch echten Test der neuen SSOT `compute_fold_boundaries`. (2) Reale Issue #465 (Audit #466, „total_return via 100%-Kapital-Aufzinsung") war als *completed* markiert, aber NICHT implementiert (kein `test_issue_466_portfolio_return.py`); `total_return` jetzt aus MtM-Equity `equity_end/equity_start−1` abgeleitet (Fallback sequentiell), Test ergänzt. (3) #467/#468-Strict-Isolation (`oos_min_*` Pflicht, fail-loud) brach #461/#401-Tests + war latent crash-anfällig bei `weights` ohne `tournament_cfg`; `compute_reward` lädt `tournament.json` im Constraint-Pfad nach; Fixtures auf `oos_min_*` migriert. (4) #468/#469-Versionsguard (warn→`raise`, Version 4→6) brach 5 #410-Tests; auf fail-loud-Contract aktualisiert. (5) Fold-Geometrie als SSOT `compute_fold_boundaries` extrahiert (4 Inline-Duplikate ersetzt). Harte Axiome A1–A9 dokumentiert. Suite: 413 passed / 0 failed. | `automation/backtest_runner.py`, `automation/optimizer/reward.py`, `automation/tests/test_issue_466_portfolio_return.py`, `automation/tests/test_issue_467_fold_geometry.py`, `automation/tests/test_issue_461_reward_no_inversion.py`, `automation/tests/test_issue_410_reward_versioning.py`, `automation/AGENTS.md` |
 | 2026-06-27 | **Implementierung Issue #460: Pitfall #85 Holdout Reachability & Anchor-Clamp** | `automation/optimizer/trial_config.py`, `automation/optimizer/confirm.py`, `automation/optimizer/sweep.py`, `automation/optimizer/run_optimization.py`, `automation/AGENTS.md` |
 | 2026-06-26 | **FORENSIK GitHub-Issues #460–#469 (Sweep TSLA.ETORO, optimizer_20260626.log).** Zehn verifizierte Defekte/Methodik-Befunde. **#460 (P0, Pitfall #85) — Holdout-Starvation:** `compute_walk_forward_window` ankert an `now`, nicht am Katalog; Holdout-OOS-Slice 2026-05-12→2026-06-26 liegt 2.2 Tage hinter dem letzten Tick (~2026-05-09) ⇒ 100 % `REJECTED_ON_HOLDOUT` (alle 6 Proposals), parameter-unabhängig. Fix: Anker-Clamp auf `min(now, catalog_newest)` + `REJECT_HOLDOUT_UNREACHABLE`-Assertion in `confirm.py`. **#461 (P0, Pitfall #86) — Reward-Inversion:** `_constraint_failure_reward` unbeschränkt nach unten; `oos_min_total_return=0.005` dominiert (`d_return=69.32`); Trial 234 (242 OOS-Trades) = −31.259 << Trials mit 0 OOS-Trades (−9.75) ⇒ TPE flieht OOS-Aktivität (exakt reproduziert). Fix: Penalty-Band-Clamp/bounded Transform, Invariante „mehr OOS-Info ⇒ nie schlechter". **#462 (P1) — Gate-1 ohne Holdout-Reach:** Preflight prüft nur fold-0-OOS-Start, nicht den Holdout-Slice. **#463 (P1, Pitfall #87) — Anker-Divergenz:** `oos_covered=true` ∧ `fill∈Union` ∧ `oos_total_trades=0`; Telemetrie (`start_ns`) vs. Zähler (`_first_tick_ns`) vereinheitlichen + Invarianten-Assertion. **#464 (P1, Pitfall #88) — Sortino-`√252`** auf Per-Trade-Returns (Frequenz-Bias). **#465/#466 (P2, Pitfall #88) — DD/Calmar/total_return** aus Trade-geordneter PnL statt zeitbasierter MtM-Equity (Intra-Trade-DD blind, 100 %-Kapital-Annahme im OOS-Gate). **#467 (P2) — `splits=4`** degeneriert zu einem kontiguierlichen IS/OOS-Block (keine echte OOS-Diversität; Purge/Embargo erwägen). **#468 (P3) — Penalty-Konditionierung:** Return-Shortfall an Gate-Schwelle normiert ⇒ Schwelle wird Penalty-Verstärker; an robuste Skala entkoppeln. **#469 (P3) — Semantics-Drift:** „Using an existing study" (best=Trial 68) trotz Reward-Änderungen; Versions-Guard fail-loud. **Merge-Reihenfolge #460→#461→#462→#463→#464→#465–#469.** Verifiziert via `/tmp/wf_check.py` (Fenster-Arithmetik) + `/tmp/reward_check.py` (Reward exakt −31.25938). | `automation/optimizer/trial_config.py`, `automation/optimizer/confirm.py`, `automation/optimizer/reward.py`, `automation/optimizer/gate.py`, `automation/optimizer/sweep.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/parsing.py`, `automation/backtest_runner.py`, `automation/config/optimizer.json`, `automation/config/tournament.json`, `automation/config/backtest.json`, `automation/AGENTS.md` |
 | 2026-06-26 | **IMPLEMENTIERUNG GitHub-Issues #451–#457 (OOS-Abdeckung, Reward-Gradient, Observability, Plateau-Stop, Fenster-SSOT).** Sieben verzahnte Optimizer-Fixes, alle test-gesichert (volle automation-Suite lokal grün: 386 passed). **#455 (P0, Pitfall #82) — OOS-Abdeckungs-Blindstelle:** Wurzel = der Katalog erreicht die früheste OOS-Sub-Fenster-Grenze (`start+is_window`) nicht (dünner/staler H2 nach `catalog_service`-Ausfall) ⇒ `oos_total_trades=0` strukturell über alle Strategien (TSLA-Signatur). Fix: `extract_metrics` berechnet `oos_window_start_ns`/`oos_covered` (WARN statt `raise`), durchgereicht über `write_tournament_json` (`data_window`) → `parse_tournament` → BEIDE Trial-Events; reine fail-open `gate.data_reaches_oos_window` + `sweep.latest_ts_by_symbol`/`compute_oos_window_start_ns` + Preflight-Skip (`OOS_WINDOW_UNREACHABLE`) VOR dem Sweep. **#452/#454 (Bug) — Reward-Gradient:** evaluiert-aber-nicht-eligible OOS-Trials nicht mehr auf den Flat-Floor clampen, sondern kontinuierliche, quadratische, config-gewichtete Distanz-Penalty (`constraint_distance_penalty_weight`, neue OOS-`win_rate`/`profit_factor` in `TournamentMetrics`) — near-miss > katastrophal, aber strikt unter dem Evaluable-Floor (Anti-Gate-Gaming bleibt). **#453 (Feature) — granulare Rejection-Observability:** Catch-All `oos_not_evaluated` aufgelöst in dezidierte Kategorien (`_classify_is_rejection_detail`/`_map_oos_reason`: `REJECT_OOS_WINDOW_UNREACHABLE` datenseitig vs. `REJECT_OOS_INACTIVE` strategieseitig vs. konkretes Gate); pro Trial als `is_rejection_detail`-User-Attr + Event, modal ins Proposal (`confirm._dominant_is_rejection_detail`). **#451 (Bug) — 100%-Rejection-Diagnose:** Root-Cause ist NICHT ein zu strenges IS-Gate (Boolean-Logik in `gate.py` korrekt, separat gepinnt), sondern die OOS-Abdeckung (#455); der 502-IS-Trades/OOS=0-Fall wird jetzt eindeutig als `REJECT_OOS_WINDOW_UNREACHABLE` diagnostiziert. **#456 (P1, Pitfall #83) — Plateau-Stop:** `floor_plateau_callback(stop_on_plateau=True)` ruft `study.stop()` (beide Zweige, crash-sicher via `getattr`+`try/except`); Produktion bindet `True`, Default bleibt `False` (Bestands-Tests grün); Observability-Invariante erhalten. **#457 (P2, Pitfall #84) — Fenster-SSOT:** reine `trial_config.compute_walk_forward_window` als EINZIGE Quelle der Fenster-Arithmetik; `build_trial` delegiert (bit-identisch); Sweep-Preflight nutzt dieselbe Grenze (verifiziert `now=2026-06-25` ⇒ `start=2025-05-16`/`end=2026-05-11`). **Hinweis #453:** Proposal-Serialisierung liegt in `confirm.py` (nicht `_serde.py`, FSB16-only) — Intent statt fehlerhafter Datei-Referenz umgesetzt. AGENTS.md: Pitfalls #82/#83/#84, §18-Konventionen (Fenster-SSOT, OOS-WARN, Plateau-Opt-in, Rejection-Granularität), neue §18.5 (Agent-Rollen/System-Prompts/Interaktionsprotokolle, Security-Audit-Checkliste). | `automation/optimizer/reward.py`, `automation/optimizer/parsing.py`, `automation/optimizer/gate.py`, `automation/optimizer/sweep.py`, `automation/optimizer/trial_config.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/confirm.py`, `automation/backtest_runner.py`, `automation/config/optimizer.json`, `automation/tests/test_issue_449_oos_coverage.py`, `automation/tests/test_issue_451_gate_diagnosis.py`, `automation/tests/test_issue_452_reward_distance.py`, `.github/workflows/pytest-gate.yml`, `automation/AGENTS.md` |
