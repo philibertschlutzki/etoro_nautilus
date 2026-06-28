@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -146,9 +147,28 @@ def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
     (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming), aber
     near-miss bleibt fuer TPE von katastrophal unterscheidbar (Gradient statt Flat-Floor)."""
     unevaluable_ceiling = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
+    evaluable_floor = unevaluable_ceiling + weights["evaluable_floor_epsilon"]
+
     penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
-    epsilon = min(weights["evaluable_floor_epsilon"], 1e-9)
-    return unevaluable_ceiling - epsilon - penalty
+
+    # Die Penalty muss asymptotisch komprimiert werden, da das Band zwischen
+    # evaluable_floor (-9.749) und unevaluable_ceiling (-9.75) mit z.B. 0.001 extrem schmal ist.
+    # Wir nutzen math.tanh(), um [0, ∞) monoton auf [0, 1) abzubilden.
+    ceiling_offset = 1e-9
+    available_span = weights["evaluable_floor_epsilon"] - ceiling_offset
+    if available_span <= 0:
+        available_span = 1e-6 # Fallback, sollte evaluable_floor_epsilon mikroskopisch sein
+
+    # Skalierungsfaktor zur Streckung des tanh-Gradienten (Zero-Hardcoding)
+    # Default 50.0 verschiebt die Sättigung (tanh(x) -> 1) in den Bereich raw_penalty > 150
+    scale_factor = float(weights.get("constraint_penalty_scale", 50.0))
+
+    # Asymptotische Kompression
+    compressed_penalty = available_span * math.tanh(penalty / scale_factor)
+
+    raw_failure_reward = evaluable_floor - ceiling_offset - compressed_penalty
+
+    return max(float(unevaluable_ceiling), raw_failure_reward)
 
 
 def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
