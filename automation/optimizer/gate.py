@@ -75,3 +75,19 @@ def data_reaches_oos_window(newest_ns: int | None,
     if int(newest_ns) >= int(oos_window_start_ns):
         return (True, "OK")
     return (False, "OOS_WINDOW_UNREACHABLE")
+
+
+def data_reaches_holdout_window(newest_ns: int | None,
+                                holdout_start_ns: int | None) -> tuple[bool, str]:
+    """Issue #462 — Gate-3-Holdout-Erreichbarkeits-Vorprüfung (rein, I/O-frei).
+
+    Returns ``(ok, reason)``:
+      * ``(True, "OK")``                    — jüngster Tick erreicht die Holdout-Grenze.
+      * ``(False, "HOLDOUT_WINDOW_UNREACHABLE")`` — jüngster Tick liegt vor der Holdout-Grenze.
+      * ``(True, "HOLDOUT_PREFLIGHT_UNAVAILABLE")`` — fail-open bei fehlender Geometrie/Telemetrie.
+    """
+    if newest_ns is None or holdout_start_ns is None:
+        return (True, "HOLDOUT_PREFLIGHT_UNAVAILABLE")
+    if int(newest_ns) >= int(holdout_start_ns):
+        return (True, "OK")
+    return (False, "HOLDOUT_WINDOW_UNREACHABLE")

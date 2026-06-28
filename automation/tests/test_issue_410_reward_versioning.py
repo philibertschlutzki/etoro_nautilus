@@ -16,7 +16,7 @@ import pytest
 from automation.optimizer import run_optimization as ro
 from automation.optimizer import trial_config
 
-CUR = {"reward_semantics_version": 3}
+CUR = {"reward_semantics_version": 4}
 
 
 class _FakeStudy:
@@ -55,7 +55,7 @@ def test_fresh_study_is_stamped_no_warning():
     lg, recs = _capturing_logger("test410a")
     s = _FakeStudy(n_trials=0)
     ro._check_reward_semantics_version(s, CUR, logger=lg)
-    assert s.user_attrs["reward_semantics_version"] == 3
+    assert s.user_attrs["reward_semantics_version"] == 4
     assert not _warned(recs)
 
 
@@ -76,7 +76,7 @@ def test_unversioned_study_with_trials_warns():
 
 def test_current_version_no_warning():
     lg, recs = _capturing_logger("test410d")
-    s = _FakeStudy(attrs={"reward_semantics_version": 3}, n_trials=10)
+    s = _FakeStudy(attrs={"reward_semantics_version": 4}, n_trials=10)
     ro._check_reward_semantics_version(s, CUR, logger=lg)
     assert not _warned(recs)
 
@@ -100,7 +100,7 @@ def test_warns_mentions_deleting_dbs():
 
 def test_shipped_config_has_reward_semantics_version():
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
-    assert cfg.get("reward_semantics_version") == 3
+    assert cfg.get("reward_semantics_version") == 4
     assert "reward_semantics_version" in cfg["_schema"]["fields"]
 
 
@@ -130,4 +130,4 @@ def test_optimize_symbol_stamps_fresh_study(tmp_path, monkeypatch):
     _isolate(monkeypatch, tmp_path)
     monkeypatch.setattr(ro, "run_backtest", _fake_backtest)
     study = ro.optimize_symbol("SmaCrossoverStrategy", "ZZZ.ETORO", n_trials=1)
-    assert study.user_attrs.get("reward_semantics_version") == 3
+    assert study.user_attrs.get("reward_semantics_version") == 4
