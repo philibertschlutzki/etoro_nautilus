@@ -316,6 +316,7 @@ def make_objective(
             "oos_window_start_ns": metrics.oos_window_start_ns,
             "oos_covered": metrics.oos_covered,
             "oos_coverage_gap_days": metrics.oos_coverage_gap_days,
+            "oos_anchor_divergence": metrics.oos_anchor_divergence,
         })
 
         return reward
