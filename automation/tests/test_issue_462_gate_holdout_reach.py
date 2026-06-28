@@ -65,9 +65,9 @@ def test_sweep_enumeration_skips_on_holdout_unreachable(caplog):
                 config=config,
                 latest_ts=latest_ts,
                 oos_window_start_ns=oos_start_ns,
-                holdout_window_start_ns=holdout_start_ns,
+                holdout_window_reach_target_ns=holdout_start_ns,
             )
 
     assert len(pairs) == 0
     assert "übersprungen (HOLDOUT_WINDOW_UNREACHABLE)" in caplog.text
-    assert "5.0 Tage VOR der Holdout-Grenze" in caplog.text
+    assert "5.0 Tage VOR der geforderten Holdout-Coverage-Grenze" in caplog.text
