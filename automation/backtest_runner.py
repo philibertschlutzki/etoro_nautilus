@@ -1215,6 +1215,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 def select_winners(
     all_results: list[dict],
     tournament_cfg: dict | None = None,
+    start_ns: int | None = None,
 ) -> tuple[dict, dict | None, list[str], int, int]:
     """Wählt Gewinner pro Symbol anhand der Tournament-Konfiguration.
 
@@ -1255,6 +1256,7 @@ def select_winners(
 
     # Issue #148: Data Start Alignment (Tournament Gating)
     if is_eligible_population:
+        # Using _first_tick_ns for Regime-Bias check is fine, it is NOT used for OOS boundary derivations.
         start_dates = [r.get("_first_tick_ns") for r in is_eligible_population if r.get("_first_tick_ns") is not None]
         if start_dates:
             min_start = min(start_dates)
@@ -1519,7 +1521,7 @@ def select_winners(
 
             # Task 0b: Extract per-fold OOS sortinos for the aggregate winner
             if is_eligible_population:
-                start_ns = is_eligible_population[0].get("_first_tick_ns")
+                # start_ns is already passed as a kwarg from the single source of truth
                 walk_forward_dict = winner_strat_params.get("_walk_forward_dict", {})
                 if walk_forward_dict and start_ns is not None:
                     is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
@@ -2659,7 +2661,7 @@ def run_backtest() -> None:
 
     # --- Tournament (Task 5: robuste Multi-Kriterien-Selektion) ---
     if args.momentum and all_results:
-        per_symbol_winners, aggregate_winner, warnings_list, is_eligible_count, fully_eligible_count = select_winners(all_results, tournament_cfg)
+        per_symbol_winners, aggregate_winner, warnings_list, is_eligible_count, fully_eligible_count = select_winners(all_results, tournament_cfg, start_ns=start_ns)
         winner_count, no_winner_symbols = print_tournament_table(
             all_results, per_symbol_winners, tournament_cfg
         )

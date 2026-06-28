@@ -1,4 +1,5 @@
 import json
+import logging
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +50,8 @@ class TournamentMetrics:
     # Aus dem single_symbol_oos/aggregate_winner-Block; leeres Tuple, wenn keiner vorliegt
     # (immutable Default ⇒ kein mutable-default-Footgun). Macht den OOS-Gate-Drop pro Trial konkret.
     oos_rejection_reasons: tuple = ()
+    # Issue #463: Telemetry property for OOS Anchor Divergence invariant check.
+    oos_anchor_divergence: bool | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -127,6 +130,15 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     dw_oos_covered = dw.get("oos_covered")
     dw_oos_gap = dw.get("oos_coverage_gap_days")
 
+    # Issue #463: Invariant Assertion for OOS Anchor Divergence
+    oos_anchor_divergence = False
+    _oos_covered_bool = bool(dw_oos_covered) if dw_oos_covered is not None else False
+
+    _oos_total_trades = oos_metrics.get("total_trades") or 0
+    if _oos_covered_bool and dw_fill_max is not None and dw_oos_start is not None and dw_fill_max >= dw_oos_start and _oos_total_trades == 0:
+        logging.getLogger("optimizer").warning("OOS Anchor Divergence detected: fill_ts_max in OOS union but 0 OOS trades.")
+        oos_anchor_divergence = True
+
     return TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
         oos_eligible=bool(oos_eligible),
@@ -152,4 +164,5 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_covered=bool(dw_oos_covered) if dw_oos_covered is not None else None,
         oos_coverage_gap_days=float(dw_oos_gap) if dw_oos_gap is not None else None,
         oos_rejection_reasons=oos_rejection_reasons,
+        oos_anchor_divergence=oos_anchor_divergence,
     )
