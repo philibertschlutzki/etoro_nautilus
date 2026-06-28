@@ -65,7 +65,8 @@ def _shortfall_distance(actual: float, target: float | None) -> float:
     if target is None or target <= 0.0:
         return 0.0
     gap = max(0.0, float(target) - float(actual))
-    return (gap / float(target)) ** 2
+    target_scale = max(float(target), 0.05)
+    return (gap / target_scale) ** 2
 
 
 def _excess_distance(actual: float, cap: float | None) -> float:
@@ -146,9 +147,16 @@ def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
     (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming), aber
     near-miss bleibt fuer TPE von katastrophal unterscheidbar (Gradient statt Flat-Floor)."""
     unevaluable_ceiling = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
+    evaluable_floor = unevaluable_ceiling + weights["evaluable_floor_epsilon"]
+
     penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
-    epsilon = min(weights["evaluable_floor_epsilon"], 1e-9)
-    return unevaluable_ceiling - epsilon - penalty
+
+    # Penalty darf den Reward maximal bis auf die unevaluable_ceiling (-9.75) drücken.
+    # Startpunkt ist knapp unter dem evaluable_floor (-9.749).
+    ceiling_offset = 1e-9
+    raw_failure_reward = evaluable_floor - ceiling_offset - penalty
+
+    return max(float(unevaluable_ceiling), raw_failure_reward)
 
 
 def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
