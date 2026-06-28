@@ -20,7 +20,7 @@ Two complementary documents have been created to ensure AI-assisted development 
 - Order lifecycle and reconciliation flow
 - Step-by-step guides for adding new instruments/strategies
 - Safety constraints and risk controls
-- 10 documented pitfalls with root causes
+- 88+ documented pitfalls with root causes (inklusive #85–#88 Walk-Forward & Reward Invarianten)
 - Code conventions and style guidelines
 - Agent-maintained changelog
 
@@ -107,6 +107,10 @@ When AGENTS.md says **"do NOT do X"**, this is binding on Jules:
 | **Never add `from adapters import` in `automation/`** | Section 15 | `automation/` is a standalone package — must work without adapters/ |
 | **Never use pandas roundtrip for FSB(16) data** | Section 15 + Pitfall #15b | `to_pandas()` converts FixedSizeBinary(16) → BinaryView → Nautilus Rust-Panic |
 | **Never use hardcoded precision maps in `automation/`** | Section 15 | Precisions must come from eToro API dynamically |
+| **Never circumvent Walk-Forward Geometry bounds** | Section 16 (Pitfall #85) | `compute_walk_forward_window` MUST clamp `end` to `min(now, catalog_newest)` to prevent Holdout-Starvation. |
+| **Never allow Reward-Inversion** | Section 16 (Pitfall #86) | Constraint-Failure-Rewards MUST be band-clamped. Invariant: `failure >= best_unevaluable`. |
+| **Never deduce OOS-Trades from `oos_covered`** | Section 16 (Pitfall #87) | Avoids Anker-Divergenz. Must assert via telemetry and `oos_anchor_divergence` flag. |
+| **Never calculate DD/Calmar/Total Return from Trade-ordered PnL** | Section 16 (Pitfall #88) | MUST use time-indexed MtM-Equity. Annualization strictly via `√(Perioden/Jahr)` or `√(Trades/Jahr)`. Hardcoding 252 is forbidden. |
 
 If Jules is tempted to violate any of these, the System Prompt requires Jules to:
 1. Document the reason for the change

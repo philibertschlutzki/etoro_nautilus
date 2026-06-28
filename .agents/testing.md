@@ -261,6 +261,23 @@ with a suggested search range and rationale from the backtest data.
 ## Next Steps
 
 Prioritized list of optimizations by expected impact.
+
+---
+
+## Phase 7 — Optimizer Invariants & Methodological Validations
+
+**Goal:** Systematische Verifikation der Constraints aus Issue #469 bezüglich Walk-Forward-Geometrie und Reward-Shaping.
+
+### Tasks
+
+1. **Pitfall #85 (Holdout-Starvation):** Assert `compute_walk_forward_window` clamps `end` to `min(now, catalog_newest)`. Check `REJECT_HOLDOUT_UNREACHABLE` assertion triggers correctly on out-of-bounds holdout slices.
+2. **Pitfall #86 (Reward-Inversion):** Verify Band-Clamp limit for Constraint-Failure-Rewards. Assert invariant: `failure >= best_unevaluable`. Verify `reward_semantics_version` increment enforcement.
+3. **Pitfall #87 (Anker-Divergenz):** Assert telemetry Flag `oos_anchor_divergence` is correctly evaluated and that `oos_covered` is not falsely translating into valid OOS-Trades.
+4. **Pitfall #88 (Annualisierung/Equity):** Validate that Drawdown, Calmar, and Total Return calculations process from a time-indexed MtM-Equity curve. Verify zero-hardcoding for annualization parameters.
+
+**Acceptance Criteria:**
+- All tests pass asserting the invariants mentioned above.
+- `pytest` suite for the `automation/optimizer` module shows 100% compliance with Pitfalls #85-#88.
 ```
 
 Parse the actual backtest metrics from the log files or HTML reports generated in Phase 3. Do not fabricate numbers — if a metric cannot be extracted, write `N/A (extraction failed)` and note the log file to check.
@@ -297,6 +314,7 @@ Upon completion of all phases, verify and report the status of each item:
 [ ] automation/tests/run_live_strategy_test.py
 [ ] automation/tests/generate_synthetic_data.py
 [ ] automation/config/strategy_defaults.json
+[ ] automation/tests/test_optimizer_invariants.py
 [ ] automation/strategies/OPTIMIZATION_GUIDE.md
 [ ] /manuals/TESTING.md
 [ ] /manuals/deployment.md (updated)
