@@ -51,5 +51,6 @@
   "min_bars_per_param": 200,
   "min_oos_bars_per_fold": 500,
   "storage_url": null,
-  "reward_semantics_version": 4
+  "reward_semantics_version": 4,
+  "constraint_penalty_scale": 50.0
 }

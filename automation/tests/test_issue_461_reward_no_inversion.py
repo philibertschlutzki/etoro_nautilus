@@ -113,3 +113,39 @@ def test_reward_no_inversion_property():
 
     # Assert 4: Gradient preservation
     assert r_near_miss > r_far_miss, f"r_near_miss={r_near_miss} <= r_far_miss={r_far_miss}"
+
+
+def test_reward_gradient_does_not_saturate():
+    weights = get_weights()
+    cfg = get_tournament_cfg()
+
+    # We want to test that a raw penalty of ~20 vs ~100 still yields a difference.
+    # oos_min_total_return = 0.05
+    # distance = (gap / target)^2
+    # if gap = 0.45, target = 0.05 -> 9^2 = 81 -> raw_distance = 81 -> penalty = 81 * 0.25 = 20.25
+    m_penalty_20 = DummyMetrics(
+        oos_evaluated=True,
+        oos_eligible=False,
+        oos_total_trades=242,
+        oos_total_return=-0.40,  # gap = 0.45
+        oos_sortino=1.0,
+        oos_max_drawdown=0.1,
+        oos_win_rate=0.5,
+        is_total_trades=500
+    )
+    r_penalty_20 = compute_reward(m_penalty_20, universe_size=1, weights=weights, risk_dd_cap=cfg["max_drawdown"], tournament_cfg=cfg)
+
+    # if gap = 1.0, target = 0.05 -> 20^2 = 400 -> penalty = 400 * 0.25 = 100
+    m_penalty_100 = DummyMetrics(
+        oos_evaluated=True,
+        oos_eligible=False,
+        oos_total_trades=242,
+        oos_total_return=-0.95, # gap = 1.0
+        oos_sortino=1.0,
+        oos_max_drawdown=0.1,
+        oos_win_rate=0.5,
+        is_total_trades=500
+    )
+    r_penalty_100 = compute_reward(m_penalty_100, universe_size=1, weights=weights, risk_dd_cap=cfg["max_drawdown"], tournament_cfg=cfg)
+
+    assert r_penalty_20 > r_penalty_100, f"Gradient saturated! r_penalty_20={r_penalty_20}, r_penalty_100={r_penalty_100}"
