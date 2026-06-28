@@ -19,7 +19,7 @@ from pathlib import Path
 import datetime as dt
 
 from automation.optimizer import bounds
-from automation.optimizer.gate import is_symbol_tunable, data_reaches_oos_window
+from automation.optimizer.gate import is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
 from automation.optimizer.manifest import WORK
 from automation.optimizer.run_optimization import (
@@ -211,10 +211,32 @@ def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None)
     return int(oos_boundary.timestamp()) * 1_000_000_000
 
 
+def compute_holdout_window_start_ns(config: dict, *, now: dt.datetime | None = None) -> int | None:
+    """Berechnet die früheste Holdout-Grenze (Epoch-ns) für das Sweep-Preflight."""
+    wf = config.get("walk_forward") or {}
+    needed = ("is_window_days", "oos_window_days", "splits", "holdout_days")
+    if not all(k in wf for k in needed):
+        return None
+    if now is None:
+        now = dt.datetime.now(dt.timezone.utc)
+
+    # Nutzung der SSOT-Funktion aus trial_config.py
+    _, end = compute_walk_forward_window(
+        now=now,
+        holdout_days=wf["holdout_days"],
+        is_window_days=wf["is_window_days"],
+        oos_window_days=wf["oos_window_days"],
+        n_folds=wf["splits"],
+    )
+    holdout_start = end - dt.timedelta(days=wf["holdout_days"])
+    return int(holdout_start.timestamp()) * 1_000_000_000
+
+
 def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                             *, tier: str, available_bars: dict[str, int],
                             config: dict, latest_ts: dict[str, int | None] | None = None,
                             oos_window_start_ns: int | None = None,
+                            holdout_window_start_ns: int | None = None,
                             logger: logging.Logger | None = None) -> list[tuple[str, str, str]]:
     """Enumeriert (strategy, symbol, 'OK')-Tripel.
 
@@ -262,6 +284,18 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                     strategy, symbol, oos_reason, gap_days,
                 )
                 continue
+
+            # Issue #462 — Holdout-Erreichbarkeits-Preflight
+            holdout_reachable, holdout_reason = data_reaches_holdout_window(newest_ns, holdout_window_start_ns)
+            if not holdout_reachable:
+                gap_days = round((holdout_window_start_ns - newest_ns) / (86400 * 1_000_000_000), 1)
+                log.warning(
+                    "⏭️  %s/%s übersprungen (%s): jüngster Tick liegt %s Tage VOR der "
+                    "Holdout-Grenze ⇒ Deterministic Holdout-Reject. Katalog-H2 auffrischen.",
+                    strategy, symbol, holdout_reason, gap_days,
+                )
+                continue
+
             pairs.append((strategy, symbol, "OK"))
 
     # Issue #412 — order-preserving Dedup der (strategy, symbol)-Tripel. Selbst wenn die Symbol-
@@ -322,10 +356,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # OOS-Grenze (#457, compute_walk_forward_window). Beide fail-open (None) ⇒ kein Skip.
     latest_ts = latest_ts_by_symbol(syms)
     oos_window_start_ns = compute_oos_window_start_ns(config)
+    holdout_window_start_ns = compute_holdout_window_start_ns(config)
 
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
-                                    latest_ts=latest_ts, oos_window_start_ns=oos_window_start_ns)
+                                    latest_ts=latest_ts, oos_window_start_ns=oos_window_start_ns,
+                                    holdout_window_start_ns=holdout_window_start_ns)
 
     # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).
     # enumerate_tunable_pairs dedupliziert bereits; diese Assertion ist der Guertel-und-Hosentraeger-
