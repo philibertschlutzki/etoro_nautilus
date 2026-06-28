@@ -1174,6 +1174,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
+            embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
 
             for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
                 notional, _ts = notionals_with_ts[i]
@@ -1182,8 +1183,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 # Enumerate-Variable nicht zu überschreiben (Loop-Var-Shadowing-Footgun).
                 for fold in range(splits):
                     split_is_start_ns = start_ns + fold * oos_window_ns
-                    split_oos_start_ns = split_is_start_ns + is_window_ns
-                    split_oos_end_ns = split_oos_start_ns + oos_window_ns
+                    split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
+                    split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
 
                     if split_oos_start_ns <= ts < split_oos_end_ns:
                         is_oos = True
@@ -1236,11 +1237,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
+            embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
 
             for fold in range(splits):  # Issue #443 — einheitlicher Fold-Index `fold`
                 split_is_start_ns = start_ns + fold * oos_window_ns
-                split_oos_start_ns = split_is_start_ns + is_window_ns
-                split_oos_end_ns = split_oos_start_ns + oos_window_ns
+                split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
+                split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
 
                 fold_pnls = []
                 fold_holds = []
@@ -1272,13 +1274,24 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Reconstruct tuples of (pnl, ts, ht, m_qty, notional) for portfolio merging
             # They were processed in the same order as oos_pnls
             _oos_idx = 0
+            if walk_forward_dict:
+                is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
+                oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
+                splits = walk_forward_dict.get("splits", 2)
+                embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
+            else:
+                is_window_ns = 0
+                oos_window_ns = 0
+                splits = 0
+                embargo_period_ns = 0
+
             for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
                 notional, _ts = notionals_with_ts[i]
                 is_oos = False
                 for fold in range(splits):  # Issue #443 — einheitlicher Fold-Index `fold`
                     split_is_start_ns = start_ns + fold * oos_window_ns
-                    split_oos_start_ns = split_is_start_ns + is_window_ns
-                    split_oos_end_ns = split_oos_start_ns + oos_window_ns
+                    split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
+                    split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
                     if split_oos_start_ns <= ts < split_oos_end_ns:
                         is_oos = True
                         break
@@ -1631,12 +1644,13 @@ def select_winners(
                     is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
                     oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
                     splits = walk_forward_dict.get("splits", 2)
+                    embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
 
                     per_fold_oos_list = []
                     for j in range(splits):
                         split_is_start_ns = start_ns + j * oos_window_ns
-                        split_oos_start_ns = split_is_start_ns + is_window_ns
-                        split_oos_end_ns = split_oos_start_ns + oos_window_ns
+                        split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
+                        split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
 
                         fold_pnls = []
                         fold_holds = []

@@ -58,15 +58,19 @@ def _cfg_value(weights: dict, tournament_cfg: dict | None, key: str, default=Non
     return default
 
 
-def _shortfall_distance(actual: float, target: float | None) -> float:
-    """Quadratische, auf den Target normierte Unterschreitungs-Distanz ∈ [0, ∞).
+def _shortfall_distance(actual: float, target: float | None, scale: float | None = None) -> float:
+    """Quadratische, auf den Target (oder Scale) normierte Unterschreitungs-Distanz ∈ [0, ∞).
     0.0, wenn ``actual >= target`` (oder kein/nicht-positiver Target). Quadratisch, damit
     ein knapp verfehltes Gate (kleiner Gap) einen deutlich kleineren Penalty traegt als ein
-    katastrophal verfehltes — genau der Gradient, den TPE braucht (Issue #452)."""
+    katastrophal verfehltes — genau der Gradient, den TPE braucht (Issue #452).
+    Issue #467: `scale` erlaubt die Entkopplung der Penalty-Krümmung vom Gate-Threshold."""
     if target is None or target <= 0.0:
         return 0.0
+    if scale is not None and scale <= 0.0:
+        raise ValueError("scale must be strictly positive to prevent ZeroDivisionError")
     gap = max(0.0, float(target) - float(actual))
-    return (gap / float(target)) ** 2
+    denominator = float(scale) if scale is not None else float(target)
+    return (gap / denominator) ** 2
 
 
 def _excess_distance(actual: float, cap: float | None) -> float:
@@ -83,17 +87,16 @@ def _any_condition_distance(m: "TournamentMetrics", weights: dict,
     """Distanz fuer die ``eligible_requires_any``-Klausel (Sortino ODER Profit-Factor).
     Erfuellt der bessere der beiden Quotienten sein Gate (ratio >= 1), ist die Distanz 0;
     sonst quadratisch im Rest-Gap des BESTEN Kandidaten — eine knapp verfehlte ANY-Bedingung
-    darf nicht doppelt so hart bestraft werden wie eine knapp verfehlte ALL-Bedingung."""
+    darf nicht doppelt so hart bestraft werden wie eine knapp verfehlte ALL-Bedingung.
+    Issue #467: Strikte Parameter-Isolation. Kein Fallback auf IS-Metriken im OOS-Pfad."""
     ratios = []
-    req_sortino = _cfg_value(weights, tournament_cfg, "oos_min_sortino",
-                             _cfg_value(weights, tournament_cfg, "min_sortino"))
+    req_sortino = _cfg_value(weights, tournament_cfg, "oos_min_sortino")
     if req_sortino and req_sortino > 0.0 and m.oos_sortino is not None:
         ratios.append(max(0.0, m.oos_sortino) / float(req_sortino))
 
-    req_pf = _cfg_value(weights, tournament_cfg, "oos_min_profit_factor",
-                        _cfg_value(weights, tournament_cfg, "min_profit_factor"))
-    if req_pf and req_pf > 0.0 and m.oos_profit_factor is not None:
-        ratios.append(max(0.0, m.oos_profit_factor) / float(req_pf))
+    req_profit_factor = _cfg_value(weights, tournament_cfg, "oos_min_profit_factor")
+    if req_profit_factor and req_profit_factor > 0.0 and m.oos_profit_factor is not None:
+        ratios.append(max(0.0, m.oos_profit_factor) / float(req_profit_factor))
 
     if not ratios:
         return 0.0
@@ -104,19 +107,22 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
                                  risk_dd_cap: float | None,
                                  tournament_cfg: dict | None) -> float:
     """Issue #452 — kontinuierliche Distanzstrafe fuer OOS-Constraint-Verletzungen.
+    Issue #467 — OOS-Parameter-Isolation und Penalty Conditioning.
 
     Nur evaluiert-aber-nicht-eligible Trials nutzen diesen Pfad. Die Strafe ist rein metrisch
     (keine Gate-Flags als Reward), quadratisch in der Ziel-Distanz und config-gewichtet. Dadurch
     unterscheidet TPE wieder 'knapp gescheitert' von 'katastrophal gescheitert', ohne die
     Rang-Invariante aufzuweichen: failed Trials bleiben unter dem Evaluable-Floor."""
-    req_trades = _cfg_value(weights, tournament_cfg, "oos_min_trades",
-                            _cfg_value(weights, tournament_cfg, "min_trades"))
-    req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return",
-                            _cfg_value(weights, tournament_cfg, "min_total_return"))
-    req_expectancy = _cfg_value(weights, tournament_cfg, "oos_min_expectancy",
-                                _cfg_value(weights, tournament_cfg, "min_expectancy"))
-    req_win_rate = _cfg_value(weights, tournament_cfg, "oos_min_win_rate",
-                              _cfg_value(weights, tournament_cfg, "min_win_rate"))
+    # Strikte Isolation (kein impliziter Fallback auf IS)
+    req_trades = _cfg_value(weights, tournament_cfg, "oos_min_trades")
+    req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return")
+    req_expectancy = _cfg_value(weights, tournament_cfg, "oos_min_expectancy")
+    req_win_rate = _cfg_value(weights, tournament_cfg, "oos_min_win_rate")
+
+    if None in (req_trades, req_return, req_expectancy, req_win_rate):
+        raise ValueError("Missing strict OOS configuration parameters in tournament.json")
+
+    return_penalty_scale = _cfg_value(weights, tournament_cfg, "return_penalty_scale")
 
     expectancy = 0.0
     if m.oos_total_trades > 0:
@@ -124,7 +130,7 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
 
     distances = [
         _shortfall_distance(float(m.oos_total_trades), req_trades),
-        _shortfall_distance(m.oos_total_return, req_return),
+        _shortfall_distance(m.oos_total_return, req_return, scale=return_penalty_scale),
         _shortfall_distance(expectancy, req_expectancy),
         _shortfall_distance(m.oos_win_rate, req_win_rate),
         _excess_distance(m.oos_max_drawdown, risk_dd_cap),

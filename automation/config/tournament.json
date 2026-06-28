@@ -1,6 +1,6 @@
 {
   "_schema": {
-    "description": "Selektionskriterien für das Tournament. Definiert harte Filter und Score-Gewichtung für die Gewinner-Auswahl pro Symbol.",
+    "description": "Selektionskriterien f\u00fcr das Tournament. Definiert harte Filter und Score-Gewichtung f\u00fcr die Gewinner-Auswahl pro Symbol.",
     "fields": {
       "min_trades": "Mindestanzahl abgeschlossener Trades (hartes Filter)",
       "min_sortino": "Mindest-Sortino-Ratio (weiches Filter, in eligible_requires_any)",
@@ -10,33 +10,48 @@
       "min_total_return": "Mindest-Total-Return (hartes Filter, 0.0 = breakeven)",
       "min_expectancy": "Mindest-Erwartungswert (total_return / total_trades). Da total_return bereits net-of-spread ist, spiegelt dies den Netto-Equity-Zuwachs pro Trade wider. Wert ist bewusst niedrig kalibriert (z.B. 0.00005 = 0.5 bps), um hochfrequente Strategien nicht zu benachteiligen (hartes Filter).",
       "sortino_min_trades": "Issue #401 / ISSUE-06 (Zero-Hardcoding) - Mindestanzahl Round-Trips (n), ab der _calculate_stats eine Sortino-Ratio berechnet (vorher hartcodiert 'n < 5'). An oos_min_trades ausgerichtet; statistischer Boden fuer eine definierbare Downside-Deviation (>= 2). Verhindert, dass low-frequency Hourly-Strategien mit 2-4 OOS-Trades faelschlich als 'unevaluable' (-9.75) abgestraft werden und die TPE-Reward-Landschaft kollabiert.",
-      "eligible_requires_all": "ALLE genannten Bedingungen müssen erfüllt sein",
-      "eligible_requires_any": "MINDESTENS EINE der genannten Bedingungen muss erfüllt sein",
-      "scoring": "Gewichtungskoeffizienten für den composite Score",
-      "scoring.sortino_weight": "Gewicht für Sortino-Ratio im Score",
-      "scoring.profit_factor_weight": "Gewicht für Profit-Factor im Score",
-      "scoring.win_rate_weight": "Gewicht für Win-Rate im Score",
-      "scoring.drawdown_penalty_weight": "Strafe-Gewicht für Max-Drawdown (wird subtrahiert)"
+      "eligible_requires_all": "ALLE genannten Bedingungen m\u00fcssen erf\u00fcllt sein",
+      "eligible_requires_any": "MINDESTENS EINE der genannten Bedingungen muss erf\u00fcllt sein",
+      "scoring": "Gewichtungskoeffizienten f\u00fcr den composite Score",
+      "scoring.sortino_weight": "Gewicht f\u00fcr Sortino-Ratio im Score",
+      "scoring.profit_factor_weight": "Gewicht f\u00fcr Profit-Factor im Score",
+      "scoring.win_rate_weight": "Gewicht f\u00fcr Win-Rate im Score",
+      "scoring.drawdown_penalty_weight": "Strafe-Gewicht f\u00fcr Max-Drawdown (wird subtrahiert)",
+      "return_penalty_scale": "Issue #467 \u2014 Skalierungsfaktor zur Entkopplung der Penalty-Kr\u00fcmmung vom Eligibility-Threshold, um numerische Explosion bei sehr kleinen OOS-Gates (z.B. 0.005) zu verhindern.",
+      "oos_min_win_rate": "Spezifischer OOS-Schwellenwert fuer die Win Rate, um Parameter-Bleed zu verhindern (Issue #467)."
     }
   },
   "min_trades": 20,
   "min_sortino": 0.3,
   "min_profit_factor": 1.1,
-  "max_drawdown": 0.30,
+  "max_drawdown": 0.3,
   "min_win_rate": 0.25,
   "min_total_return": 0.005,
-  "min_expectancy": 0.00005,
+  "min_expectancy": 5e-05,
   "k_shrinkage": 20.0,
   "oos_min_trades": 1,
   "sortino_min_trades": 2,
   "oos_min_total_return": 0.005,
-  "oos_min_expectancy": 0.00005,
-  "eligible_requires_all": ["min_trades", "min_total_return", "min_win_rate", "max_drawdown", "min_expectancy"],
-  "eligible_requires_any": ["min_sortino", "min_profit_factor"],
+  "oos_min_expectancy": 5e-05,
+  "eligible_requires_all": [
+    "min_trades",
+    "min_total_return",
+    "min_win_rate",
+    "max_drawdown",
+    "min_expectancy"
+  ],
+  "eligible_requires_any": [
+    "min_sortino",
+    "min_profit_factor"
+  ],
   "scoring": {
     "sortino_weight": 0.4,
     "profit_factor_weight": 0.3,
     "win_rate_weight": 0.2,
     "drawdown_penalty_weight": 0.1
-  }
+  },
+  "return_penalty_scale": 0.1,
+  "oos_min_win_rate": 0.25,
+  "oos_min_sortino": 0.3,
+  "oos_min_profit_factor": 1.1
 }
