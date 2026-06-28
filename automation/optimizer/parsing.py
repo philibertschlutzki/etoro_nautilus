@@ -1,4 +1,5 @@
 import json
+import logging
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,8 +133,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #463: Invariant Assertion for OOS Anchor Divergence
     oos_anchor_divergence = False
     _oos_covered_bool = bool(dw_oos_covered) if dw_oos_covered is not None else False
-    if _oos_covered_bool and dw_fill_max is not None and dw_oos_start is not None and dw_fill_max >= dw_oos_start and oos_total_trades == 0:
-        import logging
+
+    _oos_total_trades = oos_metrics.get("total_trades") or 0
+    if _oos_covered_bool and dw_fill_max is not None and dw_oos_start is not None and dw_fill_max >= dw_oos_start and _oos_total_trades == 0:
         logging.getLogger("optimizer").warning("OOS Anchor Divergence detected: fill_ts_max in OOS union but 0 OOS trades.")
         oos_anchor_divergence = True
 

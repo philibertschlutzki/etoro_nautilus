@@ -65,16 +65,47 @@ def test_oos_anchor_divergence_normal(tmp_path):
 
     assert metrics.oos_anchor_divergence is False
 
-def test_grep_gate_no_first_tick_ns_in_oos_boundary():
+def test_ast_gate_no_first_tick_ns_in_oos_boundary():
     """
-    Grep-Gate: Ensure `_first_tick_ns` is not used for OOS boundary assignment (select_winners)
-    in automation/backtest_runner.py anymore.
+    Grep-Gate (AST Parsing): Ensure `_first_tick_ns` is not used for OOS boundary assignment (select_winners)
+    in automation/backtest_runner.py anymore. Uses AST to parse instead of string matching.
     """
-    import re
+    import ast
     runner_path = Path("automation/backtest_runner.py")
     with open(runner_path, "r") as f:
         content = f.read()
 
-    # Ensure `_first_tick_ns` is NOT used anywhere to define `start_ns`
-    matches = re.findall(r'start_ns\s*=\s*.*_first_tick_ns', content)
-    assert len(matches) == 0, f"Found occurrences of dynamic re-anchoring to _first_tick_ns! Matches: {matches}"
+    tree = ast.parse(content)
+
+    class FirstTickVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.violations = []
+
+        def visit_Assign(self, node):
+            # Check if any target is 'start_ns'
+            is_start_ns_target = False
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == 'start_ns':
+                    is_start_ns_target = True
+
+            if is_start_ns_target:
+                # Check if the right side uses '_first_tick_ns' string
+                class StringVisitor(ast.NodeVisitor):
+                    def __init__(self):
+                        self.found = False
+                    def visit_Constant(self, cnode):
+                        if isinstance(cnode.value, str) and cnode.value == '_first_tick_ns':
+                            self.found = True
+                        self.generic_visit(cnode)
+
+                sv = StringVisitor()
+                sv.visit(node.value)
+                if sv.found:
+                    self.violations.append(ast.unparse(node))
+
+            self.generic_visit(node)
+
+    visitor = FirstTickVisitor()
+    visitor.visit(tree)
+
+    assert len(visitor.violations) == 0, f"Found occurrences of dynamic re-anchoring to _first_tick_ns! Matches: {visitor.violations}"
