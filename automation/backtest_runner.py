@@ -1265,9 +1265,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if mtm_series is not None and not mtm_series.empty and walk_forward_dict and start_ns is not None:
             # Slicing the mtm_series
             is_start_dt = pd.to_datetime(start_ns, unit="ns")
-            oos_start_dt = pd.to_datetime(start_ns + is_window_ns, unit="ns")
-            oos_end_dt = pd.to_datetime(start_ns + is_window_ns + oos_window_ns * splits, unit="ns")
-            is_mtm = mtm_series.loc[is_start_dt:oos_start_dt]
+            is_end_dt = pd.to_datetime(start_ns + is_window_ns, unit="ns")
+            oos_start_dt = pd.to_datetime(start_ns + is_window_ns + embargo_period_ns, unit="ns")
+            oos_end_dt = pd.to_datetime(start_ns + is_window_ns + embargo_period_ns + oos_window_ns * splits, unit="ns")
+            is_mtm = mtm_series.loc[is_start_dt:is_end_dt]
             oos_mtm = mtm_series.loc[oos_start_dt:oos_end_dt]
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
