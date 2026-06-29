@@ -191,18 +191,19 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 len(completed),
             )
 
-            # Issue #488 — Log JSON termination event explicitly for All-Unevaluable structural stop.
-            import json as _json
-            logger.info("[JSON_EVENT] " + _json.dumps({
-                "event_type": "STUDY_EARLY_STOP",
-                "reason": "STRUCTURAL_ALL_UNEVALUABLE",
-                "current_trial": len(completed),
-                "startup_limit": max(1, int(n_startup_trials)),
-                "k_limit": K
-            }))
-
             # Issue #456 / #488 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
-            if stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None):
+            should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
+            if should_stop:
+                # Log JSON termination event explicitly exactly when stopping (only once).
+                # Wait, study.set_user_attr("floor_plateau_warned", True) ensures this block runs ONCE.
+                import json as _json
+                logger.info("[JSON_EVENT] " + _json.dumps({
+                    "event_type": "STUDY_EARLY_STOP",
+                    "reason": "STRUCTURAL_ALL_UNEVALUABLE",
+                    "current_trial": len(completed),
+                    "startup_limit": max(1, int(n_startup_trials)),
+                    "k_limit": K
+                }))
                 _stop_study_safely(study, logger)
         return
 
