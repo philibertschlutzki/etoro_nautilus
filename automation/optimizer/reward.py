@@ -192,14 +192,19 @@ def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
     gedeckelt (Anti-Gate-Gaming-Invariante: unevaluable < evaluable-Floor)."""
     components = []
     return_target = weights.get("shaping_return_target")
-    if return_target:
+    if return_target and float(return_target) > 0.0:
         components.append(min(1.0, max(0.0, m.is_best_total_return) / float(return_target)))
     winrate_target = weights.get("shaping_winrate_target")
-    if winrate_target:
+    if winrate_target and float(winrate_target) > 0.0:
         components.append(min(1.0, max(0.0, m.is_best_win_rate) / float(winrate_target)))
     if not components:
         return 0.0
-    return sum(components) / len(components)
+
+    import math
+    val = sum(components) / len(components)
+    if math.isnan(val):
+        val = 0.0
+    return max(0.0, min(1.0, val))
 
 
 def compute_reward(m: "TournamentMetrics", universe_size: int,
@@ -314,16 +319,17 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
                                     or weights.get("shaping_trade_target"))
         else:
             shaping_trade_target = weights.get("shaping_trade_target")
+        # Issue #488 — Reward Shaping Monotonicity Guard
+        proximity = _gate_proximity(m, weights)
+        has_proximity_targets = "shaping_return_target" in weights or "shaping_winrate_target" in weights
+
         if shaping_trade_target:
             activity = min(1.0, m.is_total_trades / max(1, int(shaping_trade_target)))
+            if has_proximity_targets:
+                activity = min(activity, proximity)
             progress = max(progress, activity)
 
-        # Issue #407 — kontinuierlicher Eligibility-Gradient: die normierte Gate-Naehe (IS-
-        # Performance) hebt 'fast eligible' ueber 'nie eligible', auch wenn weder OOS- noch IS-
-        # Trade-Aktivitaet allein einen Gradienten liefern. Additiv und gebunden: _gate_proximity
-        # ∈ [0,1], also bleibt progress ∈ [0,1] ⇒ Shaping hart durch unevaluable_shaping_span
-        # gedeckelt (Anti-Gate-Gaming-Invariante).
-        progress = max(progress, _gate_proximity(m, weights))
+        progress = max(progress, proximity)
 
         # Floor invariant: progress ∈ [0, 1] ⇒ shaping ≤ unevaluable_shaping_span, hence every
         # unevaluable trial stays ≤ penalty + span, strictly below the evaluable floor below.

@@ -161,9 +161,18 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     if logger is None:
         logger = logging.getLogger("optimizer")
 
-    completed = [t for t in study.trials
-                 if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
-    if len(completed) < max(1, int(n_startup_trials)):
+    # Issue #488 — Zustandslos via Persistenzschicht abfragen (Parallel-Safety)
+    get_trials = getattr(study, "get_trials", None)
+    if get_trials:
+        completed = [t for t in get_trials(states=[optuna.trial.TrialState.COMPLETE])
+                     if t.value is not None]
+    else:
+        # Fallback for FakeStudy in tests
+        completed = [t for t in study.trials
+                     if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
+    # Issue #488 — Floor-Plateau Guard Hardening: Monitor K trials strictly post n_startup_trials.
+    K = int(weights.get("floor_plateau_k", 0)) if weights else 0
+    if len(completed) < max(1, int(n_startup_trials)) + K:
         return
     if study.user_attrs.get("floor_plateau_warned"):
         return
@@ -181,8 +190,20 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "Symbol ist derzeit ein No-Op.",
                 len(completed),
             )
-            # Issue #456 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
-            if stop_on_plateau:
+
+            # Issue #456 / #488 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
+            should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
+            if should_stop:
+                # Log JSON termination event explicitly exactly when stopping (only once).
+                # Wait, study.set_user_attr("floor_plateau_warned", True) ensures this block runs ONCE.
+                import json as _json
+                logger.info("[JSON_EVENT] " + _json.dumps({
+                    "event_type": "STUDY_EARLY_STOP",
+                    "reason": "STRUCTURAL_ALL_UNEVALUABLE",
+                    "current_trial": len(completed),
+                    "startup_limit": max(1, int(n_startup_trials)),
+                    "k_limit": K
+                }))
                 _stop_study_safely(study, logger)
         return
 
