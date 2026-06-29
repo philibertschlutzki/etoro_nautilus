@@ -726,17 +726,17 @@ def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
 
 
 def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tuple[int, int, int]]:
-    """Issue #466 (Audit #467) — die EINZIGE Quelle der Walk-Forward-Fold-Geometrie.
+    """Issue #490 — die EINZIGE Quelle der Walk-Forward-Fold-Geometrie.
 
+    Einzelpass-Backtest mit fragmentiertem Holdout, KEIN re-trainierender Walk-Forward.
     Rein (kein I/O, kein State, deterministisch). Liefert je Fold ein Tripel
-    ``(is_start_ns, oos_start_ns, oos_end_ns)`` für einen ECHTEN rollenden Walk-Forward:
+    ``(is_start_ns, oos_start_ns, oos_end_ns)``:
 
-      * ``is_start_ns  = start_ns + fold * oos_window_ns`` — das IS-Fenster rollt je Fold um genau
-        EIN OOS-Fenster vor ⇒ ``splits`` DISTINKTE Folds. Damit ist die in #466 beschriebene
-        Degeneration zu einem singulären, kontiguierlichen IS/OOS-Block strukturell ausgeschlossen.
-      * ``oos_start_ns = is_start_ns + is_window_ns + embargo_period_ns`` — Purge/Embargo trennt
-        IS-Ende und OOS-Start, damit Indikator-Lookbacks nicht über die Grenze lecken (Leakage).
-      * ``oos_end_ns   = oos_start_ns + oos_window_ns`` — am OOS-Start verankert ⇒ das Embargo verschiebt das effektive OOS-Fenster, verkürzt es nicht.
+      * ``is_start_ns  = start_ns`` — das IS-Fenster bleibt statisch am Anfang der Daten verankert.
+      * ``is_end_ns    = is_start_ns + is_window_ns``
+      * ``purge_end_ns = is_end_ns + embargo_period_ns``
+      * ``oos_start_ns = purge_end_ns + fold * oos_window_ns`` — kontiguierliche OOS-Sub-Folds.
+      * ``oos_end_ns   = oos_start_ns + oos_window_ns``
 
     Vier Inline-Kopien dieser Arithmetik (Worker per-Trade-Klassifikation, Worker per-Fold-Sortinos,
     oos_trade_records, Aggregat per-Fold) wären eine eingebaute Divergenz-Falle — exakt analog zu
@@ -746,10 +746,14 @@ def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tupl
     oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
     splits = walk_forward_dict.get("splits", 2)
     embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
+
     boundaries: list[tuple[int, int, int]] = []
+    is_start_ns = start_ns
+    is_end_ns = is_start_ns + is_window_ns
+    purge_end_ns = is_end_ns + embargo_period_ns
+
     for fold in range(splits):
-        is_start_ns = start_ns + fold * oos_window_ns
-        oos_start_ns = is_start_ns + is_window_ns + embargo_period_ns
+        oos_start_ns = purge_end_ns + fold * oos_window_ns
         oos_end_ns = oos_start_ns + oos_window_ns
         boundaries.append((is_start_ns, oos_start_ns, oos_end_ns))
     return boundaries
@@ -1221,21 +1225,21 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth (kein Inline-Nachbau).
             fold_boundaries = compute_fold_boundaries(start_ns, walk_forward_dict)
 
+            # IS Window boundaries are deterministic and identical for all folds
+            _is_start_ns = start_ns
+            is_end_ns = _is_start_ns + is_window_ns
+
             for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
                 notional, _ts = notionals_with_ts[i]
                 is_oos = False
-                # Issue #443 — distinkte Schleifen-Variablen, um die äußere Enumerate-Variable
-                # nicht zu überschreiben (Loop-Var-Shadowing-Footgun).
-                is_in_sample = False
 
-                for _is_start_ns, split_oos_start_ns, split_oos_end_ns in fold_boundaries:
-                    is_end_ns = split_oos_start_ns - embargo_period_ns # from the boundary formula
-
+                # Check for OOS inclusion across all folds
+                for _, split_oos_start_ns, split_oos_end_ns in fold_boundaries:
                     if split_oos_start_ns <= ts < split_oos_end_ns:
                         is_oos = True
                         break
-                    elif _is_start_ns <= ts < is_end_ns:
-                        is_in_sample = True
+
+                is_in_sample = _is_start_ns <= ts < is_end_ns
 
                 if is_oos:
                     oos_pnls.append(pnl)
