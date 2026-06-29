@@ -1409,3 +1409,4 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 | **Performance-Profil** | Deklaration des `PortfolioMonitor` Actors als integraler Core-Bestandteil der Backtest-Engine-Laufzeit. |
 
 | 2026-06-28 | **Hotfix CI Precision Mismatch:** PortfolioMonitor Actor Typecast für `BarType` hinzugefügt und Equity-Read-Methode auf `margin_balance` (NautilusTrader 1.229.0 kompatibel) aktualisiert, um TypeError Abstürze im isolierten Worker-Thread zu beheben. | `automation/backtest_runner.py` |
+| 2026-06-29 | **Fix Issue #487 (OOS-Entkopplung):** `_oos_eval`-Zuweisung in `select_winners` iteriert über `all_results`. OOS-Evaluierbarkeit vollständig von IS-Eligibility getrennt. Fail-Loud-Invariante für `universe_size==1` in `parse_tournament` implementiert, um Regressionen (OOS=0) abzufangen. | `automation/backtest_runner.py`, `automation/optimizer/parsing.py`, `automation/tests/test_issue_471_oos_eval_decoupled_from_is_gate.py` |
