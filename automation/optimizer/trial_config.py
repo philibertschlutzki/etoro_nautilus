@@ -102,11 +102,12 @@ def build_trial(
     # No-Op, wenn data_history_days fehlt (z. B. minimale Inline-Test-Configs) ⇒ rückwärtskompatibel.
     data_history_days = wf.get("data_history_days")
     if data_history_days is not None:
-        required_total = is_window_days + n_folds * oos_window_days + holdout_days
+        embargo_period_days = wf.get("embargo_period_days", 0)
+        required_total = is_window_days + (n_folds * oos_window_days) + embargo_period_days + holdout_days
         if required_total > data_history_days:
             raise ValueError(
                 f"Walk-Forward-Geometrie übersteigt die dokumentierte Datenhistorie (Issue #445): "
-                f"is_window {is_window_days} + splits {n_folds} × oos {oos_window_days} + holdout "
+                f"is_window {is_window_days} + splits {n_folds} × oos {oos_window_days} + embargo {embargo_period_days} + holdout "
                 f"{holdout_days} = {required_total} Tage > data_history_days {data_history_days}. "
                 f"Reduziere die Geometrie ODER erhöhe backtest.json.walk_forward.data_history_days "
                 f"(und beschaffe entsprechend mehr Katalog-Historie)."
