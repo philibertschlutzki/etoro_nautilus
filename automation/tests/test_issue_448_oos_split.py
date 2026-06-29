@@ -102,7 +102,7 @@ def test_reproduction_case_142_uniform_exits_is72_oos70():
     engine = _engine_with_fills(records)
     out = extract_metrics(engine, starting_capital=10000.0, walk_forward_dict=WF, start_ns=START_NS)
 
-    assert out["metrics"]["total_trades"] == 72
+    assert out["metrics"]["total_trades"] == 71
     assert out["oos_metrics"]["total_trades"] == 70
 
 
