@@ -736,8 +736,7 @@ def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tupl
         Degeneration zu einem singulären, kontiguierlichen IS/OOS-Block strukturell ausgeschlossen.
       * ``oos_start_ns = is_start_ns + is_window_ns + embargo_period_ns`` — Purge/Embargo trennt
         IS-Ende und OOS-Start, damit Indikator-Lookbacks nicht über die Grenze lecken (Leakage).
-      * ``oos_end_ns   = is_start_ns + is_window_ns + oos_window_ns`` — am IS-Start verankert (NICHT
-        am embargoten OOS-Start) ⇒ das Embargo verkürzt das effektive OOS-Fenster, verschiebt es nicht.
+      * ``oos_end_ns   = oos_start_ns + oos_window_ns`` — am OOS-Start verankert ⇒ das Embargo verschiebt das effektive OOS-Fenster, verkürzt es nicht.
 
     Vier Inline-Kopien dieser Arithmetik (Worker per-Trade-Klassifikation, Worker per-Fold-Sortinos,
     oos_trade_records, Aggregat per-Fold) wären eine eingebaute Divergenz-Falle — exakt analog zu
@@ -751,7 +750,7 @@ def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tupl
     for fold in range(splits):
         is_start_ns = start_ns + fold * oos_window_ns
         oos_start_ns = is_start_ns + is_window_ns + embargo_period_ns
-        oos_end_ns = is_start_ns + is_window_ns + oos_window_ns
+        oos_end_ns = oos_start_ns + oos_window_ns
         boundaries.append((is_start_ns, oos_start_ns, oos_end_ns))
     return boundaries
 
@@ -1218,6 +1217,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
+            embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
             # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth (kein Inline-Nachbau).
             fold_boundaries = compute_fold_boundaries(start_ns, walk_forward_dict)
 
@@ -1226,16 +1226,22 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 is_oos = False
                 # Issue #443 — distinkte Schleifen-Variablen, um die äußere Enumerate-Variable
                 # nicht zu überschreiben (Loop-Var-Shadowing-Footgun).
+                is_in_sample = False
+
                 for _is_start_ns, split_oos_start_ns, split_oos_end_ns in fold_boundaries:
+                    is_end_ns = split_oos_start_ns - embargo_period_ns # from the boundary formula
+
                     if split_oos_start_ns <= ts < split_oos_end_ns:
                         is_oos = True
                         break
+                    elif _is_start_ns <= ts < is_end_ns:
+                        is_in_sample = True
 
                 if is_oos:
                     oos_pnls.append(pnl)
                     oos_holding_times.append((ht, m_qty))
                     oos_notionals.append(notional)
-                else:
+                elif is_in_sample:
                     is_pnls.append(pnl)
                     is_holding_times.append((ht, m_qty))
                     is_notionals.append(notional)
