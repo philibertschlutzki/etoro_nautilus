@@ -125,3 +125,4 @@ def test_extract_metrics_purge_leakage():
     # Trade 11 * day_ns is purged and not in IS.
     assert 200.0 not in is_pnls
     assert 200.0 not in oos_pnls
+    assert len(is_pnls) + len(oos_pnls) < len(pnls_with_ts)
