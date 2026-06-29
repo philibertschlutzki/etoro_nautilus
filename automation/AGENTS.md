@@ -1115,6 +1115,15 @@ fließt je in Reward/Promotion zurück). Zentrale Events:
  (Agent-Maintained)
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 
+
+### 🟢 Pitfall #90 — Reward Shaping Monotonie-Guard & Floor-Plateau (Issue #488)
+**Symptom:** Der Optimizer nutzt das IS-Trade-Shaping (`is_total_trades`) als primäres Optimierungsziel im Unevaluable-Raum, selbst wenn die Strategie keine OOS-Evaluation auslöst und IS keinerlei Performance liefert (`_gate_proximity == 0`). Zudem verschwendet der TPE-Sampler bei rein strukturell unevaluierbaren Symbolen 100 Trials am Flat-Floor.
+**Fix/Regel:**
+1. Shaping ist strikt als "Tie-Breaker-Gradient" definiert und darf NIEMALS ein primäres Optimierungsziel sein. Die `activity` (Trade-Fortschritt) muss zwingend durch `_gate_proximity` geclippt werden (`activity := min(activity, _gate_proximity)`).
+2. Der Floor-Plateau Guard implementiert eine strikte Early-Stop Invariante: Wenn die ersten `K` Trials streng nach `n_startup_trials` alle `oos_evaluated=False` sind (All-Unevaluable), wird die Study hart abgebrochen und ein JSON `STUDY_EARLY_STOP` Event mit Reason `STRUCTURAL_ALL_UNEVALUABLE` geloggt. Dieser Guard verändert die Reward-Landschaft mathematisch nicht (reine Compute-Reduktion).
+**Betroffen:** `automation/optimizer/reward.py`, `automation/optimizer/run_optimization.py`
+
+
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
 | 2026-06-28 | **AUDIT #470 — Strikte Verifikation #460–#469 + Härtung.** Code-/Git-/Test-Audit der Root-Cause-Fixes. **Befunde & Remediation:** (1) #467-Testdatei mutierte `sys.modules` (pyarrow/nautilus MagicMock) prozessweit ⇒ 10 fremde Tests gekippt + Selbstbruch + tautologischer Test; ersetzt durch echten Test der neuen SSOT `compute_fold_boundaries`. (2) Reale Issue #465 (Audit #466, „total_return via 100%-Kapital-Aufzinsung") war als *completed* markiert, aber NICHT implementiert (kein `test_issue_466_portfolio_return.py`); `total_return` jetzt aus MtM-Equity `equity_end/equity_start−1` abgeleitet (Fallback sequentiell), Test ergänzt. (3) #467/#468-Strict-Isolation (`oos_min_*` Pflicht, fail-loud) brach #461/#401-Tests + war latent crash-anfällig bei `weights` ohne `tournament_cfg`; `compute_reward` lädt `tournament.json` im Constraint-Pfad nach; Fixtures auf `oos_min_*` migriert. (4) #468/#469-Versionsguard (warn→`raise`, Version 4→6) brach 5 #410-Tests; auf fail-loud-Contract aktualisiert. (5) Fold-Geometrie als SSOT `compute_fold_boundaries` extrahiert (4 Inline-Duplikate ersetzt). Harte Axiome A1–A9 dokumentiert. Suite: 413 passed / 0 failed. | `automation/backtest_runner.py`, `automation/optimizer/reward.py`, `automation/tests/test_issue_466_portfolio_return.py`, `automation/tests/test_issue_467_fold_geometry.py`, `automation/tests/test_issue_461_reward_no_inversion.py`, `automation/tests/test_issue_410_reward_versioning.py`, `automation/AGENTS.md` |
@@ -1210,6 +1219,13 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 *Zuletzt aktualisiert: 2026-06-25. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
+### 🟢 Pitfall #89 — Reward Shaping Monotonie-Guard & Floor-Plateau (Issue #488)
+**Symptom:** Der Optimizer nutzt das IS-Trade-Shaping (`is_total_trades`) als primäres Optimierungsziel im Unevaluable-Raum, selbst wenn die Strategie keine OOS-Evaluation auslöst und IS keinerlei Performance liefert (`_gate_proximity == 0`). Zudem verschwendet der TPE-Sampler bei rein strukturell unevaluierbaren Symbolen 100 Trials am Flat-Floor.
+**Fix/Regel:**
+1. Shaping ist strikt als "Tie-Breaker-Gradient" definiert und darf NIEMALS ein primäres Optimierungsziel sein. Die `activity` (Trade-Fortschritt) muss zwingend durch `_gate_proximity` geclippt werden (`activity := min(activity, _gate_proximity)`).
+2. Der Floor-Plateau Guard implementiert eine strikte Early-Stop Invariante: Wenn die ersten `K` Trials streng nach `n_startup_trials` alle `oos_evaluated=False` sind (All-Unevaluable), wird die Study hart abgebrochen und ein JSON `STUDY_EARLY_STOP` Event mit Reason `STRUCTURAL_ALL_UNEVALUABLE` geloggt. Dieser Guard verändert die Reward-Landschaft mathematisch nicht (reine Compute-Reduktion).
+**Betroffen:** `automation/optimizer/reward.py`, `automation/optimizer/run_optimization.py`
+
 ### 🟢 Pitfall #65 — Optimizer Fault-Isolation (Study-/Holdout-Crash)
 **Symptom:** Ein einzelner fehlerhafter Trial (Subprocess-Crash, korruptes JSON) oder ein Lauf ohne verwertbaren Trial reißt die gesamte Optuna-Study bzw. `run()` mit in den Absturz.
 **Root Cause:** (1) `runner.run_backtest` warf `optuna.TrialPruned` direkt — außerhalb der Optimize-Schleife (Holdout-Confirm) eskaliert das ungefangen. (2) `study.optimize` hatte kein `catch`. (3) `study.best_trial` ohne Guard bei 0 `COMPLETE`-Trials.

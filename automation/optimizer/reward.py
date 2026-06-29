@@ -192,10 +192,10 @@ def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
     gedeckelt (Anti-Gate-Gaming-Invariante: unevaluable < evaluable-Floor)."""
     components = []
     return_target = weights.get("shaping_return_target")
-    if return_target:
+    if return_target and float(return_target) > 0.0:
         components.append(min(1.0, max(0.0, m.is_best_total_return) / float(return_target)))
     winrate_target = weights.get("shaping_winrate_target")
-    if winrate_target:
+    if winrate_target and float(winrate_target) > 0.0:
         components.append(min(1.0, max(0.0, m.is_best_win_rate) / float(winrate_target)))
     if not components:
         return 0.0
