@@ -724,6 +724,38 @@ def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
     """Extrahiert je Fold den OOS-Sortino (Reihenfolge erhalten, None-sicher übersprungen)."""
     return [float(f["sortino_ratio"]) for f in per_fold_oos if f is not None and f.get("sortino_ratio") is not None]
 
+
+def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tuple[int, int, int]]:
+    """Issue #466 (Audit #467) — die EINZIGE Quelle der Walk-Forward-Fold-Geometrie.
+
+    Rein (kein I/O, kein State, deterministisch). Liefert je Fold ein Tripel
+    ``(is_start_ns, oos_start_ns, oos_end_ns)`` für einen ECHTEN rollenden Walk-Forward:
+
+      * ``is_start_ns  = start_ns + fold * oos_window_ns`` — das IS-Fenster rollt je Fold um genau
+        EIN OOS-Fenster vor ⇒ ``splits`` DISTINKTE Folds. Damit ist die in #466 beschriebene
+        Degeneration zu einem singulären, kontiguierlichen IS/OOS-Block strukturell ausgeschlossen.
+      * ``oos_start_ns = is_start_ns + is_window_ns + embargo_period_ns`` — Purge/Embargo trennt
+        IS-Ende und OOS-Start, damit Indikator-Lookbacks nicht über die Grenze lecken (Leakage).
+      * ``oos_end_ns   = is_start_ns + is_window_ns + oos_window_ns`` — am IS-Start verankert (NICHT
+        am embargoten OOS-Start) ⇒ das Embargo verkürzt das effektive OOS-Fenster, verschiebt es nicht.
+
+    Vier Inline-Kopien dieser Arithmetik (Worker per-Trade-Klassifikation, Worker per-Fold-Sortinos,
+    oos_trade_records, Aggregat per-Fold) wären eine eingebaute Divergenz-Falle — exakt analog zu
+    ``compute_walk_forward_window`` für die äussere Fenster-Grenze (#457). Daher gilt hart: diese
+    Geometrie NIE inline nachbauen, IMMER über diese Funktion (Single Source of Truth, #463/#466)."""
+    is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
+    oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
+    splits = walk_forward_dict.get("splits", 2)
+    embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
+    boundaries: list[tuple[int, int, int]] = []
+    for fold in range(splits):
+        is_start_ns = start_ns + fold * oos_window_ns
+        oos_start_ns = is_start_ns + is_window_ns + embargo_period_ns
+        oos_end_ns = is_start_ns + is_window_ns + oos_window_ns
+        boundaries.append((is_start_ns, oos_start_ns, oos_end_ns))
+    return boundaries
+
+
 _sortino_min_trades_cache: int | None = None
 
 def _read_sortino_min_trades() -> int:
@@ -752,18 +784,18 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
-    Total Return Definition:
-    Der `total_return` wird hier als "Compounded Equity-Normalized Return" berechnet.
-    Jeder Trade-PnL (`v`) wird durch das anfängliche Testkapital (`starting_capital`)
-    geteilt, um die prozentuale Rendite des Trades bezogen auf die initiale Equity
-    zu erhalten (`v / starting_capital`). Diese prozentualen Renditen werden dann
-    geometrisch aufgezinst (compounded: `cum *= (1.0 + r)`).
+    Total Return Definition (Issue #465 / Audit #466):
+    Liegt eine zeitbasierte MtM-Equity-Kurve (`mtm_series`) vor, ist `total_return` der ECHTE
+    Portfolio-Return `equity_end / equity_start − 1`. Nur im Fallback ohne Equity-Kurve wird auf
+    das sequentielle Aufzinsen `Π(1 + v/starting_capital)` zurückgegriffen (100 %-Kapital-Annahme;
+    rückwärtskompatibel im Sonderfall nicht-überlappender Full-Capital-Trades).
 
-    Drawdown-Basis:
-    Der `max_drawdown` basiert rein auf der realisierten FIFO-PnL-Kurve geschlossener Trades.
-    Er wird nicht auf einer kontinuierlichen Mark-to-Market (MtM) Equity-Kurve berechnet.
-    Das bedeutet, dass Intra-Trade-Drawdowns (Floating Drawdowns) systematisch unterschätzt
-    bzw. ignoriert werden, was zu hochgradig optimistischen Calmar-Ratios führen kann.
+    Drawdown-/Sortino-Basis (Issue #464/#465):
+    Liegt `mtm_series` vor, werden `max_drawdown` UND `sortino_ratio` aus der zeitindizierten
+    MtM-Equity-Kurve abgeleitet (Intra-Trade-/Floating-Drawdowns erfasst; Sortino mit
+    `√(Perioden/Jahr)` aus dem REALEN Zeitspann, nie `√252` auf Trade-sequentiellen Returns).
+    Der Fallback ohne Equity-Kurve (realisierte, Trade-geordnete PnL-Kurve + `√252`) ist ein
+    Legacy-Pfad und darf NIE die OOS-Gate-/Reward-Metriken speisen (siehe AGENTS.md Pitfall #88).
     """
     import math
     NULL = {
@@ -798,10 +830,21 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     win_rate = wins / n if n > 0 else 0.0
 
     rets = [v / starting_capital for v in pnl_list]
-    cum = 1.0
-    for r in rets:
-        cum *= (1.0 + r)
-    total_return = cum - 1.0
+    # Issue #465 (Audit #466) — total_return als ECHTER zeitbasierter Portfolio-Return aus der
+    # MtM-Equity-Kurve (``equity_end / equity_start − 1``), sobald eine Equity-Kurve vorliegt.
+    # Das sequentielle Aufzinsen ``Π(1 + pnl_i/C0)`` unterstellt 100 % Kapitaleinsatz je Trade
+    # nacheinander und verzerrt damit das OOS-Gate (``oos_min_total_return``) UND — über #461 —
+    # die dominante Reward-Penalty bei realer paralleler/fraktionaler Allokation. Fallback (keine
+    # Equity-Kurve, z. B. Direkt-Unit-Calls von ``_calculate_stats``): sequentielles Aufzinsen
+    # (Abwärtskompatibilität im Sonderfall nicht-überlappender Full-Capital-Trades).
+    if (mtm_series is not None and not mtm_series.empty and len(mtm_series) > 1
+            and float(mtm_series.iloc[0]) != 0.0):
+        total_return = float(mtm_series.iloc[-1]) / float(mtm_series.iloc[0]) - 1.0
+    else:
+        cum = 1.0
+        for r in rets:
+            cum *= (1.0 + r)
+        total_return = cum - 1.0
 
     if mtm_series is not None and not mtm_series.empty:
         import numpy as np
@@ -990,11 +1033,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
     Korrektur: Nutzt trader.generate_fills_report() statt des fehlerhaften Cache-Zugriffs.
     Unterstützt robustes FIFO-Position-Matching über DataFrames.
 
-    Hinweis zum Drawdown:
-    Der in den extrahierten Metriken berechnete `max_drawdown` (via `_calculate_stats`) basiert
-    ausschließlich auf der realisierten FIFO-PnL-Kurve der geschlossenen Trades und nicht
-    auf der kontinuierlichen Mark-to-Market (MtM) Equity. Intra-Trade Drawdowns bleiben
-    hierbei unberücksichtigt.
+    Hinweis zu Drawdown/Return (Issue #464–#466):
+    Diese Funktion reicht die per-Fold und aggregierten OOS-Slices der zeitbasierten MtM-Equity-Kurve
+    (`mtm_series` aus dem `PortfolioMonitor`) an `_calculate_stats` durch. `max_drawdown`,
+    `sortino_ratio` UND `total_return` der OOS-Metriken werden damit aus der zeitindizierten
+    Equity-Kurve abgeleitet (Intra-Trade-Drawdowns erfasst, frequenzkorrekt annualisiert, echter
+    Portfolio-Return) — nicht aus der Trade-geordneten realisierten PnL.
     """
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
@@ -1174,18 +1218,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
-            embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
+            # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth (kein Inline-Nachbau).
+            fold_boundaries = compute_fold_boundaries(start_ns, walk_forward_dict)
 
             for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
                 notional, _ts = notionals_with_ts[i]
                 is_oos = False
-                # Issue #443 — innere Fold-Schleife heißt `fold` (nicht `i`), um die äußere
-                # Enumerate-Variable nicht zu überschreiben (Loop-Var-Shadowing-Footgun).
-                for fold in range(splits):
-                    split_is_start_ns = start_ns + fold * oos_window_ns
-                    split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
-                    split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
-
+                # Issue #443 — distinkte Schleifen-Variablen, um die äußere Enumerate-Variable
+                # nicht zu überschreiben (Loop-Var-Shadowing-Footgun).
+                for _is_start_ns, split_oos_start_ns, split_oos_end_ns in fold_boundaries:
                     if split_oos_start_ns <= ts < split_oos_end_ns:
                         is_oos = True
                         break
@@ -1234,16 +1275,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #303: Export raw OOS trade records for chronological portfolio aggregation
         per_fold_oos_list = []
         if walk_forward_dict and start_ns is not None:
-            is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
-            oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
-            splits = walk_forward_dict.get("splits", 2)
-            embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
-
-            for fold in range(splits):  # Issue #443 — einheitlicher Fold-Index `fold`
-                split_is_start_ns = start_ns + fold * oos_window_ns
-                split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
-                split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
-
+            # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth (kein Inline-Nachbau).
+            for _is_start_ns, split_oos_start_ns, split_oos_end_ns in compute_fold_boundaries(start_ns, walk_forward_dict):
                 fold_pnls = []
                 fold_holds = []
                 fold_notionals = []
@@ -1273,25 +1306,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if oos_pnls:
             # Reconstruct tuples of (pnl, ts, ht, m_qty, notional) for portfolio merging
             # They were processed in the same order as oos_pnls
-            _oos_idx = 0
-            if walk_forward_dict:
-                is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
-                oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
-                splits = walk_forward_dict.get("splits", 2)
-                embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
-            else:
-                is_window_ns = 0
-                oos_window_ns = 0
-                splits = 0
-                embargo_period_ns = 0
+            # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth; ohne Walk-Forward
+            # (oder ohne start_ns) bleibt die Grenzliste leer ⇒ keine OOS-Records (wie zuvor splits=0).
+            boundaries = (compute_fold_boundaries(start_ns, walk_forward_dict)
+                          if walk_forward_dict and start_ns is not None else [])
 
             for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
                 notional, _ts = notionals_with_ts[i]
                 is_oos = False
-                for fold in range(splits):  # Issue #443 — einheitlicher Fold-Index `fold`
-                    split_is_start_ns = start_ns + fold * oos_window_ns
-                    split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
-                    split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
+                for _is_start_ns, split_oos_start_ns, split_oos_end_ns in boundaries:
                     if split_oos_start_ns <= ts < split_oos_end_ns:
                         is_oos = True
                         break
@@ -1641,17 +1664,9 @@ def select_winners(
                 # start_ns is already passed as a kwarg from the single source of truth
                 walk_forward_dict = winner_strat_params.get("_walk_forward_dict", {})
                 if walk_forward_dict and start_ns is not None:
-                    is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
-                    oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
-                    splits = walk_forward_dict.get("splits", 2)
-                    embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
-
+                    # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth (kein Inline-Nachbau).
                     per_fold_oos_list = []
-                    for j in range(splits):
-                        split_is_start_ns = start_ns + j * oos_window_ns
-                        split_oos_start_ns = split_is_start_ns + is_window_ns + embargo_period_ns
-                        split_oos_end_ns = split_is_start_ns + is_window_ns + oos_window_ns
-
+                    for _is_start_ns, split_oos_start_ns, split_oos_end_ns in compute_fold_boundaries(start_ns, walk_forward_dict):
                         fold_pnls = []
                         fold_holds = []
                         fold_notionals = []

@@ -33,11 +33,14 @@ def get_weights():
     }
 
 def get_tournament_cfg():
+    # Issue #467/#468 — strikte OOS-Isolation: die Constraint-Distanz-Penalty liest ausschliesslich
+    # OOS-gekeyte Schwellen (oos_min_*), niemals den IS-Fallback (min_*). Die Fixture muss daher die
+    # OOS-Keys setzen, exakt wie die ausgelieferte tournament.json.
     return {
-        "min_trades": 3,
-        "min_total_return": 0.05,
-        "min_expectancy": 0.0,
-        "min_win_rate": 0.0,
+        "oos_min_trades": 3,
+        "oos_min_total_return": 0.05,
+        "oos_min_expectancy": 0.0,
+        "oos_min_win_rate": 0.0,
         "max_drawdown": 0.2,
     }
 
