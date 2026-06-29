@@ -139,7 +139,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         logging.getLogger("optimizer").warning("OOS Anchor Divergence detected: fill_ts_max in OOS union but 0 OOS trades.")
         oos_anchor_divergence = True
 
-    return TournamentMetrics(
+    metrics = TournamentMetrics(
         oos_evaluated=bool(oos_evaluated),
         oos_eligible=bool(oos_eligible),
         is_sortino_median=float(is_sortino_median) if is_sortino_median is not None else 0.0,
@@ -166,3 +166,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_rejection_reasons=oos_rejection_reasons,
         oos_anchor_divergence=oos_anchor_divergence,
     )
+
+    # Pre-Return Invarianten-Check
+    if data.get("universe_size") == 1:
+        full_results = data.get("full_results", [])
+        has_oos_trades = any((r.get("oos_metrics") or {}).get("total_trades", 0) > 0 for r in full_results)
+        if has_oos_trades and metrics.oos_total_trades <= 0:
+            raise ValueError("Invariante gebrochen: Worker-OOS-Metriken existent, aber parse_tournament liefert oos_total_trades <= 0 (Issue #487).")
+
+    return metrics

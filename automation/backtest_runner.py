@@ -1483,20 +1483,19 @@ def select_winners(
     fully_eligible_count = 0
     require_oos = tournament_cfg.get("require_oos", True)
 
+    # Iteration ueber all_results fuer Telemetrie und single_symbol_oos
+    for r in all_results:
+        strat_params = r.get("strat_params", {})
+        # _oos_eval zwingend an jedes Resultat anhaengen, unabhaengig vom IS-Status
+        r["_oos_eval"] = _evaluate_oos_eligibility(
+            r.get("oos_metrics"),
+            tournament_cfg,
+            strat_params
+        )
+
     # Pre-evaluate all to get the true fully_eligible_count
     for r in is_eligible_population:
-        oos_metrics = r.get("oos_metrics")
-        if oos_metrics is not None:
-            oos_eval = _evaluate_oos_eligibility(oos_metrics, tournament_cfg, r.get("strat_params", {}))
-        else:
-            is_oos_eligible = not require_oos
-            oos_eval = {
-                "oos_evaluated": False,
-                "oos_eligible": is_oos_eligible,
-                "oos_metrics": None,
-                "oos_rejection_reasons": ["oos_metrics fehlt"] if not is_oos_eligible else []
-            }
-        r["_oos_eval"] = oos_eval
+        oos_eval = r["_oos_eval"]
         if oos_eval.get("oos_eligible", False):
             fully_eligible_count += 1
 
