@@ -186,7 +186,7 @@ def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[st
     return out
 
 
-def compute_start_ns_preflight(config: dict, *, now: dt.datetime | None = None) -> int | None:
+def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None, catalog_newest_ns: int | None = None) -> int | None:
     """Issue #491 — Berechnet start_ns für das OOS Preflight via compute_walk_forward_window.
     """
     wf = config.get("walk_forward") or {}
@@ -201,11 +201,12 @@ def compute_start_ns_preflight(config: dict, *, now: dt.datetime | None = None) 
         is_window_days=wf["is_window_days"],
         oos_window_days=wf["oos_window_days"],
         n_folds=wf["splits"],
+        catalog_newest_ns=catalog_newest_ns,
     )
     return int(start.timestamp()) * 1_000_000_000
 
 
-def compute_holdout_window_reach_target_ns(config: dict, *, now: dt.datetime | None = None) -> int | None:
+def compute_holdout_window_reach_target_ns(config: dict, *, now: dt.datetime | None = None, catalog_newest_ns: int | None = None) -> int | None:
     """
     Berechnet das zwingend zu erreichende Ziel-Datum (Epoch-ns) für das Holdout-Preflight.
     Verlangt eine Abdeckung von mindestens 50% des Holdout-Fensters oder einen fixen Buffer.
@@ -224,6 +225,7 @@ def compute_holdout_window_reach_target_ns(config: dict, *, now: dt.datetime | N
         is_window_days=wf["is_window_days"],
         oos_window_days=wf["oos_window_days"],
         n_folds=wf["splits"],
+        catalog_newest_ns=catalog_newest_ns,
     )
 
     # Zwingende Anpassung: Der Katalog muss mindestens bis zur Mitte des Holdout-Fensters reichen.
@@ -289,7 +291,7 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
             # Issue #462 — Holdout-Erreichbarkeits-Preflight
             holdout_reachable, holdout_reason = data_reaches_holdout_window(newest_ns, holdout_window_reach_target_ns)
             if not holdout_reachable:
-                gap_days = round((holdout_window_reach_target_ns - newest_ns) / (86400 * 1_000_000_000), 1)
+                gap_days = round(((holdout_window_reach_target_ns if holdout_window_reach_target_ns is not None else 0) - (newest_ns if newest_ns is not None else 0)) / (86400 * 1_000_000_000), 1)
                 log.warning(
                     "⏭️  %s/%s übersprungen (%s): jüngster Tick liegt %s Tage VOR der geforderten "
                     "Holdout-Coverage-Grenze ⇒ Deterministic Holdout-Reject. Katalog-H2 auffrischen.",
@@ -356,8 +358,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Issue #455 — OOS-Erreichbarkeits-Preflight vorbereiten: jüngster Tick je Symbol + die geteilte
     # OOS-Grenze (#457, compute_walk_forward_window). Beide fail-open (None) ⇒ kein Skip.
     latest_ts = latest_ts_by_symbol(syms)
-    start_ns = compute_start_ns_preflight(config)
-    holdout_window_reach_target_ns = compute_holdout_window_reach_target_ns(config)
+    global_catalog_newest_ns = max((v for v in latest_ts.values() if v is not None), default=None) if latest_ts else None
+    start_ns = compute_oos_window_start_ns(config, catalog_newest_ns=global_catalog_newest_ns)
+    holdout_window_reach_target_ns = compute_holdout_window_reach_target_ns(config, catalog_newest_ns=global_catalog_newest_ns)
 
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
