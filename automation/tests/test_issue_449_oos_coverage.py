@@ -84,18 +84,22 @@ def test_build_trial_uses_shared_window(tmp_path, monkeypatch):
 # #455 — gate.data_reaches_oos_window (rein, fail-open)
 # ===========================================================================
 def test_gate_oos_reachable_when_newest_reaches_boundary():
-    ok, reason = gate.data_reaches_oos_window(START_NS + 200 * _DAY_NS, START_NS + 180 * _DAY_NS)
+    wf_dict = {"is_window_days": 180, "oos_window_days": 30, "splits": 2, "embargo_period_days": 0, "holdout_days": 0}
+    ok, reason, gap = gate.data_reaches_oos_window(START_NS + 200 * _DAY_NS, START_NS, wf_dict)
     assert ok and reason == "OK"
 
 
 def test_gate_oos_unreachable_when_newest_before_boundary():
-    ok, reason = gate.data_reaches_oos_window(START_NS + 170 * _DAY_NS, START_NS + 180 * _DAY_NS)
+    wf_dict = {"is_window_days": 180, "oos_window_days": 30, "splits": 2, "embargo_period_days": 0, "holdout_days": 0}
+    ok, reason, gap = gate.data_reaches_oos_window(START_NS + 170 * _DAY_NS, START_NS, wf_dict)
     assert not ok and reason == "OOS_WINDOW_UNREACHABLE"
 
 
 def test_gate_oos_failopen_on_missing_telemetry():
-    assert gate.data_reaches_oos_window(None, START_NS + 180 * _DAY_NS) == (True, "OOS_PREFLIGHT_UNAVAILABLE")
-    assert gate.data_reaches_oos_window(START_NS, None) == (True, "OOS_PREFLIGHT_UNAVAILABLE")
+    wf_dict = {"is_window_days": 180, "oos_window_days": 30, "splits": 2, "embargo_period_days": 0, "holdout_days": 0}
+    assert gate.data_reaches_oos_window(None, START_NS, wf_dict) == (True, "OOS_PREFLIGHT_UNAVAILABLE", None)
+    assert gate.data_reaches_oos_window(START_NS, None, wf_dict) == (True, "OOS_PREFLIGHT_UNAVAILABLE", None)
+    assert gate.data_reaches_oos_window(START_NS, START_NS, None) == (True, "OOS_PREFLIGHT_UNAVAILABLE", None)
 
 
 # ===========================================================================
@@ -190,11 +194,11 @@ def _ample_bars(symbols):
 
 def test_enumerate_preflight_skips_unreachable_symbol():
     syms = ["GOOD.ETORO", "STALE.ETORO"]
-    oos_start = START_NS + 180 * _DAY_NS
+    start_ns = START_NS
     latest = {"GOOD.ETORO": START_NS + 200 * _DAY_NS, "STALE.ETORO": START_NS + 100 * _DAY_NS}
     pairs = sweep.enumerate_tunable_pairs(
         ["SmaCrossoverStrategy"], syms, tier="all", available_bars=_ample_bars(syms),
-        config=_GATE_CFG, latest_ts=latest, oos_window_start_ns=oos_start)
+        config=_GATE_CFG, latest_ts=latest, start_ns=start_ns)
     out_syms = {sym for _s, sym, _r in pairs}
     assert "GOOD.ETORO" in out_syms
     assert "STALE.ETORO" not in out_syms, "unerreichbares Symbol muss übersprungen werden (#455)"
@@ -210,13 +214,13 @@ def test_enumerate_preflight_failopen_without_telemetry():
     assert out_syms == {"GOOD.ETORO", "STALE.ETORO"}
 
 
-def test_compute_oos_window_start_ns_matches_start_plus_is_window():
+def test_compute_start_ns_preflight_matches():
     now = dt.datetime(2026, 6, 25, tzinfo=dt.timezone.utc)
-    oos_ns = sweep.compute_oos_window_start_ns(_GATE_CFG, now=now)
+    start_ns = sweep.compute_start_ns_preflight(_GATE_CFG, now=now)
     start, _end = compute_walk_forward_window(
         now=now, holdout_days=45, is_window_days=180, oos_window_days=45, n_folds=4)
-    expected = int((start + dt.timedelta(days=180)).timestamp()) * 1_000_000_000
-    assert oos_ns == expected
+    expected = int((start).timestamp()) * 1_000_000_000
+    assert start_ns == expected
 
 
 # ===========================================================================
