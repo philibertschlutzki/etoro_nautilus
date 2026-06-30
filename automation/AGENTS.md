@@ -949,7 +949,9 @@ die Degeneration zu EINEM singulären, kontiguierlichen IS/OOS-Block ausgeschlos
 (Pitfall #88-Leakage; Guard: `test_issue_467_fold_geometry.py`.)
 
 ### Axiom A7 (#467/#463) — Fold-Geometrie ist Single Source of Truth: `compute_fold_boundaries`
-`backtest_runner.compute_fold_boundaries(start_ns, walk_forward_dict)` ist die **EINZIGE** Quelle der
+`backtest_runner.compute_fold_boundaries(start_ns, walk_forward_dict)` ist die **EINZIGE** Quelle der Fold-Grenzen.
+Explizites Verbot: Die Inline-Berechnung `start_ns + is_window_ns` für OOS-Prüfungen ist verboten. Die Auswertung von `oos_covered` ist zwingend an die echten OOS-Intervalle (`[oos_start_k, oos_end_k)`) aus `compute_fold_boundaries` gebunden (Issue #491).
+
 `(is_start, oos_start, oos_end)`-Tripel. Sämtliche Split-Stellen (Worker per-Trade-Klassifikation, Worker
 per-Fold-Sortinos, `oos_trade_records`, Aggregat-per-Fold) MÜSSEN sie nutzen. Vier parallele Inline-Kopien
 sind eine eingebaute Divergenz-Falle — exakt analog zu `compute_walk_forward_window` für die äußere
