@@ -186,12 +186,8 @@ def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[st
     return out
 
 
-def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None) -> int | None:
-    """Issue #455/#457 — die früheste OOS-Sub-Fenster-Grenze (Epoch-ns) für das Sweep-Preflight.
-
-    Bezieht ``start`` aus der GETEILTEN ``compute_walk_forward_window`` (Single Source of Truth,
-    #457) und addiert ``is_window_days`` — exakt die Grenze, gegen die der jüngste Tick je Symbol
-    geprüft wird. ``None``, wenn die Walk-Forward-Geometrie unvollständig ist (⇒ Preflight fail-open).
+def compute_start_ns_preflight(config: dict, *, now: dt.datetime | None = None) -> int | None:
+    """Issue #491 — Berechnet start_ns für das OOS Preflight via compute_walk_forward_window.
     """
     wf = config.get("walk_forward") or {}
     needed = ("is_window_days", "oos_window_days", "splits", "holdout_days")
@@ -206,9 +202,7 @@ def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None)
         oos_window_days=wf["oos_window_days"],
         n_folds=wf["splits"],
     )
-    oos_boundary = start + dt.timedelta(days=wf["is_window_days"])
-    # Mitternacht-UTC ⇒ ganzzahlige Sekunden ⇒ exakte ns ohne Float-Drift.
-    return int(oos_boundary.timestamp()) * 1_000_000_000
+    return int(start.timestamp()) * 1_000_000_000
 
 
 def compute_holdout_window_reach_target_ns(config: dict, *, now: dt.datetime | None = None) -> int | None:
@@ -242,7 +236,7 @@ def compute_holdout_window_reach_target_ns(config: dict, *, now: dt.datetime | N
 def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                             *, tier: str, available_bars: dict[str, int],
                             config: dict, latest_ts: dict[str, int | None] | None = None,
-                            oos_window_start_ns: int | None = None,
+                            start_ns: int | None = None,
                             holdout_window_reach_target_ns: int | None = None,
                             logger: logging.Logger | None = None) -> list[tuple[str, str, str]]:
     """Enumeriert (strategy, symbol, 'OK')-Tripel.
@@ -281,9 +275,9 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                 continue
             # Issue #455 — OOS-Erreichbarkeits-Preflight (fail-open bei fehlender Telemetrie).
             newest_ns = latest_ts.get(symbol) if latest_ts else None
-            reachable, oos_reason = data_reaches_oos_window(newest_ns, oos_window_start_ns)
+            wf_dict = config.get("walk_forward")
+            reachable, oos_reason, gap_days = data_reaches_oos_window(newest_ns, start_ns, wf_dict)
             if not reachable:
-                gap_days = round((oos_window_start_ns - newest_ns) / (86400 * 1_000_000_000), 1)
                 log.warning(
                     "⏭️  %s/%s übersprungen (%s, Pitfall #82): jüngster Tick liegt %s Tage VOR der "
                     "frühesten OOS-Grenze ⇒ jedes OOS-Sub-Fenster bliebe leer (oos_total_trades=0, "
@@ -362,12 +356,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Issue #455 — OOS-Erreichbarkeits-Preflight vorbereiten: jüngster Tick je Symbol + die geteilte
     # OOS-Grenze (#457, compute_walk_forward_window). Beide fail-open (None) ⇒ kein Skip.
     latest_ts = latest_ts_by_symbol(syms)
-    oos_window_start_ns = compute_oos_window_start_ns(config)
+    start_ns = compute_start_ns_preflight(config)
     holdout_window_reach_target_ns = compute_holdout_window_reach_target_ns(config)
 
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
-                                    latest_ts=latest_ts, oos_window_start_ns=oos_window_start_ns,
+                                    latest_ts=latest_ts, start_ns=start_ns,
                                     holdout_window_reach_target_ns=holdout_window_reach_target_ns)
 
     # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).

@@ -1193,18 +1193,31 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         oos_window_start_ns = None
         oos_covered = None
         if walk_forward_dict and start_ns is not None:
-            _is_window_ns_cov = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
-            oos_window_start_ns = start_ns + _is_window_ns_cov
-            oos_covered = fill_ts_max is not None and fill_ts_max >= oos_window_start_ns
+            # Issue #491 — OOS-Abdeckung über echte Fold-Geometrie statt naiver start+is_window Arithmetik.
+            fold_boundaries_for_cov = compute_fold_boundaries(start_ns, walk_forward_dict)
+            if fold_boundaries_for_cov:
+                oos_window_start_ns = fold_boundaries_for_cov[0][1]
+
+                # oos_covered := ∃ fill : ∃ fold k : oos_start_k ≤ fill < oos_end_k
+                if _all_fill_ts:
+                    oos_covered = False
+                    for fill_ts in _all_fill_ts:
+                        for _, fold_oos_start, fold_oos_end in fold_boundaries_for_cov:
+                            if fold_oos_start <= fill_ts < fold_oos_end:
+                                oos_covered = True
+                                break
+                        if oos_covered:
+                            break
+                else:
+                    oos_covered = False
+
             if not oos_covered and log_fn:
-                if fill_ts_max is not None:
-                    _gap_days = round((oos_window_start_ns - fill_ts_max) / (86400 * 1_000_000_000), 1)
+                if fill_ts_max is not None and oos_window_start_ns is not None:
                     log_fn(
-                        f"[OOS-Abdeckung] ⚠️ fill_ts_max liegt {_gap_days} Tage VOR der frühesten "
-                        f"OOS-Grenze (start_ns + is_window, Pitfall #82). Kein Trade ist "
-                        f"OOS-klassifizierbar ⇒ oos_total_trades=0 strukturell. Ursache ist "
-                        f"DATENseitig (dünner/staler H2-Katalog), nicht parameterseitig — Katalog "
-                        f"für die zweite Fensterhälfte auffrischen (Backfill), dann erneut tunen."
+                        f"[OOS-Abdeckung] ⚠️ Keine Fills in den validen OOS-Folds (Pitfall #82). fill_ts_max "
+                        f"liegt {'VOR' if fill_ts_max < oos_window_start_ns else 'NACH/AUSSERHALB'} den OOS-Grenzen. "
+                        f"Kein Trade ist OOS-klassifizierbar ⇒ oos_total_trades=0 strukturell. Ursache ist "
+                        f"DATENseitig (Katalog), nicht parameterseitig."
                     )
                 else:
                     log_fn("[OOS-Abdeckung] ⚠️ Keine Fills im Fenster — OOS-Abdeckung nicht gegeben (Pitfall #82).")
@@ -1861,14 +1874,23 @@ def write_tournament_json(
     # Worker mit OOS-Fills genügt, damit das Paar OOS-abgedeckt ist).
     _oos_starts = [r.get("_oos_window_start_ns") for r in all_results if r.get("_oos_window_start_ns") is not None]
     oos_window_start_ns = _oos_starts[0] if _oos_starts else None
+
+    # Issue #491 — Aggregation von oos_covered aus den Worker-Ergebnissen anstatt
+    # naiver fill_ts_max >= oos_window_start_ns Rechnung.
+    _oos_covereds = [r.get("_oos_covered") for r in all_results if r.get("_oos_covered") is not None]
+    oos_covered = any(_oos_covereds) if _oos_covereds else None
+
     if start_ns is not None or end_ns is not None or fill_ts_min is not None:
         _day_ns = 86400 * 1_000_000_000
-        if oos_window_start_ns is not None and fill_ts_max is not None:
-            oos_covered = fill_ts_max >= oos_window_start_ns
-            oos_coverage_gap_days = (round((oos_window_start_ns - fill_ts_max) / _day_ns, 1)
-                                     if not oos_covered else 0.0)
+        if oos_window_start_ns is not None and fill_ts_max is not None and oos_covered is not None:
+            # Wenn fill_ts_max VOR dem ersten OOS-Start liegt, berechnen wir die Lücke.
+            # Wenn es NACH dem ersten OOS-Start liegt, aber oos_covered False ist (z.B. nach letztem Fold),
+            # ist die Gap 0.0 (es liegt kein "Verfehlen" der Grenze in der Vergangenheit vor).
+            if fill_ts_max < oos_window_start_ns:
+                oos_coverage_gap_days = round((oos_window_start_ns - fill_ts_max) / _day_ns, 1)
+            else:
+                oos_coverage_gap_days = 0.0
         else:
-            oos_covered = None
             oos_coverage_gap_days = None
         output["data_window"] = {
             "start_ns": start_ns,
