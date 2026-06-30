@@ -538,6 +538,8 @@ def _classify_is_rejection_detail(metrics) -> str:
         if covered is False:
             return "REJECT_OOS_WINDOW_UNREACHABLE"
         if covered is True:
+            if getattr(metrics, "oos_total_trades", 0) > 0:
+                return "REJECT_OOS_DISCARDED_BY_IS_GATE"
             return "REJECT_OOS_INACTIVE"
         return "REJECT_OOS_NOT_EVALUATED"
     reasons = getattr(metrics, "oos_rejection_reasons", ()) or ()
