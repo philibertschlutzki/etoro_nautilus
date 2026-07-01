@@ -84,3 +84,82 @@ def test_confirm_passes_holdout_days_as_oos_override(monkeypatch):
     hd = _holdout_days()
     assert captured.get("oos_window_days_override") == hd
     assert captured.get("holdout_days") == 0 and captured.get("n_folds") == 1
+
+def test_confirm_per_symbol_promotion_property_sweep(monkeypatch, tmp_path):
+    """Property-Test: Iterativer Sweep für catalog_end zur Überprüfung der OOS-Coverage Invariante."""
+    from automation.optimizer import confirm as cmod
+    from automation.optimizer.trial_config import compute_walk_forward_window
+    import json
+
+    # Mock configs
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "backtest.json").write_text(json.dumps({
+        "walk_forward": {
+            "is_window_days": 120,
+            "holdout_days": 45,
+            "oos_window_days": 30
+        }
+    }))
+
+    monkeypatch.setattr(cmod, "config_dir", lambda: cfg_dir)
+
+    now = dt.datetime.now(dt.timezone.utc)
+    window_start, _ = compute_walk_forward_window(
+        now=now,
+        holdout_days=45,
+        is_window_days=120,
+        oos_window_days=30,
+        n_folds=1,
+    )
+    oos_lo_ns = int((window_start + dt.timedelta(days=120)).timestamp() * 1_000_000_000)
+
+    class DummyTrial:
+        def __init__(self):
+            self.params = {}
+            self.user_attrs = {"sampled_params": {}}
+            self.number = 0
+            self.value = -1.0
+
+    class DummyStudy:
+        def __init__(self):
+            self.best_trial = DummyTrial()
+            self.study_name = "s"
+
+    study = DummyStudy()
+
+    def fake_metrics(*args, **kwargs):
+        class DummyMetrics:
+            def __init__(self):
+                self.oos_evaluated = True
+                self.oos_eligible = True
+                self.oos_sortino = 1.0
+                self.oos_max_drawdown = 0.1
+                self.oos_total_trades = 10
+        return DummyMetrics()
+
+    monkeypatch.setattr(cmod, "_holdout_metrics_for_params", fake_metrics)
+    monkeypatch.setattr(cmod, "compute_reward", lambda m, **kwargs: 1.0)
+
+    def fake_compute(*args, **kwargs):
+        # Always return the fixed window_start ignoring catalog_newest_ns to guarantee boundary condition evaluates exactly based on `now`.
+        return window_start, window_start
+    import automation.optimizer.trial_config as tc_mod
+    monkeypatch.setattr(tc_mod, "compute_walk_forward_window", fake_compute)
+
+    # Iterate through offsets from -10 to +10 days relative to oos_lo_ns
+    day_ns = int(dt.timedelta(days=1).total_seconds() * 1_000_000_000)
+    for offset in range(-10, 11):
+        test_ns = oos_lo_ns + (offset * day_ns)
+
+        res = cmod.confirm_per_symbol_promotion(
+            study, "Strat", "SYM", {},
+            run_backtest=lambda *a, **k: None,
+            build_trial=lambda *a, **k: (None, None),
+            catalog_newest_ns=test_ns
+        )
+
+        is_rejected = res.get("status") == "REJECTED_ON_HOLDOUT" and res.get("is_rejection_detail_override") == "REJECT_HOLDOUT_UNREACHABLE"
+
+        # Assertion: Preflight evaluiert zu False (is_rejected ist True) exakt dann, wenn geometrische Abdeckung nicht gegeben ist (test_ns < oos_lo_ns)
+        assert is_rejected == (test_ns < oos_lo_ns)

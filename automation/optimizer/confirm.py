@@ -176,19 +176,21 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
 
     is_window_days = wf_cfg.get("is_window_days", 120)
     holdout_days = wf_cfg.get("holdout_days", 45)
+    oos_window_days_cfg = wf_cfg.get("oos_window_days", 45)
 
     if catalog_newest_ns is not None:
         now = dt.datetime.now(dt.timezone.utc)
         from automation.optimizer.trial_config import compute_walk_forward_window
-        _, holdout_start = compute_walk_forward_window(
+        window_start, _ = compute_walk_forward_window(
             now=now,
             holdout_days=holdout_days,
             is_window_days=is_window_days,
-            oos_window_days=30,
+            oos_window_days=oos_window_days_cfg,
             n_folds=1,
             catalog_newest_ns=catalog_newest_ns,
         )
-        oos_lo_ns = int((holdout_start + dt.timedelta(days=is_window_days)).timestamp() * 1_000_000_000)
+        oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days)).timestamp() * 1_000_000_000)
+        # verfügbar, sobald catalog_newest_ns >= holdout_oos_start_ns
         if catalog_newest_ns < oos_lo_ns:
             return {
                 "promote": False,
