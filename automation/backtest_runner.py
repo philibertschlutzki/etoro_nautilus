@@ -438,33 +438,62 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     req_max_dd   = t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0))))
     req_win_rate = t_overrides.get("oos_min_win_rate", t_overrides.get("min_win_rate", tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0))))
 
-    reasons = []
-    if n_trades < req_trades:
-        reasons.append(f"oos_min_trades: {n_trades} < {req_trades}")
-    if total_return < req_return:
-        reasons.append(f"oos_min_total_return: {total_return:.5f} < {req_return:.5f}")
-    if expectancy < req_exp:
-        reasons.append(f"oos_min_expectancy: {expectancy:.5f} < {req_exp:.5f}")
-    if max_dd > req_max_dd:
-        reasons.append(f"oos_max_drawdown: {max_dd:.5f} > {req_max_dd:.5f}")
-    if win_rate < req_win_rate:
-        reasons.append(f"oos_min_win_rate: {win_rate:.5f} < {req_win_rate:.5f}")
-
-    # None-Sicherheit: Zero-Loss-OOS
-    # Issue #263: Defensives Handling für "Low-Sample"/All-Win-Szenarien
+    sortino_valid = True
+    sortino_reason = ""
     if req_sortino > 0.0:
         if sortino is None:
              if n_trades < req_trades or win_rate <= 0.0:
-                 reasons.append(f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}")
+                 sortino_valid = False
+                 sortino_reason = f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}"
         elif sortino < req_sortino:
-             reasons.append(f"oos_min_sortino: {sortino:.5f} < {req_sortino}")
+             sortino_valid = False
+             sortino_reason = f"oos_min_sortino: {sortino:.5f} < {req_sortino}"
 
+    pf_valid = True
+    pf_reason = ""
     if req_pf > 0.0:
         if pf is None:
              if n_trades < req_trades or win_rate <= 0.0:
-                 reasons.append(f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}")
+                 pf_valid = False
+                 pf_reason = f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}"
         elif pf < req_pf:
-             reasons.append(f"oos_min_profit_factor: {pf:.5f} < {req_pf}")
+             pf_valid = False
+             pf_reason = f"oos_min_profit_factor: {pf:.5f} < {req_pf}"
+
+    condition_map = {
+        "min_trades":        (n_trades >= req_trades, f"oos_min_trades: {n_trades} < {req_trades}"),
+        "min_total_return":  (total_return >= req_return, f"oos_min_total_return: {total_return:.5f} < {req_return:.5f}"),
+        "min_expectancy":    (expectancy >= req_exp, f"oos_min_expectancy: {expectancy:.5f} < {req_exp:.5f}"),
+        "max_drawdown":      (max_dd <= req_max_dd, f"oos_max_drawdown: {max_dd:.5f} > {req_max_dd:.5f}"),
+        "min_win_rate":      (win_rate >= req_win_rate, f"oos_min_win_rate: {win_rate:.5f} < {req_win_rate:.5f}"),
+        "min_sortino":       (sortino_valid, sortino_reason),
+        "min_profit_factor": (pf_valid, pf_reason),
+    }
+
+    reasons = []
+    for cond_name in tournament_cfg.get("eligible_requires_all", []):
+        if cond_name in condition_map:
+            valid, reason = condition_map[cond_name]
+            if not valid:
+                reasons.append(reason)
+
+    any_conditions = tournament_cfg.get("eligible_requires_any", [])
+    if any_conditions:
+        any_valid = False
+        any_reasons = []
+        for cond_name in any_conditions:
+            if cond_name in condition_map:
+                valid, reason = condition_map[cond_name]
+                if valid:
+                    any_valid = True
+                    break
+                else:
+                    if reason:
+                        any_reasons.append(reason)
+                    else:
+                        any_reasons.append(f"{cond_name} failed")
+        if not any_valid:
+            reasons.append("Requires ANY of " + str(any_conditions) + " failed: " + ", ".join(any_reasons))
 
     if n_trades > 0:
         median_notional = oos_metrics.get("median_position_notional", 0.0)
