@@ -82,7 +82,6 @@ def test_evaluable_strictly_above_every_unevaluable(tmp_path):
         _pairs(20)))
     r_eval = reward.compute_reward(m_eval, universe_size=100)
 
-    floor = (cfg["penalty_unevaluable_oos"] + cfg["unevaluable_shaping_span"]
-             + cfg["evaluable_floor_epsilon"])
+    floor = -float(cfg["sortino_clip_abs"])
     assert r_eval == pytest.approx(floor)   # worst evaluable is clamped to the floor
     assert r_eval > r_uneval                # strictly above every unevaluable trial
