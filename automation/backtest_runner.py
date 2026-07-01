@@ -385,8 +385,8 @@ def load_tournament_config(project_root: str | None = None) -> dict:
         "max_drawdown": 1.0,
         "min_win_rate": 0.0,
         "min_total_return": 0.0,
-        "eligible_requires_all": ["min_trades", "min_win_rate", "max_drawdown"],
-        "eligible_requires_any": ["min_profit_factor"],
+        "eligible_requires_all": ["min_trades", "max_drawdown"],
+        "eligible_requires_any": ["min_profit_factor", "min_win_rate"],
         "scoring": {
             "sortino_weight": 0.4,
             "profit_factor_weight": 0.3,

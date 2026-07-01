@@ -15,8 +15,8 @@ def test_oos_eligibility():
         "min_total_return": 0.0,
         "oos_min_trades": 5,
         "oos_min_total_return": 0.0,
-        "eligible_requires_all": ["min_trades", "min_total_return", "min_win_rate", "max_drawdown"],
-        "eligible_requires_any": ["min_sortino", "min_profit_factor"],
+        "eligible_requires_all": ["min_trades", "min_total_return", "max_drawdown"],
+        "eligible_requires_any": ["min_sortino", "min_profit_factor", "min_win_rate"],
         "scoring": {
             "sortino_weight": 0.4,
             "profit_factor_weight": 0.3,
@@ -51,8 +51,8 @@ def test_total_return_eligibility_hard_gate():
         "min_win_rate": 0.35,
         "min_total_return": 0.005,
         "min_expectancy": 0.0005,
-        "eligible_requires_all": ["min_trades", "min_total_return", "min_win_rate", "max_drawdown", "min_expectancy"],
-        "eligible_requires_any": ["min_sortino", "min_profit_factor"]
+        "eligible_requires_all": ["min_trades", "min_total_return", "max_drawdown", "min_expectancy"],
+        "eligible_requires_any": ["min_sortino", "min_profit_factor", "min_win_rate"]
     }
 
     metrics = {
