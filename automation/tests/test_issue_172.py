@@ -14,8 +14,8 @@ def test_select_winners_oos_structure():
         "oos_min_trades": 5,
         "oos_min_total_return": 0.005,
         "oos_min_expectancy": 0.0005,
-        "eligible_requires_all": ["min_trades", "min_total_return", "min_win_rate", "max_drawdown", "min_expectancy"],
-        "eligible_requires_any": ["min_sortino", "min_profit_factor"],
+        "eligible_requires_all": ["min_trades", "min_total_return", "max_drawdown", "min_expectancy"],
+        "eligible_requires_any": ["min_sortino", "min_profit_factor", "min_win_rate"],
         "scoring": {
             "sortino_weight": 0.4,
             "profit_factor_weight": 0.3,
@@ -79,8 +79,8 @@ def test_oos_not_evaluated():
         "oos_min_trades": 5,
         "oos_min_total_return": 0.005,
         "oos_min_expectancy": 0.0005,
-        "eligible_requires_all": ["min_trades", "min_total_return", "min_win_rate", "max_drawdown", "min_expectancy"],
-        "eligible_requires_any": ["min_sortino", "min_profit_factor"],
+        "eligible_requires_all": ["min_trades", "min_total_return", "max_drawdown", "min_expectancy"],
+        "eligible_requires_any": ["min_sortino", "min_profit_factor", "min_win_rate"],
         "scoring": {
             "sortino_weight": 0.4,
             "profit_factor_weight": 0.3,
