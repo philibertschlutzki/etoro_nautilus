@@ -59,34 +59,31 @@ def _cfg_value(weights: dict, tournament_cfg: dict | None, key: str, default=Non
 
 
 def _shortfall_distance(actual: float, target: float | None, scale: float | None = None) -> float:
-    """Quadratische, auf den Target (oder Scale) normierte Unterschreitungs-Distanz ∈ [0, ∞).
-    0.0, wenn ``actual >= target`` (oder kein/nicht-positiver Target). Quadratisch, damit
-    ein knapp verfehltes Gate (kleiner Gap) einen deutlich kleineren Penalty traegt als ein
-    katastrophal verfehltes — genau der Gradient, den TPE braucht (Issue #452).
-    Issue #467: `scale` erlaubt die Entkopplung der Penalty-Krümmung vom Gate-Threshold."""
+    """Lineare, auf den Target (oder Scale) normierte Unterschreitungs-Distanz ∈ [0, ∞).
+    0.0, wenn ``actual >= target`` (oder kein/nicht-positiver Target).
+    Issue #505: Lineare statt quadratische Distanz zur Vermeidung von Term-Dominanz.
+    Issue #467: `scale` erlaubt die Entkopplung der Penalty-Skalierung vom Gate-Threshold."""
     if target is None or target <= 0.0:
         return 0.0
-    if scale is not None and scale <= 0.0:
-        raise ValueError("scale must be strictly positive to prevent ZeroDivisionError")
-    gap = max(0.0, float(target) - float(actual))
-    denominator = float(scale) if scale is not None else float(target)
-    return (gap / denominator) ** 2
+    denom = float(scale) if scale is not None else float(target)
+    if denom <= 0.0:
+        raise ValueError("scale/target must be strictly positive")
+    return max(0.0, float(target) - float(actual)) / denom
 
 
 def _excess_distance(actual: float, cap: float | None) -> float:
-    """Quadratische, auf den Cap normierte Ueberschreitungs-Distanz (z. B. Drawdown > max).
+    """Lineare, auf den Cap normierte Ueberschreitungs-Distanz (z. B. Drawdown > max).
     0.0, wenn ``actual <= cap`` (oder kein/nicht-positiver Cap)."""
     if cap is None or cap <= 0.0:
         return 0.0
-    gap = max(0.0, float(actual) - float(cap))
-    return (gap / float(cap)) ** 2
+    return max(0.0, float(actual) - float(cap)) / float(cap)
 
 
 def _any_condition_distance(m: "TournamentMetrics", weights: dict,
                             tournament_cfg: dict | None) -> float:
     """Distanz fuer die ``eligible_requires_any``-Klausel (Sortino ODER Profit-Factor).
     Erfuellt der bessere der beiden Quotienten sein Gate (ratio >= 1), ist die Distanz 0;
-    sonst quadratisch im Rest-Gap des BESTEN Kandidaten — eine knapp verfehlte ANY-Bedingung
+    sonst linear im Rest-Gap des BESTEN Kandidaten — eine knapp verfehlte ANY-Bedingung
     darf nicht doppelt so hart bestraft werden wie eine knapp verfehlte ALL-Bedingung.
     Issue #467: Strikte Parameter-Isolation. Kein Fallback auf IS-Metriken im OOS-Pfad."""
     ratios = []
@@ -100,7 +97,7 @@ def _any_condition_distance(m: "TournamentMetrics", weights: dict,
 
     if not ratios:
         return 0.0
-    return max(0.0, 1.0 - min(1.0, max(ratios))) ** 2
+    return max(0.0, 1.0 - min(1.0, max(ratios)))
 
 
 def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
@@ -136,45 +133,30 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
         _excess_distance(m.oos_max_drawdown, risk_dd_cap),
         _any_condition_distance(m, weights, tournament_cfg),
     ]
-    raw_distance = sum(d for d in distances if d > 0.0)
-    if raw_distance <= 0.0:
+    active_dists = [d for d in distances if d > 0.0]
+    if not active_dists:
         return 0.0
-    return raw_distance * float(weights.get("constraint_distance_penalty_weight",
-                                            weights["unevaluable_shaping_span"]))
+    mean_distance = sum(active_dists) / len(distances)
+    return mean_distance * float(weights.get("constraint_distance_penalty_weight", weights["unevaluable_shaping_span"]))
 
 
 def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
                                risk_dd_cap: float | None,
                                tournament_cfg: dict | None) -> float:
-    """Issue #452 — Reward fuer evaluiert-aber-nicht-eligible OOS-Trials.
+    """Issue #452 / #505 — Reward fuer evaluiert-aber-nicht-eligible OOS-Trials.
 
-    Verankert knapp UNTER der Unevaluable-Decke (``penalty_unevaluable_oos + span``) und zieht die
+    Verankert am neuen Feasible-Floor (-sortino_clip_abs) und zieht die
     kontinuierliche Distanzstrafe ab. Damit gilt strikt: jeder Constraint-Failure < Evaluable-Floor
-    (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming), aber
-    near-miss bleibt fuer TPE von katastrophal unterscheidbar (Gradient statt Flat-Floor)."""
-    unevaluable_ceiling = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
-    evaluable_floor = unevaluable_ceiling + weights["evaluable_floor_epsilon"]
+    (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming).
+    Der tanh-Band-Clamp (Falle 97) wurde zugunsten eines grossen Dynamikbereichs entfernt."""
+    feasible_min = -float(weights["sortino_clip_abs"])
+    failure_ceiling = feasible_min - float(weights["evaluable_floor_epsilon"])
+    unevaluable_ceiling = float(weights["penalty_unevaluable_oos"]) + float(weights["unevaluable_shaping_span"])
 
     penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
 
-    # Die Penalty muss asymptotisch komprimiert werden, da das Band zwischen
-    # evaluable_floor (-9.749) und unevaluable_ceiling (-9.75) mit z.B. 0.001 extrem schmal ist.
-    # Wir nutzen math.tanh(), um [0, ∞) monoton auf [0, 1) abzubilden.
-    ceiling_offset = 1e-9
-    available_span = weights["evaluable_floor_epsilon"] - ceiling_offset
-    if available_span <= 0:
-        available_span = 1e-6 # Fallback, sollte evaluable_floor_epsilon mikroskopisch sein
-
-    # Skalierungsfaktor zur Streckung des tanh-Gradienten (Zero-Hardcoding)
-    # Default 50.0 verschiebt die Sättigung (tanh(x) -> 1) in den Bereich raw_penalty > 150
-    scale_factor = float(weights.get("constraint_penalty_scale", 50.0))
-
-    # Asymptotische Kompression
-    compressed_penalty = available_span * math.tanh(penalty / scale_factor)
-
-    raw_failure_reward = evaluable_floor - ceiling_offset - compressed_penalty
-
-    return max(float(unevaluable_ceiling), raw_failure_reward)
+    raw_failure_reward = failure_ceiling - penalty
+    return max(unevaluable_ceiling, raw_failure_reward)
 
 
 def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
@@ -346,7 +328,7 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     overfit_gap = max(0.0, m.is_sortino_median - base)
     dd_excess = max(0.0, m.oos_max_drawdown - risk_dd_cap)
 
-    floor = penalty_unevaluable_oos + weights["unevaluable_shaping_span"] + weights["evaluable_floor_epsilon"]
+    floor = -float(weights["sortino_clip_abs"])
 
     # A4.3: per-symbol reward path. The coverage term (win_count/universe_size) degenerates
     # when the universe is a single symbol, so drop it and add a shrinkage penalty toward the
