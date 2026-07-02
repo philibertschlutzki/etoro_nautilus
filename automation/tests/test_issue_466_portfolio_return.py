@@ -58,9 +58,8 @@ def test_fallback_sequential_when_no_mtm():
     c0 = 100.0
     pnls = [50.0, 50.0]
     stats = _calculate_stats(pnls, [(3600 * 1e9, 1.0)] * 2, c0, mtm_series=None)
-    # Fallback == sequentielle Aufzinsung (1.25).
-    assert math.isclose(stats["total_return"], _seq_compound(pnls, c0), abs_tol=1e-9)
-    assert math.isclose(stats["total_return"], 1.25, abs_tol=1e-9)
+    # Fallback wurde entfernt, total_return ist 0.0 wenn mtm_series fehlt.
+    assert math.isclose(stats["total_return"], 0.0, abs_tol=1e-9)
 
 
 def test_overlapping_trades_use_true_equity_not_naive_sum():
@@ -84,5 +83,5 @@ def test_zero_start_equity_falls_back_safely():
     ts = pd.date_range("2026-01-01", periods=2, freq="D")
     mtm = pd.Series([0.0, 110.0], index=ts)
     stats = _calculate_stats(pnls, [(3600 * 1e9, 1.0)], c0, mtm_series=mtm)
-    # Fällt sicher auf sequentielle Aufzinsung zurück (0.1), kein ZeroDivisionError.
-    assert math.isclose(stats["total_return"], 0.1, abs_tol=1e-9)
+    # Fällt auf 0.0 zurück (keine sequentielle Aufzinsung mehr).
+    assert math.isclose(stats["total_return"], 0.0, abs_tol=1e-9)
