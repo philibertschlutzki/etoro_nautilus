@@ -5,7 +5,7 @@ strukturell unevaluierbaren Trials (OOS=0, vgl. #448) faktisch die IS-Trade-Anza
 
   1. **Floor-Separation:** der BESTE unevaluierbare Reward
      (`penalty_unevaluable_oos + unevaluable_shaping_span` = −9.75) bleibt strikt KLEINER als der
-     SCHLECHTESTE evaluierbare Reward (`… + evaluable_floor_epsilon` = −9.749). Ein hyperaktiver
+     SCHLECHTESTE evaluierbare Reward (`-sortino_clip_abs` = −5.0). Ein hyperaktiver
      unevaluierbarer Trial kann niemals einen schwachen evaluierbaren überholen (Rang-Invariante).
   2. **Shaping-Saturation (Anti-Overtrading-Deckel):** im Per-Symbol-Pfad saturiert das
      IS-Aktivitäts-Shaping bei `per_symbol_shaping_trade_target`; jenseits davon liefert „noch mehr
@@ -35,7 +35,7 @@ W = {
 }
 
 UNEVAL_CEILING = W["penalty_unevaluable_oos"] + W["unevaluable_shaping_span"]            # −9.75
-EVAL_FLOOR = UNEVAL_CEILING + W["evaluable_floor_epsilon"]                               # −9.749
+EVAL_FLOOR = -float(W["sortino_clip_abs"])                                               # −5.0
 
 
 def _m(**kw):

@@ -896,13 +896,11 @@ aus `now` ohne Clamp; kein Holdout-Slice, dessen OOS-Startgrenze hinter dem jün
 nie Strategie-Befund. (Pitfall #85.)
 
 ### Axiom A2 (#461) — Constraint-Failure-Reward ist nach unten beschränkt
-`_constraint_failure_reward` komprimiert die Distanzstrafe asymptotisch (`available_span · tanh(penalty/scale)`)
-und gibt `max(unevaluable_ceiling, …)` zurück. Strikte Ordnung: `eligible > near-miss > far-miss ≥
-unevaluable_ceiling (−9.75) > unevaluable_shaping_band`. **Zwei Invarianten gelten gemeinsam:**
+Strikte Ordnung: `eligible ≥ -sortino_clip_abs > near-miss > far-miss ≥ unevaluable_ceiling (−9.75) > unevaluable_shaping_band`. Die Decke für Failures ist nun `-sortino_clip_abs - epsilon`, was TPE einen vollen Dynamikbereich gewährt, ohne die Anti-Gaming-Invariante zu brechen. **Zwei Invarianten gelten gemeinsam:**
 (1) `failure < evaluable_floor` (kein Gate-Gaming) UND (2) `failure ≥ bestes-unevaluable` ⇒ „mehr
 OOS-Information macht einen Trial NIE strikt schlechter" (keine Inversion, TPE flieht OOS-Aktivität nicht).
-**Verbot:** keine unbeschränkte (lineare/quadratische) Penalty, die unter `unevaluable_ceiling` durchschlägt.
-(Pitfall #86; Guard: `test_issue_461_reward_no_inversion.py`.)
+**Verbot:** keine unbeschränkte Penalty, die unter `unevaluable_ceiling` durchschlägt.
+(Pitfall #86, Pitfall #97; Guard: `test_issue_461_reward_no_inversion.py`.)
 
 ### Axiom A3 (#462) — Preflight prüft Holdout-Erreichbarkeit, nicht nur Fold-0
 `gate.data_reaches_holdout_window` + `sweep.compute_holdout_window_reach_target_ns` überspringen ein Symbol
@@ -1112,6 +1110,7 @@ fließt je in Reward/Promotion zurück). Zentrale Events:
 
 ## 19. Changelog
 | 2026-06-30 | **IMPLEMENTIERUNG GitHub-Issue #493 (Forensik/OOS-Rejection-Taxonomie).** Die OOS-Eligibility-Taxonomie (`_classify_is_rejection_detail`) wurde um `REJECT_OOS_DISCARDED_BY_IS_GATE` erweitert. Zuvor wurden Trials, die das OOS-Fenster abdeckten und tradeten, aber durch das IS-Gate verworfen wurden (`is_eligible=False`), pauschal als `REJECT_OOS_INACTIVE` deklariert. Dies verfälschte die Telemetrie. Die Funktion prüft nun `oos_total_trades > 0` als Weiche. Begleitender Pipeline-Mock-Test in `test_issue_493_rejection_taxonomy.py` implementiert. Pitfall #91 dokumentiert. | `automation/optimizer/run_optimization.py`, `automation/tests/test_issue_493_rejection_taxonomy.py`, `automation/AGENTS.md` |
+| 2026-07-01 | IMPLEMENTIERUNG Issue #505 (Reward Dynamic Range & Normalization): Dimensionslose Distanz-Normierung, Entfernung der `tanh`-Kompression, Ausweitung der Constraint-Failure-Spanne auf `[-9.75, -sortino_clip_abs]`. Axiom A2 aktualisiert. | `automation/optimizer/reward.py`, `automation/tests/test_issue_461_reward_no_inversion.py`, `automation/AGENTS.md` |
 | 2026-06-10 | **1c:** Optuna-Loop (SQLite, TPE, Warm-Start), Holdout-Confirmation, PR-Proposal-Export. Autotuner V2 abgeschlossen. | `automation/optimizer/` |
 
 - **Phase 0b:** ETORO_CONFIG_DIR/ETORO_LOGS_DIR env isolation implemented; Manifest-Contract (no re-merge if manifest_version is set); oos_fold_sortinos export added for aggregate winners.
@@ -1460,6 +1459,11 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 **Root Cause:** (1) `min_win_rate` war ein hartes Kriterium in `eligible_requires_all` (5-fach-UND-Konjunktion). Win-Rate ist aber bei asymmetrischen Trend-/Breakout-Strategien keine hinreichende Statistik für einen Edge. (2) `_evaluate_oos_eligibility` hat alle Schwellen statisch und hart überprüft und die in `tournament_cfg` definierten `eligible_requires_all` und `eligible_requires_any` (wie in der In-Sample Phase `_is_eligible`) komplett ignoriert.
 **Fix/Regel:** `min_win_rate` in `tournament.json` von `eligible_requires_all` nach `eligible_requires_any` verschoben, um es neben `min_profit_factor` zu einem Score- bzw. weichen Kriterium zu machen. `_evaluate_oos_eligibility` wurde vollständig refaktoriert, sodass es sich nun dynamisch an `eligible_requires_all` und `eligible_requires_any` orientiert und sich kongruent zur In-Sample-Prüfung (`_is_eligible`) verhält.
 **Betroffen:** `automation/config/tournament.json`, `automation/backtest_runner.py`
+
+
+### 🟢 Pitfall #97 — Verschwindender Dynamikbereich & Term-Dominanz im OOS-Gate (Issue #505)
+**Symptom:** TPE-Sampler optimiert ausschließlich Rauschen, da alle Constraint-Failure-Trials durch `tanh`-Kompression in ein mikroskopisches Band von 0.001 gequetscht werden. Zudem dominiert der Expectancy-Term aufgrund unskalierter Quadrierung den Gradienten.
+**Fix/Regel:** (1) Lineare, dimensionslose Normierung aller Distanzfunktionen (Entfernung von `**2`), Aggregation per Durchschnitt. (2) Ausweitung des Reward-Bands: `Feasible_Floor` wird auf `-sortino_clip_abs` (Default -5.0) angehoben. Constraint-Failures belegen nun die volle Spanne `[-9.75, -5.0 - epsilon]`. Die `tanh`-Kompression wurde restlos entfernt. Die Anti-Gaming-Invariante bleibt mathematisch gewahrt.
 
 ## Walk-Forward Validation & Look-Ahead Bias Prevention (Purge & Embargo)
 * Einzelpass-Backtest mit fragmentiertem Holdout, KEIN re-trainierender Walk-Forward. Optuna-Trials werden als Single-Pass mit fixen Parametern exekutiert. Die Kachelung in OOS-Sub-Folds dient ausschließlich der Messung der *Per-Fold-Sortino-Dispersion* und beinhaltet *kein* Re-Fitting.
