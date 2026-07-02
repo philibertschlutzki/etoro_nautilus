@@ -423,7 +423,7 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     max_dd       = oos_metrics.get("max_drawdown", 1.0)
     win_rate     = oos_metrics.get("win_rate", 0.0)
     total_return = oos_metrics.get("total_return", 0.0)
-    expectancy   = total_return / n_trades if n_trades > 0 else 0.0
+    expectancy   = oos_metrics.get("expectancy", 0.0)
 
     sortino = oos_metrics.get("sortino_ratio")
     pf = oos_metrics.get("profit_factor")
@@ -552,7 +552,7 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     max_dd       = metrics.get("max_drawdown", 1.0)
     win_rate     = metrics.get("win_rate", 0.0)
     total_return = metrics.get("total_return", 0.0)
-    expectancy   = total_return / n_trades if n_trades > 0 else 0.0
+    expectancy   = metrics.get("expectancy", 0.0)
 
     t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
     # Low-Sample / All-Win Defensive Handling
@@ -855,6 +855,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     Legacy-Pfad und darf NIE die OOS-Gate-/Reward-Metriken speisen (siehe AGENTS.md Pitfall #88).
     """
     import math
+    import statistics
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
@@ -887,6 +888,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     win_rate = wins / n if n > 0 else 0.0
 
     rets = [v / starting_capital for v in pnl_list]
+    expectancy = statistics.mean(rets) if rets else 0.0
+
     # Issue #465 (Audit #466) — total_return als ECHTER zeitbasierter Portfolio-Return aus der
     # MtM-Equity-Kurve (``equity_end / equity_start − 1``), sobald eine Equity-Kurve vorliegt.
     # Das sequentielle Aufzinsen ``Π(1 + pnl_i/C0)`` unterstellt 100 % Kapitaleinsatz je Trade
@@ -973,6 +976,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
+        "expectancy":    float(expectancy),
         "dd_excess":     float(dd_excess),
         "avg_holding_time_s": float(avg_hold),
         "median_holding_time_s": float(med_hold),

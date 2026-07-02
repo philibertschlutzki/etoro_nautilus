@@ -67,8 +67,9 @@ def test_total_return_eligibility_hard_gate():
 
     assert not _is_eligible({'metrics': metrics}, tournament_cfg), "Should reject due to total_return < 0.005 despite high sortino/pf"
 
-    metrics["total_return"] = 0.026  # Pass (also making sure expectancy = 0.026/50 > 0.0005)
-    assert _is_eligible({'metrics': metrics}, tournament_cfg), "Should pass with total_return > 0.005"
+    metrics["total_return"] = 0.026  # Pass
+    metrics["expectancy"] = 0.0006  # Pass
+    assert _is_eligible({'metrics': metrics}, tournament_cfg), "Should pass with total_return > 0.005 and expectancy > 0.0005"
 
 def test_rejection_reasons_in_is_eligible():
     tournament_cfg = {}
