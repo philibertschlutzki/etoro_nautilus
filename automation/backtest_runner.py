@@ -789,6 +789,7 @@ def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tupl
 
 
 _sortino_min_trades_cache: int | None = None
+_max_drawdown_cap_cache: float | None = None
 
 def _read_sortino_min_trades() -> int:
     """Issue #401 (Zero-Hardcoding): Mindest-Round-Trips fuer die Sortino-Berechnung aus
@@ -811,6 +812,30 @@ def _read_sortino_min_trades() -> int:
     _sortino_min_trades_cache = val
     return val
 
+
+
+_max_drawdown_cap_cache: float | None = None
+
+def _read_max_drawdown_cap() -> float:
+    """Liest dynamisch den Max-Drawdown-Schwellenwert der Konkurrenz-Validierung aus
+    tournament.json['max_drawdown']. Gecached (Hot-Path, je Worker-Subprozess konstant).
+    Fehlt der Schluessel oder ist die Datei unlesbar ⇒ Legacy-Default 0.30."""
+    global _max_drawdown_cap_cache
+    if _max_drawdown_cap_cache is not None:
+        return _max_drawdown_cap_cache
+    val = 0.30
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            import json
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("max_drawdown")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 0.30
+    _max_drawdown_cap_cache = val
+    return val
 
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None) -> dict:
     """
@@ -873,10 +898,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             and float(mtm_series.iloc[0]) != 0.0):
         total_return = float(mtm_series.iloc[-1]) / float(mtm_series.iloc[0]) - 1.0
     else:
-        cum = 1.0
-        for r in rets:
-            cum *= (1.0 + r)
-        total_return = cum - 1.0
+        total_return = 0.0
 
     if mtm_series is not None and not mtm_series.empty:
         import numpy as np
@@ -885,6 +907,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         drawdown = (mtm_series - cumulative_max) / cumulative_max.replace(0, np.nan)
         max_dd = abs(drawdown.min())
         if pd.isna(max_dd): max_dd = 0.0
+
+        risk_dd_cap = _read_max_drawdown_cap()
+        dd_excess = max(0.0, max_dd - risk_dd_cap)
 
         # Zwingende Isolation (High-Water Mark darf nicht vom IS-Fenster vererbt werden)
         cumulative_max = mtm_series.cummax()
@@ -916,34 +941,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 sortino_raw = (mean_ret / dd_dev) * math.sqrt(annualization_factor)
                 sortino = min(sortino_raw, RATIO_CAP)
     else:
-        peak = 1.0
         max_dd = 0.0
-        cum_tmp = 1.0
-        for r in rets:
-            cum_tmp *= (1.0 + r)
-            peak = max(peak, cum_tmp)
-            max_dd = max(max_dd, (peak - cum_tmp) / peak)
-
-    # Issue #401: 'n < 5' war hartcodiert (Zero-Hardcoding-Verstoss + Mismatch zu oos_min_trades);
-    # jetzt deklarativ aus tournament.json['sortino_min_trades'] (Default 5). losses_count == 0
-    # bleibt None (Zero-Loss ⇒ keine Downside-Deviation, Issue #209) und wird im Reward ueber
-    # optimizer.json['oos_sortino_fallback'] aufgefangen, statt hier einen Sortino zu fabrizieren.
-    if mtm_series is None or mtm_series.empty:
-        min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
-        if n < min_trades_sortino or losses_count == 0:
-            sortino = None
-        else:
-            down_sq = [min(r, 0.0) ** 2 for r in rets]
-            if len(down_sq) == 0 or sum(down_sq) <= 0.0:
-                sortino = None
-            else:
-                # Addition *under* the root as requested by PR review
-                # Floor dd_dev at 1e-6 to strictly protect against division-by-zero on micro downside deviations.
-                dd_dev = math.sqrt((sum(down_sq) / len(down_sq)) + EPSILON)
-                dd_dev = max(dd_dev, DENOMINATOR_FLOOR)
-                mean_ret = sum(rets) / n
-                sortino_raw = mean_ret / dd_dev * math.sqrt(252.0) # Legacy Fallback
-                sortino = min(sortino_raw, RATIO_CAP)
+        sortino = None
+        dd_excess = 0.0
 
     # Floor max_dd at DENOMINATOR_FLOOR to protect against division-by-zero when computing calmar.
     if max_dd <= 0.0:
@@ -973,6 +973,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
+        "dd_excess":     float(dd_excess),
         "avg_holding_time_s": float(avg_hold),
         "median_holding_time_s": float(med_hold),
         "losses_count": losses_count,

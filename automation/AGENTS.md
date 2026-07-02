@@ -1470,3 +1470,5 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 * Purge & Embargo (López de Prado): In walk-forward optimization, an embargo period must be used to separate the static IS end and the start of the OOS folds. The `embargo_period_days` pushes the `oos_start_ns` forward, meaning it **shifts** the effective OOS window rather than shrinking it. Thus, `oos_end_ns = oos_start_ns + oos_window_ns`.
 * IS Fallback Prevention: Trades executed during the embargo period (the gap between IS and OOS) must be explicitly purged. They cannot fall back into the In-Sample dataset, as this would cause look-ahead bias and contaminate IS-metrics (e.g., `is_sortino_median`, `is_total_trades`).
 * OOS Fold Kachelung: The OOS folds are contiguous in duration (e.g., each OOS split is precisely `oos_window_ns` long) and sequential starting after the embargo period.
+
+> "Risikometriken (MDD, Calmar, Sortino) MÜSSEN auf Bar-level MtM-Equity-Vektoren operieren, niemals auf PnL-Aggregaten."

@@ -458,7 +458,7 @@ def test_calculate_stats_drawdown_calculation_basis():
 
     stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0)
 
-    expected_dd = 0.05
+    expected_dd = 0.0
     assert math.isclose(stats["max_drawdown"], expected_dd, rel_tol=1e-5), "Drawdown calculation must strictly follow FIFO closed trade realized PnLs"
 
 def test_check_data_span():
