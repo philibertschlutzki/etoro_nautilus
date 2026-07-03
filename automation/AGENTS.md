@@ -288,6 +288,22 @@ Da alle Quellen bereits FSB(16) liefern, entfällt im Orchestrator jede Typ-Migr
 
 ## 10. Backtest & Tournament
 
+### 10.1 Multi-Objective Optimization (Optuna Pareto)
+Ab Issue #507 unterstützt das System Multi-Objective Optimization (MOO) als Alternative zum Legacy-Skalar-Reward-Modell.
+- **Aktivierung (Feature Toggle):** Gesteuert durch `reward_mode="pareto"` in `automation/config/optimizer.json`.
+- **Sampler:** Zwingende Nutzung von `optuna.samplers.NSGAIISampler()` (oder MOTPE).
+- **Objectives:**
+  | Dimension | Metrik | Optimierungsrichtung |
+  | --- | --- | --- |
+  | 1 | Return (`oos_total_return`) | Maximize |
+  | 2 | Expectancy (`oos_expectancy`) | Maximize |
+  | 3 | Win-Rate (`oos_win_rate`) | Maximize |
+  | 4 | Sortino (`oos_sortino`) | Maximize |
+  | 5 | Drawdown (`oos_max_drawdown`) | Minimize |
+  | 6 | Turnover (`oos_total_trades`) | Minimize |
+- **Optuna-Constraints:** Anstelle von Strafen-Terms (Penalty-Pfade) werden Hard-Constraints nativ an den Sampler übergeben. Dies erfolgt über eine Evaluierungslogik (in `make_objective`), die Differenzen (z. B. `min_trades - oos_total_trades` und `oos_max_drawdown - max_drawdown`) berechnet und in `trial.user_attrs['constraints']` als Tupel abspeichert. Optuna bewertet Werte <= 0 als valide (Constraint erfüllt).
+- **Selektion aus der Pareto-Front:** Wenn Optuna eine Pareto-Front generiert (MOO), evaluiert das System (`confirm.py`) iterativ alle nicht-dominierten Kandidaten der Front (`study.best_trials`) auf dem ungesehenen Holdout. Die letztendliche Selektion und der Vergleich gegen die `promotion_margin` der globalen Baseline basieren weiterhin strikt auf dem skalaren `compute_reward` (zur Auflösung der Pareto-Gleichwertigkeit).
+
 `backtest_runner.py` läuft als Subprocess. Multiprocessing via `ProcessPoolExecutor(max_workers=max(1, min(cpu//2, 6)))`, `max_tasks_per_child=1` (Python ≥ 3.11), expliziter `BrokenProcessPool`-Catch mit sequenziellem Fallback.
 
 Bei der Umwandlung von Candle zu Tick wird im Backtest nun Zero-Spread-Modeling (bid=ask=close, Buy@Ask=Sell@Bid=Close) genutzt. Die Live-Ticks im `catalog_service` behalten allerdings den realen Spread.

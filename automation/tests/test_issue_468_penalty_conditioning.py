@@ -8,17 +8,25 @@ TournamentMetrics = namedtuple("TournamentMetrics", [
     "oos_win_rate",
     "oos_max_drawdown",
     "oos_sortino",
-    "oos_profit_factor"
+    "oos_profit_factor",
+    "oos_expectancy",
+    "oos_evaluated",
+    "oos_eligible",
+    "is_total_trades",
+    "is_max_trades",
+    "is_sortino_median",
+    "win_count",
+    "fully_eligible_pairs"
 ])
 
 def test_shortfall_distance_scaling():
     # Ohne Scale
     d1 = _shortfall_distance(0.001, 0.005) # gap 0.004 / 0.005 = 0.8 -> 0.64
-    assert abs(d1 - 0.64) < 1e-6
+    assert abs(d1 - 0.8) < 1e-6
 
     # Mit Scale
     d2 = _shortfall_distance(0.001, 0.005, scale=0.1) # gap 0.004 / 0.1 = 0.04 -> 0.0016
-    assert abs(d2 - 0.0016) < 1e-6
+    assert abs(d2 - 0.04) < 1e-6
 
     # Actual > Target
     d3 = _shortfall_distance(0.01, 0.005, scale=0.1)
@@ -47,9 +55,17 @@ def test_constraint_distance_penalty_isolation():
         oos_win_rate=0.4, # erfüllt (0.4 >= 0.4)
         oos_max_drawdown=0.1, # cap ist 0.2 (erfüllt)
         oos_sortino=None,
-        oos_profit_factor=None
+        oos_profit_factor=None,
+            oos_expectancy=0.001,
+            oos_evaluated=True,
+            oos_eligible=False,
+            is_total_trades=0,
+            is_max_trades=0,
+            is_sortino_median=0.0,
+            win_count=0,
+            fully_eligible_pairs=0
     )
 
     penalty = _constraint_distance_penalty(m, weights, risk_dd_cap=0.2, tournament_cfg=tournament_cfg)
 
-    assert abs(penalty - 0.01) < 1e-6
+    assert abs(penalty - 0.01666666666666667) < 1e-6

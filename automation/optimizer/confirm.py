@@ -22,7 +22,7 @@ def confirm_on_holdout(
     passed = oos_evaluated & oos_eligible & oos_sortino>0 & oos_max_drawdown<=cap.
     Rückgabe: {'passed': bool, 'metrics': dict, 'trial_dir': str}.
     """
-    best_trial = study.best_trial
+    best_trial = study.best_trials[0] if len(getattr(study, "directions", ["maximize"])) > 1 else study.best_trial
     sampled = best_trial.user_attrs.get("sampled_params", best_trial.params)
 
     cfg_dir = config_dir()
@@ -204,20 +204,6 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 "metrics_global": {}
             }
 
-    best_trial = study.best_trial
-    symbol_params = best_trial.user_attrs.get("sampled_params", best_trial.params)
-
-    m_symbol = _holdout_metrics_for_params(strategy, symbol, symbol_params,
-                                           run_backtest=run_backtest, build_trial=build_trial,
-                                           catalog_newest_ns=catalog_newest_ns)
-    m_global = _holdout_metrics_for_params(strategy, symbol, global_params,
-                                           run_backtest=run_backtest, build_trial=build_trial,
-                                           catalog_newest_ns=catalog_newest_ns)
-
-    # Rohe risikoadjustierte Performance (Per-Symbol-Pfad, KEIN param_pen).
-    R_symbol = compute_reward(m_symbol, universe_size=1)
-    R_global = compute_reward(m_global, universe_size=1)
-
     cfg_dir = config_dir()
     risk_dd_cap = 0.30
     tournament_path = cfg_dir / "tournament.json"
@@ -227,36 +213,63 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
 
     promotion_margin = 0.10
     optimizer_path = cfg_dir / "optimizer.json"
+    global_weights = None
     if optimizer_path.exists():
         with open(optimizer_path, "r", encoding="utf-8") as f:
-            promotion_margin = (json.load(f) or {}).get("promotion_margin", 0.10)
+            global_weights = json.load(f)
+            promotion_margin = global_weights.get("promotion_margin", 0.10)
+            global_weights["reward_mode"] = "auto"
 
-    holdout_passed = (
-        m_symbol.oos_evaluated and m_symbol.oos_eligible
-        and (m_symbol.oos_sortino if m_symbol.oos_sortino is not None else -9.0) > 0.0
-        and (m_symbol.oos_max_drawdown if m_symbol.oos_max_drawdown is not None else 1.0) <= risk_dd_cap
-    )
+    m_global = _holdout_metrics_for_params(strategy, symbol, global_params,
+                                           run_backtest=run_backtest, build_trial=build_trial,
+                                           catalog_newest_ns=catalog_newest_ns)
+    R_global = compute_reward(m_global, universe_size=1, weights=global_weights) if global_weights else compute_reward(m_global, universe_size=1)
 
-    promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
+    best_trials = study.best_trials if len(getattr(study, "directions", ["maximize"])) > 1 else [study.best_trial]
 
-    if not holdout_passed:
-        status = "REJECTED_ON_HOLDOUT"
-    elif promote:
-        status = "READY_FOR_PR"
-    else:
-        status = "REJECTED_NO_EDGE_OVER_GLOBAL"
+    best_result = None
+    max_R_symbol = -float("inf")
 
-    return {
-        "promote": promote,
-        "status": status,
-        "R_symbol": R_symbol,
-        "R_global": R_global,
-        "promotion_margin": promotion_margin,
-        "holdout_passed": bool(holdout_passed),
-        "metrics_symbol": _metrics_dict(m_symbol),
-        "metrics_global": _metrics_dict(m_global),
-        "symbol_params": symbol_params,
-    }
+    for trial in best_trials:
+        symbol_params = trial.user_attrs.get("sampled_params", trial.params)
+        m_symbol = _holdout_metrics_for_params(strategy, symbol, symbol_params,
+                                               run_backtest=run_backtest, build_trial=build_trial,
+                                               catalog_newest_ns=catalog_newest_ns)
+        R_symbol = compute_reward(m_symbol, universe_size=1, weights=global_weights) if global_weights else compute_reward(m_symbol, universe_size=1)
+
+        holdout_passed = (
+            m_symbol.oos_evaluated and m_symbol.oos_eligible
+            and (m_symbol.oos_sortino if m_symbol.oos_sortino is not None else -9.0) > 0.0
+            and (m_symbol.oos_max_drawdown if m_symbol.oos_max_drawdown is not None else 1.0) <= risk_dd_cap
+        )
+
+        promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
+
+        if not holdout_passed:
+            status = "REJECTED_ON_HOLDOUT"
+        elif promote:
+            status = "READY_FOR_PR"
+        else:
+            status = "REJECTED_NO_EDGE_OVER_GLOBAL"
+
+        result = {
+            "promote": promote,
+            "status": status,
+            "is_rejection_detail_override": None,
+            "symbol_params": symbol_params,
+            "R_symbol": R_symbol,
+            "R_global": R_global,
+            "promotion_margin": promotion_margin,
+            "holdout_passed": bool(holdout_passed),
+            "metrics_symbol": _metrics_dict(m_symbol),
+            "metrics_global": _metrics_dict(m_global)
+        }
+
+        if R_symbol > max_R_symbol or best_result is None:
+            max_R_symbol = R_symbol
+            best_result = result
+
+    return best_result
 
 
 def _dominant_rejection(study) -> str | None:
@@ -293,7 +306,7 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         "strategy": strategy,
         "symbol": symbol,
         "status": promotion["status"],
-        "reward": study.best_value,
+        "reward": study.best_value if len(getattr(study, "directions", ["maximize"])) == 1 else promotion.get("R_symbol", 0.0),
         "proposed_instrument_override": promotion["symbol_params"],
         "R_symbol": promotion["R_symbol"],
         "R_global": promotion["R_global"],
@@ -345,7 +358,7 @@ def export_proposal(study, strategy: str, holdout: dict) -> Path:
     (best_trial.user_attrs['sampled_params']), Reward, Holdout-Metriken,
     status = 'READY_FOR_PR' wenn holdout['passed'] sonst 'REJECTED_ON_HOLDOUT'.
     """
-    best_trial = study.best_trial
+    best_trial = study.best_trials[0] if len(getattr(study, "directions", ["maximize"])) > 1 else study.best_trial
     sampled = best_trial.user_attrs.get("sampled_params", best_trial.params)
 
     status = "READY_FOR_PR" if holdout.get("passed") else "REJECTED_ON_HOLDOUT"
