@@ -188,7 +188,7 @@ def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
 def compute_reward(m: "TournamentMetrics", universe_size: int,
                    weights: dict | None = None, risk_dd_cap: float | None = None,
                    *, sampled: dict | None = None, global_params: dict | None = None,
-                   strategy: str | None = None, tournament_cfg: dict | None = None) -> float:
+                   strategy: str | None = None, tournament_cfg: dict | None = None) -> float | tuple:
     """weights=None  ⇒ aus optimizer.json (penalty_overfit_weight, penalty_dd_weight,
                         bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
        risk_dd_cap=None ⇒ aus tournament.json (max_drawdown).
@@ -232,6 +232,18 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         if loaded_tournament_cfg is None:
             loaded_tournament_cfg = _read_tournament_cfg()
         risk_dd_cap = loaded_tournament_cfg["max_drawdown"]
+
+
+    reward_mode_config = weights.get("reward_mode", "auto") if weights else "auto"
+    if reward_mode_config == "pareto":
+        return (
+            float(m.oos_total_return),
+            float(m.oos_expectancy),
+            float(m.oos_win_rate),
+            float(m.oos_sortino if m.oos_sortino is not None else 0.0),
+            float(m.oos_max_drawdown),
+            float(m.oos_total_trades)
+        )
 
     penalty_unevaluable_oos = weights["penalty_unevaluable_oos"]
 

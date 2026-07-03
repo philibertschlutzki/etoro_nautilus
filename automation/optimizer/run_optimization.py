@@ -40,7 +40,7 @@ _study_lock = threading.Lock()
 
 
 def _create_study_with_retry(*, study_name: str, storage: str, sampler=None,
-                             direction: str = "maximize"):
+                             direction: str | None = "maximize", directions: list[str] | None = None):
     """Issue #411 — `optuna.create_study` serialisiert (``_study_lock``) und gegen die DDL-Race-
     Exception ``table studies already exists`` GENAU EINMAL retried.
 
@@ -49,8 +49,11 @@ def _create_study_with_retry(*, study_name: str, storage: str, sampler=None,
     wird abgefangen; jeder andere Fehler propagiert hart. Beim Retry existiert das Schema garantiert
     ⇒ ``load_if_exists=True`` laedt die Study sauber."""
     def _create():
-        kwargs = dict(study_name=study_name, storage=storage, direction=direction,
-                      load_if_exists=True)
+        kwargs = dict(study_name=study_name, storage=storage, load_if_exists=True)
+        if directions is not None:
+            kwargs["directions"] = directions
+        elif direction is not None:
+            kwargs["direction"] = direction
         if sampler is not None:
             kwargs["sampler"] = sampler
         return optuna.create_study(**kwargs)
@@ -343,6 +346,19 @@ def make_objective(
             "oos_anchor_divergence": metrics.oos_anchor_divergence,
         })
 
+
+        reward_mode = "auto"
+        if optimizer_path.exists():
+            with open(optimizer_path, "r", encoding="utf-8") as f:
+                reward_mode = (json.load(f) or {}).get("reward_mode", "auto")
+        if reward_mode == "pareto":
+            min_trades = 20
+            if tournament_path.exists():
+                with open(tournament_path, "r", encoding="utf-8") as f:
+                    min_trades = (json.load(f) or {}).get("min_trades", 20)
+            trades_constraint = min_trades - metrics.oos_total_trades
+            dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
+            trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
         return reward
     return objective
 
@@ -369,19 +385,27 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     study_name = f"study_{strategy}"
 
-    sampler = optuna.samplers.TPESampler(
-        multivariate=True,
-        group=True,
-        n_startup_trials=n_startup_trials,
-        seed=seed
-    )
+    reward_mode = opt_data.get("reward_mode", "auto")
+    directions = None
+    if reward_mode == "pareto":
+        directions = ["maximize", "maximize", "maximize", "maximize", "minimize", "minimize"]
+        def constraints_func(trial):
+            return trial.user_attrs.get("constraints", (0.0, 0.0))
+        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
+    else:
+        sampler = optuna.samplers.TPESampler(
+            multivariate=True,
+            group=True,
+            n_startup_trials=n_startup_trials,
+            seed=seed
+        )
 
-    study = optuna.create_study(
+    study = _create_study_with_retry(
         study_name=study_name,
         storage=STORAGE,
-        direction="maximize",
-        sampler=sampler,
-        load_if_exists=True
+        direction="maximize" if not directions else None,
+        directions=directions,
+        sampler=sampler
     )
 
     study.set_user_attr("data_snapshot_sha256", catalog_fingerprint())
@@ -674,6 +698,19 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "is_rejection_detail": is_rejection_detail,
             "oos_rejection_reasons": list(metrics.oos_rejection_reasons),
         })
+
+        reward_mode = "auto"
+        if optimizer_path.exists():
+            with open(optimizer_path, "r", encoding="utf-8") as f:
+                reward_mode = (json.load(f) or {}).get("reward_mode", "auto")
+        if reward_mode == "pareto":
+            min_trades = 20
+            if tournament_path.exists():
+                with open(tournament_path, "r", encoding="utf-8") as f:
+                    min_trades = (json.load(f) or {}).get("min_trades", 20)
+            trades_constraint = min_trades - metrics.oos_total_trades
+            dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
+            trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
         return reward
     return objective
 
@@ -705,16 +742,30 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     if storage is None:
         storage = resolve_storage(study_name=study_name)   # A4.7: SQLite-Default, ENV/JSON-Opt-in
 
-    sampler = optuna.samplers.TPESampler(
-        multivariate=True,
-        group=True,
-        n_startup_trials=n_startup_trials,
-        seed=seed,
-    )
+    reward_mode = opt_data.get("reward_mode", "auto")
+    directions = None
+    if reward_mode == "pareto":
+        directions = ["maximize", "maximize", "maximize", "maximize", "minimize", "minimize"]
+        def constraints_func(trial):
+            return trial.user_attrs.get("constraints", (0.0, 0.0))
+        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
+    else:
+        sampler = optuna.samplers.TPESampler(
+            multivariate=True,
+            group=True,
+            n_startup_trials=n_startup_trials,
+            seed=seed,
+        )
 
     # Issue #411 — serialisiert + DDL-Race-fest (table studies already exists). Ersetzt das nackte
     # optuna.create_study, das bei zwei Workern auf derselben frischen SQLite-Datei crasht.
-    study = _create_study_with_retry(study_name=study_name, storage=storage, sampler=sampler)
+    study = _create_study_with_retry(
+        study_name=study_name,
+        storage=storage,
+        sampler=sampler,
+        direction="maximize" if not directions else None,
+        directions=directions
+    )
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
