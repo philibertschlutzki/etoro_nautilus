@@ -121,14 +121,10 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
 
     return_penalty_scale = _cfg_value(weights, tournament_cfg, "return_penalty_scale")
 
-    expectancy = 0.0
-    if m.oos_total_trades > 0:
-        expectancy = m.oos_total_return / m.oos_total_trades
-
     distances = [
         _shortfall_distance(float(m.oos_total_trades), req_trades),
         _shortfall_distance(m.oos_total_return, req_return, scale=return_penalty_scale),
-        _shortfall_distance(expectancy, req_expectancy),
+        _shortfall_distance(m.oos_expectancy, req_expectancy),
         _shortfall_distance(m.oos_win_rate, req_win_rate),
         _excess_distance(m.oos_max_drawdown, risk_dd_cap),
         _any_condition_distance(m, weights, tournament_cfg),

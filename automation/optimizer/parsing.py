@@ -20,6 +20,7 @@ class TournamentMetrics:
     # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
     # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
     oos_total_return: float = 0.0
+    oos_expectancy: float = 0.0
     # Issue #452: OOS-Distanzmetriken fuer kontinuierliche Constraint-Penalties bei
     # evaluierten, aber nicht eligiblen Trials. Defaults halten bestehende Tests/Fixtures stabil.
     oos_win_rate: float = 0.0
@@ -96,6 +97,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_total_trades = oos_metrics.get("total_trades") or 0
     # Issue #401: evaluable Reward-Fallback fuer Zero-Loss/Sub-Threshold-Sortino.
     oos_total_return = oos_metrics.get("total_return")
+    oos_expectancy = oos_metrics.get("expectancy")
     # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.
     oos_win_rate = oos_metrics.get("win_rate")
     oos_profit_factor = oos_metrics.get("profit_factor")
@@ -151,6 +153,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         is_total_trades=int(is_total_trades),
         is_max_trades=int(is_max_trades),
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
+        oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else 0.0,
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else 0.0,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,
         is_best_total_return=float(is_best_total_return),
