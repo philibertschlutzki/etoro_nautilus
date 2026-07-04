@@ -79,7 +79,7 @@ def read_precisions_from_parquet(parquet_path: str | Path, instrument_id: str = 
 
 
 
-from typing import Any
+from typing import Any, TypedDict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool as _BrokenPool
 from collections import deque
@@ -1063,6 +1063,44 @@ class PortfolioMonitor(Actor):
         df = df[~df.index.duplicated(keep='last')]
         return df["equity"]
 
+
+# ---------------------------------------------------------------------------
+# Issue #508 — Dual-Reporting-Schema: Round-Trip- vs. Fill-Match-Ebene
+# ---------------------------------------------------------------------------
+# Ein FIFO-Match ist eine *technische* Teilfüllung. Bei Scale-in/Scale-out
+# erzeugt eine EINZIGE ökonomische Position (Position-Open → Flat) mehrere
+# Matches. Werden die Kernmetriken (`total_trades`, `win_rate`, `expectancy`,
+# `profit_factor`) je Match statt je Position gebildet, inflationiert der
+# Trade-Count und verzerrt die Gate-Metriken. Deshalb werden die Matches zu
+# Round-Trips aggregiert und die primären (Gate-relevanten) Metriken strikt
+# auf Round-Trip-Ebene berechnet; die Fill-Match-Ebene bleibt als reine
+# Execution-Diagnostik erhalten.
+
+# (pnl, ts_ns, holding_ns, qty, entry_notional) — ein einzelner FIFO-Match.
+FillMatchRecord = tuple[float, int, float, float, float]
+# (pnl, exit_ts_ns, holding_ns, qty) — eine aggregierte Round-Trip-Position.
+RoundTripRecord = tuple[float, int, float, float]
+# (entry_notional, exit_ts_ns) — Notional-Spur (parallel zu den PnL-Records).
+NotionalRecord = tuple[float, int]
+
+
+class MetricsLevel(TypedDict):
+    """Metriken *einer* Aggregationsebene des Dual-Reporting-Schemas (Issue #508).
+
+    Bündelt In-Sample- und Out-of-Sample-Metriken (jeweils ein
+    ``_calculate_stats``-Rückgabe-Dict). Es existieren zwei Ebenen:
+
+      * ``round_trips`` — ökonomische Positionen (Position-Open → Flat /
+        Net-Exposure-Zero-Crossing). **Primär** für Gate-Eligibility und
+        Walk-Forward-Validierung.
+      * ``fill_matches`` — technische FIFO-Teilfüllungen. **Sekundär**, reine
+        Execution-Diagnostik (Scale-in/Scale-out-Intensität).
+    """
+
+    metrics: dict[str, Any]      # In-Sample
+    oos_metrics: dict[str, Any]  # Out-of-Sample
+
+
 def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
@@ -1076,6 +1114,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
     `sortino_ratio` UND `total_return` der OOS-Metriken werden damit aus der zeitindizierten
     Equity-Kurve abgeleitet (Intra-Trade-Drawdowns erfasst, frequenzkorrekt annualisiert, echter
     Portfolio-Return) — nicht aus der Trade-geordneten realisierten PnL.
+
+    Round-Trip-Aggregierung & Dual-Reporting (Issue #508):
+    Die FIFO-Teilfüllungen werden zu ökonomischen Positionen aggregiert (Position-Open → Flat /
+    Net-Exposure-Zero-Crossing). Die PRIMÄREN Metriken (`metrics`/`oos_metrics`, gespiegelt unter
+    `round_trips`) werden strikt auf Round-Trip-Ebene gebildet — `total_trades` == Zahl der
+    Positionen, `win_rate` == Wins/n_positions, `expectancy` == Σ PnL_positions / n_positions,
+    `profit_factor` analog. Damit inflationiert Scale-in/Scale-out den Trade-Count NICHT mehr und
+    kann die Gate-Metriken nicht verzerren. Die Fill-Match-Ebene (technische Teilfüllungen) bleibt
+    unter `fill_matches` als reine Execution-Diagnostik erhalten. Sämtliche Eligibility- und
+    Walk-Forward-Evaluierungen MÜSSEN auf `round_trips` (bzw. `metrics`/`oos_metrics`) operieren.
     """
     NULL = {
         "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
@@ -1114,14 +1162,41 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 continue
             instrument_fills.setdefault(iid, []).append(row)
 
-        pnls_with_ts = []
-        notionals_with_ts = []
+        # Fill-Match-Ebene (technische FIFO-Teilfüllungen — Execution-Diagnostik).
+        pnls_with_ts: list[FillMatchRecord] = []
+        notionals_with_ts: list[NotionalRecord] = []
+        # Round-Trip-Ebene (ökonomische Positionen — primäre Gate-Metriken, Issue #508).
+        rt_pnls_with_ts: list[RoundTripRecord] = []
+        rt_notionals_with_ts: list[NotionalRecord] = []
+
+        def _finalize_round_trip(matches: list[FillMatchRecord]) -> None:
+            """Aggregiert die FIFO-Matches EINER zusammenhängenden Position (Position-Open
+            → Flat) zu genau einem Round-Trip (Issue #508). Die Round-Trip-PnL ist die Summe
+            der Teil-Fill-PnLs (inkl. bereits allokierter Kosten); der Exit-Timestamp ist der
+            des schließenden (letzten) Fills und entscheidet die IS/OOS-Klassifikation. Die
+            Haltedauer wird mengengewichtet über die Teil-Fills gemittelt, das Notional
+            über die Legs summiert (ökonomische Positionsgröße)."""
+            if not matches:
+                return
+            rt_pnl = sum(m[0] for m in matches)
+            rt_exit_ts = matches[-1][1]  # schließender Fill (Matches sind chronologisch)
+            total_qty = sum(m[3] for m in matches)
+            if total_qty > 1e-12:
+                rt_holding_ns = sum(m[2] * m[3] for m in matches) / total_qty
+            else:
+                rt_holding_ns = matches[-1][2]
+            rt_notional = sum(m[4] for m in matches)
+            rt_pnls_with_ts.append((rt_pnl, rt_exit_ts, rt_holding_ns, total_qty))
+            rt_notionals_with_ts.append((rt_notional, rt_exit_ts))
 
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
             sorted_fills = sorted(f_list, key=_fill_ts_ns)
             buy_queue: deque[tuple[float, float, int]] = deque()  # (Stückzahl, Preis, Timestamp)
             sell_queue: deque[tuple[float, float, int]] = deque() # (Stückzahl, Preis, Timestamp)
+            # Matches der aktuell offenen Position; wird bei Net-Exposure-Zero-Crossing (Flat)
+            # zu einem Round-Trip finalisiert. Pro Instrument ist stets nur EINE Seite offen.
+            current_rt: list[FillMatchRecord] = []
 
             for f in sorted_fills:
                 try:
@@ -1150,10 +1225,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         holding_time_ns = ts - s_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         notionals_with_ts.append((entry_notional, ts))
+                        current_rt.append((pnl, ts, holding_time_ns, match_qty, entry_notional))
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
                             sell_queue.popleft()
+                    # Short vollständig gedeckt (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
+                    if not sell_queue and current_rt:
+                        _finalize_round_trip(current_rt)
+                        current_rt = []
                     if qty > 0:
                         ts_entry = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         buy_queue.append((qty, price, ts_entry))
@@ -1171,13 +1251,24 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         holding_time_ns = ts - b_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         notionals_with_ts.append((entry_notional, ts))
+                        current_rt.append((pnl, ts, holding_time_ns, match_qty, entry_notional))
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
                             buy_queue.popleft()
+                    # Long vollständig verkauft (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
+                    if not buy_queue and current_rt:
+                        _finalize_round_trip(current_rt)
+                        current_rt = []
                     if qty > 0:
                         ts_entry = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         sell_queue.append((qty, price, ts_entry))
+
+            # Position am Datenende noch offen (Teil-Fills realisiert, aber nie flat): die
+            # realisierte Teilmenge bildet einen (offenen) Round-Trip — bewahrt die Invariante
+            # Σ Round-Trip-PnL == Σ Match-PnL.
+            if current_rt:
+                _finalize_round_trip(current_rt)
 
 
 
@@ -1190,7 +1281,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             return NULL
 
         if log_fn:
-            log_fn(f"[Metriken] FIFO-Extraktion: {len(pnls_with_ts)} Round-Trips erfolgreich berechnet.")
+            log_fn(f"[Metriken] FIFO-Extraktion: {len(rt_pnls_with_ts)} Round-Trips "
+                   f"(aus {len(pnls_with_ts)} Fill-Matches) erfolgreich berechnet.")
 
         # Issue #448/#444 — beobachtete Fill-ts-Spanne (min/max der Round-Trip-Exit-ts über alle
         # Instrumente). Wird in die Worker-/Tournament-Telemetrie gehoben (data_window.fill_ts_*),
@@ -1256,60 +1348,28 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 else:
                     log_fn("[OOS-Abdeckung] ⚠️ Keine Fills im Fenster — OOS-Abdeckung nicht gegeben (Pitfall #82).")
 
-        is_pnls = []
-        oos_pnls = []
-        is_holding_times = []
-        oos_holding_times = []
-
-        is_notionals = []
-        oos_notionals = []
-
-        if walk_forward_dict and start_ns is not None:
+        # ── Fold-Geometrie & MtM-Slices (gemeinsam für beide Aggregationsebenen) ────────
+        _wf = bool(walk_forward_dict and start_ns is not None)
+        fold_boundaries: list[tuple[int, int, int]] = []
+        _is_start_ns = start_ns
+        is_end_ns: int | None = None
+        is_window_ns = oos_window_ns = embargo_period_ns = 0
+        splits = 0
+        if _wf:
             is_window_ns = walk_forward_dict.get("is_window_days", 90) * 86400 * 1_000_000_000
             oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
             splits = walk_forward_dict.get("splits", 2)
             embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
             # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth (kein Inline-Nachbau).
             fold_boundaries = compute_fold_boundaries(start_ns, walk_forward_dict)
-
             # IS Window boundaries are deterministic and identical for all folds
-            _is_start_ns = start_ns
-            is_end_ns = _is_start_ns + is_window_ns
-
-            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
-                notional, _ts = notionals_with_ts[i]
-                is_oos = False
-
-                # Check for OOS inclusion across all folds
-                for _, split_oos_start_ns, split_oos_end_ns in fold_boundaries:
-                    if split_oos_start_ns <= ts < split_oos_end_ns:
-                        is_oos = True
-                        break
-
-                is_in_sample = _is_start_ns <= ts < is_end_ns
-
-                if is_oos:
-                    oos_pnls.append(pnl)
-                    oos_holding_times.append((ht, m_qty))
-                    oos_notionals.append(notional)
-                elif is_in_sample:
-                    is_pnls.append(pnl)
-                    is_holding_times.append((ht, m_qty))
-                    is_notionals.append(notional)
-        else:
-            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
-                notional, _ts = notionals_with_ts[i]
-                is_pnls.append(pnl)
-                is_holding_times.append((ht, m_qty))
-                is_notionals.append(notional)
+            is_end_ns = start_ns + is_window_ns
 
         import statistics
-        is_med_notional = statistics.median(is_notionals) if is_notionals else 0.0
-        oos_med_notional = statistics.median(oos_notionals) if oos_notionals else 0.0
 
         is_mtm = None
         oos_mtm = None
-        if mtm_series is not None and not mtm_series.empty and walk_forward_dict and start_ns is not None:
+        if mtm_series is not None and not mtm_series.empty and _wf:
             # Slicing the mtm_series
             is_start_dt = pd.to_datetime(start_ns, unit="ns")
             is_end_dt = pd.to_datetime(start_ns + is_window_ns, unit="ns")
@@ -1320,32 +1380,68 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 
-        is_metrics = _calculate_stats(is_pnls, is_holding_times, starting_capital, med_notional=is_med_notional, mtm_series=is_mtm)
-        oos_metrics = _calculate_stats(oos_pnls, oos_holding_times, starting_capital, med_notional=oos_med_notional, mtm_series=oos_mtm) if oos_pnls else {
-            "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
-            "sortino_ratio": 0.0, "calmar_ratio": 0.0,
-            "max_drawdown": 0.0, "total_return": 0.0,
-            "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
-            "losses_count": 0,
-            "median_position_notional": 0.0,
-        }
+        def _empty_level_metrics() -> dict[str, Any]:
+            return {
+                "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
+                "sortino_ratio": 0.0, "calmar_ratio": 0.0,
+                "max_drawdown": 0.0, "total_return": 0.0,
+                "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+                "losses_count": 0,
+                "median_position_notional": 0.0,
+            }
 
-        # Issue #303: Export raw OOS trade records for chronological portfolio aggregation
+        def _split_and_stats(records: list, notionals: list) -> tuple[dict, dict]:
+            """IS/OOS-Split einer Record-Liste (Round-Trip ODER Fill-Match) + ``_calculate_stats``
+            je Ebene (Issue #508). Beide Ebenen teilen sich die IDENTISCHE Fold-Geometrie; der
+            einzige Unterschied ist die Aggregations-Granularität der übergebenen Records. Jeder
+            Record ist ``(pnl, exit_ts_ns, holding_ns, qty)``, ``notionals[i]`` das parallele
+            ``(entry_notional, exit_ts_ns)``. Rückgabe: ``(is_metrics, oos_metrics)``."""
+            split_is_pnls, split_oos_pnls = [], []
+            split_is_holds, split_oos_holds = [], []
+            split_is_notionals, split_oos_notionals = [], []
+            for rec_idx, (pnl, ts, ht, rec_qty) in enumerate(records):
+                notional = notionals[rec_idx][0]
+                if _wf:
+                    is_oos = any(s <= ts < e for _, s, e in fold_boundaries)
+                    is_in_sample = _is_start_ns <= ts < is_end_ns
+                else:
+                    is_oos, is_in_sample = False, True
+                if is_oos:
+                    split_oos_pnls.append(pnl)
+                    split_oos_holds.append((ht, rec_qty))
+                    split_oos_notionals.append(notional)
+                elif is_in_sample:
+                    split_is_pnls.append(pnl)
+                    split_is_holds.append((ht, rec_qty))
+                    split_is_notionals.append(notional)
+            is_mn = statistics.median(split_is_notionals) if split_is_notionals else 0.0
+            oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
+            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm)
+            if split_oos_pnls:
+                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm)
+            else:
+                level_oos = _empty_level_metrics()
+            return level_is, level_oos
+
+        # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
+        is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts)
+        # ── Sekundär: Fill-Match-Ebene (Execution-Diagnostik, #508) ─────────────────────
+        fm_is_metrics, fm_oos_metrics = _split_and_stats(pnls_with_ts, notionals_with_ts)
+
+        # Issue #303/#508 — Per-Fold-OOS-Sortinos AUF ROUND-TRIP-EBENE (primäre Gate-Basis).
         per_fold_oos_list = []
-        if walk_forward_dict and start_ns is not None:
-            # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth (kein Inline-Nachbau).
-            for _is_start_ns, split_oos_start_ns, split_oos_end_ns in compute_fold_boundaries(start_ns, walk_forward_dict):
+        if _wf:
+            # Issue #443 — innere Fold-Schleifen heißen `fold`, kein Shadowing der äußeren Iteration.
+            for _is_start_ns_fold, split_oos_start_ns, split_oos_end_ns in fold_boundaries:
                 fold_pnls = []
                 fold_holds = []
                 fold_notionals = []
-
-                for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
+                for fold_idx, (pnl, ts, ht, rt_qty) in enumerate(rt_pnls_with_ts):
                     if split_oos_start_ns <= ts < split_oos_end_ns:
                         fold_pnls.append(pnl)
-                        fold_holds.append((ht, m_qty))
-                        fold_notionals.append(notionals_with_ts[i][0])
+                        fold_holds.append((ht, rt_qty))
+                        fold_notionals.append(rt_notionals_with_ts[fold_idx][0])
 
-                import statistics
                 fold_med_notional = statistics.median(fold_notionals) if fold_notionals else 0.0
                 fold_mtm = None
                 if mtm_series is not None and not mtm_series.empty:
@@ -1360,30 +1456,27 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
             oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
 
+        # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
+        # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt
+        # (pnl, ts, ht, qty, notional). Ohne Walk-Forward bleibt `fold_boundaries` leer ⇒ keine Records.
         oos_trade_records = []
-        if oos_pnls:
-            # Reconstruct tuples of (pnl, ts, ht, m_qty, notional) for portfolio merging
-            # They were processed in the same order as oos_pnls
-            # Issue #466/#463 — Fold-Geometrie aus der Single Source of Truth; ohne Walk-Forward
-            # (oder ohne start_ns) bleibt die Grenzliste leer ⇒ keine OOS-Records (wie zuvor splits=0).
-            boundaries = (compute_fold_boundaries(start_ns, walk_forward_dict)
-                          if walk_forward_dict and start_ns is not None else [])
-
-            for i, (pnl, ts, ht, m_qty) in enumerate(pnls_with_ts):
-                notional, _ts = notionals_with_ts[i]
-                is_oos = False
-                for _is_start_ns, split_oos_start_ns, split_oos_end_ns in boundaries:
-                    if split_oos_start_ns <= ts < split_oos_end_ns:
-                        is_oos = True
-                        break
-                if is_oos:
-                    oos_trade_records.append((pnl, ts, ht, m_qty, notional))
+        for rt_idx, (pnl, ts, ht, rt_qty) in enumerate(rt_pnls_with_ts):
+            if any(s <= ts < e for _, s, e in fold_boundaries):
+                oos_trade_records.append((pnl, ts, ht, rt_qty, rt_notionals_with_ts[rt_idx][0]))
         oos_metrics["_oos_trade_records"] = oos_trade_records
 
-        if walk_forward_dict and start_ns is not None:
+        # Issue #508 — Dual-Reporting-Schema: beide Aggregationsebenen isoliert ausweisen.
+        round_trips: MetricsLevel = {"metrics": is_metrics, "oos_metrics": oos_metrics}
+        fill_matches: MetricsLevel = {"metrics": fm_is_metrics, "oos_metrics": fm_oos_metrics}
+
+        if _wf:
             return {
+                # `metrics`/`oos_metrics` bleiben die PRIMÄREN (round-trip-basierten) Gate-Metriken.
                 "metrics": is_metrics,
                 "oos_metrics": oos_metrics,
+                # Issue #508 — explizite Dual-Reporting-Ebenen (round_trips primär, fill_matches sekundär).
+                "round_trips": round_trips,
+                "fill_matches": fill_matches,
                 # Issue #444/#448 — beobachtete Fill-ts-Spanne für die data_window-Telemetrie.
                 "_fill_ts_min": fill_ts_min,
                 "_fill_ts_max": fill_ts_max,
@@ -1392,7 +1485,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "_oos_covered": oos_covered,
             }
         else:
-            # Fallback for backwards compatibility if oos isn't requested
+            # Fallback for backwards compatibility if oos isn't requested. Die Round-Trip-Ebene
+            # bleibt primär; die Fill-Match-Diagnostik wird als Unterschlüssel beigelegt (#508).
+            is_metrics["fill_matches"] = fm_is_metrics
             return is_metrics
     except Exception as e:
         if log_fn:
@@ -2324,6 +2419,10 @@ def run_single_backtest_worker(
             metrics = extracted_data
             oos_metrics = {}
 
+        # Issue #508 — Fill-Match-Diagnostik (Sekundärebene) nach oben reichen. `metrics`/`oos_metrics`
+        # sind bereits die primären Round-Trip-Metriken; `fill_matches` bleibt reine Execution-Diagnostik.
+        fill_matches = extracted_data.get("fill_matches") if isinstance(extracted_data, dict) else None
+
         # Issue #444 — beobachtete Fill-ts-Spanne aus extract_metrics nach oben reichen (für den
         # data_window-Block der tournament_result.json). None, wenn keine Round-Trips/kein WF-Modus.
         fill_ts_min = extracted_data.get("_fill_ts_min") if isinstance(extracted_data, dict) else None
@@ -2394,7 +2493,7 @@ def run_single_backtest_worker(
                     wlog_err(f"CSV-Fallback fehlgeschlagen: {fe}", exc=True)
 
         engine.dispose()
-        return {
+        result: dict[str, Any] = {
             "symbol": inst_id_str,
             "strategy": strategy_class_name,
             "metrics": metrics,
@@ -2411,6 +2510,11 @@ def run_single_backtest_worker(
             "_oos_window_start_ns": oos_window_start_ns,
             "_oos_covered": oos_covered,
         }
+        # Issue #508 — Fill-Match-Diagnostik (Sekundärebene) nur beilegen, wenn vorhanden;
+        # `metrics`/`oos_metrics` bleiben die primären Round-Trip-Gate-Metriken.
+        if fill_matches is not None:
+            result["fill_matches"] = fill_matches
+        return result
     finally:
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
             import shutil

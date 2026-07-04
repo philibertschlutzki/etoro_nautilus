@@ -73,6 +73,10 @@ def test_extract_metrics_no_is_overlap():
         # But the IS call should have length 2
         is_stats_calls = [c for c in mock_stats.call_args_list if c[0][0] == [1000.0, 1000.0]]
 
-        # It's called once with 2 pnls
-        assert len(is_stats_calls) == 1
+        # Issue #508: Der IS-Split wird für beide Aggregationsebenen (Round-Trip + Fill-Match)
+        # gebildet; hier ist jeder Round-Trip genau ein Fill-Match, daher >= 1 identischer Call.
+        # Entscheidend bleibt: KEIN Call vermischt alle 6 Fills (Overlap-Averaging-Regression).
+        assert len(is_stats_calls) >= 1
         assert len(is_stats_calls[0][0][0]) == 2
+        # Kein IS-Split darf mehr als 2 Trades enthalten (sonst Overlap über Folds).
+        assert all(len(c[0][0]) <= 2 for c in is_stats_calls)

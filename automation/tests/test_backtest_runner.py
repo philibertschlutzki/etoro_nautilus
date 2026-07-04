@@ -107,7 +107,7 @@ def test_extract_metrics_weighted_holding_time():
     engine_mock = MagicMock()
     # Buy 10 units at ts=0
     # Sell 2 units at ts=10 (hold = 10s)
-    # Sell 8 units at ts=20 (hold = 20s)
+    # Sell 8 units at ts=20 (hold = 20s)  -> Position wird flat: EIN Round-Trip (Scale-out).
 
     # Expected weighted avg: (2*10 + 8*20) / 10 = (20 + 160) / 10 = 180 / 10 = 18.0 s
 
@@ -144,8 +144,80 @@ def test_extract_metrics_weighted_holding_time():
         f"Metriken-Snapshot: {m}"
     )
 
-    assert m["total_trades"] == 2
+    # Issue #508: Primär = Round-Trip-Ebene. Scale-out (1 Entry, 2 Teil-Exits) == 1 Position.
+    assert m["total_trades"] == 1
+    # Mengengewichtete Haltedauer über die Teil-Fills bleibt erhalten: (2*10 + 8*20)/10 = 18.0 s.
     assert m["avg_holding_time_s"] == 18.0
+
+    # Issue #508: Die Fill-Match-Diagnostik (Sekundärebene) weist die 2 technischen Teil-Exits aus.
+    assert "fill_matches" in m
+    assert m["fill_matches"]["total_trades"] == 2
+
+
+def test_extract_metrics_scale_out_round_trip_is_one_trade():
+    """Issue #508 (Acceptance Criterion #1 & #2): Eine Position mit 1x Entry und 3x Partial-Exits
+    (Scale-out) ist genau EIN ökonomischer Round-Trip. Die primären (Gate-)Metriken zählen die
+    Position (total_trades == 1); die Fill-Match-Diagnostik zählt die 3 technischen Teilfüllungen.
+    """
+    engine_mock = MagicMock()
+    # 1x Entry (BUY 3) + 3x Partial-Exits (SELL 1 je) → Netto-Exposure kehrt zu 0 zurück ⇒ 1 Position.
+    records = [
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 3.0, "last_px": 100.0, "order_side": "BUY",  "ts_event": 0},
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 1.0, "last_px": 110.0, "order_side": "SELL", "ts_event": 10 * 10**9},
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 1.0, "last_px": 120.0, "order_side": "SELL", "ts_event": 20 * 10**9},
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 1.0, "last_px": 130.0, "order_side": "SELL", "ts_event": 30 * 10**9},
+    ]
+    df_fills = pd.DataFrame.from_records(records)
+    engine_mock.trader.generate_fills_report.return_value = df_fills
+
+    metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
+    m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
+
+    # Acceptance Criterion #1: total_trades == 1 (ökonomische Position, nicht 3 Fill-Matches).
+    assert m["total_trades"] == 1, f"Erwartet 1 Round-Trip, erhalten {m['total_trades']}. Snapshot: {m}"
+
+    # Round-Trip-PnL = Summe der Teil-Fill-PnLs: (110-100)+(120-100)+(130-100) = 10+20+30 = 60 > 0 ⇒ Win.
+    assert m["win_rate"] == 1.0
+
+    # Acceptance Criterion #2: Schema separiert Positions- von Fill-Match-Ebene.
+    assert "fill_matches" in m, "Dual-Reporting-Schema: fill_matches-Ebene fehlt."
+    assert m["fill_matches"]["total_trades"] == 3, (
+        f"Fill-Match-Diagnostik muss die 3 Teilfüllungen ausweisen, erhalten "
+        f"{m['fill_matches']['total_trades']}."
+    )
+
+
+def test_extract_metrics_dual_schema_separates_levels_walk_forward():
+    """Issue #508 (Acceptance Criterion #2): Im Walk-Forward-Modus weist die Output-Struktur beide
+    Ebenen isoliert aus — `round_trips` (primär) und `fill_matches` (sekundär) — und die primären
+    `metrics`/`oos_metrics` sind identisch zur Round-Trip-Ebene (Gate-Basis)."""
+    import pandas as _pd
+    engine_mock = MagicMock()
+    day_ns = 86400 * 1_000_000_000
+    start_ns = int(_pd.Timestamp("2025-01-01", tz="UTC").value)
+    wf = {"is_window_days": 90, "oos_window_days": 30, "splits": 2}
+    # Ein Scale-out-Round-Trip vollständig im IS-Fenster (Exit bei +45d): 1 Position, 3 Fill-Matches.
+    exit_base = start_ns + 45 * day_ns
+    records = [
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 3.0, "last_px": 100.0, "order_side": "BUY",  "ts_event": start_ns + 40 * day_ns},
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 1.0, "last_px": 110.0, "order_side": "SELL", "ts_event": exit_base},
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 1.0, "last_px": 120.0, "order_side": "SELL", "ts_event": exit_base + 1000},
+        {"instrument_id": "AAPL.NASDAQ", "last_qty": 1.0, "last_px": 130.0, "order_side": "SELL", "ts_event": exit_base + 2000},
+    ]
+    df_fills = pd.DataFrame.from_records(records)
+    engine_mock.trader.generate_fills_report.return_value = df_fills
+
+    out = extract_metrics(engine_mock, starting_capital=10000.0, walk_forward_dict=wf, start_ns=start_ns)
+
+    # Beide Ebenen sind als eigenständige Container vorhanden.
+    assert "round_trips" in out and "fill_matches" in out
+    assert set(out["round_trips"].keys()) == {"metrics", "oos_metrics"}
+    assert set(out["fill_matches"].keys()) == {"metrics", "oos_metrics"}
+
+    # Primär == Round-Trip-Ebene (1 Position); Sekundär == Fill-Match-Ebene (3 Teilfüllungen).
+    assert out["metrics"]["total_trades"] == 1
+    assert out["round_trips"]["metrics"]["total_trades"] == 1
+    assert out["fill_matches"]["metrics"]["total_trades"] == 3
 
 from automation.backtest_runner import select_winners
 
