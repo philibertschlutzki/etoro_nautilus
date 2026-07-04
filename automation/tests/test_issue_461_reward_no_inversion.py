@@ -8,6 +8,7 @@ class DummyMetrics:
     oos_eligible: bool = False
     oos_total_trades: int = 0
     oos_total_return: float = 0.0
+    oos_expectancy: float = 0.0
     oos_sortino: float = 0.0
     oos_max_drawdown: float = 0.0
     oos_win_rate: float = 0.0

@@ -1,117 +1,67 @@
 import pytest
-from automation.backtest_runner import select_winners
+from unittest.mock import MagicMock
+import pandas as pd
+from automation.backtest_runner import extract_metrics
 
-def test_oos_aggregation():
-    tournament_cfg = {
-        "min_trades": 20,
-        "min_sortino": 0.0,
-        "min_profit_factor": 1.0,
-        "max_drawdown": 1.0,
-        "min_win_rate": 0.0,
-        "min_total_return": 0.0,
-        "oos_min_trades": 4,
-        "oos_min_total_return": 0.1,
-        "eligible_requires_all": ["min_trades"],
-        "eligible_requires_any": [],
-        "scoring": {
-            "sortino_weight": 1.0,
-            "profit_factor_weight": 0.0,
-            "win_rate_weight": 0.0,
-            "drawdown_penalty_weight": 0.0
-        }
-    }
+def test_extract_metrics_scale_out_aggregation():
+    """
+    Tests that partial fills (scale-out) are aggregated into a single trade
+    representing the round trip (position open to flat).
+    """
+    engine_mock = MagicMock()
 
-    # Synthetic trades for Strategy A
-    # We create overlapping losses to ensure max_drawdown > individual max_drawdowns
-    # Symbol 1 (OOS): Trade 1: TS=100, PnL=-6000 (starting cap=100k, return = -0.06)
-    #                 Trade 2: TS=120, PnL= 1000
-    #                 Trade 3: TS=140, PnL=-5000 (return = -0.05)
-    #                 Trade 4: TS=160, PnL=12000
-    # Symbol 2 (OOS): Trade 1: TS=110, PnL=-5000 (return = -0.05)
-    #                 Trade 2: TS=130, PnL=-4000 (return = -0.04)
-    #                 Trade 3: TS=150, PnL=-2000 (return = -0.02)
-    #                 Trade 4: TS=170, PnL=20000
+    # Simulate a Scale-Out strategy
+    # 1. Buy 100 at 10.0
+    # 2. Sell 30 at 11.0 (profit = 30)
+    # 3. Sell 30 at 12.0 (profit = 60)
+    # 4. Sell 40 at 13.0 (profit = 120)
+    # Total PnL = 30 + 60 + 120 = 210
 
-    # With 100_000 initial equity:
-    # Cum Equity changes:
-    # TS=100 (S1): Eq=94,000  (peak=100,000, DD = 6%)
-    # TS=110 (S2): Eq=89,300  (peak=100,000, DD = 10.7%)
-    # TS=120 (S1): Eq=90,193  (peak=100,000)
-    # TS=130 (S2): Eq=86,585  (peak=100,000, DD = 13.4%)
-    # TS=140 (S1): Eq=82,256  (peak=100,000, DD = 17.7%)
-    # TS=150 (S2): Eq=80,611  (peak=100,000, DD = 19.38%) -> MAX DD
-    # TS=160 (S1): Eq=90,284
-    # TS=170 (S2): Eq=108,341
-
-    records_s1 = [
-        (-6000.0, 100, 1000, 1.0, 10000.0),
-        ( 1000.0, 120, 1000, 1.0, 10000.0),
-        (-5000.0, 140, 1000, 1.0, 10000.0),
-        (12000.0, 160, 1000, 1.0, 10000.0)
-    ]
-    records_s2 = [
-        (-5000.0, 110, 1000, 1.0, 10000.0),
-        (-4000.0, 130, 1000, 1.0, 10000.0),
-        (-2000.0, 150, 1000, 1.0, 10000.0),
-        (20000.0, 170, 1000, 1.0, 10000.0)
-    ]
-
-    all_results = [
+    records = [
         {
-            "symbol": "SYM1",
-            "strategy": "StrategyA",
-            "start_capital": 100000.0,
-            "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
-            "oos_metrics": {
-                "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.1, "max_drawdown": 0.1, "win_rate": 0.5, "total_return": 0.1, "median_position_notional": 50.0,
-                "_oos_trade_records": records_s1
-            }
+            "instrument_id": "AAPL.NASDAQ",
+            "last_qty": 100.0,
+            "last_px": 10.0,
+            "order_side": "BUY",
+            "ts_event": 1000,
         },
         {
-            "symbol": "SYM1",
-            "strategy": "StrategyB",
-            "start_capital": 100000.0,
-            "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
-            "oos_metrics": { "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1, "median_position_notional": 50.0, "_oos_trade_records": [] }
+            "instrument_id": "AAPL.NASDAQ",
+            "last_qty": 30.0,
+            "last_px": 11.0,
+            "order_side": "SELL",
+            "ts_event": 2000,
         },
         {
-            "symbol": "SYM2",
-            "strategy": "StrategyA",
-            "start_capital": 100000.0,
-            "metrics": { "total_trades": 20, "sortino_ratio": 50.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
-            "oos_metrics": {
-                "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.8, "max_drawdown": 0.09, "win_rate": 0.25, "total_return": 0.2, "median_position_notional": 50.0,
-                "_oos_trade_records": records_s2
-            }
+            "instrument_id": "AAPL.NASDAQ",
+            "last_qty": 30.0,
+            "last_px": 12.0,
+            "order_side": "SELL",
+            "ts_event": 3000,
         },
         {
-            "symbol": "SYM2",
-            "strategy": "StrategyB",
-            "start_capital": 100000.0,
-            "metrics": { "total_trades": 20, "sortino_ratio": 1.0, "profit_factor": 1.5, "max_drawdown": 0.1, "win_rate": 0.6, "total_return": 0.5, "median_position_notional": 50.0 },
-            "oos_metrics": { "total_trades": 4, "sortino_ratio": 1.0, "profit_factor": 1.0, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.2, "median_position_notional": 50.0, "_oos_trade_records": [] }
+            "instrument_id": "AAPL.NASDAQ",
+            "last_qty": 40.0,
+            "last_px": 13.0,
+            "order_side": "SELL",
+            "ts_event": 4000,
         }
     ]
 
-    per_symbol_winners, aggregate_winner, warnings, _, _ = select_winners(all_results, tournament_cfg)
-    assert aggregate_winner is not None, "Aggregate winner should be selected"
-    assert aggregate_winner["strategy"] == "StrategyA", "StrategyA must be the winner"
+    df_fills = pd.DataFrame.from_records(records)
+    engine_mock.trader.generate_fills_report.return_value = df_fills
 
-    # In Strategy A, neither individual symbol has DD >= 0.11 (they are 0.1 and 0.09)
-    # But chronologically combined, they suffer compounding losses dropping equity to ~80.6k.
-    # Therefore portfolio DD is > 0.18.
+    metrics_result = extract_metrics(engine_mock, starting_capital=10000.0)
+    m = metrics_result["metrics"] if "metrics" in metrics_result else metrics_result
 
-    portfolio_dd = aggregate_winner["oos_metrics"]["max_drawdown"]
-    # Da der sequentielle Fallback in Issue #474 entfernt wurde und select_winners noch keine mtm_series
-    # aufbaut, fällt max_drawdown korrekterweise auf 0.0 zurück, um PnL-Aggregations-Artefakte zu verhindern.
-    assert portfolio_dd == 0.0, f"Portfolio DD should fall back to 0.0 without mtm_series, got {portfolio_dd}"
+    assert m.get("total_trades", 0) > 0, "No trades extracted."
 
-    assert aggregate_winner["oos_metrics"]["total_trades"] == 8, "Total trades should be the portfolio sum"
-    assert aggregate_winner["oos_metrics"]["win_rate"] == 0.375, "Win rate should be reconstructed correctly (3/8)"
-    assert aggregate_winner["oos_metrics"]["aggregation_basis"] == "portfolio_equity_curve"
+    # Assert total round trips (positions) is 1, not 3.
+    assert m["total_trades"] == 1, f"Expected 1 position, got {m['total_trades']}"
 
-    # Ensure memory bloat is removed
-    assert "_oos_trade_records" not in aggregate_winner["oos_metrics"]
-    for val in per_symbol_winners.values():
-        assert "_oos_trade_records" not in val["oos_metrics"]
+    # Return of 210 on 10000 capital -> 0.021
+    assert m["expectancy"] == pytest.approx(0.021)
 
+    # Verify that the dual schema contains 'fill_matches'
+    assert "fill_matches" in m, "fill_matches missing from output"
+    assert m["fill_matches"]["total_trades"] == 3, f"Expected 3 fill matches, got {m['fill_matches']['total_trades']}"

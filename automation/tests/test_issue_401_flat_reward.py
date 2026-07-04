@@ -53,8 +53,9 @@ def _m(**kw):
 def test_sortino_threshold_is_configurable_low_sample():
     """n=3, 1 Loss: mit sortino_min_trades=2 wird ein Sortino berechnet (vorher hartes None)."""
     pnl_list = [10.0, 10.0, -2.0]  # n=3, losses_count=1, net positive
+    import pandas as pd
     stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0,
-                             min_trades_for_sortino=2)
+                             min_trades_for_sortino=2, mtm_series=pd.Series([10000.0, 10010.0, 10000.0, 10018.0, 10010.0], index=pd.date_range("2020-01-01", periods=5)))
     assert stats["sortino_ratio"] is not None
     assert stats["sortino_ratio"] <= 50.0
 
@@ -71,8 +72,9 @@ def test_zero_loss_still_none_issue_209_intact():
     """Zero-Loss ⇒ keine Downside-Deviation ⇒ Sortino bleibt None, unabhaengig vom Threshold
     (Issue #209 unangetastet; der Fallback lebt ausschliesslich im Reward, nicht in den Stats)."""
     pnl_list = [10.0, 10.0, 10.0]  # n=3, 0 Losses
+    import pandas as pd
     stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0,
-                             min_trades_for_sortino=2)
+                             min_trades_for_sortino=2, mtm_series=pd.Series([10000.0, 10010.0, 10000.0, 10018.0, 10010.0], index=pd.date_range("2020-01-01", periods=5)))
     assert stats["sortino_ratio"] is None
 
 

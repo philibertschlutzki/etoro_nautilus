@@ -4,7 +4,7 @@ from automation.optimizer.parsing import TournamentMetrics
 from automation.optimizer.reward import compute_reward
 
 W = {  # Test-Weights (DI)
-    "penalty_unevaluable_oos": -2.0,
+    "penalty_unevaluable_oos": -5.0,
     "sortino_clip_abs": 3.0,
     "penalty_overfit_weight": 1.0,
     "penalty_dd_weight": 1.0,
