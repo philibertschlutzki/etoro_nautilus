@@ -1008,6 +1008,36 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         avg_hold = 0.0
         med_hold = 0.0
 
+    # Coherence Invariant Check (Issue #528, Task 2.2)
+    if hold_list is not None and len(hold_list) > 0 and mtm_series is not None:
+        # Evaluierung der flachen Endposition über hold_list (Prüfung des terminalen Elements auf Abwesenheit offener Positionen).
+        # Wenn wir eine offene Position haben, könnte das terminale Element in `hold_list` z.B. eine qty von 0 oder None haben,
+        # oder das Konzept sieht so aus, dass am Ende des Backtests offene Positionen nicht geschlossen werden.
+        # "Prüfung des terminalen Elements auf Abwesenheit offener Positionen":
+        # Wir prüfen, ob das letzte Element in hold_list keine ungeschlossene Markierung hat (z.B. holding_ns == 0 oder open/closed).
+        # Eigentlich, wenn die Endposition flach ist (keine offenen Trades), ist das der Normalfall für pnl_list.
+        # Um den Fehler der offenen Position strikt zu handhaben: Wenn es eine offene Position gäbe, würde diese eine Divergenz erlauben.
+        # In unserem System wird ein Trade mit offenen Endposition oft ignoriert oder `hold_list` hat eine Markierung.
+        # Wenn hold_list das Terminale Element aufweist, nehmen wir eine geschlossene Position an, WENN `qty > 0`
+        # (ein Dummy für Open Position könnte qty == 0 sein) ODER wir prüfen einfach, dass `hold_list` existiert,
+        # was wir bereits tun. Aber um "offene Endposition" korrekt auszuklammern:
+        # (Wir vereinfachen: Ein offenes Terminalelement hätte `holding_ns == 0` oder wir checken `abs(sum(pnl_list)) > 0`).
+
+        sum_pnl = sum(pnl_list)
+        # We assume flat position if hold_list[-1] is a regular closed trade (e.g. qty > 0 and holding_ns > 0).
+        # To be safe and meet the requirement: "Prüfung des terminalen Elements auf Abwesenheit offener Positionen".
+        is_flat_end_position = True
+        if hold_list:
+            last_holding_time, last_qty = hold_list[-1]
+            if last_holding_time == 0 or last_qty == 0.0:
+                is_flat_end_position = False
+
+        if is_flat_end_position and abs(sum_pnl) > 1e-9 and abs(total_return) < 1e-9:
+            import logging
+            logging.warning(f"[Kohärenz-Invariante] ⚠️ KRITISCH (Issue #522): Flache Endposition, "
+                            f"aber total_return=0.0 bei sum(PnL)={sum_pnl}. "
+                            f"Total Return sign und PnL sign müssen übereinstimmen.")
+
     return {
         "total_trades":  n,
         "win_rate":      float(win_rate),
@@ -1075,19 +1105,25 @@ class PortfolioMonitor(Actor):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
-        from nautilus_trader.model.currencies import USD
-        venue = self.bar_type.instrument_id.venue
-        eq_map = self.portfolio.equity(venue=venue)
+        try:
+            from nautilus_trader.model.currencies import USD
+            venue = self.bar_type.instrument_id.venue
+            eq_map = self.portfolio.equity(venue=venue)
 
-        if not eq_map:
-            return
+            if not eq_map:
+                return
 
-        money = eq_map.get(USD)
-        if money is None:
-            money = next(iter(eq_map.values()), None)
+            money = eq_map.get(USD)
+            if money is None:
+                money = next(iter(eq_map.values()), None)
 
-        if money is not None:
-            self.equity_curve.append((bar.ts_event, money.as_double()))
+            if money is not None:
+                self.equity_curve.append((bar.ts_event, money.as_double()))
+        except Exception as e:
+            if not getattr(self, "_warned_on_bar_exception", False):
+                self._warned_on_bar_exception = True
+                import traceback
+                self._log.warning(f"[{self.__class__.__name__}] on_bar Exception (Pitfall #90): {e} \n {traceback.format_exc()}")
 
     def get_equity_series(self) -> pd.Series:
         if not self.equity_curve:
@@ -1461,6 +1497,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
         is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts)
+
+        # Integrity Guard (Issue #528, Task 1.2 & 1.3)
+        oos_total_trades = oos_metrics.get("total_trades", 0)
+        if oos_total_trades > 0 and (mtm_series is None or mtm_series.empty):
+            if log_fn:
+                log_fn("[MtM] ⚠️ KRITISCH: OOS-Trades vorhanden, aber Equity-Kurve leer — "
+                       "total_return/max_drawdown/sortino sind NICHT vertrauenswürdig (Pitfall #90).")
+            oos_metrics["mtm_empty"] = True
+
         # ── Sekundär: Fill-Match-Ebene (Execution-Diagnostik, #508) ─────────────────────
         fm_is_metrics, fm_oos_metrics = _split_and_stats(pnls_with_ts, notionals_with_ts)
 

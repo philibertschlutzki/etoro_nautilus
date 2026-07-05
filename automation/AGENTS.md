@@ -1504,6 +1504,14 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 | 2026-06-30 | **Fix Issue #473 / #503 (Walk-Forward Boundary Hardcoding):** Walk-Forward `oos_lo_ns` arithmetisch auf `window_start` anstatt auf fehlerhaft ausgepacktes `holdout_start` gestützt. Zero-Hardcoding durch dynamische Auslesung von `oos_window_days` realisiert. | `automation/optimizer/confirm.py`, `automation/tests/test_holdout_window.py` |
 | 2026-07-01 | **Fix Issue #506 (Expectancy Penalty Korruption):** `expectancy` als arithmetisches Mittel der Per-Trade-Returns (additive PnLs) umdefiniert. Völlig von `total_return` entkoppelt. Das OOS Gate `oos_min_expectancy` wurde entsprechend angepasst, um die statistisch invalide Division einer Mehrperioden-Größe durch `n_trades` abzulösen. | `automation/backtest_runner.py`, `automation/optimizer/reward.py`, `automation/config/tournament.json`, `automation/optimizer/parsing.py`, `automation/tests/test_issue_506_expectancy.py` |
 
+### 🟢 Pitfall #90 — Hot-Path Observability & Equity-Curve-Drop (Issue #528)
+**Symptom:** OOS-Trades sind vorhanden, aber die Mark-to-Market (MtM) Equity-Kurve ist leer. Dies verzerrt Core-Metriken (`total_return`, `max_drawdown`, `sortino_ratio`) massiv.
+**Anti-Pattern:** Die Verwendung von `except Exception: pass` im Hot-Path (insbesondere in State-Tracking oder `on_bar`-Methoden) schluckt potenziell Exceptions, wodurch die Equity-Kurve nicht aufgebaut, der Backtest aber nicht abgebrochen wird. Die Evaluation ist dann nicht vertrauenswürdig. Das Maskieren von Fehlern durch generische Catch-All-Blöcke ist strikt untersagt (Fail-Loud-Pattern zwingend erforderlich).
+**Mathematische Invariante (Kohärenz-Invariante):**
+Bei einer **flachen Endposition** (keine offenen Positionen am Ende des Evaluierungsfensters) gilt das mathematische Gesetz:
+`sign(total_return) == sign(sum(realisierte PnL))`
+Ist dies nicht der Fall (z. B. `total_return == 0.0` trotz non-zero PnL), deutet das zwingend auf asynchrone Fehler im MtM-Tracking oder PnL-Aggregation hin.
+
 ### 🟢 Pitfall #96 — OOS-Gate verwirft profitable asymmetrische Strategien (Win-Rate Inkompatibilität) [BEHOBEN: GH-#504]
 **Symptom:** Profitable Trials (z.B. +2.56 % Return) mit `p = 0.15` und `payoff = 8` werden ausschließlich durch `oos_min_win_rate < 0.25000` als nicht-evaluierbar abgelehnt, obwohl ihr Expectancy und Profit Factor sehr stark positiv sind.
 **Root Cause:** (1) `min_win_rate` war ein hartes Kriterium in `eligible_requires_all` (5-fach-UND-Konjunktion). Win-Rate ist aber bei asymmetrischen Trend-/Breakout-Strategien keine hinreichende Statistik für einen Edge. (2) `_evaluate_oos_eligibility` hat alle Schwellen statisch und hart überprüft und die in `tournament_cfg` definierten `eligible_requires_all` und `eligible_requires_any` (wie in der In-Sample Phase `_is_eligible`) komplett ignoriert.
