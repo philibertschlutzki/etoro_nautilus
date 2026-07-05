@@ -4,7 +4,7 @@ from automation.optimizer.parsing import TournamentMetrics
 from automation.optimizer.reward import compute_reward
 
 W = {  # Test-Weights (DI)
-    "penalty_unevaluable_oos": -2.0,
+    "penalty_unevaluable_oos": -4.0,
     "sortino_clip_abs": 3.0,
     "penalty_overfit_weight": 1.0,
     "penalty_dd_weight": 1.0,
@@ -17,7 +17,7 @@ W = {  # Test-Weights (DI)
 def _m(**kw):
     base = dict(oos_evaluated=False, oos_eligible=False, is_sortino_median=0.0,
                 oos_sortino=None, oos_max_drawdown=0.0, oos_total_trades=0,
-                win_count=0, fully_eligible_pairs=0, is_total_trades=0, is_max_trades=0)
+                win_count=0, fully_eligible_pairs=0, is_total_trades=0, hit_trade_cap=False)
     base.update(kw)
     return TournamentMetrics(**base)
 

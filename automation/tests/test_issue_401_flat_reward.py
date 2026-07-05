@@ -40,7 +40,7 @@ W = {
 def _m(**kw):
     base = dict(oos_evaluated=False, oos_eligible=False, is_sortino_median=0.0,
                 oos_sortino=None, oos_max_drawdown=0.0, oos_total_trades=0,
-                win_count=0, fully_eligible_pairs=0, is_total_trades=0, is_max_trades=0,
+                win_count=0, fully_eligible_pairs=0, is_total_trades=0, hit_trade_cap=False,
                 oos_total_return=0.0)
     base.update(kw)
     return TournamentMetrics(**base)
@@ -52,9 +52,14 @@ def _m(**kw):
 
 def test_sortino_threshold_is_configurable_low_sample():
     """n=3, 1 Loss: mit sortino_min_trades=2 wird ein Sortino berechnet (vorher hartes None)."""
+    import pandas as pd
     pnl_list = [10.0, 10.0, -2.0]  # n=3, losses_count=1, net positive
+    # We must provide an mtm_series, otherwise sortino is strictly None under the new Drawdown/Sortino MtM regime.
+    # period_rets will be [0.001, -0.0002] which will have negative elements.
+    index = pd.date_range("2026-01-01", periods=5, freq="1D")
+    mtm = pd.Series([10000.0, 10010.0, 10020.0, 10018.0, 10015.0], index=index)
     stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0,
-                             min_trades_for_sortino=2)
+                             min_trades_for_sortino=2, mtm_series=mtm)
     assert stats["sortino_ratio"] is not None
     assert stats["sortino_ratio"] <= 50.0
 

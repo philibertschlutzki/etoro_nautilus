@@ -332,9 +332,14 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     penalty_overfit_weight = weights["penalty_overfit_weight"]
     penalty_dd_weight = weights["penalty_dd_weight"]
     bonus_coverage_weight = weights["bonus_coverage_weight"]
+    penalty_turnover_weight = weights.get("penalty_turnover_weight", 0.0)
 
     overfit_gap = max(0.0, m.is_sortino_median - base)
     dd_excess = max(0.0, m.oos_max_drawdown - risk_dd_cap)
+
+    # Issue #509 (Cost Drag & Turnover Churning) - Turnover Penalty
+    # The penalty increases linearly with the number of OOS trades.
+    turnover_penalty = m.oos_total_trades * penalty_turnover_weight
 
     floor = -float(weights["sortino_clip_abs"])
 
@@ -352,7 +357,8 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         reward = (base
                   - overfit_gap * penalty_overfit_weight
                   - dd_excess * penalty_dd_weight
-                  - param_pen)
+                  - param_pen
+                  - turnover_penalty)
         return max(reward, floor)
 
     # Coverage path (universe_size > 1) — bit-identical to the pre-A4.3 behaviour.
@@ -360,5 +366,6 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     reward = (base
               - overfit_gap * penalty_overfit_weight
               - dd_excess * penalty_dd_weight
-              + coverage * bonus_coverage_weight)
+              + coverage * bonus_coverage_weight
+              - turnover_penalty)
     return max(reward, floor)

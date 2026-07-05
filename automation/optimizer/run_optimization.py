@@ -336,7 +336,7 @@ def make_objective(
             "fully_eligible_pairs": metrics.fully_eligible_pairs,
             "win_count": metrics.win_count,
             "is_total_trades": metrics.is_total_trades,
-            "is_max_trades": metrics.is_max_trades,
+            "hit_trade_cap": metrics.hit_trade_cap,
             "outcome": outcome,
             # Issue #455 — OOS-Abdeckungs-Telemetrie auch im globalen Pfad surfacen (BEIDE Events).
             "fill_ts_max": metrics.fill_ts_max,
@@ -651,7 +651,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Per-Trial-Event (nur Optunas native INFO-Zeile, vgl. #402), wodurch der Unevaluable-Floor-
         # Kollaps (Pitfall #75) forensisch unsichtbar blieb. `oos_eligible` trennt den IS-Drop
         # (Symbol nie IS-eligible ⇒ kein OOS evaluiert) vom OOS-Drop (OOS evaluiert, aber durchs
-        # Gate gefallen); `is_total_trades`/`is_max_trades` machen die Shaping-Saettigung sichtbar.
+        # Gate gefallen); `is_total_trades`/`hit_trade_cap` machen die Shaping-Saettigung sichtbar.
         outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
         # Issue #408 — modale Gate-Drop-Reason: pro Trial die kategorisierte Rejection-Reason
         # persistieren, damit confirm._dominant_rejection sie ueber die Study aggregieren kann.
@@ -676,7 +676,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_total_trades": metrics.oos_total_trades,
             "oos_total_return": metrics.oos_total_return,
             "is_total_trades": metrics.is_total_trades,
-            "is_max_trades": metrics.is_max_trades,
+            "hit_trade_cap": metrics.hit_trade_cap,
             "outcome": outcome,
             # Issue #416 — Schluessel-Kennzahlen fuer die Per-Trial-Fehleranalyse zusaetzlich ins
             # strukturierte Event heben: Daten-Zeitfenster (None, falls die JSON keinen Block traegt)

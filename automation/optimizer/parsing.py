@@ -15,7 +15,7 @@ class TournamentMetrics:
     win_count: int
     fully_eligible_pairs: int
     is_total_trades: int
-    is_max_trades: int
+    hit_trade_cap: bool = False
     # Issue #401: OOS-total_return als evaluable Reward-Fallback, wenn der Sortino
     # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
     # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
@@ -103,14 +103,22 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_profit_factor = oos_metrics.get("profit_factor")
 
     is_total_trades = 0
-    is_max_trades = 0
+    hit_trade_cap = False
     is_best_total_return = 0.0
     is_best_win_rate = 0.0
     full_results = data.get("full_results") or []
     if full_results and isinstance(full_results, list):
         trades_list = [r.get("metrics", {}).get("total_trades", 0) for r in full_results if isinstance(r, dict)]
         is_total_trades = sum(trades_list)
-        is_max_trades = max(trades_list) if trades_list else 0
+
+        strat_params = full_results[0].get("strat_params", {}) if len(full_results) > 0 and isinstance(full_results[0], dict) else {}
+        max_trades_cap = strat_params.get("max_trades_cap")
+
+        hit_trade_cap = False
+        if max_trades_cap is not None:
+            # Check if any run hit the cap
+            if any(t >= max_trades_cap for t in trades_list):
+                hit_trade_cap = True
         # Issue #407: beste IS-Rendite/-Trefferquote als Gate-Naehe-Signal (None-safe; negative
         # Rendite traegt 0 bei, da der Reward sie spaeter ohnehin auf [0,1] clippt).
         returns_list = [(r.get("metrics") or {}).get("total_return") or 0.0
@@ -151,7 +159,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         win_count=int(win_count) if win_count is not None else 0,
         fully_eligible_pairs=int(fully_eligible_pairs) if fully_eligible_pairs is not None else 0,
         is_total_trades=int(is_total_trades),
-        is_max_trades=int(is_max_trades),
+        hit_trade_cap=bool(hit_trade_cap),
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
         oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else 0.0,
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else 0.0,
