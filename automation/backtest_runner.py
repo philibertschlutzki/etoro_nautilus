@@ -942,7 +942,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             and float(mtm_series.iloc[0]) != 0.0):
         total_return = float(mtm_series.iloc[-1]) / float(mtm_series.iloc[0]) - 1.0
     else:
-        total_return = 0.0
+        # Fallback ohne verwertbare Equity-Kurve (z. B. spärliche OOS-Slices mit nur
+        # einem Datenpunkt am Fold-Rand): sequentielles Aufzinsen der realisierten,
+        # zeitlich geordneten PnLs `Π(1 + v/C0) − 1` statt der fehlerhaften 0.0-Zuweisung.
+        # Verhindert Zero-Return-Artefakte, die das OOS-Gate als "Breakeven" fehlinterpretiert
+        # und die TPE-Signale verzerren (Issue #529, siehe #521). Der Docstring oben spezifiziert
+        # exakt dieses kompoundierte Verhalten.
+        comp = 1.0
+        for v in pnl_list:
+            comp *= (1.0 + v / starting_capital)
+        total_return = comp - 1.0
 
     if mtm_series is not None and not mtm_series.empty:
         import numpy as np
