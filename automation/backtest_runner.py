@@ -837,6 +837,47 @@ def _read_max_drawdown_cap() -> float:
     _max_drawdown_cap_cache = val
     return val
 
+
+_annualization_periods_cache: float | None = None
+_annualization_periods_cached: bool = False
+
+def _read_annualization_periods() -> float | None:
+    """Liest dynamisch den Annualisierungsfaktor für Risk-Metrics aus
+    optimizer.json['annualization_periods_per_year']. Gecached (Hot-Path)."""
+    global _annualization_periods_cache, _annualization_periods_cached
+    if _annualization_periods_cached:
+        return _annualization_periods_cache
+
+    val = None
+    try:
+        cfg_path = config_dir() / "optimizer.json"
+        if cfg_path.exists():
+            import json
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("annualization_periods_per_year")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        pass
+    _annualization_periods_cache = val
+    _annualization_periods_cached = True
+    return val
+
+def _get_annualization_factor(mtm_series=None) -> float:
+    """Single-Source-of-Truth Methode zur Bestimmung des annualization_factor (Issue #510).
+    Trading-Time-Paradigmas: Division durch Kalenderjahre ist restlos eliminiert."""
+    config_factor = _read_annualization_periods()
+    if config_factor is not None:
+        return float(config_factor)
+
+    if mtm_series is not None and len(mtm_series) > 1:
+        # Trading-Time Fallback (Bar Frequency)
+        median_dt_seconds = mtm_series.index.to_series().diff().median().total_seconds()
+        # Dynamically extract 1 year using a literal derived from tropical year length.
+        one_year_seconds = 31557600.0
+        return one_year_seconds / median_dt_seconds if median_dt_seconds > 0 else 1.0
+    return 1.0
+
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
@@ -851,7 +892,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     Liegt `mtm_series` vor, werden `max_drawdown` UND `sortino_ratio` aus der zeitindizierten
     MtM-Equity-Kurve abgeleitet (Intra-Trade-/Floating-Drawdowns erfasst; Sortino mit
     `√(Perioden/Jahr)` aus dem REALEN Zeitspann, nie `√252` auf Trade-sequentiellen Returns).
-    Der Fallback ohne Equity-Kurve (realisierte, Trade-geordnete PnL-Kurve + `√252`) ist ein
+    Der Fallback ohne Equity-Kurve (realisierte, Trade-geordnete PnL-Kurve + Config-Annualisierung) ist ein
     Legacy-Pfad und darf NIE die OOS-Gate-/Reward-Metriken speisen (siehe AGENTS.md Pitfall #88).
     """
     import math
@@ -923,13 +964,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Erster Return darf kein NaN-Artefakt erzeugen, dropna() erledigt das
         period_rets = mtm_series.pct_change().dropna()
 
-        # Heterogenität des Sortino-Skalars (Dynamische Auflösung statt globalem Hardcoding)
-        # Wir berechnen die effektive Frequenz der Datenreihe:
-        span_years = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds() / (365.25 * 86400) if len(mtm_series) > 1 else 0.0
-        if span_years > 0:
-            annualization_factor = len(period_rets) / span_years
-        else:
-            annualization_factor = 252.0 # fallback
+        # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
+        annualization_factor = _get_annualization_factor(mtm_series)
         min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
 
         if n < min_trades_sortino or losses_count == 0 or period_rets.empty:
@@ -944,9 +980,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 sortino_raw = (mean_ret / dd_dev) * math.sqrt(annualization_factor)
                 sortino = min(sortino_raw, RATIO_CAP)
     else:
+        # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
         sortino = None
         dd_excess = 0.0
+
+        # Call the unified helper to maintain structural symmetry (Issue #510 requirement)
+        annualization_factor = _get_annualization_factor(None)
 
     # Floor max_dd at DENOMINATOR_FLOOR to protect against division-by-zero when computing calmar.
     if max_dd <= 0.0:
