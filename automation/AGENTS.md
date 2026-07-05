@@ -1516,3 +1516,9 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 * OOS Fold Kachelung: The OOS folds are contiguous in duration (e.g., each OOS split is precisely `oos_window_ns` long) and sequential starting after the embargo period.
 
 > "Risikometriken (MDD, Calmar, Sortino) MÜSSEN auf Bar-level MtM-Equity-Vektoren operieren, niemals auf PnL-Aggregaten."
+
+### 1. Metric Paradigms
+- **Period Definition:** Zwingende Anwendung des Trading-Time-Paradigmas für sämtliche Risk- und Return-Metrics. Die Division durch absolute Kalenderjahre (`span_years`) führt bei Time-Series mit Market-Gaps (Overnight/Weekend) zu systematischen Verzerrungen und ist untersagt.
+
+### 2. Agent Constraints
+- **Time Constants:** Absolutes Verbot von hardcodierten Zeitkonstanten (z. B. `252`, `365`, `math.sqrt(252)`) in der Evaluierungs-Logik. Annualisierungsfaktoren sind deterministisch via Config (`annualization_periods_per_year`) oder dynamisch über die Frequenz der Time-Series (`pandas.Timedelta`) abzuleiten.
