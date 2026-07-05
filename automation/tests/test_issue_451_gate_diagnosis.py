@@ -30,7 +30,7 @@ START_NS = int(pd.Timestamp("2025-05-16", tz="UTC").value)
 def _metrics(**kw) -> TournamentMetrics:
     base = dict(oos_evaluated=False, oos_eligible=False, is_sortino_median=0.0,
                 oos_sortino=None, oos_max_drawdown=0.0, oos_total_trades=0, win_count=0,
-                fully_eligible_pairs=0, is_total_trades=502, is_max_trades=502)
+                fully_eligible_pairs=0, is_total_trades=502, hit_trade_cap=False)
     base.update(kw)
     return TournamentMetrics(**base)
 

@@ -35,7 +35,7 @@ W = {
 def _m(**kw):
     base = dict(oos_evaluated=False, oos_eligible=False, is_sortino_median=0.0,
                 oos_sortino=None, oos_max_drawdown=0.0, oos_total_trades=0,
-                win_count=0, fully_eligible_pairs=0, is_total_trades=0, is_max_trades=0,
+                win_count=0, fully_eligible_pairs=0, is_total_trades=0, hit_trade_cap=False,
                 oos_total_return=0.0)
     base.update(kw)
     return TournamentMetrics(**base)

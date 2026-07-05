@@ -23,7 +23,7 @@ from automation.optimizer import trial_config
 
 REQUIRED_KEYS = (
     "symbol", "oos_evaluated", "oos_eligible", "oos_total_trades",
-    "oos_total_return", "is_total_trades", "is_max_trades", "outcome",
+    "oos_total_return", "is_total_trades", "hit_trade_cap", "outcome",
 )
 
 
@@ -119,7 +119,7 @@ def test_unevaluable_trial_separates_is_from_oos_drop(tmp_path, monkeypatch, tri
     assert e["oos_total_trades"] == 0
     # IS-Drop vs OOS-Drop: IS handelt reichlich (Saettigungsquelle), OOS evaluiert nie.
     assert e["is_total_trades"] == 210
-    assert e["is_max_trades"] == 120
+    assert e["hit_trade_cap"] is False
 
 
 def test_one_event_per_trial(tmp_path, monkeypatch, trial_events):

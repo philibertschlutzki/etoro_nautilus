@@ -56,6 +56,9 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     cooldown_bars: int = 12
     trend_filter_period: int = 0
     max_daily_trades: int | None = 5
+    min_holding_time: int = 0
+    min_signal_strength: float = 0.0
+    max_trades_cap: int | None = None
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
@@ -105,6 +108,7 @@ class HourlyStrategyBase(Strategy):
         self._profit_target_pct = getattr(config, "profit_target_pct", None)
         self._daily_trades: int = 0
         self._current_day: int | None = None
+        self._executed_trades: int = 0
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
@@ -242,6 +246,9 @@ class HourlyStrategyBase(Strategy):
         return 0.0
 
     def _check_exits_and_update(self, bar: Bar) -> bool:
+        if getattr(self.config, "max_trades_cap", None) and self._executed_trades >= self.config.max_trades_cap:
+            return True
+
         """
         Called at the START of every on_bar() in subclasses.
         Updates ATR, trailing stop level, and bar counter.
@@ -325,6 +332,11 @@ class HourlyStrategyBase(Strategy):
         # Exit condition 2: Time-based exit (48 bars)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
             exit_reason = f"Time-exit after {self._bars_in_position} bars"
+
+        # Apply min_holding_time guard to exits that are not trailing stops (e.g. time exits, signals, etc)
+        if exit_reason is not None and getattr(self.config, "min_holding_time", 0) > 0:
+            if "Trailing Stop" not in exit_reason and self._bars_in_position < self.config.min_holding_time:
+                exit_reason = None # Ignore the exit if holding time is not reached
 
         if exit_reason:
             self._log.info(f"[{self.instrument_id}] EXIT: {exit_reason}")
@@ -474,7 +486,8 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_side = None
         self._take_profit_price = None
         self._daily_trades += 1
-        self._log.info(f"[{self.instrument_id}] PositionOpened: {event} (Trade {self._daily_trades} today)")
+        self._executed_trades += 1
+        self._log.info(f"[{self.instrument_id}] PositionOpened: {event} (Trade {self._daily_trades} today, {self._executed_trades} total)")
 
         # Submit native limit order for profit target
         if self._profit_target_pct is not None:

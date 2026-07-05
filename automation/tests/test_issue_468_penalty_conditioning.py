@@ -13,7 +13,7 @@ TournamentMetrics = namedtuple("TournamentMetrics", [
     "oos_evaluated",
     "oos_eligible",
     "is_total_trades",
-    "is_max_trades",
+    "hit_trade_cap",
     "is_sortino_median",
     "win_count",
     "fully_eligible_pairs"
@@ -60,7 +60,7 @@ def test_constraint_distance_penalty_isolation():
             oos_evaluated=True,
             oos_eligible=False,
             is_total_trades=0,
-            is_max_trades=0,
+            hit_trade_cap=False,
             is_sortino_median=0.0,
             win_count=0,
             fully_eligible_pairs=0

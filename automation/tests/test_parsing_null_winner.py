@@ -59,7 +59,7 @@ def test_is_activity_metrics_parsing(tmp_path):
     })
     m = parse_tournament(p)
     assert m.is_total_trades == 35
-    assert m.is_max_trades == 25
+    assert m.hit_trade_cap is False
 
 def test_happy_path_regression(tmp_path):
     p = _write(tmp_path, {"fully_eligible_pairs": 5, "aggregate_winner": {

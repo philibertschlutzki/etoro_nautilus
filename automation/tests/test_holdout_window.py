@@ -60,7 +60,7 @@ def test_confirm_passes_holdout_days_as_oos_override(monkeypatch):
             win_count=5,
             fully_eligible_pairs=5,
             is_total_trades=20,
-            is_max_trades=5
+            hit_trade_cap=False
         )
 
     # parse_tournament/Output minimal mocken, sodass confirm nicht crasht:
