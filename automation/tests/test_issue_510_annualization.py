@@ -48,7 +48,7 @@ def test_annualization_path_parity():
 
     RATIO_CAP = 50.0
     expected_config_sortino = min((mean_ret / dd_dev) * math.sqrt(111.0), RATIO_CAP)
-    expected_fallback_sortino = min((mean_ret / dd_dev) * math.sqrt(31557600.0 / 86400), RATIO_CAP)
+    expected_fallback_sortino = min((mean_ret / dd_dev) * math.sqrt(pd.Timedelta(days=365.25).total_seconds() / 86400), RATIO_CAP)
 
     assert math.isclose(sortino_config, expected_config_sortino, rel_tol=1e-9)
     assert math.isclose(sortino_fallback, expected_fallback_sortino, rel_tol=1e-9)
@@ -66,7 +66,7 @@ def test_annualization_path_parity_strict():
     hold_list = [(3600*1e9, 1.0)] * 3
 
     median_dt_seconds = mtm_series.index.to_series().diff().median().total_seconds()
-    derived_factor = 31557600.0 / median_dt_seconds
+    derived_factor = pd.Timedelta(days=365.25).total_seconds() / median_dt_seconds
 
     with patch("automation.backtest_runner._read_annualization_periods", return_value=derived_factor):
         metrics_with_config = _calculate_stats(
