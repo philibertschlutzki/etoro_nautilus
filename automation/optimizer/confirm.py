@@ -174,11 +174,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         with open(backtest_path, "r", encoding="utf-8") as f:
             wf_cfg = (json.load(f) or {}).get("walk_forward", {})
 
-    is_window_days = wf_cfg.get("is_window_days", 120)
-    holdout_days = wf_cfg.get("holdout_days", 45)
-    oos_window_days_cfg = wf_cfg.get("oos_window_days", 45)
-    n_folds = wf_cfg.get("splits", 1)
-    embargo_period_days = wf_cfg.get("embargo_period_days", 0)
+    is_window_days = wf_cfg["is_window_days"]
+    holdout_days = wf_cfg["holdout_days"]
+    oos_window_days_cfg = wf_cfg["oos_window_days"]
+    n_folds = wf_cfg["splits"]
+    embargo_period_days = wf_cfg["embargo_period_days"]
 
     if catalog_newest_ns is not None:
         now = dt.datetime.now(dt.timezone.utc)
