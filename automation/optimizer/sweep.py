@@ -328,6 +328,7 @@ def _load_gate_config() -> dict:
 
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
                          *, tier: str = "deployable", n_jobs: int = 1,
+                         n_jobs_source: str = "DEFAULT",
                          optimize_symbol=None, confirm=None) -> list[Path]:
     """Dispatcht für jedes enumerierte Paar optimize_symbol → confirm_per_symbol_promotion →
     export_symbol_proposal und gibt die Proposal-Pfade zurück. Betritt NIE Phase 5.
@@ -420,11 +421,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         "strategies": n_strats,
         "symbols": n_syms,
         "n_jobs": n_jobs,
+        "n_jobs_source": n_jobs_source,
         "wallclock_s": wallclock_s,
     })
     mins, secs = divmod(int(wallclock_s), 60)
     print(f"✅ Sweep fertig: {len(pairs)} Paare, {n_strats} Strategien × {n_syms} Symbole, "
-          f"n_jobs={n_jobs}, Gesamtlaufzeit {mins}m{secs:02d}s.")
+          f"n_jobs={n_jobs} ({n_jobs_source}), Gesamtlaufzeit {mins}m{secs:02d}s.")
     return proposals
 
 
@@ -460,14 +462,43 @@ def main(argv: list[str] | None = None) -> list[Path]:
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
 
+    # Issue #511: Concurrency Management & Determinism Guard
+    import sys
+    active_argv = argv if argv is not None else sys.argv
+    is_cli_n_jobs = "--n-jobs" in active_argv
+
+    opt_cfg_path = config_dir() / "optimizer.json"
+    seed = None
+    try:
+        opt_cfg = json.loads(opt_cfg_path.read_text("utf-8")) if opt_cfg_path.exists() else {}
+        seed = opt_cfg.get("seed")
+    except Exception:
+        pass
+
+    if seed is not None:
+        if args.n_jobs > 1:
+            raise ValueError(
+                f"[FATAL] Determinism Constraint Violation: Seed ({seed}) erfordert zwingend Sweep-Level n_jobs=1. "
+                f"Erkannter CLI Override: n_jobs={args.n_jobs}. "
+                "Silent Overrides sind in diesem Execution Context strikt untersagt."
+            )
+        eff_n_jobs = 1
+        n_jobs_source = "ENFORCED_BY_SEED"
+    else:
+        eff_n_jobs = args.n_jobs
+        n_jobs_source = "CLI" if is_cli_n_jobs else "DEFAULT"
+
     # Issue #403: Config-Quellen + Kern-Schwellen einmalig offenlegen, bevor der Sweep in die
     # (subprocess-stummen) iterativen Trials uebergeht.
     log_active_config(f"per-symbol sweep · tier={args.tier}",
-                      extra={"n_jobs": args.n_jobs,
+                      extra={"Sweep-Level n_jobs": eff_n_jobs,
+                             "Study-Level n_jobs": 1,
+                             "n_jobs_source": n_jobs_source,
+                             "seed": seed,
                              "strategien": len(strategies),
                              "symbole": "all" if symbols is None else len(symbols)})
 
-    proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=args.n_jobs)
+    proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs, n_jobs_source=n_jobs_source)
     for p in proposals:
         print(p)
     return proposals

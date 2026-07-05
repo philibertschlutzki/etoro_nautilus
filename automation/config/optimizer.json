@@ -4,7 +4,7 @@
     "fields": {
       "n_trials": "Anzahl der Optimierungsdurchl\u00e4ufe (Trials) pro Strategie.",
       "n_startup_trials": "Anzahl der initialen Zufalls-Trials f\u00fcr den Optuna Sampler.",
-      "seed": "Random Seed f\u00fcr Reproduzierbarkeit.",
+      "seed": "Random Seed f\u00fcr Reproduzierbarkeit. Ist dieser Wert gesetzt (nicht null), wird die Sweep-Level Concurrency (--n-jobs) im Per-Symbol-Sweep strikt auf 1 gezwungen (Issue #511), um 100% reproduzierbare Sampling-Reihenfolgen (Determinism Guard) zu garantieren.",
       "penalty_overfit_weight": "Gewichtung der Strafe f\u00fcr Overfitting.",
       "penalty_dd_weight": "Gewichtung der Strafe f\u00fcr Drawdowns.",
       "bonus_coverage_weight": "Gewichtung des Bonus f\u00fcr Coverage.",
@@ -24,7 +24,7 @@
       "gate1_buffer_days": "A4.4 \u2014 Puffer (Tage) \u00fcber IS + splits*OOS + Holdout, den die Symbol-Historie zus\u00e4tzlich abdecken muss (Gate 1 Daten-Suffizienz).",
       "min_bars_per_param": "A4.4 \u2014 Mindestverh\u00e4ltnis available_bars / n_params (Anti-Overfit-Heuristik in Gate 1).",
       "min_oos_bars_per_fold": "A4.4 \u2014 Mindest-Bar-Zahl je OOS-Fold (oos_window_days * bars_per_day), damit ein Fold statistisch aussagekr\u00e4ftig ist (Gate 1).",
-      "storage_url": "A4.7 (optional) \u2014 Optuna-Storage-URL f\u00fcr Per-Symbol-Studies. null \u21d2 SQLite-Default ({WORK}/sweep/{study}.db). Reines Opt-In f\u00fcr echte Multi-Maschinen-Parallelit\u00e4t (z. B. PostgreSQL); weicht die SQLite-Leitplanke (Pitfall #53) bewusst auf. ENV ETORO_OPTUNA_STORAGE hat Vorrang. Bei non-SQLite nur n_jobs=1 deterministisch.",
+      "storage_url": "A4.7 (optional) \u2014 Optuna-Storage-URL f\u00fcr Per-Symbol-Studies. null \u21d2 SQLite-Default ({WORK}/sweep/{study}.db). Reines Opt-In f\u00fcr echte Multi-Maschinen-Parallelit\u00e4t (z. B. PostgreSQL); weicht die SQLite-Leitplanke (Pitfall #53) bewusst auf. ENV ETORO_OPTUNA_STORAGE hat Vorrang. Bei non-SQLite ist das Study-Level Sampling nur bei n_jobs=1 (intern immer erzwungen) deterministisch.",
       "reward_semantics_version": "Issue #410 (Pitfall #75) \u2014 monoton steigende Versionsnummer der Reward-Semantik. Wird beim Anlegen einer frischen Study als user_attr gestempelt. Traegt eine geladene Study eine ALTE/keine Version, obwohl sie schon Trials hat, warnt der Optimizer laut (alte Floor-Trials sind mit der neuen Semantik nicht vergleichbar \u21d2 stale DB loeschen). v3 = Fixes #404\u2013#407 (Per-Symbol-Evaluierbarkeit entkoppelt, kontextsensitives Shaping, Gate-Proximity-Gradient). v4 = Fixes #461: Constraint Failure Band-Clamp gegen Reward-Inversion. v6 = Issue #468 Semantics Guard, Issue #467 Penalty Conditioning.",
       "annualization_periods_per_year": "Annualisierungsfaktor f\u00fcr Sortino Ratio, z.B. 252 f\u00fcr Daily oder 6300 f\u00fcr Hourly. Null-Hardcoding Ansatz (Issue #464)."
     }

@@ -399,6 +399,16 @@ Abgedeckte Suiten (laut Test_report.md): Isolation, fractional_trading, utils (P
 
 ---
 
+## 13.5 Reproducibility & Determinism
+
+Der Optimizer und insbesondere der Sweep garantieren **strikte Reproduzierbarkeit**, wenn ein `seed` in `automation/config/optimizer.json` definiert ist.
+
+* **Determinism Contract**: `Identischer Seed + Identische Daten/Flags = 100% identische best_value Sequenz`.
+* **Study-Level vs. Sweep-Level Concurrency**:
+    * **Study-Level**: Das Sampling durch Optunas TPE-Sampler innerhalb EINER SQLite-basierten Study *muss* stets sequenziell erfolgen. Darum erzwingt `optimize_symbol` intern immer `n_jobs=1`.
+    * **Sweep-Level**: Das parallele Dispatching *unterschiedlicher* Studies (Paare von Strategie und Symbol) via `--n-jobs` an den Meta-Orchestrator (in `sweep.py`).
+* **Determinism Guard (Issue #511)**: Um die Reproduzierbarkeit der Optuna-Sampling-Reihenfolge nicht durch die unvorhersehbare Trial-Completion-Order paralleler Worker zu zerstören (Concurrency Leak), wird die Sweep-Level Concurrency (`--n-jobs`) strikt auf `1` gezwungen, sobald ein `seed` konfiguriert ist. In diesem Fall wird der Wert der Telemetrie-Eigenschaft `n_jobs_source` auf `"ENFORCED_BY_SEED"` gesetzt.
+
 ## 14. Error-Handling-Konventionen
 
 - WebSocket-Fehler → `os._exit(1)` (systemd-Restart). KEINE In-Process-Reconnection.
