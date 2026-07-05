@@ -1157,7 +1157,7 @@ fließt je in Reward/Promotion zurück). Zentrale Events:
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 
 
-### 🟢 Pitfall #90 — OOS-Eval an IS-Gate gekoppelt (Issue #471 / #487)
+### 🟢 Pitfall #89 — OOS-Eval an IS-Gate gekoppelt (Issue #471 / #487)
 **Symptom:** OOS-Metriken werden an das Bestehen des IS-Gates gekoppelt und bei IS-Fail verworfen, obwohl die OOS-Trades existieren. Dies führt zu OOS-Anchor Divergence (Wurzelursache für Issue #494).
 **Fix:** `_oos_eval`-Zuweisung in `select_winners` iteriert über `all_results`. OOS-Evaluierbarkeit vollständig von IS-Eligibility getrennt. Fail-Loud-Invariante in `parse_tournament`.
 **Betroffen:** `automation/backtest_runner.py`, `automation/optimizer/parsing.py`
@@ -1503,6 +1503,14 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 | 2026-06-29 | **Fix Issue #472 / #488 (Reward Shaping Monotonicity & Floor Plateau Guard):** Reward-Shaping (`is_total_trades`) durch `_gate_proximity` geclippt (Tie-Breaker-Gradient). Floor-Plateau Guard bricht Suchen nach `K` All-Unevaluable Trials frühzeitig mit JSON Event ab. | `automation/optimizer/reward.py`, `automation/optimizer/run_optimization.py` |
 | 2026-06-30 | **Fix Issue #473 / #503 (Walk-Forward Boundary Hardcoding):** Walk-Forward `oos_lo_ns` arithmetisch auf `window_start` anstatt auf fehlerhaft ausgepacktes `holdout_start` gestützt. Zero-Hardcoding durch dynamische Auslesung von `oos_window_days` realisiert. | `automation/optimizer/confirm.py`, `automation/tests/test_holdout_window.py` |
 | 2026-07-01 | **Fix Issue #506 (Expectancy Penalty Korruption):** `expectancy` als arithmetisches Mittel der Per-Trade-Returns (additive PnLs) umdefiniert. Völlig von `total_return` entkoppelt. Das OOS Gate `oos_min_expectancy` wurde entsprechend angepasst, um die statistisch invalide Division einer Mehrperioden-Größe durch `n_trades` abzulösen. | `automation/backtest_runner.py`, `automation/optimizer/reward.py`, `automation/config/tournament.json`, `automation/optimizer/parsing.py`, `automation/tests/test_issue_506_expectancy.py` |
+
+### 🟢 Pitfall #90: Hot-Path Exception Swallowing (Empty Equity Curve)
+**Symptom:** OOS-Trades sind vorhanden, aber die Mark-to-Market (MtM) Equity-Kurve ist leer. Dies verzerrt Core-Metriken (`total_return`, `max_drawdown`, `sortino_ratio`) massiv.
+**Anti-Pattern:** Die Verwendung von `except Exception: pass` im Hot-Path (insbesondere in State-Tracking oder `on_bar`-Methoden) schluckt potenziell Exceptions, wodurch die Equity-Kurve nicht aufgebaut, der Backtest aber nicht abgebrochen wird. Die Evaluation ist dann nicht vertrauenswürdig. Das Maskieren von Fehlern durch generische Catch-All-Blöcke ist strikt untersagt (Fail-Loud-Pattern zwingend erforderlich).
+**Mathematische Invariante (Kohärenz-Invariante):**
+Bei einer **flachen Endposition** (keine offenen Positionen am Ende des Evaluierungsfensters) gilt das mathematische Gesetz:
+`sign(total_return) == sign(sum(realisierte PnL))`
+Ist dies nicht der Fall (z. B. `total_return == 0.0` trotz non-zero PnL), deutet das zwingend auf asynchrone Fehler im MtM-Tracking oder PnL-Aggregation hin.
 
 ### 🟢 Pitfall #96 — OOS-Gate verwirft profitable asymmetrische Strategien (Win-Rate Inkompatibilität) [BEHOBEN: GH-#504]
 **Symptom:** Profitable Trials (z.B. +2.56 % Return) mit `p = 0.15` und `payoff = 8` werden ausschließlich durch `oos_min_win_rate < 0.25000` als nicht-evaluierbar abgelehnt, obwohl ihr Expectancy und Profit Factor sehr stark positiv sind.
