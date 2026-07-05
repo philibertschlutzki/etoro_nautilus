@@ -878,7 +878,7 @@ def _get_annualization_factor(mtm_series=None) -> float:
         return one_year_seconds / median_dt_seconds if median_dt_seconds > 0 else 1.0
     return 1.0
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -938,7 +938,14 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     # die dominante Reward-Penalty bei realer paralleler/fraktionaler Allokation. Fallback (keine
     # Equity-Kurve, z. B. Direkt-Unit-Calls von ``_calculate_stats``): sequentielles Aufzinsen
     # (Abwärtskompatibilität im Sonderfall nicht-überlappender Full-Capital-Trades).
-    if (mtm_series is not None and not mtm_series.empty and len(mtm_series) > 1
+    if mtm_frames is not None and len(mtm_frames) > 0:
+        comp = 1.0
+        for seg in mtm_frames:
+            if len(seg) > 1 and float(seg.iloc[0]) != 0.0:
+                seg_ret = float(seg.iloc[-1]) / float(seg.iloc[0]) - 1.0
+                comp *= (1.0 + seg_ret)
+        total_return = comp - 1.0
+    elif (mtm_series is not None and not mtm_series.empty and len(mtm_series) > 1
             and float(mtm_series.iloc[0]) != 0.0):
         total_return = float(mtm_series.iloc[-1]) / float(mtm_series.iloc[0]) - 1.0
     else:
@@ -1450,14 +1457,20 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         is_mtm = None
         oos_mtm = None
+        oos_frames = None
         if mtm_series is not None and not mtm_series.empty and _wf:
             # Slicing the mtm_series
             is_start_dt = pd.to_datetime(start_ns, unit="ns")
             is_end_dt = pd.to_datetime(start_ns + is_window_ns, unit="ns")
-            oos_start_dt = pd.to_datetime(start_ns + is_window_ns + embargo_period_ns, unit="ns")
-            oos_end_dt = pd.to_datetime(start_ns + is_window_ns + embargo_period_ns + oos_window_ns * splits, unit="ns")
             is_mtm = mtm_series.loc[is_start_dt:is_end_dt]
-            oos_mtm = mtm_series.loc[oos_start_dt:oos_end_dt]
+
+            oos_frames = []
+            for _, s_ns, e_ns in fold_boundaries:
+                seg = mtm_series.loc[pd.to_datetime(s_ns, unit="ns"):pd.to_datetime(e_ns, unit="ns")]
+                if not seg.empty:
+                    oos_frames.append(seg)
+            oos_mtm = pd.concat(oos_frames) if oos_frames else None
+            oos_mtm = oos_mtm[~oos_mtm.index.duplicated(keep="last")].sort_index() if oos_mtm is not None else None
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 
@@ -1499,7 +1512,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
             level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm)
             if split_oos_pnls:
-                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm)
+                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames)
             else:
                 level_oos = _empty_level_metrics()
             return level_is, level_oos
