@@ -21,7 +21,7 @@ def _cfg_dir(tmp_path):
     with open(cfg_dir / "tournament.json", "w", encoding="utf-8") as f:
         json.dump({"max_drawdown": 0.30}, f)
     with open(cfg_dir / "backtest.json", "w", encoding="utf-8") as f:
-        json.dump({"walk_forward": {"holdout_days": 45}}, f)
+        json.dump({"walk_forward": {"holdout_days": 45, "is_window_days": 120, "oos_window_days": 45, "splits": 1, "embargo_period_days": 0}}, f)
     return cfg_dir
 
 def _isolate(monkeypatch, tmp_path):

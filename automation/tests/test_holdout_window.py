@@ -98,7 +98,9 @@ def test_confirm_per_symbol_promotion_property_sweep(monkeypatch, tmp_path):
         "walk_forward": {
             "is_window_days": 120,
             "holdout_days": 45,
-            "oos_window_days": 30
+                "oos_window_days": 30,
+                "splits": 1,
+                "embargo_period_days": 0
         }
     }))
 
