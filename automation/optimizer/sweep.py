@@ -477,11 +477,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     if seed is not None:
         if args.n_jobs > 1:
-            logging.getLogger("optimizer").warning(
-                "🚨 Determinism Guard: `seed` (%s) ist in optimizer.json gesetzt. "
-                "Sweep-Level Concurrency (--n-jobs %d) wird ignoriert und auf 1 gezwungen, "
-                "um 100%% Reproduzierbarkeit der TPE-Sampling-Reihenfolge zu garantieren "
-                "(Issue #511).", seed, args.n_jobs
+            raise ValueError(
+                f"[FATAL] Determinism Constraint Violation: Seed ({seed}) erfordert zwingend Sweep-Level n_jobs=1. "
+                f"Erkannter CLI Override: n_jobs={args.n_jobs}. "
+                "Silent Overrides sind in diesem Execution Context strikt untersagt."
             )
         eff_n_jobs = 1
         n_jobs_source = "ENFORCED_BY_SEED"
