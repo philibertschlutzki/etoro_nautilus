@@ -12,6 +12,7 @@ class DummyMetrics:
     oos_max_drawdown: float = 0.0
     oos_win_rate: float = 0.0
     oos_profit_factor: float | None = 0.0
+    oos_expectancy: float = 0.0
 
     is_total_trades: int = 0
     is_best_total_return: float = 0.0

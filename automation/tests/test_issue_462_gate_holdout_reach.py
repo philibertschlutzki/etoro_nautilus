@@ -53,7 +53,7 @@ def test_sweep_enumeration_skips_on_holdout_unreachable(caplog):
     with pytest.MonkeyPatch.context() as m:
         m.setattr(sweep, "is_symbol_tunable", lambda *args, **kwargs: (True, "OK"))
         m.setattr(sweep, "n_params_for", lambda *args: 2)
-        m.setattr(sweep, "data_reaches_oos_window", lambda newest, oos_start: (True, "OK"))
+        m.setattr(sweep, "data_reaches_oos_window", lambda newest, start, wf: (True, "OK", 0.0))
         m.setattr(sweep, "data_reaches_holdout_window", lambda newest, holdout_start: (False, "HOLDOUT_WINDOW_UNREACHABLE"))
 
         with caplog.at_level(logging.WARNING):
@@ -64,7 +64,7 @@ def test_sweep_enumeration_skips_on_holdout_unreachable(caplog):
                 available_bars=available_bars,
                 config=config,
                 latest_ts=latest_ts,
-                oos_window_start_ns=oos_start_ns,
+                start_ns=oos_start_ns,
                 holdout_window_reach_target_ns=holdout_start_ns,
             )
 

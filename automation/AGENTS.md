@@ -1574,3 +1574,26 @@ Der Zugriff auf Portfolio-Accounts erfolgt ausschliesslich über die Methoden-Si
 `Portfolio.equity(venue)` liefert zwingend ein Mapping vom Typ `dict[Currency, Money]`. Ein direktes Chaining mit `.as_double()` ist strengstens verboten. Die Extraktion der Währung (Base Currency, z.B. USD oder CHF) muss über `.get()` mit Fallback-Logik implementiert werden. Realisierter plus Floating-PnL wird exakt durch diese Funktion abgebildet.
 * **Axiom 3 (Silent Failure Prohibition):**
 Das Maskieren von Fehlern in der Berechnung von Core-Metriken (MTM-Equity, Drawdown, Sortino) durch generische Catch-All-Blöcke (`except Exception: pass` wie in #522) ist ein P0-Violation. State-Evaluationen müssen bei Typfehlern deterministisch failen.
+
+## Pitfall-Kompendium — Bug-Kaskade #521–#530 (NautilusTrader ≥1.226 Equity/MtM/Annualisierung)
+
+```text
+Pitfall #90 — Equity-Kurve über NautilusTrader-Account-API:
+  Portfolio.account ist eine METHODE (venue-Argument), kein Attribut; margin_balance()
+  existiert seit >=1.226 nicht (nur balance/balance_total); Portfolio.equity() liefert ein
+  dict[Currency, Money]. Für MtM-Equity IMMER Portfolio.equity(venue).get(base_ccy) nutzen.
+  Ein leerer equity_curve => total_return/max_drawdown/sortino kollabieren still auf 0/0/None,
+  während Expectancy (aus pnl_list) weiterlebt — das ist die Signatur dieses Bugs.
+
+Pitfall #91 — Kein nacktes `except Exception: pass` im Bar-Hot-Path:
+  Deterministische API-Fehler pro Bar werden sonst 10^4x lautlos verschluckt. Warn-once
+  statt pass; zusätzlich in extract_metrics harte Warnung, wenn OOS-Trades>0 aber mtm leer.
+
+Pitfall #92 — MtM-OOS-Slice und Trade-OOS-Klassifikation MÜSSEN aus derselben
+  compute_fold_boundaries-Quelle stammen (inkl. identischer Embargo-Konvention). Nicht-
+  kontiguierliche Fold-Segmente produktweise kompoundieren, nie last/first-1 über Lücken.
+
+Pitfall #93 — Annualisierungsfaktor asset-class-/bar-frequenz-bewusst: Config-Konstante
+  darf empirische Bar-Frequenz nicht still überstimmen; √252 auf 1h-Returns unterschätzt
+  den Sortino ~2.5x.
+```
