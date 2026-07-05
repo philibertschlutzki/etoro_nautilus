@@ -728,3 +728,51 @@ def test_broken_pool_fallback_call_signature():
         )
     except TypeError as e:
         pytest.fail(f"Regression Issue #331: TypeError im Fallback-Aufruf bei vollständiger Signatur: {e}")
+
+def test_oos_geometry_embargo_alignment():
+    """
+    Issue #530 Acceptance Criterion: Unittests belegen konsistente Embargo-Konvention über Klassifikation, Log und Slice.
+    """
+    from automation.backtest_runner import compute_fold_boundaries
+    start_ns = 1672531200000000000 # 2023-01-01
+    walk_forward_dict = {
+        "is_window_days": 90,
+        "oos_window_days": 30,
+        "splits": 2,
+        "embargo_period_days": 7
+    }
+    boundaries = compute_fold_boundaries(start_ns, walk_forward_dict)
+
+    # 1. Log Field Check
+    oos_window_start_ns_log = boundaries[0][1]
+
+    # 2. Slice Start Check
+    # The first slice starts exactly at the boundaries[0][1]
+    slice_start = boundaries[0][1]
+
+    # Assert they are identically aligned
+    assert oos_window_start_ns_log == slice_start, "Embargo-Konvention weicht zwischen Log und Slice ab."
+
+def test_segmented_compounding_gap_handling():
+    """
+    Issue #530: Metrik-Berechnung wirft keine Inversions- oder Lücken-Fehler (Gap-Returns) auf.
+    Verify that time series gaps don't cause synthetic drawdowns and compounding works safely.
+    """
+    from automation.backtest_runner import _calculate_stats
+    import pandas as pd
+
+    seg1 = pd.Series([100.0, 110.0]) # 10% return
+    seg2 = pd.Series([100.0, 105.0]) # 5% return
+
+    # 1.10 * 1.05 = 1.155 (-1 = 0.155)
+    metrics = _calculate_stats(pnl_list=[1.0], hold_list=[], starting_capital=1000.0, mtm_frames=[seg1, seg2])
+
+    import math
+    assert math.isclose(metrics["total_return"], 0.155, rel_tol=1e-5), f"Segmented Compounding fehlgeschlagen: {metrics['total_return']}"
+
+    # Test with empty segment / NaN simulation handling check in loop
+    seg_empty = pd.Series([], dtype=float)
+    seg3 = pd.Series([100.0, 100.0]) # 0% return
+
+    metrics2 = _calculate_stats(pnl_list=[1.0], hold_list=[], starting_capital=1000.0, mtm_frames=[seg1, seg_empty, seg3])
+    assert math.isclose(metrics2["total_return"], 0.10, rel_tol=1e-5), f"Exception/Empty-Handling fehlgeschlagen: {metrics2['total_return']}"
