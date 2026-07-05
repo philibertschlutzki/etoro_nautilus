@@ -1532,3 +1532,8 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 
 ### 2. Agent Constraints
 - **Time Constants:** Absolutes Verbot von hardcodierten Zeitkonstanten (z. B. `252`, `365`, `math.sqrt(252)`) in der Evaluierungs-Logik. Annualisierungsfaktoren sind deterministisch via Config (`annualization_periods_per_year`) oder dynamisch über die Frequenz der Time-Series (`pandas.Timedelta`) abzuleiten.
+
+### 🟢 Pitfall #102 — Walk-Forward Geometrie Divergenz (Zero Hardcoding Policy for Optimizer Geometries) [BEHOBEN: GH-#512]
+**Symptom:** Validation Set Invalidation durch inkonsistente OOS/Holdout-Fold-Berechnung zwischen Runner und Optimizer-Gate (`confirm.py`). Die Optimierung lief mit konfigurierten Werten aus `backtest.json`, das Holdout-Gate hardcodierte jedoch Overrides (`oos_window_days=30`, `n_folds=1`), wodurch Overlaps und Leakage zwischen Train und Validation entstanden.
+**Root Cause:** Hardcodierte Walk-Forward und Holdout Literale (`30`, `1`) in der Bestätigungs-Logik (`confirm.py`).
+**Fix/Regel (Zero Hardcoding Policy for Optimizer Geometries):** `backtest.json` ist die **Single Source of Truth (SSOT)** für alle Walk-Forward-, Holdout- und Embargo-Parameter im gesamten Agenten-Lifecycle. Keine Hardcodierung von Optimizer-Geometrien in Python-Code erlaubt. Data Leakage Protection (Embargo-Abstand zwischen Train und Test) muss zwingend bei PRs per Date-Overlap Test evaluiert werden.

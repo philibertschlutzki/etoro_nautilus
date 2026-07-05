@@ -174,9 +174,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         with open(backtest_path, "r", encoding="utf-8") as f:
             wf_cfg = (json.load(f) or {}).get("walk_forward", {})
 
-    is_window_days = wf_cfg.get("is_window_days", 120)
-    holdout_days = wf_cfg.get("holdout_days", 45)
-    oos_window_days_cfg = wf_cfg.get("oos_window_days", 45)
+    is_window_days = wf_cfg["is_window_days"]
+    holdout_days = wf_cfg["holdout_days"]
+    oos_window_days_cfg = wf_cfg["oos_window_days"]
+    n_folds = wf_cfg["splits"]
+    embargo_period_days = wf_cfg["embargo_period_days"]
 
     if catalog_newest_ns is not None:
         now = dt.datetime.now(dt.timezone.utc)
@@ -186,10 +188,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             holdout_days=holdout_days,
             is_window_days=is_window_days,
             oos_window_days=oos_window_days_cfg,
-            n_folds=1,
+            n_folds=n_folds,
             catalog_newest_ns=catalog_newest_ns,
         )
-        oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days)).timestamp() * 1_000_000_000)
+        oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days + (n_folds * oos_window_days_cfg) + embargo_period_days)).timestamp() * 1_000_000_000)
         # verfügbar, sobald catalog_newest_ns >= holdout_oos_start_ns
         if catalog_newest_ns < oos_lo_ns:
             return {
