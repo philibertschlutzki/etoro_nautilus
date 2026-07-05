@@ -177,6 +177,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     is_window_days = wf_cfg.get("is_window_days", 120)
     holdout_days = wf_cfg.get("holdout_days", 45)
     oos_window_days_cfg = wf_cfg.get("oos_window_days", 45)
+    n_folds = wf_cfg.get("splits", 1)
+    embargo_period_days = wf_cfg.get("embargo_period_days", 0)
 
     if catalog_newest_ns is not None:
         now = dt.datetime.now(dt.timezone.utc)
@@ -186,10 +188,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             holdout_days=holdout_days,
             is_window_days=is_window_days,
             oos_window_days=oos_window_days_cfg,
-            n_folds=1,
+            n_folds=n_folds,
             catalog_newest_ns=catalog_newest_ns,
         )
-        oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days)).timestamp() * 1_000_000_000)
+        oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days + (n_folds * oos_window_days_cfg) + embargo_period_days)).timestamp() * 1_000_000_000)
         # verfügbar, sobald catalog_newest_ns >= holdout_oos_start_ns
         if catalog_newest_ns < oos_lo_ns:
             return {
