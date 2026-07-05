@@ -1559,6 +1559,13 @@ Ist dies nicht der Fall (z. B. `total_return == 0.0` trotz non-zero PnL), deutet
 **Root Cause:** Hardcodierte Walk-Forward und Holdout Literale (`30`, `1`) in der Bestätigungs-Logik (`confirm.py`).
 **Fix/Regel (Zero Hardcoding Policy for Optimizer Geometries):** `backtest.json` ist die **Single Source of Truth (SSOT)** für alle Walk-Forward-, Holdout- und Embargo-Parameter im gesamten Agenten-Lifecycle. Keine Hardcodierung von Optimizer-Geometrien in Python-Code erlaubt. Data Leakage Protection (Embargo-Abstand zwischen Train und Test) muss zwingend bei PRs per Date-Overlap Test evaluiert werden.
 
+### 🟢 Pitfall #103 — OOS Geometrie Inkonsistenz in nicht-kontiguierlichen Slices (Issue #530)
+**Symptom:** Verzerrte Return- und Drawdown-Metriken im Out-Of-Sample, da OOS-Slices als synthetischer kontiguierlicher Block gehandhabt wurden, obwohl Walk-Forward mit Embargos strukturell Lücken erzeugt.
+**Fix/Regel (Single Source of Truth für Folds):**
+1. **OOS-Slicing:** `compute_fold_boundaries` ist die **exklusive Schnittstelle** für alle Walk-Forward Evaluationen (Trade-Klassifikation, Logging, Slicing). Der MtM-OOS-Slice muss zwingend als Union der aus `compute_fold_boundaries` generierten OOS-Intervalle konstruiert werden.
+2. **Segmentiertes Return-Compounding:** Bei der Konkatenation nicht-kontiguierlicher Segmente verbietet sich die naive End/Start-Division (`iloc[-1]/iloc[0] - 1`), da Embargo-Lücken andernfalls fälschlich als Return abgebildet werden. `total_return` ist bei Vorliegen von Lücken **zwingend** über das Produkt der Segment-Returns zu kompoundieren: $R_{total} = \prod (1 + R_{segment}) - 1$.
+3. **State Alignment:** Eine identische Embargo-Konvention (Ausschluss des Embargos) ist strikt über Trade-Klassifikation, Logging (`oos_window_start_ns`) und MtM-Slice-Generierung durchzusetzen.
+
 ### NautilusTrader API-Handling (Version >=1.226)
 
 * **Axiom 1 (State & Portfolio Access):**
