@@ -1157,7 +1157,7 @@ fließt je in Reward/Promotion zurück). Zentrale Events:
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 
 
-### 🟢 Pitfall #90 — OOS-Eval an IS-Gate gekoppelt (Issue #471 / #487)
+### 🟢 Pitfall #89 — OOS-Eval an IS-Gate gekoppelt (Issue #471 / #487)
 **Symptom:** OOS-Metriken werden an das Bestehen des IS-Gates gekoppelt und bei IS-Fail verworfen, obwohl die OOS-Trades existieren. Dies führt zu OOS-Anchor Divergence (Wurzelursache für Issue #494).
 **Fix:** `_oos_eval`-Zuweisung in `select_winners` iteriert über `all_results`. OOS-Evaluierbarkeit vollständig von IS-Eligibility getrennt. Fail-Loud-Invariante in `parse_tournament`.
 **Betroffen:** `automation/backtest_runner.py`, `automation/optimizer/parsing.py`
@@ -1504,7 +1504,7 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 | 2026-06-30 | **Fix Issue #473 / #503 (Walk-Forward Boundary Hardcoding):** Walk-Forward `oos_lo_ns` arithmetisch auf `window_start` anstatt auf fehlerhaft ausgepacktes `holdout_start` gestützt. Zero-Hardcoding durch dynamische Auslesung von `oos_window_days` realisiert. | `automation/optimizer/confirm.py`, `automation/tests/test_holdout_window.py` |
 | 2026-07-01 | **Fix Issue #506 (Expectancy Penalty Korruption):** `expectancy` als arithmetisches Mittel der Per-Trade-Returns (additive PnLs) umdefiniert. Völlig von `total_return` entkoppelt. Das OOS Gate `oos_min_expectancy` wurde entsprechend angepasst, um die statistisch invalide Division einer Mehrperioden-Größe durch `n_trades` abzulösen. | `automation/backtest_runner.py`, `automation/optimizer/reward.py`, `automation/config/tournament.json`, `automation/optimizer/parsing.py`, `automation/tests/test_issue_506_expectancy.py` |
 
-### 🟢 Pitfall #90 — Hot-Path Observability & Equity-Curve-Drop (Issue #528)
+### 🟢 Pitfall #90: Hot-Path Exception Swallowing (Empty Equity Curve)
 **Symptom:** OOS-Trades sind vorhanden, aber die Mark-to-Market (MtM) Equity-Kurve ist leer. Dies verzerrt Core-Metriken (`total_return`, `max_drawdown`, `sortino_ratio`) massiv.
 **Anti-Pattern:** Die Verwendung von `except Exception: pass` im Hot-Path (insbesondere in State-Tracking oder `on_bar`-Methoden) schluckt potenziell Exceptions, wodurch die Equity-Kurve nicht aufgebaut, der Backtest aber nicht abgebrochen wird. Die Evaluation ist dann nicht vertrauenswürdig. Das Maskieren von Fehlern durch generische Catch-All-Blöcke ist strikt untersagt (Fail-Loud-Pattern zwingend erforderlich).
 **Mathematische Invariante (Kohärenz-Invariante):**
