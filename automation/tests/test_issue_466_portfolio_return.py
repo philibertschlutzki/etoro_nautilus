@@ -54,12 +54,15 @@ def test_backward_compatible_for_full_capital_single_trade():
 
 
 def test_fallback_sequential_when_no_mtm():
-    """Ohne Equity-Kurve bleibt der sequentielle Fallback erhalten (rückwärtskompatibel)."""
+    """Ohne Equity-Kurve greift der sequentielle Aufzins-Fallback `Π(1 + v/C0) − 1`
+    (Issue #529): keine fehlerhafte 0.0-Zuweisung mehr, die das OOS-Gate als Breakeven
+    fehlinterpretiert."""
     c0 = 100.0
     pnls = [50.0, 50.0]
     stats = _calculate_stats(pnls, [(3600 * 1e9, 1.0)] * 2, c0, mtm_series=None)
-    # Fallback wurde entfernt, total_return ist 0.0 wenn mtm_series fehlt.
-    assert math.isclose(stats["total_return"], 0.0, abs_tol=1e-9)
+    # Kompoundierter Fallback: (1.5 * 1.5) − 1 = 1.25 (NICHT 0.0).
+    assert math.isclose(stats["total_return"], _seq_compound(pnls, c0), abs_tol=1e-9)
+    assert math.isclose(stats["total_return"], 1.25, abs_tol=1e-9)
 
 
 def test_overlapping_trades_use_true_equity_not_naive_sum():
@@ -77,11 +80,13 @@ def test_overlapping_trades_use_true_equity_not_naive_sum():
 
 
 def test_zero_start_equity_falls_back_safely():
-    """Degenerierte Equity-Kurve (Start 0) ⇒ kein Division-by-Zero, sondern sequentieller Fallback."""
+    """Degenerierte Equity-Kurve (Start 0) ⇒ kein Division-by-Zero, sondern sequentieller
+    Aufzins-Fallback `Π(1 + v/C0) − 1` (Issue #529)."""
     c0 = 100.0
     pnls = [10.0]
     ts = pd.date_range("2026-01-01", periods=2, freq="D")
     mtm = pd.Series([0.0, 110.0], index=ts)
     stats = _calculate_stats(pnls, [(3600 * 1e9, 1.0)], c0, mtm_series=mtm)
-    # Fällt auf 0.0 zurück (keine sequentielle Aufzinsung mehr).
-    assert math.isclose(stats["total_return"], 0.0, abs_tol=1e-9)
+    # Fällt auf die kompoundierte Aufzinsung zurück: (1 + 10/100) − 1 = 0.1 (NICHT 0.0).
+    assert math.isclose(stats["total_return"], _seq_compound(pnls, c0), abs_tol=1e-9)
+    assert math.isclose(stats["total_return"], 0.1, abs_tol=1e-9)

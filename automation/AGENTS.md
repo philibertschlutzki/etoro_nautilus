@@ -977,6 +977,19 @@ Aggregat-Pfad ins Gate hebt, MUSS zuerst eine summierte zeitindizierte Equity-Ku
 von `oos_min_total_return` + Bump von `reward_semantics_version`. (Pitfall #88; Guards:
 `test_issue_464_sortino_dimension.py`, `test_issue_465_mtm_drawdown.py`, `test_issue_466_portfolio_return.py`.)
 
+**#529 — Kompoundierter `total_return`-Fallback statt `0.0`-Artefakt (verschärft Pitfall #88):**
+- **Restriktion:** Fallbacks dürfen OOS-Gate-Metriken NIE speisen, sofern eine valide Equity-Kurve
+  vorhanden ist. Die MtM-Priorität aus Axiom A5 bleibt unangetastet (`equity_end/equity_start − 1`).
+- **Scope:** Nach Fix #521 sind Equity-Kurven regulär verfügbar; der Fallback greift daher **exklusiv**
+  bei echt-leeren/spärlichen Slices an Fold-Rändern (Edge-Case: 1 Datenpunkt, `len(mtm_series) ≤ 1`
+  oder `equity_start == 0`).
+- **Rationale:** In diesem Fallback ersetzt der kompoundierte Wert `Π(1 + pnl_i/C0) − 1` **zwingend** die
+  frühere `total_return = 0.0`-Zuweisung. Die `0.0`-Zuweisung erzeugte Zero-Return-Artefakte, die das
+  OOS-Gate fälschlich als „Breakeven" interpretierte und die TPE-Signale punktuell verzerrte (siehe #521).
+  Der `_calculate_stats`-Docstring ist an dieses kompoundierte Verhalten angeglichen.
+- **Guard:** `test_issue_466_portfolio_return.py` (Fallback-Pfad-Tests + MtM-Pfad strikt unverändert),
+  `test_issue_528_return_pnl_coherence.py` (Σ pnl < 0 ⇒ `total_return < 0`).
+
 ### Axiom A6 (#467) — `splits=N` erzeugt N echte rollende Folds, keine Degeneration
 Die Fold-Geometrie ist ein **rollender** Walk-Forward: `is_start = start_ns + fold·oos_window` (IS rollt je
 Fold um genau ein OOS-Fenster vor) mit Purge/Embargo `oos_start = is_start + is_window + embargo`. Damit ist
