@@ -1075,23 +1075,19 @@ class PortfolioMonitor(Actor):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
-        try:
-            eq = None
-            if hasattr(self.portfolio, 'account'):
-                # In NautilusTrader v1.229.0, margin_balance() might only be realized capital.
-                # To guarantee we capture floating PnL (Issue #465), we explicitly add the sum of unrealized PnLs
-                base_eq = self.portfolio.account.margin_balance().as_double() if hasattr(self.portfolio.account, 'margin_balance') else self.portfolio.account.balance().as_double()
-                floating_pnl = sum(pos.unrealized_pnl().as_double() if callable(pos.unrealized_pnl) else float(pos.unrealized_pnl) for pos in self.portfolio.positions()) if hasattr(self.portfolio, 'positions') else 0.0
-                eq = base_eq + floating_pnl
-            elif hasattr(self.portfolio, 'equity'):
-                if callable(self.portfolio.equity):
-                    eq = self.portfolio.equity().as_double()
-                else:
-                    eq = float(self.portfolio.equity)
-            if eq is not None:
-                self.equity_curve.append((bar.ts_event, eq))
-        except Exception:
-            pass
+        from nautilus_trader.model.currencies import USD
+        venue = self.bar_type.instrument_id.venue
+        eq_map = self.portfolio.equity(venue=venue)
+
+        if not eq_map:
+            return
+
+        money = eq_map.get(USD)
+        if money is None:
+            money = next(iter(eq_map.values()), None)
+
+        if money is not None:
+            self.equity_curve.append((bar.ts_event, money.as_double()))
 
     def get_equity_series(self) -> pd.Series:
         if not self.equity_curve:

@@ -1537,3 +1537,12 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 **Symptom:** Validation Set Invalidation durch inkonsistente OOS/Holdout-Fold-Berechnung zwischen Runner und Optimizer-Gate (`confirm.py`). Die Optimierung lief mit konfigurierten Werten aus `backtest.json`, das Holdout-Gate hardcodierte jedoch Overrides (`oos_window_days=30`, `n_folds=1`), wodurch Overlaps und Leakage zwischen Train und Validation entstanden.
 **Root Cause:** Hardcodierte Walk-Forward und Holdout Literale (`30`, `1`) in der Bestätigungs-Logik (`confirm.py`).
 **Fix/Regel (Zero Hardcoding Policy for Optimizer Geometries):** `backtest.json` ist die **Single Source of Truth (SSOT)** für alle Walk-Forward-, Holdout- und Embargo-Parameter im gesamten Agenten-Lifecycle. Keine Hardcodierung von Optimizer-Geometrien in Python-Code erlaubt. Data Leakage Protection (Embargo-Abstand zwischen Train und Test) muss zwingend bei PRs per Date-Overlap Test evaluiert werden.
+
+### NautilusTrader API-Handling (Version >=1.226)
+
+* **Axiom 1 (State & Portfolio Access):**
+Der Zugriff auf Portfolio-Accounts erfolgt ausschliesslich über die Methoden-Signatur `Portfolio.account(venue=None, account_id=None)`. Attribut-basierte Zugriffe werfen `AttributeError`.
+* **Axiom 2 (Equity Handling & Type Safety):**
+`Portfolio.equity(venue)` liefert zwingend ein Mapping vom Typ `dict[Currency, Money]`. Ein direktes Chaining mit `.as_double()` ist strengstens verboten. Die Extraktion der Währung (Base Currency, z.B. USD oder CHF) muss über `.get()` mit Fallback-Logik implementiert werden. Realisierter plus Floating-PnL wird exakt durch diese Funktion abgebildet.
+* **Axiom 3 (Silent Failure Prohibition):**
+Das Maskieren von Fehlern in der Berechnung von Core-Metriken (MTM-Equity, Drawdown, Sortino) durch generische Catch-All-Blöcke (`except Exception: pass` wie in #522) ist ein P0-Violation. State-Evaluationen müssen bei Typfehlern deterministisch failen.
