@@ -8,6 +8,69 @@ the caller (the sweep adapter), never read from disk here.
 """
 
 
+class InsufficientGeometryError(Exception):
+    """Issue #531 — die REAL vorhandene Bar-Spanne deckt die Walk-Forward-Geometrie NICHT ab.
+
+    Fehlercode ``REJECT_DATA_INSUFFICIENT_GEOMETRY`` (Error-Taxonomy, AGENTS.md §14). Wird
+    geworfen, sobald ``actual_span_days < is_window + splits*oos_window + holdout``. Ersetzt das
+    stille ``.loc``-Klemmen des letzten OOS-Folds/Holdouts (No-Clamping-Policy, Fail-Loud-Paradigma):
+    ein verkürzter/leerer Fold verzerrt die Walk-Forward-Aggregation und darf NIE stillschweigend
+    entstehen. Trägt die Diskrepanz (``actual``/``required``/``delta``) explizit, damit sie im
+    Log/Telemetry sichtbar wird (``emit_gate1_rejection``)."""
+
+    code = "REJECT_DATA_INSUFFICIENT_GEOMETRY"
+
+    def __init__(self, *, actual: float, required: float, symbol: str | None = None,
+                 code: str = "REJECT_DATA_INSUFFICIENT_GEOMETRY") -> None:
+        self.actual = round(float(actual), 2)
+        self.required = round(float(required), 2)
+        self.delta = round(self.required - self.actual, 2)
+        self.symbol = symbol
+        self.code = code
+        sym = f"{symbol}: " if symbol else ""
+        super().__init__(
+            f"{sym}{code} — verfügbare Bar-Spanne {self.actual:.1f} Tage < erforderliche "
+            f"Walk-Forward-Geometrie {self.required:.1f} Tage (Defizit {self.delta:.1f} Tage). "
+            f"Silent .loc-Klemmung des letzten OOS-Folds/Holdouts ist verboten (No-Clamping-Policy). "
+            f"Reduziere die Geometrie ODER beschaffe mehr Katalog-Historie (Backfill)."
+        )
+
+
+def required_span_days(walk_forward_dict: dict) -> int:
+    """Issue #531 — die physisch erforderliche Kalendertag-Spanne der ROHDATEN für die volle
+    Walk-Forward-Geometrie: ``is_window_days + splits*oos_window_days + holdout_days``.
+
+    Rein, I/O-frei. Dies ist die Single Source of Truth der ``required_span``-Formel (deckungsgleich
+    mit Issue #531 = 180 + 4·45 + 45 = 405). Bewusst OHNE ``gate1_buffer_days`` (der Puffer ist die
+    Backfill-Schwelle, nicht der Fail-Loud-Floor) und OHNE ``embargo_period_days`` (das Embargo
+    verschiebt die OOS-Grenzen INNERHALB des Fensters, erweitert aber die geforderte Außen-Spanne
+    nicht — vgl. ``compute_walk_forward_window``)."""
+    wf = walk_forward_dict or {}
+    return int(
+        wf.get("is_window_days", 0)
+        + wf.get("splits", 0) * wf.get("oos_window_days", 0)
+        + wf.get("holdout_days", 0)
+    )
+
+
+def assert_walk_forward_geometry(*, actual_span_days: float, walk_forward_dict: dict,
+                                 symbol: str | None = None) -> float:
+    """Issue #531 — Fail-Loud-Gate gegen die REAL vorhandene Bar-Spanne (nicht gegen den
+    Config-Wert ``data_history_days``).
+
+    Wirft ``InsufficientGeometryError`` (Code ``REJECT_DATA_INSUFFICIENT_GEOMETRY``), sobald
+    ``actual_span_days < required_span_days(walk_forward_dict)``. Rein, I/O-frei — der Aufrufer
+    injiziert die real gemessene Spanne (``(df.index.max() - df.index.min()).days`` bzw.
+    ``available_bars / bars_per_day``). Gibt ``required_span_days`` zurück, wenn die Geometrie passt.
+
+    Das ist der einzige zulässige Ersatz für die frühere stille ``.loc``-Klemmung: greift die
+    Geometrie über den Datenrand, MUSS hier ein deterministischer Abbruch erfolgen (No-Clamping)."""
+    required = required_span_days(walk_forward_dict)
+    if float(actual_span_days) < float(required):
+        raise InsufficientGeometryError(actual=actual_span_days, required=required, symbol=symbol)
+    return float(required)
+
+
 def required_bars(*, is_window_days: int, oos_window_days: int, splits: int,
                   holdout_days: int, buffer_days: int, bars_per_day: int = 24) -> int:
     """Minimum bar count for the entire window on 1h bars:

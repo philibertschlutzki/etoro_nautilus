@@ -417,6 +417,108 @@ async def run_historical_fetch(
     return fetched
 
 
+# ─── Pre-Sweep Backfill Hook (Issue #531) ────────────────────────────────────
+
+def _default_backfill_fetch(
+    symbols: list[str],
+    *,
+    required_days: int,
+    buffer_days: int,
+    universe_path: Path,
+    api_key: str | None,
+    user_key: str | None,
+    logger: logging.Logger,
+) -> list[str]:
+    """Synchroner Default-Backfill für ``ensure_walkforward_history`` (Issue #531).
+
+    Löst Symbole → eToro-IDs (Universe) auf, liest die API-Keys aus der Umgebung/.env und stößt
+    einen **synchronen** ``run_historical_fetch`` an, der bis ``now − (required_days + buffer_days)``
+    zurückreicht. Fehlen Keys oder das Universe-Mapping, wird sauber (Fail-Open) mit ``[]`` beendet —
+    das Sweep-Gate entscheidet danach ohnehin fail-loud über unzureichende Symbole."""
+    if not api_key or not user_key:
+        load_dotenv(str(ENV_FILE))
+        api_key = api_key or os.getenv("ETORO_API_KEY", "")
+        user_key = user_key or os.getenv("ETORO_USER_KEY", "")
+    if not api_key or not user_key:
+        logger.warning("[#531] Backfill übersprungen: ETORO_API_KEY/ETORO_USER_KEY fehlen.")
+        return []
+
+    id_map = _load_etoro_id_map(universe_path)
+    wanted = set(symbols)
+    to_fetch = {eid: sym for eid, sym in id_map.items() if sym in wanted}
+    if not to_fetch:
+        logger.warning("[#531] Backfill übersprungen: kein Universe-Mapping für %s.", sorted(wanted))
+        return []
+
+    depth_days = int(required_days + buffer_days)
+    start_ns = int((datetime.now(timezone.utc) - timedelta(days=depth_days)).timestamp() * 1e9)
+    months = max(1, (depth_days + 29) // 30)
+    return asyncio.run(run_historical_fetch(
+        api_key=api_key, user_key=user_key, etoro_id_to_symbol=to_fetch,
+        months=months, start_ns=start_ns,
+    ))
+
+
+def ensure_walkforward_history(
+    symbols: list[str],
+    walk_forward_dict: dict,
+    *,
+    span_days_by_symbol: dict[str, float],
+    gate1_buffer_days: int = 0,
+    logger: logging.Logger | None = None,
+    fetch_fn=None,
+    universe_path: Path = UNIVERSE_PATH,
+    api_key: str | None = None,
+    user_key: str | None = None,
+) -> dict:
+    """Issue #531 — Pre-Sweep-Hook: erzwingt die volle Walk-Forward-Historie VOR dem Sweep.
+
+    Liegt die REAL vorhandene Bar-Spanne eines Symbols (``span_days_by_symbol[sym]``, vom Aufrufer
+    aus den Parquet-Statistiken injiziert) unter ``required_span_days + gate1_buffer_days`` (z. B.
+    405 + 30 = 435 Tage), wird ein **synchroner** Backfill-Request an den ``historical_fetcher``
+    abgesetzt, um das fehlende Delta (z. B. TSLA.ETORO-1h) nachzuladen, bevor der Sweep iteriert.
+
+    Rein orchestrierend und vollständig injizierbar (HI-7): ``span_days_by_symbol`` und ``fetch_fn``
+    kommen von außen, es findet KEIN eigenständiges Parquet-I/O statt. Gibt einen Report zurück
+    (``required_days``/``threshold_days``/``deficient``/``backfilled``); wirft NIE — schlägt der
+    Backfill fehl (keine Keys, Netzfehler), entscheidet das nachgelagerte Gate-1 fail-loud."""
+    from automation.optimizer.gate import required_span_days
+
+    log = logger or logging.getLogger("historical_fetcher")
+    required = required_span_days(walk_forward_dict)
+    threshold = required + int(gate1_buffer_days)
+    deficient = sorted(
+        s for s in symbols if float(span_days_by_symbol.get(s, 0.0)) < threshold
+    )
+    report = {
+        "required_days": required,
+        "buffer_days": int(gate1_buffer_days),
+        "threshold_days": threshold,
+        "deficient": deficient,
+        "backfilled": [],
+    }
+    if not deficient:
+        return report
+
+    log.warning(
+        "[#531] %d Symbol(e) unter der Walk-Forward-Schwelle (%d Tage = %d + Puffer %d) — "
+        "synchroner Pre-Sweep-Backfill: %s",
+        len(deficient), threshold, required, int(gate1_buffer_days), deficient,
+    )
+    fetch = fetch_fn or _default_backfill_fetch
+    try:
+        fetched = fetch(
+            deficient, required_days=required, buffer_days=int(gate1_buffer_days),
+            universe_path=universe_path, api_key=api_key, user_key=user_key, logger=log,
+        )
+        report["backfilled"] = list(fetched or [])
+        log.info("[#531] Pre-Sweep-Backfill abgeschlossen: %d/%d Symbol(e) nachgeladen.",
+                 len(report["backfilled"]), len(deficient))
+    except Exception as e:  # pragma: no cover - defensiv: Backfill darf den Sweep nie crashen
+        log.warning("[#531] Pre-Sweep-Backfill fehlgeschlagen (%s) — Gate-1 entscheidet fail-loud.", e)
+    return report
+
+
 # ─── CLI Entry-Point ──────────────────────────────────────────────────────────
 
 def main() -> int:
