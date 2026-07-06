@@ -1656,3 +1656,7 @@ Pitfall #93 — Annualisierungsfaktor asset-class-/bar-frequenz-bewusst: Config-
 **Symptom:** `_constraint_distance_penalty` summierte nur aktive Distanzen, teilte aber durch die feste Gesamtzahl der Dimensionen (`len(distances)==6`). Damit hing die effektive Strafe pro aktiver Dimension von der Anzahl inaktiver Gates ab — Gradientenrauschen für den TPE-Sampler.
 **Fix/Regel:** Normalisierung strikt über die AKTIVEN Dimensionen (`sum(active_dists) / len(active_dists)`); inaktive (erfüllte) Gates tragen null Gewicht im Divisor. Distanzen bleiben LINEAR (Issue #505; quadratische Distanzen würden #461-Anti-Saturation und #505-Term-Dominanz regredieren) und `return_penalty_scale` entkoppelt die Krümmung vom engen Gate (0.005). Floor-Invariante `unevaluable < evaluable-Floor` bleibt gewahrt. Siehe *Watertight Invariants → Optimizer Invariants*.
 **Betroffen:** `automation/optimizer/reward.py`
+
+### Issue #535 — Config-Orphans & Gate-1 Fallback
+* **Config Deprecation:** `constraint_penalty_scale` wurde aus `optimizer.json` entfernt. Das System verwendet stattdessen `constraint_distance_penalty_weight` und `return_penalty_scale` (Konfigurations-Drift Prävention).
+* **Gate-1 Datenprüfung (Issue #525):** `data_history_days` (in `backtest.json`) wird in der realen Gate-1 Logik als Fallback-Wert für die Datenspanne genutzt, anstatt die echte Time-Series-Spanne zu evaluieren (Fail-Loud Implikation korrigiert).
