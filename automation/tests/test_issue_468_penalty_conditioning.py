@@ -50,13 +50,13 @@ def test_constraint_distance_penalty_isolation():
     }
 
     m = TournamentMetrics(
-        oos_total_trades=10, # erfüllt (10 >= 10)
-        oos_total_return=0.04, # verfehlt (0.04 < 0.05). Gap = 0.01. Scale = 0.1. penalty = (0.01/0.1)^2 = 0.01
-        oos_win_rate=0.4, # erfüllt (0.4 >= 0.4)
-        oos_max_drawdown=0.1, # cap ist 0.2 (erfüllt)
+        oos_total_trades=10, # erfüllt (10 >= 10) -> inaktiv
+        oos_total_return=0.04, # verfehlt (0.04 < 0.05). Gap = 0.01. Scale = 0.1. dist = 0.01/0.1 = 0.1 (linear, #505)
+        oos_win_rate=0.4, # erfüllt (0.4 >= 0.4) -> inaktiv
+        oos_max_drawdown=0.1, # cap ist 0.2 (erfüllt) -> inaktiv
         oos_sortino=None,
         oos_profit_factor=None,
-            oos_expectancy=0.001,
+            oos_expectancy=0.001, # erfüllt (0.001 >= 0.001) -> inaktiv
             oos_evaluated=True,
             oos_eligible=False,
             is_total_trades=0,
@@ -68,4 +68,7 @@ def test_constraint_distance_penalty_isolation():
 
     penalty = _constraint_distance_penalty(m, weights, risk_dd_cap=0.2, tournament_cfg=tournament_cfg)
 
-    assert abs(penalty - 0.01666666666666667) < 1e-6
+    # Issue #534: Normalisierung ausschliesslich über die AKTIVEN Dimensionen. Genau eine Dimension
+    # ist aktiv (Return, dist=0.1); mean = 0.1/1 = 0.1; penalty = 0.1 * weight(1.0) = 0.1.
+    # (Vor #534 fälschlich 0.1/6 = 0.01667 durch Division über die feste Gesamtzahl der Dimensionen.)
+    assert abs(penalty - 0.1) < 1e-6

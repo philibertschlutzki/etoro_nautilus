@@ -864,18 +864,37 @@ def _read_annualization_periods() -> float | None:
     return val
 
 def _get_annualization_factor(mtm_series=None) -> float:
-    """Single-Source-of-Truth Methode zur Bestimmung des annualization_factor (Issue #510).
-    Trading-Time-Paradigmas: Division durch Kalenderjahre ist restlos eliminiert."""
+    """Single-Source-of-Truth Methode zur Bestimmung des annualization_factor (Issues #510/#532).
+    Trading-Time-Paradigma: Division durch Kalenderjahre ist restlos eliminiert.
+
+    Issue #532 — Präzedenz invertiert: Die EMPIRISCHE Bar-Frequenz aus dem ``mtm_series``-Index
+    ist jetzt der Default; ``annualization_periods_per_year`` (optimizer.json) wirkt nur noch als
+    EXPLIZITER Override (non-null), nicht mehr als stiller Default. Ein statischer Tages-Faktor
+    (252) darf die real gemessene Intraday-Bar-Frequenz nicht länger überstimmen — ``√252`` auf
+    1h-Returns unterschätzt den annualisierten Sortino systematisch (Equity-Marktstunden ⇒ Faktor
+    ≫ 252). Der Median-Δt ist robust gegen Wochenend-/Session-Lücken, weil er die dominante
+    Intra-Session-Frequenz trifft; Asset-Klassen (Equity-Marktzeiten vs. 24/7-Krypto) werden damit
+    implizit korrekt behandelt (kein pauschaler Krypto-/Equity-Faktor nötig)."""
+    # 1) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532). Nur ein echter
+    #    DatetimeIndex liefert Timedelta-Deltas mit .total_seconds(); ein nicht-zeitlicher Index
+    #    (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats) hat keine ableitbare
+    #    Bar-Frequenz und fällt sauber auf den Config-Override/neutralen Pfad zurück.
+    if (mtm_series is not None and len(mtm_series) > 1
+            and isinstance(mtm_series.index, pd.DatetimeIndex)):
+        median_dt = mtm_series.index.to_series().diff().median()
+        median_dt_seconds = median_dt.total_seconds() if median_dt is not None and not pd.isna(median_dt) else 0.0
+        if median_dt_seconds > 0:
+            # 2) Expliziter Config-Override: schlägt die Empirik nur, wenn ausdrücklich (non-null) gesetzt.
+            config_factor = _read_annualization_periods()
+            if config_factor is not None:
+                return float(config_factor)
+            one_year_seconds = 31_557_600.0  # tropisches Jahr (Sekunden)
+            return one_year_seconds / median_dt_seconds
+
+    # 3) Kein verwertbarer Zeit-Index: expliziter Config-Override, sonst neutral (1.0).
     config_factor = _read_annualization_periods()
     if config_factor is not None:
         return float(config_factor)
-
-    if mtm_series is not None and len(mtm_series) > 1:
-        # Trading-Time Fallback (Bar Frequency)
-        median_dt_seconds = mtm_series.index.to_series().diff().median().total_seconds()
-        # Dynamically extract 1 year using a literal derived from tropical year length.
-        one_year_seconds = 31557600.0
-        return one_year_seconds / median_dt_seconds if median_dt_seconds > 0 else 1.0
     return 1.0
 
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None) -> dict:

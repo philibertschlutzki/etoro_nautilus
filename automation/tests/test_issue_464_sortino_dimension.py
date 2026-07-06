@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
-from automation.backtest_runner import _calculate_stats
+import pytest
+from unittest.mock import patch
+from automation.backtest_runner import _calculate_stats, _get_annualization_factor
 
 def test_issue_464_sortino_dimension():
     # Test-Case: Zwei synthetische Return-Serien.
@@ -46,3 +48,12 @@ def test_issue_464_sortino_dimension():
     assert sortino2 is not None
     # Skaliert nicht identisch wegen Frequenz
     assert sortino1 != sortino2
+
+    # Issue #532 — der Annualisierungsfaktor wird EMPIRISCH aus der realen Bar-Frequenz abgeleitet
+    # (kein statisches 252). Serie 2 hat exakt die halbe Periode (3.5D vs. 7D) ⇒ doppelte Frequenz
+    # ⇒ exakt doppelter Faktor. Das ist die Dimensionskonsistenz-Invariante aus Issue #464/#510.
+    with patch("automation.backtest_runner._read_annualization_periods", return_value=None):
+        factor1 = _get_annualization_factor(mtm_series1)
+        factor2 = _get_annualization_factor(mtm_series2)
+    assert factor1 == pytest.approx(31_557_600.0 / (7 * 86400))
+    assert factor2 == pytest.approx(2 * factor1, rel=1e-9)

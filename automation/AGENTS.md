@@ -1552,7 +1552,14 @@ Ist dies nicht der Fall (z. B. `total_return == 0.0` trotz non-zero PnL), deutet
 - **Period Definition:** Zwingende Anwendung des Trading-Time-Paradigmas für sämtliche Risk- und Return-Metrics. Die Division durch absolute Kalenderjahre (`span_years`) führt bei Time-Series mit Market-Gaps (Overnight/Weekend) zu systematischen Verzerrungen und ist untersagt.
 
 ### 2. Agent Constraints
-- **Time Constants:** Absolutes Verbot von hardcodierten Zeitkonstanten (z. B. `252`, `365`, `math.sqrt(252)`) in der Evaluierungs-Logik. Annualisierungsfaktoren sind deterministisch via Config (`annualization_periods_per_year`) oder dynamisch über die Frequenz der Time-Series (`pandas.Timedelta`) abzuleiten.
+- **Time Constants:** Absolutes Verbot von hardcodierten Zeitkonstanten (z. B. `252`, `365`, `math.sqrt(252)`) in der Evaluierungs-Logik. Annualisierungsfaktoren werden **empirisch** aus der realen Time-Series-Frequenz abgeleitet (siehe *Time Series Invariants* unten); `annualization_periods_per_year` ist nur noch ein **expliziter Override** (non-null), kein stiller Default (Issue #532).
+
+### 3. Watertight Invariants (Issues #532–#534)
+Diese drei Invarianten sind bindend und dürfen von Gate-Logik, Objective-Funktionen und Metrik-Engine niemals verletzt werden:
+
+- **Metrics Engine Invariants:** Sortino ratios evaluate to `None` on lossless periods. Gate logic and objective functions MUST universally implement a fallback to `total_return > 0` or `expectancy > 0` to prevent rejection of optimal edge cases. *(Umsetzung: `reward.py::compute_reward` via `oos_sortino_fallback`, `confirm.py::_holdout_gate_passed` — eine gemeinsame Quelle für die »evaluable-but-sortino-undefined«-Regel; Issue #533.)*
+- **Time Series Invariants:** Annualization factors MUST be derived empirically via `31_557_600.0 / median_dt_seconds`. Static factors (e.g., 252) are explicitly deprecated unless required for forced config overrides. Asset-class market hours (Equity vs. 24/7 Crypto) are handled implicitly by the median delta. *(Umsetzung: `backtest_runner.py::_get_annualization_factor`; der Median-Δt trifft robust die dominante Intra-Session-Frequenz, ist damit gap-resistent — 1h-Bars ⇒ Faktor 8766 ≫ 252; Issue #532.)*
+- **Optimizer Invariants:** Penalty calculations for Near-Miss gradients MUST normalize exclusively against ACTIVE dimensions. Inactive constraints must carry zero weight in the divisor to prevent gradient noise during Hyperparameter Optimization (TPE). *(Umsetzung: `reward.py::_constraint_distance_penalty`, `sum(active_dists) / len(active_dists)` statt Division durch die feste Gesamtzahl der Dimensionen; Distanzen bleiben linear pro Issue #505, Floor-Invariante `unevaluable < evaluable-Floor` bleibt gewahrt; Issue #534.)*
 
 ### 🟢 Pitfall #102 — Walk-Forward Geometrie Divergenz (Zero Hardcoding Policy for Optimizer Geometries) [BEHOBEN: GH-#512]
 **Symptom:** Validation Set Invalidation durch inkonsistente OOS/Holdout-Fold-Berechnung zwischen Runner und Optimizer-Gate (`confirm.py`). Die Optimierung lief mit konfigurierten Werten aus `backtest.json`, das Holdout-Gate hardcodierte jedoch Overrides (`oos_window_days=30`, `n_folds=1`), wodurch Overlaps und Leakage zwischen Train und Validation entstanden.
@@ -1595,5 +1602,20 @@ Pitfall #92 — MtM-OOS-Slice und Trade-OOS-Klassifikation MÜSSEN aus derselben
 
 Pitfall #93 — Annualisierungsfaktor asset-class-/bar-frequenz-bewusst: Config-Konstante
   darf empirische Bar-Frequenz nicht still überstimmen; √252 auf 1h-Returns unterschätzt
-  den Sortino ~2.5x.
+  den Sortino ~2.5x.  [BEHOBEN: #532]
 ```
+
+### 🟢 Pitfall #93 — Statische Annualisierung überstimmt empirische Bar-Frequenz [BEHOBEN: GH-#532]
+**Symptom:** `annualization_periods_per_year=252` (Config) gewann IMMER; der dynamische Bar-Frequenz-Fallback (#510) war toter Code. Auf 1h-Kerzen unterschätzte `√252` den annualisierten Sortino systematisch (Faktor real ≫ 252).
+**Fix/Regel:** Präzedenz invertiert (`_get_annualization_factor`) — EMPIRISCHE Frequenz (`31_557_600 / median_dt_seconds`) ist Default; Config wirkt nur als expliziter, non-null Override. `optimizer.json['annualization_periods_per_year'] = null`. Nur ein echter `DatetimeIndex` triggert die Empirik (RangeIndex-Direct-Calls fallen sauber auf Override/1.0 zurück). Siehe *Watertight Invariants → Time Series Invariants*.
+**Betroffen:** `automation/backtest_runner.py`, `automation/config/optimizer.json`
+
+### 🟢 Pitfall #104 — Holdout-Gate blockiert verlustfreie (Sortino=None) profitable OOS-Folds [BEHOBEN: GH-#533]
+**Symptom:** Ein verlustfreier OOS-Fold (`losses_count==0`) liefert per Definition `oos_sortino=None`. Das Holdout-Gate koerzierte `None→0.0` und verwarf so mit `0.0 > 0.0 = False` das BESTE denkbare Ergebnis. Der Sweep-Reward kannte den `oos_sortino_fallback` bereits, das Holdout-Gate nicht (Inkonsistenz).
+**Fix/Regel:** `confirm.py::_holdout_gate_passed` als Single Source of Truth für die »evaluable-but-sortino-undefined«-Regel; bei `oos_sortino is None` greift `oos_total_return > 0` (Parität zu `reward.py`, config-gegatet über `oos_sortino_fallback`). `oos_total_return <= 0` passiert NIE (kein Gate-Gaming); Risk-DD-Cap bleibt hart. Siehe *Watertight Invariants → Metrics Engine Invariants*.
+**Betroffen:** `automation/optimizer/confirm.py`
+
+### 🟢 Pitfall #105 — Near-Miss-Penalty inkonsistent normalisiert (Division durch Gesamt- statt Aktiv-Dimensionen) [BEHOBEN: GH-#534]
+**Symptom:** `_constraint_distance_penalty` summierte nur aktive Distanzen, teilte aber durch die feste Gesamtzahl der Dimensionen (`len(distances)==6`). Damit hing die effektive Strafe pro aktiver Dimension von der Anzahl inaktiver Gates ab — Gradientenrauschen für den TPE-Sampler.
+**Fix/Regel:** Normalisierung strikt über die AKTIVEN Dimensionen (`sum(active_dists) / len(active_dists)`); inaktive (erfüllte) Gates tragen null Gewicht im Divisor. Distanzen bleiben LINEAR (Issue #505; quadratische Distanzen würden #461-Anti-Saturation und #505-Term-Dominanz regredieren) und `return_penalty_scale` entkoppelt die Krümmung vom engen Gate (0.005). Floor-Invariante `unevaluable < evaluable-Floor` bleibt gewahrt. Siehe *Watertight Invariants → Optimizer Invariants*.
+**Betroffen:** `automation/optimizer/reward.py`

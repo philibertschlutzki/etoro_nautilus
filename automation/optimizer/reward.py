@@ -105,11 +105,19 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
                                  tournament_cfg: dict | None) -> float:
     """Issue #452 — kontinuierliche Distanzstrafe fuer OOS-Constraint-Verletzungen.
     Issue #467 — OOS-Parameter-Isolation und Penalty Conditioning.
+    Issue #505 — lineare (nicht quadratische) Distanzen gegen Term-Dominanz.
+    Issue #534 — konsistente Normalisierung ausschliesslich ueber die AKTIVEN Dimensionen.
 
     Nur evaluiert-aber-nicht-eligible Trials nutzen diesen Pfad. Die Strafe ist rein metrisch
-    (keine Gate-Flags als Reward), quadratisch in der Ziel-Distanz und config-gewichtet. Dadurch
-    unterscheidet TPE wieder 'knapp gescheitert' von 'katastrophal gescheitert', ohne die
-    Rang-Invariante aufzuweichen: failed Trials bleiben unter dem Evaluable-Floor."""
+    (keine Gate-Flags als Reward), linear in der auf Target/Scale normierten Ziel-Distanz und
+    config-gewichtet. Aggregiert wird als MITTELWERT der aktiven Distanzen
+    (``sum(active_dists) / len(active_dists)``): eine inaktive (bereits erfuellte) Dimension traegt
+    NULL Gewicht im Divisor und darf die effektive Strafe pro aktiver Dimension nicht mehr
+    verzerren (Issue #534 — vorher fiktive Division durch die feste Gesamtzahl der Dimensionen).
+    Damit erhaelt derselbe Return-Shortfall dieselbe Teilstrafe, unabhaengig davon, wie viele
+    Nebengates zufaellig erfuellt sind. So unterscheidet TPE wieder 'knapp gescheitert' von
+    'katastrophal gescheitert', ohne die Rang-Invariante aufzuweichen: failed Trials bleiben
+    strikt unter dem Evaluable-Floor (siehe ``_constraint_failure_reward``)."""
     # Strikte Isolation (kein impliziter Fallback auf IS)
     req_trades = _cfg_value(weights, tournament_cfg, "oos_min_trades")
     req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return")
@@ -132,7 +140,11 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
     active_dists = [d for d in distances if d > 0.0]
     if not active_dists:
         return 0.0
-    mean_distance = sum(active_dists) / len(distances)
+    # Issue #534 — Normalisierung strikt ueber die AKTIVEN Dimensionen (mittlere aktive Distanz),
+    # NICHT ueber die feste Gesamtzahl len(distances)==6. Inaktive (erfuellte) Gates tragen null
+    # Gewicht im Divisor ⇒ derselbe Shortfall ergibt dieselbe Teilstrafe, egal wie viele
+    # Nebengates zufaellig erfuellt sind (kein Gradientenrauschen bei der TPE-Suche).
+    mean_distance = sum(active_dists) / len(active_dists)
     return mean_distance * float(weights.get("constraint_distance_penalty_weight", weights["unevaluable_shaping_span"]))
 
 
