@@ -18,9 +18,11 @@
       "scoring.win_rate_weight": "Gewicht f\u00fcr Win-Rate im Score",
       "scoring.drawdown_penalty_weight": "Strafe-Gewicht f\u00fcr Max-Drawdown (wird subtrahiert)",
       "return_penalty_scale": "Issue #467 \u2014 Skalierungsfaktor zur Entkopplung der Penalty-Kr\u00fcmmung vom Eligibility-Threshold, um numerische Explosion bei sehr kleinen OOS-Gates (z.B. 0.005) zu verhindern.",
-      "oos_min_win_rate": "Spezifischer OOS-Schwellenwert fuer die Win Rate, um Parameter-Bleed zu verhindern (Issue #467)."
+      "oos_min_win_rate": "Spezifischer OOS-Schwellenwert fuer die Win Rate, um Parameter-Bleed zu verhindern (Issue #467).",
+      "sortino_mar": "Issue #545 (Zero-Hardcoding): MAR (Minimum Acceptable Return) fuer die Sortino-Berechnung als Baseline fuer die Target-Downside-Deviation."
     }
   },
+  "sortino_mar": 0.0,
   "min_trades": 20,
   "min_sortino": 0.3,
   "min_profit_factor": 1.1,

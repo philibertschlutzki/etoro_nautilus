@@ -365,7 +365,7 @@ def load_tournament_config(project_root: str | None = None) -> dict:
             req_all = set(cfg.get("eligible_requires_all", []))
             req_any = set(cfg.get("eligible_requires_any", []))
             used = req_all | req_any
-            metric_keys = {k for k in cfg.keys() if k not in ("eligible_requires_all", "eligible_requires_any", "scoring", "sortino_min_trades")}
+            metric_keys = {k for k in cfg.keys() if k not in ("eligible_requires_all", "eligible_requires_any", "scoring", "sortino_min_trades", "sortino_mar")}
             for k in metric_keys:
                 base_k = k[4:] if k.startswith("oos_") else k
                 if base_k not in used:
@@ -789,7 +789,27 @@ def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tupl
 
 
 _sortino_min_trades_cache: int | None = None
+_sortino_mar_cache: float | None = None
 _max_drawdown_cap_cache: float | None = None
+
+def _read_sortino_mar() -> float:
+    """Issue #545 (Zero-Hardcoding): MAR (Minimum Acceptable Return) fuer die Sortino-Berechnung aus
+    tournament.json['sortino_mar']. Gecached (Hot-Path). Fehlt der Schluessel ⇒ Legacy-Default 0.0."""
+    global _sortino_mar_cache
+    if _sortino_mar_cache is not None:
+        return _sortino_mar_cache
+    val = 0.0
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_mar")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 0.0
+    _sortino_mar_cache = val
+    return val
 
 def _read_sortino_min_trades() -> int:
     """Issue #401 (Zero-Hardcoding): Mindest-Round-Trips fuer die Sortino-Berechnung aus
@@ -1005,18 +1025,24 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
         annualization_factor = _get_annualization_factor(mtm_series)
         min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
+        mar = _read_sortino_mar()
 
         if n < min_trades_sortino or losses_count == 0 or period_rets.empty:
             sortino = None
         else:
-            downside_rets = period_rets[period_rets < 0]
-            dd_dev = downside_rets.std()
-            if pd.isna(dd_dev) or dd_dev <= 0:
+            # Issue #545: Target-Downside-Deviation (RMS without mean-centering)
+            downside_diff = (period_rets - mar).clip(upper=0.0)
+            dd_dev = float(np.sqrt((downside_diff ** 2).mean()))
+
+            if pd.isna(dd_dev) or dd_dev <= 0.0:
                 sortino = None
             else:
                 mean_ret = period_rets.mean()
-                sortino_raw = (mean_ret / dd_dev) * math.sqrt(annualization_factor)
-                sortino = min(sortino_raw, RATIO_CAP)
+                sortino_raw = ((mean_ret - mar) / dd_dev) * math.sqrt(annualization_factor)
+                if pd.isna(sortino_raw):
+                    sortino = None
+                else:
+                    sortino = max(-RATIO_CAP, min(sortino_raw, RATIO_CAP))
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0

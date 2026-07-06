@@ -43,13 +43,14 @@ def test_annualization_path_parity():
     assert sortino_fallback is not None
 
     period_rets = mtm_series.pct_change().dropna()
-    downside_rets = period_rets[period_rets < 0]
-    dd_dev = downside_rets.std()
+    mar = 0.0
+    downside_diff = (period_rets - mar).clip(upper=0.0)
+    dd_dev = float(np.sqrt((downside_diff ** 2).mean()))
     mean_ret = period_rets.mean()
 
     RATIO_CAP = 50.0
-    expected_config_sortino = min((mean_ret / dd_dev) * math.sqrt(111.0), RATIO_CAP)
-    expected_fallback_sortino = min((mean_ret / dd_dev) * math.sqrt(pd.Timedelta(days=365.25).total_seconds() / 86400), RATIO_CAP)
+    expected_config_sortino = max(-RATIO_CAP, min(((mean_ret - mar) / dd_dev) * math.sqrt(111.0), RATIO_CAP))
+    expected_fallback_sortino = max(-RATIO_CAP, min(((mean_ret - mar) / dd_dev) * math.sqrt(pd.Timedelta(days=365.25).total_seconds() / 86400), RATIO_CAP))
 
     assert math.isclose(sortino_config, expected_config_sortino, rel_tol=1e-9)
     assert math.isclose(sortino_fallback, expected_fallback_sortino, rel_tol=1e-9)
