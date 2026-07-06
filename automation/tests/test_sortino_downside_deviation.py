@@ -1,0 +1,117 @@
+import pytest
+import math
+import numpy as np
+import pandas as pd
+from unittest.mock import patch
+
+from automation.backtest_runner import _calculate_stats
+
+@pytest.fixture
+def mock_sortino_config():
+    with patch("automation.backtest_runner._read_sortino_mar", return_value=0.0), \
+         patch("automation.backtest_runner._read_sortino_min_trades", return_value=2):
+        yield
+
+def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
+    # Test 1: Constant loss series ([-0.001]*k) + minimal win series yields a finite Sortino (< 10), not RATIO_CAP.
+    # Wir uebergeben eine mtm_series, die genau diese returns erzeugt (mtm startet bei 1.0)
+    rets1 = [-0.001] * 10 + [0.001]
+    mtm_vals1 = [1.0]
+    for r in rets1:
+        mtm_vals1.append(mtm_vals1[-1] * (1 + r))
+    mtm_series1 = pd.Series(mtm_vals1)
+
+    # Um _calculate_stats richtig aufzurufen, benoetigen wir passende Argumente.
+    # min_trades_for_sortino = 2
+    # Wir muessen pnl_list fuellen, da sonst 'n = len(pnl_list) == 0' greift (early exit in _calculate_stats).
+    # Ausserdem muss losses_count >= 2 sein, um nicht early exited zu werden fuer profit_factor.
+    stats1 = _calculate_stats(
+        pnl_list=[-1.0]*10 + [1.0],
+        hold_list=[(1, 1.0)]*11,
+        starting_capital=1.0,
+        mtm_series=mtm_series1,
+        min_trades_for_sortino=2
+    )
+
+    sortino1 = stats1.get("sortino_ratio")
+    assert sortino1 is not None, "Sortino should not be None"
+    assert sortino1 > -50.0, "Sortino should not be clipped to exactly -RATIO_CAP if it's finite"
+    assert abs(sortino1) < 50.0, "Sortino should be finite and within cap bounds"
+
+    # Test 2: Reference validation against numpy
+    # numpy formula for RMS target downside deviation with MAR=0.0
+    period_rets1 = pd.Series(rets1)
+    downside_diff = period_rets1.clip(upper=0.0)
+    dd_dev_ref = float(np.sqrt((downside_diff ** 2).mean()))
+    mean_ret = period_rets1.mean()
+    annualization_factor = 252 # Da freq nicht ableitbar ist, faellt es in der Regel auf 252 zurueck, falls nicht gesetzt. Wir ueberschreiben es intern.
+
+    # We must patch _get_annualization_factor to ensure a deterministic factor for comparison
+    with patch("automation.backtest_runner._get_annualization_factor", return_value=252):
+        stats1_fixed_ann = _calculate_stats(
+            pnl_list=[-1.0]*10 + [1.0],
+            hold_list=[(1, 1.0)]*11,
+            starting_capital=1.0,
+            mtm_series=mtm_series1,
+            min_trades_for_sortino=2
+        )
+        sortino1_fixed = stats1_fixed_ann.get("sortino_ratio")
+        expected_sortino = (mean_ret / dd_dev_ref) * math.sqrt(252)
+        assert np.isclose(sortino1_fixed, expected_sortino, atol=1e-12)
+
+    # Test 3: Loss-frequency sensitivity
+    # Identical mean_ret but varying loss frequencies must yield distinct Sortinos
+    # rets2 has fewer losses but same mean return. We need to construct rets2 carefully.
+    rets2 = [-0.001] * 5 + [0.0] * 5 + [0.001] # fewer actual losses, same mean as rets1? No, mean is different.
+
+    # Let's create two series with exactly the same mean_ret but different loss frequencies
+    # Series A: 2 losses of -0.01, 2 gains of 0.01 -> mean = 0.0
+    # Series B: 4 losses of -0.005, 4 gains of 0.005 -> mean = 0.0
+    retsA = [-0.01, -0.01, 0.01, 0.01]
+    retsB = [-0.005, -0.005, -0.005, -0.005, 0.005, 0.005, 0.005, 0.005]
+
+    # Let's adjust them so mean is not 0 (e.g. positive)
+    retsA = [-0.01, -0.01, 0.02, 0.02] # mean = 0.005, 2 losses. rms = sqrt((-0.01^2)*2 / 4) = sqrt(0.0002 / 4) = sqrt(0.00005)
+    # To get different Sortino but same mean, we need different RMS.
+    # We want mean = 0.005. So sum = 0.005 * n.
+    # Let's try retsC: [-0.01, 0.0, 0.01, 0.02] -> mean = 0.005, 1 loss.
+    retsB = [-0.01, 0.0, 0.01, 0.02]
+
+    mtm_valsA = [1.0]
+    for r in retsA: mtm_valsA.append(mtm_valsA[-1] * (1 + r))
+    mtm_seriesA = pd.Series(mtm_valsA)
+
+    mtm_valsB = [1.0]
+    for r in retsB: mtm_valsB.append(mtm_valsB[-1] * (1 + r))
+    mtm_seriesB = pd.Series(mtm_valsB)
+
+    with patch("automation.backtest_runner._get_annualization_factor", return_value=252):
+        statsA = _calculate_stats(pnl_list=[-1.0]*2+[1.0]*2, hold_list=[(1,1.0)]*4, starting_capital=1.0, mtm_series=mtm_seriesA, min_trades_for_sortino=2)
+        statsB = _calculate_stats(pnl_list=[-1.0]*1+[1.0]*3, hold_list=[(1,1.0)]*4, starting_capital=1.0, mtm_series=mtm_seriesB, min_trades_for_sortino=2)
+
+    sortinoA = statsA.get("sortino_ratio")
+    sortinoB = statsB.get("sortino_ratio")
+
+    assert sortinoA is not None and sortinoB is not None
+    assert sortinoA != sortinoB, "Loss frequency should affect the Sortino metric"
+
+    # Test 4: Regression validation verifying symmetric ±RATIO_CAP enforcement
+    # Extremely negative sortino
+    rets_extreme_neg = [-0.1] * 10
+    mtm_vals_neg = [1.0]
+    for r in rets_extreme_neg: mtm_vals_neg.append(mtm_vals_neg[-1] * (1 + r))
+    mtm_series_neg = pd.Series(mtm_vals_neg)
+
+    # Extremely positive sortino
+    rets_extreme_pos = [0.1] * 10 + [-0.000000001]
+    mtm_vals_pos = [1.0]
+    for r in rets_extreme_pos: mtm_vals_pos.append(mtm_vals_pos[-1] * (1 + r))
+    mtm_series_pos = pd.Series(mtm_vals_pos)
+
+    with patch("automation.backtest_runner._get_annualization_factor", return_value=10000000000):
+        # We use a huge annualization factor to ensure the raw sortino blows past RATIO_CAP
+        stats_neg = _calculate_stats(pnl_list=[-1.0]*10, hold_list=[(1,1.0)]*10, starting_capital=1.0, mtm_series=mtm_series_neg, min_trades_for_sortino=2)
+        stats_pos = _calculate_stats(pnl_list=[-1.0]+[1.0]*10, hold_list=[(1,1.0)]*11, starting_capital=1.0, mtm_series=mtm_series_pos, min_trades_for_sortino=2)
+
+    assert stats_neg.get("sortino_ratio") == -50.0, "Should be symmetrically clipped at -50.0"
+    assert stats_pos.get("sortino_ratio") == 50.0, "Should be symmetrically clipped at +50.0"

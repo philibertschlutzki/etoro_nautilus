@@ -1660,3 +1660,22 @@ Pitfall #93 — Annualisierungsfaktor asset-class-/bar-frequenz-bewusst: Config-
 ### Issue #535 — Config-Orphans & Gate-1 Fallback
 * **Config Deprecation:** `constraint_penalty_scale` wurde aus `optimizer.json` entfernt. Das System verwendet stattdessen `constraint_distance_penalty_weight` und `return_penalty_scale` (Konfigurations-Drift Prävention).
 * **Gate-1 Datenprüfung (Issue #525):** `data_history_days` (in `backtest.json`) wird in der realen Gate-1 Logik als Fallback-Wert für die Datenspanne genutzt, anstatt die echte Time-Series-Spanne zu evaluieren (Fail-Loud Implikation korrigiert).
+
+### 🟢 Issue #545 — Sortino Target-Downside-Deviation & Symmetric Clipping
+**Symptom:** OOS-Sortinos lieferten unzuverlässige absolute Werte und instabile Metriken unter homogenen Verlusten. Mean-centering der negativen Subsets in `pandas.Series.std()` und falscher Divisor ($k-1$ statt $N$) verzerrten die Metrik und schadeten TPE-Gradienten und Gate-Decisions. Asymmetrisches Clipping hinterließ extreme negative Ausreißer, was die Fold-Median-Aggregation zerstörte.
+**Fix/Regel:** Der Sortino-Quotient wird systemweit als Target-Downside-Deviation abgeleitet, basierend auf dem konfigurierten MAR (Minimum Acceptable Return) via `sortino_mar`. Mean-centering wurde entfernt. Symmetrisches Clipping auf `[-RATIO_CAP, +RATIO_CAP]` sichert die Gradientenstabilität ab.
+
+Zwingend in AGENTS.md zu integrierende formale Spezifikationen zur Gewährleistung absoluter Eindeutigkeit für nachgelagerte Evaluierungs-Agents und TPE-Optimizer:
+
+#### 1. Mathematische Definition (Reward Base)
+Der Sortino-Quotient wird systemweit als Target-Downside-Deviation abgeleitet.
+$$ Sortino = \frac{E[R] - MAR}{DD_{Target}} $$
+$$ DD_{Target} = \sqrt{\frac{1}{N} \sum_{t=1}^{N} \min(0, R_t - MAR)^2} $$
+Wobei N die Gesamtzahl der Evaluierungsperioden und MAR der deklarierte Minimum Acceptable Return (sortino_mar) ist.
+
+#### 2. Telemetrie & Gating Boundaries
+| Parameter | Metrik | Restriktion | Impact (TPE & Gating) |
+|---|---|---|---|
+| sortino_mar | MAR | Default 0.0 (Konfigurabel) | Statische Null-Baseline für RMS-Berechnung. |
+| RATIO_CAP | Clip_{sym} | [-50.0, +50.0] | Symmetrischer Überlaufschutz. Verhindert Gradienten-Tod bei $DD_{Target} \to 0$. |
+| oos_min_sortino | Gate | Median-Aggregat der Folds | Erhöhte Sensitivität auf Verlusthäufigkeit (Frequenz) anstatt reiner Verlustamplitude. |
