@@ -908,9 +908,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     Total Return Definition (Issue #465 / Audit #466):
     Liegt eine zeitbasierte MtM-Equity-Kurve (`mtm_series`) vor, ist `total_return` der ECHTE
-    Portfolio-Return `equity_end / equity_start − 1`. Nur im Fallback ohne Equity-Kurve wird auf
-    das sequentielle Aufzinsen `Π(1 + v/starting_capital)` zurückgegriffen (100 %-Kapital-Annahme;
-    rückwärtskompatibel im Sonderfall nicht-überlappender Full-Capital-Trades).
+    Portfolio-Return `equity_end / equity_start − 1`.
 
     Drawdown-/Sortino-Basis (Issue #464/#465):
     Liegt `mtm_series` vor, werden `max_drawdown` UND `sortino_ratio` aus der zeitindizierten
