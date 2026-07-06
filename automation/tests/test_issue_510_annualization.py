@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
 import math
+import pytest
 from unittest.mock import patch
-from automation.backtest_runner import _calculate_stats
+from automation.backtest_runner import _calculate_stats, _get_annualization_factor
 
 def test_annualization_path_parity():
     # Test-Case: Isolated execution of the MtM-Path with config injected and fallback path
@@ -82,3 +83,45 @@ def test_annualization_path_parity_strict():
     sortino_fallback = metrics_without_config["sortino_ratio"]
 
     assert math.isclose(sortino_config, sortino_fallback, rel_tol=1e-9)
+
+
+YEAR_SECONDS = 31_557_600.0
+
+
+def test_issue_532_empirical_supersedes_static_default():
+    # Issue #532 — Ohne expliziten Config-Override wird der Faktor EMPIRISCH aus dem realen
+    # mtm_series-Index abgeleitet (31_557_600 / median_dt_seconds), nicht mehr aus einem
+    # statischen Default (252).
+
+    # 1h-Kerzen (kontinuierlich): median_dt = 3600s ⇒ Faktor = 8766 (≫ 252).
+    s_1h = pd.Series(range(500), index=pd.date_range("2025-01-01", periods=500, freq="1h"))
+    with patch("automation.backtest_runner._read_annualization_periods", return_value=None):
+        factor_1h = _get_annualization_factor(s_1h)
+    assert factor_1h == pytest.approx(YEAR_SECONDS / 3600.0)  # 8766.0
+    assert factor_1h > 252.0  # Akzeptanzkriterium: 1h-Bars ⇒ Faktor ≫ 252
+
+    # Equity-Marktzeiten (7 Bars/Tag, Overnight-/Wochenend-Lücken): der Median trifft robust die
+    # dominante Intra-Session-Frequenz (1h) ⇒ derselbe Faktor 8766 trotz Gaps.
+    rows, day, n = [], pd.Timestamp("2025-01-01"), 0
+    while n < 30:
+        if day.weekday() < 5:
+            rows += [day + pd.Timedelta(hours=h) for h in range(10, 17)]
+            n += 1
+        day += pd.Timedelta(days=1)
+    s_gap = pd.Series(range(len(rows)), index=pd.DatetimeIndex(rows))
+    with patch("automation.backtest_runner._read_annualization_periods", return_value=None):
+        factor_gap = _get_annualization_factor(s_gap)
+    assert factor_gap == pytest.approx(YEAR_SECONDS / 3600.0)
+    assert factor_gap > 252.0
+
+
+def test_issue_532_explicit_config_override_wins():
+    # Ein non-null Config-Wert bleibt ein EXPLIZITER Override und überstimmt die Empirik bewusst.
+    s_1h = pd.Series(range(100), index=pd.date_range("2025-01-01", periods=100, freq="1h"))
+    with patch("automation.backtest_runner._read_annualization_periods", return_value=252.0):
+        assert _get_annualization_factor(s_1h) == pytest.approx(252.0)
+    # Ohne verwertbaren Index: expliziter Override, sonst neutral (1.0).
+    with patch("automation.backtest_runner._read_annualization_periods", return_value=252.0):
+        assert _get_annualization_factor(None) == pytest.approx(252.0)
+    with patch("automation.backtest_runner._read_annualization_periods", return_value=None):
+        assert _get_annualization_factor(None) == pytest.approx(1.0)

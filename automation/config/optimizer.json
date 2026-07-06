@@ -26,7 +26,7 @@
       "min_oos_bars_per_fold": "A4.4 \u2014 Mindest-Bar-Zahl je OOS-Fold (oos_window_days * bars_per_day), damit ein Fold statistisch aussagekr\u00e4ftig ist (Gate 1).",
       "storage_url": "A4.7 (optional) \u2014 Optuna-Storage-URL f\u00fcr Per-Symbol-Studies. null \u21d2 SQLite-Default ({WORK}/sweep/{study}.db). Reines Opt-In f\u00fcr echte Multi-Maschinen-Parallelit\u00e4t (z. B. PostgreSQL); weicht die SQLite-Leitplanke (Pitfall #53) bewusst auf. ENV ETORO_OPTUNA_STORAGE hat Vorrang. Bei non-SQLite ist das Study-Level Sampling nur bei n_jobs=1 (intern immer erzwungen) deterministisch.",
       "reward_semantics_version": "Issue #410 (Pitfall #75) \u2014 monoton steigende Versionsnummer der Reward-Semantik. Wird beim Anlegen einer frischen Study als user_attr gestempelt. Traegt eine geladene Study eine ALTE/keine Version, obwohl sie schon Trials hat, warnt der Optimizer laut (alte Floor-Trials sind mit der neuen Semantik nicht vergleichbar \u21d2 stale DB loeschen). v3 = Fixes #404\u2013#407 (Per-Symbol-Evaluierbarkeit entkoppelt, kontextsensitives Shaping, Gate-Proximity-Gradient). v4 = Fixes #461: Constraint Failure Band-Clamp gegen Reward-Inversion. v6 = Issue #468 Semantics Guard, Issue #467 Penalty Conditioning.",
-      "annualization_periods_per_year": "Annualisierungsfaktor f\u00fcr Sortino Ratio, z.B. 252 f\u00fcr Daily oder 6300 f\u00fcr Hourly. Null-Hardcoding Ansatz (Issue #464)."
+      "annualization_periods_per_year": "Issue #532 \u2014 Annualisierungsfaktor f\u00fcr die Sortino Ratio. NULL (Default) \u21d2 EMPIRISCHE Ableitung aus der realen Bar-Frequenz des mtm_series-Index (31_557_600 / median_dt_seconds); robust gegen Wochenend-/Session-L\u00fccken (Median trifft die dominante Intra-Session-Frequenz). Ein non-null Wert (z.B. 252 Daily, 8766 st\u00fcndlich 24/7) wirkt nur noch als EXPLIZITER Override und \u00fcberstimmt die Empirik bewusst \u2014 statische Faktoren sind deprecated (Issue #464/#510)."
     }
   },
   "n_trials": 100,
@@ -54,5 +54,5 @@
   "storage_url": null,
   "reward_semantics_version": 6,
   "constraint_penalty_scale": 50.0,
-  "annualization_periods_per_year": 252
+  "annualization_periods_per_year": null
 }

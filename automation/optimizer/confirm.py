@@ -9,6 +9,38 @@ from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
 from automation.optimizer.manifest import WORK
 
+
+def _holdout_gate_passed(metrics, risk_dd_cap: float, *, sortino_fallback_enabled: bool) -> bool:
+    """Issue #533 — Single Source of Truth für die Holdout-Gate-Entscheidung inkl.
+    ``oos_sortino_fallback``-Parität zu ``reward.py`` (die »evaluable-but-sortino-undefined«-Regel).
+
+    Der Sortino ist per Definition ``None`` auf einem verlustfreien OOS-Fold (``losses_count == 0``,
+    ``backtest_runner.py``). Vor diesem Fix blockierte das Holdout-Gate eine solche verlustfreie,
+    profitable OOS-Periode fälschlich (``None → 0.0``, ``0.0 > 0.0`` = False), obwohl sie das beste
+    denkbare Ergebnis ist. Analog zu ``reward.py['oos_sortino_fallback'] == 'total_return'``
+    (``reward.py`` compute_reward) greift jetzt der ``oos_total_return > 0`` als Pass-Kriterium,
+    sobald der Sortino mathematisch undefiniert ist. ``oos_total_return <= 0`` passiert NIEMALS —
+    kein Gate-Gaming; Micro-Sizing-/Risiko-Gates bleiben über ``oos_eligible`` und den
+    ``risk_dd_cap`` wirksam.
+    """
+    if not (metrics.oos_evaluated and metrics.oos_eligible):
+        return False
+
+    # Drawdown-Cap (None-safe: ein fehlender Drawdown gilt als schlechtestmöglich ⇒ blockiert).
+    max_dd = metrics.oos_max_drawdown if metrics.oos_max_drawdown is not None else 1.0
+    if max_dd > risk_dd_cap:
+        return False
+
+    if metrics.oos_sortino is not None:
+        return metrics.oos_sortino > 0.0
+
+    # Sortino undefiniert (Zero-Loss-Fold): total_return-Fallback nur bei aktiviertem Flag
+    # (Parität zu reward.py; fehlt/deaktiviert ⇒ Legacy-Verhalten, blockiert).
+    if sortino_fallback_enabled:
+        return metrics.oos_total_return > 0.0
+    return False
+
+
 def confirm_on_holdout(
     study,
     strategy: str,
@@ -28,10 +60,13 @@ def confirm_on_holdout(
     cfg_dir = config_dir()
     optimizer_path = cfg_dir / "optimizer.json"
     seed = 42
+    oos_sortino_fallback = None
     if optimizer_path.exists():
         with open(optimizer_path, "r", encoding="utf-8") as f:
             opt_data = json.load(f)
             seed = opt_data.get("seed", 42)
+            # Issue #533 — oos_sortino_fallback-Parität zu reward.py (Zero-Hardcoding).
+            oos_sortino_fallback = opt_data.get("oos_sortino_fallback")
 
     # Dynamisch Holdout-Tage auslesen (Zero-Hardcoding)
     backtest_path = cfg_dir / "backtest.json"
@@ -72,19 +107,18 @@ def confirm_on_holdout(
             t_data = json.load(f)
             risk_dd_cap = t_data.get("max_drawdown", 0.30)
 
-    oos_sortino = metrics.oos_sortino if metrics.oos_sortino is not None else 0.0
-
-    passed = (
-        metrics.oos_evaluated and
-        metrics.oos_eligible and
-        oos_sortino > 0.0 and
-        metrics.oos_max_drawdown <= risk_dd_cap
+    # Issue #533 — Holdout-Gate mit oos_sortino_fallback-Parität: ein verlustfreier (sortino=None),
+    # profitabler OOS-Fold passiert über oos_total_return>0, statt fälschlich blockiert zu werden.
+    passed = _holdout_gate_passed(
+        metrics, risk_dd_cap,
+        sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
     )
 
     return {
         "passed": passed,
         "metrics": {
             "oos_sortino": metrics.oos_sortino,
+            "oos_total_return": metrics.oos_total_return,
             "oos_max_drawdown": metrics.oos_max_drawdown,
             "oos_evaluated": metrics.oos_evaluated,
             "oos_eligible": metrics.oos_eligible,
@@ -221,6 +255,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             global_weights = json.load(f)
             promotion_margin = global_weights.get("promotion_margin", 0.10)
             global_weights["reward_mode"] = "auto"
+    # Issue #533 — oos_sortino_fallback-Parität zu reward.py / confirm_on_holdout (Zero-Hardcoding).
+    oos_sortino_fallback = global_weights.get("oos_sortino_fallback") if global_weights else None
 
     m_global = _holdout_metrics_for_params(strategy, symbol, global_params,
                                            run_backtest=run_backtest, build_trial=build_trial,
@@ -239,10 +275,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                                catalog_newest_ns=catalog_newest_ns)
         R_symbol = compute_reward(m_symbol, universe_size=1, weights=global_weights) if global_weights else compute_reward(m_symbol, universe_size=1)
 
-        holdout_passed = (
-            m_symbol.oos_evaluated and m_symbol.oos_eligible
-            and (m_symbol.oos_sortino if m_symbol.oos_sortino is not None else -9.0) > 0.0
-            and (m_symbol.oos_max_drawdown if m_symbol.oos_max_drawdown is not None else 1.0) <= risk_dd_cap
+        # Issue #533 — dieselbe oos_sortino_fallback-Parität wie confirm_on_holdout/reward.py:
+        # ein verlustfreier (sortino=None), profitabler Holdout-Fold wird nicht mehr blockiert.
+        holdout_passed = _holdout_gate_passed(
+            m_symbol, risk_dd_cap,
+            sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
         )
 
         promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
