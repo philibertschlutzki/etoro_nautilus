@@ -1,10 +1,23 @@
 import json
 import math
+import statistics
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from automation.optimizer.parsing import TournamentMetrics
+
+
+def _softplus(z: float) -> float:
+    """``ln(1 + e^z)`` — überall streng monoton, C∞, numerisch stabil (kein Overflow für großes z).
+
+    Issue #560 — glatte, streng monotone Abbildung des Rest-Gaps zum Return-Gate im
+    return-verankerten Failure-Reward. Für ``z ≫ 0`` ≈ ``z``, für ``z ≪ 0`` ≈ ``e^z`` → 0."""
+    if z > 30.0:
+        return z
+    if z < -30.0:
+        return math.exp(z)
+    return math.log1p(math.exp(z))
 
 
 
@@ -179,8 +192,35 @@ def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
     failure_ceiling = feasible_min - float(weights["evaluable_floor_epsilon"])
     unevaluable_ceiling = float(weights["penalty_unevaluable_oos"]) + float(weights["unevaluable_shaping_span"])
 
-    penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
+    # Issue #560 — Aggregations-Modus des Failure-Rewards (deklarativ, Zero-Hardcoding).
+    #   'legacy_mean'     : Mittel der aktiven Distanz-Terme (Default, bit-identisch zum Status quo).
+    #   'return_anchored' : an eine gut konditionierte, ökonomisch monotone Skalarzahl (oos_total_return)
+    #                       verankert, statt an einem von Kosten-Sättigungen dominierten 6-Term-Mittel
+    #                       (corr(reward,return|ineligible)≈0). softplus bildet den Rest-Gap zum
+    #                       Return-Gate stufenlos und streng monoton ab ⇒ corr(reward,return) > 0
+    #                       konstruktionsgemäß. Kein Term kann dominieren (es gibt nur einen).
+    mode = _cfg_value(weights, tournament_cfg, "failure_reward_mode", "legacy_mean")
 
+    if mode == "return_anchored":
+        req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return")
+        if req_return is None:
+            raise ValueError(
+                "failure_reward_mode='return_anchored' benötigt oos_min_total_return "
+                "(tournament.json/weights).")
+        s = float(_cfg_value(weights, tournament_cfg, "failure_return_softplus_scale", 0.02))
+        if s <= 0.0:
+            s = 0.02
+        w = float(_cfg_value(weights, tournament_cfg, "failure_return_penalty_weight", 2.0))
+        # z = −(return − gate)/s: großer Rest-Gap (return ≪ gate) ⇒ großes z ⇒ große Strafe;
+        # return → gate ⇒ z → 0 ⇒ Strafe → w·ln2. softplus > 0 ⇒ Failure-Reward stets < failure_ceiling
+        # (Ordnungsinvariante: max(failure) < −sortino_clip_abs bleibt strikt).
+        z = -(float(m.oos_total_return) - float(req_return)) / s
+        penalty = _softplus(z) * w
+        raw_failure_reward = failure_ceiling - penalty
+        return max(unevaluable_ceiling, raw_failure_reward)
+
+    # 'legacy_mean' (Default) — Mittel der aktiven Distanzen (bit-identisch, #452/#505/#534).
+    penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
     raw_failure_reward = failure_ceiling - penalty
     return max(unevaluable_ceiling, raw_failure_reward)
 
@@ -357,19 +397,65 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         return penalty_unevaluable_oos + shaping
 
     sortino_clip_abs = weights["sortino_clip_abs"]
-    base = max(-sortino_clip_abs, min(sortino_clip_abs, base_source))
+    # Issue #559 — WEICHE Sättigung statt Hard-Clip. Der Hard-Clip ist eine stückweise konstante
+    # Funktion mit Gradient 0 oberhalb der Klemmgrenze — genau dort, wo die Winner leben (jeder
+    # evaluable Trial mit minimalem Edge klemmte annualisiert auf +5.0 ⇒ TPE erhält ein flaches
+    # Plateau und kann den robustesten Kandidaten nicht selektieren). asinh ist linear nahe 0 (kein
+    # Informationsverlust unterhalb der Skala), logarithmisch in den Extremen und ÜBERALL streng
+    # monoton: base = c·asinh(sortino/c) trägt oberhalb der bisherigen Grenze weiterhin Ordnung
+    # (50 > 10 > 5 bleibt erhalten). Fehlt sortino_soft_scale (oder <= 0) ⇒ Legacy-Hard-Clip
+    # (bit-identisch, Migrations-sicher). Entschärft strukturell auch die #563-Clip-Sättigung.
+    soft_scale = weights.get("sortino_soft_scale")
+    if soft_scale is not None and float(soft_scale) > 0.0:
+        c = float(soft_scale)
+        base = c * math.asinh(float(base_source) / c)
+    else:
+        base = max(-sortino_clip_abs, min(sortino_clip_abs, base_source))
 
     penalty_overfit_weight = weights["penalty_overfit_weight"]
     penalty_dd_weight = weights["penalty_dd_weight"]
     bonus_coverage_weight = weights["bonus_coverage_weight"]
     penalty_turnover_weight = weights.get("penalty_turnover_weight", 0.0)
 
+    # Issue #565 — Divergenz-Strafe IS↔OOS. Legacy (einseitig): overfit_gap = max(0, IS − OOS)
+    # bestraft NUR IS≫OOS; der Fall OOS≫IS (Overfit auf ein günstiges OOS-Sub-Fenster, das am
+    # Holdout revertiert) erhält gap=0 und vollen Kredit. Bei overfit_divergence_mode=='symmetric'
+    # wird |IS − OOS| bestraft (OOS≫IS optional milder via overfit_oos_luck_weight). Fehlt der Key
+    # ⇒ Legacy einseitig (bit-identisch, Zero-Hardcoding).
     overfit_gap = max(0.0, m.is_sortino_median - base)
+    divergence_mode = weights.get("overfit_divergence_mode")
+    if divergence_mode == "symmetric":
+        diff = m.is_sortino_median - base
+        if diff >= 0.0:
+            divergence_penalty = penalty_overfit_weight * diff
+        else:
+            oos_luck_w = float(weights.get("overfit_oos_luck_weight", penalty_overfit_weight))
+            divergence_penalty = oos_luck_w * (-diff)
+    else:
+        divergence_penalty = penalty_overfit_weight * overfit_gap
+
     dd_excess = max(0.0, m.oos_max_drawdown - risk_dd_cap)
 
     # Issue #509 (Cost Drag & Turnover Churning) - Turnover Penalty
     # The penalty increases linearly with the number of OOS trades.
     turnover_penalty = m.oos_total_trades * penalty_turnover_weight
+
+    # Issue #565 — Fold-Dispersions-Strafe: die Streuung der Per-Fold-OOS-Sortinos bestraft
+    # *glückliche* (ein starker Fold trägt den Median) gegenüber *konsistenter* Performance —
+    # die Reward-seitige Ergänzung zum Gate-seitigen #550. Fehlt der Gewichts-Key oder liegen
+    # < 2 Fold-Sortinos vor ⇒ 0.0 (bit-identisch, rückwärtskompatibel).
+    fold_dispersion_penalty = 0.0
+    w_disp = weights.get("fold_dispersion_weight")
+    fold_sortinos = getattr(m, "oos_fold_sortinos", None) or []
+    if w_disp and len(fold_sortinos) >= 2:
+        fold_dispersion_penalty = float(w_disp) * statistics.pstdev(
+            [float(s) for s in fold_sortinos])
+
+    # Issue #559 — return-Tie-Breaker: bricht Rest-Plateaus im eligiblen Ast ökonomisch sinnvoll auf
+    # (oos_total_return streut, wo der — nun weich gesättigte — Sortino nicht mehr differenziert).
+    # w_ret klein wählen, damit die Sortino-Ordnung nicht überstimmt wird. Fehlt w_ret ⇒ 0.0.
+    w_ret = float(weights.get("w_ret", 0.0))
+    return_tie_breaker = w_ret * float(m.oos_total_return)
 
     floor = -float(weights["sortino_clip_abs"])
 
@@ -385,17 +471,23 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
             b = bounds.extract_numeric_bounds(strategy)
             param_pen = weights["lambda_reg"] * bounds.normalized_param_distance(sampled, global_params, b)
         reward = (base
-                  - overfit_gap * penalty_overfit_weight
+                  - divergence_penalty
                   - dd_excess * penalty_dd_weight
                   - param_pen
-                  - turnover_penalty)
+                  - turnover_penalty
+                  - fold_dispersion_penalty
+                  + return_tie_breaker)
         return max(reward, floor)
 
-    # Coverage path (universe_size > 1) — bit-identical to the pre-A4.3 behaviour.
+    # Coverage path (universe_size > 1) — bit-identical to the pre-A4.3 behaviour when the new
+    # opt-in shaping keys (sortino_soft_scale/overfit_divergence_mode/fold_dispersion_weight/w_ret)
+    # are absent.
     coverage = m.win_count / max(1, universe_size)
     reward = (base
-              - overfit_gap * penalty_overfit_weight
+              - divergence_penalty
               - dd_excess * penalty_dd_weight
               + coverage * bonus_coverage_weight
-              - turnover_penalty)
+              - turnover_penalty
+              - fold_dispersion_penalty
+              + return_tie_breaker)
     return max(reward, floor)

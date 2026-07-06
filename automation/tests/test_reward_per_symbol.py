@@ -2,8 +2,12 @@
 
 Zero-hardcoding: every weight/margin is read from optimizer.json/tournament.json,
 never a duplicated literal in the assert (HI-6). Pure arithmetic, no backtest.
+
+Issue #559/#565: die Reward-Base ist weich gesättigt (base = c·asinh(sortino/c)) und die
+Overfit-Strafe symmetrisch (|IS − OOS|); die Spec-Ableitungen unten spiegeln das (Living Spec).
 """
 import json
+import math
 import pytest
 from pathlib import Path
 
@@ -20,6 +24,24 @@ def _cfg():
     return json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
 
 
+def _base(cfg, sortino):
+    """Issue #559 — weiche Sättigung, wenn sortino_soft_scale gesetzt, sonst Legacy-Hard-Clip."""
+    ss = cfg.get("sortino_soft_scale")
+    if ss:
+        return float(ss) * math.asinh(sortino / float(ss))
+    return max(-cfg["sortino_clip_abs"], min(cfg["sortino_clip_abs"], sortino))
+
+
+def _divergence(cfg, is_median, base):
+    """Issue #565 — symmetrische Divergenz, wenn overfit_divergence_mode='symmetric', sonst Legacy."""
+    if cfg.get("overfit_divergence_mode") == "symmetric":
+        diff = is_median - base
+        if diff >= 0.0:
+            return cfg["penalty_overfit_weight"] * diff
+        return cfg.get("overfit_oos_luck_weight", cfg["penalty_overfit_weight"]) * (-diff)
+    return cfg["penalty_overfit_weight"] * max(0.0, is_median - base)
+
+
 def _cap():
     return json.loads(Path("automation/config/tournament.json").read_text("utf-8"))["max_drawdown"]
 
@@ -34,9 +56,10 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
     sampled = {"sma_period": 60, "cooldown_bars": 36}
     glob = {"sma_period": 20, "cooldown_bars": 12}
     b = bounds.extract_numeric_bounds("SmaCrossoverStrategy")
-    base = max(-cfg["sortino_clip_abs"], min(cfg["sortino_clip_abs"], 1.0))
+    base = _base(cfg, 1.0)
     pen = cfg["lambda_reg"] * bounds.normalized_param_distance(sampled, glob, b)
-    expected = base - max(0.0, 2.0 - base) * cfg["penalty_overfit_weight"] - 0.0 * cfg["penalty_dd_weight"] - pen
+    # Ein einzelner Fold-Sortino ⇒ keine Dispersions-Strafe; oos_total_return=0 ⇒ kein Tie-Breaker.
+    expected = base - _divergence(cfg, 2.0, base) - 0.0 * cfg["penalty_dd_weight"] - pen
     floor = cfg["penalty_unevaluable_oos"] + cfg["unevaluable_shaping_span"] + cfg["evaluable_floor_epsilon"]
     got = reward.compute_reward(m, universe_size=1, sampled=sampled, global_params=glob,
                                 strategy="SmaCrossoverStrategy")
@@ -94,6 +117,8 @@ def test_reward_mode_per_symbol_forces_path_above_universe_1(tmp_path):
     m = parsing.parse_tournament(p)
     cap = _cap()
     r = reward.compute_reward(m, universe_size=100, weights=weights, risk_dd_cap=cap)
-    base = max(-cfg["sortino_clip_abs"], min(cfg["sortino_clip_abs"], 1.0))
-    # no coverage term, no param_pen (no sampled/global) -> reward == base
-    assert r == pytest.approx(base, rel=1e-9)
+    base = _base(cfg, 1.0)
+    # no coverage term, no param_pen (no sampled/global); IS-median==1.0 ⇒ kleine symmetrische
+    # Divergenz-Strafe (base < 1.0 durch Soft-Sättigung); ein Fold ⇒ keine Dispersion; return=0.
+    expected = base - _divergence(cfg, 1.0, base)
+    assert r == pytest.approx(expected, rel=1e-9)

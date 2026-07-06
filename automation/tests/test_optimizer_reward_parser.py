@@ -1,7 +1,24 @@
-import json, statistics
+import json, math, statistics
 import pytest
 from pathlib import Path
 from automation.optimizer import parsing, reward
+
+
+def _base(cfg, sortino):
+    """Issue #559 — weiche Sättigung (asinh), sonst Legacy-Hard-Clip."""
+    ss = cfg.get("sortino_soft_scale")
+    if ss:
+        return float(ss) * math.asinh(sortino / float(ss))
+    return max(-cfg["sortino_clip_abs"], min(cfg["sortino_clip_abs"], sortino))
+
+
+def _divergence(cfg, is_median, base):
+    """Issue #565 — symmetrische Divergenz, sonst Legacy-einseitig."""
+    if cfg.get("overfit_divergence_mode") == "symmetric":
+        diff = is_median - base
+        return (cfg["penalty_overfit_weight"] * diff if diff >= 0.0
+                else cfg.get("overfit_oos_luck_weight", cfg["penalty_overfit_weight"]) * (-diff))
+    return cfg["penalty_overfit_weight"] * max(0.0, is_median - base)
 
 def _write_tournament(tmp_path, **agg):
     data = {"fully_eligible_pairs": 1, "aggregate_winner": agg}
@@ -25,9 +42,10 @@ def test_reward_uses_config_weights(tmp_path):
                           oos_metrics={"sortino_ratio": 1.0, "max_drawdown": cap + 0.1})
     m = parsing.parse_tournament(p)
 
-    base = max(-cfg["sortino_clip_abs"], min(cfg["sortino_clip_abs"], 1.0))
+    base = _base(cfg, 1.0)
+    # Ein einzelner Fold-Sortino ⇒ keine Dispersions-Strafe; oos_total_return=0 ⇒ kein Tie-Breaker.
     expected = (base
-                - max(0.0, 3.0 - base) * cfg["penalty_overfit_weight"]
+                - _divergence(cfg, 3.0, base)
                 - 0.1 * cfg["penalty_dd_weight"]
                 + (5 / 100) * cfg["bonus_coverage_weight"])
 
