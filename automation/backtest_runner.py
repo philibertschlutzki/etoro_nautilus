@@ -878,7 +878,8 @@ def _get_annualization_factor(mtm_series=None) -> float:
     (uniforme Trading-Time-Konvention). Innerhalb einer Asset-Klasse ist das ein konstanter
     √factor-Multiplikator (ranking-neutral für TPE); nur die ABSOLUTEN Sortino-Gates
     (oos_min_sortino) und echte Cross-Asset-Vergleiche brauchen ggf. eine Observations-per-Year-
-    Skalierung (n_periods · 31_557_600 / total_span_seconds) — offene Design-Entscheidung."""
+    Skalierung (n_periods · 31_557_600 / total_span_seconds). Entscheidung (PR #542): 8766 ist der
+    akzeptierte 1h-Standard; die Cross-Asset-Korrektur ist als Folge-Issue #543 getrackt."""
     # 1) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532). Nur ein echter
     #    DatetimeIndex liefert Timedelta-Deltas mit .total_seconds(); ein nicht-zeitlicher Index
     #    (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats) hat keine ableitbare
