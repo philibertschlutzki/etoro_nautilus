@@ -1039,7 +1039,10 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             else:
                 mean_ret = period_rets.mean()
                 sortino_raw = ((mean_ret - mar) / dd_dev) * math.sqrt(annualization_factor)
-                sortino = max(-RATIO_CAP, min(sortino_raw, RATIO_CAP))
+                if pd.isna(sortino_raw):
+                    sortino = None
+                else:
+                    sortino = max(-RATIO_CAP, min(sortino_raw, RATIO_CAP))
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0

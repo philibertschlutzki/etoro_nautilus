@@ -115,3 +115,28 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
 
     assert stats_neg.get("sortino_ratio") == -50.0, "Should be symmetrically clipped at -50.0"
     assert stats_pos.get("sortino_ratio") == 50.0, "Should be symmetrically clipped at +50.0"
+
+def test_sortino_nan_poisoning(mock_sortino_config):
+    # Test 5: Verify that if mean_ret somehow results in a NaN (which poisons sortino_raw),
+    # the sortino ratio is gracefully set to None instead of -RATIO_CAP (-50.0).
+    rets = [np.nan, np.nan, np.nan]
+    mtm_vals = [1.0, 1.0, 1.0, 1.0] # constant mtm gives period_rets = 0.0 which means dd_dev = 0.0 -> None
+
+    # We must explicitly force the NaN path by patching period_rets.mean() and avoiding the dd_dev=0 trap
+
+    # Let's create a series that has dd_dev > 0 but the mean is somehow NaN?
+    # Not possible normally in pandas, but we can simulate it with a mock.
+    with patch("pandas.Series.mean", return_value=np.nan):
+        rets_valid = [-0.1, -0.2, -0.3]
+        mtm_vals_valid = [1.0]
+        for r in rets_valid: mtm_vals_valid.append(mtm_vals_valid[-1] * (1 + r))
+        mtm_series_valid = pd.Series(mtm_vals_valid)
+
+        stats = _calculate_stats(
+            pnl_list=[-1.0]*3,
+            hold_list=[(1, 1.0)]*3,
+            starting_capital=1.0,
+            mtm_series=mtm_series_valid,
+            min_trades_for_sortino=2
+        )
+        assert stats.get("sortino_ratio") is None, "NaN-poisoned raw Sortino must evaluate to None, not -RATIO_CAP"
