@@ -416,7 +416,9 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             "oos_evaluated": False,
             "oos_eligible": False,
             "oos_metrics": None,
-            "oos_rejection_reasons": ["oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."]
+            "oos_rejection_reasons": ["oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."],
+            # Issue #554 — schemastabil: leeres numerisches Delta-Dict auch im Not-Evaluated-Fall.
+            "oos_gate_deltas": {},
         }
 
 
@@ -437,6 +439,14 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     req_pf       = t_overrides.get("oos_min_profit_factor", t_overrides.get("min_profit_factor", tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0))))
     req_max_dd   = t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0))))
     req_win_rate = t_overrides.get("oos_min_win_rate", t_overrides.get("min_win_rate", tournament_cfg.get("oos_min_win_rate", tournament_cfg.get("min_win_rate", 0.0))))
+    # Issue #550 — Fold-Konsistenz-Gate: Mindest-Anteil profitabler OOS-Folds. Fehlt der Key
+    # (None) ⇒ Bedingung inaktiv (rückwärtskompatibel, Zero-Hardcoding).
+    req_profitable_folds_frac = t_overrides.get("oos_min_profitable_folds_frac",
+                                                tournament_cfg.get("oos_min_profitable_folds_frac"))
+    # Issue #552 — Benchmark-relatives Excess-Return-(Alpha-)Gate. Fehlt der Key (None) ⇒ inaktiv
+    # (Legacy-Absolut-Gate über oos_min_total_return bleibt allein maßgeblich).
+    req_excess_return = t_overrides.get("oos_min_excess_return",
+                                        tournament_cfg.get("oos_min_excess_return"))
 
     sortino_valid = True
     sortino_reason = ""
@@ -460,15 +470,66 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
              pf_valid = False
              pf_reason = f"oos_min_profit_factor: {pf:.5f} < {req_pf}"
 
+    # Issue #550 — Fold-Konsistenz-Bedingung. Nur aktiv, wenn die Schwelle konfiguriert ist UND
+    # die Fold-Telemetrie (oos_folds_total, #549/#550) vorliegt (Walk-Forward-Pfad). Fehlt eines
+    # von beiden ⇒ trivial erfüllt (inaktiv, rückwärtskompatibel zu Nicht-WF- und Legacy-JSONs).
+    prof_folds_valid = True
+    prof_folds_reason = ""
+    if req_profitable_folds_frac is not None:
+        n_folds_total = oos_metrics.get("oos_folds_total")
+        n_folds_prof = oos_metrics.get("oos_profitable_folds", 0)
+        if n_folds_total:
+            frac = n_folds_prof / n_folds_total if n_folds_total > 0 else 0.0
+            if frac < req_profitable_folds_frac:
+                prof_folds_valid = False
+                prof_folds_reason = (f"oos_min_profitable_folds: {n_folds_prof}/{n_folds_total} "
+                                     f"({frac:.2f}) < {req_profitable_folds_frac:.2f}")
+
+    # Issue #552 — Excess-Return-Bedingung. Nur aktiv, wenn die Schwelle gesetzt ist UND die
+    # Benchmark-Telemetrie (oos_excess_return) vorliegt; sonst trivial erfüllt (rückwärtskompatibel).
+    excess_valid = True
+    excess_reason = ""
+    # Issue #554 — adaptive Präzision (.6g) + numerisches Delta im Reject-String. Der frühere fixe
+    # :.5f verschluckte bei mikroskopischen Schwellen (5e-05) genau die entscheidenden Stellen
+    # ("0.00005 < 0.00005"), sodass ein Near-Miss (Δ=−1e-7) vom groben Miss (Δ=−1e-4) ununterscheidbar
+    # wurde. .6g zeigt signifikante Stellen, das Δ macht den Rest-Gap explizit.
+    def _reason(label, actual, thresh, op):
+        return f"{label}: {actual:.6g} {op} {thresh:.6g} (Δ={actual - thresh:+.3e})"
+
+    if req_excess_return is not None:
+        oos_excess = oos_metrics.get("oos_excess_return")
+        if oos_excess is not None and oos_excess < req_excess_return:
+            excess_valid = False
+            excess_reason = _reason("oos_min_excess_return", oos_excess, req_excess_return, "<")
+
     condition_map = {
         "min_trades":        (n_trades >= req_trades, f"oos_min_trades: {n_trades} < {req_trades}"),
-        "min_total_return":  (total_return >= req_return, f"oos_min_total_return: {total_return:.5f} < {req_return:.5f}"),
-        "min_expectancy":    (expectancy >= req_exp, f"oos_min_expectancy: {expectancy:.5f} < {req_exp:.5f}"),
-        "max_drawdown":      (max_dd <= req_max_dd, f"oos_max_drawdown: {max_dd:.5f} > {req_max_dd:.5f}"),
-        "min_win_rate":      (win_rate >= req_win_rate, f"oos_min_win_rate: {win_rate:.5f} < {req_win_rate:.5f}"),
+        "min_total_return":  (total_return >= req_return, _reason("oos_min_total_return", total_return, req_return, "<")),
+        "min_expectancy":    (expectancy >= req_exp, _reason("oos_min_expectancy", expectancy, req_exp, "<")),
+        "max_drawdown":      (max_dd <= req_max_dd, _reason("oos_max_drawdown", max_dd, req_max_dd, ">")),
+        "min_win_rate":      (win_rate >= req_win_rate, _reason("oos_min_win_rate", win_rate, req_win_rate, "<")),
         "min_sortino":       (sortino_valid, sortino_reason),
         "min_profit_factor": (pf_valid, pf_reason),
+        "min_profitable_folds": (prof_folds_valid, prof_folds_reason),
+        "min_excess_return": (excess_valid, excess_reason),
     }
+
+    # Issue #554 — maschinenlesbares Delta-Dict (actual − threshold; für max_drawdown cap − actual,
+    # damit einheitlich 'negativ = Gate verfehlt' gilt). Rein additiv/observational, kein Entscheidungs-
+    # einfluss. So muss die Auswertung nicht auf String-Parsing der Reject-Gründe zurückfallen.
+    oos_gate_deltas: dict[str, float] = {
+        "oos_min_trades": float(n_trades - req_trades),
+        "oos_min_total_return": float(total_return - req_return),
+        "oos_min_expectancy": float(expectancy - req_exp),
+        "oos_max_drawdown": float(req_max_dd - max_dd),
+        "oos_min_win_rate": float(win_rate - req_win_rate),
+    }
+    if sortino is not None and req_sortino:
+        oos_gate_deltas["oos_min_sortino"] = float(sortino - req_sortino)
+    if pf is not None and req_pf:
+        oos_gate_deltas["oos_min_profit_factor"] = float(pf - req_pf)
+    if req_excess_return is not None and oos_metrics.get("oos_excess_return") is not None:
+        oos_gate_deltas["oos_min_excess_return"] = float(oos_metrics["oos_excess_return"] - req_excess_return)
 
     reasons = []
     for cond_name in tournament_cfg.get("eligible_requires_all", []):
@@ -504,7 +565,10 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         "oos_evaluated": True,
         "oos_eligible": len(reasons) == 0,
         "oos_metrics": oos_metrics,
-        "oos_rejection_reasons": reasons
+        "oos_rejection_reasons": reasons,
+        # Issue #554 — numerische Gate-Deltas (metric → actual − threshold) für die maschinen-
+        # lesbare Forensik im optimizer_trial_completed-Event.
+        "oos_gate_deltas": oos_gate_deltas,
     }
 
 def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
@@ -754,6 +818,56 @@ def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
     return [float(f["sortino_ratio"]) for f in per_fold_oos if f is not None and f.get("sortino_ratio") is not None]
 
 
+# Issue #549/#550 — die vier risikoadjustierten OOS-Gate-Kennzahlen einheitlich als Fold-Median.
+_FOLD_MEDIAN_METRICS = ("sortino_ratio", "win_rate", "expectancy", "profit_factor")
+
+
+def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | None]) -> dict:
+    """Issue #549/#550 — mutiert ``oos_metrics`` in place zur kanonischen Fold-Median-Aggregation.
+
+    Rein & deterministisch (kein I/O), damit unit-testbar losgelöst vom BacktestEngine.
+
+    Motivation: Vor dem Fix mischte das Gate drei Aggregationslogiken in DERSELBEN Klausel:
+    ``total_return`` compoundiert, ``sortino_ratio`` Fold-Median (nur im Reward via parse_tournament),
+    ``win_rate``/``expectancy``/``profit_factor`` GEPOOLT über alle OOS-Trades. Das (a) ließ
+    Gate-Sortino (pooled) und Reward-Sortino (fold-median) divergieren (#549) und (b) belohnte ein
+    einzelnes Glücks-Sub-Fenster, weil ein katastrophaler Fold in der gepoolten Kennzahl von einem
+    starken maskiert wurde (#550).
+
+    Fix: die vier risikoadjustierten Kennzahlen (``sortino_ratio``, ``win_rate``, ``expectancy``,
+    ``profit_factor``) werden zum FOLD-MEDIAN (robuste Zentraltendenz). ``total_return`` bleibt
+    compoundiert (geometrisch korrekt, #465); ``max_drawdown``/``total_trades``/``median_position_notional``
+    bleiben pooled. Der Fold-Median-Sortino ist DERSELBE Wert, den ``parse_tournament`` aus
+    ``oos_fold_sortinos`` bildet ⇒ Gate == Reward (kanonisch an der Quelle, #549). Die gepoolten
+    Originalwerte bleiben zur Forensik unter ``<metric>_pooled`` erhalten.
+
+    Zusätzlich: Fold-Konsistenz-Telemetrie (``oos_folds_total``, ``oos_profitable_folds``,
+    ``oos_profitable_folds_frac``) als Grundlage des deklarativen ``min_profitable_folds``-Gates (#550).
+
+    Für ``splits==1`` (Holdout/Single-Fold) ist der Fold-Median == der gepoolte Wert (identische
+    Trade-Menge, ein Fold) ⇒ bit-identisch; nur echte Multi-Fold-Sweeps ändern sich. Siehe
+    AGENTS.md Pitfall #110.
+    """
+    import statistics as _stats
+    oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+
+    valid_folds = [f for f in per_fold_oos_list if f is not None]
+    n_folds_total = len(per_fold_oos_list)
+    n_folds_profitable = sum(1 for f in valid_folds if (f.get("total_return") or 0.0) > 0.0)
+    oos_metrics["oos_folds_total"] = n_folds_total
+    oos_metrics["oos_profitable_folds"] = n_folds_profitable
+    oos_metrics["oos_profitable_folds_frac"] = (
+        n_folds_profitable / n_folds_total if n_folds_total > 0 else 0.0)
+
+    if valid_folds:
+        for key in _FOLD_MEDIAN_METRICS:
+            vals = [f.get(key) for f in valid_folds if f.get(key) is not None]
+            if vals:
+                oos_metrics[f"{key}_pooled"] = oos_metrics.get(key)
+                oos_metrics[key] = _stats.median(vals)
+    return oos_metrics
+
+
 def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tuple[int, int, int]]:
     """Issue #490 — die EINZIGE Quelle der Walk-Forward-Fold-Geometrie.
 
@@ -922,13 +1036,22 @@ def _get_annualization_factor(mtm_series=None) -> float:
         return float(config_factor)
     return 1.0
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
     Total Return Definition (Issue #465 / Audit #466):
     Liegt eine zeitbasierte MtM-Equity-Kurve (`mtm_series`) vor, ist `total_return` der ECHTE
     Portfolio-Return `equity_end / equity_start − 1`.
+
+    Expectancy Definition (Issue #546):
+    Liegt eine parallele `notional_list` (je Trade eingesetztes Entry-Notional) vor, ist
+    `expectancy` der sizing-INVARIANTE Per-Trade-Return auf das eingesetzte Kapital
+    `mean(pnl_i / notional_i)`. Ohne `notional_list` (Direkt-Unit-Calls, Legacy) fällt die
+    Berechnung bit-identisch auf `mean(pnl_i / starting_capital)` zurück. Die notional-relative
+    Definition entkoppelt Expectancy von der Positionsgröße: eine Strategie mit 10 % Einsatz und
+    eine mit 100 % Einsatz bei identischem Per-Trade-Edge liefern dieselbe Expectancy (vorher
+    Faktor 10). Siehe AGENTS.md Pitfall #107.
 
     Drawdown-/Sortino-Basis (Issue #464/#465):
     Liegt `mtm_series` vor, werden `max_drawdown` UND `sortino_ratio` aus der zeitindizierten
@@ -970,8 +1093,16 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     win_rate = wins / n if n > 0 else 0.0
 
-    rets = [v / starting_capital for v in pnl_list]
-    expectancy = statistics.mean(rets) if rets else 0.0
+    # Issue #546 — Expectancy als Return auf das je Trade eingesetzte Notional (sizing-invariant),
+    # sobald eine längen-kongruente notional_list vorliegt. Trades mit nicht-positivem Notional
+    # (defensiv) werden übersprungen. Fehlt die Liste ⇒ Legacy-Pfad (Normierung auf starting_capital),
+    # bit-identisch für alle Direkt-Unit-Calls von _calculate_stats.
+    if notional_list is not None and len(notional_list) == len(pnl_list):
+        per_trade = [v / nz for v, nz in zip(pnl_list, notional_list) if nz and nz > 0.0]
+        expectancy = statistics.mean(per_trade) if per_trade else 0.0
+    else:
+        rets = [v / starting_capital for v in pnl_list]
+        expectancy = statistics.mean(rets) if rets else 0.0
 
     # Issue #465 (Audit #466) — total_return als ECHTER zeitbasierter Portfolio-Return aus der
     # MtM-Equity-Kurve (``equity_end / equity_start − 1``), sobald eine Equity-Kurve vorliegt.
@@ -1164,11 +1295,22 @@ class PortfolioMonitor(Actor):
         from nautilus_trader.model.data import BarType
         self.bar_type = BarType.from_str(bar_type)
         self.equity_curve = []
+        # Issue #552 — parallele Close-Preis-Spur des überwachten Symbols (Buy&Hold-Benchmark).
+        # Für den Single-Symbol-Sweep abonniert der Monitor genau EIN bar_type ⇒ die Close-Serie
+        # ist die Symbol-Preisreihe, aus der der benchmark-relative Excess-Return (Alpha) folgt.
+        self.benchmark_curve = []
 
     def on_start(self):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar: Bar):
+        # Issue #552 — Close-Preis JEDES Bars erfassen (vor dem Equity-Guard, damit die Benchmark-
+        # Serie lückenlos ist). Fehlerrobust: schlägt die Erfassung fehl, bleibt benchmark_curve
+        # leer ⇒ #552-Telemetrie/Excess-Gate fallen sauber auf das Legacy-Absolut-Gate zurück.
+        try:
+            self.benchmark_curve.append((bar.ts_event, bar.close.as_double()))
+        except Exception:
+            pass
         try:
             from nautilus_trader.model.currencies import USD
             venue = self.bar_type.instrument_id.venue
@@ -1198,6 +1340,16 @@ class PortfolioMonitor(Actor):
         # Drop duplicate timestamps, keeping the last recorded equity for the timestamp
         df = df[~df.index.duplicated(keep='last')]
         return df["equity"]
+
+    def get_benchmark_series(self) -> pd.Series:
+        """Issue #552 — deduplizierte Close-Preis-Serie (Buy&Hold-Benchmark des Symbols)."""
+        if not self.benchmark_curve:
+            return pd.Series(dtype=float)
+        df = pd.DataFrame(self.benchmark_curve, columns=["ts", "close"])
+        df["ts"] = pd.to_datetime(df["ts"], unit="ns")
+        df.set_index("ts", inplace=True)
+        df = df[~df.index.duplicated(keep='last')]
+        return df["close"]
 
 
 # ---------------------------------------------------------------------------
@@ -1237,7 +1389,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -1506,19 +1658,46 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         is_mtm = None
         oos_mtm = None
         oos_frames = None
+        oos_buyhold_return = None  # Issue #552 — Buy&Hold-Benchmark-Return über das OOS-Fenster.
         if mtm_series is not None and not mtm_series.empty and _wf:
-            # Slicing the mtm_series
-            is_start_dt = pd.to_datetime(start_ns, unit="ns")
-            is_end_dt = pd.to_datetime(start_ns + is_window_ns, unit="ns")
-            is_mtm = mtm_series.loc[is_start_dt:is_end_dt]
+            # Issue #551 — Equity-Slices HALB-OFFEN [s, e), konsistent zur Trade-Klassifikation
+            # (``any(s <= ts < e ...)``). ``pandas.loc[a:b]`` ist auf BEIDEN Seiten geschlossen; da
+            # bei kontinuierlichen Folds ``oos_end_k == oos_start_{k+1}`` gilt, läge der Grenz-Bar
+            # sonst in ZWEI benachbarten Fold-Segmenten und würde im compoundierten Return (über
+            # ``mtm_frames``, das NICHT dedupliziert wird) doppelt gezählt. 1 ns vor dem exklusiven
+            # Ende zu schneiden macht die Intervall-Konvention systemweit einheitlich. Siehe
+            # AGENTS.md Pitfall #111.
+            def _slice_half_open(series, s_ns_, e_ns_):
+                start_dt = pd.to_datetime(s_ns_, unit="ns")
+                end_excl = pd.to_datetime(e_ns_, unit="ns") - pd.Timedelta(nanoseconds=1)
+                return series.loc[start_dt:end_excl]
+
+            is_mtm = _slice_half_open(mtm_series, start_ns, start_ns + is_window_ns)
 
             oos_frames = []
             for _, s_ns, e_ns in fold_boundaries:
-                seg = mtm_series.loc[pd.to_datetime(s_ns, unit="ns"):pd.to_datetime(e_ns, unit="ns")]
+                seg = _slice_half_open(mtm_series, s_ns, e_ns)
                 if not seg.empty:
                     oos_frames.append(seg)
             oos_mtm = pd.concat(oos_frames) if oos_frames else None
+            # Dedup bleibt als Sicherheitsnetz (jetzt i. d. R. No-Op, da die Segmente disjunkt sind).
             oos_mtm = oos_mtm[~oos_mtm.index.duplicated(keep="last")].sort_index() if oos_mtm is not None else None
+
+            # Issue #552 — Buy&Hold-Benchmark-Return des Symbols über EXAKT dieselbe (halb-offene,
+            # deduplizierte) OOS-Fensterung wie der Strategie-Return. Damit misst das (opt-in)
+            # Excess-Gate ALPHA (Strategie − Markt) statt bloßes Long-Bias-Beta. Rein additive
+            # Telemetrie; fehlt die Benchmark-Serie ⇒ oos_buyhold_return bleibt None (Legacy-Gate).
+            if benchmark_series is not None and not benchmark_series.empty:
+                bench_frames = []
+                for _, s_ns, e_ns in fold_boundaries:
+                    bseg = _slice_half_open(benchmark_series, s_ns, e_ns)
+                    if not bseg.empty:
+                        bench_frames.append(bseg)
+                if bench_frames:
+                    bench_oos = pd.concat(bench_frames)
+                    bench_oos = bench_oos[~bench_oos.index.duplicated(keep="last")].sort_index()
+                    if len(bench_oos) > 1 and float(bench_oos.iloc[0]) != 0.0:
+                        oos_buyhold_return = float(bench_oos.iloc[-1]) / float(bench_oos.iloc[0]) - 1.0
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 
@@ -1558,9 +1737,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     split_is_notionals.append(notional)
             is_mn = statistics.median(split_is_notionals) if split_is_notionals else 0.0
             oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
-            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm)
+            # Issue #546 — die parallelen Per-Trade-Notionals durchreichen ⇒ sizing-invariante
+            # (notional-relative) Expectancy statt Normierung auf das fixe starting_capital.
+            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals)
             if split_oos_pnls:
-                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames)
+                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals)
             else:
                 level_oos = _empty_level_metrics()
             return level_is, level_oos
@@ -1596,16 +1777,31 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 fold_med_notional = statistics.median(fold_notionals) if fold_notionals else 0.0
                 fold_mtm = None
                 if mtm_series is not None and not mtm_series.empty:
+                    # Issue #551 — halb-offene Fold-Equity-Slice [start, end), konsistent zur
+                    # Trade-Klassifikation oben (``split_oos_start_ns <= ts < split_oos_end_ns``).
                     split_oos_start_dt = pd.to_datetime(split_oos_start_ns, unit="ns")
-                    split_oos_end_dt = pd.to_datetime(split_oos_end_ns, unit="ns")
-                    fold_mtm = mtm_series.loc[split_oos_start_dt:split_oos_end_dt]
+                    split_oos_end_excl = pd.to_datetime(split_oos_end_ns, unit="ns") - pd.Timedelta(nanoseconds=1)
+                    fold_mtm = mtm_series.loc[split_oos_start_dt:split_oos_end_excl]
                 if fold_pnls:
-                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, mtm_series=fold_mtm)
+                    # Issue #546 — Per-Fold-Expectancy ebenfalls notional-relativ (Fold-Aggregation #550).
+                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, mtm_series=fold_mtm, notional_list=fold_notionals)
                 else:
                     fold_metrics = None
                 per_fold_oos_list.append(fold_metrics)
 
-            oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+            # Issue #549/#550 — kanonische Fold-Median-Aggregation der Gate-Kennzahlen + Fold-
+            # Konsistenz-Telemetrie an DER Quelle (Single Source of Truth), damit Gate und Reward
+            # denselben Sortino sehen und kein Glücks-Sub-Fenster belohnt wird. Reine Funktion,
+            # separat unit-getestet (test_issue_549/#550).
+            apply_fold_aggregation(oos_metrics, per_fold_oos_list)
+
+            # Issue #552 — Benchmark-relative Alpha-Telemetrie: excess = Strategie-OOS-Return −
+            # Buy&Hold-OOS-Return. Nur wenn die Benchmark-Serie verfügbar war (sonst greift das
+            # Legacy-Absolut-Gate). oos_total_return bleibt der compoundierte Strategie-Return.
+            if oos_buyhold_return is not None:
+                oos_metrics["oos_buyhold_return"] = oos_buyhold_return
+                oos_metrics["oos_excess_return"] = (
+                    (oos_metrics.get("total_return") or 0.0) - oos_buyhold_return)
 
         # Issue #303/#508 — OOS-Trade-Records AUF ROUND-TRIP-EBENE (eine Position == ein Record)
         # für die chronologische Portfolio-Aggregation in select_winners. Tupel-Arity bleibt
@@ -1808,6 +2004,11 @@ def select_winners(
         sym = r["symbol"]
         grouped_by_symbol.setdefault(sym, []).append(r)
 
+    # Issue #553 — Deflated-Sortino-Selektion (OPT-IN, Multiple-Testing-Korrektur). Fehlt das Flag
+    # ⇒ deflated_selection=False ⇒ bit-identisch zum Status quo (kein zusätzliches Gate).
+    deflated_selection = bool(tournament_cfg.get("deflated_selection", False))
+    deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
+
     per_symbol_winners = {}
     for sym, candidates in grouped_by_symbol.items():
         candidates_sorted = sorted(
@@ -1816,18 +2017,49 @@ def select_winners(
             reverse=True
         )
 
+        # Issue #553 — deflationierte Rausch-Schwelle für den OOS-Sortino des Winners. Über die
+        # Anzahl effektiv getesteter (OOS-evaluierter) Konfigurationen und deren Cross-Trial-
+        # Streuung: der Winner muss das erwartete Best-of-N-Rauschen schlagen, nicht nur das
+        # statische Gate (Bailey & López de Prado). None ⇒ Bedingung inaktiv (Legacy-Pfad).
+        deflated_min_sortino = None
+        if deflated_selection:
+            import statistics as _dstats
+            cand_sortinos = [c.get("oos_metrics", {}).get("sortino_ratio") for c in candidates
+                             if c.get("_oos_eval", {}).get("oos_evaluated")]
+            cand_sortinos = [float(s) for s in cand_sortinos if s is not None]
+            if len(cand_sortinos) >= 2:
+                dispersion = _dstats.pstdev(cand_sortinos)
+                from automation.optimizer.deflation import deflated_threshold
+                deflated_min_sortino = deflated_threshold(
+                    len(cand_sortinos), dispersion,
+                    confidence=deflation_confidence, baseline=0.0)
+                # Telemetrie: effektive (deflationierte) Schwelle je Study/Symbol.
+                print(f"  [Deflated #553] {sym}: effektive OOS-Sortino-Schwelle "
+                      f"{deflated_min_sortino:.4f} (N={len(cand_sortinos)}, σ={dispersion:.4f}, "
+                      f"conf={deflation_confidence})")
+
         for r in candidates_sorted:
             strat = r["strategy"]
             score = r.get("_score", 0.0)
             oos_eval = r["_oos_eval"]
 
             if oos_eval.get("oos_eligible", False):
-                per_symbol_winners[sym] = {
+                # Issue #553 — zusätzlich das deflationierte Rausch-Maximum schlagen (opt-in).
+                if deflated_min_sortino is not None:
+                    cand_oos_sortino = (r.get("oos_metrics") or {}).get("sortino_ratio")
+                    if cand_oos_sortino is None or float(cand_oos_sortino) < deflated_min_sortino:
+                        print(f"  [Deflated-Drop #553] {sym} | {strat}: OOS-Sortino "
+                              f"{cand_oos_sortino} < deflated {deflated_min_sortino:.4f}")
+                        continue
+                winner_entry = {
                     "strategy": strat,
                     "metrics": r["metrics"],
                     "score": round(score, 6),
                     **oos_eval
                 }
+                if deflated_min_sortino is not None:
+                    winner_entry["deflated_min_sortino"] = deflated_min_sortino
+                per_symbol_winners[sym] = winner_entry
                 break  # Winner found, move to next symbol
             else:
                 reasons = ", ".join(oos_eval.get("oos_rejection_reasons", []))
@@ -1932,7 +2164,8 @@ def select_winners(
 
 
             # Calculate the true portfolio metrics from chronologically ordered trades
-            portfolio_metrics = _calculate_stats(portfolio_pnls, portfolio_holds, starting_capital, med_notional=portfolio_med_notional)
+            # Issue #546 — notional-relative Expectancy auch auf der aggregierten Portfolio-Ebene.
+            portfolio_metrics = _calculate_stats(portfolio_pnls, portfolio_holds, starting_capital, med_notional=portfolio_med_notional, notional_list=portfolio_notionals)
 
             avg_oos = {
                 "total_trades": portfolio_total_trades,
@@ -1984,7 +2217,8 @@ def select_winners(
                         fold_med_notional = statistics.median(fold_notionals) if fold_notionals else 0.0
                         # The portfolio aggregate per fold cannot easily have an aggregated MtM curve without combining time series from multiple runs. We'll pass None for the MtM series here.
                         if fold_pnls:
-                            fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional)
+                            # Issue #546 — notional-relative Expectancy auch je Aggregat-Fold.
+                            fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, notional_list=fold_notionals)
                         else:
                             fold_metrics = None
                         per_fold_oos_list.append(fold_metrics)
@@ -2064,6 +2298,8 @@ def _build_single_symbol_oos(all_results: list[dict]) -> dict | None:
         "oos_evaluated": bool(oos_eval.get("oos_evaluated", False)),
         "oos_eligible": bool(oos_eval.get("oos_eligible", False)),
         "oos_rejection_reasons": oos_eval.get("oos_rejection_reasons", []),
+        # Issue #554 — numerische Gate-Deltas mit durchreichen (maschinenlesbare Forensik).
+        "oos_gate_deltas": oos_eval.get("oos_gate_deltas", {}),
         "oos_metrics": oos_metrics,
         "oos_fold_sortinos": oos_metrics.get("oos_fold_sortinos") or [],
         "median_is_sortino": is_metrics.get("sortino_ratio"),
@@ -2546,7 +2782,7 @@ def run_single_backtest_worker(
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
         try:
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series())
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series())
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {

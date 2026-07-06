@@ -53,6 +53,9 @@ class TournamentMetrics:
     oos_rejection_reasons: tuple = ()
     # Issue #463: Telemetry property for OOS Anchor Divergence invariant check.
     oos_anchor_divergence: bool | None = None
+    # Issue #554 — maschinenlesbare Gate-Deltas (metric → actual − threshold). Leeres Dict, wenn der
+    # Block fehlt (rückwärtskompatibel zu Pre-#554-JSONs). Für die forensische Near-Miss-Analyse.
+    oos_gate_deltas: dict | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -79,6 +82,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     win_count = agg.get("win_count") or 0
     # Issue #453 — konkrete OOS-Ablehnungsgründe (None-safe ⇒ leeres Tuple).
     oos_rejection_reasons = tuple(agg.get("oos_rejection_reasons") or ())
+    # Issue #554 — maschinenlesbare Gate-Deltas (None-safe ⇒ leeres Dict).
+    oos_gate_deltas = dict(agg.get("oos_gate_deltas") or {})
 
     # is_sortino_median fallback logic
     is_sortino_median = agg.get("median_is_sortino")
@@ -88,6 +93,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_fold_sortinos = agg.get("oos_fold_sortinos") or []
     oos_metrics = agg.get("oos_metrics") or {}
 
+    # Issue #549 — Gate/Reward-Sortino-Parität. Seit #549 setzt extract_metrics (apply_fold_aggregation)
+    # oos_metrics["sortino_ratio"] bereits AN DER QUELLE auf den Fold-Median der oos_fold_sortinos.
+    # Beide Zweige hier liefern damit denselben kanonischen Wert (median(oos_fold_sortinos) im WF-Pfad,
+    # der gepoolte Fallback nur, wenn keine Fold-Sortinos existieren) — der Reward liest exakt den
+    # Sortino, den das Gate (_evaluate_oos_eligibility) verwendet. Kein divergierender Gradient mehr
+    # an der Gate-Grenze (siehe AGENTS.md Pitfall #110).
     if oos_fold_sortinos and isinstance(oos_fold_sortinos, list) and len(oos_fold_sortinos) > 0:
         oos_sortino = statistics.median(oos_fold_sortinos)
     else:
@@ -176,6 +187,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_coverage_gap_days=float(dw_oos_gap) if dw_oos_gap is not None else None,
         oos_rejection_reasons=oos_rejection_reasons,
         oos_anchor_divergence=oos_anchor_divergence,
+        oos_gate_deltas=oos_gate_deltas,
     )
 
     # Pre-Return Invarianten-Check

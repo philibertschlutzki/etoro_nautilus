@@ -128,15 +128,33 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
         raise ValueError("Missing strict OOS configuration parameters in tournament.json")
 
     return_penalty_scale = _cfg_value(weights, tournament_cfg, "return_penalty_scale")
+    # Issue #547 — Expectancy-Distanz analog zum Return (#467) vom Gate-Threshold entkoppeln.
+    # ``_shortfall_distance`` normiert defaultmäßig auf ``target``; für die mikroskopische
+    # Expectancy-Schwelle sprengte ein winziger absoluter Miss den Aktiv-Mittelwert (Distanz ≫ 1)
+    # und maskierte alle anderen Signale. Mit ``expectancy_penalty_scale`` landet ein typischer
+    # Miss im Bereich der übrigen Terme (≈ 0…1.5). Fehlt der Key ⇒ ``scale=None`` ⇒ Legacy-Pfad
+    # (Normierung auf ``target``), bit-identisch (Zero-Hardcoding). Siehe AGENTS.md Pitfall #108.
+    expectancy_penalty_scale = _cfg_value(weights, tournament_cfg, "expectancy_penalty_scale")
 
     distances = [
         _shortfall_distance(float(m.oos_total_trades), req_trades),
         _shortfall_distance(m.oos_total_return, req_return, scale=return_penalty_scale),
-        _shortfall_distance(m.oos_expectancy, req_expectancy),
+        _shortfall_distance(m.oos_expectancy, req_expectancy, scale=expectancy_penalty_scale),
         _shortfall_distance(m.oos_win_rate, req_win_rate),
         _excess_distance(m.oos_max_drawdown, risk_dd_cap),
         _any_condition_distance(m, weights, tournament_cfg),
     ]
+
+    # Issue #547 (robuster Schutz) — Clip-Obergrenze pro Term: kein einzelner Distanz-Term darf
+    # den Aktiv-Mittelwert je dominieren, unabhängig von Kalibrierfehlern der Ziel-Schwellen.
+    # Fehlt ``distance_term_cap`` (oder <= 0) ⇒ kein Cap ⇒ bit-identisch zum Legacy-Verhalten.
+    # Der Cap senkt Distanzen nur (Strafe ≤ ungecappt) ⇒ die Rang-Invariante (failed < Floor)
+    # bleibt strikt erhalten.
+    term_cap = _cfg_value(weights, tournament_cfg, "distance_term_cap")
+    if term_cap is not None and float(term_cap) > 0.0:
+        cap = float(term_cap)
+        distances = [min(d, cap) for d in distances]
+
     active_dists = [d for d in distances if d > 0.0]
     if not active_dists:
         return 0.0

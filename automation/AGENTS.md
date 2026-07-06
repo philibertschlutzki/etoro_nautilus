@@ -1173,7 +1173,11 @@ Alle Laufzeit-Agenten emittieren LLM-/Audit-parsbare Events über `log_manager.e
 fließt je in Reward/Promotion zurück). Zentrale Events:
 - `optimizer_trial_completed` — pro Trial; trägt seit #404 die Per-Symbol-Telemetrie, seit #455 die
   OOS-Abdeckung (`fill_ts_max`, `oos_window_start_ns`, `oos_covered`, `oos_coverage_gap_days`), seit
-  #453 die granulare Kategorie (`is_rejection_detail`, `oos_rejection_reasons`).
+  #453 die granulare Kategorie (`is_rejection_detail`, `oos_rejection_reasons`), seit **#554** das
+  maschinenlesbare `oos_gate_deltas`-Dict (`metric → actual − threshold`; für `max_drawdown`
+  `cap − actual`, einheitlich „negativ = verfehlt"). Fold-Konsistenz (`oos_profitable_folds`,
+  `oos_profitable_folds_frac`, #550) und Benchmark-Alpha (`oos_buyhold_return`, `oos_excess_return`,
+  #552) reisen in `oos_metrics` der `tournament_result.json` mit.
 - `optimizer_study_completed` / `sweep_completed` — Timing (`wallclock_s`) + Evaluierbarkeit
   (`evaluable_trials`). Zeitdauer-Pflicht §18.
 - Logging MUSS am Entrypoint einmalig initialisiert sein (`setup_bot_logging`, Pitfall #78), sonst
@@ -1194,9 +1198,81 @@ fließt je in Reward/Promotion zurück). Zentrale Events:
 | Rate-Limit-Konformität (eToro-API) | `adapters/etoro_rate_limiter.py` | `.agents/API_docs_etoro.md`, `Integration_Guide.md` |
 | Per-Study-Parallelität reproduzierbar | Paar-Dedup + Schema-Pre-Init + Fail-Fast | `test_issue_411/412`, Pitfall #76/#77 |
 
+### 18.5.7 OOS-Eligibility-Zustandsautomat & Fallback-Matrix (Issue-Set #546–#555, wasserdicht)
+
+Der `backtest_runner`-Worker klassifiziert jeden Trial in **genau einen** OOS-Zustand. Der Automat ist deterministisch und config-getrieben (Zero-Hardcoding, HI-6); jede Transition ist unten explizit spezifiziert. Null Ambiguität.
+
+**Zustände & Transitionen (`_evaluate_oos_eligibility`):**
+
+```
+                         oos_total_trades <= 0
+   [START] ──────────────────────────────────────────►  NOT_EVALUABLE
+      │                                                   (oos_evaluated=False, oos_eligible=False,
+      │ oos_total_trades > 0                               oos_gate_deltas={}, reason="oos_not_evaluable")
+      ▼
+  EVALUATED ── ALLE eligible_requires_all erfüllt ──┐
+      │        ∧ ≥1 eligible_requires_any erfüllt    │ ja
+      │        ∧ median_notional ≥ 10 (Micro-Sizing) ▼
+      │                                            ELIGIBLE  (oos_eligible=True)
+      │ nein
+      ▼
+  FAILED  (oos_evaluated=True, oos_eligible=False, oos_rejection_reasons=[…], oos_gate_deltas={…})
+```
+
+**Reward-Pfad-Kopplung (`compute_reward`, Reihenfolge zwingend):** `oos_evaluated ∧ ¬oos_eligible` ⇒ `_constraint_failure_reward` (kontinuierliche Distanzstrafe, strikt < Evaluable-Floor). `¬oos_evaluated ∨ base_source is None` ⇒ Unevaluable-Shaping (`penalty_unevaluable_oos + shaping`). Sonst Evaluable-Base (geclippter Sortino). **Rang-Invariante (hart): jeder FAILED-Reward < jeder ELIGIBLE-Reward.** `distance_term_cap` (#547) senkt Distanzen nur ⇒ Invariante bleibt.
+
+**`eligible_requires_all`-Bedingungen (condition_map) & ihre kanonische Metrik-Quelle:**
+
+| Bedingung | Config-Key | Metrik (Aggregation, Issue) | Reject-Format (#554) |
+|---|---|---|---|
+| `min_trades` | `oos_min_trades` | `total_trades` (pooled, Summe) | `{n} < {req}` |
+| `min_total_return` | `oos_min_total_return` | `total_return` (compoundiert, #465) | `.6g` + `Δ=±.3e` |
+| `min_expectancy` | `oos_min_expectancy` | `expectancy` (**notional-relativ**, Fold-Median, #546/#550) | `.6g` + `Δ=±.3e` |
+| `max_drawdown` | `oos_max_drawdown`/`max_drawdown` | `max_drawdown` (pooled MtM) | `.6g` + `Δ=±.3e` (`cap−actual`) |
+| `min_win_rate` | `oos_min_win_rate` | `win_rate` (Fold-Median, #550) | `.6g` + `Δ=±.3e` |
+| `min_sortino` (any) | `oos_min_sortino` | `sortino_ratio` (**Fold-Median, kanonisch #549**) | `.5f` |
+| `min_profit_factor` (any) | `oos_min_profit_factor` | `profit_factor` (Fold-Median, #550) | `.5f` |
+| `min_profitable_folds` | `oos_min_profitable_folds_frac` | `oos_profitable_folds / oos_folds_total` (#550) | `{n}/{tot} ({frac}) < {req}` |
+| `min_excess_return` | `oos_min_excess_return` | `oos_excess_return` = `total_return − oos_buyhold_return` (#552) | `.6g` + `Δ=±.3e` |
+
+**Fallback-Matrix (Zero-Hardcoding — Verhalten bei fehlendem Key; alle rückwärtskompatibel):**
+
+| Config-Key | Default-Verhalten bei Abwesenheit | Issue |
+|---|---|---|
+| `notional_list` (Laufzeit-Arg) | Expectancy fällt auf `mean(pnl/starting_capital)` zurück (Legacy, bit-identisch) | #546 |
+| `expectancy_penalty_scale` | `_shortfall_distance` normiert auf `target` (Legacy) | #547 |
+| `distance_term_cap` | kein Cap (Distanzen ungedeckelt, Legacy) | #547 |
+| `embargo_period_days` | 0 ⇒ kein Purge-Gap (Fold 0 startet bei `is_end`); Fenster-Span bit-identisch | #548 |
+| `oos_min_profitable_folds_frac` | Bedingung inaktiv (trivial erfüllt) — greift nur, wenn gesetzt UND Fold-Telemetrie vorliegt | #550 |
+| `oos_min_excess_return` | Bedingung inaktiv ⇒ Legacy-Absolut-Gate (`oos_min_total_return`) allein maßgeblich | #552 |
+| `deflated_selection` | `false` ⇒ keine Multiple-Testing-Korrektur (Selektion bit-identisch) | #553 |
+| `deflation_confidence` | `0.95` (nur wirksam bei `deflated_selection=true`) | #553 |
+
+**Splits==1-Degenerierung (Holdout/Single-Fold):** Fold-Median == pooled (#549/#550), Buy&Hold über den einen Fold (#552) ⇒ die #549–#552-Änderungen sind für `n_folds=1`-Läufe (`confirm.py`) **bit-identisch**; nur echte Multi-Fold-Sweeps ändern ihr Verhalten. Diese Degenerierung ist die Rückwärtskompatibilitäts-Garantie des Holdout-Pfads.
+
 ---
 
 ## 19. Changelog
+
+### 2026-07-06 — Issue-Set #546–#555 (Mathematische Exzellenz & Kalkulationsmethodik des Per-Symbol-Sweeps)
+
+Chirurgische, test-gesicherte Fixes der rechnerischen/methodischen Defekte, die (a) die risikoadjustierten Kennzahlen verfälschten, (b) den TPE-Gradienten verzerrten und (c) die Robustheitsbewertung aushebelten. **+37 neue Tests (alle grün), 0 Regressionen** (Full-Suite identisch zu `main`: dieselben 13 vorbestehenden Environment-Failures aus der `test_issue_489`-`sys.modules`-Mock-Pollution + `n_jobs`-Determinismus-Config; CI führt Testdateien isoliert aus und ist davon nicht betroffen). Neue Pitfalls **#106–#114**. Financial-Metrics-Hinweis: alle hier berührten Kennzahlen (Expectancy als Return-auf-Notional, Sortino/Profit-Factor-Ratios, Fold-Fraktionen, Excess-Return) sind **dimensionslose Verhältniszahlen** — keine währungsbehafteten Beträge; eine CHF-Normierung ist auf diesen Größen mathematisch nicht anwendbar (Profit-Targets/Stop-Loss/Limits werden von diesem Issue-Set nicht berührt).
+
+| GH-Issue | Prio | Kernänderung | Dateien |
+|---|---|---|---|
+| **#546** | P1 | Expectancy notional-relativ (`mean(pnl_i / entry_notional_i)`, sizing-invariant) statt auf `starting_capital`; `_calculate_stats(..., notional_list=)` + Aufrufer; Legacy-Pfad bit-identisch. Rekalibrierung `oos_min_expectancy`/`min_expectancy` 5e-05→0.001. Pitfall #106/#107. | `backtest_runner.py`, `config/tournament.json` |
+| **#547** | P1 | `expectancy_penalty_scale` (0.002) entkoppelt die Expectancy-Distanz vom Gate-Threshold; optionaler `distance_term_cap` (3.0) deckelt jeden Distanz-Term. Alle sechs Dimensionen auf vergleichbare Skala. Pitfall #108. | `optimizer/reward.py`, `config/tournament.json` |
+| **#548** | P1 | `embargo_period_days` in `wf_settings` (Manifest+kopierte backtest.json) UND `compute_walk_forward_window`-Span reserviert; Fold `n−1` endet exakt bei `end`. `confirm.py` konsistent. Pitfall #109. | `optimizer/trial_config.py`, `optimizer/confirm.py` |
+| **#549** | P2 | Kanonischer Fold-Median-Sortino AN DER QUELLE (`apply_fold_aggregation`) ⇒ Gate == Reward; gepoolter Wert unter `sortino_ratio_pooled`. Pitfall #110. | `backtest_runner.py`, `optimizer/parsing.py` |
+| **#550** | P2 | Einheitliche Fold-Median-Aggregation (sortino/win_rate/expectancy/profit_factor), `total_return` compoundiert; deklaratives `oos_min_profitable_folds_frac`-Gate (0.5) + `oos_profitable_folds`-Telemetrie. Pitfall #110. | `backtest_runner.py`, `config/tournament.json` |
+| **#551** | P2 | Halb-offene Equity-Slices `[s, e)` an allen Slice-Stellen (IS/OOS-Frames/Per-Fold), konsistent zur Trade-Klassifikation; disjunkte Fold-Segmente. Pitfall #111. | `backtest_runner.py` |
+| **#552** | P2 | OPT-IN benchmark-relatives `oos_min_excess_return`-Gate (Buy&Hold über identisches OOS-Fenster; `PortfolioMonitor.get_benchmark_series`); Telemetrie `oos_buyhold_return`/`oos_excess_return`. Default deaktiviert. Pitfall #112. | `backtest_runner.py`, `config/tournament.json` |
+| **#553** | P3 | OPT-IN Deflated-Sortino-Selektion (`deflated_selection`, Bailey & López de Prado); `deflation.deflated_threshold` kontrolliert die False-Positive-Winner-Rate auf `1−confidence`. Default deaktiviert ⇒ bit-identisch. Pitfall #113. | `optimizer/deflation.py` (neu), `backtest_runner.py`, `config/tournament.json` |
+| **#554** | P3 | Adaptive Reject-Präzision (`.6g` + `Δ=±.3e`) + maschinenlesbares `oos_gate_deltas`-Dict bis ins `optimizer_trial_completed`-Event. Pitfall #114. | `backtest_runner.py`, `optimizer/parsing.py`, `optimizer/run_optimization.py` |
+| **#555** | Meta | Katalog/Dokumentation: Pitfalls #106–#114, Changelog, Migrationsnotizen (dieser Eintrag). | `automation/AGENTS.md` |
+
+Tests: `test_issue_546_expectancy_notional.py`, `test_issue_547_constraint_distance_balance.py`, `test_issue_548_embargo_geometry.py`, `test_issue_549_gate_reward_sortino_parity.py`, `test_issue_550_fold_consistency_gate.py`, `test_issue_551_fold_slice_disjoint.py`, `test_issue_552_benchmark_relative_gate.py`, `test_issue_553_deflated_selection_montecarlo.py`, `test_issue_554_reject_reason_precision.py`.
+
 | 2026-06-30 | **IMPLEMENTIERUNG GitHub-Issue #493 (Forensik/OOS-Rejection-Taxonomie).** Die OOS-Eligibility-Taxonomie (`_classify_is_rejection_detail`) wurde um `REJECT_OOS_DISCARDED_BY_IS_GATE` erweitert. Zuvor wurden Trials, die das OOS-Fenster abdeckten und tradeten, aber durch das IS-Gate verworfen wurden (`is_eligible=False`), pauschal als `REJECT_OOS_INACTIVE` deklariert. Dies verfälschte die Telemetrie. Die Funktion prüft nun `oos_total_trades > 0` als Weiche. Begleitender Pipeline-Mock-Test in `test_issue_493_rejection_taxonomy.py` implementiert. Pitfall #91 dokumentiert. | `automation/optimizer/run_optimization.py`, `automation/tests/test_issue_493_rejection_taxonomy.py`, `automation/AGENTS.md` |
 | 2026-07-02 | **IMPLEMENTIERUNG Issue #509 (Cost Drag & Turnover Churning):** Turnover-Penalty in Reward Shaping aufgenommen, Throttling-Parameter (cooldown_bars, min_holding_time, min_signal_strength) im Suchraum für alle aktiven Strategien ergänzt. Net vs Gross Expectancy Metriken in extract_metrics und TournamentMetrics aufgeteilt. Hard-Constraint max_trades_cap implementiert und obsoletes is_max_trades entfernt. | `automation/optimizer/reward.py`, `automation/config/optimizer.json`, `automation/strategies/hourly_strategy_base.py`, `automation/optimizer/spaces.py`, `automation/backtest_runner.py`, `automation/optimizer/parsing.py`, `automation/optimizer/run_optimization.py`, `automation/AGENTS.md` |
 | 2026-07-01 | IMPLEMENTIERUNG Issue #505 (Reward Dynamic Range & Normalization): Dimensionslose Distanz-Normierung, Entfernung der `tanh`-Kompression, Ausweitung der Constraint-Failure-Spanne auf `[-9.75, -sortino_clip_abs]`. Axiom A2 aktualisiert. | `automation/optimizer/reward.py`, `automation/tests/test_issue_461_reward_no_inversion.py`, `automation/AGENTS.md` | (Reward Dynamic Range & Normalization): Dimensionslose Distanz-Normierung, Entfernung der `tanh`-Kompression, Ausweitung der Constraint-Failure-Spanne auf `[-9.75, -sortino_clip_abs]`. Axiom A2 aktualisiert. | `automation/optimizer/reward.py`, `automation/tests/test_issue_461_reward_no_inversion.py`, `automation/AGENTS.md` |
@@ -1340,7 +1416,7 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 
 ---
 
-*Zuletzt aktualisiert: 2026-06-25. Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-07-06 (Issue-Set #546–#555: Kalkulationsmethodik Per-Symbol-Sweep, Pitfalls #106–#114, §18.5.7 OOS-Gate-Zustandsautomat & Fallback-Matrix). Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
 ### 🟢 Pitfall #89 — Reward Shaping Monotonie-Guard & Floor-Plateau (Issue #488)
@@ -1656,6 +1732,50 @@ Pitfall #93 — Annualisierungsfaktor asset-class-/bar-frequenz-bewusst: Config-
 **Symptom:** `_constraint_distance_penalty` summierte nur aktive Distanzen, teilte aber durch die feste Gesamtzahl der Dimensionen (`len(distances)==6`). Damit hing die effektive Strafe pro aktiver Dimension von der Anzahl inaktiver Gates ab — Gradientenrauschen für den TPE-Sampler.
 **Fix/Regel:** Normalisierung strikt über die AKTIVEN Dimensionen (`sum(active_dists) / len(active_dists)`); inaktive (erfüllte) Gates tragen null Gewicht im Divisor. Distanzen bleiben LINEAR (Issue #505; quadratische Distanzen würden #461-Anti-Saturation und #505-Term-Dominanz regredieren) und `return_penalty_scale` entkoppelt die Krümmung vom engen Gate (0.005). Floor-Invariante `unevaluable < evaluable-Floor` bleibt gewahrt. Siehe *Watertight Invariants → Optimizer Invariants*.
 **Betroffen:** `automation/optimizer/reward.py`
+
+### 🟢 Pitfall #106 — Expectancy auf `starting_capital` statt eingesetztes Notional normiert [BEHOBEN: GH-#546]
+**Symptom:** `_calculate_stats` normierte Expectancy auf das fixe `starting_capital` (`mean(pnl_i / start_capital)`). Die Kennzahl skalierte damit mit der Positionsgröße: eine Strategie mit 10 % Einsatz hatte bei identischem Per-Trade-Edge eine 10× kleinere Expectancy als eine mit 100 %. Das erzwang die mikroskopische Gate-Schwelle 5e-05 (0.5 bps), die als Cross-Strategie-Kennzahl fast wertlos ist und (über Pitfall #108) die Constraint-Penalty dominierte.
+**Fix/Regel:** Expectancy IMMER auf das je Trade eingesetzte Notional normieren (`mean(pnl_i / entry_notional_i)`, sizing-invariant), sobald eine längen-kongruente `notional_list` vorliegt. `_calculate_stats` erhielt den keyword-only Parameter `notional_list`; alle Aufrufer in `extract_metrics`/`select_winners` reichen die parallelen Per-Trade-Notionals durch. **Direkt-Unit-Calls ohne `notional_list` bleiben bit-identisch (Legacy-Pfad `mean(pnl_i / start_capital)`).** Migration: `oos_min_expectancy`/`min_expectancy` von `5e-05` auf `0.001` (= 10 bps Netto-Return je Trade auf eingesetztem Kapital) rekalibriert — direkt interpretierbar.
+**Betroffen:** `automation/backtest_runner.py` (`_calculate_stats`, Aufrufer), `automation/config/tournament.json`
+
+### 🟢 Pitfall #107 — Expectancy immer auf eingesetztes Notional normieren, nie auf `starting_capital` [BEHOBEN: GH-#546]
+**Regel (Kompendium):** Sonst skaliert die Kennzahl mit der Positionsgröße und erzwingt mikroskopische Schwellen (5e-05), die nachgelagerte Distanz-Penalties dominieren (Pitfall #108). Der `entry_notional` je Round-Trip ist in `extract_metrics` (FIFO-Match) bereits vorhanden — nie durch das fixe Startkapital ersetzen.
+**Betroffen:** `automation/backtest_runner.py`
+
+### 🟢 Pitfall #108 — Neue OOS-Distanz-Terme in `_constraint_distance_penalty` brauchen `scale`-Entkopplung [BEHOBEN: GH-#547]
+**Symptom:** Der Near-Miss-Gradient war ~90 % expectancy-getrieben. `_shortfall_distance` normiert defaultmäßig auf `target`; für `oos_min_expectancy = 5e-05` ergab ein winziger absoluter Miss (−0.00037) eine Distanz von ~8.4, während alle anderen aktiven Distanzen < 1 lagen. Über das Aktiv-Mittel (#534) riss dieser eine Term den Mittelwert nach oben und maskierte Return/Sortino/Profit-Factor/Win-Rate.
+**Fix/Regel:** Jede auf einen (potenziell mikroskopischen) `target` normierte Distanz braucht eine `scale`-Entkopplung analog `return_penalty_scale` (#467). `expectancy_penalty_scale` (0.002) bringt einen typischen Miss auf die Skala der übrigen Terme (~0…1.5). Zusätzlich deckelt der optionale `distance_term_cap` (3.0) jeden Term robust gegen Kalibrierfehler (`min(d, cap)`; senkt Distanzen nur ⇒ Rang-Invariante `failed < Evaluable-Floor` bleibt strikt). **Regel: alle sechs Distanz-Dimensionen auf vergleichbare Skala (≈ 0…2) bringen.** Fehlt der Key ⇒ Legacy-Pfad (`scale=target`).
+**Betroffen:** `automation/optimizer/reward.py`, `automation/config/tournament.json`
+
+### 🟢 Pitfall #109 — `wf_settings` (Manifest) MUSS alle Walk-Forward-Keys tragen, inkl. `embargo_period_days` [BEHOBEN: GH-#548]
+**Symptom:** `backtest.json` konfigurierte `embargo_period_days=21` (Leakage-Prevention #466), aber `wf_settings` (ins Manifest UND in die kopierte `backtest.json` geschrieben) ließ den Key weg. Der Backtest-Subprozess las `walk_forward.get("embargo_period_days", 0)` → **0**: der Purge-Gap zwischen IS-Ende und OOS-Start war wirkungslos (Indikator-Lookback bleedet über die IS→OOS-Grenze). Zusätzlich reservierte `compute_walk_forward_window` keinen Embargo-Platz im äusseren Fenster — fixte man nur (1), liefe der letzte OOS-Fold `embargo` Tage über den Datenrand `end`.
+**Fix/Regel:** `compute_walk_forward_window` UND `wf_settings` gemeinsam ändern (nie nur eines): der Embargo wird im Span reserviert (`start = end − (is + embargo + n_folds·oos)`), sodass Fold `n_folds−1` exakt bei `end` endet (kein Overflow). Geometrie-Gegenrechnung: `is+embargo+folds·oos+holdout = 180+21+180+45 = 426 ≤ data_history_days(450)`. `embargo_period_days=0` reproduziert das Alt-Verhalten bit-identisch. Analog in `confirm.py` (dieselbe Fenster-Funktion).
+**Betroffen:** `automation/optimizer/trial_config.py`, `automation/optimizer/confirm.py`
+
+### 🟢 Pitfall #110 — Gate- und Reward-Metriken MÜSSEN dieselbe Aggregation nutzen (kanonisch an der Quelle) [BEHOBEN: GH-#549/#550]
+**Symptom:** Das Gate nutzte den GEPOOLTEN OOS-Sortino (ein `_calculate_stats` über die konkatenierte OOS-Serie), der Reward aber den Median der Per-Fold-Sortinos (`parse_tournament`). An der Gate-Grenze konnte ein Trial vom Gate anders bewertet werden als vom Reward — inkonsistenter Gradient. Zudem mischte das Gate drei Aggregationslogiken in derselben Klausel: `total_return` compoundiert, `sortino` fold-median (nur im Reward), `win_rate`/`expectancy`/`profit_factor` gepoolt.
+**Fix/Regel:** EINE kanonische Aggregation AN DER QUELLE (`apply_fold_aggregation` in `extract_metrics`): die vier risikoadjustierten Kennzahlen (`sortino_ratio`, `win_rate`, `expectancy`, `profit_factor`) werden zum FOLD-MEDIAN (robuste Zentraltendenz), `total_return` bleibt compoundiert (#465), `max_drawdown`/`total_trades` bleiben pooled. Gepoolte Werte bleiben zur Forensik unter `<metric>_pooled`. Für `splits==1` (Holdout) ist der Fold-Median == pooled (bit-identisch). Zusätzlich (#550) das deklarative `oos_min_profitable_folds_frac`-Gate (Fold-Konsistenz; belohnt echte Robustheit statt eines Glücks-Sub-Fensters). Fehlt der Key ⇒ inaktiv.
+**Betroffen:** `automation/backtest_runner.py`, `automation/optimizer/parsing.py`, `automation/config/tournament.json`
+
+### 🟢 Pitfall #111 — Equity-Slicing halb-offen `[s, e)` halten, konsistent zur Trade-Klassifikation [BEHOBEN: GH-#551]
+**Symptom:** `pandas.loc[a:b]` ist auf BEIDEN Seiten geschlossen. Bei kontinuierlichen Folds (`oos_end_k == oos_start_{k+1}`, Embargo=0) lag der Grenz-Bar in ZWEI benachbarten Fold-Segmenten und wurde im compoundierten Return (`mtm_frames`, nicht dedupliziert) doppelt gezählt. Die Trade-Klassifikation war halb-offen `[s, e)`, die Equity-Slices aber geschlossen `[s, e]` — zwei Intervallkonventionen im selben Code.
+**Fix/Regel:** Equity-Slices halb-offen schneiden (`end_excl = pd.to_datetime(e_ns) − 1ns`), konsistent zur Trade-Klassifikation (`s <= ts < e`), an ALLEN Slice-Stellen (IS, OOS-Frames, Per-Fold). Folge: der Bar exakt am exklusiven Fenster-Ende gehört zum NÄCHSTEN Fenster (auch der Buy&Hold-Benchmark aus #552 nutzt diese Konvention). Kein Bar-Timestamp erscheint mehr in zwei Segmenten.
+**Betroffen:** `automation/backtest_runner.py`
+
+### 🟢 Pitfall #112 — Absolutes OOS-Return-Gate misst Markt-Beta, nicht Strategie-Alpha [BEHOBEN: GH-#552, opt-in]
+**Symptom:** `oos_min_total_return = 0.005` ist ein absolutes Gate. In einem steigenden Markt ist +0.5 % durch bloßes Long-Bias trivial; es misst dann Marktrichtung, nicht Signalqualität.
+**Fix/Regel:** OPT-IN benchmark-relatives Alpha-Gate: `oos_excess_return = oos_total_return − oos_buyhold_return` (Buy&Hold des Symbols über EXAKT dasselbe halb-offene, deduplizierte OOS-Fenster, #551-Konvention). `oos_min_excess_return` (default deaktiviert ⇒ Legacy-Absolut-Gate). Die Telemetrie-Felder `oos_buyhold_return`/`oos_excess_return` werden geschrieben, sobald die Benchmark-Serie (`PortfolioMonitor.get_benchmark_series`) verfügbar ist. Aktivieren: `oos_min_excess_return` setzen UND `min_excess_return` in `eligible_requires_all` aufnehmen.
+**Betroffen:** `automation/backtest_runner.py`, `automation/config/tournament.json`
+
+### 🟢 Pitfall #113 — Winner-Selektion ohne Multiple-Testing-Korrektur (Selection-Bias) [BEHOBEN: GH-#553, opt-in]
+**Symptom:** Der beste von N getesteten Konfigurationen ist auch unter H0 (kein Edge) positiv und wächst mit N. Ohne Korrektur ist die False-Positive-Winner-Rate hoch.
+**Fix/Regel:** OPT-IN Deflated-Sortino-Selektion (`deflated_selection: true`, Bailey & López de Prado). `automation/optimizer/deflation.deflated_threshold(n_trials, dispersion, confidence)` liefert das `confidence`-Quantil des Maximums von N i.i.d. Rausch-Sortinos; der Winner muss dieses Rausch-Maximum schlagen. Kontrolliert die False-Positive-Rate auf `1 − confidence`. Default false ⇒ bit-identisch. Effektive Schwelle wird je Study geloggt und als `deflated_min_sortino` telemetriert.
+**Betroffen:** `automation/optimizer/deflation.py`, `automation/backtest_runner.py`, `automation/config/tournament.json`
+
+### 🟢 Pitfall #114 — Reject-Gründe mit fixem `:.5f` sind bei mikroskopischen Schwellen unaktionierbar [BEHOBEN: GH-#554]
+**Symptom:** `oos_min_expectancy: 0.00005 < 0.00005` — der Ist-Wert (0.0000499…) und die Schwelle 5e-05 wurden durch die 5-stellige Rundung identisch dargestellt; der echte Rest-Gap war unsichtbar.
+**Fix/Regel:** Adaptive Präzision (`.6g`) plus ein explizites numerisches Δ im Reject-String (`Δ={actual−thresh:+.3e}`) UND ein maschinenlesbares `oos_gate_deltas`-Dict (`metric → actual − threshold`; für `max_drawdown` `cap − actual`, damit einheitlich „negativ = verfehlt"). Das Dict wird durch `single_symbol_oos`/`parse_tournament` bis ins `optimizer_trial_completed`-Event durchgereicht — Forensik ohne String-Parsing.
+**Betroffen:** `automation/backtest_runner.py`, `automation/optimizer/parsing.py`, `automation/optimizer/run_optimization.py`
 
 ### Issue #535 — Config-Orphans & Gate-1 Fallback
 * **Config Deprecation:** `constraint_penalty_scale` wurde aus `optimizer.json` entfernt. Das System verwendet stattdessen `constraint_distance_penalty_weight` und `return_penalty_scale` (Konfigurations-Drift Prävention).

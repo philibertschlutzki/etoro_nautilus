@@ -8,7 +8,8 @@
       "max_drawdown": "Maximaler Drawdown (hartes Filter, 0.30 = 30%)",
       "min_win_rate": "Mindest-Win-Rate (Score-Kriterium / weiches Filter in eligible_requires_any, 0.35 = 35%)",
       "min_total_return": "Mindest-Total-Return (hartes Filter, 0.0 = breakeven)",
-      "min_expectancy": "Mindest-Erwartungswert (Arithmetisches Mittel der Per-Trade PnLs). Da die PnLs bereits net-of-spread sind, spiegelt dies den durchschnittlichen Netto-Zuwachs pro Trade wider. Er ist konzeptionell vom kompoundierten total_return entkoppelt. Wert ist bewusst niedrig kalibriert (z.B. 0.00005 = 0.5 bps), um hochfrequente Strategien nicht zu benachteiligen (hartes Filter).",
+      "min_expectancy": "Issue #546 — Mindest-Erwartungswert als NOTIONAL-RELATIVER Per-Trade-Return (mean(pnl_i / entry_notional_i), sizing-invariant). MIGRATION: Vor #546 war Expectancy auf das fixe starting_capital normiert (mean(pnl_i / start_capital)), was mit der Positionsgröße skalierte und eine mikroskopische Schwelle (5e-05) erzwang. Seit #546 ist die Kennzahl der Netto-Return je Trade auf das eingesetzte Kapital; die Schwelle ist auf 0.001 (= 10 bps Netto-Return je Trade auf eingesetztem Notional) rekalibriert und damit direkt interpretierbar (hartes Filter). Direkt-Unit-Calls von _calculate_stats ohne notional_list nutzen weiterhin den Legacy-Pfad (bit-identisch).",
+      "oos_min_expectancy_note": "Issue #546 — analog zu min_expectancy notional-relativ; von 5e-05 auf 0.001 rekalibriert (10 bps je Trade auf eingesetztem Notional).",
       "sortino_min_trades": "Issue #401 / ISSUE-06 (Zero-Hardcoding) - Mindestanzahl Round-Trips (n), ab der _calculate_stats eine Sortino-Ratio berechnet (vorher hartcodiert 'n < 5'). An oos_min_trades ausgerichtet; statistischer Boden fuer eine definierbare Downside-Deviation (>= 2). Verhindert, dass low-frequency Hourly-Strategien mit 2-4 OOS-Trades faelschlich als 'unevaluable' (-9.75) abgestraft werden und die TPE-Reward-Landschaft kollabiert.",
       "eligible_requires_all": "ALLE genannten Bedingungen m\u00fcssen erf\u00fcllt sein",
       "eligible_requires_any": "MINDESTENS EINE der genannten Bedingungen muss erf\u00fcllt sein",
@@ -18,8 +19,15 @@
       "scoring.win_rate_weight": "Gewicht f\u00fcr Win-Rate im Score",
       "scoring.drawdown_penalty_weight": "Strafe-Gewicht f\u00fcr Max-Drawdown (wird subtrahiert)",
       "return_penalty_scale": "Issue #467 \u2014 Skalierungsfaktor zur Entkopplung der Penalty-Kr\u00fcmmung vom Eligibility-Threshold, um numerische Explosion bei sehr kleinen OOS-Gates (z.B. 0.005) zu verhindern.",
+      "expectancy_penalty_scale": "Issue #547 \u2014 Skalierungsfaktor (analog return_penalty_scale) zur Entkopplung der Expectancy-Distanz in _constraint_distance_penalty von der (mikroskopischen) oos_min_expectancy-Schwelle. Ohne diesen Wert normiert _shortfall_distance auf das Target, sodass ein winziger absoluter Expectancy-Miss den Aktiv-Mittelwert der sechs Distanz-Terme dominiert. 0.002 bringt einen typischen Miss (bei Schwelle 0.001 aus #546) auf eine mit den anderen Termen vergleichbare Skala (~0..1.5). Fehlt der Key \u21d2 Legacy-Pfad (scale=target).",
+      "distance_term_cap": "Issue #547 \u2014 optionale Clip-Obergrenze pro Distanz-Term in _constraint_distance_penalty (min(d, cap)). Verhindert, dass ein einzelner fehlkalibrierter Term den Aktiv-Mittelwert je dominiert (alle sechs Dimensionen auf ~[0, cap]). Fehlt der Key oder <= 0 \u21d2 kein Cap (bit-identisch zum Legacy-Verhalten). Der Cap senkt Distanzen nur \u21d2 die Rang-Invariante (failed < Evaluable-Floor) bleibt erhalten.",
       "oos_min_win_rate": "Spezifischer OOS-Schwellenwert fuer die Win Rate, um Parameter-Bleed zu verhindern (Issue #467).",
-      "sortino_mar": "Issue #545 (Zero-Hardcoding): MAR (Minimum Acceptable Return) fuer die Sortino-Berechnung als Baseline fuer die Target-Downside-Deviation."
+      "sortino_mar": "Issue #545 (Zero-Hardcoding): MAR (Minimum Acceptable Return) fuer die Sortino-Berechnung als Baseline fuer die Target-Downside-Deviation.",
+      "oos_min_profitable_folds_frac": "Issue #550 — Fold-Konsistenz-Gate: geforderter Mindest-Anteil profitabler OOS-Folds (total_return > 0) über die Walk-Forward-Folds. 0.5 = die Strategie muss in >= 50% der Folds profitabel sein. Verhindert, dass ein einzelnes Glücks-Sub-Fenster (1 starker + 3 schwache Folds) die gepoolte Kennzahl knapp positiv zieht und das Gate passiert. Bedingung nur aktiv, wenn dieser Key gesetzt ist UND Fold-Telemetrie vorliegt (Walk-Forward); fehlt der Key ⇒ inaktiv (rückwärtskompatibel). Muss in eligible_requires_all gelistet sein, um zu greifen.",
+      "oos_min_excess_return": "Issue #552 — OPT-IN benchmark-relatives Alpha-Gate: mindestens geforderter Excess-Return = oos_total_return − oos_buyhold_return (Buy&Hold des Symbols über dasselbe OOS-Fenster). 0.0 = 'schlage Buy&Hold'. Trennt Strategie-Alpha von reinem Markt-Beta (ein absolutes Return-Gate misst in einem steigenden Markt nur Long-Bias). STANDARDMÄSSIG DEAKTIVIERT (Key nicht gesetzt / nicht in eligible_requires_all) ⇒ Legacy-Absolut-Gate (oos_min_total_return) bleibt allein maßgeblich (rückwärtskompatibel). Zum Aktivieren: oos_min_excess_return setzen UND 'min_excess_return' in eligible_requires_all aufnehmen. Die Telemetrie-Felder oos_buyhold_return/oos_excess_return werden unabhängig vom Gate geschrieben, sobald die Benchmark-Serie verfügbar ist.",
+      "aggregation_note": "Issue #549/#550 — die vier risikoadjustierten OOS-Gate-Kennzahlen (sortino_ratio, win_rate, expectancy, profit_factor) werden als FOLD-MEDIAN aggregiert (an der Quelle in extract_metrics), total_return bleibt compoundiert, max_drawdown/total_trades pooled. Damit nutzen Gate und Reward denselben kanonischen Sortino (#549) und keine Kennzahl belohnt ein Glücks-Sub-Fenster (#550). Für splits==1 (Holdout) ist der Fold-Median == pooled (bit-identisch).",
+      "deflated_selection": "Issue #553 — OPT-IN Deflated-Sortino-Selektion (Multiple-Testing-Korrektur, Bailey & López de Prado). true ⇒ ein Per-Symbol-Winner muss zusätzlich zum statischen Gate das deflationierte Rausch-Maximum des OOS-Sortino schlagen: das confidence-Quantil des Maximums von N i.i.d. Rausch-Sortinos (N = Anzahl OOS-evaluierter Konfigurationen, Streuung = deren pstdev). Kontrolliert die False-Positive-Winner-Rate auf 1−confidence. STANDARDMÄSSIG false ⇒ bit-identisch zum Status quo. Die effektive Schwelle wird je Study/Symbol geloggt und im Winner-Eintrag als deflated_min_sortino telemetriert.",
+      "deflation_confidence": "Issue #553 — Konfidenzniveau der Deflated-Selektion (Default 0.95 ⇒ nominelle False-Positive-Winner-Rate 5%). Nur wirksam bei deflated_selection=true."
     }
   },
   "sortino_mar": 0.0,
@@ -29,17 +37,19 @@
   "max_drawdown": 0.3,
   "min_win_rate": 0.25,
   "min_total_return": 0.005,
-  "min_expectancy": 5e-05,
+  "min_expectancy": 0.001,
   "k_shrinkage": 20.0,
   "oos_min_trades": 1,
   "sortino_min_trades": 2,
   "oos_min_total_return": 0.005,
-  "oos_min_expectancy": 5e-05,
+  "oos_min_expectancy": 0.001,
+  "oos_min_profitable_folds_frac": 0.5,
   "eligible_requires_all": [
     "min_trades",
     "min_total_return",
     "max_drawdown",
-    "min_expectancy"
+    "min_expectancy",
+    "min_profitable_folds"
   ],
   "eligible_requires_any": [
     "min_sortino",
@@ -53,6 +63,10 @@
     "drawdown_penalty_weight": 0.1
   },
   "return_penalty_scale": 0.1,
+  "expectancy_penalty_scale": 0.002,
+  "distance_term_cap": 3.0,
+  "deflated_selection": false,
+  "deflation_confidence": 0.95,
   "oos_min_win_rate": 0.25,
   "oos_min_sortino": 0.3,
   "oos_min_profit_factor": 1.1
