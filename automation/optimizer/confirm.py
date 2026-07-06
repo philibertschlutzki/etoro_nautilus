@@ -217,12 +217,17 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     if catalog_newest_ns is not None:
         now = dt.datetime.now(dt.timezone.utc)
         from automation.optimizer.trial_config import compute_walk_forward_window
+        # Issue #548 — der Embargo MUSS auch hier im Fenster-Span reserviert werden (dieselbe
+        # Single-Source-of-Truth-Funktion wie build_trial), sonst divergiert die Reachability-
+        # Geometrie von der real gebauten Holdout-Geometrie. Mit reserviertem Embargo gilt
+        # ``oos_lo_ns == end`` (die exakte äussere Fenster-Grenze), konsistent zu #548.
         window_start, _ = compute_walk_forward_window(
             now=now,
             holdout_days=holdout_days,
             is_window_days=is_window_days,
             oos_window_days=oos_window_days_cfg,
             n_folds=n_folds,
+            embargo_period_days=embargo_period_days,
             catalog_newest_ns=catalog_newest_ns,
         )
         oos_lo_ns = int((window_start + dt.timedelta(days=is_window_days + (n_folds * oos_window_days_cfg) + embargo_period_days)).timestamp() * 1_000_000_000)

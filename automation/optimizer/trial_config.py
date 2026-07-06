@@ -21,6 +21,7 @@ def compute_walk_forward_window(
     is_window_days: int,
     oos_window_days: int,
     n_folds: int,
+    embargo_period_days: int = 0,
     catalog_newest_ns: int | None = None,
 ) -> tuple[dt.datetime, dt.datetime]:
     """Issue #457 (Pitfall #84) — die EINZIGE Quelle der Walk-Forward-Fenster-Arithmetik.
@@ -37,9 +38,15 @@ def compute_walk_forward_window(
       * ``end`` = Mitternacht(``now``); faellt ``now`` auf einen Sonntag (``weekday()==6``),
         rollt ``end`` VOR dem Holdout-Abzug auf Samstag zurueck.
       * ``end`` -= ``holdout_days``.
-      * ``start`` = ``end`` − (``is_window_days`` + ``n_folds`` × ``oos_window_days``) Tage.
+      * ``start`` = ``end`` − (``is_window_days`` + ``embargo_period_days`` + ``n_folds`` × ``oos_window_days``) Tage.
 
-    Die frueheste OOS-Sub-Fenster-Grenze (fold=0) ist damit ``start + is_window_days``.
+    Issue #548 (Pitfall #109) — der Embargo/Purge-Gap zwischen IS-Ende und OOS-Start MUSS im
+    äusseren Fenster-Span reserviert werden, sonst liefe der letzte OOS-Fold ``embargo_period_days``
+    über den Datenrand ``end`` hinaus (``compute_fold_boundaries`` startet OOS-Fold 0 bei
+    ``is_end + embargo``). Mit der Reservierung endet Fold ``n_folds−1`` exakt bei ``end``:
+    ``oos_end_{n-1} = start + is + embargo + n_folds×oos = end`` (kein Overflow). Die früheste
+    OOS-Sub-Fenster-Grenze (fold=0) ist damit ``start + is_window_days + embargo_period_days``.
+    ``embargo_period_days=0`` reproduziert das Alt-Verhalten bit-identisch.
     """
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if catalog_newest_ns is not None:
@@ -50,7 +57,7 @@ def compute_walk_forward_window(
     if end.weekday() == 6:
         end -= dt.timedelta(days=1)
     end -= dt.timedelta(days=holdout_days)
-    start = end - dt.timedelta(days=is_window_days + n_folds * oos_window_days)
+    start = end - dt.timedelta(days=is_window_days + embargo_period_days + n_folds * oos_window_days)
     return start, end
 
 def build_trial(
@@ -139,11 +146,16 @@ def build_trial(
     # start_capital must travel inside the manifest's global_settings, not only via the
     # copied backtest.json side-channel. Built once and reused for both sinks (DRY).
     start_capital = bt_data.get("start_capital", 10000.0)
+    # Issue #548 (Pitfall #109) — der Embargo MUSS mit ins Manifest/kopierte backtest.json wandern.
+    # Der Backtest-Subprozess liest walk_forward.embargo_period_days via .get(key, 0); fehlt der Key,
+    # greift still der 0-Default und der Leakage-Schutz (#466) ist wirkungslos (kein Purge-Gap).
+    embargo_period_days = wf.get("embargo_period_days", 0)
     wf_settings = {
         "is_window_days": is_window_days,
         "oos_window_days": oos_window_days,
         "splits": n_folds,
         "holdout_days": holdout_days,
+        "embargo_period_days": embargo_period_days,
         "walk_forward_active": True,
     }
 
@@ -156,6 +168,7 @@ def build_trial(
         is_window_days=is_window_days,
         oos_window_days=oos_window_days,
         n_folds=n_folds,
+        embargo_period_days=embargo_period_days,
         catalog_newest_ns=catalog_newest_ns,
     )
 

@@ -703,6 +703,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             # ins strukturierte Event heben (Observability; ändert keine Entscheidung).
             "is_rejection_detail": is_rejection_detail,
             "oos_rejection_reasons": list(metrics.oos_rejection_reasons),
+            # Issue #554 — maschinenlesbare Gate-Deltas (metric → actual − threshold) für die
+            # forensische Near-Miss-Analyse ohne String-Parsing der Reject-Gründe.
+            "oos_gate_deltas": metrics.oos_gate_deltas or {},
         })
 
         reward_mode = "auto"
