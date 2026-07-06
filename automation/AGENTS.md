@@ -419,6 +419,37 @@ Der Optimizer und insbesondere der Sweep garantieren **strikte Reproduzierbarkei
 - HTTP 429 → `Retry-After` respektieren; Timeout → Retry mit Backoff.
 - Worker-Crash im Backtest → `BrokenProcessPool`-Catch → sequenzieller Fallback.
 
+### 14.1 Walk-Forward-Daten-Suffizienz — projektweite Invarianten (Issue #531)
+
+Diese drei Invarianten sind **hart** und dürfen von keinem Walk-Forward-Modul aufgeweicht werden:
+
+1. **Strict Walk-Forward Geometry Check.** Vor jeder Walk-Forward-Auswertung MUSS die Formel
+   `actual_span_days >= is_window_days + splits · oos_window_days + holdout_days` (= 405 Tage bei
+   der Produktions-Geometrie 180/45/4/45) gegen die **real vorhandene** Bar-Spanne der Rohdaten
+   evaluiert werden — **niemals** gegen den Config-Wert `data_history_days`. Single Source of Truth
+   der Formel: `automation.optimizer.gate.required_span_days` (bewusst OHNE `embargo_period_days`
+   und OHNE `gate1_buffer_days`; der Puffer ist die Backfill-Schwelle, nicht der Fail-Loud-Floor).
+   Der reine Guard ist `automation.optimizer.gate.assert_walk_forward_geometry`.
+2. **No-Clamping Policy.** Stillschweigendes Zurechtschneiden von Time-Series-Slices via `.loc`
+   (`mtm_series.loc[start:end]`) bei Out-of-Bound-Geometrien ist **strikt verboten** — ein
+   verkürzter/leerer letzter OOS-Fold oder Holdout verzerrt die Walk-Forward-Aggregation lautlos.
+   Greift die Geometrie über den Datenrand, gilt das **Fail-Loud-Paradigma**: deterministischer
+   Abbruch (`InsufficientGeometryError`) ODER präventiver Backfill (siehe unten), nie ein Clamp.
+3. **Error Taxonomy.** Der zugehörige Fehlercode ist `REJECT_DATA_INSUFFICIENT_GEOMETRY`
+   (`gate.InsufficientGeometryError.code`). Jeder Abbruch MUSS das strukturierte Telemetry-Event
+   `GATE_1_REJECTION` über `automation.log_manager.emit_gate1_rejection` emittieren; die Payload
+   exponiert die Diskrepanz explizit:
+   ```json
+   {"event": "GATE_1_REJECTION", "error_category": "REJECT_DATA_INSUFFICIENT_GEOMETRY",
+    "available_days": <float>, "required_days": <float>, "delta_days": <float>}
+   ```
+   Verdrahtung: `sweep.enumerate_tunable_pairs` (Gate-1, macht INSUFFICIENT_HISTORY sichtbar),
+   `trial_config.build_trial` (Fail-Loud gegen die durchgereichte `catalog_span_days`) und der
+   Pre-Sweep-Backfill `historical_fetcher.ensure_walkforward_history` (synchroner Nachlade-Request
+   an den `historical_fetcher`, sobald die reale Spanne `required_span_days + gate1_buffer_days`
+   unterschreitet, z. B. < 435 Tage). Reihenfolge im Sweep: **erst Backfill, dann fail-loud** —
+   ein Symbol wird nur verworfen, wenn auch nach dem Nachladen zu wenig Historie vorliegt.
+
 ---
 
 ## 15. Code-Style & Conventions
@@ -443,7 +474,13 @@ Der Optimizer und insbesondere der Sweep garantieren **strikte Reproduzierbarkei
 
 - `backtest_runner.py` liest Strategien + Parameter **ausschließlich** aus der via `--config` übergebenen Manifest-Datei. `strategies[].params` sind vollständig aufgelöst und autoritativ; **kein** erneutes Mergen aus `strategy_defaults.json`, sobald `manifest_version` gesetzt ist.
 - **Self-describing Manifest (ISSUE-OPT-374):** Die `global_settings` des Manifests tragen zusätzlich `walk_forward` (`is_window_days`, `oos_window_days`, `splits == n_folds`, `holdout_days`) **und** `start_capital`. `backtest_runner.py` liest Walk-Forward-Geometrie und Start-Kapital **autoritativ aus dem Manifest** (`global_settings`); fehlen sie (Legacy/Direkt-Lauf), fällt es auf die trial-lokale `backtest.json` zurück. Der Startup-Header loggt die effektive Quelle (`Walk-Forward Quelle: manifest|backtest.json`). Damit hängt die IS/OOS-Aufteilung nicht mehr an einem Side-Channel — Manifest und Sizing/Splitting sind deckungsgleich.
-- **Korridor-Geometrie vs. 12-Monats-History (ISSUE-OPT-374):** Der benötigte Korridor = `is_window_days + n_folds·oos_window_days + holdout_days` = `180 + 4·45 + 45` = **405 Tage** vor heute. `historical_fetcher --months 12` liefert ~365 Tage ⇒ am frühen Rand fehlen ~40 Tage; die frühesten Folds können datenarm sein. **Bewusst beibehalten** (keine Geometrie-Änderung ohne frischen Baseline-Lauf, Typ S): Der `span_tolerance_days`-Guard und die Trennung `oos_not_evaluable_pairs` fangen datenarme Folds deklarativ ab; der Holdout wird aus den jüngsten, dichtesten 45 Tagen geschnitten. Wer alle Folds voll abdecken will, erhöht die Beschaffungstiefe (z. B. `historical_fetcher --months 14`) statt die Fenster zu verkleinern.
+- **Korridor-Geometrie vs. 12-Monats-History (ISSUE-OPT-374 / Issue #531):** Der benötigte Korridor = `is_window_days + n_folds·oos_window_days + holdout_days` = `180 + 4·45 + 45` = **405 Tage** vor heute (Single Source of Truth: `gate.required_span_days`). `historical_fetcher --months 12` liefert ~365 Tage ⇒ am frühen Rand fehlen ~40 Tage; die frühesten Folds können datenarm sein. **Issue #531 — Fail-Loud statt stiller Klemmung:** Unterschreitet die **real** vorhandene Bar-Spanne die 405-Tage-Geometrie, ist ein stiller `.loc`-Clamp des letzten OOS-Folds/Holdouts VERBOTEN (No-Clamping-Policy, §14.1). Gate-1 (`sweep`/`build_trial`) validiert gegen die **tatsächliche** Bar-Spanne — nicht gegen `data_history_days` — und bricht mit `REJECT_DATA_INSUFFICIENT_GEOMETRY` fail-loud ab bzw. lädt via `historical_fetcher.ensure_walkforward_history` präventiv nach, sobald `required_span_days + gate1_buffer_days` (≈ 435 Tage) unterschritten wird. Der `span_tolerance_days`-Guard bleibt nur für **knappe** Near-Miss-Fälle (z. B. 402 statt 405) innerhalb der IS/OOS-Toleranz; die 45-Tage-Holdout-Lücke des Ist-Bugs (360 < 405) fällt NICHT mehr darunter. Wer alle Folds voll abdecken will, erhöht die Beschaffungstiefe (z. B. `historical_fetcher --months 14`).
+
+### 🟢 Issue #531 — Datenfenster < Walk-Forward-Geometrie (Silent Truncation)
+**Symptom:** `data_window_days = 360.0` (< 405), der Sweep läuft dennoch durch; letzter OOS-Fold und Holdout liegen jenseits der Daten und werden via `.loc` still eingekürzt ⇒ verkürzte/leere Fold-Fenster, verzerrte Walk-Forward-Aggregation.
+**Root Cause:** Gate-1 validierte gegen den **konfigurierten** `data_history_days` (450), nicht gegen die **real** vorhandene Bar-Spanne (360). Die geforderte Geometrie `is_window + splits·oos + holdout` = 405 Tage wurde nie gegen die tatsächliche Datenlage geprüft; pandas-`.loc`-Slicing klemmte Out-of-Bound-Fenster lautlos.
+**Fix/Regel:** Siehe §14.1 (harte Invarianten). Gate-1 prüft die **reale** Spanne (`gate.assert_walk_forward_geometry`), bricht mit `REJECT_DATA_INSUFFICIENT_GEOMETRY` fail-loud ab (`emit_gate1_rejection` → `GATE_1_REJECTION` mit `available_days`/`required_days`/`delta_days`) und lädt via `historical_fetcher.ensure_walkforward_history` präventiv nach, sobald `required_span_days + gate1_buffer_days` (≈ 435 Tage) unterschritten wird. **Kein** stilles `.loc`-Clamping mehr (No-Clamping-Policy).
+**Betroffen:** `automation/optimizer/gate.py`, `automation/optimizer/trial_config.py`, `automation/optimizer/sweep.py`, `automation/historical_fetcher.py`, `automation/log_manager.py`
 
 ### 🟢 Pitfall #64 — parse_tournament NoneType bei null aggregate_winner (Issue #357/#358)
 **Symptom:** Reihenweise `AttributeError("'NoneType' object has no attribute 'get'")` in `parsing.py`; die gesamte Optuna-Study stirbt beim ersten Trial.

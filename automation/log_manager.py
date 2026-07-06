@@ -205,6 +205,37 @@ def emit_execution_event(
     logger.log(level, f"[JSON_EVENT] {json.dumps(event, ensure_ascii=False, default=str)}")
 
 
+def emit_gate1_rejection(
+    logger: logging.Logger,
+    available_days: float,
+    required_days: float,
+    *,
+    error_category: str = "REJECT_DATA_INSUFFICIENT_GEOMETRY",
+    symbol: str | None = None,
+    level: int = logging.ERROR,
+) -> None:
+    """Issue #531 — strukturiertes ``GATE_1_REJECTION``-Telemetry-Event bei Daten-Insuffizienz.
+
+    Macht die Diskrepanz zwischen der REAL vorhandenen Bar-Spanne (``available_days``) und der von
+    der Walk-Forward-Geometrie geforderten Spanne (``required_days``) explizit sichtbar — statt den
+    letzten OOS-Fold/Holdout still zu klemmen (No-Clamping-Policy). ``delta_days`` = Defizit.
+
+    Mandatory Payload (AGENTS.md §14 / Issue #531):
+        {"event": "GATE_1_REJECTION", "error_category": "REJECT_DATA_INSUFFICIENT_GEOMETRY",
+         "available_days": <float>, "required_days": <float>, "delta_days": <float>}
+    """
+    payload: dict[str, Any] = {
+        "event":          "GATE_1_REJECTION",
+        "error_category": error_category,
+        "available_days": round(float(available_days), 2),
+        "required_days":  round(float(required_days), 2),
+        "delta_days":     round(float(required_days) - float(available_days), 2),
+    }
+    if symbol is not None:
+        payload["symbol"] = symbol
+    emit_execution_event(logger, "GATE_1_REJECTION", payload, level=level)
+
+
 def emit_order_event(
     logger: logging.Logger,
     symbol: str,

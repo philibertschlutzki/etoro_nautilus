@@ -19,7 +19,9 @@ from pathlib import Path
 import datetime as dt
 
 from automation.optimizer import bounds
-from automation.optimizer.gate import is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window
+from automation.optimizer.gate import (
+    is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
+)
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
 from automation.optimizer.manifest import WORK
 from automation.optimizer.run_optimization import (
@@ -30,7 +32,7 @@ from automation.optimizer.run_optimization import (
     _preinit_study_storage,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
-from automation.log_manager import setup_bot_logging, emit_execution_event
+from automation.log_manager import setup_bot_logging, emit_execution_event, emit_gate1_rejection
 
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
@@ -274,6 +276,19 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
             ok, _reason = is_symbol_tunable(
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
             if not ok:
+                # Issue #531 — Diskrepanz SICHTBAR machen: unzureichende Historie darf nicht still
+                # übersprungen (und der letzte OOS-Fold/Holdout still geklemmt) werden. Bei
+                # INSUFFICIENT_HISTORY das strukturierte GATE_1_REJECTION-Event mit available_days
+                # (reale Bar-Spanne = available_bars / bars_per_day) UND required_days (reine
+                # Geometrie is+splits*oos+holdout) emittieren — genau die im Ist-Zustand fehlende
+                # Diskrepanz-Visibilität (Config-450 vs. real-360).
+                if _reason == "INSUFFICIENT_HISTORY":
+                    emit_gate1_rejection(
+                        log,
+                        available_days=available_bars.get(symbol, 0) / 24.0,
+                        required_days=required_span_days(config.get("walk_forward") or {}),
+                        symbol=symbol,
+                    )
                 continue
             # Issue #455 — OOS-Erreichbarkeits-Preflight (fail-open bei fehlender Telemetrie).
             newest_ns = latest_ts.get(symbol) if latest_ts else None
@@ -356,6 +371,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     config = _load_gate_config()
     available_bars = count_available_bars(syms)
 
+    # Issue #531 — Pre-Sweep-Backfill-Hook: Symbole, deren REAL vorhandene Bar-Spanne die volle
+    # Walk-Forward-Geometrie + gate1_buffer_days (z. B. < 435 Tage) unterschreiten, VOR dem Sweep
+    # synchron nachladen (statt sie später still zu klemmen). Nur im echten Storage-Pfad — injizierte
+    # Fakes (HI-7) simulieren keinen Katalog und brauchen keinen Netz-Backfill. Fail-open: ohne
+    # API-Keys/Netz ist es ein No-Op, das Gate-1-Preflight entscheidet danach fail-loud.
+    if using_real_optimize:
+        try:
+            from automation.historical_fetcher import ensure_walkforward_history
+            _bf_report = ensure_walkforward_history(
+                syms, config["walk_forward"],
+                span_days_by_symbol={s: available_bars.get(s, 0) / 24.0 for s in syms},
+                gate1_buffer_days=config.get("gate1_buffer_days", 0),
+                logger=logging.getLogger("optimizer"),
+            )
+            if _bf_report.get("backfilled"):
+                available_bars = count_available_bars(syms)  # nach Backfill neu vermessen
+        except Exception as e:  # pragma: no cover - Backfill darf den Sweep nie crashen
+            logging.getLogger("optimizer").warning("[#531] Pre-Sweep-Backfill übersprungen: %s", e)
+
     # Issue #455 — OOS-Erreichbarkeits-Preflight vorbereiten: jüngster Tick je Symbol + die geteilte
     # OOS-Grenze (#457, compute_walk_forward_window). Beide fail-open (None) ⇒ kein Skip.
     latest_ts = latest_ts_by_symbol(syms)
@@ -398,7 +432,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     def _run_pair(pair: tuple[str, str, str]) -> Path:
         strategy, symbol, _reason = pair
         newest_ns = latest_ts.get(symbol) if latest_ts else None
-        study = optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns)
+        # Issue #531 — die REAL vorhandene Bar-Spanne (Tage) an build_trial durchreichen, damit die
+        # Manifest-Konstruktion gegen die tatsächliche Datenlage (nicht nur data_history_days) prüft.
+        span_days = available_bars.get(symbol, 0) / 24.0
+        study = optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns,
+                                catalog_span_days=span_days)
         global_params = load_global_best(strategy, config_dir())
         promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns)
         return export_symbol_proposal(study, strategy, symbol, promotion)
