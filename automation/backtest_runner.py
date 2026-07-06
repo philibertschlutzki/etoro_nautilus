@@ -873,8 +873,12 @@ def _get_annualization_factor(mtm_series=None) -> float:
     (252) darf die real gemessene Intraday-Bar-Frequenz nicht länger überstimmen — ``√252`` auf
     1h-Returns unterschätzt den annualisierten Sortino systematisch (Equity-Marktstunden ⇒ Faktor
     ≫ 252). Der Median-Δt ist robust gegen Wochenend-/Session-Lücken, weil er die dominante
-    Intra-Session-Frequenz trifft; Asset-Klassen (Equity-Marktzeiten vs. 24/7-Krypto) werden damit
-    implizit korrekt behandelt (kein pauschaler Krypto-/Equity-Faktor nötig)."""
+    Intra-Session-Frequenz trifft (1h ⇒ 8766). Präzisierung (Review PR #542): Der Median
+    DIFFERENZIERT die Asset-Klasse NICHT — Equity-1h und 24/7-Krypto-1h ergeben beide 8766
+    (uniforme Trading-Time-Konvention). Innerhalb einer Asset-Klasse ist das ein konstanter
+    √factor-Multiplikator (ranking-neutral für TPE); nur die ABSOLUTEN Sortino-Gates
+    (oos_min_sortino) und echte Cross-Asset-Vergleiche brauchen ggf. eine Observations-per-Year-
+    Skalierung (n_periods · 31_557_600 / total_span_seconds) — offene Design-Entscheidung."""
     # 1) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532). Nur ein echter
     #    DatetimeIndex liefert Timedelta-Deltas mit .total_seconds(); ein nicht-zeitlicher Index
     #    (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats) hat keine ableitbare
