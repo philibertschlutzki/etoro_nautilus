@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import logging
 import sqlite3
@@ -344,6 +345,14 @@ def make_objective(
             "oos_covered": metrics.oos_covered,
             "oos_coverage_gap_days": metrics.oos_coverage_gap_days,
             "oos_anchor_divergence": metrics.oos_anchor_divergence,
+            # Issue #569 — Roh-Kennzahlen additiv (rein observational) auch im globalen Pfad.
+            "oos_total_return": metrics.oos_total_return,
+            "oos_sortino": metrics.oos_sortino,
+            "oos_expectancy": metrics.oos_expectancy,
+            "oos_win_rate": metrics.oos_win_rate,
+            "oos_profit_factor": metrics.oos_profit_factor,
+            "is_sortino_median": metrics.is_sortino_median,
+            "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
         })
 
 
@@ -382,6 +391,8 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     if n_trials is None:
         n_trials = conf_n_trials
+    # Issue #568 — n_startup_trials dokumentiert an die Parameterzahl koppeln (Legacy ohne den Key).
+    n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
     study_name = f"study_{strategy}"
 
@@ -502,6 +513,42 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
     return {}
 
 
+def load_strategy_defaults_params(strategy: str, base_cfg: Path) -> dict:
+    """Issue #565 — die deklarierten Default-Parameter einer Strategie aus strategy_defaults.json
+    (ohne den ``_schema``-Block). None-safe ⇒ ``{}``, wenn Datei/Strategie fehlt. Das ist der
+    ökonomisch begründete Prior (genau der Vektor, der laut Holdout-Evidenz besser generalisiert
+    als der ungezügelt symbol-getunte)."""
+    defaults_path = base_cfg / "strategy_defaults.json"
+    if defaults_path.exists():
+        try:
+            with open(defaults_path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            params = data.get(strategy)
+            if isinstance(params, dict):
+                return {k: v for k, v in params.items() if not k.startswith("_")}
+        except (OSError, ValueError):
+            pass
+    return {}
+
+
+def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path) -> tuple[dict, str]:
+    """Issue #565 — Shrinkage-/Warm-Start-Referenz für den Per-Symbol-Pfad, mit definiertem
+    Fallback statt Silent-Zero.
+
+    Reihenfolge: ``load_global_best`` (Proposal READY_FOR_PR / strategies.json) → strategy_defaults →
+    ``{}``. Gibt ``(seed_params, source)`` zurück, ``source ∈ {'global_best', 'strategy_defaults',
+    'none'}``. Fehlt das echte globale Optimum, ist ``strategy_defaults`` der Prior, gegen den die
+    A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen`` NIE still 0 (der Kollaps, bei dem
+    der symbol-getunte Vektor völlig ungezügelt Richtung IS/OOS-CV-Rausch tunt, #565)."""
+    global_best = load_global_best(strategy, base_cfg)
+    if global_best:
+        return global_best, "global_best"
+    defaults = load_strategy_defaults_params(strategy, base_cfg)
+    if defaults:
+        return defaults, "strategy_defaults"
+    return {}, "none"
+
+
 def _classify_trial_rejection(metrics) -> str:
     """Issue #408 — kategorisiert, WARUM ein Per-Symbol-Trial nicht promotebar ist, fuer die modale
     Aggregation im Proposal (confirm._dominant_rejection). Trennt den IS-Drop ('oos_not_evaluated':
@@ -572,12 +619,48 @@ def _classify_is_rejection_detail(metrics) -> str:
     return "REJECT_OOS_GATE"
 
 
+def derive_n_startup_trials(strategy: str, base_n_startup: int, opt_data: dict) -> int:
+    """Issue #568 — ``n_startup_trials`` an die effektive Dimensionalität koppeln.
+
+    Bei ``multivariate=True, group=True`` sollte ``n_startup_trials ≳ k·dim`` sein (``dim`` = Anzahl
+    numerischer Suchraum-Parameter), damit der TPE die Kovarianzstruktur überhaupt schätzen kann;
+    für Strategien mit vielen Parametern (ComboTrendVwap ~14) sind fixe 16 knapp. Deklarativ über
+    ``n_startup_trials_per_dim`` (k): ``n_startup_trials = max(base, ceil(k·dim))``. Fehlt der Key
+    (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding)."""
+    k = opt_data.get("n_startup_trials_per_dim")
+    if not k or float(k) <= 0.0:
+        return int(base_n_startup)
+    try:
+        from automation.optimizer import bounds
+        dim = len(bounds.extract_numeric_bounds(strategy))
+    except Exception:
+        return int(base_n_startup)
+    return max(int(base_n_startup), math.ceil(float(k) * dim))
+
+
+def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
+                                tau: float) -> bool:
+    """Issue #568 — Gradienten-Gate für die Tier-Eskalation.
+
+    Höheres Trial-Budget (nächstes Tier) rechtfertigt sich nur, wenn die untere Study überhaupt
+    Signal zeigt: ``evaluable_fraction > 0`` UND ``pstdev(reward) > τ``. Auf einer flachen
+    (Plateau/Deckel-)Landschaft ist zusätzliches Budget wirkungslos (100 → 200 Trials lieferten
+    identische best_value). Reine, deterministische Funktion (separat testbar)."""
+    if not rewards or evaluable_fraction <= 0.0 or len(rewards) < 2:
+        return False
+    return statistics.pstdev([float(r) for r in rewards]) > float(tau)
+
+
 def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
     """Issue #415 — Per-Study-Timing-/Evaluierbarkeits-Summary nach ``study.optimize``.
 
     Defensiv gegen Test-Doubles (``DummyStudy`` ohne ``trials``/``best_value``): jeder Zugriff ist
     ``getattr``-/try-gekapselt, sodass die Summary nie den Lauf crasht. Aggregiert die per-Trial
-    ``backtest_ms`` (User-Attr) zu Total/Median und zaehlt evaluable Trials (``oos_evaluated``)."""
+    ``backtest_ms`` (User-Attr) zu Total/Median und zaehlt evaluable Trials (``oos_evaluated``).
+
+    Issue #568 — zusätzlich das Gradienten-Signal (``reward_pstdev``, ``evaluable_fraction``,
+    ``gradient_signal``) ausweisen, damit eine (aussichtslose) Study NICHT in höhere Tiers
+    eskaliert wird und der Eskalations-Entscheid aus dem Log nachvollziehbar ist."""
     trials = list(getattr(study, "trials", None) or [])
     durs = [v for t in trials
             if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
@@ -586,6 +669,28 @@ def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
         best_value = study.best_value
     except Exception:
         best_value = None
+
+    # Issue #568 — Gradienten-Signal aus den abgeschlossenen Reward-Werten. tau deklarativ.
+    rewards = [getattr(t, "value", None) for t in trials]
+    rewards = [float(r) for r in rewards if isinstance(r, (int, float))]
+    evaluable_fraction = (evaluable / len(trials)) if trials else 0.0
+    tau = 1e-3
+    try:
+        opt_path = config_dir() / "optimizer.json"
+        if opt_path.exists():
+            tau = float((json.loads(opt_path.read_text("utf-8")) or {}).get(
+                "tier_escalation_min_signal", tau))
+    except Exception:
+        pass
+    reward_pstdev = statistics.pstdev(rewards) if len(rewards) >= 2 else 0.0
+    gradient_signal = study_shows_gradient_signal(rewards, evaluable_fraction, tau)
+    if not gradient_signal:
+        logging.getLogger("optimizer").warning(
+            "[#568] %s: kein Gradienten-Signal (evaluable_fraction=%.2f, reward_pstdev=%.4f ≤ τ=%.4f) "
+            "⇒ KEINE Tier-Eskalation gerechtfertigt (zusätzliches Budget auf flacher Landschaft ist "
+            "wirkungslos).", symbol, evaluable_fraction, reward_pstdev, tau,
+        )
+
     emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
         "study_name": getattr(study, "study_name", None),
         "symbol": symbol,
@@ -595,6 +700,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
         "backtest_ms_total": sum(durs) if durs else 0,
         "backtest_ms_median": int(statistics.median(durs)) if durs else None,
         "wallclock_s": round(time.perf_counter() - study_t0),
+        # Issue #568 — Gradienten-getriebene Eskalations-Telemetrie.
+        "reward_pstdev": reward_pstdev,
+        "evaluable_fraction": evaluable_fraction,
+        "gradient_signal": gradient_signal,
     })
 
 
@@ -706,6 +815,16 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             # Issue #554 — maschinenlesbare Gate-Deltas (metric → actual − threshold) für die
             # forensische Near-Miss-Analyse ohne String-Parsing der Reject-Gründe.
             "oos_gate_deltas": metrics.oos_gate_deltas or {},
+            # Issue #569 — Roh-Kennzahlen additiv ins Event heben (rein observational, kein
+            # Entscheidungseinfluss), damit #559/#560/#563/#565 direkt aus dem Log verifizierbar sind
+            # (statt aus oos_gate_deltas + reward rückgerechnet). null bei mathematisch undefiniertem
+            # Sortino/PF (Zero-Loss/Sub-Threshold). per_fold_oos_sortino für die #565-Dispersion.
+            "oos_sortino": metrics.oos_sortino,
+            "oos_expectancy": metrics.oos_expectancy,
+            "oos_win_rate": metrics.oos_win_rate,
+            "oos_profit_factor": metrics.oos_profit_factor,
+            "is_sortino_median": metrics.is_sortino_median,
+            "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
         })
 
         reward_mode = "auto"
@@ -745,6 +864,9 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             seed = opt_data.get("seed", seed)
     if n_trials is None:
         n_trials = conf_n_trials
+    # Issue #568 — n_startup_trials an die Parameterzahl der Strategie koppeln (>= k·dim), damit der
+    # TPE bei multivariate=True,group=True genügend Startpunkte hat. Legacy, wenn der Key fehlt.
+    n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
     study_name = f"study_{strategy}_{_sanitize(symbol)}"
     sweep_dir = WORK / "sweep"
@@ -780,8 +902,29 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
 
-    # Gate 2 — Warm-Start am globalen Optimum (nur wenn nicht leer).
-    global_best = load_global_best(strategy, cfg_dir)
+    # Gate 2 — Warm-Start + Shrinkage-Referenz. Issue #565: definierter Fallback statt Silent-Zero.
+    # Fehlt das echte globale Optimum (load_global_best leer), wird strategy_defaults der
+    # Warm-Start-Seed UND die Shrinkage-Referenz (param_pen zieht Richtung Default statt ins Leere).
+    # ``shrinkage_inactive`` (Study-User-Attr) markiert LAUT & forensisch sichtbar (analog
+    # Floor-Guard #409/#456), dass KEIN echtes globales Optimum als Anker vorliegt — unabhängig vom
+    # Defaults-Fallback, damit der fehlende Global-Stage-Anker im Standalone-Sweep nie still bleibt.
+    global_best, seed_source = resolve_symbol_shrinkage_seed(strategy, cfg_dir)
+    shrinkage_inactive = seed_source != "global_best"
+    study.set_user_attr("shrinkage_seed_source", seed_source)
+    study.set_user_attr("shrinkage_inactive", shrinkage_inactive)
+    if seed_source == "strategy_defaults":
+        logging.getLogger("optimizer").warning(
+            "[#565] %s/%s: kein global_best im Per-Symbol-Sweep (shrinkage_inactive) — Fallback auf "
+            "strategy_defaults als Shrinkage-Referenz & Warm-Start-Seed (param_pen zieht Richtung "
+            "Default statt ins Leere).",
+            strategy, symbol,
+        )
+    elif seed_source == "none":
+        logging.getLogger("optimizer").warning(
+            "[#565] %s/%s: WEDER global_best NOCH strategy_defaults auflösbar (shrinkage_inactive) ⇒ "
+            "param_pen ≡ 0, der Per-Symbol-Vektor tunt ungezügelt Richtung CV-Rausch (Overfit-Risiko).",
+            strategy, symbol,
+        )
     if global_best:
         study.enqueue_trial(global_best)
 

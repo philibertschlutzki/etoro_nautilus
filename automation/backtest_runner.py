@@ -435,6 +435,24 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     req_trades   = t_overrides.get("oos_min_trades", t_overrides.get("min_trades", tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0))))
     req_return   = t_overrides.get("oos_min_total_return", t_overrides.get("min_total_return", tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0))))
     req_exp      = t_overrides.get("oos_min_expectancy", t_overrides.get("min_expectancy", tournament_cfg.get("oos_min_expectancy", tournament_cfg.get("min_expectancy", 0.0))))
+
+    # Issue #562 — KOSTENRELATIVES Expectancy-Gate. Statt einer absoluten Magie-Zahl (0.001 = 10 bps),
+    # die zufällig exakt auf der Round-Trip-Kostenwand liegt und damit strukturell unerreichbar ist,
+    # wird das Gate relativ zur tatsächlichen Kostenbasis definiert: oos_min_expectancy := k_alpha · c_rt
+    # ("schlage die Kosten um k_alpha"). c_rt (Round-Trip-Kosten in bps) wird aus dem Kostenmodell
+    # ABGELEITET (round_trip_cost_bps, von der Worker-Kostenstelle in die Metriken gestempelt, #562),
+    # nicht doppelt gepflegt — ändert man Spread oder Kommission, zieht das effektive Gate automatisch mit.
+    # Aktiv NUR, wenn k_alpha konfiguriert ist UND die Kosten-Telemetrie vorliegt; sonst statisches
+    # Legacy-Gate (bit-identisch, Zero-Hardcoding). effective_expectancy_gate wird für die Telemetrie
+    # zurückgegeben.
+    k_alpha = t_overrides.get("oos_min_expectancy_k_alpha",
+                              tournament_cfg.get("oos_min_expectancy_k_alpha"))
+    effective_expectancy_gate = None
+    if k_alpha is not None and oos_metrics is not None:
+        c_rt_bps = oos_metrics.get("round_trip_cost_bps")
+        if c_rt_bps is not None:
+            req_exp = float(k_alpha) * float(c_rt_bps) / 10000.0
+            effective_expectancy_gate = req_exp
     req_sortino  = t_overrides.get("oos_min_sortino", t_overrides.get("min_sortino", tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0))))
     req_pf       = t_overrides.get("oos_min_profit_factor", t_overrides.get("min_profit_factor", tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0))))
     req_max_dd   = t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0))))
@@ -569,6 +587,9 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         # Issue #554 — numerische Gate-Deltas (metric → actual − threshold) für die maschinen-
         # lesbare Forensik im optimizer_trial_completed-Event.
         "oos_gate_deltas": oos_gate_deltas,
+        # Issue #562 — effektive (kostenrelativ abgeleitete) Expectancy-Schwelle für die Telemetrie.
+        # None ⇒ statisches Legacy-Gate war maßgeblich (k_alpha nicht gesetzt oder keine Kosten-Telemetrie).
+        "effective_expectancy_gate": effective_expectancy_gate,
     }
 
 def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
@@ -672,6 +693,25 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
         return False
 
     return True
+
+
+def resolve_spread_bps(inst_id_str: str,
+                       spread_bps_by_asset_class: dict | None,
+                       spread_bps_by_symbol: dict | None,
+                       asset_class_key: str = "DEFAULT") -> float:
+    """Issue #566 — Single Source of Truth für die Spread-Auflösung (bps).
+
+    Auflösungsreihenfolge (strikt): Symbol-Override (``spread_bps_by_symbol[inst_id]``) →
+    Asset-Class (``spread_bps_by_asset_class[asset_class_key]``) → Asset-Class-DEFAULT → 0.0.
+    Ein symbol-spezifischer Override übersteuert die grobe Asset-Class-Konstante, damit ein zu
+    weiter EQUITY-Spread liquide Blue-Chips (z. B. TSLA.ETORO ~2 bps) nicht fälschlich
+    unrentabel macht. Fehlen beide Maps ⇒ 0.0 (kein Spread-Modeling, rückwärtskompatibel)."""
+    if spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol:
+        return float(spread_bps_by_symbol[inst_id_str])
+    if spread_bps_by_asset_class:
+        return float(spread_bps_by_asset_class.get(
+            asset_class_key, spread_bps_by_asset_class.get("DEFAULT", 4.0)))
+    return 0.0
 
 
 def load_ticks_from_catalog(
@@ -1506,9 +1546,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         pnl = match_qty * (s_price - price)
                         entry_notional = match_qty * s_price
                         if commission_bps > 0:
-                            # Notional Value = Menge * Preis for both legs (entry and exit)
+                            # Issue #561 — commission_bps ist per ROUND-TRIP (backtest.json._schema).
+                            # Beide Legs (Entry + Exit) zusammen dürfen in Summe genau
+                            # commission_bps · notional_avg kosten ⇒ halbe Rate JE Leg. Vor #561 wurde
+                            # die volle Rate auf beide Legs verrechnet (2× der dokumentierten Semantik):
+                            # commission_bps=1 kostete real 2 bps/Round-Trip und schob die Kostenwand
+                            # exakt auf die Expectancy-Schwelle (Pitfall #115).
                             exit_value = match_qty * price
-                            pnl -= (entry_notional + exit_value) * (commission_bps / 10000.0)
+                            per_leg_bps = commission_bps / 2.0
+                            pnl -= (entry_notional + exit_value) * (per_leg_bps / 10000.0)
                         ts = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         holding_time_ns = ts - s_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
@@ -1532,9 +1578,12 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         pnl = match_qty * (price - b_price)
                         entry_notional = match_qty * b_price
                         if commission_bps > 0:
-                            # Notional Value = Menge * Preis for both legs (entry and exit)
+                            # Issue #561 — commission_bps ist per ROUND-TRIP (backtest.json._schema).
+                            # Halbe Rate JE Leg (Entry + Exit), Summe == commission_bps · notional_avg
+                            # EINMAL. Symmetrisch zum Buy-Zweig oben (Pitfall #115).
                             exit_value = match_qty * price
-                            pnl -= (entry_notional + exit_value) * (commission_bps / 10000.0)
+                            per_leg_bps = commission_bps / 2.0
+                            pnl -= (entry_notional + exit_value) * (per_leg_bps / 10000.0)
                         ts = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         holding_time_ns = ts - b_ts
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
@@ -2300,6 +2349,8 @@ def _build_single_symbol_oos(all_results: list[dict]) -> dict | None:
         "oos_rejection_reasons": oos_eval.get("oos_rejection_reasons", []),
         # Issue #554 — numerische Gate-Deltas mit durchreichen (maschinenlesbare Forensik).
         "oos_gate_deltas": oos_eval.get("oos_gate_deltas", {}),
+        # Issue #562 — effektive (kostenrelative) Expectancy-Schwelle ins Study-Output heben.
+        "effective_expectancy_gate": oos_eval.get("effective_expectancy_gate"),
         "oos_metrics": oos_metrics,
         "oos_fold_sortinos": oos_metrics.get("oos_fold_sortinos") or [],
         "median_is_sortino": is_metrics.get("sortino_ratio"),
@@ -2582,6 +2633,7 @@ def run_single_backtest_worker(
     span_tolerance_days: float,
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
+    spread_bps_by_symbol: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -2616,12 +2668,17 @@ def run_single_backtest_worker(
 
             catalog = ParquetDataCatalog(effective_catalog_path)
 
-            # Determine asset class for spread
-            spread_bps = 0.0
-            if spread_bps_by_asset_class:
+            # Determine spread for the symbol. Issue #566 — Auflösungsreihenfolge (resolve_spread_bps,
+            # Single Source of Truth): Symbol-Override → Asset-Class → DEFAULT. Die Asset-Class wird
+            # nur dann per instrument_map.json aufgelöst, wenn KEIN Symbol-Override greift (kein
+            # unnötiges I/O). Ein symbol-spezifischer Override (z. B. TSLA.ETORO=2.0) übersteuert die
+            # grobe Asset-Class-Konstante, damit ein zu weiter EQUITY-Spread liquide Blue-Chips nicht
+            # fälschlich unrentabel macht.
+            has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
+            asset_class_key = "DEFAULT"
+            if spread_bps_by_asset_class and not has_symbol_override:
                 import json
                 instrument_map_path = str(config_dir() / "instrument_map.json")
-                asset_class_key = "DEFAULT"
                 try:
                     with open(instrument_map_path, "r", encoding="utf-8") as f:
                         inst_map = json.load(f).get("instruments", {})
@@ -2634,10 +2691,12 @@ def run_single_backtest_worker(
                 except Exception as e:
                     pass
 
-                spread_bps = spread_bps_by_asset_class.get(asset_class_key, spread_bps_by_asset_class.get("DEFAULT", 4.0))
+            spread_bps = resolve_spread_bps(
+                inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)
 
             if spread_bps > 0.0:
-                wlog(f"   📊 Spread-Modeling: {spread_bps} bps applied to {inst_id_str}")
+                src = "Symbol-Override" if has_symbol_override else f"Asset-Class {asset_class_key}"
+                wlog(f"   📊 Spread-Modeling ({src}): {spread_bps} bps applied to {inst_id_str}")
 
             ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns, spread_bps)
         except RuntimeError as e:
@@ -2806,6 +2865,17 @@ def run_single_backtest_worker(
             metrics = extracted_data
             oos_metrics = {}
 
+        # Issue #562 — Round-Trip-Kosten (bps) als Single Source of Truth in die Metriken stempeln,
+        # GENAU dort, wo Spread (spread_bps) und Kommission (commission_bps) real angewandt werden.
+        # Das kostenrelative Expectancy-Gate (_evaluate_oos_eligibility) liest diese Zahl und leitet
+        # oos_min_expectancy = k_alpha · c_rt daraus ab — kein doppelt gepflegter Kostenwert. Nach
+        # #561 gilt c_rt = spread_bps + commission_bps (Kommission 1×/Round-Trip).
+        round_trip_cost_bps = float(spread_bps) + float(commission_bps)
+        if isinstance(metrics, dict):
+            metrics["round_trip_cost_bps"] = round_trip_cost_bps
+        if isinstance(oos_metrics, dict):
+            oos_metrics["round_trip_cost_bps"] = round_trip_cost_bps
+
         # Issue #508 — Fill-Match-Diagnostik (Sekundärebene) nach oben reichen. `metrics`/`oos_metrics`
         # sind bereits die primären Round-Trip-Metriken; `fill_matches` bleibt reine Execution-Diagnostik.
         fill_matches = extracted_data.get("fill_matches") if isinstance(extracted_data, dict) else None
@@ -2965,6 +3035,8 @@ def run_backtest() -> None:
     span_tolerance_days = backtest_global_cfg.get("span_tolerance_days", 3.0)
     commission_bps = backtest_global_cfg.get("commission_bps", 0.0)
     spread_bps_by_asset_class = backtest_global_cfg.get("spread_bps_by_asset_class", {})
+    # Issue #566 — optionale symbol-spezifische Spread-Overrides (übersteuert die Asset-Class-Konstante).
+    spread_bps_by_symbol = backtest_global_cfg.get("spread_bps_by_symbol", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -3294,7 +3366,8 @@ def run_backtest() -> None:
                         inst_id_str, bar_type, strat,
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
-                        span_tolerance_days, commission_bps, spread_bps_by_asset_class
+                        span_tolerance_days, commission_bps, spread_bps_by_asset_class,
+                        spread_bps_by_symbol
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -3302,7 +3375,8 @@ def run_backtest() -> None:
                         inst_id_str, bar_type, strat,
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
-                        span_tolerance_days, commission_bps, spread_bps_by_asset_class
+                        span_tolerance_days, commission_bps, spread_bps_by_asset_class,
+                        spread_bps_by_symbol
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -3335,7 +3409,8 @@ def run_backtest() -> None:
                         futures, future, strategies_list, catalog_path,
                         start_ns, end_ns, start_capital, args.htmlreport,
                         reports_dir, all_results, done_count, total_jobs,
-                        span_tolerance_days, commission_bps, spread_bps_by_asset_class
+                        span_tolerance_days, commission_bps, spread_bps_by_asset_class,
+                        spread_bps_by_symbol
                     )
                     break
                 except Exception as e:
@@ -3420,6 +3495,7 @@ def _run_remaining_sequentially(
     span_tolerance_days: float,
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
+    spread_bps_by_symbol: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -3435,7 +3511,8 @@ def _run_remaining_sequentially(
         res = run_single_backtest_worker(
             rem_inst, bar_type, rem_strat, catalog_path,
             start_ns, end_ns, start_capital, generate_html, reports_dir, rem_log,
-            span_tolerance_days, commission_bps, spread_bps_by_asset_class
+            span_tolerance_days, commission_bps, spread_bps_by_asset_class,
+            spread_bps_by_symbol
         )
         _flush_worker_log(rem_log)
         done_count += 1

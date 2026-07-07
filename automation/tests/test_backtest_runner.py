@@ -680,20 +680,23 @@ def test_broken_pool_fallback_passes_arguments():
                  # Verify that _run_remaining_sequentially was called
                  assert mock_run_seq.called
 
-                 # Verify it was called with the correct signature (at least 15 parameters)
-                 # args = (futures, future, strategies_list, catalog_path, start_ns, end_ns, start_capital, args.htmlreport, reports_dir, all_results, done_count, total_jobs, span_tolerance_days, commission_bps, spread_bps_by_asset_class)
+                 # Verify it was called with the correct signature (16 parameters after Issue #566
+                 # threaded spread_bps_by_symbol through the sequential-fallback path).
+                 # args = (futures, future, strategies_list, catalog_path, start_ns, end_ns, start_capital, args.htmlreport, reports_dir, all_results, done_count, total_jobs, span_tolerance_days, commission_bps, spread_bps_by_asset_class, spread_bps_by_symbol)
                  called_args, called_kwargs = mock_run_seq.call_args
-                 assert len(called_args) == 15
+                 assert len(called_args) == 16
 
                  # Check the specific added variables
                  span_tolerance_days = called_args[12]
                  commission_bps = called_args[13]
                  spread_bps_by_asset_class = called_args[14]
+                 spread_bps_by_symbol = called_args[15]  # Issue #566
 
                  # The values should match our mocked config
                  assert isinstance(span_tolerance_days, float)
                  assert isinstance(commission_bps, float)
                  assert isinstance(spread_bps_by_asset_class, dict)
+                 assert isinstance(spread_bps_by_symbol, dict)
 
 def test_broken_pool_fallback_call_signature():
     """

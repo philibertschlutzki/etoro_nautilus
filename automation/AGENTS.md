@@ -1245,14 +1245,47 @@ Der `backtest_runner`-Worker klassifiziert jeden Trial in **genau einen** OOS-Zu
 | `embargo_period_days` | 0 ⇒ kein Purge-Gap (Fold 0 startet bei `is_end`); Fenster-Span bit-identisch | #548 |
 | `oos_min_profitable_folds_frac` | Bedingung inaktiv (trivial erfüllt) — greift nur, wenn gesetzt UND Fold-Telemetrie vorliegt | #550 |
 | `oos_min_excess_return` | Bedingung inaktiv ⇒ Legacy-Absolut-Gate (`oos_min_total_return`) allein maßgeblich | #552 |
-| `deflated_selection` | `false` ⇒ keine Multiple-Testing-Korrektur (Selektion bit-identisch) | #553 |
+| `deflated_selection` | seit #567 `true` in Prod; `false` ⇒ keine Multiple-Testing-Korrektur (bit-identisch zu Pre-#553) | #553/#567 |
 | `deflation_confidence` | `0.95` (nur wirksam bei `deflated_selection=true`) | #553 |
+| `spread_bps_by_symbol` | Symbol-Override fehlt ⇒ Asset-Class-Auflösung (`resolve_spread_bps`), bit-identisch | #566 |
+| `oos_min_expectancy_k_alpha` | fehlt ⇒ statisches `oos_min_expectancy` maßgeblich (kein kostenrelatives Gate) | #562 |
+| `sortino_soft_scale` | fehlt/≤0 ⇒ Legacy-Hard-Clip auf `±sortino_clip_abs` | #559 |
+| `w_ret` | fehlt ⇒ `0.0` (kein return-Tie-Breaker im eligiblen Ast) | #559 |
+| `failure_reward_mode` | fehlt ⇒ `legacy_mean` (Mittel der aktiven Distanzen, bit-identisch) | #560 |
+| `overfit_divergence_mode` | fehlt ⇒ Legacy-einseitig (`max(0, IS−base)`) | #565 |
+| `overfit_oos_luck_weight` | fehlt ⇒ `penalty_overfit_weight` (symmetrisch gleichgewichtet) | #565 |
+| `fold_dispersion_weight` | fehlt/0 oder < 2 Fold-Sortinos ⇒ keine Dispersions-Strafe | #565 |
+| `n_startup_trials_per_dim` | fehlt/≤0 ⇒ fixer `n_startup_trials` (keine Dimensions-Kopplung) | #568 |
+| `tier_escalation_min_signal` | `1e-3` (τ für das Gradienten-Gate der Tier-Eskalation) | #568 |
 
 **Splits==1-Degenerierung (Holdout/Single-Fold):** Fold-Median == pooled (#549/#550), Buy&Hold über den einen Fold (#552) ⇒ die #549–#552-Änderungen sind für `n_folds=1`-Läufe (`confirm.py`) **bit-identisch**; nur echte Multi-Fold-Sweeps ändern ihr Verhalten. Diese Degenerierung ist die Rückwärtskompatibilitäts-Garantie des Holdout-Pfads.
 
 ---
 
 ## 19. Changelog
+
+### 2026-07-06 — Issue-Set #559–#571 (Mathematische Sanierung der Reward-Landschaft des Per-Symbol-Sweeps `TSLA.ETORO`)
+
+Chirurgische, test-gesicherte Behebung der **degenerierten Reward-Landschaft**, über die TPE optimiert: kein Tuning-Problem (mehr Trials/andere Bounds), sondern ein Konstruktionsdefekt der Zielfunktion. Drei unabhängige Defekte kollabierten die Landschaft (Winner-Deckel bei `reward==+5.0` exakt; Near-Miss-Plateau mit `corr(reward,return)≈0`; unerreichbares OOS-Gate an der 10-bps-Kostenwand). **+50 neue Tests (alle isoliert grün), 0 Regressionen** (Full-Suite identisch zu `main`: dieselben vorbestehenden Environment-Failures aus der `test_issue_489`-`sys.modules`-Mock-Pollution + `n_jobs`-Determinismus-Config; CI führt Testdateien isoliert aus). Neue Pitfalls **#115–#118** + Kern-Invariante (Reward-Gradient). Financial-Metrics-Hinweis: alle berührten Kennzahlen sind dimensionslose Verhältniszahlen (Expectancy als Return-auf-Notional, Sortino/PF-Ratios, Fold-Fraktionen) — keine währungsbehafteten Beträge, CHF-Normierung mathematisch nicht anwendbar.
+
+**Merge-Reihenfolge (gekoppelt):** Phase 1 Kostenehrlichkeit (#561/#566/#562) → Phase 2 Gradient (#559/#560/#563) → Phase 3 Overfit-Eindämmung (#564/#565/#567) → Phase 4 Effizienz/Sichtbarkeit (#569/#568/#570). Alle neuen Config-Keys sind Zero-Hardcoding: fehlt ein Key ⇒ Legacy-Verhalten (bit-identisch).
+
+| GH-Issue | Prio | Kernänderung | Dateien |
+|---|---|---|---|
+| **#561** | P0 | Kommissions-Semantik 2×→1×: halbe Rate je Leg (`per_leg_bps=commission_bps/2`), Summe == `commission_bps·notional` einmal. Schema präzisiert. Pitfall #115. | `backtest_runner.py`, `config/backtest.json` |
+| **#566** | P2 | EQUITY-Spread 8→3 bps (realistischer Blue-Chip) + `spread_bps_by_symbol`-Override (`TSLA.ETORO=2`); `resolve_spread_bps` (SSOT: Symbol→Asset-Class→DEFAULT). | `backtest_runner.py`, `config/backtest.json` |
+| **#562** | P0 | Kostenrelatives Expectancy-Gate `oos_min_expectancy := k_alpha·c_rt` (k_alpha=0.25); `c_rt=round_trip_cost_bps` aus dem Kostenmodell abgeleitet & telemetriert (`effective_expectancy_gate`). | `backtest_runner.py`, `config/tournament.json` |
+| **#559** | P0 | Weiche Sortino-Sättigung `base=c·asinh(sortino/c)` statt Hard-Clip (Gradient lebt oberhalb der alten Grenze) + return-Tie-Breaker `+w_ret·return`. Pitfall #117. | `optimizer/reward.py`, `config/optimizer.json` |
+| **#560** | P0 | Return-verankerter Near-Miss-Gradient (`failure_reward_mode='return_anchored'`, softplus) statt Mittel kosten-saturierter Terme ⇒ `corr(reward,return\|ineligible)>0`. Pitfall #117. | `optimizer/reward.py`, `config/optimizer.json` |
+| **#563** | P1 | Sortino-Annualisierungs-Konsistenz: `oos_min_sortino` als ANNUALISIERTE Schwelle dokumentiert (√8766) und 0.3→1.0 kalibriert; Clip-Sättigung durch #559 entschärft. | `config/tournament.json` |
+| **#564** | P1 | Shrinkage/Warm-Start-Fallback: fehlt `global_best` ⇒ `strategy_defaults` als Referenz+Seed (`resolve_symbol_shrinkage_seed`), `shrinkage_inactive`-Warnung; `param_pen` nie still 0. Pitfall #116. | `optimizer/run_optimization.py` |
+| **#565** | P1 | Symmetrische Divergenz-Strafe `\|IS−base\|` (OOS-Glück bestraft) + Fold-Dispersions-Malus (`pstdev(per_fold_oos_sortino)`); `oos_fold_sortinos` in `TournamentMetrics`. Pitfall #118. | `optimizer/reward.py`, `optimizer/parsing.py`, `config/optimizer.json` |
+| **#567** | P2 | Deflated-Sortino-Selektion aktiviert (`deflated_selection=true`, conf 0.95): Winner muss das deflationierte Rausch-Maximum über N Konfigurationen schlagen (FP-Rate ≤ 5 %). | `config/tournament.json` |
+| **#569** | P3 | Per-Trial-Telemetrie: `oos_sortino`/`oos_expectancy`/`oos_win_rate`/`oos_profit_factor`/`is_sortino_median`/`per_fold_oos_sortino` additiv ins Event (Reward rekonstruierbar ±1e-6). | `optimizer/run_optimization.py` |
+| **#568** | P2 | Budget-Steuerung: `n_startup_trials=max(base, ceil(k·dim))` (Dimensions-Kopplung) + Gradienten-Gate `study_shows_gradient_signal` (keine Eskalation ohne Signal, telemetriert). | `optimizer/run_optimization.py`, `config/optimizer.json` |
+| **#570/#571** | P3/Meta | AGENTS.md: Pitfalls #115–#118, Kern-Invariante (Reward-Gradient), Fallback-Matrix, Changelog (dieser Eintrag); Verifikation des Katalogs. | `automation/AGENTS.md` |
+
+Tests: `test_issue_560_soft_saturation.py`, `test_issue_561_nearmiss_gradient.py`, `test_issue_562_commission_semantics.py`, `test_issue_563_cost_relative_gate.py`, `test_issue_564_sortino_scaling.py`, `test_issue_565_shrinkage_fallback.py`, `test_issue_566_overfit_symmetry.py`, `test_issue_567_spread_realism.py`, `test_issue_568_deflated_selection.py`, `test_issue_569_budget_control.py`, `test_issue_570_trial_telemetry.py`.
 
 ### 2026-07-06 — Issue-Set #546–#555 (Mathematische Exzellenz & Kalkulationsmethodik des Per-Symbol-Sweeps)
 
@@ -1416,7 +1449,7 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 
 ---
 
-*Zuletzt aktualisiert: 2026-07-06 (Issue-Set #546–#555: Kalkulationsmethodik Per-Symbol-Sweep, Pitfalls #106–#114, §18.5.7 OOS-Gate-Zustandsautomat & Fallback-Matrix). Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
+*Zuletzt aktualisiert: 2026-07-06 (Issue-Set #559–#571: Mathematische Sanierung der Reward-Landschaft — weiche Sortino-Sättigung, return-verankerter Near-Miss-Gradient, kostenrelatives Expectancy-Gate, Kommissions-Semantik 2×→1×, Shrinkage-Fallback, symmetrische Overfit-/Fold-Dispersions-Strafe, Deflated-Selektion aktiv, Per-Trial-Telemetrie, Budget-Gating; Pitfalls #115–#118 + Kern-Invariante Reward-Gradient. Vorher: Issue-Set #546–#555). Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
 ### 🟢 Pitfall #89 — Reward Shaping Monotonie-Guard & Floor-Plateau (Issue #488)
@@ -1776,6 +1809,31 @@ Pitfall #93 — Annualisierungsfaktor asset-class-/bar-frequenz-bewusst: Config-
 **Symptom:** `oos_min_expectancy: 0.00005 < 0.00005` — der Ist-Wert (0.0000499…) und die Schwelle 5e-05 wurden durch die 5-stellige Rundung identisch dargestellt; der echte Rest-Gap war unsichtbar.
 **Fix/Regel:** Adaptive Präzision (`.6g`) plus ein explizites numerisches Δ im Reject-String (`Δ={actual−thresh:+.3e}`) UND ein maschinenlesbares `oos_gate_deltas`-Dict (`metric → actual − threshold`; für `max_drawdown` `cap − actual`, damit einheitlich „negativ = verfehlt"). Das Dict wird durch `single_symbol_oos`/`parse_tournament` bis ins `optimizer_trial_completed`-Event durchgereicht — Forensik ohne String-Parsing.
 **Betroffen:** `automation/backtest_runner.py`, `automation/optimizer/parsing.py`, `automation/optimizer/run_optimization.py`
+
+---
+
+> ### 🧭 Kern-Invariante: Reward-Gradient (Issue-Set #559–#570)
+> **Die Zielfunktion MUSS über den *gesamten* relevanten Metrik-Bereich streng monoton in der ökonomischen Zielgröße sein** — kein Hard-Clip, kein Mittelwert saturierter Terme, keine stückweise Konstante am Ort der Optima. **Prüfbar:** `corr(reward, oos_total_return) > 0` sowohl im eligiblen (Winner-Ast) als auch im ineligiblen (Near-Miss-Ast). Verletzt eine künftige Änderung diese Invariante (z. B. ein neuer `min/max`-Clip auf einer Reward-Komponente, oder ein Mittelwert über Terme, von denen einige kosten-/schwellen-saturiert bei ~konstant kleben), kollabiert die TPE-Landschaft zu Plateau/Deckel und der Sweep wird bei beliebigem Budget nutzlos. Jede Reward-Berührung braucht einen Gradienten-Property-Test (siehe `test_issue_560_soft_saturation.py`, `test_issue_561_nearmiss_gradient.py`).
+
+### 🟢 Pitfall #115 — `commission_bps` auf beide Legs = 2× der „pro-Round-Trip"-Semantik [BEHOBEN: GH-#561]
+**Symptom:** `backtest.json._schema` deklariert `commission_bps` als „pro Round-Trip", der FIFO-Match belastete aber beide Legs (Entry + Exit) mit der VOLLEN Rate ⇒ `commission_bps=1` kostete real 2 bps/Round-Trip. In Summe mit dem Spread ergab sich eine Kostenwand von exakt 10 bps — genau die Höhe, an der 81,5 % der Trials ihre Expectancy pinnten (unerreichbares Expectancy-Gate).
+**Fix/Regel:** Round-Trip-Kommission == `commission_bps · notional_avg` **einmal** ⇒ halbe Rate je Leg (`per_leg_bps = commission_bps / 2.0`). Unit-Test verrechnet **exakt 10 USD** (nicht 20) für `notional=10k @ commission_bps=10`. Die Kosten sind **Single Source of Truth** für das kostenrelative Gate (#562, `round_trip_cost_bps` in die Metriken gestempelt) — nie doppelt pflegen.
+**Betroffen:** `automation/backtest_runner.py`, `automation/config/backtest.json`
+
+### 🟢 Pitfall #116 — Per-Symbol-Sweep ohne `global_best`: Shrinkage & Warm-Start silent inaktiv [BEHOBEN: GH-#564]
+**Symptom:** Im Standalone-`sweep` erzeugt kein Artefakt `global_best` ⇒ `study.enqueue_trial(global_best)` übersprungen (kein Gate-2-Warm-Start) UND `normalized_param_distance(sampled, {}, bounds) = 0` ⇒ `param_pen ≡ 0` ⇒ die A4.3-Shrinkage ist wirkungslos. Alle eligiblen Trials `reward == clip` exakt; der ungezügelt symbol-getunte Vektor überfittet, während die globalen Defaults am Holdout teils bestehen (Per-Symbol-Tuning netto schädlich).
+**Fix/Regel:** Fehlt `global_best` im Per-Symbol-Pfad ⇒ **LAUT** warnen (Study-Attr `shrinkage_inactive=true`) UND auf `strategy_defaults.json` als Shrinkage-Referenz + Warm-Start-Seed zurückfallen (`resolve_symbol_shrinkage_seed`). `param_pen` zieht dann Richtung Default (der ökonomisch begründete Prior) statt ins Leere — es darf **nie still 0** werden.
+**Betroffen:** `automation/optimizer/run_optimization.py`
+
+### 🟢 Pitfall #117 — Hard-Clip / Mittelwert saturierter Terme tötet den TPE-Gradienten [BEHOBEN: GH-#559/#560]
+**Symptom:** Eligible `reward == +5.0` exakt (Deckel: `base = clip(oos_sortino, ±5)` ist stückweise konstant oberhalb der Klemmgrenze — genau dort, wo die Winner leben). Ineligible `corr(reward, return) ≈ 0` (Plateau: der Failure-Reward war das Mittel von 6 Distanz-Termen, von denen 3 kosten-saturiert bei ~1.0 kleben, sodass der einzige performance-tragende Return-Term auf ~2,5 % verdünnt wurde). 5 von 6 Strategien fanden 0 Winner — nicht mangels Winner, sondern weil der Sampler ihn nicht finden *konnte*.
+**Fix/Regel:** Weiche Sättigung (`base = c·asinh(oos_sortino/c)`, überall streng monoton) statt `min/max`-Clip; Failure-Reward **return-verankert** (`softplus(−(return−gate)/s)·w`), nicht Mittel gesättigter Terme; kleiner return-Tie-Breaker (`+ w_ret·oos_total_return`) im eligiblen Ast. **INVARIANTE:** `corr(reward, oos_total_return) > 0` in BEIDEN Ästen; kein einzelner Distanz-Term > 60 % des Aktiv-Mittels. Alle neuen Keys fehlen ⇒ Legacy (Hard-Clip / `legacy_mean`), bit-identisch.
+**Betroffen:** `automation/optimizer/reward.py`, `automation/config/optimizer.json`
+
+### 🟢 Pitfall #118 — `overfit_gap` einseitig ⇒ OOS-Glück wird belohnt [BEHOBEN: GH-#565]
+**Symptom:** `overfit_gap = max(0, is_sortino_median − base)` bestraft NUR `IS > OOS`. Der Fall `OOS ≫ IS` (Overfit auf ein günstiges OOS-Sub-Fenster, das am Holdout revertiert, `R_symbol ≈ −5.1`) erhält `gap = 0` und **vollen Kredit**. Zusätzlich floss nur der Median-OOS-Sortino in den Reward, nicht die Streuung über die Folds — ein einzelner starker Fold konnte den Wert tragen.
+**Fix/Regel:** Symmetrische Divergenz-Strafe `w_of·|is_sortino_median − base|` (OOS≫IS via `overfit_oos_luck_weight` optional milder, aber ≠ 0) PLUS Fold-Dispersions-Malus (`w_disp·pstdev(per_fold_oos_sortino)`, die Reward-seitige Ergänzung zum Gate-seitigen #550). Ergänzend die Deflated-Sortino-Selektion (#567) gegen das Rausch-Maximum über N Konfigurationen. Fehlen die Keys ⇒ Legacy-einseitig, bit-identisch.
+**Betroffen:** `automation/optimizer/reward.py`, `automation/optimizer/parsing.py`, `automation/config/optimizer.json`
 
 ### Issue #535 — Config-Orphans & Gate-1 Fallback
 * **Config Deprecation:** `constraint_penalty_scale` wurde aus `optimizer.json` entfernt. Das System verwendet stattdessen `constraint_distance_penalty_weight` und `return_penalty_scale` (Konfigurations-Drift Prävention).

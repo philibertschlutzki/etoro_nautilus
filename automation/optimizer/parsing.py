@@ -56,6 +56,10 @@ class TournamentMetrics:
     # Issue #554 — maschinenlesbare Gate-Deltas (metric → actual − threshold). Leeres Dict, wenn der
     # Block fehlt (rückwärtskompatibel zu Pre-#554-JSONs). Für die forensische Near-Miss-Analyse.
     oos_gate_deltas: dict | None = None
+    # Issue #565 — Per-Fold-OOS-Sortinos für die reward-seitige Fold-Dispersions-Strafe (pstdev).
+    # Leeres Tuple, wenn keine Fold-Telemetrie vorliegt (immutable Default ⇒ kein mutable-default-
+    # Footgun; rückwärtskompatibel). Belohnt konsistente statt glücklicher Per-Fold-Performance.
+    oos_fold_sortinos: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -188,6 +192,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_rejection_reasons=oos_rejection_reasons,
         oos_anchor_divergence=oos_anchor_divergence,
         oos_gate_deltas=oos_gate_deltas,
+        # Issue #565 — Per-Fold-OOS-Sortinos (None-safe ⇒ leeres Tuple) für die Fold-Dispersion.
+        oos_fold_sortinos=tuple(oos_fold_sortinos) if oos_fold_sortinos else (),
     )
 
     # Pre-Return Invarianten-Check
