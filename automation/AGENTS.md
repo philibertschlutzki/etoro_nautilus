@@ -1862,6 +1862,6 @@ Wobei N die Gesamtzahl der Evaluierungsperioden und MAR der deklarierte Minimum 
 **Symptom:** Fold-Sortinos explodieren auf harte Caps (z.B. 50.0), wenn Folds wenige, geringfügige Verlust-Bars aufweisen ($dd\_dev \approx 0$). Dies korrumpiert Gate-Eligibility (falscher Median) und treibt Dispersion-Strafen in die Höhe.
 **Mitigation:**
 1. Niemals ungeschützte Division durch Return-Deviations.
-2. Zwingende Implementation eines deklarativen $dd\_dev$-Floors (z.B. $\max(dd\_dev, \epsilon)$).
-3. Etablierung eines lokal validen Minimum-Trade-Counts (`sortino_min_trades >= 10`), unabhängig von der globalen `oos_min_trades` Semantik.
-4. Pre-Aggregation Winsorizing von Fold-Metriken anwenden.
+2. Zwingende Implementation eines deklarativen $dd\_dev$-Floors via `sortino_downside_floor` (z.B. $\max(dd\_dev, 0.002)$).
+3. Etablierung eines lokal validen Minimum-Trade-Counts via `sortino_min_trades` (z.B. >= 10), unabhängig von der globalen `oos_min_trades` Semantik.
+4. Pre-Aggregation Winsorizing von Fold-Metriken anwenden (via `fold_winsorize_lower` und `fold_winsorize_upper`), unter Verwendung von `interpolation="nearest"`, um Lineare-Interpolations-Artefakte bei Folds mit geringer Kardinalität zu vermeiden.

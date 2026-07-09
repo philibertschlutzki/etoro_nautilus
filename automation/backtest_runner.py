@@ -906,8 +906,17 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
                 oos_metrics[f"{key}_pooled"] = oos_metrics.get(key)
                 if key == "sortino_ratio" and len(vals) >= 3:
                     import pandas as _pd
+                    import json
+                    try:
+                            # Direct parsing logic from tournament
+                            config_p = _AUTOMATION_DIR / "automation" / "config" / "tournament.json"
+                            w_lower = float(json.loads(config_p.read_text()).get("fold_winsorize_lower", 0.05))
+                            w_upper = float(json.loads(config_p.read_text()).get("fold_winsorize_upper", 0.95))
+                    except Exception:
+                        w_lower, w_upper = 0.05, 0.95
+
                     s_vals = _pd.Series(vals)
-                    lb, ub = s_vals.quantile(0.05), s_vals.quantile(0.95)
+                    lb, ub = s_vals.quantile(w_lower, interpolation="nearest"), s_vals.quantile(w_upper, interpolation="nearest")
                     vals = s_vals.clip(lower=lb, upper=ub).tolist()
                 oos_metrics[key] = _stats.median(vals)
     return oos_metrics
@@ -1144,7 +1153,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     EPSILON = 1e-9
     DENOMINATOR_FLOOR = 1e-6
-    RATIO_CAP = 50.0
+    RATIO_CAP = 15.0
 
     # Floor `gross_loss` at EPSILON implicitly to protect against division-by-zero, but logic captures it via count.
     if gross_loss <= 0.0:
