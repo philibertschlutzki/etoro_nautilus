@@ -904,6 +904,11 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
             vals = [f.get(key) for f in valid_folds if f.get(key) is not None]
             if vals:
                 oos_metrics[f"{key}_pooled"] = oos_metrics.get(key)
+                if key == "sortino_ratio" and len(vals) >= 3:
+                    import pandas as _pd
+                    s_vals = _pd.Series(vals)
+                    lb, ub = s_vals.quantile(0.05), s_vals.quantile(0.95)
+                    vals = s_vals.clip(lower=lb, upper=ub).tolist()
                 oos_metrics[key] = _stats.median(vals)
     return oos_metrics
 
@@ -945,6 +950,7 @@ def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tupl
 _sortino_min_trades_cache: int | None = None
 _sortino_mar_cache: float | None = None
 _max_drawdown_cap_cache: float | None = None
+_sortino_downside_floor_cache: float | None = None
 
 def _read_sortino_mar() -> float:
     """Issue #545 (Zero-Hardcoding): MAR (Minimum Acceptable Return) fuer die Sortino-Berechnung aus
@@ -963,6 +969,23 @@ def _read_sortino_mar() -> float:
     except (OSError, ValueError, TypeError):
         val = 0.0
     _sortino_mar_cache = val
+    return val
+
+def _read_sortino_downside_floor() -> float:
+    global _sortino_downside_floor_cache
+    if _sortino_downside_floor_cache is not None:
+        return _sortino_downside_floor_cache
+    val = 1e-6
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_downside_floor")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 1e-6
+    _sortino_downside_floor_cache = val
     return val
 
 def _read_sortino_min_trades() -> int:
@@ -1205,9 +1228,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             downside_diff = (period_rets - mar).clip(upper=0.0)
             dd_dev = float(np.sqrt((downside_diff ** 2).mean()))
 
-            if pd.isna(dd_dev) or dd_dev <= 0.0:
+            if pd.isna(dd_dev):
                 sortino = None
             else:
+                downside_floor = _read_sortino_downside_floor()
+                dd_dev = max(dd_dev, downside_floor)
                 mean_ret = period_rets.mean()
                 sortino_raw = ((mean_ret - mar) / dd_dev) * math.sqrt(annualization_factor)
                 if pd.isna(sortino_raw):
