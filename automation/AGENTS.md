@@ -1857,3 +1857,11 @@ Wobei N die Gesamtzahl der Evaluierungsperioden und MAR der deklarierte Minimum 
 | sortino_mar | MAR | Default 0.0 (Konfigurabel) | Statische Null-Baseline für RMS-Berechnung. |
 | RATIO_CAP | Clip_{sym} | [-50.0, +50.0] | Symmetrischer Überlaufschutz. Verhindert Gradienten-Tod bei $DD_{Target} \to 0$. |
 | oos_min_sortino | Gate | Median-Aggregat der Folds | Erhöhte Sensitivität auf Verlusthäufigkeit (Frequenz) anstatt reiner Verlustamplitude. |
+
+### Pitfall #119: Per-Fold-Sortino-Explosion durch unzureichende Downside-Deviation (Metrik-Fundament)
+**Symptom:** Fold-Sortinos explodieren auf harte Caps (z.B. 50.0), wenn Folds wenige, geringfügige Verlust-Bars aufweisen ($dd\_dev \approx 0$). Dies korrumpiert Gate-Eligibility (falscher Median) und treibt Dispersion-Strafen in die Höhe.
+**Mitigation:**
+1. Niemals ungeschützte Division durch Return-Deviations.
+2. Zwingende Implementation eines deklarativen $dd\_dev$-Floors via `sortino_downside_floor` (z.B. $\max(dd\_dev, 0.002)$).
+3. Etablierung eines lokal validen Minimum-Trade-Counts via `sortino_min_trades` (z.B. >= 10), unabhängig von der globalen `oos_min_trades` Semantik.
+4. Pre-Aggregation Winsorizing von Fold-Metriken anwenden (via `fold_winsorize_lower` und `fold_winsorize_upper`), unter Verwendung von `interpolation="nearest"`, um Lineare-Interpolations-Artefakte bei Folds mit geringer Kardinalität zu vermeiden.

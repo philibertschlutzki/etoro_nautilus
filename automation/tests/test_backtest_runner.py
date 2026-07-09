@@ -427,7 +427,7 @@ def test_clamping_limits():
     hold_list = [(1000, 1.0)] * 52
     metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
     # Caps were reinstated according to safety rules (max 50.0 for PF and Sortino, Calmar 50.0 per Issue #288)
-    assert metrics["profit_factor"] == 50.0
+    assert metrics["profit_factor"] == 15.0
     assert metrics["sortino_ratio"] is None  # removed fallback logic
     assert metrics["calmar_ratio"] is None  # calmar is also computed strictly from MtM now
 

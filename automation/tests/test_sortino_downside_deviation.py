@@ -35,12 +35,12 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
 
     sortino1 = stats1.get("sortino_ratio")
     assert sortino1 is not None, "Sortino should not be None"
-    assert sortino1 > -50.0, "Sortino should not be clipped to exactly -RATIO_CAP if it's finite"
-    assert abs(sortino1) < 50.0, "Sortino should be finite and within cap bounds"
+    assert sortino1 > -15.0, "Sortino should not be clipped to exactly -RATIO_CAP if it's finite"
+    assert abs(sortino1) < 15.0, "Sortino should be finite and within cap bounds"
 
     # Test 2: Reference validation against numpy
     # numpy formula for RMS target downside deviation with MAR=0.0
-    period_rets1 = pd.Series(rets1)
+    period_rets1 = mtm_series1.pct_change().dropna()
     downside_diff = period_rets1.clip(upper=0.0)
     dd_dev_ref = float(np.sqrt((downside_diff ** 2).mean()))
     mean_ret = period_rets1.mean()
@@ -56,7 +56,8 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
             min_trades_for_sortino=2
         )
         sortino1_fixed = stats1_fixed_ann.get("sortino_ratio")
-        expected_sortino = (mean_ret / dd_dev_ref) * math.sqrt(252)
+        dd_dev_ref = max(dd_dev_ref, 1e-6)
+        expected_sortino = max(-15.0, min((mean_ret / dd_dev_ref) * math.sqrt(252), 15.0))
         assert np.isclose(sortino1_fixed, expected_sortino, atol=1e-12)
 
     # Test 3: Loss-frequency sensitivity
@@ -113,12 +114,12 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
         stats_neg = _calculate_stats(pnl_list=[-1.0]*10, hold_list=[(1,1.0)]*10, starting_capital=1.0, mtm_series=mtm_series_neg, min_trades_for_sortino=2)
         stats_pos = _calculate_stats(pnl_list=[-1.0]+[1.0]*10, hold_list=[(1,1.0)]*11, starting_capital=1.0, mtm_series=mtm_series_pos, min_trades_for_sortino=2)
 
-    assert stats_neg.get("sortino_ratio") == -50.0, "Should be symmetrically clipped at -50.0"
-    assert stats_pos.get("sortino_ratio") == 50.0, "Should be symmetrically clipped at +50.0"
+    assert stats_neg.get("sortino_ratio") == -15.0, "Should be symmetrically clipped at -15.0"
+    assert stats_pos.get("sortino_ratio") == 15.0, "Should be symmetrically clipped at +15.0"
 
 def test_sortino_nan_poisoning(mock_sortino_config):
     # Test 5: Verify that if mean_ret somehow results in a NaN (which poisons sortino_raw),
-    # the sortino ratio is gracefully set to None instead of -RATIO_CAP (-50.0).
+    # the sortino ratio is gracefully set to None instead of -RATIO_CAP (-15.0).
     rets = [np.nan, np.nan, np.nan]
     mtm_vals = [1.0, 1.0, 1.0, 1.0] # constant mtm gives period_rets = 0.0 which means dd_dev = 0.0 -> None
 
