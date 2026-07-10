@@ -142,3 +142,47 @@ def test_drawdown_soft_penalty_eligible_trials():
     import pytest
 
     assert actual_diff == pytest.approx(expected_diff)
+
+
+def test_drawdown_soft_penalty_quadratic_non_linearity():
+    """
+    Ein Drawdown von 80% des Caps muss exakt den 4-fachen Penalty-Abzug eines Drawdowns von 40% des Caps erzeugen ($0.8^2 / 0.4^2 = 4$).
+    """
+    weights = W.copy()
+    weights["penalty_dd_weight"] = 1.0
+
+    common_metrics = dict(
+        oos_evaluated=True,
+        oos_eligible=True,
+        is_sortino_median=2.0,
+        oos_sortino=2.0,
+        oos_total_trades=50,
+        win_count=20,
+        oos_total_return=0.1,
+    )
+
+    cap = 0.3
+
+    # Trial with 0 drawdown (base reward, no penalty)
+    trial_base = _m(**common_metrics, oos_max_drawdown=0.0)
+    reward_base = compute_reward(
+        trial_base, universe_size=70, weights=weights, risk_dd_cap=cap
+    )
+
+    # 40% of the cap (0.4 * 0.3 = 0.12)
+    trial_40 = _m(**common_metrics, oos_max_drawdown=0.12)
+    reward_40 = compute_reward(
+        trial_40, universe_size=70, weights=weights, risk_dd_cap=cap
+    )
+    penalty_40 = reward_base - reward_40
+
+    # 80% of the cap (0.8 * 0.3 = 0.24)
+    trial_80 = _m(**common_metrics, oos_max_drawdown=0.24)
+    reward_80 = compute_reward(
+        trial_80, universe_size=70, weights=weights, risk_dd_cap=cap
+    )
+    penalty_80 = reward_base - reward_80
+
+    import pytest
+
+    assert penalty_80 == pytest.approx(4 * penalty_40)
