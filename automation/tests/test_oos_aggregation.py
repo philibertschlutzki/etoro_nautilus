@@ -115,3 +115,69 @@ def test_oos_aggregation():
     for val in per_symbol_winners.values():
         assert "_oos_trade_records" not in val["oos_metrics"]
 
+
+def test_issue_574_pooled_frequency_metrics():
+    """Asserts that Win Rate, Profit Factor, and Expectancy are pooled, NOT fold-medians."""
+    from automation.backtest_runner import apply_fold_aggregation, _evaluate_oos_eligibility
+
+    # Two folds with sparse winners
+    # Fold 1: 0 winners, 5 losers -> wr=0.0, pf=0.0
+    # Fold 2: 0 winners, 5 losers -> wr=0.0, pf=0.0
+    # Fold 3: 20 winners, 0 losers -> wr=1.0, pf=inf
+    # Median of wr: median([0.0, 0.0, 1.0]) = 0.0
+    # Pooled wr: 20 winners / 30 trades = 0.66
+
+    per_fold = [
+        {"total_return": -0.05, "sortino_ratio": -1.0, "win_rate": 0.0, "expectancy": -0.01, "profit_factor": 0.0, "total_trades": 5},
+        {"total_return": -0.05, "sortino_ratio": -1.0, "win_rate": 0.0, "expectancy": -0.01, "profit_factor": 0.0, "total_trades": 5},
+        {"total_return": 0.20, "sortino_ratio": 5.0, "win_rate": 1.0, "expectancy": 0.01, "profit_factor": 99.0, "total_trades": 20}
+    ]
+
+    # Original pooled metrics calculated prior to apply_fold_aggregation
+    oos_metrics = {
+        "sortino_ratio": 1.0, # Will be overwritten by median(-1, -1, 5) = -1.0
+        "win_rate": 0.66,
+        "expectancy": 0.005,
+        "profit_factor": 2.5,
+        "total_return": 0.1,
+        "total_trades": 30,
+        "median_position_notional": 1000.0,
+    }
+
+    apply_fold_aggregation(oos_metrics, per_fold)
+
+    assert oos_metrics["sortino_ratio"] == -1.0
+    assert oos_metrics["win_rate"] == 0.66, "Win rate should be pooled, not median of 0.0"
+    assert oos_metrics["profit_factor"] == 2.5, "Profit factor should be pooled"
+    assert oos_metrics["expectancy"] == 0.005, "Expectancy should be pooled"
+
+    # Test holdout parity logic (1 split)
+    per_fold_single = [
+        {"total_return": 0.1, "sortino_ratio": 1.5, "win_rate": 0.5, "expectancy": 0.02, "profit_factor": 1.5, "total_trades": 10}
+    ]
+    oos_metrics_single = {
+        "sortino_ratio": 1.5,
+        "win_rate": 0.5,
+        "expectancy": 0.02,
+        "profit_factor": 1.5,
+        "total_return": 0.1,
+        "total_trades": 10
+    }
+
+    apply_fold_aggregation(oos_metrics_single, per_fold_single)
+    # Ensure they are perfectly bit-identical
+    assert oos_metrics_single["sortino_ratio"] == 1.5
+    assert oos_metrics_single["win_rate"] == 0.5
+    assert oos_metrics_single["profit_factor"] == 1.5
+
+    # Check Eligibility
+    cfg = {
+        "oos_min_trades": 20,
+        "oos_min_win_rate": 0.4,
+        "oos_min_profit_factor": 1.2,
+        "oos_min_sortino": -2.0,
+        "eligible_requires_all": ["min_trades", "min_win_rate", "min_profit_factor"]
+    }
+
+    ev = _evaluate_oos_eligibility(oos_metrics, cfg)
+    assert ev["oos_eligible"] is True, f"Strategy should pass eligibility, got {ev['oos_rejection_reasons']}"
