@@ -1,7 +1,6 @@
 import json
 import math
 import statistics
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -12,7 +11,8 @@ def _softplus(z: float) -> float:
     """``ln(1 + e^z)`` — überall streng monoton, C∞, numerisch stabil (kein Overflow für großes z).
 
     Issue #560 — glatte, streng monotone Abbildung des Rest-Gaps zum Return-Gate im
-    return-verankerten Failure-Reward. Für ``z ≫ 0`` ≈ ``z``, für ``z ≪ 0`` ≈ ``e^z`` → 0."""
+    return-verankerten Failure-Reward. Für ``z ≫ 0`` ≈ ``z``, für ``z ≪ 0`` ≈ ``e^z`` → 0.
+    """
     if z > 30.0:
         return z
     if z < -30.0:
@@ -28,8 +28,6 @@ def _apply_soft_scale(value: float, scale: float | None) -> float:
     return float(value)
 
 
-
-
 _oos_min_trades_cache: int | None = None
 _tournament_cfg_cache: dict | None = None
 
@@ -41,11 +39,12 @@ def _read_tournament_cfg() -> dict:
 
     try:
         from automation.optimizer.trial_config import config_dir
+
         cfg_path = config_dir() / "tournament.json"
         if not cfg_path.exists():
             _tournament_cfg_cache = {}
             return {}
-        with open(cfg_path, 'r', encoding='utf-8') as f:
+        with open(cfg_path, "r", encoding="utf-8") as f:
             data = json.load(f) or {}
             _tournament_cfg_cache = data
             return data
@@ -79,11 +78,14 @@ def _cfg_value(weights: dict, tournament_cfg: dict | None, key: str, default=Non
     return default
 
 
-def _shortfall_distance(actual: float, target: float | None, scale: float | None = None) -> float:
+def _shortfall_distance(
+    actual: float, target: float | None, scale: float | None = None
+) -> float:
     """Lineare, auf den Target (oder Scale) normierte Unterschreitungs-Distanz ∈ [0, ∞).
     0.0, wenn ``actual >= target`` (oder kein/nicht-positiver Target).
     Issue #505: Lineare statt quadratische Distanz zur Vermeidung von Term-Dominanz.
-    Issue #467: `scale` erlaubt die Entkopplung der Penalty-Skalierung vom Gate-Threshold."""
+    Issue #467: `scale` erlaubt die Entkopplung der Penalty-Skalierung vom Gate-Threshold.
+    """
     if target is None or target <= 0.0:
         return 0.0
     denom = float(scale) if scale is not None else float(target)
@@ -100,20 +102,26 @@ def _excess_distance(actual: float, cap: float | None) -> float:
     return max(0.0, float(actual) - float(cap)) / float(cap)
 
 
-def _any_condition_distance(m: "TournamentMetrics", weights: dict,
-                            tournament_cfg: dict | None) -> float:
+def _any_condition_distance(
+    m: "TournamentMetrics", weights: dict, tournament_cfg: dict | None
+) -> float:
     """Distanz fuer die ``eligible_requires_any``-Klausel (Sortino ODER Profit-Factor).
     Erfuellt der bessere der beiden Quotienten sein Gate (ratio >= 1), ist die Distanz 0;
     sonst linear im Rest-Gap des BESTEN Kandidaten — eine knapp verfehlte ANY-Bedingung
     darf nicht doppelt so hart bestraft werden wie eine knapp verfehlte ALL-Bedingung.
-    Issue #467: Strikte Parameter-Isolation. Kein Fallback auf IS-Metriken im OOS-Pfad."""
+    Issue #467: Strikte Parameter-Isolation. Kein Fallback auf IS-Metriken im OOS-Pfad.
+    """
     ratios = []
     req_sortino = _cfg_value(weights, tournament_cfg, "oos_min_sortino")
     if req_sortino and req_sortino > 0.0 and m.oos_sortino is not None:
         ratios.append(max(0.0, m.oos_sortino) / float(req_sortino))
 
     req_profit_factor = _cfg_value(weights, tournament_cfg, "oos_min_profit_factor")
-    if req_profit_factor and req_profit_factor > 0.0 and m.oos_profit_factor is not None:
+    if (
+        req_profit_factor
+        and req_profit_factor > 0.0
+        and m.oos_profit_factor is not None
+    ):
         ratios.append(max(0.0, m.oos_profit_factor) / float(req_profit_factor))
 
     if not ratios:
@@ -121,9 +129,12 @@ def _any_condition_distance(m: "TournamentMetrics", weights: dict,
     return max(0.0, 1.0 - min(1.0, max(ratios)))
 
 
-def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
-                                 risk_dd_cap: float | None,
-                                 tournament_cfg: dict | None) -> float:
+def _constraint_distance_penalty(
+    m: "TournamentMetrics",
+    weights: dict,
+    risk_dd_cap: float | None,
+    tournament_cfg: dict | None,
+) -> float:
     """Issue #452 — kontinuierliche Distanzstrafe fuer OOS-Constraint-Verletzungen.
     Issue #467 — OOS-Parameter-Isolation und Penalty Conditioning.
     Issue #505 — lineare (nicht quadratische) Distanzen gegen Term-Dominanz.
@@ -146,7 +157,9 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
     req_win_rate = _cfg_value(weights, tournament_cfg, "oos_min_win_rate")
 
     if None in (req_trades, req_return, req_expectancy, req_win_rate):
-        raise ValueError("Missing strict OOS configuration parameters in tournament.json")
+        raise ValueError(
+            "Missing strict OOS configuration parameters in tournament.json"
+        )
 
     return_penalty_scale = _cfg_value(weights, tournament_cfg, "return_penalty_scale")
     # Issue #547 — Expectancy-Distanz analog zum Return (#467) vom Gate-Threshold entkoppeln.
@@ -155,12 +168,16 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
     # und maskierte alle anderen Signale. Mit ``expectancy_penalty_scale`` landet ein typischer
     # Miss im Bereich der übrigen Terme (≈ 0…1.5). Fehlt der Key ⇒ ``scale=None`` ⇒ Legacy-Pfad
     # (Normierung auf ``target``), bit-identisch (Zero-Hardcoding). Siehe AGENTS.md Pitfall #108.
-    expectancy_penalty_scale = _cfg_value(weights, tournament_cfg, "expectancy_penalty_scale")
+    expectancy_penalty_scale = _cfg_value(
+        weights, tournament_cfg, "expectancy_penalty_scale"
+    )
 
     distances = [
         _shortfall_distance(float(m.oos_total_trades), req_trades),
         _shortfall_distance(m.oos_total_return, req_return, scale=return_penalty_scale),
-        _shortfall_distance(m.oos_expectancy, req_expectancy, scale=expectancy_penalty_scale),
+        _shortfall_distance(
+            m.oos_expectancy, req_expectancy, scale=expectancy_penalty_scale
+        ),
         _shortfall_distance(m.oos_win_rate, req_win_rate),
         _excess_distance(m.oos_max_drawdown, risk_dd_cap),
         _any_condition_distance(m, weights, tournament_cfg),
@@ -184,21 +201,31 @@ def _constraint_distance_penalty(m: "TournamentMetrics", weights: dict,
     # Gewicht im Divisor ⇒ derselbe Shortfall ergibt dieselbe Teilstrafe, egal wie viele
     # Nebengates zufaellig erfuellt sind (kein Gradientenrauschen bei der TPE-Suche).
     mean_distance = sum(active_dists) / len(active_dists)
-    return mean_distance * float(weights.get("constraint_distance_penalty_weight", weights["unevaluable_shaping_span"]))
+    return mean_distance * float(
+        weights.get(
+            "constraint_distance_penalty_weight", weights["unevaluable_shaping_span"]
+        )
+    )
 
 
-def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
-                               risk_dd_cap: float | None,
-                               tournament_cfg: dict | None) -> float:
+def _constraint_failure_reward(
+    m: "TournamentMetrics",
+    weights: dict,
+    risk_dd_cap: float | None,
+    tournament_cfg: dict | None,
+) -> float:
     """Issue #452 / #505 — Reward fuer evaluiert-aber-nicht-eligible OOS-Trials.
 
     Verankert am neuen Feasible-Floor (-sortino_clip_abs) und zieht die
     kontinuierliche Distanzstrafe ab. Damit gilt strikt: jeder Constraint-Failure < Evaluable-Floor
     (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming).
-    Der tanh-Band-Clamp (Falle 97) wurde zugunsten eines grossen Dynamikbereichs entfernt."""
+    Der tanh-Band-Clamp (Falle 97) wurde zugunsten eines grossen Dynamikbereichs entfernt.
+    """
     feasible_min = -float(weights["sortino_clip_abs"])
     failure_ceiling = feasible_min - float(weights["evaluable_floor_epsilon"])
-    unevaluable_ceiling = float(weights["penalty_unevaluable_oos"]) + float(weights["unevaluable_shaping_span"])
+    unevaluable_ceiling = float(weights["penalty_unevaluable_oos"]) + float(
+        weights["unevaluable_shaping_span"]
+    )
 
     # Issue #560 — Aggregations-Modus des Failure-Rewards (deklarativ, Zero-Hardcoding).
     #   'legacy_mean'     : Mittel der aktiven Distanz-Terme (Default, bit-identisch zum Status quo).
@@ -214,11 +241,16 @@ def _constraint_failure_reward(m: "TournamentMetrics", weights: dict,
         if req_return is None:
             raise ValueError(
                 "failure_reward_mode='return_anchored' benötigt oos_min_total_return "
-                "(tournament.json/weights).")
-        s = float(_cfg_value(weights, tournament_cfg, "failure_return_softplus_scale", 0.02))
+                "(tournament.json/weights)."
+            )
+        s = float(
+            _cfg_value(weights, tournament_cfg, "failure_return_softplus_scale", 0.02)
+        )
         if s <= 0.0:
             s = 0.02
-        w = float(_cfg_value(weights, tournament_cfg, "failure_return_penalty_weight", 2.0))
+        w = float(
+            _cfg_value(weights, tournament_cfg, "failure_return_penalty_weight", 2.0)
+        )
         # z = −(return − gate)/s: großer Rest-Gap (return ≪ gate) ⇒ großes z ⇒ große Strafe;
         # return → gate ⇒ z → 0 ⇒ Strafe → w·ln2. softplus > 0 ⇒ Failure-Reward stets < failure_ceiling
         # (Ordnungsinvariante: max(failure) < −sortino_clip_abs bleibt strikt).
@@ -249,60 +281,74 @@ def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
     components = []
     return_target = weights.get("shaping_return_target")
     if return_target and float(return_target) > 0.0:
-        components.append(min(1.0, max(0.0, m.is_best_total_return) / float(return_target)))
+        components.append(
+            min(1.0, max(0.0, m.is_best_total_return) / float(return_target))
+        )
     winrate_target = weights.get("shaping_winrate_target")
     if winrate_target and float(winrate_target) > 0.0:
-        components.append(min(1.0, max(0.0, m.is_best_win_rate) / float(winrate_target)))
+        components.append(
+            min(1.0, max(0.0, m.is_best_win_rate) / float(winrate_target))
+        )
     if not components:
         return 0.0
 
     import math
+
     val = sum(components) / len(components)
     if math.isnan(val):
         val = 0.0
     return max(0.0, min(1.0, val))
 
 
-def compute_reward(m: "TournamentMetrics", universe_size: int,
-                   weights: dict | None = None, risk_dd_cap: float | None = None,
-                   *, sampled: dict | None = None, global_params: dict | None = None,
-                   strategy: str | None = None, tournament_cfg: dict | None = None) -> float | tuple:
+def compute_reward(
+    m: "TournamentMetrics",
+    universe_size: int,
+    weights: dict | None = None,
+    risk_dd_cap: float | None = None,
+    *,
+    sampled: dict | None = None,
+    global_params: dict | None = None,
+    strategy: str | None = None,
+    tournament_cfg: dict | None = None
+) -> float | tuple:
     """weights=None  ⇒ aus optimizer.json (penalty_overfit_weight, penalty_dd_weight,
-                        bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
-       risk_dd_cap=None ⇒ aus tournament.json (max_drawdown).
-       Falls not m.oos_evaluated oder m.oos_sortino is None: Unevaluable-Pfad (Penalty + Shaping).
-       ISSUE #401: Ist ein OOS-Sample evaluated ∧ eligible, aber oos_sortino is None
-       (Zero-Loss / n < sortino_min_trades), UND weights['oos_sortino_fallback'] == 'total_return',
-       wird statt des Penalty-Pfades der geclippte oos_total_return als evaluable Base genutzt
-       (Flat-Reward-Landscape-Fix). Fehlt der Schluessel ⇒ unveraenderter Legacy-Penalty-Pfad.
-       ISSUE #452: Ist ein OOS-Sample evaluated, aber NICHT eligible (durchs OOS-Gate gefallen),
-       greift _constraint_failure_reward: eine kontinuierliche, quadratische, config-gewichtete
-       Distanzstrafe (constraint_distance_penalty_weight) statt Flat-Floor-Clamping — knapp verfehlt
-       > katastrophal verfehlt (TPE-Gradient), aber strikt unter dem Evaluable-Floor (kein Gate-
-       Gaming). tournament_cfg (optional) liefert die OOS-Schwellen ohne erneutes Datei-IO.
+                     bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
+    risk_dd_cap=None ⇒ aus tournament.json (max_drawdown).
+    Falls not m.oos_evaluated oder m.oos_sortino is None: Unevaluable-Pfad (Penalty + Shaping).
+    ISSUE #401: Ist ein OOS-Sample evaluated ∧ eligible, aber oos_sortino is None
+    (Zero-Loss / n < sortino_min_trades), UND weights['oos_sortino_fallback'] == 'total_return',
+    wird statt des Penalty-Pfades der geclippte oos_total_return als evaluable Base genutzt
+    (Flat-Reward-Landscape-Fix). Fehlt der Schluessel ⇒ unveraenderter Legacy-Penalty-Pfad.
+    ISSUE #452: Ist ein OOS-Sample evaluated, aber NICHT eligible (durchs OOS-Gate gefallen),
+    greift _constraint_failure_reward: eine kontinuierliche, quadratische, config-gewichtete
+    Distanzstrafe (constraint_distance_penalty_weight) statt Flat-Floor-Clamping — knapp verfehlt
+    > katastrophal verfehlt (TPE-Gradient), aber strikt unter dem Evaluable-Floor (kein Gate-
+    Gaming). tournament_cfg (optional) liefert die OOS-Schwellen ohne erneutes Datei-IO.
 
-       universe_size > 1 (und reward_mode != 'per_symbol') ⇒ Coverage-Pfad (bit-identisch, A4.3/HI-2):
-         reward = base - overfit_gap*penalty_overfit_weight - dd_excess*penalty_dd_weight
-                  + coverage*bonus_coverage_weight ; coverage = win_count / max(1, universe_size).
+    universe_size > 1 (und reward_mode != 'per_symbol') ⇒ Coverage-Pfad (bit-identisch, A4.3/HI-2):
+      reward = base - overfit_gap*penalty_overfit_weight - dd_penalty
+               + coverage*bonus_coverage_weight ; coverage = win_count / max(1, universe_size).
 
-       universe_size == 1 ODER weights['reward_mode'] == 'per_symbol' ⇒ Per-Symbol-Pfad (A4.3):
-         KEIN Coverage-Term, dafür Shrinkage-Strafe param_pen Richtung global:
-         param_pen = lambda_reg * normalized_param_distance(sampled, global_params,
-                                  bounds.extract_numeric_bounds(strategy))
-                     falls (sampled and global_params and strategy), sonst 0.0.
-         reward = base - overfit_gap*penalty_overfit_weight - dd_excess*penalty_dd_weight - param_pen.
+    universe_size == 1 ODER weights['reward_mode'] == 'per_symbol' ⇒ Per-Symbol-Pfad (A4.3):
+      KEIN Coverage-Term, dafür Shrinkage-Strafe param_pen Richtung global:
+      param_pen = lambda_reg * normalized_param_distance(sampled, global_params,
+                               bounds.extract_numeric_bounds(strategy))
+                  falls (sampled and global_params and strategy), sonst 0.0.
+      reward = base - overfit_gap*penalty_overfit_weight - dd_penalty - param_pen.
 
-       base = clip(oos_sortino, ±sortino_clip_abs); overfit_gap = max(0, is_sortino_median - base);
-       dd_excess = max(0, oos_max_drawdown - risk_dd_cap).
-       floor = penalty_unevaluable_oos + unevaluable_shaping_span + evaluable_floor_epsilon;
-       return max(reward, floor)  # Ordnungsinvariante: evaluable >= floor > unevaluable."""
+    base = clip(oos_sortino, ±sortino_clip_abs); overfit_gap = max(0, is_sortino_median - base);
+    dd_penalty = penalty_dd_weight * (oos_max_drawdown / risk_dd_cap)^2.
+    floor = penalty_unevaluable_oos + unevaluable_shaping_span + evaluable_floor_epsilon;
+    return max(reward, floor)  # Ordnungsinvariante: evaluable >= floor > unevaluable.
+    """
 
     loaded_tournament_cfg = tournament_cfg
 
     if weights is None:
         from automation.optimizer.trial_config import config_dir
+
         cfg_path = config_dir() / "optimizer.json"
-        with open(cfg_path, 'r', encoding='utf-8') as f:
+        with open(cfg_path, "r", encoding="utf-8") as f:
             weights = json.load(f)
         loaded_tournament_cfg = _read_tournament_cfg()
 
@@ -310,7 +356,6 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         if loaded_tournament_cfg is None:
             loaded_tournament_cfg = _read_tournament_cfg()
         risk_dd_cap = loaded_tournament_cfg["max_drawdown"]
-
 
     reward_mode_config = weights.get("reward_mode", "auto") if weights else "auto"
     if reward_mode_config == "pareto":
@@ -320,7 +365,7 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
             float(m.oos_win_rate),
             float(m.oos_sortino if m.oos_sortino is not None else 0.0),
             float(m.oos_max_drawdown),
-            float(m.oos_total_trades)
+            float(m.oos_total_trades),
         )
 
     penalty_unevaluable_oos = weights["penalty_unevaluable_oos"]
@@ -336,8 +381,12 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     # damit kein Gate-Gaming (Falle 2); Micro-Sizing-/Risiko-Gates (Pitfall #58) bleiben ueber
     # oos_eligible wirksam.
     base_source = m.oos_sortino
-    if (m.oos_evaluated and m.oos_eligible and m.oos_sortino is None
-            and weights.get("oos_sortino_fallback") == "total_return"):
+    if (
+        m.oos_evaluated
+        and m.oos_eligible
+        and m.oos_sortino is None
+        and weights.get("oos_sortino_fallback") == "total_return"
+    ):
         base_source = m.oos_total_return
 
     # Issue #452 — evaluiert, aber durchs OOS-Eligibility-Gate gefallen: KEIN Flat-Floor-Clamp,
@@ -354,7 +403,9 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         # Single-Source-of-Truth-Config nachladen (idempotent, gecached), bevor die Strafe greift.
         if loaded_tournament_cfg is None:
             loaded_tournament_cfg = _read_tournament_cfg()
-        return _constraint_failure_reward(m, weights, risk_dd_cap, loaded_tournament_cfg)
+        return _constraint_failure_reward(
+            m, weights, risk_dd_cap, loaded_tournament_cfg
+        )
 
     if not m.oos_evaluated or base_source is None:
         # Avoid IO if possible:
@@ -383,13 +434,16 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         # per_symbol_shaping_trade_target nutzen (Fallback auf shaping_trade_target, wenn absent).
         reward_mode_uneval = weights.get("reward_mode", "auto")
         if universe_size == 1 or reward_mode_uneval == "per_symbol":
-            shaping_trade_target = (weights.get("per_symbol_shaping_trade_target")
-                                    or weights.get("shaping_trade_target"))
+            shaping_trade_target = weights.get(
+                "per_symbol_shaping_trade_target"
+            ) or weights.get("shaping_trade_target")
         else:
             shaping_trade_target = weights.get("shaping_trade_target")
         # Issue #488 — Reward Shaping Monotonicity Guard
         proximity = _gate_proximity(m, weights)
-        has_proximity_targets = "shaping_return_target" in weights or "shaping_winrate_target" in weights
+        has_proximity_targets = (
+            "shaping_return_target" in weights or "shaping_winrate_target" in weights
+        )
 
         if shaping_trade_target:
             activity = min(1.0, m.is_total_trades / max(1, int(shaping_trade_target)))
@@ -442,15 +496,23 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         if diff >= 0.0:
             divergence_penalty = penalty_overfit_weight * diff
         else:
-            oos_luck_w = float(weights.get("overfit_oos_luck_weight", penalty_overfit_weight))
+            oos_luck_w = float(
+                weights.get("overfit_oos_luck_weight", penalty_overfit_weight)
+            )
             divergence_penalty = oos_luck_w * (-diff)
     else:
         divergence_penalty = penalty_overfit_weight * overfit_gap
 
     if penalty_relative_cap is not None:
-        divergence_penalty = min(divergence_penalty, float(penalty_relative_cap) * abs(base))
+        divergence_penalty = min(
+            divergence_penalty, float(penalty_relative_cap) * abs(base)
+        )
 
-    dd_excess = max(0.0, m.oos_max_drawdown - risk_dd_cap)
+    dd_penalty = (
+        float(penalty_dd_weight) * ((m.oos_max_drawdown / risk_dd_cap) ** 2)
+        if risk_dd_cap and float(risk_dd_cap) > 0.0
+        else 0.0
+    )
 
     # Issue #509 (Cost Drag & Turnover Churning) - Turnover Penalty
     # The penalty increases linearly with the number of OOS trades.
@@ -465,7 +527,9 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         scaled_folds = [_apply_soft_scale(float(s), soft_scale) for s in fold_sortinos]
         fold_dispersion_penalty = float(w_disp) * statistics.pstdev(scaled_folds)
         if penalty_relative_cap is not None:
-            fold_dispersion_penalty = min(fold_dispersion_penalty, float(penalty_relative_cap) * abs(base))
+            fold_dispersion_penalty = min(
+                fold_dispersion_penalty, float(penalty_relative_cap) * abs(base)
+            )
 
     # Issue #559 — return-Tie-Breaker: bricht Rest-Plateaus im eligiblen Ast ökonomisch sinnvoll auf
     # (oos_total_return streut, wo der — nun weich gesättigte — Sortino nicht mehr differenziert).
@@ -484,26 +548,33 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
         param_pen = 0.0
         if sampled and global_params and strategy:
             from automation.optimizer import bounds
+
             b = bounds.extract_numeric_bounds(strategy)
-            param_pen = weights["lambda_reg"] * bounds.normalized_param_distance(sampled, global_params, b)
-        reward = (base
-                  - divergence_penalty
-                  - dd_excess * penalty_dd_weight
-                  - param_pen
-                  - turnover_penalty
-                  - fold_dispersion_penalty
-                  + return_tie_breaker)
+            param_pen = weights["lambda_reg"] * bounds.normalized_param_distance(
+                sampled, global_params, b
+            )
+        reward = (
+            base
+            - divergence_penalty
+            - dd_penalty
+            - param_pen
+            - turnover_penalty
+            - fold_dispersion_penalty
+            + return_tie_breaker
+        )
         return max(reward, floor)
 
     # Coverage path (universe_size > 1) — bit-identical to the pre-A4.3 behaviour when the new
     # opt-in shaping keys (sortino_soft_scale/overfit_divergence_mode/fold_dispersion_weight/w_ret)
     # are absent.
     coverage = m.win_count / max(1, universe_size)
-    reward = (base
-              - divergence_penalty
-              - dd_excess * penalty_dd_weight
-              + coverage * bonus_coverage_weight
-              - turnover_penalty
-              - fold_dispersion_penalty
-              + return_tie_breaker)
+    reward = (
+        base
+        - divergence_penalty
+        - dd_penalty
+        + coverage * bonus_coverage_weight
+        - turnover_penalty
+        - fold_dispersion_penalty
+        + return_tie_breaker
+    )
     return max(reward, floor)
