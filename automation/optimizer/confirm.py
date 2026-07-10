@@ -330,16 +330,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         holdout_metrics_list.append((trial, symbol_params, m_symbol))
 
     # Bilde den MEDIAN-Holdout aus den Top-k Evaluierungen (Robustheitsmaximierung #576)
-    import statistics
 
-    def _median_or_none(vals):
-        clean_vals = [v for v in vals if v is not None]
-        return statistics.median(clean_vals) if clean_vals else None
+    def _lower_median_or_none(vals):
+        clean_vals = sorted([v for v in vals if v is not None])
+        n = len(clean_vals)
+        if n == 0:
+            return None
+        return clean_vals[(n - 1) // 2]
 
     # Aggregiere die Metriken zu einem Median-Holdout-Kandidaten
-    median_sortino = _median_or_none([m.oos_sortino for _, _, m in holdout_metrics_list])
-    median_max_drawdown = _median_or_none([m.oos_max_drawdown for _, _, m in holdout_metrics_list])
-    median_total_return = _median_or_none([m.oos_total_return for _, _, m in holdout_metrics_list])
+    median_sortino = _lower_median_or_none([m.oos_sortino for _, _, m in holdout_metrics_list])
+    median_max_drawdown = _lower_median_or_none([m.oos_max_drawdown for _, _, m in holdout_metrics_list])
+    median_total_return = _lower_median_or_none([m.oos_total_return for _, _, m in holdout_metrics_list])
 
     # Fuer das Proposal werten wir den 'besten' (d.h. den am hoechsten rankenden IS) aus,
     # aber nutzen die Median-Metriken zur Evaluierung der Holdout-Gate-Robustheit.
@@ -353,7 +355,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         is_sortino_median=0.0, # Nicht relevant fuer Holdout-Gate
         oos_sortino=median_sortino,
         oos_max_drawdown=median_max_drawdown if median_max_drawdown is not None else 1.0,
-        oos_total_trades=int(_median_or_none([m.oos_total_trades for _, _, m in holdout_metrics_list]) or 0),
+        oos_total_trades=int(_lower_median_or_none([m.oos_total_trades for _, _, m in holdout_metrics_list]) or 0),
         win_count=0,
         fully_eligible_pairs=0,
         is_total_trades=0,
