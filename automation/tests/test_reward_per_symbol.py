@@ -32,14 +32,30 @@ def _base(cfg, sortino):
     return max(-cfg["sortino_clip_abs"], min(cfg["sortino_clip_abs"], sortino))
 
 
+def _apply_soft_scale_inline(value, scale):
+    if scale is not None and scale > 0.0:
+        return float(scale) * math.asinh(float(value) / float(scale))
+    return float(value)
+
 def _divergence(cfg, is_median, base):
-    """Issue #565 — symmetrische Divergenz, wenn overfit_divergence_mode='symmetric', sonst Legacy."""
+    """Issue #565 / #575 — symmetrische Divergenz mit Skalenparität."""
+    soft_scale = cfg.get("sortino_soft_scale")
+    is_sortino_val = _apply_soft_scale_inline(is_median, soft_scale)
+
     if cfg.get("overfit_divergence_mode") == "symmetric":
-        diff = is_median - base
+        diff = is_sortino_val - base
         if diff >= 0.0:
-            return cfg["penalty_overfit_weight"] * diff
-        return cfg.get("overfit_oos_luck_weight", cfg["penalty_overfit_weight"]) * (-diff)
-    return cfg["penalty_overfit_weight"] * max(0.0, is_median - base)
+            penalty = cfg["penalty_overfit_weight"] * diff
+        else:
+            penalty = cfg.get("overfit_oos_luck_weight", cfg["penalty_overfit_weight"]) * (-diff)
+    else:
+        penalty = cfg["penalty_overfit_weight"] * max(0.0, is_sortino_val - base)
+
+    cap = cfg.get("penalty_relative_cap")
+    if cap is not None:
+        penalty = min(penalty, float(cap) * abs(base))
+
+    return penalty
 
 
 def _cap():

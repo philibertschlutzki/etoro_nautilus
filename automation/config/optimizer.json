@@ -57,6 +57,7 @@
   "overfit_divergence_mode": "symmetric",
   "overfit_oos_luck_weight": 0.25,
   "fold_dispersion_weight": 0.5,
+  "penalty_relative_cap": 0.5,
   "unevaluable_shaping_span": 0.25,
   "constraint_distance_penalty_weight": 0.25,
   "evaluable_floor_epsilon": 0.001,
@@ -72,6 +73,6 @@
   "min_bars_per_param": 200,
   "min_oos_bars_per_fold": 500,
   "storage_url": null,
-  "reward_semantics_version": 6,
+  "reward_semantics_version": 7,
   "annualization_periods_per_year": null
 }

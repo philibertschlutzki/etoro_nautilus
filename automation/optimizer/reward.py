@@ -20,6 +20,14 @@ def _softplus(z: float) -> float:
     return math.log1p(math.exp(z))
 
 
+def _apply_soft_scale(value: float, scale: float | None) -> float:
+    """Wendelt die weiche asinh-Kompression an, wenn eine Scale vorliegt."""
+    if scale is not None and scale > 0.0:
+        c = float(scale)
+        return c * math.asinh(float(value) / c)
+    return float(value)
+
+
 
 
 _oos_min_trades_cache: int | None = None
@@ -405,10 +413,13 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     # monoton: base = c·asinh(sortino/c) trägt oberhalb der bisherigen Grenze weiterhin Ordnung
     # (50 > 10 > 5 bleibt erhalten). Fehlt sortino_soft_scale (oder <= 0) ⇒ Legacy-Hard-Clip
     # (bit-identisch, Migrations-sicher). Entschärft strukturell auch die #563-Clip-Sättigung.
-    soft_scale = weights.get("sortino_soft_scale")
-    if soft_scale is not None and float(soft_scale) > 0.0:
-        c = float(soft_scale)
-        base = c * math.asinh(float(base_source) / c)
+    soft_scale = None
+    soft_scale_val = weights.get("sortino_soft_scale")
+    if soft_scale_val is not None and float(soft_scale_val) > 0.0:
+        soft_scale = float(soft_scale_val)
+
+    if soft_scale is not None:
+        base = _apply_soft_scale(float(base_source), soft_scale)
     else:
         base = max(-sortino_clip_abs, min(sortino_clip_abs, base_source))
 
@@ -416,16 +427,18 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     penalty_dd_weight = weights["penalty_dd_weight"]
     bonus_coverage_weight = weights["bonus_coverage_weight"]
     penalty_turnover_weight = weights.get("penalty_turnover_weight", 0.0)
+    penalty_relative_cap = weights.get("penalty_relative_cap")
 
-    # Issue #565 — Divergenz-Strafe IS↔OOS. Legacy (einseitig): overfit_gap = max(0, IS − OOS)
-    # bestraft NUR IS≫OOS; der Fall OOS≫IS (Overfit auf ein günstiges OOS-Sub-Fenster, das am
-    # Holdout revertiert) erhält gap=0 und vollen Kredit. Bei overfit_divergence_mode=='symmetric'
-    # wird |IS − OOS| bestraft (OOS≫IS optional milder via overfit_oos_luck_weight). Fehlt der Key
-    # ⇒ Legacy einseitig (bit-identisch, Zero-Hardcoding).
-    overfit_gap = max(0.0, m.is_sortino_median - base)
+    # Issue #565 / #575 — Divergenz-Strafe IS↔OOS. Skalenparität mit asinh erfordert
+    # Kompression auch für IS_sortino.
+    is_sortino_val = m.is_sortino_median
+    if soft_scale is not None:
+        is_sortino_val = _apply_soft_scale(is_sortino_val, soft_scale)
+
+    overfit_gap = max(0.0, is_sortino_val - base)
     divergence_mode = weights.get("overfit_divergence_mode")
     if divergence_mode == "symmetric":
-        diff = m.is_sortino_median - base
+        diff = is_sortino_val - base
         if diff >= 0.0:
             divergence_penalty = penalty_overfit_weight * diff
         else:
@@ -434,22 +447,25 @@ def compute_reward(m: "TournamentMetrics", universe_size: int,
     else:
         divergence_penalty = penalty_overfit_weight * overfit_gap
 
+    if penalty_relative_cap is not None:
+        divergence_penalty = min(divergence_penalty, float(penalty_relative_cap) * abs(base))
+
     dd_excess = max(0.0, m.oos_max_drawdown - risk_dd_cap)
 
     # Issue #509 (Cost Drag & Turnover Churning) - Turnover Penalty
     # The penalty increases linearly with the number of OOS trades.
     turnover_penalty = m.oos_total_trades * penalty_turnover_weight
 
-    # Issue #565 — Fold-Dispersions-Strafe: die Streuung der Per-Fold-OOS-Sortinos bestraft
-    # *glückliche* (ein starker Fold trägt den Median) gegenüber *konsistenter* Performance —
-    # die Reward-seitige Ergänzung zum Gate-seitigen #550. Fehlt der Gewichts-Key oder liegen
-    # < 2 Fold-Sortinos vor ⇒ 0.0 (bit-identisch, rückwärtskompatibel).
+    # Issue #565 / #575 — Fold-Dispersions-Strafe. Auch die Fold-Sortinos müssen in die
+    # komprimierte Skala transformiert werden, bevor pstdev berechnet wird.
     fold_dispersion_penalty = 0.0
     w_disp = weights.get("fold_dispersion_weight")
     fold_sortinos = getattr(m, "oos_fold_sortinos", None) or []
     if w_disp and len(fold_sortinos) >= 2:
-        fold_dispersion_penalty = float(w_disp) * statistics.pstdev(
-            [float(s) for s in fold_sortinos])
+        scaled_folds = [_apply_soft_scale(float(s), soft_scale) for s in fold_sortinos]
+        fold_dispersion_penalty = float(w_disp) * statistics.pstdev(scaled_folds)
+        if penalty_relative_cap is not None:
+            fold_dispersion_penalty = min(fold_dispersion_penalty, float(penalty_relative_cap) * abs(base))
 
     # Issue #559 — return-Tie-Breaker: bricht Rest-Plateaus im eligiblen Ast ökonomisch sinnvoll auf
     # (oos_total_return streut, wo der — nun weich gesättigte — Sortino nicht mehr differenziert).

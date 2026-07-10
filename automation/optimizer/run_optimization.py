@@ -259,15 +259,21 @@ def _check_reward_semantics_version(study, opt_data: dict,
         study.set_user_attr("reward_semantics_version", current)
         return
 
-    # Issue #468 — Harter Fail-Loud-Mechanismus bei Posterior-Korruption.
+    # Issue #468 / #575 — Harter Fail-Loud-Mechanismus und Purge bei Posterior-Korruption.
     msg = (f"Reward-Semantik-Versionskonflikt: die geladene Study wurde unter Version {existing if existing is not None else 'unversioniert'} "
            f"akkumuliert, aktuell ist Version {current}. Reward-Werte verschiedener Versionen "
            f"sind NICHT vergleichbar. Dies führt zu Posterior-Korruption im TPE-Sampler. "
-           f"Bitte löschen Sie die obsolete Study-Datenbank (*.db) und starten Sie neu.")
+           f"Initiere Purge der obsoleten Study-Datenbank...")
 
     if has_trials:
         if existing is None or existing < current:
-            raise ValueError(msg)
+            logger.warning("♻️ %s", msg)
+            try:
+                optuna.delete_study(study_name=study.study_name, storage=study._storage)
+                logger.warning(f"Obsolete Study '{study.study_name}' erfolgreich gelöscht. Sie wird beim nächsten Versuch neu erstellt.")
+            except Exception as e:
+                logger.error(f"Fehler beim Löschen der Study: {e}")
+            raise ValueError(f"Study-Semantik Mismatch. {msg}")
 
     logger.warning("♻️ %s", msg)
 

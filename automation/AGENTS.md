@@ -1865,3 +1865,10 @@ Wobei N die Gesamtzahl der Evaluierungsperioden und MAR der deklarierte Minimum 
 2. Zwingende Implementation eines deklarativen $dd\_dev$-Floors via `sortino_downside_floor` (z.B. $\max(dd\_dev, 0.002)$).
 3. Etablierung eines lokal validen Minimum-Trade-Counts via `sortino_min_trades` (z.B. >= 10), unabhängig von der globalen `oos_min_trades` Semantik.
 4. Pre-Aggregation Winsorizing von Fold-Metriken anwenden (via `fold_winsorize_lower` und `fold_winsorize_upper`), unter Verwendung von `interpolation="nearest"`, um Lineare-Interpolations-Artefakte bei Folds mit geringer Kardinalität zu vermeiden.
+
+### Pitfall #120: Reward Scaling Discrepancies
+**Context:** TPE Optimizer Reward Calculation (`compute_reward`).
+**Failure Mode:** Mixing raw bounded variables (e.g., clipped at ±50) with softly saturated variables (e.g., `asinh` compressed) in additive penalty terms or distance calculations. This causes penalties to scale exponentially against the compressed base signal, forcing the optimizer to target zero-dispersion over positive edge.
+**Invariant:**
+1. **Scale Parity:** All operands in distance functions (`diff`) and dispersion metrics (`pstdev`) MUST exist in the same mathematical space. If `base` is compressed via `asinh`, all penalty inputs MUST be compressed using the exact same scaling factor `c` prior to operation.
+2. **Relative Penalty Capping:** Additive penalty terms must never structurally dominate the base signal. Enforce declarative bounding (`penalty_relative_cap * abs(base)`) on all dispersion and divergence penalties. Zero hardcoding applies; caps must be configurable.
