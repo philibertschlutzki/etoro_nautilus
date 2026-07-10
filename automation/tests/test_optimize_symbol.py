@@ -31,6 +31,102 @@ def _fake_factory(captured):
     return _fake
 
 
+def test_optimize_symbol_cli_warns_on_missing_global_best():
+    """E2E-Assertion fuer Issue #579: CLI-Command '--strategies all --symbols TSLA.ETORO'
+    liefert exakt 6x die '#565' Warnung fuer fehlendes global_best."""
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    mock_script = """
+import sys
+from pathlib import Path
+sys.path.append('.')
+
+import automation.optimizer.sweep as sweep
+import automation.optimizer.run_optimization as ro
+
+def mock_count_available_bars(syms):
+    return {s: 24 * 500 for s in syms}
+
+def mock_latest_ts_by_symbol(syms):
+    return {s: 1600000000000000000 for s in syms}
+
+sweep.count_available_bars = mock_count_available_bars
+sweep.latest_ts_by_symbol = mock_latest_ts_by_symbol
+sweep.compute_oos_window_start_ns = lambda c, **kw: 0
+sweep.compute_holdout_window_reach_target_ns = lambda c, **kw: 0
+sweep.export_symbol_proposal = lambda *a, **k: Path("proposal.json")
+
+def mock_confirm(*args, **kwargs):
+    return {"status": "TEST"}
+sweep._confirm = mock_confirm
+
+def mock_resolve_strategies(arg):
+    return [
+        "HourlyMeanReversionStrategy",
+        "SmaCrossoverStrategy",
+        "ComboTrendVwapStrategy",
+        "FlashCrashReversalStrategy",
+        "VolatilityBreakoutPumpStrategy",
+        "VwapExhaustionStrategy"
+    ]
+sweep._resolve_strategies = mock_resolve_strategies
+
+def mock_enumerate_tunable_pairs(strats, syms, **kw):
+    return [(s, syms[0], "OK") for s in strats]
+sweep.enumerate_tunable_pairs = mock_enumerate_tunable_pairs
+
+original_optimize_symbol = sweep._optimize_symbol
+def mock_optimize_symbol(strategy, symbol, *args, **kwargs):
+    kwargs['n_trials'] = 0
+    return original_optimize_symbol(strategy, symbol, *args, **kwargs)
+sweep._optimize_symbol = mock_optimize_symbol
+sweep.optimize_symbol = mock_optimize_symbol
+
+# We explicitly mock load_global_best here inside the sub-process to simulate missing global bests
+# just in case earlier cached db or local proposals exists.
+def _mock_load_global_best(*args, **kwargs):
+    return {}
+ro.load_global_best = _mock_load_global_best
+
+if __name__ == '__main__':
+    import shutil
+    db_path = Path("automation/data/optimizer/studies.db")
+    sweep_dir = Path("automation/data/optimizer/sweep")
+    if sweep_dir.exists():
+        shutil.rmtree(sweep_dir)
+
+    import glob
+    import os
+    for f in glob.glob("automation/data/optimizer/proposal_*.json"):
+        os.remove(f)
+
+    sweep.main(["--strategies", "all", "--symbols", "TSLA.ETORO", "--n-jobs", "1"])
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(mock_script)
+        fake_script = f.name
+
+    try:
+        result = subprocess.run(
+            [sys.executable, fake_script],
+            capture_output=True,
+            text=True
+        )
+
+        combined_output = result.stdout + result.stderr
+        specific_warning = "kein global_best im Per-Symbol-Sweep (shrinkage_inactive) — Fallback auf strategy_defaults"
+        warning_count = combined_output.count(specific_warning)
+
+        if warning_count != 6:
+            print("Output was:", combined_output)
+
+        assert warning_count == 6, f"Expected 6 specific warnings, got {warning_count}. Output: {combined_output}"
+    finally:
+        Path(fake_script).unlink()
+
 def test_sanitize():
     assert ro._sanitize("TSLA.ETORO") == "TSLA_ETORO"
 
