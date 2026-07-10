@@ -2117,7 +2117,8 @@ def select_winners(
             import statistics as _dstats
             cand_sortinos = [c.get("oos_metrics", {}).get("sortino_ratio") for c in candidates
                              if c.get("_oos_eval", {}).get("oos_evaluated")]
-            cand_sortinos = [float(s) for s in cand_sortinos if s is not None]
+            # Issue #576: 50-Clip-Sentinels aus der Deflations-Dispersion ausschliessen
+            cand_sortinos = [float(s) for s in cand_sortinos if s is not None and float(s) != 50.0]
             if len(cand_sortinos) >= 2:
                 dispersion = _dstats.pstdev(cand_sortinos)
                 from automation.optimizer.deflation import deflated_threshold

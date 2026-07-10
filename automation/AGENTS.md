@@ -1872,3 +1872,14 @@ Wobei N die Gesamtzahl der Evaluierungsperioden und MAR der deklarierte Minimum 
 **Invariant:**
 1. **Scale Parity:** All operands in distance functions (`diff`) and dispersion metrics (`pstdev`) MUST exist in the same mathematical space. If `base` is compressed via `asinh`, all penalty inputs MUST be compressed using the exact same scaling factor `c` prior to operation.
 2. **Relative Penalty Capping:** Additive penalty terms must never structurally dominate the base signal. Enforce declarative bounding (`penalty_relative_cap * abs(base)`) on all dispersion and divergence penalties. Zero hardcoding applies; caps must be configurable.
+
+### 🟢 Issue #576 — Deflated Holdout Selection (Top-k Median & Dispersion Filter)
+**Symptom:** Hohe Rejektionsrate auf dem Holdout-Datensatz (`REJECTED_ON_HOLDOUT`), da `confirm_per_symbol_promotion` historisch nur `study.best_trial` evaluierte (Single-Point-Failure via Rausch-Maximum/Overfitting). Zudem wurde das deflationierte Rausch-Korrektiv (Issue #553) nicht für den finalen Holdout-Check angewandt, wodurch unkorrigierte Selektions-Bias unentdeckt blieben.
+**Root Cause:**
+1. **Argmax-Overfitting:** TPE sucht nach dem maximalen Signal — oft maximiert es lediglich Rauschen. Die Auswahl von `best_trial[0]` erwischt das Rausch-Maximum, welches OOS (Holdout) am stärksten revertiert.
+2. **Deflations-Parität:** Die `deflated_threshold` aus `automation/optimizer/deflation.py` wurde im Matrix-Lauf korrekt angewandt, aber in `confirm_per_symbol_promotion` ignoriert.
+3. **Dispersions-Verunreinigung:** 50.0-Clipping-Sentinels, die verlustfreie OOS-Folds repräsentieren, vergrößerten fälschlich die Cross-Trial-Dispersion (Standardabweichung `pstdev`), was den Deflations-Threshold artifiziell in die Höhe trieb und solide Modelle unfair bestrafte.
+**Fix:**
+- **Top-k Median:** `confirm_per_symbol_promotion` identifiziert die Top-$k$ eligiblen Trials (Standard $k=5$, konfiguriert in `tournament.json['holdout_top_k']`), führt den OOS-Backtest für alle aus und bildet einen **Median-Holdout** (Robustheitsmaximierung).
+- **Deflation Gate in Confirm:** Das deflationierte Threshold-Korrektiv (`deflated_min_sortino`) wird berechnet und fungiert (falls aktiviert) als zusätzliches Holdout-Ausschluss-Gate gegen die Median-Holdout-Performance.
+- **50-Clip Sentinel Ausschluss:** `50.0` Werte (Sentinels für `Zero-Loss`) sind jetzt bei der Dispersion-Berechnung (`cand_sortinos`) sowohl in `backtest_runner.py` als auch in `confirm.py` strikt ausgeschlossen.
