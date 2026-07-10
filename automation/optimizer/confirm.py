@@ -268,50 +268,141 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                            catalog_newest_ns=catalog_newest_ns)
     R_global = compute_reward(m_global, universe_size=1, weights=global_weights) if global_weights else compute_reward(m_global, universe_size=1)
 
-    best_trials = study.best_trials if len(getattr(study, "directions", ["maximize"])) > 1 else [study.best_trial]
+    import optuna
+    import logging
+    # 1. Top-k Holdout Evaluation (Issue #576)
+    # Selektiere alle eligiblen Trials basierend auf OOS Gate (oder einfach die besten eligiblen).
+    # t.value ist der (korrigierte) Reward.
+    eligible_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE
+                       and t.user_attrs.get("is_rejection_detail") is None
+                       and t.value is not None]
 
-    best_result = None
-    max_R_symbol = -float("inf")
+    # Sortiere absteigend nach Reward (best_value)
+    eligible_trials.sort(key=lambda t: t.value, reverse=True)
+
+    # Tournament cfg (for Top-k und Deflation)
+    tournament_cfg = {}
+    if tournament_path.exists():
+        with open(tournament_path, "r", encoding="utf-8") as f:
+            tournament_cfg = json.load(f) or {}
+
+    top_k = tournament_cfg.get("holdout_top_k", 5)
+    best_trials = eligible_trials[:top_k]
+
+    if not best_trials:
+        # Fallback falls keine eligiblen gefunden wurden. Sollte eigentlich nicht passieren,
+        # da confirm_per_symbol_promotion nur fuer winner_candidates aufgerufen wird.
+        best_trials = study.best_trials if len(getattr(study, "directions", ["maximize"])) > 1 else [study.best_trial]
+
+    # 2. Deflations-Vorfilter (Issue #576)
+    deflated_selection = bool(tournament_cfg.get("deflated_selection", False))
+    deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
+    deflated_min_sortino = None
+
+    if deflated_selection:
+        import statistics as _dstats
+        # Nutze alle Trials die OOS-evaluiert wurden, unabhaengig von IS-Eligibility.
+        cand_sortinos = [
+            t.user_attrs.get("oos_sortino") for t in study.trials
+            if t.state == optuna.trial.TrialState.COMPLETE and t.user_attrs.get("oos_evaluated")
+        ]
+        # Issue #576: 50-Clip-Sentinels aus der Deflations-Dispersion ausschliessen
+        cand_sortinos = [float(s) for s in cand_sortinos if s is not None and float(s) != 50.0]
+        if len(cand_sortinos) >= 2:
+            dispersion = _dstats.pstdev(cand_sortinos)
+            from automation.optimizer.deflation import deflated_threshold
+            deflated_min_sortino = deflated_threshold(
+                len(cand_sortinos), dispersion,
+                confidence=deflation_confidence, baseline=0.0)
+            logging.getLogger("optimizer").info(
+                f"[Deflated Holdout #576] {symbol}: Schwelle {deflated_min_sortino:.4f} "
+                f"(N={len(cand_sortinos)}, σ={dispersion:.4f})"
+            )
+
+    # Evaluiere den Holdout ueber die Top-k Trials
+    holdout_metrics_list = []
 
     for trial in best_trials:
         symbol_params = trial.user_attrs.get("sampled_params", trial.params)
         m_symbol = _holdout_metrics_for_params(strategy, symbol, symbol_params,
                                                run_backtest=run_backtest, build_trial=build_trial,
                                                catalog_newest_ns=catalog_newest_ns)
-        R_symbol = compute_reward(m_symbol, universe_size=1, weights=global_weights) if global_weights else compute_reward(m_symbol, universe_size=1)
+        holdout_metrics_list.append((trial, symbol_params, m_symbol))
 
-        # Issue #533 — dieselbe oos_sortino_fallback-Parität wie confirm_on_holdout/reward.py:
-        # ein verlustfreier (sortino=None), profitabler Holdout-Fold wird nicht mehr blockiert.
-        holdout_passed = _holdout_gate_passed(
-            m_symbol, risk_dd_cap,
-            sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
-        )
+    # Bilde den MEDIAN-Holdout aus den Top-k Evaluierungen (Robustheitsmaximierung #576)
 
-        promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
+    def _lower_median_or_none(vals):
+        clean_vals = sorted([v for v in vals if v is not None])
+        n = len(clean_vals)
+        if n == 0:
+            return None
+        return clean_vals[(n - 1) // 2]
 
-        if not holdout_passed:
-            status = "REJECTED_ON_HOLDOUT"
-        elif promote:
-            status = "READY_FOR_PR"
-        else:
-            status = "REJECTED_NO_EDGE_OVER_GLOBAL"
+    # Aggregiere die Metriken zu einem Median-Holdout-Kandidaten
+    median_sortino = _lower_median_or_none([m.oos_sortino for _, _, m in holdout_metrics_list])
+    median_max_drawdown = _lower_median_or_none([m.oos_max_drawdown for _, _, m in holdout_metrics_list])
+    median_total_return = _lower_median_or_none([m.oos_total_return for _, _, m in holdout_metrics_list])
 
-        result = {
-            "promote": promote,
-            "status": status,
-            "is_rejection_detail_override": None,
-            "symbol_params": symbol_params,
-            "R_symbol": R_symbol,
-            "R_global": R_global,
-            "promotion_margin": promotion_margin,
-            "holdout_passed": bool(holdout_passed),
-            "metrics_symbol": _metrics_dict(m_symbol),
-            "metrics_global": _metrics_dict(m_global)
-        }
+    # Fuer das Proposal werten wir den 'besten' (d.h. den am hoechsten rankenden IS) aus,
+    # aber nutzen die Median-Metriken zur Evaluierung der Holdout-Gate-Robustheit.
+    best_trial, best_symbol_params, best_m_symbol = holdout_metrics_list[0]
 
-        if R_symbol > max_R_symbol or best_result is None:
-            max_R_symbol = R_symbol
-            best_result = result
+    # Mocke ein TournamentMetrics-aehnliches Objekt fuer die Median-Evaluierung
+    from automation.optimizer.parsing import TournamentMetrics
+    median_m_symbol = TournamentMetrics(
+        oos_evaluated=all(m.oos_evaluated for _, _, m in holdout_metrics_list),
+        oos_eligible=all(m.oos_eligible for _, _, m in holdout_metrics_list),
+        is_sortino_median=0.0, # Nicht relevant fuer Holdout-Gate
+        oos_sortino=median_sortino,
+        oos_max_drawdown=median_max_drawdown if median_max_drawdown is not None else 1.0,
+        oos_total_trades=int(_lower_median_or_none([m.oos_total_trades for _, _, m in holdout_metrics_list]) or 0),
+        win_count=0,
+        fully_eligible_pairs=0,
+        is_total_trades=0,
+        oos_total_return=median_total_return if median_total_return is not None else 0.0
+    )
+
+    R_symbol = compute_reward(median_m_symbol, universe_size=1, weights=global_weights) if global_weights else compute_reward(median_m_symbol, universe_size=1)
+
+    # Gate-Evaluation ZWINGEND ueber den Median-Holdout
+    holdout_passed = _holdout_gate_passed(
+        median_m_symbol, risk_dd_cap,
+        sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
+    )
+
+    # Deflations-Vorfilter Check
+    if holdout_passed and deflated_min_sortino is not None:
+        if median_sortino is None or median_sortino < deflated_min_sortino:
+            holdout_passed = False
+            logging.getLogger("optimizer").warning(
+                f"[Deflated-Drop Holdout #576] {symbol}: Median-Holdout-Sortino {median_sortino} "
+                f"< deflated {deflated_min_sortino:.4f}"
+            )
+
+    promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
+
+    if not holdout_passed:
+        status = "REJECTED_ON_HOLDOUT"
+    elif promote:
+        status = "READY_FOR_PR"
+    else:
+        status = "REJECTED_NO_EDGE_OVER_GLOBAL"
+
+    best_result = {
+        "promote": promote,
+        "status": status,
+        "is_rejection_detail_override": None,
+        "symbol_params": best_symbol_params,
+        "R_symbol": R_symbol,
+        "R_global": R_global,
+        "promotion_margin": promotion_margin,
+        "holdout_passed": bool(holdout_passed),
+        "metrics_symbol": _metrics_dict(median_m_symbol),
+        "metrics_global": _metrics_dict(m_global)
+    }
+
+    if deflated_min_sortino is not None:
+        best_result["metrics_symbol"]["deflated_min_sortino"] = deflated_min_sortino
 
     return best_result
 
