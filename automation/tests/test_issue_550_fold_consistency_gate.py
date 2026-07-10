@@ -66,22 +66,30 @@ def test_gate_inactive_when_threshold_absent():
     assert ev["oos_eligible"] is True
 
 
-def test_four_gate_metrics_use_fold_median():
-    """Alle vier Gate-Kennzahlen nutzen dieselbe Fold-Median-Aggregation (nicht mehr pooled)."""
+def test_gate_metrics_aggregation_split():
+    """Nur sortino_ratio nutzt Fold-Median. Häufigkeitsmetriken bleiben pooled (Issue #574)."""
     import statistics
     per_fold = [
         _fold(0.02, sortino=2.0, win_rate=0.8, expectancy=0.03, profit_factor=3.0),
         _fold(-0.01, sortino=-1.0, win_rate=0.2, expectancy=-0.01, profit_factor=0.5),
         _fold(0.01, sortino=1.0, win_rate=0.6, expectancy=0.02, profit_factor=2.0),
     ]
-    # Bewusst „falsche" gepoolte Startwerte, die überschrieben werden müssen.
-    oos_metrics = {"sortino_ratio": 99.0, "win_rate": 99.0, "expectancy": 99.0,
-                   "profit_factor": 99.0, "total_return": 0.02, "total_trades": 30}
+    # Diese "gepoolten" Startwerte simulieren die Gesamt-Auswertung VOR apply_fold_aggregation
+    oos_metrics = {"sortino_ratio": 99.0, "win_rate": 0.55, "expectancy": 0.015,
+                   "profit_factor": 1.7, "total_return": 0.02, "total_trades": 30}
     apply_fold_aggregation(oos_metrics, per_fold)
+
+    # Sortino wird durch Fold-Median überschrieben
     assert oos_metrics["sortino_ratio"] == statistics.median([2.0, -1.0, 1.0])
-    assert oos_metrics["win_rate"] == statistics.median([0.8, 0.2, 0.6])
-    assert oos_metrics["expectancy"] == statistics.median([0.03, -0.01, 0.02])
-    assert oos_metrics["profit_factor"] == statistics.median([3.0, 0.5, 2.0])
+
+    # Win Rate, Expectancy, Profit Factor bleiben pooled und werden zusätzlich unter _pooled gespeichert
+    assert oos_metrics["win_rate"] == 0.55
+    assert oos_metrics["win_rate_pooled"] == 0.55
+    assert oos_metrics["expectancy"] == 0.015
+    assert oos_metrics["expectancy_pooled"] == 0.015
+    assert oos_metrics["profit_factor"] == 1.7
+    assert oos_metrics["profit_factor_pooled"] == 1.7
+
     # total_return bleibt UNBERÜHRT (compoundiert an anderer Stelle).
     assert oos_metrics["total_return"] == 0.02
 

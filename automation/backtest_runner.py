@@ -859,7 +859,9 @@ def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
 
 
 # Issue #549/#550 — die vier risikoadjustierten OOS-Gate-Kennzahlen einheitlich als Fold-Median.
-_FOLD_MEDIAN_METRICS = ("sortino_ratio", "win_rate", "expectancy", "profit_factor")
+# Issue #574 — _FOLD_MEDIAN_METRICS auf "sortino_ratio" reduziert, da Häufigkeitskennzahlen pooled sein müssen.
+_FOLD_MEDIAN_METRICS = ("sortino_ratio",)
+_POOLED_METRICS = ("win_rate", "expectancy", "profit_factor")
 
 
 def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | None]) -> dict:
@@ -919,6 +921,12 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
                     lb, ub = s_vals.quantile(w_lower, interpolation="nearest"), s_vals.quantile(w_upper, interpolation="nearest")
                     vals = s_vals.clip(lower=lb, upper=ub).tolist()
                 oos_metrics[key] = _stats.median(vals)
+
+        # For pooled metrics, ensure they remain pooled (they already are in oos_metrics),
+        # but also explicitly save them to <metric>_pooled for backwards compatibility / telemetry.
+        for key in _POOLED_METRICS:
+            if key in oos_metrics:
+                oos_metrics[f"{key}_pooled"] = oos_metrics.get(key)
     return oos_metrics
 
 
