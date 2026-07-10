@@ -108,3 +108,18 @@ def test_gate_inactive_when_threshold_absent_legacy_absolute():
     }
     ev = _evaluate_oos_eligibility(oos_metrics, cfg)
     assert ev["oos_eligible"] is True  # total_return 0.01 >= 0.005, Excess ignoriert
+
+def test_degenerate_trial_expectancy_gate():
+    """Issue #577: Degenerate (zero-trade) trials must correctly stamp the effective expectancy gate."""
+    cfg = {
+        "oos_min_expectancy_k_alpha": 2.5
+    }
+    # For degenerated trials n_trades is 0, but we want the expectancy gate calculation to happen
+    oos_metrics = {
+        "total_trades": 0,
+        "round_trip_cost_bps": 3.0
+    }
+
+    res = _evaluate_oos_eligibility(oos_metrics, cfg)
+    assert res["oos_evaluated"] is False
+    assert res["effective_expectancy_gate"] == pytest.approx(2.5 * 3.0 / 10000.0, abs=1e-9)
