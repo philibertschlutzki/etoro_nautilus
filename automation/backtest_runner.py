@@ -2915,14 +2915,22 @@ def run_single_backtest_worker(
         # Das kostenrelative Expectancy-Gate (_evaluate_oos_eligibility) liest diese Zahl und leitet
         # oos_min_expectancy = k_alpha · c_rt daraus ab — kein doppelt gepflegter Kostenwert. Nach
         # #561 gilt c_rt = spread_bps + commission_bps (Kommission 1×/Round-Trip).
-        round_trip_cost_bps = float(spread_bps) + float(commission_bps)
-        if metrics is None:
+        if spread_bps is not None and commission_bps is not None:
+            round_trip_cost_bps = float(spread_bps) + float(commission_bps)
+        else:
+            # Fallback to None if not explicitly provided, to ensure downstream processes properly fallback to static config
+            round_trip_cost_bps = None
+
+        # Only initialize to {} if they are explicitly None or not a dict. Note that NULL from extraction failure is a valid dict.
+        # But if they are missing or None, we force initialize to {} to ensure downstream components have valid dictionaries.
+        if metrics is None or not isinstance(metrics, dict):
             metrics = {}
-        if oos_metrics is None:
+        if oos_metrics is None or not isinstance(oos_metrics, dict):
             oos_metrics = {}
 
-        metrics["round_trip_cost_bps"] = round_trip_cost_bps
-        oos_metrics["round_trip_cost_bps"] = round_trip_cost_bps
+        if round_trip_cost_bps is not None:
+            metrics["round_trip_cost_bps"] = round_trip_cost_bps
+            oos_metrics["round_trip_cost_bps"] = round_trip_cost_bps
 
         # Issue #508 — Fill-Match-Diagnostik (Sekundärebene) nach oben reichen. `metrics`/`oos_metrics`
         # sind bereits die primären Round-Trip-Metriken; `fill_matches` bleibt reine Execution-Diagnostik.
