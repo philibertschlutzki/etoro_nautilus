@@ -10,6 +10,7 @@ Akzeptanzkriterien (Issue #569):
 - Bestehende Consumer brechen nicht (additiv).
 - Reward aus den emittierten Rohwerten rekonstruierbar ± 1e−6 (End-to-End-Konsistenz).
 """
+
 import json
 import logging
 import math
@@ -22,8 +23,14 @@ from automation.optimizer import trial_config
 from automation.optimizer.parsing import TournamentMetrics
 from automation.optimizer.reward import compute_reward
 
-RAW_KEYS = ("oos_sortino", "oos_expectancy", "oos_win_rate", "oos_profit_factor",
-            "is_sortino_median", "per_fold_oos_sortino")
+RAW_KEYS = (
+    "oos_sortino",
+    "oos_expectancy",
+    "oos_win_rate",
+    "oos_profit_factor",
+    "is_sortino_median",
+    "per_fold_oos_sortino",
+)
 
 
 def _isolate(monkeypatch, tmp_path):
@@ -39,6 +46,7 @@ def _fake_backtest(payload):
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload), "utf-8")
         return out
+
     return _fake
 
 
@@ -74,12 +82,25 @@ def _completed(events):
 # ── Die fünf Roh-Felder erscheinen im Event ──────────────────────────────────────────────────
 def test_raw_metrics_present_in_event(tmp_path, monkeypatch, trial_events):
     _isolate(monkeypatch, tmp_path)
-    payload = {"fully_eligible_pairs": 1, "aggregate_winner": {
-        "oos_evaluated": True, "oos_eligible": True, "win_count": 1,
-        "median_is_sortino": 1.4, "oos_fold_sortinos": [1.1, 1.3, 1.5],
-        "oos_metrics": {"sortino_ratio": 1.3, "profit_factor": 1.6, "win_rate": 0.55,
-                        "expectancy": 0.004, "max_drawdown": 0.05, "total_trades": 22,
-                        "total_return": 0.09}}}
+    payload = {
+        "fully_eligible_pairs": 1,
+        "aggregate_winner": {
+            "oos_evaluated": True,
+            "oos_eligible": True,
+            "win_count": 1,
+            "median_is_sortino": 1.4,
+            "oos_fold_sortinos": [1.1, 1.3, 1.5],
+            "oos_metrics": {
+                "sortino_ratio": 1.3,
+                "profit_factor": 1.6,
+                "win_rate": 0.55,
+                "expectancy": 0.004,
+                "max_drawdown": 0.05,
+                "total_trades": 22,
+                "total_return": 0.09,
+            },
+        },
+    }
     monkeypatch.setattr(ro, "run_backtest", _fake_backtest(payload))
     ro.optimize_symbol("SmaCrossoverStrategy", "TSLA.ETORO", n_trials=1)
 
@@ -97,12 +118,25 @@ def test_raw_metrics_present_in_event(tmp_path, monkeypatch, trial_events):
 def test_undefined_sortino_and_pf_are_null(tmp_path, monkeypatch, trial_events):
     """Mathematisch undefinierter Sortino/PF (Zero-Loss) ⇒ null im Event (nicht 0.0)."""
     _isolate(monkeypatch, tmp_path)
-    payload = {"fully_eligible_pairs": 1, "aggregate_winner": {
-        "oos_evaluated": True, "oos_eligible": True, "win_count": 1,
-        "median_is_sortino": 1.0, "oos_fold_sortinos": [],
-        "oos_metrics": {"sortino_ratio": None, "profit_factor": None, "win_rate": 1.0,
-                        "expectancy": 0.01, "max_drawdown": 0.02, "total_trades": 5,
-                        "total_return": 0.05}}}
+    payload = {
+        "fully_eligible_pairs": 1,
+        "aggregate_winner": {
+            "oos_evaluated": True,
+            "oos_eligible": True,
+            "win_count": 1,
+            "median_is_sortino": 1.0,
+            "oos_fold_sortinos": [],
+            "oos_metrics": {
+                "sortino_ratio": None,
+                "profit_factor": None,
+                "win_rate": 1.0,
+                "expectancy": 0.01,
+                "max_drawdown": 0.02,
+                "total_trades": 5,
+                "total_return": 0.05,
+            },
+        },
+    }
     monkeypatch.setattr(ro, "run_backtest", _fake_backtest(payload))
     ro.optimize_symbol("SmaCrossoverStrategy", "AAA.ETORO", n_trials=1)
 
@@ -114,34 +148,70 @@ def test_undefined_sortino_and_pf_are_null(tmp_path, monkeypatch, trial_events):
 # ── Reward aus den Rohwerten rekonstruierbar (±1e-6) ─────────────────────────────────────────
 def test_reward_reconstructable_from_raw_metrics():
     """End-to-End-Konsistenz Reward↔Telemetrie: mit dd/param/turnover=0 ergibt sich der Reward
-    exakt aus den emittierten Rohwerten (base, Divergenz, Fold-Dispersion, return-Tie-Breaker)."""
+    exakt aus den emittierten Rohwerten (base, Divergenz, Fold-Dispersion, return-Tie-Breaker).
+    """
     weights = {
-        "penalty_unevaluable_oos": -10.0, "unevaluable_shaping_span": 0.25,
-        "evaluable_floor_epsilon": 0.001, "sortino_clip_abs": 5.0, "sortino_soft_scale": 5.0,
-        "penalty_overfit_weight": 0.5, "penalty_dd_weight": 8.0, "bonus_coverage_weight": 1.0,
-        "overfit_divergence_mode": "symmetric", "overfit_oos_luck_weight": 0.25,
-        "fold_dispersion_weight": 0.5, "w_ret": 2.0,
+        "penalty_unevaluable_oos": -10.0,
+        "unevaluable_shaping_span": 0.25,
+        "evaluable_floor_epsilon": 0.001,
+        "sortino_clip_abs": 5.0,
+        "sortino_soft_scale": 5.0,
+        "penalty_overfit_weight": 0.5,
+        "penalty_dd_weight": 8.0,
+        "bonus_coverage_weight": 1.0,
+        "overfit_divergence_mode": "symmetric",
+        "overfit_oos_luck_weight": 0.25,
+        "fold_dispersion_weight": 0.5,
+        "w_ret": 2.0,
     }
     cfg = {"oos_min_total_return": 0.005, "max_drawdown": 0.3}
-    raw = dict(oos_sortino=3.0, is_sortino_median=2.0, oos_total_return=0.02,
-               per_fold=[1.0, 3.0, 2.5, 3.5])
+    raw = dict(
+        oos_sortino=3.0,
+        is_sortino_median=2.0,
+        oos_total_return=0.02,
+        per_fold=[1.0, 3.0, 2.5, 3.5],
+    )
     m = TournamentMetrics(
-        oos_evaluated=True, oos_eligible=True, is_sortino_median=raw["is_sortino_median"],
-        oos_sortino=raw["oos_sortino"], oos_max_drawdown=0.02, oos_total_trades=30, win_count=1,
-        fully_eligible_pairs=1, is_total_trades=100, oos_total_return=raw["oos_total_return"],
-        oos_expectancy=0.004, oos_win_rate=0.55, oos_profit_factor=1.6,
+        oos_evaluated=True,
+        oos_eligible=True,
+        is_sortino_median=raw["is_sortino_median"],
+        oos_sortino=raw["oos_sortino"],
+        oos_max_drawdown=0.02,
+        oos_total_trades=30,
+        win_count=1,
+        fully_eligible_pairs=1,
+        is_total_trades=100,
+        oos_total_return=raw["oos_total_return"],
+        oos_expectancy=0.004,
+        oos_win_rate=0.55,
+        oos_profit_factor=1.6,
         oos_fold_sortinos=tuple(raw["per_fold"]),
     )
-    actual = compute_reward(m, universe_size=1, weights=weights, risk_dd_cap=0.3, tournament_cfg=cfg)
+    actual = compute_reward(
+        m, universe_size=1, weights=weights, risk_dd_cap=0.3, tournament_cfg=cfg
+    )
 
     # Rekonstruktion NUR aus den emittierten Rohwerten:
     import statistics
+
     c = weights["sortino_soft_scale"]
     base = c * math.asinh(raw["oos_sortino"] / c)
-    diff = raw["is_sortino_median"] - base
-    divergence = (weights["penalty_overfit_weight"] * diff if diff >= 0
-                  else weights["overfit_oos_luck_weight"] * (-diff))
-    fold_disp = weights["fold_dispersion_weight"] * statistics.pstdev(raw["per_fold"])
-    reconstructed = base - divergence - fold_disp + weights["w_ret"] * raw["oos_total_return"]
+    is_sortino_val = c * math.asinh(raw["is_sortino_median"] / c)
+    diff = is_sortino_val - base
+    divergence = (
+        weights["penalty_overfit_weight"] * diff
+        if diff >= 0
+        else weights["overfit_oos_luck_weight"] * (-diff)
+    )
+    scaled_folds = [c * math.asinh(s / c) for s in raw["per_fold"]]
+    fold_disp = weights["fold_dispersion_weight"] * statistics.pstdev(scaled_folds)
+    dd_penalty = weights["penalty_dd_weight"] * ((0.02 / 0.3) ** 2)
+    reconstructed = (
+        base
+        - divergence
+        - fold_disp
+        + weights["w_ret"] * raw["oos_total_return"]
+        - dd_penalty
+    )
 
     assert actual == pytest.approx(reconstructed, abs=1e-6)

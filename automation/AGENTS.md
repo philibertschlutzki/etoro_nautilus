@@ -1873,6 +1873,15 @@ Wobei N die Gesamtzahl der Evaluierungsperioden und MAR der deklarierte Minimum 
 1. **Scale Parity:** All operands in distance functions (`diff`) and dispersion metrics (`pstdev`) MUST exist in the same mathematical space. If `base` is compressed via `asinh`, all penalty inputs MUST be compressed using the exact same scaling factor `c` prior to operation.
 2. **Relative Penalty Capping:** Additive penalty terms must never structurally dominate the base signal. Enforce declarative bounding (`penalty_relative_cap * abs(base)`) on all dispersion and divergence penalties. Zero hardcoding applies; caps must be configurable.
 
+
+### 🟢 Issue #578 — Drawdown-Penalty (Soft Penalty) Unzureichend
+**Symptom:** Drawdown-Penalty (`dd_excess * 8.0`) in `compute_reward` war unzureichend implementiert (Dead Code). Hard-Cap-Gate (`max_drawdown`) deklariert Trials mit `dd > cap` präemptiv als `oos_eligible = False`. Ineligible Trials triggern `_constraint_failure_reward` **vor** der Penalty-Kalkulation im Execution-Flow. Eligible Trials passieren das Gate zwingend mit `dd <= cap`, resultierend in `dd_excess = 0`. Effektive Gewichtung der Penalty war mathematisch konstant 0.
+**Fix/Regel:** Restlose Entfernung der obsoleten `dd_excess`-Logik. Implementierung eines progressiven Penalty-Terms für *eligible* Trials zur Glättung des Optimizer-Gradienten *unterhalb* des Hard-Caps. Risiko muss zwingend bepreist werden.
+Quadratische Skalierung zur überproportionalen Bestrafung bei Annäherung an das Cap:
+$$Penalty = penalty\_dd\_weight \cdot \left(rac{current\_dd}{max\_dd}\right)^2$$
+Der `penalty_dd_weight` Faktor in `optimizer.json` wurde von 8.0 auf 1.0 rekalibriert.
+**Betroffen:** `automation/optimizer/reward.py`, `automation/config/optimizer.json`
+
 ### 🟢 Issue #576 — Deflated Holdout Selection (Top-k Median & Dispersion Filter)
 **Symptom:** Hohe Rejektionsrate auf dem Holdout-Datensatz (`REJECTED_ON_HOLDOUT`), da `confirm_per_symbol_promotion` historisch nur `study.best_trial` evaluierte (Single-Point-Failure via Rausch-Maximum/Overfitting). Zudem wurde das deflationierte Rausch-Korrektiv (Issue #553) nicht für den finalen Holdout-Check angewandt, wodurch unkorrigierte Selektions-Bias unentdeckt blieben.
 **Root Cause:**
