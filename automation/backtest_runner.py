@@ -410,6 +410,28 @@ def compute_tournament_score(metrics: dict, scoring: dict) -> float:
 
 def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, strat_params: dict = None) -> dict:
     """Wertet OOS-Metriken strukturiert aus und liefert die 4 OOS-Pflicht-Keys."""
+    t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
+
+    req_exp      = t_overrides.get("oos_min_expectancy", t_overrides.get("min_expectancy", tournament_cfg.get("oos_min_expectancy", tournament_cfg.get("min_expectancy", 0.0))))
+
+    # Issue #562 — KOSTENRELATIVES Expectancy-Gate. Statt einer absoluten Magie-Zahl (0.001 = 10 bps),
+    # die zufällig exakt auf der Round-Trip-Kostenwand liegt und damit strukturell unerreichbar ist,
+    # wird das Gate relativ zur tatsächlichen Kostenbasis definiert: oos_min_expectancy := k_alpha · c_rt
+    # ("schlage die Kosten um k_alpha"). c_rt (Round-Trip-Kosten in bps) wird aus dem Kostenmodell
+    # ABGELEITET (round_trip_cost_bps, von der Worker-Kostenstelle in die Metriken gestempelt, #562),
+    # nicht doppelt gepflegt — ändert man Spread oder Kommission, zieht das effektive Gate automatisch mit.
+    # Aktiv NUR, wenn k_alpha konfiguriert ist UND die Kosten-Telemetrie vorliegt; sonst statisches
+    # Legacy-Gate (bit-identisch, Zero-Hardcoding). effective_expectancy_gate wird für die Telemetrie
+    # zurückgegeben. Issue #577: Stationäres Gate auch bei degenerierten (Zero-Trade) Trials stempeln.
+    k_alpha = t_overrides.get("oos_min_expectancy_k_alpha",
+                              tournament_cfg.get("oos_min_expectancy_k_alpha"))
+    effective_expectancy_gate = None
+    if k_alpha is not None and oos_metrics is not None:
+        c_rt_bps = oos_metrics.get("round_trip_cost_bps")
+        if c_rt_bps is not None:
+            req_exp = float(k_alpha) * float(c_rt_bps) / 10000.0
+            effective_expectancy_gate = req_exp
+
     n_trades = oos_metrics.get("total_trades", 0) if oos_metrics else 0
     if n_trades <= 0:
         return {
@@ -419,6 +441,7 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             "oos_rejection_reasons": ["oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."],
             # Issue #554 — schemastabil: leeres numerisches Delta-Dict auch im Not-Evaluated-Fall.
             "oos_gate_deltas": {},
+            "effective_expectancy_gate": effective_expectancy_gate,
         }
 
 
@@ -430,29 +453,8 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     sortino = oos_metrics.get("sortino_ratio")
     pf = oos_metrics.get("profit_factor")
 
-    t_overrides = strat_params.get("tournament_overrides", {}) if strat_params else {}
-
     req_trades   = t_overrides.get("oos_min_trades", t_overrides.get("min_trades", tournament_cfg.get("oos_min_trades", tournament_cfg.get("min_trades", 0))))
     req_return   = t_overrides.get("oos_min_total_return", t_overrides.get("min_total_return", tournament_cfg.get("oos_min_total_return", tournament_cfg.get("min_total_return", 0.0))))
-    req_exp      = t_overrides.get("oos_min_expectancy", t_overrides.get("min_expectancy", tournament_cfg.get("oos_min_expectancy", tournament_cfg.get("min_expectancy", 0.0))))
-
-    # Issue #562 — KOSTENRELATIVES Expectancy-Gate. Statt einer absoluten Magie-Zahl (0.001 = 10 bps),
-    # die zufällig exakt auf der Round-Trip-Kostenwand liegt und damit strukturell unerreichbar ist,
-    # wird das Gate relativ zur tatsächlichen Kostenbasis definiert: oos_min_expectancy := k_alpha · c_rt
-    # ("schlage die Kosten um k_alpha"). c_rt (Round-Trip-Kosten in bps) wird aus dem Kostenmodell
-    # ABGELEITET (round_trip_cost_bps, von der Worker-Kostenstelle in die Metriken gestempelt, #562),
-    # nicht doppelt gepflegt — ändert man Spread oder Kommission, zieht das effektive Gate automatisch mit.
-    # Aktiv NUR, wenn k_alpha konfiguriert ist UND die Kosten-Telemetrie vorliegt; sonst statisches
-    # Legacy-Gate (bit-identisch, Zero-Hardcoding). effective_expectancy_gate wird für die Telemetrie
-    # zurückgegeben.
-    k_alpha = t_overrides.get("oos_min_expectancy_k_alpha",
-                              tournament_cfg.get("oos_min_expectancy_k_alpha"))
-    effective_expectancy_gate = None
-    if k_alpha is not None and oos_metrics is not None:
-        c_rt_bps = oos_metrics.get("round_trip_cost_bps")
-        if c_rt_bps is not None:
-            req_exp = float(k_alpha) * float(c_rt_bps) / 10000.0
-            effective_expectancy_gate = req_exp
     req_sortino  = t_overrides.get("oos_min_sortino", t_overrides.get("min_sortino", tournament_cfg.get("oos_min_sortino", tournament_cfg.get("min_sortino", 0.0))))
     req_pf       = t_overrides.get("oos_min_profit_factor", t_overrides.get("min_profit_factor", tournament_cfg.get("oos_min_profit_factor", tournament_cfg.get("min_profit_factor", 1.0))))
     req_max_dd   = t_overrides.get("oos_max_drawdown", t_overrides.get("max_drawdown", tournament_cfg.get("oos_max_drawdown", tournament_cfg.get("max_drawdown", 1.0))))
@@ -2914,10 +2916,13 @@ def run_single_backtest_worker(
         # oos_min_expectancy = k_alpha · c_rt daraus ab — kein doppelt gepflegter Kostenwert. Nach
         # #561 gilt c_rt = spread_bps + commission_bps (Kommission 1×/Round-Trip).
         round_trip_cost_bps = float(spread_bps) + float(commission_bps)
-        if isinstance(metrics, dict):
-            metrics["round_trip_cost_bps"] = round_trip_cost_bps
-        if isinstance(oos_metrics, dict):
-            oos_metrics["round_trip_cost_bps"] = round_trip_cost_bps
+        if metrics is None:
+            metrics = {}
+        if oos_metrics is None:
+            oos_metrics = {}
+
+        metrics["round_trip_cost_bps"] = round_trip_cost_bps
+        oos_metrics["round_trip_cost_bps"] = round_trip_cost_bps
 
         # Issue #508 — Fill-Match-Diagnostik (Sekundärebene) nach oben reichen. `metrics`/`oos_metrics`
         # sind bereits die primären Round-Trip-Metriken; `fill_matches` bleibt reine Execution-Diagnostik.
