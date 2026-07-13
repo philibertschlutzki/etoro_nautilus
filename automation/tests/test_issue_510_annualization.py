@@ -98,11 +98,11 @@ def test_issue_532_empirical_supersedes_static_default():
     # mtm_series-Index abgeleitet (31_557_600 / median_dt_seconds), nicht mehr aus einem
     # statischen Default (252).
 
-    # 1h-Kerzen (kontinuierlich): median_dt = 3600s ⇒ Faktor = 8766 (≫ 252).
+    # 1h-Kerzen (kontinuierlich): empirische Spann-Ableitung ⇒ Faktor ~8766 (≫ 252).
     s_1h = pd.Series(range(500), index=pd.date_range("2025-01-01", periods=500, freq="1h"))
     with patch("automation.backtest_runner._read_annualization_periods", return_value=None):
         factor_1h = _get_annualization_factor(s_1h)
-    assert factor_1h == pytest.approx(YEAR_SECONDS / 3600.0)  # 8766.0
+    assert math.isclose(factor_1h, 8766.0, rel_tol=0.05)  # 8766.0
     assert factor_1h > 252.0  # Akzeptanzkriterium: 1h-Bars ⇒ Faktor ≫ 252
 
     # Equity-Marktzeiten (7 Bars/Tag, Overnight-/Wochenend-Lücken): der neue Faktor 

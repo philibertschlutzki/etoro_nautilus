@@ -1753,7 +1753,7 @@ Pitfall #93 — Annualisierungsfaktor asset-class-/bar-frequenz-bewusst: Config-
 
 ### 🟢 Pitfall #93 — Statische Annualisierung überstimmt empirische Bar-Frequenz [BEHOBEN: GH-#532]
 **Symptom:** `annualization_periods_per_year=252` (Config) gewann IMMER; der dynamische Bar-Frequenz-Fallback (#510) war toter Code. Auf 1h-Kerzen unterschätzte `√252` den annualisierten Sortino systematisch (Faktor real ≫ 252).
-**Fix/Regel:** Präzedenz invertiert (`_get_annualization_factor`) — EMPIRISCHE Frequenz (`31_557_600 / median_dt_seconds`) ist Default; Config wirkt nur als expliziter, non-null Override. `optimizer.json['annualization_periods_per_year'] = null`. Nur ein echter `DatetimeIndex` triggert die Empirik (RangeIndex-Direct-Calls fallen sauber auf Override/1.0 zurück). Siehe *Watertight Invariants → Time Series Invariants*.
+**Fix/Regel:** Präzedenz invertiert (`_get_annualization_factor`) — EMPIRISCHE Frequenz (`n_periods * 31_557_600.0 / total_span_seconds`) ist Default; Config wirkt nur als expliziter, non-null Override. `optimizer.json['annualization_periods_per_year'] = null`. Nur ein echter `DatetimeIndex` triggert die Empirik (RangeIndex-Direct-Calls fallen sauber auf Override/1.0 zurück). Siehe *Watertight Invariants → Time Series Invariants*.
 **Betroffen:** `automation/backtest_runner.py`, `automation/config/optimizer.json`
 
 ### 🟢 Pitfall #104 — Holdout-Gate blockiert verlustfreie (Sortino=None) profitable OOS-Folds [BEHOBEN: GH-#533]
