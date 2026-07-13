@@ -1902,3 +1902,8 @@ Wobei N die Gesamtzahl der Evaluierungsperioden und MAR der deklarierte Minimum 
 $$ periods\_per\_year = \frac{n\_periods \cdot 31\,557\,600.0}{total\_span\_seconds} $$
 Dies liefert für TSLA-1h automatisch $\approx 1638$ und für 24/7-Krypto $\approx 8766$ Bars pro Jahr. `annualization_periods_per_year` bleibt als optionaler, expliziter non-null Override aktiv.
 **Betroffen:** `automation/backtest_runner.py`, `automation/config/optimizer.json`, `automation/tests/test_issue_510_annualization.py`
+
+
+### 🟢 Zero-Hardcoding & Sättigungs-Paradigma (Issue #596)
+1. **Numeric Guards:** Dienen ausschließlich dem Abfangen von Datenfehlern / Float-Anomalien (`backtest_runner.py`), agieren per Fail-Loud (Logging), verändern niemals stillschweigend die Numerik.
+2. **Semantic Saturation:** Darf ausschließlich über streng monotone, Gradienten-erhaltende Transformationen (z.B. $\text{asinh}$) im Modul `reward.py` erfolgen, um die Sichtbarkeit für den Optuna-Sampler zu garantieren.

@@ -1158,7 +1158,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     EPSILON = 1e-9
     DENOMINATOR_FLOOR = 1e-6
-    RATIO_CAP = 15.0
+    config = _read_optimizer_config()
+    profit_factor_cap = config.get('profit_factor_cap', 15.0)
+    sortino_guard = config.get('sortino_numeric_guard', 100.0)
 
     # Floor `gross_loss` at EPSILON implicitly to protect against division-by-zero, but logic captures it via count.
     if gross_loss <= 0.0:
@@ -1166,7 +1168,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     elif losses_count < 2 and n < 50:
         profit_factor = None
     else:
-        profit_factor = min(gross_profit / max(gross_loss, DENOMINATOR_FLOOR), RATIO_CAP)
+        profit_factor = min(gross_profit / max(gross_loss, DENOMINATOR_FLOOR), profit_factor_cap)
 
     win_rate = wins / n if n > 0 else 0.0
 
@@ -1229,6 +1231,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Ableitung der per-Period Returns
         # Erster Return darf kein NaN-Artefakt erzeugen, dropna() erledigt das
         period_rets = mtm_series.pct_change().dropna()
+        n_periods = len(period_rets)
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
         annualization_factor = _get_annualization_factor(mtm_series)
@@ -1252,7 +1255,17 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 if pd.isna(sortino_raw):
                     sortino = None
                 else:
-                    sortino = max(-RATIO_CAP, min(sortino_raw, RATIO_CAP))
+                    if abs(sortino_raw) > sortino_guard:
+                        import logging
+                        logging.getLogger("backtest_runner").warning(
+                            "SORTINO_GUARD_TRIPPED",
+                            extra={
+                                "sortino_raw": sortino_raw,
+                                "n_periods": n_periods,
+                                "dd_dev": dd_dev
+                            }
+                        )
+                    sortino = sortino_raw
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
@@ -1266,7 +1279,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     if max_dd <= 0.0:
         calmar = None
     else:
-        calmar = min(total_return / max(max_dd, DENOMINATOR_FLOOR), RATIO_CAP)
+        calmar = min(total_return / max(max_dd, DENOMINATOR_FLOOR), profit_factor_cap)
 
     import statistics
     if hold_list:

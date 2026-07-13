@@ -1,0 +1,1 @@
+pytest automation/tests/test_issue_588_no_source_clip.py
