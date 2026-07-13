@@ -30,7 +30,7 @@ def test_hourly_annualization_factor_is_8766():
     series = pd.Series(range(48), index=idx, dtype=float)
     factor = _get_annualization_factor(series)
     assert math.isclose(factor, 8766.0, rel_tol=0.05)
-    assert round(math.sqrt(factor), 1) == 94.6  # der Multiplikator für die Annualisierung (≈94.6)
+    assert round(math.sqrt(factor), 1) == 93.6  # der Multiplikator für die Annualisierung (≈93.6)
 
 
 # ── oos_min_sortino ist annualisiert dokumentiert + auf 1.0 kalibriert ───────────────────────
