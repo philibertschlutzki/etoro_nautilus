@@ -102,9 +102,12 @@ def test_order_invariant_eligible_above_ineligible():
 # ── Legacy-Migrationssicherheit: fehlt sortino_soft_scale ⇒ Hard-Clip (bit-identisch) ─────────
 def test_missing_soft_scale_is_legacy_hard_clip():
     legacy = dict(WEIGHTS); legacy.pop("sortino_soft_scale"); legacy.pop("w_ret")
+    # Setzen von max_drawdown auf 0, um die in Issue #578 eingeführte Drawdown-Soft-Penalty
+    # zu vermeiden. Vorher war dd_excess immer 0, jetzt gibt es eine quadratic penalty.
     m = _eligible(10.0, 0.015)
+    m.oos_max_drawdown = 0.0
     r = compute_reward(m, universe_size=1, weights=legacy, risk_dd_cap=0.3, tournament_cfg=CFG)
-    # Hard-Clip: base == 5.0 (geklemmt), keine return-Komponente. overfit_gap=max(0,0-5)=0, dd=0.
+    # Hard-Clip: base == 5.0 (geklemmt), keine return-Komponente. overfit_gap=max(0,0-5)=0, dd-penalty=0.
     assert r == pytest.approx(5.0)
 
 

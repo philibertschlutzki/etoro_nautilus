@@ -1104,11 +1104,11 @@ def _get_annualization_factor(mtm_series=None) -> float:
     #    hat keine ableitbare Bar-Frequenz und fällt sauber auf den neutralen Pfad zurück.
     if (mtm_series is not None and len(mtm_series) > 1
             and isinstance(mtm_series.index, pd.DatetimeIndex)):
-        n_periods = len(mtm_series.pct_change().dropna())
+        # Off-by-One Alignment: Die Anzahl der Rendite-Perioden ist len(mtm_series) - 1
+        n_periods = len(mtm_series) - 1
         total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
         if total_span_seconds > 0:
-            one_year_seconds = 31_557_600.0  # tropisches Jahr (Sekunden)
-            return n_periods * one_year_seconds / total_span_seconds
+            return n_periods * 31_557_600.0 / total_span_seconds
 
     # 3) Kein verwertbarer Zeit-Index: neutral (1.0).
     return 1.0
