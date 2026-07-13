@@ -48,9 +48,12 @@ def test_annualization_path_parity():
     dd_dev = float(np.sqrt((downside_diff ** 2).mean()))
     mean_ret = period_rets.mean()
 
-    RATIO_CAP = 50.0
+    RATIO_CAP = 15.0
     expected_config_sortino = max(-RATIO_CAP, min(((mean_ret - mar) / dd_dev) * math.sqrt(111.0), RATIO_CAP))
-    expected_fallback_sortino = max(-RATIO_CAP, min(((mean_ret - mar) / dd_dev) * math.sqrt(pd.Timedelta(days=365.25).total_seconds() / 86400), RATIO_CAP))
+    n_periods = len(mtm_series.pct_change().dropna())
+    total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
+    derived_factor = n_periods * 31_557_600.0 / total_span_seconds
+    expected_fallback_sortino = max(-RATIO_CAP, min(((mean_ret - mar) / dd_dev) * math.sqrt(derived_factor), RATIO_CAP))
 
     assert math.isclose(sortino_config, expected_config_sortino, rel_tol=1e-9)
     assert math.isclose(sortino_fallback, expected_fallback_sortino, rel_tol=1e-9)
@@ -67,8 +70,9 @@ def test_annualization_path_parity_strict():
     pnl_list = [10.0, -5.0, 15.0]
     hold_list = [(3600*1e9, 1.0)] * 3
 
-    median_dt_seconds = mtm_series.index.to_series().diff().median().total_seconds()
-    derived_factor = pd.Timedelta(days=365.25).total_seconds() / median_dt_seconds
+    n_periods = len(mtm_series.pct_change().dropna())
+    total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
+    derived_factor = n_periods * 31_557_600.0 / total_span_seconds
 
     with patch("automation.backtest_runner._read_annualization_periods", return_value=derived_factor):
         metrics_with_config = _calculate_stats(
@@ -101,8 +105,8 @@ def test_issue_532_empirical_supersedes_static_default():
     assert factor_1h == pytest.approx(YEAR_SECONDS / 3600.0)  # 8766.0
     assert factor_1h > 252.0  # Akzeptanzkriterium: 1h-Bars ⇒ Faktor ≫ 252
 
-    # Equity-Marktzeiten (7 Bars/Tag, Overnight-/Wochenend-Lücken): der Median trifft robust die
-    # dominante Intra-Session-Frequenz (1h) ⇒ derselbe Faktor 8766 trotz Gaps.
+    # Equity-Marktzeiten (7 Bars/Tag, Overnight-/Wochenend-Lücken): der neue Faktor 
+    # spiegelt die reale RTH-Frequenz wider (ca. 1850).
     rows, day, n = [], pd.Timestamp("2025-01-01"), 0
     while n < 30:
         if day.weekday() < 5:
@@ -112,8 +116,9 @@ def test_issue_532_empirical_supersedes_static_default():
     s_gap = pd.Series(range(len(rows)), index=pd.DatetimeIndex(rows))
     with patch("automation.backtest_runner._read_annualization_periods", return_value=None):
         factor_gap = _get_annualization_factor(s_gap)
-    assert factor_gap == pytest.approx(YEAR_SECONDS / 3600.0)
-    assert factor_gap > 252.0
+    # n_periods = 209. span = 41 days + 6 hours = 3,564,000s. factor_gap = 209 * 31_557_600 / 3,564,000 = 1850.559
+    assert 1800.0 < factor_gap < 1900.0
+    assert factor_gap < 8766.0
 
 
 def test_issue_532_explicit_config_override_wins():

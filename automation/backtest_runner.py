@@ -1080,7 +1080,7 @@ def _read_annualization_periods() -> float | None:
     return val
 
 def _get_annualization_factor(mtm_series=None) -> float:
-    """Single-Source-of-Truth Methode zur Bestimmung des annualization_factor (Issues #510/#532).
+    """Single-Source-of-Truth Methode zur Bestimmung des annualization_factor (Issues #510/#532/#595).
     Trading-Time-Paradigma: Division durch Kalenderjahre ist restlos eliminiert.
 
     Issue #532 — Präzedenz invertiert: Die EMPIRISCHE Bar-Frequenz aus dem ``mtm_series``-Index
@@ -1088,34 +1088,29 @@ def _get_annualization_factor(mtm_series=None) -> float:
     EXPLIZITER Override (non-null), nicht mehr als stiller Default. Ein statischer Tages-Faktor
     (252) darf die real gemessene Intraday-Bar-Frequenz nicht länger überstimmen — ``√252`` auf
     1h-Returns unterschätzt den annualisierten Sortino systematisch (Equity-Marktstunden ⇒ Faktor
-    ≫ 252). Der Median-Δt ist robust gegen Wochenend-/Session-Lücken, weil er die dominante
-    Intra-Session-Frequenz trifft (1h ⇒ 8766). Präzisierung (Review PR #542): Der Median
-    DIFFERENZIERT die Asset-Klasse NICHT — Equity-1h und 24/7-Krypto-1h ergeben beide 8766
-    (uniforme Trading-Time-Konvention). Innerhalb einer Asset-Klasse ist das ein konstanter
-    √factor-Multiplikator (ranking-neutral für TPE); nur die ABSOLUTEN Sortino-Gates
-    (oos_min_sortino) und echte Cross-Asset-Vergleiche brauchen ggf. eine Observations-per-Year-
-    Skalierung (n_periods · 31_557_600 / total_span_seconds). Entscheidung (PR #542): 8766 ist der
-    akzeptierte 1h-Standard; die Cross-Asset-Korrektur ist als Folge-Issue #543 getrackt."""
-    # 1) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532). Nur ein echter
-    #    DatetimeIndex liefert Timedelta-Deltas mit .total_seconds(); ein nicht-zeitlicher Index
-    #    (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats) hat keine ableitbare
-    #    Bar-Frequenz und fällt sauber auf den Config-Override/neutralen Pfad zurück.
-    if (mtm_series is not None and len(mtm_series) > 1
-            and isinstance(mtm_series.index, pd.DatetimeIndex)):
-        median_dt = mtm_series.index.to_series().diff().median()
-        median_dt_seconds = median_dt.total_seconds() if median_dt is not None and not pd.isna(median_dt) else 0.0
-        if median_dt_seconds > 0:
-            # 2) Expliziter Config-Override: schlägt die Empirik nur, wenn ausdrücklich (non-null) gesetzt.
-            config_factor = _read_annualization_periods()
-            if config_factor is not None:
-                return float(config_factor)
-            one_year_seconds = 31_557_600.0  # tropisches Jahr (Sekunden)
-            return one_year_seconds / median_dt_seconds
+    ≫ 252).
 
-    # 3) Kein verwertbarer Zeit-Index: expliziter Config-Override, sonst neutral (1.0).
+    Issue #595 — Die empirische Frequenz wird nun aus der realen Zeitspanne abgeleitet:
+    (n_periods · 31_557_600 / total_span_seconds).
+    Das liefert für RTH-Instrumente (z. B. Equity) automatisch die Handelszeiten (TSLA ≈ 1638)
+    und für 24/7-Krypto (≈ 8766) korrekt skaliert."""
+    # 1) Expliziter Config-Override: schlägt die Empirik nur, wenn ausdrücklich (non-null) gesetzt.
     config_factor = _read_annualization_periods()
     if config_factor is not None:
         return float(config_factor)
+
+    # 2) Empirische Bar-Frequenz aus dem realen ZEIT-Index (bevorzugt, Issue #532/#595).
+    #    Ein nicht-zeitlicher Index (z. B. RangeIndex bei Direkt-Unit-Calls von _calculate_stats)
+    #    hat keine ableitbare Bar-Frequenz und fällt sauber auf den neutralen Pfad zurück.
+    if (mtm_series is not None and len(mtm_series) > 1
+            and isinstance(mtm_series.index, pd.DatetimeIndex)):
+        n_periods = len(mtm_series.pct_change().dropna())
+        total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
+        if total_span_seconds > 0:
+            one_year_seconds = 31_557_600.0  # tropisches Jahr (Sekunden)
+            return n_periods * one_year_seconds / total_span_seconds
+
+    # 3) Kein verwertbarer Zeit-Index: neutral (1.0).
     return 1.0
 
 def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None) -> dict:
