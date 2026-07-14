@@ -378,6 +378,8 @@ def make_objective(
             trades_constraint = min_trades - metrics.oos_total_trades
             dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
             trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
+        # Issue #612 — Feasibility-Constraint(s) für den TPE-Sampler auch im globalen Pfad.
+        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics))
         return reward
     return objective
 
@@ -414,11 +416,18 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
             return trial.user_attrs.get("constraints", (0.0, 0.0))
         sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
     else:
+        # Issue #612 — FEASIBILITY GEHÖRT IN DEN SAMPLER, nicht in eine 12-Einheiten-Reward-Klippe.
+        # ``constraints_func`` liest die gestempelten, normierten OOS-Gate-Verletzungen
+        # (``oos_constraint_violations``, ≤ 0 = feasible). Optuna 4.9 behandelt Feasibility NATIV:
+        # ``study.best_trial`` UND das TPE-Sampling bevorzugen feasible strikt vor infeasible; unter den
+        # infeasiblen wird nach Gesamtverletzung sortiert. Damit optimiert der Sampler EINE stetige
+        # Grösse (die risikoadjustierte OOS-Performance, nach #614 die PSR) statt einer Stufenfunktion.
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
             group=True,
             n_startup_trials=n_startup_trials,
-            seed=seed
+            seed=seed,
+            constraints_func=_oos_constraints_func,
         )
 
     study = _create_study_with_retry(
@@ -578,6 +587,29 @@ def _classify_trial_rejection(metrics) -> str:
 # ``is_rejection_detail is None`` (Python-``None``), gestempelt wurde aber der STRING "NONE" ⇒
 # eligible_trials war IMMER leer ⇒ Top-k-Holdout (#576) lief nie (k=1 statt k=holdout_top_k).
 IS_REJECTION_NONE = "NONE"
+
+
+def _compute_oos_constraints(metrics) -> tuple:
+    """Issue #612 — Feasibility-Constraint(s) für den Sampler (Optuna-Konvention: ``<= 0`` = feasible).
+
+    Ein eligibler (feasibler) Trial ⇒ ``(0.0,)``. Sonst die SUMMIERTE positive OOS-Gate-Verletzung
+    (aus ``oos_gate_deltas``, ``delta = actual − threshold`` ⇒ Verletzung ``max(0, −delta)``) — ``> 0``,
+    sodass der Sampler unter den infeasiblen nach Gesamtverletzung sortiert. Erfassen die Deltas die
+    Ineligibilität nicht (nicht-evaluiert, Micro-Sizing) ⇒ konstante Verletzung ``1.0``. KONSTANTE
+    Länge (1) über alle Trials — Optuna verlangt einen fixen Constraint-Vektor."""
+    if getattr(metrics, "oos_eligible", False):
+        return (0.0,)
+    deltas = getattr(metrics, "oos_gate_deltas", None) or {}
+    violation = sum(max(0.0, -float(v)) for v in deltas.values())
+    if not (violation > 0.0):
+        violation = 1.0
+    return (float(violation),)
+
+
+def _oos_constraints_func(trial):
+    """Issue #612 — von TPESampler/NSGAIISampler aufgerufen: liest die im Objective gestempelten
+    ``oos_constraint_violations``. Fehlt der Stempel (Pruned/Legacy) ⇒ feasible ``(0.0,)``."""
+    return trial.user_attrs.get("oos_constraint_violations", (0.0,))
 
 
 # Issue #453 — Prefix → dezidierte Enum-Kategorie. Die Reason-Strings stammen aus
@@ -933,6 +965,10 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Python-``None`` ⇒ eligible_trials IMMER leer ⇒ Top-k lief nie. Der gestempelte Bool ist die
         # kohärente, direkt filterbare Grösse (identisch zu ``is_rejection_detail == IS_REJECTION_NONE``).
         trial.set_user_attr("oos_eligible", bool(metrics.oos_eligible))
+        # Issue #612 — Feasibility-Constraint(s) für den Sampler (≤ 0 = feasible). Damit optimiert der
+        # TPE EINE stetige Grösse (die risikoadjustierte OOS-Performance) statt einer Stufenfunktion;
+        # die Feasibility-Rangordnung übernimmt Optuna nativ (feasible ≻ infeasible in best_trial).
+        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
@@ -1035,11 +1071,14 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             return trial.user_attrs.get("constraints", (0.0, 0.0))
         sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
     else:
+        # Issue #612 — Feasibility in den Sampler (siehe optimize_symbol): constraints_func liest die
+        # gestempelten OOS-Gate-Verletzungen; Optuna 4.9 bevorzugt feasible nativ vor infeasible.
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
             group=True,
             n_startup_trials=n_startup_trials,
             seed=seed,
+            constraints_func=_oos_constraints_func,
         )
 
     # Issue #411 — serialisiert + DDL-Race-fest (table studies already exists). Ersetzt das nackte
