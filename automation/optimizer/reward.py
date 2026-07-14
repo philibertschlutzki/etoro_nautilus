@@ -687,12 +687,21 @@ def compute_reward(
     if w_disp and not holdout and n_total >= 2:
         n_valid = len(fold_returns)
         base_disp = statistics.pstdev(fold_returns) if n_valid >= 2 else 0.0
+        # Issue #616 — NORMIERUNGSSKALA (analog dd_reward_scale, #597): ``pstdev(fold_returns)`` lebt auf
+        # der Roh-Return-Skala (0.001–0.05), ``base`` auf der PSR-/asinh-Sortino-Skala ⇒ ohne Normierung
+        # war der Term drei Grössenordnungen zu klein (Median 0.036, struktureller Blindgänger — exakt der
+        # Pre-#597-dd_penalty-Fehler). ``fold_dispersion_scale`` (realisierte Fold-Return-Streuung ≈ 0.03)
+        # hebt ihn in den Bereich der übrigen Terme. Fehlt der Key ⇒ Roh-Skala (Legacy, bit-identisch).
+        _fds = weights.get("fold_dispersion_scale")
+        fold_dispersion_scale = float(_fds) if _fds and float(_fds) > 0.0 else None
+        norm_disp = (base_disp / fold_dispersion_scale) if fold_dispersion_scale else base_disp
         if n_valid < n_total:
+            # #616 — die Missing-Fold-Strafe auf DERSELBEN normierten Skala (sonst wieder blind).
             miss_scale = float(weights.get("missing_fold_penalty_scale", 0.0))
             frac_missing = (n_total - n_valid) / n_total
-            fold_dispersion_penalty = float(w_disp) * (base_disp + miss_scale * frac_missing)
+            fold_dispersion_penalty = float(w_disp) * (norm_disp + miss_scale * frac_missing)
         else:
-            fold_dispersion_penalty = float(w_disp) * base_disp
+            fold_dispersion_penalty = float(w_disp) * norm_disp
         if penalty_relative_cap is not None:
             fold_dispersion_penalty = min(
                 fold_dispersion_penalty, float(penalty_relative_cap) * cap_scale
