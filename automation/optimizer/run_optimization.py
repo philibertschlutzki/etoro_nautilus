@@ -332,7 +332,8 @@ def make_objective(
                 u_data = json.load(f)
                 universe_size = len(u_data.get("universe", []))
 
-        reward = compute_reward(metrics, universe_size=universe_size, risk_dd_cap=risk_dd_cap)
+        reward, reward_terms = compute_reward(metrics, universe_size=universe_size, risk_dd_cap=risk_dd_cap, return_terms=True)
+        trial.set_user_attr("reward_terms", reward_terms)
 
         outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
         import logging
@@ -361,6 +362,7 @@ def make_objective(
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            "reward_terms": reward_terms,
         })
 
 
@@ -752,6 +754,58 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             symbol, boundary_hit_fraction,
         )
 
+    # Issue #621 — Reward-Term-Dekomposition
+    eligible_terms = []
+    for t in trials:
+        if getattr(t, "user_attrs", {}).get("oos_evaluated") is True:
+            terms = getattr(t, "user_attrs", {}).get("reward_terms")
+            if terms and terms.get("branch") in ("eligible", "per_symbol", "pareto"):
+                eligible_terms.append(terms)
+
+    term_aggregates = {
+        "divergence_at_cap": 0.0,
+        "floor_clamped": 0.0,
+        "terms": {}
+    }
+
+    if eligible_terms:
+        n_el = len(eligible_terms)
+        term_aggregates["divergence_at_cap"] = sum(1 for t in eligible_terms if t.get("divergence_at_cap")) / n_el
+        term_aggregates["floor_clamped"] = sum(1 for t in eligible_terms if t.get("floor_clamped")) / n_el
+
+        numeric_keys = ["base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker"]
+
+        rew_vals = []
+        for t in eligible_terms:
+            r = (t.get("base", 0.0) - t.get("divergence", 0.0) - t.get("dd_penalty", 0.0)
+                 - t.get("param_pen", 0.0) - t.get("turnover", 0.0) - t.get("fold_dispersion", 0.0)
+                 + t.get("tie_breaker", 0.0))
+            rew_vals.append(r)
+
+        rew_std = statistics.pstdev(rew_vals) if n_el >= 2 else 0.0
+        rew_var = rew_std ** 2
+
+        for k in numeric_keys:
+            vals = [float(t.get(k, 0.0)) for t in eligible_terms]
+            std_k = statistics.pstdev(vals) if n_el >= 2 else 0.0
+            med_k = statistics.median(vals) if vals else 0.0
+
+            var_contrib = 0.0
+            if n_el >= 2 and rew_var > 0.0:
+                mean_k = sum(vals) / n_el
+                mean_r = sum(rew_vals) / n_el
+                cov = sum((vals[i] - mean_k) * (rew_vals[i] - mean_r) for i in range(n_el)) / n_el
+                var_contrib = cov / rew_var
+
+            term_aggregates["terms"][k] = {
+                "median": med_k,
+                "std": std_k,
+                "var_contrib": var_contrib
+            }
+
+            if std_k < 0.01 * rew_std:
+                logging.getLogger("optimizer").warning("REWARD_TERM_INERT: %s", k)
+
     emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
         "study_name": getattr(study, "study_name", None),
         "symbol": symbol,
@@ -772,6 +826,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "deflation_baseline": deflation_baseline,
         # Issue #597 — Randlösungs-Signatur.
         "boundary_hit_fraction": boundary_hit_fraction,
+        "reward_terms_aggregates": term_aggregates,
     })
 
 
@@ -841,8 +896,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             with open(tournament_path, "r", encoding="utf-8") as f:
                 risk_dd_cap = (json.load(f) or {}).get("max_drawdown", 0.30)
 
-        reward = compute_reward(metrics, universe_size=1, risk_dd_cap=risk_dd_cap,
-                                sampled=sampled, global_params=global_params, strategy=strategy)
+        reward, reward_terms = compute_reward(metrics, universe_size=1, risk_dd_cap=risk_dd_cap,
+                                sampled=sampled, global_params=global_params, strategy=strategy, return_terms=True)
+        trial.set_user_attr("reward_terms", reward_terms)
 
         # Issue #404 (P0) — Per-Symbol-Telemetrie. Der Sweep emittierte bislang KEIN strukturiertes
         # Per-Trial-Event (nur Optunas native INFO-Zeile, vgl. #402), wodurch der Unevaluable-Floor-
@@ -907,6 +963,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            "reward_terms": reward_terms,
         })
 
         reward_mode = "auto"
