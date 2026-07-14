@@ -31,6 +31,10 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(ro, "config_dir", lambda: _cfg_dir(tmp_path))
     monkeypatch.setattr(confirm, "config_dir", lambda: _cfg_dir(tmp_path))
     monkeypatch.setattr(trial_config, "config_dir", lambda: _cfg_dir(tmp_path))
+    # Issue #622 — diese Tests prüfen den Promotions-FLUSS (Edge über Global), nicht das Randlösungs-
+    # Veto. Der synthetische Warm-Start-Winner (sma_period=60) läge sonst an einer Suchraumgrenze und
+    # würde #622-korrekt als REJECTED_BOUNDARY_SOLUTION geblockt. Randlösungs-Fraktion neutralisieren.
+    monkeypatch.setattr(ro, "_boundary_hit_fraction", lambda *a, **k: 0.0)
 
 
 

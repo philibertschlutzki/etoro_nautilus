@@ -405,6 +405,8 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     if n_trials is None:
         n_trials = conf_n_trials
+    # Issue #622 — n_trials an die Dimensionalität koppeln (>= k·dim). Legacy ohne n_trials_per_dim.
+    n_trials = derive_n_trials(strategy, n_trials, opt_data)
     # Issue #568 — n_startup_trials dokumentiert an die Parameterzahl koppeln (Legacy ohne den Key).
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
@@ -688,6 +690,24 @@ def derive_n_startup_trials(strategy: str, base_n_startup: int, opt_data: dict) 
     except Exception:
         return int(base_n_startup)
     return max(int(base_n_startup), math.ceil(float(k) * dim))
+
+
+def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
+    """Issue #622 — ``n_trials`` an die Dimensionalität koppeln (analog derive_n_startup_trials).
+
+    ``n_trials = 100`` bei 14 Dimensionen ist faktisch Zufallssuche (72 TPE-Trials für 14 dim ⇒
+    Spearman(trial_nr, reward) ≈ 0.04–0.23, best(51–100) oft SCHLECHTER als best(1–50)). Deklarativ
+    über ``n_trials_per_dim`` (k ≥ 20): ``n_trials = max(base, ceil(k·dim))`` ⇒ ComboTrendVwap (14 dim)
+    ≥ 280. Fehlt der Key (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding)."""
+    k = opt_data.get("n_trials_per_dim")
+    if not k or float(k) <= 0.0:
+        return int(base_n_trials)
+    try:
+        from automation.optimizer import bounds
+        dim = len(bounds.extract_numeric_bounds(strategy))
+    except Exception:
+        return int(base_n_trials)
+    return max(int(base_n_trials), math.ceil(float(k) * dim))
 
 
 def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
@@ -1084,6 +1104,9 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             seed = opt_data.get("seed", seed)
     if n_trials is None:
         n_trials = conf_n_trials
+    # Issue #622 — n_trials an die Dimensionalität koppeln (>= k·dim, k>=20), sonst ist die Suche bei
+    # 14 Dimensionen faktisch Zufall. Legacy, wenn n_trials_per_dim fehlt.
+    n_trials = derive_n_trials(strategy, n_trials, opt_data)
     # Issue #568 — n_startup_trials an die Parameterzahl der Strategie koppeln (>= k·dim), damit der
     # TPE bei multivariate=True,group=True genügend Startpunkte hat. Legacy, wenn der Key fehlt.
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)

@@ -511,10 +511,29 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             f"[PBO #619] {symbol}: PBO={study_pbo:.3f} > 0.5 ⇒ REJECTED_SELECTION_OVERFIT"
         )
 
-    promote = bool(holdout_passed and not pbo_overfit and (R_symbol > R_global + promotion_margin))
+    # Issue #622 — Randlösungs-Veto: klebt der Gewinner an > 30 % der Suchraumgrenzen, ist die Lösung
+    # keine Lösung (Bounds falsch ODER der Reward drückt in die Ecke) ⇒ FAIL-LOUD, kein READY_FOR_PR
+    # (vorher nur eine folgenlose #597-WARNING). Lazy-Import (run_optimization importiert confirm).
+    boundary_frac = None
+    try:
+        from automation.optimizer.run_optimization import _boundary_hit_fraction
+        boundary_frac = _boundary_hit_fraction(study, strategy)
+    except Exception:
+        boundary_frac = None
+    boundary_overfit = bool(boundary_frac is not None and boundary_frac > 0.3)
+    if boundary_overfit:
+        logging.getLogger("optimizer").warning(
+            f"[Boundary #622] {symbol}: boundary_hit_fraction={boundary_frac:.2f} > 0.3 ⇒ "
+            f"REJECTED_BOUNDARY_SOLUTION (Bounds prüfen ODER Reward-Konditionierung)"
+        )
+
+    promote = bool(holdout_passed and not pbo_overfit and not boundary_overfit
+                   and (R_symbol > R_global + promotion_margin))
 
     if pbo_overfit:
         status = "REJECTED_SELECTION_OVERFIT"
+    elif boundary_overfit:
+        status = "REJECTED_BOUNDARY_SOLUTION"
     elif not holdout_passed:
         status = "REJECTED_ON_HOLDOUT"
     elif promote:
