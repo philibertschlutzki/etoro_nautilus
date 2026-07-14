@@ -588,7 +588,18 @@ def compute_reward(
     if soft_scale_val is not None and float(soft_scale_val) > 0.0:
         soft_scale = float(soft_scale_val)
 
-    if soft_scale is not None:
+    # Issue #614 — REWARD-BASE = PSR (Probabilistic Sharpe/Sortino Ratio), sobald sie definiert ist.
+    # Die PSR ist skalenfrei, in [0,1] beschränkt, ANNUALISIERUNGS-INVARIANT (per-Perioden-ŜR) und
+    # bezieht T + Schiefe + Kurtosis explizit ein — der annualisierte Sortino ist bei T≈200 eine
+    # Reskalierung ohne Informationsgewinn (Signal-Rausch ≈ 0). Die asinh-Sättigung (#559) und die
+    # asinh-Overfit-Divergenz (#565/#613) werden damit ÜBERFLÜSSIG: die Small-Sample-Overfit-Strafe,
+    # die die Divergenz heuristisch approximierte, steckt jetzt exakt im √(T−1)-Term der PSR. Fehlt
+    # ``oos_psr`` (Legacy-JSONs/Fixtures ohne PSR) ⇒ Fallback auf die asinh/Clip-Sortino-Base
+    # (bit-identisch, migrations-sicher) inkl. der Divergenz.
+    psr_base_active = getattr(m, "oos_psr", None) is not None
+    if psr_base_active:
+        base = float(m.oos_psr)
+    elif soft_scale is not None:
         base = _apply_soft_scale(float(base_source), soft_scale)
     else:
         base = max(-sortino_clip_abs, min(sortino_clip_abs, base_source))
@@ -610,7 +621,10 @@ def compute_reward(
     # für einen Single-Fold-Holdout ohne IS-Referenz bedeutungslos. Sie werden ABGESCHALTET (nicht mit
     # einem 0.0-Platzhalter gefüttert, der bei negativem base eine fiktive Overfit-Strafe erzeugte).
     # Ausserhalb des Holdout ist ``is_sortino_median is None`` ein Fehler (kein stiller 0.0-Default).
-    if holdout:
+    if holdout or psr_base_active:
+        # Issue #594 — Holdout: keine IS-Referenz. Issue #614 — PSR-Base: die Small-Sample-Overfit-
+        # Strafe steckt bereits im √(T−1)-Term der PSR ⇒ die separate asinh-Divergenz wäre eine
+        # inkohärente Doppelbestrafung auf einer anderen Skala (sortino vs. PSR ∈ [0,1]).
         divergence_penalty = 0.0
     else:
         # Issue #613 — die Divergenz-Strafe nutzt AUSSCHLIESSLICH den GEPOOLTEN IS-Sortino

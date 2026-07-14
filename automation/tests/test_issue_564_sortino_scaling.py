@@ -110,21 +110,20 @@ def test_no_hard_clip_saturation_after_soft_saturation():
 
 # ── Fixes for Issue #573 (Downside Floor) + #588 (no hard clip) ─────────────────
 def test_synthetic_zero_loss_sortino():
-    # Issue #588/#590 — Der frühere Hard-Clip (±15/±50) ist ENTFERNT; ein verlustarmer Fold
-    # liefert über den sortino_downside_floor (#573) einen ENDLICHEN, POSITIVEN, UNGEKLEMMTEN
-    # Sortino (nicht None, nicht auf 50 geklemmt). Nur der reine Numerik-Guard (sortino_numeric_guard,
-    # Default 1e6) fängt echte Overflows ab.
+    # Issue #614 SUPERSEDET #588/#590 hier: eine praktisch verlustFREIE Equity (Downside auf den
+    # sortino_downside_floor 1e-6 geklemmt) treibt den ANNUALISIERTEN Sortino ins Extreme (>> 25) ⇒
+    # der auf 25.0 gesenkte Numerik-Guard greift ⇒ Datenfehler ⇒ sortino/psr=None (ohne messbare
+    # Downside ist die Risiko-Adjustierung ehrlich undefiniert). Ein Fold mit realer Downside bleibt
+    # finit (test_issue_590::test_small_downside_fold_yields_finite_positive_sortino).
     idx = pd.date_range("2025-01-01", periods=10, freq="1h", tz="UTC")
     series = pd.Series([1000.0, 1001.0, 1002.0, 1003.0, 1004.0, 1005.0, 1006.0, 1007.0, 1006.999999, 1008.0], index=idx)
     pnls = [1.0] * 11 + [-1e-8]
     holds = [(3600*10**9, 1.0)] * 12
     import automation.backtest_runner as br
     stats = br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
-    sortino = stats.get("sortino_ratio")
-    assert sortino is not None          # #590 — losses_count==0 ist KEIN Ausstiegsgrund mehr
-    assert math.isfinite(sortino)
-    assert sortino > 0.0                # positiv (aufsteigende Equity)
-    assert abs(sortino) <= br._read_sortino_numeric_guard()  # unterhalb des reinen Numerik-Guards
+    assert br._read_sortino_numeric_guard() == 25.0     # #614 — Guard von 1e6 auf 25.0
+    assert stats.get("sortino_ratio") is None            # #614 — |annualized| > 25 ⇒ Guard ⇒ None
+    assert stats.get("psr") is None
 
 def test_monotonic_edge_scaling():
     idx = pd.date_range("2025-01-01", periods=10, freq="1h", tz="UTC")

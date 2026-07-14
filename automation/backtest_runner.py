@@ -579,6 +579,23 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             eval_folds_reason = (f"oos_min_evaluable_folds: {n_valid_sortinos} valide "
                                  f"< {req_evaluable_folds} (von {n_folds_total_ev} Folds)")
 
+    # Issue #614 — PSR-Gate (skalenfrei, in [0,1], T-bewusst). Der ANNUALISIERTE Sortino ist NUR noch
+    # Telemetrie und fliesst NICHT mehr ins Gate (bei T≈200 statistisch bedeutungslos). Ein
+    # UNDEFINIERTER PSR (zu wenig Trades ODER Guard-getrippt, |annualized|>25) ist NICHT eligible —
+    # kein impliziter Pass (analog #617). Nur aktiv, wenn ``oos_min_psr`` konfiguriert ist (sonst
+    # trivial erfüllt, rückwärtskompatibel zu Nicht-PSR-JSONs/Legacy-Gates).
+    req_psr = t_overrides.get("oos_min_psr", tournament_cfg.get("oos_min_psr"))
+    psr = oos_metrics.get("psr")
+    psr_valid = True
+    psr_reason = ""
+    if req_psr is not None and float(req_psr) > 0.0:
+        if psr is None:
+            psr_valid = False
+            psr_reason = f"oos_min_psr: None (insufficient/guard) < {req_psr}"
+        elif float(psr) < float(req_psr):
+            psr_valid = False
+            psr_reason = _reason("oos_min_psr", float(psr), float(req_psr), "<")
+
     condition_map = {
         "min_trades":        (n_trades >= req_trades, f"oos_min_trades: {n_trades} < {req_trades}"),
         "min_total_return":  (total_return >= req_return, _reason("oos_min_total_return", total_return, req_return, "<")),
@@ -586,6 +603,7 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         "max_drawdown":      (max_dd <= req_max_dd, _reason("oos_max_drawdown", max_dd, req_max_dd, ">")),
         "min_win_rate":      (win_rate >= req_win_rate, _reason("oos_min_win_rate", win_rate, req_win_rate, "<")),
         "min_sortino":       (sortino_valid, sortino_reason),
+        "min_psr":           (psr_valid, psr_reason),
         "min_profit_factor": (pf_valid, pf_reason),
         "min_profitable_folds": (prof_folds_valid, prof_folds_reason),
         "min_excess_return": (excess_valid, excess_reason),
@@ -604,6 +622,9 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     }
     if sortino is not None and req_sortino:
         oos_gate_deltas["oos_min_sortino"] = float(sortino - req_sortino)
+    # Issue #614 — PSR-Delta (maschinenlesbar, für die #612-Constraints-Aggregation).
+    if psr is not None and req_psr:
+        oos_gate_deltas["oos_min_psr"] = float(float(psr) - float(req_psr))
     if pf is not None and req_pf:
         oos_gate_deltas["oos_min_profit_factor"] = float(pf - req_pf)
     if req_excess_return is not None and oos_metrics.get("oos_excess_return") is not None:
@@ -1404,6 +1425,15 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # und umging so die Fold-Dispersionsstrafe vollständig (Reward-Hacking: die Bewertung LÖSCHEN
         # statt Performance verbessern). Der ``downside_floor``-Codepfad war für genau diesen Fall
         # gedacht, aber hinter der ``losses_count == 0``-Prüfung toter Code.
+        # Issue #614 — PER-PERIODEN-Ratio + PSR. Der ANNUALISIERTE Sortino ist nur noch Telemetrie:
+        # die Annualisierung (·√A) multipliziert Punktschätzer UND Standardfehler gleich ⇒ kein
+        # Informationsgewinn (bei T≈200 std 20.97, Range [−43, +227] — statistisch bedeutungslos).
+        # Gate/Reward nutzen die PSR (skalenfrei, in [0,1], bezieht T + Schiefe + Kurtosis ein).
+        n_periods = int(len(period_rets))
+        sortino_period = None
+        sortino_annualized = None
+        oos_psr = None
+        ret_skew, ret_kurtosis = 0.0, 3.0
         if n < min_trades_sortino or period_rets.empty:
             sortino = None
         else:
@@ -1417,31 +1447,46 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 downside_floor = _read_sortino_downside_floor()
                 dd_dev = max(dd_dev, downside_floor)
                 mean_ret = period_rets.mean()
-                sortino_raw = ((mean_ret - mar) / dd_dev) * math.sqrt(annualization_factor)
-                # Issue #588 — KEIN semantischer Hard-Clip mehr (der vernichtete die Rangordnung
-                # oberhalb ±15 und machte die #559-asinh-Sättigung wirkungslos). Die weiche Sättigung
-                # passiert ausschliesslich in reward.py via sortino_soft_scale. Hier NUR ein Numerik-/
-                # Datenfehler-Guard: ein |sortino_raw| jenseits von ``sortino_numeric_guard`` ist nach
-                # #587 (empirische Annualisierung) kein legitimes Ergebnis, sondern ein Datenfehler —
-                # fail-loud loggen (SORTINO_GUARD_TRIPPED) und als undefiniert (None) behandeln, statt
-                # still zu klemmen. Der Sortino selbst bleibt UNGEKLEMMT und trägt oberhalb der
-                # bisherigen Grenze weiterhin Ordnung (50 > 18 bleibt erhalten).
-                if pd.isna(sortino_raw) or not np.isfinite(sortino_raw):
+                # Issue #614 — der PER-PERIODEN-Sortino ist die statistisch tragende Grösse (fliesst
+                # in die PSR); der annualisierte Wert ist reine Telemetrie (sortino_ratio/annualized).
+                sortino_period = float((mean_ret - mar) / dd_dev)
+                sortino_annualized = sortino_period * math.sqrt(annualization_factor)
+                # Issue #588/#614 — Numerik-/Datenfehler-Guard auf dem ANNUALISIERTEN Sortino, jetzt bei
+                # 25.0 (tournament.json): jenseits davon ist ein OOS-Sortino bei T≈200 ein Datenfehler,
+                # kein Ergebnis. Fail-loud (SORTINO_GUARD_TRIPPED) und als undefiniert (None) behandeln —
+                # sortino UND psr fallen aus (kein extremer Fold-Artefakt passiert das Gate stumm).
+                if pd.isna(sortino_annualized) or not np.isfinite(sortino_annualized):
                     sortino = None
-                elif abs(sortino_raw) > sortino_numeric_guard:
+                    sortino_period = None
+                    sortino_annualized = None
+                elif abs(sortino_annualized) > sortino_numeric_guard:
                     import logging
                     logging.getLogger("optimizer").warning(
-                        "SORTINO_GUARD_TRIPPED: |sortino_raw|=%.6g > guard=%.6g "
-                        "(n_periods=%d, dd_dev=%.6g) — als Datenfehler verworfen (sortino=None).",
-                        sortino_raw, sortino_numeric_guard, len(period_rets), dd_dev,
+                        "SORTINO_GUARD_TRIPPED: |sortino_annualized|=%.6g > guard=%.6g "
+                        "(n_periods=%d, dd_dev=%.6g) — als Datenfehler verworfen (#614; sortino/psr=None).",
+                        sortino_annualized, sortino_numeric_guard, len(period_rets), dd_dev,
                     )
                     sortino = None
+                    sortino_period = None
+                    sortino_annualized = None
                 else:
-                    sortino = float(sortino_raw)
+                    # sortino_ratio bleibt (rückwärtskompatibel + Kohärenz-Sign-Check #589) der
+                    # ANNUALISIERTE Wert; die PSR ist die neue Reward-/Gate-Grösse (#614).
+                    sortino = float(sortino_annualized)
+                    from automation.optimizer.deflation import (
+                        probabilistic_sharpe_ratio as _psr, sample_skew_kurtosis as _skku)
+                    ret_skew, ret_kurtosis = _skku(period_rets.to_numpy())
+                    oos_psr = _psr(sortino_period, n_periods, skew=ret_skew,
+                                   kurtosis=ret_kurtosis, sr_star=0.0)
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
         sortino = None
+        sortino_period = None
+        sortino_annualized = None
+        oos_psr = None
+        n_periods = 0
+        ret_skew, ret_kurtosis = 0.0, 3.0
         dd_excess = 0.0
 
         # Call the unified helper to maintain structural symmetry (Issue #510 requirement)
@@ -1502,6 +1547,14 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "win_rate":      float(win_rate),
         "profit_factor": float(profit_factor) if profit_factor is not None else None,
         "sortino_ratio": float(sortino) if sortino is not None else None,
+        # Issue #614 — PSR (Reward-/Gate-Grösse) + per-Perioden-/annualisierter Sortino + T + Momente
+        # (Telemetrie). ``psr`` ∈ [0,1] oder None (undefiniert/Guard). ``sortino_annualized`` == sortino_ratio.
+        "psr":                float(oos_psr) if oos_psr is not None else None,
+        "sortino_period":     float(sortino_period) if sortino_period is not None else None,
+        "sortino_annualized": float(sortino_annualized) if sortino_annualized is not None else None,
+        "n_periods":          int(n_periods),
+        "ret_skew":           float(ret_skew),
+        "ret_kurtosis":       float(ret_kurtosis),
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
