@@ -472,13 +472,43 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     req_evaluable_folds = t_overrides.get("oos_min_evaluable_folds",
                                           tournament_cfg.get("oos_min_evaluable_folds"))
 
+    # Issue #617 — der ``None``-Guard darf NICHT schwächer sein als die Bedingung, unter der die
+    # Kennzahl überhaupt DEFINIERT ist. ``sortino``/``profit_factor`` werden ``None``, sobald
+    # ``n < sortino_min_trades`` (Sortino) bzw. ``gross_loss<=0`` / ``losses_count<2 ∧ n<50`` (PF) —
+    # ``_calculate_stats``. Mit ``oos_min_trades = 1`` war der Guard ``n_trades < 1`` VAKUANT: ein
+    # Trial mit 9 OOS-Trades und 0 Verlusten (sortino=None, win_rate>0) passierte ``min_sortino``
+    # UND ``min_profit_factor`` GRATIS — genau der »Bewertung löschen statt Performance liefern«-Kanal,
+    # den #590 schliessen sollte. Der Guard nutzt daher ``max(oos_min_trades, sortino_min_trades)``:
+    # unterhalb dieser Stichprobe ist die Kennzahl nicht definierbar ⇒ das Gate MUSS scheitern.
+    sortino_min_trades = (t_overrides.get("sortino_min_trades",
+                                          tournament_cfg.get("sortino_min_trades", 0)) or 0)
+    req_trades_guard = max(int(req_trades or 0), int(sortino_min_trades))
+    # Issue #617 — EXPLIZITE, benannte Policy für eine bei AUSREICHENDER Stichprobe
+    # (``n_trades >= req_trades_guard``) dennoch mathematisch UNDEFINIERTE (``None``) Pflicht-Kennzahl
+    # (verlustfreier, profitabler Fold). KEIN impliziter Pass mehr: ``"fail"`` ⇒ das Gate scheitert;
+    # ``"fallback_total_return"`` ⇒ Pass genau dann, wenn ``oos_total_return > 0`` (Parität zu
+    # ``reward.py['oos_sortino_fallback']`` und ``confirm._holdout_gate_passed`` — der Sortino ist auf
+    # einem verlustfreien Fold per Definition undefiniert, ``oos_total_return>0`` ist dort das
+    # ökonomisch korrekte Pass-Kriterium). Fehlt der Key ⇒ ``"fail"`` (strengster, sicherster Default).
+    undefined_metric_policy = t_overrides.get("undefined_metric_policy",
+                                              tournament_cfg.get("undefined_metric_policy", "fail"))
+
     sortino_valid = True
     sortino_reason = ""
     if req_sortino > 0.0:
         if sortino is None:
-             if n_trades < req_trades or win_rate <= 0.0:
+             if n_trades < req_trades_guard or win_rate <= 0.0:
                  sortino_valid = False
-                 sortino_reason = f"oos_min_sortino: None (all-win/insufficient) < {req_sortino}"
+                 sortino_reason = (f"oos_min_sortino: None (insufficient) < {req_sortino} "
+                                   f"(n_trades={n_trades} < {req_trades_guard})")
+             elif undefined_metric_policy == "fallback_total_return":
+                 sortino_valid = total_return > 0.0
+                 if not sortino_valid:
+                     sortino_reason = (f"oos_min_sortino: None (undefined; fallback_total_return "
+                                       f"{total_return:.6g} <= 0)")
+             else:
+                 sortino_valid = False
+                 sortino_reason = "oos_min_sortino: None (undefined; undefined_metric_policy=fail)"
         elif sortino < req_sortino:
              sortino_valid = False
              sortino_reason = f"oos_min_sortino: {sortino:.5f} < {req_sortino}"
@@ -487,9 +517,18 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     pf_reason = ""
     if req_pf > 0.0:
         if pf is None:
-             if n_trades < req_trades or win_rate <= 0.0:
+             if n_trades < req_trades_guard or win_rate <= 0.0:
                  pf_valid = False
-                 pf_reason = f"oos_min_profit_factor: None (all-win/insufficient) < {req_pf}"
+                 pf_reason = (f"oos_min_profit_factor: None (insufficient) < {req_pf} "
+                              f"(n_trades={n_trades} < {req_trades_guard})")
+             elif undefined_metric_policy == "fallback_total_return":
+                 pf_valid = total_return > 0.0
+                 if not pf_valid:
+                     pf_reason = (f"oos_min_profit_factor: None (undefined; fallback_total_return "
+                                  f"{total_return:.6g} <= 0)")
+             else:
+                 pf_valid = False
+                 pf_reason = "oos_min_profit_factor: None (undefined; undefined_metric_policy=fail)"
         elif pf < req_pf:
              pf_valid = False
              pf_reason = f"oos_min_profit_factor: {pf:.5f} < {req_pf}"
@@ -921,6 +960,29 @@ def _assert_sortino_return_coherence(oos_metrics: dict, *, tol: float = 1e-4) ->
             "müssen kohärent sein (derselbe Equity-Pfad).", sr, tr, tol,
         )
         oos_metrics["oos_coherence_violation"] = True
+
+
+def _assert_is_oos_sortino_coherence(is_basis: str | None, is_sortino, oos_basis: str | None, oos_sortino) -> bool:
+    """Issue #613 — Kohärenz-Invariant für die Divergenz-Strafe (analog ``_assert_sortino_return_coherence``).
+
+    Der IS- und der OOS-Sortino gehen als ``overfit_gap = is_sortino − oos_base`` in DIESELBE Reward-
+    Differenz ein. Sie MÜSSEN daher aus derselben Aggregationsebene stammen (beide ``pooled_equity_curve``):
+    ein Fold-/Symbol-Median-IS-Sortino gegen einen gepoolten OOS-Sortino vergleicht Grössen verschiedener
+    Fenster/Skalen und treibt den Term systematisch in die Sättigung (#613: corr=0.185, 96 % im oos_luck-Ast).
+    Verletzung ⇒ ERROR + Telemetrie-Flag (kein Abbruch — der Reward-Pfad bleibt robust). Rückgabe: True bei
+    Verletzung (für Telemetrie/Tests)."""
+    if is_sortino is None or oos_sortino is None:
+        return False
+    if is_basis and oos_basis and is_basis != oos_basis:
+        import logging
+        logging.getLogger("optimizer").error(
+            "IS_OOS_SORTINO_AGGREGATION_INCOHERENCE (#613): is_basis=%s (sortino=%.6g) != "
+            "oos_basis=%s (sortino=%.6g) — IS- und OOS-Sortino der Divergenz-Strafe MÜSSEN aus "
+            "derselben Aggregationsebene stammen (beide pooled_equity_curve).",
+            is_basis, float(is_sortino), oos_basis, float(oos_sortino),
+        )
+        return True
+    return False
 
 
 def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | None]) -> dict:
@@ -1955,6 +2017,15 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals)
             else:
                 level_oos = _empty_level_metrics()
+            # Issue #613 — Aggregationsebene des Sortino EXPLIZIT stempeln. IS UND OOS werden aus ihrer
+            # jeweiligen mtm-Equity-Kurve (pooled) abgeleitet — DERSELBE ``_calculate_stats``-Pfad. Der
+            # Basis-Tag macht die IS↔OOS-Kohärenz (Divergenz-Strafe, #613) fail-loud prüfbar; ein
+            # ``trade_sequential``-Sortino (Legacy-Fallback ohne Equity-Kurve) darf NIE gegen einen
+            # ``pooled_equity_curve``-Sortino verglichen werden (inkommensurable Skalen).
+            level_is["sortino_aggregation_basis"] = (
+                "pooled_equity_curve" if (is_mtm is not None and not is_mtm.empty) else "trade_sequential")
+            level_oos["sortino_aggregation_basis"] = (
+                "pooled_equity_curve" if (oos_mtm is not None and not oos_mtm.empty) else "trade_sequential")
             return level_is, level_oos
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
@@ -2452,12 +2523,20 @@ def select_winners(
         # Assertion: Aggregate OOS pass cannot override a per-pair failure
         assert not (agg_oos_eval.get("oos_eligible", False) is True and len(per_symbol_winners) == 0), "Aggregat-OOS-Pass darf nicht das Per-Pair-Gate überstimmen (eligible_pairs == 0)"
 
+        _agg_median_is_sortino = round(
+            get_median([x for x in sortinos_by_strat[best] if x is not None]), 4
+        )
         aggregate_winner = {
             "strategy":    best,
             "win_count":   win_counts[best],
-            "median_is_sortino": round(
-                get_median([x for x in sortinos_by_strat[best] if x is not None]), 4
-            ),
+            "median_is_sortino": _agg_median_is_sortino,
+            # Issue #613 — die per-Symbol-IS-Sortinos in ``sortinos_by_strat`` stammen aus der jeweiligen
+            # IS-Equity-Kurve (``_split_and_stats``). Der Aggregat-Wert ist ein Symbol-Median GEPOOLTER
+            # per-Symbol-Sortinos; explizit als solcher getaggt, damit die Divergenz-Kohärenz-Prüfung
+            # (#613) die Aggregationsebene kennt. Der gepoolte OOS-Sortino der Aggregat-Ebene wird ohne
+            # mtm berechnet (``trade_sequential``) ⇒ der Divergenz-Term ist primär ein Per-Symbol-Signal.
+            "median_is_sortino_pooled": _agg_median_is_sortino,
+            "is_sortino_aggregation_basis": "symbol_median_pooled_equity",
             **agg_oos_eval
         }
 
@@ -2508,6 +2587,15 @@ def _build_single_symbol_oos(all_results: list[dict]) -> dict | None:
     oos_metrics = {k: v for k, v in raw_oos.items() if k != "_oos_trade_records"}
     is_metrics = best.get("metrics") or {}
 
+    # Issue #613 — der gepoolte IS-Sortino stammt aus DERSELBEN mtm-Equity-Kurve wie der OOS-Sortino
+    # (``_split_and_stats``, ``is_metrics["sortino_ratio"]``) — die kohärente Divergenz-Grösse. Der
+    # frühere ``median_is_sortino`` (Fold-/Symbol-Median) bleibt rein forensisch. Beide Aggregations-
+    # Basen mitgeben und die IS↔OOS-Kohärenz fail-loud prüfen.
+    is_sortino_pooled = is_metrics.get("sortino_ratio")
+    is_basis = is_metrics.get("sortino_aggregation_basis")
+    oos_basis = oos_metrics.get("sortino_aggregation_basis")
+    _assert_is_oos_sortino_coherence(is_basis, is_sortino_pooled, oos_basis, oos_metrics.get("sortino_ratio"))
+
     return {
         "strategy": best.get("strategy"),
         "oos_evaluated": bool(oos_eval.get("oos_evaluated", False)),
@@ -2520,6 +2608,9 @@ def _build_single_symbol_oos(all_results: list[dict]) -> dict | None:
         "oos_metrics": oos_metrics,
         "oos_fold_sortinos": oos_metrics.get("oos_fold_sortinos") or [],
         "median_is_sortino": is_metrics.get("sortino_ratio"),
+        # Issue #613 — kohärenter, gepoolter IS-Sortino + Aggregations-Basis für die Divergenz-Strafe.
+        "median_is_sortino_pooled": is_sortino_pooled,
+        "is_sortino_aggregation_basis": is_basis,
         "win_count": 1 if oos_eval.get("oos_eligible") else 0,
     }
 

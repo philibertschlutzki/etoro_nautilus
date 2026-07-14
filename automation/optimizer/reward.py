@@ -613,14 +613,23 @@ def compute_reward(
     if holdout:
         divergence_penalty = 0.0
     else:
-        if m.is_sortino_median is None:
+        # Issue #613 — die Divergenz-Strafe nutzt AUSSCHLIESSLICH den GEPOOLTEN IS-Sortino
+        # (``is_sortino_pooled``, aus der IS-Equity-Kurve — DERSELBE mtm-Pfad wie ``oos_sortino``/base).
+        # Nur so vergleicht ``overfit_gap = is − base`` zwei Grössen DERSELBEN Aggregationsebene. Der
+        # Fold-/Symbol-Median (``is_sortino_median``) bleibt rein forensische Telemetrie — als Divergenz-
+        # Grösse trieb er den Term systematisch in die Sättigung (#613: corr(is_median, oos_pooled)=0.185,
+        # 96 % im oos_luck-Ast, 72 % konstant am Cap ⇒ kein Gradient). Fehlt ``is_sortino_pooled``
+        # (Legacy-JSONs/Fixtures) ⇒ Fallback auf ``is_sortino_median`` (bit-identisch, migrations-sicher).
+        is_source = (m.is_sortino_pooled if getattr(m, "is_sortino_pooled", None) is not None
+                     else m.is_sortino_median)
+        if is_source is None:
             raise ValueError(
-                "compute_reward: is_sortino_median is None ohne holdout=True — ein Platzhalter darf "
-                "nie in einen Reward-Ausdruck fliessen (#594). Holdout-Rewards mit holdout=True aufrufen."
+                "compute_reward: is_sortino_pooled/is_sortino_median is None ohne holdout=True — ein "
+                "Platzhalter darf nie in einen Reward-Ausdruck fliessen (#594/#613). Holdout-Rewards "
+                "mit holdout=True aufrufen."
             )
-        # Issue #565 / #575 — Divergenz-Strafe IS↔OOS. Skalenparität mit asinh erfordert
-        # Kompression auch für IS_sortino.
-        is_sortino_val = m.is_sortino_median
+        # Issue #565 / #575 — Skalenparität mit asinh erfordert dieselbe Kompression wie für base.
+        is_sortino_val = is_source
         if soft_scale is not None:
             is_sortino_val = _apply_soft_scale(is_sortino_val, soft_scale)
 

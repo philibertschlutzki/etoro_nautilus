@@ -8,6 +8,7 @@ from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
 from automation.optimizer.manifest import WORK
+from automation.log_manager import emit_execution_event
 
 
 def _holdout_gate_passed(metrics, risk_dd_cap: float, *, sortino_fallback_enabled: bool) -> bool:
@@ -196,7 +197,15 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
         catalog_newest_ns=catalog_newest_ns,
     )
     output_path = run_backtest(trial_dir, manifest_path)
-    return parse_tournament(output_path)
+    m = parse_tournament(output_path)
+    # Issue #615 — die trial_dir-Identität AN die Metriken heften (kein Signatur-Bruch ⇒ bestehende
+    # Mocks von _holdout_metrics_for_params bleiben gültig). Macht die Kohärenz-Invariante
+    # (symbol_params/R_symbol/holdout_passed stammen aus DEMSELBEN trial_dir) nachweisbar.
+    try:
+        m.holdout_trial_dir = str(trial_dir)
+    except Exception:
+        pass
+    return m
 
 
 
@@ -292,29 +301,53 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
 
     import optuna
     import logging
-    # 1. Top-k Holdout Evaluation (Issue #576)
-    # Selektiere alle eligiblen Trials basierend auf OOS Gate (oder einfach die besten eligiblen).
-    # t.value ist der (korrigierte) Reward.
-    eligible_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE
-                       and t.user_attrs.get("is_rejection_detail") is None
-                       and t.value is not None]
 
-    # Sortiere absteigend nach Reward (best_value)
-    eligible_trials.sort(key=lambda t: t.value, reverse=True)
-
-    # Tournament cfg (for Top-k und Deflation)
+    # Tournament cfg (für Top-k + Deflation) — VOR der Eligible-Selektion laden (top_k wird bereits im
+    # Leer-Fall gebraucht). ``holdout_top_k`` ist in tournament.json deklariert (Zero-Hardcoding, #615).
     tournament_cfg = {}
     if tournament_path.exists():
         with open(tournament_path, "r", encoding="utf-8") as f:
             tournament_cfg = json.load(f) or {}
+    top_k = int(tournament_cfg.get("holdout_top_k", 5))
 
-    top_k = tournament_cfg.get("holdout_top_k", 5)
+    # 1. Top-k-Holdout-Selektion (Issue #576/#615). Filter auf die BEREITS GESTEMPELTE OOS-Eligibility
+    # (run_optimization.make_symbol_objective, #615) — NICHT auf ``is_rejection_detail is None``: der
+    # gestempelte Wert ist der STRING "NONE" (IS_REJECTION_NONE), nie Python-``None`` ⇒ der alte Filter
+    # war in JEDER Study leer ⇒ Top-k (#576) lief nie (faktisch k=1) und der Median-Vektor (#594) war
+    # inert (Index immer 0). ``oos_eligible`` ist die kohärente, direkt filterbare Grösse (identisch zu
+    # ``is_rejection_detail == IS_REJECTION_NONE``). ``t.value`` ist der (korrigierte) Reward.
+    eligible_trials = [t for t in study.trials
+                       if t.state == optuna.trial.TrialState.COMPLETE
+                       and t.user_attrs.get("oos_eligible")
+                       and t.value is not None]
+    eligible_trials.sort(key=lambda t: t.value, reverse=True)
+
+    # Issue #615 — FAIL-LOUD statt stillem Floor-Trial-Fallback. Keine eligiblen Trials ⇒ strukturiertes
+    # HOLDOUT_NO_ELIGIBLE_TRIALS-Event + Rejection; es wandert KEIN Floor-Trial (argmax reward über ALLE
+    # Trials, evtl. ein evaluable_reward_floor-Trial) unbemerkt in den Holdout. Der frühere
+    # ``study.best_trial``-Fallback promotete im Leer-Fall genau solche nie-validierten Parameter.
+    if not eligible_trials:
+        emit_execution_event(logging.getLogger("optimizer"), "HOLDOUT_NO_ELIGIBLE_TRIALS", {
+            "symbol": symbol,
+            "strategy": strategy,
+            "n_trials": len(getattr(study, "trials", []) or []),
+            "holdout_top_k": top_k,
+        })
+        return {
+            "promote": False,
+            "status": "REJECTED_ON_HOLDOUT",
+            "is_rejection_detail_override": "HOLDOUT_NO_ELIGIBLE_TRIALS",
+            "symbol_params": {},
+            "R_symbol": 0.0,
+            "R_global": R_global,
+            "promotion_margin": promotion_margin,
+            "holdout_passed": False,
+            "trial_dir": None,
+            "metrics_symbol": {},
+            "metrics_global": _metrics_dict(m_global),
+        }
+
     best_trials = eligible_trials[:top_k]
-
-    if not best_trials:
-        # Fallback falls keine eligiblen gefunden wurden. Sollte eigentlich nicht passieren,
-        # da confirm_per_symbol_promotion nur fuer winner_candidates aufgerufen wird.
-        best_trials = study.best_trials if len(getattr(study, "directions", ["maximize"])) > 1 else [study.best_trial]
 
     # 2. Deflations-Vorfilter (Issue #576/#592) — auf der REWARD-Skala (dem tatsächlichen
     # Selektionskriterium argmax(reward)), NICHT auf dem geklemmten Sortino. Der frühere
@@ -352,38 +385,41 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                                catalog_newest_ns=catalog_newest_ns)
         holdout_metrics_list.append((trial, symbol_params, m_symbol))
 
-    # Issue #594 — VEKTOR-Median statt komponentenweisem Median: der Lauf mit dem medianen Rang
-    # (nach oos_total_return, dokumentierte Tie-Break-Regel via _median_rank_index) liefert seinen
-    # VOLLSTÄNDIGEN, kohärenten Metrikvektor. Der frühere komponentenweise Median setzte sortino aus
-    # Lauf A, drawdown aus Lauf B, return aus Lauf C zusammen — ein Vektor, der zu KEINEM real
-    # gelaufenen Backtest gehörte, und speiste daraus R_symbol UND das Promotion-Gate.
+    # Issue #594/#615 — KOHÄRENTE Promotion aus EINEM Lauf. Der Lauf mit dem MEDIANEN Rang (nach
+    # oos_total_return, dokumentierte Tie-Break-Regel via _median_rank_index) liefert seinen
+    # VOLLSTÄNDIGEN, kohärenten Metrikvektor UND wird VOLLSTÄNDIG promotet: Params, Gate, R_symbol und
+    # der Deflations-Check stammen ALLE aus DIESEM einen trial_dir. #615-Verbindlichkeit: ein gemischter
+    # Vektor (Params von Trial Y, Gate/Reward von Trial X) ist unzulässig — er exportierte nie-validierte
+    # Parameter (Params[Y]), während Gate-Entscheidung und R_symbol von Trial X stammten. Der Median-Rang
+    # (nicht das argmax) ist die bewusste Robustheits-Wahl (#576/#594): er filtert Holdout-Glück doppelt.
     median_idx = _median_rank_index([m.oos_total_return for _, _, m in holdout_metrics_list])
-    median_trial, median_symbol_params, median_m_symbol = holdout_metrics_list[median_idx]
-
-    # Fuer das Proposal werten wir den 'besten' (d.h. den am hoechsten rankenden) aus (die
-    # vorgeschlagenen Parameter), aber die Gate-/Reward-Robustheit über den KOHÄRENTEN Median-Vektor.
-    best_trial, best_symbol_params, best_m_symbol = holdout_metrics_list[0]
+    promoted_trial, promoted_symbol_params, promoted_m_symbol = holdout_metrics_list[median_idx]
+    # Issue #615 — der EINE trial_dir, aus dem der gesamte promotete Vektor stammt (Invarianten-Beleg).
+    promoted_trial_dir = getattr(promoted_m_symbol, "holdout_trial_dir", None)
+    if not isinstance(promoted_trial_dir, str):
+        promoted_trial_dir = None
 
     # Issue #594 — Holdout-Reward über DENSELBEN Codepfad (compute_reward) mit holdout=True: die
     # IS-abhängigen Terme werden ABGESCHALTET (kein 0.0-Platzhalter, der bei negativem base eine
-    # fiktive Overfit-Strafe von 0.5·|base| erzeugte). median_m_symbol ist ein REALER Lauf.
-    R_symbol = (compute_reward(median_m_symbol, universe_size=1, weights=global_weights, holdout=True)
-                if global_weights else compute_reward(median_m_symbol, universe_size=1, holdout=True))
+    # fiktive Overfit-Strafe von 0.5·|base| erzeugte). promoted_m_symbol ist ein REALER Lauf.
+    R_symbol = (compute_reward(promoted_m_symbol, universe_size=1, weights=global_weights, holdout=True)
+                if global_weights else compute_reward(promoted_m_symbol, universe_size=1, holdout=True))
 
-    # Gate-Evaluation ZWINGEND ueber den kohärenten Median-Holdout-Vektor.
+    # Gate-Evaluation ZWINGEND über denselben promoteten (Median-Rang-)Holdout-Vektor.
     holdout_passed = _holdout_gate_passed(
-        median_m_symbol, risk_dd_cap,
+        promoted_m_symbol, risk_dd_cap,
         sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
     )
 
-    # Deflations-Vorfilter Check (Issue #592) — der Study-Gewinner (argmax reward) muss das
-    # deflationierte Rausch-Maximum der REWARD-Verteilung schlagen (nicht eine Teil-Kennzahl).
+    # Deflations-Vorfilter Check (Issue #592/#615) — KOHÄRENT auf dem PROMOTETEN (Median-Rang-)Trial,
+    # NICHT auf best_trials[0] (das wäre erneut ein anderer Trial als der promotete). Der Reward des
+    # tatsächlich promoteten Trials muss das deflationierte Rausch-Maximum der REWARD-Verteilung schlagen.
     if holdout_passed and deflated_min_reward is not None:
-        winner_reward = best_trials[0].value if best_trials and best_trials[0].value is not None else None
+        winner_reward = promoted_trial.value if promoted_trial.value is not None else None
         if winner_reward is None or winner_reward < deflated_min_reward:
             holdout_passed = False
             logging.getLogger("optimizer").warning(
-                f"[Deflated-Drop Holdout #592] {symbol}: Study-Gewinner-Reward {winner_reward} "
+                f"[Deflated-Drop Holdout #592] {symbol}: promoteter Trial-Reward {winner_reward} "
                 f"< deflated {deflated_min_reward:.4f}"
             )
 
@@ -400,12 +436,14 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "promote": promote,
         "status": status,
         "is_rejection_detail_override": None,
-        "symbol_params": best_symbol_params,
+        # Issue #615 — Params, R_symbol, holdout_passed und trial_dir stammen ALLE aus promoted_m_symbol.
+        "symbol_params": promoted_symbol_params,
         "R_symbol": R_symbol,
         "R_global": R_global,
         "promotion_margin": promotion_margin,
         "holdout_passed": bool(holdout_passed),
-        "metrics_symbol": _metrics_dict(median_m_symbol),
+        "trial_dir": promoted_trial_dir,
+        "metrics_symbol": _metrics_dict(promoted_m_symbol),
         "metrics_global": _metrics_dict(m_global)
     }
 
@@ -460,6 +498,9 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # Issue #453 — granularere, dezidierte dominante Ablehnungs-Kategorie (löst den Catch-All
         # 'oos_not_evaluated' in die tatsächliche, handlungsleitende Ursache auf).
         "is_rejection_detail": promotion.get("is_rejection_detail_override") or _dominant_is_rejection_detail(study),
+        # Issue #615 — der EINE Holdout-trial_dir, aus dem der promotete Vektor (Params/R_symbol/Gate)
+        # stammt: macht die Kohärenz-Invariante im Proposal nachvollziehbar.
+        "holdout_trial_dir": promotion.get("trial_dir"),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],
