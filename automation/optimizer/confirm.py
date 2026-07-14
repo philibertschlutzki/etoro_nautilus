@@ -354,25 +354,35 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # 50.0-Sentinel-Filter (hartcodierte Zahl, die seit der Clip-Änderung #588 ins Leere
     # griff) ist ersatzlos entfallen. baseline = median(rewards) (die Reward-Skala ist nicht
     # nullzentriert). Ein Numerik-Guard-Trial (#588) hat value=None ⇒ fällt komplett aus der Kohorte.
+    # Issue #611/#618 — Deflated Sortino Ratio (DSR) statt Reward-Skalen-Deflation. Die alte Kohorte
+    # (ALLE oos_evaluated-Trials) war eine Zwei-Punkt-Mischung (Failure-Masse ≈ −13 + eligible Modus ≈ +2);
+    # ihr σ = pstdev(bimodal) ≈ gap·√(p(1−p)) war die BERNOULLI-Standardabweichung der Gate-Passrate
+    # (maximal bei p=0.5 ⇒ je besser die Strategie, desto höher die Hürde — anti-monoton), und der
+    # Median war stets der Rejection-Floor. Fix #611: Kohorte = die ELIGIBLEN Trials, die tatsächlich um
+    # argmax konkurrieren. Fix #618: die Statistik ist die vollständige DSR auf der PER-PERIODEN-Sortino-
+    # Skala (SR₀ = √V[ŜR_trials]·E[max_N], DSR = PSR relativ zu SR₀), nicht die Reward-Skala.
     deflated_selection = bool(tournament_cfg.get("deflated_selection", False))
     deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
-    deflated_min_reward = None
-    deflation_n = deflation_sigma = deflation_baseline = None
+    deflation_sr0 = deflation_dsr = None
+    deflation_n = 0
+    deflation_var = None
 
     if deflated_selection:
-        cand_rewards = [
-            t.value for t in study.trials
+        cohort_sr = [
+            t.user_attrs.get("oos_sortino_period") for t in study.trials
             if t.state == optuna.trial.TrialState.COMPLETE
-            and t.user_attrs.get("oos_evaluated")
-            and t.value is not None
+            and t.user_attrs.get("oos_eligible")
+            and t.user_attrs.get("oos_sortino_period") is not None
         ]
-        from automation.optimizer.deflation import deflated_reward_threshold
-        deflated_min_reward, deflation_n, deflation_sigma, deflation_baseline = (
-            deflated_reward_threshold(cand_rewards, confidence=deflation_confidence))
-        if deflated_min_reward is not None:
+        deflation_n = len(cohort_sr)
+        if deflation_n >= 2:
+            import statistics as _st
+            from automation.optimizer.deflation import sr0_multiple_testing
+            deflation_var = _st.pvariance([float(s) for s in cohort_sr])
+            deflation_sr0 = sr0_multiple_testing(deflation_var, deflation_n)
             logging.getLogger("optimizer").info(
-                f"[Deflated Holdout #592] {symbol}: Reward-Schwelle {deflated_min_reward:.4f} "
-                f"(N={deflation_n}, σ={deflation_sigma:.4f}, baseline={deflation_baseline:.4f})"
+                f"[DSR #618] {symbol}: SR₀={deflation_sr0:.4f} "
+                f"(N_eligible={deflation_n}, V[ŜR]={deflation_var:.6f})"
             )
 
     # Evaluiere den Holdout ueber die Top-k Trials
@@ -411,16 +421,23 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
     )
 
-    # Deflations-Vorfilter Check (Issue #592/#615) — KOHÄRENT auf dem PROMOTETEN (Median-Rang-)Trial,
-    # NICHT auf best_trials[0] (das wäre erneut ein anderer Trial als der promotete). Der Reward des
-    # tatsächlich promoteten Trials muss das deflationierte Rausch-Maximum der REWARD-Verteilung schlagen.
-    if holdout_passed and deflated_min_reward is not None:
-        winner_reward = promoted_trial.value if promoted_trial.value is not None else None
-        if winner_reward is None or winner_reward < deflated_min_reward:
+    # Issue #618/#615 — DSR-Vorfilter KOHÄRENT auf dem PROMOTETEN (Median-Rang-)Trial: dessen
+    # per-Perioden-Holdout-Sortino muss die Multiple-Testing-Schwelle SR₀ mit Konfidenz
+    # deflation_confidence schlagen (DSR ≥ conf), sonst HOLD. Ein undefinierter promoteter Sortino
+    # (None) ⇒ fail-safe Drop.
+    if holdout_passed and deflated_selection and deflation_n >= 2:
+        from automation.optimizer.deflation import deflated_sharpe_ratio
+        deflation_dsr = deflated_sharpe_ratio(
+            getattr(promoted_m_symbol, "oos_sortino_period", None),
+            getattr(promoted_m_symbol, "oos_n_periods", 0),
+            var_sr_trials=deflation_var, n_trials=deflation_n,
+            skew=getattr(promoted_m_symbol, "oos_ret_skew", 0.0),
+            kurtosis=getattr(promoted_m_symbol, "oos_ret_kurtosis", 3.0))
+        if deflation_dsr is None or deflation_dsr < deflation_confidence:
             holdout_passed = False
             logging.getLogger("optimizer").warning(
-                f"[Deflated-Drop Holdout #592] {symbol}: promoteter Trial-Reward {winner_reward} "
-                f"< deflated {deflated_min_reward:.4f}"
+                f"[DSR-Drop #618] {symbol}: DSR={deflation_dsr} < {deflation_confidence} "
+                f"(SR₀={deflation_sr0:.4f}, N={deflation_n}) ⇒ HOLD"
             )
 
     promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
@@ -447,8 +464,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "metrics_global": _metrics_dict(m_global)
     }
 
-    if deflated_min_reward is not None:
-        best_result["metrics_symbol"]["deflated_min_reward"] = deflated_min_reward
+    # Issue #611/#618 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle.
+    if deflation_sr0 is not None:
+        best_result["metrics_symbol"]["deflated_sr0"] = deflation_sr0
+        best_result["metrics_symbol"]["deflated_dsr"] = deflation_dsr
+        best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
 
     return best_result
 

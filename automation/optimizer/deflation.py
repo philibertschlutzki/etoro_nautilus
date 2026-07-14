@@ -70,6 +70,31 @@ def expected_max_standard_normal(n_trials: int) -> float:
             + _EULER_MASCHERONI * _ND.inv_cdf(1.0 - 1.0 / (n_trials * math.e)))
 
 
+def sr0_multiple_testing(var_sr_trials: float, n_trials: int) -> float:
+    """Issue #618 — die Multiple-Testing-Nullhypothesen-Ratio SR₀ (Bailey/López de Prado, DSR).
+
+    ``SR₀ = √V[ŜR_trials] · E[max_N standard normal]`` mit ``E[max_N] = expected_max_standard_normal(N)``.
+    Der erwartete Bestwert von N getesteten Konfigurationen unter H0 (kein Edge) wächst mit N — genau
+    diese Hürde muss der Gewinner schlagen. ``V[ŜR_trials]`` = Streuung der Ratios ÜBER die N Trials
+    (die Multiple-Testing-Varianz), NICHT der Standardfehler des Gewinners (der steckt in der PSR/DSR).
+    Degeneriert auf 0.0 bei fehlender Streuung oder N ≤ 1 (kein Multiple-Testing)."""
+    if var_sr_trials is None or var_sr_trials <= 0.0 or n_trials <= 1:
+        return 0.0
+    return math.sqrt(float(var_sr_trials)) * expected_max_standard_normal(n_trials)
+
+
+def deflated_sharpe_ratio(sr, n_periods, *, var_sr_trials: float, n_trials: int,
+                          skew: float = 0.0, kurtosis: float = 3.0):
+    """Issue #618 — vollständige Deflated Sharpe/Sortino Ratio: die PSR relativ zur Multiple-Testing-
+    Schwelle ``SR₀`` (statt zu 0). ``DSR = Φ[(ŜR − SR₀)·√(T−1)/√(1 − γ₃·ŜR + ((γ₄−1)/4)·ŜR²)]``.
+
+    Alle Grössen PER-PERIODE (nicht annualisiert, #614). ``promote ⟺ DSR ≥ deflation_confidence``.
+    Referenz (VwapExhaustion): ``ŜR=0.11386, T=202, N=100, V[ŜR_trials]=1.803e-3`` ⇒
+    ``SR₀=0.1075, DSR=0.5364`` ⇒ HOLD (< 0.95). ``None`` bei undefinierter Eingabe."""
+    sr0 = sr0_multiple_testing(var_sr_trials, n_trials)
+    return probabilistic_sharpe_ratio(sr, n_periods, skew=skew, kurtosis=kurtosis, sr_star=sr0)
+
+
 def deflated_threshold(n_trials: int, dispersion: float, *, confidence: float = 0.95,
                        baseline: float = 0.0) -> float:
     """``confidence``-Quantil des MAXIMUMS von ``n_trials`` i.i.d. N(``baseline``, ``dispersion``²).

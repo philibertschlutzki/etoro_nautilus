@@ -774,16 +774,22 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
 
     # Issue #592 — Deflations-Telemetrie auf der REWARD-Skala (je Study sichtbar, nicht nur im
     # Holdout-Pfad). Nutzt die evaluable Trial-Rewards (das tatsächliche argmax-Selektionskriterium).
+    # Issue #611 — p_eligible (Gate-Passrate) + DSR-Kohorten-Telemetrie auf der ELIGIBLEN PER-PERIODEN-
+    # Sortino-Skala. Die alte Reward-Skalen-Deflation über ALLE oos_evaluated-Trials schätzte σ auf einer
+    # Zwei-Punkt-Mischung ⇒ Bernoulli-Standardabweichung der Passrate (anti-monoton). Jetzt: die
+    # Streuung ÜBER die eligiblen Sortinos (die tatsächlichen argmax-Konkurrenten) ⇒ SR₀ (#618).
     deflated_selection, deflation_confidence = _read_deflation_config()
-    evaluable_rewards = [float(getattr(t, "value", None))
-                         for t in trials
-                         if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
-                         and isinstance(getattr(t, "value", None), (int, float))]
-    deflated_min_reward = deflation_n = deflation_sigma = deflation_baseline = None
-    if deflated_selection:
-        from automation.optimizer.deflation import deflated_reward_threshold
-        deflated_min_reward, deflation_n, deflation_sigma, deflation_baseline = (
-            deflated_reward_threshold(evaluable_rewards, confidence=deflation_confidence))
+    n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
+    p_eligible = (n_eligible / len(trials)) if trials else 0.0
+    cohort_sr = [getattr(t, "user_attrs", {}).get("oos_sortino_period") for t in trials
+                 if getattr(t, "user_attrs", {}).get("oos_eligible") is True
+                 and getattr(t, "user_attrs", {}).get("oos_sortino_period") is not None]
+    deflation_n = len(cohort_sr)
+    deflation_sr0 = deflation_var = None
+    if deflated_selection and deflation_n >= 2:
+        from automation.optimizer.deflation import sr0_multiple_testing
+        deflation_var = statistics.pvariance([float(s) for s in cohort_sr])
+        deflation_sr0 = sr0_multiple_testing(deflation_var, deflation_n)
 
     # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
     boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
@@ -859,11 +865,12 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "reward_pstdev": reward_pstdev,
         "evaluable_fraction": evaluable_fraction,
         "gradient_signal": gradient_signal,
-        # Issue #592 — Deflations-Telemetrie (Reward-Skala) je Study.
-        "deflated_min_reward": deflated_min_reward,
-        "deflation_n": deflation_n,
-        "deflation_sigma": deflation_sigma,
-        "deflation_baseline": deflation_baseline,
+        # Issue #611/#618 — DSR-Telemetrie (per-Perioden-Sortino-Skala) + p_eligible (Gate-Passrate).
+        # Monotonie-Invariante (#611): SR₀ steigt NICHT mit p_eligible (kein Bernoulli-Artefakt mehr).
+        "p_eligible": p_eligible,
+        "deflation_n_eligible": deflation_n,
+        "deflation_sr0": deflation_sr0,
+        "deflation_var_sr": deflation_var,
         # Issue #597 — Randlösungs-Signatur.
         "boundary_hit_fraction": boundary_hit_fraction,
         "reward_terms_aggregates": term_aggregates,
@@ -969,6 +976,10 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # TPE EINE stetige Grösse (die risikoadjustierte OOS-Performance) statt einer Stufenfunktion;
         # die Feasibility-Rangordnung übernimmt Optuna nativ (feasible ≻ infeasible in best_trial).
         trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics))
+        # Issue #618 — der PER-PERIODEN-Sortino + PSR je Trial (für die DSR-Kohorten-Varianz V[ŜR_trials]
+        # in confirm; Multiple-Testing-Korrektur auf der per-Perioden-Skala, NICHT der Reward-Skala #611).
+        trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
+        trial.set_user_attr("oos_psr", metrics.oos_psr)
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
