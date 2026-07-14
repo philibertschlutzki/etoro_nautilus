@@ -21,6 +21,10 @@ def get_base_metrics(oos_sortino, is_sortino_median=0.0, folds=None):
     )
     m.oos_total_return = 0.05
     m.oos_fold_sortinos = folds
+    # Issue #589 — die Fold-Dispersion läuft nun über die per-Fold-RETURNS (+ oos_folds_total für die
+    # Normierung fehlender Folds). Die synthetischen ``folds`` werden hier als Return-Serie gespiegelt.
+    m.oos_fold_returns = folds
+    m.oos_folds_total = len(folds)
     m.oos_expectancy = 0.01
     m.oos_win_rate = 0.55
     m.oos_profit_factor = 1.2
@@ -79,7 +83,8 @@ def test_monotonicity_unit_test():
 
 
 def test_cap_unit_test():
-    """Assert, dass penalty <= penalty_relative_cap * abs(base) unter Extremwerten (+- 50 Raw Sortino) nicht gebrochen wird."""
+    """Issue #591 — penalty <= penalty_relative_cap * SOFT_SCALE (positive Skalenkonstante), NICHT
+    mehr * abs(base). Assert, dass unter Extremwerten (± 50 Raw Sortino) der Cap greift."""
     weights = get_base_weights()
     cap = 0.5
     weights["penalty_relative_cap"] = cap
@@ -96,8 +101,8 @@ def test_cap_unit_test():
     c = weights["sortino_soft_scale"]
     base = c * math.asinh(m.oos_sortino / c)
 
-    # Reconstruct what the theoretical penalty cap should be
-    max_penalty_allowed = cap * abs(base)
+    # Issue #591 — der Cap bindet an die positive Skalenkonstante soft_scale, nicht an |base|.
+    max_penalty_allowed = cap * c
 
     # Check what the actual penalities were (we can infer them if we know base, dd_excess, coverage)
     # reward = base - div_pen - dd_excess*w + cov*w - turnover_pen - fold_disp_pen + ret_tie

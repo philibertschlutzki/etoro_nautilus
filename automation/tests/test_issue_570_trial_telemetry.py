@@ -186,6 +186,9 @@ def test_reward_reconstructable_from_raw_metrics():
         oos_win_rate=0.55,
         oos_profit_factor=1.6,
         oos_fold_sortinos=tuple(raw["per_fold"]),
+        # Issue #589 — die Fold-Dispersion läuft über die per-Fold-RETURNS (+ oos_folds_total).
+        oos_fold_returns=tuple(raw["per_fold"]),
+        oos_folds_total=len(raw["per_fold"]),
     )
     actual = compute_reward(
         m, universe_size=1, weights=weights, risk_dd_cap=0.3, tournament_cfg=cfg
@@ -203,8 +206,9 @@ def test_reward_reconstructable_from_raw_metrics():
         if diff >= 0
         else weights["overfit_oos_luck_weight"] * (-diff)
     )
-    scaled_folds = [c * math.asinh(s / c) for s in raw["per_fold"]]
-    fold_disp = weights["fold_dispersion_weight"] * statistics.pstdev(scaled_folds)
+    # Issue #589 — Fold-Dispersion über die per-Fold-RETURNS (raw, KEINE asinh-Kompression;
+    # alle Folds valide ⇒ keine missing-fold-Strafe).
+    fold_disp = weights["fold_dispersion_weight"] * statistics.pstdev(raw["per_fold"])
     dd_penalty = weights["penalty_dd_weight"] * ((0.02 / 0.3) ** 2)
     reconstructed = (
         base

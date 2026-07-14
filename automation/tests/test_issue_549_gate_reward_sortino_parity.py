@@ -1,9 +1,11 @@
-"""Issue #549 — Gate-Sortino und Reward-Sortino müssen DENSELBEN kanonischen Wert nutzen.
+"""Issue #549/#589 — Gate-Sortino und Reward-Sortino müssen DENSELBEN kanonischen Wert nutzen.
 
-Vor dem Fix nutzte das Gate den gepoolten Sortino (ein _calculate_stats über die konkatenierte
-OOS-Serie), der Reward aber den Median der Per-Fold-Sortinos. An der Gate-Grenze konnte ein Trial
-so vom Gate anders bewertet werden als vom Reward (inkonsistenter Gradient). Der Fix setzt den
-Fold-Median an der Quelle (``apply_fold_aggregation``), sodass beide identisch propagieren.
+Historie: #549 setzte den Fold-MEDIAN an der Quelle, damit Gate und Reward identisch propagieren.
+#589 macht die Parität kohärent: der kanonische Sortino ist der GEPOOLTE Wert aus der konkatenierten
+OOS-Equity-Kurve (kohärent mit total_return), NICHT mehr der Fold-Median (der einen katastrophalen
+Fold maskierte und den Sortino vom Ergebnis entkoppelte). ``apply_fold_aggregation`` lässt
+``sortino_ratio`` gepoolt; der Fold-Median bleibt nur forensisch. Gate und Reward lesen beide den
+gepoolten ``oos_metrics["sortino_ratio"]``.
 """
 import json
 import statistics
@@ -20,20 +22,22 @@ def _fold(total_return, sortino, win_rate=0.5, expectancy=0.01, profit_factor=1.
     }
 
 
-def test_source_sets_sortino_to_fold_median():
-    """apply_fold_aggregation überschreibt sortino_ratio mit dem Fold-Median; pooled bleibt erhalten."""
+def test_source_keeps_pooled_sortino():
+    """Issue #589 — apply_fold_aggregation LÄSST sortino_ratio gepoolt (kohärent mit total_return);
+    der frühere Fold-Median ist nur noch forensisch (sortino_ratio_fold_median)."""
     per_fold = [_fold(0.02, 2.0), _fold(-0.01, -1.0), _fold(0.005, 0.5), _fold(-0.02, -0.5)]
-    # Gepoolter Ausgangswert (z. B. aus der konkatenierten OOS-Serie) — soll ÜBERSCHRIEBEN werden.
+    # Gepoolter Ausgangswert (aus der konkatenierten OOS-Serie) — bleibt UNVERÄNDERT der kanonische.
     oos_metrics = {"sortino_ratio": -0.41656, "win_rate": 0.3, "expectancy": 0.0,
                    "profit_factor": 0.9, "total_return": 0.001, "total_trades": 40,
                    "max_drawdown": 0.1}
 
     apply_fold_aggregation(oos_metrics, per_fold)
 
-    expected_median = statistics.median([2.0, -1.0, 0.5, -0.5])  # = 0.0
-    assert oos_metrics["sortino_ratio"] == expected_median
-    assert oos_metrics["sortino_ratio_pooled"] == -0.41656  # forensisch erhalten
+    assert oos_metrics["sortino_ratio"] == -0.41656  # gepoolt, NICHT überschrieben
+    assert oos_metrics["sortino_ratio_pooled"] == -0.41656
+    assert oos_metrics["sortino_ratio_fold_median"] == statistics.median([2.0, -1.0, 0.5, -0.5])
     assert oos_metrics["oos_fold_sortinos"] == [2.0, -1.0, 0.5, -0.5]
+    assert oos_metrics["oos_fold_returns"] == [0.02, -0.01, 0.005, -0.02]
 
 
 def test_gate_and_reward_read_identical_sortino(tmp_path):
@@ -43,9 +47,9 @@ def test_gate_and_reward_read_identical_sortino(tmp_path):
                    "profit_factor": 1.5, "total_return": 0.001, "total_trades": 40,
                    "max_drawdown": 0.1, "median_position_notional": 1000.0}
     apply_fold_aggregation(oos_metrics, per_fold)
-    canonical = oos_metrics["sortino_ratio"]
+    canonical = oos_metrics["sortino_ratio"]  # Issue #589 — der GEPOOLTE Wert (nicht der Fold-Median)
 
-    # Reward-Seite: parse_tournament liest median(oos_fold_sortinos) == canonical.
+    # Reward-Seite: parse_tournament liest den gepoolten oos_metrics["sortino_ratio"] == canonical.
     result = {
         "universe_size": 1,
         "single_symbol_oos": {

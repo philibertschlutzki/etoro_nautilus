@@ -127,6 +127,25 @@ def confirm_on_holdout(
     }
 
 
+def _median_rank_index(values) -> int:
+    """Issue #594 — Index des Laufs mit dem MEDIANEN Rang nach ``values`` (z. B. oos_total_return).
+
+    Dokumentierte, benannte Aggregation mit expliziter Tie-Breaking-Regel (ersetzt das
+    undokumentierte ``_lower_median_or_none``): aufsteigend nach ``value`` sortiert (``None`` ⇒ −inf,
+    schlechtestmöglich), bei gerader Anzahl der UNTERE Median (konservativ, ``order[(n-1)//2]``). Der
+    Rückgabe-Index adressiert EINEN real gelaufenen Backtest, dessen VOLLSTÄNDIGER, kohärenter
+    Metrikvektor (nicht ein komponentenweiser Frankenstein-Median) in die Bewertung geht.
+    Deterministisch (stabiler Sekundär-Sort nach Original-Index)."""
+    n = len(values)
+    if n == 0:
+        raise ValueError("_median_rank_index: leere Werteliste")
+    order = sorted(
+        range(n),
+        key=lambda i: (float("-inf") if values[i] is None else float(values[i]), i),
+    )
+    return order[(n - 1) // 2]
+
+
 def _metrics_dict(m) -> dict:
     """Serialisierbare Teilmenge der Holdout-Metriken (analog confirm_on_holdout)."""
     return {
@@ -266,7 +285,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     m_global = _holdout_metrics_for_params(strategy, symbol, global_params,
                                            run_backtest=run_backtest, build_trial=build_trial,
                                            catalog_newest_ns=catalog_newest_ns)
-    R_global = compute_reward(m_global, universe_size=1, weights=global_weights) if global_weights else compute_reward(m_global, universe_size=1)
+    # Issue #594 — Holdout-Reward über denselben Codepfad mit holdout=True (IS-Terme abgeschaltet,
+    # kein Platzhalter). Study-Reward und Holdout-Reward laufen damit nachweislich über compute_reward.
+    R_global = (compute_reward(m_global, universe_size=1, weights=global_weights, holdout=True)
+                if global_weights else compute_reward(m_global, universe_size=1, holdout=True))
 
     import optuna
     import logging
@@ -294,29 +316,30 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # da confirm_per_symbol_promotion nur fuer winner_candidates aufgerufen wird.
         best_trials = study.best_trials if len(getattr(study, "directions", ["maximize"])) > 1 else [study.best_trial]
 
-    # 2. Deflations-Vorfilter (Issue #576)
+    # 2. Deflations-Vorfilter (Issue #576/#592) — auf der REWARD-Skala (dem tatsächlichen
+    # Selektionskriterium argmax(reward)), NICHT auf dem geklemmten Sortino. Der frühere
+    # 50.0-Sentinel-Filter (hartcodierte Zahl, die seit der Clip-Änderung #588 ins Leere
+    # griff) ist ersatzlos entfallen. baseline = median(rewards) (die Reward-Skala ist nicht
+    # nullzentriert). Ein Numerik-Guard-Trial (#588) hat value=None ⇒ fällt komplett aus der Kohorte.
     deflated_selection = bool(tournament_cfg.get("deflated_selection", False))
     deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
-    deflated_min_sortino = None
+    deflated_min_reward = None
+    deflation_n = deflation_sigma = deflation_baseline = None
 
     if deflated_selection:
-        import statistics as _dstats
-        # Nutze alle Trials die OOS-evaluiert wurden, unabhaengig von IS-Eligibility.
-        cand_sortinos = [
-            t.user_attrs.get("oos_sortino") for t in study.trials
-            if t.state == optuna.trial.TrialState.COMPLETE and t.user_attrs.get("oos_evaluated")
+        cand_rewards = [
+            t.value for t in study.trials
+            if t.state == optuna.trial.TrialState.COMPLETE
+            and t.user_attrs.get("oos_evaluated")
+            and t.value is not None
         ]
-        # Issue #576: 50-Clip-Sentinels aus der Deflations-Dispersion ausschliessen
-        cand_sortinos = [float(s) for s in cand_sortinos if s is not None and float(s) != 50.0]
-        if len(cand_sortinos) >= 2:
-            dispersion = _dstats.pstdev(cand_sortinos)
-            from automation.optimizer.deflation import deflated_threshold
-            deflated_min_sortino = deflated_threshold(
-                len(cand_sortinos), dispersion,
-                confidence=deflation_confidence, baseline=0.0)
+        from automation.optimizer.deflation import deflated_reward_threshold
+        deflated_min_reward, deflation_n, deflation_sigma, deflation_baseline = (
+            deflated_reward_threshold(cand_rewards, confidence=deflation_confidence))
+        if deflated_min_reward is not None:
             logging.getLogger("optimizer").info(
-                f"[Deflated Holdout #576] {symbol}: Schwelle {deflated_min_sortino:.4f} "
-                f"(N={len(cand_sortinos)}, σ={dispersion:.4f})"
+                f"[Deflated Holdout #592] {symbol}: Reward-Schwelle {deflated_min_reward:.4f} "
+                f"(N={deflation_n}, σ={deflation_sigma:.4f}, baseline={deflation_baseline:.4f})"
             )
 
     # Evaluiere den Holdout ueber die Top-k Trials
@@ -329,54 +352,39 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                                catalog_newest_ns=catalog_newest_ns)
         holdout_metrics_list.append((trial, symbol_params, m_symbol))
 
-    # Bilde den MEDIAN-Holdout aus den Top-k Evaluierungen (Robustheitsmaximierung #576)
+    # Issue #594 — VEKTOR-Median statt komponentenweisem Median: der Lauf mit dem medianen Rang
+    # (nach oos_total_return, dokumentierte Tie-Break-Regel via _median_rank_index) liefert seinen
+    # VOLLSTÄNDIGEN, kohärenten Metrikvektor. Der frühere komponentenweise Median setzte sortino aus
+    # Lauf A, drawdown aus Lauf B, return aus Lauf C zusammen — ein Vektor, der zu KEINEM real
+    # gelaufenen Backtest gehörte, und speiste daraus R_symbol UND das Promotion-Gate.
+    median_idx = _median_rank_index([m.oos_total_return for _, _, m in holdout_metrics_list])
+    median_trial, median_symbol_params, median_m_symbol = holdout_metrics_list[median_idx]
 
-    def _lower_median_or_none(vals):
-        clean_vals = sorted([v for v in vals if v is not None])
-        n = len(clean_vals)
-        if n == 0:
-            return None
-        return clean_vals[(n - 1) // 2]
-
-    # Aggregiere die Metriken zu einem Median-Holdout-Kandidaten
-    median_sortino = _lower_median_or_none([m.oos_sortino for _, _, m in holdout_metrics_list])
-    median_max_drawdown = _lower_median_or_none([m.oos_max_drawdown for _, _, m in holdout_metrics_list])
-    median_total_return = _lower_median_or_none([m.oos_total_return for _, _, m in holdout_metrics_list])
-
-    # Fuer das Proposal werten wir den 'besten' (d.h. den am hoechsten rankenden IS) aus,
-    # aber nutzen die Median-Metriken zur Evaluierung der Holdout-Gate-Robustheit.
+    # Fuer das Proposal werten wir den 'besten' (d.h. den am hoechsten rankenden) aus (die
+    # vorgeschlagenen Parameter), aber die Gate-/Reward-Robustheit über den KOHÄRENTEN Median-Vektor.
     best_trial, best_symbol_params, best_m_symbol = holdout_metrics_list[0]
 
-    # Mocke ein TournamentMetrics-aehnliches Objekt fuer die Median-Evaluierung
-    from automation.optimizer.parsing import TournamentMetrics
-    median_m_symbol = TournamentMetrics(
-        oos_evaluated=all(m.oos_evaluated for _, _, m in holdout_metrics_list),
-        oos_eligible=all(m.oos_eligible for _, _, m in holdout_metrics_list),
-        is_sortino_median=0.0, # Nicht relevant fuer Holdout-Gate
-        oos_sortino=median_sortino,
-        oos_max_drawdown=median_max_drawdown if median_max_drawdown is not None else 1.0,
-        oos_total_trades=int(_lower_median_or_none([m.oos_total_trades for _, _, m in holdout_metrics_list]) or 0),
-        win_count=0,
-        fully_eligible_pairs=0,
-        is_total_trades=0,
-        oos_total_return=median_total_return if median_total_return is not None else 0.0
-    )
+    # Issue #594 — Holdout-Reward über DENSELBEN Codepfad (compute_reward) mit holdout=True: die
+    # IS-abhängigen Terme werden ABGESCHALTET (kein 0.0-Platzhalter, der bei negativem base eine
+    # fiktive Overfit-Strafe von 0.5·|base| erzeugte). median_m_symbol ist ein REALER Lauf.
+    R_symbol = (compute_reward(median_m_symbol, universe_size=1, weights=global_weights, holdout=True)
+                if global_weights else compute_reward(median_m_symbol, universe_size=1, holdout=True))
 
-    R_symbol = compute_reward(median_m_symbol, universe_size=1, weights=global_weights) if global_weights else compute_reward(median_m_symbol, universe_size=1)
-
-    # Gate-Evaluation ZWINGEND ueber den Median-Holdout
+    # Gate-Evaluation ZWINGEND ueber den kohärenten Median-Holdout-Vektor.
     holdout_passed = _holdout_gate_passed(
         median_m_symbol, risk_dd_cap,
         sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
     )
 
-    # Deflations-Vorfilter Check
-    if holdout_passed and deflated_min_sortino is not None:
-        if median_sortino is None or median_sortino < deflated_min_sortino:
+    # Deflations-Vorfilter Check (Issue #592) — der Study-Gewinner (argmax reward) muss das
+    # deflationierte Rausch-Maximum der REWARD-Verteilung schlagen (nicht eine Teil-Kennzahl).
+    if holdout_passed and deflated_min_reward is not None:
+        winner_reward = best_trials[0].value if best_trials and best_trials[0].value is not None else None
+        if winner_reward is None or winner_reward < deflated_min_reward:
             holdout_passed = False
             logging.getLogger("optimizer").warning(
-                f"[Deflated-Drop Holdout #576] {symbol}: Median-Holdout-Sortino {median_sortino} "
-                f"< deflated {deflated_min_sortino:.4f}"
+                f"[Deflated-Drop Holdout #592] {symbol}: Study-Gewinner-Reward {winner_reward} "
+                f"< deflated {deflated_min_reward:.4f}"
             )
 
     promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
@@ -401,8 +409,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "metrics_global": _metrics_dict(m_global)
     }
 
-    if deflated_min_sortino is not None:
-        best_result["metrics_symbol"]["deflated_min_sortino"] = deflated_min_sortino
+    if deflated_min_reward is not None:
+        best_result["metrics_symbol"]["deflated_min_reward"] = deflated_min_reward
 
     return best_result
 

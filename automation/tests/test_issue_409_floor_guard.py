@@ -84,14 +84,16 @@ def test_no_warning_before_startup_threshold():
 
 
 def test_floor_is_derived_from_shipped_config():
-    """Ohne explizite weights leitet der Callback Floor (−9.75) UND n_startup (16) aus optimizer.json ab."""
+    """Ohne explizite weights leitet der Callback den Unevaluable-Floor UND n_startup (16) aus
+    optimizer.json ab. Issue #591 — die Bänder wurden nach unten verschoben (penalty_unevaluable_oos
+    −10 → −20), der Unevaluable-Floor ist damit −19.75 (= −20 + 0.25)."""
     lg, recs = _capturing_logger("test409d")
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
     floor = cfg["penalty_unevaluable_oos"] + cfg["unevaluable_shaping_span"]
     study = _FakeStudy([floor] * (cfg["n_startup_trials"] + 2))
     ro.floor_plateau_callback(study, study.trials[-1], logger=lg)   # weights=None -> config
     assert _warned(recs)
-    assert floor == pytest.approx(-9.75)
+    assert floor == pytest.approx(-19.75)
 
 
 def test_warns_only_once_per_study():
@@ -130,5 +132,5 @@ def test_optimize_symbol_registers_floor_guard(tmp_path, monkeypatch):
 
     study = ro.optimize_symbol("SmaCrossoverStrategy", "CPRT.ETORO", n_trials=16)
 
-    assert all(abs(t.value - (-9.75)) < 1e-9 for t in study.trials)   # voller Floor-Kollaps
+    assert all(abs(t.value - (-19.75)) < 1e-9 for t in study.trials)  # voller Floor-Kollaps (#591: Band -20..-19.75)
     assert _warned(recs), "optimize_symbol MUSS den floor_plateau_callback registrieren"

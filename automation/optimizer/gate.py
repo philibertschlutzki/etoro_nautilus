@@ -37,17 +37,27 @@ class InsufficientGeometryError(Exception):
 
 
 def required_span_days(walk_forward_dict: dict) -> int:
-    """Issue #531 — die physisch erforderliche Kalendertag-Spanne der ROHDATEN für die volle
-    Walk-Forward-Geometrie: ``is_window_days + splits*oos_window_days + holdout_days``.
+    """Issue #531/#596 — die physisch erforderliche Kalendertag-Spanne der ROHDATEN für die volle
+    Walk-Forward-Geometrie: ``is_window_days + embargo_period_days + splits*oos_window_days +
+    holdout_days``.
 
-    Rein, I/O-frei. Dies ist die Single Source of Truth der ``required_span``-Formel (deckungsgleich
-    mit Issue #531 = 180 + 4·45 + 45 = 405). Bewusst OHNE ``gate1_buffer_days`` (der Puffer ist die
-    Backfill-Schwelle, nicht der Fail-Loud-Floor) und OHNE ``embargo_period_days`` (das Embargo
-    verschiebt die OOS-Grenzen INNERHALB des Fensters, erweitert aber die geforderte Außen-Spanne
-    nicht — vgl. ``compute_walk_forward_window``)."""
+    Rein, I/O-frei. Single Source of Truth der ``required_span``-Formel, NUMERISCH deckungsgleich mit
+    ``compute_walk_forward_window`` + Holdout: ``(end − start).days + holdout_days`` = ``is + embargo +
+    splits·oos + holdout`` (= 180 + 21 + 4·45 + 45 = 426 mit der Produktions-Geometrie).
+
+    Issue #596 — das Embargo GEHÖRT in die Spanne. Der frühere Docstring behauptete das Gegenteil
+    ("das Embargo verschiebt die OOS-Grenzen INNERHALB des Fensters"), das war sachlich falsch und
+    widersprach Issue #548: ``compute_fold_boundaries`` startet OOS-Fold 0 bei ``is_end + embargo`` und
+    ``compute_walk_forward_window`` reserviert das Embargo im Außen-Span. Ohne das Embargo prüfte
+    ``assert_walk_forward_geometry`` gegen eine um exakt ``embargo_period_days`` zu KLEINE Zahl — ein
+    Symbol mit 405–425 d Historie passierte den Guard, obwohl ``start`` vor den Datenanfang fiel und
+    das IS-Fenster still verkürzt wurde (genau die No-Clamping-Verletzung, die #531 ausschliessen
+    sollte). Bewusst OHNE ``gate1_buffer_days`` (der Puffer ist die Backfill-Schwelle, nicht der
+    Fail-Loud-Floor)."""
     wf = walk_forward_dict or {}
     return int(
         wf.get("is_window_days", 0)
+        + wf.get("embargo_period_days", 0)
         + wf.get("splits", 0) * wf.get("oos_window_days", 0)
         + wf.get("holdout_days", 0)
     )
@@ -72,10 +82,16 @@ def assert_walk_forward_geometry(*, actual_span_days: float, walk_forward_dict: 
 
 
 def required_bars(*, is_window_days: int, oos_window_days: int, splits: int,
-                  holdout_days: int, buffer_days: int, bars_per_day: int = 24) -> int:
+                  holdout_days: int, buffer_days: int, bars_per_day: int = 24,
+                  embargo_period_days: int = 0) -> int:
     """Minimum bar count for the entire window on 1h bars:
-    ``(is + splits*oos + holdout + buffer) * bars_per_day``."""
-    return int((is_window_days + splits * oos_window_days + holdout_days + buffer_days) * bars_per_day)
+    ``(is + embargo + splits*oos + holdout + buffer) * bars_per_day``.
+
+    Issue #596 — konsistent zu ``required_span_days`` um ``embargo_period_days`` erweitert (der
+    Embargo/Purge-Gap gehört in die geforderte Spanne; vgl. ``compute_walk_forward_window``/#548).
+    Fehlt der Parameter (Default 0) ⇒ bit-identisch zum Alt-Verhalten."""
+    return int((is_window_days + embargo_period_days + splits * oos_window_days
+                + holdout_days + buffer_days) * bars_per_day)
 
 
 def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
@@ -94,6 +110,7 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
     wf = config["walk_forward"]
 
     # (a) absolute history coverage of the full walk-forward corridor + buffer
+    # Issue #596 — inkl. embargo_period_days (konsistent zu required_span_days / #548-Geometrie).
     need = required_bars(
         is_window_days=wf["is_window_days"],
         oos_window_days=wf["oos_window_days"],
@@ -101,6 +118,7 @@ def is_symbol_tunable(symbol: str, n_params: int, *, available_bars: int,
         holdout_days=wf["holdout_days"],
         buffer_days=config["gate1_buffer_days"],
         bars_per_day=bars_per_day,
+        embargo_period_days=wf.get("embargo_period_days", 0),
     )
     if available_bars < need:
         return (False, "INSUFFICIENT_HISTORY")

@@ -30,12 +30,17 @@ CFG = {"oos_min_total_return": 0.005, "max_drawdown": 0.3}
 
 
 def _m(oos_sortino, is_sortino_median, fold_sortinos=None, oos_total_return=0.01):
+    # Issue #589 — die Fold-Dispersion läuft nun über die per-Fold-RETURNS (+ oos_folds_total); die
+    # synthetische ``fold_sortinos``-Streuung wird hier zusätzlich als Return-Serie gespiegelt.
+    folds = tuple(fold_sortinos) if fold_sortinos else ()
     return TournamentMetrics(
         oos_evaluated=True, oos_eligible=True, is_sortino_median=is_sortino_median,
         oos_sortino=oos_sortino, oos_max_drawdown=0.02, oos_total_trades=30, win_count=1,
         fully_eligible_pairs=1, is_total_trades=100, oos_total_return=oos_total_return,
         oos_expectancy=0.001, oos_win_rate=0.5, oos_profit_factor=1.5,
-        oos_fold_sortinos=tuple(fold_sortinos) if fold_sortinos else (),
+        oos_fold_sortinos=folds,
+        oos_fold_returns=folds,
+        oos_folds_total=len(folds),
     )
 
 

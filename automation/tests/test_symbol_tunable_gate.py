@@ -19,10 +19,12 @@ def _cfg():
 
 def _need(cfg, bars_per_day=24):
     wf = cfg["walk_forward"]
+    # Issue #596 — konsistent zu is_symbol_tunable/required_bars inkl. embargo_period_days.
     return gate.required_bars(
         is_window_days=wf["is_window_days"], oos_window_days=wf["oos_window_days"],
         splits=wf["splits"], holdout_days=wf["holdout_days"],
-        buffer_days=cfg["gate1_buffer_days"], bars_per_day=bars_per_day)
+        buffer_days=cfg["gate1_buffer_days"], bars_per_day=bars_per_day,
+        embargo_period_days=wf.get("embargo_period_days", 0))
 
 
 def test_required_bars_formula():

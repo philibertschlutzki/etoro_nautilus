@@ -48,12 +48,13 @@ def test_annualization_path_parity():
     dd_dev = float(np.sqrt((downside_diff ** 2).mean()))
     mean_ret = period_rets.mean()
 
-    RATIO_CAP = 15.0
-    expected_config_sortino = max(-RATIO_CAP, min(((mean_ret - mar) / dd_dev) * math.sqrt(111.0), RATIO_CAP))
+    # Issue #588 — der Sortino wird NICHT mehr an der Quelle geklemmt (nur der reine Numerik-Guard
+    # ≫ 15 greift). Die Pfad-Parität gilt für den UNGEKLEMMTEN Wert.
+    expected_config_sortino = ((mean_ret - mar) / dd_dev) * math.sqrt(111.0)
     n_periods = len(mtm_series.pct_change().dropna())
     total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
     derived_factor = n_periods * 31_557_600.0 / total_span_seconds
-    expected_fallback_sortino = max(-RATIO_CAP, min(((mean_ret - mar) / dd_dev) * math.sqrt(derived_factor), RATIO_CAP))
+    expected_fallback_sortino = ((mean_ret - mar) / dd_dev) * math.sqrt(derived_factor)
 
     assert math.isclose(sortino_config, expected_config_sortino, rel_tol=1e-9)
     assert math.isclose(sortino_fallback, expected_fallback_sortino, rel_tol=1e-9)

@@ -80,7 +80,9 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
         win_count=1,
         median_is_sortino=2.0,
         oos_fold_sortinos=[1.0],
-        oos_metrics={"sortino_ratio": 1.0, "max_drawdown": cap},
+        # Issue #597 — realistischer OOS-Drawdown (nicht der 30 %-Gate-Cap), damit der auf
+        # dd_reward_scale (0.03) normierte dd_penalty nicht katastrophal wird und den Reward floort.
+        oos_metrics={"sortino_ratio": 1.0, "max_drawdown": 0.01},
     )
     m = parsing.parse_tournament(p)
     sampled = {"sma_period": 60, "cooldown_bars": 36}
@@ -88,16 +90,16 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
     b = bounds.extract_numeric_bounds("SmaCrossoverStrategy")
     base = _base(cfg, 1.0)
     pen = cfg["lambda_reg"] * bounds.normalized_param_distance(sampled, glob, b)
-    # Ein einzelner Fold-Sortino ⇒ keine Dispersions-Strafe; oos_total_return=0 ⇒ kein Tie-Breaker.
+    # Ein einzelner Fold-Return ⇒ keine Dispersions-Strafe; oos_total_return=0 ⇒ kein Tie-Breaker.
+    # Issue #597 — dd_penalty normiert auf dd_reward_scale (nicht mehr auf den Gate-Cap).
+    dd = 0.01
+    dd_scale = cfg.get("dd_reward_scale", cap)
     dd_penalty = (
-        cfg["penalty_dd_weight"] * ((cap / cap) ** 2) if cap and cap > 0 else 0.0
+        cfg["penalty_dd_weight"] * ((dd / dd_scale) ** 2) if dd_scale and dd_scale > 0 else 0.0
     )
     expected = base - _divergence(cfg, 2.0, base) - dd_penalty - pen
-    floor = (
-        cfg["penalty_unevaluable_oos"]
-        + cfg["unevaluable_shaping_span"]
-        + cfg["evaluable_floor_epsilon"]
-    )
+    # Issue #591 — der eligible Reward-Floor ist der ENTKOPPELTE evaluable_reward_floor.
+    floor = cfg["evaluable_reward_floor"]
     got = reward.compute_reward(
         m,
         universe_size=1,

@@ -67,7 +67,8 @@ def test_gate_inactive_when_threshold_absent():
 
 
 def test_gate_metrics_aggregation_split():
-    """Nur sortino_ratio nutzt Fold-Median. Häufigkeitsmetriken bleiben pooled (Issue #574)."""
+    """Issue #589 — sortino_ratio bleibt GEPOOLT (kohärent mit total_return), NICHT Fold-Median.
+    Häufigkeitsmetriken bleiben ebenfalls pooled (Issue #574)."""
     import statistics
     per_fold = [
         _fold(0.02, sortino=2.0, win_rate=0.8, expectancy=0.03, profit_factor=3.0),
@@ -79,8 +80,9 @@ def test_gate_metrics_aggregation_split():
                    "profit_factor": 1.7, "total_return": 0.02, "total_trades": 30}
     apply_fold_aggregation(oos_metrics, per_fold)
 
-    # Sortino wird durch Fold-Median überschrieben
-    assert oos_metrics["sortino_ratio"] == statistics.median([2.0, -1.0, 1.0])
+    # Issue #589 — Sortino bleibt gepoolt (UNVERÄNDERT); der Fold-Median ist nur noch forensisch.
+    assert oos_metrics["sortino_ratio"] == 99.0
+    assert oos_metrics["sortino_ratio_fold_median"] == statistics.median([2.0, -1.0, 1.0])
 
     # Win Rate, Expectancy, Profit Factor bleiben pooled und werden zusätzlich unter _pooled gespeichert
     assert oos_metrics["win_rate"] == 0.55

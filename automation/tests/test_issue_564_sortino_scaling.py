@@ -33,13 +33,17 @@ def test_hourly_annualization_factor_is_8766():
     assert round(math.sqrt(factor), 1) == 93.6  # der Multiplikator für die Annualisierung (≈93.6)
 
 
-# ── oos_min_sortino ist annualisiert dokumentiert + auf 1.0 kalibriert ───────────────────────
+# ── oos_min_sortino ist annualisiert dokumentiert + auf die √1638-Skala rekalibriert ─────────
+# Issue #587/#593 — nach der EMPIRISCHEN Span-Annualisierung (#587) fiel der Faktor für RTH-Equity-1h
+# von √8766 (Kalenderjahr-Fehlannahme) auf √1638 (reale Handelsstunden). Der alte 1.0-Wert (√8766-Ära)
+# wird analytisch auf 1.0·√(1638/8766) ≈ 0.43 übersetzt (empirisch aus einem Kalibrierlauf zu verfeinern).
 def test_oos_min_sortino_calibrated_and_documented():
-    assert TCFG["oos_min_sortino"] >= 1.0, "oos_min_sortino auf ökonomisch sinnvolles Niveau heben."
+    assert 0.4 <= TCFG["oos_min_sortino"] <= 0.5, (
+        "oos_min_sortino auf die √1638-Skala rekalibrieren (≈0.43, Issue #587/#593).")
     schema = TCFG["_schema"]["fields"]
     doc = (schema.get("min_sortino", "") + schema.get("oos_min_sortino_note", "")).lower()
     assert "annualis" in doc, "Schema muss klarstellen, dass die Schwelle ANNUALISIERT ist."
-    assert "8766" in doc or "annualization_factor" in doc
+    assert "1638" in doc, "Schema muss die √1638-Rekalibrierung (#587) dokumentieren."
 
 
 # ── Sensitivitäts-Sweep: Winner-Rate monoton fallend in oos_min_sortino ──────────────────────
@@ -104,21 +108,23 @@ def test_no_hard_clip_saturation_after_soft_saturation():
         for s in (6.0, 9.0, 12.0, 15.0)]
     assert statistics.pstdev(rewards) > 1e-3
 
-# ── Fixes for Issue #573 (Downside Floor and Clipping) ────────────────────────
+# ── Fixes for Issue #573 (Downside Floor) + #588 (no hard clip) ─────────────────
 def test_synthetic_zero_loss_sortino():
-    # Create synthetic MtM fold with minimal or zero downside deviation
+    # Issue #588/#590 — Der frühere Hard-Clip (±15/±50) ist ENTFERNT; ein verlustarmer Fold
+    # liefert über den sortino_downside_floor (#573) einen ENDLICHEN, POSITIVEN, UNGEKLEMMTEN
+    # Sortino (nicht None, nicht auf 50 geklemmt). Nur der reine Numerik-Guard (sortino_numeric_guard,
+    # Default 1e6) fängt echte Overflows ab.
     idx = pd.date_range("2025-01-01", periods=10, freq="1h", tz="UTC")
-    # All positive returns + one tiny negative return to bypass losses_count == 0
     series = pd.Series([1000.0, 1001.0, 1002.0, 1003.0, 1004.0, 1005.0, 1006.0, 1007.0, 1006.999999, 1008.0], index=idx)
-    # PnL list to mock trades (needs to have at least one loss, and >= sortino_min_trades)
     pnls = [1.0] * 11 + [-1e-8]
     holds = [(3600*10**9, 1.0)] * 12
     import automation.backtest_runner as br
     stats = br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
     sortino = stats.get("sortino_ratio")
-    assert sortino is not None
+    assert sortino is not None          # #590 — losses_count==0 ist KEIN Ausstiegsgrund mehr
     assert math.isfinite(sortino)
-    assert sortino <= 50.0
+    assert sortino > 0.0                # positiv (aufsteigende Equity)
+    assert abs(sortino) <= br._read_sortino_numeric_guard()  # unterhalb des reinen Numerik-Guards
 
 def test_monotonic_edge_scaling():
     idx = pd.date_range("2025-01-01", periods=10, freq="1h", tz="UTC")
@@ -134,11 +140,16 @@ def test_monotonic_edge_scaling():
     assert sortinos[0] < sortinos[1] < sortinos[2], f"Sortino should scale monotonically: {sortinos}"
 
 def test_gating_immunity():
-    # Test that apply_fold_aggregation applies winsorization
-    oos_metrics = {"sortino_ratio": 0.5}
-    per_fold = [{"sortino_ratio": 1.0}, {"sortino_ratio": 2.0}, {"sortino_ratio": 50.0}]
+    # Issue #589 — apply_fold_aggregation aggregiert den Sortino NICHT mehr zum (winsorisierten)
+    # Fold-Median; der gepoolte sortino_ratio (hier 0.5) bleibt unangetastet, der frühere Median
+    # ist nur noch forensisch (sortino_ratio_fold_median).
+    oos_metrics = {"sortino_ratio": 0.5, "total_return": 0.02}
+    per_fold = [{"sortino_ratio": 1.0, "total_return": 0.01},
+                {"sortino_ratio": 2.0, "total_return": 0.02},
+                {"sortino_ratio": 50.0, "total_return": 0.03}]
     import automation.backtest_runner as br
+    import statistics
     br.apply_fold_aggregation(oos_metrics, per_fold)
-    # If 50.0 is clipped at 95th percentile, it should be heavily reduced (or just median calculation applies anyway)
-    # We assert it does not crash and works as a median or clamped value.
-    assert "sortino_ratio" in oos_metrics
+    assert oos_metrics["sortino_ratio"] == 0.5            # gepoolt, unverändert
+    assert oos_metrics["sortino_ratio_fold_median"] == statistics.median([1.0, 2.0, 50.0])
+    assert oos_metrics["oos_fold_returns"] == [0.01, 0.02, 0.03]
