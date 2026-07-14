@@ -81,6 +81,10 @@ class TournamentMetrics:
     oos_n_periods: int = 0
     oos_ret_skew: float = 0.0
     oos_ret_kurtosis: float = 3.0
+    # Issue #620 — die #589-Kohärenz-Invariante (sign(oos_sortino)==sign(oos_total_return)) feuert im
+    # Backtest-SUBPROZESS; ihr Flag ``oos_coherence_violation`` erreichte bisher weder TournamentMetrics
+    # noch das JSON_EVENT. Jetzt durchgereicht ⇒ beobachtbar (Study-Zähler coherence_violations).
+    oos_coherence_violation: bool = False
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -147,6 +151,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_n_periods = oos_metrics.get("n_periods")
     oos_ret_skew = oos_metrics.get("ret_skew")
     oos_ret_kurtosis = oos_metrics.get("ret_kurtosis")
+    # Issue #620 — Kohärenz-Verletzungs-Flag aus dem Subprozess (None-safe ⇒ False).
+    oos_coherence_violation = bool(oos_metrics.get("oos_coherence_violation") or False)
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -248,6 +254,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_n_periods=int(oos_n_periods) if oos_n_periods is not None else 0,
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
+        oos_coherence_violation=oos_coherence_violation,
     )
 
     # Pre-Return Invarianten-Check

@@ -362,6 +362,8 @@ def make_objective(
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            # Issue #620 — #589-Kohärenz-Verletzung (sign(oos_sortino)≠sign(oos_total_return)) sichtbar.
+            "oos_coherence_violation": bool(metrics.oos_coherence_violation),
             "reward_terms": reward_terms,
         })
 
@@ -746,6 +748,16 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     durs = [v for t in trials
             if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
     evaluable = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
+    # Issue #620 — Zähler der #589-Kohärenz-Verletzungen (sichtbar statt still im Subprozess). > 1 %
+    # einer Study ⇒ WARNING mit Study-Name.
+    coherence_violations = sum(
+        1 for t in trials if getattr(t, "user_attrs", {}).get("oos_coherence_violation") is True)
+    if trials and coherence_violations / len(trials) > 0.01:
+        logging.getLogger("optimizer").warning(
+            "[#620] %s: coherence_violations=%d/%d (> 1 %%) — sign(oos_sortino)≠sign(oos_total_return) "
+            "häuft sich; Aggregationspfad prüfen.", getattr(study, "study_name", "?"),
+            coherence_violations, len(trials),
+        )
     try:
         best_value = study.best_value
     except Exception:
@@ -871,6 +883,8 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "deflation_n_eligible": deflation_n,
         "deflation_sr0": deflation_sr0,
         "deflation_var_sr": deflation_var,
+        # Issue #620 — #589-Kohärenz-Verletzungen je Study (beobachtbar).
+        "coherence_violations": coherence_violations,
         # Issue #597 — Randlösungs-Signatur.
         "boundary_hit_fraction": boundary_hit_fraction,
         "reward_terms_aggregates": term_aggregates,
@@ -980,6 +994,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # in confirm; Multiple-Testing-Korrektur auf der per-Perioden-Skala, NICHT der Reward-Skala #611).
         trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
         trial.set_user_attr("oos_psr", metrics.oos_psr)
+        # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
+        trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
@@ -1024,6 +1040,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            # Issue #620 — #589-Kohärenz-Verletzung (sign(oos_sortino)≠sign(oos_total_return)) sichtbar.
+            "oos_coherence_violation": bool(metrics.oos_coherence_violation),
             "reward_terms": reward_terms,
         })
 
