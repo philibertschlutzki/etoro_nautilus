@@ -306,7 +306,13 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
             allowed = set(winners.get(strategy, []))
             candidate_syms = [s for s in syms if s in allowed]
         elif tier == "refine":
-            candidate_syms = []   # Platzhalter — echte Refinement-Heuristik ist späterer P3-Ausbau
+            # Issue #623 — der frühere `candidate_syms = []`-Platzhalter lieferte STRUKTURELL 0 Paare,
+            # ohne Fehler, ohne Warnung ('--tier refine' war ein stiller No-Op). Bis zur echten
+            # Refinement-Heuristik (P3-Ausbau) bricht der Modus jetzt FAIL-LOUD ab.
+            raise NotImplementedError(
+                "'--tier refine' ist noch nicht implementiert (Issue #623): die Refinement-Heuristik "
+                "ist ein späterer P3-Ausbau. Nutze '--tier deployable' oder '--tier all'."
+            )
         else:  # 'all'
             candidate_syms = list(syms)
 

@@ -948,6 +948,42 @@ def collect_oos_fold_returns(per_fold_oos: list[dict]) -> list[float]:
     return [float(f["total_return"]) for f in per_fold_oos if f is not None and f.get("total_return") is not None]
 
 
+_fold_winsorize_cache: tuple | None = None
+
+
+def _read_fold_winsorize() -> tuple:
+    """Issue #623 — (fold_winsorize_lower, fold_winsorize_upper) aus tournament.json (gecached).
+    Fehlen die Keys ⇒ (None, None) ⇒ _winsorize ist ein No-Op (Legacy, bit-identisch, Zero-Hardcoding)."""
+    global _fold_winsorize_cache
+    if _fold_winsorize_cache is not None:
+        return _fold_winsorize_cache
+    lo = hi = None
+    try:
+        cfg = config_dir() / "tournament.json"
+        if cfg.exists():
+            d = json.loads(cfg.read_text("utf-8")) or {}
+            lo, hi = d.get("fold_winsorize_lower"), d.get("fold_winsorize_upper")
+    except Exception:
+        pass
+    _fold_winsorize_cache = (lo, hi)
+    return _fold_winsorize_cache
+
+
+def _winsorize(values, lower, upper) -> list[float]:
+    """Issue #623 — klemmt eine Werteliste auf ihre ``[lower, upper]``-Perzentile (Extreme gekappt, KEIN
+    Entfernen ⇒ Länge/Reihenfolge erhalten). ``lower``/``upper`` None oder leere Liste ⇒ unverändert.
+    Bei wenigen Werten (≤ 4 Folds) treffen die 5/95-Perzentile i. d. R. Min/Max ⇒ effektiv No-Op; erst
+    bei vielen Folds mit Ausreissern (z. B. Fold-Sortino +227) greift die Klemmung."""
+    vals = [float(v) for v in values]
+    if not vals or lower is None or upper is None:
+        return vals
+    s = sorted(vals)
+    n = len(s)
+    lo_v = s[min(n - 1, max(0, int(round(float(lower) * (n - 1)))))]
+    hi_v = s[min(n - 1, max(0, int(round(float(upper) * (n - 1)))))]
+    return [min(max(v, lo_v), hi_v) for v in vals]
+
+
 # Issue #549/#550 — Häufigkeitskennzahlen bleiben GEPOOLT (über alle OOS-Trades).
 # Issue #589 — der Sortino wird NICHT mehr zum Fold-Median aggregiert (Kohärenz-Verlust +
 # Median-Maskierung katastrophaler Folds), sondern bleibt der GEPOOLTE Wert aus der OOS-Equity-Kurve.
@@ -1034,8 +1070,13 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
     AGENTS.md Pitfall #110/#113.
     """
     import statistics as _stats
-    oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
-    oos_metrics["oos_fold_returns"] = collect_oos_fold_returns(per_fold_oos_list)
+    # Issue #623 — WINSORISIERUNG der Fold-Kennzahlen (fold_winsorize_lower/upper, tournament.json):
+    # bei Fold-Sortino-Extremen (bis +227) klemmt sie die forensische Fold-Median-/Dispersions-Statistik
+    # auf die konfigurierten Perzentile, statt ein falsches Robustheitsversprechen ohne Call-Site zu sein.
+    # Fehlen die Keys ⇒ No-Op (Legacy, bit-identisch). Rein index-basiert, deterministisch.
+    _w_lo, _w_hi = _read_fold_winsorize()
+    oos_metrics["oos_fold_sortinos"] = _winsorize(collect_oos_fold_sortinos(per_fold_oos_list), _w_lo, _w_hi)
+    oos_metrics["oos_fold_returns"] = _winsorize(collect_oos_fold_returns(per_fold_oos_list), _w_lo, _w_hi)
 
     valid_folds = [f for f in per_fold_oos_list if f is not None]
     n_folds_total = len(per_fold_oos_list)
