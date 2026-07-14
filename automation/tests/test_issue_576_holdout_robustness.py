@@ -5,25 +5,17 @@ from unittest.mock import MagicMock, patch
 from automation.optimizer.confirm import confirm_per_symbol_promotion
 
 def test_deflated_holdout_gate_rejection(tmp_path):
+    # Issue #592 — Deflation läuft auf der REWARD-Skala (dem tatsächlichen argmax-Selektionskriterium),
+    # nicht auf dem geklemmten Sortino. Reine Rausch-Reward-Verteilung (kein echter Edge): das erwartete
+    # Maximum von N i.i.d. Werten wächst mit √(2 ln N) und liegt UNTER der deflationierten Schwelle
+    # (baseline + σ·Φ⁻¹(0.95^(1/N))) ⇒ der Study-Gewinner (max) muss verworfen werden.
     study = optuna.create_study()
     for i in range(100):
         t = study.ask()
         study._storage.set_trial_user_attr(t._trial_id, "oos_evaluated", True)
         study._storage.set_trial_user_attr(t._trial_id, "oos_eligible", True)
         study._storage.set_trial_user_attr(t._trial_id, "oos_sortino", 1.0 + i * 0.01)
-        study.tell(t, float(i))
-
-    t = study.ask()
-    study._storage.set_trial_user_attr(t._trial_id, "oos_evaluated", True)
-    study._storage.set_trial_user_attr(t._trial_id, "oos_eligible", True)
-    study._storage.set_trial_user_attr(t._trial_id, "oos_sortino", 2.0)
-    study.tell(t, 1000.0)
-
-    t = study.ask()
-    study._storage.set_trial_user_attr(t._trial_id, "oos_evaluated", True)
-    study._storage.set_trial_user_attr(t._trial_id, "oos_eligible", True)
-    study._storage.set_trial_user_attr(t._trial_id, "oos_sortino", 10.0)
-    study.tell(t, 2000.0)
+        study.tell(t, float((i % 7) - 3))   # Rausch-Rewards in [-3, 3], σ≈2.0, max=3 < Schwelle≈6.6
 
     mock_m_symbol = MagicMock()
     mock_m_symbol.oos_evaluated = True
@@ -64,5 +56,6 @@ def test_deflated_holdout_gate_rejection(tmp_path):
             assert res is not None
             assert res["status"] == "REJECTED_ON_HOLDOUT"
             assert res["holdout_passed"] == False
-            assert "deflated_min_sortino" in res["metrics_symbol"]
-            assert res["metrics_symbol"]["deflated_min_sortino"] > 1.0
+            assert "deflated_min_reward" in res["metrics_symbol"]
+            # Der Study-Gewinner-Reward (max=3.0) liegt UNTER der deflationierten Rausch-Schwelle.
+            assert res["metrics_symbol"]["deflated_min_reward"] > 3.0

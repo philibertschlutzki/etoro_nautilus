@@ -109,6 +109,45 @@ def n_params_for(strategy: str) -> int:
     return len(bounds.extract_numeric_bounds(strategy))
 
 
+def strategy_has_search_space(strategy: str) -> bool:
+    """Issue #595 — True, wenn ``spaces.sample_params`` einen Suchraum für ``strategy`` kennt."""
+    try:
+        n_params_for(strategy)
+        return True
+    except ValueError:
+        return False
+
+
+def assert_strategy_space_parity(strategies: list[str]) -> None:
+    """Issue #595 — FAIL-LOUD (VOR dem ersten Trial): JEDE angeforderte (aktive) Strategie MUSS einen
+    Suchraum in ``spaces.py`` haben.
+
+    Eine in ``strategies.json`` aktive, aber in ``spaces.py`` untunbare Strategie ist ein
+    Konfigurationswiderspruch: vorher warf ``spaces.sample_params`` ``ValueError: Unknown strategy``,
+    das in der Fault-Isolation des Sweeps STILL verschluckt wurde ⇒ 40 % des aktiven Strategieraums
+    (4 von 10) wurden nie evaluiert, 0 ERROR-Zeilen. Verletzung ⇒ ``ValueError`` mit Code
+    ``STRATEGY_NO_SEARCH_SPACE`` (Entscheidung erzwingen: Suchraum ergänzen ODER active:false)."""
+    missing = [s for s in strategies if not strategy_has_search_space(s)]
+    if missing:
+        raise ValueError(
+            f"STRATEGY_NO_SEARCH_SPACE: aktive Strategie(n) ohne Suchraum in spaces.py: {missing}. "
+            f"Entweder den Suchraum in spaces.sample_params ergänzen ODER die Strategie in "
+            f"strategies.json auf active:false setzen (aktiv-aber-untunbar ist ein "
+            f"Konfigurationswiderspruch, Issue #595)."
+        )
+
+
+def _assert_gate_reward_parity() -> None:
+    """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
+    ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität)."""
+    from automation.optimizer.reward import assert_any_condition_parity
+    try:
+        cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return
+    assert_any_condition_parity(cfg)
+
+
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:
     """Adapter: schätzt verfügbare 1h-Bars je Symbol aus der Parquet-Zeitspanne
     (``(max_ts - min_ts) / 1h``). Robust gegen Tick-Dichte; 0 bei fehlender Datei/Fehler.
@@ -271,7 +310,22 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
         else:  # 'all'
             candidate_syms = list(syms)
 
-        n_params = n_params_for(strategy)
+        # Issue #595 — n_params_for wirft ValueError für eine Strategie ohne Suchraum. Vorher
+        # propagierte das ungefangen und wurde in der Fault-Isolation still verschluckt. Jetzt: als
+        # STRATEGY_NO_SEARCH_SPACE (ERROR, strukturiert) emittieren und die Strategie überspringen —
+        # der fail-loud-Guard assert_strategy_space_parity fängt den Widerspruch bereits vor dem Sweep;
+        # dieser Catch ist die Defense-in-Depth für Direktaufrufe (z. B. Tests) ohne den Guard.
+        try:
+            n_params = n_params_for(strategy)
+        except ValueError:
+            emit_execution_event(log, "STRATEGY_NO_SEARCH_SPACE", {
+                "strategy": strategy,
+                "enabled_in_strategies_json": True,
+                "has_space_in_spaces_py": False,
+            })
+            log.error("STRATEGY_NO_SEARCH_SPACE: %s ist aktiv, hat aber keinen Suchraum in spaces.py "
+                      "⇒ übersprungen (Issue #595).", strategy)
+            continue
         for symbol in candidate_syms:
             ok, _reason = is_symbol_tunable(
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
@@ -280,8 +334,8 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                 # übersprungen (und der letzte OOS-Fold/Holdout still geklemmt) werden. Bei
                 # INSUFFICIENT_HISTORY das strukturierte GATE_1_REJECTION-Event mit available_days
                 # (reale Bar-Spanne = available_bars / bars_per_day) UND required_days (reine
-                # Geometrie is+splits*oos+holdout) emittieren — genau die im Ist-Zustand fehlende
-                # Diskrepanz-Visibilität (Config-450 vs. real-360).
+                # Geometrie is+embargo+splits*oos+holdout) emittieren — genau die im Ist-Zustand
+                # fehlende Diskrepanz-Visibilität (Config-450 vs. real-360).
                 if _reason == "INSUFFICIENT_HISTORY":
                     emit_gate1_rejection(
                         log,
@@ -289,6 +343,11 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                         required_days=required_span_days(config.get("walk_forward") or {}),
                         symbol=symbol,
                     )
+                else:
+                    # Issue #595 — ALLE drei is_symbol_tunable-Ablehnungsgründe loggen (vorher nur
+                    # INSUFFICIENT_HISTORY; PARAM_DATA_RATIO_TOO_LOW und OOS_FOLD_TOO_SHORT waren still).
+                    log.warning("⏭️  %s/%s übersprungen (Gate 1: %s, Issue #595).",
+                                strategy, symbol, _reason)
                 continue
             # Issue #455 — OOS-Erreichbarkeits-Preflight (fail-open bei fehlender Telemetrie).
             newest_ns = latest_ts.get(symbol) if latest_ts else None
@@ -366,6 +425,14 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         optimize_symbol = _optimize_symbol
     if confirm is None:
         confirm = _confirm
+
+    # Issue #595/#593 — FAIL-LOUD-Preflight VOR dem ersten Trial (nur im echten Pfad; injizierte
+    # HI-7-Fakes nutzen frei benannte Strategien und überspringen den Guard). (1) Jede aktive
+    # Strategie MUSS einen Suchraum in spaces.py haben. (2) Gate- und Reward-Klauseln müssen
+    # dieselbe eligible_requires_any-Menge sehen.
+    if using_real_optimize:
+        assert_strategy_space_parity(strategies)
+        _assert_gate_reward_parity()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
@@ -454,14 +521,34 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     n_strats = len({s for s, _, _ in pairs})
     n_syms = len({sym for _, sym, _ in pairs})
     wallclock_s = round(time.perf_counter() - sweep_t0)
-    emit_execution_event(logging.getLogger("optimizer"), "sweep_completed", {
+
+    # Issue #595 — Strategie-Abdeckungs-Telemetrie: welche angeforderten Strategien wurden
+    # tatsächlich enumeriert und welche (mit Grund) übersprungen. Eine Differenz > 0 erzeugt eine
+    # WARNING-Zusammenfassung am Sweep-Ende (vorher: 6 von 10 lautlos, 0 Warnungen).
+    _log = logging.getLogger("optimizer")
+    enumerated = {s for s, _, _ in pairs}
+    strategies_skipped = []
+    for s in strategies:
+        if s not in enumerated:
+            reason = "NO_SEARCH_SPACE" if not strategy_has_search_space(s) else "NO_ELIGIBLE_SYMBOLS"
+            strategies_skipped.append({"strategy": s, "reason": reason})
+
+    emit_execution_event(_log, "sweep_completed", {
         "pairs": len(pairs),
         "strategies": n_strats,
         "symbols": n_syms,
         "n_jobs": n_jobs,
         "n_jobs_source": n_jobs_source,
         "wallclock_s": wallclock_s,
+        # Issue #595 — Strategie-Parität sichtbar machen.
+        "strategies_requested": len(strategies),
+        "strategies_enumerated": len(enumerated),
+        "strategies_skipped": strategies_skipped,
     })
+    if strategies_skipped:
+        _log.warning("[#595] %d von %d angeforderten Strategien NICHT enumeriert: %s",
+                     len(strategies_skipped), len(strategies),
+                     ", ".join(f"{d['strategy']}({d['reason']})" for d in strategies_skipped))
     mins, secs = divmod(int(wallclock_s), 60)
     print(f"✅ Sweep fertig: {len(pairs)} Paare, {n_strats} Strategien × {n_syms} Symbole, "
           f"n_jobs={n_jobs} ({n_jobs_source}), Gesamtlaufzeit {mins}m{secs:02d}s.")

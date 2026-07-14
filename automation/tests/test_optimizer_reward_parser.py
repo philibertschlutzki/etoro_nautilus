@@ -36,9 +36,12 @@ def _divergence(cfg, is_median, base):
     else:
         penalty = cfg["penalty_overfit_weight"] * max(0.0, is_sortino_val - base)
 
+    # Issue #591 — der relative Cap bindet an die positive Skalenkonstante soft_scale (Legacy-Fallback
+    # sortino_clip_abs), NICHT an |base|.
     cap = cfg.get("penalty_relative_cap")
     if cap is not None:
-        penalty = min(penalty, float(cap) * abs(base))
+        cap_scale = soft_scale if soft_scale else cfg["sortino_clip_abs"]
+        penalty = min(penalty, float(cap) * float(cap_scale))
 
     return penalty
 
@@ -50,7 +53,10 @@ def _write_tournament(tmp_path, **agg):
     return p
 
 
-def test_parser_median_from_fold_sortinos(tmp_path):
+def test_parser_uses_pooled_sortino_not_fold_median(tmp_path):
+    # Issue #589 — der kanonische OOS-Sortino ist der GEPOOLTE oos_metrics["sortino_ratio"] (kohärent
+    # mit total_return), NICHT der Median der oos_fold_sortinos (der einen katastrophalen Fold
+    # maskierte). Gate und Reward lesen damit exakt denselben Wert.
     p = _write_tournament(
         tmp_path,
         oos_evaluated=True,
@@ -61,7 +67,7 @@ def test_parser_median_from_fold_sortinos(tmp_path):
         oos_metrics={"sortino_ratio": 9.9, "max_drawdown": 0.1},
     )
     m = parsing.parse_tournament(p)
-    assert m.oos_sortino == statistics.median([1.0, 3.0, 2.0])  # 2.0, nicht 9.9
+    assert m.oos_sortino == 9.9  # pooled, nicht median([1.0, 3.0, 2.0])==2.0
 
 
 def test_reward_uses_config_weights(tmp_path):
@@ -70,6 +76,9 @@ def test_reward_uses_config_weights(tmp_path):
         "max_drawdown"
     ]
 
+    # Issue #597 — realistischer OOS-Drawdown (dd_penalty normiert auf dd_reward_scale, nicht auf
+    # den Gate-Cap; ein 40 %-DD würde den Reward katastrophal floorten).
+    dd = 0.02
     p = _write_tournament(
         tmp_path,
         oos_evaluated=True,
@@ -77,16 +86,18 @@ def test_reward_uses_config_weights(tmp_path):
         win_count=5,
         median_is_sortino=3.0,
         oos_fold_sortinos=[1.0],
-        oos_metrics={"sortino_ratio": 1.0, "max_drawdown": cap + 0.1},
+        oos_metrics={"sortino_ratio": 1.0, "max_drawdown": dd},
     )
     m = parsing.parse_tournament(p)
 
     base = _base(cfg, 1.0)
     # Ein einzelner Fold-Sortino ⇒ keine Dispersions-Strafe; oos_total_return=0 ⇒ kein Tie-Breaker.
+    # Issue #597 — dd_penalty normiert auf dd_reward_scale.
+    dd_scale = cfg.get("dd_reward_scale", cap)
     expected = (
         base
         - _divergence(cfg, 3.0, base)
-        - cfg["penalty_dd_weight"] * (((cap + 0.1) / cap) ** 2)
+        - cfg["penalty_dd_weight"] * ((dd / dd_scale) ** 2)
         + (5 / 100) * cfg["bonus_coverage_weight"]
     )
 
@@ -165,6 +176,7 @@ def test_evaluable_strictly_above_every_unevaluable(tmp_path):
     )
     r_eval = reward.compute_reward(m_eval, universe_size=100)
 
-    floor = -float(cfg["sortino_clip_abs"])
+    # Issue #591 — der eligible Reward-Floor ist der ENTKOPPELTE evaluable_reward_floor (nicht -sortino_clip_abs).
+    floor = float(cfg["evaluable_reward_floor"])
     assert r_eval == pytest.approx(floor)  # worst evaluable is clamped to the floor
     assert r_eval > r_uneval  # strictly above every unevaluable trial

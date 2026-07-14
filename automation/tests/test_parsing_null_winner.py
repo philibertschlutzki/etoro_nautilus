@@ -33,13 +33,16 @@ def test_null_oos_metrics_inside_winner(tmp_path):
     assert m.oos_sortino is None
     assert m.is_sortino_median == pytest.approx(1.2)
 
-def test_fold_sortinos_take_median(tmp_path):
+def test_oos_sortino_is_pooled_not_fold_median(tmp_path):
+    # Issue #589 — parse_tournament liest den GEPOOLTEN oos_metrics["sortino_ratio"] (kohärent mit
+    # total_return), NICHT mehr den Median der oos_fold_sortinos. Der Fold-Median (hier 1.0) ist
+    # forensisch; der kanonische Wert ist der pooled 1.23.
     p = _write(tmp_path, {"aggregate_winner": {
         "oos_evaluated": True, "oos_eligible": True,
         "oos_fold_sortinos": [0.5, 1.5, 1.0],
-        "oos_metrics": {"max_drawdown": 0.1, "total_trades": 30}}})
+        "oos_metrics": {"sortino_ratio": 1.23, "max_drawdown": 0.1, "total_trades": 30}}})
     m = parse_tournament(p)
-    assert m.oos_sortino == pytest.approx(1.0)
+    assert m.oos_sortino == pytest.approx(1.23)   # pooled, nicht median([0.5,1.5,1.0])==1.0
     assert m.oos_total_trades == 30
 
 def test_null_fully_eligible_pairs(tmp_path):

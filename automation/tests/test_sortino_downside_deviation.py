@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from unittest.mock import patch
 
-from automation.backtest_runner import _calculate_stats
+from automation.backtest_runner import _calculate_stats, _read_sortino_numeric_guard
 
 @pytest.fixture
 def mock_sortino_config():
@@ -96,26 +96,35 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
     assert sortinoA is not None and sortinoB is not None
     assert sortinoA != sortinoB, "Loss frequency should affect the Sortino metric"
 
-    # Test 4: Regression validation verifying symmetric ±RATIO_CAP enforcement
-    # Extremely negative sortino
+    # Test 4 (Issue #588): KEIN Hard-Clip mehr. Der frühere ±RATIO_CAP-Clip (±15) vernichtete die
+    # Rangordnung oberhalb der Grenze. Ein extremer, aber UNTERHALB des reinen Numerik-Guards
+    # liegender Sortino bleibt jetzt UNGEKLEMMT (trägt Ordnung); ein Wert JENSEITS des Guards ist ein
+    # Datenfehler ⇒ None (SORTINO_GUARD_TRIPPED), NICHT still auf ±15 geklemmt.
+    guard = _read_sortino_numeric_guard()
+
+    # Extremely negative sortino (unterhalb des Guards) — endlich, ungeklemmt, |s| kann > 15 sein.
     rets_extreme_neg = [-0.1] * 10
     mtm_vals_neg = [1.0]
     for r in rets_extreme_neg: mtm_vals_neg.append(mtm_vals_neg[-1] * (1 + r))
     mtm_series_neg = pd.Series(mtm_vals_neg)
 
-    # Extremely positive sortino
+    # Extremely positive sortino (near-zero downside × riesiger Faktor ⇒ jenseits des Guards).
     rets_extreme_pos = [0.1] * 10 + [-0.000000001]
     mtm_vals_pos = [1.0]
     for r in rets_extreme_pos: mtm_vals_pos.append(mtm_vals_pos[-1] * (1 + r))
     mtm_series_pos = pd.Series(mtm_vals_pos)
 
-    with patch("automation.backtest_runner._get_annualization_factor", return_value=10000000000):
-        # We use a huge annualization factor to ensure the raw sortino blows past RATIO_CAP
+    with patch("automation.backtest_runner._get_annualization_factor", return_value=1_000_000):
         stats_neg = _calculate_stats(pnl_list=[-1.0]*10, hold_list=[(1,1.0)]*10, starting_capital=1.0, mtm_series=mtm_series_neg, min_trades_for_sortino=2)
-        stats_pos = _calculate_stats(pnl_list=[-1.0]+[1.0]*10, hold_list=[(1,1.0)]*11, starting_capital=1.0, mtm_series=mtm_series_pos, min_trades_for_sortino=2)
+    s_neg = stats_neg.get("sortino_ratio")
+    assert s_neg is not None and math.isfinite(s_neg)
+    assert s_neg < -15.0, "kein Hard-Clip mehr: ein stark negativer Sortino bleibt ungeklemmt"
+    assert abs(s_neg) <= guard
 
-    assert stats_neg.get("sortino_ratio") == -15.0, "Should be symmetrically clipped at -15.0"
-    assert stats_pos.get("sortino_ratio") == 15.0, "Should be symmetrically clipped at +15.0"
+    with patch("automation.backtest_runner._get_annualization_factor", return_value=10_000_000_000):
+        # Riesiger Faktor × near-zero Downside ⇒ |sortino_raw| jenseits des Guards ⇒ Datenfehler.
+        stats_pos = _calculate_stats(pnl_list=[-1.0]+[1.0]*10, hold_list=[(1,1.0)]*11, starting_capital=1.0, mtm_series=mtm_series_pos, min_trades_for_sortino=2)
+    assert stats_pos.get("sortino_ratio") is None, "Wert jenseits des Numerik-Guards ⇒ None (kein still-Clip)"
 
 def test_sortino_nan_poisoning(mock_sortino_config):
     # Test 5: Verify that if mean_ret somehow results in a NaN (which poisons sortino_raw),

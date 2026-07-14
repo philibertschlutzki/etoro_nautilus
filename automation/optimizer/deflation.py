@@ -48,3 +48,27 @@ def deflated_threshold(n_trials: int, dispersion: float, *, confidence: float = 
     q = confidence ** (1.0 / n_trials)
     q = min(max(q, 1e-12), 1.0 - 1e-12)
     return baseline + dispersion * _ND.inv_cdf(q)
+
+
+def deflated_reward_threshold(rewards, *, confidence: float = 0.95):
+    """Issue #592 — Deflations-Schwelle auf der REWARD-Skala (dem tatsächlichen Selektionskriterium
+    ``argmax(reward)`` über N Trials), NICHT auf einer geklemmten Teil-Kennzahl (Sortino).
+
+    Zwei Fehler behob #592: (1) der 50.0-Sentinel-Filter war eine hartcodierte Zahl, die seit
+    einer Clip-Änderung (RATIO_CAP 50 → 15 → entfernt, #588) ins Leere griff und ±Clip-Artefakte
+    ungefiltert in die Dispersion liess; (2) die Dispersion wurde auf der GEKLEMMTEN Sortino-Skala
+    geschätzt, die ``deflated_threshold`` (Maximum von N i.i.d. UNBESCHRÄNKTEN Normalen) modelliert.
+    Auf der Reward-Skala entfällt beides. ``baseline = median(rewards)`` (die Reward-Skala ist NICHT
+    nullzentriert — ``baseline=0.0`` wäre auf einer bei −6.8 zentrierten Skala sinnlos).
+
+    Rückgabe ``(threshold, n, sigma, baseline)``; ``(None, n, None, None)`` bei < 2 Werten
+    (kein Multiple-Testing)."""
+    import statistics
+    vals = [float(r) for r in rewards if r is not None]
+    n = len(vals)
+    if n < 2:
+        return None, n, None, None
+    sigma = statistics.pstdev(vals)
+    baseline = statistics.median(vals)
+    thr = deflated_threshold(n, sigma, confidence=confidence, baseline=baseline)
+    return thr, n, sigma, baseline

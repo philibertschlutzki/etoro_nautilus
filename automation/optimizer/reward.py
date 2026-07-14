@@ -28,6 +28,35 @@ def _apply_soft_scale(value: float, scale: float | None) -> float:
     return float(value)
 
 
+def _evaluable_floor(weights: dict) -> float:
+    """Issue #591 — der von ``sortino_clip_abs`` ENTKOPPELTE Reward-Floor des eligiblen Asts.
+    ``sortino_clip_abs`` ist die Sättigungsskala der Base und hat semantisch nichts mit der
+    Untergrenze des Reward-Wertebereichs zu tun; sie an ``−sortino_clip_abs`` zu koppeln erzeugte ein
+    Plateau (6/8 SmaCrossover-Trials exakt −5.0). Fehlt ``evaluable_reward_floor`` ⇒ Legacy-Anker
+    (``−sortino_clip_abs``), bit-identisch für Pre-#591-Weights."""
+    v = weights.get("evaluable_reward_floor")
+    if v is not None:
+        return float(v)
+    return -float(weights["sortino_clip_abs"])
+
+
+def _dd_penalty(m: "TournamentMetrics", weights: dict, risk_dd_cap: float | None) -> float:
+    """Issue #578/#597 — progressive Drawdown-Strafe ``penalty_dd_weight·(oos_max_drawdown/scale)^2``.
+
+    Issue #597 — die Normierungsskala ist ``dd_reward_scale`` (die realisierte Risiko-Skala,
+    ENTKOPPELT vom Gate-Cap ``max_drawdown``). Grund: ``oos_max_drawdown`` ist portfolio-relativ (auf
+    ``start_capital``), die Strategie setzt aber nur einen Bruchteil ein ⇒ realer DD 0.6–2.4 %; gegen
+    den 30 %-Gate-Cap normiert war ``dd_penalty ≈ 0.004`` (vier Größenordnungen zu klein, struktureller
+    Blindgänger). Auf ``dd_reward_scale ≈ 0.03`` normiert liegt der Term im Bereich der übrigen
+    Strafterme. Fehlt ``dd_reward_scale`` ⇒ Fallback auf den Gate-Cap (Legacy, bit-identisch)."""
+    scale = weights.get("dd_reward_scale")
+    if scale is None:
+        scale = risk_dd_cap
+    if scale and float(scale) > 0.0:
+        return float(weights["penalty_dd_weight"]) * ((m.oos_max_drawdown / float(scale)) ** 2)
+    return 0.0
+
+
 _oos_min_trades_cache: int | None = None
 _tournament_cfg_cache: dict | None = None
 
@@ -102,27 +131,52 @@ def _excess_distance(actual: float, cap: float | None) -> float:
     return max(0.0, float(actual) - float(cap)) / float(cap)
 
 
+# Issue #593 — die EINZIGEN Klauseln, für die _any_condition_distance einen korrespondierenden
+# Distanz-Term besitzt. Gate (eligible_requires_any) und Reward-Distanz MÜSSEN dieselbe Klauselmenge
+# sehen (#549-Parität) — deshalb ist diese Menge die Single Source of Truth für die Parity-Assertion.
+_ANY_CONDITION_CLAUSES = frozenset({"min_sortino", "min_profit_factor", "min_win_rate"})
+
+
+def assert_any_condition_parity(tournament_cfg: dict | None) -> None:
+    """Issue #593 — fail-loud beim Config-Load: JEDE Klausel in ``eligible_requires_any`` MUSS einen
+    korrespondierenden Term in ``_any_condition_distance`` haben (sonst sehen Gate und Reward
+    unterschiedliche Klauselmengen — genau die #549-Paritätsverletzung, die einen Optimierer eine im
+    Reward unsichtbare Gate-Hürde ausnutzen lässt). Eine unbekannte Klausel ⇒ ``ValueError``."""
+    any_clauses = set((tournament_cfg or {}).get("eligible_requires_any", []) or [])
+    unknown = any_clauses - _ANY_CONDITION_CLAUSES
+    if unknown:
+        raise ValueError(
+            f"eligible_requires_any enthält Klausel(n) ohne korrespondierenden Term in "
+            f"_any_condition_distance: {sorted(unknown)}. Gate und Reward müssen dieselbe "
+            f"Klauselmenge sehen (#549/#593-Parität). Erlaubt: {sorted(_ANY_CONDITION_CLAUSES)}."
+        )
+
+
 def _any_condition_distance(
     m: "TournamentMetrics", weights: dict, tournament_cfg: dict | None
 ) -> float:
-    """Distanz fuer die ``eligible_requires_any``-Klausel (Sortino ODER Profit-Factor).
-    Erfuellt der bessere der beiden Quotienten sein Gate (ratio >= 1), ist die Distanz 0;
-    sonst linear im Rest-Gap des BESTEN Kandidaten — eine knapp verfehlte ANY-Bedingung
+    """Distanz fuer die ``eligible_requires_any``-Klausel. Issue #593 — spiegelt EXAKT die in
+    ``eligible_requires_any`` konfigurierten Klauseln (inkl. ``min_win_rate``, das vorher im Gate,
+    aber NICHT in dieser Distanz war). Erfuellt der beste der Quotienten sein Gate (ratio >= 1), ist
+    die Distanz 0; sonst linear im Rest-Gap des BESTEN Kandidaten — eine knapp verfehlte ANY-Bedingung
     darf nicht doppelt so hart bestraft werden wie eine knapp verfehlte ALL-Bedingung.
     Issue #467: Strikte Parameter-Isolation. Kein Fallback auf IS-Metriken im OOS-Pfad.
     """
+    any_clauses = (tournament_cfg or {}).get("eligible_requires_any", []) if tournament_cfg else []
     ratios = []
-    req_sortino = _cfg_value(weights, tournament_cfg, "oos_min_sortino")
-    if req_sortino and req_sortino > 0.0 and m.oos_sortino is not None:
-        ratios.append(max(0.0, m.oos_sortino) / float(req_sortino))
-
-    req_profit_factor = _cfg_value(weights, tournament_cfg, "oos_min_profit_factor")
-    if (
-        req_profit_factor
-        and req_profit_factor > 0.0
-        and m.oos_profit_factor is not None
-    ):
-        ratios.append(max(0.0, m.oos_profit_factor) / float(req_profit_factor))
+    for clause in any_clauses:
+        if clause == "min_sortino":
+            req = _cfg_value(weights, tournament_cfg, "oos_min_sortino")
+            if req and req > 0.0 and m.oos_sortino is not None:
+                ratios.append(max(0.0, m.oos_sortino) / float(req))
+        elif clause == "min_profit_factor":
+            req = _cfg_value(weights, tournament_cfg, "oos_min_profit_factor")
+            if req and req > 0.0 and m.oos_profit_factor is not None:
+                ratios.append(max(0.0, m.oos_profit_factor) / float(req))
+        elif clause == "min_win_rate":
+            req = _cfg_value(weights, tournament_cfg, "oos_min_win_rate")
+            if req and req > 0.0:
+                ratios.append(max(0.0, m.oos_win_rate) / float(req))
 
     if not ratios:
         return 0.0
@@ -221,7 +275,9 @@ def _constraint_failure_reward(
     (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming).
     Der tanh-Band-Clamp (Falle 97) wurde zugunsten eines grossen Dynamikbereichs entfernt.
     """
-    feasible_min = -float(weights["sortino_clip_abs"])
+    # Issue #591 — der Failure-Ceiling hängt am ENTKOPPELTEN evaluable_reward_floor (nicht mehr an
+    # −sortino_clip_abs). Bandinvariante: unevaluable_ceiling < failure_ceiling < evaluable_reward_floor.
+    feasible_min = _evaluable_floor(weights)
     failure_ceiling = feasible_min - float(weights["evaluable_floor_epsilon"])
     unevaluable_ceiling = float(weights["penalty_unevaluable_oos"]) + float(
         weights["unevaluable_shaping_span"]
@@ -309,7 +365,8 @@ def compute_reward(
     sampled: dict | None = None,
     global_params: dict | None = None,
     strategy: str | None = None,
-    tournament_cfg: dict | None = None
+    tournament_cfg: dict | None = None,
+    holdout: bool = False,
 ) -> float | tuple:
     """weights=None  ⇒ aus optimizer.json (penalty_overfit_weight, penalty_dd_weight,
                      bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
@@ -336,10 +393,11 @@ def compute_reward(
                   falls (sampled and global_params and strategy), sonst 0.0.
       reward = base - overfit_gap*penalty_overfit_weight - dd_penalty - param_pen.
 
-    base = clip(oos_sortino, ±sortino_clip_abs); overfit_gap = max(0, is_sortino_median - base);
-    dd_penalty = penalty_dd_weight * (oos_max_drawdown / risk_dd_cap)^2.
-    floor = penalty_unevaluable_oos + unevaluable_shaping_span + evaluable_floor_epsilon;
-    return max(reward, floor)  # Ordnungsinvariante: evaluable >= floor > unevaluable.
+    base = sortino_soft_scale·asinh(oos_sortino/scale)  # Issue #559 — WEICH, kein Hard-Clip (#588).
+    overfit_gap = max(0, is_sortino_median - base)      # nur ausserhalb holdout=True (#594).
+    dd_penalty = penalty_dd_weight * (oos_max_drawdown / dd_reward_scale)^2  # Issue #597 (nicht Gate-Cap).
+    floor = evaluable_reward_floor                      # Issue #591 — ENTKOPPELT von sortino_clip_abs.
+    return max(reward, floor)  # Ordnungsinvariante: evaluable >= floor > failure > unevaluable.
     """
 
     loaded_tournament_cfg = tournament_cfg
@@ -483,52 +541,76 @@ def compute_reward(
     penalty_turnover_weight = weights.get("penalty_turnover_weight", 0.0)
     penalty_relative_cap = weights.get("penalty_relative_cap")
 
-    # Issue #565 / #575 — Divergenz-Strafe IS↔OOS. Skalenparität mit asinh erfordert
-    # Kompression auch für IS_sortino.
-    is_sortino_val = m.is_sortino_median
-    if soft_scale is not None:
-        is_sortino_val = _apply_soft_scale(is_sortino_val, soft_scale)
+    # Issue #591 — der relative Cap bindet an eine POSITIVE Skalenkonstante (sortino_soft_scale bzw.
+    # der Legacy-Fallback sortino_clip_abs), NICHT an ``|base|``. Bei negativem base bedeutete
+    # ``|base|`` einen Konditionierungsfehler: je schlechter die Base, desto GRÖSSER die erlaubte
+    # Strafe. Die Cap-Höhe ist damit vorzeichen-invariant (base=−5 und base=+5 ⇒ gleiche Cap-Höhe).
+    cap_scale = soft_scale if soft_scale is not None else float(sortino_clip_abs)
 
-    overfit_gap = max(0.0, is_sortino_val - base)
-    divergence_mode = weights.get("overfit_divergence_mode")
-    if divergence_mode == "symmetric":
-        diff = is_sortino_val - base
-        if diff >= 0.0:
-            divergence_penalty = penalty_overfit_weight * diff
-        else:
-            oos_luck_w = float(
-                weights.get("overfit_oos_luck_weight", penalty_overfit_weight)
-            )
-            divergence_penalty = oos_luck_w * (-diff)
+    # Issue #594 — Holdout-Modus: die IS-abhängigen Terme (Overfit-Divergenz, Fold-Dispersion) sind
+    # für einen Single-Fold-Holdout ohne IS-Referenz bedeutungslos. Sie werden ABGESCHALTET (nicht mit
+    # einem 0.0-Platzhalter gefüttert, der bei negativem base eine fiktive Overfit-Strafe erzeugte).
+    # Ausserhalb des Holdout ist ``is_sortino_median is None`` ein Fehler (kein stiller 0.0-Default).
+    if holdout:
+        divergence_penalty = 0.0
     else:
-        divergence_penalty = penalty_overfit_weight * overfit_gap
+        if m.is_sortino_median is None:
+            raise ValueError(
+                "compute_reward: is_sortino_median is None ohne holdout=True — ein Platzhalter darf "
+                "nie in einen Reward-Ausdruck fliessen (#594). Holdout-Rewards mit holdout=True aufrufen."
+            )
+        # Issue #565 / #575 — Divergenz-Strafe IS↔OOS. Skalenparität mit asinh erfordert
+        # Kompression auch für IS_sortino.
+        is_sortino_val = m.is_sortino_median
+        if soft_scale is not None:
+            is_sortino_val = _apply_soft_scale(is_sortino_val, soft_scale)
 
-    if penalty_relative_cap is not None:
-        divergence_penalty = min(
-            divergence_penalty, float(penalty_relative_cap) * abs(base)
-        )
+        overfit_gap = max(0.0, is_sortino_val - base)
+        divergence_mode = weights.get("overfit_divergence_mode")
+        if divergence_mode == "symmetric":
+            diff = is_sortino_val - base
+            if diff >= 0.0:
+                divergence_penalty = penalty_overfit_weight * diff
+            else:
+                oos_luck_w = float(
+                    weights.get("overfit_oos_luck_weight", penalty_overfit_weight)
+                )
+                divergence_penalty = oos_luck_w * (-diff)
+        else:
+            divergence_penalty = penalty_overfit_weight * overfit_gap
 
-    dd_penalty = (
-        float(penalty_dd_weight) * ((m.oos_max_drawdown / risk_dd_cap) ** 2)
-        if risk_dd_cap and float(risk_dd_cap) > 0.0
-        else 0.0
-    )
+        if penalty_relative_cap is not None:
+            divergence_penalty = min(
+                divergence_penalty, float(penalty_relative_cap) * cap_scale
+            )
+
+    dd_penalty = _dd_penalty(m, weights, risk_dd_cap)
 
     # Issue #509 (Cost Drag & Turnover Churning) - Turnover Penalty
     # The penalty increases linearly with the number of OOS trades.
     turnover_penalty = m.oos_total_trades * penalty_turnover_weight
 
-    # Issue #565 / #575 — Fold-Dispersions-Strafe. Auch die Fold-Sortinos müssen in die
-    # komprimierte Skala transformiert werden, bevor pstdev berechnet wird.
+    # Issue #589/#590 — Fold-Dispersions-Strafe auf den per-Fold-RETURNS (die gut konditionierte
+    # Größe; nach #589 NICHT mehr auf den Fold-Sortinos). #590 — normiert über ``oos_folds_total``,
+    # nicht über die Zahl valider Folds: fehlende/degenerierte Folds sind MAXIMALE Unsicherheit
+    # (missing_fold_penalty_scale), keine Auslassung — sonst umgeht der Optimierer die Strafe, indem
+    # er die Bewertung löscht (Fold-Degeneration). Im Holdout (Single-Fold) abgeschaltet.
     fold_dispersion_penalty = 0.0
     w_disp = weights.get("fold_dispersion_weight")
-    fold_sortinos = getattr(m, "oos_fold_sortinos", None) or []
-    if w_disp and len(fold_sortinos) >= 2:
-        scaled_folds = [_apply_soft_scale(float(s), soft_scale) for s in fold_sortinos]
-        fold_dispersion_penalty = float(w_disp) * statistics.pstdev(scaled_folds)
+    fold_returns = list(getattr(m, "oos_fold_returns", None) or [])
+    n_total = int(getattr(m, "oos_folds_total", 0) or 0)
+    if w_disp and not holdout and n_total >= 2:
+        n_valid = len(fold_returns)
+        base_disp = statistics.pstdev(fold_returns) if n_valid >= 2 else 0.0
+        if n_valid < n_total:
+            miss_scale = float(weights.get("missing_fold_penalty_scale", 0.0))
+            frac_missing = (n_total - n_valid) / n_total
+            fold_dispersion_penalty = float(w_disp) * (base_disp + miss_scale * frac_missing)
+        else:
+            fold_dispersion_penalty = float(w_disp) * base_disp
         if penalty_relative_cap is not None:
             fold_dispersion_penalty = min(
-                fold_dispersion_penalty, float(penalty_relative_cap) * abs(base)
+                fold_dispersion_penalty, float(penalty_relative_cap) * cap_scale
             )
 
     # Issue #559 — return-Tie-Breaker: bricht Rest-Plateaus im eligiblen Ast ökonomisch sinnvoll auf
@@ -537,7 +619,8 @@ def compute_reward(
     w_ret = float(weights.get("w_ret", 0.0))
     return_tie_breaker = w_ret * float(m.oos_total_return)
 
-    floor = -float(weights["sortino_clip_abs"])
+    # Issue #591 — Reward-Floor ENTKOPPELT von sortino_clip_abs (eigener evaluable_reward_floor).
+    floor = _evaluable_floor(weights)
 
     # A4.3: per-symbol reward path. The coverage term (win_count/universe_size) degenerates
     # when the universe is a single symbol, so drop it and add a shrinkage penalty toward the

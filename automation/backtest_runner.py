@@ -467,6 +467,10 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     # (Legacy-Absolut-Gate über oos_min_total_return bleibt allein maßgeblich).
     req_excess_return = t_overrides.get("oos_min_excess_return",
                                         tournament_cfg.get("oos_min_excess_return"))
+    # Issue #590 — Fold-Degenerations-Gate: Mindestzahl VALIDE evaluierbarer Folds (definierter
+    # Sortino) bei > 1 Gesamt-Fold. Fehlt der Key (None) ⇒ inaktiv (rückwärtskompatibel).
+    req_evaluable_folds = t_overrides.get("oos_min_evaluable_folds",
+                                          tournament_cfg.get("oos_min_evaluable_folds"))
 
     sortino_valid = True
     sortino_reason = ""
@@ -522,6 +526,20 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             excess_valid = False
             excess_reason = _reason("oos_min_excess_return", oos_excess, req_excess_return, "<")
 
+    # Issue #590 — Fold-Degenerations-Bedingung. Nur aktiv, wenn die Schwelle konfiguriert ist UND
+    # oos_folds_total > 1 (echter Walk-Forward). Ein Trial mit mehreren Gesamt-Folds, aber < Schwelle
+    # valide evaluierbaren (Sortino definiert), hat die Bewertung degeneriert (Reward-Hacking) statt
+    # Performance geliefert ⇒ nicht eligible. Fehlt Telemetrie ⇒ trivial erfüllt (rückwärtskompatibel).
+    eval_folds_valid = True
+    eval_folds_reason = ""
+    if req_evaluable_folds is not None:
+        n_folds_total_ev = oos_metrics.get("oos_folds_total")
+        n_valid_sortinos = len(oos_metrics.get("oos_fold_sortinos") or [])
+        if n_folds_total_ev and n_folds_total_ev > 1 and n_valid_sortinos < req_evaluable_folds:
+            eval_folds_valid = False
+            eval_folds_reason = (f"oos_min_evaluable_folds: {n_valid_sortinos} valide "
+                                 f"< {req_evaluable_folds} (von {n_folds_total_ev} Folds)")
+
     condition_map = {
         "min_trades":        (n_trades >= req_trades, f"oos_min_trades: {n_trades} < {req_trades}"),
         "min_total_return":  (total_return >= req_return, _reason("oos_min_total_return", total_return, req_return, "<")),
@@ -532,6 +550,7 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         "min_profit_factor": (pf_valid, pf_reason),
         "min_profitable_folds": (prof_folds_valid, prof_folds_reason),
         "min_excess_return": (excess_valid, excess_reason),
+        "min_evaluable_folds": (eval_folds_valid, eval_folds_reason),
     }
 
     # Issue #554 — maschinenlesbares Delta-Dict (actual − threshold; für max_drawdown cap − actual,
@@ -860,40 +879,80 @@ def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
     return [float(f["sortino_ratio"]) for f in per_fold_oos if f is not None and f.get("sortino_ratio") is not None]
 
 
-# Issue #549/#550 — die vier risikoadjustierten OOS-Gate-Kennzahlen einheitlich als Fold-Median.
-# Issue #574 — _FOLD_MEDIAN_METRICS auf "sortino_ratio" reduziert, da Häufigkeitskennzahlen pooled sein müssen.
-_FOLD_MEDIAN_METRICS = ("sortino_ratio",)
+def collect_oos_fold_returns(per_fold_oos: list[dict]) -> list[float]:
+    """Issue #589/#590 — je Fold den OOS-total_return (Reihenfolge erhalten, None-sicher).
+
+    Die Fold-DISPERSION (Reward-seitige Fold-Konsistenz-Strafe) läuft nach #589 über den RETURN,
+    nicht über den Fold-Sortino: der Return ist die gut konditionierte Größe, der Fold-Sortino
+    (Median n=4, Schätzfehler ±3–5 Einheiten; Explosionen bei verlustarmen Folds) ist es nicht."""
+    return [float(f["total_return"]) for f in per_fold_oos if f is not None and f.get("total_return") is not None]
+
+
+# Issue #549/#550 — Häufigkeitskennzahlen bleiben GEPOOLT (über alle OOS-Trades).
+# Issue #589 — der Sortino wird NICHT mehr zum Fold-Median aggregiert (Kohärenz-Verlust +
+# Median-Maskierung katastrophaler Folds), sondern bleibt der GEPOOLTE Wert aus der OOS-Equity-Kurve.
 _POOLED_METRICS = ("win_rate", "expectancy", "profit_factor")
+
+# Issue #263/#288/#592 — der "All-Win"-Sentinel für die Score-Normalisierung im Winner-Ranking
+# (get_sentinel injiziert bis zu diesem Wert, wenn ein profit_factor/sortino wegen 0 Verlusten
+# undefiniert ist). Als BENANNTE Konstante (statt verstreuter 50.0-Literale), damit die
+# Sentinel-Filterung nicht an einer hartcodierten Zahl klebt und bei künftiger Änderung nicht still
+# bricht (Zero-Hardcoding, vgl. CODE_AUDIT). Bewusst ENTKOPPELT vom (entfernten) Sortino-Clip #588.
+_ALL_WIN_SENTINEL = 50.0
+
+
+def _assert_sortino_return_coherence(oos_metrics: dict, *, tol: float = 1e-4) -> None:
+    """Issue #589 — Kohärenz-Invariant (analog zum #528-Coherence-Check): der gepoolte OOS-Sortino
+    (Risiko-adjustierter Return aus der OOS-Equity-Kurve) und der OOS-total_return beschreiben
+    DENSELBEN Equity-Pfad ⇒ ihre Vorzeichen MÜSSEN übereinstimmen. Eine Verletzung bei
+    ``|total_return| > tol`` ist ein Aggregationsdefekt (vorher 245/600 Trials mit return>0 ∧
+    sortino<0). ERROR + Telemetrie-Flag (kein Abbruch — der Reward-Pfad bleibt robust)."""
+    tr = oos_metrics.get("total_return")
+    sr = oos_metrics.get("sortino_ratio")
+    if tr is None or sr is None:
+        return
+    tr = float(tr)
+    sr = float(sr)
+    if abs(tr) > tol and sr != 0.0 and (tr > 0.0) != (sr > 0.0):
+        import logging
+        logging.getLogger("optimizer").error(
+            "COHERENCE_INVARIANT_VIOLATION (#589): sign(oos_sortino=%.6g) != "
+            "sign(oos_total_return=%.6g) bei |return| > %.0e — gepoolter OOS-Sortino und Return "
+            "müssen kohärent sein (derselbe Equity-Pfad).", sr, tr, tol,
+        )
+        oos_metrics["oos_coherence_violation"] = True
 
 
 def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | None]) -> dict:
-    """Issue #549/#550 — mutiert ``oos_metrics`` in place zur kanonischen Fold-Median-Aggregation.
+    """Issue #549/#550/#589/#590 — mutiert ``oos_metrics`` in place: EINE kohärente
+    Aggregationsebene für den Sortino + Fold-Konsistenz-Telemetrie.
 
-    Rein & deterministisch (kein I/O), damit unit-testbar losgelöst vom BacktestEngine.
+    Rein & deterministisch (kein I/O — die frühere doppelte ``tournament.json``-Lesung im Hot-Path
+    ist mit dem Fold-Median-Sortino entfallen), damit unit-testbar losgelöst vom BacktestEngine.
 
-    Motivation: Vor dem Fix mischte das Gate drei Aggregationslogiken in DERSELBEN Klausel:
-    ``total_return`` compoundiert, ``sortino_ratio`` Fold-Median (nur im Reward via parse_tournament),
-    ``win_rate``/``expectancy``/``profit_factor`` GEPOOLT über alle OOS-Trades. Das (a) ließ
-    Gate-Sortino (pooled) und Reward-Sortino (fold-median) divergieren (#549) und (b) belohnte ein
-    einzelnes Glücks-Sub-Fenster, weil ein katastrophaler Fold in der gepoolten Kennzahl von einem
-    starken maskiert wurde (#550).
+    Issue #589 — Vor dem Fix mischte das Gate drei Aggregationslogiken in DERSELBEN Klausel und der
+    Sortino wurde zum FOLD-MEDIAN aggregiert. Das (a) entkoppelte den Sortino vom Ergebnis
+    (corr(oos_sortino, oos_total_return) −0.44…+0.24 je Study; 245/600 Trials return>0 ∧ sortino<0)
+    und (b) maskierte über den Median (n=4, Standardfehler ≈ 0.63σ ⇒ ±3–5 Sortino-Einheiten) einen
+    katastrophalen Fold vollständig. Fix: der ``sortino_ratio`` bleibt der GEPOOLTE Wert, den
+    ``_calculate_stats`` bereits aus der konkatenierten, purged OOS-Equity-Kurve (``oos_mtm``)
+    berechnet hat — DERSELBE Pfad, aus dem ``total_return`` kommt (``mtm_frames``). Damit sind Zähler
+    und Nenner per Konstruktion kohärent (Kohärenz-Invariant ``_assert_sortino_return_coherence``).
+    Der frühere Fold-Median wird nur noch forensisch als ``sortino_ratio_fold_median`` geführt; der
+    gepoolte Wert zusätzlich als ``sortino_ratio_pooled`` (== ``sortino_ratio``).
 
-    Fix: die vier risikoadjustierten Kennzahlen (``sortino_ratio``, ``win_rate``, ``expectancy``,
-    ``profit_factor``) werden zum FOLD-MEDIAN (robuste Zentraltendenz). ``total_return`` bleibt
-    compoundiert (geometrisch korrekt, #465); ``max_drawdown``/``total_trades``/``median_position_notional``
-    bleiben pooled. Der Fold-Median-Sortino ist DERSELBE Wert, den ``parse_tournament`` aus
-    ``oos_fold_sortinos`` bildet ⇒ Gate == Reward (kanonisch an der Quelle, #549). Die gepoolten
-    Originalwerte bleiben zur Forensik unter ``<metric>_pooled`` erhalten.
+    Die Fold-KONSISTENZ bleibt ein EIGENSTÄNDIGES Signal (nicht in den Sortino hineingemittelt):
+    Gate ``oos_min_profitable_folds_frac`` (#550) + ``oos_min_evaluable_folds`` (#590); Reward
+    ``fold_dispersion_weight`` auf ``pstdev(oos_fold_returns)`` (#589) mit Strafe für fehlende Folds
+    (#590). ``win_rate``/``expectancy``/``profit_factor`` bleiben pooled; ``total_return``
+    compoundiert; ``max_drawdown``/``total_trades``/``median_position_notional`` pooled.
 
-    Zusätzlich: Fold-Konsistenz-Telemetrie (``oos_folds_total``, ``oos_profitable_folds``,
-    ``oos_profitable_folds_frac``) als Grundlage des deklarativen ``min_profitable_folds``-Gates (#550).
-
-    Für ``splits==1`` (Holdout/Single-Fold) ist der Fold-Median == der gepoolte Wert (identische
-    Trade-Menge, ein Fold) ⇒ bit-identisch; nur echte Multi-Fold-Sweeps ändern sich. Siehe
-    AGENTS.md Pitfall #110.
+    Für ``splits==1`` (Holdout/Single-Fold) ist pooled == der eine Fold ⇒ bit-identisch. Siehe
+    AGENTS.md Pitfall #110/#113.
     """
     import statistics as _stats
     oos_metrics["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+    oos_metrics["oos_fold_returns"] = collect_oos_fold_returns(per_fold_oos_list)
 
     valid_folds = [f for f in per_fold_oos_list if f is not None]
     n_folds_total = len(per_fold_oos_list)
@@ -903,32 +962,20 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
     oos_metrics["oos_profitable_folds_frac"] = (
         n_folds_profitable / n_folds_total if n_folds_total > 0 else 0.0)
 
+    # Issue #589 — sortino_ratio bleibt der GEPOOLTE Wert (kohärent mit total_return). Forensische
+    # Zweitwerte: der gepoolte (redundant, aber explizit benannt) und der frühere Fold-Median.
+    fold_sortino_vals = oos_metrics["oos_fold_sortinos"]
+    oos_metrics["sortino_ratio_pooled"] = oos_metrics.get("sortino_ratio")
+    oos_metrics["sortino_ratio_fold_median"] = (
+        _stats.median(fold_sortino_vals) if fold_sortino_vals else None)
+
     if valid_folds:
-        for key in _FOLD_MEDIAN_METRICS:
-            vals = [f.get(key) for f in valid_folds if f.get(key) is not None]
-            if vals:
-                oos_metrics[f"{key}_pooled"] = oos_metrics.get(key)
-                if key == "sortino_ratio" and len(vals) >= 3:
-                    import pandas as _pd
-                    import json
-                    try:
-                            # Direct parsing logic from tournament
-                            config_p = _AUTOMATION_DIR / "automation" / "config" / "tournament.json"
-                            w_lower = float(json.loads(config_p.read_text()).get("fold_winsorize_lower", 0.05))
-                            w_upper = float(json.loads(config_p.read_text()).get("fold_winsorize_upper", 0.95))
-                    except Exception:
-                        w_lower, w_upper = 0.05, 0.95
-
-                    s_vals = _pd.Series(vals)
-                    lb, ub = s_vals.quantile(w_lower, interpolation="nearest"), s_vals.quantile(w_upper, interpolation="nearest")
-                    vals = s_vals.clip(lower=lb, upper=ub).tolist()
-                oos_metrics[key] = _stats.median(vals)
-
-        # For pooled metrics, ensure they remain pooled (they already are in oos_metrics),
-        # but also explicitly save them to <metric>_pooled for backwards compatibility / telemetry.
+        # Häufigkeitskennzahlen bleiben gepoolt (bereits in oos_metrics); forensische Kopie.
         for key in _POOLED_METRICS:
             if key in oos_metrics:
                 oos_metrics[f"{key}_pooled"] = oos_metrics.get(key)
+
+    _assert_sortino_return_coherence(oos_metrics)
     return oos_metrics
 
 
@@ -1006,6 +1053,54 @@ def _read_sortino_downside_floor() -> float:
         val = 1e-6
     _sortino_downside_floor_cache = val
     return val
+
+_sortino_numeric_guard_cache: float | None = None
+_profit_factor_cap_cache: float | None = None
+
+
+def _read_sortino_numeric_guard() -> float:
+    """Issue #588 (Zero-Hardcoding): reiner Numerik-/Datenfehler-Guard fuer den Sortino aus
+    tournament.json['sortino_numeric_guard'] (KEINE semantische Saettigung — die passiert
+    ausschliesslich in reward.py via sortino_soft_scale). Gecached (Hot-Path). Fehlt der
+    Schluessel ⇒ 1e6 (rueckwaertskompatibler Overflow-Schutz)."""
+    global _sortino_numeric_guard_cache
+    if _sortino_numeric_guard_cache is not None:
+        return _sortino_numeric_guard_cache
+    val = 1e6
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_numeric_guard")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 1e6
+    _sortino_numeric_guard_cache = val
+    return val
+
+
+def _read_profit_factor_cap() -> float:
+    """Issue #588 (Zero-Hardcoding): EIGENER Cap fuer profit_factor UND calmar_ratio aus
+    tournament.json['profit_factor_cap'] (rechtsschiefe Kennzahlen, ein Cap ist hier sinnvoll —
+    aber getrennt vom Sortino, der nach #588 nicht mehr geklemmt wird). Gecached. Fehlt der
+    Schluessel ⇒ 15.0 (Legacy-Wert des frueheren gemeinsamen RATIO_CAP)."""
+    global _profit_factor_cap_cache
+    if _profit_factor_cap_cache is not None:
+        return _profit_factor_cap_cache
+    val = 15.0
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("profit_factor_cap")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 15.0
+    _profit_factor_cap_cache = val
+    return val
+
 
 def _read_sortino_min_trades() -> int:
     """Issue #401 (Zero-Hardcoding): Mindest-Round-Trips fuer die Sortino-Berechnung aus
@@ -1158,7 +1253,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
     EPSILON = 1e-9
     DENOMINATOR_FLOOR = 1e-6
-    RATIO_CAP = 15.0
+    # Issue #588 — der frühere gemeinsame RATIO_CAP=15.0 klemmte Sortino, profit_factor UND calmar
+    # mit DERSELBEN Zahl. Der Sortino-Clip war ein struktureller Defekt (stückweise konstant,
+    # Gradient 0 ⇒ Rangordnung vernichtet, #559-asinh wirkungslos) und entfällt (nur noch Numerik-
+    # Guard). profit_factor/calmar sind naturgemäss rechtsschief ⇒ ein Cap ist dort sinnvoll, aber
+    # als EIGENER Key (profit_factor_cap), nicht am Sortino gekoppelt.
+    profit_factor_cap = _read_profit_factor_cap()
+    sortino_numeric_guard = _read_sortino_numeric_guard()
 
     # Floor `gross_loss` at EPSILON implicitly to protect against division-by-zero, but logic captures it via count.
     if gross_loss <= 0.0:
@@ -1166,7 +1267,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     elif losses_count < 2 and n < 50:
         profit_factor = None
     else:
-        profit_factor = min(gross_profit / max(gross_loss, DENOMINATOR_FLOOR), RATIO_CAP)
+        profit_factor = min(gross_profit / max(gross_loss, DENOMINATOR_FLOOR), profit_factor_cap)
 
     win_rate = wins / n if n > 0 else 0.0
 
@@ -1235,7 +1336,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         min_trades_sortino = min_trades_for_sortino if min_trades_for_sortino is not None else _read_sortino_min_trades()
         mar = _read_sortino_mar()
 
-        if n < min_trades_sortino or losses_count == 0 or period_rets.empty:
+        # Issue #590 — ``losses_count == 0`` ist KEIN Ausstiegsgrund mehr. Ein Fold ohne Verlust hat
+        # eine wohldefinierte Downside-Deviation von 0 — der ``sortino_downside_floor`` (#573) ist genau
+        # dafür da. Vor dem Fix verschwand ein verlustfreier Fold aus ``oos_fold_sortinos`` (sortino=None)
+        # und umging so die Fold-Dispersionsstrafe vollständig (Reward-Hacking: die Bewertung LÖSCHEN
+        # statt Performance verbessern). Der ``downside_floor``-Codepfad war für genau diesen Fall
+        # gedacht, aber hinter der ``losses_count == 0``-Prüfung toter Code.
+        if n < min_trades_sortino or period_rets.empty:
             sortino = None
         else:
             # Issue #545: Target-Downside-Deviation (RMS without mean-centering)
@@ -1249,10 +1356,26 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 dd_dev = max(dd_dev, downside_floor)
                 mean_ret = period_rets.mean()
                 sortino_raw = ((mean_ret - mar) / dd_dev) * math.sqrt(annualization_factor)
-                if pd.isna(sortino_raw):
+                # Issue #588 — KEIN semantischer Hard-Clip mehr (der vernichtete die Rangordnung
+                # oberhalb ±15 und machte die #559-asinh-Sättigung wirkungslos). Die weiche Sättigung
+                # passiert ausschliesslich in reward.py via sortino_soft_scale. Hier NUR ein Numerik-/
+                # Datenfehler-Guard: ein |sortino_raw| jenseits von ``sortino_numeric_guard`` ist nach
+                # #587 (empirische Annualisierung) kein legitimes Ergebnis, sondern ein Datenfehler —
+                # fail-loud loggen (SORTINO_GUARD_TRIPPED) und als undefiniert (None) behandeln, statt
+                # still zu klemmen. Der Sortino selbst bleibt UNGEKLEMMT und trägt oberhalb der
+                # bisherigen Grenze weiterhin Ordnung (50 > 18 bleibt erhalten).
+                if pd.isna(sortino_raw) or not np.isfinite(sortino_raw):
+                    sortino = None
+                elif abs(sortino_raw) > sortino_numeric_guard:
+                    import logging
+                    logging.getLogger("optimizer").warning(
+                        "SORTINO_GUARD_TRIPPED: |sortino_raw|=%.6g > guard=%.6g "
+                        "(n_periods=%d, dd_dev=%.6g) — als Datenfehler verworfen (sortino=None).",
+                        sortino_raw, sortino_numeric_guard, len(period_rets), dd_dev,
+                    )
                     sortino = None
                 else:
-                    sortino = max(-RATIO_CAP, min(sortino_raw, RATIO_CAP))
+                    sortino = float(sortino_raw)
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
@@ -1266,7 +1389,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     if max_dd <= 0.0:
         calmar = None
     else:
-        calmar = min(total_return / max(max_dd, DENOMINATOR_FLOOR), RATIO_CAP)
+        calmar = min(total_return / max(max_dd, DENOMINATOR_FLOOR), profit_factor_cap)
 
     import statistics
     if hold_list:
@@ -2001,9 +2124,9 @@ def select_winners(
             # Issue #263 / #288: Handle None/All-Win scenarios logically.
             # Convert any None/0.0 fallback that actually corresponds to an All-Win
             # to a scaled sentinel value in the caller, but here we process the vals correctly.
-            # We filter out exactly 50.0 to prevent hard caps from contaminating the distribution.
+            # We filter out the All-Win sentinel to prevent it from contaminating the distribution.
             # We don't filter the scaled sentinels since they represent legitimate rank differences.
-            non_sentinels = [v for v in vals if v != 50.0]
+            non_sentinels = [v for v in vals if v != _ALL_WIN_SENTINEL]
             if len(non_sentinels) == 0:
                 return [1.0] * len(vals)
             su = sorted(list(set(vals)), reverse=reverse)
@@ -2015,9 +2138,9 @@ def select_winners(
         # We must protect genuine empirical ratios from being degraded by dynamic sentinels.
         def get_sentinel(n_trades, population_ratios):
             # 1. Scale sentinel based on sample size confidence
-            scaled = min(50.0, max(2.0, 50.0 * (n_trades / 50.0)))
+            scaled = min(_ALL_WIN_SENTINEL, max(2.0, _ALL_WIN_SENTINEL * (n_trades / _ALL_WIN_SENTINEL)))
             # 2. Prevent dynamic sentinel from outranking the highest genuine organic ratio
-            organic_ratios = [v for v in population_ratios if v is not None and v != 50.0]
+            organic_ratios = [v for v in population_ratios if v is not None and v != _ALL_WIN_SENTINEL]
             if organic_ratios:
                 return min(scaled, max(organic_ratios))
             return scaled
@@ -2114,8 +2237,11 @@ def select_winners(
             import statistics as _dstats
             cand_sortinos = [c.get("oos_metrics", {}).get("sortino_ratio") for c in candidates
                              if c.get("_oos_eval", {}).get("oos_evaluated")]
-            # Issue #576: 50-Clip-Sentinels aus der Deflations-Dispersion ausschliessen
-            cand_sortinos = [float(s) for s in cand_sortinos if s is not None and float(s) != 50.0]
+            # Issue #592 — der frühere 50.0-Sentinel-Filter entfällt ERSATZLOS: nach #588 gibt
+            # es keinen Sortino-Clip (und damit keine Clip-Sentinels) mehr; die hartcodierte 50.0
+            # (Wert-Drift seit RATIO_CAP 50→15→entfernt) hätte einen legitimen Sortino von exakt 50.0
+            # fälschlich verworfen. None bleibt gefiltert (undefinierter Sortino).
+            cand_sortinos = [float(s) for s in cand_sortinos if s is not None]
             if len(cand_sortinos) >= 2:
                 dispersion = _dstats.pstdev(cand_sortinos)
                 from automation.optimizer.deflation import deflated_threshold
@@ -2165,10 +2291,10 @@ def select_winners(
     aggregate_winner = None
     if win_counts:
         def get_median(vals):
-            # Issue #288 / #263: Filter out None and exactly 50.0 hard caps to prevent distortion.
-            # Scaled sentinels (< 50.0) are deliberately kept to reflect sample size significance.
+            # Issue #288 / #263: Filter out None and the All-Win sentinel to prevent distortion.
+            # Scaled sentinels (< sentinel) are deliberately kept to reflect sample size significance.
             vals = [v for v in vals if v is not None]
-            non_sentinel_vals = [v for v in vals if v != 50.0]
+            non_sentinel_vals = [v for v in vals if v != _ALL_WIN_SENTINEL]
 
             # Use non-sentinel values if available, fallback to full list if all are sentinels
             target_vals = non_sentinel_vals if non_sentinel_vals else vals

@@ -273,7 +273,9 @@ def _check_reward_semantics_version(study, opt_data: dict,
                 logger.warning(f"Obsolete Study '{study.study_name}' erfolgreich gelöscht. Sie wird beim nächsten Versuch neu erstellt.")
             except Exception as e:
                 logger.error(f"Fehler beim Löschen der Study: {e}")
-            raise ValueError(f"Study-Semantik Mismatch. {msg}")
+            # Issue #591 — fail-loud mit explizitem Fehlercode. v8 (Issues #587–#591) ist mit v7
+            # inkompatibel: alte SQLite-Studies MÜSSEN gelöscht werden, kein stilles Weiterlaufen.
+            raise ValueError(f"REJECT_STALE_STUDY_SEMANTICS: Study-Semantik Mismatch. {msg}")
 
     logger.warning("♻️ %s", msg)
 
@@ -657,7 +659,38 @@ def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
     return statistics.pstdev([float(r) for r in rewards]) > float(tau)
 
 
-def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
+def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
+    """Issue #597 — Anteil der numerischen Gewinner-Parameter, die innerhalb von 2 % einer
+    Suchraumgrenze liegen. Ein Wert > 0.3 ist ein Alarm: entweder ist der Suchraum falsch gewählt
+    oder der Reward drückt die Lösung in die Ecke (Randlösungs-Signatur, z. B. Trade-Frequenz
+    maximieren). ``None``, wenn Strategie/Bounds/Winner nicht verfügbar sind (defensiv)."""
+    if not strategy:
+        return None
+    try:
+        best = study.best_trial
+    except Exception:
+        return None
+    from automation.optimizer import bounds as _bounds
+    try:
+        b = _bounds.extract_numeric_bounds(strategy)
+    except Exception:
+        return None
+    params = getattr(best, "params", {}) or {}
+    numeric = [(k, v) for k, v in params.items()
+               if k in b and isinstance(v, (int, float)) and not isinstance(v, bool)]
+    if not numeric:
+        return None
+    hits = 0
+    for k, v in numeric:
+        lo, hi = b[k]
+        span = (hi - lo) or 1.0
+        norm = (float(v) - lo) / span
+        if norm <= 0.02 or norm >= 0.98:
+            hits += 1
+    return hits / len(numeric)
+
+
+def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | None = None) -> None:
     """Issue #415 — Per-Study-Timing-/Evaluierbarkeits-Summary nach ``study.optimize``.
 
     Defensiv gegen Test-Doubles (``DummyStudy`` ohne ``trials``/``best_value``): jeder Zugriff ist
@@ -697,6 +730,28 @@ def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
             "wirkungslos).", symbol, evaluable_fraction, reward_pstdev, tau,
         )
 
+    # Issue #592 — Deflations-Telemetrie auf der REWARD-Skala (je Study sichtbar, nicht nur im
+    # Holdout-Pfad). Nutzt die evaluable Trial-Rewards (das tatsächliche argmax-Selektionskriterium).
+    deflated_selection, deflation_confidence = _read_deflation_config()
+    evaluable_rewards = [float(getattr(t, "value", None))
+                         for t in trials
+                         if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+                         and isinstance(getattr(t, "value", None), (int, float))]
+    deflated_min_reward = deflation_n = deflation_sigma = deflation_baseline = None
+    if deflated_selection:
+        from automation.optimizer.deflation import deflated_reward_threshold
+        deflated_min_reward, deflation_n, deflation_sigma, deflation_baseline = (
+            deflated_reward_threshold(evaluable_rewards, confidence=deflation_confidence))
+
+    # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
+    boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
+    if boundary_hit_fraction is not None and boundary_hit_fraction > 0.3:
+        logging.getLogger("optimizer").warning(
+            "[#597] %s: boundary_hit_fraction=%.2f > 0.3 — der Gewinner klebt an den Suchraumgrenzen "
+            "(Randlösung). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
+            symbol, boundary_hit_fraction,
+        )
+
     emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
         "study_name": getattr(study, "study_name", None),
         "symbol": symbol,
@@ -710,7 +765,28 @@ def _emit_study_summary(study, symbol: str, study_t0: float) -> None:
         "reward_pstdev": reward_pstdev,
         "evaluable_fraction": evaluable_fraction,
         "gradient_signal": gradient_signal,
+        # Issue #592 — Deflations-Telemetrie (Reward-Skala) je Study.
+        "deflated_min_reward": deflated_min_reward,
+        "deflation_n": deflation_n,
+        "deflation_sigma": deflation_sigma,
+        "deflation_baseline": deflation_baseline,
+        # Issue #597 — Randlösungs-Signatur.
+        "boundary_hit_fraction": boundary_hit_fraction,
     })
+
+
+def _read_deflation_config() -> tuple[bool, float]:
+    """Issue #592 — (deflated_selection, deflation_confidence) aus tournament.json (Zero-Hardcoding)."""
+    deflated_selection, confidence = False, 0.95
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text("utf-8")) or {}
+            deflated_selection = bool(data.get("deflated_selection", False))
+            confidence = float(data.get("deflation_confidence", 0.95))
+    except Exception:
+        pass
+    return deflated_selection, confidence
 
 
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
@@ -951,7 +1027,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     study.optimize(objective, n_trials=n_trials, n_jobs=1,
                    catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
     # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
-    _emit_study_summary(study, symbol, study_t0)
+    _emit_study_summary(study, symbol, study_t0, strategy=strategy)
     return study
 
 

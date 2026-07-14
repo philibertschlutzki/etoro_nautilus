@@ -56,10 +56,13 @@ class TournamentMetrics:
     # Issue #554 — maschinenlesbare Gate-Deltas (metric → actual − threshold). Leeres Dict, wenn der
     # Block fehlt (rückwärtskompatibel zu Pre-#554-JSONs). Für die forensische Near-Miss-Analyse.
     oos_gate_deltas: dict | None = None
-    # Issue #565 — Per-Fold-OOS-Sortinos für die reward-seitige Fold-Dispersions-Strafe (pstdev).
-    # Leeres Tuple, wenn keine Fold-Telemetrie vorliegt (immutable Default ⇒ kein mutable-default-
-    # Footgun; rückwärtskompatibel). Belohnt konsistente statt glücklicher Per-Fold-Performance.
+    # Issue #565 — Per-Fold-OOS-Sortinos (forensisch seit #589; die Fold-Dispersion läuft nun über
+    # die Returns). Leeres Tuple, wenn keine Fold-Telemetrie vorliegt (immutable Default).
     oos_fold_sortinos: tuple = ()
+    # Issue #589/#590 — Per-Fold-OOS-Returns (gut konditionierte Größe der Fold-Dispersions-Strafe)
+    # und die Gesamtzahl der Walk-Forward-Folds (Normierung fehlender/degenerierter Folds im Reward).
+    oos_fold_returns: tuple = ()
+    oos_folds_total: int = 0
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -96,17 +99,21 @@ def parse_tournament(path: Path) -> TournamentMetrics:
 
     oos_fold_sortinos = agg.get("oos_fold_sortinos") or []
     oos_metrics = agg.get("oos_metrics") or {}
+    # Issue #589/#590 — Per-Fold-OOS-Returns + Gesamt-Fold-Zahl für die reward-seitige Fold-
+    # Dispersion (pstdev(returns)) und die Normierung fehlender Folds. None-safe.
+    oos_fold_returns = agg.get("oos_fold_returns")
+    if oos_fold_returns is None:
+        oos_fold_returns = oos_metrics.get("oos_fold_returns") or []
+    oos_folds_total = agg.get("oos_folds_total")
+    if oos_folds_total is None:
+        oos_folds_total = oos_metrics.get("oos_folds_total")
 
-    # Issue #549 — Gate/Reward-Sortino-Parität. Seit #549 setzt extract_metrics (apply_fold_aggregation)
-    # oos_metrics["sortino_ratio"] bereits AN DER QUELLE auf den Fold-Median der oos_fold_sortinos.
-    # Beide Zweige hier liefern damit denselben kanonischen Wert (median(oos_fold_sortinos) im WF-Pfad,
-    # der gepoolte Fallback nur, wenn keine Fold-Sortinos existieren) — der Reward liest exakt den
-    # Sortino, den das Gate (_evaluate_oos_eligibility) verwendet. Kein divergierender Gradient mehr
-    # an der Gate-Grenze (siehe AGENTS.md Pitfall #110).
-    if oos_fold_sortinos and isinstance(oos_fold_sortinos, list) and len(oos_fold_sortinos) > 0:
-        oos_sortino = statistics.median(oos_fold_sortinos)
-    else:
-        oos_sortino = oos_metrics.get("sortino_ratio")
+    # Issue #549/#589 — Gate/Reward-Sortino-Parität. Seit #589 ist ``oos_metrics["sortino_ratio"]``
+    # der GEPOOLTE OOS-Sortino aus der konkatenierten OOS-Equity-Kurve (kohärent mit total_return) —
+    # NICHT mehr der Fold-Median. Gate (_evaluate_oos_eligibility) UND Reward lesen damit exakt
+    # denselben kanonischen, gepoolten Sortino (kein divergierender Gradient an der Gate-Grenze; kein
+    # Median, der einen katastrophalen Fold maskiert). Siehe AGENTS.md Pitfall #110/#113.
+    oos_sortino = oos_metrics.get("sortino_ratio")
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -192,8 +199,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_rejection_reasons=oos_rejection_reasons,
         oos_anchor_divergence=oos_anchor_divergence,
         oos_gate_deltas=oos_gate_deltas,
-        # Issue #565 — Per-Fold-OOS-Sortinos (None-safe ⇒ leeres Tuple) für die Fold-Dispersion.
+        # Issue #565 — Per-Fold-OOS-Sortinos (None-safe ⇒ leeres Tuple); forensisch seit #589.
         oos_fold_sortinos=tuple(oos_fold_sortinos) if oos_fold_sortinos else (),
+        # Issue #589/#590 — Per-Fold-OOS-Returns + Gesamt-Fold-Zahl (None-safe).
+        oos_fold_returns=tuple(oos_fold_returns) if oos_fold_returns else (),
+        oos_folds_total=int(oos_folds_total) if oos_folds_total is not None else 0,
     )
 
     # Pre-Return Invarianten-Check

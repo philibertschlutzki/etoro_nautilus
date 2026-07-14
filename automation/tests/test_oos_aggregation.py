@@ -135,7 +135,7 @@ def test_issue_574_pooled_frequency_metrics():
 
     # Original pooled metrics calculated prior to apply_fold_aggregation
     oos_metrics = {
-        "sortino_ratio": 1.0, # Will be overwritten by median(-1, -1, 5) = -1.0
+        "sortino_ratio": 1.0,  # Issue #589 — stays POOLED (coherent with total_return), not median
         "win_rate": 0.66,
         "expectancy": 0.005,
         "profit_factor": 2.5,
@@ -146,7 +146,9 @@ def test_issue_574_pooled_frequency_metrics():
 
     apply_fold_aggregation(oos_metrics, per_fold)
 
-    assert oos_metrics["sortino_ratio"] == -1.0
+    # Issue #589 — sortino_ratio stays the pooled value; fold-median is forensic only.
+    assert oos_metrics["sortino_ratio"] == 1.0
+    assert oos_metrics["sortino_ratio_fold_median"] == -1.0  # median(-1, -1, 5)
     assert oos_metrics["win_rate"] == 0.66, "Win rate should be pooled, not median of 0.0"
     assert oos_metrics["profit_factor"] == 2.5, "Profit factor should be pooled"
     assert oos_metrics["expectancy"] == 0.005, "Expectancy should be pooled"
