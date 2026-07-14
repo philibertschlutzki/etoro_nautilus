@@ -267,7 +267,8 @@ def _constraint_failure_reward(
     weights: dict,
     risk_dd_cap: float | None,
     tournament_cfg: dict | None,
-) -> float:
+    return_terms: bool = False,
+) -> float | tuple:
     """Issue #452 / #505 — Reward fuer evaluiert-aber-nicht-eligible OOS-Trials.
 
     Verankert am neuen Feasible-Floor (-sortino_clip_abs) und zieht die
@@ -313,12 +314,40 @@ def _constraint_failure_reward(
         z = -(float(m.oos_total_return) - float(req_return)) / s
         penalty = _softplus(z) * w
         raw_failure_reward = failure_ceiling - penalty
-        return max(unevaluable_ceiling, raw_failure_reward)
+        rew = max(unevaluable_ceiling, raw_failure_reward)
+        if return_terms:
+            return rew, {
+                "branch": "failure",
+                "base": float(m.oos_total_return),
+                "divergence": 0.0,
+                "divergence_at_cap": False,
+                "dd_penalty": penalty,
+                "param_pen": 0.0,
+                "turnover": 0.0,
+                "fold_dispersion": 0.0,
+                "tie_breaker": 0.0,
+                "floor_clamped": rew == unevaluable_ceiling
+            }
+        return rew
 
     # 'legacy_mean' (Default) — Mittel der aktiven Distanzen (bit-identisch, #452/#505/#534).
     penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
     raw_failure_reward = failure_ceiling - penalty
-    return max(unevaluable_ceiling, raw_failure_reward)
+    rew = max(unevaluable_ceiling, raw_failure_reward)
+    if return_terms:
+        return rew, {
+            "branch": "failure",
+            "base": 0.0,
+            "divergence": 0.0,
+            "divergence_at_cap": False,
+            "dd_penalty": penalty,
+            "param_pen": 0.0,
+            "turnover": 0.0,
+            "fold_dispersion": 0.0,
+            "tie_breaker": 0.0,
+            "floor_clamped": rew == unevaluable_ceiling
+        }
+    return rew
 
 
 def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
@@ -367,6 +396,7 @@ def compute_reward(
     strategy: str | None = None,
     tournament_cfg: dict | None = None,
     holdout: bool = False,
+    return_terms: bool = False,
 ) -> float | tuple:
     """weights=None  ⇒ aus optimizer.json (penalty_overfit_weight, penalty_dd_weight,
                      bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
@@ -417,7 +447,7 @@ def compute_reward(
 
     reward_mode_config = weights.get("reward_mode", "auto") if weights else "auto"
     if reward_mode_config == "pareto":
-        return (
+        res = (
             float(m.oos_total_return),
             float(m.oos_expectancy),
             float(m.oos_win_rate),
@@ -425,6 +455,20 @@ def compute_reward(
             float(m.oos_max_drawdown),
             float(m.oos_total_trades),
         )
+        if return_terms:
+            return res, {
+                "branch": "pareto",
+                "base": 0.0,
+                "divergence": 0.0,
+                "divergence_at_cap": False,
+                "dd_penalty": 0.0,
+                "param_pen": 0.0,
+                "turnover": 0.0,
+                "fold_dispersion": 0.0,
+                "tie_breaker": 0.0,
+                "floor_clamped": False
+            }
+        return res
 
     penalty_unevaluable_oos = weights["penalty_unevaluable_oos"]
 
@@ -462,7 +506,7 @@ def compute_reward(
         if loaded_tournament_cfg is None:
             loaded_tournament_cfg = _read_tournament_cfg()
         return _constraint_failure_reward(
-            m, weights, risk_dd_cap, loaded_tournament_cfg
+            m, weights, risk_dd_cap, loaded_tournament_cfg, return_terms=return_terms
         )
 
     if not m.oos_evaluated or base_source is None:
@@ -514,7 +558,21 @@ def compute_reward(
         # Floor invariant: progress ∈ [0, 1] ⇒ shaping ≤ unevaluable_shaping_span, hence every
         # unevaluable trial stays ≤ penalty + span, strictly below the evaluable floor below.
         shaping = weights["unevaluable_shaping_span"] * progress
-        return penalty_unevaluable_oos + shaping
+        rew = penalty_unevaluable_oos + shaping
+        if return_terms:
+            return rew, {
+                "branch": "unevaluable",
+                "base": 0.0,
+                "divergence": 0.0,
+                "divergence_at_cap": False,
+                "dd_penalty": 0.0,
+                "param_pen": 0.0,
+                "turnover": 0.0,
+                "fold_dispersion": 0.0,
+                "tie_breaker": 0.0,
+                "floor_clamped": False
+            }
+        return rew
 
     sortino_clip_abs = weights["sortino_clip_abs"]
     # Issue #559 — WEICHE Sättigung statt Hard-Clip. Der Hard-Clip ist eine stückweise konstante
@@ -547,6 +605,7 @@ def compute_reward(
     # Strafe. Die Cap-Höhe ist damit vorzeichen-invariant (base=−5 und base=+5 ⇒ gleiche Cap-Höhe).
     cap_scale = soft_scale if soft_scale is not None else float(sortino_clip_abs)
 
+    divergence_at_cap = False
     # Issue #594 — Holdout-Modus: die IS-abhängigen Terme (Overfit-Divergenz, Fold-Dispersion) sind
     # für einen Single-Fold-Holdout ohne IS-Referenz bedeutungslos. Sie werden ABGESCHALTET (nicht mit
     # einem 0.0-Platzhalter gefüttert, der bei negativem base eine fiktive Overfit-Strafe erzeugte).
@@ -580,8 +639,11 @@ def compute_reward(
             divergence_penalty = penalty_overfit_weight * overfit_gap
 
         if penalty_relative_cap is not None:
+            cap_val = float(penalty_relative_cap) * cap_scale
+            if divergence_penalty >= cap_val:
+                divergence_at_cap = True
             divergence_penalty = min(
-                divergence_penalty, float(penalty_relative_cap) * cap_scale
+                divergence_penalty, cap_val
             )
 
     dd_penalty = _dd_penalty(m, weights, risk_dd_cap)
@@ -645,19 +707,48 @@ def compute_reward(
             - fold_dispersion_penalty
             + return_tie_breaker
         )
-        return max(reward, floor)
+        final_reward = max(reward, floor)
+        if return_terms:
+            return final_reward, {
+                "branch": "per_symbol",
+                "base": base,
+                "divergence": divergence_penalty,
+                "divergence_at_cap": divergence_at_cap,
+                "dd_penalty": dd_penalty,
+                "param_pen": param_pen,
+                "turnover": turnover_penalty,
+                "fold_dispersion": fold_dispersion_penalty,
+                "tie_breaker": return_tie_breaker,
+                "floor_clamped": reward < floor
+            }
+        return final_reward
 
     # Coverage path (universe_size > 1) — bit-identical to the pre-A4.3 behaviour when the new
     # opt-in shaping keys (sortino_soft_scale/overfit_divergence_mode/fold_dispersion_weight/w_ret)
     # are absent.
     coverage = m.win_count / max(1, universe_size)
+    coverage_bonus = coverage * bonus_coverage_weight
     reward = (
         base
         - divergence_penalty
         - dd_penalty
-        + coverage * bonus_coverage_weight
+        + coverage_bonus
         - turnover_penalty
         - fold_dispersion_penalty
         + return_tie_breaker
     )
-    return max(reward, floor)
+    final_reward = max(reward, floor)
+    if return_terms:
+        return final_reward, {
+            "branch": "eligible",
+            "base": base,
+            "divergence": divergence_penalty,
+            "divergence_at_cap": divergence_at_cap,
+            "dd_penalty": dd_penalty,
+            "param_pen": 0.0,
+            "turnover": turnover_penalty,
+            "fold_dispersion": fold_dispersion_penalty,
+            "tie_breaker": return_tie_breaker,
+            "floor_clamped": reward < floor
+        }
+    return final_reward
