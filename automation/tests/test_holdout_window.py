@@ -127,6 +127,13 @@ def test_confirm_per_symbol_promotion_property_sweep(monkeypatch, tmp_path):
         def __init__(self):
             self.best_trial = DummyTrial()
             self.study_name = "s"
+            # Issue #615 — confirm_per_symbol_promotion selektiert eligible Trials aus ``study.trials``
+            # (Filter auf gestempeltes ``oos_eligible``). Für diesen reinen Reachability-Preflight-Sweep
+            # reicht eine leere Trials-Liste: für offset >= 0 (Katalog abgedeckt) greift dann fail-loud
+            # HOLDOUT_NO_ELIGIBLE_TRIALS (Rejection OHNE den REJECT_HOLDOUT_UNREACHABLE-Override) ⇒
+            # is_rejected bleibt False, exakt wie der Sweep es erwartet.
+            self.trials = []
+            self.directions = ["maximize"]
 
     study = DummyStudy()
 

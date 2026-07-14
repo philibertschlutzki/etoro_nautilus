@@ -63,6 +63,15 @@ class TournamentMetrics:
     # und die Gesamtzahl der Walk-Forward-Folds (Normierung fehlender/degenerierter Folds im Reward).
     oos_fold_returns: tuple = ()
     oos_folds_total: int = 0
+    # Issue #613 — der GEPOOLTE IS-Sortino aus der IS-Equity-Kurve (derselbe _calculate_stats-mtm-Pfad
+    # wie oos_sortino), die KOHÄRENTE Grösse für die Divergenz-Strafe. is_sortino_median (Fold-/Symbol-
+    # Median) bleibt rein forensische Telemetrie. Default None ⇒ rückwärtskompatibel: reward.py fällt
+    # dann auf is_sortino_median zurück (Legacy-JSONs/Fixtures ohne median_is_sortino_pooled).
+    is_sortino_pooled: float | None = None
+    # Issue #613 — Aggregationsebene des IS-/OOS-Sortino (Kohärenz-Telemetrie). "pooled_equity_curve"
+    # wenn aus der mtm-Equity-Kurve, sonst "trade_sequential"/None. Für die fail-loud Kohärenz-Assertion.
+    is_sortino_aggregation_basis: str | None = None
+    oos_sortino_aggregation_basis: str | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -97,8 +106,16 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     if is_sortino_median is None:
         is_sortino_median = agg.get("median_sortino", 0.0)
 
+    # Issue #613 — der EXPLIZIT gepoolte IS-Sortino aus der IS-Equity-Kurve (derselbe mtm-Pfad wie
+    # oos_sortino), die kohärente Divergenz-Grösse. None ⇒ reward.py fällt auf is_sortino_median zurück
+    # (Legacy-JSONs/Fixtures ohne das Feld). Der Fold-/Symbol-Median bleibt rein forensisch.
+    is_sortino_pooled = agg.get("median_is_sortino_pooled")
+    is_sortino_aggregation_basis = agg.get("is_sortino_aggregation_basis")
+
     oos_fold_sortinos = agg.get("oos_fold_sortinos") or []
     oos_metrics = agg.get("oos_metrics") or {}
+    # Issue #613 — Aggregationsebene des OOS-Sortino (Kohärenz-Telemetrie).
+    oos_sortino_aggregation_basis = oos_metrics.get("sortino_aggregation_basis") or agg.get("aggregation_basis")
     # Issue #589/#590 — Per-Fold-OOS-Returns + Gesamt-Fold-Zahl für die reward-seitige Fold-
     # Dispersion (pstdev(returns)) und die Normierung fehlender Folds. None-safe.
     oos_fold_returns = agg.get("oos_fold_returns")
@@ -204,6 +221,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #589/#590 — Per-Fold-OOS-Returns + Gesamt-Fold-Zahl (None-safe).
         oos_fold_returns=tuple(oos_fold_returns) if oos_fold_returns else (),
         oos_folds_total=int(oos_folds_total) if oos_folds_total is not None else 0,
+        # Issue #613 — gepoolter IS-Sortino + Aggregations-Basen (Kohärenz).
+        is_sortino_pooled=float(is_sortino_pooled) if is_sortino_pooled is not None else None,
+        is_sortino_aggregation_basis=str(is_sortino_aggregation_basis) if is_sortino_aggregation_basis is not None else None,
+        oos_sortino_aggregation_basis=str(oos_sortino_aggregation_basis) if oos_sortino_aggregation_basis is not None else None,
     )
 
     # Pre-Return Invarianten-Check

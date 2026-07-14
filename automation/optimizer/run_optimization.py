@@ -572,6 +572,14 @@ def _classify_trial_rejection(metrics) -> str:
     return "oos_gate_rejected"
 
 
+# Issue #453/#615 — die kanonische »kein Drop«-Kategorie (``is_rejection_detail``-User-Attr eines
+# eligiblen Trials). BENANNTE Konstante statt verstreuter "NONE"-String-Literale in zwei Modulen
+# (run_optimization + confirm) — genau die Divergenz, die #615 verursachte: confirm filterte auf
+# ``is_rejection_detail is None`` (Python-``None``), gestempelt wurde aber der STRING "NONE" ⇒
+# eligible_trials war IMMER leer ⇒ Top-k-Holdout (#576) lief nie (k=1 statt k=holdout_top_k).
+IS_REJECTION_NONE = "NONE"
+
+
 # Issue #453 — Prefix → dezidierte Enum-Kategorie. Die Reason-Strings stammen aus
 # backtest_runner._evaluate_oos_eligibility (z. B. "oos_max_drawdown: 0.5 > 0.3"); längere Prefixe
 # zuerst, damit "oos_min_total_return" nicht fälschlich von "oos_min_t..." geschluckt wird.
@@ -613,7 +621,7 @@ def _classify_is_rejection_detail(metrics) -> str:
       * ``REJECT_OOS_<GATE>``             — evaluiert, aber durchs konkrete Eligibility-Gate gefallen.
     """
     if metrics.oos_evaluated and metrics.oos_eligible:
-        return "NONE"
+        return IS_REJECTION_NONE
     if not metrics.oos_evaluated:
         covered = getattr(metrics, "oos_covered", None)
         if covered is False:
@@ -919,6 +927,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Issue #413 — oos_evaluated als User-Attr: Grundlage des evaluable-basierten Floor-Guards
         # (floor_plateau_callback) UND der `evaluable_trials`-Zaehlung im Per-Study-Summary (#415).
         trial.set_user_attr("oos_evaluated", bool(metrics.oos_evaluated))
+        # Issue #615 — oos_eligible EXPLIZIT stempeln (Single Source of Truth für die Top-k-Holdout-
+        # Selektion in confirm.confirm_per_symbol_promotion, #576). Vorher filterte confirm auf
+        # ``is_rejection_detail is None`` — der gestempelte Wert war aber der STRING "NONE", nie
+        # Python-``None`` ⇒ eligible_trials IMMER leer ⇒ Top-k lief nie. Der gestempelte Bool ist die
+        # kohärente, direkt filterbare Grösse (identisch zu ``is_rejection_detail == IS_REJECTION_NONE``).
+        trial.set_user_attr("oos_eligible", bool(metrics.oos_eligible))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
