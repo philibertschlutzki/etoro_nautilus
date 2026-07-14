@@ -11,6 +11,23 @@ from automation.optimizer.manifest import WORK
 from automation.log_manager import emit_execution_event
 
 
+def _holdout_bootstrap_ci_passes(metrics, *, confidence: float = 0.95) -> tuple[bool, float | None]:
+    """Issue #619 — Stationary-Bootstrap-CI auf dem per-Perioden-Sortino des Holdout (Politis/Romano).
+
+    Statt des Punktschätzers (``oos_sortino > 0``) prüft das Gate die UNTERE CI-Grenze
+    (``ci_lower(sortino) > 0``) — die statistisch saubere Version dessen, was ``deflated_selection``
+    heuristisch approximiert, und auf 21 Trades EHRLICH (das CI wird breit sein — genau die Information).
+    Rückgabe ``(passes, ci_lower)``; ``passes=True`` bei zu wenigen Returns (< 5, CI nicht schätzbar ⇒
+    kein zusätzliches Veto, das ``oos_sortino``-Punkt-Gate bleibt allein maßgeblich)."""
+    rets = list(getattr(metrics, "oos_period_returns", ()) or ())
+    if len(rets) < 5:
+        return True, None
+    from automation.optimizer.bootstrap import bootstrap_ci, sortino_statistic, ci_lower_bound_passes
+    _, lo, _ = bootstrap_ci(rets, lambda a: sortino_statistic(a, mar=0.0, annualization=1.0),
+                            confidence=confidence, seed=42)
+    return ci_lower_bound_passes(lo, 0.0), lo
+
+
 def _holdout_gate_passed(metrics, risk_dd_cap: float, *, sortino_fallback_enabled: bool) -> bool:
     """Issue #533 — Single Source of Truth für die Holdout-Gate-Entscheidung inkl.
     ``oos_sortino_fallback``-Parität zu ``reward.py`` (die »evaluable-but-sortino-undefined«-Regel).
@@ -126,6 +143,40 @@ def confirm_on_holdout(
         },
         "trial_dir": str(trial_dir)
     }
+
+
+def _study_pbo(study, *, min_trials: int = 4) -> float | None:
+    """Issue #619 — Probability of Backtest Overfitting (Bailey/López de Prado, CSCV) über die Study.
+
+    Baut aus den per-Fold-OOS-Sortinos der ELIGIBLEN Trials (die getesteten Konfigurationen) eine
+    ``(n_paths, n_strategies)``-IS/OOS-Matrix via CSCV über die Folds (``cpcv_paths``): je Pfad ist das
+    IS-Set der Train-Folds, das OOS-Set die Test-Folds. ``PBO > 0.5`` ⇒ der IS-Gewinner ist OOS
+    schlechter als der Median ⇒ die Selektion überfittet systematisch. ``None``, wenn zu wenige Trials
+    oder Folds vorliegen (kein Urteil)."""
+    import numpy as _np
+    import optuna
+    rows = []
+    for t in study.trials:
+        if t.state != optuna.trial.TrialState.COMPLETE or not t.user_attrs.get("oos_eligible"):
+            continue
+        fs = t.user_attrs.get("oos_fold_sortinos") or []
+        if fs:
+            rows.append([float(x) for x in fs])
+    if len(rows) < min_trials:
+        return None
+    n_folds = min(len(r) for r in rows)
+    if n_folds < 2:
+        return None
+    mat = _np.array([r[:n_folds] for r in rows], dtype=float)   # (n_strategies, n_folds)
+    from automation.optimizer.cpcv import cpcv_paths, probability_of_backtest_overfitting
+    k_test = max(1, n_folds // 2)
+    if not (0 < k_test < n_folds):
+        return None
+    is_rows, oos_rows = [], []
+    for train, test in cpcv_paths(n_folds, k_test):
+        is_rows.append(mat[:, list(train)].mean(axis=1))    # IS-Perf je Strategie (Train-Folds)
+        oos_rows.append(mat[:, list(test)].mean(axis=1))    # OOS-Perf je Strategie (Test-Folds)
+    return probability_of_backtest_overfitting(_np.array(is_rows), _np.array(oos_rows))
 
 
 def _median_rank_index(values) -> int:
@@ -440,9 +491,31 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 f"(SR₀={deflation_sr0:.4f}, N={deflation_n}) ⇒ HOLD"
             )
 
-    promote = bool(holdout_passed and (R_symbol > R_global + promotion_margin))
+    # Issue #619 — Stationary-Bootstrap-CI (opt-in) auf dem promoteten Holdout-Sortino: die UNTERE
+    # CI-Grenze muss > 0 sein (ci_lower(sortino) > 0), nicht nur der Punktschätzer. Fehlen genug
+    # Returns (< 5) ⇒ kein Zusatz-Veto (das Punkt-Gate bleibt maßgeblich).
+    if holdout_passed and bool(tournament_cfg.get("holdout_bootstrap_ci", False)):
+        ci_ok, ci_lo = _holdout_bootstrap_ci_passes(promoted_m_symbol, confidence=deflation_confidence)
+        if not ci_ok:
+            holdout_passed = False
+            logging.getLogger("optimizer").warning(
+                f"[Bootstrap-CI #619] {symbol}: ci_lower(sortino)={ci_lo} ≤ 0 ⇒ HOLD"
+            )
 
-    if not holdout_passed:
+    # Issue #619 — Sweep-Level-PBO (Selektions-Overfit): PBO > 0.5 ⇒ der IS-Gewinner ist OOS schlechter
+    # als der Median ⇒ Promotion ist per Definition Selektions-Overfit ⇒ HARD-STOP.
+    study_pbo = _study_pbo(study)
+    pbo_overfit = bool(study_pbo is not None and study_pbo > 0.5)
+    if pbo_overfit:
+        logging.getLogger("optimizer").warning(
+            f"[PBO #619] {symbol}: PBO={study_pbo:.3f} > 0.5 ⇒ REJECTED_SELECTION_OVERFIT"
+        )
+
+    promote = bool(holdout_passed and not pbo_overfit and (R_symbol > R_global + promotion_margin))
+
+    if pbo_overfit:
+        status = "REJECTED_SELECTION_OVERFIT"
+    elif not holdout_passed:
         status = "REJECTED_ON_HOLDOUT"
     elif promote:
         status = "READY_FOR_PR"
@@ -464,6 +537,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "metrics_global": _metrics_dict(m_global)
     }
 
+    # Issue #619 — PBO-Telemetrie (Selektions-Overfit-Diagnose).
+    if study_pbo is not None:
+        best_result["metrics_symbol"]["pbo"] = study_pbo
     # Issue #611/#618 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle.
     if deflation_sr0 is not None:
         best_result["metrics_symbol"]["deflated_sr0"] = deflation_sr0

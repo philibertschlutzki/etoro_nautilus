@@ -1413,6 +1413,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Ableitung der per-Period Returns
         # Erster Return darf kein NaN-Artefakt erzeugen, dropna() erledigt das
         period_rets = mtm_series.pct_change().dropna()
+        # Issue #619 — die per-Perioden-Returns durchreichen (gecappt), damit der Holdout-Pfad einen
+        # Stationary-Bootstrap-CI auf dem Sortino rechnen kann (ci_lower > 0 statt Punktschätzer).
+        _period_returns_list = [float(x) for x in period_rets.tolist()[:2000]]
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
         annualization_factor = _get_annualization_factor(mtm_series)
@@ -1487,6 +1490,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         oos_psr = None
         n_periods = 0
         ret_skew, ret_kurtosis = 0.0, 3.0
+        _period_returns_list = []
         dd_excess = 0.0
 
         # Call the unified helper to maintain structural symmetry (Issue #510 requirement)
@@ -1555,6 +1559,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "n_periods":          int(n_periods),
         "ret_skew":           float(ret_skew),
         "ret_kurtosis":       float(ret_kurtosis),
+        "period_returns":     _period_returns_list,   # Issue #619 — für den Bootstrap-CI im Holdout.
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),

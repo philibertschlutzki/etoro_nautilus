@@ -996,6 +996,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         trial.set_user_attr("oos_psr", metrics.oos_psr)
         # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
         trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
+        # Issue #619 — per-Fold-OOS-Sortinos je Trial (für die Sweep-Level-PBO/CSCV in confirm).
+        trial.set_user_attr("oos_fold_sortinos", list(metrics.oos_fold_sortinos))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,

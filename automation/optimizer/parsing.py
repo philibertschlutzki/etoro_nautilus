@@ -85,6 +85,8 @@ class TournamentMetrics:
     # Backtest-SUBPROZESS; ihr Flag ``oos_coherence_violation`` erreichte bisher weder TournamentMetrics
     # noch das JSON_EVENT. Jetzt durchgereicht ⇒ beobachtbar (Study-Zähler coherence_violations).
     oos_coherence_violation: bool = False
+    # Issue #619 — die per-Perioden-OOS-Returns (gecappt) für den Stationary-Bootstrap-CI im Holdout-Gate.
+    oos_period_returns: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -153,6 +155,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_ret_kurtosis = oos_metrics.get("ret_kurtosis")
     # Issue #620 — Kohärenz-Verletzungs-Flag aus dem Subprozess (None-safe ⇒ False).
     oos_coherence_violation = bool(oos_metrics.get("oos_coherence_violation") or False)
+    # Issue #619 — per-Perioden-OOS-Returns (None-safe ⇒ leeres Tuple).
+    oos_period_returns = tuple(oos_metrics.get("period_returns") or ())
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -255,6 +259,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
         oos_coherence_violation=oos_coherence_violation,
+        oos_period_returns=oos_period_returns,
     )
 
     # Pre-Return Invarianten-Check

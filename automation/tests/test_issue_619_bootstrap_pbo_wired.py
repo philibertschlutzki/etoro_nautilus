@@ -1,0 +1,73 @@
+"""Issue #619 — bootstrap.py (#599) und cpcv.py (#600) sind jetzt VERDRAHTET.
+
+Vor #619: 0 Referenzen ausserhalb der Tests (toter Code mit Robustheits-Docstring). Fix: der
+Stationary-Bootstrap-CI prüft die untere Sortino-CI-Grenze im Holdout-Gate; die CPCV/PBO ist
+Sweep-Level-Diagnose mit Hard-Stop (PBO > 0.5 ⇒ REJECTED_SELECTION_OVERFIT).
+"""
+import types
+
+import numpy as np
+import optuna
+
+from automation.optimizer import confirm as cmod
+
+
+# ── Bootstrap-CI-Gate: untere CI-Grenze statt Punktschätzer ──────────────────────────────────────
+def test_bootstrap_ci_gate_blocks_wide_ci():
+    # Rauschige Returns (Mittel ~0, breite Streuung) ⇒ ci_lower(sortino) ≤ 0 ⇒ Gate blockt.
+    rng = np.random.default_rng(1)
+    m = types.SimpleNamespace(oos_period_returns=tuple(rng.normal(0.0, 0.02, 200)))
+    ok, lo = cmod._holdout_bootstrap_ci_passes(m, confidence=0.95)
+    assert ok is False
+    assert lo is not None and lo <= 0.0
+
+
+def test_bootstrap_ci_gate_passes_strong_edge():
+    # Starker, konsistenter Edge mit MESSBARER (kleiner) Downside ⇒ Sortino hoch positiv ⇒ ci_lower > 0.
+    m = types.SimpleNamespace(oos_period_returns=tuple([0.02, 0.018, -0.002, 0.021] * 50))
+    ok, lo = cmod._holdout_bootstrap_ci_passes(m, confidence=0.95)
+    assert ok is True and lo > 0.0
+
+
+def test_bootstrap_ci_gate_too_few_returns_no_veto():
+    m = types.SimpleNamespace(oos_period_returns=(0.01, 0.02))
+    ok, lo = cmod._holdout_bootstrap_ci_passes(m)
+    assert ok is True and lo is None   # < 5 Returns ⇒ kein Zusatz-Veto
+
+
+# ── PBO über die Study (CSCV über Folds) ─────────────────────────────────────────────────────────
+def _study_with_folds(fold_rows):
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(direction="maximize")
+    for i, folds in enumerate(fold_rows):
+        t = study.ask()
+        study._storage.set_trial_user_attr(t._trial_id, "oos_eligible", True)
+        study._storage.set_trial_user_attr(t._trial_id, "oos_fold_sortinos", list(folds))
+        study.tell(t, float(i))
+    return study
+
+
+def test_pbo_low_for_consistent_is_oos():
+    # IS-Rangordnung stimmt mit OOS überein (Folds korreliert) ⇒ niedrige PBO.
+    rng = np.random.default_rng(3)
+    rows = []
+    for base in np.linspace(0.0, 1.0, 12):
+        rows.append((base + rng.normal(0, 0.02, 4)).tolist())   # 4 Folds, konsistentes Niveau
+    pbo = cmod._study_pbo(_study_with_folds(rows))
+    assert pbo is not None and 0.0 <= pbo <= 1.0
+    assert pbo < 0.5
+
+
+def test_pbo_none_when_too_few_trials():
+    assert cmod._study_pbo(_study_with_folds([[1.0, 2.0, 3.0, 4.0]])) is None
+
+
+def test_pbo_high_for_anticorrelated_is_oos():
+    # IS-Gewinner ist OOS systematisch schlecht (Folds gegenläufig) ⇒ hohe PBO.
+    rows = []
+    for i in range(12):
+        # Fold 0/1 (Train) hoch, Fold 2/3 (Test) niedrig für die IS-Besten und umgekehrt.
+        a = i / 11.0
+        rows.append([a, a, 1.0 - a, 1.0 - a])
+    pbo = cmod._study_pbo(_study_with_folds(rows))
+    assert pbo is not None and pbo > 0.5
