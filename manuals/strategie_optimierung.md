@@ -145,3 +145,94 @@ except Exception as e:
 
 Sind diese Punkte erfüllt, kannst du deine Änderungen (die angepasste `strategies.json`) ins Git-Repository pushen und live nehmen!
 
+---
+
+## Kapitel 6: Holdout-Signifikanz — die unbequeme Wahrheit über kurze Fenster (§Holdout-Signifikanz)
+
+> **Kontext (Issue #624):** Der Sweep protokolliert beim Start eine `[#624] Holdout-Geometrie`-Zeile
+> und verweist auf genau dieses Kapitel. Es beantwortet die Frage, die die Promotions-Entscheidung
+> ehrlich macht: *Reicht ein 45-Tage-Holdout überhaupt aus, um eine 95‑%‑Aussage zu treffen?*
+
+### 6.1 Worum es geht
+
+Gate 3 promotet ein Symbol nur, wenn die maßgeschneiderte Strategie den globalen Standard auf dem
+ungesehenen Holdout schlägt (`promotion_margin`) **und** die Deflation/PSR-Schwelle passiert. Die PSR
+(Probabilistic Sharpe/Sortino Ratio) beziffert, mit welcher Wahrscheinlichkeit die *wahre* risiko-
+adjustierte Rendite über einer Referenzschwelle liegt — sie ist ∈ [0, 1] und **annualisierungs-
+invariant** (sie hängt von der per-Periode-Ratio ŜR und der Stichprobenlänge T ab, nicht von der
+gewählten Skalierung). Die Schwelle im Repo ist `oos_min_psr = 0.75` (Eligibility-Gate) bzw. die
+strengere DSR/PSR-Promotionslinie von **0.95** in der Confirm-Stufe.
+
+Formel (López de Prado):
+
+```
+PSR(SR*) = Φ[ (ŜR − SR*) · √(T − 1) / √(1 − γ₃·ŜR + ((γ₄ − 1)/4)·ŜR²) ]
+```
+
+mit ŜR = per-Periode-Sortino, T = Anzahl der Holdout-Perioden (MTM-Bars), γ₃ = Schiefe, γ₄ =
+(nicht-exzess) Kurtosis. `PSR(0)` ist die Wahrscheinlichkeit, dass die wahre Ratio > 0 ist.
+
+### 6.2 Die harte Rechnung
+
+Ein 45-Tage-Holdout liefert bei der aktuellen Katalog-/Bar-Geometrie **T ≈ 202** verwertbare
+MTM-Perioden. Ein *gerade noch* promotionswürdiger Grenzkandidat hat eine per-Periode-Sortino von
+etwa **ŜR ≈ 0.114**. Setzt man das ein (γ₃ = 0, γ₄ = 3, Gauß-Referenz):
+
+| T (Holdout-Perioden) | z = ŜR·√(T−1) | PSR(0) = Φ(z) | ≥ 0.95 ? |
+|----------------------|---------------|---------------|----------|
+| **202** (heute)      | 1.611         | **0.9464**    | ✗        |
+| 205                  | 1.622         | 0.9477        | ✗        |
+| **211**              | 1.646         | **0.9501**    | ✓ (grade) |
+| 250                  | 1.793         | 0.9635        | ✓        |
+| 300                  | 1.964         | 0.9753        | ✓        |
+
+**Kernaussage:** Bei ŜR ≈ 0.114 und T = 202 erreicht selbst der beste Grenzkandidat nur
+**PSR(0) = 0.9464 < 0.95**. Um die 0.95-Linie zu überschreiten, braucht es **T ≥ 211** Perioden —
+oder, äquivalent bei T = 202, eine per-Periode-Sortino von **≥ 0.116** (statt 0.114). Die fehlende
+Signifikanz ist also kein Software-Fehler, sondern eine **geometrische Eigenschaft des zu kurzen
+Fensters**. (Vor den Fixes #611/#618/#619 war die PSR/Deflation zudem auf der falschen — Reward- statt
+Sortino-Skala und über die falsche Kohorte — berechnet; seither ist die Zahl korrekt, aber eben
+ehrlich zu klein.)
+
+### 6.3 Die getroffene Entscheidung (bewusst, dokumentiert, umkehrbar)
+
+Wir haben **drei** Optionen abgewogen und uns bewusst für die erste entschieden:
+
+1. **Die 0.95-Schwelle ehrlich beibehalten (gewählt).** Wir senken die Promotionslinie **nicht**, nur
+   damit die aktuellen Daten sie passieren. Konsequenz: Grenzkandidaten um ŜR ≈ 0.114 werden mit der
+   heutigen Geometrie **korrekt zurückgehalten (HOLD, nicht promotet)**. Das ist das *dokumentierte,
+   akzeptierte* Verhalten — lieber ein ehrliches „noch nicht signifikant" als ein promotetes Overfit.
+2. **Mehr Historie backfillen (bevorzugter Auflösungspfad).** Sobald der Katalog so weit zurückreicht,
+   dass der Holdout **T ≥ 211** Perioden trägt, passiert derselbe echte Edge die Schwelle — ohne dass
+   irgendeine Latte gesenkt wurde. Das ist der einzige Weg, der Signifikanz *gewinnt* statt sie
+   *wegzudefinieren*.
+3. **`oos_min_psr` / die Promotionslinie explizit senken (nur als bewusster Operator-Eingriff).**
+   Technisch möglich über `tournament.json`, aber **nur** mit verstandener Konsequenz: jede Absenkung
+   erhöht die Typ-I-Fehlerrate (falsch promotete Strategien) direkt und quantifizierbar. Kein
+   stillschweigender Default.
+
+### 6.4 Warum das trotzdem tragbar ist
+
+Die 0.95-PSR ist nicht die einzige Verteidigungslinie. Der akzeptierte Rest-Typ-I-Fehler wird durch
+zwei orthogonale Mechanismen beschränkt, die mit #611/#618/#619 scharf geschaltet wurden:
+
+* **DSR-Deflation über die *eligible* Kohorte (#611/#618).** Die Deflated Sharpe/Sortino Ratio zieht
+  die Multiple-Testing-Latte `SR₀ = √V[ŜR]·E[max_N]` ab — je mehr Trials, desto höher die Latte. Die
+  Kohorte sind ausschließlich die *eligiblen* Trials (nicht die Bernoulli-Reward-Skala von früher).
+* **CPCV/PBO-Hard-Stop (#619).** Die Probability of Backtest Overfitting aus Combinatorial-Purged-CV
+  ist ein von T unabhängiges Overfit-Signal; ein zu hoher PBO blockt die Promotion
+  (`REJECTED_SELECTION_OVERFIT`), selbst wenn die PSR knapp passieren würde.
+* **Familienweise Zahl (#625).** Da je Symbol mehrere Strategien-Studies konkurrieren, wird die
+  familienweise `deflation_n_family` (Σ eligibler Trials über die Studies) telemetriert — die
+  konservative Obergrenze der tatsächlichen Multiple-Testing-Last.
+
+### 6.5 Was der Operator konkret tun sollte
+
+* **Beim Sweep-Start** die `[#624] Holdout-Geometrie`-Logzeile lesen: sie nennt `required_span_days`
+  und die Fenster-Zerlegung (is + embargo + splits×oos + holdout). Ist der Katalog knapp, ist ein
+  HOLD kein Alarm.
+* **Ein HOLD an der 0.95-Linie** bedeutet: *nicht* die Schwelle senken, sondern **Historie
+  nachladen**, bis T ≥ 211, und den Sweep erneut fahren.
+* **Eine bewusste Absenkung** von `oos_min_psr` gehört in einen dokumentierten PR mit expliziter
+  Nennung des in Kauf genommenen Typ-I-Fehlers — niemals als stiller Config-Tweak.
+
