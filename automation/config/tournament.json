@@ -67,10 +67,10 @@
     "min_total_return",
     "max_drawdown",
     "min_expectancy",
-    "min_profitable_folds",
-    "min_evaluable_folds",
-    "min_psr",
-    "min_excess_return"
+    "oos_min_profitable_folds_frac",
+    "oos_min_evaluable_folds",
+    "oos_min_psr",
+    "oos_min_excess_return"
   ],
   "eligible_requires_any": [
     "min_profit_factor",

@@ -56,5 +56,18 @@
     "keltner_atr_period": 10,
     "keltner_multiplier": 1.5,
     "trade_amount_pct": 15.0
+  },
+  "AdxAtrMomentumStrategy": {
+    "adx_period": 14,
+    "ema_period": 50,
+    "atr_multiplier": 2.0,
+    "trade_amount_pct": 15.0
+  },
+  "TrendPullbackStrategy": {
+    "ema_period": 200,
+    "rsi_period": 14,
+    "rsi_oversold": 30.0,
+    "rsi_overbought": 70.0,
+    "trade_amount_pct": 15.0
   }
 }
