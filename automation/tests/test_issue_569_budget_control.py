@@ -65,15 +65,23 @@ def test_degenerate_inputs_no_signal():
 
 # ── _emit_study_summary weist das Gradienten-Signal aus (Log-Nachweis der Nicht-Eskalation) ──
 class _DummyTrial:
-    def __init__(self, value, evaluable):
+    def __init__(self, value, evaluable, eligible=None):
         self.value = value
-        self.user_attrs = {"oos_evaluated": evaluable, "backtest_ms": 10}
+        # Issue #640 — gradient_signal misst seither die FEASIBLE-Region (oos_eligible), nicht mehr
+        # oos_evaluated. Default: eligible == evaluable (die alten Fixtures meinten "evaluable" im
+        # Sinne von "zaehlt fuers Signal", was nach #640 oos_eligible ist).
+        self.user_attrs = {
+            "oos_evaluated": evaluable,
+            "oos_eligible": evaluable if eligible is None else eligible,
+            "backtest_ms": 10,
+        }
 
 
 class _DummyStudy:
-    def __init__(self, values, evaluable):
+    def __init__(self, values, evaluable, eligible=None):
         self.study_name = "study_X"
-        self.trials = [_DummyTrial(v, e) for v, e in zip(values, evaluable)]
+        elig = eligible or evaluable
+        self.trials = [_DummyTrial(v, e, el) for v, e, el in zip(values, evaluable, elig)]
         self.best_value = max(values)
 
 
@@ -83,20 +91,57 @@ def test_study_summary_emits_gradient_signal(monkeypatch):
     captured = []
     monkeypatch.setattr(ro, "emit_execution_event",
                         lambda logger, name, payload: captured.append((name, payload)))
-    # Flache Study (Deckel): alle Rewards identisch, alle evaluable ⇒ gradient_signal False.
+    # Flache Study (Deckel): alle Rewards identisch, alle eligible ⇒ gradient_signal False.
     flat = _DummyStudy([5.0, 5.0, 5.0], [True, True, True])
     _emit_study_summary(flat, "TSLA.ETORO", time.perf_counter())
     name, payload = captured[-1]
     assert name == "optimizer_study_completed"
     assert payload["gradient_signal"] is False
+    assert payload["feasible_reward_pstdev"] == 0.0
+    assert payload["feasible_p_eligible"] == 1.0
+    # Issue #640 — die globale Roh-Diagnose bleibt zusaetzlich erhalten, ist aber NICHT mehr die
+    # Eskalations-Grundlage.
     assert payload["reward_pstdev"] == 0.0
     assert payload["evaluable_fraction"] == 1.0
 
-    # Informative Study ⇒ gradient_signal True.
+    # Informative Study (Streuung IM FEASIBLEN Bereich) ⇒ gradient_signal True.
     captured.clear()
     signal = _DummyStudy([1.0, 3.0, 5.0], [True, True, True])
     _emit_study_summary(signal, "AAA.ETORO", time.perf_counter())
     assert captured[-1][1]["gradient_signal"] is True
+
+
+def test_global_variance_alone_does_not_trigger_gradient_signal(monkeypatch):
+    """Issue #640 — Regressionstest fuer den Kern der Aenderung: eine Study mit GROSSER globaler
+    Streuung (Populations-Mischung aus Unevaluable/Failure/Eligible), aber KONSTANTEM Reward
+    INNERHALB der eligiblen Kohorte, darf NICHT als Gradienten-Signal gelten — vor #640 haette der
+    globale pstdev (dominiert von der Gate-Passrate) hier faelschlich True geliefert."""
+    import automation.optimizer.run_optimization as ro
+    monkeypatch.setattr(ro, "config_dir", lambda: Path("automation/config"))
+    captured = []
+    monkeypatch.setattr(ro, "emit_execution_event",
+                        lambda logger, name, payload: captured.append((name, payload)))
+
+    class _T:
+        def __init__(self, value, eligible, evaluated=True):
+            self.value = value
+            self.user_attrs = {"oos_evaluated": evaluated, "oos_eligible": eligible, "backtest_ms": 5}
+
+    class _S:
+        study_name = "study_mixed"
+        # Grosse globale Streuung (Unevaluable ~ -20, Failure ~ -50, Eligible konstant 2.0), aber
+        # die eligiblen Trials selbst sind IDENTISCH ⇒ kein Signal im feasiblen Bereich.
+        trials = [_T(-20.0, False), _T(-50.0, False), _T(-19.5, False),
+                  _T(2.0, True), _T(2.0, True), _T(2.0, True)]
+        best_value = 2.0
+
+    _emit_study_summary(_S(), "MIX.ETORO", time.perf_counter())
+
+    payload = captured[-1][1]
+    assert payload["gradient_signal"] is False
+    assert payload["feasible_reward_pstdev"] == 0.0
+    # Die globale Streuung ist gross — genau der Wert, den #640 NICHT mehr als Grundlage nutzt.
+    assert payload["reward_pstdev"] > 1.0
 
 
 # ── Produktions-Config hat die Kopplung + Schwelle deklariert ────────────────────────────────

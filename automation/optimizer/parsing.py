@@ -88,6 +88,13 @@ class TournamentMetrics:
     oos_coherence_violation: bool = False
     # Issue #619 — die per-Perioden-OOS-Returns (gecappt) für den Stationary-Bootstrap-CI im Holdout-Gate.
     oos_period_returns: tuple = ()
+    # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (oos_buyhold_return/oos_excess_return aus
+    # backtest_runner._calculate_stats, #632 per-Fold-kompoundiert). Vorher NICHT nach TournamentMetrics
+    # durchgereicht ⇒ reward._normalized_gate_distances/#612-Sampler-Constraint konnten das
+    # oos_min_excess_return-Gate nie normiert sehen (die #635-PSR/Excess-Return-Erweiterung wäre sonst
+    # strukturell inert geblieben). None, wenn keine Benchmark-Serie vorlag (rückwärtskompatibel).
+    oos_buyhold_return: float | None = None
+    oos_excess_return: float | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -159,6 +166,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_coherence_violation = bool(oos_metrics.get("oos_coherence_violation") or False)
     # Issue #619 — per-Perioden-OOS-Returns (None-safe ⇒ leeres Tuple).
     oos_period_returns = tuple(oos_metrics.get("period_returns") or ())
+    # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe; fehlt ohne Benchmark-Serie).
+    oos_buyhold_return = oos_metrics.get("oos_buyhold_return")
+    oos_excess_return = oos_metrics.get("oos_excess_return")
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -263,6 +273,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
         oos_coherence_violation=oos_coherence_violation,
         oos_period_returns=oos_period_returns,
+        # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe).
+        oos_buyhold_return=float(oos_buyhold_return) if oos_buyhold_return is not None else None,
+        oos_excess_return=float(oos_excess_return) if oos_excess_return is not None else None,
     )
 
     # Pre-Return Invarianten-Check

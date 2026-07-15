@@ -969,6 +969,29 @@ def _read_fold_winsorize() -> tuple:
     return _fold_winsorize_cache
 
 
+_fold_profit_epsilon_cache: float | None = None
+
+
+def _read_fold_profit_epsilon() -> float:
+    """Issue #634 — Rausch-Boden fuer den Profitable-Folds-Zaehler aus tournament.json (gecached).
+    Fehlt der Key ⇒ 0.0 (Legacy striktes ``> 0.0``, bit-identisch, Zero-Hardcoding)."""
+    global _fold_profit_epsilon_cache
+    if _fold_profit_epsilon_cache is not None:
+        return _fold_profit_epsilon_cache
+    val = 0.0
+    try:
+        cfg = config_dir() / "tournament.json"
+        if cfg.exists():
+            d = json.loads(cfg.read_text("utf-8")) or {}
+            v = d.get("fold_profit_epsilon")
+            if v is not None and float(v) > 0.0:
+                val = float(v)
+    except Exception:
+        pass
+    _fold_profit_epsilon_cache = val
+    return _fold_profit_epsilon_cache
+
+
 def _winsorize(values, lower, upper) -> list[float]:
     """Issue #623 — klemmt eine Werteliste auf ihre ``[lower, upper]``-Perzentile (Extreme gekappt, KEIN
     Entfernen ⇒ Länge/Reihenfolge erhalten). ``lower``/``upper`` None oder leere Liste ⇒ unverändert.
@@ -1076,11 +1099,24 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
     # Fehlen die Keys ⇒ No-Op (Legacy, bit-identisch). Rein index-basiert, deterministisch.
     _w_lo, _w_hi = _read_fold_winsorize()
     oos_metrics["oos_fold_sortinos"] = _winsorize(collect_oos_fold_sortinos(per_fold_oos_list), _w_lo, _w_hi)
-    oos_metrics["oos_fold_returns"] = _winsorize(collect_oos_fold_returns(per_fold_oos_list), _w_lo, _w_hi)
+    winsorized_fold_returns = _winsorize(collect_oos_fold_returns(per_fold_oos_list), _w_lo, _w_hi)
+    oos_metrics["oos_fold_returns"] = winsorized_fold_returns
 
     valid_folds = [f for f in per_fold_oos_list if f is not None]
     n_folds_total = len(per_fold_oos_list)
-    n_folds_profitable = sum(1 for f in valid_folds if (f.get("total_return") or 0.0) > 0.0)
+    # Issue #634 — Profitable-Folds-Zähler ROBUSTIFIZIERT (Rausch-Doppelbestrafung, vgl. #589/#616-
+    # Fold-Dispersions-Strafe, die dieselbe Streuung bereits im Reward abbildet):
+    # (1) ε-Schwelle statt striktem ">0.0" — ein Fold mit Return +1e-7 (statistisches Rauschen bei
+    #     T≈50/Fold) zählte vorher genauso als "profitabel" wie einer mit +0.02; ein Fold mit −1e-7
+    #     kippte den Zähler in die andere Richtung, obwohl beide vom wahren Nullpunkt ununterscheidbar
+    #     sind. fold_profit_epsilon (tournament.json) definiert den Rausch-Boden; fehlt der Key ⇒ 0.0
+    #     (Legacy striktes ">0.0", bit-identisch, Zero-Hardcoding).
+    # (2) Zählung auf der WINSORISIERTEN Fold-Return-Sequenz (identisch zu
+    #     oos_metrics["oos_fold_returns"]) statt auf den rohen per_fold_oos_list-Werten — die
+    #     konfigurierte Winsorisierung (fold_winsorize_lower/upper) war vorher deklariert (#623), aber
+    #     im Zähler selbst ungenutzt.
+    fold_profit_epsilon = _read_fold_profit_epsilon()
+    n_folds_profitable = sum(1 for r in winsorized_fold_returns if r > fold_profit_epsilon)
     oos_metrics["oos_folds_total"] = n_folds_total
     oos_metrics["oos_profitable_folds"] = n_folds_profitable
     oos_metrics["oos_profitable_folds_frac"] = (
@@ -2060,21 +2096,32 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Dedup bleibt als Sicherheitsnetz (jetzt i. d. R. No-Op, da die Segmente disjunkt sind).
             oos_mtm = oos_mtm[~oos_mtm.index.duplicated(keep="last")].sort_index() if oos_mtm is not None else None
 
-            # Issue #552 — Buy&Hold-Benchmark-Return des Symbols über EXAKT dieselbe (halb-offene,
-            # deduplizierte) OOS-Fensterung wie der Strategie-Return. Damit misst das (opt-in)
-            # Excess-Gate ALPHA (Strategie − Markt) statt bloßes Long-Bias-Beta. Rein additive
-            # Telemetrie; fehlt die Benchmark-Serie ⇒ oos_buyhold_return bleibt None (Legacy-Gate).
+            # Issue #552/#632 — Buy&Hold-Benchmark-Return des Symbols über EXAKT dieselbe (halb-offene)
+            # OOS-Fensterung wie der Strategie-Return. Damit misst das (opt-in) Excess-Gate ALPHA
+            # (Strategie − Markt) statt bloßes Long-Bias-Beta. Rein additive Telemetrie; fehlt die
+            # Benchmark-Serie ⇒ oos_buyhold_return bleibt None (Legacy-Gate).
+            #
+            # Issue #632 — PER-FOLD KOMPOUNDIERT, exakt wie der Strategie-Return (``mtm_frames`` /
+            # `total_return` oben in ``_calculate_stats``, Zeile ~1416-1422: ``comp *= (1+seg_ret)``
+            # je Fold). Der frühere Code konkatenierte alle Fold-Segmente zu EINER Serie und bildete
+            # ``letzter_Bar / erster_Bar − 1`` über die VOLLE Spanne Fold-0-Start → Fold-(n-1)-Ende —
+            # das schließt die IS-Fenster + Embargos ZWISCHEN den OOS-Folds mit ein (bei 4 Folds ≈ die
+            # doppelte Zeit-im-Markt gegenüber den tatsächlichen 4×OOS-Tagen). Der Benchmark wurde damit
+            # für ungefähr die doppelte Marktexposition gutgeschrieben, was in einem steigenden Markt
+            # ``excess_return = strat − bench`` systematisch < 0 trieb, unabhängig vom echten Alpha der
+            # Strategie. Fix: dieselbe Fold-für-Fold-Kompoundierung wie beim Strategie-Return — Zähler
+            # (Strategie) und Nenner (Benchmark) decken jetzt BIT-IDENTISCH dieselbe Bar-Menge ab.
             if benchmark_series is not None and not benchmark_series.empty:
-                bench_frames = []
+                comp_b = 1.0
+                any_bench_fold = False
                 for _, s_ns, e_ns in fold_boundaries:
                     bseg = _slice_half_open(benchmark_series, s_ns, e_ns)
-                    if not bseg.empty:
-                        bench_frames.append(bseg)
-                if bench_frames:
-                    bench_oos = pd.concat(bench_frames)
-                    bench_oos = bench_oos[~bench_oos.index.duplicated(keep="last")].sort_index()
-                    if len(bench_oos) > 1 and float(bench_oos.iloc[0]) != 0.0:
-                        oos_buyhold_return = float(bench_oos.iloc[-1]) / float(bench_oos.iloc[0]) - 1.0
+                    if len(bseg) > 1 and float(bseg.iloc[0]) != 0.0:
+                        any_bench_fold = True
+                        bseg_ret = float(bseg.iloc[-1]) / float(bseg.iloc[0]) - 1.0
+                        comp_b *= (1.0 + bseg_ret)
+                if any_bench_fold:
+                    oos_buyhold_return = comp_b - 1.0
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 

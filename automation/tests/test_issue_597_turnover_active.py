@@ -46,13 +46,17 @@ def test_dd_penalty_in_same_order_of_magnitude_as_other_terms():
     Strafterme (Faktor < 100), nicht > 1000 wie beim 30 %-Gate-Cap."""
     m = _m(60, dd=0.02)
     dd_pen = _dd_penalty(m, CFG, risk_dd_cap=0.30)
-    # base ~ soft-scaled 1.5 (~1.4); ein anderer Strafterm (Turnover) ~ 60·3e-4 = 0.018.
-    turnover = m.oos_total_trades * CFG["penalty_turnover_weight"]
+    # base ~ soft-scaled 1.5 (~1.4); ein anderer Strafterm (Turnover) ~ 60·3e-4·penalty_scale_vs_base.
+    penalty_scale = CFG.get("penalty_scale_vs_base", 1.0)
+    turnover = m.oos_total_trades * CFG["penalty_turnover_weight"] * penalty_scale
     assert dd_pen > 0.0
     assert dd_pen / max(turnover, 1e-9) < 100.0, "dd_penalty darf die übrigen Terme nicht um >100× dominieren"
-    # Gegenprobe: auf dem Gate-Cap (0.30) normiert wäre dd_penalty ~4 Größenordnungen kleiner.
+    # Gegenprobe: auf dem Gate-Cap (0.30) normiert wäre dd_penalty (VOR #631-Rekalibrierung) ~4
+    # Größenordnungen kleiner. Issue #631 — die #597-dd_reward_scale-Normierung bleibt strukturell
+    # aktiv, wird aber zusätzlich mit penalty_scale_vs_base gegen die psr_z-Base-Streuung gedämpft
+    # (die frühere 50×-Baseline schrumpft proportional zum Faktor).
     dd_pen_legacy = CFG["penalty_dd_weight"] * ((0.02 / 0.30) ** 2)
-    assert dd_pen > dd_pen_legacy * 50
+    assert dd_pen > dd_pen_legacy * 50 * penalty_scale
 
 
 class _Trial:

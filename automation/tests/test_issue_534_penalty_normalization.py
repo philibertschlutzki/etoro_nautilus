@@ -25,7 +25,6 @@ CFG = {
 WEIGHTS = {
     "penalty_unevaluable_oos": -10.0,
     "unevaluable_shaping_span": 0.25,
-    "evaluable_floor_epsilon": 0.001,
     "constraint_distance_penalty_weight": 0.25,
     "sortino_clip_abs": 5.0,
     "penalty_overfit_weight": 0.5,
@@ -78,11 +77,14 @@ def test_reward_monotonic_with_oos_total_return_in_sub_gate_region():
     assert len(set(rewards)) == len(rewards)   # kein Plateau (echter Gradient)
 
 
-def test_failed_trial_stays_below_evaluable_floor():
-    # Invariante (Issue #452/#461/#534): failed Trials bleiben strikt unter dem Evaluable-Floor.
-    evaluable_floor = -float(WEIGHTS["sortino_clip_abs"])
-    unevaluable_ceiling = WEIGHTS["penalty_unevaluable_oos"] + WEIGHTS["unevaluable_shaping_span"]
-    r = compute_reward(_m(oos_total_return=0.0), universe_size=1, weights=WEIGHTS,
-                       risk_dd_cap=CFG["max_drawdown"], tournament_cfg=CFG)
-    assert r < evaluable_floor
-    assert r >= unevaluable_ceiling
+def test_failed_trial_penalty_lowers_reward_below_eligible_twin():
+    # Issue #629 — kein separates Floor-Band mehr (Invariante #452/#461/#534 wurde ersatzlos
+    # gestrichen, siehe test_issue_629_*). Was bleibt: die Near-Miss-Distanzstrafe senkt den Reward
+    # eines ansonsten identischen, aber ineligiblen Trials strikt unter den eines eligiblen Zwillings.
+    m_failed = _m(oos_total_return=0.0)
+    m_eligible_twin = _m(oos_evaluated=True, oos_eligible=True, oos_total_return=0.0)
+    r_failed = compute_reward(m_failed, universe_size=1, weights=WEIGHTS,
+                              risk_dd_cap=CFG["max_drawdown"], tournament_cfg=CFG)
+    r_eligible_twin = compute_reward(m_eligible_twin, universe_size=1, weights=WEIGHTS,
+                                     risk_dd_cap=CFG["max_drawdown"], tournament_cfg=CFG)
+    assert r_failed < r_eligible_twin

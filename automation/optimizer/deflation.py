@@ -100,6 +100,29 @@ def sr0_multiple_testing(var_sr_trials: float, n_trials: int) -> float:
     return math.sqrt(float(var_sr_trials)) * expected_max_standard_normal(n_trials)
 
 
+def sr0_multiple_testing_robust(
+    var_sr_trials: float | None, n_trials: int, *,
+    min_cohort: int = 10, var_floor: float = 0.0018,
+) -> tuple[float, bool]:
+    """Issue #636 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration.
+
+    ``V[ŜR_trials]`` aus einer 2-3-Punkte-Kohorte (z. B. VwapExhaustion N=3, Hourly N=2) ist
+    statistisch bedeutungslos (beobachtet: ``deflation_var_sr = 2.4e-9`` für Hourly — eine
+    Rundungsartefakt-Grössenordnung, keine echte Streuung). Unterhalb ``min_cohort`` wird die
+    empirische Varianz durch einen dokumentierten, KONSERVATIVEN Floor ersetzt (NIE unterschritten),
+    sodass SR₀ nie durch eine zufällig winzige Stichproben-Varianz unterschätzt wird — die Multiple-
+    Testing-Hürde bleibt mindestens so streng wie der Floor es vorgibt (Fail-loud-Log obliegt dem
+    Aufrufer). ``var_floor=0.0018`` ist die in ``deflated_sharpe_ratio`` dokumentierte REALE
+    Referenz-Varianz (VwapExhaustion, N=100 getestete Konfigurationen: ``V[ŜR_trials]=1.803e-3``) —
+    kein erfundener Wert, sondern der einzige im Code belegte empirische Ankerpunkt für diese Grösse.
+
+    Rückgabe ``(sr0, used_fallback)``."""
+    used_fallback = n_trials < min_cohort
+    observed = float(var_sr_trials) if var_sr_trials is not None else 0.0
+    effective_var = max(observed, var_floor) if used_fallback else observed
+    return sr0_multiple_testing(effective_var, n_trials), used_fallback
+
+
 def deflated_sharpe_ratio(sr, n_periods, *, var_sr_trials: float, n_trials: int,
                           skew: float = 0.0, kurtosis: float = 3.0):
     """Issue #618 — vollständige Deflated Sharpe/Sortino Ratio: die PSR relativ zur Multiple-Testing-

@@ -414,9 +414,14 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Skala (SR₀ = √V[ŜR_trials]·E[max_N], DSR = PSR relativ zu SR₀), nicht die Reward-Skala.
     deflated_selection = bool(tournament_cfg.get("deflated_selection", False))
     deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
-    deflation_sr0 = deflation_dsr = None
+    # Issue #636 — Mindest-Kohorte für eine belastbare V[ŜR_trials]-Schätzung; darunter greift der
+    # dokumentierte konservative Varianz-Floor (siehe deflation.sr0_multiple_testing_robust).
+    deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
+    deflation_var_floor = float(tournament_cfg.get("deflation_var_floor", 0.0018))
+    deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     deflation_n = 0
     deflation_var = None
+    deflation_used_var_floor = False
 
     if deflated_selection:
         cohort_sr = [
@@ -428,13 +433,23 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         deflation_n = len(cohort_sr)
         if deflation_n >= 2:
             import statistics as _st
-            from automation.optimizer.deflation import sr0_multiple_testing
+            from automation.optimizer.deflation import sr0_multiple_testing_robust
             deflation_var = _st.pvariance([float(s) for s in cohort_sr])
-            deflation_sr0 = sr0_multiple_testing(deflation_var, deflation_n)
-            logging.getLogger("optimizer").info(
-                f"[DSR #618] {symbol}: SR₀={deflation_sr0:.4f} "
-                f"(N_eligible={deflation_n}, V[ŜR]={deflation_var:.6f})"
+            deflation_sr0, deflation_used_var_floor = sr0_multiple_testing_robust(
+                deflation_var, deflation_n,
+                min_cohort=deflation_min_cohort, var_floor=deflation_var_floor,
             )
+            if deflation_used_var_floor:
+                logging.getLogger("optimizer").warning(
+                    f"[DSR #618/#636] {symbol}: N_eligible={deflation_n} < N_min={deflation_min_cohort} "
+                    f"⇒ Fallback-SR₀ (Varianz-Floor {deflation_var_floor} statt der 2-3-Punkte-"
+                    f"Stichproben-Varianz V[ŜR]={deflation_var:.6f}) ⇒ SR₀={deflation_sr0:.4f}"
+                )
+            else:
+                logging.getLogger("optimizer").info(
+                    f"[DSR #618] {symbol}: SR₀={deflation_sr0:.4f} "
+                    f"(N_eligible={deflation_n}, V[ŜR]={deflation_var:.6f})"
+                )
 
     # Evaluiere den Holdout ueber die Top-k Trials
     holdout_metrics_list = []
@@ -472,24 +487,39 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
     )
 
-    # Issue #618/#615 — DSR-Vorfilter KOHÄRENT auf dem PROMOTETEN (Median-Rang-)Trial: dessen
-    # per-Perioden-Holdout-Sortino muss die Multiple-Testing-Schwelle SR₀ mit Konfidenz
-    # deflation_confidence schlagen (DSR ≥ conf), sonst HOLD. Ein undefinierter promoteter Sortino
-    # (None) ⇒ fail-safe Drop.
-    if holdout_passed and deflated_selection and deflation_n >= 2:
-        from automation.optimizer.deflation import deflated_sharpe_ratio
-        deflation_dsr = deflated_sharpe_ratio(
-            getattr(promoted_m_symbol, "oos_sortino_period", None),
-            getattr(promoted_m_symbol, "oos_n_periods", 0),
-            var_sr_trials=deflation_var, n_trials=deflation_n,
-            skew=getattr(promoted_m_symbol, "oos_ret_skew", 0.0),
-            kurtosis=getattr(promoted_m_symbol, "oos_ret_kurtosis", 3.0))
-        if deflation_dsr is None or deflation_dsr < deflation_confidence:
-            holdout_passed = False
-            logging.getLogger("optimizer").warning(
-                f"[DSR-Drop #618] {symbol}: DSR={deflation_dsr} < {deflation_confidence} "
-                f"(SR₀={deflation_sr0:.4f}, N={deflation_n}) ⇒ HOLD"
-            )
+    # Issue #618/#636 — DSR-BERECHNUNG von der Pass-Kette ENTKOPPELT: vorher lief dieser Block nur
+    # ``if holdout_passed and ...`` — aber JEDE Strategie scheiterte an einem FRÜHEREN Holdout-Gate
+    # (Excess-Return via #629, negativer Holdout-Sortino), sodass ``holdout_passed`` bereits False
+    # war, BEVOR die DSR exerziert wurde ⇒ ``deflated_dsr`` blieb in ALLEN Proposals None (die DSR
+    # war die letzte Hürde einer Kette, die vorher schon alles ablehnte — nie erreicht, Telemetrie
+    # uninformativ). Fix: der WERT wird IMMER berechnet, sobald genug Kohorte + ein definierter
+    # promoteter per-Perioden-Sortino vorliegen — unabhängig vom bisherigen ``holdout_passed``. Der
+    # DROP-EFFEKT (``holdout_passed=False``) bleibt an ``holdout_passed`` gekoppelt: ein Trial, der
+    # ohnehin schon abgelehnt ist, wird nicht zusätzlich "gedroppt", aber seine DSR ist trotzdem
+    # sichtbar (Diagnose: "hätte er die früheren Gates geschafft, wäre er an der DSR gescheitert?").
+    if deflated_selection and deflation_n >= 2:
+        promoted_sr_period = getattr(promoted_m_symbol, "oos_sortino_period", None)
+        if promoted_sr_period is not None:
+            from automation.optimizer.deflation import deflated_sharpe_ratio, psr_z
+            promoted_n_periods = getattr(promoted_m_symbol, "oos_n_periods", 0)
+            promoted_skew = getattr(promoted_m_symbol, "oos_ret_skew", 0.0)
+            promoted_kurtosis = getattr(promoted_m_symbol, "oos_ret_kurtosis", 3.0)
+            deflation_dsr = deflated_sharpe_ratio(
+                promoted_sr_period, promoted_n_periods,
+                var_sr_trials=deflation_var, n_trials=deflation_n,
+                skew=promoted_skew, kurtosis=promoted_kurtosis)
+            # Issue #636 (#627-Synergie) — die UNBESCHRÄNKTE Effektstärke z_DSR = (ŜR−SR₀)·√(T−1)/σ
+            # als Selektions-Robustheits-Telemetrie, konsistent zur psr_z-Base (#630): eine CDF nahe
+            # 1.0 sättigt und unterscheidet "knapp drüber" nicht von "weit drüber", der z-Score tut es.
+            deflation_dsr_z = psr_z(
+                promoted_sr_period, promoted_n_periods,
+                skew=promoted_skew, kurtosis=promoted_kurtosis, sr_star=deflation_sr0)
+            if holdout_passed and (deflation_dsr is None or deflation_dsr < deflation_confidence):
+                holdout_passed = False
+                logging.getLogger("optimizer").warning(
+                    f"[DSR-Drop #618] {symbol}: DSR={deflation_dsr} < {deflation_confidence} "
+                    f"(SR₀={deflation_sr0:.4f}, N={deflation_n}) ⇒ HOLD"
+                )
 
     # Issue #619 — Stationary-Bootstrap-CI (opt-in) auf dem promoteten Holdout-Sortino: die UNTERE
     # CI-Grenze muss > 0 sein (ci_lower(sortino) > 0), nicht nur der Punktschätzer. Fehlen genug
@@ -559,11 +589,15 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Issue #619 — PBO-Telemetrie (Selektions-Overfit-Diagnose).
     if study_pbo is not None:
         best_result["metrics_symbol"]["pbo"] = study_pbo
-    # Issue #611/#618 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle.
+    # Issue #611/#618/#636 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle. Seit
+    # #636 IMMER gefüllt, sobald SR₀ berechenbar war (unabhängig von holdout_passed) — deflated_dsr
+    # ist damit nie mehr uninformativ-null, nur weil ein früheres Gate schon ablehnte.
     if deflation_sr0 is not None:
         best_result["metrics_symbol"]["deflated_sr0"] = deflation_sr0
         best_result["metrics_symbol"]["deflated_dsr"] = deflation_dsr
+        best_result["metrics_symbol"]["deflation_dsr_z"] = deflation_dsr_z
         best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
+        best_result["metrics_symbol"]["deflation_used_var_floor"] = deflation_used_var_floor
 
     return best_result
 

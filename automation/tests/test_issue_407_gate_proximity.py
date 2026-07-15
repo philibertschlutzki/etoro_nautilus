@@ -6,8 +6,10 @@ Naehe-Signal: `_gate_proximity(m, weights)` ∈ [0,1] aus `is_best_total_return`
 gegen `shaping_return_target`/`shaping_winrate_target`. Additiv und gebunden:
 `progress = max(progress, _gate_proximity(...))`.
 
-HARTE Invariante (Anti-Gate-Gaming): Shaping bleibt durch `unevaluable_shaping_span` gedeckelt;
-evaluierbare Trials werden IMMER besser bewertet als unevaluable. Reine Arithmetik via DI-Weights.
+Shaping bleibt durch `unevaluable_shaping_span` gedeckelt (Anti-Gate-Gaming fuer den Unevaluable-Ast
+selbst). Issue #629 — die einstige HARTE Invariante 'evaluable schlaegt IMMER unevaluable' wurde
+ersatzlos gestrichen: die Feasibility-Rangordnung kommt seither ausschliesslich vom #612-Sampler-
+Constraint, compute_reward ist ein ungeklemmtes Qualitaetsziel. Reine Arithmetik via DI-Weights.
 """
 import json
 from pathlib import Path
@@ -24,7 +26,6 @@ W = {
     "penalty_dd_weight": 8.0,
     "bonus_coverage_weight": 1.0,
     "unevaluable_shaping_span": 0.25,
-    "evaluable_floor_epsilon": 0.001,
     "shaping_trade_target": 50,
     "per_symbol_shaping_trade_target": 400,
     "shaping_return_target": 0.5,
@@ -107,16 +108,21 @@ def test_progress_takes_max_of_activity_and_proximity():
     assert r == pytest.approx(-10.0 + 0.25 * 1.0)
 
 
-def test_evaluable_ALWAYS_beats_unevaluable_with_full_gradient():
-    """HARTE Invariante: worst-case evaluable (auf den Floor geklemmt) schlaegt jeden maximal
-    geshapeden unevaluable Trial — auch bei voller IS-Aktivitaet UND voller Gate-Naehe."""
+def test_worst_evaluable_can_fall_below_best_shaped_unevaluable():
+    """Issue #629 — die vormals HARTE Floor-Invariante ('evaluable schlaegt IMMER unevaluable') ist
+    ersatzlos gestrichen: compute_reward liefert seit #629 ein ungeklemmtes Qualitaetsziel, ein
+    katastrophaler evaluierter Trial (Sortino am Clip, Drawdown 99 %) darf legitim UNTER einem
+    maximal geshapeten, nie-evaluierten Trial liegen. Die Feasibility beider Trials wird
+    ausschliesslich vom #612-Sampler-Constraint sichergestellt, nicht von diesem Reward-Wert."""
     worst_eval = _m(oos_evaluated=True, oos_eligible=True, oos_sortino=-5.0,
                     is_sortino_median=5.0, oos_max_drawdown=0.99, oos_total_trades=20)
     best_uneval = _m(is_best_total_return=99.0, is_best_win_rate=1.0,
                      is_total_trades=10_000, oos_total_trades=9999)
     r_eval = compute_reward(worst_eval, universe_size=1, weights=W, risk_dd_cap=0.3)
     r_uneval = compute_reward(best_uneval, universe_size=1, weights=W, risk_dd_cap=0.3)
-    assert r_eval > r_uneval
+    assert r_eval < r_uneval
+    import math
+    assert math.isfinite(r_eval)
 
 
 def test_legacy_weights_without_targets_unchanged():

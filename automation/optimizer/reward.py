@@ -28,16 +28,20 @@ def _apply_soft_scale(value: float, scale: float | None) -> float:
     return float(value)
 
 
-def _evaluable_floor(weights: dict) -> float:
-    """Issue #591 — der von ``sortino_clip_abs`` ENTKOPPELTE Reward-Floor des eligiblen Asts.
-    ``sortino_clip_abs`` ist die Sättigungsskala der Base und hat semantisch nichts mit der
-    Untergrenze des Reward-Wertebereichs zu tun; sie an ``−sortino_clip_abs`` zu koppeln erzeugte ein
-    Plateau (6/8 SmaCrossover-Trials exakt −5.0). Fehlt ``evaluable_reward_floor`` ⇒ Legacy-Anker
-    (``−sortino_clip_abs``), bit-identisch für Pre-#591-Weights."""
-    v = weights.get("evaluable_reward_floor")
-    if v is not None:
-        return float(v)
-    return -float(weights["sortino_clip_abs"])
+def _penalty_scale_vs_base(weights: dict) -> float:
+    """Issue #631 — globaler Skalierungsfaktor, der ALLE additiven Straf-Terme (dd_penalty,
+    turnover_penalty, fold_dispersion_penalty, param_pen) gegen die REALISIERTE Streuung der
+    aktuellen Reward-Base kalibriert (``psr_z`` seit #630). Die Strafterme wurden historisch gegen
+    die asinh-Sortino-Base (Skala ~1–15) kalibriert; seit #614/#630 ist die Base ``psr_z`` mit einer
+    DEUTLICH engeren realisierten Eligible-Kohorten-Streuung (σ ≈ 0.05–0.07, hergeleitet aus der
+    #614-Referenzrechnung σ(psr)=0.017 über die Delta-Methode dz≈dPSR/φ(z)). Ohne Rekalibrierung
+    dominieren die Strafterme (z. B. dd_penalty σ≈0.077, das 4,5-Fache der Base-Streuung) das Ranking,
+    obwohl sie nur Korrekturterme sein sollen. Ein Strafterm soll die Base-ORDNUNG modifizieren, nicht
+    überstimmen: Zielgrösse ``σ(penalty_term) ≲ 0.25·σ(base)``. Fehlt der Key ⇒ 1.0 (Legacy,
+    bit-identisch, Zero-Hardcoding) — siehe ``assert_penalty_scale_calibrated`` für die fail-loud
+    Kalibrier-Prüfung, die genau diese Regression erkennt."""
+    v = weights.get("penalty_scale_vs_base")
+    return float(v) if v is not None else 1.0
 
 
 def _dd_penalty(m: "TournamentMetrics", weights: dict, risk_dd_cap: float | None) -> float:
@@ -48,13 +52,19 @@ def _dd_penalty(m: "TournamentMetrics", weights: dict, risk_dd_cap: float | None
     ``start_capital``), die Strategie setzt aber nur einen Bruchteil ein ⇒ realer DD 0.6–2.4 %; gegen
     den 30 %-Gate-Cap normiert war ``dd_penalty ≈ 0.004`` (vier Größenordnungen zu klein, struktureller
     Blindgänger). Auf ``dd_reward_scale ≈ 0.03`` normiert liegt der Term im Bereich der übrigen
-    Strafterme. Fehlt ``dd_reward_scale`` ⇒ Fallback auf den Gate-Cap (Legacy, bit-identisch)."""
+    Strafterme. Fehlt ``dd_reward_scale`` ⇒ Fallback auf den Gate-Cap (Legacy, bit-identisch).
+
+    Issue #631 — zusätzlich mit ``penalty_scale_vs_base`` gegen die realisierte Base-Streuung
+    (``psr_z`` seit #630) rekalibriert (siehe ``_penalty_scale_vs_base``). Fehlt der Key ⇒ Faktor 1.0
+    (Legacy, bit-identisch)."""
     scale = weights.get("dd_reward_scale")
     if scale is None:
         scale = risk_dd_cap
     if scale and float(scale) > 0.0:
-        return float(weights["penalty_dd_weight"]) * ((m.oos_max_drawdown / float(scale)) ** 2)
-    return 0.0
+        raw = float(weights["penalty_dd_weight"]) * ((m.oos_max_drawdown / float(scale)) ** 2)
+    else:
+        raw = 0.0
+    return raw * _penalty_scale_vs_base(weights)
 
 
 _oos_min_trades_cache: int | None = None
@@ -152,6 +162,56 @@ def assert_any_condition_parity(tournament_cfg: dict | None) -> None:
         )
 
 
+# Issue #633 — dokumentiertes Kalibrier-Fixture: die empirisch beobachtete OOS-Win-Rate-Verteilung
+# über 336 Trials (Trend-/Breakout-Strategien auf 1h-Bars, asymmetrischer Payoff — hoher Profit-
+# Factor bei niedriger Trefferquote, z. B. PF 3,80 bei 13 % Win-Rate). Beobachtetes Maximum 0,197.
+# Rein deklarativ, KEIN I/O, KEIN Zufall — Referenz für ``check_any_arm_reachability``.
+_CALIBRATION_FIXTURE_WIN_RATES = (
+    0.05, 0.07, 0.08, 0.09, 0.10, 0.11, 0.12, 0.13, 0.13, 0.14,
+    0.14, 0.15, 0.15, 0.16, 0.16, 0.17, 0.17, 0.18, 0.18, 0.19, 0.197,
+)
+# clause -> (Kalibrier-Fixture-Stichprobe, Schwellen-Key in tournament.json). Nur Klauseln mit
+# dokumentierter Referenzverteilung werden geprüft; min_sortino/min_profit_factor haben (noch) keine
+# #633-Kalibrierung ⇒ kein Urteil (kein False-Positive durch Rate).
+_ANY_ARM_CALIBRATION = {
+    "min_win_rate": (_CALIBRATION_FIXTURE_WIN_RATES, "oos_min_win_rate"),
+}
+
+
+def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
+    """Issue #633 — warnt (WARNING-Log, KEIN Abbruch — Zero-Hardcoding-Diagnose statt Hard-Fail, weil
+    die wahre Erreichbarkeit strategie-/symbolabhängig ist), wenn eine ``eligible_requires_any``-
+    Schwelle STRUKTURELL über dem p99 der dokumentierten Kalibrier-Fixture-Verteilung liegt. Ein
+    solcher OR-Arm ist faktisch unerreichbar (#633-Root-Cause: ``oos_min_win_rate=0.25`` bei einem
+    über 336 Trials beobachteten Maximum von 0.197) und die ANY-Klausel kollabiert lautlos auf die
+    übrigen Arme — TPE optimiert dann unbemerkt gegen ein engeres Gate als konfiguriert scheint.
+    Rückgabe: die Namen der betroffenen Klauseln (für Tests / Aufrufer)."""
+    import logging
+
+    any_clauses = (tournament_cfg or {}).get("eligible_requires_any", []) or []
+    unreachable = []
+    for clause in any_clauses:
+        calib = _ANY_ARM_CALIBRATION.get(clause)
+        if calib is None:
+            continue
+        fixture, threshold_key = calib
+        threshold = (tournament_cfg or {}).get(threshold_key)
+        if threshold is None:
+            continue
+        sorted_vals = sorted(fixture)
+        p99_idx = max(0, min(len(sorted_vals) - 1, round(0.99 * (len(sorted_vals) - 1))))
+        p99 = sorted_vals[p99_idx]
+        if float(threshold) > p99:
+            unreachable.append(clause)
+            logging.getLogger("optimizer").warning(
+                "[#633] eligible_requires_any-Klausel '%s': Schwelle %.4f > p99(Kalibrier-Fixture)=%.4f "
+                "— der OR-Arm ist strukturell unerreichbar und kollabiert die ANY-Klausel lautlos auf "
+                "die übrigen Arme. tournament.json['%s'] gegen die realisierte Metrik-Verteilung "
+                "nachschärfen.", clause, float(threshold), p99, threshold_key,
+            )
+    return unreachable
+
+
 def _any_condition_distance(
     m: "TournamentMetrics", weights: dict, tournament_cfg: dict | None
 ) -> float:
@@ -183,27 +243,31 @@ def _any_condition_distance(
     return max(0.0, 1.0 - min(1.0, max(ratios)))
 
 
-def _constraint_distance_penalty(
+# Issue #635 — die SECHS Kern-Gates, die _constraint_distance_penalty seit #452/#505/#534 verwendet
+# (Reward-Near-Miss-Shaping). Als benannte Konstante, damit _compute_oos_constraints (Sampler-
+# Constraint, run_optimization.py) exakt weiss, welche Keys aus ``_normalized_gate_distances`` mit
+# dem Reward-Pfad GETEILT sind (Single Source of Truth der Skalen-Auflösung).
+_CORE_DISTANCE_KEYS = (
+    "oos_min_trades", "oos_min_total_return", "oos_min_expectancy",
+    "oos_min_win_rate", "oos_max_drawdown", "any_condition",
+)
+
+
+def _normalized_gate_distances(
     m: "TournamentMetrics",
     weights: dict,
     risk_dd_cap: float | None,
     tournament_cfg: dict | None,
-) -> float:
-    """Issue #452 — kontinuierliche Distanzstrafe fuer OOS-Constraint-Verletzungen.
-    Issue #467 — OOS-Parameter-Isolation und Penalty Conditioning.
-    Issue #505 — lineare (nicht quadratische) Distanzen gegen Term-Dominanz.
-    Issue #534 — konsistente Normalisierung ausschliesslich ueber die AKTIVEN Dimensionen.
-
-    Nur evaluiert-aber-nicht-eligible Trials nutzen diesen Pfad. Die Strafe ist rein metrisch
-    (keine Gate-Flags als Reward), linear in der auf Target/Scale normierten Ziel-Distanz und
-    config-gewichtet. Aggregiert wird als MITTELWERT der aktiven Distanzen
-    (``sum(active_dists) / len(active_dists)``): eine inaktive (bereits erfuellte) Dimension traegt
-    NULL Gewicht im Divisor und darf die effektive Strafe pro aktiver Dimension nicht mehr
-    verzerren (Issue #534 — vorher fiktive Division durch die feste Gesamtzahl der Dimensionen).
-    Damit erhaelt derselbe Return-Shortfall dieselbe Teilstrafe, unabhaengig davon, wie viele
-    Nebengates zufaellig erfuellt sind. So unterscheidet TPE wieder 'knapp gescheitert' von
-    'katastrophal gescheitert', ohne die Rang-Invariante aufzuweichen: failed Trials bleiben
-    strikt unter dem Evaluable-Floor (siehe ``_constraint_failure_reward``)."""
+) -> dict:
+    """Issue #452/#635 — GETEILTE Scale-Auflösung: liefert jede OOS-Gate-Distanz dimensionslos
+    normiert (``_shortfall_distance``/``_excess_distance``, dieselbe Normierung wie überall) als
+    benanntes Dict, statt eines aggregierten Skalars. Single Source of Truth für
+    ``_constraint_distance_penalty`` (Reward-Near-Miss-Shaping, nutzt nur ``_CORE_DISTANCE_KEYS``)
+    UND ``_compute_oos_constraints`` (#612-Sampler-Constraint, run_optimization.py, nutzt ALLE
+    Keys inkl. PSR/Excess-Return) — beide MÜSSEN dieselben Skalen sehen, sonst sortiert der Sampler
+    infeasible Trials nach einer anderen Rangordnung als der Reward sie bestraft (#635-Root-Cause:
+    der Sampler summierte zuvor UN-normierte Rohdeltas, in denen ein grossskaliges Gate wie PSR
+    (∈[0,1]) ein kleinskaliges wie Excess-Return (~[0,0.05]) um den Faktor ~19 verschluckte)."""
     # Strikte Isolation (kein impliziter Fallback auf IS)
     req_trades = _cfg_value(weights, tournament_cfg, "oos_min_trades")
     req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return")
@@ -226,26 +290,75 @@ def _constraint_distance_penalty(
         weights, tournament_cfg, "expectancy_penalty_scale"
     )
 
-    distances = [
-        _shortfall_distance(float(m.oos_total_trades), req_trades),
-        _shortfall_distance(m.oos_total_return, req_return, scale=return_penalty_scale),
-        _shortfall_distance(
+    distances = {
+        "oos_min_trades": _shortfall_distance(float(m.oos_total_trades), req_trades),
+        "oos_min_total_return": _shortfall_distance(m.oos_total_return, req_return, scale=return_penalty_scale),
+        "oos_min_expectancy": _shortfall_distance(
             m.oos_expectancy, req_expectancy, scale=expectancy_penalty_scale
         ),
-        _shortfall_distance(m.oos_win_rate, req_win_rate),
-        _excess_distance(m.oos_max_drawdown, risk_dd_cap),
-        _any_condition_distance(m, weights, tournament_cfg),
-    ]
+        "oos_min_win_rate": _shortfall_distance(m.oos_win_rate, req_win_rate),
+        "oos_max_drawdown": _excess_distance(m.oos_max_drawdown, risk_dd_cap),
+        "any_condition": _any_condition_distance(m, weights, tournament_cfg),
+    }
+
+    # Issue #635 — zusätzliche Gates, die #612 (Sampler-Constraint) sieht, aber die ursprünglichen
+    # 6 Kern-Terme (#452) NICHT abdecken: PSR (grosskalig ∈[0,1], #614) und Excess-Return
+    # (kleinskalig ~[0,0.05], #552) — exakt das Skalen-Paar aus dem #635-Symptom. PSR hat einen
+    # positiven Target (0.75) ⇒ normale Target-Normierung. Excess-Return hat einen LEGITIMEN
+    # Target von 0.0 ('schlage Buy&Hold') ⇒ _shortfall_distance's Target>0-Guard (der einen
+    # nicht-positiven Target als 'Gate trivial erfüllt' interpretiert) passt hier NICHT — die
+    # Distanz wird daher direkt auf return_penalty_scale normiert (dieselbe Return-Einheiten-Skala
+    # wie total_return, kein separater Key nötig).
+    req_psr = _cfg_value(weights, tournament_cfg, "oos_min_psr")
+    if req_psr is not None and float(req_psr) > 0.0 and getattr(m, "oos_psr", None) is not None:
+        distances["oos_min_psr"] = _shortfall_distance(float(m.oos_psr), float(req_psr))
+
+    req_excess = _cfg_value(weights, tournament_cfg, "oos_min_excess_return")
+    oos_excess_return = getattr(m, "oos_excess_return", None)
+    if req_excess is not None and oos_excess_return is not None:
+        excess_scale = float(return_penalty_scale) if return_penalty_scale else float(req_return)
+        if excess_scale > 0.0:
+            distances["oos_min_excess_return"] = max(
+                0.0, float(req_excess) - float(oos_excess_return)
+            ) / excess_scale
 
     # Issue #547 (robuster Schutz) — Clip-Obergrenze pro Term: kein einzelner Distanz-Term darf
     # den Aktiv-Mittelwert je dominieren, unabhängig von Kalibrierfehlern der Ziel-Schwellen.
     # Fehlt ``distance_term_cap`` (oder <= 0) ⇒ kein Cap ⇒ bit-identisch zum Legacy-Verhalten.
-    # Der Cap senkt Distanzen nur (Strafe ≤ ungecappt) ⇒ die Rang-Invariante (failed < Floor)
-    # bleibt strikt erhalten.
     term_cap = _cfg_value(weights, tournament_cfg, "distance_term_cap")
     if term_cap is not None and float(term_cap) > 0.0:
         cap = float(term_cap)
-        distances = [min(d, cap) for d in distances]
+        distances = {k: min(v, cap) for k, v in distances.items()}
+
+    return distances
+
+
+def _constraint_distance_penalty(
+    m: "TournamentMetrics",
+    weights: dict,
+    risk_dd_cap: float | None,
+    tournament_cfg: dict | None,
+) -> float:
+    """Issue #452 — kontinuierliche Distanzstrafe fuer OOS-Constraint-Verletzungen.
+    Issue #467 — OOS-Parameter-Isolation und Penalty Conditioning.
+    Issue #505 — lineare (nicht quadratische) Distanzen gegen Term-Dominanz.
+    Issue #534 — konsistente Normalisierung ausschliesslich ueber die AKTIVEN Dimensionen.
+
+    Nur evaluiert-aber-nicht-eligible Trials nutzen diesen Pfad. Die Strafe ist rein metrisch
+    (keine Gate-Flags als Reward), linear in der auf Target/Scale normierten Ziel-Distanz und
+    config-gewichtet. Aggregiert wird als MITTELWERT der aktiven Distanzen
+    (``sum(active_dists) / len(active_dists)``): eine inaktive (bereits erfuellte) Dimension traegt
+    NULL Gewicht im Divisor und darf die effektive Strafe pro aktiver Dimension nicht mehr
+    verzerren (Issue #534 — vorher fiktive Division durch die feste Gesamtzahl der Dimensionen).
+    Damit erhaelt derselbe Return-Shortfall dieselbe Teilstrafe, unabhaengig davon, wie viele
+    Nebengates zufaellig erfuellt sind. So unterscheidet TPE wieder 'knapp gescheitert' von
+    'katastrophal gescheitert'. Issue #629 — dieser Wert wird additiv vom gemeinsamen
+    Qualitäts-Kern (``compute_reward``) abgezogen; es gibt kein separates Floor-/Ceiling-Band
+    mehr, die Feasibility-Rangordnung selbst kommt ausschliesslich vom #612-Sampler-Constraint.
+    Issue #635 — die zugrundeliegenden Distanzen kommen jetzt aus der GETEILTEN
+    ``_normalized_gate_distances`` (nur die ursprünglichen 6 Kern-Terme, bit-identisch)."""
+    all_distances = _normalized_gate_distances(m, weights, risk_dd_cap, tournament_cfg)
+    distances = [all_distances[k] for k in _CORE_DISTANCE_KEYS]
 
     active_dists = [d for d in distances if d > 0.0]
     if not active_dists:
@@ -260,94 +373,6 @@ def _constraint_distance_penalty(
             "constraint_distance_penalty_weight", weights["unevaluable_shaping_span"]
         )
     )
-
-
-def _constraint_failure_reward(
-    m: "TournamentMetrics",
-    weights: dict,
-    risk_dd_cap: float | None,
-    tournament_cfg: dict | None,
-    return_terms: bool = False,
-) -> float | tuple:
-    """Issue #452 / #505 — Reward fuer evaluiert-aber-nicht-eligible OOS-Trials.
-
-    Verankert am neuen Feasible-Floor (-sortino_clip_abs) und zieht die
-    kontinuierliche Distanzstrafe ab. Damit gilt strikt: jeder Constraint-Failure < Evaluable-Floor
-    (``+ epsilon``) ⇒ kein failed Trial kann je einen eligiblen ueberholen (Anti-Gate-Gaming).
-    Der tanh-Band-Clamp (Falle 97) wurde zugunsten eines grossen Dynamikbereichs entfernt.
-    """
-    # Issue #591 — der Failure-Ceiling hängt am ENTKOPPELTEN evaluable_reward_floor (nicht mehr an
-    # −sortino_clip_abs). Bandinvariante: unevaluable_ceiling < failure_ceiling < evaluable_reward_floor.
-    feasible_min = _evaluable_floor(weights)
-    failure_ceiling = feasible_min - float(weights["evaluable_floor_epsilon"])
-    unevaluable_ceiling = float(weights["penalty_unevaluable_oos"]) + float(
-        weights["unevaluable_shaping_span"]
-    )
-
-    # Issue #560 — Aggregations-Modus des Failure-Rewards (deklarativ, Zero-Hardcoding).
-    #   'legacy_mean'     : Mittel der aktiven Distanz-Terme (Default, bit-identisch zum Status quo).
-    #   'return_anchored' : an eine gut konditionierte, ökonomisch monotone Skalarzahl (oos_total_return)
-    #                       verankert, statt an einem von Kosten-Sättigungen dominierten 6-Term-Mittel
-    #                       (corr(reward,return|ineligible)≈0). softplus bildet den Rest-Gap zum
-    #                       Return-Gate stufenlos und streng monoton ab ⇒ corr(reward,return) > 0
-    #                       konstruktionsgemäß. Kein Term kann dominieren (es gibt nur einen).
-    mode = _cfg_value(weights, tournament_cfg, "failure_reward_mode", "legacy_mean")
-
-    if mode == "return_anchored":
-        req_return = _cfg_value(weights, tournament_cfg, "oos_min_total_return")
-        if req_return is None:
-            raise ValueError(
-                "failure_reward_mode='return_anchored' benötigt oos_min_total_return "
-                "(tournament.json/weights)."
-            )
-        s = float(
-            _cfg_value(weights, tournament_cfg, "failure_return_softplus_scale", 0.02)
-        )
-        if s <= 0.0:
-            s = 0.02
-        w = float(
-            _cfg_value(weights, tournament_cfg, "failure_return_penalty_weight", 2.0)
-        )
-        # z = −(return − gate)/s: großer Rest-Gap (return ≪ gate) ⇒ großes z ⇒ große Strafe;
-        # return → gate ⇒ z → 0 ⇒ Strafe → w·ln2. softplus > 0 ⇒ Failure-Reward stets < failure_ceiling
-        # (Ordnungsinvariante: max(failure) < −sortino_clip_abs bleibt strikt).
-        z = -(float(m.oos_total_return) - float(req_return)) / s
-        penalty = _softplus(z) * w
-        raw_failure_reward = failure_ceiling - penalty
-        rew = max(unevaluable_ceiling, raw_failure_reward)
-        if return_terms:
-            return rew, {
-                "branch": "failure",
-                "base": float(m.oos_total_return),
-                "divergence": 0.0,
-                "divergence_at_cap": False,
-                "dd_penalty": penalty,
-                "param_pen": 0.0,
-                "turnover": 0.0,
-                "fold_dispersion": 0.0,
-                "tie_breaker": 0.0,
-                "floor_clamped": rew == unevaluable_ceiling
-            }
-        return rew
-
-    # 'legacy_mean' (Default) — Mittel der aktiven Distanzen (bit-identisch, #452/#505/#534).
-    penalty = _constraint_distance_penalty(m, weights, risk_dd_cap, tournament_cfg)
-    raw_failure_reward = failure_ceiling - penalty
-    rew = max(unevaluable_ceiling, raw_failure_reward)
-    if return_terms:
-        return rew, {
-            "branch": "failure",
-            "base": 0.0,
-            "divergence": 0.0,
-            "divergence_at_cap": False,
-            "dd_penalty": penalty,
-            "param_pen": 0.0,
-            "turnover": 0.0,
-            "fold_dispersion": 0.0,
-            "tie_breaker": 0.0,
-            "floor_clamped": rew == unevaluable_ceiling
-        }
-    return rew
 
 
 def _gate_proximity(m: "TournamentMetrics", weights: dict) -> float:
@@ -401,19 +426,29 @@ def compute_reward(
     """weights=None  ⇒ aus optimizer.json (penalty_overfit_weight, penalty_dd_weight,
                      bonus_coverage_weight, penalty_unevaluable_oos, sortino_clip_abs).
     risk_dd_cap=None ⇒ aus tournament.json (max_drawdown).
-    Falls not m.oos_evaluated oder m.oos_sortino is None: Unevaluable-Pfad (Penalty + Shaping).
-    ISSUE #401: Ist ein OOS-Sample evaluated ∧ eligible, aber oos_sortino is None
-    (Zero-Loss / n < sortino_min_trades), UND weights['oos_sortino_fallback'] == 'total_return',
-    wird statt des Penalty-Pfades der geclippte oos_total_return als evaluable Base genutzt
-    (Flat-Reward-Landscape-Fix). Fehlt der Schluessel ⇒ unveraenderter Legacy-Penalty-Pfad.
-    ISSUE #452: Ist ein OOS-Sample evaluated, aber NICHT eligible (durchs OOS-Gate gefallen),
-    greift _constraint_failure_reward: eine kontinuierliche, quadratische, config-gewichtete
-    Distanzstrafe (constraint_distance_penalty_weight) statt Flat-Floor-Clamping — knapp verfehlt
-    > katastrophal verfehlt (TPE-Gradient), aber strikt unter dem Evaluable-Floor (kein Gate-
-    Gaming). tournament_cfg (optional) liefert die OOS-Schwellen ohne erneutes Datei-IO.
+    Falls not m.oos_evaluated oder base_source is None: Unevaluable-Pfad (Penalty + Shaping) —
+    diese Trials haben KEINE OOS-Kennzahl, aus der sich irgendeine Qualität ableiten liesse.
+    ISSUE #401: Ist ein OOS-Sample evaluated, aber oos_sortino is None (Zero-Loss /
+    n < sortino_min_trades), UND weights['oos_sortino_fallback'] == 'total_return', wird statt des
+    Unevaluable-Pfades der geclippte oos_total_return als Base genutzt (Flat-Reward-Landscape-Fix).
+    Fehlt der Schluessel ⇒ Unevaluable-Pfad. Issue #629 — dieser Fallback gilt seit der Feasibility-
+    Constraint-Migration (#612) UNABHÄNGIG von ``m.oos_eligible``: eligible UND evaluated-aber-
+    ineligible Trials teilen sich denselben Base-Auflösungspfad (siehe unten).
 
-    universe_size > 1 (und reward_mode != 'per_symbol') ⇒ Coverage-Pfad (bit-identisch, A4.3/HI-2):
-      reward = base - overfit_gap*penalty_overfit_weight - dd_penalty
+    ISSUE #629 — Feasibility ist AUSSCHLIESSLICH ein #612-Sampler-Constraint
+    (``oos_constraint_violations``), NIEMALS mehr ein Reward-Term. Jeder EVALUIERTE Trial
+    (``m.oos_evaluated and base_source is not None``) — ob ``oos_eligible`` oder nicht — durchläuft
+    DENSELBEN Qualitäts-Kern (Base − Divergenz − Drawdown − Turnover − Fold-Dispersion + Tie-Breaker,
+    KEIN Floor-Clamp mehr). Ein evaluated-aber-ineligible Trial erhält ZUSÄTZLICH die kontinuierliche,
+    bereits existierende Near-Miss-Distanzstrafe (``_constraint_distance_penalty``, #452/#505/#534) on
+    top — near-miss bleibt damit klar besser bewertet als ein katastrophaler Miss, aber OHNE
+    künstliche Untergrenze/Ober­grenze (``evaluable_reward_floor``/``failure_ceiling``/
+    ``unevaluable_ceiling`` sind ENTFALLEN). Das Ergebnis ist EIN stetiges, nicht-gesättigtes
+    Qualitätsziel über alle evaluierten Trials; die Feasibility-Rangordnung übernimmt Optuna nativ
+    über den #612-Constraint (feasible ≻ infeasible in ``best_trial``/TPE-Sampling).
+
+    universe_size > 1 (und reward_mode != 'per_symbol') ⇒ Coverage-Pfad (A4.3/HI-2):
+      reward = base - overfit_gap*penalty_overfit_weight - dd_penalty - gate_distance_penalty
                + coverage*bonus_coverage_weight ; coverage = win_count / max(1, universe_size).
 
     universe_size == 1 ODER weights['reward_mode'] == 'per_symbol' ⇒ Per-Symbol-Pfad (A4.3):
@@ -421,13 +456,12 @@ def compute_reward(
       param_pen = lambda_reg * normalized_param_distance(sampled, global_params,
                                bounds.extract_numeric_bounds(strategy))
                   falls (sampled and global_params and strategy), sonst 0.0.
-      reward = base - overfit_gap*penalty_overfit_weight - dd_penalty - param_pen.
+      reward = base - overfit_gap*penalty_overfit_weight - dd_penalty - param_pen - gate_distance_penalty.
 
+    gate_distance_penalty = _constraint_distance_penalty(...) falls NICHT m.oos_eligible, sonst 0.0.
     base = sortino_soft_scale·asinh(oos_sortino/scale)  # Issue #559 — WEICH, kein Hard-Clip (#588).
     overfit_gap = max(0, is_sortino_median - base)      # nur ausserhalb holdout=True (#594).
     dd_penalty = penalty_dd_weight * (oos_max_drawdown / dd_reward_scale)^2  # Issue #597 (nicht Gate-Cap).
-    floor = evaluable_reward_floor                      # Issue #591 — ENTKOPPELT von sortino_clip_abs.
-    return max(reward, floor)  # Ordnungsinvariante: evaluable >= floor > failure > unevaluable.
     """
 
     loaded_tournament_cfg = tournament_cfg
@@ -473,41 +507,27 @@ def compute_reward(
     penalty_unevaluable_oos = weights["penalty_unevaluable_oos"]
 
     # ISSUE #401 — Zero-Loss/Sub-Threshold-Sortino-Fallback (Flat-Reward-Landscape-Fix).
-    # Ein OOS-Sample, das gehandelt UND jedes (eingefrorene) OOS-Risiko-Gate bestanden hat
-    # (oos_evaluated ∧ oos_eligible), dessen Sortino aber mathematisch undefiniert ist
+    # Ein OOS-Sample, das gehandelt hat, dessen Sortino aber mathematisch undefiniert ist
     # (losses_count == 0 oder n < sortino_min_trades ⇒ oos_sortino is None), darf NICHT auf
     # den flachen Unevaluable-Floor (−9.75) kollabieren — das nivelliert die TPE-Reward-
     # Landschaft (Zero-Gradient). Deklarativ gegated ueber optimizer.json['oos_sortino_fallback']
-    # (Zero-Hardcoding); fehlt der Schluessel ⇒ unveraenderter Legacy-Penalty-Pfad. Der Reward-
-    # WERT bleibt rein performance-basiert (geclippter OOS-total_return), nie das Gate-Flag —
-    # damit kein Gate-Gaming (Falle 2); Micro-Sizing-/Risiko-Gates (Pitfall #58) bleiben ueber
-    # oos_eligible wirksam.
+    # (Zero-Hardcoding); fehlt der Schluessel ⇒ Unevaluable-Pfad. Der Reward-WERT bleibt rein
+    # performance-basiert (geclippter OOS-total_return), nie das Gate-Flag — damit kein
+    # Gate-Gaming (Falle 2); Micro-Sizing-/Risiko-Gates (Pitfall #58) bleiben ueber oos_eligible
+    # (als #612-Sampler-Constraint) wirksam.
+    # Issue #629 — die ``m.oos_eligible``-Bedingung ist ENTFALLEN: vor #629 lief ein evaluated-
+    # aber-ineligible Trial NIE hier durch (er wurde vom jetzt entfernten
+    # ``_constraint_failure_reward`` VORHER abgefangen). Seit eligible UND evaluated-aber-
+    # ineligible Trials denselben Qualitäts-Kern teilen, muss dieser Fallback beiden offenstehen —
+    # sonst kollabiert ein ineligibler Zero-Loss-Trial auf den Unevaluable-Shaping-Pfad, obwohl
+    # echte OOS-Performance-Daten vorliegen.
     base_source = m.oos_sortino
     if (
         m.oos_evaluated
-        and m.oos_eligible
         and m.oos_sortino is None
         and weights.get("oos_sortino_fallback") == "total_return"
     ):
         base_source = m.oos_total_return
-
-    # Issue #452 — evaluiert, aber durchs OOS-Eligibility-Gate gefallen: KEIN Flat-Floor-Clamp,
-    # sondern eine kontinuierliche, config-gewichtete Distanzstrafe (near-miss > katastrophal),
-    # die strikt unter dem Evaluable-Floor bleibt. Steht VOR dem Unevaluable-Pfad, weil ein
-    # evaluiertes-aber-ineligibles Sample (oos_evaluated=True) sonst je nach Sortino-Definiertheit
-    # mal in den Evaluable-, mal in den Unevaluable-Pfad fiele (inkonsistenter Gradient).
-    if m.oos_evaluated and not m.oos_eligible:
-        # Issue #467/#468 (strikte OOS-Isolation): _constraint_distance_penalty verlangt die
-        # OOS-Schwellen (oos_min_*) und wirft fail-loud, wenn sie fehlen. Wird compute_reward mit
-        # explizitem ``weights``, aber ohne ``tournament_cfg`` aufgerufen (DI-/confirm-Pfade,
-        # universe_size==1), bleibt loaded_tournament_cfg sonst None ⇒ die kanonischen oos_min_*
-        # aus tournament.json wären unsichtbar und der Lauf crashte statt zu bewerten. Hier die
-        # Single-Source-of-Truth-Config nachladen (idempotent, gecached), bevor die Strafe greift.
-        if loaded_tournament_cfg is None:
-            loaded_tournament_cfg = _read_tournament_cfg()
-        return _constraint_failure_reward(
-            m, weights, risk_dd_cap, loaded_tournament_cfg, return_terms=return_terms
-        )
 
     if not m.oos_evaluated or base_source is None:
         # Avoid IO if possible:
@@ -675,7 +695,9 @@ def compute_reward(
 
     # Issue #509 (Cost Drag & Turnover Churning) - Turnover Penalty
     # The penalty increases linearly with the number of OOS trades.
-    turnover_penalty = m.oos_total_trades * penalty_turnover_weight
+    # Issue #631 — mit penalty_scale_vs_base gegen die realisierte Base-Streuung rekalibriert
+    # (siehe _penalty_scale_vs_base). Fehlt der Key ⇒ Faktor 1.0 (Legacy, bit-identisch).
+    turnover_penalty = m.oos_total_trades * penalty_turnover_weight * _penalty_scale_vs_base(weights)
 
     # Issue #589/#590 — Fold-Dispersions-Strafe auf den per-Fold-RETURNS (die gut konditionierte
     # Größe; nach #589 NICHT mehr auf den Fold-Sortinos). #590 — normiert über ``oos_folds_total``,
@@ -704,19 +726,41 @@ def compute_reward(
             fold_dispersion_penalty = float(w_disp) * (norm_disp + miss_scale * frac_missing)
         else:
             fold_dispersion_penalty = float(w_disp) * norm_disp
+        # Issue #631 — mit penalty_scale_vs_base gegen die realisierte Base-Streuung rekalibriert.
+        # Fehlt der Key ⇒ Faktor 1.0 (Legacy, bit-identisch).
+        fold_dispersion_penalty *= _penalty_scale_vs_base(weights)
         if penalty_relative_cap is not None:
             fold_dispersion_penalty = min(
                 fold_dispersion_penalty, float(penalty_relative_cap) * cap_scale
             )
 
-    # Issue #559 — return-Tie-Breaker: bricht Rest-Plateaus im eligiblen Ast ökonomisch sinnvoll auf
-    # (oos_total_return streut, wo der — nun weich gesättigte — Sortino nicht mehr differenziert).
-    # w_ret klein wählen, damit die Sortino-Ordnung nicht überstimmt wird. Fehlt w_ret ⇒ 0.0.
+    # Issue #559/#638 — return-Tie-Breaker: bricht Rest-Plateaus im eligiblen Ast ökonomisch sinnvoll
+    # auf (oos_total_return streut, wo die Base nicht mehr differenziert). Issue #638 — w_ret MUSS so
+    # klein sein, dass σ(w_ret·return) ≪ σ(base) bleibt: auf der alten, breiter gestreuten asinh-
+    # Sortino-Base war w_ret=2.0 ein echter Tie-Breaker, auf der seit #614/#630 viel enger gestreuten
+    # psr_z-Base überstimmte derselbe Wert die Base-Ordnung (Return-Chasing durch die Hintertür).
+    # Fehlt w_ret ⇒ 0.0.
     w_ret = float(weights.get("w_ret", 0.0))
     return_tie_breaker = w_ret * float(m.oos_total_return)
 
-    # Issue #591 — Reward-Floor ENTKOPPELT von sortino_clip_abs (eigener evaluable_reward_floor).
-    floor = _evaluable_floor(weights)
+    # Issue #629 — near-miss OOS-Gate-Distanzstrafe: NUR für evaluated-aber-ineligible Trials, additiv
+    # auf denselben Qualitäts-Kern, den ein eligibler Trial mit identischen Kennzahlen erhielte (kein
+    # separates Floor/Ceiling-Band mehr). Ein knapper Miss bleibt so nahe an einem gleich guten
+    # eligiblen Trial, ein katastrophaler Miss fällt weit ab — die Feasibility-RANGORDNUNG selbst
+    # kommt ausschliesslich vom #612-Sampler-Constraint (``oos_constraint_violations``).
+    gate_distance_penalty = 0.0
+    if not m.oos_eligible:
+        # Issue #467/#468 (strikte OOS-Isolation): _constraint_distance_penalty verlangt die
+        # OOS-Schwellen (oos_min_*) und wirft fail-loud, wenn sie fehlen. Wird compute_reward mit
+        # explizitem ``weights``, aber ohne ``tournament_cfg`` aufgerufen (DI-/confirm-Pfade,
+        # universe_size==1), bleibt loaded_tournament_cfg sonst None ⇒ die kanonischen oos_min_*
+        # aus tournament.json wären unsichtbar. Hier die Single-Source-of-Truth-Config nachladen
+        # (idempotent, gecached), bevor die Strafe greift.
+        if loaded_tournament_cfg is None:
+            loaded_tournament_cfg = _read_tournament_cfg()
+        gate_distance_penalty = _constraint_distance_penalty(
+            m, weights, risk_dd_cap, loaded_tournament_cfg
+        )
 
     # A4.3: per-symbol reward path. The coverage term (win_count/universe_size) degenerates
     # when the universe is a single symbol, so drop it and add a shrinkage penalty toward the
@@ -729,8 +773,12 @@ def compute_reward(
             from automation.optimizer import bounds
 
             b = bounds.extract_numeric_bounds(strategy)
-            param_pen = weights["lambda_reg"] * bounds.normalized_param_distance(
-                sampled, global_params, b
+            # Issue #631 — mit penalty_scale_vs_base gegen die realisierte Base-Streuung rekalibriert.
+            # Fehlt der Key ⇒ Faktor 1.0 (Legacy, bit-identisch).
+            param_pen = (
+                weights["lambda_reg"]
+                * bounds.normalized_param_distance(sampled, global_params, b)
+                * _penalty_scale_vs_base(weights)
             )
         reward = (
             base
@@ -739,12 +787,12 @@ def compute_reward(
             - param_pen
             - turnover_penalty
             - fold_dispersion_penalty
+            - gate_distance_penalty
             + return_tie_breaker
         )
-        final_reward = max(reward, floor)
         if return_terms:
-            return final_reward, {
-                "branch": "per_symbol",
+            return reward, {
+                "branch": "per_symbol" if m.oos_eligible else "failure",
                 "base": base,
                 "divergence": divergence_penalty,
                 "divergence_at_cap": divergence_at_cap,
@@ -753,13 +801,12 @@ def compute_reward(
                 "turnover": turnover_penalty,
                 "fold_dispersion": fold_dispersion_penalty,
                 "tie_breaker": return_tie_breaker,
-                "floor_clamped": reward < floor
+                "gate_distance_penalty": gate_distance_penalty,
+                "floor_clamped": False
             }
-        return final_reward
+        return reward
 
-    # Coverage path (universe_size > 1) — bit-identical to the pre-A4.3 behaviour when the new
-    # opt-in shaping keys (sortino_soft_scale/overfit_divergence_mode/fold_dispersion_weight/w_ret)
-    # are absent.
+    # Coverage path (universe_size > 1).
     coverage = m.win_count / max(1, universe_size)
     coverage_bonus = coverage * bonus_coverage_weight
     reward = (
@@ -769,12 +816,12 @@ def compute_reward(
         + coverage_bonus
         - turnover_penalty
         - fold_dispersion_penalty
+        - gate_distance_penalty
         + return_tie_breaker
     )
-    final_reward = max(reward, floor)
     if return_terms:
-        return final_reward, {
-            "branch": "eligible",
+        return reward, {
+            "branch": "eligible" if m.oos_eligible else "failure",
             "base": base,
             "divergence": divergence_penalty,
             "divergence_at_cap": divergence_at_cap,
@@ -783,6 +830,86 @@ def compute_reward(
             "turnover": turnover_penalty,
             "fold_dispersion": fold_dispersion_penalty,
             "tie_breaker": return_tie_breaker,
-            "floor_clamped": reward < floor
+            "gate_distance_penalty": gate_distance_penalty,
+            "floor_clamped": False
         }
-    return final_reward
+    return reward
+
+
+# Issue #631 — deklaratives Kalibrier-Fixture für ``assert_penalty_scale_calibrated``: repräsentiert
+# eine realistische Eligible-Kohorte (psr_z knapp über dem Gate-Quantil Φ⁻¹(0.75)≈0.6745, realisierte
+# Drawdown-Spanne 0.6–2.4 % aus #597, Turnover-Spanne 20–120 Trades, vier leicht streuende Fold-
+# Returns pro Trial aus #616). Rein & deterministisch — KEIN I/O, KEIN Zufall.
+_CALIBRATION_FIXTURE_PSR_Z = (0.6745, 0.7245, 0.7745, 0.8245, 0.8745, 0.9245, 0.9745, 1.0245)
+_CALIBRATION_FIXTURE_DD = (0.006, 0.010, 0.014, 0.018, 0.020, 0.022, 0.024, 0.008)
+_CALIBRATION_FIXTURE_TRADES = (20, 35, 50, 65, 80, 95, 110, 120)
+_CALIBRATION_FIXTURE_FOLD_RETURNS = (
+    (0.010, 0.012, 0.009, 0.011), (0.020, -0.010, 0.015, 0.005),
+    (0.008, 0.008, 0.009, 0.007), (0.030, -0.020, 0.025, -0.010),
+    (0.011, 0.010, 0.012, 0.009), (0.015, 0.005, 0.020, 0.000),
+    (0.009, 0.011, 0.010, 0.010), (0.025, -0.015, 0.020, -0.005),
+)
+_CALIBRATION_PENALTY_TERM_KEYS = ("dd_penalty", "turnover", "fold_dispersion")
+
+
+def assert_penalty_scale_calibrated(weights: dict) -> None:
+    """Issue #631 — Fail-loud-Kalibrier-Assertion beim Config-Load.
+
+    Berechnet ``compute_reward`` über das deklarative Kalibrier-Fixture (oben) und prüft:
+    ``median(σ_penalty_terms) ≤ σ_base``. Verletzt eine Config diese Grenze, überstimmen die
+    additiven Strafterme (dd_penalty/turnover/fold_dispersion) strukturell die Base-Streuung — exakt
+    der #631-Root-Cause-Fehler (Strafterme wurden gegen die alte, weiter gestreute asinh-Sortino-Base
+    kalibriert und dominieren seit #614/#630 die viel engere psr_z-Streuung). ``ValueError`` bei
+    Verletzung; kein Effekt auf den Reward-Wert selbst (reine Config-Validierung, wie
+    ``assert_any_condition_parity``, #593)."""
+    # Defensiv: ein unvollständiges/leeres ``weights`` (z. B. fehlende optimizer.json in Tests/
+    # Sonderpfaden) ist NICHT das, was diese Assertion prüfen soll — compute_reward selbst wirft dafür
+    # bereits fail-loud KeyErrors an der eigentlichen Aufrufstelle. Diese Kalibrier-Prüfung ist ein
+    # No-Op, solange die für den Qualitäts-Kern nötigen Kern-Keys fehlen (Zero-Hardcoding).
+    required = ("penalty_unevaluable_oos", "sortino_clip_abs", "penalty_overfit_weight",
+                "penalty_dd_weight", "bonus_coverage_weight")
+    if any(k not in weights for k in required):
+        return
+
+    tcfg = {
+        "oos_min_trades": 10, "oos_min_total_return": 0.0, "oos_min_expectancy": 0.0,
+        "oos_min_win_rate": 0.0, "max_drawdown": 0.3,
+    }
+    all_terms = []
+    for z, dd, n_tr, folds in zip(
+        _CALIBRATION_FIXTURE_PSR_Z, _CALIBRATION_FIXTURE_DD,
+        _CALIBRATION_FIXTURE_TRADES, _CALIBRATION_FIXTURE_FOLD_RETURNS,
+    ):
+        from automation.optimizer.parsing import TournamentMetrics
+
+        m = TournamentMetrics(
+            oos_evaluated=True, oos_eligible=True, is_sortino_median=0.0,
+            oos_sortino=z, oos_max_drawdown=dd, oos_total_trades=n_tr, win_count=1,
+            fully_eligible_pairs=1, is_total_trades=n_tr, oos_total_return=0.01,
+            oos_win_rate=0.4, oos_profit_factor=1.3, oos_psr_z=z,
+            oos_fold_returns=folds, oos_folds_total=4,
+        )
+        _, terms = compute_reward(
+            m, universe_size=1, weights=weights, risk_dd_cap=tcfg["max_drawdown"],
+            tournament_cfg=tcfg, return_terms=True,
+        )
+        all_terms.append(terms)
+
+    base_vals = [t["base"] for t in all_terms]
+    sigma_base = statistics.pstdev(base_vals)
+    if sigma_base <= 0.0:
+        return  # degeneriertes Fixture (kann bei extremen Custom-Weights auftreten) ⇒ kein Urteil
+
+    penalty_sigmas = [
+        statistics.pstdev([t.get(k, 0.0) for t in all_terms])
+        for k in _CALIBRATION_PENALTY_TERM_KEYS
+    ]
+    median_penalty_sigma = statistics.median(penalty_sigmas)
+    if median_penalty_sigma > sigma_base:
+        raise ValueError(
+            f"PENALTY_SCALE_MISCALIBRATED (#631): median(σ_penalty_terms)={median_penalty_sigma:.6f} "
+            f"> σ_base={sigma_base:.6f} auf dem Kalibrier-Fixture — dd_penalty/turnover/"
+            f"fold_dispersion überstimmen strukturell die Base-Streuung, statt sie nur zu "
+            f"modifizieren (Straf-Terme dominieren die Base — Rekalibrierung nötig, #631). "
+            f"penalty_scale_vs_base (optimizer.json) nachschärfen."
+        )

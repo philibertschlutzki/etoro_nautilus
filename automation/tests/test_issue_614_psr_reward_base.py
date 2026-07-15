@@ -17,7 +17,6 @@ from automation.optimizer.parsing import TournamentMetrics
 
 _W = {
     "penalty_unevaluable_oos": -20.0, "unevaluable_shaping_span": 0.25,
-    "evaluable_floor_epsilon": 0.001, "evaluable_reward_floor": -12.0,
     "sortino_clip_abs": 5.0, "sortino_soft_scale": 5.0,
     "penalty_overfit_weight": 0.5, "penalty_dd_weight": 1.0, "bonus_coverage_weight": 1.0,
     "penalty_turnover_weight": 0.0, "w_ret": 0.0,
@@ -25,12 +24,12 @@ _W = {
 _CFG = {"oos_min_total_return": 0.005, "max_drawdown": 0.3}
 
 
-def _m(*, psr, sortino_annualized, dd=0.0, ret=0.03):
+def _m(*, psr, sortino_annualized, dd=0.0, ret=0.03, psr_z=None):
     return TournamentMetrics(
         oos_evaluated=True, oos_eligible=True, is_sortino_median=1.0,
         oos_sortino=sortino_annualized, oos_max_drawdown=dd, oos_total_trades=30, win_count=1,
         fully_eligible_pairs=1, is_total_trades=100, oos_total_return=ret,
-        oos_psr=psr, oos_sortino_annualized=sortino_annualized)
+        oos_psr=psr, oos_psr_z=psr_z, oos_sortino_annualized=sortino_annualized)
 
 
 # ── Referenzrechnung (muss exakt reproduzierbar sein) ────────────────────────────────────────────
@@ -52,20 +51,23 @@ def test_psr_in_unit_interval(sr, T):
 
 # ── Reward ist INVARIANT gegenüber der Annualisierungs-Konvention ────────────────────────────────
 def test_reward_invariant_to_annualization():
-    """Derselbe Return-Pfad (⇒ dieselbe PSR) unter A=1638 und A=8766 ⇒ IDENTISCHER Reward. Der
-    annualisierte Sortino differiert (4.61 vs. 10.66), fliesst aber nicht mehr in den Reward."""
-    m_1638 = _m(psr=0.94, sortino_annualized=4.61)
-    m_8766 = _m(psr=0.94, sortino_annualized=4.61 * math.sqrt(8766.0 / 1638.0))
+    """Derselbe Return-Pfad (⇒ dieselbe PSR/psr_z) unter A=1638 und A=8766 ⇒ IDENTISCHER Reward. Der
+    annualisierte Sortino differiert (4.61 vs. 10.66), fliesst aber nicht mehr in den Reward.
+    Issue #630 — die Reward-Base ist seither ``psr_z`` (unbeschränkte Effektstärke), nicht mehr die
+    CDF-Wahrscheinlichkeit ``psr``; dieselbe ``psr_z`` ⇒ identischer Reward."""
+    m_1638 = _m(psr=0.94, sortino_annualized=4.61, psr_z=1.609)
+    m_8766 = _m(psr=0.94, sortino_annualized=4.61 * math.sqrt(8766.0 / 1638.0), psr_z=1.609)
     r1 = compute_reward(m_1638, universe_size=1, weights=_W, risk_dd_cap=0.3, tournament_cfg=_CFG)
     r2 = compute_reward(m_8766, universe_size=1, weights=_W, risk_dd_cap=0.3, tournament_cfg=_CFG)
     assert r1 == pytest.approx(r2, abs=1e-12)
 
 
-def test_reward_base_is_psr_when_present():
-    """Bei aktivierter PSR ist die Base die PSR (∈[0,1]), nicht die asinh-Sortino-Grösse."""
-    _, terms = compute_reward(_m(psr=0.9463, sortino_annualized=4.61), universe_size=1,
+def test_reward_base_is_psr_z_when_present():
+    """Issue #630 — bei aktivierter PSR-Z ist die Base die unbeschränkte Effektstärke ``psr_z``,
+    nicht die sättigende CDF ``psr`` und nicht die asinh-Sortino-Grösse."""
+    _, terms = compute_reward(_m(psr=0.9463, sortino_annualized=4.61, psr_z=1.609), universe_size=1,
                               weights=_W, risk_dd_cap=0.3, tournament_cfg=_CFG, return_terms=True)
-    assert terms["base"] == pytest.approx(0.9463, abs=1e-9)
+    assert terms["base"] == pytest.approx(1.609, abs=1e-9)
     assert terms["divergence"] == 0.0          # #614 — asinh-Overfit-Divergenz von PSR subsumiert
 
 
