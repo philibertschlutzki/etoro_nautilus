@@ -24,7 +24,9 @@ from automation.optimizer.spaces import sample_params
 from automation.optimizer.trial_config import build_trial, config_dir
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
-from automation.optimizer.reward import compute_reward
+from automation.optimizer.reward import (
+    compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
+)
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.log_manager import emit_execution_event
 
@@ -263,7 +265,7 @@ def _check_reward_semantics_version(study, opt_data: dict,
     msg = (f"Reward-Semantik-Versionskonflikt: die geladene Study wurde unter Version {existing if existing is not None else 'unversioniert'} "
            f"akkumuliert, aktuell ist Version {current}. Reward-Werte verschiedener Versionen "
            f"sind NICHT vergleichbar. Dies führt zu Posterior-Korruption im TPE-Sampler. "
-           f"Initiere Purge der obsoleten Study-Datenbank...")
+           f"Initiere Purge der obsoleten Study-Datenbank (.db)...")
 
     if has_trials:
         if existing is None or existing < current:
@@ -320,9 +322,10 @@ def make_objective(
 
         tournament_path = cfg_dir / "tournament.json"
         risk_dd_cap = 0.30
+        t_data: dict = {}
         if tournament_path.exists():
             with open(tournament_path, "r", encoding="utf-8") as f:
-                t_data = json.load(f)
+                t_data = json.load(f) or {}
                 risk_dd_cap = t_data.get("max_drawdown", 0.30)
 
         universe_path = config_dir().parent.parent / "data" / "universe" / "momentum_ls.json"
@@ -381,7 +384,8 @@ def make_objective(
             dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
             trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
         # Issue #612 — Feasibility-Constraint(s) für den TPE-Sampler auch im globalen Pfad.
-        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics))
+        # Issue #635 — dimensionslos normiert (t_data = dieselbe tournament.json-Config, oben geladen).
+        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics, t_data))
         return reward
     return objective
 
@@ -402,6 +406,16 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
             conf_n_trials = opt_data.get("n_trials", conf_n_trials)
             n_startup_trials = opt_data.get("n_startup_trials", n_startup_trials)
             seed = opt_data.get("seed", seed)
+
+    # Issue #631 — Fail-loud beim Config-Load: die additiven Strafterme dürfen die Base-Streuung auf
+    # dem deklarativen Kalibrier-Fixture nicht strukturell überstimmen (PENALTY_SCALE_MISCALIBRATED).
+    assert_penalty_scale_calibrated(opt_data)
+    # Issue #633 — warnt beim Config-Load, wenn eine eligible_requires_any-Schwelle strukturell über
+    # dem p99 der dokumentierten Kalibrier-Fixture-Verteilung liegt (unerreichbarer OR-Arm).
+    tournament_path_check = cfg_dir / "tournament.json"
+    if tournament_path_check.exists():
+        with open(tournament_path_check, "r", encoding="utf-8") as f:
+            check_any_arm_reachability(json.load(f) or {})
 
     if n_trials is None:
         n_trials = conf_n_trials
@@ -594,20 +608,34 @@ def _classify_trial_rejection(metrics) -> str:
 IS_REJECTION_NONE = "NONE"
 
 
-def _compute_oos_constraints(metrics) -> tuple:
+def _compute_oos_constraints(metrics, tournament_cfg: dict | None = None) -> tuple:
     """Issue #612 — Feasibility-Constraint(s) für den Sampler (Optuna-Konvention: ``<= 0`` = feasible).
 
-    Ein eligibler (feasibler) Trial ⇒ ``(0.0,)``. Sonst die SUMMIERTE positive OOS-Gate-Verletzung
-    (aus ``oos_gate_deltas``, ``delta = actual − threshold`` ⇒ Verletzung ``max(0, −delta)``) — ``> 0``,
-    sodass der Sampler unter den infeasiblen nach Gesamtverletzung sortiert. Erfassen die Deltas die
-    Ineligibilität nicht (nicht-evaluiert, Micro-Sizing) ⇒ konstante Verletzung ``1.0``. KONSTANTE
-    Länge (1) über alle Trials — Optuna verlangt einen fixen Constraint-Vektor."""
+    Ein eligibler (feasibler) Trial ⇒ ``(0.0,)``. Sonst die MITTLERE, dimensionslos normierte
+    OOS-Gate-Verletzung — ``> 0``, sodass der Sampler unter den infeasiblen nach vergleichbarem
+    Rest-Gap sortiert.
+
+    Issue #635 — VORHER wurden rohe, un-normierte Deltas (``oos_gate_deltas``, ``actual − threshold``)
+    summiert: ein grosskaliges Gate wie PSR (∈[0,1]) verschluckte ein kleinskaliges wie Excess-Return
+    (~[0,0.05]) um den Faktor ~19 — der Sampler steuerte infeasible Trials faktisch nur nach PSR-Nähe.
+    Jetzt: dieselbe GETEILTE Scale-Auflösung wie der Reward-Near-Miss-Pfad
+    (``reward._normalized_gate_distances``, Single Source of Truth mit ``_constraint_distance_penalty``)
+    — jede Verletzung auf Target/Scale normiert, dann gemittelt über die AKTIVEN Dimensionen (analog
+    #534). Erfassen die Distanzen die Ineligibilität nicht (nicht-evaluiert, Micro-Sizing, fehlende
+    ``tournament_cfg``, unzureichende Metrik-Daten) ⇒ konstante Verletzung ``1.0``. KONSTANTE Länge
+    (1) über alle Trials — Optuna verlangt einen fixen Constraint-Vektor."""
     if getattr(metrics, "oos_eligible", False):
         return (0.0,)
-    deltas = getattr(metrics, "oos_gate_deltas", None) or {}
-    violation = sum(max(0.0, -float(v)) for v in deltas.values())
-    if not (violation > 0.0):
-        violation = 1.0
+    if not getattr(metrics, "oos_evaluated", False) or not tournament_cfg:
+        return (1.0,)
+    try:
+        from automation.optimizer.reward import _normalized_gate_distances
+        risk_dd_cap = tournament_cfg.get("max_drawdown")
+        distances = _normalized_gate_distances(metrics, {}, risk_dd_cap, tournament_cfg)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        distances = {}
+    active = [d for d in distances.values() if d > 0.0]
+    violation = (sum(active) / len(active)) if active else 1.0
     return (float(violation),)
 
 
@@ -762,9 +790,9 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     ``getattr``-/try-gekapselt, sodass die Summary nie den Lauf crasht. Aggregiert die per-Trial
     ``backtest_ms`` (User-Attr) zu Total/Median und zaehlt evaluable Trials (``oos_evaluated``).
 
-    Issue #568 — zusätzlich das Gradienten-Signal (``reward_pstdev``, ``evaluable_fraction``,
-    ``gradient_signal``) ausweisen, damit eine (aussichtslose) Study NICHT in höhere Tiers
-    eskaliert wird und der Eskalations-Entscheid aus dem Log nachvollziehbar ist."""
+    Issue #568/#640 — zusätzlich das Gradienten-Signal (``feasible_reward_pstdev``,
+    ``feasible_p_eligible``, ``gradient_signal``) ausweisen, damit eine (aussichtslose) Study NICHT
+    in höhere Tiers eskaliert wird und der Eskalations-Entscheid aus dem Log nachvollziehbar ist."""
     trials = list(getattr(study, "trials", None) or [])
     durs = [v for t in trials
             if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
@@ -784,7 +812,12 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     except Exception:
         best_value = None
 
-    # Issue #568 — Gradienten-Signal aus den abgeschlossenen Reward-Werten. tau deklarativ.
+    # Issue #611 — p_eligible (Gate-Passrate) EINMALIG bestimmen (wiederverwendet vom #640-
+    # Gradienten-Gate UND von der #618-DSR-Kohorte weiter unten).
+    n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
+    p_eligible = (n_eligible / len(trials)) if trials else 0.0
+
+    # Issue #568 — Gradienten-Signal. tau deklarativ.
     rewards = [getattr(t, "value", None) for t in trials]
     rewards = [float(r) for r in rewards if isinstance(r, (int, float))]
     evaluable_fraction = (evaluable / len(trials)) if trials else 0.0
@@ -796,33 +829,63 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 "tier_escalation_min_signal", tau))
     except Exception:
         pass
+    # Issue #640 — gradient_signal (und die feasible-Diagnose) NICHT mehr auf dem globalen,
+    # populations-gemischten reward_pstdev messen: selbst nach #629 (kein Reward-Band mehr) spannt
+    # die globale Reward-Verteilung weiterhin die Unevaluable-Shaping-Spanne, die potenziell
+    # katastrophale Failure-Region UND das enge Eligible-Band gemeinsam auf — ihr pstdev misst primär
+    # die Populations-Mischung (nahe an der Bernoulli-Streuung der Gate-Passrate p_eligible·(1−p_eligible)),
+    # nicht die tatsächlich für TPE INNERHALB des feasiblen Bereichs erkletterbare Streuung. Die
+    # Eskalations-Entscheidung (mehr Budget lohnt sich nur bei echtem Signal) muss daher auf der
+    # FEASIBLE-REGION-Reward-Varianz laufen: nur eligible Trials, mit p_eligible als Usability-Gate
+    # (kein Signal ohne mindestens 2 eligible Trials).
+    feasible_rewards = [
+        float(t.value) for t in trials
+        if getattr(t, "user_attrs", {}).get("oos_eligible") is True
+        and isinstance(getattr(t, "value", None), (int, float))
+    ]
+    feasible_reward_pstdev = statistics.pstdev(feasible_rewards) if len(feasible_rewards) >= 2 else 0.0
+    # reward_pstdev bleibt als ROHE, globale Diagnose-Telemetrie erhalten (Populations-Streuung über
+    # ALLE Trials) — ist aber seit #640 NICHT mehr die Grundlage von gradient_signal.
     reward_pstdev = statistics.pstdev(rewards) if len(rewards) >= 2 else 0.0
-    gradient_signal = study_shows_gradient_signal(rewards, evaluable_fraction, tau)
+    gradient_signal = study_shows_gradient_signal(feasible_rewards, p_eligible, tau)
     if not gradient_signal:
         logging.getLogger("optimizer").warning(
-            "[#568] %s: kein Gradienten-Signal (evaluable_fraction=%.2f, reward_pstdev=%.4f ≤ τ=%.4f) "
-            "⇒ KEINE Tier-Eskalation gerechtfertigt (zusätzliches Budget auf flacher Landschaft ist "
-            "wirkungslos).", symbol, evaluable_fraction, reward_pstdev, tau,
+            "[#640] %s: kein Gradienten-Signal im feasiblen Bereich (feasible_p_eligible=%.2f, "
+            "feasible_reward_pstdev=%.4f ≤ τ=%.4f) ⇒ KEINE Tier-Eskalation gerechtfertigt "
+            "(zusätzliches Budget auf flacher Feasible-Region-Landschaft ist wirkungslos).",
+            symbol, p_eligible, feasible_reward_pstdev, tau,
         )
 
     # Issue #592 — Deflations-Telemetrie auf der REWARD-Skala (je Study sichtbar, nicht nur im
     # Holdout-Pfad). Nutzt die evaluable Trial-Rewards (das tatsächliche argmax-Selektionskriterium).
-    # Issue #611 — p_eligible (Gate-Passrate) + DSR-Kohorten-Telemetrie auf der ELIGIBLEN PER-PERIODEN-
-    # Sortino-Skala. Die alte Reward-Skalen-Deflation über ALLE oos_evaluated-Trials schätzte σ auf einer
-    # Zwei-Punkt-Mischung ⇒ Bernoulli-Standardabweichung der Passrate (anti-monoton). Jetzt: die
-    # Streuung ÜBER die eligiblen Sortinos (die tatsächlichen argmax-Konkurrenten) ⇒ SR₀ (#618).
+    # Issue #611 — DSR-Kohorten-Telemetrie auf der ELIGIBLEN PER-PERIODEN-Sortino-Skala. Die alte
+    # Reward-Skalen-Deflation über ALLE oos_evaluated-Trials schätzte σ auf einer Zwei-Punkt-Mischung
+    # ⇒ Bernoulli-Standardabweichung der Passrate (anti-monoton). Jetzt: die Streuung ÜBER die
+    # eligiblen Sortinos (die tatsächlichen argmax-Konkurrenten) ⇒ SR₀ (#618).
     deflated_selection, deflation_confidence = _read_deflation_config()
-    n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
-    p_eligible = (n_eligible / len(trials)) if trials else 0.0
     cohort_sr = [getattr(t, "user_attrs", {}).get("oos_sortino_period") for t in trials
                  if getattr(t, "user_attrs", {}).get("oos_eligible") is True
                  and getattr(t, "user_attrs", {}).get("oos_sortino_period") is not None]
     deflation_n = len(cohort_sr)
     deflation_sr0 = deflation_var = None
+    deflation_used_var_floor = False
     if deflated_selection and deflation_n >= 2:
-        from automation.optimizer.deflation import sr0_multiple_testing
+        from automation.optimizer.deflation import sr0_multiple_testing_robust
         deflation_var = statistics.pvariance([float(s) for s in cohort_sr])
-        deflation_sr0 = sr0_multiple_testing(deflation_var, deflation_n)
+        # Issue #636 — dieselbe Small-Cohort-Robustifizierung wie confirm.py (Single Source of
+        # Truth): unterhalb deflation_min_cohort ersetzt ein dokumentierter Varianz-Floor die
+        # statistisch bedeutungslose 2-3-Punkte-Stichproben-Varianz.
+        opt_path_dsr = config_dir() / "tournament.json"
+        min_cohort, var_floor = 10, 0.0018
+        try:
+            if opt_path_dsr.exists():
+                _tcfg = json.loads(opt_path_dsr.read_text("utf-8")) or {}
+                min_cohort = int(_tcfg.get("deflation_min_cohort", min_cohort))
+                var_floor = float(_tcfg.get("deflation_var_floor", var_floor))
+        except Exception:
+            pass
+        deflation_sr0, deflation_used_var_floor = sr0_multiple_testing_robust(
+            deflation_var, deflation_n, min_cohort=min_cohort, var_floor=var_floor)
 
     # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
     boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
@@ -894,16 +957,28 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "backtest_ms_total": sum(durs) if durs else 0,
         "backtest_ms_median": int(statistics.median(durs)) if durs else None,
         "wallclock_s": round(time.perf_counter() - study_t0),
-        # Issue #568 — Gradienten-getriebene Eskalations-Telemetrie.
+        # Issue #568 — globale Roh-Diagnose (Populations-Streuung über ALLE Trials, NICHT die
+        # Eskalations-Grundlage seit #640 — siehe feasible_reward_pstdev/gradient_signal unten).
         "reward_pstdev": reward_pstdev,
         "evaluable_fraction": evaluable_fraction,
+        # Issue #640 — die tatsaechliche Eskalations-Grundlage: Reward-Varianz NUR über die eligible
+        # Kohorte (feasible_reward_pstdev) + deren Passrate (feasible_p_eligible), getrennt von der
+        # globalen Populations-Streuung emittiert, damit "echtes Signal" nicht mit "Passrate > 0"
+        # verwechselt wird. gradient_signal ist jetzt auf feasible_reward_pstdev/feasible_p_eligible
+        # begründet, nicht mehr auf reward_pstdev/evaluable_fraction.
+        "feasible_reward_pstdev": feasible_reward_pstdev,
+        "feasible_p_eligible": p_eligible,
         "gradient_signal": gradient_signal,
-        # Issue #611/#618 — DSR-Telemetrie (per-Perioden-Sortino-Skala) + p_eligible (Gate-Passrate).
+        # Issue #611/#618 — DSR-Telemetrie (per-Perioden-Sortino-Skala) + p_eligible (Gate-Passrate,
+        # identisch zu feasible_p_eligible — hier unter dem historischen Namen für die DSR-Kohorte).
         # Monotonie-Invariante (#611): SR₀ steigt NICHT mit p_eligible (kein Bernoulli-Artefakt mehr).
         "p_eligible": p_eligible,
         "deflation_n_eligible": deflation_n,
         "deflation_sr0": deflation_sr0,
         "deflation_var_sr": deflation_var,
+        # Issue #636 — sichtbar, ob SR₀ aus dem konservativen Varianz-Floor (Small-Cohort-Fallback)
+        # statt der empirischen Kohorten-Varianz stammt.
+        "deflation_used_var_floor": deflation_used_var_floor,
         # Issue #620 — #589-Kohärenz-Verletzungen je Study (beobachtbar).
         "coherence_violations": coherence_violations,
         # Issue #597 — Randlösungs-Signatur.
@@ -974,9 +1049,11 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
 
         tournament_path = cfg_dir / "tournament.json"
         risk_dd_cap = 0.30
+        t_data: dict = {}
         if tournament_path.exists():
             with open(tournament_path, "r", encoding="utf-8") as f:
-                risk_dd_cap = (json.load(f) or {}).get("max_drawdown", 0.30)
+                t_data = json.load(f) or {}
+                risk_dd_cap = t_data.get("max_drawdown", 0.30)
 
         reward, reward_terms = compute_reward(metrics, universe_size=1, risk_dd_cap=risk_dd_cap,
                                 sampled=sampled, global_params=global_params, strategy=strategy, return_terms=True)
@@ -1010,7 +1087,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Issue #612 — Feasibility-Constraint(s) für den Sampler (≤ 0 = feasible). Damit optimiert der
         # TPE EINE stetige Grösse (die risikoadjustierte OOS-Performance) statt einer Stufenfunktion;
         # die Feasibility-Rangordnung übernimmt Optuna nativ (feasible ≻ infeasible in best_trial).
-        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics))
+        # Issue #635 — dimensionslos normiert (t_data = dieselbe tournament.json-Config, oben geladen).
+        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics, t_data))
         # Issue #618 — der PER-PERIODEN-Sortino + PSR je Trial (für die DSR-Kohorten-Varianz V[ŜR_trials]
         # in confirm; Multiple-Testing-Korrektur auf der per-Perioden-Skala, NICHT der Reward-Skala #611).
         trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
@@ -1103,6 +1181,17 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             conf_n_trials = opt_data.get("n_trials", conf_n_trials)
             n_startup_trials = opt_data.get("n_startup_trials", n_startup_trials)
             seed = opt_data.get("seed", seed)
+
+    # Issue #631 — Fail-loud beim Config-Load (siehe optimize()): additive Strafterme dürfen die
+    # Base-Streuung auf dem Kalibrier-Fixture nicht strukturell überstimmen.
+    assert_penalty_scale_calibrated(opt_data)
+    # Issue #633 — warnt beim Config-Load, wenn eine eligible_requires_any-Schwelle strukturell über
+    # dem p99 der dokumentierten Kalibrier-Fixture-Verteilung liegt (unerreichbarer OR-Arm).
+    tournament_path_check = cfg_dir / "tournament.json"
+    if tournament_path_check.exists():
+        with open(tournament_path_check, "r", encoding="utf-8") as f:
+            check_any_arm_reachability(json.load(f) or {})
+
     if n_trials is None:
         n_trials = conf_n_trials
         # Issue #622 — NUR den Config-Default an die Dimensionalität koppeln (>= k·dim, k>=20), sonst ist

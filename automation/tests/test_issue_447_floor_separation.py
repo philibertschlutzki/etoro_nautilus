@@ -1,15 +1,17 @@
 """Issue #447 (P1) — Unevaluable-Floor belohnt kein IS-Overtrading (Per-Symbol-Shaping).
 
-Formalisiert die zwei Invarianten des Per-Symbol-Reward-Pfads, die verhindern, dass Optuna bei
+Formalisiert die Invarianten des Per-Symbol-Reward-Pfads, die verhindern, dass Optuna bei
 strukturell unevaluierbaren Trials (OOS=0, vgl. #448) faktisch die IS-Trade-Anzahl maximiert:
 
-  1. **Floor-Separation:** der BESTE unevaluierbare Reward
-     (`penalty_unevaluable_oos + unevaluable_shaping_span` = −9.75) bleibt strikt KLEINER als der
-     SCHLECHTESTE evaluierbare Reward (`-sortino_clip_abs` = −5.0). Ein hyperaktiver
-     unevaluierbarer Trial kann niemals einen schwachen evaluierbaren überholen (Rang-Invariante).
-  2. **Shaping-Saturation (Anti-Overtrading-Deckel):** im Per-Symbol-Pfad saturiert das
+  1. **Shaping-Saturation (Anti-Overtrading-Deckel):** im Per-Symbol-Pfad saturiert das
      IS-Aktivitäts-Shaping bei `per_symbol_shaping_trade_target`; jenseits davon liefert „noch mehr
      IS-Trades" KEINEN zusätzlichen Reward — `reward(is=target) == reward(is=10·target)`.
+
+Issue #629 — die vormalige zweite Invariante ("Floor-Separation": jeder evaluierbare Reward bleibt
+strikt über jedem unevaluierbaren) ist ERSATZLOS gestrichen. compute_reward liefert seither ein
+ungeklemmtes Qualitätsziel; ein katastrophaler evaluierbarer Trial darf legitim unter einem gut
+geshapten unevaluierbaren landen. Die Feasibility-Rangordnung kommt ausschliesslich vom
+#612-Sampler-Constraint.
 
 Die Werte spiegeln `automation/config/optimizer.json` (penalty −10, span 0.25, epsilon 0.001,
 per_symbol_shaping_trade_target 400), per DI übergeben (kein File-IO im Test).
@@ -26,7 +28,6 @@ W = {
     "penalty_dd_weight": 8.0,
     "bonus_coverage_weight": 1.0,
     "unevaluable_shaping_span": 0.25,
-    "evaluable_floor_epsilon": 0.001,
     "shaping_trade_target": 50,
     "per_symbol_shaping_trade_target": 400,
     "reward_mode": "per_symbol",
@@ -57,15 +58,17 @@ def test_best_unevaluable_equals_documented_ceiling():
     assert best_uneval == pytest.approx(UNEVAL_CEILING)
 
 
-def test_per_symbol_floor_separation_is_strict():
-    """Der schlechteste evaluierbare Trial schlägt strikt den besten unevaluierbaren (Rang-Invariante)."""
+def test_worst_evaluable_can_fall_below_best_unevaluable():
+    """Issue #629 — kein Floor mehr: der schlechtestmoegliche evaluierbare Trial (minimaler Sortino,
+    maximaler Overfit-Gap & Drawdown 99 %) darf jetzt legitim UNTER dem besten unevaluierbaren
+    landen — das Gegenteil der frueheren, per Floor erzwungenen Rang-Invariante."""
     best_uneval = _reward(_m(is_total_trades=10 * W["per_symbol_shaping_trade_target"]))
-    # Schlechtest möglicher evaluierbarer Trial: minimaler Sortino, maximaler Overfit-Gap & DD.
     worst_eval = _reward(_m(oos_evaluated=True, oos_eligible=True,
                             oos_sortino=-W["sortino_clip_abs"], is_sortino_median=W["sortino_clip_abs"],
                             oos_max_drawdown=0.99, oos_total_trades=20))
-    assert worst_eval >= EVAL_FLOOR - 1e-12
-    assert worst_eval > best_uneval, "Floor-Separation verletzt: evaluable muss IMMER unevaluable schlagen"
+    import math
+    assert math.isfinite(worst_eval)
+    assert worst_eval < best_uneval
 
 
 def test_is_activity_shaping_saturates_at_target():

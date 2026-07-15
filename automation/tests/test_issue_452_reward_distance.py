@@ -11,7 +11,6 @@ W = {
     "bonus_coverage_weight": 1.0,
     "unevaluable_shaping_span": 0.25,
     "constraint_distance_penalty_weight": 0.25,
-    "evaluable_floor_epsilon": 0.001,
     "lambda_reg": 0.25,
     "oos_min_trades": 20,
     "oos_min_total_return": 0.005,
@@ -42,30 +41,49 @@ def test_ineligible_near_miss_beats_severe_constraint_failure():
     assert _reward(near) > _reward(severe)
     assert _reward(near) != pytest.approx(_reward(severe))
 
-def test_failed_constraint_trials_stay_below_evaluable_floor():
+def test_near_miss_can_outrank_a_catastrophic_eligible_trial():
+    # Issue #629 — es gibt kein Floor-/Ceiling-Band mehr, das ineligible Trials pauschal unter jeden
+    # eligiblen Trial zwingt. Ein knapper Near-Miss mit ordentlicher zugrundeliegender Qualität
+    # rankt jetzt korrekt ÜBER einem eligiblen, aber katastrophal schlechten Trial (Sortino −5.0,
+    # Drawdown 99 %) — genau das macht den Reward zu EINEM stetigen Qualitätsziel statt einer
+    # künstlichen Stufenfunktion. Die Feasibility-RANGORDNUNG selbst übernimmt ausschliesslich der
+    # #612-Sampler-Constraint (oos_constraint_violations), nicht compute_reward.
     near = _m(oos_total_trades=20, oos_total_return=0.0045, oos_win_rate=0.25,
               oos_sortino=0.3, oos_profit_factor=1.1, oos_max_drawdown=0.30)
-    eligible = _m(oos_evaluated=True, oos_eligible=True, oos_total_trades=20,
-                  oos_total_return=0.005, oos_win_rate=0.25, oos_sortino=-5.0,
-                  oos_profit_factor=1.1, oos_max_drawdown=0.99)
+    catastrophic_eligible = _m(oos_evaluated=True, oos_eligible=True, oos_total_trades=20,
+                               oos_total_return=0.005, oos_win_rate=0.25, oos_sortino=-5.0,
+                               oos_profit_factor=1.1, oos_max_drawdown=0.99)
 
-    floor = -float(W["sortino_clip_abs"])
-    assert _reward(near) < floor
-    assert _reward(eligible) >= floor - 1e-12
-    assert _reward(eligible) > _reward(near)
+    assert _reward(near) > _reward(catastrophic_eligible)
 
-def test_missing_distance_metrics_still_do_not_flatten_to_evaluable_floor():
+
+def test_ineligible_reward_equals_quality_core_minus_gate_distance_penalty():
+    # Issue #629 — der ineligible Reward ist exakt der GEMEINSAME Qualitäts-Kern (dieselbe Formel wie
+    # ein eligibler Trial mit identischen Kennzahlen erhielte) MINUS der kontinuierlichen Near-Miss-
+    # Distanzstrafe — kein separates Band, keine künstliche Bodenklammer.
+    from automation.optimizer.reward import _constraint_distance_penalty
+
     failed = _m(oos_total_trades=20, oos_total_return=0.0045, oos_win_rate=0.25,
                 oos_sortino=0.3, oos_profit_factor=1.1, oos_max_drawdown=0.30)
-    ceiling = W["penalty_unevaluable_oos"] + W["unevaluable_shaping_span"]
-    eval_floor = -float(W["sortino_clip_abs"]) - W["evaluable_floor_epsilon"]
+    eligible_twin = _m(oos_evaluated=True, oos_eligible=True, oos_total_trades=20,
+                       oos_total_return=0.0045, oos_win_rate=0.25, oos_sortino=0.3,
+                       oos_profit_factor=1.1, oos_max_drawdown=0.30)
 
-    assert _reward(failed) <= eval_floor
-    assert _reward(failed) >= ceiling
+    # explizites (leeres) tournament_cfg fuer BEIDE Aufrufe: _any_condition_distance liest
+    # eligible_requires_any ausschliesslich aus tournament_cfg (nie aus weights) — mit
+    # tournament_cfg=None wuerde compute_reward intern die REALE tournament.json nachladen und
+    # den manuellen Vergleich verfaelschen (W traegt alle oos_min_*-Schwellen direkt).
+    tcfg = {"eligible_requires_any": []}
+    gate_distance_penalty = _constraint_distance_penalty(failed, W, risk_dd_cap=0.30,
+                                                          tournament_cfg=tcfg)
+    assert gate_distance_penalty > 0.0
+    r_failed = compute_reward(failed, universe_size=1, weights=W, risk_dd_cap=0.30, tournament_cfg=tcfg)
+    r_eligible_twin = compute_reward(eligible_twin, universe_size=1, weights=W, risk_dd_cap=0.30,
+                                     tournament_cfg=tcfg)
+    assert r_failed == pytest.approx(r_eligible_twin - gate_distance_penalty, abs=1e-9)
 
 def test_monotonic_gradient_across_trade_shortfall():
     w = W.copy()
-    w["evaluable_floor_epsilon"] = 0.1
     rewards = [
         compute_reward(_m(oos_total_trades=n, oos_total_return=0.005,
                    oos_win_rate=0.25, oos_sortino=0.3, oos_profit_factor=1.1), universe_size=1, weights=w, risk_dd_cap=0.30)
@@ -76,7 +94,6 @@ def test_monotonic_gradient_across_trade_shortfall():
 
 def test_default_weight_falls_back_to_shaping_span():
     w = {k: v for k, v in W.items() if k != "constraint_distance_penalty_weight"}
-    w["evaluable_floor_epsilon"] = 0.1
     near = _m(oos_total_trades=19, oos_total_return=0.0049, oos_win_rate=0.24,
               oos_sortino=0.29, oos_profit_factor=1.09, oos_max_drawdown=0.30)
     severe = _m(oos_total_trades=1, oos_total_return=-0.05, oos_win_rate=0.0,

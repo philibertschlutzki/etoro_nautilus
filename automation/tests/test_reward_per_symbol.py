@@ -89,17 +89,21 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
     glob = {"sma_period": 20, "cooldown_bars": 12}
     b = bounds.extract_numeric_bounds("SmaCrossoverStrategy")
     base = _base(cfg, 1.0)
-    pen = cfg["lambda_reg"] * bounds.normalized_param_distance(sampled, glob, b)
+    # Issue #631 — param_pen (lambda_reg) mit penalty_scale_vs_base gegen die realisierte
+    # Base-Streuung rekalibriert.
+    penalty_scale = cfg.get("penalty_scale_vs_base", 1.0)
+    pen = cfg["lambda_reg"] * bounds.normalized_param_distance(sampled, glob, b) * penalty_scale
     # Ein einzelner Fold-Return ⇒ keine Dispersions-Strafe; oos_total_return=0 ⇒ kein Tie-Breaker.
-    # Issue #597 — dd_penalty normiert auf dd_reward_scale (nicht mehr auf den Gate-Cap).
+    # Issue #597 — dd_penalty normiert auf dd_reward_scale (nicht mehr auf den Gate-Cap). Issue #631
+    # — zusätzlich mit penalty_scale_vs_base rekalibriert.
     dd = 0.01
     dd_scale = cfg.get("dd_reward_scale", cap)
     dd_penalty = (
-        cfg["penalty_dd_weight"] * ((dd / dd_scale) ** 2) if dd_scale and dd_scale > 0 else 0.0
+        cfg["penalty_dd_weight"] * ((dd / dd_scale) ** 2) * penalty_scale
+        if dd_scale and dd_scale > 0 else 0.0
     )
     expected = base - _divergence(cfg, 2.0, base) - dd_penalty - pen
-    # Issue #591 — der eligible Reward-Floor ist der ENTKOPPELTE evaluable_reward_floor.
-    floor = cfg["evaluable_reward_floor"]
+    # Issue #629 — kein Reward-Floor mehr; der eligible Pfad ist ungeklemmt.
     got = reward.compute_reward(
         m,
         universe_size=1,
@@ -107,7 +111,7 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
         global_params=glob,
         strategy="SmaCrossoverStrategy",
     )
-    assert got == pytest.approx(max(expected, floor), rel=1e-9)
+    assert got == pytest.approx(expected, rel=1e-9)
     assert pen > 0.0  # divergent params actually incur a shrinkage penalty
 
 

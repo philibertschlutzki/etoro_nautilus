@@ -20,7 +20,6 @@ from automation.optimizer.reward import (
 WEIGHTS = {
     "penalty_unevaluable_oos": -10.0,
     "unevaluable_shaping_span": 0.25,
-    "evaluable_floor_epsilon": 0.001,
     "constraint_distance_penalty_weight": 0.25,
     "sortino_clip_abs": 5.0,
     "penalty_overfit_weight": 0.5,
@@ -96,12 +95,18 @@ def test_missing_scale_uses_legacy_target_normalization():
     assert d == pytest.approx(expected)
 
 
-def test_rank_invariant_failed_below_evaluable_floor():
-    """Akzeptanzkriterium 3: jeder Constraint-Failure-Reward strikt < Evaluable-Floor."""
+def test_rank_invariant_failed_below_eligible_twin():
+    """Issue #629 — kein Evaluable-Floor mehr (die Bandgrenze wurde ersatzlos gestrichen). Was
+    bleibt: derselbe Trial ist als ineligibler Failure strikt schlechter bewertet als als eligibler
+    Zwilling mit identischen Kennzahlen (die Near-Miss-Distanzstrafe senkt den gemeinsamen
+    Qualitäts-Kern additiv)."""
     m = TournamentMetrics(**TRIAL3)
+    m_eligible_twin = TournamentMetrics(**dict(TRIAL3, oos_eligible=True))
     r = compute_reward(m, universe_size=1, weights=WEIGHTS,
                        risk_dd_cap=NEW_CFG["max_drawdown"], tournament_cfg=NEW_CFG)
-    assert r < -float(WEIGHTS["sortino_clip_abs"])
+    r_eligible_twin = compute_reward(m_eligible_twin, universe_size=1, weights=WEIGHTS,
+                                     risk_dd_cap=NEW_CFG["max_drawdown"], tournament_cfg=NEW_CFG)
+    assert r < r_eligible_twin
 
 
 def test_cap_only_lowers_penalty():

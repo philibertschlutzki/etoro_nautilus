@@ -92,12 +92,14 @@ def test_reward_uses_config_weights(tmp_path):
 
     base = _base(cfg, 1.0)
     # Ein einzelner Fold-Sortino ⇒ keine Dispersions-Strafe; oos_total_return=0 ⇒ kein Tie-Breaker.
-    # Issue #597 — dd_penalty normiert auf dd_reward_scale.
+    # Issue #597 — dd_penalty normiert auf dd_reward_scale. Issue #631 — zusätzlich mit
+    # penalty_scale_vs_base gegen die realisierte Base-Streuung rekalibriert.
     dd_scale = cfg.get("dd_reward_scale", cap)
+    penalty_scale = cfg.get("penalty_scale_vs_base", 1.0)
     expected = (
         base
         - _divergence(cfg, 3.0, base)
-        - cfg["penalty_dd_weight"] * ((dd / dd_scale) ** 2)
+        - cfg["penalty_dd_weight"] * ((dd / dd_scale) ** 2) * penalty_scale
         + (5 / 100) * cfg["bonus_coverage_weight"]
     )
 
@@ -136,13 +138,17 @@ def _pairs(*trade_counts):
     ]
 
 
-def test_evaluable_strictly_above_every_unevaluable(tmp_path):
-    """The worst-case evaluable trial (clamped to the floor) still strictly beats the
-    best-shaped unevaluable trial — the hard reward-ordering invariant."""
+def test_worst_case_eligible_trial_is_unclamped_and_reflects_catastrophic_quality(tmp_path):
+    """Issue #629 — kein Reward-Floor mehr. Ein eligibler, aber katastrophal schlechter Trial
+    (Sortino am Legacy-Clip, Drawdown weit über dem Cap) erhält einen entsprechend katastrophalen,
+    UNGEKLEMMTEN Reward und darf jetzt legitim UNTER einem gut geshapeten unevaluierten Trial liegen
+    — genau das Gegenteil der frueheren, per Floor erzwungenen 'evaluable > unevaluable'-Invariante.
+    Die Feasibility-Rangordnung selbst kommt ausschliesslich vom #612-Sampler-Constraint."""
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
     cap = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))[
         "max_drawdown"
     ]
+    assert "evaluable_reward_floor" not in cfg  # #629 — der Key ist ersatzlos entfallen
 
     # Best-shaped unevaluable: IS activity saturated far past the target.
     saturated = cfg["shaping_trade_target"] * 1000
@@ -176,7 +182,5 @@ def test_evaluable_strictly_above_every_unevaluable(tmp_path):
     )
     r_eval = reward.compute_reward(m_eval, universe_size=100)
 
-    # Issue #591 — der eligible Reward-Floor ist der ENTKOPPELTE evaluable_reward_floor (nicht -sortino_clip_abs).
-    floor = float(cfg["evaluable_reward_floor"])
-    assert r_eval == pytest.approx(floor)  # worst evaluable is clamped to the floor
-    assert r_eval > r_uneval  # strictly above every unevaluable trial
+    assert math.isfinite(r_eval)
+    assert r_eval < r_uneval  # #629 — kein Floor mehr: katastrophale Qualität schlägt jetzt durch

@@ -9,7 +9,6 @@ W = {  # Test-Weights (DI)
     "penalty_dd_weight": 1.0,
     "bonus_coverage_weight": 0.5,
     "unevaluable_shaping_span": 0.25,
-    "evaluable_floor_epsilon": 1e-3,
     "oos_min_trades": 20,  # falls Helper Weights-Override unterstützt; sonst tournament.json mocken
 }
 
@@ -58,7 +57,11 @@ def test_unevaluable_capped_at_min_trades():
     assert a == pytest.approx(b)  # trade_progress clippt bei 1.0
 
 
-def test_evaluable_ALWAYS_beats_unevaluable():
+def test_worst_evaluable_can_fall_below_best_unevaluable():
+    """Issue #629 — kein Reward-Floor mehr: die vormalige HARTE Invariante ('evaluable > unevaluable
+    immer') ist ersatzlos gestrichen. Ein katastrophaler eligibler Trial (Sortino am Clip, Drawdown
+    99 %) darf legitim unter einem maximal geshapten, nie evaluierten Trial liegen. Die Feasibility-
+    Rangordnung selbst kommt ausschliesslich vom #612-Sampler-Constraint."""
     worst_eval = _m(
         oos_evaluated=True,
         oos_eligible=True,
@@ -73,7 +76,9 @@ def test_evaluable_ALWAYS_beats_unevaluable():
     r_uneval = compute_reward(
         best_uneval, universe_size=70, weights=W, risk_dd_cap=0.30
     )
-    assert r_eval > r_uneval  # HARTE Invariante
+    import math
+    assert math.isfinite(r_eval)
+    assert r_eval < r_uneval
 
 
 def test_holdout_not_referenced(monkeypatch):

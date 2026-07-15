@@ -24,7 +24,6 @@ def get_weights():
     return {
         "penalty_unevaluable_oos": -10.0,
         "unevaluable_shaping_span": 0.25,
-        "evaluable_floor_epsilon": 0.001,
         "constraint_distance_penalty_weight": 0.25,
         "shaping_trade_target": 50,
         "sortino_clip_abs": 5.0,
@@ -46,20 +45,18 @@ def get_tournament_cfg():
     }
 
 def test_reward_no_inversion_property():
+    """Issue #629 — die Anti-Gate-Gaming-Invariante ('eligible schlaegt jeden Failure') und die
+    'evaluated bleibt >= unevaluable_ceiling'-Bandgrenze wurden ERSATZLOS gestrichen: sie waren die
+    Reward-seitige Kodierung von Feasibility, die jetzt AUSSCHLIESSLICH der #612-Sampler-Constraint
+    (oos_constraint_violations) traegt. compute_reward liefert seither EIN stetiges, nicht-gesaettigtes
+    Qualitaetsziel — ein katastrophaler evaluierter Trial (riesiger Drawdown/negativer Return) darf
+    legitim UNTER dem Unevaluable-Reward landen (siehe test_catastrophic_trial_can_fall_below_unevaluable
+    unten). Was bleibt: der Near-Miss/Far-Miss-Gradient (naeher am Gate ⇒ besser bewertet) UND — in
+    dieser Fixture, weil der eligible Trial auch auf jeder zugrundeliegenden Kennzahl mindestens
+    gleichauf liegt — eligible > near/far-miss als KONSEQUENZ der Kennzahlen, nicht als erzwungene
+    Bandgrenze."""
     weights = get_weights()
     cfg = get_tournament_cfg()
-
-    unevaluable_ceiling = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
-    evaluable_floor = -float(weights["sortino_clip_abs"])
-
-    # 1. 0 Trades (Unevaluable)
-    m_0_trades = DummyMetrics(
-        oos_evaluated=False,
-        oos_eligible=False,
-        oos_total_trades=0,
-        is_total_trades=0
-    )
-    r_0_trades = compute_reward(m_0_trades, universe_size=1, weights=weights, risk_dd_cap=cfg["max_drawdown"], tournament_cfg=cfg)
 
     # 2. Many Trades, Near Miss (Evaluated, not eligible)
     m_near_miss = DummyMetrics(
@@ -87,7 +84,8 @@ def test_reward_no_inversion_property():
     )
     r_far_miss = compute_reward(m_far_miss, universe_size=1, weights=weights, risk_dd_cap=cfg["max_drawdown"], tournament_cfg=cfg)
 
-    # 4. Eligible (Evaluated, eligible)
+    # 4. Eligible (Evaluated, eligible) — mindestens gleichauf mit near_miss auf jeder Kennzahl,
+    # strikt besser als far_miss.
     m_eligible = DummyMetrics(
         oos_evaluated=True,
         oos_eligible=True,
@@ -100,23 +98,37 @@ def test_reward_no_inversion_property():
     )
     r_eligible = compute_reward(m_eligible, universe_size=1, weights=weights, risk_dd_cap=cfg["max_drawdown"], tournament_cfg=cfg)
 
-    # Assert 1: MUSS >= unevaluable_ceiling (-9.75) sein
-    assert r_near_miss >= unevaluable_ceiling, f"r_near_miss={r_near_miss} < {unevaluable_ceiling}"
-    assert r_far_miss >= unevaluable_ceiling, f"r_far_miss={r_far_miss} < {unevaluable_ceiling}"
-
-    # Assert 2: Weak monotonic invariant against 0 trades
-    # Ein evaluierter Trial darf nie schlechter bewertet werden als ein komplett unevaluierter (oder nur epsilon schlechter)
-    assert r_near_miss >= r_0_trades - 1e-6, f"r_near_miss={r_near_miss} < r_0_trades={r_0_trades}"
-    assert r_far_miss >= r_0_trades - 1e-6, f"r_far_miss={r_far_miss} < r_0_trades={r_0_trades}"
-
-    # Assert 3: Anti-Gate-Gaming
-    # Eligible MUST be > any failure
-    assert r_eligible >= evaluable_floor, f"r_eligible={r_eligible} < {evaluable_floor}"
+    # Konsequenz (nicht erzwungene Invariante): bei gleichwertigen/besseren Kennzahlen UND dem Wegfall
+    # der Gate-Distanzstrafe rankt eligible hier ueber near/far-miss.
     assert r_eligible > r_near_miss, f"r_eligible={r_eligible} <= r_near_miss={r_near_miss}"
     assert r_eligible > r_far_miss, f"r_eligible={r_eligible} <= r_far_miss={r_far_miss}"
 
-    # Assert 4: Gradient preservation
+    # Gradient preservation: near-miss bleibt naeher an eligible als ein katastrophaler far-miss.
     assert r_near_miss > r_far_miss, f"r_near_miss={r_near_miss} <= r_far_miss={r_far_miss}"
+
+
+def test_catastrophic_trial_can_fall_below_unevaluable_ceiling():
+    """Issue #629 — Regressionstest fuer den Kern der Aenderung: ohne Floor/Band darf ein
+    katastrophaler evaluierter-aber-ineligibler Trial (riesiger Drawdown, stark negativer Return)
+    LEGITIM unter das, was ein niemals-evaluierter Trial (fixer Shaping-Wert) erhaelt, fallen. Der
+    alte Code erzwang das Gegenteil (r_far_miss >= unevaluable_ceiling) — genau die Reward-Klippe,
+    die #629 entfernt. Die Feasibility beider Trials (unevaluable UND far_miss) wird ausschliesslich
+    ueber den #612-Sampler-Constraint sichergestellt, nicht ueber diesen Reward-Wert."""
+    weights = get_weights()
+    cfg = get_tournament_cfg()
+
+    # Kein Trade ⇒ progress=0 ⇒ shaping=0 ⇒ r_0_trades == penalty_unevaluable_oos (Boden des Bandes).
+    m_0_trades = DummyMetrics(oos_evaluated=False, oos_eligible=False, oos_total_trades=0, is_total_trades=0)
+    r_0_trades = compute_reward(m_0_trades, universe_size=1, weights=weights, risk_dd_cap=cfg["max_drawdown"], tournament_cfg=cfg)
+    assert r_0_trades == pytest.approx(weights["penalty_unevaluable_oos"], abs=1e-9)
+
+    m_far_miss = DummyMetrics(
+        oos_evaluated=True, oos_eligible=False, oos_total_trades=242,
+        oos_total_return=-0.50, oos_sortino=-1.0, oos_max_drawdown=0.5, oos_win_rate=0.2,
+        is_total_trades=500,
+    )
+    r_far_miss = compute_reward(m_far_miss, universe_size=1, weights=weights, risk_dd_cap=cfg["max_drawdown"], tournament_cfg=cfg)
+    assert r_far_miss < r_0_trades
 
 
 def test_reward_gradient_does_not_saturate():
