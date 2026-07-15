@@ -211,23 +211,6 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 _stop_study_safely(study, logger)
         return
 
-    # Legacy-Fallback (kein oos_evaluated-Attr, z. B. alte Studies / globaler make_objective-Pfad):
-    # bisheriges Wert-Gleichheits-Praedikat am konstanten Unevaluable-Floor (−9.75).
-    if "penalty_unevaluable_oos" not in weights or "unevaluable_shaping_span" not in weights:
-        return
-    floor = weights["penalty_unevaluable_oos"] + weights["unevaluable_shaping_span"]
-    if all(abs(t.value - floor) < eps for t in completed):
-        study.set_user_attr("floor_plateau_warned", True)
-        logger.warning(
-            "🚨 Floor-Plateau erkannt: alle %d abgeschlossenen Trials kleben am Unevaluable-Floor "
-            "(%.4f). Der TPE-Sampler hat keinen Gradienten — das Symbol ist vermutlich strukturell "
-            "unevaluable (Pitfall #75: OOS erzeugt nie evaluierbare Trades). Pruefe Daten-Suffizienz "
-            "und Gates; verwirf ggf. die stale Study (rm data/optimizer/sweep/*.db).",
-            len(completed), floor,
-        )
-        # Issue #456 — auch im Legacy-Wert-Zweig die aussichtslose Suche frueh beenden (Opt-in).
-        if stop_on_plateau:
-            _stop_study_safely(study, logger)
 
 
 def _check_reward_semantics_version(study, opt_data: dict,
