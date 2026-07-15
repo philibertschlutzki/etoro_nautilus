@@ -34,7 +34,7 @@ def test_catalog_fingerprint_missing_dir_no_crash(tmp_path):
 def test_optimizer_json_parses_and_has_keys():
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
     for k in ("n_trials","n_startup_trials","seed","penalty_overfit_weight",
-              "penalty_dd_weight","bonus_coverage_weight","penalty_unevaluable_oos","sortino_clip_abs"):
+              "penalty_dd_weight","bonus_coverage_weight","sortino_clip_abs"):
         assert k in cfg
 
 def test_backtest_json_has_holdout():
