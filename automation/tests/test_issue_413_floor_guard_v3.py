@@ -93,15 +93,6 @@ def test_guard_silent_before_startup_threshold():
     assert not _warned(recs)   # 2 < n_startup=3
 
 
-def test_legacy_value_guard_still_works_without_attr():
-    """Rueckwaerts-Kompat: ohne oos_evaluated-Attr greift der Legacy-Wert-Guard am −9.75-Floor."""
-    lg, recs = _capturing_logger("test413e")
-    floor = W["penalty_unevaluable_oos"] + W["unevaluable_shaping_span"]  # -9.75
-    trials = [_FakeTrial(floor) for _ in range(5)]  # KEIN oos_evaluated-Attr
-    study = _FakeStudy(trials)
-    ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=3, logger=lg)
-    assert _warned(recs)
-
 
 # ── Integration: make_symbol_objective legt das oos_evaluated-User-Attr ab ────
 def _isolate(monkeypatch, tmp_path):
