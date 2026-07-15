@@ -58,8 +58,13 @@ def test_sortino_threshold_is_configurable_low_sample():
     # period_rets will be [0.001, -0.0002] which will have negative elements.
     index = pd.date_range("2026-01-01", periods=5, freq="1D")
     mtm = pd.Series([10000.0, 10010.0, 10020.0, 10018.0, 10015.0], index=index)
-    stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0,
-                             min_trades_for_sortino=2, mtm_series=mtm)
+    # Issue #614 — dieser Test prüft den KONFIGURIERBAREN Mindest-Sample (sortino_min_trades), nicht
+    # den Datenfehler-Guard (25). Guard hochsetzen, damit der synthetische Low-Sample-Sortino nicht
+    # als Datenfehler verworfen wird.
+    from unittest.mock import patch
+    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+        stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0,
+                                 min_trades_for_sortino=2, mtm_series=mtm)
     assert stats["sortino_ratio"] is not None
     assert stats["sortino_ratio"] <= 50.0
 

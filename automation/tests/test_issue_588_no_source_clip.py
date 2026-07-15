@@ -30,14 +30,18 @@ def _sortino_for_target(target_ratio: float) -> float:
         mtm.append(mtm[-1] * (1 + r))
     idx = pd.date_range("2025-01-01", periods=len(mtm), freq="1h", tz="UTC")
     series = pd.Series(mtm, index=idx)
-    with patch("automation.backtest_runner._get_annualization_factor", return_value=1.0):
+    # Issue #614 — dieser #588-Test prüft die NO-CLIP-Rangordnung oberhalb der alten Grenze (15), nicht
+    # den Datenfehler-Guard (25, separat getestet). Guard hochsetzen, damit die Ordnung sichtbar bleibt.
+    with patch("automation.backtest_runner._get_annualization_factor", return_value=1.0), \
+         patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
         stats = _calculate_stats([1.0] * 30 + [-1.0], [(3600 * 10**9, 1.0)] * 31, 1000.0,
                                  mtm_series=series, min_trades_for_sortino=5)
     return stats["sortino_ratio"]
 
 
 def test_source_sortino_is_unclamped_and_ordered():
-    """sortino_raw 18 und 47 sind NACH _calculate_stats verschieden und BEIDE > 15 (kein Clip)."""
+    """sortino 18 und 47 sind NACH _calculate_stats verschieden und BEIDE > 15 (kein Hard-Clip, #588).
+    (Der #614-Datenfehler-Guard bei 25 ist hier hochgesetzt — er ist in test_issue_614/#588 separat getestet.)"""
     s18 = _sortino_for_target(18.0)
     s47 = _sortino_for_target(47.0)
     assert s18 is not None and s47 is not None
@@ -86,7 +90,9 @@ def test_numeric_guard_trips_and_logs():
     finally:
         logging.getLogger("optimizer").removeHandler(caplog)
     assert stats["sortino_ratio"] is None, "Datenfehler jenseits des Guards ⇒ None (kein still-Clip)"
-    assert guard >= 1e5  # der Guard ist ein reiner Overflow-Schutz, nicht die alte 15er-Sättigung
+    # Issue #614 — der Guard ist von 1e6 auf 25.0 gesenkt (bei T≈200 ist |annualized|>25 ein
+    # Datenfehler); er bleibt ein fail-loud Datenfehler-Guard, NICHT die Reward-Sättigung (soft_scale).
+    assert guard == 25.0
     assert any("SORTINO_GUARD_TRIPPED" in r.getMessage() for r in caplog.records)
 
 

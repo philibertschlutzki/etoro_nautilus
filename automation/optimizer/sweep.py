@@ -306,7 +306,13 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
             allowed = set(winners.get(strategy, []))
             candidate_syms = [s for s in syms if s in allowed]
         elif tier == "refine":
-            candidate_syms = []   # Platzhalter — echte Refinement-Heuristik ist späterer P3-Ausbau
+            # Issue #623 — der frühere `candidate_syms = []`-Platzhalter lieferte STRUKTURELL 0 Paare,
+            # ohne Fehler, ohne Warnung ('--tier refine' war ein stiller No-Op). Bis zur echten
+            # Refinement-Heuristik (P3-Ausbau) bricht der Modus jetzt FAIL-LOUD ab.
+            raise NotImplementedError(
+                "'--tier refine' ist noch nicht implementiert (Issue #623): die Refinement-Heuristik "
+                "ist ein späterer P3-Ausbau. Nutze '--tier deployable' oder '--tier all'."
+            )
         else:  # 'all'
             candidate_syms = list(syms)
 
@@ -400,6 +406,37 @@ def _load_gate_config() -> dict:
             **{k: opt[k] for k in ("gate1_buffer_days", "min_bars_per_param", "min_oos_bars_per_fold")}}
 
 
+def _family_n_from_proposals(proposals) -> dict[str, int]:
+    """Issue #625 — FAMILIENWEISE Multiple-Testing-Zahl je Symbol.
+
+    Die Selektion läuft über ALLE Studies (Strategien) eines Symbols — z. B. 6 Studies × 100 Trials =
+    600 Kandidaten je Symbol —, die per-Study-Deflation (DSR) aber nur über N=100. Die familienweise
+    Fehlerrate ist entsprechend höher als das nominelle 5 %. N_eff je Study wird konservativ als Anzahl
+    *eligibler* Trials angesetzt (TPE-Vorschläge sind nicht i.i.d. ⇒ N_eff < N); N_family = Σ_studies
+    N_eff. Diese Zahl ist die dokumentierte konservative Obergrenze der Multiple-Testing-Last (die
+    per-Study-DSR bleibt unverändert; PBO #619 ist der orthogonale Hard-Stop).
+
+    ``proposals`` sind die von ``export_symbol_proposal`` geschriebenen Path-Objekte — daher hier je
+    Proposal die JSON lesen (``deflation_n_eligible`` liegt unter ``holdout.symbol``). Ein bereits
+    geparstes Dict wird defensiv ebenfalls akzeptiert (Test-Pfad). Fehlt der Schlüssel (Kohorte < 2
+    eligible ⇒ keine Deflation), trägt das Proposal 0 bei.
+    """
+    family_n: dict[str, int] = {}
+    for _p in (proposals or []):
+        try:
+            payload = _p if isinstance(_p, dict) else json.loads(Path(_p).read_text("utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        sym = payload.get("symbol")
+        metrics_symbol = (payload.get("holdout") or {}).get("symbol") or {}
+        neff = metrics_symbol.get("deflation_n_eligible")
+        if sym and isinstance(neff, (int, float)) and not isinstance(neff, bool):
+            family_n[sym] = family_n.get(sym, 0) + int(neff)
+    return family_n
+
+
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
@@ -461,8 +498,33 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # OOS-Grenze (#457, compute_walk_forward_window). Beide fail-open (None) ⇒ kein Skip.
     latest_ts = latest_ts_by_symbol(syms)
     global_catalog_newest_ns = max((v for v in latest_ts.values() if v is not None), default=None) if latest_ts else None
+    global_catalog_oldest_ns = min((v for v in latest_ts.values() if v is not None), default=None) if latest_ts else None
     start_ns = compute_oos_window_start_ns(config, catalog_newest_ns=global_catalog_newest_ns)
     holdout_window_reach_target_ns = compute_holdout_window_reach_target_ns(config, catalog_newest_ns=global_catalog_newest_ns)
+
+    # Issue #624 — Holdout-Geometrie vs. TATSÄCHLICHE Katalog-Spanne beim Sweep-Start LOGGEN. Die
+    # unbequeme Kernaussage: auf 45 d Holdout (T≈202 MTM-Perioden) ist selbst der beste Grenzkandidat
+    # (per-Periode-Sortino ≈ 0.114) NICHT signifikant für eine 95 %-Entscheidung — PSR(0)=0.9464 < 0.95,
+    # T≥211 nötig. Die Promotionsschwelle DSR/PSR wird bewusst NICHT gesenkt; die Entscheidung ist in
+    # manuals/strategie_optimierung.md §Holdout-Signifikanz dokumentiert. Der Preflight prüft die
+    # Reachability bereits per Symbol; hier die aggregierte Diagnose (verfügbare vs. benötigte Spanne).
+    _wf = config.get("walk_forward") or {}
+    _req_span = required_span_days(_wf)
+    _avail_span = (
+        (global_catalog_newest_ns - global_catalog_oldest_ns) / 1e9 / 86400.0
+        if global_catalog_newest_ns is not None and global_catalog_oldest_ns is not None
+        else None
+    )
+    _covers = "n/a" if _avail_span is None else ("JA" if _avail_span >= _req_span else "NEIN")
+    logging.getLogger("optimizer").info(
+        "[#624] Holdout-Geometrie: required_span_days=%s (is=%s + embargo=%s + %s×oos=%s + holdout=%s); "
+        "verfügbare Katalog-Spanne=%s d (deckt benötigte Spanne: %s). 45-d-Holdout ⇒ T≈202 Bars ⇒ "
+        "PSR(0)≈0.946 < 0.95 (T≥211 nötig). Promotionsschwelle DSR/PSR wird EXPLIZIT und dokumentiert "
+        "getragen (siehe manuals/strategie_optimierung.md §Holdout-Signifikanz).",
+        _req_span, _wf.get("is_window_days"), _wf.get("embargo_period_days"),
+        _wf.get("splits"), _wf.get("oos_window_days"), _wf.get("holdout_days"),
+        None if _avail_span is None else round(_avail_span, 1), _covers,
+    )
 
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
@@ -533,6 +595,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             reason = "NO_SEARCH_SPACE" if not strategy_has_search_space(s) else "NO_ELIGIBLE_SYMBOLS"
             strategies_skipped.append({"strategy": s, "reason": reason})
 
+    # Issue #625 — familienweise Multiple-Testing-Zahl je Symbol (Σ eligibler Trials über die
+    # Strategien-Studies desselben Symbols). Siehe _family_n_from_proposals.
+    family_n = _family_n_from_proposals(proposals)
+
     emit_execution_event(_log, "sweep_completed", {
         "pairs": len(pairs),
         "strategies": n_strats,
@@ -544,6 +610,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         "strategies_requested": len(strategies),
         "strategies_enumerated": len(enumerated),
         "strategies_skipped": strategies_skipped,
+        # Issue #625 — familienweise N_eff je Symbol (Σ eligibler Trials über die Strategien-Studies).
+        "deflation_n_family": family_n,
     })
     if strategies_skipped:
         _log.warning("[#595] %d von %d angeforderten Strategien NICHT enumeriert: %s",

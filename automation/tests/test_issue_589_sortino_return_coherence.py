@@ -29,10 +29,16 @@ def _pooled_metrics_from_returns(period_rets: list[float]) -> dict:
 
 
 def test_pooled_sortino_return_correlation_above_0_6():
-    """Über 100 synthetische Trials gilt corr(oos_sortino, oos_total_return) > 0.6."""
+    """Über 100 synthetische Trials gilt corr(oos_sortino, oos_total_return) > 0.6.
+
+    Issue #614 — der Datenfehler-Guard (25) wird hier hochgesetzt: dieser Test prüft die Sortino↔Return-
+    KOHÄRENZ des Rechenpfads über eine breite (bewusst extreme) synthetische Sortino-Verteilung, nicht
+    den Guard (der ist in test_issue_614/#588 getestet)."""
+    from unittest.mock import patch
     rng = np.random.default_rng(12345)
     sortinos, returns = [], []
-    for _ in range(100):
+    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+      for _ in range(100):
         # Drift dominiert (breite Spanne), Volatilität variiert nur mild ⇒ gepoolter Sortino und
         # Return werden beide primär vom Drift getrieben (die ökonomisch realistische Kohärenz).
         mu = rng.uniform(-0.006, 0.012)

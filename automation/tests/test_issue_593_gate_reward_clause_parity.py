@@ -17,9 +17,13 @@ from automation.optimizer.reward import assert_any_condition_parity, _ANY_CONDIT
 TCFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 
-def test_shipped_config_moves_sortino_to_requires_all():
-    assert "min_sortino" in TCFG["eligible_requires_all"]
-    assert "min_sortino" not in TCFG["eligible_requires_any"]
+def test_shipped_config_moves_risk_adjusted_gate_to_requires_all():
+    # Issue #614 — das HARTE risikoadjustierte Kriterium ist seit #614 die PSR (min_psr), nicht mehr
+    # der annualisierte Sortino (min_sortino, jetzt Telemetrie). Es bleibt in eligible_requires_all
+    # (die #593-Anti-ODER-Bypass-Invariante gilt für die PSR statt den Sortino).
+    assert "min_psr" in TCFG["eligible_requires_all"]
+    assert "min_sortino" not in TCFG["eligible_requires_all"]
+    assert "min_psr" not in TCFG["eligible_requires_any"]
     assert set(TCFG["eligible_requires_any"]) == {"min_profit_factor", "min_win_rate"}
 
 
@@ -36,18 +40,18 @@ def test_any_condition_parity_fails_loud_on_unknown_clause():
         assert_any_condition_parity(bogus)
 
 
-def test_negative_sortino_trial_is_not_eligible():
-    """Kein Trial mit oos_sortino < oos_min_sortino ist nach dem Fix oos_eligible (Sortino in
-    eligible_requires_all). Ein PF > 1.1 rettet ihn NICHT mehr (vorher der Ausweg über die ODER-Klausel).
-    """
+def test_negative_edge_trial_is_not_eligible():
+    """Issue #614 — kein Trial mit niedriger PSR (negativer Edge) ist oos_eligible (min_psr in
+    eligible_requires_all). Ein PF > 1.1 rettet ihn NICHT (die #593-Anti-ODER-Bypass-Invariante gilt
+    jetzt für die PSR). Ein negativer per-Perioden-Sortino ⇒ PSR < 0.5 < oos_min_psr(0.75)."""
     cfg = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
     oos = {
         "total_trades": 300, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1,
-        "expectancy": 0.01, "sortino_ratio": -6.5,            # negativ, weit unter oos_min_sortino
+        "expectancy": 0.01, "sortino_ratio": -6.5, "psr": 0.10,   # negativer Edge ⇒ niedrige PSR
         "profit_factor": 1.169, "median_position_notional": 1000.0,
         "oos_folds_total": 4, "oos_fold_sortinos": [-6.5, -5.0, -7.0, -6.0],
         "oos_excess_return": 0.02,
     }
     ev = _evaluate_oos_eligibility(oos, cfg)
     assert ev["oos_eligible"] is False
-    assert any("oos_min_sortino" in r for r in ev["oos_rejection_reasons"])
+    assert any("oos_min_psr" in r for r in ev["oos_rejection_reasons"])

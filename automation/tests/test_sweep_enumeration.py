@@ -5,6 +5,8 @@ timing guard applies — this file must finish in well under a second.
 """
 import subprocess
 
+import pytest
+
 from automation.optimizer import sweep
 
 
@@ -33,12 +35,15 @@ def test_enumeration_all_tier_is_cross_product(monkeypatch):
                      ("SmaCrossoverStrategy", "B.ETORO", "OK")]
 
 
-def test_enumeration_refine_is_placeholder(monkeypatch):
+def test_enumeration_refine_fails_loud(monkeypatch):
+    # Issue #623 — der frühere `candidate_syms = []`-Platzhalter machte '--tier refine' zu einem
+    # STILLEN No-Op (0 Paare, keine Warnung). Bis zur echten P3-Refinement-Heuristik bricht der Modus
+    # jetzt fail-loud ab, statt lautlos nichts zu tun.
     monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
     bars = {"A.ETORO": 10_000}
-    pairs = sweep.enumerate_tunable_pairs(["SmaCrossoverStrategy"], ["A.ETORO"],
-                                          tier="refine", available_bars=bars, config=_GATE_CFG)
-    assert pairs == []   # refine is a P3 placeholder, yields nothing yet
+    with pytest.raises(NotImplementedError, match="refine"):
+        sweep.enumerate_tunable_pairs(["SmaCrossoverStrategy"], ["A.ETORO"],
+                                      tier="refine", available_bars=bars, config=_GATE_CFG)
 
 
 def test_sweep_dispatch_writes_proposals_no_backtest(monkeypatch, tmp_path):

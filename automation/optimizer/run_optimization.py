@@ -362,6 +362,8 @@ def make_objective(
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            # Issue #620 — #589-Kohärenz-Verletzung (sign(oos_sortino)≠sign(oos_total_return)) sichtbar.
+            "oos_coherence_violation": bool(metrics.oos_coherence_violation),
             "reward_terms": reward_terms,
         })
 
@@ -378,6 +380,8 @@ def make_objective(
             trades_constraint = min_trades - metrics.oos_total_trades
             dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
             trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
+        # Issue #612 — Feasibility-Constraint(s) für den TPE-Sampler auch im globalen Pfad.
+        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics))
         return reward
     return objective
 
@@ -401,6 +405,9 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     if n_trials is None:
         n_trials = conf_n_trials
+        # Issue #622 — NUR den Config-Default an die Dimensionalität koppeln (>= k·dim). Ein EXPLIZIT
+        # übergebenes n_trials (Test/CLI --n-trials) ist eine bewusste Wahl und wird exakt respektiert.
+        n_trials = derive_n_trials(strategy, n_trials, opt_data)
     # Issue #568 — n_startup_trials dokumentiert an die Parameterzahl koppeln (Legacy ohne den Key).
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
@@ -414,11 +421,18 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
             return trial.user_attrs.get("constraints", (0.0, 0.0))
         sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
     else:
+        # Issue #612 — FEASIBILITY GEHÖRT IN DEN SAMPLER, nicht in eine 12-Einheiten-Reward-Klippe.
+        # ``constraints_func`` liest die gestempelten, normierten OOS-Gate-Verletzungen
+        # (``oos_constraint_violations``, ≤ 0 = feasible). Optuna 4.9 behandelt Feasibility NATIV:
+        # ``study.best_trial`` UND das TPE-Sampling bevorzugen feasible strikt vor infeasible; unter den
+        # infeasiblen wird nach Gesamtverletzung sortiert. Damit optimiert der Sampler EINE stetige
+        # Grösse (die risikoadjustierte OOS-Performance, nach #614 die PSR) statt einer Stufenfunktion.
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
             group=True,
             n_startup_trials=n_startup_trials,
-            seed=seed
+            seed=seed,
+            constraints_func=_oos_constraints_func,
         )
 
     study = _create_study_with_retry(
@@ -580,6 +594,29 @@ def _classify_trial_rejection(metrics) -> str:
 IS_REJECTION_NONE = "NONE"
 
 
+def _compute_oos_constraints(metrics) -> tuple:
+    """Issue #612 — Feasibility-Constraint(s) für den Sampler (Optuna-Konvention: ``<= 0`` = feasible).
+
+    Ein eligibler (feasibler) Trial ⇒ ``(0.0,)``. Sonst die SUMMIERTE positive OOS-Gate-Verletzung
+    (aus ``oos_gate_deltas``, ``delta = actual − threshold`` ⇒ Verletzung ``max(0, −delta)``) — ``> 0``,
+    sodass der Sampler unter den infeasiblen nach Gesamtverletzung sortiert. Erfassen die Deltas die
+    Ineligibilität nicht (nicht-evaluiert, Micro-Sizing) ⇒ konstante Verletzung ``1.0``. KONSTANTE
+    Länge (1) über alle Trials — Optuna verlangt einen fixen Constraint-Vektor."""
+    if getattr(metrics, "oos_eligible", False):
+        return (0.0,)
+    deltas = getattr(metrics, "oos_gate_deltas", None) or {}
+    violation = sum(max(0.0, -float(v)) for v in deltas.values())
+    if not (violation > 0.0):
+        violation = 1.0
+    return (float(violation),)
+
+
+def _oos_constraints_func(trial):
+    """Issue #612 — von TPESampler/NSGAIISampler aufgerufen: liest die im Objective gestempelten
+    ``oos_constraint_violations``. Fehlt der Stempel (Pruned/Legacy) ⇒ feasible ``(0.0,)``."""
+    return trial.user_attrs.get("oos_constraint_violations", (0.0,))
+
+
 # Issue #453 — Prefix → dezidierte Enum-Kategorie. Die Reason-Strings stammen aus
 # backtest_runner._evaluate_oos_eligibility (z. B. "oos_max_drawdown: 0.5 > 0.3"); längere Prefixe
 # zuerst, damit "oos_min_total_return" nicht fälschlich von "oos_min_t..." geschluckt wird.
@@ -656,6 +693,24 @@ def derive_n_startup_trials(strategy: str, base_n_startup: int, opt_data: dict) 
     return max(int(base_n_startup), math.ceil(float(k) * dim))
 
 
+def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
+    """Issue #622 — ``n_trials`` an die Dimensionalität koppeln (analog derive_n_startup_trials).
+
+    ``n_trials = 100`` bei 14 Dimensionen ist faktisch Zufallssuche (72 TPE-Trials für 14 dim ⇒
+    Spearman(trial_nr, reward) ≈ 0.04–0.23, best(51–100) oft SCHLECHTER als best(1–50)). Deklarativ
+    über ``n_trials_per_dim`` (k ≥ 20): ``n_trials = max(base, ceil(k·dim))`` ⇒ ComboTrendVwap (14 dim)
+    ≥ 280. Fehlt der Key (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding)."""
+    k = opt_data.get("n_trials_per_dim")
+    if not k or float(k) <= 0.0:
+        return int(base_n_trials)
+    try:
+        from automation.optimizer import bounds
+        dim = len(bounds.extract_numeric_bounds(strategy))
+    except Exception:
+        return int(base_n_trials)
+    return max(int(base_n_trials), math.ceil(float(k) * dim))
+
+
 def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
                                 tau: float) -> bool:
     """Issue #568 — Gradienten-Gate für die Tier-Eskalation.
@@ -714,6 +769,16 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     durs = [v for t in trials
             if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
     evaluable = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
+    # Issue #620 — Zähler der #589-Kohärenz-Verletzungen (sichtbar statt still im Subprozess). > 1 %
+    # einer Study ⇒ WARNING mit Study-Name.
+    coherence_violations = sum(
+        1 for t in trials if getattr(t, "user_attrs", {}).get("oos_coherence_violation") is True)
+    if trials and coherence_violations / len(trials) > 0.01:
+        logging.getLogger("optimizer").warning(
+            "[#620] %s: coherence_violations=%d/%d (> 1 %%) — sign(oos_sortino)≠sign(oos_total_return) "
+            "häuft sich; Aggregationspfad prüfen.", getattr(study, "study_name", "?"),
+            coherence_violations, len(trials),
+        )
     try:
         best_value = study.best_value
     except Exception:
@@ -742,16 +807,22 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
 
     # Issue #592 — Deflations-Telemetrie auf der REWARD-Skala (je Study sichtbar, nicht nur im
     # Holdout-Pfad). Nutzt die evaluable Trial-Rewards (das tatsächliche argmax-Selektionskriterium).
+    # Issue #611 — p_eligible (Gate-Passrate) + DSR-Kohorten-Telemetrie auf der ELIGIBLEN PER-PERIODEN-
+    # Sortino-Skala. Die alte Reward-Skalen-Deflation über ALLE oos_evaluated-Trials schätzte σ auf einer
+    # Zwei-Punkt-Mischung ⇒ Bernoulli-Standardabweichung der Passrate (anti-monoton). Jetzt: die
+    # Streuung ÜBER die eligiblen Sortinos (die tatsächlichen argmax-Konkurrenten) ⇒ SR₀ (#618).
     deflated_selection, deflation_confidence = _read_deflation_config()
-    evaluable_rewards = [float(getattr(t, "value", None))
-                         for t in trials
-                         if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
-                         and isinstance(getattr(t, "value", None), (int, float))]
-    deflated_min_reward = deflation_n = deflation_sigma = deflation_baseline = None
-    if deflated_selection:
-        from automation.optimizer.deflation import deflated_reward_threshold
-        deflated_min_reward, deflation_n, deflation_sigma, deflation_baseline = (
-            deflated_reward_threshold(evaluable_rewards, confidence=deflation_confidence))
+    n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
+    p_eligible = (n_eligible / len(trials)) if trials else 0.0
+    cohort_sr = [getattr(t, "user_attrs", {}).get("oos_sortino_period") for t in trials
+                 if getattr(t, "user_attrs", {}).get("oos_eligible") is True
+                 and getattr(t, "user_attrs", {}).get("oos_sortino_period") is not None]
+    deflation_n = len(cohort_sr)
+    deflation_sr0 = deflation_var = None
+    if deflated_selection and deflation_n >= 2:
+        from automation.optimizer.deflation import sr0_multiple_testing
+        deflation_var = statistics.pvariance([float(s) for s in cohort_sr])
+        deflation_sr0 = sr0_multiple_testing(deflation_var, deflation_n)
 
     # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
     boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
@@ -827,11 +898,14 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "reward_pstdev": reward_pstdev,
         "evaluable_fraction": evaluable_fraction,
         "gradient_signal": gradient_signal,
-        # Issue #592 — Deflations-Telemetrie (Reward-Skala) je Study.
-        "deflated_min_reward": deflated_min_reward,
-        "deflation_n": deflation_n,
-        "deflation_sigma": deflation_sigma,
-        "deflation_baseline": deflation_baseline,
+        # Issue #611/#618 — DSR-Telemetrie (per-Perioden-Sortino-Skala) + p_eligible (Gate-Passrate).
+        # Monotonie-Invariante (#611): SR₀ steigt NICHT mit p_eligible (kein Bernoulli-Artefakt mehr).
+        "p_eligible": p_eligible,
+        "deflation_n_eligible": deflation_n,
+        "deflation_sr0": deflation_sr0,
+        "deflation_var_sr": deflation_var,
+        # Issue #620 — #589-Kohärenz-Verletzungen je Study (beobachtbar).
+        "coherence_violations": coherence_violations,
         # Issue #597 — Randlösungs-Signatur.
         "boundary_hit_fraction": boundary_hit_fraction,
         "reward_terms_aggregates": term_aggregates,
@@ -933,6 +1007,18 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Python-``None`` ⇒ eligible_trials IMMER leer ⇒ Top-k lief nie. Der gestempelte Bool ist die
         # kohärente, direkt filterbare Grösse (identisch zu ``is_rejection_detail == IS_REJECTION_NONE``).
         trial.set_user_attr("oos_eligible", bool(metrics.oos_eligible))
+        # Issue #612 — Feasibility-Constraint(s) für den Sampler (≤ 0 = feasible). Damit optimiert der
+        # TPE EINE stetige Grösse (die risikoadjustierte OOS-Performance) statt einer Stufenfunktion;
+        # die Feasibility-Rangordnung übernimmt Optuna nativ (feasible ≻ infeasible in best_trial).
+        trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics))
+        # Issue #618 — der PER-PERIODEN-Sortino + PSR je Trial (für die DSR-Kohorten-Varianz V[ŜR_trials]
+        # in confirm; Multiple-Testing-Korrektur auf der per-Perioden-Skala, NICHT der Reward-Skala #611).
+        trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
+        trial.set_user_attr("oos_psr", metrics.oos_psr)
+        # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
+        trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
+        # Issue #619 — per-Fold-OOS-Sortinos je Trial (für die Sweep-Level-PBO/CSCV in confirm).
+        trial.set_user_attr("oos_fold_sortinos", list(metrics.oos_fold_sortinos))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
@@ -977,6 +1063,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            # Issue #620 — #589-Kohärenz-Verletzung (sign(oos_sortino)≠sign(oos_total_return)) sichtbar.
+            "oos_coherence_violation": bool(metrics.oos_coherence_violation),
             "reward_terms": reward_terms,
         })
 
@@ -1017,6 +1105,11 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             seed = opt_data.get("seed", seed)
     if n_trials is None:
         n_trials = conf_n_trials
+        # Issue #622 — NUR den Config-Default an die Dimensionalität koppeln (>= k·dim, k>=20), sonst ist
+        # die Suche bei 14 Dimensionen faktisch Zufall. Der Sweep ruft ohne n_trials auf ⇒ skaliert.
+        # Ein EXPLIZIT übergebenes n_trials (Test/CLI --n-trials) ist bewusst gewählt und wird exakt
+        # respektiert. Legacy ohne den Key.
+        n_trials = derive_n_trials(strategy, n_trials, opt_data)
     # Issue #568 — n_startup_trials an die Parameterzahl der Strategie koppeln (>= k·dim), damit der
     # TPE bei multivariate=True,group=True genügend Startpunkte hat. Legacy, wenn der Key fehlt.
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
@@ -1035,11 +1128,14 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             return trial.user_attrs.get("constraints", (0.0, 0.0))
         sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
     else:
+        # Issue #612 — Feasibility in den Sampler (siehe optimize_symbol): constraints_func liest die
+        # gestempelten OOS-Gate-Verletzungen; Optuna 4.9 bevorzugt feasible nativ vor infeasible.
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
             group=True,
             n_startup_trials=n_startup_trials,
             seed=seed,
+            constraints_func=_oos_constraints_func,
         )
 
     # Issue #411 — serialisiert + DDL-Race-fest (table studies already exists). Ersetzt das nackte

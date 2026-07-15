@@ -588,7 +588,18 @@ def compute_reward(
     if soft_scale_val is not None and float(soft_scale_val) > 0.0:
         soft_scale = float(soft_scale_val)
 
-    if soft_scale is not None:
+    # Issue #614 — REWARD-BASE = PSR (Probabilistic Sharpe/Sortino Ratio), sobald sie definiert ist.
+    # Die PSR ist skalenfrei, in [0,1] beschränkt, ANNUALISIERUNGS-INVARIANT (per-Perioden-ŜR) und
+    # bezieht T + Schiefe + Kurtosis explizit ein — der annualisierte Sortino ist bei T≈200 eine
+    # Reskalierung ohne Informationsgewinn (Signal-Rausch ≈ 0). Die asinh-Sättigung (#559) und die
+    # asinh-Overfit-Divergenz (#565/#613) werden damit ÜBERFLÜSSIG: die Small-Sample-Overfit-Strafe,
+    # die die Divergenz heuristisch approximierte, steckt jetzt exakt im √(T−1)-Term der PSR. Fehlt
+    # ``oos_psr`` (Legacy-JSONs/Fixtures ohne PSR) ⇒ Fallback auf die asinh/Clip-Sortino-Base
+    # (bit-identisch, migrations-sicher) inkl. der Divergenz.
+    psr_base_active = getattr(m, "oos_psr", None) is not None
+    if psr_base_active:
+        base = float(m.oos_psr)
+    elif soft_scale is not None:
         base = _apply_soft_scale(float(base_source), soft_scale)
     else:
         base = max(-sortino_clip_abs, min(sortino_clip_abs, base_source))
@@ -610,7 +621,10 @@ def compute_reward(
     # für einen Single-Fold-Holdout ohne IS-Referenz bedeutungslos. Sie werden ABGESCHALTET (nicht mit
     # einem 0.0-Platzhalter gefüttert, der bei negativem base eine fiktive Overfit-Strafe erzeugte).
     # Ausserhalb des Holdout ist ``is_sortino_median is None`` ein Fehler (kein stiller 0.0-Default).
-    if holdout:
+    if holdout or psr_base_active:
+        # Issue #594 — Holdout: keine IS-Referenz. Issue #614 — PSR-Base: die Small-Sample-Overfit-
+        # Strafe steckt bereits im √(T−1)-Term der PSR ⇒ die separate asinh-Divergenz wäre eine
+        # inkohärente Doppelbestrafung auf einer anderen Skala (sortino vs. PSR ∈ [0,1]).
         divergence_penalty = 0.0
     else:
         # Issue #613 — die Divergenz-Strafe nutzt AUSSCHLIESSLICH den GEPOOLTEN IS-Sortino
@@ -673,12 +687,21 @@ def compute_reward(
     if w_disp and not holdout and n_total >= 2:
         n_valid = len(fold_returns)
         base_disp = statistics.pstdev(fold_returns) if n_valid >= 2 else 0.0
+        # Issue #616 — NORMIERUNGSSKALA (analog dd_reward_scale, #597): ``pstdev(fold_returns)`` lebt auf
+        # der Roh-Return-Skala (0.001–0.05), ``base`` auf der PSR-/asinh-Sortino-Skala ⇒ ohne Normierung
+        # war der Term drei Grössenordnungen zu klein (Median 0.036, struktureller Blindgänger — exakt der
+        # Pre-#597-dd_penalty-Fehler). ``fold_dispersion_scale`` (realisierte Fold-Return-Streuung ≈ 0.03)
+        # hebt ihn in den Bereich der übrigen Terme. Fehlt der Key ⇒ Roh-Skala (Legacy, bit-identisch).
+        _fds = weights.get("fold_dispersion_scale")
+        fold_dispersion_scale = float(_fds) if _fds and float(_fds) > 0.0 else None
+        norm_disp = (base_disp / fold_dispersion_scale) if fold_dispersion_scale else base_disp
         if n_valid < n_total:
+            # #616 — die Missing-Fold-Strafe auf DERSELBEN normierten Skala (sonst wieder blind).
             miss_scale = float(weights.get("missing_fold_penalty_scale", 0.0))
             frac_missing = (n_total - n_valid) / n_total
-            fold_dispersion_penalty = float(w_disp) * (base_disp + miss_scale * frac_missing)
+            fold_dispersion_penalty = float(w_disp) * (norm_disp + miss_scale * frac_missing)
         else:
-            fold_dispersion_penalty = float(w_disp) * base_disp
+            fold_dispersion_penalty = float(w_disp) * norm_disp
         if penalty_relative_cap is not None:
             fold_dispersion_penalty = min(
                 fold_dispersion_penalty, float(penalty_relative_cap) * cap_scale

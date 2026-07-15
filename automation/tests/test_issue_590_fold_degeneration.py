@@ -17,18 +17,41 @@ from automation.optimizer.reward import compute_reward
 from automation.optimizer.parsing import TournamentMetrics
 
 
-def test_zero_loss_fold_yields_finite_positive_sortino():
-    """Ein Fold mit losses_count == 0 und 12 Gewinn-Trades ⇒ endlicher, positiver Sortino (nicht None)."""
+def test_zero_downside_fold_trips_guard_under_614():
+    """Issue #614 SUPERSEDET #590 an dieser Stelle: eine STRENG steigende (Zero-Downside-)Equity hat
+    eine UNMESSBARE Downside (``dd_dev`` auf ``sortino_downside_floor`` geklemmt) ⇒ der annualisierte
+    Sortino explodiert (>> 25) ⇒ der #614-Guard greift ⇒ ``sortino=None`` (ehrlich undefiniert, kein
+    Datenfehler-Ergebnis). Das Anti-Reward-Hacking (#590) läuft jetzt über die PSR (T-bewusst) + den
+    engen Guard + ``min_evaluable_folds``, NICHT mehr über einen erzwungen-finiten Zero-Downside-Sortino."""
     idx = pd.date_range("2025-01-01", periods=13, freq="1h", tz="UTC")
-    series = pd.Series([1000.0 * (1.002 ** i) for i in range(13)], index=idx)  # streng steigend
+    series = pd.Series([1000.0 * (1.002 ** i) for i in range(13)], index=idx)  # streng steigend, keine Downside
     pnls = [5.0] * 12
     holds = [(3600 * 10**9, 1.0)] * 12
     stats = _calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
     assert stats["losses_count"] == 0
+    assert stats["sortino_ratio"] is None   # #614 — Guard: |annualized| > 25 ⇒ Datenfehler ⇒ None
+    assert stats["psr"] is None             # PSR folgt (kein per-Perioden-Sortino)
+
+
+def test_small_downside_fold_yields_finite_positive_sortino():
+    """Ein Fold mit MESSBARER, realer Downside (moderates Signal-Rausch) liefert einen FINITEN,
+    positiven Sortino UNTERHALB des #614-Guards (25) — die #590-Intention (ein überwiegend gewinnender
+    Fold verschwindet nicht) bleibt für nicht-degenerierte Downside erhalten. Die PSR ist definiert."""
+    idx = pd.date_range("2025-01-01", periods=41, freq="1h", tz="UTC")
+    # Kleiner positiver Drift mit realer Volatilität ⇒ moderater per-Perioden-Sortino, annualisiert < 25.
+    rets = ([0.0015, -0.0011] * 20) + [0.0015]   # 41 Werte ⇒ 40 Perioden, Netto-Drift positiv
+    vals = [1000.0]
+    for r in rets[1:]:
+        vals.append(vals[-1] * (1.0 + r))
+    series = pd.Series(vals, index=idx)
+    pnls = [3.0] * 25 + [-2.0] * 13
+    holds = [(3600 * 10**9, 1.0)] * 38
+    stats = _calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
     sortino = stats["sortino_ratio"]
-    assert sortino is not None            # #590 — kein losses_count==0-Ausstieg mehr
-    assert math.isfinite(sortino)
-    assert sortino > 0.0
+    assert sortino is not None
+    assert math.isfinite(sortino) and sortino > 0.0
+    assert abs(sortino) <= 25.0             # unter dem #614-Guard
+    assert 0.0 <= stats["psr"] <= 1.0       # PSR definiert und beschränkt
 
 
 _WEIGHTS = {

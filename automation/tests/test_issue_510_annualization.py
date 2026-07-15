@@ -5,6 +5,16 @@ import pytest
 from unittest.mock import patch
 from automation.backtest_runner import _calculate_stats, _get_annualization_factor
 
+
+@pytest.fixture(autouse=True)
+def _lift_sortino_guard():
+    # Issue #614 — dieses Modul prüft die Annualisierungs-Pfad-PARITÄT des Sortino-Rechenwegs, nicht
+    # den Datenfehler-Guard (25, separat in test_issue_614/#588 getestet). Guard hochsetzen, damit die
+    # synthetischen (bewusst hohen) annualisierten Sortinos nicht als Datenfehler verworfen werden.
+    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+        yield
+
+
 def test_annualization_path_parity():
     # Test-Case: Isolated execution of the MtM-Path with config injected and fallback path
     # Issue #510 requirement: path parity test asserting absolute identity between paths.

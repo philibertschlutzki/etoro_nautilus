@@ -5,22 +5,29 @@ from unittest.mock import MagicMock, patch
 from automation.optimizer.confirm import confirm_per_symbol_promotion
 
 def test_deflated_holdout_gate_rejection(tmp_path):
-    # Issue #592 — Deflation läuft auf der REWARD-Skala (dem tatsächlichen argmax-Selektionskriterium),
-    # nicht auf dem geklemmten Sortino. Reine Rausch-Reward-Verteilung (kein echter Edge): das erwartete
-    # Maximum von N i.i.d. Werten wächst mit √(2 ln N) und liegt UNTER der deflationierten Schwelle
-    # (baseline + σ·Φ⁻¹(0.95^(1/N))) ⇒ der Study-Gewinner (max) muss verworfen werden.
+    # Issue #611/#618 — die Deflation ist jetzt die DSR auf der PER-PERIODEN-Sortino-Skala über die
+    # ELIGIBLE Kohorte (nicht die bimodale Reward-Verteilung, #611). Reine Rausch-Sortinos (kein echter
+    # Edge): der promotete per-Perioden-Sortino schlägt die Multiple-Testing-Schwelle SR₀ nicht mit 95 %
+    # (DSR < 0.95) ⇒ HOLD. Referenz-nah (#618): ŜR≈0.114, T=202, N=100, V≈1.8e-3 ⇒ DSR≈0.54 < 0.95.
+    import numpy as np
     study = optuna.create_study()
+    rng = np.random.default_rng(0)
+    noise_sr = rng.normal(0.0, 0.0425, 100)   # V ≈ 1.8e-3 ⇒ SR₀ ≈ 0.107
     for i in range(100):
         t = study.ask()
         study._storage.set_trial_user_attr(t._trial_id, "oos_evaluated", True)
         study._storage.set_trial_user_attr(t._trial_id, "oos_eligible", True)
-        study._storage.set_trial_user_attr(t._trial_id, "oos_sortino", 1.0 + i * 0.01)
-        study.tell(t, float((i % 7) - 3))   # Rausch-Rewards in [-3, 3], σ≈2.0, max=3 < Schwelle≈6.6
+        study._storage.set_trial_user_attr(t._trial_id, "oos_sortino_period", float(noise_sr[i]))
+        study.tell(t, float((i % 7) - 3))
 
     mock_m_symbol = MagicMock()
     mock_m_symbol.oos_evaluated = True
     mock_m_symbol.oos_eligible = True
-    mock_m_symbol.oos_sortino = 1.0  # Median sortino on holdout will be 1.0
+    mock_m_symbol.oos_sortino = 1.0
+    mock_m_symbol.oos_sortino_period = 0.114   # per-Perioden-Sortino des promoteten Holdout-Laufs
+    mock_m_symbol.oos_n_periods = 202
+    mock_m_symbol.oos_ret_skew = 0.0
+    mock_m_symbol.oos_ret_kurtosis = 3.0
     mock_m_symbol.oos_max_drawdown = 0.1
     mock_m_symbol.oos_total_return = 0.5
     mock_m_symbol.oos_total_trades = 10
@@ -56,6 +63,7 @@ def test_deflated_holdout_gate_rejection(tmp_path):
             assert res is not None
             assert res["status"] == "REJECTED_ON_HOLDOUT"
             assert res["holdout_passed"] == False
-            assert "deflated_min_reward" in res["metrics_symbol"]
-            # Der Study-Gewinner-Reward (max=3.0) liegt UNTER der deflationierten Rausch-Schwelle.
-            assert res["metrics_symbol"]["deflated_min_reward"] > 3.0
+            # Issue #618 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle.
+            assert "deflated_dsr" in res["metrics_symbol"]
+            assert res["metrics_symbol"]["deflated_dsr"] < 0.95   # Rausch ⇒ HOLD
+            assert 0.05 < res["metrics_symbol"]["deflated_sr0"] < 0.2

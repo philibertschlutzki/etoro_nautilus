@@ -72,6 +72,21 @@ class TournamentMetrics:
     # wenn aus der mtm-Equity-Kurve, sonst "trade_sequential"/None. Für die fail-loud Kohärenz-Assertion.
     is_sortino_aggregation_basis: str | None = None
     oos_sortino_aggregation_basis: str | None = None
+    # Issue #614 — die PSR (Probabilistic Sharpe/Sortino Ratio) ist die skalenfreie, T-bewusste Reward-/
+    # Gate-Grösse; der annualisierte Sortino ist nur noch Telemetrie. None ⇒ undefiniert (zu wenig
+    # Trades / Guard). Reward fällt bei None (Legacy-JSONs) auf die asinh-Sortino-Base zurück.
+    oos_psr: float | None = None
+    oos_sortino_period: float | None = None
+    oos_sortino_annualized: float | None = None
+    oos_n_periods: int = 0
+    oos_ret_skew: float = 0.0
+    oos_ret_kurtosis: float = 3.0
+    # Issue #620 — die #589-Kohärenz-Invariante (sign(oos_sortino)==sign(oos_total_return)) feuert im
+    # Backtest-SUBPROZESS; ihr Flag ``oos_coherence_violation`` erreichte bisher weder TournamentMetrics
+    # noch das JSON_EVENT. Jetzt durchgereicht ⇒ beobachtbar (Study-Zähler coherence_violations).
+    oos_coherence_violation: bool = False
+    # Issue #619 — die per-Perioden-OOS-Returns (gecappt) für den Stationary-Bootstrap-CI im Holdout-Gate.
+    oos_period_returns: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -131,6 +146,17 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # denselben kanonischen, gepoolten Sortino (kein divergierender Gradient an der Gate-Grenze; kein
     # Median, der einen katastrophalen Fold maskiert). Siehe AGENTS.md Pitfall #110/#113.
     oos_sortino = oos_metrics.get("sortino_ratio")
+    # Issue #614 — PSR + per-Perioden-/annualisierter Sortino + T + Momente (None-safe).
+    oos_psr = oos_metrics.get("psr")
+    oos_sortino_period = oos_metrics.get("sortino_period")
+    oos_sortino_annualized = oos_metrics.get("sortino_annualized")
+    oos_n_periods = oos_metrics.get("n_periods")
+    oos_ret_skew = oos_metrics.get("ret_skew")
+    oos_ret_kurtosis = oos_metrics.get("ret_kurtosis")
+    # Issue #620 — Kohärenz-Verletzungs-Flag aus dem Subprozess (None-safe ⇒ False).
+    oos_coherence_violation = bool(oos_metrics.get("oos_coherence_violation") or False)
+    # Issue #619 — per-Perioden-OOS-Returns (None-safe ⇒ leeres Tuple).
+    oos_period_returns = tuple(oos_metrics.get("period_returns") or ())
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -225,6 +251,15 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         is_sortino_pooled=float(is_sortino_pooled) if is_sortino_pooled is not None else None,
         is_sortino_aggregation_basis=str(is_sortino_aggregation_basis) if is_sortino_aggregation_basis is not None else None,
         oos_sortino_aggregation_basis=str(oos_sortino_aggregation_basis) if oos_sortino_aggregation_basis is not None else None,
+        # Issue #614 — PSR + Sortino-Zerlegung (per-Periode/annualisiert) + T + Momente.
+        oos_psr=float(oos_psr) if oos_psr is not None else None,
+        oos_sortino_period=float(oos_sortino_period) if oos_sortino_period is not None else None,
+        oos_sortino_annualized=float(oos_sortino_annualized) if oos_sortino_annualized is not None else None,
+        oos_n_periods=int(oos_n_periods) if oos_n_periods is not None else 0,
+        oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
+        oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
+        oos_coherence_violation=oos_coherence_violation,
+        oos_period_returns=oos_period_returns,
     )
 
     # Pre-Return Invarianten-Check
