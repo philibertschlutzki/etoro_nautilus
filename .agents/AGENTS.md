@@ -24,4 +24,12 @@ Die PSR setzt sich mathematisch aus der kumulativen Verteilungsfunktion (CDF, Φ
 - **`oos_psr_z` (Effektstärke)**: Dient AUSSCHLIESSLICH als **Ranking-Base** im Reward-Signal (unbeschränkt, sättigt nicht an der 1.0-Decke).
 
 **CRITICAL**: Agenten DÜRFEN NIEMALS die CDF (`oos_psr`) als Reward-Base zurück in `compute_reward` einführen. Das presst die Base an die 1,0-Decke und zerstört den Ranking-Gradienten des Optimierers. Gate- und Ranking-Signale müssen auf diesen unterschiedlichen Skalen strikt getrennt bleiben.
->>>>>>> origin/main
+
+
+## Optimizer Reward & Constraint Architecture
+**Strict Invariants:**
+
+1. **Decoupling of Feasibility and Objective:** Constraints MUST NOT be encoded, evaluated, or penalized within the reward function. Feasibility is exclusively handled natively via Optuna: `optuna.samplers.TPESampler(constraints_func=_oos_constraints_func)`.
+2. **Continuous Objective Space:** The reward computation (`reward.py`) must return a singular, continuous quality metric across the entire parameter space (feasible and infeasible regions alike).
+3. **Prohibition of Cliff Penalties:** Hardcoded boundaries, reward bands, state-dependent constants, or saturated penalty cliffs (e.g., `failure_ceiling`, `unevaluable_ceiling`, `evaluable_reward_floor`) are strictly prohibited in the codebase.
+4. **Surrogate Model Integrity:** The objective value must accurately reflect the strategy's mathematical signal quality (Out-of-Sample PSR minus structural penalties). TPE surrogate modeling must capture metric variance, not gate pass rates.
