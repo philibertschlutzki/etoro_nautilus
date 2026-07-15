@@ -405,8 +405,9 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     if n_trials is None:
         n_trials = conf_n_trials
-    # Issue #622 — n_trials an die Dimensionalität koppeln (>= k·dim). Legacy ohne n_trials_per_dim.
-    n_trials = derive_n_trials(strategy, n_trials, opt_data)
+        # Issue #622 — NUR den Config-Default an die Dimensionalität koppeln (>= k·dim). Ein EXPLIZIT
+        # übergebenes n_trials (Test/CLI --n-trials) ist eine bewusste Wahl und wird exakt respektiert.
+        n_trials = derive_n_trials(strategy, n_trials, opt_data)
     # Issue #568 — n_startup_trials dokumentiert an die Parameterzahl koppeln (Legacy ohne den Key).
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
@@ -1104,9 +1105,11 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             seed = opt_data.get("seed", seed)
     if n_trials is None:
         n_trials = conf_n_trials
-    # Issue #622 — n_trials an die Dimensionalität koppeln (>= k·dim, k>=20), sonst ist die Suche bei
-    # 14 Dimensionen faktisch Zufall. Legacy, wenn n_trials_per_dim fehlt.
-    n_trials = derive_n_trials(strategy, n_trials, opt_data)
+        # Issue #622 — NUR den Config-Default an die Dimensionalität koppeln (>= k·dim, k>=20), sonst ist
+        # die Suche bei 14 Dimensionen faktisch Zufall. Der Sweep ruft ohne n_trials auf ⇒ skaliert.
+        # Ein EXPLIZIT übergebenes n_trials (Test/CLI --n-trials) ist bewusst gewählt und wird exakt
+        # respektiert. Legacy ohne den Key.
+        n_trials = derive_n_trials(strategy, n_trials, opt_data)
     # Issue #568 — n_startup_trials an die Parameterzahl der Strategie koppeln (>= k·dim), damit der
     # TPE bei multivariate=True,group=True genügend Startpunkte hat. Legacy, wenn der Key fehlt.
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
