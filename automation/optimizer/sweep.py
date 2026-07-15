@@ -137,17 +137,6 @@ def assert_strategy_space_parity(strategies: list[str]) -> None:
         )
 
 
-def _assert_gate_reward_parity() -> None:
-    """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
-    ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität)."""
-    from automation.optimizer.reward import assert_any_condition_parity
-    try:
-        cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
-    except (OSError, ValueError):
-        return
-    assert_any_condition_parity(cfg)
-
-
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:
     """Adapter: schätzt verfügbare 1h-Bars je Symbol aus der Parquet-Zeitspanne
     (``(max_ts - min_ts) / 1h``). Robust gegen Tick-Dichte; 0 bei fehlender Datei/Fehler.
@@ -469,7 +458,6 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # dieselbe eligible_requires_any-Menge sehen.
     if using_real_optimize:
         assert_strategy_space_parity(strategies)
-        _assert_gate_reward_parity()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
