@@ -149,15 +149,21 @@ def compute_reward(
     if soft_scale_val is not None and float(soft_scale_val) > 0.0:
         soft_scale = float(soft_scale_val)
 
-    psr_base_active = getattr(m, "oos_psr", None) is not None
+    # Issue #614 — REWARD-BASE = PSR (Probabilistic Sharpe/Sortino Ratio), sobald sie definiert ist.
+    # Die PSR ist skalenfrei, in [0,1] beschränkt, ANNUALISIERUNGS-INVARIANT (per-Perioden-ŜR) und
+    # bezieht T + Schiefe + Kurtosis explizit ein — der annualisierte Sortino ist bei T≈200 eine
+    # Reskalierung ohne Informationsgewinn (Signal-Rausch ≈ 0). Die asinh-Sättigung (#559) und die
+    # asinh-Overfit-Divergenz (#565/#613) werden damit ÜBERFLÜSSIG: die Small-Sample-Overfit-Strafe,
+    # die die Divergenz heuristisch approximierte, steckt jetzt exakt im √(T−1)-Term der PSR. Fehlt
+    # ``oos_psr`` (Legacy-JSONs/Fixtures ohne PSR) ⇒ Fallback auf die asinh/Clip-Sortino-Base
+    # (bit-identisch, migrations-sicher) inkl. der Divergenz.
+    # Issue #630 — psr_z (die unbeschränkte Effektstärke) als Ranking-Base anstelle der
+    # sättigenden Wahrscheinlichkeit (CDF) psr. Die CDF bleibt ein reines statistisches Gate.
+    psr_base_active = getattr(m, "oos_psr_z", None) is not None
     if psr_base_active:
-        base = float(m.oos_psr)
+        base = float(m.oos_psr_z)
     else:
-        if base_source is None:
-            base_source_val = 0.0
-        else:
-            base_source_val = float(base_source)
-            
+        base_source_val = float(base_source) if base_source is not None else 0.0
         if soft_scale is not None:
             base = _apply_soft_scale(base_source_val, soft_scale)
         else:

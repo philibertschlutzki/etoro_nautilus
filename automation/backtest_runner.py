@@ -1477,6 +1477,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         sortino_period = None
         sortino_annualized = None
         oos_psr = None
+        oos_psr_z = None
         ret_skew, ret_kurtosis = 0.0, 3.0
         if n < min_trades_sortino or period_rets.empty:
             sortino = None
@@ -1518,10 +1519,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     # ANNUALISIERTE Wert; die PSR ist die neue Reward-/Gate-Grösse (#614).
                     sortino = float(sortino_annualized)
                     from automation.optimizer.deflation import (
-                        probabilistic_sharpe_ratio as _psr, sample_skew_kurtosis as _skku)
+                        probabilistic_sharpe_ratio as _psr, psr_z as _psr_z, sample_skew_kurtosis as _skku)
                     ret_skew, ret_kurtosis = _skku(period_rets.to_numpy())
                     oos_psr = _psr(sortino_period, n_periods, skew=ret_skew,
                                    kurtosis=ret_kurtosis, sr_star=0.0)
+                    oos_psr_z = _psr_z(sortino_period, n_periods, skew=ret_skew,
+                                       kurtosis=ret_kurtosis, sr_star=0.0)
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
@@ -1529,6 +1532,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         sortino_period = None
         sortino_annualized = None
         oos_psr = None
+        oos_psr_z = None
         n_periods = 0
         ret_skew, ret_kurtosis = 0.0, 3.0
         _period_returns_list = []
@@ -1592,9 +1596,10 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "win_rate":      float(win_rate),
         "profit_factor": float(profit_factor) if profit_factor is not None else None,
         "sortino_ratio": float(sortino) if sortino is not None else None,
-        # Issue #614 — PSR (Reward-/Gate-Grösse) + per-Perioden-/annualisierter Sortino + T + Momente
+        # Issue #614 / #630 — PSR + psr_z (Reward-/Gate-Grösse) + per-Perioden-/annualisierter Sortino + T + Momente
         # (Telemetrie). ``psr`` ∈ [0,1] oder None (undefiniert/Guard). ``sortino_annualized`` == sortino_ratio.
         "psr":                float(oos_psr) if oos_psr is not None else None,
+        "psr_z":              float(oos_psr_z) if oos_psr_z is not None else None,
         "sortino_period":     float(sortino_period) if sortino_period is not None else None,
         "sortino_annualized": float(sortino_annualized) if sortino_annualized is not None else None,
         "n_periods":          int(n_periods),

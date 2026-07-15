@@ -15,3 +15,13 @@ Die Reward-Metriken im Optimierer (Optuna) werden nach Issue #621 systematisch n
 4. **Keine Reward-Bänder mehr:** (Issue #629) Die Feasibility wird **ausschließlich** über den `#612`-Constraint von Optuna getragen. Die Reward-Gleichung ist ein einziges, stetiges, nicht-gesättigtes Qualitätsziel über ALLE Trials (feasible wie infeasible). `evaluable_reward_floor`, `failure_ceiling`, `unevaluable_ceiling` und das Branching im `compute_reward`-Pfad existieren nicht mehr.
 5. **Varianzbeitrag & Aggregation**: In `_emit_study_summary` werden diese Metriken am Ende einer Study gesammelt und als Event `optimizer_study_completed` persistiert. Dazu gehören auch `divergence_at_cap` sowie `floor_clamped`. Diese Metriken müssen ohne Rekonstruktion aus dem Log direkt ablesbar sein.
 6. **Keine verdeckten Konstanten**: Alle Bestandteile des Reward-Signals müssen exakt und vollständig im Terms-Dictionary auftauchen. Es darf keinen mathematischen Faktor geben, der nicht explizit isoliert über Telemetrie aufgezeichnet wird.
+
+## Trennung von PSR (Gate) und PSR_Z (Reward-Base) (Issue #630)
+
+Die Probabilistic Sharpe/Sortino Ratio (PSR) ist skalenfrei, in [0, 1] beschränkt und annualisierungs-invariant.
+Die PSR setzt sich mathematisch aus der kumulativen Verteilungsfunktion (CDF, Φ) angewandt auf eine standardisierte Effektstärke `z` zusammen.
+- **`oos_psr` (CDF)**: Dient AUSSCHLIESSLICH als statistisches Signifikanz-Gate (ist der Edge signifikant > 0?).
+- **`oos_psr_z` (Effektstärke)**: Dient AUSSCHLIESSLICH als **Ranking-Base** im Reward-Signal (unbeschränkt, sättigt nicht an der 1.0-Decke).
+
+**CRITICAL**: Agenten DÜRFEN NIEMALS die CDF (`oos_psr`) als Reward-Base zurück in `compute_reward` einführen. Das presst die Base an die 1,0-Decke und zerstört den Ranking-Gradienten des Optimierers. Gate- und Ranking-Signale müssen auf diesen unterschiedlichen Skalen strikt getrennt bleiben.
+>>>>>>> origin/main

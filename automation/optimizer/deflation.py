@@ -16,6 +16,27 @@ _ND = NormalDist()
 _EULER_MASCHERONI = 0.5772156649015329
 
 
+def psr_z(sr, n_periods, *, skew: float = 0.0, kurtosis: float = 3.0,
+          sr_star: float = 0.0) -> float | None:
+    """Issue #630 — z-Score der Probabilistic Sharpe/Sortino Ratio (die unbeschränkte Effektstärke).
+
+    ``z = (ŜR − SR*)·√(T−1) / √(1 − γ₃·ŜR + ((γ₄−1)/4)·ŜR²)``
+
+    Das unbeschränkte Argument der CDF Φ. Dient als Ranking-Base anstelle der zu
+    rasch sättigenden Wahrscheinlichkeit (CDF), da es monoton skaliert und
+    nicht an einer 1.0-Decke klemmt.
+
+    ``None`` bei undefinierter Eingabe oder nicht-positivem Varianz-Term (analog PSR).
+    """
+    if sr is None or n_periods is None or n_periods < 2:
+        return None
+    sr = float(sr)
+    denom_var = 1.0 - float(skew) * sr + ((float(kurtosis) - 1.0) / 4.0) * (sr * sr)
+    if denom_var <= 0.0:
+        return None
+    return (sr - float(sr_star)) * math.sqrt(float(n_periods) - 1.0) / math.sqrt(denom_var)
+
+
 def probabilistic_sharpe_ratio(sr, n_periods, *, skew: float = 0.0, kurtosis: float = 3.0,
                                sr_star: float = 0.0):
     """Issue #614 — Probabilistic Sharpe/Sortino Ratio (Bailey & López de Prado).
@@ -31,13 +52,9 @@ def probabilistic_sharpe_ratio(sr, n_periods, *, skew: float = 0.0, kurtosis: fl
     ``None`` bei undefinierter Eingabe (``sr is None``, ``T < 2``) oder nicht-positivem Varianz-Term
     (numerisch degeneriert). Referenz (#614/#618): ``ŜR=0.11386, T=202, γ₃=0, γ₄=3, SR*=0 ⇒ 0.9463``.
     """
-    if sr is None or n_periods is None or n_periods < 2:
+    z = psr_z(sr, n_periods, skew=skew, kurtosis=kurtosis, sr_star=sr_star)
+    if z is None:
         return None
-    sr = float(sr)
-    denom_var = 1.0 - float(skew) * sr + ((float(kurtosis) - 1.0) / 4.0) * (sr * sr)
-    if denom_var <= 0.0:
-        return None
-    z = (sr - float(sr_star)) * math.sqrt(float(n_periods) - 1.0) / math.sqrt(denom_var)
     return float(_ND.cdf(z))
 
 

@@ -98,8 +98,6 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
         cfg["penalty_dd_weight"] * ((dd / dd_scale) ** 2) if dd_scale and dd_scale > 0 else 0.0
     )
     expected = base - _divergence(cfg, 2.0, base) - dd_penalty - pen
-    # Issue #591 — der eligible Reward-Floor ist der ENTKOPPELTE evaluable_reward_floor.
-    floor = cfg["evaluable_reward_floor"]
     got = reward.compute_reward(
         m,
         universe_size=1,
@@ -107,7 +105,7 @@ def test_per_symbol_drops_coverage_and_applies_param_pen(tmp_path):
         global_params=glob,
         strategy="SmaCrossoverStrategy",
     )
-    assert got == pytest.approx(max(expected, floor), rel=1e-9)
+    assert got == pytest.approx(expected, rel=1e-9)
     assert pen > 0.0  # divergent params actually incur a shrinkage penalty
 
 
