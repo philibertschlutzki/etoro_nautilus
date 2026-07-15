@@ -596,9 +596,11 @@ def compute_reward(
     # die die Divergenz heuristisch approximierte, steckt jetzt exakt im √(T−1)-Term der PSR. Fehlt
     # ``oos_psr`` (Legacy-JSONs/Fixtures ohne PSR) ⇒ Fallback auf die asinh/Clip-Sortino-Base
     # (bit-identisch, migrations-sicher) inkl. der Divergenz.
-    psr_base_active = getattr(m, "oos_psr", None) is not None
+    # Issue #630 — psr_z (die unbeschränkte Effektstärke) als Ranking-Base anstelle der
+    # sättigenden Wahrscheinlichkeit (CDF) psr. Die CDF bleibt ein reines statistisches Gate.
+    psr_base_active = getattr(m, "oos_psr_z", None) is not None
     if psr_base_active:
-        base = float(m.oos_psr)
+        base = float(m.oos_psr_z)
     elif soft_scale is not None:
         base = _apply_soft_scale(float(base_source), soft_scale)
     else:
