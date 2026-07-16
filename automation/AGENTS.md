@@ -2274,3 +2274,8 @@ solche annotiert.
 - **Reward-Near-Miss-Shaping und Sampler-Constraint sehen dieselben normierten Skalen:** `_normalized_gate_distances` ist die einzige Quelle für Gate-Distanzen — nie rohe Deltas summieren (Pitfall #152).
 - **Eine Multiple-Testing-Diagnose (DSR) wird immer berechnet, sobald die Kohorte reicht — unabhängig vom Ausgang früherer Gates:** der DSR-DROP-Effekt bleibt gated, der DSR-WERT nie (Pitfall #153).
 - **Top-k/Median-Rang-Holdout-Selektion ist nur so vertrauenswürdig wie das zugrundeliegende IS-Ranking:** nach jedem `reward_semantics_version`-Bump ist eine Spearman-Re-Evaluation (IS-Rang ↔ Holdout-Rang) fällig, bevor der Mechanismus wieder blind vertraut wird (Pitfall #154).
+
+### Optimizer Guardrails: Strategy Space Parity (Strict Constraint)
+- **Rule:** Jede Strategie, die im Target-File `config/strategies.json` das Flag `"active": true` aufweist, MUSS zwingend eine korrespondierende Hyperparameter-Mapping-Definition in `automation/optimizer/spaces.py` (Function: `sample_params`) besitzen.
+- **Violation:** Abweichungen resultieren im Fatal Error `STRATEGY_NO_SEARCH_SPACE` (Referenz: Issue #595) und erzwingen einen Immediate Exit der Bootstrapping-Phase.
+- **Zero-Hardcoding Policy:** Optimizer-Search-Spaces (Dictionaries) dürfen ausschliesslich über Optuna-Sampling-Methoden (`trial.suggest_*`) definiert werden. Statische Parameter-Zuweisungen im Optimizer-Scope sind verboten. Sämtliche vererbten Management-Parameter der `HourlyStrategyBase` müssen ebenfalls dynamisch abgebildet werden.
