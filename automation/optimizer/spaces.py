@@ -84,18 +84,9 @@ def sample_params(strategy: str, trial) -> dict:
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 6, 48),
         }
-    elif strategy == "MeanReversionStrategy":
-        return {
-            "keltner_period": trial.suggest_int("keltner_period", 10, 60),
-            "keltner_atr_period": trial.suggest_int("keltner_atr_period", 10, 60),
-            "keltner_multiplier": trial.suggest_float("keltner_multiplier", 1.0, 3.5),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
-            "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
-        }
     elif strategy == "DynamicBreakoutStrategy":
         return {
-            "price_breakout_period": trial.suggest_int("price_breakout_period", 5, 40),
+            "price_breakout_period": trial.suggest_int("price_breakout_period", 5, 60),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
@@ -103,9 +94,9 @@ def sample_params(strategy: str, trial) -> dict:
     elif strategy == "TrendPullbackStrategy":
         return {
             "ema_period": trial.suggest_int("ema_period", 50, 300),
-            "rsi_period": trial.suggest_int("rsi_period", 7, 21),
-            "rsi_oversold": trial.suggest_float("rsi_oversold", 20.0, 40.0),
-            "rsi_overbought": trial.suggest_float("rsi_overbought", 60.0, 80.0),
+            "rsi_period": trial.suggest_int("rsi_period", 5, 21),
+            "rsi_oversold": trial.suggest_float("rsi_oversold", 15.0, 45.0),
+            "rsi_overbought": trial.suggest_float("rsi_overbought", 55.0, 85.0),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
@@ -114,10 +105,19 @@ def sample_params(strategy: str, trial) -> dict:
         return {
             "adx_period": trial.suggest_int("adx_period", 7, 30),
             "ema_period": trial.suggest_int("ema_period", 20, 100),
-            "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 3.5),
-            "atr_period": trial.suggest_int("atr_period", 7, 21),
+            "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 4.0),
+            "atr_period": trial.suggest_int("atr_period", 5, 21),
             "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
+        }
+    elif strategy == "MeanReversionStrategy":
+        return {
+            "keltner_period": trial.suggest_int("keltner_period", 6, 40),
+            "keltner_atr_period": trial.suggest_int("keltner_atr_period", 6, 40),
+            "keltner_multiplier": trial.suggest_float("keltner_multiplier", 1.0, 3.5),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.3, 2.5),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
         }
     else:
