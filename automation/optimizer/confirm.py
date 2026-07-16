@@ -632,11 +632,16 @@ def _dominant_is_rejection_detail(study) -> str | None:
 def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -> Path:
     """Schreibt data/optimizer/proposal_{strategy}_{symbol}.json. Schreibt NIE in strategies.json —
     Promotion erfolgt ausschließlich per menschlich freigegebenem PR (HI-3)."""
+    try:
+        _reward = study.best_value if len(getattr(study, "directions", ["maximize"])) == 1 else promotion.get("R_symbol", 0.0)
+    except ValueError:
+        _reward = None
+
     payload = {
         "strategy": strategy,
         "symbol": symbol,
         "status": promotion["status"],
-        "reward": study.best_value if len(getattr(study, "directions", ["maximize"])) == 1 else promotion.get("R_symbol", 0.0),
+        "reward": _reward,
         "proposed_instrument_override": promotion["symbol_params"],
         "R_symbol": promotion["R_symbol"],
         "R_global": promotion["R_global"],
