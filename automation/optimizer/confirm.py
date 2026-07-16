@@ -10,6 +10,13 @@ from automation.optimizer.reward import compute_reward
 from automation.optimizer.manifest import WORK
 from automation.log_manager import emit_execution_event
 
+# Issue #659 — gültige Werte für tournament.json['promotion_correction_mode']. "conjunction"
+# (Default, fehlt der Key) ist bit-identisch zum Pre-#659-Verhalten (DSR UND Bootstrap-CI UND PBO
+# müssen ALLE bestehen); "dsr_or_robust_pair" ersetzt die Konjunktion durch eine der beiden
+# unabhängigen Bestätigungen (DSR ODER (PBO + Bootstrap-CI)). Ein unbekannter Wert bricht fail-loud
+# ab (kein stiller Fallback auf eine möglicherweise falsch geschriebene Modus-Zeichenkette).
+_VALID_PROMOTION_CORRECTION_MODES = frozenset({"conjunction", "dsr_or_robust_pair"})
+
 
 def _holdout_bootstrap_ci_passes(metrics, *, confidence: float = 0.95) -> tuple[bool, float | None]:
     """Issue #619 — Stationary-Bootstrap-CI auf dem per-Perioden-Sortino des Holdout (Politis/Romano).
@@ -262,12 +269,22 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
 
 def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_params: dict,
                                  *, run_backtest=run_backtest, build_trial=build_trial,
-                                 catalog_newest_ns: int | None = None) -> dict:
+                                 catalog_newest_ns: int | None = None,
+                                 deflation_n_family: int | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
     ungesehenen Holdout (a) das Holdout-Gate selbst besteht UND (b) das globale Baseline um
     `promotion_margin` (optimizer.json) schlägt.
+
+    ``deflation_n_family`` (Issue #652) — die familienweite Multiple-Testing-Multiplizität (Σ
+    eligibler Trials über ALLE Strategien-Studies desselben Symbols, VOR dieser Promotion bekannt).
+    Die Selektion wählt den besten von mehreren Strategien-Studies je Symbol; das per-Study N
+    (``deflation_n``, weiterhin als Telemetrie erhalten) unterschätzt die tatsächliche Anzahl
+    „Schüsse aufs Tor" der Gesamt-Selektion. Ist ``deflation_n_family`` grösser als das per-Study N,
+    wird es für die SR₀-Berechnung (und damit DSR/DSR-z) verwendet — NIE ein kleineres N als das
+    lokal Bekannte (``max(deflation_n, deflation_n_family)``). ``None``/fehlend ⇒ bit-identisch zum
+    Pre-#652-Verhalten (per-Study-N, Legacy-Aufrufer wie Unit-Tests bleiben unverändert grün).
 
     **Verbindliche Design-Entscheidung:** Der Vergleichs-Score ist die *rohe* risikoadjustierte
     Performance — `compute_reward(..., universe_size=1)` OHNE `sampled`/`global_params` ⇒
@@ -277,6 +294,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     Rückfrage-Klärung: Fällt der globale Vektor im Holdout durch das Risk-Cap, liefert
     compute_reward dennoch einen (entsprechend niedrigen) endlichen R_global; ein symbol-getunter
     Vektor, der das Holdout-Gate selbst besteht und R_global + Marge schlägt, gilt damit als Edge.
+    Issue #655 — erzeugt der globale Vektor auf DIESEM Symbol/Holdout NIE OOS-Trades (strukturell
+    ungeeignet, z. B. #656), ist ``R_global`` KEINE Zahl mehr (``None`` statt des alten −20-Sentinels)
+    — es gibt dann keine Baseline zu schlagen, die R-Edge-Bedingung gilt trivial als erfüllt (siehe
+    unten).
 
     status ∈ {'READY_FOR_PR', 'REJECTED_NO_EDGE_OVER_GLOBAL', 'REJECTED_ON_HOLDOUT'}.
     """
@@ -420,6 +441,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     deflation_var_floor = float(tournament_cfg.get("deflation_var_floor", 0.0018))
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     deflation_n = 0
+    deflation_n_effective = 0
     deflation_var = None
     deflation_used_var_floor = False
 
@@ -431,24 +453,49 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             and t.user_attrs.get("oos_sortino_period") is not None
         ]
         deflation_n = len(cohort_sr)
+        # Issue #652 — die PROMOTIONS-relevante Multiplizität ist familienweit (bester von mehreren
+        # Strategien-Studies je Symbol), nicht per-Study. ``deflation_n`` bleibt die per-Study-
+        # Telemetrie (Stichprobengrösse der V[ŜR_trials]-Schätzung); ``deflation_n_effective`` ist
+        # NIE kleiner als das per-Study-N (max(...)) — eine fehlende/kleinere Familien-Zahl kann das
+        # bereits lokal bekannte N nie unterschreiten.
+        deflation_n_effective = max(deflation_n, int(deflation_n_family or 0))
         if deflation_n >= 2:
             import statistics as _st
             from automation.optimizer.deflation import sr0_multiple_testing_robust
             deflation_var = _st.pvariance([float(s) for s in cohort_sr])
+            # Issue #653 — T (OOS-Perioden) der Kohorte für den Lo-2002-Varianz-Floor. Der Median
+            # über die eligiblen Trials ist die robuste zentrale T-Schätzung (T ist bei fixer
+            # Walk-Forward-Geometrie über die Kohorte annähernd konstant; Ausreisser durch
+            # Degeneration einzelner Trials beeinflussen den Median nicht).
+            cohort_n_periods = [
+                t.user_attrs.get("oos_n_periods") for t in study.trials
+                if t.state == optuna.trial.TrialState.COMPLETE
+                and t.user_attrs.get("oos_eligible")
+                and t.user_attrs.get("oos_sortino_period") is not None
+                and t.user_attrs.get("oos_n_periods")
+            ]
+            deflation_t_periods = int(_st.median(cohort_n_periods)) if cohort_n_periods else None
+            # Issue #652 — ``n_trials=deflation_n_effective`` (familienweit) treibt NUR E[max_N];
+            # ``variance_n_trials=deflation_n`` (per-Study) treibt das #653-Shrinkage-Gewicht — die
+            # Verlässlichkeit von V[ŜR_trials] hängt von der TATSÄCHLICH beobachteten Kohorte ab,
+            # nicht von der (grösseren) familienweiten Multiplizität (siehe deflation.py-Docstring).
             deflation_sr0, deflation_used_var_floor = sr0_multiple_testing_robust(
-                deflation_var, deflation_n,
+                deflation_var, deflation_n_effective,
                 min_cohort=deflation_min_cohort, var_floor=deflation_var_floor,
+                n_periods=deflation_t_periods, variance_n_trials=deflation_n,
             )
             if deflation_used_var_floor:
                 logging.getLogger("optimizer").warning(
                     f"[DSR #618/#636] {symbol}: N_eligible={deflation_n} < N_min={deflation_min_cohort} "
                     f"⇒ Fallback-SR₀ (Varianz-Floor {deflation_var_floor} statt der 2-3-Punkte-"
-                    f"Stichproben-Varianz V[ŜR]={deflation_var:.6f}) ⇒ SR₀={deflation_sr0:.4f}"
+                    f"Stichproben-Varianz V[ŜR]={deflation_var:.6f}) ⇒ SR₀={deflation_sr0:.4f} "
+                    f"(N_effective={deflation_n_effective})"
                 )
             else:
                 logging.getLogger("optimizer").info(
-                    f"[DSR #618] {symbol}: SR₀={deflation_sr0:.4f} "
-                    f"(N_eligible={deflation_n}, V[ŜR]={deflation_var:.6f})"
+                    f"[DSR #618/#652] {symbol}: SR₀={deflation_sr0:.4f} "
+                    f"(N_eligible={deflation_n}, N_family={deflation_n_family or 0}, "
+                    f"N_effective={deflation_n_effective}, V[ŜR]={deflation_var:.6f})"
                 )
 
     # Evaluiere den Holdout ueber die Top-k Trials
@@ -486,6 +533,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         promoted_m_symbol, risk_dd_cap,
         sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
     )
+    # Issue #654 — die TATSÄCHLICHE blockierende Ursache verfolgen (statt am Ende nur "irgendein
+    # früheres Gate hat schon abgelehnt"). Jeder der folgenden Blöcke, der ``holdout_passed`` auf
+    # False setzt, schreibt hier seinen spezifischen Grund; da jeder Block nur greift, wenn
+    # ``holdout_passed`` an dieser Stelle NOCH True ist, kann genau EIN Grund gewinnen — keine
+    # Ambiguität. Default (Symbol-Holdout-Gate selbst gescheitert): REJECT_HOLDOUT_GATE.
+    holdout_reject_detail = None if holdout_passed else "REJECT_HOLDOUT_GATE"
 
     # Issue #618/#636 — DSR-BERECHNUNG von der Pass-Kette ENTKOPPELT: vorher lief dieser Block nur
     # ``if holdout_passed and ...`` — aber JEDE Strategie scheiterte an einem FRÜHEREN Holdout-Gate
@@ -504,9 +557,16 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             promoted_n_periods = getattr(promoted_m_symbol, "oos_n_periods", 0)
             promoted_skew = getattr(promoted_m_symbol, "oos_ret_skew", 0.0)
             promoted_kurtosis = getattr(promoted_m_symbol, "oos_ret_kurtosis", 3.0)
+            # Issue #651 — dasselbe (bereits gefloorte) ``deflation_sr0`` speist SOWOHL die
+            # Entscheidung (``deflation_dsr``, hier) ALS AUCH die Telemetrie (``deflation_dsr_z``,
+            # unten via ``psr_z(..., sr_star=deflation_sr0)``). Vor #651 berechnete
+            # ``deflated_sharpe_ratio`` SR₀ intern aus ``var_sr_trials``/``n_trials`` — UNGEFLOORT —
+            # während ``deflation_dsr_z``/``deflated_sr0`` bereits das GEFLOORTE SR₀ nutzten; beide
+            # Grössen divergierten dadurch bei Small Cohorts (#651-Referenzfall: Hourly N=9, Faktor
+            # ≈3.48× zwischen internem und telemetriertem SR₀). Ein Aufruf, EIN SR₀ — bit-identisch.
             deflation_dsr = deflated_sharpe_ratio(
                 promoted_sr_period, promoted_n_periods,
-                var_sr_trials=deflation_var, n_trials=deflation_n,
+                sr0=deflation_sr0,
                 skew=promoted_skew, kurtosis=promoted_kurtosis)
             # Issue #636 (#627-Synergie) — die UNBESCHRÄNKTE Effektstärke z_DSR = (ŜR−SR₀)·√(T−1)/σ
             # als Selektions-Robustheits-Telemetrie, konsistent zur psr_z-Base (#630): eine CDF nahe
@@ -516,6 +576,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 skew=promoted_skew, kurtosis=promoted_kurtosis, sr_star=deflation_sr0)
             if holdout_passed and (deflation_dsr is None or deflation_dsr < deflation_confidence):
                 holdout_passed = False
+                holdout_reject_detail = "REJECT_HOLDOUT_DSR_DROP"
                 logging.getLogger("optimizer").warning(
                     f"[DSR-Drop #618] {symbol}: DSR={deflation_dsr} < {deflation_confidence} "
                     f"(SR₀={deflation_sr0:.4f}, N={deflation_n}) ⇒ HOLD"
@@ -528,6 +589,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         ci_ok, ci_lo = _holdout_bootstrap_ci_passes(promoted_m_symbol, confidence=deflation_confidence)
         if not ci_ok:
             holdout_passed = False
+            holdout_reject_detail = "REJECT_HOLDOUT_BOOTSTRAP_CI"
             logging.getLogger("optimizer").warning(
                 f"[Bootstrap-CI #619] {symbol}: ci_lower(sortino)={ci_lo} ≤ 0 ⇒ HOLD"
             )
@@ -540,6 +602,43 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         logging.getLogger("optimizer").warning(
             f"[PBO #619] {symbol}: PBO={study_pbo:.3f} > 0.5 ⇒ REJECTED_SELECTION_OVERFIT"
         )
+
+    # Issue #659 — gestapelte Multiple-Testing-Korrekturen kompoundieren den Type-II-Fehler. Die
+    # Promotion verlangt per Default (``promotion_correction_mode`` fehlt/"conjunction", bit-
+    # identisch zum Pre-#659-Verhalten) DSR **UND** Bootstrap-CI **UND** PBO gleichzeitig — auf einem
+    # kurzen Holdout (z. B. 37 Trades) ist die 95 %-DSR-Schwelle ALLEIN bereits streng; die
+    # KONJUNKTIVE Verknüpfung mehrerer, teils redundanter Korrekturen (PBO und DSR sind
+    # UNTERSCHIEDLICHE, teils widersprüchliche Multiple-Testing-/Overfit-Bestätigungen) lehnt
+    # strukturell auch reale Edges ab. Opt-in ``promotion_correction_mode="dsr_or_robust_pair"``
+    # (tournament.json): EINE der beiden UNABHÄNGIGEN Bestätigungen genügt — entweder die DSR selbst
+    # ODER (PBO sicher UND Bootstrap-CI besteht) — TROTZ eines DSR-Miss. Ein gescheitertes
+    # Symbol-Holdout-Gate SELBST (``REJECT_HOLDOUT_GATE``) bleibt IMMER ein Hard-Stop — kein
+    # Ersatzpfad ersetzt das Basisgate. Die KONKRETE Wahl (Modus + ``deflation_confidence``) ist
+    # empirisch aus einem dedizierten Kalibrierlauf abzuleiten (siehe tournament.json-Schema) —
+    # dieser Mechanismus stellt nur die STRUKTUR bereit, erzwingt aber keine Schwelle.
+    correction_mode = tournament_cfg.get("promotion_correction_mode", "conjunction")
+    if correction_mode not in _VALID_PROMOTION_CORRECTION_MODES:
+        raise ValueError(
+            f"tournament.json: promotion_correction_mode={correction_mode!r} unbekannt. "
+            f"Erlaubt: {sorted(_VALID_PROMOTION_CORRECTION_MODES)}."
+        )
+    if (correction_mode == "dsr_or_robust_pair"
+            and not holdout_passed
+            and holdout_reject_detail in ("REJECT_HOLDOUT_DSR_DROP", "REJECT_HOLDOUT_BOOTSTRAP_CI")):
+        dsr_ok = deflation_dsr is not None and deflation_dsr >= deflation_confidence
+        ci_ok_recheck = True
+        if bool(tournament_cfg.get("holdout_bootstrap_ci", False)):
+            ci_ok_recheck, _ = _holdout_bootstrap_ci_passes(
+                promoted_m_symbol, confidence=deflation_confidence)
+        robust_pair_ok = (not pbo_overfit) and ci_ok_recheck
+        if dsr_ok or robust_pair_ok:
+            holdout_passed = True
+            holdout_reject_detail = None
+            logging.getLogger("optimizer").info(
+                f"[#659] {symbol}: promotion_correction_mode=dsr_or_robust_pair — unabhängige "
+                f"Bestätigung ersetzt die Konjunktion (dsr_ok={dsr_ok}, pbo_ok={not pbo_overfit}, "
+                f"ci_ok={ci_ok_recheck}) ⇒ Holdout-Gate reinstated."
+            )
 
     # Issue #622 — Randlösungs-Veto: klebt der Gewinner an > 30 % der Suchraumgrenzen, ist die Lösung
     # keine Lösung (Bounds falsch ODER der Reward drückt in die Ecke) ⇒ FAIL-LOUD, kein READY_FOR_PR
@@ -557,24 +656,52 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             f"REJECTED_BOUNDARY_SOLUTION (Bounds prüfen ODER Reward-Konditionierung)"
         )
 
-    promote = bool(holdout_passed and not pbo_overfit and not boundary_overfit
-                   and (R_symbol > R_global + promotion_margin))
+    # Issue #655 — R_symbol/R_global sind seit #655 ``None`` (statt eines numerischen −20-Sentinels),
+    # sobald der jeweilige Holdout-Backtest NIE OOS-evaluierbar war (compute_reward(holdout=True)
+    # liefert dann ``None``, keine Zahl). ``R_symbol`` ist praktisch immer definiert (der promotete
+    # Trial stammt aus der eligiblen Kohorte, hat also per Definition OOS-Performance) — defensiv
+    # dennoch behandelt. Ein UNDEFINIERTES ``R_global`` (der globale Vektor erzeugte auf DIESEM
+    # Symbol/Holdout nie OOS-Trades) bedeutet: es gibt KEINE Baseline zu schlagen ⇒ die R-Edge-
+    # Bedingung gilt trivial als erfüllt (dokumentiert, ersetzt den impliziten Effekt des alten
+    # −20-Sentinels OHNE die kontaminierte Zahl in Telemetrie/Aggregation zu tragen). Ein
+    # UNDEFINIERTES ``R_symbol`` kann dagegen NIE einen Edge belegen ⇒ die Bedingung scheitert.
+    if R_symbol is None:
+        r_edge_satisfied = False
+    elif R_global is None:
+        r_edge_satisfied = True
+    else:
+        r_edge_satisfied = R_symbol > R_global + promotion_margin
 
+    promote = bool(holdout_passed and not pbo_overfit and not boundary_overfit and r_edge_satisfied)
+
+    # Issue #654 — ``is_rejection_detail`` im Proposal war bislang der modale IS-Study-Trial-Grund
+    # (via ``_dominant_is_rejection_detail``-Fallback, da ``is_rejection_detail_override`` hier
+    # unconditional ``None`` war), NICHT die tatsächliche Promotion-Ursache. DynamicBreakout zeigte
+    # z. B. ``REJECT_OOS_MIN_TOTAL_RETURN`` (70/76 IS-Trials), obwohl das Symbol-Holdout-Gate
+    # bestanden war und die Promotion AUSSCHLIESSLICH am DSR-Drop scheiterte — die Forensik wies die
+    # falsche Ursache aus. Fix: jeder Promotion-Ausgang setzt seinen EXAKTEN Grund; der modale
+    # IS-Grund bleibt separat als ``dominant_is_rejection_detail`` in ``export_symbol_proposal``
+    # (Study-Diagnose) erhalten — vermischt aber NICHT mehr mit der Promotion-Entscheidung.
     if pbo_overfit:
         status = "REJECTED_SELECTION_OVERFIT"
+        is_rejection_detail_override = "REJECT_SELECTION_PBO"
     elif boundary_overfit:
         status = "REJECTED_BOUNDARY_SOLUTION"
+        is_rejection_detail_override = "REJECT_BOUNDARY_SOLUTION"
     elif not holdout_passed:
         status = "REJECTED_ON_HOLDOUT"
+        is_rejection_detail_override = holdout_reject_detail
     elif promote:
         status = "READY_FOR_PR"
+        is_rejection_detail_override = None
     else:
         status = "REJECTED_NO_EDGE_OVER_GLOBAL"
+        is_rejection_detail_override = "REJECT_NO_EDGE_OVER_GLOBAL"
 
     best_result = {
         "promote": promote,
         "status": status,
-        "is_rejection_detail_override": None,
+        "is_rejection_detail_override": is_rejection_detail_override,
         # Issue #615 — Params, R_symbol, holdout_passed und trial_dir stammen ALLE aus promoted_m_symbol.
         "symbol_params": promoted_symbol_params,
         "R_symbol": R_symbol,
@@ -598,6 +725,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_dsr_z"] = deflation_dsr_z
         best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
         best_result["metrics_symbol"]["deflation_used_var_floor"] = deflation_used_var_floor
+        # Issue #652 — die familienweite Multiplizität, die tatsächlich in die SR₀-Berechnung
+        # eingeflossen ist (N_effective = max(per-Study-N, N_family)), plus die rohe übergebene
+        # Familien-Zahl — beide sichtbar im Proposal, damit die effektive SR₀-Hürde je promoteter
+        # Kandidat nachvollziehbar ist (Akzeptanzkriterium #652).
+        best_result["metrics_symbol"]["deflation_n_family"] = int(deflation_n_family or 0)
+        best_result["metrics_symbol"]["deflation_n_effective"] = deflation_n_effective
 
     return best_result
 
@@ -649,9 +782,17 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # Issue #408 — modale Gate-Drop-Reason ueber alle Trials (Observability; aendert NIE die
         # Promotion-Entscheidung selbst, die ausschliesslich ueber das Holdout-Gate faellt).
         "dominant_rejection": _dominant_rejection(study),
-        # Issue #453 — granularere, dezidierte dominante Ablehnungs-Kategorie (löst den Catch-All
-        # 'oos_not_evaluated' in die tatsächliche, handlungsleitende Ursache auf).
-        "is_rejection_detail": promotion.get("is_rejection_detail_override") or _dominant_is_rejection_detail(study),
+        # Issue #453/#654 — die TATSÄCHLICHE Promotion-Ursache (REJECT_HOLDOUT_DSR_DROP,
+        # REJECT_HOLDOUT_BOOTSTRAP_CI, REJECT_SELECTION_PBO, REJECT_BOUNDARY_SOLUTION,
+        # REJECT_NO_EDGE_OVER_GLOBAL, REJECT_HOLDOUT_GATE, oder None bei READY_FOR_PR) —
+        # ``confirm_per_symbol_promotion`` setzt ``is_rejection_detail_override`` jetzt für JEDEN
+        # Ausgang explizit (#654; vorher fiel dies auf den modalen IS-Study-Trial-Grund zurück, der
+        # mit der Holdout-/Promotion-Entscheidung nichts zu tun hat — kein OR-Fallback mehr).
+        "is_rejection_detail": promotion.get("is_rejection_detail_override"),
+        # Issue #654 — der modale IS-Study-Trial-Grund bleibt SEPARAT für die Study-Diagnose
+        # erhalten (z. B. 'warum scheiterten die meisten IS-Trials dieser Study', unabhängig davon,
+        # woran die konkrete Promotion-Entscheidung scheiterte).
+        "dominant_is_rejection_detail": _dominant_is_rejection_detail(study),
         # Issue #615 — der EINE Holdout-trial_dir, aus dem der promotete Vektor (Params/R_symbol/Gate)
         # stammt: macht die Kohärenz-Invariante im Proposal nachvollziehbar.
         "holdout_trial_dir": promotion.get("trial_dir"),

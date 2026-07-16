@@ -37,17 +37,23 @@ def _scale_fingerprint(cfg: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-# Gepinnt gegen reward_semantics_version=9 (dieser PR). Bei jedem künftigen, bewussten Bump der
-# Reward-Skalen-Konstanten: reward_semantics_version erhöhen UND diesen Fingerprint nachziehen —
+# Gepinnt gegen reward_semantics_version=9 (dieser PR) UND fortgeschrieben für v10 (#658 — die
+# #649/#650/#657-Eligibility-Semantik ändert nicht die hier gepinnten Reward-SKALEN-Konstanten,
+# daher bleibt der Fingerprint zwischen v9 und v10 identisch). Bei jedem künftigen, bewussten Bump
+# der Reward-Skalen-Konstanten: reward_semantics_version erhöhen UND diesen Fingerprint nachziehen —
 # genau das erzwingt dieser Test (#637-Akzeptanzkriterium: "Kein Reward-berührender PR ohne
 # Version-Bump").
 _EXPECTED_FINGERPRINT_BY_VERSION = {
-    9: _scale_fingerprint(CFG),  # zur Bump-Zeit erzeugt — pinnt den IST-Zustand von v9.
+    9: _scale_fingerprint(CFG),   # zur Bump-Zeit erzeugt — pinnt den IST-Zustand von v9.
+    10: _scale_fingerprint(CFG),  # Issue #658 — Eligibility-Bump, Skalen-Konstanten unverändert.
 }
 
 
-def test_reward_semantics_version_bumped_to_9():
-    assert CFG["reward_semantics_version"] == 9
+def test_reward_semantics_version_at_least_9():
+    """Issue #658 bumpte die Version weiter auf 10 (Eligibility-Semantik, #649/#650/#657) — dieser
+    Test pinnt nur noch die historische UNTERGRENZE (die v9-Migration ist irreversibel abgeschlossen),
+    die exakte AKTUELLE Version wird in test_issue_658_reward_semantics_bump.py gepinnt."""
+    assert CFG["reward_semantics_version"] >= 9
 
 
 def test_version_is_documented_with_v9_changelog_entry():

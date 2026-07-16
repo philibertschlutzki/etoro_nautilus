@@ -100,38 +100,108 @@ def sr0_multiple_testing(var_sr_trials: float, n_trials: int) -> float:
     return math.sqrt(float(var_sr_trials)) * expected_max_standard_normal(n_trials)
 
 
+def lo2002_sharpe_variance(sr: float, n_periods: int) -> float:
+    """Issue #653 — Lo (2002): asymptotische Stichprobenvarianz eines geschätzten Sharpe/Sortino-
+    Ratios unter i.i.d.-normalverteilten Perioden-Renditen: ``Var[ŜR] ≈ (1 + ŜR²/2) / T``.
+
+    ``T = n_periods`` (OOS-Perioden je Schätzer), ``ŜR`` = per-Perioden-Ratio. Rein deterministisch
+    (kein I/O). ``sr=0.0`` (der in ``sr0_multiple_testing_robust`` verwendete Default) ist die
+    Varianz UNTER DER NULLHYPOTHESE „kein Edge" — die konservativste, parameterfreie Referenz (keine
+    Annahme über den wahren SR-Level nötig, konsistent mit dem Multiple-Testing-Null-Modell selbst).
+    Skaliert erwartungsgemäss invers mit T: kürzeres OOS-Fenster (kleineres T) ⇒ höhere
+    Schätz-Unsicherheit ⇒ grössere Varianz ⇒ konservativerer Floor."""
+    if n_periods is None or n_periods <= 1:
+        raise ValueError("lo2002_sharpe_variance: n_periods muss > 1 sein (T = OOS-Perioden)")
+    return (1.0 + (float(sr) ** 2) / 2.0) / float(n_periods)
+
+
+def _cohort_shrinkage_weight(n_trials: int, min_cohort: int) -> float:
+    """Issue #653 — STETIGES Shrinkage-Gewicht λ(N) ∈ (0, 1] Richtung der theoretischen
+    Referenz-Varianz: ``λ(N) = min_cohort / (min_cohort + N)``.
+
+    ``λ(0) = 1`` (volles Vertrauen in die Theorie bei N=0), ``λ(min_cohort) = 0.5`` (hälftiger
+    Blend), ``λ(N) → 0`` für ``N → ∞`` (volles Vertrauen in die empirische Kohorten-Varianz, sobald
+    genug Punkte vorliegen). STETIG in N — anders als der alte harte Cutover bei ``min_cohort``
+    (N=min_cohort−1 erhielt 100 % Floor, N=min_cohort 0 % Floor: ein Sprung um Grössenordnungen
+    zwischen zwei fast identischen Kohorten, #653-Symptom)."""
+    n = max(0, int(n_trials))
+    k = max(1, int(min_cohort))
+    return float(k) / float(k + n)
+
+
 def sr0_multiple_testing_robust(
     var_sr_trials: float | None, n_trials: int, *,
     min_cohort: int = 10, var_floor: float = 0.0018,
+    n_periods: int | None = None, sr_estimate: float = 0.0,
+    variance_n_trials: int | None = None,
 ) -> tuple[float, bool]:
-    """Issue #636 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration.
+    """Issue #636/#653 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration, STETIG in N.
 
     ``V[ŜR_trials]`` aus einer 2-3-Punkte-Kohorte (z. B. VwapExhaustion N=3, Hourly N=2) ist
     statistisch bedeutungslos (beobachtet: ``deflation_var_sr = 2.4e-9`` für Hourly — eine
-    Rundungsartefakt-Grössenordnung, keine echte Streuung). Unterhalb ``min_cohort`` wird die
-    empirische Varianz durch einen dokumentierten, KONSERVATIVEN Floor ersetzt (NIE unterschritten),
-    sodass SR₀ nie durch eine zufällig winzige Stichproben-Varianz unterschätzt wird — die Multiple-
-    Testing-Hürde bleibt mindestens so streng wie der Floor es vorgibt (Fail-loud-Log obliegt dem
-    Aufrufer). ``var_floor=0.0018`` ist die in ``deflated_sharpe_ratio`` dokumentierte REALE
-    Referenz-Varianz (VwapExhaustion, N=100 getestete Konfigurationen: ``V[ŜR_trials]=1.803e-3``) —
-    kein erfundener Wert, sondern der einzige im Code belegte empirische Ankerpunkt für diese Grösse.
+    Rundungsartefakt-Grössenordnung, keine echte Streuung). Die empirische Varianz wird daher gegen
+    eine THEORETISCH begründete Referenz geshrinkt (``_cohort_shrinkage_weight``), NIE unterschritten
+    im Erwartungswert, sodass SR₀ nicht durch eine zufällig winzige Stichproben-Varianz unterschätzt
+    wird — die Multiple-Testing-Hürde bleibt mindestens so streng wie die Theorie es vorgibt
+    (Fail-loud-Log obliegt dem Aufrufer).
 
-    Rückgabe ``(sr0, used_fallback)``."""
-    used_fallback = n_trials < min_cohort
+    Issue #653 — VOR #653 war der Floor eine einzige HARTE Konstante (``var_floor=0.0018``) mit
+    einem DISKONTINUIERLICHEN Cutover bei ``min_cohort`` (``max(observed, var_floor)`` nur unterhalb
+    ``min_cohort``, sonst die rohe Stichproben-Varianz) — ein Faktor-~3.5-Sprung zwischen N=9 und
+    N=10 bei sonst fast identischen Kohorten, weil die Kohorten-Varianz selbst ein Selektions-
+    Artefakt ist (das Gate censoriert die Verteilung). Fix: ``effective_var = λ(N)·theoretical_var +
+    (1−λ(N))·observed`` mit dem STETIGEN Shrinkage-Gewicht ``λ(N)`` (``_cohort_shrinkage_weight``) —
+    kein Cutover, SR₀(N) ist über JEDEN N-Übergang stetig. ``theoretical_var`` folgt Lo (2002)
+    (``lo2002_sharpe_variance``, ``T = n_periods``, T-bewusst: kürzeres OOS-Fenster ⇒ konservativerer
+    Floor) — fehlt ``n_periods`` (Legacy-Aufrufer ohne T-Telemetrie), bleibt ``var_floor`` (die alte,
+    empirisch verankerte VwapExhaustion-N=100-Referenz-Konstante ``V[ŜR_trials]=1.803e-3``) die
+    Referenz (bit-identischer Fallback, kein neuer Hardcoding-Zwang für Alt-Aufrufer).
+
+    Issue #652 — ``n_trials`` und ``variance_n_trials`` sind ABSICHTLICH ENTKOPPELT: ``n_trials``
+    treibt AUSSCHLIESSLICH ``E[max_N]`` (die Multiple-Testing-MULTIPLIZITÄT — bei #652 familienweit,
+    also potenziell GRÖSSER als die tatsächliche Kohorte, aus der ``var_sr_trials`` geschätzt wurde);
+    ``variance_n_trials`` (Default: ``n_trials``, Rückwärtskompat für Nicht-Familien-Aufrufer) treibt
+    AUSSCHLIESSLICH das Shrinkage-Gewicht ``λ`` — die VERLÄSSLICHKEIT der Varianz-SCHÄTZUNG hängt von
+    der Anzahl der tatsächlich beobachteten Datenpunkte ab, NICHT von der (grösseren) familienweiten
+    Multiplizität. Würden beide dieselbe (familienweite) Zahl teilen, verschöbe eine grosse
+    Familien-N das Shrinkage-Gewicht fälschlich Richtung „viele Datenpunkte" und liesse eine winzige,
+    unzuverlässige empirische Varianz dominieren — SR₀ könnte dadurch mit wachsendem N_family sogar
+    SINKEN (das Gegenteil der beabsichtigten strengeren Hürde).
+
+    Rückgabe ``(sr0, floor_dominant)`` — ``floor_dominant`` ist True, sobald der Floor-Anteil
+    (``λ ≥ 0.5``, äquivalent zu ``variance_n_trials <= min_cohort``) MASSGEBLICH ist (Rückwärtskompat-
+    Signal zum alten booleschen ``used_fallback``)."""
     observed = float(var_sr_trials) if var_sr_trials is not None else 0.0
-    effective_var = max(observed, var_floor) if used_fallback else observed
-    return sr0_multiple_testing(effective_var, n_trials), used_fallback
+    if n_periods is not None and n_periods > 1:
+        theoretical_var = lo2002_sharpe_variance(sr_estimate, n_periods)
+    else:
+        theoretical_var = var_floor
+    reliability_n = variance_n_trials if variance_n_trials is not None else n_trials
+    weight = _cohort_shrinkage_weight(reliability_n, min_cohort)
+    effective_var = weight * theoretical_var + (1.0 - weight) * observed
+    floor_dominant = weight >= 0.5
+    return sr0_multiple_testing(effective_var, n_trials), floor_dominant
 
 
-def deflated_sharpe_ratio(sr, n_periods, *, var_sr_trials: float, n_trials: int,
+def deflated_sharpe_ratio(sr, n_periods, *, sr0: float,
                           skew: float = 0.0, kurtosis: float = 3.0):
-    """Issue #618 — vollständige Deflated Sharpe/Sortino Ratio: die PSR relativ zur Multiple-Testing-
-    Schwelle ``SR₀`` (statt zu 0). ``DSR = Φ[(ŜR − SR₀)·√(T−1)/√(1 − γ₃·ŜR + ((γ₄−1)/4)·ŜR²)]``.
+    """Issue #618/#651 — vollständige Deflated Sharpe/Sortino Ratio: die PSR relativ zur Multiple-
+    Testing-Schwelle ``SR₀`` (statt zu 0). ``DSR = Φ[(ŜR − SR₀)·√(T−1)/√(1 − γ₃·ŜR + ((γ₄−1)/4)·ŜR²)]``.
+
+    Issue #651 — ``sr0`` MUSS vom Aufrufer bereits berechnet übergeben werden (typischerweise via
+    ``sr0_multiple_testing`` oder, unterhalb der Mindestkohorte, ``sr0_multiple_testing_robust``),
+    NICHT mehr intern aus ``var_sr_trials``/``n_trials`` rekonstruiert. Vor #651 berechnete diese
+    Funktion SR₀ INTERN und UNGEFLOORT (``sr0_multiple_testing``, ohne den #636-Small-Cohort-Floor),
+    während die parallel geloggte Telemetrie (``deflated_sr0``, ``deflation_dsr_z`` via ``psr_z``)
+    das GEFLOORTE SR₀ nutzte — die promotion-ENTSCHEIDENDE DSR und die telemetrierte DSR-Diagnose
+    divergierten dadurch bei Small Cohorts (Faktor bis ~3.5×, siehe #651-Referenzfall Hourly N=9).
+    Ein einzelnes, vom Aufrufer EINMAL berechnetes ``sr0`` ist die einzige robuste Garantie, dass
+    Entscheidung (``deflated_dsr``) und Telemetrie (``deflation_dsr_z``, ``deflated_sr0``) IMMER
+    bit-identisch dasselbe SR₀ konsumieren.
 
     Alle Grössen PER-PERIODE (nicht annualisiert, #614). ``promote ⟺ DSR ≥ deflation_confidence``.
-    Referenz (VwapExhaustion): ``ŜR=0.11386, T=202, N=100, V[ŜR_trials]=1.803e-3`` ⇒
-    ``SR₀=0.1075, DSR=0.5364`` ⇒ HOLD (< 0.95). ``None`` bei undefinierter Eingabe."""
-    sr0 = sr0_multiple_testing(var_sr_trials, n_trials)
+    Referenz (VwapExhaustion): ``ŜR=0.11386, T=202, SR₀=sr0_multiple_testing(1.803e-3, 100)=0.1075``
+    ⇒ ``DSR=0.5364`` ⇒ HOLD (< 0.95). ``None`` bei undefinierter Eingabe."""
     return probabilistic_sharpe_ratio(sr, n_periods, skew=skew, kurtosis=kurtosis, sr_star=sr0)
 
 

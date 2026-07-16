@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from automation.backtest_runner import _evaluate_oos_eligibility
+from automation.backtest_runner import _evaluate_oos_eligibility, _canonical_gate_key
 from automation.optimizer.reward import assert_any_condition_parity, _ANY_CONDITION_CLAUSES
 
 TCFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
@@ -21,8 +21,15 @@ def test_shipped_config_moves_risk_adjusted_gate_to_requires_all():
     # Issue #614 — das HARTE risikoadjustierte Kriterium ist seit #614 die PSR (min_psr), nicht mehr
     # der annualisierte Sortino (min_sortino, jetzt Telemetrie). Es bleibt in eligible_requires_all
     # (die #593-Anti-ODER-Bypass-Invariante gilt für die PSR statt den Sortino).
-    assert "min_psr" in TCFG["eligible_requires_all"]
-    assert "min_sortino" not in TCFG["eligible_requires_all"]
+    # Issue #649 — die ausgelieferte Config schreibt die Klausel PRÄFIGIERT (``oos_min_psr``); ein
+    # Vergleich gegen den blanken Namen ``min_psr`` (wie vor #649) prüft NIE die tatsächlich
+    # ausgelieferte Config und wäre selbst ein Exemplar des #649-Fixture-vs-Produktion-Drifts (der
+    # Grund, warum die vier Gates in Produktion still tot waren, während der #614-Test grün blieb).
+    # Nach ``_canonical_gate_key``-Normalisierung ist die Schreibweise (mit/ohne ``oos_``-Präfix)
+    # äquivalent — dieser Test prüft die kanonische Form gegen die ECHTE Datei.
+    canonical_all = {_canonical_gate_key(k) for k in TCFG["eligible_requires_all"]}
+    assert "min_psr" in canonical_all
+    assert "min_sortino" not in canonical_all
     assert "min_psr" not in TCFG["eligible_requires_any"]
     assert set(TCFG["eligible_requires_any"]) == {"min_profit_factor", "min_win_rate"}
 

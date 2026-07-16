@@ -170,7 +170,13 @@ def test_dominant_is_rejection_detail_none_when_absent():
     assert confirm._dominant_is_rejection_detail(_Study([None, None])) is None
 
 
-def test_export_proposal_persists_is_rejection_detail(tmp_path, monkeypatch):
+def test_export_proposal_persists_dominant_is_rejection_detail(tmp_path, monkeypatch):
+    """Issue #654 — der modale IS-Study-Trial-Grund wird SEPARAT als ``dominant_is_rejection_detail``
+    persistiert (Study-Diagnose), NICHT mehr unter ``is_rejection_detail`` (das ist seit #654
+    AUSSCHLIESSLICH die tatsächliche Promotion-Ursache — ``is_rejection_detail_override`` — und
+    fällt NICHT MEHR auf den modalen IS-Grund zurück, wenn kein Override gesetzt ist: genau dieser
+    OR-Fallback war die #654-Root-Cause, die einer bestandenen Holdout-Promotion fälschlich den
+    modalen IS-Study-Grund als Ablehnungsursache zuschrieb)."""
     monkeypatch.setattr(confirm, "WORK", tmp_path)
     study = _Study(["REJECT_OOS_WINDOW_UNREACHABLE", "REJECT_OOS_WINDOW_UNREACHABLE",
                     "REJECT_OOS_INACTIVE"])
@@ -178,7 +184,27 @@ def test_export_proposal_persists_is_rejection_detail(tmp_path, monkeypatch):
         "status": "REJECTED_ON_HOLDOUT", "symbol_params": {"sma_period": 10},
         "R_symbol": -9.9, "R_global": -9.0, "promotion_margin": 0.10,
         "metrics_symbol": {}, "metrics_global": {},
+        "is_rejection_detail_override": "REJECT_HOLDOUT_GATE",
     }
     path = confirm.export_symbol_proposal(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion)
     data = json.loads(Path(path).read_text("utf-8"))
-    assert data["is_rejection_detail"] == "REJECT_OOS_WINDOW_UNREACHABLE"
+    assert data["is_rejection_detail"] == "REJECT_HOLDOUT_GATE"
+    assert data["dominant_is_rejection_detail"] == "REJECT_OOS_WINDOW_UNREACHABLE"
+
+
+def test_export_proposal_is_rejection_detail_none_without_override(tmp_path, monkeypatch):
+    """Issue #654 — fehlt ``is_rejection_detail_override`` (z. B. READY_FOR_PR, keine Ablehnung),
+    ist ``is_rejection_detail`` explizit ``None`` — KEIN stiller Fallback auf den modalen IS-Grund
+    mehr (der #654-Root-Cause-Fehler)."""
+    monkeypatch.setattr(confirm, "WORK", tmp_path)
+    study = _Study(["REJECT_OOS_WINDOW_UNREACHABLE", "REJECT_OOS_WINDOW_UNREACHABLE",
+                    "REJECT_OOS_INACTIVE"])
+    promotion = {
+        "status": "READY_FOR_PR", "symbol_params": {"sma_period": 10},
+        "R_symbol": 1.2, "R_global": 0.5, "promotion_margin": 0.10,
+        "metrics_symbol": {}, "metrics_global": {},
+    }
+    path = confirm.export_symbol_proposal(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion)
+    data = json.loads(Path(path).read_text("utf-8"))
+    assert data["is_rejection_detail"] is None
+    assert data["dominant_is_rejection_detail"] == "REJECT_OOS_WINDOW_UNREACHABLE"

@@ -24,22 +24,25 @@ def test_expected_max_is_used_in_sr0():
 def test_dsr_reference_calculation():
     sr0 = sr0_multiple_testing(1.803e-3, 100)
     assert abs(sr0 - 0.1075) < 1e-3, sr0
-    dsr = deflated_sharpe_ratio(0.11386, 202, var_sr_trials=1.803e-3, n_trials=100,
-                                skew=0.0, kurtosis=3.0)
+    # Issue #651 — deflated_sharpe_ratio nimmt SR₀ als Parameter (vom Aufrufer berechnet), statt es
+    # intern aus var_sr_trials/n_trials zu rekonstruieren (Single Source of Truth mit der Telemetrie).
+    dsr = deflated_sharpe_ratio(0.11386, 202, sr0=sr0, skew=0.0, kurtosis=3.0)
     assert abs(dsr - 0.5364) < 1e-3, dsr
     assert dsr < 0.95   # DSR = 0.536 < 0.95 ⇒ HOLD (reproduzierbar)
 
 
 # ── #618 — die DSR bezieht T ein (der zentrale Bruch mit deflated_threshold, das kein T kannte) ───
 def test_dsr_depends_on_T():
-    a = deflated_sharpe_ratio(0.2, 50, var_sr_trials=1e-3, n_trials=100)
-    b = deflated_sharpe_ratio(0.2, 500, var_sr_trials=1e-3, n_trials=100)
+    sr0 = sr0_multiple_testing(1e-3, 100)
+    a = deflated_sharpe_ratio(0.2, 50, sr0=sr0)
+    b = deflated_sharpe_ratio(0.2, 500, sr0=sr0)
     assert b > a, "mehr Bars (T) ⇒ höhere Konfidenz ⇒ höhere DSR"
 
 
 def test_dsr_monotone_in_edge():
-    lo = deflated_sharpe_ratio(0.10, 202, var_sr_trials=1.8e-3, n_trials=100)
-    hi = deflated_sharpe_ratio(0.20, 202, var_sr_trials=1.8e-3, n_trials=100)
+    sr0 = sr0_multiple_testing(1.8e-3, 100)
+    lo = deflated_sharpe_ratio(0.10, 202, sr0=sr0)
+    hi = deflated_sharpe_ratio(0.20, 202, sr0=sr0)
     assert hi > lo
 
 
@@ -62,7 +65,7 @@ def test_two_point_mixture_no_threshold_above_eligible_max():
     sr0 = sr0_multiple_testing(var, len(eligible_sr))
     assert sr0 == 0.0
     # ⇒ der Gewinner (ŜR = 2.0 > SR₀ = 0) wird NICHT unter seinen eigenen Edge gedrückt.
-    dsr = deflated_sharpe_ratio(2.0, 202, var_sr_trials=var, n_trials=14)
+    dsr = deflated_sharpe_ratio(2.0, 202, sr0=sr0)
     assert dsr > 0.95   # ein realer, konsistenter Edge über T=202 ⇒ PASS (nicht künstlich verworfen)
 
 

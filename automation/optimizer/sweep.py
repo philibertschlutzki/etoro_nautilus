@@ -437,6 +437,23 @@ def _family_n_from_proposals(proposals) -> dict[str, int]:
     return family_n
 
 
+def _family_n_from_studies(pairs, studies) -> dict[str, int]:
+    """Issue #652 — familienweise Multiple-Testing-N je Symbol AUS DEN STUDY-OBJEKTEN SELBST
+    (nicht aus den exportierten Proposals — die existieren an dieser Stelle noch nicht, siehe
+    ``_family_n_from_proposals`` für die post-hoc-Variante der reinen Sweep-Telemetrie). Summe der
+    eligiblen Trials über ALLE Strategien-Studies desselben Symbols, BEVOR irgendeine Promotion-
+    Entscheidung fällt — genau das schliesst die #652-Lücke: die Promotions-DSR nutzte bislang
+    ausschliesslich das per-Study-N, weil die familienweite Zahl erst NACH allen Promotions bekannt
+    war (``sweep_completed``-Event). ``pairs``/``studies`` müssen index-parallel sein (wie von der
+    Phase-1-Dispatch-Schleife in ``run_per_symbol_sweep`` erzeugt)."""
+    family_n: dict[str, int] = {}
+    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+        trials = getattr(study, "trials", None) or []
+        n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
+        family_n[symbol] = family_n.get(symbol, 0) + n_eligible
+    return family_n
+
+
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
@@ -558,24 +575,48 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # eigentliche Backtest als Subprozess laeuft (run_backtest) und die GIL freigibt → echte
     # Nebenlaeufigkeit fuer diesen IO-/Subprozess-gebundenen Workload, und (2) die injizierbaren
     # optimize_symbol/confirm (HI-7) ohne Pickling nutzbar bleiben.
-    def _run_pair(pair: tuple[str, str, str]) -> Path:
+    #
+    # Issue #652 — ZWEI Phasen statt eines einzigen optimize+confirm+export-Schritts je Paar: die
+    # familienweite Multiple-Testing-Zahl (Σ eligibler Trials über ALLE Strategien-Studies desselben
+    # Symbols) muss VOR jeder Promotions-Entscheidung bekannt sein, kann aber erst nach Abschluss
+    # ALLER Studies eines Symbols berechnet werden. Phase 1 sammelt die Studies (weiterhin über
+    # n_jobs parallelisiert); Phase 2 (Confirm + Export) läuft danach mit der bereits bekannten
+    # ``deflation_n_family`` je Symbol.
+    def _run_optimize(pair: tuple[str, str, str]):
         strategy, symbol, _reason = pair
         newest_ns = latest_ts.get(symbol) if latest_ts else None
         # Issue #531 — die REAL vorhandene Bar-Spanne (Tage) an build_trial durchreichen, damit die
         # Manifest-Konstruktion gegen die tatsächliche Datenlage (nicht nur data_history_days) prüft.
         span_days = available_bars.get(symbol, 0) / 24.0
-        study = optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns,
-                                catalog_span_days=span_days)
+        return optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns,
+                               catalog_span_days=span_days)
+
+    if n_jobs and n_jobs > 1 and len(pairs) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(n_jobs, len(pairs))) as executor:
+            studies = list(executor.map(_run_optimize, pairs))
+    else:
+        studies = [_run_optimize(p) for p in pairs]
+
+    # Issue #652 — familienweite Multiplizität je Symbol, AUS DEN STUDIES (Phase 1 bereits
+    # abgeschlossen), BEVOR irgendeine Promotion (Phase 2) läuft.
+    n_family_pre_promotion = _family_n_from_studies(pairs, studies)
+
+    def _run_confirm_and_export(pair: tuple[str, str, str], study) -> Path:
+        strategy, symbol, _reason = pair
+        newest_ns = latest_ts.get(symbol) if latest_ts else None
         global_params = load_global_best(strategy, config_dir())
-        promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns)
+        promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
+                            deflation_n_family=n_family_pre_promotion.get(symbol, 0))
         return export_symbol_proposal(study, strategy, symbol, promotion)
 
     if n_jobs and n_jobs > 1 and len(pairs) > 1:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=min(n_jobs, len(pairs))) as executor:
-            proposals = list(executor.map(_run_pair, pairs))
+            proposals = list(executor.map(
+                lambda ps: _run_confirm_and_export(ps[0], ps[1]), zip(pairs, studies)))
     else:
-        proposals = [_run_pair(p) for p in pairs]
+        proposals = [_run_confirm_and_export(p, s) for p, s in zip(pairs, studies)]
 
     # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
     # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne
