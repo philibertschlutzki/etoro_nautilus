@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "/app/automation/optimizer/sweep.py", line 27, in <module>
-    from automation.optimizer.run_optimization import (
-  File "/app/automation/optimizer/run_optimization.py", line 10, in <module>
-    import optuna
-ModuleNotFoundError: No module named 'optuna'
