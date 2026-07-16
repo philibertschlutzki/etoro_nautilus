@@ -23,7 +23,10 @@ CFG = {
     "oos_min_expectancy": 0.0,
     "oos_min_win_rate": 0.0,
     "oos_min_profitable_folds_frac": 0.5,
-    "eligible_requires_all": ["min_trades", "min_profitable_folds"],
+    # Issue #649 — der condition_map-Handler heisst ``min_profitable_folds_frac`` (kanonische Form
+    # der Config-Klausel ``oos_min_profitable_folds_frac``), NICHT ``min_profitable_folds`` (die alte,
+    # bereits vor #649 abweichende Handler-Bezeichnung).
+    "eligible_requires_all": ["min_trades", "min_profitable_folds_frac"],
 }
 
 
@@ -60,9 +63,9 @@ def test_gate_inactive_when_threshold_absent():
                    "profit_factor": 1.5, "total_return": 0.005, "total_trades": 40,
                    "median_position_notional": 1000.0, "max_drawdown": 0.05}
     apply_fold_aggregation(oos_metrics, per_fold)
-    cfg_no_key = {"oos_min_trades": 1, "eligible_requires_all": ["min_trades", "min_profitable_folds"]}
+    cfg_no_key = {"oos_min_trades": 1, "eligible_requires_all": ["min_trades", "min_profitable_folds_frac"]}
     ev = _evaluate_oos_eligibility(oos_metrics, cfg_no_key)
-    # Ohne Schwelle greift min_profitable_folds nicht ⇒ nur min_trades zählt (erfüllt).
+    # Ohne Schwelle greift min_profitable_folds_frac nicht ⇒ nur min_trades zählt (erfüllt).
     assert ev["oos_eligible"] is True
 
 

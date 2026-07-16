@@ -68,3 +68,76 @@ DSR-Telemetrie in jedem Proposal `None`, sobald irgendein früheres Gate zuerst 
 ursprüngliche #636-Defekt). Unterhalb `deflation_min_cohort` (Default 10) ersetzt der dokumentierte
 `deflation_var_floor` (0,0018) die 2-3-Punkte-Stichproben-Varianz — niemals eine kleinere, zufällige
 Roh-Varianz verwenden.
+
+## Gate-Config-Keys IMMER kanonisch normalisiert gegen die Handler-Registry prüfen (Issue #649)
+
+`tournament.json` schreibt manche `eligible_requires_all`/`_any`-Klauseln MIT `oos_`-Präfix
+(`oos_min_psr`), die `condition_map`-Handler in `backtest_runner._evaluate_oos_eligibility` sind
+durchgehend UN-präfigiert. `_canonical_gate_key(key)` (entfernt das optionale `oos_`-Präfix) ist die
+**einzige** Stelle, die beide Schreibweisen auf dieselbe Handler-Identität abbildet — VOR jedem
+`in condition_map`-Check.
+
+**CRITICAL**: Ein neues Gate MUSS in `OOS_CONDITION_MAP_KEYS` (backtest_runner.py) UND als
+`condition_map`-Handler existieren, bevor es in `tournament.json` referenziert wird —
+`load_tournament_config` bricht sonst fail-loud ab (`ValueError`, ausserhalb des Datei-Lade-
+`try/except`, damit die Exception nicht verschluckt wird). Agenten DÜRFEN diese Registry-Prüfung
+NIEMALS lockern oder in den Lade-`try/except` zurückverschieben — genau das verdeckte vier Gates
+(darunter das komplette PSR-/Alpha-Gate) über mehrere Sessions hinweg still (#649-Root-Cause). Ein
+Unit-Test, der eine EIGENE Fixture-Config konstruiert, testet NIE die ausgelieferte `tournament.json`
+— für jede config-getriebene Gate-Semantik gehört zusätzlich ein Test, der die reale Datei lädt.
+
+## Absolute Return-Gates dominieren NIE die risikoadjustierten Gates (Issue #650/#657)
+
+`min_total_return`/`oos_min_total_return` sind KEINE harten `eligible_requires_all`-Klauseln mehr
+(Default `0.0`, höchstens eine weiche Breakeven-Sanity-Untergrenze). Die Profitabilitätsentscheidung
+tragen die risikoadjustierten, fenster-/annualisierungsinvarianten Gates (`oos_min_psr`,
+`oos_min_excess_return`) und — als EINZIGES verbleibendes absolutes Gate — `min_expectancy`
+(kostenrelativ via `oos_min_expectancy_k_alpha`).
+
+**CRITICAL**: Agenten DÜRFEN `min_total_return` NIEMALS wieder in `eligible_requires_all` einführen
+und DÜRFEN NIEMALS ein zweites, unabhängiges absolutes Return-Mittelwert-Gate neben `min_expectancy`
+ergänzen (Kollinearität, #657) — ein absoluter Return-Floor über ein kurzes/variables OOS-Fenster
+censoriert die Verteilungs-Oberkante und verwirft hoch-Sortino/hoch-PSR-Trials an marginalen
+Return-Deltas, unabhängig von echtem Risiko oder Alpha.
+
+## SR₀: eine Quelle für Entscheidung UND Telemetrie, stetig in N, T-bewusst (Issue #651/#652/#653)
+
+`deflated_sharpe_ratio(sr, n_periods, *, sr0, ...)` nimmt `sr0` als PARAMETER — es rekonstruiert SR₀
+NIEMALS mehr intern aus `var_sr_trials`/`n_trials`. `confirm.py` berechnet SR₀ EINMAL
+(`sr0_multiple_testing_robust`) und übergibt denselben Wert an `deflated_sharpe_ratio`
+(Entscheidung) UND `psr_z`/`deflated_sr0` (Telemetrie).
+
+**CRITICAL**: Agenten DÜRFEN diese Entkopplung NIEMALS rückgängig machen — sonst divergieren
+Promotion-Entscheidung und geloggte DSR wieder (der #651-Defekt, bis Faktor 3,5× bei Small Cohorts).
+`sr0_multiple_testing_robust` nutzt ZWEI ABSICHTLICH ENTKOPPELTE N-Parameter: `n_trials` (treibt NUR
+`E[max_N]` — kann familienweit sein, `deflation_n_effective = max(per-Study-N, deflation_n_family)`,
+#652) und `variance_n_trials` (treibt NUR das #653-Shrinkage-Gewicht — MUSS IMMER die tatsächliche
+per-Study-Kohortengrösse bleiben, nie die grössere familienweite Zahl, sonst könnte SR₀ mit
+wachsendem N_family sogar SINKEN). Der Varianz-Floor ist ein STETIGES Shrinkage-Gewicht Richtung
+der T-bewussten Lo-2002-Referenz (`lo2002_sharpe_variance`), kein harter Cutover an einer Konstante.
+
+## `is_rejection_detail` ist die Promotion-Ursache, NIE der modale IS-Study-Grund (Issue #654)
+
+`confirm_per_symbol_promotion` setzt `is_rejection_detail_override` für JEDEN Ausgang explizit
+(`REJECT_HOLDOUT_GATE`, `REJECT_HOLDOUT_DSR_DROP`, `REJECT_HOLDOUT_BOOTSTRAP_CI`,
+`REJECT_SELECTION_PBO`, `REJECT_BOUNDARY_SOLUTION`, `REJECT_NO_EDGE_OVER_GLOBAL`, oder `None` bei
+READY_FOR_PR). `export_symbol_proposal` schreibt dies als `is_rejection_detail` — **OHNE** OR-Fallback
+auf den modalen IS-Study-Trial-Grund.
+
+**CRITICAL**: Agenten DÜRFEN den OR-Fallback (`promotion.get("is_rejection_detail_override") or
+_dominant_is_rejection_detail(study)`) NIEMALS wiederherstellen — das war der #654-Defekt (eine
+bestandene Holdout-Promotion, die nur an der DSR scheiterte, zeigte fälschlich den modalen
+IS-Study-Grund als Ablehnungsursache). Der modale IS-Grund bleibt als SEPARATES Feld
+(`dominant_is_rejection_detail`) für die Study-Diagnose erhalten.
+
+## Kein numerischer Reward-Sentinel in Cross-Entity-Vergleichen (Issue #655)
+
+`compute_reward(..., holdout=True)` liefert `None` (nicht die numerische Unevaluable-Shaping-Formel),
+sobald `not m.oos_evaluated` — die IS-Eligibility-Shaping-Logik ist im Holdout-Kontext (ein
+abgeschlossener Einzellauf, kein Optimierungsschritt) kategorial fehl am Platz.
+
+**CRITICAL**: Agenten DÜRFEN `R_symbol`/`R_global` NIEMALS als garantiert-numerisch annehmen — jeder
+Vergleich/jede Aggregation MUSS `None` explizit behandeln (nicht als Zahl). Ein degeneriertes/nicht-
+evaluiertes Ergebnis wird IMMER mit `None`/NaN markiert, NIEMALS mit einer Magic-Zahl (der alte
+`-20.0`-Sentinel war von einem echten, sehr schlechten Reward ununterscheidbar und kontaminierte
+jede Cross-Strategy-Aggregation).

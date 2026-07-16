@@ -348,6 +348,40 @@ def apply_strategy_defaults(strategies: list[dict], defaults: dict, is_manifest:
 # Tournament-Config-Loader und Scoring (Task 5)
 # ---------------------------------------------------------------------------
 
+def _canonical_gate_key(key: str) -> str:
+    """Issue #649 — kanonische Registry-Form eines Gate-Namens: entfernt ein optionales
+    ``oos_``-Präfix. ``tournament.json``s ``eligible_requires_all``/``_any`` listet manche Klauseln
+    MIT (``oos_min_psr``) und manche OHNE (``min_trades``) Präfix; die ``condition_map``-Handler in
+    ``_evaluate_oos_eligibility`` sind durchgehend UN-präfigiert. Diese Funktion ist die EINE Stelle,
+    die beide Schreibweisen auf dieselbe Handler-Identität abbildet — VOR jedem
+    ``in condition_map``-Check, sowohl beim Gate-Loop als auch bei der Startup-Validierung
+    (``load_tournament_config``). Vor #649 wurde nirgends normalisiert, wodurch vier präfigierte
+    Klauseln (``oos_min_profitable_folds_frac``, ``oos_min_evaluable_folds``, ``oos_min_psr``,
+    ``oos_min_excess_return``) niemals auf ihren Handler resolvten und STILL übersprungen wurden."""
+    return key[4:] if key.startswith("oos_") else key
+
+
+# Issue #649 — kanonische Registry der in ``_evaluate_oos_eligibility`` TATSÄCHLICH implementierten
+# ``condition_map``-Handler (nach ``_canonical_gate_key``-Normalisierung). ``load_tournament_config``
+# validiert JEDEN ``eligible_requires_all``/``_any``-Eintrag gegen diese Menge und bricht fail-loud
+# ab, wenn ein Eintrag auf keinen Handler resolved — genau der Drift, der #649 verursachte, blieb
+# vorher UNENTDECKT, weil die bisherige Startup-Prüfung nur config-INTERNE Konsistenz (Metrik
+# definiert ↔ referenziert) prüfte, nie gegen die tatsächliche Handler-Menge.
+OOS_CONDITION_MAP_KEYS = frozenset({
+    "min_trades",
+    "min_total_return",
+    "min_expectancy",
+    "max_drawdown",
+    "min_win_rate",
+    "min_sortino",
+    "min_psr",
+    "min_profit_factor",
+    "min_profitable_folds_frac",
+    "min_excess_return",
+    "min_evaluable_folds",
+})
+
+
 def load_tournament_config(project_root: str | None = None) -> dict:
     """Lädt tournament.json aus automation/config/.
 
@@ -361,6 +395,9 @@ def load_tournament_config(project_root: str | None = None) -> dict:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             cfg = {k: v for k, v in data.items() if not k.startswith("_")}
+        except (OSError, ValueError) as e:
+            print(f"  ⚠️  tournament.json Ladefehler: {e} — nutze Legacy-Defaults.")
+        else:
             # Startup-Validierung
             req_all = set(cfg.get("eligible_requires_all", []))
             req_any = set(cfg.get("eligible_requires_any", []))
@@ -374,9 +411,27 @@ def load_tournament_config(project_root: str | None = None) -> dict:
             for u in used:
                 if u not in normalized_metric_keys:
                     print(f"  ⚠️  Referenziertes Kriterium '{u}' in eligible_requires_all/any ist nicht definiert!")
+
+            # Issue #649 — Fail-Loud-Validierung GEGEN DIE REGISTRY (nicht nur config-intern). Die
+            # obige Prüfung deckt nur auf, ob ein Metrik-Threshold definiert-aber-unreferenziert (oder
+            # umgekehrt) ist — sie prüft NICHT, ob ein referenzierter Gate-Name tatsächlich auf einen
+            # ``condition_map``-Handler in ``_evaluate_oos_eligibility``/``_is_eligible`` resolved. Ein
+            # unbekannter (nach Normalisierung nicht in ``OOS_CONDITION_MAP_KEYS`` enthaltener) Eintrag
+            # wurde vorher STILL übersprungen (kein Fehler, keine Warnung — die #649-Root-Cause: vier
+            # präfigierte Klauseln waren nie durchsetzbar). Ein bewusst falscher Key MUSS hier abbrechen
+            # — DESHALB ausserhalb des obigen ``try/except`` (dieser fängt nur Lade-/Parse-Fehler, kein
+            # ``ValueError`` aus einer bewussten Config-Validierung mehr ab).
+            unknown_gates = sorted(
+                cond_name for cond_name in used
+                if _canonical_gate_key(cond_name) not in OOS_CONDITION_MAP_KEYS
+            )
+            if unknown_gates:
+                raise ValueError(
+                    "tournament.json: eligible_requires_all/eligible_requires_any referenziert "
+                    f"Gate(s) ohne condition_map-Handler (nach oos_-Normalisierung): {unknown_gates}. "
+                    f"Bekannte Handler (kanonisch): {sorted(OOS_CONDITION_MAP_KEYS)}."
+                )
             return cfg
-        except Exception as e:
-            print(f"  ⚠️  tournament.json Ladefehler: {e} — nutze Legacy-Defaults.")
     # Legacy-Defaults (Rückwärts-Kompatibilität)
     return {
         "min_trades": 20,
@@ -605,7 +660,13 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         "min_sortino":       (sortino_valid, sortino_reason),
         "min_psr":           (psr_valid, psr_reason),
         "min_profit_factor": (pf_valid, pf_reason),
-        "min_profitable_folds": (prof_folds_valid, prof_folds_reason),
+        # Issue #649 — Schlüssel war zuvor ``min_profitable_folds`` (ohne ``_frac``), während die
+        # Config-Klausel ``oos_min_profitable_folds_frac`` heisst. Nach ``_canonical_gate_key``
+        # (entfernt nur das ``oos_``-Präfix) blieb ``min_profitable_folds_frac`` übrig — ein ZWEITER,
+        # von der reinen Präfix-Normalisierung unabhängiger Namens-Mismatch, der die Klausel selbst
+        # nach einer naiven oos_-Strip-Normalisierung noch tot gelassen hätte. Der Handler-Name
+        # MUSS exakt der kanonischen Form der Config-Klausel entsprechen.
+        "min_profitable_folds_frac": (prof_folds_valid, prof_folds_reason),
         "min_excess_return": (excess_valid, excess_reason),
         "min_evaluable_folds": (eval_folds_valid, eval_folds_reason),
     }
@@ -630,10 +691,16 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     if req_excess_return is not None and oos_metrics.get("oos_excess_return") is not None:
         oos_gate_deltas["oos_min_excess_return"] = float(oos_metrics["oos_excess_return"] - req_excess_return)
 
+    # Issue #649 — kanonische Normalisierung (``_canonical_gate_key``, entfernt ein optionales
+    # ``oos_``-Präfix) VOR jedem ``condition_map``-Lookup. ``tournament.json`` schreibt manche
+    # Klauseln mit Präfix (``oos_min_psr``), die ``condition_map``-Handler sind durchgehend
+    # un-präfigiert — ohne diese Normalisierung wurden die präfigierten Einträge STILL übersprungen
+    # (kein Fehler, keine Warnung), obwohl der zugehörige Handler existiert.
     reasons = []
     for cond_name in tournament_cfg.get("eligible_requires_all", []):
-        if cond_name in condition_map:
-            valid, reason = condition_map[cond_name]
+        canon = _canonical_gate_key(cond_name)
+        if canon in condition_map:
+            valid, reason = condition_map[canon]
             if not valid:
                 reasons.append(reason)
 
@@ -642,8 +709,9 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         any_valid = False
         any_reasons = []
         for cond_name in any_conditions:
-            if cond_name in condition_map:
-                valid, reason = condition_map[cond_name]
+            canon = _canonical_gate_key(cond_name)
+            if canon in condition_map:
+                valid, reason = condition_map[canon]
                 if valid:
                     any_valid = True
                     break

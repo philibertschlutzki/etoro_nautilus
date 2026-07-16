@@ -212,6 +212,58 @@ def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
     return unreachable
 
 
+# Issue #660 — clause -> Threshold-Key, für die LIVE-Variante von check_any_arm_reachability. Die
+# statische #633-Fixture (_ANY_ARM_CALIBRATION) ist ein CROSS-STRATEGY-Referenzwert (p99=0.197 über
+# 336 Trials mehrerer Trend-/Breakout-Strategien) — für ein SPEZIFISCHES Symbol/Tier kann die real
+# beobachtete Verteilung strukturell darunter liegen (TSLA.ETORO Hourly-Tier: max ~0.11), ohne dass
+# die statische, config-load-time Prüfung (die noch keine Trials kennt) das je erkennen könnte.
+_ANY_ARM_LIVE_THRESHOLD_KEYS = {"min_win_rate": "oos_min_win_rate"}
+
+
+def check_any_arm_reachability_live(tournament_cfg: dict | None,
+                                    observed_values: dict[str, list] | None) -> list[str]:
+    """Issue #660 — wie ``check_any_arm_reachability`` (#633), aber gegen die TATSÄCHLICH in EINER
+    KONKRETEN Study beobachtete empirische Verteilung (``observed_values``, z. B.
+    ``{"min_win_rate": [0.05, 0.08, ...]}`` aus den Trial-User-Attrs), NICHT das statische,
+    cross-strategy Kalibrier-Fixture aus #633. Root-Cause #660: ``oos_min_win_rate=0.15`` liegt
+    UNTER dem #633-Fixture-p99 (0.197) und wird von ``check_any_arm_reachability`` daher als
+    'erreichbar' eingestuft — obwohl die für EIN SPEZIFISCHES Symbol/Tier (z. B. TSLA.ETORO Hourly)
+    tatsächlich beobachtete OOS-Win-Rate nie über ~0.11 hinauskam. Der OR-Arm kollabiert für DIESEN
+    Lauf lautlos auf ``min_profit_factor``, ohne dass die #633-Prüfung (die noch keine Trials kennt)
+    dies je erkennen könnte. Aufgerufen NACH Studienabschluss (``_emit_study_summary``), wenn genug
+    Trials (>= 5) eine definierte Kennzahl beigetragen haben (sonst kein Urteil auf zu wenig Daten).
+    Rückgabe: die Namen der betroffenen Klauseln."""
+    import logging
+
+    any_clauses = (tournament_cfg or {}).get("eligible_requires_any", []) or []
+    unreachable = []
+    for clause in any_clauses:
+        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(clause)
+        if threshold_key is None:
+            continue
+        threshold = (tournament_cfg or {}).get(threshold_key)
+        if threshold is None:
+            continue
+        samples = [float(v) for v in (observed_values or {}).get(clause, []) if v is not None]
+        if len(samples) < 5:
+            continue
+        sorted_vals = sorted(samples)
+        p99_idx = max(0, min(len(sorted_vals) - 1, round(0.99 * (len(sorted_vals) - 1))))
+        p99 = sorted_vals[p99_idx]
+        if float(threshold) > p99:
+            unreachable.append(clause)
+            logging.getLogger("optimizer").warning(
+                "[#660] eligible_requires_any-Klausel '%s': Schwelle %.4f > beobachtetes p99=%.4f "
+                "DIESER Study (%d Trials) — der OR-Arm ist für DIESES Symbol/DIESE Strategie "
+                "strukturell unerreichbar und kollabiert lautlos auf die übrigen Arme, obwohl das "
+                "globale #633-Kalibrier-Fixture die Schwelle als erreichbar einstuft. "
+                "tournament.json['%s'] symbol-spezifisch nachschärfen (p99 der empirischen "
+                "Symbol-Verteilung) oder den OR-Arm bewusst auf die übrigen Arme reduzieren.",
+                clause, float(threshold), p99, len(samples), threshold_key,
+            )
+    return unreachable
+
+
 def _any_condition_distance(
     m: "TournamentMetrics", weights: dict, tournament_cfg: dict | None
 ) -> float:
@@ -530,6 +582,33 @@ def compute_reward(
         base_source = m.oos_total_return
 
     if not m.oos_evaluated or base_source is None:
+        # Issue #655 — im HOLDOUT-Kontext (``holdout=True``) ist die IS-Eligibility-Shaping-Formel
+        # unten (Trade-/IS-Aktivitäts-Näherung Richtung des Gates) KATEGORIAL fehl am Platz: sie
+        # existiert, um dem TPE-Sampler während der Study einen Gradienten Richtung Eligibility zu
+        # geben (Pitfall #75) — ein Holdout-Backtest ist aber ein EINMALIGER, abgeschlossener Lauf,
+        # kein Optimierungsschritt. Ein Symbol/Vektor, der auf dem Holdout NIE OOS-Trades erzeugt
+        # (z. B. der globale Vektor auf einem Symbol, für das er strukturell ungeeignet ist —
+        # AdxAtrMomentum/TrendPullback, #656), lieferte bislang trotzdem einen NUMERISCHEN Wert nahe
+        # ``penalty_unevaluable_oos`` (z. B. exakt −20.0 bei Nullaktivität) — ununterscheidbar von
+        # einem echten, sehr schlechten Reward und damit ein GIFTIGER Sentinel in jeder Cross-
+        # Strategy-``R_global``-Aggregation/Baseline-Vergleich (#655-Root-Cause). Der Holdout-Reward
+        # ist hier schlicht UNDEFINIERT (keine OOS-Performance zum Bewerten) ⇒ ``None`` statt einer
+        # Zahl. Aufrufer (``confirm.py``) MÜSSEN ``None`` explizit behandeln, nicht als Zahl.
+        if holdout:
+            if return_terms:
+                return None, {
+                    "branch": "unevaluated_holdout",
+                    "base": 0.0,
+                    "divergence": 0.0,
+                    "divergence_at_cap": False,
+                    "dd_penalty": 0.0,
+                    "param_pen": 0.0,
+                    "turnover": 0.0,
+                    "fold_dispersion": 0.0,
+                    "tie_breaker": 0.0,
+                    "floor_clamped": False,
+                }
+            return None
         # Avoid IO if possible:
         oos_min_trades = None
         if weights is not None and "oos_min_trades" in weights:

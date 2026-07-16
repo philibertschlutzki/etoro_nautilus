@@ -142,8 +142,9 @@ def test_dsr_value_computed_despite_earlier_gate_failure(tmp_path, monkeypatch):
 
 
 def test_small_cohort_below_min_triggers_var_floor_fallback(tmp_path, monkeypatch):
-    """Akzeptanzkriterium (#636): unter ``deflation_n < deflation_min_cohort`` (Default 10) greift
-    der dokumentierte Varianz-Floor statt der 2-Punkte-Stichproben-Varianz."""
+    """Akzeptanzkriterium (#636/#653): unter ``deflation_n < deflation_min_cohort`` (Default 10)
+    dominiert der theoretisch begründete (Lo 2002), T-bewusste Varianz-Floor die 2-Punkte-
+    Stichproben-Varianz (STETIGER Shrinkage, #653 — kein harter Cutover mehr wie vor #653)."""
     global_params = {"sma_period": 20}
     # Zwei eligible Trials mit fast identischem SR ⇒ winzige empirische Varianz, weit unter dem Floor.
     study = _build_study(tmp_path, monkeypatch, n_trials=2, cohort_periods=[0.030, 0.032])
@@ -157,7 +158,16 @@ def test_small_cohort_below_min_triggers_var_floor_fallback(tmp_path, monkeypatc
 
     assert res["metrics_symbol"]["deflation_n_eligible"] == 2
     assert res["metrics_symbol"]["deflation_used_var_floor"] is True
-    expected_sr0 = sr0_multiple_testing(0.0018, 2)
+    # Issue #653 — die Kohorte trägt n_periods=200 (aus den Trial-Fixtures) ⇒ theoretical_var =
+    # lo2002_sharpe_variance(0.0, 200) = 1/200; die winzige 2-Punkte-Stichprobenvarianz (≈1e-6)
+    # trägt nur das Rest-Gewicht (1 − λ(2)) bei.
+    from automation.optimizer.deflation import lo2002_sharpe_variance, _cohort_shrinkage_weight
+    import statistics as _st
+    observed_var = _st.pvariance([0.030, 0.032])
+    theoretical_var = lo2002_sharpe_variance(0.0, 200)
+    weight = _cohort_shrinkage_weight(2, 10)
+    expected_var = weight * theoretical_var + (1.0 - weight) * observed_var
+    expected_sr0 = sr0_multiple_testing(expected_var, 2)
     assert res["metrics_symbol"]["deflated_sr0"] == pytest.approx(expected_sr0)
 
 

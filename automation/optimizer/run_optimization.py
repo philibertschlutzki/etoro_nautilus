@@ -26,6 +26,7 @@ from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
+    check_any_arm_reachability_live,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.log_manager import emit_execution_event
@@ -180,7 +181,7 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     K = int(weights.get("floor_plateau_k", 0)) if weights else 0
     if len(completed) < max(1, int(n_startup_trials)) + K:
         return
-    if study.user_attrs.get("floor_plateau_warned"):
+    if study.user_attrs.get("floor_plateau_warned") or study.user_attrs.get("zero_eligible_plateau_warned"):
         return
 
     # Issue #413 — evaluable-basierter Primaer-Guard. Tragen die Trials das oos_evaluated-Attr, ist
@@ -211,6 +212,51 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "k_limit": K
                 }))
                 _stop_study_safely(study, logger)
+            return
+
+        # Issue #656 — ZERO-ELIGIBLE-PLATEAU: alle abgeschlossenen Trials WURDEN evaluiert
+        # (oos_evaluated=True, echte OOS-Backtests liefen durch), aber KEINER war je oos_eligible —
+        # ein STRUKTURELL ANDERES Kollaps-Muster als Pitfall #75 (der #413-Guard oben, kein Trial je
+        # evaluable). Beobachtet bei AdxAtrMomentum/TrendPullback: 2×120 Trials liefen vollständig
+        # durch (echte OOS-Metriken vorhanden), aber der Suchraum erzeugte NIE einen Lauf mit
+        # >= min_trades OOS-Round-Trips + positivem Return — das Gate verwarf strukturell jeden
+        # Trial, statt dass die Daten fehlten. Ohne diesen Guard laufen 100+ Trials nutzlos durch,
+        # bevor ein Mensch das im Proposal (0 eligible) bemerkt.
+        if all(f is True for f in evaluated_flags):
+            eligible_flags = [getattr(t, "user_attrs", {}).get("oos_eligible") for t in completed]
+            if all(f is False for f in eligible_flags):
+                study.set_user_attr("zero_eligible_plateau_warned", True)
+                oos_trade_counts = [getattr(t, "user_attrs", {}).get("oos_total_trades") for t in completed]
+                oos_trade_counts = [int(c) for c in oos_trade_counts if c is not None]
+                hit_cap_flags = [getattr(t, "user_attrs", {}).get("hit_trade_cap") for t in completed]
+                n_hit_cap = sum(1 for f in hit_cap_flags if f is True)
+                median_oos_trades = statistics.median(oos_trade_counts) if oos_trade_counts else None
+                logger.warning(
+                    "🚨 Zero-Eligible-Plateau erkannt: %d/%d Trials wurden evaluiert (echte OOS-"
+                    "Backtests), aber KEINER war oos_eligible — der Suchraum erzeugt strukturell "
+                    "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d Trials trafen die "
+                    "Haltedauer-/Trade-Cap-Grenze). Suchraum-Bounds pruefen (spaces.py) ODER die "
+                    "Strategie fuer dieses Symbol/Tier deaktivieren, statt die restlichen Trials "
+                    "nutzlos durchlaufen zu lassen.",
+                    len(completed), len(completed), median_oos_trades, n_hit_cap, len(completed),
+                )
+                import json as _json
+                emit_execution_event(logger, "ZERO_ELIGIBLE_PLATEAU", {
+                    "n_trials": len(completed),
+                    "median_oos_total_trades": median_oos_trades,
+                    "hit_trade_cap_count": n_hit_cap,
+                })
+
+                should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
+                if should_stop:
+                    logger.info("[JSON_EVENT] " + _json.dumps({
+                        "event_type": "STUDY_EARLY_STOP",
+                        "reason": "STRUCTURAL_ZERO_ELIGIBLE",
+                        "current_trial": len(completed),
+                        "startup_limit": max(1, int(n_startup_trials)),
+                        "k_limit": K
+                    }))
+                    _stop_study_safely(study, logger)
         return
 
     # Legacy-Fallback (kein oos_evaluated-Attr, z. B. alte Studies / globaler make_objective-Pfad):
@@ -872,9 +918,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     if deflated_selection and deflation_n >= 2:
         from automation.optimizer.deflation import sr0_multiple_testing_robust
         deflation_var = statistics.pvariance([float(s) for s in cohort_sr])
-        # Issue #636 — dieselbe Small-Cohort-Robustifizierung wie confirm.py (Single Source of
-        # Truth): unterhalb deflation_min_cohort ersetzt ein dokumentierter Varianz-Floor die
-        # statistisch bedeutungslose 2-3-Punkte-Stichproben-Varianz.
+        # Issue #636/#653 — dieselbe Small-Cohort-Robustifizierung wie confirm.py (Single Source of
+        # Truth, Pitfall #131): der theoretisch begründete, T-bewusste Varianz-Floor (Lo 2002) wird
+        # STETIG in N gegen die empirische Kohorten-Varianz geshrinkt — dieselbe Funktion, dieselben
+        # Parameter wie in der PROMOTIONS-Entscheidung (confirm.py), sonst würde die Study-Summary-
+        # Telemetrie erneut vom promotion-entscheidenden SR₀ abweichen (exakt der #651-Fehler).
         opt_path_dsr = config_dir() / "tournament.json"
         min_cohort, var_floor = 10, 0.0018
         try:
@@ -884,8 +932,14 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 var_floor = float(_tcfg.get("deflation_var_floor", var_floor))
         except Exception:
             pass
+        cohort_n_periods = [getattr(t, "user_attrs", {}).get("oos_n_periods") for t in trials
+                            if getattr(t, "user_attrs", {}).get("oos_eligible") is True
+                            and getattr(t, "user_attrs", {}).get("oos_sortino_period") is not None
+                            and getattr(t, "user_attrs", {}).get("oos_n_periods")]
+        deflation_t_periods = int(statistics.median(cohort_n_periods)) if cohort_n_periods else None
         deflation_sr0, deflation_used_var_floor = sr0_multiple_testing_robust(
-            deflation_var, deflation_n, min_cohort=min_cohort, var_floor=var_floor)
+            deflation_var, deflation_n, min_cohort=min_cohort, var_floor=var_floor,
+            n_periods=deflation_t_periods)
 
     # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
     boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
@@ -895,6 +949,24 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             "(Randlösung). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
             symbol, boundary_hit_fraction,
         )
+
+    # Issue #660 — LIVE-Reachability-Check der eligible_requires_any-Klauseln GEGEN DIE TATSÄCHLICH
+    # in DIESER Study beobachtete empirische Verteilung (nicht nur das statische #633-Cross-Strategy-
+    # Fixture, das bereits beim Config-Load lief, BEVOR irgendein Trial existierte). Ein Symbol/eine
+    # Strategie kann eine Schwelle strukturell nie erreichen, obwohl das globale Fixture sie als
+    # 'erreichbar' einstuft (#660-Root-Cause: oos_min_win_rate=0.15 < Fixture-p99=0.197, aber die
+    # für TSLA.ETORO Hourly tatsächlich beobachtete OOS-Win-Rate blieb unter ~0.11).
+    live_win_rates = [getattr(t, "user_attrs", {}).get("oos_win_rate") for t in trials
+                      if getattr(t, "user_attrs", {}).get("oos_win_rate") is not None]
+    any_arm_live_unreachable = []
+    try:
+        opt_path_arm = config_dir() / "tournament.json"
+        if opt_path_arm.exists():
+            _tcfg_arm = json.loads(opt_path_arm.read_text("utf-8")) or {}
+            any_arm_live_unreachable = check_any_arm_reachability_live(
+                _tcfg_arm, {"min_win_rate": live_win_rates})
+    except Exception:
+        any_arm_live_unreachable = []
 
     # Issue #621 — Reward-Term-Dekomposition
     eligible_terms = []
@@ -983,6 +1055,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "coherence_violations": coherence_violations,
         # Issue #597 — Randlösungs-Signatur.
         "boundary_hit_fraction": boundary_hit_fraction,
+        # Issue #660 — live (studien-eigene) OR-Arm-Reachability, ergänzend zum #633-Config-Load-
+        # Fixture-Check: Klauseln, deren konfigurierte Schwelle über dem beobachteten p99 DIESER
+        # Study liegt.
+        "any_arm_live_unreachable": any_arm_live_unreachable,
         "reward_terms_aggregates": term_aggregates,
     })
 
@@ -1093,8 +1169,25 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # in confirm; Multiple-Testing-Korrektur auf der per-Perioden-Skala, NICHT der Reward-Skala #611).
         trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
         trial.set_user_attr("oos_psr", metrics.oos_psr)
+        # Issue #653 — T (Anzahl OOS-Perioden) je Trial, damit confirm.py den theoretischen
+        # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
+        # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
+        trial.set_user_attr("oos_n_periods", metrics.oos_n_periods)
         # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
         trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
+        # Issue #656 — Trade-Count-Telemetrie je Trial (bereits im Log-Event vorhanden, hier
+        # zusätzlich als User-Attr persistiert), damit der Zero-Eligible-Plateau-Guard
+        # (floor_plateau_callback) eine Trade-Count-Diagnose bilden kann, ohne die volle Metrics
+        # erneut laden zu müssen (Suchraum-Diagnose für strukturell 0-eligible Strategien).
+        trial.set_user_attr("oos_total_trades", int(metrics.oos_total_trades))
+        trial.set_user_attr("is_total_trades", int(metrics.is_total_trades))
+        trial.set_user_attr("hit_trade_cap", bool(metrics.hit_trade_cap))
+        # Issue #660 — die per-Trial OOS-Win-Rate persistiert, damit die Study-Summary
+        # (_emit_study_summary) die tatsächlich BEOBACHTETE Symbol-/Strategie-spezifische
+        # Win-Rate-Verteilung gegen die konfigurierte oos_min_win_rate-Schwelle prüfen kann (LIVE,
+        # nicht nur das statische Cross-Strategy-Kalibrier-Fixture aus #633).
+        if metrics.oos_win_rate is not None:
+            trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
         # Issue #619 — per-Fold-OOS-Sortinos je Trial (für die Sweep-Level-PBO/CSCV in confirm).
         trial.set_user_attr("oos_fold_sortinos", list(metrics.oos_fold_sortinos))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
