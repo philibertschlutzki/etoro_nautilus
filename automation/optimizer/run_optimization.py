@@ -27,6 +27,7 @@ from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
     check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
+    gate_collinearity_redundancy_alarm,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.log_manager import emit_execution_event
@@ -133,7 +134,8 @@ def _stop_study_safely(study, logger: logging.Logger) -> None:
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
-                           stop_on_plateau: bool = False) -> None:
+                           stop_on_plateau: bool = False,
+                           strategy: str | None = None, symbol: str | None = None) -> None:
     """Issue #409/#413/#456 (P1/P2) — Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
 
     Optuna-Callback (Signatur ``(study, trial)``; ``weights``/``n_startup_trials``/``logger``/
@@ -224,6 +226,27 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "n_trials": len(completed), **diagnosis,
             })
 
+            # Issue #681 — schliesst die Diagnose zu einer Aktion: die Empfehlung (denylist /
+            # search_space_override / none) wird in den AUTOMATISCH gepflegten Cache geschrieben
+            # (NICHT die menschlich-kuratierte symbol_strategy_denylist.json selbst) — der
+            # naechste Lauf überspringt ein 'denylist'-empfohlenes Paar automatisch
+            # (enumerate_tunable_pairs), waehrend die permanente Governance-Entscheidung weiterhin
+            # per PR getroffen wird. Nur wirksam, wenn strategy/symbol übergeben wurden (Production-
+            # Bindung in optimize_symbol; Legacy-/Test-Aufrufer ohne diese Kwargs bleiben No-Op).
+            if strategy is not None and symbol is not None:
+                try:
+                    from automation.optimizer.sweep_diagnostics import (
+                        recommend_diagnosis_action, record_diagnosed_pair,
+                        has_existing_search_space_override,
+                    )
+                    rec = recommend_diagnosis_action(
+                        strategy, symbol, diagnosis,
+                        has_existing_override=has_existing_search_space_override(strategy, symbol),
+                    )
+                    record_diagnosed_pair(rec)
+                except Exception:
+                    logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
+
             # Issue #456 / #488 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
             should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
             if should_stop:
@@ -276,6 +299,24 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     # hier NICHTS beheben — trennt diesen Fall explizit von STRUCTURAL_ALL_UNEVALUABLE).
                     "binding_cause": "signal_quality",
                 })
+
+                # Issue #681 — dieselbe Closed-Loop-Aktion wie im STRUCTURAL_ALL_UNEVALUABLE-Zweig:
+                # 'signal_quality' resolved IMMER auf 'denylist' (Bounds-Kalibrierung hilft hier per
+                # binding_cause-Definition nicht) — in den Auto-Cache geschrieben, NICHT in die
+                # menschlich-kuratierte Denylist-Config.
+                if strategy is not None and symbol is not None:
+                    try:
+                        from automation.optimizer.sweep_diagnostics import (
+                            recommend_diagnosis_action, record_diagnosed_pair,
+                        )
+                        rec = recommend_diagnosis_action(
+                            strategy, symbol, {"binding_cause": "signal_quality",
+                                               "median_oos_trades": median_oos_trades,
+                                               "median_is_trades": None},
+                        )
+                        record_diagnosed_pair(rec)
+                    except Exception:
+                        logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
 
                 should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
                 if should_stop:
@@ -959,6 +1000,8 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Parameter wie in der PROMOTIONS-Entscheidung (confirm.py), sonst würde die Study-Summary-
         # Telemetrie erneut vom promotion-entscheidenden SR₀ abweichen (exakt der #651-Fehler).
         opt_path_dsr = config_dir() / "tournament.json"
+        # Issue #685 — var_floor ist DEPRECATED: nur ein Legacy-Fallback, wirksam ausschliesslich
+        # wenn n_periods (T, siehe unten) fehlt. Bei vorhandenem T ist die Referenz immer Lo-2002.
         min_cohort, var_floor = 10, 0.0018
         try:
             if opt_path_dsr.exists():
@@ -1020,6 +1063,13 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         gate_collinearity = assert_gate_collinearity_guard(gate_deltas_cohort)
     except Exception:
         gate_collinearity = {"n_samples": 0, "correlations": {}}
+    # Issue #679 — dieselbe Kohorte, aber als STRUKTURIERTER Redundanz-ALARM statt nur eines
+    # WARNING-Logs: welches Gate-Paar kollinear ist UND welches (niedriger priorisierte, siehe
+    # reward._GATE_CONSOLIDATION_PRIORITY) Gate der Konsolidierungs-Kandidat waere.
+    try:
+        gate_collinearity_alarm = gate_collinearity_redundancy_alarm(gate_deltas_cohort)
+    except Exception:
+        gate_collinearity_alarm = {"n_samples": 0, "alarms": [], "redundant_candidates": {}}
 
     # Issue #621 — Reward-Term-Dekomposition
     eligible_terms = []
@@ -1128,6 +1178,12 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "gate_collinearity": {
             f"{k1}|{k2}": rho for (k1, k2), rho in gate_collinearity.get("correlations", {}).items()
         },
+        # Issue #679 — strukturierter Redundanz-Alarm (nicht nur geloggt): pro kollinearem Paar
+        # welches Gate behalten werden soll (PSR-priorisiert) und welches der Konsolidierungs-
+        # Kandidat ist. ``redundant_candidates`` fasst je Kandidat-Gate die stärkste beobachtete
+        # Kollinearität zusammen — leer, solange kein Paar die Schwelle überschreitet.
+        "gate_collinearity_alarm": gate_collinearity_alarm.get("alarms", []),
+        "gate_collinearity_redundant_candidates": gate_collinearity_alarm.get("redundant_candidates", {}),
         "reward_terms_aggregates": term_aggregates,
     })
 
@@ -1461,7 +1517,8 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     # Issue #456 — Produktion bindet stop_on_plateau=True: die als aussichtslos erkannte
     # Per-Symbol-Study früh beenden (spart ~84 nutzlose Trials, ~30 min pro Floor-Symbol).
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
-                          n_startup_trials=n_startup_trials, stop_on_plateau=True)
+                          n_startup_trials=n_startup_trials, stop_on_plateau=True,
+                          strategy=strategy, symbol=symbol)
     study.optimize(objective, n_trials=n_trials, n_jobs=1,
                    catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
     # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.

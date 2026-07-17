@@ -157,10 +157,45 @@ _PBO_DEFAULT_N_GROUPS = 12
 _PBO_MIN_GROUPS = 8
 
 
+_PBO_DEFAULT_CLUSTER_THRESHOLD = 0.99
+
+
+def _group_split_metric(arr, boundaries) -> list:
+    """Issue #683 — annualisierungsfreier PER-GRUPPEN-Sortino (Mittelwert / Downside-Deviation der
+    Gruppen-Subserie) als CSCV-Split-Metrik, statt des rohen Gruppen-Mittelwerts (Pre-#683).
+
+    Root-Cause (#683): zwischen Trades ist eine Config in Cash (Bar-Return ≈ 0) — die per-Bar-
+    Return-Serie ist von Nullen dominiert. Der GRUPPEN-MITTELWERT dieser meist-flachen Serie macht
+    den CSCV-Vergleich zu einem Timing-Lotto (welche Config war zufällig während der grössten
+    Kursbewegung positioniert), nicht zu einem Parameter-Sensitivitäts-Test. Der Gruppen-Sortino
+    normiert den Mittelwert auf die tatsächlich realisierte Abwärts-Streuung DIESER Gruppe — zwei
+    Configs mit identischem Timing-Zufallstreffer, aber unterschiedlicher Streuung, werden dadurch
+    unterscheidbar; eine Gruppe OHNE jeden Verlust-Bar behält den rohen Mittelwert (kein erfundener,
+    unendlicher Sortino).
+
+    Rein, deterministisch. Rückgabe: Liste der Split-Metrik-Werte je Gruppe (NaN für leere
+    Gruppen — vom Aufrufer über den vorhandenen NaN-Ausschluss behandelt)."""
+    import numpy as _np
+    out = []
+    for start, end in boundaries:
+        if end <= start:
+            out.append(float("nan"))
+            continue
+        seg = arr[start:end]
+        mean_r = float(seg.mean())
+        downside = seg[seg < 0.0]
+        if downside.size == 0:
+            out.append(mean_r)
+            continue
+        dd = float(_np.sqrt((downside ** 2).mean()))
+        out.append(mean_r / dd if dd > 0.0 else mean_r)
+    return out
+
+
 def _study_pbo(study, *, tournament_cfg: dict | None = None,
                min_configs: int | None = None, n_groups: int | None = None) -> tuple[float | None, dict]:
-    """Issue #663/#619 — Probability of Backtest Overfitting (Bailey/López de Prado, CSCV) über die
-    Study, auf einer EIGENEN, feineren CSCV-Partition der GEPOOLTEN OOS-Per-Perioden-Return-Serie
+    """Issue #663/#619/#683 — Probability of Backtest Overfitting (Bailey/López de Prado, CSCV) über
+    die Study, auf einer EIGENEN, feineren CSCV-Partition der GEPOOLTEN OOS-Per-Perioden-Return-Serie
     jedes eligiblen Trials (S ≥ 8–16 kontiguierliche Gruppen) — NICHT mehr auf den 4
     Walk-Forward-Folds (Pre-#663-Verhalten).
 
@@ -168,21 +203,29 @@ def _study_pbo(study, *, tournament_cfg: dict | None = None,
     (Bailey/López de Prado empfehlen S≳10–16); bei regime-heterogenen Folds (z. B. Fold 1–3
     strukturell defunkt, Fold 4 tradeable) misst die CSCV faktisch *Regime-Transfer* zwischen
     Folds, nicht Overfit — PBO→1.0 selbst bei Configs mit identischem Rang-Profil, nur einem
-    Level-Offset (Artefakt, keine echte Selektions-Überanpassung). Zusätzlich war die alte
-    Split-Metrik (``oos_fold_sortinos``, annualisiert) bei T≈137 Bars/Fold Rauschen UND über Folds
-    NICHT kommensurabel (fold-spezifischer Annualisierungsfaktor, #665).
+    Level-Offset (Artefakt, keine echte Selektions-Überanpassung).
 
-    Fix: die CSCV-Partition läuft auf der GEPOOLTEN, per-Perioden OOS-Return-Serie (``oos_period_returns``,
-    je eligiblem Trial gestempelt, #663/#665) in ``n_groups`` KONTIGUIERLICHEN Gruppen — unabhängig von
-    der (groben) Walk-Forward-Fold-Geometrie. Split-Metrik ist der MITTLERE Perioden-Return je Gruppe
-    (``pbo_metric='period_return'`` — annualisierungs-invariant, über Gruppen kommensurabel, ohne eine
-    zusätzliche Downside-Deviation-Schätzung auf einer noch kleineren Teilstichprobe).
+    Root-Cause (#683): die per-Bar-MtM-Return-Serie (``oos_period_returns``) ist zwischen Trades
+    mit Nullen durchsetzt (Config in Cash) — der GRUPPEN-MITTELWERT dieser Serie misst faktisch
+    Regime-TIMING (welche Config zufällig während der grössten Bewegung positioniert war), nicht
+    Config-Robustheit; zusätzlich erzeugen Near-Duplicate-Configs (dichtes Suchraum-Grid)
+    near-identische Return-Vektoren, wodurch die EFFEKTIVE Anzahl unabhängiger Strategien ≪ der
+    nominellen Trial-Zahl liegt und die CSCV-Rangstatistik verzerrt.
+
+    Fix (#683): (1) Split-Metrik ist der PER-GRUPPEN-SORTINO (``_group_split_metric`` — annualisierungs-
+    frei, konsistent mit ``oos_fold_sortino_periods``, #665) statt des rohen Gruppen-Mittelwerts
+    (``pbo_metric='group_sortino'``, vorher ``'period_return'``). (2) Near-Duplicate-Configs werden
+    VOR der CSCV-Partitionierung auf effektiv-unabhängige Vertreter reduziert
+    (``cpcv.cluster_effective_configs`` — Pearson-Korrelation der VOLLEN per-Perioden-Return-Serie
+    ``> pbo_cluster_threshold``, Default 0.99).
 
     Rückgabe ``(pbo, telemetry)``. ``pbo`` ist ``None`` (kein PBO-Veto — das Punkt-/DSR-Gate bleibt
     maßgeblich), wenn zu wenige eligible Configs (``< min_configs``, Default ``pbo_min_configs``=10)
     ODER zu wenige Gruppen (``< 8``) vorliegen — statt eines rausch-getriebenen Hard-Stops.
-    ``telemetry`` trägt ``pbo_n_groups``/``pbo_n_configs``/``pbo_metric`` für den Winner-Eintrag,
-    IMMER gefüllt (auch wenn ``pbo is None``, zur Diagnose WARUM kein Urteil gefällt wurde)."""
+    ``telemetry`` trägt ``pbo_n_groups``/``pbo_n_configs``/``pbo_n_configs_raw``/``pbo_metric`` für
+    den Winner-Eintrag, IMMER gefüllt (auch wenn ``pbo is None``, zur Diagnose WARUM kein Urteil
+    gefällt wurde). ``pbo_n_configs`` ist die EFFEKTIVE (nach Clustering) Config-Zahl;
+    ``pbo_n_configs_raw`` die rohe, vor dem Clustering gezählte."""
     import numpy as _np
     import optuna
 
@@ -191,6 +234,7 @@ def _study_pbo(study, *, tournament_cfg: dict | None = None,
         min_configs = int(tournament_cfg.get("pbo_min_configs", _PBO_DEFAULT_MIN_CONFIGS))
     if n_groups is None:
         n_groups = int(tournament_cfg.get("pbo_n_groups", _PBO_DEFAULT_N_GROUPS))
+    cluster_threshold = float(tournament_cfg.get("pbo_cluster_threshold", _PBO_DEFAULT_CLUSTER_THRESHOLD))
 
     rows = []
     for t in study.trials:
@@ -200,28 +244,42 @@ def _study_pbo(study, *, tournament_cfg: dict | None = None,
         if rets:
             rows.append([float(x) for x in rets])
 
-    telemetry = {"pbo_n_groups": 0, "pbo_n_configs": len(rows), "pbo_metric": "period_return"}
+    telemetry = {
+        "pbo_n_groups": 0, "pbo_n_configs": len(rows), "pbo_n_configs_raw": len(rows),
+        "pbo_metric": "group_sortino",
+    }
     if len(rows) < min_configs:
         return None, telemetry
 
     n_obs = min(len(r) for r in rows)
+
+    from automation.optimizer.cpcv import (
+        cpcv_group_boundaries, cpcv_paths, cluster_effective_configs,
+        probability_of_backtest_overfitting)
+
+    # Issue #683 — Near-Duplicate-Reduktion VOR der Gruppenbildung, auf der VOLLEN per-Perioden-
+    # Return-Serie (höhere Auflösung als die grobe Gruppen-Matrix). ``pbo_n_configs_raw`` bleibt die
+    # rohe (pre-Clustering) Zahl für die Diagnose, wie stark reduziert wurde.
+    truncated_rows = [r[:n_obs] for r in rows]
+    keep_idx = cluster_effective_configs(truncated_rows, threshold=cluster_threshold)
+    rows = [rows[i] for i in keep_idx]
+    telemetry["pbo_n_configs_raw"] = len(truncated_rows)
+    telemetry["pbo_n_configs"] = len(rows)
+    if len(rows) < 2:
+        return None, telemetry
+
     # Kann nicht mehr Gruppen bilden als gepoolte Perioden-Beobachtungen vorliegen.
     n_groups_eff = min(int(n_groups), n_obs)
     if n_groups_eff < _PBO_MIN_GROUPS:
         telemetry["pbo_n_groups"] = n_groups_eff
         return None, telemetry
 
-    from automation.optimizer.cpcv import (
-        cpcv_group_boundaries, cpcv_paths, probability_of_backtest_overfitting)
     boundaries = cpcv_group_boundaries(n_obs, n_groups_eff)
 
     group_returns = []
     for r in rows:
         arr = _np.asarray(r[:n_obs], dtype=float)
-        group_returns.append([
-            float(arr[start:end].mean()) if end > start else float("nan")
-            for start, end in boundaries
-        ])
+        group_returns.append(_group_split_metric(arr, boundaries))
     mat = _np.array(group_returns, dtype=float)   # (n_configs, n_groups)
 
     # Issue #663 — degenerierte (NaN, z. B. eine leere Gruppe) Config-Zeilen EXPLIZIT ausschliessen,
@@ -231,7 +289,7 @@ def _study_pbo(study, *, tournament_cfg: dict | None = None,
     mat = mat[valid_mask]
     telemetry["pbo_n_groups"] = n_groups_eff
     telemetry["pbo_n_configs"] = int(mat.shape[0])
-    if mat.shape[0] < min_configs:
+    if mat.shape[0] < 2:
         return None, telemetry
 
     k_test = max(1, n_groups_eff // 2)
@@ -543,6 +601,50 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 )
 
     if not eligible_trials:
+        # Issue #682 — bevor endgültig REJECTED wird: ein global-viabler Default ohne
+        # symbol-eligiblen Trial darf nicht lautlos als HOLDOUT_NO_ELIGIBLE_TRIALS enden. m_global/
+        # R_global (oben bereits berechnet — der GLOBALE Parametervektor auf GENAU DIESEM
+        # Symbol-Holdout) sind eine legitime, wenn auch UNGETUNTE Deployment-Route: besteht der
+        # globale Default das Symbol-Holdout-Gate SELBST und ist sein Reward positiv, gibt es
+        # nichts Symbol-Spezifisches zu vergleichen (keine eligiblen Trials ⇒ auch kein
+        # Micro-Tuning-Anspruch) — aber eine reale, testbare Kante auf diesem Symbol. Root-Cause
+        # (#565/#682): der Per-Symbol-Pfad verlangte bislang einen symbol-eligiblen Trial als
+        # ZWINGENDE Voraussetzung, auch wenn der globale Vektor selbst längst eligible war.
+        global_default_promotable = bool(
+            _holdout_gate_passed(
+                m_global, risk_dd_cap,
+                sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
+            )
+            and R_global is not None and R_global > 0.0
+        )
+        if global_default_promotable:
+            emit_execution_event(logging.getLogger("optimizer"), "PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL", {
+                "symbol": symbol,
+                "strategy": strategy,
+                "R_global": R_global,
+                "n_trials": len(getattr(study, "trials", []) or []),
+            })
+            logging.getLogger("optimizer").info(
+                f"[#682] {symbol}/{strategy}: kein symbol-eligibler Trial, aber der GLOBALE "
+                f"Default besteht das Symbol-Holdout-Gate selbst (R_global={R_global:.4f} > 0) ⇒ "
+                f"PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL (R_symbol := R_global, kein "
+                f"Micro-Tuning-Anspruch — EXPLIZITE Entscheidung statt stillem HOLDOUT_NO_ELIGIBLE)."
+            )
+            return {
+                "promote": True,
+                "status": "READY_FOR_PR",
+                "is_rejection_detail_override": None,
+                "promotion_route": "global_default_on_symbol",
+                "symbol_params": dict(global_params),
+                "R_symbol": R_global,
+                "R_global": R_global,
+                "promotion_margin": promotion_margin,
+                "holdout_passed": True,
+                "trial_dir": None,
+                "metrics_symbol": _metrics_dict(m_global),
+                "metrics_global": _metrics_dict(m_global),
+            }
+
         emit_execution_event(logging.getLogger("optimizer"), "HOLDOUT_NO_ELIGIBLE_TRIALS", {
             "symbol": symbol,
             "strategy": strategy,
@@ -582,6 +684,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Issue #636 — Mindest-Kohorte für eine belastbare V[ŜR_trials]-Schätzung; darunter greift der
     # dokumentierte konservative Varianz-Floor (siehe deflation.sr0_multiple_testing_robust).
     deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
+    # Issue #685 — DEPRECATED: nur noch ein Legacy-Fallback (siehe sr0_multiple_testing_robust-
+    # Docstring), wirksam AUSSCHLIESSLICH wenn n_periods (T) unten fehlt. Bei vorhandenem T ist die
+    # Referenz immer Lo-2002 (T-bewusst) — dieser Wert wird dann NIE konsultiert.
     deflation_var_floor = float(tournament_cfg.get("deflation_var_floor", 0.0018))
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     deflation_n = 0
@@ -892,6 +997,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["pbo"] = study_pbo
     best_result["metrics_symbol"]["pbo_n_groups"] = pbo_telemetry.get("pbo_n_groups")
     best_result["metrics_symbol"]["pbo_n_configs"] = pbo_telemetry.get("pbo_n_configs")
+    # Issue #683 — die ROHE (pre-Clustering) Config-Zahl separat sichtbar, damit nachvollziehbar
+    # bleibt, wie stark die Near-Duplicate-Reduktion N tatsächlich reduziert hat.
+    best_result["metrics_symbol"]["pbo_n_configs_raw"] = pbo_telemetry.get("pbo_n_configs_raw")
     best_result["metrics_symbol"]["pbo_metric"] = pbo_telemetry.get("pbo_metric")
     # Issue #611/#618/#636 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle. Seit
     # #636 IMMER gefüllt, sobald SR₀ berechenbar war (unabhängig von holdout_passed) — deflated_dsr
@@ -990,6 +1098,10 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         "R_symbol": promotion["R_symbol"],
         "R_global": promotion["R_global"],
         "promotion_margin": promotion["promotion_margin"],
+        # Issue #682 — explizite Attribution, wenn der Kandidat NICHT aus einem symbol-eligiblen
+        # Trial stammt, sondern der GLOBALE Default auf dem Symbol-Holdout selbst promotet wurde
+        # (kein Micro-Tuning-Anspruch). ``None`` für den regulären Per-Symbol-Trial-Pfad.
+        "promotion_route": promotion.get("promotion_route"),
         # Issue #408/#671 — modale Gate-Drop-Reason ueber alle Trials, ES SEI DENN die Promotion
         # scheiterte nachweislich am Confirm-/Holdout-Pfad (siehe _CONFIRM_STAGE_REJECTIONS oben) —
         # dann zeigt dieses Top-Level-Feld die ECHTE Ursache statt des irreführenden IS-Per-Trial-Grunds.

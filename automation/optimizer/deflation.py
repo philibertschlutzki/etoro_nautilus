@@ -135,7 +135,12 @@ def sr0_multiple_testing_robust(
     n_periods: int | None = None, sr_estimate: float = 0.0,
     variance_n_trials: int | None = None,
 ) -> tuple[float, bool, float, str]:
-    """Issue #636/#653 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration, STETIG in N.
+    """Issue #636/#653/#685 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration, STETIG in N.
+
+    ``var_floor`` — ⚠️ DEPRECATED (Issue #685): NUR wirksam, wenn ``n_periods`` fehlt (Legacy-
+    Aufrufer ohne T-Telemetrie). Bei vorhandenem ``n_periods`` ist die theoretische Referenz IMMER
+    Lo-2002 (T-bewusst, ``lo2002_sharpe_variance``) — ``var_floor`` wird dann NIE konsultiert. Nicht
+    als aktiven, konstanten Mechanismus interpretieren (genau die #670-Fehldeutung).
 
     ``V[ŜR_trials]`` aus einer 2-3-Punkte-Kohorte (z. B. VwapExhaustion N=3, Hourly N=2) ist
     statistisch bedeutungslos (beobachtet: ``deflation_var_sr = 2.4e-9`` für Hourly — eine

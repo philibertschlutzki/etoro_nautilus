@@ -150,8 +150,25 @@ def test_ineligible_high_reward_trial_excluded(tmp_path, monkeypatch):
 
 # ── Study ohne eligible Trials ⇒ fail-loud HOLDOUT_NO_ELIGIBLE_TRIALS, KEIN Floor-Trial ──────────
 def test_no_eligible_trials_fail_loud_no_floor(tmp_path, monkeypatch):
+    """Issue #682 — der globale Vektor MUSS hier selbst am Symbol-Holdout scheitern (negativer
+    Sortino), sonst griffe die #682-Route (PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL) — dieser Test prüft
+    explizit den verbleibenden Fail-Loud-Fall (auch der globale Default ist auf diesem Symbol nicht
+    tragfähig), NICHT den #682-Fallback (siehe test_issue_682_global_default_promotion.py)."""
     _patch(tmp_path, monkeypatch, top_k=5)
-    holdout_calls, _ = _wire_backtests(monkeypatch)
+    holdout_calls = []
+
+    def fake_holdout(strategy, symbol, params, **kw):
+        holdout_calls.append(dict(params))
+        if not params:  # globaler Aufruf — scheitert selbst am Holdout (negativer Sortino).
+            return _mk(sortino=-1.0, ret=-0.05, dd=0.1, td="td_global")
+        i = params.get("p", -1)
+        return _mk(sortino=1.0, ret=_RET.get(i, 0.05), dd=0.1, td=f"td_{i}")
+
+    def fake_reward(m, **kw):
+        return float(m.oos_total_return) * 10.0
+
+    monkeypatch.setattr(cmod, "_holdout_metrics_for_params", fake_holdout)
+    monkeypatch.setattr(cmod, "compute_reward", fake_reward)
     events = []
     monkeypatch.setattr(cmod, "emit_execution_event",
                         lambda logger, name, payload: events.append((name, payload)))

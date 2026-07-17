@@ -32,7 +32,9 @@ from automation.optimizer.run_optimization import (
     _preinit_study_storage,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
-from automation.optimizer.sweep_diagnostics import load_symbol_strategy_denylist
+from automation.optimizer.sweep_diagnostics import (
+    load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
+)
 from automation.log_manager import setup_bot_logging, emit_execution_event, emit_gate1_rejection
 
 
@@ -304,6 +306,13 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     # strukturell nicht-viable Paare werden VOR dem Sweep übersprungen (kein Bounds-Problem, keine
     # 16 nutzlosen Trials je Paar). Leer per Default ⇒ bit-identisch.
     denylist = load_symbol_strategy_denylist()
+    # Issue #681 — der AUTOMATISCH gepflegte Diagnose-Cache (aus einem VORHERIGEN Lauf via
+    # run_optimization.floor_plateau_callback befüllt): schliesst die Budget-Schleife, OHNE die
+    # menschlich-kuratierte Denylist-Config selbst zu mutieren. Nur 'denylist'-empfohlene Paare
+    # werden übersprungen — 'search_space_override'-Empfehlungen laufen weiter (Bounds-Kalibrierung
+    # ist eine bewusste Kalibrierlauf-/PR-Entscheidung, kein automatischer Skip). Fehlt der Cache
+    # ⇒ {} (bit-identisch).
+    auto_diagnosed = load_diagnosed_pairs_cache()
 
     pairs: list[tuple[str, str, str]] = []
     for strategy in strategies:
@@ -347,6 +356,28 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                 })
                 log.warning("⏭️  %s/%s übersprungen (deklariert nicht-viabel, Issue #669: %s).",
                            strategy, symbol, deny_reason)
+                continue
+
+            # Issue #681 — automatisch gepflegter Diagnose-Cache: ein Paar, das ein VORHERIGER Lauf
+            # als 'denylist'-würdig diagnostiziert hat (binding_cause=signal_quality ODER
+            # signal_frequency/hold_duration ohne wirksame Override-Option), wird ab dem NÄCHSTEN
+            # Lauf automatisch übersprungen — schliesst die Budget-Schleife, OHNE die menschlich-
+            # kuratierte Denylist-Config zu mutieren (die bleibt für die PERMANENTE Governance-
+            # Entscheidung reserviert).
+            auto_rec = auto_diagnosed.get((strategy, symbol))
+            if auto_rec is not None and auto_rec.get("action") == "denylist":
+                emit_execution_event(log, "SYMBOL_STRATEGY_AUTO_DIAGNOSED_SKIP", {
+                    "strategy": strategy, "symbol": symbol,
+                    "binding_cause": auto_rec.get("binding_cause"),
+                    "median_oos_trades": auto_rec.get("median_oos_trades"),
+                    "median_is_trades": auto_rec.get("median_is_trades"),
+                })
+                log.warning(
+                    "⏭️  %s/%s übersprungen (Issue #681: automatisch aus einem vorherigen "
+                    "Diagnose-Lauf als strukturell nicht-viabel erkannt, binding_cause=%s). Zur "
+                    "PERMANENTEN Deaktivierung symbol_strategy_denylist.json per PR pflegen.",
+                    strategy, symbol, auto_rec.get("binding_cause"),
+                )
                 continue
             ok, _reason = is_symbol_tunable(
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)

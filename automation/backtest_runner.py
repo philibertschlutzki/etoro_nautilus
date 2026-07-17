@@ -478,14 +478,30 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     # Aktiv NUR, wenn k_alpha konfiguriert ist UND die Kosten-Telemetrie vorliegt; sonst statisches
     # Legacy-Gate (bit-identisch, Zero-Hardcoding). effective_expectancy_gate wird für die Telemetrie
     # zurückgegeben. Issue #577: Stationäres Gate auch bei degenerierten (Zero-Trade) Trials stempeln.
+    # Issue #684 — Root-Cause: fehlt die Kosten-Telemetrie (``round_trip_cost_bps`` nicht gestempelt,
+    # z. B. degenerierte/Zero-Trade-Trials oder Nicht-Standard-Call-Sites), fiel das Gate bislang
+    # STUMM auf das statische ``oos_min_expectancy`` (0.001) zurück — eine ZWEITE, unabhängig
+    # gepflegte Schwelle, die zufällig ~13× strenger ist als der kostenrelative Regelpfad
+    # (``k_alpha·c_rt`` ≈ 7.5e-5 bei c_rt=3bps). Ist ``k_alpha`` konfiguriert (die Kosten-Relativität
+    # ist damit bereits die gewollte Semantik), aber die LIVE-Telemetrie fehlt, wird stattdessen ein
+    # aus DEMSELBEN Kostenmodell abgeleiteter DEFAULT-c_rt verwendet (``_read_default_round_trip_cost_bps``,
+    # Single Source of Truth mit backtest_runner-Zeile ~3613 ``c_rt = spread_bps + commission_bps``)
+    # — der Fallback trägt dadurch dieselbe Grössenordnung wie der Regelpfad (≤ 2× konsistent), statt
+    # einer unabhängig geratenen Konstante. ``expectancy_gate_cost_source`` macht die tatsächlich
+    # verwendete Quelle telemetrisch nachvollziehbar.
     k_alpha = t_overrides.get("oos_min_expectancy_k_alpha",
                               tournament_cfg.get("oos_min_expectancy_k_alpha"))
     effective_expectancy_gate = None
+    expectancy_gate_cost_source = "static"
     if k_alpha is not None and oos_metrics is not None:
         c_rt_bps = oos_metrics.get("round_trip_cost_bps")
-        if c_rt_bps is not None:
-            req_exp = float(k_alpha) * float(c_rt_bps) / 10000.0
-            effective_expectancy_gate = req_exp
+        if c_rt_bps is None:
+            c_rt_bps = _read_default_round_trip_cost_bps()
+            expectancy_gate_cost_source = "config_default"
+        else:
+            expectancy_gate_cost_source = "telemetry"
+        req_exp = float(k_alpha) * float(c_rt_bps) / 10000.0
+        effective_expectancy_gate = req_exp
 
     n_trades = oos_metrics.get("total_trades", 0) if oos_metrics else 0
     if n_trades <= 0:
@@ -497,6 +513,7 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
             # Issue #554 — schemastabil: leeres numerisches Delta-Dict auch im Not-Evaluated-Fall.
             "oos_gate_deltas": {},
             "effective_expectancy_gate": effective_expectancy_gate,
+            "expectancy_gate_cost_source": expectancy_gate_cost_source,
         }
 
 
@@ -607,8 +624,18 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     if req_profitable_folds_frac is not None:
         n_folds_total = oos_metrics.get("oos_folds_total")
         n_folds_prof = oos_metrics.get("oos_profitable_folds", 0)
+        # Issue #676 — Nenner = Anzahl EVALUIERBARER Folds (``oos_folds_evaluable``, von
+        # ``apply_fold_aggregation`` gestempelt), NICHT ``n_folds_total`` (zählt No-Trade-Folds
+        # ungefiltert mit). Fehlt das Feld (Legacy-Metrics-Dict ohne ``apply_fold_aggregation``-Lauf)
+        # ⇒ Fallback auf ``n_folds_total`` (bit-identisch zum Pre-#676-Verhalten für solche Aufrufer).
+        n_folds_evaluable = oos_metrics.get("oos_folds_evaluable")
+        if n_folds_evaluable is None:
+            n_folds_evaluable = n_folds_total
         if n_folds_total:
             if profitable_folds_weighting == "recency":
+                # Issue #676 — bereits von ``apply_fold_aggregation`` mit dem korrigierten
+                # (evaluierbare-Folds-)Nenner berechnet; hier NUR gelesen (Single Source of Truth,
+                # keine zweite, divergierende Nenner-Berechnung mehr).
                 frac = oos_metrics.get("oos_profitable_folds_frac_recency")
                 frac = float(frac) if frac is not None else 0.0
                 if frac < req_profitable_folds_frac:
@@ -616,10 +643,14 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
                     prof_folds_reason = (
                         f"oos_min_profitable_folds (recency): {frac:.3f} < {req_profitable_folds_frac:.2f}")
             else:
-                frac = n_folds_prof / n_folds_total if n_folds_total > 0 else 0.0
+                # Issue #676 — dieselbe Grösse, die ``apply_fold_aggregation`` bereits unter
+                # ``oos_profitable_folds_frac`` gestempelt hat (Zähler/EVALUIERBARE Folds); hier
+                # aus den Rohzählern rekonstruiert (keine Kopplung an die Aufruf-Reihenfolge/das
+                # Vorhandensein des Felds), aber mit demselben korrigierten Nenner.
+                frac = n_folds_prof / n_folds_evaluable if n_folds_evaluable > 0 else 0.0
                 if frac < req_profitable_folds_frac:
                     prof_folds_valid = False
-                    prof_folds_reason = (f"oos_min_profitable_folds: {n_folds_prof}/{n_folds_total} "
+                    prof_folds_reason = (f"oos_min_profitable_folds: {n_folds_prof}/{n_folds_evaluable} "
                                          f"({frac:.2f}) < {req_profitable_folds_frac:.2f}")
             prof_folds_frac_delta = float(frac - req_profitable_folds_frac)
 
@@ -663,19 +694,39 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
                 excess_valid = False
                 excess_reason = _reason("oos_min_excess_return", oos_excess, req_excess_return, "<")
 
-    # Issue #590 — Fold-Degenerations-Bedingung. Nur aktiv, wenn die Schwelle konfiguriert ist UND
-    # oos_folds_total > 1 (echter Walk-Forward). Ein Trial mit mehreren Gesamt-Folds, aber < Schwelle
-    # valide evaluierbaren (Sortino definiert), hat die Bewertung degeneriert (Reward-Hacking) statt
-    # Performance geliefert ⇒ nicht eligible. Fehlt Telemetrie ⇒ trivial erfüllt (rückwärtskompatibel).
+    # Issue #590/#677 — Fold-Degenerations-Bedingung. Nur aktiv, wenn die Schwelle konfiguriert ist
+    # UND oos_folds_total > 1 (echter Walk-Forward). Fehlt Telemetrie ⇒ trivial erfüllt
+    # (rückwärtskompatibel). Issue #677 — Root-Cause: ein ABSOLUTER Fold-ZÄHLER bestraft
+    # frequenz-heterogene Configs strukturell (eine Config, die ihre ≥oos_min_trades Trades in
+    # WENIGER Folds konzentriert, ist kein Qualitätsmangel — die Mindest-Stichprobe ist bereits über
+    # ``min_trades`` abgedeckt). Fix: eine Schwelle in ``(0, 1]`` wird als Mindest-ANTEIL
+    # evaluierbarer Folds MIT SIGNAL (``oos_folds_evaluable``, #676 — Folds mit ≥1 Trade)
+    # interpretiert, statt eines absoluten Fold-Zählers — die variable Fold-Anzahl je Trial
+    # (#677-Pitfall #144: fold-übergreifende Vergleiche sind bei variabler Fold-Zahl inkommensurabel)
+    # wird dadurch explizit zum Nenner gemacht statt ignoriert. Ein Wert ``>= 1`` (Legacy-Default,
+    # nur bei expliziter Reaktivierung relevant, siehe eligible_requires_all-Kommentar) bleibt der
+    # ABSOLUTE Zähler — bit-identisch zum Pre-#677-Verhalten.
     eval_folds_valid = True
     eval_folds_reason = ""
     if req_evaluable_folds is not None:
         n_folds_total_ev = oos_metrics.get("oos_folds_total")
         n_valid_sortinos = len(oos_metrics.get("oos_fold_sortinos") or [])
-        if n_folds_total_ev and n_folds_total_ev > 1 and n_valid_sortinos < req_evaluable_folds:
-            eval_folds_valid = False
-            eval_folds_reason = (f"oos_min_evaluable_folds: {n_valid_sortinos} valide "
-                                 f"< {req_evaluable_folds} (von {n_folds_total_ev} Folds)")
+        if n_folds_total_ev and n_folds_total_ev > 1:
+            if 0.0 < req_evaluable_folds <= 1.0:
+                n_folds_signal = oos_metrics.get("oos_folds_evaluable")
+                if n_folds_signal is None:
+                    n_folds_signal = n_folds_total_ev
+                frac_valid = n_valid_sortinos / n_folds_signal if n_folds_signal > 0 else 0.0
+                if frac_valid < req_evaluable_folds:
+                    eval_folds_valid = False
+                    eval_folds_reason = (
+                        f"oos_min_evaluable_folds (relativ zu Folds mit Signal): "
+                        f"{n_valid_sortinos}/{n_folds_signal} ({frac_valid:.2f}) "
+                        f"< {req_evaluable_folds:.2f}")
+            elif n_valid_sortinos < req_evaluable_folds:
+                eval_folds_valid = False
+                eval_folds_reason = (f"oos_min_evaluable_folds: {n_valid_sortinos} valide "
+                                     f"< {req_evaluable_folds} (von {n_folds_total_ev} Folds)")
 
     # Issue #614 — PSR-Gate (skalenfrei, in [0,1], T-bewusst). Der ANNUALISIERTE Sortino ist NUR noch
     # Telemetrie und fliesst NICHT mehr ins Gate (bei T≈200 statistisch bedeutungslos). Ein
@@ -782,8 +833,13 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         # lesbare Forensik im optimizer_trial_completed-Event.
         "oos_gate_deltas": oos_gate_deltas,
         # Issue #562 — effektive (kostenrelativ abgeleitete) Expectancy-Schwelle für die Telemetrie.
-        # None ⇒ statisches Legacy-Gate war maßgeblich (k_alpha nicht gesetzt oder keine Kosten-Telemetrie).
+        # None ⇒ statisches Legacy-Gate war maßgeblich (k_alpha nicht gesetzt).
         "effective_expectancy_gate": effective_expectancy_gate,
+        # Issue #684 — welche Kostenquelle das effektive Gate tatsächlich gespeist hat: 'telemetry'
+        # (round_trip_cost_bps aus dem echten Backtest), 'config_default' (k_alpha gesetzt, aber
+        # Telemetrie fehlte ⇒ Config-abgeleiteter Schätzwert, #684-Fix) oder 'static' (k_alpha gar
+        # nicht konfiguriert ⇒ Legacy-Gate).
+        "expectancy_gate_cost_source": expectancy_gate_cost_source,
     }
 
 def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None = None, symbol: str = "Unknown", strategy: str = "Unknown", log_rejections: bool = False) -> bool:
@@ -1360,10 +1416,21 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
     n_folds_profitable = sum(1 for r in winsorized_fold_returns if r > fold_profit_epsilon)
     oos_metrics["oos_folds_total"] = n_folds_total
     oos_metrics["oos_profitable_folds"] = n_folds_profitable
-    # Issue #664 — EQUAL-gewichtete Fraktion (Status quo, bit-identisch — bleibt die kanonische
-    # ``oos_profitable_folds_frac``, unabhängig vom konfigurierten Gewichtungsmodus).
+    # Issue #676 — Nenner der Fraktion ist die Anzahl EVALUIERBARER Folds (Folds mit einem
+    # tatsächlich berechneten Return — exakt die Population, über die ``winsorized_fold_returns``
+    # bereits läuft, ``collect_oos_fold_returns`` filtert None-/No-Trade-Folds bereits heraus),
+    # NICHT ``n_folds_total`` (das No-Trade-Folds — Folds ohne Signal, KEINE Unprofitabilität —
+    # ungefiltert mitzählt). Root-Cause: ein Fold ohne Trade (``per_fold_oos_list[i] is None``)
+    # zählte vorher als "nicht profitabel" im NENNER, obwohl er in KEINEM Fall in den Zähler
+    # einging — eine strukturelle Asymmetrie, die die Fraktion künstlich nach unten zog (1
+    # profitabler + 3 No-Trade-Folds ergab 0.25 statt der korrekten 1.0). ``oos_folds_total``
+    # bleibt UNVERÄNDERT als Rohtelemetrie (alle Folds, inkl. No-Trade) erhalten.
+    n_folds_evaluable = len(winsorized_fold_returns)
+    oos_metrics["oos_folds_evaluable"] = n_folds_evaluable
+    # Issue #664 — EQUAL-gewichtete Fraktion (bleibt die kanonische ``oos_profitable_folds_frac``,
+    # unabhängig vom konfigurierten Gewichtungsmodus).
     oos_metrics["oos_profitable_folds_frac"] = (
-        n_folds_profitable / n_folds_total if n_folds_total > 0 else 0.0)
+        n_folds_profitable / n_folds_evaluable if n_folds_evaluable > 0 else 0.0)
 
     # Issue #664 — Diagnose-Artefakt: das Profitable-Folds-Gate ist bei nicht-stationären
     # Deployment-Zielen strukturell an Regime-Heterogenität gekoppelt (kein Bug, eine echte
@@ -1383,9 +1450,12 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
         for idx, val in zip(valid_indices, winsorized_fold_returns):
             profitable_by_index[idx] = val > fold_profit_epsilon
         recency_weights = _fold_recency_weights(n_folds_total, _read_recency_halflife_folds())
-        total_w = sum(recency_weights) or 1.0
+        # Issue #676 — Nenner NUR über die EVALUIERBAREN Fold-Indizes (``valid_indices``), analog zur
+        # Equal-Fraktion oben: ein No-Trade-Fold trägt sein Recency-Gewicht nicht in den Nenner, sonst
+        # zieht dieselbe Nenner-Asymmetrie die recency-Fraktion künstlich nach unten.
+        total_w = sum(recency_weights[i] for i in valid_indices) or 1.0
         oos_metrics["oos_profitable_folds_frac_recency"] = (
-            sum(w for w, prof in zip(recency_weights, profitable_by_index) if prof) / total_w
+            sum(recency_weights[i] for i in valid_indices if profitable_by_index[i]) / total_w
         )
     else:
         oos_metrics["oos_profitable_folds_frac_recency"] = 0.0
@@ -1420,17 +1490,40 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
 
 
 def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tuple[int, int, int]]:
-    """Issue #490 — die EINZIGE Quelle der Walk-Forward-Fold-Geometrie.
+    """Issue #490/#675 — die EINZIGE Quelle der Walk-Forward-Fold-Geometrie.
 
-    Einzelpass-Backtest mit fragmentiertem Holdout, KEIN re-trainierender Walk-Forward.
-    Rein (kein I/O, kein State, deterministisch). Liefert je Fold ein Tripel
-    ``(is_start_ns, oos_start_ns, oos_end_ns)``:
+    Einzelpass-Backtest mit fragmentiertem Holdout. Rein (kein I/O, kein State, deterministisch).
+    Liefert je Fold ein Tripel ``(is_start_ns, oos_start_ns, oos_end_ns)``. Die OOS-Sub-Fold-Grenzen
+    sind IMMER kontiguierlich und UNABHÄNGIG vom ``retrain``-Modus (siehe unten):
 
-      * ``is_start_ns  = start_ns`` — das IS-Fenster bleibt statisch am Anfang der Daten verankert.
-      * ``is_end_ns    = is_start_ns + is_window_ns``
-      * ``purge_end_ns = is_end_ns + embargo_period_ns``
-      * ``oos_start_ns = purge_end_ns + fold * oos_window_ns`` — kontiguierliche OOS-Sub-Folds.
+      * ``purge_end_ns = start_ns + is_window_ns + embargo_period_ns``
+      * ``oos_start_ns = purge_end_ns + fold * oos_window_ns``
       * ``oos_end_ns   = oos_start_ns + oos_window_ns``
+
+    ``is_start_ns`` je Fold hängt vom Modus ``walk_forward_dict.get("retrain", False)`` ab:
+
+      * ``retrain=False`` (Default, Zero-Hardcoding, bit-identisch zum Pre-#675-Verhalten) —
+        ``is_start_ns = start_ns`` für ALLE Folds: EIN statisch am Datenanfang verankertes IS-Fenster.
+        Das ist KEIN echter Walk-Forward — er testet Regime-PERSISTENZ (ein bis zu
+        ``splits * oos_window_days`` Tage altes Referenzfenster wird ungeprüft auf immer weiter
+        entfernte OOS-Daten angewandt), nicht Config-ROBUSTHEIT (AGENTS.md Pitfall #142).
+      * ``retrain=True`` (Opt-in) — ``is_start_ns = oos_start_ns − embargo_period_ns − is_window_ns``
+        je Fold: ein ROLLENDES, dem jeweiligen OOS-Fold unmittelbar vorangehendes IS-Fenster (mit
+        demselben Embargo-/Purge-Abstand wie im statischen Modus — die Literal-Formel aus dem
+        Issue-Text, ``is_start_ns = oos_start_ns − is_window_ns`` OHNE Embargo-Abzug, würde den
+        Purge-Gap dieses Folds auf 0 kollabieren und exakt die Lookback-Leakage reintroduzieren, die
+        ``embargo_period_days`` (#466/#548/#596) verhindern soll — das wäre technisch unpräzise trotz
+        wörtlicher Issue-Konformität, daher bewusst korrigiert).
+
+    WICHTIGER SCOPE-HINWEIS (#675): Dieses System optimiert EINEN Parametervektor pro Trial über die
+    GESAMTE Zeitspanne in einem einzigen kontinuierlichen Backtest (Optuna wählt die Parameter, keine
+    Per-Fold-Neuanpassung). ``retrain=True`` liefert daher KEIN echtes Parameter-Refit je Fold —
+    das wäre ein grundlegend anderer Architektur-Schnitt (N separate Sub-Backtests je Trial). Es
+    liefert die im Issue explizit spezifizierte, minimal-invasive Geometrie-Primitive (rollierendes
+    statt statisches IS-Referenzfenster je Fold) als Baustein für rollierende IS/OOS-Divergenz-
+    Diagnostik (siehe ``oos_fold_is_sortino_rolling`` in der per-Fold-Aggregation). Die im Issue als
+    Alternative genannte CPCV-Eligibility-Basis existiert bereits separat (``cpcv.py``, genutzt für
+    PBO in ``confirm._study_pbo``, #663) und bleibt der empfohlene strukturelle Haupt-Hebel.
 
     Vier Inline-Kopien dieser Arithmetik (Worker per-Trade-Klassifikation, Worker per-Fold-Sortinos,
     oos_trade_records, Aggregat per-Fold) wären eine eingebaute Divergenz-Falle — exakt analog zu
@@ -1440,23 +1533,122 @@ def compute_fold_boundaries(start_ns: int, walk_forward_dict: dict) -> list[tupl
     oos_window_ns = walk_forward_dict.get("oos_window_days", 30) * 86400 * 1_000_000_000
     splits = walk_forward_dict.get("splits", 2)
     embargo_period_ns = walk_forward_dict.get("embargo_period_days", 0) * 86400 * 1_000_000_000
+    retrain = bool(walk_forward_dict.get("retrain", False))
 
     boundaries: list[tuple[int, int, int]] = []
-    is_start_ns = start_ns
-    is_end_ns = is_start_ns + is_window_ns
-    purge_end_ns = is_end_ns + embargo_period_ns
+    static_is_start_ns = start_ns
+    purge_end_ns = static_is_start_ns + is_window_ns + embargo_period_ns
 
     for fold in range(splits):
         oos_start_ns = purge_end_ns + fold * oos_window_ns
         oos_end_ns = oos_start_ns + oos_window_ns
-        boundaries.append((is_start_ns, oos_start_ns, oos_end_ns))
+        if retrain:
+            fold_is_start_ns = oos_start_ns - embargo_period_ns - is_window_ns
+        else:
+            fold_is_start_ns = static_is_start_ns
+        boundaries.append((fold_is_start_ns, oos_start_ns, oos_end_ns))
     return boundaries
+
+
+def rolling_fold_is_oos_divergence(mtm_series, fold_boundaries: list[tuple[int, int, int]],
+                                   is_window_ns: int) -> list[dict]:
+    """Issue #675 — per-Fold IS/OOS-Divergenz-Diagnose auf der (ggf. rollierenden,
+    ``walk_forward.retrain``-gesteuerten) ``fold_boundaries``-Geometrie. Rein additive Telemetrie,
+    OHNE jeden Gate-/Reward-Einfluss (kein Konsument dieser Funktion darf eine Eligibility-
+    Entscheidung daraus ableiten — das bleibt #676/#677 vorbehalten).
+
+    Für jeden Fold wird eine einfache, annualisierungsfreie Bar-zu-Bar-Sortino-Näherung auf der
+    IS-Vorperiode (``[fold_is_start, fold_is_start + is_window_ns)``) und der OOS-Periode
+    (``[oos_start, oos_end)``) DERSELBEN Equity-Kurve berechnet; die Differenz
+    (``is_sortino_approx − oos_sortino_approx``) ist der per-Fold Overfit-/Divergenz-Gap.
+
+    Bei ``retrain=False`` (die ``fold_boundaries``, wie von ``compute_fold_boundaries`` geliefert)
+    ist ``fold_is_start`` für JEDEN Fold identisch (statisch) — die IS-Referenz ist dann für alle
+    Folds dieselbe (weit zurückliegende) Periode. Bei ``retrain=True`` rollt das IS-Fenster mit
+    jedem Fold mit (unmittelbar vorangehende Periode) — die Diagnose wird dadurch regime-aktuell
+    statt regime-stale (siehe ``compute_fold_boundaries``-Docstring, Pitfall #142).
+
+    Rein, deterministisch, kein I/O. Liefert pro Fold ``{'fold', 'is_sortino_approx',
+    'oos_sortino_approx', 'overfit_gap'}`` (``None``-Werte bei < 3 Bars oder fehlender Downside in
+    einer Teilperiode — bewusst konservativ, kein erfundener Wert)."""
+    import math
+
+    def _slice(s_ns, e_ns):
+        if mtm_series is None or mtm_series.empty:
+            return None
+        start_dt = pd.to_datetime(s_ns, unit="ns")
+        end_excl = pd.to_datetime(e_ns, unit="ns") - pd.Timedelta(nanoseconds=1)
+        seg = mtm_series.loc[start_dt:end_excl]
+        return seg if not seg.empty else None
+
+    def _bar_sortino(seg):
+        if seg is None or len(seg) < 3:
+            return None
+        rets = seg.pct_change().dropna()
+        if len(rets) < 2:
+            return None
+        mean_r = float(rets.mean())
+        downside_sq = [float(r) * float(r) for r in rets if r < 0.0]
+        if not downside_sq:
+            return None
+        dd = math.sqrt(sum(downside_sq) / len(rets))
+        if dd <= 0.0:
+            return None
+        return mean_r / dd
+
+    results = []
+    for i, (fold_is_start, oos_start, oos_end) in enumerate(fold_boundaries):
+        is_seg = _slice(fold_is_start, fold_is_start + is_window_ns)
+        oos_seg = _slice(oos_start, oos_end)
+        is_sr = _bar_sortino(is_seg)
+        oos_sr = _bar_sortino(oos_seg)
+        gap = (is_sr - oos_sr) if (is_sr is not None and oos_sr is not None) else None
+        results.append({
+            "fold": i, "is_sortino_approx": is_sr, "oos_sortino_approx": oos_sr,
+            "overfit_gap": gap,
+        })
+    return results
 
 
 _sortino_min_trades_cache: int | None = None
 _sortino_mar_cache: float | None = None
 _max_drawdown_cap_cache: float | None = None
 _sortino_downside_floor_cache: float | None = None
+_default_round_trip_cost_bps_cache: float | None = None
+
+
+def _read_default_round_trip_cost_bps() -> float:
+    """Issue #684 — Config-abgeleiteter DEFAULT-Round-Trip-Kostenwert (bps), Single Source of
+    Truth mit dem realen Kostenmodell (``backtest.json``: ``commission_bps`` +
+    ``spread_bps_by_asset_class['DEFAULT']`` — identische Formel wie ``c_rt = spread_bps +
+    commission_bps`` an der Stelle, die ``round_trip_cost_bps`` überhaupt erst stempelt).
+
+    Root-Cause (#684): das kostenrelative Expectancy-Gate (``oos_min_expectancy_k_alpha``) fällt bei
+    FEHLENDER Kosten-Telemetrie (``oos_metrics['round_trip_cost_bps'] is None``) auf das STATISCHE
+    ``oos_min_expectancy`` (0.001) zurück — eine ZWEITE, unabhängig gepflegte Schwelle, die zufällig
+    ~13× strenger ist als der kostenrelative Regelpfad (``k_alpha·c_rt`` ≈ 7.5e-5 bei c_rt=3bps).
+    Dieser Reader liefert stattdessen einen aus DEMSELBEN Kostenmodell abgeleiteten Schätzwert, damit
+    der Fallback dieselbe Grössenordnung wie der Regelpfad trägt (≤ 2× konsistent), statt einer
+    unabhängig geratenen Konstante. Gecached (Hot-Path). Fehlt ``backtest.json``/der Schlüssel ⇒
+    5.0 (= DEFAULT-Asset-Class-Spread 4.0 + commission_bps-Fallback 1.0, der dokumentierte
+    Cross-Asset-Referenzwert aus backtest.json._schema)."""
+    global _default_round_trip_cost_bps_cache
+    if _default_round_trip_cost_bps_cache is not None:
+        return _default_round_trip_cost_bps_cache
+    val = 5.0
+    try:
+        cfg_path = config_dir() / "backtest.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            commission_bps = float(data.get("commission_bps", 1.0))
+            spread_default = float(
+                (data.get("spread_bps_by_asset_class") or {}).get("DEFAULT", 4.0))
+            val = commission_bps + spread_default
+    except (OSError, ValueError, TypeError):
+        val = 5.0
+    _default_round_trip_cost_bps_cache = val
+    return val
 
 def _read_sortino_mar() -> float:
     """Issue #545 (Zero-Hardcoding): MAR (Minimum Acceptable Return) fuer die Sortino-Berechnung aus
@@ -2555,6 +2747,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # denselben Sortino sehen und kein Glücks-Sub-Fenster belohnt wird. Reine Funktion,
             # separat unit-getestet (test_issue_549/#550).
             apply_fold_aggregation(oos_metrics, per_fold_oos_list)
+
+            # Issue #675 — rollierende IS/OOS-Divergenz-Diagnose, NUR wenn ``walk_forward.retrain``
+            # aktiv ist (Zero-Hardcoding: bei Default/False bleibt der Trial-Output bit-identisch —
+            # kein neues Telemetrie-Feld, keine Gate-/Reward-Wirkung). Reine additive Forensik.
+            if walk_forward_dict.get("retrain", False):
+                oos_metrics["oos_fold_is_oos_divergence"] = rolling_fold_is_oos_divergence(
+                    mtm_series, fold_boundaries, is_window_ns)
 
             # Issue #552 — Benchmark-relative Alpha-Telemetrie: excess = Strategie-OOS-Return −
             # Buy&Hold-OOS-Return. Nur wenn die Benchmark-Serie verfügbar war (sonst greift das

@@ -256,10 +256,13 @@ gemischt, grundieren sie den TPE-Posterior mit inkommensurablen Rewards (`REJECT
    Semantik brechen, analog den Vorversionen).
 3. **Als LETZTE Aktion vor dem Re-Run:** alle Per-Symbol-SQLite-Studies löschen
    (`{WORK}/sweep/*.db` bzw. der konfigurierte `storage_url`-Pfad). Der bestehende
-   `_check_reward_semantics_version`-Guard (#410/#468/#575/#658/#672) lehnt eine geladene Study mit
-   älterer/keiner Version ohnehin fail-loud ab (`REJECT_STALE_STUDY_SEMANTICS`) — der manuelle Purge
-   ist die aufgeräumte, geplante Variante desselben Ergebnisses, statt es dem ersten Trial jeder
-   Study zu überlassen.
+   `_check_reward_semantics_version`-Guard (#410/#468/#575/#658/#672/#686) lehnt eine geladene Study
+   mit älterer/keiner Version ohnehin fail-loud ab (`REJECT_STALE_STUDY_SEMANTICS`) — der Purge ist
+   die aufgeräumte, geplante Variante desselben Ergebnisses, statt es dem ersten Trial jeder Study zu
+   überlassen. Issue #686 — statt N einzelne Sweep-Starts nacheinander fail-loud abbrechen zu lassen,
+   führt ein Bulk-Purge-Werkzeug den Schritt in einem Durchgang aus:
+   `python -m automation.optimizer.purge_stale_studies --dry-run` (Vorschau) gefolgt von
+   `python -m automation.optimizer.purge_stale_studies` (löscht tatsächlich).
 4. **Erst danach** den Sweep erneut starten (`python -m automation.optimizer.sweep ...`).
 
 **Warum genau diese Reihenfolge:** Ein Purge VOR dem letzten Gate-Fix würde eine frische Study unter
