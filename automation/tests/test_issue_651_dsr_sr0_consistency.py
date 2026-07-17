@@ -40,8 +40,8 @@ def test_deflated_dsr_equals_phi_of_dsr_z_with_active_floor():
     var_sr_trials, n_trials = 1.483e-4, 9   # der im Issue zitierte Hourly-Referenzfall
     sr, n_periods = 0.08, 200
 
-    sr0, used_floor = sr0_multiple_testing_robust(var_sr_trials, n_trials,
-                                                   min_cohort=10, var_floor=0.0018)
+    sr0, used_floor, *_ = sr0_multiple_testing_robust(var_sr_trials, n_trials,
+                                                       min_cohort=10, var_floor=0.0018)
     assert used_floor is True   # N=9 < min_cohort=10 ⇒ der Floor MUSS greifen
 
     dsr = deflated_sharpe_ratio(sr, n_periods, sr0=sr0)
@@ -54,7 +54,7 @@ def test_hourly_n9_regression_fixture_reproduces_a_single_sr0_value():
     das EINZIGE SR₀ sein, das sowohl in die Entscheidung als auch die Telemetrie einfliesst — vor
     #651 divergierten hier zwei verschiedene SR₀-Werte um den Faktor √(0,0018/1,483e-4) ≈ 3,48×."""
     deflation_var, deflation_n = 1.483e-4, 9
-    deflation_sr0, used_floor = sr0_multiple_testing_robust(
+    deflation_sr0, used_floor, *_ = sr0_multiple_testing_robust(
         deflation_var, deflation_n, min_cohort=10, var_floor=0.0018)
     assert used_floor is True
 

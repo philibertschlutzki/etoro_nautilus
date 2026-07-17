@@ -264,6 +264,172 @@ def check_any_arm_reachability_live(tournament_cfg: dict | None,
     return unreachable
 
 
+# Issue #668 — gültige Werte für tournament.json['any_arm_unreachable_policy']. 'warn' (Default,
+# fehlt der Key) ist BIT-IDENTISCH zum Pre-#668-Verhalten (nur die #660-Live-Warnung, keine
+# Verhaltensänderung). Ein unbekannter Wert bricht fail-loud ab (analog #659
+# promotion_correction_mode) statt einer möglicherweise falsch geschriebenen Policy-Zeichenkette
+# still zu ignorieren.
+_ANY_ARM_UNREACHABLE_POLICIES = frozenset({"warn", "drop_arm", "recalibrate"})
+
+
+def resolve_any_arm_policy(tournament_cfg: dict | None,
+                           observed_values: dict[str, list] | None) -> dict:
+    """Issue #668 — hebt ``check_any_arm_reachability_live`` (#660, reine WARNUNG) auf eine
+    KONFIGURIERTE Policy (``tournament.json['any_arm_unreachable_policy']``).
+
+    Root-Cause: #660 lieferte nur die Live-Diagnose (WARNING-Log), aber die Schwelle blieb eine
+    globale Zahl, die per (Symbol, Strategie) strukturell unerreichbar sein kann — der OR-Arm
+    kollabiert dann STILL auf die übrigen Arme (z. B. reines ``min_profit_factor``-Gate), ohne dass
+    dies je EXPLIZIT entschieden/telemetriert wurde.
+
+    ``'warn'`` (Default) — bit-identisch zu #660: reine Diagnose, keine Verhaltensänderung.
+    ``'drop_arm'`` — jede strukturell unerreichbare Klausel (``check_any_arm_reachability_live``)
+    wird EXPLIZIT als gedroppt zurückgegeben (``dropped_clauses``) — die Disjunktion wird bewusst
+    auf die übrigen Arme reduziert, statt still zu kollabieren.
+    ``'recalibrate'`` — die Schwelle wird SYMBOL-spezifisch auf das p99 der beobachteten Verteilung
+    neu gesetzt (mit einem globalen Floor, ``min_win_rate_recalibration_floor``, Default 0.05),
+    sodass der Arm ein echter Filter bleibt statt strukturell unerreichbar zu sein.
+
+    Rückgabe: ``{'policy': str, 'dropped_clauses': [...], 'recalibrated_thresholds': {...}}``.
+    Beide Listen/Dicts bleiben leer, wenn kein Arm unerreichbar ist (oder Policy='warn'). Ein
+    unbekannter Policy-Wert bricht FAIL-LOUD ab (``ValueError``, analog
+    ``confirm.py['promotion_correction_mode']``, #659)."""
+    tournament_cfg = tournament_cfg or {}
+    policy = tournament_cfg.get("any_arm_unreachable_policy", "warn")
+    if policy not in _ANY_ARM_UNREACHABLE_POLICIES:
+        raise ValueError(
+            f"tournament.json: any_arm_unreachable_policy={policy!r} unbekannt. "
+            f"Erlaubt: {sorted(_ANY_ARM_UNREACHABLE_POLICIES)}."
+        )
+    result = {"policy": policy, "dropped_clauses": [], "recalibrated_thresholds": {}}
+    if policy == "warn":
+        return result
+
+    unreachable = check_any_arm_reachability_live(tournament_cfg, observed_values)
+    if not unreachable:
+        return result
+
+    floor = float(tournament_cfg.get("min_win_rate_recalibration_floor", 0.05))
+    for clause in unreachable:
+        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(clause)
+        if threshold_key is None:
+            continue
+        if policy == "drop_arm":
+            result["dropped_clauses"].append(clause)
+        else:  # 'recalibrate'
+            samples = sorted(float(v) for v in (observed_values or {}).get(clause, []) if v is not None)
+            if not samples:
+                continue
+            p99_idx = max(0, min(len(samples) - 1, round(0.99 * (len(samples) - 1))))
+            result["recalibrated_thresholds"][threshold_key] = max(floor, samples[p99_idx])
+    return result
+
+
+# Issue #667 — die VIER eligible-Gates, die im 138-rejected-evaluable-Trials-Symptom fast immer
+# GEMEINSAM fallen (expectancy 70 %, profitable_folds 69 %, requires_any[PF|WR] 68 %, psr 66 %) —
+# effektiv eine einzige latente "net-of-cost-profitabel"-Achse, 4× redundant kodiert.
+_GATE_COLLINEARITY_KEYS = (
+    "oos_min_expectancy", "oos_min_profitable_folds_frac", "any_condition", "oos_min_psr",
+)
+
+
+def _spearman_rank_correlation(x: list, y: list) -> float | None:
+    """Spearman-Rangkorrelation zweier gleichlanger Sequenzen (Pearson auf den Rängen, Ties über
+    den Durchschnittsrang aufgelöst). ``None`` bei < 3 Punkten oder Null-Varianz in einer Sequenz
+    (Rangkorrelation nicht definierbar). Rein, deterministisch, kein externer Abhängigkeit (numpy/
+    scipy) nötig."""
+    n = len(x)
+    if n < 3 or n != len(y):
+        return None
+
+    def _ranks(vals):
+        order = sorted(range(n), key=lambda i: vals[i])
+        ranks = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j + 1 < n and vals[order[j + 1]] == vals[order[i]]:
+                j += 1
+            avg_rank = (i + j) / 2.0 + 1.0
+            for k in range(i, j + 1):
+                ranks[order[k]] = avg_rank
+            i = j + 1
+        return ranks
+
+    rx, ry = _ranks(x), _ranks(y)
+    mean_rx, mean_ry = sum(rx) / n, sum(ry) / n
+    var_x = sum((v - mean_rx) ** 2 for v in rx)
+    var_y = sum((v - mean_ry) ** 2 for v in ry)
+    if var_x <= 0.0 or var_y <= 0.0:
+        return None
+    cov = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(n))
+    return cov / ((var_x ** 0.5) * (var_y ** 0.5))
+
+
+def _any_condition_delta_from_gate_deltas(deltas: dict | None) -> float | None:
+    """Issue #667 — die ``eligible_requires_any``-Klausel hat KEINEN einzelnen Delta-Eintrag in
+    ``oos_gate_deltas`` (sie ist eine Disjunktion mehrerer Arme). Als Kollinearitäts-Proxy dient
+    der BESTE (am wenigsten negative) der konfigurierten Arm-Deltas — konsistent mit der
+    Gate-Semantik selbst (die ANY-Klausel ist erfüllt, sobald IRGENDEIN Arm besteht)."""
+    if not deltas:
+        return None
+    candidates = [deltas[k] for k in ("oos_min_profit_factor", "oos_min_win_rate", "oos_min_sortino")
+                  if deltas.get(k) is not None]
+    return max(candidates) if candidates else None
+
+
+def gate_rank_correlation_matrix(trial_gate_deltas: list) -> dict:
+    """Issue #667 — Rang-Korrelationsmatrix (Spearman) der VIER eligible-Gates (``_GATE_COLLINEARITY_KEYS``)
+    über eine Kohorte von Trials, aus deren gestempelten ``oos_gate_deltas`` (#554/#668 — pro Trial
+    als User-Attr verfügbar). Nur Trials mit ALLEN vier definierten Deltas fliessen ein (Zero-
+    Hardcoding: fehlende Gates werden nicht künstlich mit 0 aufgefüllt, das würde eine falsche
+    Korrelation vortäuschen).
+
+    Rückgabe ``{'n_samples': int, 'correlations': {(gate_a, gate_b): rho_or_None, ...}}`` — ein
+    Eintrag je der ``C(4,2)=6`` Gate-Paare. Rein, deterministisch."""
+    series: dict[str, list] = {k: [] for k in _GATE_COLLINEARITY_KEYS}
+    for deltas in trial_gate_deltas:
+        deltas = deltas or {}
+        row = {
+            "oos_min_expectancy": deltas.get("oos_min_expectancy"),
+            "oos_min_profitable_folds_frac": deltas.get("oos_min_profitable_folds_frac"),
+            "any_condition": _any_condition_delta_from_gate_deltas(deltas),
+            "oos_min_psr": deltas.get("oos_min_psr"),
+        }
+        if any(v is None for v in row.values()):
+            continue
+        for k, v in row.items():
+            series[k].append(float(v))
+
+    keys = list(_GATE_COLLINEARITY_KEYS)
+    correlations = {}
+    for i, k1 in enumerate(keys):
+        for k2 in keys[i + 1:]:
+            correlations[(k1, k2)] = _spearman_rank_correlation(series[k1], series[k2])
+    n_samples = len(series[keys[0]]) if keys else 0
+    return {"n_samples": n_samples, "correlations": correlations}
+
+
+def assert_gate_collinearity_guard(trial_gate_deltas: list, *, threshold: float = 0.95) -> dict:
+    """Issue #667 — Redundanz-Wächter: warnt FAIL-LOUD-artig (WARNING-Log, KEIN Abbruch — die
+    Kollinearität selbst automatisiert nicht, WELCHES Gate entfernt wird; das bleibt eine bewusste,
+    im PR dokumentierte Entscheidung), sobald zwei der vier eligible-Gates ``|ρ| > threshold`` über
+    das Kalibrier-/Studien-Fixture zeigen (Bezug: Root-Cause #667 — 4× redundant kodierte
+    "net-of-cost-profitabel"-Achse). Rückgabe: die volle Korrelationsmatrix (Telemetrie/Tests)."""
+    import logging
+    result = gate_rank_correlation_matrix(trial_gate_deltas)
+    for (k1, k2), rho in result["correlations"].items():
+        if rho is not None and abs(rho) > threshold:
+            logging.getLogger("optimizer").warning(
+                "[#667] Gate-Kollinearität: |ρ(%s, %s)|=%.3f > %.2f über %d Trials — die beiden "
+                "eligible-Gates kodieren mutmasslich redundant dieselbe latente Achse; "
+                "Konsolidierung auf das statistisch schärfste (PSR, fenster-/annualisierungs-"
+                "invariant) erwägen.",
+                k1, k2, rho, threshold, result["n_samples"],
+            )
+    return result
+
+
 def _any_condition_distance(
     m: "TournamentMetrics", weights: dict, tournament_cfg: dict | None
 ) -> float:
@@ -365,14 +531,27 @@ def _normalized_gate_distances(
     if req_psr is not None and float(req_psr) > 0.0 and getattr(m, "oos_psr", None) is not None:
         distances["oos_min_psr"] = _shortfall_distance(float(m.oos_psr), float(req_psr))
 
+    # Issue #666 — Gate/Reward-Parität: dieselbe |Benchmark|-bewusste Regime-Fallunterscheidung wie
+    # das Hard-Gate (backtest_runner._evaluate_oos_eligibility). Im Bär-Markt (oos_buyhold_return<0)
+    # ist die Distanz die Unterschreitung des risikoadjustierten per-Perioden-Sortino unter 0
+    # (skalenfrei) — NICHT der absolute Excess-Return-Rest-Gap, der im Bärenmarkt trivial ≥0 ist und
+    # damit KEINE Diskriminierung träge (exakt das #666-Symptom auf der Constraint-Skala gespiegelt).
+    # Ein undefinierter sortino_period liefert — konsistent mit dem oos_min_psr-Präzedenzfall oben —
+    # KEINEN erfundenen Distanz-Wert (das Hard-Gate selbst behandelt "undefiniert" separat als Fail).
     req_excess = _cfg_value(weights, tournament_cfg, "oos_min_excess_return")
     oos_excess_return = getattr(m, "oos_excess_return", None)
+    oos_buyhold_return = getattr(m, "oos_buyhold_return", None)
     if req_excess is not None and oos_excess_return is not None:
-        excess_scale = float(return_penalty_scale) if return_penalty_scale else float(req_return)
-        if excess_scale > 0.0:
-            distances["oos_min_excess_return"] = max(
-                0.0, float(req_excess) - float(oos_excess_return)
-            ) / excess_scale
+        if oos_buyhold_return is not None and oos_buyhold_return < 0.0:
+            sortino_p = getattr(m, "oos_sortino_period", None)
+            if sortino_p is not None:
+                distances["oos_min_excess_return"] = max(0.0, -float(sortino_p))
+        else:
+            excess_scale = float(return_penalty_scale) if return_penalty_scale else float(req_return)
+            if excess_scale > 0.0:
+                distances["oos_min_excess_return"] = max(
+                    0.0, float(req_excess) - float(oos_excess_return)
+                ) / excess_scale
 
     # Issue #547 (robuster Schutz) — Clip-Obergrenze pro Term: kein einzelner Distanz-Term darf
     # den Aktiv-Mittelwert je dominieren, unabhängig von Kalibrierfehlern der Ziel-Schwellen.

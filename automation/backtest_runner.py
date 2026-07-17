@@ -591,17 +591,37 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     # Issue #550 — Fold-Konsistenz-Bedingung. Nur aktiv, wenn die Schwelle konfiguriert ist UND
     # die Fold-Telemetrie (oos_folds_total, #549/#550) vorliegt (Walk-Forward-Pfad). Fehlt eines
     # von beiden ⇒ trivial erfüllt (inaktiv, rückwärtskompatibel zu Nicht-WF- und Legacy-JSONs).
+    # Issue #664 — Gewichtungsmodus des Profitable-Folds-Gates. ``'equal'`` (Default, fehlt der Key)
+    # ist BIT-IDENTISCH zum Status quo (Zähler/Gesamt-Fraktion); ``'recency'`` ist eine BEWUSSTE,
+    # OPT-IN Entscheidung (kein blinder Default-Wechsel, siehe apply_fold_aggregation-Docstring) —
+    # das Gate konsumiert dann die exponentiell-gewichtete Parallel-Fraktion
+    # (``oos_profitable_folds_frac_recency``), die jüngere Folds stärker gewichtet.
+    profitable_folds_weighting = t_overrides.get(
+        "profitable_folds_weighting", tournament_cfg.get("profitable_folds_weighting", "equal"))
     prof_folds_valid = True
     prof_folds_reason = ""
+    # Issue #667 — das maschinenlesbare Delta (frac − threshold) auch für die Profitable-Folds-
+    # Klausel, damit die Gate-Kollinearitäts-Diagnose (reward.gate_rank_correlation_matrix) sie
+    # neben expectancy/psr/any_condition sehen kann (vorher fehlte dieser Delta-Eintrag komplett).
+    prof_folds_frac_delta = None
     if req_profitable_folds_frac is not None:
         n_folds_total = oos_metrics.get("oos_folds_total")
         n_folds_prof = oos_metrics.get("oos_profitable_folds", 0)
         if n_folds_total:
-            frac = n_folds_prof / n_folds_total if n_folds_total > 0 else 0.0
-            if frac < req_profitable_folds_frac:
-                prof_folds_valid = False
-                prof_folds_reason = (f"oos_min_profitable_folds: {n_folds_prof}/{n_folds_total} "
-                                     f"({frac:.2f}) < {req_profitable_folds_frac:.2f}")
+            if profitable_folds_weighting == "recency":
+                frac = oos_metrics.get("oos_profitable_folds_frac_recency")
+                frac = float(frac) if frac is not None else 0.0
+                if frac < req_profitable_folds_frac:
+                    prof_folds_valid = False
+                    prof_folds_reason = (
+                        f"oos_min_profitable_folds (recency): {frac:.3f} < {req_profitable_folds_frac:.2f}")
+            else:
+                frac = n_folds_prof / n_folds_total if n_folds_total > 0 else 0.0
+                if frac < req_profitable_folds_frac:
+                    prof_folds_valid = False
+                    prof_folds_reason = (f"oos_min_profitable_folds: {n_folds_prof}/{n_folds_total} "
+                                         f"({frac:.2f}) < {req_profitable_folds_frac:.2f}")
+            prof_folds_frac_delta = float(frac - req_profitable_folds_frac)
 
     # Issue #552 — Excess-Return-Bedingung. Nur aktiv, wenn die Schwelle gesetzt ist UND die
     # Benchmark-Telemetrie (oos_excess_return) vorliegt; sonst trivial erfüllt (rückwärtskompatibel).
@@ -614,11 +634,34 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
     def _reason(label, actual, thresh, op):
         return f"{label}: {actual:.6g} {op} {thresh:.6g} (Δ={actual - thresh:+.3e})"
 
+    # Issue #666 — Bär-Markt-Symmetrie. "Schlage Buy&Hold im absoluten Endpunkt-Return" misst bei
+    # FALLENDEM Benchmark nur negatives Beta (Nicht-im-Markt-Sein), kein positives Alpha: fiel B&H
+    # z. B. −11 % über das OOS-Fenster, "schlägt" JEDE Strategie, die nicht schlimmer als −11 %
+    # verliert, den Benchmark trivial — inklusive einer flachen/Zufalls-Strategie. Fix (|Benchmark|-
+    # bewusstes Gate): im Bär-Markt (``oos_buyhold_return < 0``) muss die Strategie einen ECHTEN
+    # positiven risikoadjustierten Return liefern (``sortino_period > 0`` — dieselbe, bereits an
+    # anderer Stelle gate-/reward-massgebliche annualisierungs-invariante Grösse, #614/#665), NICHT
+    # nur "weniger schlecht als der Markt". Im Bull-/Flat-Markt (``oos_buyhold_return >= 0``) bleibt
+    # das ursprüngliche absolute Excess-Return-Gate massgeblich (bit-identisch). Fail-open bleibt
+    # erhalten: fehlt die Benchmark-Telemetrie (``oos_excess_return is None``), ist die Klausel
+    # weiterhin trivial erfüllt.
     if req_excess_return is not None:
         oos_excess = oos_metrics.get("oos_excess_return")
-        if oos_excess is not None and oos_excess < req_excess_return:
-            excess_valid = False
-            excess_reason = _reason("oos_min_excess_return", oos_excess, req_excess_return, "<")
+        oos_buyhold = oos_metrics.get("oos_buyhold_return")
+        if oos_excess is not None:
+            if oos_buyhold is not None and oos_buyhold < 0.0:
+                sortino_p = oos_metrics.get("sortino_period")
+                if sortino_p is None or sortino_p <= 0.0:
+                    excess_valid = False
+                    sp_str = "None (insufficient/guard)" if sortino_p is None else f"{sortino_p:.6g}"
+                    excess_reason = (
+                        f"oos_min_excess_return (bear-regime, oos_buyhold_return={oos_buyhold:.6g}<0): "
+                        f"sortino_period={sp_str} <= 0 — absoluter Excess {oos_excess:.6g} allein "
+                        f"belegt im Bärenmarkt kein Alpha (nur negatives Beta)"
+                    )
+            elif oos_excess < req_excess_return:
+                excess_valid = False
+                excess_reason = _reason("oos_min_excess_return", oos_excess, req_excess_return, "<")
 
     # Issue #590 — Fold-Degenerations-Bedingung. Nur aktiv, wenn die Schwelle konfiguriert ist UND
     # oos_folds_total > 1 (echter Walk-Forward). Ein Trial mit mehreren Gesamt-Folds, aber < Schwelle
@@ -690,6 +733,8 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         oos_gate_deltas["oos_min_profit_factor"] = float(pf - req_pf)
     if req_excess_return is not None and oos_metrics.get("oos_excess_return") is not None:
         oos_gate_deltas["oos_min_excess_return"] = float(oos_metrics["oos_excess_return"] - req_excess_return)
+    if prof_folds_frac_delta is not None:
+        oos_gate_deltas["oos_min_profitable_folds_frac"] = prof_folds_frac_delta
 
     # Issue #649 — kanonische Normalisierung (``_canonical_gate_key``, entfernt ein optionales
     # ``oos_``-Präfix) VOR jedem ``condition_map``-Lookup. ``tournament.json`` schreibt manche
@@ -1003,8 +1048,27 @@ def create_mock_instrument(
 
 
 def collect_oos_fold_sortinos(per_fold_oos: list[dict]) -> list[float]:
-    """Extrahiert je Fold den OOS-Sortino (Reihenfolge erhalten, None-sicher übersprungen)."""
+    """Issue #665 — DEPRECATED für fold-übergreifende Aggregation/Vergleiche (PBO, Fold-Median-
+    Ranking): extrahiert je Fold den ANNUALISIERTEN OOS-Sortino. ``_get_annualization_factor``
+    leitet den Faktor EMPIRISCH aus der Kalender-Span JEDES Folds ab (Wochenenden/Feiertage/
+    Lücken variieren pro Fold) ⇒ die zurückgegebenen Werte sind über Folds NICHT kommensurabel
+    (ein Fold mit kürzerer Span wird stärker hochskaliert als einer mit längerer, bei identischer
+    Perioden-Performance). Bleibt NUR als forensische Telemetrie (``sortino_ratio_fold_median``)
+    erhalten. Für jede fold-übergreifende Aggregation IMMER ``collect_oos_fold_sortino_periods``
+    (annualisierungs-invariant, per-Perioden) verwenden — siehe AGENTS.md Pitfall (#665)."""
     return [float(f["sortino_ratio"]) for f in per_fold_oos if f is not None and f.get("sortino_ratio") is not None]
+
+
+def collect_oos_fold_sortino_periods(per_fold_oos: list[dict]) -> list[float]:
+    """Issue #665 — die KANONISCHE fold-übergreifende Sortino-Grösse: der PER-PERIODEN (nicht
+    annualisierte) OOS-Sortino je Fold (Reihenfolge erhalten, None-sicher übersprungen).
+
+    Anders als ``collect_oos_fold_sortinos`` (annualisiert, fold-spezifisch skaliert) ist dieser
+    Wert annualisierungs-INVARIANT: er trägt keinen fold-spezifischen Kalender-Faktor und ist
+    daher über Folds UNTERSCHIEDLICHER Kalenderabdeckung direkt vergleichbar/mittelbar. Jede
+    fold-übergreifende Aggregation (PBO/CSCV-Eingaben, Fold-Median-Telemetrie) MUSS diese Funktion
+    nutzen, nicht ``collect_oos_fold_sortinos``."""
+    return [float(f["sortino_period"]) for f in per_fold_oos if f is not None and f.get("sortino_period") is not None]
 
 
 def collect_oos_fold_returns(per_fold_oos: list[dict]) -> list[float]:
@@ -1133,6 +1197,106 @@ def _assert_is_oos_sortino_coherence(is_basis: str | None, is_sortino, oos_basis
     return False
 
 
+_profitable_folds_weighting_cache: str | None = None
+_recency_halflife_folds_cache: float | None = None
+_recency_halflife_folds_cached: bool = False
+
+
+def _read_profitable_folds_weighting() -> str:
+    """Issue #664 — Gewichtungsmodus für ``oos_min_profitable_folds_frac`` aus
+    ``tournament.json['profitable_folds_weighting']`` (gecached). ``'equal'`` (Default, fehlt der
+    Key) gewichtet alle Folds gleich — bit-identisch zum Status quo. ``'recency'`` ist opt-in (siehe
+    ``apply_fold_aggregation``/``_evaluate_oos_eligibility``). Ein unbekannter Wert fällt defensiv
+    auf ``'equal'`` zurück (kein Fail-Loud hier — reine Gewichtungswahl, kein Struktur-Constraint)."""
+    global _profitable_folds_weighting_cache
+    if _profitable_folds_weighting_cache is not None:
+        return _profitable_folds_weighting_cache
+    val = "equal"
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("profitable_folds_weighting")
+            if raw in ("equal", "recency"):
+                val = raw
+    except (OSError, ValueError, TypeError):
+        val = "equal"
+    _profitable_folds_weighting_cache = val
+    return val
+
+
+def _read_recency_halflife_folds() -> float | None:
+    """Issue #664 — Halbwertszeit (in Folds) der exponentiellen Recency-Gewichtung
+    (``tournament.json['recency_halflife_folds']``), gecached. ``None`` (Default) ⇒
+    ``_fold_recency_weights`` fällt auf die milde Default-Halbwertszeit (= n_folds) zurück."""
+    global _recency_halflife_folds_cache, _recency_halflife_folds_cached
+    if _recency_halflife_folds_cached:
+        return _recency_halflife_folds_cache
+    val = None
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("recency_halflife_folds")
+            if raw is not None and float(raw) > 0.0:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = None
+    _recency_halflife_folds_cache = val
+    _recency_halflife_folds_cached = True
+    return val
+
+
+def _fold_recency_weights(n_folds: int, halflife: float | None) -> list[float]:
+    """Issue #664 — exponentielle Recency-Gewichte über ``n_folds`` (Index 0 = ältester Fold,
+    ``n_folds-1`` = jüngster): ``weight_i ∝ 2^{-(n_folds-1-i)/halflife}`` (unnormiert; der Aufrufer
+    normiert über die Summe). ``halflife`` None/≤0 ⇒ die (dokumentierte) milde Default-Halbwertszeit
+    ``= n_folds`` (jeder Fold verliert über die volle Fold-Spanne die Hälfte seines relativen
+    Gewichts). Rein, deterministisch."""
+    if n_folds <= 0:
+        return []
+    hl = float(halflife) if halflife and halflife > 0.0 else float(n_folds)
+    return [2.0 ** (-(n_folds - 1 - i) / hl) for i in range(n_folds)]
+
+
+def _fold_regime_diagnostics(fold_returns: list[float]) -> dict:
+    """Issue #664 — Stationaritäts-/Regime-DIAGNOSE der Fold-Return-Sequenz (rein informativ, KEIN
+    Gate-/Reward-Einfluss): Vorzeichen-Autokorrelation (Lag-1) + Anteil Fold-Sign-Flips zwischen
+    benachbarten Folds.
+
+    ``fold_sign_flip_frac`` ist das ROBUSTE Primärsignal (auch bei sehr wenigen/ungleich verteilten
+    Folds gut interpretierbar): wenige Flips ⇒ die Folds gruppieren sich in zusammenhängende
+    Regime-Läufe (z. B. mehrere defunkte Alt-Folds gefolgt von einem tradeablen jüngsten Fold) statt
+    zufällig zu alternieren. ``fold_sign_autocorr`` (Pearson, Lag-1) ergänzt dies, ist aber bei sehr
+    kleiner, UNGLEICH verteilter Fold-Zahl (z. B. 3 negative + 1 positiver Fold bei n=4) statistisch
+    sensitiv gegenüber der Klassen-Balance und kann dabei — trotz eines klaren "Lauf"-Musters — ein
+    dem Vorzeichen nach unintuitives Ergebnis liefern (bekannte Small-N-Eigenschaft der Pearson-
+    Korrelation bei unbalancierten binären Sequenzen); es ist daher ein SEKUNDÄRES Signal.
+
+    Zeigt der Symbol-Datensatz eine strukturelle Nicht-Stationarität, ist das ein SYMBOL-Regime-
+    Signal, keine Strategie-Schwäche — das Diagnose-Artefakt trennt diese beiden Interpretationen,
+    ohne selbst eine Gate-Entscheidung zu treffen (siehe AGENTS.md, Issue #664).
+
+    ``None``-Werte, wenn zu wenige vergleichbare (nicht-degenerierte) Fold-Paare vorliegen."""
+    n = len(fold_returns)
+    if n < 2:
+        return {"fold_sign_autocorr": None, "fold_sign_flip_frac": None}
+    signs = [1.0 if r > 0.0 else (-1.0 if r < 0.0 else 0.0) for r in fold_returns]
+    comparable_pairs = [(a, b) for a, b in zip(signs, signs[1:]) if a != 0.0 and b != 0.0]
+    flip_frac = (
+        sum(1 for a, b in comparable_pairs if a != b) / len(comparable_pairs)
+        if comparable_pairs else None
+    )
+    autocorr = None
+    if n >= 3:
+        mean_s = sum(signs) / n
+        var_s = sum((s - mean_s) ** 2 for s in signs)
+        if var_s > 0.0:
+            cov = sum((signs[i] - mean_s) * (signs[i + 1] - mean_s) for i in range(n - 1))
+            autocorr = cov / var_s
+    return {"fold_sign_autocorr": autocorr, "fold_sign_flip_frac": flip_frac}
+
+
 def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | None]) -> dict:
     """Issue #549/#550/#589/#590 — mutiert ``oos_metrics`` in place: EINE kohärente
     Aggregationsebene für den Sortino + Fold-Konsistenz-Telemetrie.
@@ -1167,6 +1331,15 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
     # Fehlen die Keys ⇒ No-Op (Legacy, bit-identisch). Rein index-basiert, deterministisch.
     _w_lo, _w_hi = _read_fold_winsorize()
     oos_metrics["oos_fold_sortinos"] = _winsorize(collect_oos_fold_sortinos(per_fold_oos_list), _w_lo, _w_hi)
+    # Issue #665 — die annualisierungs-INVARIANTE, über Folds kommensurable Parallelgrösse. Jede
+    # fold-übergreifende Aggregation (PBO/CSCV, Fold-Median-Telemetrie) konsumiert AUSSCHLIESSLICH
+    # diese Serie; ``oos_fold_sortinos`` (oben) bleibt nur noch forensische Anzeige-Telemetrie
+    # (annualisiert, fold-spezifisch skaliert, siehe collect_oos_fold_sortinos-Docstring).
+    oos_metrics["oos_fold_sortino_periods"] = _winsorize(
+        collect_oos_fold_sortino_periods(per_fold_oos_list), _w_lo, _w_hi)
+    # Issue #665 — literale Telemetrie-Alias (Akzeptanzkriterium): identische Liste unter dem im
+    # Issue benannten Feldnamen, damit Log-/Proposal-Konsumenten sie unter beiden Namen finden.
+    oos_metrics["per_fold_oos_sortino_period"] = oos_metrics["oos_fold_sortino_periods"]
     winsorized_fold_returns = _winsorize(collect_oos_fold_returns(per_fold_oos_list), _w_lo, _w_hi)
     oos_metrics["oos_fold_returns"] = winsorized_fold_returns
 
@@ -1187,15 +1360,54 @@ def apply_fold_aggregation(oos_metrics: dict, per_fold_oos_list: list[dict | Non
     n_folds_profitable = sum(1 for r in winsorized_fold_returns if r > fold_profit_epsilon)
     oos_metrics["oos_folds_total"] = n_folds_total
     oos_metrics["oos_profitable_folds"] = n_folds_profitable
+    # Issue #664 — EQUAL-gewichtete Fraktion (Status quo, bit-identisch — bleibt die kanonische
+    # ``oos_profitable_folds_frac``, unabhängig vom konfigurierten Gewichtungsmodus).
     oos_metrics["oos_profitable_folds_frac"] = (
         n_folds_profitable / n_folds_total if n_folds_total > 0 else 0.0)
 
+    # Issue #664 — Diagnose-Artefakt: das Profitable-Folds-Gate ist bei nicht-stationären
+    # Deployment-Zielen strukturell an Regime-Heterogenität gekoppelt (kein Bug, eine echte
+    # Design-Spannung). Zwei rein ADDITIVE Telemetrie-Erweiterungen, beide OHNE Gate-/Reward-
+    # Wirkung, solange ``profitable_folds_weighting`` nicht explizit auf ``'recency'`` steht:
+    # (a) das Stationaritäts-/Regime-Signal (Vorzeichen-Autokorrelation + Fold-Sign-Flip-Anteil),
+    # (b) die RECENCY-gewichtete Parallel-Fraktion (exponentielle Fold-Gewichte, jüngster Fold am
+    # stärksten gewichtet) — auf DERSELBEN winsorisierten Return-Sequenz + demselben ε-Rauschboden
+    # wie die Equal-Fraktion, damit beide Grössen direkt vergleichbar sind.
+    oos_metrics.update(_fold_regime_diagnostics(winsorized_fold_returns))
+    if n_folds_total > 0:
+        valid_indices = [
+            i for i, f in enumerate(per_fold_oos_list)
+            if f is not None and f.get("total_return") is not None
+        ]
+        profitable_by_index = [False] * n_folds_total
+        for idx, val in zip(valid_indices, winsorized_fold_returns):
+            profitable_by_index[idx] = val > fold_profit_epsilon
+        recency_weights = _fold_recency_weights(n_folds_total, _read_recency_halflife_folds())
+        total_w = sum(recency_weights) or 1.0
+        oos_metrics["oos_profitable_folds_frac_recency"] = (
+            sum(w for w, prof in zip(recency_weights, profitable_by_index) if prof) / total_w
+        )
+    else:
+        oos_metrics["oos_profitable_folds_frac_recency"] = 0.0
+    # Issue #664 — BEWUSSTE Entscheidung (kein blinder Default-Wechsel): welche der beiden
+    # Fraktionen das Gate tatsächlich konsumiert, entscheidet ausschliesslich
+    # ``_evaluate_oos_eligibility`` über ``profitable_folds_weighting`` (Default ``'equal'``,
+    # bit-identisch). Diese Funktion liefert NUR die Zahlen, trifft keine Gate-Entscheidung.
+
     # Issue #589 — sortino_ratio bleibt der GEPOOLTE Wert (kohärent mit total_return). Forensische
     # Zweitwerte: der gepoolte (redundant, aber explizit benannt) und der frühere Fold-Median.
+    # Issue #665 — ``sortino_ratio_fold_median`` (annualisiert) ist DEPRECATED für jede
+    # fold-übergreifende Vergleichs-/Aggregationslogik (fold-spezifisch inkommensurabel, siehe
+    # collect_oos_fold_sortinos-Docstring) und bleibt NUR als forensische Anzeige-Telemetrie
+    # erhalten. ``sortino_period_fold_median`` (per-Perioden) ist die kanonische, annualisierungs-
+    # invariante Nachfolgegrösse für jede Konsumenten-Logik (PBO, Dashboards, Diagnose).
     fold_sortino_vals = oos_metrics["oos_fold_sortinos"]
+    fold_sortino_period_vals = oos_metrics["oos_fold_sortino_periods"]
     oos_metrics["sortino_ratio_pooled"] = oos_metrics.get("sortino_ratio")
     oos_metrics["sortino_ratio_fold_median"] = (
         _stats.median(fold_sortino_vals) if fold_sortino_vals else None)
+    oos_metrics["sortino_period_fold_median"] = (
+        _stats.median(fold_sortino_period_vals) if fold_sortino_period_vals else None)
 
     if valid_folds:
         # Häufigkeitskennzahlen bleiben gepoolt (bereits in oos_metrics); forensische Kopie.
@@ -1284,6 +1496,8 @@ def _read_sortino_downside_floor() -> float:
 
 _sortino_numeric_guard_cache: float | None = None
 _profit_factor_cap_cache: float | None = None
+_sortino_numeric_guard_min_periods_cache: float | None = None
+_sortino_numeric_guard_min_periods_cached: bool = False
 
 
 def _read_sortino_numeric_guard() -> float:
@@ -1306,6 +1520,49 @@ def _read_sortino_numeric_guard() -> float:
         val = 1e6
     _sortino_numeric_guard_cache = val
     return val
+
+
+def _read_sortino_numeric_guard_min_periods() -> float | None:
+    """Issue #665 — OPT-IN Referenz-Stichprobengrösse für den T-bewussten Sortino-Numerik-Guard
+    (tournament.json['sortino_numeric_guard_min_periods']). Gecached (Hot-Path). Fehlt der
+    Schlüssel (Default) ⇒ ``None`` ⇒ der Guard bleibt bit-identisch zum Pre-#665-Verhalten (fixer
+    Schwellenwert ``sortino_numeric_guard``, kein T-Skalierung — daher KEIN
+    ``reward_semantics_version``-Bump nötig, solange dieser Key ungesetzt bleibt)."""
+    global _sortino_numeric_guard_min_periods_cache, _sortino_numeric_guard_min_periods_cached
+    if _sortino_numeric_guard_min_periods_cached:
+        return _sortino_numeric_guard_min_periods_cache
+    val = None
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_numeric_guard_min_periods")
+            if raw is not None and float(raw) > 0.0:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = None
+    _sortino_numeric_guard_min_periods_cache = val
+    _sortino_numeric_guard_min_periods_cached = True
+    return val
+
+
+def _effective_sortino_numeric_guard(sortino_numeric_guard: float, n_periods: int) -> float:
+    """Issue #665 — T-bewusste Skalierung des Sortino-Numerik-Guards (opt-in, siehe
+    ``_read_sortino_numeric_guard_min_periods``).
+
+    Root-Cause: ein annualisierter Fold-Sortino bei kleinem Stichprobenumfang T (z. B. T≈137
+    Bars/Fold) trägt eine enorme Schätz-Unsicherheit — |sortino_annualized| bis knapp unter dem
+    fixen Guard (25.0) ist bei diesem T bereits Rauschen, nicht nur bei Verletzung des Guards. Die
+    T-Skalierung senkt den effektiven Schwellenwert PROPORTIONAL zu ``sqrt(n_periods / min_periods)``
+    unterhalb der Referenzgrösse ``min_periods`` (typischerweise die pooled-OOS-Stichprobe, bei der
+    der Guard analytisch kalibriert wurde) — bei/über der Referenz bleibt der Schwellenwert exakt
+    ``sortino_numeric_guard`` (bit-identisch). Inaktiv (Rückgabe unverändert), solange
+    ``sortino_numeric_guard_min_periods`` nicht konfiguriert ist."""
+    min_periods = _read_sortino_numeric_guard_min_periods()
+    if min_periods is None or n_periods is None or n_periods <= 0:
+        return sortino_numeric_guard
+    import math as _math
+    return sortino_numeric_guard * _math.sqrt(min(1.0, float(n_periods) / min_periods))
 
 
 def _read_profit_factor_cap() -> float:
@@ -1608,12 +1865,15 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     sortino = None
                     sortino_period = None
                     sortino_annualized = None
-                elif abs(sortino_annualized) > sortino_numeric_guard:
+                elif abs(sortino_annualized) > _effective_sortino_numeric_guard(
+                        sortino_numeric_guard, n_periods):
                     import logging
+                    _eff_guard = _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods)
                     logging.getLogger("optimizer").warning(
                         "SORTINO_GUARD_TRIPPED: |sortino_annualized|=%.6g > guard=%.6g "
-                        "(n_periods=%d, dd_dev=%.6g) — als Datenfehler verworfen (#614; sortino/psr=None).",
-                        sortino_annualized, sortino_numeric_guard, len(period_rets), dd_dev,
+                        "(effective_guard=%.6g, n_periods=%d, dd_dev=%.6g) — als Datenfehler "
+                        "verworfen (#614/#665; sortino/psr=None).",
+                        sortino_annualized, sortino_numeric_guard, _eff_guard, len(period_rets), dd_dev,
                     )
                     sortino = None
                     sortino_period = None
@@ -2729,6 +2989,9 @@ def select_winners(
                         per_fold_oos_list.append(fold_metrics)
 
                     agg_oos_eval["oos_fold_sortinos"] = collect_oos_fold_sortinos(per_fold_oos_list)
+                    # Issue #665 — die annualisierungs-invariante Parallelgrösse (siehe
+                    # collect_oos_fold_sortino_periods-Docstring), auch auf der Aggregat-Ebene.
+                    agg_oos_eval["oos_fold_sortino_periods"] = collect_oos_fold_sortino_periods(per_fold_oos_list)
 
         else:
 
@@ -2826,6 +3089,9 @@ def _build_single_symbol_oos(all_results: list[dict]) -> dict | None:
         "effective_expectancy_gate": oos_eval.get("effective_expectancy_gate"),
         "oos_metrics": oos_metrics,
         "oos_fold_sortinos": oos_metrics.get("oos_fold_sortinos") or [],
+        # Issue #665 — annualisierungs-invariante Parallelgrösse (siehe
+        # collect_oos_fold_sortino_periods-Docstring); kanonisch für fold-übergreifende Aggregation.
+        "oos_fold_sortino_periods": oos_metrics.get("oos_fold_sortino_periods") or [],
         "median_is_sortino": is_metrics.get("sortino_ratio"),
         # Issue #613 — kohärenter, gepoolter IS-Sortino + Aggregations-Basis für die Divergenz-Strafe.
         "median_is_sortino_pooled": is_sortino_pooled,

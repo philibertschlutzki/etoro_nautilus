@@ -20,8 +20,11 @@ CFG_PATH = Path("automation/config/optimizer.json")
 CFG = json.loads(CFG_PATH.read_text("utf-8"))
 
 
-def test_reward_semantics_version_is_10():
-    assert CFG["reward_semantics_version"] == 10
+def test_reward_semantics_version_at_least_10():
+    """Issue #672 bumpte die Version weiter auf 11 (Eligibility-Semantik, #666) — dieser Test pinnt
+    nur noch die historische UNTERGRENZE (die v10-Migration ist irreversibel abgeschlossen), die
+    exakte AKTUELLE Version wird in test_issue_672_reward_semantics_bump.py gepinnt."""
+    assert CFG["reward_semantics_version"] >= 10
 
 
 def test_version_is_documented_with_v10_changelog_entry():
@@ -64,9 +67,11 @@ def test_stale_pre_v10_study_is_rejected_fail_loud():
         _check_reward_semantics_version(_FakeStudy(), CFG)
 
 
-def test_fresh_study_stamps_v10_without_error():
+def test_fresh_study_stamps_current_version_without_error():
     """Eine frische Study (keine Trials) wird klaglos mit der aktuellen Version gestempelt — kein
-    Purge nötig, da keine Alt-Trials zu vergiften wären."""
+    Purge nötig, da keine Alt-Trials zu vergiften wären. Dynamisch gegen CFG geprüft (die Version
+    ist seit #672 11, nicht mehr hartcodiert 10 — siehe test_issue_672_reward_semantics_bump.py für
+    den exakten aktuellen Pin)."""
     from automation.optimizer.run_optimization import _check_reward_semantics_version
 
     class _FakeStudy:
@@ -85,19 +90,19 @@ def test_fresh_study_stamps_v10_without_error():
 
     study = _FakeStudy()
     _check_reward_semantics_version(study, CFG)
-    assert study.user_attrs["reward_semantics_version"] == 10
+    assert study.user_attrs["reward_semantics_version"] == CFG["reward_semantics_version"]
 
 
 def test_matching_version_is_a_no_op():
-    """Eine Study, die bereits mit der aktuellen Version (10) gestempelt ist, wird nicht erneut
-    als stale erkannt (kein falsches Positiv bei jedem Trial-Callback)."""
+    """Eine Study, die bereits mit der AKTUELLEN Version gestempelt ist, wird nicht erneut als
+    stale erkannt (kein falsches Positiv bei jedem Trial-Callback)."""
     from automation.optimizer.run_optimization import _check_reward_semantics_version
 
     class _FakeStudy:
         def __init__(self):
-            self._attrs = {"reward_semantics_version": 10}
+            self._attrs = {"reward_semantics_version": CFG["reward_semantics_version"]}
             self.trials = [object()] * 20
-            self.study_name = "study_v10"
+            self.study_name = "study_current"
             self._storage = None
 
         @property
@@ -108,3 +113,26 @@ def test_matching_version_is_a_no_op():
             self._attrs[k] = v
 
     _check_reward_semantics_version(_FakeStudy(), CFG)  # muss NICHT raisen
+
+
+def test_stale_v10_study_is_rejected_against_current_config():
+    """Issue #672 — eine unter v10 (Pre-#666-Regime-Symmetrie) akkumulierte Study wird gegen die
+    aktuelle (v11+) Config fail-loud abgelehnt, GENAU wie die v9-Study oben."""
+    from automation.optimizer.run_optimization import _check_reward_semantics_version
+
+    class _FakeStudy:
+        def __init__(self):
+            self._attrs = {"reward_semantics_version": 10}
+            self.trials = [object()] * 5
+            self.study_name = "study_stale_v10"
+            self._storage = None
+
+        @property
+        def user_attrs(self):
+            return dict(self._attrs)
+
+        def set_user_attr(self, k, v):
+            self._attrs[k] = v
+
+    with pytest.raises(ValueError, match="REJECT_STALE_STUDY_SEMANTICS"):
+        _check_reward_semantics_version(_FakeStudy(), CFG)

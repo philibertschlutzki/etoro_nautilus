@@ -180,7 +180,9 @@ def test_pbo_overfit_sets_correct_override(tmp_path, monkeypatch):
 
     with_pbo = confirm._study_pbo
     try:
-        confirm._study_pbo = lambda study, **k: 0.75  # erzwungenes Selektions-Overfit-Signal
+        # Issue #663 — _study_pbo liefert seit der feineren CSCV-Partition ein (pbo, telemetry)-Tupel.
+        confirm._study_pbo = lambda study, **k: (0.75, {  # erzwungenes Selektions-Overfit-Signal
+            "pbo_n_groups": 12, "pbo_n_configs": 12, "pbo_metric": "period_return"})
         res = confirm.confirm_per_symbol_promotion(
             study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
             run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,

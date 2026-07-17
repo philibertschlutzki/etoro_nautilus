@@ -46,6 +46,7 @@ def _scale_fingerprint(cfg: dict) -> str:
 _EXPECTED_FINGERPRINT_BY_VERSION = {
     9: _scale_fingerprint(CFG),   # zur Bump-Zeit erzeugt — pinnt den IST-Zustand von v9.
     10: _scale_fingerprint(CFG),  # Issue #658 — Eligibility-Bump, Skalen-Konstanten unverändert.
+    11: _scale_fingerprint(CFG),  # Issue #672 — Eligibility-Bump (#666), Skalen-Konstanten unverändert.
 }
 
 
