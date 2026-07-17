@@ -26,7 +26,7 @@ from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
-    check_any_arm_reachability_live,
+    check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.log_manager import emit_execution_event
@@ -190,13 +190,39 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     if any(f is not None for f in evaluated_flags):
         if all(f is False for f in evaluated_flags):
             study.set_user_attr("floor_plateau_warned", True)
+            # Issue #669 — Suchraum-Diagnose-Artefakt: trennt Signal-Frequenz von Haltedauer als
+            # bindende Ursache des STRUCTURAL_ALL_UNEVALUABLE-Kollapses (statt nur "kein Trial je
+            # evaluable" zu melden) — macht sichtbar, OB eine Bounds-Kalibrierung (spaces.py) hier
+            # überhaupt greifen könnte.
+            from automation.optimizer.sweep_diagnostics import diagnose_trade_frequency
+            _oos_min_trades = 20
+            try:
+                _tcfg_path = config_dir() / "tournament.json"
+                if _tcfg_path.exists():
+                    _oos_min_trades = int(
+                        (json.loads(_tcfg_path.read_text("utf-8")) or {}).get("oos_min_trades", 20))
+            except Exception:
+                pass
+            _trial_dicts = [{
+                "oos_evaluated": getattr(t, "user_attrs", {}).get("oos_evaluated"),
+                "oos_eligible": getattr(t, "user_attrs", {}).get("oos_eligible"),
+                "oos_total_trades": getattr(t, "user_attrs", {}).get("oos_total_trades"),
+                "is_total_trades": getattr(t, "user_attrs", {}).get("is_total_trades"),
+                "hit_trade_cap": getattr(t, "user_attrs", {}).get("hit_trade_cap"),
+            } for t in completed]
+            diagnosis = diagnose_trade_frequency(_trial_dicts, oos_min_trades=_oos_min_trades)
             logger.warning(
                 "🚨 Floor-Plateau erkannt: kein evaluable Trial nach %d Trials — das Symbol erzeugt "
-                "nie evaluierbare OOS-Trades (Pitfall #75-Klasse). Pruefe Daten-Suffizienz, "
+                "nie evaluierbare OOS-Trades (Pitfall #75-Klasse). Bindende Ursache (#669): %s "
+                "(median_is_trades=%s, frac_hit_trade_cap=%s). Pruefe Daten-Suffizienz, "
                 "OOS-Trade-Frequenz und Micro-Sizing-/min_trades-Gate. Per-Symbol-Tuning fuer dieses "
                 "Symbol ist derzeit ein No-Op.",
-                len(completed),
+                len(completed), diagnosis["binding_cause"], diagnosis["median_is_trades"],
+                diagnosis["frac_hit_trade_cap"],
             )
+            emit_execution_event(logger, "STRUCTURAL_ALL_UNEVALUABLE", {
+                "n_trials": len(completed), **diagnosis,
+            })
 
             # Issue #456 / #488 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
             should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
@@ -245,6 +271,10 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "n_trials": len(completed),
                     "median_oos_total_trades": median_oos_trades,
                     "hit_trade_cap_count": n_hit_cap,
+                    # Issue #669 — per Definition dieses Zweigs (alle evaluiert, keiner eligible):
+                    # Signal-QUALITÄT, keine Frequenz-/Bounds-Ursache (Bounds-Kalibrierung würde
+                    # hier NICHTS beheben — trennt diesen Fall explizit von STRUCTURAL_ALL_UNEVALUABLE).
+                    "binding_cause": "signal_quality",
                 })
 
                 should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
@@ -411,6 +441,9 @@ def make_objective(
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            # Issue #665 — annualisierungs-invariante Fassung (kanonisch für fold-übergreifende
+            # Vergleiche); "per_fold_oos_sortino" (oben) bleibt nur forensische Anzeige.
+            "per_fold_oos_sortino_period": list(metrics.oos_fold_sortino_periods),
             # Issue #620 — #589-Kohärenz-Verletzung (sign(oos_sortino)≠sign(oos_total_return)) sichtbar.
             "oos_coherence_violation": bool(metrics.oos_coherence_violation),
             "reward_terms": reward_terms,
@@ -915,6 +948,8 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     deflation_n = len(cohort_sr)
     deflation_sr0 = deflation_var = None
     deflation_used_var_floor = False
+    deflation_lambda = None
+    deflation_theoretical_var_source = None
     if deflated_selection and deflation_n >= 2:
         from automation.optimizer.deflation import sr0_multiple_testing_robust
         deflation_var = statistics.pvariance([float(s) for s in cohort_sr])
@@ -937,7 +972,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                             and getattr(t, "user_attrs", {}).get("oos_sortino_period") is not None
                             and getattr(t, "user_attrs", {}).get("oos_n_periods")]
         deflation_t_periods = int(statistics.median(cohort_n_periods)) if cohort_n_periods else None
-        deflation_sr0, deflation_used_var_floor = sr0_multiple_testing_robust(
+        # Issue #670 — dieselbe (Rückwärtskompat-)Signatur wie confirm.py: ``deflation_used_var_floor``
+        # bedeutet nur "λ ≥ 0.5"; ``deflation_lambda``/``deflation_theoretical_var_source`` sind die
+        # präzisen Grössen für die Study-Summary-Telemetrie.
+        (deflation_sr0, deflation_used_var_floor, deflation_lambda,
+         deflation_theoretical_var_source) = sr0_multiple_testing_robust(
             deflation_var, deflation_n, min_cohort=min_cohort, var_floor=var_floor,
             n_periods=deflation_t_periods)
 
@@ -959,14 +998,28 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     live_win_rates = [getattr(t, "user_attrs", {}).get("oos_win_rate") for t in trials
                       if getattr(t, "user_attrs", {}).get("oos_win_rate") is not None]
     any_arm_live_unreachable = []
+    # Issue #668 — hebt die reine #660-Warnung auf eine KONFIGURIERTE Policy (warn/drop_arm/
+    # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
+    any_arm_policy_decision = {"policy": "warn", "dropped_clauses": [], "recalibrated_thresholds": {}}
     try:
         opt_path_arm = config_dir() / "tournament.json"
         if opt_path_arm.exists():
             _tcfg_arm = json.loads(opt_path_arm.read_text("utf-8")) or {}
             any_arm_live_unreachable = check_any_arm_reachability_live(
                 _tcfg_arm, {"min_win_rate": live_win_rates})
+            any_arm_policy_decision = resolve_any_arm_policy(
+                _tcfg_arm, {"min_win_rate": live_win_rates})
     except Exception:
         any_arm_live_unreachable = []
+
+    # Issue #667 — Rang-Korrelationsmatrix der vier eligible-Gates (Redundanz-Diagnose) über die
+    # gestempelten Per-Trial oos_gate_deltas (#554/#668). Reine Telemetrie/Warnung — ändert NIE eine
+    # Gate-/Reward-Entscheidung; welches Gate ggf. konsolidiert wird, ist eine bewusste PR-Wahl.
+    gate_deltas_cohort = [getattr(t, "user_attrs", {}).get("oos_gate_deltas") for t in trials]
+    try:
+        gate_collinearity = assert_gate_collinearity_guard(gate_deltas_cohort)
+    except Exception:
+        gate_collinearity = {"n_samples": 0, "correlations": {}}
 
     # Issue #621 — Reward-Term-Dekomposition
     eligible_terms = []
@@ -1048,9 +1101,13 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "deflation_n_eligible": deflation_n,
         "deflation_sr0": deflation_sr0,
         "deflation_var_sr": deflation_var,
-        # Issue #636 — sichtbar, ob SR₀ aus dem konservativen Varianz-Floor (Small-Cohort-Fallback)
-        # statt der empirischen Kohorten-Varianz stammt.
+        # Issue #636 — sichtbar, ob das Shrinkage-Gewicht λ ≥ 0.5 ist (die theoretische Referenz
+        # dominiert die Blend-Gewichtung — NICHT "die var_floor-Konstante wurde verwendet", #670).
         "deflation_used_var_floor": deflation_used_var_floor,
+        # Issue #670 — die präzisen Grössen: das tatsächliche Shrinkage-Gewicht λ und die
+        # tatsächlich verwendete theoretische Referenz-Quelle ('lo2002' vs 'var_floor').
+        "deflation_lambda": deflation_lambda,
+        "deflation_theoretical_var_source": deflation_theoretical_var_source,
         # Issue #620 — #589-Kohärenz-Verletzungen je Study (beobachtbar).
         "coherence_violations": coherence_violations,
         # Issue #597 — Randlösungs-Signatur.
@@ -1059,6 +1116,18 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Fixture-Check: Klauseln, deren konfigurierte Schwelle über dem beobachteten p99 DIESER
         # Study liegt.
         "any_arm_live_unreachable": any_arm_live_unreachable,
+        # Issue #668 — die EXPLIZITE Policy-Entscheidung (statt der blossen #660-Warnung): welche
+        # Klauseln gedroppt (any_arm_reduced) bzw. auf welche Schwellen symbol-spezifisch
+        # rekalibriert wurden (any_arm_recalibrated_thresholds). Beide leer bei Policy='warn'.
+        "any_arm_unreachable_policy": any_arm_policy_decision.get("policy"),
+        "any_arm_reduced": any_arm_policy_decision.get("dropped_clauses"),
+        "any_arm_recalibrated_thresholds": any_arm_policy_decision.get("recalibrated_thresholds"),
+        # Issue #667 — Gate-Kollinearitäts-Diagnose. Tupel-Schlüssel sind nicht JSON-serialisierbar
+        # ⇒ "gate_a|gate_b"-Stringform für das strukturierte Event.
+        "gate_collinearity_n_samples": gate_collinearity.get("n_samples"),
+        "gate_collinearity": {
+            f"{k1}|{k2}": rho for (k1, k2), rho in gate_collinearity.get("correlations", {}).items()
+        },
         "reward_terms_aggregates": term_aggregates,
     })
 
@@ -1089,7 +1158,10 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
        durchgereicht, damit die Manifest-Konstruktion fail-loud gegen die tatsächliche Datenlage
        prüft (REJECT_DATA_INSUFFICIENT_GEOMETRY statt stiller .loc-Klemmung)."""
     def objective(trial):
-        sampled = sample_params(strategy, trial)
+        # Issue #669 — symbol-spezifische Suchraum-Bounds-Überschreibungen (opt-in, leer per
+        # Default) NUR im Per-Symbol-Pfad; der globale Multi-Symbol-Pfad (make_objective) bleibt
+        # ohne Symbol-Kontext bei den universellen Default-Bounds.
+        sampled = sample_params(strategy, trial, symbol=symbol)
         trial.set_user_attr("sampled_params", sampled)
 
         cfg_dir = config_dir()
@@ -1188,8 +1260,22 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # nicht nur das statische Cross-Strategy-Kalibrier-Fixture aus #633).
         if metrics.oos_win_rate is not None:
             trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
-        # Issue #619 — per-Fold-OOS-Sortinos je Trial (für die Sweep-Level-PBO/CSCV in confirm).
+        # Issue #668 — die maschinenlesbaren Gate-Deltas je Trial (bereits im JSON_EVENT emittiert,
+        # #554) zusätzlich als User-Attr persistiert: erlaubt confirm.py, die eligible_requires_any-
+        # Klausel für BEREITS ABGESCHLOSSENE Trials retroaktiv unter einer angepassten Policy
+        # (drop_arm/recalibrate) neu zu bewerten, OHNE einen Re-Backtest zu benötigen.
+        trial.set_user_attr("oos_gate_deltas", dict(metrics.oos_gate_deltas or {}))
+        # Issue #619 — per-Fold-OOS-Sortinos je Trial (DEPRECATED für PBO/CSCV seit #663/#665 —
+        # annualisiert, fold-spezifisch inkommensurabel; bleibt forensische Telemetrie).
         trial.set_user_attr("oos_fold_sortinos", list(metrics.oos_fold_sortinos))
+        # Issue #665 — die kanonische, annualisierungs-invariante Parallelgrösse.
+        trial.set_user_attr("oos_fold_sortino_periods", list(metrics.oos_fold_sortino_periods))
+        # Issue #663/#665 — die gepoolte OOS-Per-Perioden-Return-Serie NUR für eligible Trials
+        # gestempelt (Storage-Kosten begrenzt): die neue Sweep-Level-PBO (#663) braucht die gepoolte
+        # OOS-Serie je eligiblem Trial, um sie in eine EIGENE, feinere CSCV-Partition (S≥8–16 Gruppen)
+        # zu splitten, statt auf den 4 groben Walk-Forward-Folds zu rechnen (siehe confirm._study_pbo).
+        if metrics.oos_eligible:
+            trial.set_user_attr("oos_period_returns", list(metrics.oos_period_returns))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
@@ -1234,6 +1320,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             "oos_profit_factor": metrics.oos_profit_factor,
             "is_sortino_median": metrics.is_sortino_median,
             "per_fold_oos_sortino": list(metrics.oos_fold_sortinos),
+            # Issue #665 — annualisierungs-invariante Fassung (kanonisch für fold-übergreifende
+            # Vergleiche); "per_fold_oos_sortino" (oben) bleibt nur forensische Anzeige.
+            "per_fold_oos_sortino_period": list(metrics.oos_fold_sortino_periods),
             # Issue #620 — #589-Kohärenz-Verletzung (sign(oos_sortino)≠sign(oos_total_return)) sichtbar.
             "oos_coherence_violation": bool(metrics.oos_coherence_violation),
             "reward_terms": reward_terms,

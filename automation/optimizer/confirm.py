@@ -152,38 +152,99 @@ def confirm_on_holdout(
     }
 
 
-def _study_pbo(study, *, min_trials: int = 4) -> float | None:
-    """Issue #619 — Probability of Backtest Overfitting (Bailey/López de Prado, CSCV) über die Study.
+_PBO_DEFAULT_MIN_CONFIGS = 10
+_PBO_DEFAULT_N_GROUPS = 12
+_PBO_MIN_GROUPS = 8
 
-    Baut aus den per-Fold-OOS-Sortinos der ELIGIBLEN Trials (die getesteten Konfigurationen) eine
-    ``(n_paths, n_strategies)``-IS/OOS-Matrix via CSCV über die Folds (``cpcv_paths``): je Pfad ist das
-    IS-Set der Train-Folds, das OOS-Set die Test-Folds. ``PBO > 0.5`` ⇒ der IS-Gewinner ist OOS
-    schlechter als der Median ⇒ die Selektion überfittet systematisch. ``None``, wenn zu wenige Trials
-    oder Folds vorliegen (kein Urteil)."""
+
+def _study_pbo(study, *, tournament_cfg: dict | None = None,
+               min_configs: int | None = None, n_groups: int | None = None) -> tuple[float | None, dict]:
+    """Issue #663/#619 — Probability of Backtest Overfitting (Bailey/López de Prado, CSCV) über die
+    Study, auf einer EIGENEN, feineren CSCV-Partition der GEPOOLTEN OOS-Per-Perioden-Return-Serie
+    jedes eligiblen Trials (S ≥ 8–16 kontiguierliche Gruppen) — NICHT mehr auf den 4
+    Walk-Forward-Folds (Pre-#663-Verhalten).
+
+    Root-Cause (#663): 4 Walk-Forward-Folds ⇒ nur ``C(4,2)=6`` CSCV-Pfade sind statistisch grob
+    (Bailey/López de Prado empfehlen S≳10–16); bei regime-heterogenen Folds (z. B. Fold 1–3
+    strukturell defunkt, Fold 4 tradeable) misst die CSCV faktisch *Regime-Transfer* zwischen
+    Folds, nicht Overfit — PBO→1.0 selbst bei Configs mit identischem Rang-Profil, nur einem
+    Level-Offset (Artefakt, keine echte Selektions-Überanpassung). Zusätzlich war die alte
+    Split-Metrik (``oos_fold_sortinos``, annualisiert) bei T≈137 Bars/Fold Rauschen UND über Folds
+    NICHT kommensurabel (fold-spezifischer Annualisierungsfaktor, #665).
+
+    Fix: die CSCV-Partition läuft auf der GEPOOLTEN, per-Perioden OOS-Return-Serie (``oos_period_returns``,
+    je eligiblem Trial gestempelt, #663/#665) in ``n_groups`` KONTIGUIERLICHEN Gruppen — unabhängig von
+    der (groben) Walk-Forward-Fold-Geometrie. Split-Metrik ist der MITTLERE Perioden-Return je Gruppe
+    (``pbo_metric='period_return'`` — annualisierungs-invariant, über Gruppen kommensurabel, ohne eine
+    zusätzliche Downside-Deviation-Schätzung auf einer noch kleineren Teilstichprobe).
+
+    Rückgabe ``(pbo, telemetry)``. ``pbo`` ist ``None`` (kein PBO-Veto — das Punkt-/DSR-Gate bleibt
+    maßgeblich), wenn zu wenige eligible Configs (``< min_configs``, Default ``pbo_min_configs``=10)
+    ODER zu wenige Gruppen (``< 8``) vorliegen — statt eines rausch-getriebenen Hard-Stops.
+    ``telemetry`` trägt ``pbo_n_groups``/``pbo_n_configs``/``pbo_metric`` für den Winner-Eintrag,
+    IMMER gefüllt (auch wenn ``pbo is None``, zur Diagnose WARUM kein Urteil gefällt wurde)."""
     import numpy as _np
     import optuna
+
+    tournament_cfg = tournament_cfg or {}
+    if min_configs is None:
+        min_configs = int(tournament_cfg.get("pbo_min_configs", _PBO_DEFAULT_MIN_CONFIGS))
+    if n_groups is None:
+        n_groups = int(tournament_cfg.get("pbo_n_groups", _PBO_DEFAULT_N_GROUPS))
+
     rows = []
     for t in study.trials:
         if t.state != optuna.trial.TrialState.COMPLETE or not t.user_attrs.get("oos_eligible"):
             continue
-        fs = t.user_attrs.get("oos_fold_sortinos") or []
-        if fs:
-            rows.append([float(x) for x in fs])
-    if len(rows) < min_trials:
-        return None
-    n_folds = min(len(r) for r in rows)
-    if n_folds < 2:
-        return None
-    mat = _np.array([r[:n_folds] for r in rows], dtype=float)   # (n_strategies, n_folds)
-    from automation.optimizer.cpcv import cpcv_paths, probability_of_backtest_overfitting
-    k_test = max(1, n_folds // 2)
-    if not (0 < k_test < n_folds):
-        return None
+        rets = t.user_attrs.get("oos_period_returns") or []
+        if rets:
+            rows.append([float(x) for x in rets])
+
+    telemetry = {"pbo_n_groups": 0, "pbo_n_configs": len(rows), "pbo_metric": "period_return"}
+    if len(rows) < min_configs:
+        return None, telemetry
+
+    n_obs = min(len(r) for r in rows)
+    # Kann nicht mehr Gruppen bilden als gepoolte Perioden-Beobachtungen vorliegen.
+    n_groups_eff = min(int(n_groups), n_obs)
+    if n_groups_eff < _PBO_MIN_GROUPS:
+        telemetry["pbo_n_groups"] = n_groups_eff
+        return None, telemetry
+
+    from automation.optimizer.cpcv import (
+        cpcv_group_boundaries, cpcv_paths, probability_of_backtest_overfitting)
+    boundaries = cpcv_group_boundaries(n_obs, n_groups_eff)
+
+    group_returns = []
+    for r in rows:
+        arr = _np.asarray(r[:n_obs], dtype=float)
+        group_returns.append([
+            float(arr[start:end].mean()) if end > start else float("nan")
+            for start, end in boundaries
+        ])
+    mat = _np.array(group_returns, dtype=float)   # (n_configs, n_groups)
+
+    # Issue #663 — degenerierte (NaN, z. B. eine leere Gruppe) Config-Zeilen EXPLIZIT ausschliessen,
+    # statt sie über den alten min/max-1e-12-Clamp in probability_of_backtest_overfitting lautlos
+    # zu maskieren (die Zeile wäre sonst als reguläre "flache" Config in die CSCV eingegangen).
+    valid_mask = ~_np.isnan(mat).any(axis=1)
+    mat = mat[valid_mask]
+    telemetry["pbo_n_groups"] = n_groups_eff
+    telemetry["pbo_n_configs"] = int(mat.shape[0])
+    if mat.shape[0] < min_configs:
+        return None, telemetry
+
+    k_test = max(1, n_groups_eff // 2)
+    if not (0 < k_test < n_groups_eff):
+        return None, telemetry
     is_rows, oos_rows = [], []
-    for train, test in cpcv_paths(n_folds, k_test):
-        is_rows.append(mat[:, list(train)].mean(axis=1))    # IS-Perf je Strategie (Train-Folds)
-        oos_rows.append(mat[:, list(test)].mean(axis=1))    # OOS-Perf je Strategie (Test-Folds)
-    return probability_of_backtest_overfitting(_np.array(is_rows), _np.array(oos_rows))
+    for train, test in cpcv_paths(n_groups_eff, k_test):
+        is_rows.append(mat[:, list(train)].mean(axis=1))    # IS-Perf je Config (Train-Gruppen)
+        oos_rows.append(mat[:, list(test)].mean(axis=1))    # OOS-Perf je Config (Test-Gruppen)
+    pbo = probability_of_backtest_overfitting(_np.array(is_rows), _np.array(oos_rows))
+    if pbo != pbo:  # NaN-Guard (z. B. < 2 verbleibende Configs nach dem NaN-Ausschluss)
+        return None, telemetry
+    return float(pbo), telemetry
 
 
 def _median_rank_index(values) -> int:
@@ -203,6 +264,68 @@ def _median_rank_index(values) -> int:
         key=lambda i: (float("-inf") if values[i] is None else float(values[i]), i),
     )
     return order[(n - 1) // 2]
+
+
+def _rescue_eligible_trials_under_any_arm_policy(study, tournament_cfg: dict) -> tuple[list, dict]:
+    """Issue #668 — wenn die STATISCHE Eligibility-Selektion leer ist (die Study würde
+    ``HOLDOUT_NO_ELIGIBLE_TRIALS`` auslösen), aber der Grund dafür AUSSCHLIESSLICH der strukturell
+    unerreichbare ``min_win_rate``-OR-Arm war (#660), und ``any_arm_unreachable_policy`` ∈
+    ``{'drop_arm', 'recalibrate'}`` konfiguriert ist, werden die BEREITS ABGESCHLOSSENEN Trials
+    dieser Study retroaktiv unter der angepassten Policy neu bewertet — aus den bereits
+    gestempelten ``oos_gate_deltas``/``oos_win_rate`` User-Attrs, OHNE einen Re-Backtest.
+
+    Ein Trial gilt unter der Policy als eligible, wenn (a) jede ``eligible_requires_all``-Klausel,
+    für die ein Delta gestempelt ist, weiterhin erfüllt war (Delta >= 0) UND (b) die
+    ``eligible_requires_any``-Klausel unter der Policy erfüllt ist: der verbleibende Arm
+    (``min_profit_factor``) reicht allein (Delta >= 0), ODER — nur bei ``'recalibrate'`` —
+    ``oos_win_rate`` erreicht die symbol-spezifisch rekalibrierte Schwelle.
+
+    Rückgabe ``(rescued_trials, decision)`` — ``rescued_trials`` absteigend nach ``t.value``
+    sortiert (leer, wenn nichts zu retten ist); ``decision`` die ``resolve_any_arm_policy``-
+    Rückgabe (für die Winner-Eintrag-Telemetrie, auch wenn nichts gerettet wurde)."""
+    import optuna
+    from automation.optimizer.reward import resolve_any_arm_policy
+
+    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    live_win_rates = [t.user_attrs.get("oos_win_rate") for t in completed
+                      if t.user_attrs.get("oos_win_rate") is not None]
+    decision = resolve_any_arm_policy(tournament_cfg, {"min_win_rate": live_win_rates})
+    if decision["policy"] == "warn":
+        return [], decision
+    if not decision["dropped_clauses"] and not decision["recalibrated_thresholds"]:
+        return [], decision  # der Arm war ohnehin erreichbar ⇒ nichts zu retten
+
+    any_conditions = tournament_cfg.get("eligible_requires_any") or []
+    if "min_win_rate" not in any_conditions:
+        return [], decision  # die Policy betrifft nur den konfigurierten min_win_rate-Arm
+
+    recalibrated_wr = decision["recalibrated_thresholds"].get("oos_min_win_rate")
+    require_all = tournament_cfg.get("eligible_requires_all") or []
+
+    rescued = []
+    for t in completed:
+        if t.value is None:
+            continue
+        deltas = t.user_attrs.get("oos_gate_deltas") or {}
+        all_ok = True
+        for cond in require_all:
+            key = cond if cond.startswith("oos_") else f"oos_{cond}"
+            if key in deltas and deltas[key] < 0.0:
+                all_ok = False
+                break
+        if not all_ok:
+            continue
+
+        pf_delta = deltas.get("oos_min_profit_factor")
+        any_ok = pf_delta is not None and pf_delta >= 0.0
+        if not any_ok and recalibrated_wr is not None:
+            wr = t.user_attrs.get("oos_win_rate")
+            any_ok = wr is not None and wr >= recalibrated_wr
+        if any_ok:
+            rescued.append(t)
+
+    rescued.sort(key=lambda t: t.value, reverse=True)
+    return rescued, decision
 
 
 def _metrics_dict(m) -> dict:
@@ -398,6 +521,27 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # HOLDOUT_NO_ELIGIBLE_TRIALS-Event + Rejection; es wandert KEIN Floor-Trial (argmax reward über ALLE
     # Trials, evtl. ein evaluable_reward_floor-Trial) unbemerkt in den Holdout. Der frühere
     # ``study.best_trial``-Fallback promotete im Leer-Fall genau solche nie-validierten Parameter.
+    #
+    # Issue #668 — BEVOR endgültig REJECTED wird: ist die statische Leere ausschliesslich dem
+    # strukturell unerreichbaren ``min_win_rate``-OR-Arm geschuldet (#660) UND
+    # ``any_arm_unreachable_policy`` explizit auf 'drop_arm'/'recalibrate' konfiguriert, werden die
+    # bereits abgeschlossenen Trials retroaktiv unter der angepassten Policy neu bewertet (KEIN
+    # Re-Backtest) — die Reduktion/Rekalibrierung wird EXPLIZIT im Winner-Eintrag telemetriert,
+    # statt den OR-Arm lautlos auf ein reines PF-Gate kollabieren zu lassen (#668-Root-Cause).
+    any_arm_decision = None
+    if not eligible_trials:
+        any_arm_decision = None
+        if tournament_cfg.get("any_arm_unreachable_policy") in ("drop_arm", "recalibrate"):
+            rescued, any_arm_decision = _rescue_eligible_trials_under_any_arm_policy(study, tournament_cfg)
+            if rescued:
+                eligible_trials = rescued
+                logging.getLogger("optimizer").warning(
+                    f"[#668] {symbol}: HOLDOUT_NO_ELIGIBLE_TRIALS unter dem statischen Gate — "
+                    f"any_arm_unreachable_policy={any_arm_decision['policy']} rettet "
+                    f"{len(rescued)} Trial(s) (dropped={any_arm_decision['dropped_clauses']}, "
+                    f"recalibrated={any_arm_decision['recalibrated_thresholds']})."
+                )
+
     if not eligible_trials:
         emit_execution_event(logging.getLogger("optimizer"), "HOLDOUT_NO_ELIGIBLE_TRIALS", {
             "symbol": symbol,
@@ -443,7 +587,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     deflation_n = 0
     deflation_n_effective = 0
     deflation_var = None
+    # Issue #670 — ``deflation_used_var_floor`` (Rückwärtskompat-Name) bedeutet AUSSCHLIESSLICH
+    # "Shrinkage-Gewicht λ ≥ 0.5" (die theoretische Referenz dominiert die Blend-Gewichtung),
+    # NICHT "die var_floor-Konstante wurde verwendet" — siehe deflation.sr0_multiple_testing_robust-
+    # Docstring. ``deflation_lambda``/``deflation_theoretical_var_source`` sind die präzisen Grössen.
     deflation_used_var_floor = False
+    deflation_lambda = None
+    deflation_theoretical_var_source = None
 
     if deflated_selection:
         cohort_sr = [
@@ -479,23 +629,34 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             # ``variance_n_trials=deflation_n`` (per-Study) treibt das #653-Shrinkage-Gewicht — die
             # Verlässlichkeit von V[ŜR_trials] hängt von der TATSÄCHLICH beobachteten Kohorte ab,
             # nicht von der (grösseren) familienweiten Multiplizität (siehe deflation.py-Docstring).
-            deflation_sr0, deflation_used_var_floor = sr0_multiple_testing_robust(
+            (deflation_sr0, deflation_used_var_floor, deflation_lambda,
+             deflation_theoretical_var_source) = sr0_multiple_testing_robust(
                 deflation_var, deflation_n_effective,
                 min_cohort=deflation_min_cohort, var_floor=deflation_var_floor,
                 n_periods=deflation_t_periods, variance_n_trials=deflation_n,
             )
-            if deflation_used_var_floor:
-                logging.getLogger("optimizer").warning(
-                    f"[DSR #618/#636] {symbol}: N_eligible={deflation_n} < N_min={deflation_min_cohort} "
-                    f"⇒ Fallback-SR₀ (Varianz-Floor {deflation_var_floor} statt der 2-3-Punkte-"
-                    f"Stichproben-Varianz V[ŜR]={deflation_var:.6f}) ⇒ SR₀={deflation_sr0:.4f} "
-                    f"(N_effective={deflation_n_effective})"
+            # Issue #670 — die Message an den TATSÄCHLICH verwendeten theoretical_var-Zweig koppeln
+            # (``deflation_theoretical_var_source``), NICHT an ``deflation_used_var_floor`` (das nur
+            # "λ ≥ 0.5" bedeutet). Bei vorhandenem ``deflation_t_periods`` ist die theoretische
+            # Referenz seit #653 IMMER Lo-2002 (T-bewusst) — die alte Message behauptete hier fälschlich
+            # "Varianz-Floor {deflation_var_floor}" UND reaktivierte wörtlich das "N < N_min ⇒
+            # Fallback"-Diskontinuitäts-Framing, das #653 durch stetiges λ(N)-Shrinkage ersetzt hat.
+            # Kein "< N_min"-Vokabular mehr: es gibt seit #653 keinen Cutover, nur ein stetiges Gewicht.
+            if deflation_theoretical_var_source == "lo2002":
+                logging.getLogger("optimizer").info(
+                    f"[DSR #618/#653/#670] {symbol}: SR₀={deflation_sr0:.4f} via stetigem Shrinkage "
+                    f"λ={deflation_lambda:.3f} Richtung theoretischer Referenz Lo-2002 (T="
+                    f"{deflation_t_periods}) (N_eligible={deflation_n}, "
+                    f"N_family={deflation_n_family or 0}, N_effective={deflation_n_effective}, "
+                    f"V[ŜR]_beobachtet={deflation_var:.6f})"
                 )
             else:
                 logging.getLogger("optimizer").info(
-                    f"[DSR #618/#652] {symbol}: SR₀={deflation_sr0:.4f} "
-                    f"(N_eligible={deflation_n}, N_family={deflation_n_family or 0}, "
-                    f"N_effective={deflation_n_effective}, V[ŜR]={deflation_var:.6f})"
+                    f"[DSR #618/#653/#670] {symbol}: SR₀={deflation_sr0:.4f} via stetigem Shrinkage "
+                    f"λ={deflation_lambda:.3f} Richtung Varianz-Floor {deflation_var_floor} (kein "
+                    f"n_periods verfügbar, Legacy-Pfad) (N_eligible={deflation_n}, "
+                    f"N_family={deflation_n_family or 0}, N_effective={deflation_n_effective}, "
+                    f"V[ŜR]_beobachtet={deflation_var:.6f})"
                 )
 
     # Evaluiere den Holdout ueber die Top-k Trials
@@ -594,9 +755,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 f"[Bootstrap-CI #619] {symbol}: ci_lower(sortino)={ci_lo} ≤ 0 ⇒ HOLD"
             )
 
-    # Issue #619 — Sweep-Level-PBO (Selektions-Overfit): PBO > 0.5 ⇒ der IS-Gewinner ist OOS schlechter
-    # als der Median ⇒ Promotion ist per Definition Selektions-Overfit ⇒ HARD-STOP.
-    study_pbo = _study_pbo(study)
+    # Issue #619/#663 — Sweep-Level-PBO (Selektions-Overfit) auf der feineren, gepoolten
+    # OOS-Perioden-CSCV-Partition (siehe _study_pbo-Docstring): PBO > 0.5 ⇒ der IS-Gewinner ist OOS
+    # schlechter als der Median ⇒ Promotion ist per Definition Selektions-Overfit ⇒ HARD-STOP.
+    study_pbo, pbo_telemetry = _study_pbo(study, tournament_cfg=tournament_cfg)
     pbo_overfit = bool(study_pbo is not None and study_pbo > 0.5)
     if pbo_overfit:
         logging.getLogger("optimizer").warning(
@@ -713,9 +875,24 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "metrics_global": _metrics_dict(m_global)
     }
 
-    # Issue #619 — PBO-Telemetrie (Selektions-Overfit-Diagnose).
+    # Issue #668 — die explizite Any-Arm-Policy-Entscheidung im Winner-Eintrag, sobald sie eine
+    # Wirkung hatte (Trials wurden gerettet oder wären ohne Policy gerettet worden) — sichtbar,
+    # statt den OR-Arm-Kollaps lautlos geschehen zu lassen.
+    if any_arm_decision and (any_arm_decision.get("dropped_clauses")
+                              or any_arm_decision.get("recalibrated_thresholds")):
+        best_result["metrics_symbol"]["any_arm_unreachable_policy"] = any_arm_decision.get("policy")
+        best_result["metrics_symbol"]["any_arm_reduced"] = any_arm_decision.get("dropped_clauses")
+        best_result["metrics_symbol"]["any_arm_recalibrated_thresholds"] = (
+            any_arm_decision.get("recalibrated_thresholds"))
+
+    # Issue #619/#663 — PBO-Telemetrie (Selektions-Overfit-Diagnose). ``pbo_n_groups``/
+    # ``pbo_n_configs``/``pbo_metric`` IMMER gefüllt (auch bei ``study_pbo is None``), damit
+    # nachvollziehbar bleibt, WARUM kein PBO-Urteil gefällt wurde (zu wenige Configs/Gruppen).
     if study_pbo is not None:
         best_result["metrics_symbol"]["pbo"] = study_pbo
+    best_result["metrics_symbol"]["pbo_n_groups"] = pbo_telemetry.get("pbo_n_groups")
+    best_result["metrics_symbol"]["pbo_n_configs"] = pbo_telemetry.get("pbo_n_configs")
+    best_result["metrics_symbol"]["pbo_metric"] = pbo_telemetry.get("pbo_metric")
     # Issue #611/#618/#636 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle. Seit
     # #636 IMMER gefüllt, sobald SR₀ berechenbar war (unabhängig von holdout_passed) — deflated_dsr
     # ist damit nie mehr uninformativ-null, nur weil ein früheres Gate schon ablehnte.
@@ -724,7 +901,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflated_dsr"] = deflation_dsr
         best_result["metrics_symbol"]["deflation_dsr_z"] = deflation_dsr_z
         best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
+        # Issue #670 — ``deflation_used_var_floor`` bleibt aus Rückwärtskompat-Gründen erhalten
+        # (bedeutet NUR "λ ≥ 0.5"). Die PRÄZISEN Grössen für die Forensik: ``deflation_lambda`` (das
+        # tatsächliche Shrinkage-Gewicht) und ``deflation_theoretical_var_source`` (welche
+        # theoretische Referenz — Lo-2002 oder var_floor — tatsächlich verwendet wurde).
         best_result["metrics_symbol"]["deflation_used_var_floor"] = deflation_used_var_floor
+        best_result["metrics_symbol"]["deflation_lambda"] = deflation_lambda
+        best_result["metrics_symbol"]["deflation_theoretical_var_source"] = deflation_theoretical_var_source
         # Issue #652 — die familienweite Multiplizität, die tatsächlich in die SR₀-Berechnung
         # eingeflossen ist (N_effective = max(per-Study-N, N_family)), plus die rohe übergebene
         # Familien-Zahl — beide sichtbar im Proposal, damit die effektive SR₀-Hürde je promoteter
@@ -733,6 +916,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_n_effective"] = deflation_n_effective
 
     return best_result
+
+
+# Issue #671 — Confirm-/Holdout-Ursachen, die VORAUSSETZEN, dass die Selektion tatsächlich einen
+# Holdout-Lauf erreichte (mind. 1 eligible Trial in der Top-k-Selektion) — im Unterschied zu
+# ``HOLDOUT_NO_ELIGIBLE_TRIALS``/``REJECT_HOLDOUT_UNREACHABLE``, die VOR jedem Holdout-Backtest
+# greifen. Für diese Ursachen ist der modale PER-TRIAL IS-Grund (``_dominant_rejection``) keine
+# sinnvolle Erklärung der Promotion-Ablehnung — die Strategie hatte eligible IS-Trials, scheiterte
+# aber am Confirm-/Holdout-Pfad selbst.
+_CONFIRM_STAGE_REJECTIONS = frozenset({
+    "REJECT_HOLDOUT_GATE", "REJECT_HOLDOUT_DSR_DROP", "REJECT_HOLDOUT_BOOTSTRAP_CI",
+    "REJECT_SELECTION_PBO", "REJECT_BOUNDARY_SOLUTION", "REJECT_NO_EDGE_OVER_GLOBAL",
+})
 
 
 def _dominant_rejection(study) -> str | None:
@@ -770,6 +965,22 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
     except ValueError:
         _reward = None
 
+    # Issue #671 — die EINE gewinnende Ursache aus dem Confirm-Pfad (bereits seit #654 exakt
+    # gesetzt für JEDEN Ausgang: REJECT_HOLDOUT_GATE/_DSR_DROP/_BOOTSTRAP_CI, REJECT_SELECTION_PBO,
+    # REJECT_BOUNDARY_SOLUTION, REJECT_NO_EDGE_OVER_GLOBAL, HOLDOUT_NO_ELIGIBLE_TRIALS,
+    # REJECT_HOLDOUT_UNREACHABLE, oder None bei READY_FOR_PR).
+    holdout_reject_detail = promotion.get("is_rejection_detail_override")
+    # Issue #671 — dominant_rejection (Top-Level) auf die CONFIRM-Ursache ausrichten, sobald die
+    # Strategie tatsächlich einen Holdout-Lauf erreichte: der modale PER-TRIAL IS-Grund
+    # (_dominant_rejection) erklärt in diesem Fall NICHT, warum die Promotion scheiterte — sie
+    # scheiterte am Confirm-/Holdout-Pfad, nicht an einem IS-Gate. Nur wenn die Selektion NIE einen
+    # Holdout-Lauf erreichte (HOLDOUT_NO_ELIGIBLE_TRIALS/REJECT_HOLDOUT_UNREACHABLE/READY_FOR_PR)
+    # bleibt der modale IS-Grund die sinnvollste Top-Level-Erklärung.
+    if holdout_reject_detail in _CONFIRM_STAGE_REJECTIONS:
+        dominant_rejection = holdout_reject_detail
+    else:
+        dominant_rejection = _dominant_rejection(study)
+
     payload = {
         "strategy": strategy,
         "symbol": symbol,
@@ -779,19 +990,28 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         "R_symbol": promotion["R_symbol"],
         "R_global": promotion["R_global"],
         "promotion_margin": promotion["promotion_margin"],
-        # Issue #408 — modale Gate-Drop-Reason ueber alle Trials (Observability; aendert NIE die
-        # Promotion-Entscheidung selbst, die ausschliesslich ueber das Holdout-Gate faellt).
-        "dominant_rejection": _dominant_rejection(study),
+        # Issue #408/#671 — modale Gate-Drop-Reason ueber alle Trials, ES SEI DENN die Promotion
+        # scheiterte nachweislich am Confirm-/Holdout-Pfad (siehe _CONFIRM_STAGE_REJECTIONS oben) —
+        # dann zeigt dieses Top-Level-Feld die ECHTE Ursache statt des irreführenden IS-Per-Trial-Grunds.
+        "dominant_rejection": dominant_rejection,
         # Issue #453/#654 — die TATSÄCHLICHE Promotion-Ursache (REJECT_HOLDOUT_DSR_DROP,
         # REJECT_HOLDOUT_BOOTSTRAP_CI, REJECT_SELECTION_PBO, REJECT_BOUNDARY_SOLUTION,
         # REJECT_NO_EDGE_OVER_GLOBAL, REJECT_HOLDOUT_GATE, oder None bei READY_FOR_PR) —
         # ``confirm_per_symbol_promotion`` setzt ``is_rejection_detail_override`` jetzt für JEDEN
         # Ausgang explizit (#654; vorher fiel dies auf den modalen IS-Study-Trial-Grund zurück, der
         # mit der Holdout-/Promotion-Entscheidung nichts zu tun hat — kein OR-Fallback mehr).
-        "is_rejection_detail": promotion.get("is_rejection_detail_override"),
-        # Issue #654 — der modale IS-Study-Trial-Grund bleibt SEPARAT für die Study-Diagnose
-        # erhalten (z. B. 'warum scheiterten die meisten IS-Trials dieser Study', unabhängig davon,
-        # woran die konkrete Promotion-Entscheidung scheiterte).
+        # Beibehalten für Rückwärtskompatibilität; ``holdout_reject_detail`` (unten) ist das
+        # erstklassige, eindeutig benannte Äquivalent (#671).
+        "is_rejection_detail": holdout_reject_detail,
+        # Issue #671 — ERSTKLASSIGES Feld: dieselbe, EINE gewinnende Confirm-/Holdout-Ursache unter
+        # einem eindeutigen Namen — vorher versteckte sich die tatsächlich blockierende Ursache
+        # zwischen zwei ähnlich benannten *_rejection_detail-Feldern (is_rejection_detail vs.
+        # dominant_is_rejection_detail), von denen nur eines (das hier) die Promotion-Entscheidung
+        # tatsächlich erklärt.
+        "holdout_reject_detail": holdout_reject_detail,
+        # Issue #453/#654/#671 — der modale IS-Study-Trial-Grund: reine SEKUNDÄRE Study-Diagnose
+        # ('warum scheiterten die meisten IS-Trials dieser Study'), NIEMALS die Promotion-
+        # blockierende Ursache — unabhängig davon, ob ``holdout_reject_detail`` gesetzt ist.
         "dominant_is_rejection_detail": _dominant_is_rejection_detail(study),
         # Issue #615 — der EINE Holdout-trial_dir, aus dem der promotete Vektor (Params/R_symbol/Gate)
         # stammt: macht die Kohärenz-Invariante im Proposal nachvollziehbar.

@@ -134,7 +134,7 @@ def sr0_multiple_testing_robust(
     min_cohort: int = 10, var_floor: float = 0.0018,
     n_periods: int | None = None, sr_estimate: float = 0.0,
     variance_n_trials: int | None = None,
-) -> tuple[float, bool]:
+) -> tuple[float, bool, float, str]:
     """Issue #636/#653 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration, STETIG in N.
 
     ``V[ŜR_trials]`` aus einer 2-3-Punkte-Kohorte (z. B. VwapExhaustion N=3, Hourly N=2) ist
@@ -168,19 +168,34 @@ def sr0_multiple_testing_robust(
     unzuverlässige empirische Varianz dominieren — SR₀ könnte dadurch mit wachsendem N_family sogar
     SINKEN (das Gegenteil der beabsichtigten strengeren Hürde).
 
-    Rückgabe ``(sr0, floor_dominant)`` — ``floor_dominant`` ist True, sobald der Floor-Anteil
-    (``λ ≥ 0.5``, äquivalent zu ``variance_n_trials <= min_cohort``) MASSGEBLICH ist (Rückwärtskompat-
-    Signal zum alten booleschen ``used_fallback``)."""
+    Issue #670 — die Rückgabe trägt zusätzlich das TATSÄCHLICH verwendete Shrinkage-Gewicht
+    (``shrinkage_lambda``, ``= λ(N)`` — nicht nur das boolesche ``floor_dominant = λ ≥ 0.5``) und die
+    tatsächlich verwendete theoretische Referenz-QUELLE (``theoretical_var_source ∈ {'lo2002',
+    'var_floor'}``). Root-Cause #670: der Aufrufer (``confirm.py``) koppelte seine Log-Message
+    bislang an ``floor_dominant`` und interpretierte das WÖRTLICH als „die ``var_floor``-Konstante
+    wurde verwendet" — das ist bei vorhandenem ``n_periods`` FALSCH: seit #653 ist die theoretische
+    Referenz dann IMMER Lo-2002 (T-bewusst), ``var_floor`` nur der Fallback OHNE ``n_periods``.
+    ``floor_dominant`` bedeutet ausschliesslich „das Shrinkage-Gewicht λ ist ≥ 0.5" (die THEORETISCHE
+    Referenz — welche auch immer sie ist — dominiert die Blend-Gewichtung), NICHT „welche Konstante".
+
+    Rückgabe ``(sr0, floor_dominant, shrinkage_lambda, theoretical_var_source)`` — ``floor_dominant``
+    bleibt aus Rückwärtskompat-Gründen erhalten (``λ ≥ 0.5``, äquivalent zu
+    ``variance_n_trials <= min_cohort``), aber ``shrinkage_lambda``/``theoretical_var_source`` sind
+    die PRÄZISEN Grössen, die Log-Messages/Telemetrie referenzieren MÜSSEN (nie ``floor_dominant``
+    als Proxy für „welche Konstante wurde verwendet")."""
     observed = float(var_sr_trials) if var_sr_trials is not None else 0.0
     if n_periods is not None and n_periods > 1:
         theoretical_var = lo2002_sharpe_variance(sr_estimate, n_periods)
+        theoretical_var_source = "lo2002"
     else:
         theoretical_var = var_floor
+        theoretical_var_source = "var_floor"
     reliability_n = variance_n_trials if variance_n_trials is not None else n_trials
     weight = _cohort_shrinkage_weight(reliability_n, min_cohort)
     effective_var = weight * theoretical_var + (1.0 - weight) * observed
     floor_dominant = weight >= 0.5
-    return sr0_multiple_testing(effective_var, n_trials), floor_dominant
+    return (sr0_multiple_testing(effective_var, n_trials), floor_dominant, weight,
+            theoretical_var_source)
 
 
 def deflated_sharpe_ratio(sr, n_periods, *, sr0: float,

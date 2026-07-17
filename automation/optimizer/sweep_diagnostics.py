@@ -1,0 +1,112 @@
+"""Issue #669 — Suchraum-Diagnose-Artefakt + deklarative (Symbol, Strategie)-Deaktivierungsliste.
+
+Symptom: 7 von 10 Strategien tragen auf TSLA-1h NICHTS zur Familie bei — 0 evaluable (nie ≥
+``oos_min_trades`` OOS-Round-Trips, ``STRUCTURAL_ALL_UNEVALUABLE``, #656) ODER 0 eligible bei
+VOLLER Evaluierbarkeit (``ZERO_ELIGIBLE_PLATEAU``, #656). Der #656-Diagnose-/Early-Stop-Mechanismus
+feuert korrekt, unterscheidet aber NICHT zwischen den beiden strukturell unterschiedlichen
+Kollaps-Ursachen: ein Suchraum, der zu wenige Trades erzeugt (``spaces.py``-Bounds-Problem), und
+ein Suchraum, der genug Trades, aber nie ein risikoadjustiert eligibles Ergebnis erzeugt
+(Signal-Qualität, kein Bounds-Problem). Dieses Modul trennt beide Fälle explizit.
+"""
+from __future__ import annotations
+
+import json
+import statistics
+from pathlib import Path
+
+# Issue #669 — die vier möglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible Trial).
+_BINDING_CAUSES = frozenset(
+    {"signal_frequency", "hold_duration", "signal_quality", "none", "no_data"}
+)
+
+
+def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict:
+    """Bestimmt die BINDENDE Ursache eines 0-evaluable/0-eligible-Kollapses für ein
+    (Symbol, Strategie)-Paar aus den per-Trial-Kennzahlen (``oos_evaluated``, ``oos_eligible``,
+    ``oos_total_trades``, ``is_total_trades``, ``hit_trade_cap`` — bereits als Trial-User-Attrs
+    gestempelt, run_optimization.make_symbol_objective).
+
+    Trennt (Akzeptanzkriterium #669):
+      * ``'signal_frequency'`` — 0 evaluable UND die IS-Aktivität (``is_total_trades``, Median)
+        bleibt bereits UNTER ``oos_min_trades`` ⇒ der Suchraum erzeugt zu selten überhaupt ein
+        Signal (Bounds zu eng, z. B. Signal-Schwellen/Cooldown).
+      * ``'hold_duration'`` — 0 evaluable, IS-Aktivität AUSREICHEND, aber die Mehrheit der Trials
+        trifft die Haltedauer-/Trade-Cap-Grenze (``hit_trade_cap``) ⇒ Signale entstehen, überleben
+        aber nicht bis zur Realisierung im OOS-Fenster (Haltedauer-Obergrenze zu lang/kurz falsch
+        kalibriert).
+      * ``'signal_quality'`` — ALLE Trials wurden evaluiert (echte OOS-Backtests, genug Trades),
+        aber KEINER war je eligible ⇒ ein Suchraum-/Bounds-Problem ist NICHT die Ursache; die
+        Strategie ist auf diesem Symbol/Tier strukturell nicht kanten-fähig (oder das Gate ist zu
+        streng) — Bounds-Kalibrierung würde hier NICHTS beheben.
+      * ``'none'`` — mindestens ein Trial war eligible (kein Kollaps).
+
+    Rückgabe: ``{'n_trials', 'n_evaluable', 'n_eligible', 'median_oos_trades', 'median_is_trades',
+    'frac_hit_trade_cap', 'binding_cause'}``. Rein, deterministisch, kein I/O."""
+    n = len(trials)
+    if n == 0:
+        return {
+            "n_trials": 0, "n_evaluable": 0, "n_eligible": 0,
+            "median_oos_trades": None, "median_is_trades": None,
+            "frac_hit_trade_cap": None, "binding_cause": "no_data",
+        }
+
+    n_evaluable = sum(1 for t in trials if t.get("oos_evaluated"))
+    n_eligible = sum(1 for t in trials if t.get("oos_eligible"))
+    oos_trade_counts = [int(t.get("oos_total_trades") or 0) for t in trials]
+    median_oos_trades = statistics.median(oos_trade_counts) if oos_trade_counts else 0
+    frac_hit_cap = sum(1 for t in trials if t.get("hit_trade_cap")) / n
+
+    if n_evaluable == 0:
+        is_trade_counts = [int(t.get("is_total_trades") or 0) for t in trials]
+        median_is_trades = statistics.median(is_trade_counts) if is_trade_counts else 0
+        if median_is_trades < oos_min_trades:
+            binding_cause = "signal_frequency"
+        elif frac_hit_cap > 0.5:
+            binding_cause = "hold_duration"
+        else:
+            binding_cause = "signal_frequency"
+        return {
+            "n_trials": n, "n_evaluable": 0, "n_eligible": 0,
+            "median_oos_trades": median_oos_trades, "median_is_trades": median_is_trades,
+            "frac_hit_trade_cap": frac_hit_cap, "binding_cause": binding_cause,
+        }
+
+    if n_eligible == 0:
+        return {
+            "n_trials": n, "n_evaluable": n_evaluable, "n_eligible": 0,
+            "median_oos_trades": median_oos_trades, "median_is_trades": None,
+            "frac_hit_trade_cap": frac_hit_cap, "binding_cause": "signal_quality",
+        }
+
+    return {
+        "n_trials": n, "n_evaluable": n_evaluable, "n_eligible": n_eligible,
+        "median_oos_trades": median_oos_trades, "median_is_trades": None,
+        "frac_hit_trade_cap": frac_hit_cap, "binding_cause": "none",
+    }
+
+
+def load_symbol_strategy_denylist(base_cfg: Path | None = None) -> dict[tuple[str, str], str]:
+    """Issue #669 — deklarative (Strategie, Symbol)-Deaktivierungsliste aus
+    ``symbol_strategy_denylist.json`` (Zero-Hardcoding): ``{(strategy, symbol): reason}``.
+
+    Ein Paar in dieser Liste wird in ``sweep.enumerate_tunable_pairs`` VOR dem Sweep übersprungen
+    (Log-Zeile mit ``reason``), statt 16 strukturell nutzlose Trials zu verbrennen. Fehlt die Datei
+    oder ist ``pairs`` leer ⇒ ``{}`` (bit-identisch zum Pre-#669-Verhalten — KEIN Paar wird ohne
+    einen dokumentierten Diagnose-Befund deaktiviert)."""
+    if base_cfg is None:
+        from automation.optimizer.trial_config import config_dir
+        base_cfg = config_dir()
+    path = base_cfg / "symbol_strategy_denylist.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+    out: dict[tuple[str, str], str] = {}
+    for entry in data.get("pairs", []) or []:
+        strat = entry.get("strategy")
+        sym = entry.get("symbol")
+        if strat and sym:
+            out[(strat, sym)] = entry.get("reason", "DECLARED_NON_VIABLE")
+    return out

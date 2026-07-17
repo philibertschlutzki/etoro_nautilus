@@ -1,12 +1,61 @@
-def sample_params(strategy: str, trial) -> dict:
+import json as _json
+
+
+_search_space_overrides_cache: dict | None = None
+
+
+def _load_search_space_overrides() -> dict:
+    """Issue #669 — symbol-spezifische Suchraum-Bounds-Überschreibungen aus
+    ``search_space_overrides.json`` (Zero-Hardcoding, gecached). Fehlt die Datei/der Eintrag
+    ⇒ ``{}`` (bit-identisch zum Pre-#669-Verhalten)."""
+    global _search_space_overrides_cache
+    if _search_space_overrides_cache is not None:
+        return _search_space_overrides_cache
+    try:
+        from automation.optimizer.trial_config import config_dir
+        path = config_dir() / "search_space_overrides.json"
+        if path.exists():
+            data = _json.loads(path.read_text("utf-8")) or {}
+            _search_space_overrides_cache = data.get("overrides", {}) or {}
+        else:
+            _search_space_overrides_cache = {}
+    except Exception:
+        _search_space_overrides_cache = {}
+    return _search_space_overrides_cache
+
+
+def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
+    """Issue #669 — löst die effektiven ``(low, high)``-Suchraumgrenzen für ``param`` auf: eine
+    konfigurierte symbol-spezifische Überschreibung (``search_space_overrides.json``) hat Vorrang
+    vor den universellen Default-Bounds. Fehlt ``symbol`` ODER ist kein Override für
+    (``strategy``, ``symbol``, ``param``) konfiguriert ⇒ ``(low, high)`` UNVERÄNDERT (bit-identisch,
+    Zero-Hardcoding — kein Symbol-Override ist ohne einen dokumentierten Diagnose-/Kalibrier-Befund
+    voreingestellt, siehe ``sweep_diagnostics.diagnose_trade_frequency``)."""
+    if not symbol:
+        return low, high
+    entry = (_load_search_space_overrides().get(strategy) or {}).get(symbol) or {}
+    bound = entry.get(param)
+    if bound and len(bound) == 2:
+        return bound[0], bound[1]
+    return low, high
+
+
+def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
+    """Issue #669 — ``symbol`` (optional, Default ``None``) aktiviert symbol-spezifische
+    Suchraum-Bounds-Überschreibungen für die trade-armen Strategien (siehe ``_bounds_for``). Fehlt
+    ``symbol`` (z. B. der globale Multi-Symbol-Pfad, ``bounds.extract_numeric_bounds``) ⇒
+    bit-identisch zu den universellen Default-Bounds."""
     if strategy == "HourlyMeanReversionStrategy":
+        kp_lo, kp_hi = _bounds_for(strategy, symbol, "keltner_period", 6, 40)
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, 96)
         return {
-            "keltner_period": trial.suggest_int("keltner_period", 6, 40),
+            "keltner_period": trial.suggest_int("keltner_period", kp_lo, kp_hi),
             "keltner_atr_period": trial.suggest_int("keltner_atr_period", 6, 40),
             "keltner_multiplier": trial.suggest_float("keltner_multiplier", 1.0, 3.5),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.3, 2.5),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "SmaCrossoverStrategy":
         return {
@@ -92,24 +141,37 @@ def sample_params(strategy: str, trial) -> dict:
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
         }
     elif strategy == "TrendPullbackStrategy":
+        # Issue #669 — TrendPullback erzeugte auf TSLA-1h STRUCTURAL_ALL_UNEVALUABLE (0/16 Trials
+        # >= oos_min_trades): ema_period bis 300 Bars (~12.5 Tage bei 1h) verlangt ein sehr langes
+        # Trend-Fenster, cooldown_bars/max_bars_in_trade begrenzen zusätzlich die Signal-/Realisierungs-
+        # frequenz. Symbol-Override-Punkte (leer per Default, Zero-Hardcoding — Aktivierung erst nach
+        # einem dokumentierten Kalibrierlauf, siehe search_space_overrides.json).
+        ema_lo, ema_hi = _bounds_for(strategy, symbol, "ema_period", 50, 300)
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, 96)
         return {
-            "ema_period": trial.suggest_int("ema_period", 50, 300),
+            "ema_period": trial.suggest_int("ema_period", ema_lo, ema_hi),
             "rsi_period": trial.suggest_int("rsi_period", 5, 21),
             "rsi_oversold": trial.suggest_float("rsi_oversold", 15.0, 45.0),
             "rsi_overbought": trial.suggest_float("rsi_overbought", 55.0, 85.0),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "AdxAtrMomentumStrategy":
+        # Issue #669 — analog TrendPullback: STRUCTURAL_ALL_UNEVALUABLE auf TSLA-1h. Symbol-
+        # Override-Punkte für adx_period/cooldown_bars/max_bars_in_trade (leer per Default).
+        adx_lo, adx_hi = _bounds_for(strategy, symbol, "adx_period", 7, 30)
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, 96)
         return {
-            "adx_period": trial.suggest_int("adx_period", 7, 30),
+            "adx_period": trial.suggest_int("adx_period", adx_lo, adx_hi),
             "ema_period": trial.suggest_int("ema_period", 20, 100),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 4.0),
             "atr_period": trial.suggest_int("atr_period", 5, 21),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "MeanReversionStrategy":
         return {

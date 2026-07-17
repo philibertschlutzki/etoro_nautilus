@@ -1,0 +1,9 @@
+{
+  "_schema": {
+    "description": "Issue #669 — deklarative Deaktivierungsliste für (Symbol, Strategie)-Paare, die nach einer Suchraum-Diagnose (automation.optimizer.sweep_diagnostics.diagnose_trade_frequency) strukturell 0 evaluable/eligible Trials liefern (auch nach Bounds-Kalibrierung). Spart Budget statt 16 nutzlose Trials je Paar zu verbrennen. LEER per Default (Zero-Hardcoding): kein Paar wird ohne einen dokumentierten Diagnose-Befund (binding_cause + median_oos_trades/median_is_trades aus einem realen Lauf) deaktiviert — ein leerer 'pairs'-Block ist bit-identisch zum Pre-#669-Verhalten (kein Paar wird übersprungen).",
+    "fields": {
+      "pairs": "Liste von {strategy, symbol, reason}-Einträgen. sweep.enumerate_tunable_pairs überspringt ein gelistetes Paar VOR dem Sweep (WARNING-Log mit reason, strukturiertes SYMBOL_STRATEGY_DENYLISTED-Event), statt das volle Trial-Budget zu verbrennen."
+    }
+  },
+  "pairs": []
+}

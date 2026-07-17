@@ -236,3 +236,35 @@ zwei orthogonale Mechanismen beschränkt, die mit #611/#618/#619 scharf geschalt
 * **Eine bewusste Absenkung** von `oos_min_psr` gehört in einen dokumentierten PR mit expliziter
   Nennung des in Kauf genommenen Typ-I-Fehlers — niemals als stiller Config-Tweak.
 
+---
+
+## Kapitel 7: Re-Run-Runbook nach einem Eligibility-/Gate-Kalibrier-Katalog (Issue #672)
+
+Ein Katalog von Gate-/Kalibrierungs-Fixes (z. B. #663–#672) verschiebt potenziell die **effektive
+OOS-Eligibility-Definition** — welche Trials überhaupt als „feasible" gelten. Alt-Trials in
+bestehenden SQLite-Studies wurden unter der ALTEN Semantik bewertet; würden sie mit neuen Trials
+gemischt, grundieren sie den TPE-Posterior mit inkommensurablen Rewards (`REJECT_STALE_STUDY_SEMANTICS`).
+
+**Merge-Reihenfolge vor jedem Re-Run:**
+
+1. **Alle Gate-/Kalibrierungs-Fixes zuerst mergen** (z. B. Kohorte A: Selektions-Robustheit; Kohorte
+   B: Gate-Kalibrierung/Redundanz; Kohorte C: Suchraum). Telemetrie-/Confirm-only-Fixes (kein
+   gespeicherter Trial-Reward betroffen) erzwingen für sich genommen **keinen** Versions-Bump.
+2. **`reward_semantics_version` bumpen** (`automation/config/optimizer.json`), sobald **mindestens
+   ein** eligibility-veränderndes Issue (ein Default-Gate-Codepfad-Wechsel, kein reines Opt-in)
+   gemergt ist. Den neuen Changelog-Eintrag im `_schema`-Docstring ergänzen (welche Issues die
+   Semantik brechen, analog den Vorversionen).
+3. **Als LETZTE Aktion vor dem Re-Run:** alle Per-Symbol-SQLite-Studies löschen
+   (`{WORK}/sweep/*.db` bzw. der konfigurierte `storage_url`-Pfad). Der bestehende
+   `_check_reward_semantics_version`-Guard (#410/#468/#575/#658/#672) lehnt eine geladene Study mit
+   älterer/keiner Version ohnehin fail-loud ab (`REJECT_STALE_STUDY_SEMANTICS`) — der manuelle Purge
+   ist die aufgeräumte, geplante Variante desselben Ergebnisses, statt es dem ersten Trial jeder
+   Study zu überlassen.
+4. **Erst danach** den Sweep erneut starten (`python -m automation.optimizer.sweep ...`).
+
+**Warum genau diese Reihenfolge:** Ein Purge VOR dem letzten Gate-Fix würde eine frische Study unter
+einer noch nicht vollständigen Gate-Semantik neu befüllen — der zweite, spätere Fix würde dieselbe
+Study dann erneut als stale erkennen und ein zweites Mal purgen (doppelte Rechenzeit). Der Purge als
+**letzter** Schritt garantiert, dass jede neu angelegte Study von Anfang an unter der finalen,
+vollständigen Semantik des gesamten Katalogs läuft.
+

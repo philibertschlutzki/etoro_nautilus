@@ -83,9 +83,9 @@ def test_sr0_continuous_across_min_cohort_transition():
     tiny_var = 1.483e-4  # der im Issue zitierte Hourly-Referenzwert
     n_periods = 200
 
-    sr0_9, floor_dom_9 = sr0_multiple_testing_robust(
+    sr0_9, floor_dom_9, *_ = sr0_multiple_testing_robust(
         tiny_var, 9, min_cohort=10, var_floor=0.0018, n_periods=n_periods)
-    sr0_10, floor_dom_10 = sr0_multiple_testing_robust(
+    sr0_10, floor_dom_10, *_ = sr0_multiple_testing_robust(
         tiny_var, 10, min_cohort=10, var_floor=0.0018, n_periods=n_periods)
 
     assert floor_dom_9 is True
@@ -117,9 +117,9 @@ def test_floor_scales_with_t_shorter_oos_more_conservative():
     """Akzeptanzkriterium (#653): kürzeres OOS-Fenster (kleineres T) ⇒ höhere Schätz-Unsicherheit ⇒
     konservativerer (grösserer) Floor ⇒ grösseres SR₀ bei identischer, winziger Kohorten-Varianz."""
     tiny_var = 1e-6
-    sr0_short_t, _ = sr0_multiple_testing_robust(
+    sr0_short_t, *_ = sr0_multiple_testing_robust(
         tiny_var, 3, min_cohort=10, var_floor=0.0018, n_periods=30)
-    sr0_long_t, _ = sr0_multiple_testing_robust(
+    sr0_long_t, *_ = sr0_multiple_testing_robust(
         tiny_var, 3, min_cohort=10, var_floor=0.0018, n_periods=500)
     assert sr0_short_t > sr0_long_t
 
@@ -127,7 +127,7 @@ def test_floor_scales_with_t_shorter_oos_more_conservative():
 def test_legacy_callers_without_n_periods_fall_back_to_var_floor_constant():
     """Rückwärtskompatibilität: fehlt n_periods (Legacy-Aufrufer ohne T-Telemetrie), bleibt
     var_floor die theoretische Referenz (bit-identisch zum Pre-#653-Ankerwert als Reference)."""
-    sr0, floor_dominant = sr0_multiple_testing_robust(
+    sr0, floor_dominant, *_ = sr0_multiple_testing_robust(
         1e-9, 2, min_cohort=10, var_floor=0.0018)
     assert floor_dominant is True
     weight = _cohort_shrinkage_weight(2, 10)
@@ -139,7 +139,7 @@ def test_large_cohort_trusts_observed_variance():
     """Bei grossem N (weit über min_cohort) dominiert die empirische Varianz nahezu vollständig —
     der Floor-Einfluss wird vernachlässigbar (λ(N) → 0)."""
     observed_var = 0.05
-    sr0, floor_dominant = sr0_multiple_testing_robust(
+    sr0, floor_dominant, *_ = sr0_multiple_testing_robust(
         observed_var, 500, min_cohort=10, var_floor=0.0018, n_periods=200)
     assert floor_dominant is False
     # Nahezu identisch zur unrobusten Referenz bei vernachlässigbarem Floor-Gewicht.

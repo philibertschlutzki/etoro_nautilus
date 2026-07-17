@@ -32,6 +32,7 @@ from automation.optimizer.run_optimization import (
     _preinit_study_storage,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
+from automation.optimizer.sweep_diagnostics import load_symbol_strategy_denylist
 from automation.log_manager import setup_bot_logging, emit_execution_event, emit_gate1_rejection
 
 
@@ -299,6 +300,10 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     syms = symbols if symbols else load_symbol_universe()
     winners = load_tier_a_winners() if tier == "deployable" else {}
     log = logger or logging.getLogger("optimizer")
+    # Issue #669 — deklarative (Strategie, Symbol)-Deaktivierungsliste: bereits diagnostizierte,
+    # strukturell nicht-viable Paare werden VOR dem Sweep übersprungen (kein Bounds-Problem, keine
+    # 16 nutzlosen Trials je Paar). Leer per Default ⇒ bit-identisch.
+    denylist = load_symbol_strategy_denylist()
 
     pairs: list[tuple[str, str, str]] = []
     for strategy in strategies:
@@ -333,6 +338,16 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                       "⇒ übersprungen (Issue #595).", strategy)
             continue
         for symbol in candidate_syms:
+            # Issue #669 — deklarativer Deaktivierungs-Skip (VOR jedem anderen Preflight): ein
+            # bereits diagnostiziertes, strukturell nicht-viables Paar spart das volle Trial-Budget.
+            deny_reason = denylist.get((strategy, symbol))
+            if deny_reason is not None:
+                emit_execution_event(log, "SYMBOL_STRATEGY_DENYLISTED", {
+                    "strategy": strategy, "symbol": symbol, "reason": deny_reason,
+                })
+                log.warning("⏭️  %s/%s übersprungen (deklariert nicht-viabel, Issue #669: %s).",
+                           strategy, symbol, deny_reason)
+                continue
             ok, _reason = is_symbol_tunable(
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
             if not ok:

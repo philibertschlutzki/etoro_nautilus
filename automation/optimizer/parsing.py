@@ -58,7 +58,14 @@ class TournamentMetrics:
     oos_gate_deltas: dict | None = None
     # Issue #565 — Per-Fold-OOS-Sortinos (forensisch seit #589; die Fold-Dispersion läuft nun über
     # die Returns). Leeres Tuple, wenn keine Fold-Telemetrie vorliegt (immutable Default).
+    # Issue #665 — DEPRECATED für fold-übergreifende Aggregation/Vergleiche (annualisiert,
+    # fold-spezifisch inkommensurabel); siehe backtest_runner.collect_oos_fold_sortinos-Docstring.
+    # Nur noch forensische Anzeige-Telemetrie.
     oos_fold_sortinos: tuple = ()
+    # Issue #665 — die kanonische, annualisierungs-invariante Parallelgrösse (per-Perioden
+    # OOS-Sortino je Fold). JEDE fold-übergreifende Aggregation (PBO, Fold-Median-Diagnose) MUSS
+    # diese Serie konsumieren, nicht ``oos_fold_sortinos``.
+    oos_fold_sortino_periods: tuple = ()
     # Issue #589/#590 — Per-Fold-OOS-Returns (gut konditionierte Größe der Fold-Dispersions-Strafe)
     # und die Gesamtzahl der Walk-Forward-Folds (Normierung fehlender/degenerierter Folds im Reward).
     oos_fold_returns: tuple = ()
@@ -136,7 +143,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     is_sortino_aggregation_basis = agg.get("is_sortino_aggregation_basis")
 
     oos_fold_sortinos = agg.get("oos_fold_sortinos") or []
+    # Issue #665 — annualisierungs-invariante Parallelgrösse (fällt None-safe auf oos_metrics
+    # zurück, falls nur dort gestempelt — z. B. direkte apply_fold_aggregation-Aufrufer/Fixtures).
     oos_metrics = agg.get("oos_metrics") or {}
+    oos_fold_sortino_periods = agg.get("oos_fold_sortino_periods")
+    if not oos_fold_sortino_periods:
+        oos_fold_sortino_periods = oos_metrics.get("oos_fold_sortino_periods") or []
     # Issue #613 — Aggregationsebene des OOS-Sortino (Kohärenz-Telemetrie).
     oos_sortino_aggregation_basis = oos_metrics.get("sortino_aggregation_basis") or agg.get("aggregation_basis")
     # Issue #589/#590 — Per-Fold-OOS-Returns + Gesamt-Fold-Zahl für die reward-seitige Fold-
@@ -254,8 +266,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_rejection_reasons=oos_rejection_reasons,
         oos_anchor_divergence=oos_anchor_divergence,
         oos_gate_deltas=oos_gate_deltas,
-        # Issue #565 — Per-Fold-OOS-Sortinos (None-safe ⇒ leeres Tuple); forensisch seit #589.
+        # Issue #565 — Per-Fold-OOS-Sortinos (None-safe ⇒ leeres Tuple); forensisch seit #589,
+        # DEPRECATED für Aggregation seit #665 (annualisiert, fold-spezifisch inkommensurabel).
         oos_fold_sortinos=tuple(oos_fold_sortinos) if oos_fold_sortinos else (),
+        # Issue #665 — kanonische, annualisierungs-invariante Parallelgrösse für Aggregation.
+        oos_fold_sortino_periods=tuple(oos_fold_sortino_periods) if oos_fold_sortino_periods else (),
         # Issue #589/#590 — Per-Fold-OOS-Returns + Gesamt-Fold-Zahl (None-safe).
         oos_fold_returns=tuple(oos_fold_returns) if oos_fold_returns else (),
         oos_folds_total=int(oos_folds_total) if oos_folds_total is not None else 0,
