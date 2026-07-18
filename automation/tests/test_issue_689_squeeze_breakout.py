@@ -135,7 +135,8 @@ def test_spaces_branch_produces_valid_params():
                 "min_squeeze_bars", "cooldown_bars", "atr_period",
                 "atr_trailing_multiplier", "max_bars_in_trade"):
         assert key in params
-    assert 12 <= params["max_bars_in_trade"] <= 30
+    # Issue #714 (GR-01) — Obergrenze 30 → 24 (24-Bar-Zeitbox über alle 15 Strategien).
+    assert 12 <= params["max_bars_in_trade"] <= 24
 
 
 def test_squeeze_release_logic_fires_on_realistic_wick_data():

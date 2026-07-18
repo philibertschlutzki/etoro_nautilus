@@ -46,8 +46,9 @@
 - [Issue-Katalog #675–#686 — Optimizer: Mathematische Exzellenz, vier Kohorten](#issue-katalog-675686--optimizer-mathematische-exzellenz-vier-kohorten-sitzung-2026-07-17-lauf-2)
 - [Issue-Katalog #695–#702 — DSR-Familien-Decluster, Gate-Konsolidierung & Purge-Klassifikation](#issue-katalog-695702--dsr-familien-decluster-gate-konsolidierung--purge-klassifikation-2026-07-18)
 - [Epic #702 (Issues #703–#710) — Iterativer Champion-Warm-Start & symbol-skopierte Default-Nachführung](#epic-702-issues-703710--iterativer-champion-warm-start--symbol-skopierte-default-nachführung)
+- [Issue-Katalog #710–#717 — Time-Box-Reward, Dynamisches Take-Profit & Live-Guardrails](#issue-katalog-710717--time-box-reward-dynamisches-take-profit--live-guardrails-sitzung-2026-07-18)
 
-> **Pitfall-Index-Hinweis:** Die höchste zum Zeitpunkt dieser Doku-Härtung vergebene Nummer ist **Pitfall #205** (siehe §16-Konvention). Vor dem Anlegen eines neuen Pitfalls IMMER `grep -n "Pitfall #" automation/AGENTS.md` laufen lassen — Nummern sind global eindeutig über die gesamte Datei, nicht nur innerhalb von §16.
+> **Pitfall-Index-Hinweis:** Die höchste zum Zeitpunkt dieser Doku-Härtung vergebene Nummer ist **Pitfall #213** (siehe §16-Konvention). Vor dem Anlegen eines neuen Pitfalls IMMER `grep -n "Pitfall #" automation/AGENTS.md` laufen lassen — Nummern sind global eindeutig über die gesamte Datei, nicht nur innerhalb von §16.
 
 ---
 
@@ -1424,6 +1425,7 @@ Tests: `test_issue_546_expectancy_notional.py`, `test_issue_547_constraint_dista
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-07-18 | **Implementierung Issue-Katalog #710–#717 (Time-Box-Reward, Dynamisches Take-Profit & Live-Guardrails) + reward_semantics_version 13→14.** Acht Fixes über drei unabhängige Tracks (siehe Issue #707 §2 Merge-Order). **Track 1 (Objective/Suchraum):** #710/Pitfall — `oos_median_bars_held`/`oos_p95_bars_held` (Bars, 1h) in `_calculate_stats`/`TournamentMetrics`/`parse_tournament` verdrahtet, reine Telemetrie, KEIN Bump für sich genommen; #711/Pitfall #206–#208 — additiver `time_box_penalty`-Term (`penalty_time_box_weight·(oos_median_bars_held/time_box_bars)²·penalty_scale_vs_base`) NEBEN `dd_penalty`/`turnover_penalty`, `base` bleibt `psr_z` UNVERÄNDERT (Req-04 wörtlich hätte die Base ersetzt — Rückschritt hinter #559–#702), Default `penalty_time_box_weight=0.0` ⇒ bit-identisch; `assert_penalty_scale_calibrated` deckt den neuen Term ab UND wurde auf Median-über-AKTIVE-Terme gehärtet (ein struktureller inaktiver Term darf die Guard-Schärfe für andere Terme nicht verwässern, Pitfall #208); #712 — vereinheitlichtes dynamisches Take-Profit (`compute_dyn_tp_target`, `TP(t)=entry±γ·ATR·exp(−λ·bars/max_bars)`) in `HourlyStrategyBase` für alle 15 Strategien, Cancel/Replace nur bei >1-Tick-Delta, Default `dyn_tp_enabled=False`=bit-identisch; #713 — `dyn_tp_enabled/lambda/gamma` einheitlich in `spaces.sample_params` angehängt (nicht pro Strategie depliziert), konditionales Sampling. **Track 2 (Guardrails, unabhängig parallel):** #714/Pitfall #210 — 24-Bar-Zeitbox: `DEFAULT_MAX_BARS_IN_TRADE`/alle `spaces.py`-Obergrenzen auf ≤24 geklemmt, HARTE Konstruktor-Klemmung (`MAX_BARS_IN_TRADE_HARD_CAP`) für Alt-Configs aus dem Cache; #715/Pitfall #211 — Pre-Trade-Spread-Gate (`_compute_quantity`, `SPREAD_GATE_REJECT`), Schwelle `k_spread·spread_bps_model` aus `backtest.json` abgeleitet (Single Source of Truth mit dem Backtest-Kostenmodell); #716/Pitfall #212 — node-weiter `max_aggregate_open_positions`-Cap ZUSÄTZLICH zum per-Strategie-Cap + harter `max_order_notional`-Deckel, konservative AKTIVE Defaults (5 Positionen / 2000 USD, Guardrails sind bewusst NICHT opt-in); #717/Pitfall #209/#213 — `_StateManager` erweitert auf `{positionId, entry_ns, entry_bar_seq}` (migrationssicher, sticky Entry-Anker), `HourlyStrategyBase._reconcile_after_reconnect` rehydriert `_bars_in_position` bei `on_start()` aus dem Bar-Cache relativ zu Nautilus' nativem `pos.ts_opened` (Wall-Clock-Fallback ≥24h bei leerer Historie) und liquidiert sofort bei bereits abgelaufenen Positionen; `EToroExecutionClient._reconcile_positions_on_connect` erkennt Phantom-Positionen (eToro bereits geschlossen) via PnL-REST-Diff und publiziert ein msgbus-Signal statt selbst Order-State zu fabrizieren — die Strategie schliesst über den bestehenden `_close_position_base`-Pfad (schliesst `[EX-2-followup]`). **Purge-Klassifikation:** GENAU #711 bumpt `reward_semantics_version` (13→14, neue Skalen-Konstanten `penalty_time_box_weight`/`time_box_bars`); #710/#712–#717 sind purge-frei (Telemetrie-only bzw. Default-AUS-opt-in bzw. Guardrail-Code ohne Reward-Wirkung). Neue Pitfalls #206–#213 (§ „Issue-Katalog #710–#717"). Zehn neue Testdateien (`test_issue_710`…`test_issue_717_*`, 4 Dateien für #717 [State-Manager-Migration, Strategie-Reconnect, Execution-Reconcile-Diff]), insgesamt ~140 neue Tests. Volle Suite: 1347 passed (5 vorbestehende, umgebungsbedingte Fehlschläge — identisch via `git stash` reproduziert, NICHT durch diesen Katalog verursacht); zwei bestehende Fixtures korrigiert, die unbeabsichtigt vom Versions-Bump betroffen waren (`test_issue_697_gate_consolidation.py`, `test_issue_702_champion_warmstart.py` — beide nutzten hartkodierte statt dynamisch aus `optimizer.json` gelesene `reward_semantics_version`-Referenzen). | `automation/backtest_runner.py`, `automation/optimizer/parsing.py`, `automation/optimizer/reward.py`, `automation/optimizer/spaces.py`, `automation/strategies/hourly_strategy_base.py`, `automation/adapters/etoro_state_manager.py`, `automation/adapters/etoro_execution.py`, `automation/config/optimizer.json`, `automation/tests/test_issue_710_bars_held_metric.py` (neu), `automation/tests/test_issue_711_time_box_penalty.py` (neu), `automation/tests/test_issue_712_dynamic_take_profit.py` (neu), `automation/tests/test_issue_713_dyn_tp_search_space.py` (neu), `automation/tests/test_issue_714_bar_time_box.py` (neu), `automation/tests/test_issue_715_spread_gate.py` (neu), `automation/tests/test_issue_716_aggregate_exposure_cap.py` (neu), `automation/tests/test_issue_717_state_manager_migration.py` (neu), `automation/tests/test_issue_717_reconnect_reconciliation.py` (neu), `automation/tests/test_issue_717_execution_reconciliation.py` (neu), `automation/tests/test_issue_637_reward_semantics_bump.py`, `automation/tests/test_issue_697_gate_consolidation.py`, `automation/tests/test_issue_702_champion_warmstart.py`, `automation/tests/test_combo_conjunction_switches.py`, `automation/tests/test_issue_689_squeeze_breakout.py`, `automation/tests/test_optimizer_loop.py`, `automation/AGENTS.md` |
 | 2026-07-18 | **Implementierung Epic #702 (Issues #703–#710) — Iterativer Champion-Warm-Start & symbol-skopierte Default-Nachführung.** Neues Modul `automation/optimizer/champions.py`: `store_champion` (#703, Champion-Store unter `data/optimizer/champions/`, aufgerufen von `sweep.py` unmittelbar nach `export_symbol_proposal`, nur im echten Storage-Pfad, fail-open); `load_champion_seed`/`load_champion_entry` (#704, neue Tier-Stufe `global_best → champion → strategy_defaults → none` in `run_optimization.resolve_symbol_shrinkage_seed`, additiv-optional via `symbol`/`opt_data`-Kwargs — HI-2-rückwärtskompatibel, Legacy-Aufrufer ohne diese Argumente bit-identisch); `champion_is_admissible` (#705, EINE zentrale Guard-Funktion für Schreiben UND Lesen: reward-version, override-keys>0, Rejection-Allowlist `{None, REJECT_HOLDOUT_DSR_DROP, REJECT_HOLDOUT_BOOTSTRAP_CI, REJECT_HOLDOUT_GATE}` — explizit OHNE `REJECT_SELECTION_PBO`/`REJECT_BOUNDARY_SOLUTION`, R_symbol-Floor, Demotion-Schwelle); `maybe_write_back` (#706, Writeback nach neuem `automation/config/strategy_symbol_seeds.json`, symbol-skopiert, NIE `strategy_defaults.json`, Gate: Korroboration UND Fensterfortschritt ODER echte READY_FOR_PR-Promotion; `optimizer/resolve.py::resolve_params`-Präzedenz additiv erweitert); Regions-Korroboration + Erhalt-vs-Ersetzung-Merge-Logik (#707, wiederverwendet `bounds.normalized_param_distance`, dieselbe Metrik wie die A4.3-Shrinkage); Regime-Degradation-Demotion (#708, `degrade_streak`, entfernt Store- + Seed-Eintrag); Study-User-Attr-Telemetrie in `optimize_symbol` (#709, `champion_seed_source`/`champion_R_symbol_at_store`/`champion_corroboration_count`/`champion_age_days`/`champion_window_advanced`/`champion_writeback_applied`, Log-Parität mit `shrinkage_*`); 49 neue Tests in `test_issue_702_champion_warmstart.py` (#710, inkl. #694-Kopplungs-Sanity). Sechs neue `champion_*`-Config-Keys in `optimizer.json` (Zero-Hardcoding, Default-Werte dokumentiert bit-identisch zum Pre-Epic-Verhalten bei `champion_enabled=false`). **Purge-Klassifikation:** das gesamte Epic ist purge-frei, KEIN `reward_semantics_version`-Bump (P0–P2 ändern die Gate-Mathematik nicht — ein Champion-Seed ist nur ein weiterer Trial, der erneut durch alle bestehenden Gates läuft; die #711-Bounds-Recentering-Option bleibt bewusst zurückgestellt/nicht umgesetzt). **Kritische Vorbedingung verifiziert:** #694/#695 (`cpcv.cluster_effective_configs` auf der DSR-Familien-Ebene, Pitfall #190) war bereits vor Epic-Start implementiert — die in Issue #705 §9 verlangte Reihenfolge (erst declustern, dann warm-starten) ist damit erfüllt, test-gesichert statt nur angenommen. Neue Pitfalls #201–#205 (§ „Epic #702"). Volle Suite (1170 passed, dieselben 20 vorbestehenden, umgebungsbedingten Fehlschläge wie vor dieser Änderung — verifiziert via `git stash`, identische Fehlerliste ohne/mit diesem Epic). | `automation/optimizer/champions.py` (neu), `automation/optimizer/sweep.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/resolve.py`, `automation/config/optimizer.json`, `automation/config/strategy_symbol_seeds.json` (neu), `automation/tests/test_issue_702_champion_warmstart.py` (neu), `automation/AGENTS.md` |
 | 2026-07-18 | **AGENTS.md-Doku-Härtung (GH-#705, "absolut wasserdicht dokumentiert").** Reine Dokumentations-Integrität, kein Code-/Verhaltens-Fix, keine `reward_semantics_version`-Wirkung. (1) **TOC-Vollständigkeit:** Inhaltsverzeichnis um einen "Anhang"-Block mit allen bislang unverlinkten `##`-Sektionen ergänzt (Architectural Invariant, Audit #470, IS/OOS-Methodik, Known-Pitfalls-Fortsetzung, Walk-Forward-Validation, sowie sämtliche Bug-Kaskaden-/Issue-Kataloge #521–702). (2) **Drei fehlende `##`-Parent-Header ergänzt:** Issue-Katalog #663–#672, #675–#686 und #695–#702 hingen bisher headerlos unter `## Bug-Kaskade #649–#660`, obwohl inhaltlich eigenständige, bereits an anderer Stelle vollständig dokumentierte Kataloge (Config-Keys-Tabelle + Watertight-Invariants-Block existierten je Katalog bereits) — jetzt mit eigenem `##`-Header + kurzer Einleitung, konsistent zum Muster der älteren Kataloge. (3) **Pitfall-Nummern-Kollisionen aufgelöst:** Drei verschiedene `### Pitfall #89`-Header (OOS-Eval/IS-Gate, Reward-Shaping-Monotonie, Semantics-Guard) und zwei verschiedene `### Pitfall #93`-Header (oos_covered Lower-Bound, Annualisierungsfaktor) kollidierten auf denselben Nummern — je EIN kanonischer Header (identifiziert per Cross-Referenz aus Axiom A9 bzw. der eigenen Einleitung) behält seine Nummer, die übrigen wurden auf neue, bislang unbenutzte Nummern **#198–#200** umnummeriert (kein Content gelöscht). (4) **Axiom A8** referenzierte fälschlich "Pitfall #88-Konditionierung" (Pitfall #88 ist tatsächlich Leakage-in-OOS-Window, ein anderes Thema) — auf direkte Issue-#468-Referenz korrigiert, kein Pitfall-Header existiert dafür. (5) **§16-Einleitung** um eine Nummerierungs-Konvention ergänzt (globale Eindeutigkeit über die ganze Datei, `grep`-Pflicht vor Vergabe einer neuen Nummer), um künftige Kollisionen zu verhindern. | `automation/AGENTS.md` |
 | 2026-07-18 | **Implementierung Issue-Katalog #695–#702 (Optimizer — DSR-Familien-Decluster, Gate-Konsolidierung, Strategie-Closed-Loop) + reward_semantics_version 12→13 + Purge-Klassifikation (Pitfalls #190–#197).** Acht verzahnte Fixes. **#695/Pitfall #190** (`deflation_family_period_returns` declustert die DSR-Familien-Multiplizität via `cpcv.cluster_effective_configs`, dieselbe Pearson-Schwelle wie PBO — `deflation_n_effective = max(deflation_n, deflation_n_family_effective)`, #652-Invariante gewahrt); **#696/Pitfall #191** (`deflation_n_effective` war ein Fehlname vor #695 — trug die ROHE statt der effektiven Zahl, jetzt korrigiert + `deflation_n_family_raw`/`deflation_n_family_effective` explizit telemetriert); **#697/Pitfall #192** (`min_expectancy` aus `eligible_requires_all` entfernt — |ρ|=0.961 kollinear zu `oos_min_psr`, superseded den #657-Zwischenstand; `reward.assert_eligible_requires_all_not_redundant` als neuer Fail-Loud-Konsument des #679-Alarms; `calibration.calibrate_gate_consolidation_false_positive_rate` verifiziert per Monte-Carlo, dass die FP-Rate durch die Konsolidierung nicht steigt — **EINZIGER** Fix dieses Katalogs mit gestempelter Eligibility-Wirkung); **#698/Pitfall #193** (`invalid_on_continuous_bars`-Flag für `GapContinuationStrategy` — ein Gap auf synthetischen 24/7-Bars misst nur die Differenz zweier aufeinanderfolgender Bars, kein Bounds-Problem); **#699/Pitfall #194** (zwei unabhängige Strategie-Code-Defekte statt eines Bounds-Problems: `AdxAtrMomentumStrategy`s toter `DirectionalMovement.value`-ADX-Gate durch EMA-Steigung ersetzt [dieselbe NautilusTrader-1.230.0-Klasse Defekt wie Pitfall #189]; `TrendPullbackStrategy` fehlte der verbindliche `_check_exits_and_update(bar)`-Aufruf, dadurch 0 Exits ausser Gegensignal; zusätzlich `previously_recommended_override` eskaliert eine wiederholte `search_space_override`-Empfehlung auf `denylist`); **#700/Pitfall #195** (`ZERO_ELIGIBLE_PLATEAU` verlangte `all(evaluated)`, ein GEMISCHTER Cohort — z. B. `SqueezeBreakoutStrategy` mit Trade-Cap-Treffern — fiel dadurch durch beide Early-Stop-Netze; Fix: Bedingung nur noch auf die EVALUIERTEN Trials bezogen, neue `eligibility_curve`-Fensterdiagnose); **#701/Pitfall #196** (`deflation_var_floor`, seit Pitfall #187 als DEPRECATED markiert, nach Verifikation der Unerreichbarkeit von `n_periods` VOLLSTÄNDIG entfernt — `sr0_multiple_testing_robust` verlangt `n_periods` jetzt als Pflicht-Keyword, `theoretical_var_source` immer `'lo2002'`; DSR-Drop-Rejection bleibt konservativ bei `deflation_sr0 is None`); **#702/Pitfall #197** (Purge-Disziplin: GENAU #697 bumpt `reward_semantics_version` [12→13], die übrigen sieben Fixes sind purge-frei [Confirm-/Telemetrie-/Strategie-Code-/Diagnose-only oder Entfernung bereits toten Codes] — Kapitel 7 in `manuals/strategie_optimierung.md` um die katalogspezifische Klassifikationstabelle ergänzt). Test-gesichert: 6 neue Test-Dateien (`test_issue_695`/`697`/`698`/`699`/`700`/`701`, 65 neue Tests) + mehrere bestehende Fixtures korrigiert, die unbeabsichtigt betroffen waren (`test_issue_637`, `test_issue_657`, `test_issue_670`, `test_issue_576`, `test_issue_651`, `test_issue_653`, `test_issue_685`, `test_issue_686`). | `automation/optimizer/confirm.py`, `automation/optimizer/sweep.py`, `automation/optimizer/sweep_diagnostics.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/deflation.py`, `automation/optimizer/reward.py`, `automation/optimizer/calibration.py`, `automation/strategies/adx_atr_momentum.py`, `automation/strategies/trend_pullback.py`, `automation/optimizer/spaces.py`, `automation/config/tournament.json`, `automation/config/optimizer.json`, `automation/config/strategies.json`, `manuals/strategie_optimierung.md`, `automation/AGENTS.md` |
@@ -2979,3 +2981,205 @@ ursprünglich war.
   (`champion_is_admissible`)** — keine duplizierte Guard-Logik in sweep.py/run_optimization.py.
 - **Ebene 3 (Live-Deployment) bleibt IMMER menschlich (HI-3):** kein Teil dieses Epics schreibt je
   `strategies.json`.
+
+## Issue-Katalog #710–#717 — Time-Box-Reward, Dynamisches Take-Profit & Live-Guardrails (Sitzung 2026-07-18)
+
+Issue #707 bündelt acht Einzel-Issues (#710–#717) entlang von drei unabhängigen Tracks, die #708s
+Beobachtungen zum GR-01-Zeitbox-Regime (1h-Bars, harte 24-Bar-Exit-Deadline) technisch nachziehen,
+ohne die seit #614/#630/#697/#702 gehärtete Reward-/Gate-/Champion-Architektur zu verletzen:
+
+- **Track A — Reward-Shaping (#710, #711):** ein neuer additiver `time_box_penalty`-Term, der
+  Trials mit langer Haltedauer relativ zur 24-Bar-Deadline bestraft, OHNE die getestete `psr_z`-Base
+  zu ersetzen. Voraussetzung ist eine neue Backtest-Metrik (`median_bars_held`/`p95_bars_held`,
+  #710), die der Reward-Term (#711) konsumiert.
+- **Track B — Strategieverhalten (#712, #713, #714):** ein optionales, per Default deaktiviertes
+  dynamisches Take-Profit, das mit wachsender Bars-in-Position-Zahl enger zieht (#712), dessen
+  Suchraum-Anbindung im Optuna-Sampler (#713), und eine Senkung der `max_bars_in_trade`-Obergrenze
+  auf 24 Bars systemweit (#714), damit kein Sampler-Trial mehr eine Zeitbox-Verletzung von
+  vornherein erzeugen kann.
+- **Track C — Live-Guardrails (#715, #716, #717):** ein Spread-Gate, das Orders bei zu weiten
+  Bid/Ask-Spreads gegenüber ATR ablehnt (#715), eine Aggregat-Positions-/Notional-Obergrenze über
+  alle offenen Positionen einer Strategie-Instanz hinweg (#716), und eine Reconnect-Reconciliation,
+  die verwaiste eToro-Positionen nach einem Prozess-Neustart sicher über msgbus-Signalisierung an
+  die Strategie zurückmeldet, statt Order-State im Execution-Client zu fabrizieren (#717).
+
+**Merge-Reihenfolge (wie in #707 §2 vorgegeben):** #710 vor #711 (Metrik vor Konsument), #712 vor
+#713 (Feature vor Suchraum-Anbindung), #714 unabhängig aber vor dem nächsten Live-Sweep (senkt das
+Sampler-Maximum, das #713s `dyn_tp`-Fenster überlappt), #715/#716/#717 unabhängig voneinander, aber
+alle vor dem nächsten Live-Deployment. `reward_semantics_version` 13→14 (nur #711 berührt
+`compute_reward`) mit Pflicht-Purge aller Studien vor v14 (`python -m
+automation.optimizer.purge_stale_studies`) als letzte Aktion vor dem nächsten Optimizer-Run.
+
+### 🟢 Pitfall #206 — Ein neuer additiver Reward-Term ersetzt NIE die getestete Base [BEHOBEN: GH-#711]
+**Symptom:** #708-Req-04 fordert wörtlich `Obj = E[R]/σ_R⁻ − β·(t_hold/24)²` — buchstabengetreu
+umgesetzt würde das die seit #614/#630 gehärtete `psr_z`-Base durch rohen Sortino ersetzen und damit
+alle seit v7–v13 gewonnenen Skalen-/Eligibility-Garantien (#559–#702) rückgängig machen.
+**Fix/Regel:** Nur der additive Straf-Term (`time_box_penalty`) wird in die bestehende
+`compute_reward`-Assembly aufgenommen, exakt neben `dd_penalty`/`turnover_penalty`/
+`fold_dispersion_penalty`. `base = psr_z`, alle Gates, Deflation und Confirm-Logik bleiben
+unverändert. Bei `penalty_time_box_weight=0.0` (Default) ist der Reward bit-identisch zum Pre-#711-
+Zustand (Skalen-Fingerprint `test_issue_637` UND Eligibility-Fingerprint unverändert).
+**Invariante:** Eine Issue-Spezifikation, die eine bereits gehärtete Reward-Base ersetzen würde,
+wird NIE wörtlich umgesetzt — nur additiv, isoliert, mit Default-Null-Wirkung integriert.
+**Betroffen:** `automation/optimizer/reward.py` (`compute_reward`, `_time_box_penalty`).
+
+### 🟢 Pitfall #207 — Skalenkohärenz: jeder neue additive Reward-Term braucht penalty_scale_vs_base [BEHOBEN: GH-#711]
+**Symptom:** Ein neuer additiver Straf-Term, der ohne Skalierung direkt vom `psr_z`-Base-Betrag
+subtrahiert wird, kann je nach Base-Größenordnung entweder komplett wirkungslos (zu klein) oder
+dominant (zu groß) sein — die Kalibrierung ist nicht selbsterklärend aus dem rohen Gewicht ableitbar.
+**Fix/Regel:** `_time_box_penalty` durchläuft dieselbe `_penalty_scale_vs_base(weights)`-Skalierung
+wie `dd_penalty`/`turnover_penalty`/`fold_dispersion_penalty` — kein neuer Straf-Term bekommt eine
+eigene, abweichende Skalierungs-Konvention.
+**Invariante:** JEDER additive Straf-Term in `compute_reward` läuft durch dieselbe zentrale
+`penalty_scale_vs_base`-Funktion — es gibt keinen Sonderpfad pro Term.
+**Betroffen:** `automation/optimizer/reward.py` (`_penalty_scale_vs_base`, `_time_box_penalty`).
+
+### 🟢 Pitfall #208 — Median-Aggregation über eine wachsende Termmenge verwässert ohne Aktiv-Filter [BEHOBEN: GH-#711]
+**Symptom:** `assert_penalty_scale_calibrated` prüft Miskalibrierung über den Median der Sigmas
+aller bekannten Straf-Terme. Ein vierter, strukturell-inaktiver Term (Default-Gewicht `0.0`, Sigma
+`0.0`) verschiebt diesen Median nach unten und schwächt dadurch die Sensitivität der Prüfung für
+die bereits gehärteten Terme — ein `test_issue_631`-Regressionstest
+(`test_calibration_fixture_fails_loud_without_rescaling`) hörte auf zu raisen, sobald
+`time_box_penalty` unreflektiert in `_CALIBRATION_PENALTY_TERM_KEYS` aufgenommen wurde.
+**Fix/Regel:** `assert_penalty_scale_calibrated` filtert auf Terme mit `sigma > 0` ("aktive
+Dimensionen") und bildet den Median NUR über diese — exakt dieselbe Philosophie wie #534s
+`_constraint_distance_penalty`, das ebenfalls nur aktive Constraint-Dimensionen mittelt. Sind gar
+keine Terme aktiv, wird die Prüfung übersprungen (nichts zu kalibrieren).
+**Invariante:** Das Hinzufügen eines per Default inaktiven Straf-Terms darf NIE die
+Erkennungsschärfe der Kalibrierungs-Prüfung für bereits aktive Terme verwässern.
+**Betroffen:** `automation/optimizer/reward.py` (`assert_penalty_scale_calibrated`,
+`_CALIBRATION_PENALTY_TERM_KEYS`).
+
+### 🟢 Pitfall #209 — Shaping ≠ Gate [BEHOBEN: GH-#711]
+**Symptom:** Ein Zeitbox-Straf-Term könnte fälschlich so verdrahtet werden, dass er nach
+`oos_eligible` unterscheidet (z.B. nur auf eligible Trials angewendet) — das würde ihn faktisch zu
+einem zweiten, verdeckten Gate machen und die seit #629/#649 etablierte strikte Trennung
+Gate-vs-Shaping verletzen.
+**Fix/Regel:** `_time_box_penalty` liest ausschließlich `oos_median_bars_held` und die Gewichte —
+niemals `oos_eligible` oder andere Gate-Flags. Ein eligible und ein sonst identisches ineligible
+Trial erhalten exakt denselben `time_box_penalty`-Betrag.
+**Invariante:** Additive Reward-Terme (Shaping) und Eligibility-Gates bleiben strikt getrennte
+Codepfade — kein Shaping-Term liest je ein Gate-Flag.
+**Betroffen:** `automation/optimizer/reward.py` (`_time_box_penalty`).
+
+### 🟢 Pitfall #210 — Bar-Zähler-Deadline braucht einen restart-durablen Persistenz-Anker [BEHOBEN: GH-#714/#717]
+**Symptom:** Die 24-Bar-Zeitbox-Deadline wird im Live-Betrieb über einen In-Memory-Bar-Zähler
+(`_bars_in_position`) auf der Strategie-Instanz verfolgt. Ein Prozess-Neustart (Deploy, Crash,
+Reconnect) verliert diesen Zähler — eine Position, die bereits 20 von 24 Bars gehalten wurde, würde
+nach Neustart wieder bei 0 anfangen und die Deadline effektiv um bis zu 24 Bars verlängern.
+**Fix/Regel:** `_reconcile_after_reconnect` rekonstruiert den Bar-Zähler beim Start aus dem
+Nautilus-nativen `Position.ts_opened`-Zeitstempel (immer verfügbar, unabhängig vom Prozess-Leben)
+kombiniert mit dem Bar-Cache (`_count_bars_since`), NICHT aus einem separat zu pflegenden
+Cross-Prozess-State. Für den unabhängigen Zweck der Phantom-Positions-Erkennung (verwaiste
+eToro-Positionen ohne lokale Nautilus-Position) persistiert `_StateManager` zusätzlich
+`entry_ns`/`entry_bar_seq` je Mapping-Eintrag — bewusst getrennt vom Bar-Zähler-Mechanismus, da
+dort kein Nautilus-`Position`-Objekt existiert, aus dem rekonstruiert werden könnte.
+**Invariante:** Jeder restart-kritische Zähler mit einer Handlungs-Deadline (Zeitbox, Cooldown, ...)
+MUSS aus einer bereits durablen, Nautilus- oder Broker-nativen Quelle rekonstruierbar sein — niemals
+ausschließlich aus zusätzlichem, selbst gepflegtem Prozess-State.
+**Betroffen:** `automation/strategies/hourly_strategy_base.py` (`_reconcile_after_reconnect`,
+`_count_bars_since`), `automation/adapters/etoro_state_manager.py` (`_coerce_entry`, `set`,
+`get_entry`).
+
+### 🟢 Pitfall #211 — Ein Laufzeit-Gate braucht eine explizite Runtime-Prüfung, nicht nur ein Backtest-Kostenmodell [BEHOBEN: GH-#715]
+**Symptom:** Spread existierte vor #715 ausschliesslich als Backtest-Kostenmodell
+(`backtest.json spread_bps_*`, `fill_model=bid_ask`) und als Reward-Turnover-Kosten. Ein
+Kostenmodell verteuert Trades im Backtest, verwirft aber live KEINEN Einstieg bei realer
+Spread-Ausweitung — genau die von GR-02 adressierte Ertrags-Erosion blieb ungefiltert, weil kein
+Order-Pfad-Gate existierte.
+**Fix/Regel:** Im Entry-Pfad (`_compute_quantity`, vor jeder Order) wird der effektive Live-Spread
+aus dem aktuellen `QuoteTick` berechnet (`s = (ask − bid) / mid`, in bps) und bei Überschreiten der
+Schwelle das Signal verworfen + strukturiert geloggt (`SPREAD_GATE_REJECT`). Die Schwelle selbst
+bleibt an EINER Quelle verankert (`_resolve_spread_gate_bps`): `spread_gate_bps = k_spread ×
+spread_bps_model` (`resolve_spread_bps_model` liest denselben `backtest.json`-Kostenmodell-Wert,
+den auch die Backtest-Kostensimulation nutzt) — sonst entstünden zwei unabhängig zu pflegende
+Spread-Zahlen (Pre-#562/#684-Fehler). `k_spread ≈ 2.0` sorgt dafür, dass die bereits eingepreiste
+Normal-Spread nicht doppelt bestraft wird — nur Ausweitungen darüber hinaus lösen die Ablehnung
+aus. Ein expliziter `config.spread_gate_bps`-Override bleibt möglich (manuelle Fixierung); ohne
+`QuoteTick` (Cold-Start) ist das Gate fail-open (kein erfundener Wert).
+**Invariante:** Ein Kostenmodell-Parameter, der eine reale Laufzeit-Filterung bewirken soll, MUSS
+über einen expliziten Order-Pfad-Check angebunden werden — reine Backtest-Kostensimulation wirkt
+nie automatisch als Live-Gate. Existieren Kostenmodell UND Live-Gate für dieselbe Grösse (Spread),
+leiten sie sich von EINER Quelle ab, nie von zwei unabhängig gepflegten Zahlen.
+**Betroffen:** `automation/strategies/hourly_strategy_base.py` (`resolve_spread_bps_model`,
+`_resolve_spread_gate_bps`, `_compute_quantity`).
+
+### 🟢 Pitfall #212 — Per-Entity-Cap ≠ System-Limit [BEHOBEN: GH-#716]
+**Symptom:** Eine "maximale Anzahl offener Positionen"-Guardrail ließe sich fälschlich als globales,
+prozessweites Limit implementieren — das würde aber nicht vor dem eigentlichen Risiko schützen:
+zu viel Aggregat-Exposure durch EINE Strategie-Instanz auf EINEM Symbol, die wiederholt nachlegt.
+**Fix/Regel:** `max_aggregate_open_positions` und `max_order_notional` werden pro
+Strategie-Instanz (über `self.cache`, gescoped auf `self.instrument_id`/`self.config`) ausgewertet,
+nicht global. Der Cap-Check (`AGGREGATE_EXPOSURE_CAP_REJECT`) läuft in `_compute_quantity` VOR dem
+Spread-Gate-Ergebnis in die Order-Größen-Entscheidung ein, der Notional-Cap clamped
+`trade_amount_usd` nach unten statt die Order abzulehnen.
+**Invariante:** Eine Exposure-Guardrail ist immer so eng gescoped wie das Risiko, das sie
+begrenzen soll — ein Per-Strategie-Instanz/Symbol-Risiko bekommt einen Per-Strategie-Instanz/
+Symbol-Cap, kein globales System-Limit.
+**Betroffen:** `automation/strategies/hourly_strategy_base.py` (`_compute_quantity`).
+
+### 🟢 Pitfall #213 — Eine Execution-Client-Komponente fabriziert NIE eigenmächtig Order-State [BEHOBEN: GH-#717]
+**Symptom:** Nach einem Prozess-Neustart kann `EToroExecutionClient` verwaiste eToro-Positionen
+entdecken (Positionen, die broker-seitig offen sind, aber keine entsprechende lokale
+Nautilus-`Position` mehr haben). Ein naiver Fix würde den Execution-Client direkt `OrderFilled`/
+`OrderSubmitted`-Events für eine `ClientOrderId` fabrizieren, die nie legitim durch
+`order_factory` einer Strategie erzeugt wurde — das verletzt Nautilus' Order-Lifecycle-Invariante
+und kann zu inkonsistentem Cache-State führen (zusätzlich: `EToroExecutionClient` lässt sich in
+Tests wegen Cython-Konstruktor-Typchecks ohnehin nicht mit Mocks instanziieren, was ein Symptom
+derselben Grenzverletzung ist).
+**Fix/Regel:** `_reconcile_positions_on_connect` erkennt Phantom-Positionen rein lesend
+(`extract_open_position_ids`, `find_phantom_positions` — beide als reine, ohne Nautilus-Objekte
+testbare Modul-Funktionen extrahiert) und publiziert stattdessen ein
+`events.gr04_close_request.{instrument_id}`-msgbus-Signal. Die Strategie selbst (Empfänger via
+`_on_gr04_close_request`) schließt die Position über ihren bereits etablierten, geprüften
+`_close_position_base()`-Pfad — der Execution-Client erzeugt zu keinem Zeitpunkt eigenständig
+Order- oder Fill-Events.
+**Invariante:** Nur die Strategie-Instanz (über ihren `order_factory`) erzeugt Order-State für ihre
+eigenen Positionen. Der Execution-Client kommuniziert Beobachtungen ausschließlich über
+msgbus-Signale, nie durch direkte Fabrikation von Order-/Fill-Events.
+**Betroffen:** `automation/adapters/etoro_execution.py` (`extract_open_position_ids`,
+`find_phantom_positions`, `_reconcile_positions_on_connect`), `automation/strategies/
+hourly_strategy_base.py` (`_on_gr04_close_request`, `on_start`).
+
+### 📋 Neue/geänderte Config-Keys (Issues #710–#717)
+| Key | Datei | Wert | Zweck |
+|---|---|---|---|
+| `penalty_time_box_weight` | optimizer.json | *neu* (Default `0.0`) | Gewicht des additiven Zeitbox-Straf-Terms, bit-identisch bei `0.0` (Pitfall #206) |
+| `time_box_bars` | optimizer.json | *neu* (Default `24.0`) | Normierungs-Deadline (Bars) für `time_box_penalty` |
+| `reward_semantics_version` | optimizer.json | `13` → `14` | `compute_reward` berührt (neuer additiver Term), Pflicht-Purge vor Re-Run |
+| `dyn_tp_enabled` | Sampler-Suchraum (spaces.py) | *neu* (Default `False`) | Schalter für dynamisches Take-Profit pro Trial |
+| `dyn_tp_lambda` | Sampler-Suchraum (spaces.py) | *neu* (log-uniform `0.1–3.0`, nur falls `dyn_tp_enabled`) | Skalierungsfaktor des dynamischen TP-Ziels |
+| `dyn_tp_gamma` | Sampler-Suchraum (spaces.py) | *neu* (uniform `0.5–4.0`, nur falls `dyn_tp_enabled`) | Krümmung der Zeit-Annäherungsfunktion |
+| `spread_gate_bps` | HourlyStrategyConfig | *neu* (Default `None` = deaktiviert) | Optionaler fixer Spread-Grenzwert (bps) |
+| `k_spread` | HourlyStrategyConfig | *neu* (Default `2.0`) | ATR-Multiplikator für dynamisches Spread-Gate |
+| `max_aggregate_open_positions` | HourlyStrategyConfig | *neu* (Default `5`) | Per-Instanz-Cap offener Positionen (Pitfall #212) |
+| `max_order_notional` | HourlyStrategyConfig | *neu* (Default `2000.0`) | Per-Instanz-Notional-Cap je Order (Pitfall #212) |
+| `max_bars_in_trade` (Sampler-Obergrenze) | spaces.py (`_MAX_BARS_IN_TRADE_CAP`) | bis zu `120` → `24` | Verhindert Trials, die die Zeitbox-Deadline strukturell verletzen (#714) |
+| `max_bars_in_trade` (Strategie-Hard-Cap) | hourly_strategy_base.py (`MAX_BARS_IN_TRADE_HARD_CAP`) | *neu* `24` | Konstruktor-seitiges Clamping, unabhängig vom Config-Wert (#714) |
+| `_StateManager`-Mapping-Schema | etoro_state_manager.py | `str` → `{"positionId", "entry_ns", "entry_bar_seq"}` | Restart-durabler Anker für Phantom-Positions-Erkennung (Pitfall #210), rückwärtskompatibel über `_coerce_entry` |
+
+### 🔒 Watertight Invariants (Issues #710–#717) — für künftige Agenten
+- **Eine wörtliche Issue-Spezifikation, die eine bereits gehärtete Reward-Base ersetzen würde, wird
+  NIE wörtlich umgesetzt** — nur additiv, isoliert, mit garantiert bit-identischer
+  Default-Nullwirkung (Pitfall #206).
+- **Jeder additive Straf-Term in `compute_reward` läuft durch dieselbe zentrale
+  `penalty_scale_vs_base`-Funktion** — kein Sonderpfad pro Term (Pitfall #207).
+- **Die Median-Kalibrierungs-Prüfung mittelt NUR über strukturell aktive (Sigma > 0) Straf-Terme**
+  — ein neuer, per Default inaktiver Term verwässert nie die Sensitivität für bereits aktive Terme
+  (Pitfall #208).
+- **Additive Reward-Terme (Shaping) lesen NIE Eligibility-Gate-Flags** — Shaping und Gate bleiben
+  strikt getrennte Codepfade (Pitfall #209).
+- **Jeder restart-kritische Zähler mit Handlungs-Deadline MUSS aus einer bereits durablen,
+  Nautilus- oder Broker-nativen Quelle rekonstruierbar sein** — niemals nur aus zusätzlichem,
+  selbst gepflegtem Prozess-State (Pitfall #210).
+- **Ein Backtest-Kostenmodell wirkt NIE automatisch als Live-Gate** — eine reale Laufzeit-Filterung
+  braucht einen expliziten Order-Pfad-Check; existieren Kostenmodell UND Live-Gate für dieselbe
+  Grösse, leiten sie sich von EINER Quelle ab (Pitfall #211).
+- **Eine Exposure-Guardrail ist immer so eng gescoped wie das Risiko, das sie begrenzen soll** —
+  kein globales System-Limit für ein Per-Strategie-Instanz/Symbol-Risiko (Pitfall #212).
+- **Nur die Strategie-Instanz (über ihren `order_factory`) erzeugt Order-State für ihre eigenen
+  Positionen — der Execution-Client kommuniziert Beobachtungen ausschließlich über msgbus-Signale,
+  nie durch direkte Fabrikation von Order-/Fill-Events** (Pitfall #213).
+- **`reward_semantics_version` wird bei JEDER `compute_reward`-berührenden Änderung erhöht, mit
+  Pflicht-Purge aller Studien vor der neuen Version als letzte Aktion vor dem nächsten Run** —
+  unverändert seit #614, hier erneut bestätigt für v13→14.

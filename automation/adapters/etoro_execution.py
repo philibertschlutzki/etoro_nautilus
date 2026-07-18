@@ -78,6 +78,41 @@ _PNL_BASE: dict[str, str] = {
 _WS_URL = "wss://ws.etoro.com/ws"
 
 
+def extract_open_position_ids(pnl_data: dict) -> set[str]:
+    """Issue #717 (GR-04) — reine Parsing-Funktion: extrahiert die Menge offener eToro-
+    PositionIDs aus einem PnL-REST-Response-Body (dieselbe Struktur/Feld-Fallbacks wie
+    ``_reconcile_via_pnl``). Von der async I/O-Schicht getrennt, damit sie ohne aiohttp-Mocking
+    direkt unit-testbar ist. Rein, deterministisch."""
+    data = pnl_data.get("clientPortfolio", pnl_data)
+    positions = data.get("Positions", data.get("positions", []))
+    ids: set[str] = set()
+    for item in positions:
+        pid = item.get("PositionID", item.get("positionID", item.get("positionId")))
+        if pid:
+            ids.add(str(pid))
+    return ids
+
+
+def find_phantom_positions(
+    nautilus_positions: list[tuple[str, str | None]],
+    etoro_open_ids: set[str],
+) -> list[tuple[str, str]]:
+    """Issue #717 (GR-04) — reine Diff-Funktion: welche Nautilus-offenen Positionen sind bei
+    eToro bereits geschlossen (Phantom)? ``nautilus_positions`` ist eine Liste von
+    ``(instrument_id, stored_position_id)`` (der gespeicherte eToro-PositionId-String für die
+    Position aus ``_StateManager.get()``, ``None``, wenn (noch) unbekannt). Ein Eintrag ohne
+    gespeicherte positionId wird übersprungen (kein Urteil ohne bekannten venue-seitigen Anker).
+    Rein, deterministisch — von der async I/O-/Nautilus-Cache-Schicht getrennt, damit sie direkt
+    unit-testbar ist."""
+    phantoms: list[tuple[str, str]] = []
+    for instrument_id, stored_position_id in nautilus_positions:
+        if not stored_position_id:
+            continue
+        if stored_position_id not in etoro_open_ids:
+            phantoms.append((instrument_id, stored_position_id))
+    return phantoms
+
+
 class EToroExecutionClient(LiveExecutionClient):
 
     def __init__(
@@ -172,6 +207,101 @@ class EToroExecutionClient(LiveExecutionClient):
             reported=False,
             ts_event=self._clock.timestamp_ns(),
         )
+
+        # Issue #717 (GR-04) — Portfolio-Reconcile Nautilus <-> eToro NACH dem State-Load (kennt
+        # COID->positionId) und der WS-Verbindung (Live-Events wieder empfangbar). Fehler hier
+        # dürfen den Connect NICHT blockieren (best-effort Diagnose/Reconciliation).
+        try:
+            await self._reconcile_positions_on_connect()
+        except Exception as exc:
+            self._log.warning(
+                f"[GR-04] Reconnect-Reconciliation fehlgeschlagen: {exc}", LogColor.YELLOW
+            )
+
+    async def _reconcile_positions_on_connect(self) -> None:
+        """Issue #717 (GR-04) — Portfolio-Reconcile Nautilus <-> eToro bei jedem (Re-)Connect.
+
+        Deckt den Fall ab, den die reaktive [EX-2]-Phantom-Erkennung verpasst: ein SL/TP/TSL, das
+        eToro WÄHREND einer Offline-Phase autonom ausgelöst hat (die WS liefert nur LIVE-Events,
+        kein Backlog) — die Nautilus-Position bliebe sonst dauerhaft ein Phantom, bis das nächste
+        Strategie-Signal oder ein manueller ``etoro_close_orphans.py``-Lauf sie entdeckt (schliesst
+        endlich ``[EX-2-followup]``).
+
+        Schliesst NICHT direkt: die ExecutionClient kann keine neue Order ohne einen von
+        ``Strategy.order_factory`` initiierten Order-Kontext sicher erzeugen (ein synthetischer
+        ``generate_order_filled`` für eine nie über die Engine submittete ClientOrderId würde die
+        Order-State-Machine verletzen — exakt der Grund, warum [EX-2] bislang nur loggt statt
+        automatisch schliesst). Stattdessen wird ein Signal auf dem msgbus publiziert; die
+        betroffene Strategie-Instanz (``hourly_strategy_base.py``, ``on_start``-Subscription)
+        führt die Schliessung über ihren bereits bestehenden, geprüften ``_close_position_base``-
+        Pfad aus.
+
+        Das GR-01-Ablauf-Kriterium (Nautilus offen / eToro offen, aber die 24-Bar-Zeitbox bereits
+        offline abgelaufen) wird NICHT hier, sondern strategie-seitig behandelt
+        (``HourlyStrategyBase._reconcile_after_reconnect``, ``on_start``) — dort ist sowohl der
+        Bar-Cache als auch der native ``pos.ts_opened``-Zeitstempel bereits lokal verfügbar, ohne
+        eine zusätzliche Cross-Component-Abhängigkeit auf den hier gestempelten State einzuführen.
+        """
+        if self._dry_run:
+            return
+        nautilus_positions = self._cache.positions_open()
+        if not nautilus_positions:
+            return
+        try:
+            etoro_open_ids = await self._fetch_etoro_open_position_ids()
+        except Exception as exc:
+            self._log.warning(
+                f"[GR-04] Reconcile: PnL-Abfrage fehlgeschlagen: {exc}", LogColor.YELLOW
+            )
+            return
+        if etoro_open_ids is None:
+            return
+
+        position_entries = []
+        for pos in nautilus_positions:
+            coid = str(pos.opening_order_id)
+            stored_pos_id = await self._state.get(coid)
+            position_entries.append((str(pos.instrument_id), stored_pos_id))
+
+        for instrument_id, stored_pos_id in find_phantom_positions(position_entries, etoro_open_ids):
+            self._log.warning(
+                f"[GR-04] Phantom-Position erkannt (Reconnect): {instrument_id} "
+                f"posId={stored_pos_id} bei eToro bereits geschlossen — Close-Request an "
+                "Strategie.",
+                LogColor.YELLOW,
+            )
+            self._msgbus.publish(
+                topic=f"events.gr04_close_request.{instrument_id}",
+                msg={"reason": "phantom", "position_id": stored_pos_id},
+            )
+
+    async def _fetch_etoro_open_position_ids(self) -> set[str] | None:
+        """Issue #717 — dieselbe PnL-REST-Quelle wie ``_reconcile_via_pnl`` (Single Source of
+        Truth, kein zweiter unabhängig gepflegter Positions-Abfrage-Pfad). ``None`` bei einem
+        nicht-200-Status (Aufrufer wertet das als "Reconcile diesmal übersprungen", nicht als
+        "keine offenen Positionen")."""
+        async with self._session.get(
+            self._pnl_base, headers=self._make_headers()
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+            return extract_open_position_ids(data)
+
+    def _latest_bar_ts_ns(self, instrument_id) -> int | None:
+        """Issue #717 — jüngster bekannter Bar-Zeitstempel (ns) für die 1h-MID-INTERNAL-Bar-Serie
+        dieses Instruments, als forensischer Bar-Anker (``entry_bar_seq``). ``None``, wenn der
+        Bar-Cache (noch) keine Historie trägt (Kaltstart) — kein erfundener Wert."""
+        try:
+            from nautilus_trader.model.data import BarType
+
+            bar_type = BarType.from_str(f"{instrument_id}-1-HOUR-MID-INTERNAL")
+            bars = self._cache.bars(bar_type)
+        except Exception:
+            return None
+        if not bars:
+            return None
+        return max(int(b.ts_event) for b in bars)
 
     async def _disconnect(self) -> None:
         await self._rate_limiter.stop()
@@ -430,6 +560,16 @@ class EToroExecutionClient(LiveExecutionClient):
                         commission=Money(0.0, USD),
                         liquidity_side=LiquiditySide.TAKER,
                         ts_event=ts,
+                    )
+                    # Issue #717 (GR-04) — Entry-Anker stempeln (sticky, siehe _StateManager.set:
+                    # ein späterer set()-Aufruf für denselben COID überschreibt ihn nicht mehr).
+                    # entry_ns = Ausführungsclient-Zeitstempel der ERSTEN Fill-Bestätigung;
+                    # entry_bar_seq = jüngster bekannter Bar-Zeitstempel (Forensik/Bar-Anker).
+                    await self._state.set(
+                        matched_coid,
+                        real_id_from_ws or matched_coid,
+                        entry_ns=ts,
+                        entry_bar_seq=self._latest_bar_ts_ns(order.instrument_id),
                     )
             self.create_task(self._refresh_balance(), log_msg="balance_refresh")
 
