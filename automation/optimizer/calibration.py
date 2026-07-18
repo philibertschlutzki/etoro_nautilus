@@ -26,6 +26,8 @@ Funktionen wie ``confirm.py``) geprüfte Infrastruktur, keinen Ersatz für den L
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from automation.optimizer.bootstrap import bootstrap_ci, ci_lower_bound_passes, sortino_statistic
@@ -63,7 +65,7 @@ def _cohort_pbo(cohort: list[np.ndarray], n_groups: int) -> float | None:
 def calibrate_promotion_correction_mode(
     *, n_configs: int = 12, n_periods: int = 200, period_std: float = 0.01,
     n_reps: int = 200, confidence: float = 0.95, min_cohort: int = 10,
-    var_floor: float = 0.0018, pbo_n_groups: int = 12, seed: int = 42, n_boot: int = 1000,
+    pbo_n_groups: int = 12, seed: int = 42, n_boot: int = 1000,
 ) -> dict:
     """Issue #667 — Monte-Carlo-Kalibrierlauf: empirische False-Positive-Winner-Rate von
     ``'conjunction'`` (DSR UND Bootstrap-CI UND PBO) vs. ``'dsr_or_robust_pair'`` (DSR ODER
@@ -94,7 +96,7 @@ def calibrate_promotion_correction_mode(
 
         var_sr = float(np.var(cohort_sr, ddof=0))
         sr0, *_ = sr0_multiple_testing_robust(
-            var_sr, n_configs, min_cohort=min_cohort, var_floor=var_floor, n_periods=n_periods)
+            var_sr, n_configs, min_cohort=min_cohort, n_periods=n_periods)
         dsr = deflated_sharpe_ratio(sr_period, n_periods, sr0=sr0, skew=skew, kurtosis=kurt)
         dsr_ok = dsr is not None and dsr >= confidence
 
@@ -123,7 +125,7 @@ def calibrate_t_adaptive_confidence(
     *, n_configs: int, n_periods: int, period_std: float = 0.01,
     confidence_grid: tuple[float, ...] = (0.99, 0.975, 0.95, 0.925, 0.90, 0.85, 0.80),
     target_fp_rate: float = 0.05, n_reps: int = 200, min_cohort: int = 10,
-    var_floor: float = 0.0018, seed: int = 42,
+    seed: int = 42,
 ) -> dict:
     """Issue #678 — T-ADAPTIVE ``deflation_confidence``: statt eines fixen 0.95-Konstante-Niveaus
     (das bei kleinem T, z. B. ~36 Holdout-Perioden, die konjunktive Promotion-Bestätigung praktisch
@@ -151,7 +153,7 @@ def calibrate_t_adaptive_confidence(
     for conf in confidence_grid:
         res = calibrate_promotion_correction_mode(
             n_configs=n_configs, n_periods=n_periods, period_std=period_std,
-            n_reps=n_reps, confidence=conf, min_cohort=min_cohort, var_floor=var_floor, seed=seed,
+            n_reps=n_reps, confidence=conf, min_cohort=min_cohort, seed=seed,
         )
         row = {"confidence": conf, "fp_rate_conjunction": res["fp_rate_conjunction"]}
         grid.append(row)
@@ -162,4 +164,70 @@ def calibrate_t_adaptive_confidence(
     return {
         "n_configs": n_configs, "n_periods": n_periods, "target_fp_rate": target_fp_rate,
         "grid": grid, "selected_confidence": best[1] if best else None,
+    }
+
+
+def calibrate_gate_consolidation_false_positive_rate(
+    *, n_configs: int = 12, n_periods: int = 200, period_std: float = 0.01,
+    n_reps: int = 2000, confidence: float = 0.95, min_cohort: int = 10,
+    expectancy_psr_correlation: float = 0.96, seed: int = 42,
+) -> dict:
+    """Issue #697 — Null-Kalibrierlauf: belegt, dass das Entfernen des mit ``oos_min_psr``
+    ~96%-kollinearen ``oos_min_expectancy``-Gates aus ``eligible_requires_all`` die empirische
+    False-Positive-Winner-Rate unter H0 (kein echter Edge) NICHT erhöht.
+
+    Je Replikation wird — wie in ``confirm.confirm_per_symbol_promotion`` — der DSR-Gewinner
+    (argmax des per-Perioden-Sortino über ``n_configs`` i.i.d. Rausch-Konfigurationen) ermittelt
+    und die DSR exakt wie im Promotion-Pfad berechnet (dieselben Funktionen aus ``deflation.py``).
+    Zusätzlich wird ein SYNTHETISCHER Expectancy-Proxy erzeugt, der mit dem standardisierten
+    Sortino-Rang eine Pearson-Korrelation von ``expectancy_psr_correlation`` trägt (Default 0.96 —
+    dieselbe Grössenordnung wie das reale #667-Symptom, ``|ρ(oos_min_expectancy, oos_min_psr)|
+    =0.961``), via Standard-Bivariate-Konstruktion (``Y = ρ·X + √(1−ρ²)·Z``, ``X``/``Z`` unabhängig
+    standardnormal) — ohne die reale Expectancy-Berechnung zu duplizieren, die Korrelationsstruktur
+    ist der Test-Gegenstand, nicht die Formel selbst. ``expectancy_ok`` ⟺ ``expectancy_proxy > 0``
+    (die im Issue-Kontext ökonomisch analoge "netto positiv"-Bedingung).
+
+    ``'conjunction_with_expectancy'`` = DSR UND expectancy_ok (Pre-#697-Konjunktion);
+    ``'psr_only'`` = NUR DSR (Post-#697). Rückgabe: ``{'fp_rate_conjunction_with_expectancy',
+    'fp_rate_psr_only', 'nominal_fp_rate', ...}``. Akzeptanzkriterium (#697): ``fp_rate_psr_only``
+    darf ``fp_rate_conjunction_with_expectancy`` NICHT MATERIELL übersteigen — die entfernte Klausel
+    trug wegen der hohen Kollinearität ~keine unabhängige Type-I-Kontrolle bei; beide Raten bleiben
+    nahe dem nominellen Niveau ``1 − confidence``. Deterministisch bei festem ``seed``."""
+    rng = np.random.default_rng(seed)
+    fp_conjunction = 0
+    fp_psr_only = 0
+
+    for _ in range(n_reps):
+        cohort = _simulate_h0_cohort(rng, n_configs, n_periods, period_std)
+        cohort_sr = [sortino_statistic(c, mar=0.0, annualization=1.0) for c in cohort]
+        cohort_sr = [float(s) if s == s else 0.0 for s in cohort_sr]  # NaN (dd<=0) ⇒ 0.0
+
+        winner_idx = int(np.argmax(cohort_sr))
+        winner = cohort[winner_idx]
+        sr_period = cohort_sr[winner_idx]
+        skew, kurt = sample_skew_kurtosis(winner)
+
+        var_sr = float(np.var(cohort_sr, ddof=0))
+        sr0, *_ = sr0_multiple_testing_robust(
+            var_sr, n_configs, min_cohort=min_cohort, n_periods=n_periods)
+        dsr = deflated_sharpe_ratio(sr_period, n_periods, sr0=sr0, skew=skew, kurtosis=kurt)
+        dsr_ok = dsr is not None and dsr >= confidence
+
+        std_sr = math.sqrt(var_sr) if var_sr > 0.0 else 1.0
+        standardized_sr = sr_period / std_sr
+        rho = float(expectancy_psr_correlation)
+        expectancy_proxy = rho * standardized_sr + math.sqrt(max(0.0, 1.0 - rho ** 2)) * rng.normal(0.0, 1.0)
+        expectancy_ok = expectancy_proxy > 0.0
+
+        if dsr_ok:
+            fp_psr_only += 1
+        if dsr_ok and expectancy_ok:
+            fp_conjunction += 1
+
+    return {
+        "n_reps": n_reps, "n_configs": n_configs, "n_periods": n_periods,
+        "confidence": confidence, "nominal_fp_rate": 1.0 - confidence,
+        "expectancy_psr_correlation": expectancy_psr_correlation,
+        "fp_rate_conjunction_with_expectancy": fp_conjunction / n_reps,
+        "fp_rate_psr_only": fp_psr_only / n_reps,
     }

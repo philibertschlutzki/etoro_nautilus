@@ -237,11 +237,18 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 try:
                     from automation.optimizer.sweep_diagnostics import (
                         recommend_diagnosis_action, record_diagnosed_pair,
-                        has_existing_search_space_override,
+                        has_existing_search_space_override, load_diagnosed_pairs_cache,
                     )
+                    # Issue #699 — Eskalations-Check: wurde für dieses Paar bereits in einem
+                    # VORHERIGEN Lauf 'search_space_override' empfohlen (und nichts hat sich seither
+                    # geändert), diesen Lauf auf 'denylist' eskalieren statt die identische
+                    # Empfehlung endlos zu wiederholen (siehe recommend_diagnosis_action-Docstring).
+                    _prior = load_diagnosed_pairs_cache().get((strategy, symbol))
                     rec = recommend_diagnosis_action(
                         strategy, symbol, diagnosis,
                         has_existing_override=has_existing_search_space_override(strategy, symbol),
+                        previously_recommended_override=bool(
+                            _prior and _prior.get("action") == "search_space_override"),
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -263,71 +270,101 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 _stop_study_safely(study, logger)
             return
 
-        # Issue #656 — ZERO-ELIGIBLE-PLATEAU: alle abgeschlossenen Trials WURDEN evaluiert
-        # (oos_evaluated=True, echte OOS-Backtests liefen durch), aber KEINER war je oos_eligible —
-        # ein STRUKTURELL ANDERES Kollaps-Muster als Pitfall #75 (der #413-Guard oben, kein Trial je
-        # evaluable). Beobachtet bei AdxAtrMomentum/TrendPullback: 2×120 Trials liefen vollständig
-        # durch (echte OOS-Metriken vorhanden), aber der Suchraum erzeugte NIE einen Lauf mit
-        # >= min_trades OOS-Round-Trips + positivem Return — das Gate verwarf strukturell jeden
-        # Trial, statt dass die Daten fehlten. Ohne diesen Guard laufen 100+ Trials nutzlos durch,
-        # bevor ein Mensch das im Proposal (0 eligible) bemerkt.
-        if all(f is True for f in evaluated_flags):
-            eligible_flags = [getattr(t, "user_attrs", {}).get("oos_eligible") for t in completed]
-            if all(f is False for f in eligible_flags):
-                study.set_user_attr("zero_eligible_plateau_warned", True)
-                oos_trade_counts = [getattr(t, "user_attrs", {}).get("oos_total_trades") for t in completed]
-                oos_trade_counts = [int(c) for c in oos_trade_counts if c is not None]
-                hit_cap_flags = [getattr(t, "user_attrs", {}).get("hit_trade_cap") for t in completed]
-                n_hit_cap = sum(1 for f in hit_cap_flags if f is True)
-                median_oos_trades = statistics.median(oos_trade_counts) if oos_trade_counts else None
-                logger.warning(
-                    "🚨 Zero-Eligible-Plateau erkannt: %d/%d Trials wurden evaluiert (echte OOS-"
-                    "Backtests), aber KEINER war oos_eligible — der Suchraum erzeugt strukturell "
-                    "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d Trials trafen die "
-                    "Haltedauer-/Trade-Cap-Grenze). Suchraum-Bounds pruefen (spaces.py) ODER die "
-                    "Strategie fuer dieses Symbol/Tier deaktivieren, statt die restlichen Trials "
-                    "nutzlos durchlaufen zu lassen.",
-                    len(completed), len(completed), median_oos_trades, n_hit_cap, len(completed),
-                )
-                import json as _json
-                emit_execution_event(logger, "ZERO_ELIGIBLE_PLATEAU", {
-                    "n_trials": len(completed),
-                    "median_oos_total_trades": median_oos_trades,
-                    "hit_trade_cap_count": n_hit_cap,
-                    # Issue #669 — per Definition dieses Zweigs (alle evaluiert, keiner eligible):
-                    # Signal-QUALITÄT, keine Frequenz-/Bounds-Ursache (Bounds-Kalibrierung würde
-                    # hier NICHTS beheben — trennt diesen Fall explizit von STRUCTURAL_ALL_UNEVALUABLE).
-                    "binding_cause": "signal_quality",
-                })
+        # Issue #656/#700 — ZERO-ELIGIBLE-PLATEAU: mindestens ein Trial WURDE evaluiert (oos_
+        # evaluated=True, echte OOS-Backtests liefen durch) und traf tatsaechlich eine oos_eligible-
+        # Determination, aber KEINER dieser evaluierten Trials war je eligible — ein STRUKTURELL
+        # ANDERES Kollaps-Muster als Pitfall #75 (der #413-Guard oben, kein Trial je evaluable).
+        #
+        # Root-Cause #700: dieser Zweig verlangte vorher STRIKT ``all(evaluated_flags is True)`` —
+        # ein GEMISCHTER Cohort (einige Trials evaluable, einige nicht, z. B. durch Trade-Cap-
+        # Treffer/hohe Frequenz bei SqueezeBreakout) fiel dadurch durch BEIDE Netze (weder "kein
+        # Trial evaluable" oben noch "alle Trials evaluable" hier) und verbrannte das VOLLE
+        # 180-Trial-Budget, waehrend GapContinuation (zufaellig ein homogener 0-evaluable-Cohort)
+        # korrekt bei 16 Trials stoppte. Fix: die Bedingung ist jetzt ausschliesslich
+        # ``p_eligible(evaluierte Trials) == 0`` — UNABHAENGIG davon, ob ALLE oder nur EIN TEIL der
+        # Trials evaluiert wurden (woertliches #700-Akzeptanzkriterium: ob gestoppt wird, haengt
+        # NICHT an der binding_cause-Klassifikation, die nur die URSACHE telemetriert).
+        eligible_flags_of_evaluated = [
+            getattr(t, "user_attrs", {}).get("oos_eligible") for t in completed
+            if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+        ]
+        if (eligible_flags_of_evaluated
+                and any(f is not None for f in eligible_flags_of_evaluated)
+                and all(f is not True for f in eligible_flags_of_evaluated)):
+            study.set_user_attr("zero_eligible_plateau_warned", True)
+            n_evaluated = len(eligible_flags_of_evaluated)
+            oos_trade_counts = [
+                getattr(t, "user_attrs", {}).get("oos_total_trades") for t in completed
+                if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+            ]
+            oos_trade_counts = [int(c) for c in oos_trade_counts if c is not None]
+            hit_cap_flags = [
+                getattr(t, "user_attrs", {}).get("hit_trade_cap") for t in completed
+                if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+            ]
+            n_hit_cap = sum(1 for f in hit_cap_flags if f is True)
+            median_oos_trades = statistics.median(oos_trade_counts) if oos_trade_counts else None
 
-                # Issue #681 — dieselbe Closed-Loop-Aktion wie im STRUCTURAL_ALL_UNEVALUABLE-Zweig:
-                # 'signal_quality' resolved IMMER auf 'denylist' (Bounds-Kalibrierung hilft hier per
-                # binding_cause-Definition nicht) — in den Auto-Cache geschrieben, NICHT in die
-                # menschlich-kuratierte Denylist-Config.
-                if strategy is not None and symbol is not None:
-                    try:
-                        from automation.optimizer.sweep_diagnostics import (
-                            recommend_diagnosis_action, record_diagnosed_pair,
-                        )
-                        rec = recommend_diagnosis_action(
-                            strategy, symbol, {"binding_cause": "signal_quality",
-                                               "median_oos_trades": median_oos_trades,
-                                               "median_is_trades": None},
-                        )
-                        record_diagnosed_pair(rec)
-                    except Exception:
-                        logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
+            # Issue #700 — per-16-Trial-Fenster p_eligible-Kurve (Diagnose-Akzeptanzkriterium):
+            # unterscheidet TRANSIENTE (irgendwo zwischenzeitlich eligible Trials) von PERMANENTER
+            # (jedes Fenster 0.0) Null-Eligibilitaet.
+            from automation.optimizer.sweep_diagnostics import eligibility_curve
+            p_eligible_windows = eligibility_curve(
+                [{"oos_eligible": getattr(t, "user_attrs", {}).get("oos_eligible")} for t in completed],
+                window=16,
+            )
 
-                should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
-                if should_stop:
-                    logger.info("[JSON_EVENT] " + _json.dumps({
-                        "event_type": "STUDY_EARLY_STOP",
-                        "reason": "STRUCTURAL_ZERO_ELIGIBLE",
-                        "current_trial": len(completed),
-                        "startup_limit": max(1, int(n_startup_trials)),
-                        "k_limit": K
-                    }))
-                    _stop_study_safely(study, logger)
+            logger.warning(
+                "🚨 Zero-Eligible-Plateau erkannt: %d/%d Trials wurden evaluiert (echte OOS-"
+                "Backtests), aber KEINER war oos_eligible — der Suchraum erzeugt strukturell "
+                "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d Trials trafen die "
+                "Haltedauer-/Trade-Cap-Grenze). p_eligible je 16-Trial-Fenster: %s. Suchraum-Bounds "
+                "pruefen (spaces.py) ODER die Strategie fuer dieses Symbol/Tier deaktivieren, statt "
+                "die restlichen Trials nutzlos durchlaufen zu lassen.",
+                n_evaluated, len(completed), median_oos_trades, n_hit_cap, n_evaluated,
+                p_eligible_windows,
+            )
+            import json as _json
+            emit_execution_event(logger, "ZERO_ELIGIBLE_PLATEAU", {
+                "n_trials": len(completed),
+                "n_evaluated": n_evaluated,
+                "median_oos_total_trades": median_oos_trades,
+                "hit_trade_cap_count": n_hit_cap,
+                "p_eligible_windows": p_eligible_windows,
+                # Issue #669 — innerhalb der EVALUIERTEN Trials: Signal-QUALITÄT, keine Frequenz-/
+                # Bounds-Ursache (Bounds-Kalibrierung würde hier NICHTS beheben — trennt diesen Fall
+                # explizit von STRUCTURAL_ALL_UNEVALUABLE).
+                "binding_cause": "signal_quality",
+            })
+
+            # Issue #681 — dieselbe Closed-Loop-Aktion wie im STRUCTURAL_ALL_UNEVALUABLE-Zweig:
+            # 'signal_quality' resolved IMMER auf 'denylist' (Bounds-Kalibrierung hilft hier per
+            # binding_cause-Definition nicht) — in den Auto-Cache geschrieben, NICHT in die
+            # menschlich-kuratierte Denylist-Config.
+            if strategy is not None and symbol is not None:
+                try:
+                    from automation.optimizer.sweep_diagnostics import (
+                        recommend_diagnosis_action, record_diagnosed_pair,
+                    )
+                    rec = recommend_diagnosis_action(
+                        strategy, symbol, {"binding_cause": "signal_quality",
+                                           "median_oos_trades": median_oos_trades,
+                                           "median_is_trades": None},
+                    )
+                    record_diagnosed_pair(rec)
+                except Exception:
+                    logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
+
+            should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
+            if should_stop:
+                logger.info("[JSON_EVENT] " + _json.dumps({
+                    "event_type": "STUDY_EARLY_STOP",
+                    "reason": "STRUCTURAL_ZERO_ELIGIBLE",
+                    "current_trial": len(completed),
+                    "startup_limit": max(1, int(n_startup_trials)),
+                    "k_limit": K
+                }))
+                _stop_study_safely(study, logger)
         return
 
     # Legacy-Fallback (kein oos_evaluated-Attr, z. B. alte Studies / globaler make_objective-Pfad):
@@ -1000,14 +1037,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Parameter wie in der PROMOTIONS-Entscheidung (confirm.py), sonst würde die Study-Summary-
         # Telemetrie erneut vom promotion-entscheidenden SR₀ abweichen (exakt der #651-Fehler).
         opt_path_dsr = config_dir() / "tournament.json"
-        # Issue #685 — var_floor ist DEPRECATED: nur ein Legacy-Fallback, wirksam ausschliesslich
-        # wenn n_periods (T, siehe unten) fehlt. Bei vorhandenem T ist die Referenz immer Lo-2002.
-        min_cohort, var_floor = 10, 0.0018
+        min_cohort = 10
         try:
             if opt_path_dsr.exists():
                 _tcfg = json.loads(opt_path_dsr.read_text("utf-8")) or {}
                 min_cohort = int(_tcfg.get("deflation_min_cohort", min_cohort))
-                var_floor = float(_tcfg.get("deflation_var_floor", var_floor))
         except Exception:
             pass
         cohort_n_periods = [getattr(t, "user_attrs", {}).get("oos_n_periods") for t in trials
@@ -1018,10 +1052,21 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Issue #670 — dieselbe (Rückwärtskompat-)Signatur wie confirm.py: ``deflation_used_var_floor``
         # bedeutet nur "λ ≥ 0.5"; ``deflation_lambda``/``deflation_theoretical_var_source`` sind die
         # präzisen Grössen für die Study-Summary-Telemetrie.
-        (deflation_sr0, deflation_used_var_floor, deflation_lambda,
-         deflation_theoretical_var_source) = sr0_multiple_testing_robust(
-            deflation_var, deflation_n, min_cohort=min_cohort, var_floor=var_floor,
-            n_periods=deflation_t_periods)
+        # Issue #701 — ``deflation_t_periods`` ist NIE ``None``, wenn ``deflation_n >= 2`` (siehe
+        # confirm.py-Kommentar/deflation.py-Docstring für die Invarianten-Herleitung); der var_floor-
+        # Fallback wurde nach Verifikation entfernt. Defense-in-Depth statt Crash, falls die
+        # Invariante durch eine künftige Datenanomalie doch einmal bricht.
+        if deflation_t_periods is None:
+            logging.getLogger("optimizer").warning(
+                "[DSR #701] %s: deflation_t_periods fehlt trotz deflation_n=%d >= 2 — sollte laut "
+                "Invariante unerreichbar sein. SR₀ bleibt fuer diese Study-Summary unberechnet.",
+                symbol, deflation_n,
+            )
+        else:
+            (deflation_sr0, deflation_used_var_floor, deflation_lambda,
+             deflation_theoretical_var_source) = sr0_multiple_testing_robust(
+                deflation_var, deflation_n, min_cohort=min_cohort,
+                n_periods=deflation_t_periods)
 
     # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
     boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
@@ -1154,8 +1199,8 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Issue #636 — sichtbar, ob das Shrinkage-Gewicht λ ≥ 0.5 ist (die theoretische Referenz
         # dominiert die Blend-Gewichtung — NICHT "die var_floor-Konstante wurde verwendet", #670).
         "deflation_used_var_floor": deflation_used_var_floor,
-        # Issue #670 — die präzisen Grössen: das tatsächliche Shrinkage-Gewicht λ und die
-        # tatsächlich verwendete theoretische Referenz-Quelle ('lo2002' vs 'var_floor').
+        # Issue #670/#701 — die präzisen Grössen: das tatsächliche Shrinkage-Gewicht λ und die
+        # theoretische Referenz-Quelle (seit #701 IMMER 'lo2002' — der var_floor-Fallback ist entfernt).
         "deflation_lambda": deflation_lambda,
         "deflation_theoretical_var_source": deflation_theoretical_var_source,
         # Issue #620 — #589-Kohärenz-Verletzungen je Study (beobachtbar).

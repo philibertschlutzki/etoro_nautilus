@@ -1,54 +1,48 @@
-"""Issue #685 — deflation_var_floor ist nach der #653-Lo-2002-Migration ein irreführender Legacy-Key.
+"""Issue #685 — deflation_var_floor war nach der #653-Lo-2002-Migration ein irreführender Legacy-Key.
 
-1. Der Config-Key trägt einen unmissverständlichen Deprecation-Hinweis (nicht nur beiläufig in einem
-   dichten Absatz erwähnt).
-2. Funktional: bei vorhandenem n_periods hat ``var_floor`` NULL Einfluss auf SR₀ (die Referenz ist
-   immer Lo-2002) — nur wenn n_periods fehlt, greift der Legacy-Fallback.
+Historie: #685 markierte den Key als DEPRECATED (nur noch ein Legacy-Fallback für Aufrufer ohne
+n_periods) und verlangte VOR einer Entfernung die Verifikation, dass n_periods an JEDER
+Produktions-Call-Site unconditional verfügbar ist. Issue #701 hat diese Verifikation durchgeführt
+(``oos_sortino_period is not None`` impliziert an jeder Call-Site ``oos_n_periods >= 1``, da beide
+aus demselben ``backtest_runner``-Berechnungsblock stammen) und den Key + den Fallback-Zweig
+ERSATZLOS ENTFERNT — dieser Test verifiziert, dass die Entfernung vollständig ist.
 """
 import json
 from pathlib import Path
+
+import pytest
 
 from automation.optimizer.deflation import sr0_multiple_testing_robust
 
 TCFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 
-def test_schema_carries_unmistakable_deprecation_marker():
-    desc = TCFG["_schema"]["fields"]["deflation_var_floor"]
-    assert "DEPRECATED" in desc
-    assert desc.strip().startswith("⚠️ DEPRECATED") or desc.lstrip().startswith("⚠️ DEPRECATED"), (
-        "Deprecation-Hinweis muss am ANFANG stehen, nicht in einem dichten Absatz vergraben sein."
-    )
-    assert "#653" in desc and "Lo-2002" in desc
+def test_deflation_var_floor_key_is_fully_removed_from_config():
+    assert "deflation_var_floor" not in TCFG
+    assert "deflation_var_floor" not in TCFG["_schema"]["fields"]
 
 
-def test_var_floor_has_no_effect_when_n_periods_present():
-    """Kein Konsument darf var_floor als aktiven Floor interpretieren, solange n_periods bekannt
-    ist — zwei stark unterschiedliche var_floor-Werte müssen identisches SR₀ liefern."""
-    sr0_low_floor, *_ = sr0_multiple_testing_robust(
-        1e-6, 20, min_cohort=10, var_floor=0.0018, n_periods=200)
-    sr0_high_floor, *_ = sr0_multiple_testing_robust(
-        1e-6, 20, min_cohort=10, var_floor=999.0, n_periods=200)
-    assert sr0_low_floor == sr0_high_floor
+def test_deflation_min_cohort_schema_documents_the_701_removal():
+    doc = TCFG["_schema"]["fields"]["deflation_min_cohort"]
+    assert "#701" in doc
+    assert "ENTFERNT" in doc or "entfernt" in doc
 
 
-def test_var_floor_only_active_as_legacy_fallback_without_n_periods():
-    """Fehlt n_periods (Legacy-Aufrufer ohne T-Telemetrie), IST var_floor die theoretische
-    Referenz — unterschiedliche Werte liefern unterschiedliches SR₀."""
-    sr0_low_floor, *_ = sr0_multiple_testing_robust(
-        1e-6, 20, min_cohort=10, var_floor=0.0018, n_periods=None)
-    sr0_high_floor, *_ = sr0_multiple_testing_robust(
-        1e-6, 20, min_cohort=10, var_floor=999.0, n_periods=None)
-    assert sr0_low_floor != sr0_high_floor
+def test_sr0_multiple_testing_robust_no_longer_accepts_var_floor_kwarg():
+    with pytest.raises(TypeError):
+        sr0_multiple_testing_robust(1e-6, 20, min_cohort=10, var_floor=0.0018, n_periods=200)
 
 
-def test_theoretical_var_source_confirms_lo2002_when_n_periods_present():
-    _, _, _, source = sr0_multiple_testing_robust(
-        1e-6, 20, min_cohort=10, var_floor=0.0018, n_periods=200)
+def test_n_periods_is_a_required_keyword_argument():
+    with pytest.raises(TypeError):
+        sr0_multiple_testing_robust(1e-6, 20, min_cohort=10)
+
+
+def test_missing_n_periods_value_fails_loud():
+    with pytest.raises(ValueError, match="n_periods"):
+        sr0_multiple_testing_robust(1e-6, 20, min_cohort=10, n_periods=None)
+
+
+def test_theoretical_var_source_is_always_lo2002_now():
+    _, _, _, source = sr0_multiple_testing_robust(1e-6, 20, min_cohort=10, n_periods=200)
     assert source == "lo2002"
-
-
-def test_theoretical_var_source_confirms_var_floor_only_as_fallback():
-    _, _, _, source = sr0_multiple_testing_robust(
-        1e-6, 20, min_cohort=10, var_floor=0.0018, n_periods=None)
-    assert source == "var_floor"

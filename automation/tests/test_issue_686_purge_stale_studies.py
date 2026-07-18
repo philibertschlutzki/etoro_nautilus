@@ -74,5 +74,7 @@ def test_find_stale_study_dbs_empty_dir_returns_empty(tmp_path):
 
 
 def test_current_version_read_from_real_optimizer_json():
+    # Issue #697 — forward-kompatibel (analog test_issue_686_reward_semantics_bump.py): pinnt nur
+    # die historische UNTERGRENZE, der v13-Bump (#697) hebt die LIVE-Version weiter an.
     from automation.optimizer.purge_stale_studies import _current_reward_semantics_version
-    assert _current_reward_semantics_version() == 12
+    assert _current_reward_semantics_version() >= 12

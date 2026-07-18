@@ -16,7 +16,10 @@ CFG = json.loads(CFG_PATH.read_text("utf-8"))
 
 
 def test_reward_semantics_version_is_12():
-    assert CFG["reward_semantics_version"] == 12
+    # Issue #697 — forward-kompatibel (analog test_issue_658/672): der v12-Bump ist ein
+    # historischer Meilenstein, der v13-Bump (#697) hebt die LIVE-Version weiter an, ohne diesen
+    # Test zu brechen — die v12-Changelog-Prüfungen unten bleiben unabhängig davon exakt pinnbar.
+    assert CFG["reward_semantics_version"] >= 12
 
 
 def test_version_is_documented_with_v12_changelog_entry():
@@ -80,7 +83,7 @@ def test_fresh_study_stamps_v12_without_error():
 
     study = _FakeStudy()
     _check_reward_semantics_version(study, CFG)
-    assert study.user_attrs["reward_semantics_version"] == 12
+    assert study.user_attrs["reward_semantics_version"] == CFG["reward_semantics_version"]
 
 
 def test_matching_v12_version_is_a_no_op():
@@ -88,7 +91,7 @@ def test_matching_v12_version_is_a_no_op():
 
     class _FakeStudy:
         def __init__(self):
-            self._attrs = {"reward_semantics_version": 12}
+            self._attrs = {"reward_semantics_version": CFG["reward_semantics_version"]}
             self.trials = [object()] * 20
             self.study_name = "study_v12"
             self._storage = None

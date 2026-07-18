@@ -131,16 +131,10 @@ def _cohort_shrinkage_weight(n_trials: int, min_cohort: int) -> float:
 
 def sr0_multiple_testing_robust(
     var_sr_trials: float | None, n_trials: int, *,
-    min_cohort: int = 10, var_floor: float = 0.0018,
-    n_periods: int | None = None, sr_estimate: float = 0.0,
+    min_cohort: int = 10, n_periods: int, sr_estimate: float = 0.0,
     variance_n_trials: int | None = None,
 ) -> tuple[float, bool, float, str]:
-    """Issue #636/#653/#685 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration, STETIG in N.
-
-    ``var_floor`` — ⚠️ DEPRECATED (Issue #685): NUR wirksam, wenn ``n_periods`` fehlt (Legacy-
-    Aufrufer ohne T-Telemetrie). Bei vorhandenem ``n_periods`` ist die theoretische Referenz IMMER
-    Lo-2002 (T-bewusst, ``lo2002_sharpe_variance``) — ``var_floor`` wird dann NIE konsultiert. Nicht
-    als aktiven, konstanten Mechanismus interpretieren (genau die #670-Fehldeutung).
+    """Issue #636/#653/#685/#701 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration, STETIG in N.
 
     ``V[ŜR_trials]`` aus einer 2-3-Punkte-Kohorte (z. B. VwapExhaustion N=3, Hourly N=2) ist
     statistisch bedeutungslos (beobachtet: ``deflation_var_sr = 2.4e-9`` für Hourly — eine
@@ -158,9 +152,19 @@ def sr0_multiple_testing_robust(
     (1−λ(N))·observed`` mit dem STETIGEN Shrinkage-Gewicht ``λ(N)`` (``_cohort_shrinkage_weight``) —
     kein Cutover, SR₀(N) ist über JEDEN N-Übergang stetig. ``theoretical_var`` folgt Lo (2002)
     (``lo2002_sharpe_variance``, ``T = n_periods``, T-bewusst: kürzeres OOS-Fenster ⇒ konservativerer
-    Floor) — fehlt ``n_periods`` (Legacy-Aufrufer ohne T-Telemetrie), bleibt ``var_floor`` (die alte,
-    empirisch verankerte VwapExhaustion-N=100-Referenz-Konstante ``V[ŜR_trials]=1.803e-3``) die
-    Referenz (bit-identischer Fallback, kein neuer Hardcoding-Zwang für Alt-Aufrufer).
+    Floor).
+
+    Issue #701 — ``n_periods`` ist SEIT #701 ein PFLICHT-Parameter (kein Default mehr) und der
+    frühere ``var_floor``-Legacy-Fallback (Issue #685-Deprecation) ENTFÄLLT ERSATZLOS: die
+    Verifikation belegte, dass ``oos_sortino_period`` an JEDER Produktions-Call-Site (confirm.py,
+    run_optimization.py) NIE ohne ein zugehöriges, ebenfalls truthy ``oos_n_periods`` gestempelt
+    wird — beide stammen aus DEMSELBEN ``backtest_runner.py``-Berechnungsblock (``sortino_period``
+    wird NUR gesetzt, nachdem ``n_periods = len(period_rets)`` bereits > 0 ist, siehe
+    ``backtest_runner._calculate_stats``), der Fallback-Zweig war auf jedem Entscheidungs-Pfad
+    dieses Systems bereits TOT. Der Key ``deflation_var_floor`` (tournament.json) ist entfernt —
+    ein fehlendes/ungültiges ``n_periods`` bricht jetzt FAIL-LOUD ab (``ValueError``), statt still
+    auf eine geratene Konstante zurückzufallen (Zero-Hardcoding: kein Entscheidungs-Pfad soll je
+    auf einer nicht-konfigurierbaren Magic-Number statt der T-bewussten Theorie beruhen).
 
     Issue #652 — ``n_trials`` und ``variance_n_trials`` sind ABSICHTLICH ENTKOPPELT: ``n_trials``
     treibt AUSSCHLIESSLICH ``E[max_N]`` (die Multiple-Testing-MULTIPLIZITÄT — bei #652 familienweit,
@@ -175,26 +179,25 @@ def sr0_multiple_testing_robust(
 
     Issue #670 — die Rückgabe trägt zusätzlich das TATSÄCHLICH verwendete Shrinkage-Gewicht
     (``shrinkage_lambda``, ``= λ(N)`` — nicht nur das boolesche ``floor_dominant = λ ≥ 0.5``) und die
-    tatsächlich verwendete theoretische Referenz-QUELLE (``theoretical_var_source ∈ {'lo2002',
-    'var_floor'}``). Root-Cause #670: der Aufrufer (``confirm.py``) koppelte seine Log-Message
-    bislang an ``floor_dominant`` und interpretierte das WÖRTLICH als „die ``var_floor``-Konstante
-    wurde verwendet" — das ist bei vorhandenem ``n_periods`` FALSCH: seit #653 ist die theoretische
-    Referenz dann IMMER Lo-2002 (T-bewusst), ``var_floor`` nur der Fallback OHNE ``n_periods``.
-    ``floor_dominant`` bedeutet ausschliesslich „das Shrinkage-Gewicht λ ist ≥ 0.5" (die THEORETISCHE
-    Referenz — welche auch immer sie ist — dominiert die Blend-Gewichtung), NICHT „welche Konstante".
+    theoretische Referenz-QUELLE (``theoretical_var_source`` — SEIT #701 IMMER ``'lo2002'``, als
+    Rückwärtskompat-Feld für bestehende Telemetrie-Konsumenten erhalten, keine Fallunterscheidung
+    mehr). ``floor_dominant`` bedeutet ausschliesslich „das Shrinkage-Gewicht λ ist ≥ 0.5" (die
+    theoretische Lo-2002-Referenz dominiert die Blend-Gewichtung), NICHT „welche Konstante".
 
     Rückgabe ``(sr0, floor_dominant, shrinkage_lambda, theoretical_var_source)`` — ``floor_dominant``
     bleibt aus Rückwärtskompat-Gründen erhalten (``λ ≥ 0.5``, äquivalent zu
     ``variance_n_trials <= min_cohort``), aber ``shrinkage_lambda``/``theoretical_var_source`` sind
     die PRÄZISEN Grössen, die Log-Messages/Telemetrie referenzieren MÜSSEN (nie ``floor_dominant``
     als Proxy für „welche Konstante wurde verwendet")."""
+    if n_periods is None or n_periods <= 1:
+        raise ValueError(
+            "sr0_multiple_testing_robust: n_periods muss > 1 sein (Issue #701 — der var_floor-"
+            "Fallback ohne n_periods wurde als tot verifiziert und ersatzlos entfernt; ein "
+            "fehlendes n_periods an dieser Call-Site ist ein Bug im Aufrufer, kein Legacy-Fall)."
+        )
     observed = float(var_sr_trials) if var_sr_trials is not None else 0.0
-    if n_periods is not None and n_periods > 1:
-        theoretical_var = lo2002_sharpe_variance(sr_estimate, n_periods)
-        theoretical_var_source = "lo2002"
-    else:
-        theoretical_var = var_floor
-        theoretical_var_source = "var_floor"
+    theoretical_var = lo2002_sharpe_variance(sr_estimate, n_periods)
+    theoretical_var_source = "lo2002"
     reliability_n = variance_n_trials if variance_n_trials is not None else n_trials
     weight = _cohort_shrinkage_weight(reliability_n, min_cohort)
     effective_var = weight * theoretical_var + (1.0 - weight) * observed

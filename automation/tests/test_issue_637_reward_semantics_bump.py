@@ -48,6 +48,7 @@ _EXPECTED_FINGERPRINT_BY_VERSION = {
     10: _scale_fingerprint(CFG),  # Issue #658 — Eligibility-Bump, Skalen-Konstanten unverändert.
     11: _scale_fingerprint(CFG),  # Issue #672 — Eligibility-Bump (#666), Skalen-Konstanten unverändert.
     12: _scale_fingerprint(CFG),  # Issue #686 — Eligibility-Bump (#676/#677/#684), Skalen-Konstanten unverändert.
+    13: _scale_fingerprint(CFG),  # Issue #697 — Eligibility-Bump (min_expectancy aus eligible_requires_all entfernt), Skalen-Konstanten unverändert.
 }
 
 

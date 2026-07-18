@@ -84,9 +84,9 @@ def test_sr0_continuous_across_min_cohort_transition():
     n_periods = 200
 
     sr0_9, floor_dom_9, *_ = sr0_multiple_testing_robust(
-        tiny_var, 9, min_cohort=10, var_floor=0.0018, n_periods=n_periods)
+        tiny_var, 9, min_cohort=10, n_periods=n_periods)
     sr0_10, floor_dom_10, *_ = sr0_multiple_testing_robust(
-        tiny_var, 10, min_cohort=10, var_floor=0.0018, n_periods=n_periods)
+        tiny_var, 10, min_cohort=10, n_periods=n_periods)
 
     assert floor_dom_9 is True
     assert floor_dom_10 is True   # #653 — N=min_cohort zählt noch als floor-dominant (Gewicht=0.5)
@@ -103,8 +103,7 @@ def test_sr0_continuous_in_transition_window_around_min_cohort():
     tiny_var = 1e-4
     n_periods = 200
     sr0s = [
-        sr0_multiple_testing_robust(tiny_var, n, min_cohort=10, var_floor=0.0018,
-                                    n_periods=n_periods)[0]
+        sr0_multiple_testing_robust(tiny_var, n, min_cohort=10, n_periods=n_periods)[0]
         for n in range(7, 15)
     ]
     # Aufeinanderfolgende Werte dürfen sich in dieser Übergangszone nur graduell ändern.
@@ -118,21 +117,19 @@ def test_floor_scales_with_t_shorter_oos_more_conservative():
     konservativerer (grösserer) Floor ⇒ grösseres SR₀ bei identischer, winziger Kohorten-Varianz."""
     tiny_var = 1e-6
     sr0_short_t, *_ = sr0_multiple_testing_robust(
-        tiny_var, 3, min_cohort=10, var_floor=0.0018, n_periods=30)
+        tiny_var, 3, min_cohort=10, n_periods=30)
     sr0_long_t, *_ = sr0_multiple_testing_robust(
-        tiny_var, 3, min_cohort=10, var_floor=0.0018, n_periods=500)
+        tiny_var, 3, min_cohort=10, n_periods=500)
     assert sr0_short_t > sr0_long_t
 
 
-def test_legacy_callers_without_n_periods_fall_back_to_var_floor_constant():
-    """Rückwärtskompatibilität: fehlt n_periods (Legacy-Aufrufer ohne T-Telemetrie), bleibt
-    var_floor die theoretische Referenz (bit-identisch zum Pre-#653-Ankerwert als Reference)."""
-    sr0, floor_dominant, *_ = sr0_multiple_testing_robust(
-        1e-9, 2, min_cohort=10, var_floor=0.0018)
-    assert floor_dominant is True
-    weight = _cohort_shrinkage_weight(2, 10)
-    expected_var = weight * 0.0018 + (1.0 - weight) * 1e-9
-    assert sr0 == pytest.approx(sr0_multiple_testing(expected_var, 2))
+def test_missing_n_periods_fails_loud_no_more_var_floor_constant():
+    """Issue #701 — der var_floor-Legacy-Fallback (Rückwärtskompat ohne n_periods) wurde nach
+    Verifikation, dass n_periods an jeder Produktions-Call-Site unconditional verfügbar ist,
+    ERSATZLOS ENTFERNT: ein fehlendes n_periods ist jetzt ein Bug im Aufrufer (ValueError), kein
+    stiller Rückfall mehr auf die alte 0.0018-Konstante."""
+    with pytest.raises(ValueError, match="n_periods"):
+        sr0_multiple_testing_robust(1e-9, 2, min_cohort=10, n_periods=None)
 
 
 def test_large_cohort_trusts_observed_variance():
@@ -140,7 +137,7 @@ def test_large_cohort_trusts_observed_variance():
     der Floor-Einfluss wird vernachlässigbar (λ(N) → 0)."""
     observed_var = 0.05
     sr0, floor_dominant, *_ = sr0_multiple_testing_robust(
-        observed_var, 500, min_cohort=10, var_floor=0.0018, n_periods=200)
+        observed_var, 500, min_cohort=10, n_periods=200)
     assert floor_dominant is False
     # Nahezu identisch zur unrobusten Referenz bei vernachlässigbarem Floor-Gewicht.
     assert sr0 == pytest.approx(sr0_multiple_testing(observed_var, 500), rel=0.05)

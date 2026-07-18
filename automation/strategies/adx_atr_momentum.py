@@ -1,3 +1,18 @@
+"""
+automation/strategies/adx_atr_momentum.py
+===========================================
+AdxAtrMomentumStrategy — Issue #699.
+
+Regime-Filter: Option B (EMA-Steigung) ist AKTIV. Der #691-Trockenlauf (echter NautilusTrader-
+Engine-Lauf, siehe donchian_regime_breakout.py) hat verifiziert, dass `DirectionalMovement(period)
+.value` in der installierten NautilusTrader-Version (1.230.0) konstant `0.0` bleibt (nie
+initialisiert im Sinne eines ADX-Werts). Das ursprüngliche Regime-Gate `adx_value > 25` war daher
+IMMER `False` — die Strategie eröffnete NIE eine Position (0 evaluable OOS-Trades, exakt das in
+strategies.json dokumentierte "ADX-Initialisierungsproblem", #669/#699). Fix: derselbe Weg wie bei
+DonchianRegimeBreakout (#691) — das tote ADX-Gate durch eine EMA-Steigungs-Bestätigung ersetzt.
+Option A (ADX) bleibt auskommentiert als Referenz/Re-Evaluationspunkt, falls eine künftige
+NautilusTrader-Version `DirectionalMovement.value` korrekt berechnet.
+"""
 from nautilus_trader.common.enums import LogColor
 from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
@@ -21,7 +36,7 @@ class AdxAtrMomentumConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
 
 class AdxAtrMomentumStrategy(HourlyStrategyBase):
     """
-    Trendfolge-Strategie basierend auf ADX (Trendstärke), EMA (Trendrichtung) und
+    Trendfolge-Strategie basierend auf EMA (Trendrichtung + -stärke via Steigung) und
     ATR (Trailing Stop). Mit echter Orderausführung.
     """
 
@@ -33,6 +48,7 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
         self.adx = DirectionalMovement(config.adx_period)
         self.ema = ExponentialMovingAverage(config.ema_period)
         self.atr = AverageTrueRange(config.atr_period)
+        self._ema_prev: float | None = None
 
         # Internal state for trailing-stop logic (kept for indicator calculations)
         self.current_position: str | None = None
@@ -54,9 +70,20 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
             return
 
         close_price = float(bar.close)
-        adx_value = self.adx.value
         ema_value = self.ema.value
         atr_value = self.atr.value
+        if self._ema_prev is None:
+            self._ema_prev = ema_value
+            return
+        # Regime-Filter Option B (AKTIV — siehe Modul-Docstring): EMA-Steigung als
+        # Trendstärke-Bestätigung statt des toten ADX-Werts.
+        rising_ema = ema_value > self._ema_prev
+        falling_ema = ema_value < self._ema_prev
+        # Option A (ADX, deaktiviert — `DirectionalMovement.value` liefert konstant 0.0 in der
+        # installierten NautilusTrader-Version, siehe Modul-Docstring):
+        #   adx_value = self.adx.value
+        #   rising_ema = falling_ema = adx_value > 25
+        self._ema_prev = ema_value
 
         # Trailing Stop Logik (uses internal current_position as signal state)
         if self.current_position == "BUY":
@@ -89,26 +116,26 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
 
         # Entry logic
         if self.current_position is None:
-            if close_price > ema_value and adx_value > 25:
+            if close_price > ema_value and rising_ema:
                 self.current_position = "BUY"
                 self.entry_price = close_price
                 self.trailing_stop = close_price - (atr_value * self.config.atr_multiplier)
                 self._log.info(
                     f"[{self.instrument_id}] BUY SIGNAL AdxAtrMomentum | "
-                    f"Close: {close_price:.2f} > EMA: {ema_value:.2f} | "
-                    f"ADX: {adx_value:.2f} | ATR: {atr_value:.2f} | Stop: {self.trailing_stop:.2f}",
+                    f"Close: {close_price:.2f} > EMA: {ema_value:.2f} (rising) | "
+                    f"ATR: {atr_value:.2f} | Stop: {self.trailing_stop:.2f}",
                     LogColor.GREEN,
                 )
                 self._on_buy_signal(bar)
 
-            elif close_price < ema_value and adx_value > 25:
+            elif close_price < ema_value and falling_ema:
                 self.current_position = "SELL"
                 self.entry_price = close_price
                 self.trailing_stop = close_price + (atr_value * self.config.atr_multiplier)
                 self._log.info(
                     f"[{self.instrument_id}] SELL SIGNAL AdxAtrMomentum | "
-                    f"Close: {close_price:.2f} < EMA: {ema_value:.2f} | "
-                    f"ADX: {adx_value:.2f} | ATR: {atr_value:.2f} | Stop: {self.trailing_stop:.2f}",
+                    f"Close: {close_price:.2f} < EMA: {ema_value:.2f} (falling) | "
+                    f"ATR: {atr_value:.2f} | Stop: {self.trailing_stop:.2f}",
                     LogColor.RED,
                 )
                 self._on_sell_signal(bar)

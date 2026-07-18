@@ -6,6 +6,12 @@ Root-Cause: die Log-Message war an ``deflation_used_var_floor`` gekoppelt, das
 Gewicht dominant", NICHT "die 0.0018-Konstante wurde verwendet". Seit #653 ist bei vorhandenem
 ``n_periods`` die theoretische Referenz IMMER Lo-2002 (T-bewusst), nicht ``var_floor``. Fix: die
 Message (und die Telemetrie) koppeln an den TATSÄCHLICH verwendeten ``theoretical_var``-Zweig.
+
+Issue #701 — der ``var_floor``-Legacy-Fallback selbst (wirksam nur ohne ``n_periods``) wurde nach
+Verifikation, dass ``n_periods`` an jeder Produktions-Call-Site unconditional verfügbar ist,
+ERSATZLOS ENTFERNT: ``n_periods`` ist jetzt ein PFLICHT-Parameter, ``theoretical_var_source`` ist
+IMMER ``'lo2002'``. Die vormaligen var_floor-Fallback-Tests dieser Datei sind entsprechend durch
+Fail-Loud-/Graceful-Degradation-Tests ersetzt.
 """
 import logging
 
@@ -17,24 +23,29 @@ from automation.optimizer.deflation import sr0_multiple_testing_robust, _cohort_
 # ── deflation.sr0_multiple_testing_robust: die präzisen Zusatz-Rückgabewerte ────────────────────
 def test_theoretical_var_source_is_lo2002_when_n_periods_present():
     sr0, floor_dominant, lam, source = sr0_multiple_testing_robust(
-        1.483e-4, 9, min_cohort=10, var_floor=0.0018, n_periods=200)
+        1.483e-4, 9, min_cohort=10, n_periods=200)
     assert source == "lo2002"
     assert floor_dominant is True  # N=9 < min_cohort=10 ⇒ trotzdem weiterhin λ ≥ 0.5
     assert lam == pytest.approx(_cohort_shrinkage_weight(9, 10))
 
 
-def test_theoretical_var_source_is_var_floor_when_n_periods_absent():
-    sr0, floor_dominant, lam, source = sr0_multiple_testing_robust(
-        1.483e-4, 9, min_cohort=10, var_floor=0.0018)
-    assert source == "var_floor"
-    assert floor_dominant is True
+def test_missing_n_periods_fails_loud_not_silent_var_floor_fallback():
+    """Issue #701 — kein stiller Rückfall mehr auf eine geratene 0.0018-Konstante: ein fehlendes
+    n_periods ist ein Bug im Aufrufer und bricht jetzt fail-loud ab."""
+    with pytest.raises(ValueError, match="n_periods"):
+        sr0_multiple_testing_robust(1.483e-4, 9, min_cohort=10, n_periods=None)
+
+
+def test_n_periods_of_one_or_less_also_fails_loud():
+    with pytest.raises(ValueError, match="n_periods"):
+        sr0_multiple_testing_robust(1.483e-4, 9, min_cohort=10, n_periods=1)
 
 
 def test_theoretical_var_source_is_lo2002_even_when_floor_not_dominant():
     """floor_dominant (λ<0.5) und theoretical_var_source sind ORTHOGONALE Grössen: bei grossem N ist
     λ klein, aber die Referenz-QUELLE bleibt Lo-2002, sobald n_periods bekannt ist."""
     sr0, floor_dominant, lam, source = sr0_multiple_testing_robust(
-        0.05, 500, min_cohort=10, var_floor=0.0018, n_periods=200)
+        0.05, 500, min_cohort=10, n_periods=200)
     assert source == "lo2002"
     assert floor_dominant is False
     assert lam < 0.5
@@ -42,7 +53,7 @@ def test_theoretical_var_source_is_lo2002_even_when_floor_not_dominant():
 
 def test_shrinkage_lambda_matches_cohort_shrinkage_weight_with_variance_n_trials():
     sr0, floor_dominant, lam, source = sr0_multiple_testing_robust(
-        1e-4, 100, min_cohort=10, var_floor=0.0018, n_periods=200, variance_n_trials=9)
+        1e-4, 100, min_cohort=10, n_periods=200, variance_n_trials=9)
     assert lam == pytest.approx(_cohort_shrinkage_weight(9, 10))
     assert floor_dominant is True  # variance_n_trials=9 treibt lambda, nicht n_trials=100
 
@@ -69,7 +80,7 @@ def _cfg_dir(tmp_path):
         json.dump({
             "max_drawdown": 0.30, "deflated_selection": True, "deflation_confidence": 0.95,
             "oos_min_trades": 1, "oos_min_total_return": -1.0, "oos_min_expectancy": -1.0,
-            "oos_min_win_rate": 0.0, "deflation_min_cohort": 10, "deflation_var_floor": 0.0018,
+            "oos_min_win_rate": 0.0, "deflation_min_cohort": 10,
         }, f)
     with open(cfg_dir / "backtest.json", "w", encoding="utf-8") as f:
         json.dump({"walk_forward": {"holdout_days": 45, "is_window_days": 120,
@@ -140,7 +151,7 @@ def _build_study(tmp_path, monkeypatch, *, n_trials, cohort_periods, n_periods):
 def test_dsr_message_cites_lo2002_when_n_periods_available(tmp_path, monkeypatch, caplog):
     global_params = {"price_breakout_period": 20}
     # 9 eligible Trials (< deflation_min_cohort=10 ⇒ floor_dominant=True), aber n_periods=200
-    # gestempelt ⇒ die theoretische Referenz MUSS Lo-2002 sein, nicht var_floor.
+    # gestempelt ⇒ die theoretische Referenz MUSS Lo-2002 sein.
     study = _build_study(tmp_path, monkeypatch, n_trials=9,
                          cohort_periods=[0.02 + 0.001 * i for i in range(9)], n_periods=200)
 
@@ -163,10 +174,13 @@ def test_dsr_message_cites_lo2002_when_n_periods_available(tmp_path, monkeypatch
     assert res["metrics_symbol"].get("deflation_lambda") is not None
 
 
-def test_dsr_message_cites_var_floor_only_without_n_periods(tmp_path, monkeypatch, caplog):
+def test_missing_n_periods_degrades_gracefully_without_crashing_promotion(tmp_path, monkeypatch, caplog):
+    """Issue #701 — ein (nach der Invariante unerreichbares, aber defensiv abgefangenes) fehlendes
+    n_periods darf die GESAMTE Promotion-Pipeline nicht abstürzen lassen: DSR bleibt für diesen
+    Lauf schlicht unberechnet (kein var_floor-Fallback mehr), statt eine ValueError zu propagieren."""
     global_params = {"price_breakout_period": 20}
-    # n_periods=0/None gestempelt (Legacy-Fixture ohne T-Telemetrie) ⇒ Lo-2002 nicht verfügbar
-    # ⇒ die theoretische Referenz bleibt var_floor (Legacy-Pfad).
+    # n_periods=0 gestempelt (künstliche Datenanomalie, die die Invariante verletzt) ⇒
+    # deflation_t_periods bleibt None ⇒ der #701-Defense-in-Depth-Zweig greift.
     study = _build_study(tmp_path, monkeypatch, n_trials=9,
                          cohort_periods=[0.02 + 0.001 * i for i in range(9)], n_periods=0)
 
@@ -180,12 +194,9 @@ def test_dsr_message_cites_var_floor_only_without_n_periods(tmp_path, monkeypatc
                                           global_result=global_result),
         )
 
-    dsr_messages = [r.message for r in caplog.records if "[DSR #618/#653/#670]" in r.message]
-    assert dsr_messages, "keine DSR-Message geloggt"
-    joined = " | ".join(dsr_messages)
-    assert "Varianz-Floor" in joined
-    assert "Lo-2002" not in joined
-    assert res["metrics_symbol"].get("deflation_theoretical_var_source") == "var_floor"
+    assert any("[DSR #701]" in r.message for r in caplog.records)
+    assert res["metrics_symbol"].get("deflated_sr0") is None
+    assert res["metrics_symbol"].get("deflation_theoretical_var_source") is None
 
 
 def test_no_stale_n_min_discontinuity_vocabulary_in_message(tmp_path, monkeypatch, caplog):

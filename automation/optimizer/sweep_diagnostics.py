@@ -85,6 +85,26 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     }
 
 
+def eligibility_curve(trials: list[dict], *, window: int = 16) -> list[float]:
+    """Issue #700 — die per-Trial ``oos_eligible``-Fraktion je kontiguierlichem Fenster von
+    ``window`` Trials (in Trial-Reihenfolge), NICHT nur die aggregierte Gesamtzahl. Unterscheidet
+    TRANSIENTE Null-Eligibilität (irgendwo zwischenzeitlich eligible Trials, die spaeter — z. B.
+    durch eine spaetere confirm-Filterung — nicht mehr im finalen Cohort auftauchen) von
+    PERMANENTER Null-Eligibilität (jedes Fenster zeigt 0.0) — genau die im #700-Symptom offene
+    Frage: "reproduziert der Squeeze-Fall einen sauberen 16-Trial-Stop, oder weist die Telemetrie
+    transiente eligible Trials aus (dann ist es keine strukturelle Ursache, sondern eine spaetere
+    Filterung, die selbst zu erklaeren ist)". Das letzte Fenster darf kuerzer als ``window`` sein.
+
+    Rein, deterministisch, kein I/O. Rückgabe: Liste der Fensteranteile ``eligible/n`` (``[]`` bei
+    leerer ``trials``-Liste)."""
+    fractions = []
+    for i in range(0, len(trials), window):
+        chunk = trials[i:i + window]
+        n_eligible = sum(1 for t in chunk if t.get("oos_eligible") is True)
+        fractions.append(n_eligible / len(chunk))
+    return fractions
+
+
 # Issue #681 — Strategien, für die spaces.py._bounds_for tatsächlich Symbol-Overrides auflöst
 # (#669). Nur für diese ist ein "search_space_override"-Vorschlag sinnvoll — für jede andere
 # Strategie hätte ein Bounds-Override keine Wirkung (fail-open, aber nutzlos), daher direkt Denylist.
@@ -112,7 +132,8 @@ def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Pat
 
 
 def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
-                               has_existing_override: bool = False) -> dict:
+                               has_existing_override: bool = False,
+                               previously_recommended_override: bool = False) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -130,6 +151,18 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         ohnehin keine Wirkung, spaces.py._bounds_for ist fail-open no-op für sie).
       * ``'none'``/``'no_data'`` ⇒ ``'none'`` (kein Kollaps, nichts zu tun).
 
+    Issue #699 — ``previously_recommended_override`` schliesst die verbleibende Lücke der
+    #681-Closed-Loop: eine ``'search_space_override'``-Empfehlung OHNE Eskalationspfad wiederholt
+    sich bei JEDEM Lauf identisch, solange niemand tatsächlich einen Override in
+    ``search_space_overrides.json`` einträgt — genau das #699-Symptom ("jeder Lauf verbrennt
+    3 × 16 Trials für dieselben nicht-viablen Paare"), weil NUR ``'denylist'``-Empfehlungen den
+    Budget-Skip in ``enumerate_tunable_pairs`` auslösen. Wurde für dasselbe (``strategy``,
+    ``symbol``)-Paar in einem VORHERIGEN Lauf bereits ``'search_space_override'`` empfohlen (aus dem
+    ``diagnosed_pairs_cache``, vom Aufrufer geprüft) UND existiert weiterhin KEIN Override UND das
+    Paar scheitert WEITERHIN an derselben Frequenz-/Haltedauer-Ursache, wird die Empfehlung dieses
+    Mal auf ``'denylist'`` eskaliert — die Override-Chance wird genau EINMAL gewährt, dann greift
+    der Budget-Skip. Default ``False`` ⇒ bit-identisch zum Pre-#699-Verhalten.
+
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades'}``."""
     cause = diagnosis.get("binding_cause")
@@ -139,7 +172,7 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         action = "denylist"
     elif cause in ("signal_frequency", "hold_duration"):
         if strategy in WIRED_OVERRIDE_STRATEGIES and not has_existing_override:
-            action = "search_space_override"
+            action = "denylist" if previously_recommended_override else "search_space_override"
         else:
             action = "denylist"
     else:
@@ -194,6 +227,43 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None)
     payload = {"pairs": list(cache.values())}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
+
+
+def load_continuous_bar_invalid_strategies(base_cfg: Path | None = None) -> frozenset[str]:
+    """Issue #698 — Strategien, deren Signal auf synthetischen, KONTINUIERLICHEN 24/7-1h-Bars
+    (die einzige in diesem System verfügbare Bar-Semantik, kein RTH-Session-Katalog) strukturell
+    etwas anderes misst als beabsichtigt — z. B. ``GapContinuationStrategy`` (Variante A,
+    Vortagsschluss-vs-Tagesbeginn-Gap): ohne echte Handelspausen zwischen Kalendertagen degeneriert
+    der Gap zur Differenz zweier AUFEINANDERFOLGENDER Bars, die keinerlei Continuation-Edge trägt
+    (bekannter 24/7-Boundary-Caveat, SPEC_05/#693). Kein Bounds-Weiten behebt eine ungültige
+    Messung — die Entscheidung ist an der BAR-SEMANTIK des Systems festzumachen, nicht am
+    Backtest-Ergebnis (die Root-Cause-Präzisierung aus #698).
+
+    Deklariert in ``strategies.json`` je Strategie-Eintrag als ``invalid_on_continuous_bars: true``
+    (Zero-Hardcoding — keine Python-Konstante). ``sweep.enumerate_tunable_pairs`` überspringt eine
+    gelistete Strategie VOLLSTÄNDIG (alle Symbole, EIN strukturiertes Event statt N nutzloser
+    Trials) und weist sie im ``sweep_completed``-Event als ``strategies_skipped`` mit dem Grund
+    ``SKIPPED_INVALID_ON_CONTINUOUS_BARS`` aus — kein stiller 16/180-Trial-Budget-Verbrauch für ein
+    Signal, das auf dieser Datenquelle strukturell ungültig ist. Fehlt der Key (Default) ⇒ die
+    Strategie läuft unverändert (bit-identisch zum Pre-#698-Verhalten). Eine RTH-session-bewusste
+    Variante B (``session_open_hour``) bliebe der Re-Aktivierungspfad, sollte künftig ein
+    Session-Kalender für ein Symbol verfügbar werden — bis dahin ist die Deaktivierung die
+    ehrlichere Wahl gegenüber einer strukturell ungültigen Messung."""
+    if base_cfg is None:
+        from automation.optimizer.trial_config import config_dir
+        base_cfg = config_dir()
+    path = base_cfg / "strategies.json"
+    if not path.exists():
+        return frozenset()
+    try:
+        data = json.loads(path.read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return frozenset()
+    out = set()
+    for entry in data.get("strategies", []) or []:
+        if entry.get("invalid_on_continuous_bars") is True and entry.get("strategy_class"):
+            out.add(entry["strategy_class"])
+    return frozenset(out)
 
 
 def load_symbol_strategy_denylist(base_cfg: Path | None = None) -> dict[tuple[str, str], str]:
