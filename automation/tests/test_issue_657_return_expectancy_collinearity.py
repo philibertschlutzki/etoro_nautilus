@@ -4,10 +4,15 @@ Beide waren harte Gates, massen aber dieselbe Grösse: `total_return ≈ Σ(expe
 `expectancy ≈ total_return / n_trades`. Bei `min_trades=20` und `min_total_return=0.005` war ein
 unabhängiges `min_expectancy=0.001` eine DOPPELTE Kodierung derselben Bedingung.
 
-Fix (nach #650): das absolute `min_expectancy`-Gate bleibt als das EINZIGE absolute
+Fix (nach #650): das absolute `min_expectancy`-Gate blieb zunächst als das EINZIGE absolute
 Profitabilitäts-Gate bestehen (kostenrelativ via `oos_min_expectancy_k_alpha`, #562) —
-`min_total_return` wurde bereits durch #650 aus `eligible_requires_all` entfernt. Kein zwei
-kollineare harte Return-Gates mehr.
+`min_total_return` wurde bereits durch #650 aus `eligible_requires_all` entfernt.
+
+Issue #697 — SUPERSEDIERT diesen Zwischenstand: `min_expectancy` selbst war zu ~96% kollinear mit
+`oos_min_psr` (|ρ|=0.961) und wurde ebenfalls aus der Konjunktion entfernt (bleibt als WEICHE
+Near-Miss-Distanz über `reward._normalized_gate_distances` erhalten). Es existiert seither KEIN
+hartes absolutes Return-/Expectancy-Gate mehr — `oos_min_psr` (risikoadjustiert, skalenfrei) ist
+das alleinige harte Netto-Edge-Gate.
 """
 import json
 from pathlib import Path
@@ -15,15 +20,17 @@ from pathlib import Path
 TCFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 
-def test_exactly_one_absolute_profitability_gate_remains():
-    """Akzeptanzkriterium (#657): nach der Konsolidierung existiert GENAU EIN absolutes
-    Profitabilitäts-Gate (Breakeven-nach-Kosten, kostenrelativ) in eligible_requires_all."""
+def test_no_absolute_profitability_gate_remains_after_697():
+    """Akzeptanzkriterium (#697, supersediert die #657-Zwischenlage): nach der weiteren
+    Konsolidierung existiert KEIN absolutes Return-/Expectancy-Gate mehr in eligible_requires_all —
+    das risikoadjustierte oos_min_psr trägt die Netto-Edge-Entscheidung allein."""
     req_all = set(TCFG["eligible_requires_all"])
     absolute_return_gates = req_all & {"min_total_return", "min_expectancy"}
-    assert absolute_return_gates == {"min_expectancy"}, (
-        f"Erwartet genau EIN absolutes Profitabilitäts-Gate (min_expectancy), gefunden: "
+    assert absolute_return_gates == set(), (
+        f"Erwartet KEIN absolutes Profitabilitäts-Gate mehr (seit #697), gefunden: "
         f"{absolute_return_gates}"
     )
+    assert "oos_min_psr" in req_all
 
 
 def test_min_total_return_and_min_expectancy_are_not_both_hard_gates():

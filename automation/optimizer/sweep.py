@@ -34,6 +34,7 @@ from automation.optimizer.run_optimization import (
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
+    load_continuous_bar_invalid_strategies,
 )
 from automation.log_manager import setup_bot_logging, emit_execution_event, emit_gate1_rejection
 
@@ -313,9 +314,24 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     # ist eine bewusste Kalibrierlauf-/PR-Entscheidung, kein automatischer Skip). Fehlt der Cache
     # ⇒ {} (bit-identisch).
     auto_diagnosed = load_diagnosed_pairs_cache()
+    # Issue #698 — Strategien, deren Signal auf der (system-weit einzigen) kontinuierlichen
+    # 24/7-Bar-Semantik strukturell ungültig ist (z. B. GapContinuation Variante A — kein echter
+    # Overnight-Gap ohne Handelspausen). Deklarativ aus strategies.json, leer ⇒ bit-identisch.
+    continuous_bar_invalid = load_continuous_bar_invalid_strategies()
 
     pairs: list[tuple[str, str, str]] = []
     for strategy in strategies:
+        # Issue #698 — VOR jeder Symbol-Enumeration: eine auf dieser Bar-Semantik strukturell
+        # ungültige Strategie überspringt ALLE Symbole in EINEM Schritt (kein 16/180-Trial-Budget
+        # je Symbol) und fällt im sweep_completed-Event unter strategies_skipped.
+        if strategy in continuous_bar_invalid:
+            emit_execution_event(log, "STRATEGY_INVALID_ON_CONTINUOUS_BARS", {
+                "strategy": strategy,
+                "reason": "SKIPPED_INVALID_ON_CONTINUOUS_BARS",
+            })
+            log.warning("⏭️  %s vollständig übersprungen (auf kontinuierlichen 24/7-Bars strukturell "
+                       "ungültiges Signal, Issue #698: SKIPPED_INVALID_ON_CONTINUOUS_BARS).", strategy)
+            continue
         if tier == "deployable":
             allowed = set(winners.get(strategy, []))
             candidate_syms = [s for s in syms if s in allowed]
@@ -491,13 +507,43 @@ def _family_n_from_studies(pairs, studies) -> dict[str, int]:
     Entscheidung fällt — genau das schliesst die #652-Lücke: die Promotions-DSR nutzte bislang
     ausschliesslich das per-Study-N, weil die familienweite Zahl erst NACH allen Promotions bekannt
     war (``sweep_completed``-Event). ``pairs``/``studies`` müssen index-parallel sein (wie von der
-    Phase-1-Dispatch-Schleife in ``run_per_symbol_sweep`` erzeugt)."""
+    Phase-1-Dispatch-Schleife in ``run_per_symbol_sweep`` erzeugt).
+
+    Issue #695 — dies bleibt die ROHE (un-declusterte) Familien-Multiplizität (Σ eligibler Trials,
+    ohne jede Korrelations-Reduktion). Die deklusterte Variante (Σ EFFEKTIV-unabhängiger Configs)
+    liefert ``_family_period_returns_from_studies`` (die per-Trial-Return-Vektoren, aus denen
+    ``confirm_per_symbol_promotion`` selbst deklustert, analog zu ``_study_pbo``)."""
     family_n: dict[str, int] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
         n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
         family_n[symbol] = family_n.get(symbol, 0) + n_eligible
     return family_n
+
+
+def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[float]]]:
+    """Issue #695 — familienweite OOS-Perioden-Return-MATRIX je Symbol (nicht nur ein Zähler): je
+    eligiblem Trial ALLER Strategien-Studies desselben Symbols dessen ``oos_period_returns``
+    (dieselbe Quelle, die ``confirm._study_pbo`` bereits PER STUDY liest). ``confirm_per_symbol_
+    promotion`` deklustert diese Matrix via ``cpcv.cluster_effective_configs`` (Pearson ρ >
+    ``pbo_cluster_threshold``) VOR der SR₀-Berechnung — derselbe Mechanismus, den der PBO-Pfad
+    bereits je Study anwendet, jetzt konsistent auch familienweit für die DSR-Multiplizität
+    (Root-Cause #695: der PBO-Pfad declustert dieselben Configs bereits, der DSR-Pfad zählte sie
+    bislang roh — zwei Multiple-Testing-Korrekturen im selben Confirm-Lauf mit inkonsistenter
+    Config-Zählung).
+
+    Nur Trials MIT nicht-leeren ``oos_period_returns`` fliessen ein (Korrelation braucht eine
+    Return-Serie); ``pairs``/``studies`` müssen index-parallel sein, wie ``_family_n_from_studies``."""
+    family_returns: dict[str, list[list[float]]] = {}
+    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+        trials = getattr(study, "trials", None) or []
+        for t in trials:
+            if getattr(t, "user_attrs", {}).get("oos_eligible") is not True:
+                continue
+            rets = t.user_attrs.get("oos_period_returns") or []
+            if rets:
+                family_returns.setdefault(symbol, []).append([float(x) for x in rets])
+    return family_returns
 
 
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
@@ -647,13 +693,18 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Issue #652 — familienweite Multiplizität je Symbol, AUS DEN STUDIES (Phase 1 bereits
     # abgeschlossen), BEVOR irgendeine Promotion (Phase 2) läuft.
     n_family_pre_promotion = _family_n_from_studies(pairs, studies)
+    # Issue #695 — dieselbe Phase-1-Grundlage, aber als familienweite Return-MATRIX statt nur eines
+    # Zählers, damit confirm.confirm_per_symbol_promotion die rohe Familien-N vor der SR₀-Berechnung
+    # korrelations-declustern kann (siehe _family_period_returns_from_studies-Docstring).
+    family_returns_pre_promotion = _family_period_returns_from_studies(pairs, studies)
 
     def _run_confirm_and_export(pair: tuple[str, str, str], study) -> Path:
         strategy, symbol, _reason = pair
         newest_ns = latest_ts.get(symbol) if latest_ts else None
         global_params = load_global_best(strategy, config_dir())
         promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
-                            deflation_n_family=n_family_pre_promotion.get(symbol, 0))
+                            deflation_n_family=n_family_pre_promotion.get(symbol, 0),
+                            deflation_family_period_returns=family_returns_pre_promotion.get(symbol))
         return export_symbol_proposal(study, strategy, symbol, promotion)
 
     if n_jobs and n_jobs > 1 and len(pairs) > 1:
@@ -676,10 +727,20 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # WARNING-Zusammenfassung am Sweep-Ende (vorher: 6 von 10 lautlos, 0 Warnungen).
     _log = logging.getLogger("optimizer")
     enumerated = {s for s, _, _ in pairs}
+    # Issue #698 — dieselbe deklarative Menge wie in enumerate_tunable_pairs (dort lokal, hier für
+    # die Skip-Grund-Auflösung erneut gelesen — billige JSON-Datei, kein Caching nötig).
+    continuous_bar_invalid = load_continuous_bar_invalid_strategies()
     strategies_skipped = []
     for s in strategies:
         if s not in enumerated:
-            reason = "NO_SEARCH_SPACE" if not strategy_has_search_space(s) else "NO_ELIGIBLE_SYMBOLS"
+            # Issue #698 — VOR der NO_SEARCH_SPACE/NO_ELIGIBLE_SYMBOLS-Fallunterscheidung: eine
+            # Strategie, die auf der kontinuierlichen 24/7-Bar-Semantik strukturell ungültig ist
+            # (siehe enumerate_tunable_pairs), HAT einen Suchraum UND wäre für Symbole eligibel —
+            # der generische Fallback würde sie sonst fälschlich als NO_ELIGIBLE_SYMBOLS ausweisen.
+            if s in continuous_bar_invalid:
+                reason = "SKIPPED_INVALID_ON_CONTINUOUS_BARS"
+            else:
+                reason = "NO_SEARCH_SPACE" if not strategy_has_search_space(s) else "NO_ELIGIBLE_SYMBOLS"
             strategies_skipped.append({"strategy": s, "reason": reason})
 
     # Issue #625 — familienweise Multiple-Testing-Zahl je Symbol (Σ eligibler Trials über die

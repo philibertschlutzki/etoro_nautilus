@@ -18,6 +18,10 @@ def test_deflated_holdout_gate_rejection(tmp_path):
         study._storage.set_trial_user_attr(t._trial_id, "oos_evaluated", True)
         study._storage.set_trial_user_attr(t._trial_id, "oos_eligible", True)
         study._storage.set_trial_user_attr(t._trial_id, "oos_sortino_period", float(noise_sr[i]))
+        # Issue #701 — n_periods ist seit #701 ein Pflicht-Parameter von sr0_multiple_testing_robust
+        # (der var_floor-Fallback ohne T wurde entfernt); T=202 matcht die im Docstring dokumentierte
+        # Referenz-Grössenordnung (ŜR≈0.114, T=202) und die des promoteten mock_m_symbol unten.
+        study._storage.set_trial_user_attr(t._trial_id, "oos_n_periods", 202)
         study.tell(t, float((i % 7) - 3))
 
     mock_m_symbol = MagicMock()

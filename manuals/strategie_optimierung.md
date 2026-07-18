@@ -271,3 +271,28 @@ Study dann erneut als stale erkennen und ein zweites Mal purgen (doppelte Rechen
 **letzter** Schritt garantiert, dass jede neu angelegte Study von Anfang an unter der finalen,
 vollständigen Semantik des gesamten Katalogs läuft.
 
+### Purge-Klassifikation je Issue — Beispiel-Präzedenzfall Katalog #695–#702 (Issue #702)
+
+Der Bump-Entscheid wird — wie in Schritt 2 gefordert — **pro Issue einzeln** getroffen, nie pauschal
+für den ganzen Katalog. Die folgende Tabelle ist das Arbeitsprotokoll für den Katalog #695–#702
+(`automation/AGENTS.md`, Pitfalls #190–#197) und dient künftigen Katalogen als Vorlage für die eigene
+Klassifikation:
+
+| Issue | Ändert gestempelte `oos_eligible`/Reward-Semantik? | Begründung | Purge nötig? |
+|---|---|---|---|
+| #695 (DSR-Familien-Decluster) | Nein | Wirkt ausschliesslich NACH dem Trial, in der Confirm-/Promotion-Selektion (`deflation_n_family_effective`) — kein Trial-User-Attr wird rückwirkend neu bewertet. | Nein |
+| #696 (`deflation_n_effective`-Telemetrie) | Nein | Reine Namensgebungs-/Telemetrie-Korrektur eines bereits von #695 berechneten Werts. | Nein |
+| **#697 (Gate-Konsolidierung, `min_expectancy` entfernt)** | **Ja** | Ändert den DEFAULT-Codepfad von `eligible_requires_all` — ein Trial, der zuvor am `min_expectancy`-Gate scheiterte, kann jetzt bei erfülltem `oos_min_psr` eligible sein. Der gestempelte `oos_eligible`-Wert vergangener Trials entspricht damit nicht mehr der aktuellen Semantik. | **Ja** |
+| #698 (`invalid_on_continuous_bars`) | Nein | Überspringt eine Strategie bereits VOR der Trial-Enumeration (`enumerate_tunable_pairs`) — betrifft keinen gespeicherten Trial-Reward. | Nein |
+| #699 (AdxAtrMomentum/TrendPullback Strategie-Code) | Nein | Strategie-Code-Fixes wirken nur auf NEUE Backtests; sie bewerten keinen bereits gestempelten `oos_eligible`-Wert rückwirkend um (die alten Trials bleiben unter der alten Code-Version korrekt interpretiert, nicht unter einer neuen Semantik falsch). | Nein |
+| #700 (`ZERO_ELIGIBLE_PLATEAU`-Coverage-Lücke) | Nein | Reine Early-Stop-Diagnose/Observability (`eligibility_curve`) — kein Gate-Codepfad, der `oos_eligible` selbst verändert. | Nein |
+| #701 (`deflation_var_floor` entfernt) | Nein | Entfernt einen bereits als TOT verifizierten Fallback-Zweig — kein je erreichter Trial nutzte ihn (Precondition von #701 selbst). | Nein |
+| #702 (diese Dokumentation) | Nein | Reine Dokumentation. | Nein |
+
+**Ergebnis:** `reward_semantics_version` wurde für diesen Katalog genau **einmal** gebumpt (12→13),
+ausschliesslich durch #697 — der Bump-Grund steht im `_schema`-Docstring von
+`automation/config/optimizer.json`. Vor dem nächsten Sweep-Re-Run gilt weiterhin Schritt 3 oben
+(Bulk-Purge als letzte Aktion) — unabhängig davon, dass sieben der acht Issues für sich genommen
+keinen Bump ausgelöst hätten, macht das eine `Ja`-Klassifikation den Purge für den GESAMTEN Katalog
+erforderlich.
+

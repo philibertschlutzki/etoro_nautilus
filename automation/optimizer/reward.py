@@ -477,6 +477,56 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, *, threshold: fl
     }
 
 
+# Issue #697 — Mapping von den _GATE_COLLINEARITY_KEYS (Telemetrie-Domain-Namen, gestempelt aus
+# oos_gate_deltas) auf den TATSÄCHLICHEN eligible_requires_all-Konjunktions-Mitgliedsnamen
+# (tournament.json-Config-Key). 'min_expectancy' (nicht 'oos_min_expectancy') ist der Klausel-Name
+# in eligible_requires_all (siehe backtest_runner._evaluate_oos_eligibility). 'any_condition' hat
+# KEIN Gegenstück in eligible_requires_all — sie repräsentiert die GESAMTE eligible_requires_any-
+# Disjunktion, kein einzelnes ALL-Gate — daher None (wird von der Validierung uebersprungen).
+_GATE_COLLINEARITY_TO_CONJUNCTION_KEY = {
+    "oos_min_expectancy": "min_expectancy",
+    "oos_min_profitable_folds_frac": "oos_min_profitable_folds_frac",
+    "oos_min_psr": "oos_min_psr",
+    "any_condition": None,
+}
+
+
+def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible_requires_all: list,
+                                               *, threshold: float = 0.9) -> list[str]:
+    """Issue #697 — konsumiert den #679-Redundanz-ALARM (bislang reine Telemetrie OHNE Konsument,
+    Root-Cause #697: ``eligible_requires_all`` behielt ``min_expectancy`` UND ``oos_min_psr``
+    trotz dokumentierter |ρ|=0.961-Kollinearität, weil nichts die Alarm-Ausgabe gegen die Config
+    prüfte). Root-Cause-Fix ist die KONFIG-Konsolidierung selbst (``min_expectancy`` wurde aus
+    ``eligible_requires_all`` entfernt, siehe tournament.json); diese Funktion ist der WÄCHTER
+    gegen eine künftige Regression — reaktiviert ein Operator versehentlich ein Gate, das die LIVE
+    Kohorte (``trial_gate_deltas``, aus ``oos_gate_deltas``-User-Attrs) als redundant gegenüber
+    einem höher priorisierten, ebenfalls konjunktiv geforderten Gate ausweist (siehe
+    ``_GATE_CONSOLIDATION_PRIORITY``), wird das jetzt LAUT (ERROR-Log statt stiller WARNING-
+    Diagnose) — statt erneut folgenlos zu bleiben.
+
+    Rückgabe: sortierte Liste der noch unkonsolidierten Konjunktions-Mitglieder (leer ⇒ die Config
+    ist konsistent mit der aktuellen Alarm-Ausgabe — der Regelfall nach #697). Bricht den Lauf NICHT
+    ab (welches Gate konsolidiert wird, bleibt eine bewusste, dokumentierte Entscheidung, siehe
+    ``gate_collinearity_redundancy_alarm``-Docstring) — macht die Inkonsistenz aber unübersehbar."""
+    import logging
+    alarm = gate_collinearity_redundancy_alarm(trial_gate_deltas, threshold=threshold)
+    conjunction = set(eligible_requires_all or [])
+    still_redundant = []
+    for candidate, rho in alarm["redundant_candidates"].items():
+        conj_key = _GATE_COLLINEARITY_TO_CONJUNCTION_KEY.get(candidate, candidate)
+        if conj_key is None or conj_key not in conjunction:
+            continue
+        still_redundant.append(conj_key)
+        logging.getLogger("optimizer").error(
+            "[#697] eligible_requires_all enthält weiterhin '%s' — gate_collinearity_redundancy_"
+            "alarm markiert es als redundant (|ρ|=%.3f > %.2f über %d Trials). Konsolidierung auf "
+            "das schärfste Gate (reward._GATE_CONSOLIDATION_PRIORITY) erwägen (tournament.json "
+            "['eligible_requires_all']).",
+            conj_key, abs(rho), threshold, alarm["n_samples"],
+        )
+    return sorted(still_redundant)
+
+
 def _any_condition_distance(
     m: "TournamentMetrics", weights: dict, tournament_cfg: dict | None
 ) -> float:

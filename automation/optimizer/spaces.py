@@ -159,13 +159,16 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "AdxAtrMomentumStrategy":
-        # Issue #669 — analog TrendPullback: STRUCTURAL_ALL_UNEVALUABLE auf TSLA-1h. Symbol-
-        # Override-Punkte für adx_period/cooldown_bars/max_bars_in_trade (leer per Default).
-        adx_lo, adx_hi = _bounds_for(strategy, symbol, "adx_period", 7, 30)
+        # Issue #669 — Symbol-Override-Punkte für cooldown_bars/max_bars_in_trade (leer per
+        # Default). Issue #699 — `adx_period` wird NICHT MEHR gesampelt: der #691-Trockenlauf
+        # verifizierte, dass `DirectionalMovement.value` in NautilusTrader 1.230.0 konstant 0.0
+        # bleibt — das ADX-Gate wurde durch eine EMA-Steigungs-Bestätigung ersetzt (Option B,
+        # siehe adx_atr_momentum.py-Docstring, analog DonchianRegimeBreakout/#691). `adx_period`
+        # ist seither funktional TOT (kein Effekt auf das Entry-Signal) und würde sonst
+        # Phantom-Tuning betreiben (Pitfall #4) — bleibt in der Config als Re-Aktivierungspunkt.
         cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
         mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, 96)
         return {
-            "adx_period": trial.suggest_int("adx_period", adx_lo, adx_hi),
             "ema_period": trial.suggest_int("ema_period", 20, 100),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 4.0),
             "atr_period": trial.suggest_int("atr_period", 5, 21),

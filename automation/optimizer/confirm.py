@@ -451,7 +451,8 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
 def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_params: dict,
                                  *, run_backtest=run_backtest, build_trial=build_trial,
                                  catalog_newest_ns: int | None = None,
-                                 deflation_n_family: int | None = None) -> dict:
+                                 deflation_n_family: int | None = None,
+                                 deflation_family_period_returns: list | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
@@ -462,10 +463,23 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     eligibler Trials über ALLE Strategien-Studies desselben Symbols, VOR dieser Promotion bekannt).
     Die Selektion wählt den besten von mehreren Strategien-Studies je Symbol; das per-Study N
     (``deflation_n``, weiterhin als Telemetrie erhalten) unterschätzt die tatsächliche Anzahl
-    „Schüsse aufs Tor" der Gesamt-Selektion. Ist ``deflation_n_family`` grösser als das per-Study N,
-    wird es für die SR₀-Berechnung (und damit DSR/DSR-z) verwendet — NIE ein kleineres N als das
-    lokal Bekannte (``max(deflation_n, deflation_n_family)``). ``None``/fehlend ⇒ bit-identisch zum
-    Pre-#652-Verhalten (per-Study-N, Legacy-Aufrufer wie Unit-Tests bleiben unverändert grün).
+    „Schüsse aufs Tor" der Gesamt-Selektion. ``None``/fehlend ⇒ bit-identisch zum Pre-#652-Verhalten
+    (per-Study-N, Legacy-Aufrufer wie Unit-Tests bleiben unverändert grün).
+
+    ``deflation_family_period_returns`` (Issue #695) — die ROHE Familien-Zahl (``deflation_n_family``)
+    ist eine un-declusterte Summe eligibler Trials über ALLE Studies: near-identische Configs (z. B.
+    aus einem dichten Optuna-Suchraum-Grid) zählen darin als ebenso viele „unabhängige Schüsse aufs
+    Tor" wie tatsächlich unabhängige Parametrisierungen — derselbe Root-Cause, den der PBO-Pfad
+    (``_study_pbo``) bereits je Study via ``cpcv.cluster_effective_configs`` korrigiert. Ist diese
+    Liste (je eligiblem Trial ALLER Studies des Symbols dessen ``oos_period_returns``, siehe
+    ``sweep._family_period_returns_from_studies``) übergeben, wird sie VOR der SR₀-Berechnung auf
+    die Pearson-Korrelation ihrer vollen Return-Serie (Schwelle ``pbo_cluster_threshold``) reduziert
+    ⇒ ``deflation_n_family_effective`` (declusterte Familienzahl), die ANSTELLE der rohen Zahl das
+    ``E[max_N]`` in ``sr0_multiple_testing_robust`` speist. Fehlt die Liste (Legacy-Aufrufer/Unit-
+    Tests, die nur den Skalar ``deflation_n_family`` kennen) ⇒ ``deflation_n_family_effective ==
+    deflation_n_family_raw`` (kein Clustering möglich, bit-identisch zum Pre-#695-Verhalten). Die
+    #652-Invariante bleibt gewahrt: ``deflation_n_effective = max(deflation_n, deflation_n_family_
+    effective)`` unterschreitet NIE das lokal bekannte per-Study-N.
 
     **Verbindliche Design-Entscheidung:** Der Vergleichs-Score ist die *rohe* risikoadjustierte
     Performance — `compute_reward(..., universe_size=1)` OHNE `sampled`/`global_params` ⇒
@@ -684,13 +698,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Issue #636 — Mindest-Kohorte für eine belastbare V[ŜR_trials]-Schätzung; darunter greift der
     # dokumentierte konservative Varianz-Floor (siehe deflation.sr0_multiple_testing_robust).
     deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
-    # Issue #685 — DEPRECATED: nur noch ein Legacy-Fallback (siehe sr0_multiple_testing_robust-
-    # Docstring), wirksam AUSSCHLIESSLICH wenn n_periods (T) unten fehlt. Bei vorhandenem T ist die
-    # Referenz immer Lo-2002 (T-bewusst) — dieser Wert wird dann NIE konsultiert.
-    deflation_var_floor = float(tournament_cfg.get("deflation_var_floor", 0.0018))
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     deflation_n = 0
     deflation_n_effective = 0
+    # Issue #695/#696 — rohe (Σ eligibler Trials) vs. declusterte (korrelations-reduzierte)
+    # familienweite Config-Zahl, getrennt telemetriert (siehe Docstring/#696-Feldnamen unten).
+    deflation_n_family_raw = 0
+    deflation_n_family_effective = 0
     deflation_var = None
     # Issue #670 — ``deflation_used_var_floor`` (Rückwärtskompat-Name) bedeutet AUSSCHLIESSLICH
     # "Shrinkage-Gewicht λ ≥ 0.5" (die theoretische Referenz dominiert die Blend-Gewichtung),
@@ -708,12 +722,37 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             and t.user_attrs.get("oos_sortino_period") is not None
         ]
         deflation_n = len(cohort_sr)
+        # Issue #695 — die rohe familienweite Zahl (Σ eligibler Trials über ALLE Strategien-Studies
+        # des Symbols) VOR jeder SR₀-Berechnung auf effektiv-unabhängige Configs declustern — exakt
+        # der Mechanismus, den ``_study_pbo`` bereits PER STUDY anwendet (``cluster_effective_
+        # configs``, Pearson ρ > ``pbo_cluster_threshold``). Ohne diesen Fix zählt E[max_N] near-
+        # identische Configs (dichtes Suchraum-Grid) als ebenso viele unabhängige "Schüsse aufs
+        # Tor" wie tatsächlich unabhängige Parametrisierungen und überschätzt damit systematisch die
+        # Multiple-Testing-Hürde (Root-Cause #695: derselbe Confirm-Lauf declustert für PBO, aber
+        # nicht für DSR — inkonsistente Config-Zählung zweier Korrekturen im selben Pfad).
+        deflation_n_family_raw = int(deflation_n_family or 0)
+        deflation_n_family_effective = deflation_n_family_raw
+        if deflation_family_period_returns:
+            cluster_threshold = float(
+                tournament_cfg.get("pbo_cluster_threshold", _PBO_DEFAULT_CLUSTER_THRESHOLD))
+            family_rows = [[float(x) for x in r] for r in deflation_family_period_returns if r]
+            deflation_n_family_raw = max(deflation_n_family_raw, len(family_rows))
+            if len(family_rows) >= 2:
+                from automation.optimizer.cpcv import cluster_effective_configs
+                n_obs_family = min(len(r) for r in family_rows)
+                truncated_family_rows = [r[:n_obs_family] for r in family_rows]
+                keep_idx = cluster_effective_configs(truncated_family_rows, threshold=cluster_threshold)
+                deflation_n_family_effective = len(keep_idx)
+            elif len(family_rows) == 1:
+                deflation_n_family_effective = 1
         # Issue #652 — die PROMOTIONS-relevante Multiplizität ist familienweit (bester von mehreren
         # Strategien-Studies je Symbol), nicht per-Study. ``deflation_n`` bleibt die per-Study-
         # Telemetrie (Stichprobengrösse der V[ŜR_trials]-Schätzung); ``deflation_n_effective`` ist
         # NIE kleiner als das per-Study-N (max(...)) — eine fehlende/kleinere Familien-Zahl kann das
-        # bereits lokal bekannte N nie unterschreiten.
-        deflation_n_effective = max(deflation_n, int(deflation_n_family or 0))
+        # bereits lokal bekannte N nie unterschreiten. Issue #695 — die familienweite Seite dieses
+        # max() ist jetzt die DECLUSTERTE Zahl (``deflation_n_family_effective``), nicht mehr die
+        # rohe Σ — das ist der eigentliche Fix (E[max_N] auf effektiver statt roher Config-Zahl).
+        deflation_n_effective = max(deflation_n, deflation_n_family_effective)
         if deflation_n >= 2:
             import statistics as _st
             from automation.optimizer.deflation import sr0_multiple_testing_robust
@@ -730,37 +769,38 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 and t.user_attrs.get("oos_n_periods")
             ]
             deflation_t_periods = int(_st.median(cohort_n_periods)) if cohort_n_periods else None
-            # Issue #652 — ``n_trials=deflation_n_effective`` (familienweit) treibt NUR E[max_N];
-            # ``variance_n_trials=deflation_n`` (per-Study) treibt das #653-Shrinkage-Gewicht — die
-            # Verlässlichkeit von V[ŜR_trials] hängt von der TATSÄCHLICH beobachteten Kohorte ab,
-            # nicht von der (grösseren) familienweiten Multiplizität (siehe deflation.py-Docstring).
-            (deflation_sr0, deflation_used_var_floor, deflation_lambda,
-             deflation_theoretical_var_source) = sr0_multiple_testing_robust(
-                deflation_var, deflation_n_effective,
-                min_cohort=deflation_min_cohort, var_floor=deflation_var_floor,
-                n_periods=deflation_t_periods, variance_n_trials=deflation_n,
-            )
-            # Issue #670 — die Message an den TATSÄCHLICH verwendeten theoretical_var-Zweig koppeln
-            # (``deflation_theoretical_var_source``), NICHT an ``deflation_used_var_floor`` (das nur
-            # "λ ≥ 0.5" bedeutet). Bei vorhandenem ``deflation_t_periods`` ist die theoretische
-            # Referenz seit #653 IMMER Lo-2002 (T-bewusst) — die alte Message behauptete hier fälschlich
-            # "Varianz-Floor {deflation_var_floor}" UND reaktivierte wörtlich das "N < N_min ⇒
-            # Fallback"-Diskontinuitäts-Framing, das #653 durch stetiges λ(N)-Shrinkage ersetzt hat.
-            # Kein "< N_min"-Vokabular mehr: es gibt seit #653 keinen Cutover, nur ein stetiges Gewicht.
-            if deflation_theoretical_var_source == "lo2002":
-                logging.getLogger("optimizer").info(
-                    f"[DSR #618/#653/#670] {symbol}: SR₀={deflation_sr0:.4f} via stetigem Shrinkage "
-                    f"λ={deflation_lambda:.3f} Richtung theoretischer Referenz Lo-2002 (T="
-                    f"{deflation_t_periods}) (N_eligible={deflation_n}, "
-                    f"N_family={deflation_n_family or 0}, N_effective={deflation_n_effective}, "
-                    f"V[ŜR]_beobachtet={deflation_var:.6f})"
+            # Issue #701 — ``n_periods`` ist seit #701 ein PFLICHT-Parameter von
+            # ``sr0_multiple_testing_robust`` (der var_floor-Fallback ohne T wurde als tot verifiziert
+            # und entfernt, siehe deflation.py-Docstring). ``deflation_t_periods`` ist NIE ``None``,
+            # wenn ``deflation_n >= 2`` (jeder Trial in ``cohort_sr`` hat ein definiertes
+            # ``oos_sortino_period`` UND — aus DEMSELBEN backtest_runner-Berechnungsblock — ein
+            # truthy ``oos_n_periods``); der Guard bleibt als Defense-in-Depth gegen eine künftige,
+            # heute unbekannte Datenanomalie erhalten, OHNE die gesamte Promotion-Pipeline
+            # abstürzen zu lassen (DSR bleibt dann schlicht unberechnet, wie bei ``deflation_n < 2``).
+            if deflation_t_periods is None:
+                logging.getLogger("optimizer").warning(
+                    f"[DSR #701] {symbol}: deflation_t_periods fehlt trotz deflation_n={deflation_n} "
+                    f">= 2 — sollte laut Invariante (oos_sortino_period impliziert oos_n_periods) "
+                    f"unerreichbar sein. DSR bleibt für diesen Lauf unberechnet (kein Crash)."
                 )
             else:
+                # Issue #652 — ``n_trials=deflation_n_effective`` (familienweit) treibt NUR E[max_N];
+                # ``variance_n_trials=deflation_n`` (per-Study) treibt das #653-Shrinkage-Gewicht — die
+                # Verlässlichkeit von V[ŜR_trials] hängt von der TATSÄCHLICH beobachteten Kohorte ab,
+                # nicht von der (grösseren) familienweiten Multiplizität (siehe deflation.py-Docstring).
+                (deflation_sr0, deflation_used_var_floor, deflation_lambda,
+                 deflation_theoretical_var_source) = sr0_multiple_testing_robust(
+                    deflation_var, deflation_n_effective,
+                    min_cohort=deflation_min_cohort,
+                    n_periods=deflation_t_periods, variance_n_trials=deflation_n,
+                )
                 logging.getLogger("optimizer").info(
-                    f"[DSR #618/#653/#670] {symbol}: SR₀={deflation_sr0:.4f} via stetigem Shrinkage "
-                    f"λ={deflation_lambda:.3f} Richtung Varianz-Floor {deflation_var_floor} (kein "
-                    f"n_periods verfügbar, Legacy-Pfad) (N_eligible={deflation_n}, "
-                    f"N_family={deflation_n_family or 0}, N_effective={deflation_n_effective}, "
+                    f"[DSR #618/#653/#670] {symbol}: SR₀={deflation_sr0:.4f} via stetigem "
+                    f"Shrinkage λ={deflation_lambda:.3f} Richtung theoretischer Referenz Lo-2002 (T="
+                    f"{deflation_t_periods}) (N_eligible={deflation_n}, "
+                    f"N_family_raw={deflation_n_family_raw}, "
+                    f"N_family_effective={deflation_n_family_effective}, "
+                    f"N_effective={deflation_n_effective}, "
                     f"V[ŜR]_beobachtet={deflation_var:.6f})"
                 )
 
@@ -819,33 +859,45 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     if deflated_selection and deflation_n >= 2:
         promoted_sr_period = getattr(promoted_m_symbol, "oos_sortino_period", None)
         if promoted_sr_period is not None:
-            from automation.optimizer.deflation import deflated_sharpe_ratio, psr_z
-            promoted_n_periods = getattr(promoted_m_symbol, "oos_n_periods", 0)
-            promoted_skew = getattr(promoted_m_symbol, "oos_ret_skew", 0.0)
-            promoted_kurtosis = getattr(promoted_m_symbol, "oos_ret_kurtosis", 3.0)
-            # Issue #651 — dasselbe (bereits gefloorte) ``deflation_sr0`` speist SOWOHL die
-            # Entscheidung (``deflation_dsr``, hier) ALS AUCH die Telemetrie (``deflation_dsr_z``,
-            # unten via ``psr_z(..., sr_star=deflation_sr0)``). Vor #651 berechnete
-            # ``deflated_sharpe_ratio`` SR₀ intern aus ``var_sr_trials``/``n_trials`` — UNGEFLOORT —
-            # während ``deflation_dsr_z``/``deflated_sr0`` bereits das GEFLOORTE SR₀ nutzten; beide
-            # Grössen divergierten dadurch bei Small Cohorts (#651-Referenzfall: Hourly N=9, Faktor
-            # ≈3.48× zwischen internem und telemetriertem SR₀). Ein Aufruf, EIN SR₀ — bit-identisch.
-            deflation_dsr = deflated_sharpe_ratio(
-                promoted_sr_period, promoted_n_periods,
-                sr0=deflation_sr0,
-                skew=promoted_skew, kurtosis=promoted_kurtosis)
-            # Issue #636 (#627-Synergie) — die UNBESCHRÄNKTE Effektstärke z_DSR = (ŜR−SR₀)·√(T−1)/σ
-            # als Selektions-Robustheits-Telemetrie, konsistent zur psr_z-Base (#630): eine CDF nahe
-            # 1.0 sättigt und unterscheidet "knapp drüber" nicht von "weit drüber", der z-Score tut es.
-            deflation_dsr_z = psr_z(
-                promoted_sr_period, promoted_n_periods,
-                skew=promoted_skew, kurtosis=promoted_kurtosis, sr_star=deflation_sr0)
+            # Issue #701 — ``deflation_sr0`` kann in dem (nach Invariante unerreichbaren, aber
+            # defensiv abgefangenen) Fall None sein, dass ``deflation_t_periods`` oben fehlte. OHNE
+            # SR0 gibt es keine Referenz für DSR/psr_z (``float(None)`` würde crashen) — die
+            # BERECHNUNG wird dann übersprungen, aber die REJECTION-Prüfung unten bleibt aktiv:
+            # ``deflation_dsr`` bleibt in diesem Fall ``None`` und zählt konservativ als "DSR nicht
+            # nachgewiesen" (fail-closed, dieselbe Semantik wie ein regulär berechnetes, zu
+            # niedriges DSR — kein stiller Promotions-Freifahrtschein durch eine Datenanomalie).
+            if deflation_sr0 is not None:
+                from automation.optimizer.deflation import deflated_sharpe_ratio, psr_z
+                promoted_n_periods = getattr(promoted_m_symbol, "oos_n_periods", 0)
+                promoted_skew = getattr(promoted_m_symbol, "oos_ret_skew", 0.0)
+                promoted_kurtosis = getattr(promoted_m_symbol, "oos_ret_kurtosis", 3.0)
+                # Issue #651 — dasselbe (bereits gefloorte) ``deflation_sr0`` speist SOWOHL die
+                # Entscheidung (``deflation_dsr``, hier) ALS AUCH die Telemetrie (``deflation_dsr_z``,
+                # unten via ``psr_z(..., sr_star=deflation_sr0)``). Vor #651 berechnete
+                # ``deflated_sharpe_ratio`` SR₀ intern aus ``var_sr_trials``/``n_trials`` — UNGEFLOORT —
+                # während ``deflation_dsr_z``/``deflated_sr0`` bereits das GEFLOORTE SR₀ nutzten; beide
+                # Grössen divergierten dadurch bei Small Cohorts (#651-Referenzfall: Hourly N=9, Faktor
+                # ≈3.48× zwischen internem und telemetriertem SR₀). Ein Aufruf, EIN SR₀ — bit-identisch.
+                deflation_dsr = deflated_sharpe_ratio(
+                    promoted_sr_period, promoted_n_periods,
+                    sr0=deflation_sr0,
+                    skew=promoted_skew, kurtosis=promoted_kurtosis)
+                # Issue #636 (#627-Synergie) — die UNBESCHRÄNKTE Effektstärke z_DSR = (ŜR−SR₀)·√(T−1)/σ
+                # als Selektions-Robustheits-Telemetrie, konsistent zur psr_z-Base (#630): eine CDF nahe
+                # 1.0 sättigt und unterscheidet "knapp drüber" nicht von "weit drüber", der z-Score tut es.
+                deflation_dsr_z = psr_z(
+                    promoted_sr_period, promoted_n_periods,
+                    skew=promoted_skew, kurtosis=promoted_kurtosis, sr_star=deflation_sr0)
             if holdout_passed and (deflation_dsr is None or deflation_dsr < deflation_confidence):
                 holdout_passed = False
                 holdout_reject_detail = "REJECT_HOLDOUT_DSR_DROP"
+                # Issue #701 — die Log-Message darf nicht am ``.4f``-Format crashen, wenn
+                # ``deflation_sr0`` None blieb (kein sekundärer Bug on top eines bereits
+                # abgefangenen Primärfalls).
+                sr0_repr = f"{deflation_sr0:.4f}" if deflation_sr0 is not None else "None"
                 logging.getLogger("optimizer").warning(
                     f"[DSR-Drop #618] {symbol}: DSR={deflation_dsr} < {deflation_confidence} "
-                    f"(SR₀={deflation_sr0:.4f}, N={deflation_n}) ⇒ HOLD"
+                    f"(SR₀={sr0_repr}, N={deflation_n}) ⇒ HOLD"
                 )
 
     # Issue #619 — Stationary-Bootstrap-CI (opt-in) auf dem promoteten Holdout-Sortino: die UNTERE
@@ -869,6 +921,16 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         logging.getLogger("optimizer").warning(
             f"[PBO #619] {symbol}: PBO={study_pbo:.3f} > 0.5 ⇒ REJECTED_SELECTION_OVERFIT"
         )
+
+    # Issue #697 — Fail-Loud-Konsument des #679-Gate-Kollinearitäts-Alarms: prüft AUS DER STUDY
+    # SELBST (dieselbe ``oos_gate_deltas``-Quelle wie run_optimization._emit_study_summary), ob
+    # ``eligible_requires_all`` noch ein Gate enthält, das die LIVE Kohorte als redundant gegenüber
+    # einem höher priorisierten Konjunktions-Mitglied ausweist. Reine Diagnose (ändert keine
+    # Promotion-Entscheidung); Ergebnis (leer im Regelfall nach #697) sichtbar im Winner-Eintrag.
+    from automation.optimizer.reward import assert_eligible_requires_all_not_redundant
+    gate_deltas_cohort = [getattr(t, "user_attrs", {}).get("oos_gate_deltas") for t in study.trials]
+    unconsolidated_gates = assert_eligible_requires_all_not_redundant(
+        gate_deltas_cohort, tournament_cfg.get("eligible_requires_all", []))
 
     # Issue #659 — gestapelte Multiple-Testing-Korrekturen kompoundieren den Type-II-Fehler. Die
     # Promotion verlangt per Default (``promotion_correction_mode`` fehlt/"conjunction", bit-
@@ -1001,6 +1063,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # bleibt, wie stark die Near-Duplicate-Reduktion N tatsächlich reduziert hat.
     best_result["metrics_symbol"]["pbo_n_configs_raw"] = pbo_telemetry.get("pbo_n_configs_raw")
     best_result["metrics_symbol"]["pbo_metric"] = pbo_telemetry.get("pbo_metric")
+    # Issue #697 — sichtbar machen, falls die Konjunktion trotz #697-Konsolidierung noch ein von der
+    # LIVE-Kohorte als redundant markiertes Gate enthält (Regelfall: leere Liste).
+    if unconsolidated_gates:
+        best_result["metrics_symbol"]["gate_collinearity_unconsolidated"] = unconsolidated_gates
     # Issue #611/#618/#636 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle. Seit
     # #636 IMMER gefüllt, sobald SR₀ berechenbar war (unabhängig von holdout_passed) — deflated_dsr
     # ist damit nie mehr uninformativ-null, nur weil ein früheres Gate schon ablehnte.
@@ -1011,16 +1077,27 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
         # Issue #670 — ``deflation_used_var_floor`` bleibt aus Rückwärtskompat-Gründen erhalten
         # (bedeutet NUR "λ ≥ 0.5"). Die PRÄZISEN Grössen für die Forensik: ``deflation_lambda`` (das
-        # tatsächliche Shrinkage-Gewicht) und ``deflation_theoretical_var_source`` (welche
-        # theoretische Referenz — Lo-2002 oder var_floor — tatsächlich verwendet wurde).
+        # tatsächliche Shrinkage-Gewicht) und ``deflation_theoretical_var_source`` (seit #701 IMMER
+        # ``'lo2002'`` — der var_floor-Fallback wurde nach Verifikation als tot entfernt).
         best_result["metrics_symbol"]["deflation_used_var_floor"] = deflation_used_var_floor
         best_result["metrics_symbol"]["deflation_lambda"] = deflation_lambda
         best_result["metrics_symbol"]["deflation_theoretical_var_source"] = deflation_theoretical_var_source
         # Issue #652 — die familienweite Multiplizität, die tatsächlich in die SR₀-Berechnung
         # eingeflossen ist (N_effective = max(per-Study-N, N_family)), plus die rohe übergebene
         # Familien-Zahl — beide sichtbar im Proposal, damit die effektive SR₀-Hürde je promoteter
-        # Kandidat nachvollziehbar ist (Akzeptanzkriterium #652).
+        # Kandidat nachvollziehbar ist (Akzeptanzkriterium #652). ``deflation_n_family`` (Legacy-Name)
+        # bleibt bit-identisch der roh übergebene Skalar (Rückwärtskompat, siehe test_issue_652).
         best_result["metrics_symbol"]["deflation_n_family"] = int(deflation_n_family or 0)
+        # Issue #695/#696 — ``deflation_n_effective`` (Legacy-Name, #652) war bislang ein Fehlname:
+        # sie trug die ROHE (un-declusterte) Familien-Multiplizität, obwohl der Name "effektiv"
+        # suggeriert (dieselbe Fehldeutungsklasse wie #670 bei ``deflation_used_var_floor``). Seit
+        # #695 ist der Wert, den ``deflation_n_effective`` trägt, TATSÄCHLICH effektiv (die
+        # declusterte Familienzahl treibt jetzt E[max_N]) — die zwei PRÄZISEN, PBO-Pfad-parallelen
+        # Grössen (``pbo_n_configs_raw``/``pbo_n_configs``-Analogon) sind zusätzlich EXPLIZIT
+        # benannt, damit ein Operator roh vs. declustert auditieren kann, ohne den Legacy-Namen
+        # (miss-)interpretieren zu müssen (Akzeptanzkriterium #696).
+        best_result["metrics_symbol"]["deflation_n_family_raw"] = deflation_n_family_raw
+        best_result["metrics_symbol"]["deflation_n_family_effective"] = deflation_n_family_effective
         best_result["metrics_symbol"]["deflation_n_effective"] = deflation_n_effective
 
     return best_result

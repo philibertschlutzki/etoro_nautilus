@@ -8,7 +8,8 @@
       "config_class": "Klassen-Name der Strategie-Konfiguration",
       "params": "Optionale Parameter-Overrides (merged \u00fcber strategy_defaults.json)",
       "instrument_overrides": "Optional (A4.1) \u2014 symbol-spezifische Parameter-Overrides { \"<SYMBOL.ETORO>\": { \"<param>\": <value> } }; pro Symbol nur die zu \u00fcberschreibenden Keys. Precedence: strategy_defaults < params < instrument_overrides[symbol] < sampled. Wird NUR im Legacy/Matrix-Pfad (is_manifest=False) und nur bei gesetztem instrument angewandt; im Manifest-Pfad niemals (Pitfall #61). Promotion ausschlie\u00dflich per menschlich freigegebenem PR (A4.5b).",
-      "tournament_overrides": "Dict \u2014 optionale Overrides f\u00fcr Tournament-Kriterien (z.B. min_expectancy: float, min_trades: int)"
+      "tournament_overrides": "Dict \u2014 optionale Overrides f\u00fcr Tournament-Kriterien (z.B. min_expectancy: float, min_trades: int)",
+      "invalid_on_continuous_bars": "Issue #698 \u2014 bool (Default false/fehlt). true \u21d2 die Strategie misst auf der synthetischen, KONTINUIERLICHEN 24/7-1h-Bar-Semantik dieses Systems strukturell etwas anderes als beabsichtigt (z.B. GapContinuation Variante A: ohne echte Handelspausen zwischen Kalendertagen degeneriert der Overnight-Gap zur Differenz zweier aufeinanderfolgender Bars, tr\u00e4gt also keine Continuation-Edge). automation.optimizer.sweep.enumerate_tunable_pairs \u00fcberspringt eine so markierte Strategie VOLLST\u00c4NDIG (alle Symbole, EIN strukturiertes STRATEGY_INVALID_ON_CONTINUOUS_BARS-Event statt N\u00d716 nutzloser Trials je Symbol) und weist sie im sweep_completed-Event als strategies_skipped mit dem Grund SKIPPED_INVALID_ON_CONTINUOUS_BARS aus. Root-Cause-Pr\u00e4zisierung (#698): die Entscheidung wird an der BAR-SEMANTIK des Systems festgemacht, nicht am Backtest-Ergebnis \u2014 kein Bounds-Weiten (z.B. gap_threshold_pct) behebt eine ung\u00fcltige Messung."
     }
   },
   "strategies": [
@@ -78,7 +79,7 @@
       "strategy_class": "TrendPullbackStrategy",
       "config_class": "TrendPullbackConfig",
       "params": {},
-      "_note": "Deaktiviert: 0 FIFO-Schliessungen in allen Tests."
+      "_note": "Issue #699 — Root-Cause der vormaligen '0 FIFO-Schliessungen'-Note behoben: on_bar() rief entgegen dem HourlyStrategyBase-Vertrag nie _check_exits_and_update() auf (kein ATR-Trailing-Stop, kein Time-Exit) — jetzt verdrahtet, inkl. on_position_closed-Reset von current_signal (verhindert einen Flat-Lock nach Trailing-Stop-Exits)."
     },
     {
       "active": true,
@@ -86,7 +87,7 @@
       "strategy_class": "AdxAtrMomentumStrategy",
       "config_class": "AdxAtrMomentumConfig",
       "params": {},
-      "_note": "Deaktiviert: ADX-Initialisierungsproblem."
+      "_note": "Issue #699 — Root-Cause der vormaligen ADX-Initialisierungsproblem-Note behoben: DirectionalMovement.value bleibt in NautilusTrader 1.230.0 konstant 0.0, das Entry-Gate adx_value>25 war daher IMMER False (0 Trades). Analog DonchianRegimeBreakout (#691) durch eine EMA-Steigungs-Bestätigung (Option B) ersetzt; adx_period wird nicht mehr gesampelt (spaces.py)."
     },
     {
       "active": true,
@@ -139,7 +140,8 @@
       "tournament_overrides": {
         "min_trades": 8
       },
-      "_note": "Issue #693 — nur Gap-Tage → wenige Trades; min_trades gesenkt."
+      "invalid_on_continuous_bars": true,
+      "_note": "Issue #693 — nur Gap-Tage → wenige Trades; min_trades gesenkt. Issue #698 — auf den synthetischen, kontinuierlichen 24/7-1h-Bars dieses Systems existiert kein echter Overnight-Gap (Variante A degeneriert zur Differenz zweier aufeinanderfolgender Bars, keine Continuation-Edge); daher via invalid_on_continuous_bars vollständig übersprungen (strategies_skipped: SKIPPED_INVALID_ON_CONTINUOUS_BARS) statt stillen 16-Trial-Budget-Verbrauchs. Re-Aktivierungspfad: eine RTH-session-bewusste Variante B (session_open_hour), sobald ein Session-Kalender für ein Symbol verfügbar ist."
     }
   ]
 }
