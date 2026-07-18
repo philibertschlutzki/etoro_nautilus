@@ -4,10 +4,11 @@ from pathlib import Path
 def resolve_params(strategy_class: str, sampled: dict, base_cfg: Path,
                    *, instrument: str | None = None) -> dict:
     """
-    Reihenfolge: strategy_defaults.json < strategies.json[params]
+    Reihenfolge: strategy_defaults.json < strategy_symbol_seeds.json[strategy][instrument]
+    (nur falls instrument != None, Issue #706) < strategies.json[params]
     < instrument_overrides[instrument] (nur falls instrument != None) < sampled (höchste Prio).
 
-    instrument=None ⇒ exakt bisheriges Verhalten (rückwärtskompatibel, A4.1).
+    instrument=None ⇒ exakt bisheriges Verhalten (rückwärtskompatibel, A4.1/#706 additiv).
     """
     params = {}
 
@@ -18,6 +19,21 @@ def resolve_params(strategy_class: str, sampled: dict, base_cfg: Path,
             defaults_data = json.load(f)
             if strategy_class in defaults_data:
                 params.update(defaults_data[strategy_class])
+
+    # 1.5. Issue #706 (Epic #702, Ebene 2) — symbol-skopierter, automatisch nachgeführter
+    # Champion-Seed-Prior. NIE der globale Cross-Symbol-Default (strategy_defaults.json) — eine
+    # separate, symbol-skopierte Datei, AUSSCHLIESSLICH via champions.maybe_write_back geschrieben
+    # (korroboriert + fensterfortgeschritten, siehe champions.py-Docstring). Nur wirksam, wenn ein
+    # instrument gesetzt ist (dasselbe additive A4.1-Muster wie instrument_overrides unten) — ohne
+    # instrument bit-identisch zum Pre-#706-Verhalten.
+    if instrument is not None:
+        seeds_path = base_cfg / "strategy_symbol_seeds.json"
+        if seeds_path.exists():
+            with open(seeds_path, "r", encoding="utf-8") as f:
+                seeds_data = json.load(f) or {}
+                seed = ((seeds_data.get("seeds") or {}).get(strategy_class) or {}).get(instrument)
+                if seed:
+                    params.update(seed)
 
     # 2. strategies.json[params] (+ instrument_overrides[instrument], additiv)
     strats_path = base_cfg / "strategies.json"

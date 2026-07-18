@@ -32,6 +32,7 @@ from automation.optimizer.run_optimization import (
     _preinit_study_storage,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
+from automation.optimizer import champions
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies,
@@ -468,6 +469,20 @@ def _load_gate_config() -> dict:
             **{k: opt[k] for k in ("gate1_buffer_days", "min_bars_per_param", "min_oos_bars_per_fold")}}
 
 
+def _load_optimizer_config() -> dict:
+    """Issue #703 — vollständige optimizer.json (reward_semantics_version + champion_* Keys) für
+    den Champion-Store-Hook. Fail-open (leeres Dict), falls die Datei fehlt/kaputt ist — der
+    Champion-Store bleibt dann über ``champion_is_admissible``'s ``reward_semantics_version``-Guard
+    (None ⇒ nicht versionssicher) inert, statt den Sweep zu crashen."""
+    path = config_dir() / "optimizer.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _family_n_from_proposals(proposals) -> dict[str, int]:
     """Issue #625 — FAMILIENWEISE Multiple-Testing-Zahl je Symbol.
 
@@ -582,6 +597,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
+    # Issue #703 — vollständige optimizer.json EINMAL vor dem Dispatch geladen (Champion-Store-
+    # Gates: reward_semantics_version + champion_*-Keys), wiederverwendet über die Closure von
+    # ``_run_confirm_and_export`` statt pro Paar erneut von der Platte gelesen zu werden.
+    opt_data = _load_optimizer_config()
     available_bars = count_available_bars(syms)
 
     # Issue #531 — Pre-Sweep-Backfill-Hook: Symbole, deren REAL vorhandene Bar-Spanne die volle
@@ -705,7 +724,22 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
                             deflation_n_family=n_family_pre_promotion.get(symbol, 0),
                             deflation_family_period_returns=family_returns_pre_promotion.get(symbol))
-        return export_symbol_proposal(study, strategy, symbol, promotion)
+        proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
+        # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
+        # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die
+        # aktuelle Promotion-Entscheidung noch strategies.json, HI-3); nur im echten Storage-Pfad
+        # (injizierte HI-7-Fakes simulieren keinen Katalog/keine reale champions.WORK-Isolation).
+        # Fail-open: ein Champion-Store-Fehler darf den Sweep nie crashen (analog #531-Backfill).
+        if using_real_optimize:
+            try:
+                champions.store_champion(study, strategy, symbol, promotion,
+                                         catalog_newest_ns=newest_ns, opt_data=opt_data, tier=tier)
+            except Exception:
+                logging.getLogger("optimizer").warning(
+                    "[#703] %s/%s: Champion-Store-Schreiben fehlgeschlagen (non-fatal).",
+                    strategy, symbol, exc_info=True,
+                )
+        return proposal_path
 
     if n_jobs and n_jobs > 1 and len(pairs) > 1:
         from concurrent.futures import ThreadPoolExecutor
