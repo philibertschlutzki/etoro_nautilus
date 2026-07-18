@@ -1,0 +1,125 @@
+{
+  "global_settings": {
+    "catalog_path": "/home/user/etoro_nautilus/data/nautilus",
+    "start_time": "2025-07-23T00:00:00Z",
+    "end_time": "2026-07-18T00:00:00Z",
+    "start_capital": 10000.0,
+    "walk_forward": {
+      "is_window_days": 180,
+      "oos_window_days": 45,
+      "splits": 4,
+      "holdout_days": 45,
+      "data_history_days": 450,
+      "embargo_period_days": 21,
+      "retrain": false
+    },
+    "_note": "Dynamisch generiert — Fenster: 2025-07-23 bis 2026-07-18 (Midnight UTC). Config-Root: automation/config/. Quellen: catalog_service.py (stündliche ZIPs) + api_backfiller.py + historical_fetcher.py. Alle Daten als FSB(16)."
+  },
+  "strategies": [
+    {
+      "strategy_module": "automation.strategies.sma_crossover",
+      "strategy_class": "SmaCrossoverStrategy",
+      "config_class": "SmaCrossoverConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.mean_reversion",
+      "strategy_class": "MeanReversionStrategy",
+      "config_class": "MeanReversionConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.dynamic_breakout",
+      "strategy_class": "DynamicBreakoutStrategy",
+      "config_class": "DynamicBreakoutConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.flash_crash_reversal",
+      "strategy_class": "FlashCrashReversalStrategy",
+      "config_class": "FlashCrashReversalConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.volatility_breakout",
+      "strategy_class": "VolatilityBreakoutPumpStrategy",
+      "config_class": "VolatilityBreakoutConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.tesla_combo_strategy",
+      "strategy_class": "ComboTrendVwapStrategy",
+      "config_class": "ComboTrendVwapConfig",
+      "params": {
+        "allow_short": true
+      },
+      "tournament_overrides": {
+        "min_trades": 5
+      }
+    },
+    {
+      "strategy_module": "automation.strategies.vwap_exhaustion",
+      "strategy_class": "VwapExhaustionStrategy",
+      "config_class": "VwapExhaustionConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 10
+      }
+    },
+    {
+      "strategy_module": "automation.strategies.trend_pullback",
+      "strategy_class": "TrendPullbackStrategy",
+      "config_class": "TrendPullbackConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.adx_atr_momentum",
+      "strategy_class": "AdxAtrMomentumStrategy",
+      "config_class": "AdxAtrMomentumConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.hourly_mean_reversion",
+      "strategy_class": "HourlyMeanReversionStrategy",
+      "config_class": "HourlyMeanReversionConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.squeeze_breakout",
+      "strategy_class": "SqueezeBreakoutStrategy",
+      "config_class": "SqueezeBreakoutConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 12
+      }
+    },
+    {
+      "strategy_module": "automation.strategies.opening_range_breakout",
+      "strategy_class": "OpeningRangeBreakoutStrategy",
+      "config_class": "OpeningRangeBreakoutConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.donchian_regime_breakout",
+      "strategy_class": "DonchianRegimeBreakoutStrategy",
+      "config_class": "DonchianRegimeBreakoutConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.rsi2_reversion",
+      "strategy_class": "Rsi2ReversionStrategy",
+      "config_class": "Rsi2ReversionConfig",
+      "params": {}
+    },
+    {
+      "strategy_module": "automation.strategies.gap_continuation",
+      "strategy_class": "GapContinuationStrategy",
+      "config_class": "GapContinuationConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 8
+      },
+      "invalid_on_continuous_bars": true
+    }
+  ]
+}
