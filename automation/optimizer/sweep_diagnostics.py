@@ -85,6 +85,117 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     }
 
 
+# Issue #681 — Strategien, für die spaces.py._bounds_for tatsächlich Symbol-Overrides auflöst
+# (#669). Nur für diese ist ein "search_space_override"-Vorschlag sinnvoll — für jede andere
+# Strategie hätte ein Bounds-Override keine Wirkung (fail-open, aber nutzlos), daher direkt Denylist.
+WIRED_OVERRIDE_STRATEGIES = frozenset({
+    "TrendPullbackStrategy", "AdxAtrMomentumStrategy", "HourlyMeanReversionStrategy",
+})
+
+
+def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Path | None = None) -> bool:
+    """Issue #681 — prüft, ob ``search_space_overrides.json`` bereits einen (nicht-leeren)
+    Bounds-Override für ``(strategy, symbol)`` enthält (irgendein Parameter genügt). Fehlt die
+    Datei/der Eintrag ⇒ ``False`` (bit-identisch zum Pre-#681-Verhalten, kein Override vorhanden)."""
+    if base_cfg is None:
+        from automation.optimizer.trial_config import config_dir
+        base_cfg = config_dir()
+    path = base_cfg / "search_space_overrides.json"
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return False
+    entry = (data.get("overrides", {}) or {}).get(strategy, {}).get(symbol)
+    return bool(entry)
+
+
+def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
+                               has_existing_override: bool = False) -> dict:
+    """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
+    Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
+    ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
+    bei JEDEM Lauf neu enumeriert (Root-Cause #681).
+
+    Fallunterscheidung nach ``binding_cause`` (#669):
+      * ``'signal_quality'`` (ALLE Trials evaluiert, 0 eligible) — Bounds-Kalibrierung hilft NICHT
+        (kein Frequenz-, ein Qualitätsproblem) ⇒ ``'denylist'``.
+      * ``'signal_frequency'``/``'hold_duration'`` (0 evaluable) UND die Strategie ist für
+        Symbol-Bounds-Overrides verdrahtet (``WIRED_OVERRIDE_STRATEGIES``) UND es existiert noch
+        KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-Kalibrierung probieren,
+        BEVOR das Paar aufgegeben wird). Existiert bereits ein Override (Bounds-Kalibrierung wurde
+        schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf ``'denylist'``.
+      * Frequenzproblem bei einer NICHT verdrahteten Strategie ⇒ ``'denylist'`` (ein Override hätte
+        ohnehin keine Wirkung, spaces.py._bounds_for ist fail-open no-op für sie).
+      * ``'none'``/``'no_data'`` ⇒ ``'none'`` (kein Kollaps, nichts zu tun).
+
+    Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
+    'median_oos_trades', 'median_is_trades'}``."""
+    cause = diagnosis.get("binding_cause")
+    if cause in ("none", "no_data", None):
+        action = "none"
+    elif cause == "signal_quality":
+        action = "denylist"
+    elif cause in ("signal_frequency", "hold_duration"):
+        if strategy in WIRED_OVERRIDE_STRATEGIES and not has_existing_override:
+            action = "search_space_override"
+        else:
+            action = "denylist"
+    else:
+        action = "denylist"
+    return {
+        "strategy": strategy, "symbol": symbol, "action": action, "binding_cause": cause,
+        "median_oos_trades": diagnosis.get("median_oos_trades"),
+        "median_is_trades": diagnosis.get("median_is_trades"),
+    }
+
+
+def _diagnosed_pairs_cache_path(work_dir: Path | None = None) -> Path:
+    if work_dir is None:
+        from automation.optimizer.manifest import WORK
+        work_dir = WORK
+    return Path(work_dir) / "diagnosed_pairs_cache.json"
+
+
+def load_diagnosed_pairs_cache(work_dir: Path | None = None) -> dict[tuple[str, str], dict]:
+    """Issue #681 — der AUTOMATISCH gepflegte Diagnose-Cache (``data/optimizer/
+    diagnosed_pairs_cache.json``) — bewusst GETRENNT von der menschlich-kuratierten
+    ``symbol_strategy_denylist.json``: dieser Cache schliesst NUR die Budget-Schleife
+    (``enumerate_tunable_pairs`` überspringt ein ``'denylist'``-empfohlenes Paar automatisch ab dem
+    NÄCHSTEN Lauf), ändert aber NIE die versionierte, PR-gebundene Config-Denylist selbst. Fehlt die
+    Datei ⇒ ``{}`` (bit-identisch zum Pre-#681-Verhalten)."""
+    path = _diagnosed_pairs_cache_path(work_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+    out: dict[tuple[str, str], dict] = {}
+    for entry in data.get("pairs", []) or []:
+        strat, sym = entry.get("strategy"), entry.get("symbol")
+        if strat and sym:
+            out[(strat, sym)] = entry
+    return out
+
+
+def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None) -> Path:
+    """Issue #681 — schreibt/aktualisiert den (Symbol, Strategie)-Diagnose-Eintrag im automatisch
+    gepflegten Cache (siehe ``load_diagnosed_pairs_cache``-Docstring). Ein No-Op-Eintrag
+    (``action == 'none'``) wird NICHT gespeichert (kein Kollaps ⇒ nichts zu cachen). Idempotent:
+    ein erneuter Diagnose-Lauf für dasselbe Paar überschreibt den vorherigen Eintrag."""
+    if recommendation.get("action") == "none":
+        return _diagnosed_pairs_cache_path(work_dir)
+    path = _diagnosed_pairs_cache_path(work_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cache = load_diagnosed_pairs_cache(work_dir)
+    cache[(recommendation["strategy"], recommendation["symbol"])] = recommendation
+    payload = {"pairs": list(cache.values())}
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
 def load_symbol_strategy_denylist(base_cfg: Path | None = None) -> dict[tuple[str, str], str]:
     """Issue #669 — deklarative (Strategie, Symbol)-Deaktivierungsliste aus
     ``symbol_strategy_denylist.json`` (Zero-Hardcoding): ``{(strategy, symbol): reason}``.

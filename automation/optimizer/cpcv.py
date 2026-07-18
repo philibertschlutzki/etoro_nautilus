@@ -56,6 +56,51 @@ def purged_train_groups(train_groups: Sequence[int], test_groups: Sequence[int],
     return tuple(g for g in train_groups if g not in forbidden)
 
 
+def cluster_effective_configs(rows: Sequence[Sequence[float]], *, threshold: float = 0.99) -> list[int]:
+    """Issue #683 — reduziert eine Kohorte von Konfigurations-Return-Vektoren (gleicher Länge, z. B.
+    per-Perioden-OOS-Returns) auf die Indizes EFFEKTIV-unabhängiger Configs: zwei Configs mit
+    Pearson-Korrelation ``> threshold`` über ihre volle Return-Serie sind Near-Duplikate (fast
+    identische Parametrisierungen oder degenerierte Configs, die sich kaum unterscheidbar
+    verhalten) — nur die ERSTE (Reihenfolge-stabile) Zeile jedes Clusters bleibt erhalten.
+
+    Root-Cause (#683): PBO/CSCV setzt voraus, dass ``N`` Kandidaten-Configs statistisch
+    UNABHÄNGIGE Parametrisierungen sind (Bailey/López de Prado). Near-Duplicate-Configs (z. B. aus
+    einem dichten Optuna-Suchraum-Grid) erzeugen near-identische Return-Vektoren ⇒ die EFFEKTIVE
+    Anzahl unabhängiger Strategien ist ≪ ``N`` ⇒ die CSCV-Rangstatistik ist verzerrt (ein PBO auf
+    36 hochkorrelierten Configs ist kein PBO auf 36 unabhängigen Hypothesen).
+
+    Rein, deterministisch (keine Zufallskomponente), kein I/O. Rückgabe: sortierte Liste der zu
+    KEEPENDEN Zeilen-Indizes (mind. 1, sofern ``rows`` nicht leer ist). Bei (nahezu) Nullvarianz
+    einer oder beider Zeilen ist die Pearson-Korrelation numerisch instabil/undefiniert — in diesem
+    Fall entscheidet stattdessen ein direkter Näheverleich (``np.allclose``): zwei praktisch
+    KONSTANTE, (fast) identische Serien (z. B. mehrere signal-freie/No-Trade-Configs mit
+    durchgängig Null-Return) sind ebenfalls Duplikate und werden zusammengelegt; zwei
+    UNTERSCHIEDLICHE konstante Serien (z. B. verschiedene Flat-Return-Niveaus) bleiben getrennt."""
+    n = len(rows)
+    if n <= 1:
+        return list(range(n))
+    arr = np.asarray(rows, dtype=float)
+    stds = arr.std(axis=1)
+    degenerate_eps = 1e-9
+    keep: list[int] = []
+    assigned = [False] * n
+    for i in range(n):
+        if assigned[i]:
+            continue
+        keep.append(i)
+        assigned[i] = True
+        for j in range(i + 1, n):
+            if assigned[j]:
+                continue
+            if stds[i] < degenerate_eps or stds[j] < degenerate_eps:
+                is_dup = bool(np.allclose(arr[i], arr[j], atol=1e-9, rtol=1e-6))
+            else:
+                is_dup = float(np.corrcoef(arr[i], arr[j])[0, 1]) > threshold
+            if is_dup:
+                assigned[j] = True
+    return keep
+
+
 def probability_of_backtest_overfitting(is_perf: np.ndarray, oos_perf: np.ndarray) -> float:
     """PBO via die Rang-Logit-Methode (Bailey & López de Prado, CSCV).
 

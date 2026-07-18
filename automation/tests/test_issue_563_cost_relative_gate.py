@@ -97,9 +97,30 @@ def test_legacy_static_gate_without_k_alpha():
     assert res["oos_gate_deltas"]["oos_min_expectancy"] < 0
 
 
-def test_legacy_static_gate_without_cost_telemetry():
-    """k_alpha gesetzt, aber round_trip_cost_bps fehlt (Unit-Call) ⇒ statisches Gate (bit-identisch)."""
+def test_config_derived_fallback_gate_without_cost_telemetry():
+    """Issue #684 — k_alpha gesetzt, aber round_trip_cost_bps fehlt (z. B. degenerierter Trial/
+    Unit-Call): das Gate bleibt KOSTENRELATIV, nur die Kostenbasis kommt aus dem Config-Kostenmodell
+    (backtest.json: commission_bps + spread_bps_by_asset_class.DEFAULT) statt aus der Live-Telemetrie
+    — NICHT mehr das ~13× strengere statische 0.001-Gate (die #684-Root-Cause: zwei unabhängig
+    gepflegte Schwellen)."""
+    from automation.backtest_runner import _read_default_round_trip_cost_bps
     cfg = _cfg(oos_min_expectancy_k_alpha=0.25)
     res = _evaluate_oos_eligibility(_oos(0.0008, cost_rt_bps=None), cfg)
+    default_c_rt = _read_default_round_trip_cost_bps()
+    expected_gate = 0.25 * default_c_rt / 10000.0
+    assert res["effective_expectancy_gate"] == expected_gate
+    assert res["expectancy_gate_cost_source"] == "config_default"
+    # Der Fallback ist HÖCHSTENS ein kleines Vielfaches vom kostenrelativen Referenzwert (c_rt=3bps
+    # ⇒ 7.5e-5) entfernt — NICHT die 13×-strengere statische 0.001-Konstante.
+    assert expected_gate < 0.001 / 2.0
+
+
+def test_legacy_static_gate_without_k_alpha_or_telemetry():
+    """Fehlt k_alpha GANZ (nicht konfiguriert), bleibt es beim statischen Legacy-Gate — unabhängig
+    von der Kosten-Telemetrie (Zero-Hardcoding: die #684-Kostenbasis-Herleitung greift nur, wenn der
+    Operator sich bereits für ein kostenrelatives Gate entschieden hat)."""
+    cfg = _cfg()  # kein oos_min_expectancy_k_alpha
+    res = _evaluate_oos_eligibility(_oos(0.0008, cost_rt_bps=None), cfg)
     assert res["effective_expectancy_gate"] is None
+    assert res["expectancy_gate_cost_source"] == "static"
     assert res["oos_gate_deltas"]["oos_min_expectancy"] < 0  # gegen statische 0.001 gemessen

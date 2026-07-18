@@ -41,16 +41,28 @@ def test_every_requires_any_clause_resolves_to_a_condition_map_handler():
         assert canon in OOS_CONDITION_MAP_KEYS
 
 
-def test_the_four_previously_dead_prefixed_clauses_are_present_and_resolve():
-    """Die vier im Issue benannten, vormals toten Klauseln sind in der echten Config vorhanden UND
-    resolven jetzt (kanonisch) zu einem Handler."""
+def test_the_four_previously_dead_prefixed_clauses_resolve_to_a_handler():
+    """Die vier im Issue benannten, vormals toten Klauseln resolven (kanonisch) zu einem Handler —
+    unabhaengig davon, ob sie aktuell DEFAULT-Mitglied von eligible_requires_all sind.
+
+    Issue #676/#677 — 'oos_min_profitable_folds_frac' UND 'oos_min_evaluable_folds' wurden bewusst
+    aus dem DEFAULT ``eligible_requires_all`` entfernt (anti-monotone, redundante Fold-Zähler-Gates
+    bei nicht-stationaeren Einzelasset-Zielen, siehe tournament.json-Schema/AGENTS.md Pitfall
+    #143/#144). Das ist eine Konjunktions-Mitgliedschafts-Entscheidung, KEIN Rueckfall in die
+    #649-Root-Cause (beide Handler existieren weiterhin und resolven korrekt — ein Operator kann
+    beide Keys jederzeit wieder in eligible_requires_all aufnehmen, ohne Code-Aenderung)."""
     dead_before_fix = [
         "oos_min_profitable_folds_frac", "oos_min_evaluable_folds",
         "oos_min_psr", "oos_min_excess_return",
     ]
     for clause in dead_before_fix:
-        assert clause in TCFG["eligible_requires_all"], f"{clause} fehlt in eligible_requires_all"
         assert _canonical_gate_key(clause) in OOS_CONDITION_MAP_KEYS
+
+    # Die zwei UEBRIGEN (#676/#677-unberuehrten) Klauseln bleiben DEFAULT-Mitglieder von
+    # eligible_requires_all (die eigentliche #649-Regression waere ihr stilles Verschwinden).
+    still_default = ["oos_min_psr", "oos_min_excess_return"]
+    for clause in still_default:
+        assert clause in TCFG["eligible_requires_all"], f"{clause} fehlt in eligible_requires_all"
 
 
 def test_load_tournament_config_fails_loud_on_unknown_gate_name(tmp_path, monkeypatch):

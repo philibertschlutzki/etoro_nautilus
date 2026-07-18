@@ -182,5 +182,71 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.3, 2.5),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 96),
         }
+    elif strategy == "SqueezeBreakoutStrategy":
+        # Issue #689 — Bollinger-innerhalb-Keltner-Squeeze-Release. `bb_std_dev`/`keltner_multiplier`
+        # bewusst NICHT hart auf ein festes Verhältnis fixiert (Pitfall #6-analog): der Optimizer
+        # kalibriert die Squeeze-Enge selbst innerhalb der Bounds.
+        return {
+            "bb_period": trial.suggest_int("bb_period", 10, 40),
+            "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 2.5),
+            "keltner_period": trial.suggest_int("keltner_period", 10, 40),
+            "keltner_multiplier": trial.suggest_float("keltner_multiplier", 1.0, 2.5),
+            "min_squeeze_bars": trial.suggest_int("min_squeeze_bars", 3, 18),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 24),
+            "atr_period": trial.suggest_int("atr_period", 7, 21),
+            "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 3.5),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 30),
+        }
+    elif strategy == "OpeningRangeBreakoutStrategy":
+        # Issue #690 — Opening-Range-Breakout (Momentum-Ignition am Tagesbeginn).
+        return {
+            "or_bars": trial.suggest_int("or_bars", 2, 8),
+            "or_atr_buffer": trial.suggest_float("or_atr_buffer", 0.0, 1.0),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 24),
+            "atr_period": trial.suggest_int("atr_period", 7, 21),
+            "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 3.5),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 30),
+        }
+    elif strategy == "DonchianRegimeBreakoutStrategy":
+        # Issue #691 — Donchian-Ausbruch, EMA-Steigungs-gegatet (Regime-Filter Option B). Der
+        # Trockenlauf (echter NautilusTrader-Engine-Lauf) verifizierte, dass `DirectionalMovement
+        # .value` in der installierten NautilusTrader-Version (1.230.0) konstant 0.0 bleibt — Option
+        # A (ADX) wurde daher deaktiviert (siehe donchian_regime_breakout.py-Docstring, Pitfall #9
+        # des Implementierungs-Leitfadens #688). `adx_period`/`adx_threshold` sind seither
+        # funktional TOT (kein Effekt auf das Entry-Signal mehr) und werden daher NICHT gesampelt
+        # (sonst Phantom-Tuning, Pitfall #4) — sie bleiben in der Config als Re-Aktivierungs-Punkt
+        # für eine künftige NautilusTrader-Version.
+        return {
+            "donchian_period": trial.suggest_int("donchian_period", 8, 60),
+            "ema_period": trial.suggest_int("ema_period", 20, 100),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 24),
+            "atr_period": trial.suggest_int("atr_period", 7, 21),
+            "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 30),
+        }
+    elif strategy == "Rsi2ReversionStrategy":
+        # Issue #692 — Connors-RSI(2)-Pullback-/Bounce-Reversion. Untere `rsi_oversold`-Bound
+        # (5.0) hält das Signal selektiv (RSI(2) ist stark verrauscht, Spec-Warnung: nicht auf 30
+        # anheben, sonst degeneriert es zu einem Dauer-Signal).
+        return {
+            "rsi_period": trial.suggest_int("rsi_period", 2, 6),
+            "rsi_oversold": trial.suggest_float("rsi_oversold", 5.0, 25.0),
+            "rsi_overbought": trial.suggest_float("rsi_overbought", 75.0, 95.0),
+            "ema_period": trial.suggest_int("ema_period", 50, 200),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", 1, 18),
+            "atr_period": trial.suggest_int("atr_period", 7, 21),
+            "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 8, 30),
+        }
+    elif strategy == "GapContinuationStrategy":
+        # Issue #693 — Overnight-/Event-Gap-Continuation. Untere `gap_threshold_pct`-Bound
+        # (0.5 %) hält genug Setups offen (Gap-Tage sind ohnehin selten, tournament_overrides
+        # senkt min_trades zusätzlich, siehe strategies.json).
+        return {
+            "gap_threshold_pct": trial.suggest_float("gap_threshold_pct", 0.005, 0.04),
+            "atr_period": trial.suggest_int("atr_period", 7, 21),
+            "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 3.5),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, 30),
+        }
     else:
         raise ValueError(f"Unknown strategy: {strategy}")

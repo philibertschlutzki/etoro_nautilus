@@ -117,3 +117,49 @@ def calibrate_promotion_correction_mode(
         "fp_rate_conjunction": fp_conjunction / n_reps,
         "fp_rate_dsr_or_robust_pair": fp_robust_pair / n_reps,
     }
+
+
+def calibrate_t_adaptive_confidence(
+    *, n_configs: int, n_periods: int, period_std: float = 0.01,
+    confidence_grid: tuple[float, ...] = (0.99, 0.975, 0.95, 0.925, 0.90, 0.85, 0.80),
+    target_fp_rate: float = 0.05, n_reps: int = 200, min_cohort: int = 10,
+    var_floor: float = 0.0018, seed: int = 42,
+) -> dict:
+    """Issue #678 — T-ADAPTIVE ``deflation_confidence``: statt eines fixen 0.95-Konstante-Niveaus
+    (das bei kleinem T, z. B. ~36 Holdout-Perioden, die konjunktive Promotion-Bestätigung praktisch
+    unerreichbar macht, siehe confirm.py-Docstring/#659) wird die Schwelle EMPIRISCH aus einem
+    Null-Kalibrierlauf für die TATSÄCHLICHE (n_configs, n_periods)-Grössenordnung abgeleitet — die
+    Schwelle, bei der die 'conjunction'-False-Positive-Winner-Rate am nächsten am nominellen Ziel
+    (``target_fp_rate``, Default 5 %) liegt. ``NICHT geraten`` (siehe tournament.json-Schema).
+
+    WICHTIG (Root-Cause-Präzisierung, #678): Der im Issue beschriebene "Chicken-Egg-Deadlock"
+    (Kalibrierung erfordert eine Live-Promotion, aber ohne Promotion keine Kalibrierbasis) existiert
+    in DIESEM Code NICHT — ``calibrate_promotion_correction_mode`` (#667) arbeitet bereits auf
+    SYNTHETISCHEN H0-Daten und benötigt keine einzige reale Promotion. Diese Funktion erweitert
+    dieselbe synthetische Kalibrier-Infrastruktur um eine zweite Dimension (T-adaptive Konfidenz statt
+    nur Moduswahl) für exakt dieselbe kleine T-Grössenordnung, die #678 als Problem benennt.
+
+    Rückgabe: ``{'n_configs', 'n_periods', 'target_fp_rate', 'grid': [{'confidence',
+    'fp_rate_conjunction'}, ...], 'selected_confidence'}`` — ``selected_confidence`` ist der
+    Grid-Punkt mit der ABSOLUT kleinsten Abweichung von ``target_fp_rate`` (conjunction-Modus, der
+    empirisch bessere Type-I-Kontrolle behält, siehe #667-Kalibrierlauf-Fund). Deterministisch bei
+    festem ``seed`` (jede Grid-Stufe nutzt denselben Seed — bewusst KEINE Rauschreduktion durch
+    Cross-Grid-Kohorten-Wiederverwendung, um die Funktion einfach und auditierbar zu halten; für
+    produktive Kalibrierläufe ``n_reps`` erhöhen)."""
+    grid = []
+    best = None
+    for conf in confidence_grid:
+        res = calibrate_promotion_correction_mode(
+            n_configs=n_configs, n_periods=n_periods, period_std=period_std,
+            n_reps=n_reps, confidence=conf, min_cohort=min_cohort, var_floor=var_floor, seed=seed,
+        )
+        row = {"confidence": conf, "fp_rate_conjunction": res["fp_rate_conjunction"]}
+        grid.append(row)
+        dist = abs(res["fp_rate_conjunction"] - target_fp_rate)
+        if best is None or dist < best[0]:
+            best = (dist, conf)
+
+    return {
+        "n_configs": n_configs, "n_periods": n_periods, "target_fp_rate": target_fp_rate,
+        "grid": grid, "selected_confidence": best[1] if best else None,
+    }

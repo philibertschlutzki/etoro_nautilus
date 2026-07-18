@@ -94,6 +94,52 @@
       "strategy_class": "HourlyMeanReversionStrategy",
       "config_class": "HourlyMeanReversionConfig",
       "params": {}
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.squeeze_breakout",
+      "strategy_class": "SqueezeBreakoutStrategy",
+      "config_class": "SqueezeBreakoutConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 12
+      },
+      "_note": "Issue #689 — selektiver Squeeze-Release; erwartet wenige Trades, min_trades gesenkt."
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.opening_range_breakout",
+      "strategy_class": "OpeningRangeBreakoutStrategy",
+      "config_class": "OpeningRangeBreakoutConfig",
+      "params": {},
+      "_note": "Issue #690 — Momentum-Ignition am Tagesbeginn (Opening-Range-Breakout)."
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.donchian_regime_breakout",
+      "strategy_class": "DonchianRegimeBreakoutStrategy",
+      "config_class": "DonchianRegimeBreakoutConfig",
+      "params": {},
+      "_note": "Issue #691 — ADX-gegateter Donchian-Kanal-Ausbruch (Trend-Fortsetzung nur im Trend-Regime)."
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.rsi2_reversion",
+      "strategy_class": "Rsi2ReversionStrategy",
+      "config_class": "Rsi2ReversionConfig",
+      "params": {},
+      "_note": "Issue #692 — Connors-RSI(2)-Pullback-/Bounce-Reversion mit EMA-Trend-Filter."
+    },
+    {
+      "active": true,
+      "strategy_module": "automation.strategies.gap_continuation",
+      "strategy_class": "GapContinuationStrategy",
+      "config_class": "GapContinuationConfig",
+      "params": {},
+      "tournament_overrides": {
+        "min_trades": 8
+      },
+      "_note": "Issue #693 — nur Gap-Tage → wenige Trades; min_trades gesenkt."
     }
   ]
 }

@@ -50,7 +50,9 @@ def test_regime_split_with_no_real_edge_yields_pbo_near_half_not_one():
     assert pbo is not None
     assert telemetry["pbo_n_configs"] == 12
     assert telemetry["pbo_n_groups"] >= 8
-    assert telemetry["pbo_metric"] == "period_return"
+    # Issue #683 — Split-Metrik ist seit #683 der per-Gruppen-Sortino, nicht mehr der rohe
+    # Gruppen-Mittelwert (annualisierungsfrei, konsistent mit oos_fold_sortino_periods, #665).
+    assert telemetry["pbo_metric"] == "group_sortino"
     # PBO nahe 0.5 (kein systematischer IS-Gewinner-Kollaps im OOS bei fehlendem echtem Edge),
     # klar unter der alten 1.0-Artefakt-Antwort.
     assert 0.2 <= pbo <= 0.8
@@ -99,8 +101,13 @@ def test_min_configs_below_threshold_yields_none_not_hard_veto():
 
 
 def test_min_groups_below_threshold_yields_none():
-    """S < 8 Gruppen (zu wenige gepoolte Perioden-Beobachtungen) ⇒ PBO=None."""
-    rows = [[0.01, 0.02, 0.005, 0.03, 0.01] for _ in range(12)]  # nur 5 Perioden ⇒ max 5 Gruppen
+    """S < 8 Gruppen (zu wenige gepoolte Perioden-Beobachtungen) ⇒ PBO=None.
+
+    Issue #683 — die 12 Zeilen muessen HINREICHEND UNKORRELIERT sein (unabhängiges Rauschen je
+    Zeile), sonst kollabiert die #683-Near-Duplicate-Reduktion sie zuerst auf < 2 effektive Configs
+    und maskiert damit das hier eigentlich zu testende min_groups-Gate."""
+    rng = np.random.default_rng(3)
+    rows = rng.normal(0.01, 0.01, (12, 5)).tolist()  # 5 Perioden ⇒ max 5 Gruppen
     pbo, telemetry = cmod._study_pbo(_study(rows))
     assert pbo is None
     assert telemetry["pbo_n_groups"] == 5
@@ -126,8 +133,16 @@ def test_ineligible_and_empty_period_returns_trials_excluded():
 
 def test_nan_degenerate_group_rows_excluded_explicitly():
     """Issue #663 — eine Config-Zeile, deren Gruppen-Partition eine LEERE Gruppe erzeugt (NaN-Mean),
-    wird explizit ausgeschlossen (nicht über den alten min/max-1e-12-Clamp lautlos maskiert)."""
-    good_rows = [(np.linspace(0, 1, 12)[i] + np.random.default_rng(2).normal(0, 0.02, 96)).tolist()
+    wird explizit ausgeschlossen (nicht über den alten min/max-1e-12-Clamp lautlos maskiert).
+
+    Issue #683 — JEDE Zeile braucht ihr EIGENES (unabhängiges) Rauschen: die ursprüngliche Version
+    erzeugte pro Iteration einen NEUEN ``default_rng(2)`` (derselbe Seed bei jedem Aufruf) ⇒ alle
+    11 Zeilen teilten dieselbe Rausch-Sequenz und unterschieden sich nur durch einen additiven
+    Offset — Pearson-Korrelation ist invariant gegen additive Verschiebung ⇒ ρ=1.0 zwischen JEDEM
+    Zeilenpaar, was die #683-Near-Duplicate-Reduktion (korrekterweise) auf 1 Repräsentanten
+    kollabieren liess und das hier eigentlich zu testende NaN-Ausschluss-Verhalten maskierte."""
+    _rng = np.random.default_rng(2)
+    good_rows = [(np.linspace(0, 1, 12)[i] + _rng.normal(0, 0.02, 96)).tolist()
                  for i in range(11)]
     # Ein Ausreisser-Trial mit deutlich weniger Perioden ⇒ n_obs = min(...) sinkt auf dessen Länge,
     # aber die Gruppenzahl bleibt >= 8 (Grenzfall wird über die anderen Zeilen sauber mitgetragen).
@@ -138,7 +153,12 @@ def test_nan_degenerate_group_rows_excluded_explicitly():
 
 
 def test_tournament_cfg_overrides_min_configs_and_n_groups():
-    rows = [[0.01] * 200 for _ in range(6)]
+    """Issue #683 — die 6 Zeilen muessen sich UNTERSCHEIDEN: 6 identische Flat-Configs waeren
+    (korrekterweise) Duplikate der #683-Near-Duplicate-Reduktion und wuerden auf 1 effektive Config
+    kollabieren — dieser Test prueft aber die Config-Override-Mechanik (pbo_min_configs/pbo_n_groups),
+    nicht das Clustering."""
+    rng = np.random.default_rng(9)
+    rows = rng.normal(0.01, 0.01, (6, 200)).tolist()
     tcfg = {"pbo_min_configs": 5, "pbo_n_groups": 8}
     pbo, telemetry = cmod._study_pbo(_study(rows), tournament_cfg=tcfg)
     assert telemetry["pbo_n_configs"] == 6

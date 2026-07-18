@@ -430,6 +430,53 @@ def assert_gate_collinearity_guard(trial_gate_deltas: list, *, threshold: float 
     return result
 
 
+# Issue #679 — Konsolidierungs-Priorität für kollineare eligible-Gates: PSR (skalenfrei,
+# fenster-/annualisierungs-invariant, T-bewusst, #614) ist das statistisch schärfste Gate und wird
+# IMMER als "zu behaltendes" Gate empfohlen; die übrigen drei werden in dieser Reihenfolge als
+# Konsolidierungs-Kandidat markiert, sobald sie mit einem HÖHER priorisierten Gate kollinear sind.
+_GATE_CONSOLIDATION_PRIORITY = (
+    "oos_min_psr", "oos_min_expectancy", "oos_min_profitable_folds_frac", "any_condition",
+)
+
+
+def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, *, threshold: float = 0.9) -> dict:
+    """Issue #679 — hebt die #667-Kollinearitäts-DIAGNOSE (bislang NUR ein WARNING-Log) auf einen
+    STRUKTURIERTEN, maschinenlesbaren Redundanz-ALARM: ``eligible_requires_all`` addiert korrelierte
+    Klauseln, deren gemeinsame Passrate ≈ der strengsten Einzelklausel entspricht, aber jede
+    zusätzliche korrelierte Klausel senkt die eligible-Rate weiter, ohne echte False-Positive-
+    Kontrolle beizutragen (das leistet die DSR/PBO-Ebene bereits).
+
+    Für jedes Gate-Paar mit ``|ρ| > threshold`` (Default 0.9, aus dem Issue-Text) wird — via
+    ``_GATE_CONSOLIDATION_PRIORITY`` (PSR hat die höchste Prioritaet, wird nie als redundant
+    markiert) — das NIEDRIGER priorisierte Gate als ``redundant_candidate`` markiert. Rückgabe:
+    ``{'n_samples', 'alarms': [{'keep', 'redundant_candidate', 'rho'}], 'redundant_candidates': {...}}``
+    — ``alarms`` ist leer, wenn keine Kollinearität über der Schwelle liegt (kein Alarm, reine
+    Diagnose bleibt über ``assert_gate_collinearity_guard`` verfügbar). Diese Funktion selbst
+    KONSOLIDIERT NICHTS automatisch (welches Gate tatsächlich aus ``eligible_requires_all`` entfernt
+    wird, bleibt eine bewusste, dokumentierte Config-/PR-Entscheidung, #679-Akzeptanzkriterium:
+    "wird als Redundanz-Alarm ausgewertet, nicht nur geloggt") — sie macht den Alarm aber
+    STRUKTURIERT auswertbar (Tooling/Dashboards/Tests können darauf reagieren), statt nur eine
+    Log-Zeile zu emittieren."""
+    result = gate_rank_correlation_matrix(trial_gate_deltas)
+    priority = {k: i for i, k in enumerate(_GATE_CONSOLIDATION_PRIORITY)}
+    alarms = []
+    redundant_candidates: dict[str, float] = {}
+    for (k1, k2), rho in result["correlations"].items():
+        if rho is None or abs(rho) <= threshold:
+            continue
+        # Höhere Prioritaet (kleinerer Index) wird behalten; die andere ist der Konsolidierungs-Kandidat.
+        keep, candidate = (k1, k2) if priority.get(k1, 99) < priority.get(k2, 99) else (k2, k1)
+        alarms.append({"keep": keep, "redundant_candidate": candidate, "rho": rho})
+        prev = redundant_candidates.get(candidate)
+        if prev is None or abs(rho) > abs(prev):
+            redundant_candidates[candidate] = rho
+    return {
+        "n_samples": result["n_samples"],
+        "alarms": alarms,
+        "redundant_candidates": redundant_candidates,
+    }
+
+
 def _any_condition_distance(
     m: "TournamentMetrics", weights: dict, tournament_cfg: dict | None
 ) -> float:

@@ -69,5 +69,58 @@
     "rsi_oversold": 30.0,
     "rsi_overbought": 70.0,
     "trade_amount_pct": 15.0
+  },
+  "SqueezeBreakoutStrategy": {
+    "bb_period": 20,
+    "bb_std_dev": 2.0,
+    "keltner_period": 20,
+    "keltner_multiplier": 1.5,
+    "min_squeeze_bars": 6,
+    "cooldown_bars": 6,
+    "atr_period": 14,
+    "atr_trailing_multiplier": 2.0,
+    "max_bars_in_trade": 24,
+    "trade_amount_pct": 15.0
+  },
+  "OpeningRangeBreakoutStrategy": {
+    "or_bars": 3,
+    "or_atr_buffer": 0.25,
+    "cooldown_bars": 6,
+    "atr_period": 14,
+    "atr_trailing_multiplier": 2.0,
+    "max_bars_in_trade": 24,
+    "max_daily_trades": 2,
+    "trade_amount_pct": 15.0
+  },
+  "DonchianRegimeBreakoutStrategy": {
+    "donchian_period": 20,
+    "adx_period": 14,
+    "adx_threshold": 20.0,
+    "ema_period": 50,
+    "cooldown_bars": 6,
+    "atr_period": 14,
+    "atr_trailing_multiplier": 2.5,
+    "max_bars_in_trade": 24,
+    "trade_amount_pct": 15.0
+  },
+  "Rsi2ReversionStrategy": {
+    "rsi_period": 2,
+    "rsi_oversold": 10.0,
+    "rsi_overbought": 90.0,
+    "ema_period": 100,
+    "cooldown_bars": 3,
+    "atr_period": 14,
+    "atr_trailing_multiplier": 1.5,
+    "max_bars_in_trade": 24,
+    "trade_amount_pct": 15.0
+  },
+  "GapContinuationStrategy": {
+    "gap_threshold_pct": 0.015,
+    "cooldown_bars": 0,
+    "atr_period": 14,
+    "atr_trailing_multiplier": 2.0,
+    "max_bars_in_trade": 24,
+    "max_daily_trades": 1,
+    "trade_amount_pct": 15.0
   }
 }

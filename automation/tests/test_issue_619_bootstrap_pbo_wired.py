@@ -61,7 +61,8 @@ def test_pbo_low_for_consistent_is_oos():
     assert pbo < 0.5
     assert telemetry["pbo_n_configs"] == 12
     assert telemetry["pbo_n_groups"] == 12
-    assert telemetry["pbo_metric"] == "period_return"
+    # Issue #683 — Split-Metrik ist seit #683 der per-Gruppen-Sortino, nicht der rohe Gruppen-Mittelwert.
+    assert telemetry["pbo_metric"] == "group_sortino"
 
 
 def test_pbo_none_when_too_few_trials():
