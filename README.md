@@ -20,11 +20,12 @@ Dieses Dokument ist der **zentrale Einstieg** und verlinkt alle Detail-Handbüch
 8. [Precision-System (Nachkommastellen)](#8-precision-system-nachkommastellen)
 9. [Backtest, Walk-Forward & Turnier](#9-backtest-walk-forward--turnier)
 10. [Live-Deployment & Safety-Interlock](#10-live-deployment--safety-interlock)
-11. [Verzeichnis- & Log-Struktur](#11-verzeichnis---log-struktur)
-12. [Tests & Pre-Flight-Checks](#12-tests--pre-flight-checks)
-13. [Dokumentations-Landkarte](#13-dokumentations-landkarte)
-14. [Bekannte offene Punkte & Roadmap](#14-bekannte-offene-punkte--roadmap)
-15. [Dokumentations-Bereinigung (offene Issues)](#15-dokumentations-bereinigung-offene-issues)
+11. [Paper-Trading-Guardrails (GR-01–04)](#11-paper-trading-guardrails-gr-01-04)
+12. [Verzeichnis- & Log-Struktur](#12-verzeichnis---log-struktur)
+13. [Tests & Pre-Flight-Checks](#13-tests--pre-flight-checks)
+14. [Dokumentations-Landkarte](#14-dokumentations-landkarte)
+15. [Bekannte offene Punkte & Roadmap](#15-bekannte-offene-punkte--roadmap)
+16. [Dokumentations-Bereinigung (offene Issues)](#16-dokumentations-bereinigung-offene-issues)
 
 ---
 
@@ -266,7 +267,68 @@ Fehlt eine Bedingung, läuft der Bot automatisch im **Dry-Run** (keine echten Or
 
 ---
 
-## 11. Verzeichnis- & Log-Struktur
+## 11. Paper-Trading-Guardrails (GR-01–04)
+
+> 🟡 **Status: geplant, nicht implementiert.** Dieses Kapitel beschreibt vier Sicherheitsmechanismen, die den Live-/Paper-Betrieb **zusätzlich** zum Safety-Interlock aus [Kapitel 10](#10-live-deployment--safety-interlock) absichern sollen. Sie sind als GitHub-Issues **#710–#718** spezifiziert (Katalog: `ISSUES_paper_trading_guardrails_20260718.md`), aber noch nicht gemergt. Der Abschnitt beantwortet die Frage: *Was ändert sich für den Betrieb, sobald diese Issues umgesetzt sind?*
+
+### Warum das nötig ist
+
+Der bestehende Bot (Kapitel 9–10) trifft eine **einmalige** Entscheidung: Turnier bestehen → live schalten. Was danach mit einer einzelnen offenen Position passiert — wie lange sie offen bleibt, ob der Markt gerade handelbar ist, wie viel Kapital insgesamt riskiert wird, was nach einem Verbindungsabbruch mit ihr geschieht — ist heute **nicht** durchgängig abgesichert. Die vier Guardrails schließen genau diese vier Lücken, unabhängig davon, welche Strategie gerade aktiv ist.
+
+### GR-01 — Die 24-Stunden-Zeitbox
+
+**Regel:** Keine Position bleibt länger als 24 Stunden offen — unabhängig davon, ob sie gerade gewinnt oder verliert.
+
+**Warum:** Eine Position, die "auf Erholung wartet", bindet Kapital und Risiko unbegrenzt. Eine feste Obergrenze erzwingt Diszipliniertheit: Gewinn mitnehmen oder Verlust begrenzen, aber spätestens nach einem Tag raus.
+
+**Wie umgesetzt:** Der Bot zählt bereits heute die Anzahl der 1-Stunden-Kerzen ("Bars"), seit eine Position eröffnet wurde. Nach 24 solchen Bars wird zwangsweise geschlossen. Umgesetzt wird lediglich, dass **kein** Parameter — weder Default noch die vom Optimizer durchsuchten Wertebereiche — diese 24er-Grenze mehr überschreiten darf (heute sind bis zu 120 Bars, also 5 Tage, möglich). Übersteht eine Position einen Neustart des Bots, wird ihr Alter aus dem gespeicherten Zustand rekonstruiert, damit die Zählung nicht bei null neu beginnt (siehe GR-04).
+
+### GR-02 — Der Spread-Filter
+
+**Regel:** Ist der Unterschied zwischen Kauf- und Verkaufspreis (Spread) gerade ungewöhnlich groß, wird **kein** neuer Trade eröffnet.
+
+**Warum:** Ein breiter Spread bedeutet schlechte Handelsbedingungen — oft ausgelöst durch geringe Liquidität, Marktöffnung/-schluss oder Nachrichtenereignisse. Ein Einstieg zu diesem Zeitpunkt kostet überproportional viel allein durch die Differenz zwischen Kauf- und Verkaufspreis, bevor sich die Position überhaupt bewegt hat.
+
+**Wie umgesetzt:** Der Spread wird heute nur **im Backtest** als Kostenmodell simuliert, hat aber im Live-Betrieb keine Wirkung. Neu: Direkt vor jeder Order wird der aktuelle Spread gegen einen Schwellenwert geprüft (abgeleitet aus dem ohnehin je Symbol hinterlegten Referenzwert); liegt er darüber, wird der Einstieg abgelehnt und protokolliert.
+
+### GR-03 — Die Positions- und Kapital-Obergrenze
+
+**Regel:** Es gibt eine feste Obergrenze, wie viele Positionen gleichzeitig über **alle** Strategien hinweg offen sein dürfen, und wie groß eine einzelne Order maximal sein darf.
+
+**Warum:** Jede Strategie hat heute ihre eigene, unabhängige Obergrenze — aber niemand behält den Überblick, wie viel das System als Ganzes gerade riskiert, wenn mehrere Strategien gleichzeitig aktiv sind. Ohne eine Gesamtgrenze kann das System theoretisch weit mehr Kapital binden, als beabsichtigt.
+
+**Wie umgesetzt:** Zusätzlich zur bestehenden Pro-Strategie-Grenze wird eine **system-weite** Obergrenze für die Gesamtzahl offener Positionen eingeführt, plus ein harter Höchstbetrag pro einzelner Order (bisher wird eine Order nur relativ zum verfügbaren Kapital bemessen, nie mit einer absoluten Obergrenze gedeckelt).
+
+### GR-04 — Der Abgleich nach Verbindungsabbruch
+
+**Regel:** Nach jedem Neustart oder Verbindungsabbruch gleicht der Bot seinen eigenen Datenstand **vollständig** mit dem tatsächlichen Kontostand bei eToro ab, bevor er weiterarbeitet.
+
+**Warum:** Verbindungen brechen ab — WLAN-Aussetzer, Server-Neustart, eToro-Wartung. Kommt der Bot zurück online, muss er wissen: Ist eine Position, die er für offen hält, bei eToro vielleicht längst geschlossen worden (durch manuelles Eingreifen oder eine automatische Liquidation)? Und: Ist eine Position während der Downtime unbemerkt über ihre 24-Stunden-Grenze (GR-01) hinausgelaufen?
+
+**Wie umgesetzt:** Heute wird nur auf Order-Ebene abgeglichen, verwaiste "Phantom-Positionen" müssen von Hand bereinigt werden. Neu: Ein automatischer Abgleich bei jedem Reconnect vergleicht den kompletten offenen Positionsbestand. Bei eToro geschlossene, im Bot aber noch offene Positionen werden automatisch nachgezogen; Positionen, deren 24-Stunden-Fenster während der Downtime abgelaufen ist, werden sofort geschlossen. Dafür merkt sich der Bot ab sofort **wann** jede Position eröffnet wurde, nicht nur, dass sie offen ist.
+
+### Zusätzlich: eine "klügere" Gewinnmitnahme
+
+Losgelöst von den vier Guardrails, aber im selben Zuge umgesetzt: Statt eines einmalig fixen Gewinnziels pro Position kann optional ein **Ziel, das mit der Zeit näher an den Einstiegspreis heranrückt**, aktiviert werden. Der Gedanke: Je näher die 24-Stunden-Grenze rückt, desto eher soll auch ein kleinerer, aber sicherer Gewinn mitgenommen werden, statt stur auf das ursprüngliche Ziel zu warten. Dieser Mechanismus ist rein optional (Default: aus) und ändert am bestehenden Verhalten nichts, solange er nicht aktiv eingeschaltet wird.
+
+### Was sich für den Optimierer ändert
+
+Der Prozess, der die besten Strategie-Parameter sucht (Kapitel 9), bewertet Kandidaten künftig nicht mehr nur nach Rendite und Risiko, sondern erhält einen **zusätzlichen, kleinen Abschlag** für Positionen, die unnötig lange offen bleiben — als sanften Anreiz, zügig abzuschließen, statt die 24-Stunden-Grenze routinemäßig auszureizen. Die bestehende, bereits gut erprobte Bewertungsformel wird dabei **erweitert**, nicht ersetzt: Bei ausgeschaltetem Abschlag (Default) verhält sich alles exakt wie bisher.
+
+| Guardrail / Erweiterung | Löst | Issue(s) |
+|---|---|---|
+| GR-01 — 24h-Zeitbox | Positionen ohne Obergrenze für die Haltedauer | #714, #717 |
+| GR-02 — Spread-Filter | Einstiege bei schlechten, teuren Handelsbedingungen | #715 |
+| GR-03 — Positions-/Kapital-Cap | Fehlende system-weite Risikogrenze über alle Strategien | #716 |
+| GR-04 — Reconnect-Abgleich | Manuelle Nacharbeit + unbemerkt abgelaufene Positionen nach Ausfällen | #717 |
+| Dynamisches Gewinnziel | Starres Zielprofit ohne Rücksicht auf die verstreichende Zeit | #712, #713 |
+| Zeitbox-Abschlag im Optimizer | Optimierer "belohnt" bisher langes Halten nicht extra, bestraft es aber auch nicht | #710, #711 |
+
+**Betroffene Dateien.** `automation/strategies/hourly_strategy_base.py`, `automation/adapters/etoro_state_manager.py`, `automation/adapters/etoro_execution.py`, `automation/optimizer/spaces.py`, `automation/config/strategy_defaults.json`, `automation/reward.py`. Vollständige technische Spezifikation (Root-Cause, Mathematik, Akzeptanzkriterien pro Issue): `ISSUES_paper_trading_guardrails_20260718.md`.
+
+---
+
+## 12. Verzeichnis- & Log-Struktur
 
 | Pfad | Inhalt |
 |------|--------|
@@ -286,7 +348,7 @@ Fehlt eine Bedingung, läuft der Bot automatisch im **Dry-Run** (keine echten Or
 
 ---
 
-## 12. Tests & Pre-Flight-Checks
+## 13. Tests & Pre-Flight-Checks
 
 ```bash
 # Vollständige Test-Suite (Unit-Tests des automation-Pakets)
@@ -300,11 +362,11 @@ python3 -c "import json; d=json.load(open('automation/config/instrument_map.json
 
 Alle Tests respektieren das Standalone-Prinzip (AST-Prüfung in `test_automation_isolation.py`). Roundtrip-Tests und `total_trades > 0`-Assertions stellen sicher, dass echte Fills erzeugt werden (nicht nur „kein Crash").
 
-> ℹ️ **Test-Verzeichnis:** Tests liegen im `automation/`-Paket (`automation/tests/`). Einige ältere Handbücher referenzieren noch `tests/` ohne Präfix — siehe [Kapitel 15](#15-dokumentations-bereinigung-offene-issues). Vollständige Test-Anleitung: [`manuals/TESTING.md`](manuals/TESTING.md).
+> ℹ️ **Test-Verzeichnis:** Tests liegen im `automation/`-Paket (`automation/tests/`). Einige ältere Handbücher referenzieren noch `tests/` ohne Präfix — siehe [Kapitel 16](#16-dokumentations-bereinigung-offene-issues). Vollständige Test-Anleitung: [`manuals/TESTING.md`](manuals/TESTING.md).
 
 ---
 
-## 13. Dokumentations-Landkarte
+## 14. Dokumentations-Landkarte
 
 | Handbuch | Inhalt | Status |
 |----------|--------|--------|
@@ -320,12 +382,13 @@ Alle Tests respektieren das Standalone-Prinzip (AST-Prüfung in `test_automation
 | [`manuals/end_to_end_workflow.md`](manuals/end_to_end_workflow.md) | Vollständige 5-Phasen-Pipeline | (im Repo) |
 | [`manuals/backtesting_manual.md`](manuals/backtesting_manual.md) | Backtest-Konfiguration und Auswertung | (im Repo) |
 | [`manuals/feature_automation_LS.md`](manuals/feature_automation_LS.md) | Implementierungsstatus | (im Repo) |
+| [`ISSUES_paper_trading_guardrails_20260718.md`](ISSUES_paper_trading_guardrails_20260718.md) | Vollspezifikation der Guardrails GR-01–04 + Zeitbox-Optimierung (Issues #710–#718, s. [Kapitel 11](#11-paper-trading-guardrails-gr-01-04)) | 🆕 geplant |
 
 **Faustregel zur Quellenhierarchie:** Bei Widersprüchen gilt immer der **Code** vor `AGENTS.md` vor den übrigen Handbüchern. `AGENTS.md` ist bei jeder strukturellen Änderung aktuell zu halten.
 
 ---
 
-## 14. Bekannte offene Punkte & Roadmap
+## 15. Bekannte offene Punkte & Roadmap
 
 Diese Themen sind bewusste Kompromisse oder Optimierungspotenziale. Sie sind **kein Bug**, aber relevant für die Weiterentwicklung. Vollständige Ausarbeitung mit Mathematik, erwartetem Effekt und Umsetzungsplan: **[`manuals/feature_roadmap.md`](manuals/feature_roadmap.md)**.
 
@@ -337,7 +400,7 @@ Diese Themen sind bewusste Kompromisse oder Optimierungspotenziale. Sie sind **k
 
 ---
 
-## 15. Dokumentations-Bereinigung (offene Issues)
+## 16. Dokumentations-Bereinigung (offene Issues)
 
 Bei der Konsolidierung wurden Inkonsistenzen zwischen den Handbüchern und dem dokumentierten Code-Stand gefunden. Sie sind als GitHub-Issues im AGENTS.md-Format aufbereitet in **[`DOC_CLEANUP_ISSUES.md`](DOC_CLEANUP_ISSUES.md)** (zum direkten Einstellen als GitHub Issues / Jules-Prompts):
 
@@ -354,4 +417,4 @@ Bei der Konsolidierung wurden Inkonsistenzen zwischen den Handbüchern und dem d
 
 ---
 
-*Master-README erstellt am 2026-06-09. Bei strukturellen Änderungen sind dieses Dokument und `automation/AGENTS.md` synchron zu halten.*
+*Master-README erstellt am 2026-06-09, zuletzt erweitert am 2026-07-18 (Kapitel 11: Paper-Trading-Guardrails). Bei strukturellen Änderungen sind dieses Dokument und `automation/AGENTS.md` synchron zu halten.*
