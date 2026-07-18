@@ -29,6 +29,26 @@
 18.5. [Agent-Rollen, System-Prompts & Interaktionsprotokolle (Enterprise / Security-Audit-Grade)](#185-agent-rollen-system-prompts--interaktionsprotokolle-enterprise--security-audit-grade)
 19. [Changelog (Agent-Maintained)](#19-changelog-agent-maintained)
 
+**Anhang — chronologische Forensik-/Bug-Kaskaden-Kataloge (nicht Teil der Kernkapitel 1–19, aber verbindliche Pitfall-Quelle):**
+
+- [ARCHITECTURAL INVARIANT: Walk-Forward Boundary Anchoring (Issue #463)](#architectural-invariant-walk-forward-boundary-anchoring-issue-463)
+- [AUDIT #470 — Verifizierte mathematische Invarianten (#460–#469): HARTE AXIOME](#audit-470--verifizierte-mathematische-invarianten-460469-harte-axiome)
+- [Architektonische Methodik: IS/OOS Split und "State Bleed"](#architektonische-methodik-isoos-split-und-state-bleed)
+- [Known Pitfalls & Architecture Notes (Pitfalls #59–#98 Fortsetzung)](#known-pitfalls--architecture-notes)
+- [Walk-Forward Validation & Look-Ahead Bias Prevention (Purge & Embargo)](#walk-forward-validation--look-ahead-bias-prevention-purge--embargo)
+- [Pitfall-Kompendium — Bug-Kaskade #521–#530 (NautilusTrader ≥1.226 Equity/MtM/Annualisierung)](#pitfall-kompendium--bug-kaskade-521530-nautilustrader-1226-equitymtmannualisierung)
+- [🧭 Bug-Kaskade #587–#600 — Reward-/Metrik-Pipeline-Kohärenz](#-bug-kaskade-587600--reward-metrik-pipeline-kohärenz-sortino--gate--reward--holdout--selektion)
+- [Bug-Kaskade #613/#615/#617 — Selektions-/Divergenz-/Gate-Kohärenz](#bug-kaskade-613615617--selektions-divergenz-gate-kohärenz-p0p0p1)
+- [Bug-Kaskade #611–#625 — Statistische Signifikanz der Selektion](#bug-kaskade-611625--statistische-signifikanz-der-selektion-p0-kaskade)
+- [Bug-Kaskade #629–#639 — PSR-Migrations-Nachwirkungen & Gate-Kalibrierung](#bug-kaskade-629639--psr-migrations-nachwirkungen--gate-kalibrierung-p0-kaskade)
+- [Bug-Kaskade #649–#660 — Selektions-Integrität & Deflations-Kohärenz](#bug-kaskade-649660--selektions-integrität--deflations-kohärenz-p0-kaskade)
+- [Issue-Katalog #663–#672 — Fold-Kommensurabilität, CSCV-Granularität & Regime-symmetrische Gates](#issue-katalog-663672--fold-kommensurabilität-cscv-granularität--regime-symmetrische-gates-sitzung-2026-07-17-lauf-1)
+- [Issue-Katalog #675–#686 — Optimizer: Mathematische Exzellenz, vier Kohorten](#issue-katalog-675686--optimizer-mathematische-exzellenz-vier-kohorten-sitzung-2026-07-17-lauf-2)
+- [Issue-Katalog #695–#702 — DSR-Familien-Decluster, Gate-Konsolidierung & Purge-Klassifikation](#issue-katalog-695702--dsr-familien-decluster-gate-konsolidierung--purge-klassifikation-2026-07-18)
+- [Epic #702 (Issues #703–#710) — Iterativer Champion-Warm-Start & symbol-skopierte Default-Nachführung](#epic-702-issues-703710--iterativer-champion-warm-start--symbol-skopierte-default-nachführung)
+
+> **Pitfall-Index-Hinweis:** Die höchste zum Zeitpunkt dieser Doku-Härtung vergebene Nummer ist **Pitfall #205** (siehe §16-Konvention). Vor dem Anlegen eines neuen Pitfalls IMMER `grep -n "Pitfall #" automation/AGENTS.md` laufen lassen — Nummern sind global eindeutig über die gesamte Datei, nicht nur innerhalb von §16.
+
 ---
 
 ## 1. Produktübersicht
@@ -506,6 +526,17 @@ Diese drei Invarianten sind **hart** und dürfen von keinem Walk-Forward-Modul a
 ---
 
 ## 16. Bekannte Pitfalls & offene Bugs
+
+> **Nummerierungs-Konvention (verbindlich für jeden Agenten, der einen neuen Pitfall dokumentiert):**
+> Pitfall-Nummern sind **global eindeutig über die gesamte Datei** — nicht nur innerhalb von §16, denn
+> spätere Kataloge (`## Bug-Kaskade …`, `## Issue-Katalog …`) hängen ihre Pitfalls chronologisch ans
+> Dateiende an, ausserhalb dieses Kapitels. Vor dem Vergeben einer neuen Nummer **immer**
+> `grep -noE "Pitfall #[0-9]+" automation/AGENTS.md | sort -t'#' -k2 -n | tail -5` laufen lassen und die
+> nächste freie Nummer nehmen — niemals eine Nummer aus dem Gedächtnis/der letzten Session raten. Die
+> höchste zum Zeitpunkt dieser Session (2026-07-18, Epic #702) vergebene Nummer ist **#205**. Historische
+> Kollisionen (drei verschiedene Pitfalls trugen `#89`, zwei `#93`) wurden auf `#89`/`#93` (kanonisch,
+> per Cross-Referenz aus Axiom A9 bzw. der eigenen Einleitung identifiziert) sowie `#198`–`#200`
+> (umnummeriert) aufgelöst — siehe Changelog 2026-07-18.
 
 ### 🟢 Pitfall #66 — Silent Worker Crash Swallowing (Fail-Fast vs Resilience, Issue #355)
 **Symptom:** Der Orchestrator meldet "[Phase 3] Backtest beendet (Exit-Code: 0)" und startet das Live-Deployment, obwohl im Hintergrund Worker-Prozesse aufgrund fundamentaler Python-Fehler (z.B. `ImportError`) abgestürzt sind.
@@ -1095,7 +1126,8 @@ konditioniert). `_shortfall_distance(..., scale)` entkoppelt Eligibility-Schwell
 `oos_min_profit_factor`) — **kein stiller Fallback auf IS-`min_*`**. `_constraint_distance_penalty` wirft
 fail-loud, wenn die OOS-Keys fehlen; `compute_reward` lädt dafür `tournament.json` nach, falls mit
 explizitem `weights`, aber ohne `tournament_cfg` aufgerufen. **Verbot:** IS-Schwellen im OOS-Gate;
-`scale ≤ 0` (ZeroDivision). (Pitfall #88-Konditionierung; Guard: `test_issue_468_penalty_conditioning.py`.)
+`scale ≤ 0` (ZeroDivision). (Issue #468 — kein eigener Pitfall-Header, nicht zu verwechseln mit
+Pitfall #88 [Leakage in OOS Window, Axiom A6]; Guard: `test_issue_468_penalty_conditioning.py`.)
 
 ### Axiom A9 (#469) — Reward-Semantics-Version: fail-loud gegen Posterior-Korruption
 `_check_reward_semantics_version` bricht **fail-loud** (`ValueError`) ab, wenn eine geladene Study eine
@@ -1305,7 +1337,7 @@ Der `backtest_runner`-Worker klassifiziert jeden Trial in **genau einen** OOS-Zu
 
 ---
 
-## 19. Changelog
+## 19. Changelog (Agent-Maintained)
 
 ### 2026-07-06 — Issue-Set #559–#571 (Mathematische Sanierung der Reward-Landschaft des Per-Symbol-Sweeps `TSLA.ETORO`)
 
@@ -1359,7 +1391,7 @@ Tests: `test_issue_546_expectancy_notional.py`, `test_issue_547_constraint_dista
 > **Anweisung für Jules:** Bei jeder Änderung am `automation/`-Paket hier einen Eintrag (Datum, Beschreibung, Dateien) anhängen.
 
 
-### 🟢 Pitfall #89 — OOS-Eval an IS-Gate gekoppelt (Issue #471 / #487)
+### 🟢 Pitfall #198 — OOS-Eval an IS-Gate gekoppelt (Issue #471 / #487)
 **Symptom:** OOS-Metriken werden an das Bestehen des IS-Gates gekoppelt und bei IS-Fail verworfen, obwohl die OOS-Trades existieren. Dies führt zu OOS-Anchor Divergence (Wurzelursache für Issue #494).
 **Fix:** `_oos_eval`-Zuweisung in `select_winners` iteriert über `all_results`. OOS-Evaluierbarkeit vollständig von IS-Eligibility getrennt. Fail-Loud-Invariante in `parse_tournament`.
 **Betroffen:** `automation/backtest_runner.py`, `automation/optimizer/parsing.py`
@@ -1374,7 +1406,7 @@ Tests: `test_issue_546_expectancy_notional.py`, `test_issue_547_constraint_dista
 **Fix/Regel:** Die `embargo_period_days` schiebt den `oos_start_ns` nach vorne. Invariante: `oos_end_ns = oos_start_ns + oos_window_ns`.
 **Betroffen:** `automation/optimizer/trial_config.py`
 
-### 🟢 Pitfall #93 — oos_covered Lower-Bound-only (Issue #475 / #491)
+### 🟢 Pitfall #200 — oos_covered Lower-Bound-only (Issue #475 / #491)
 **Symptom:** `oos_covered` wird naiv durch `fill_ts_max >= oos_window_start_ns` berechnet, was bei Walk-Forward mit Lücken zwischen den Folds fehlerhaft ist.
 **Fix:** `oos_covered` ist nun als Bounded-Union implementiert (`∃ fill : ∃ fold k : oos_start_k ≤ fill < oos_end_k`).
 **Betroffen:** `automation/backtest_runner.py`
@@ -1392,6 +1424,8 @@ Tests: `test_issue_546_expectancy_notional.py`, `test_issue_547_constraint_dista
 
 | Datum | Änderung | Dateien |
 |-------|----------|---------|
+| 2026-07-18 | **Implementierung Epic #702 (Issues #703–#710) — Iterativer Champion-Warm-Start & symbol-skopierte Default-Nachführung.** Neues Modul `automation/optimizer/champions.py`: `store_champion` (#703, Champion-Store unter `data/optimizer/champions/`, aufgerufen von `sweep.py` unmittelbar nach `export_symbol_proposal`, nur im echten Storage-Pfad, fail-open); `load_champion_seed`/`load_champion_entry` (#704, neue Tier-Stufe `global_best → champion → strategy_defaults → none` in `run_optimization.resolve_symbol_shrinkage_seed`, additiv-optional via `symbol`/`opt_data`-Kwargs — HI-2-rückwärtskompatibel, Legacy-Aufrufer ohne diese Argumente bit-identisch); `champion_is_admissible` (#705, EINE zentrale Guard-Funktion für Schreiben UND Lesen: reward-version, override-keys>0, Rejection-Allowlist `{None, REJECT_HOLDOUT_DSR_DROP, REJECT_HOLDOUT_BOOTSTRAP_CI, REJECT_HOLDOUT_GATE}` — explizit OHNE `REJECT_SELECTION_PBO`/`REJECT_BOUNDARY_SOLUTION`, R_symbol-Floor, Demotion-Schwelle); `maybe_write_back` (#706, Writeback nach neuem `automation/config/strategy_symbol_seeds.json`, symbol-skopiert, NIE `strategy_defaults.json`, Gate: Korroboration UND Fensterfortschritt ODER echte READY_FOR_PR-Promotion; `optimizer/resolve.py::resolve_params`-Präzedenz additiv erweitert); Regions-Korroboration + Erhalt-vs-Ersetzung-Merge-Logik (#707, wiederverwendet `bounds.normalized_param_distance`, dieselbe Metrik wie die A4.3-Shrinkage); Regime-Degradation-Demotion (#708, `degrade_streak`, entfernt Store- + Seed-Eintrag); Study-User-Attr-Telemetrie in `optimize_symbol` (#709, `champion_seed_source`/`champion_R_symbol_at_store`/`champion_corroboration_count`/`champion_age_days`/`champion_window_advanced`/`champion_writeback_applied`, Log-Parität mit `shrinkage_*`); 49 neue Tests in `test_issue_702_champion_warmstart.py` (#710, inkl. #694-Kopplungs-Sanity). Sechs neue `champion_*`-Config-Keys in `optimizer.json` (Zero-Hardcoding, Default-Werte dokumentiert bit-identisch zum Pre-Epic-Verhalten bei `champion_enabled=false`). **Purge-Klassifikation:** das gesamte Epic ist purge-frei, KEIN `reward_semantics_version`-Bump (P0–P2 ändern die Gate-Mathematik nicht — ein Champion-Seed ist nur ein weiterer Trial, der erneut durch alle bestehenden Gates läuft; die #711-Bounds-Recentering-Option bleibt bewusst zurückgestellt/nicht umgesetzt). **Kritische Vorbedingung verifiziert:** #694/#695 (`cpcv.cluster_effective_configs` auf der DSR-Familien-Ebene, Pitfall #190) war bereits vor Epic-Start implementiert — die in Issue #705 §9 verlangte Reihenfolge (erst declustern, dann warm-starten) ist damit erfüllt, test-gesichert statt nur angenommen. Neue Pitfalls #201–#205 (§ „Epic #702"). Volle Suite (1170 passed, dieselben 20 vorbestehenden, umgebungsbedingten Fehlschläge wie vor dieser Änderung — verifiziert via `git stash`, identische Fehlerliste ohne/mit diesem Epic). | `automation/optimizer/champions.py` (neu), `automation/optimizer/sweep.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/resolve.py`, `automation/config/optimizer.json`, `automation/config/strategy_symbol_seeds.json` (neu), `automation/tests/test_issue_702_champion_warmstart.py` (neu), `automation/AGENTS.md` |
+| 2026-07-18 | **AGENTS.md-Doku-Härtung (GH-#705, "absolut wasserdicht dokumentiert").** Reine Dokumentations-Integrität, kein Code-/Verhaltens-Fix, keine `reward_semantics_version`-Wirkung. (1) **TOC-Vollständigkeit:** Inhaltsverzeichnis um einen "Anhang"-Block mit allen bislang unverlinkten `##`-Sektionen ergänzt (Architectural Invariant, Audit #470, IS/OOS-Methodik, Known-Pitfalls-Fortsetzung, Walk-Forward-Validation, sowie sämtliche Bug-Kaskaden-/Issue-Kataloge #521–702). (2) **Drei fehlende `##`-Parent-Header ergänzt:** Issue-Katalog #663–#672, #675–#686 und #695–#702 hingen bisher headerlos unter `## Bug-Kaskade #649–#660`, obwohl inhaltlich eigenständige, bereits an anderer Stelle vollständig dokumentierte Kataloge (Config-Keys-Tabelle + Watertight-Invariants-Block existierten je Katalog bereits) — jetzt mit eigenem `##`-Header + kurzer Einleitung, konsistent zum Muster der älteren Kataloge. (3) **Pitfall-Nummern-Kollisionen aufgelöst:** Drei verschiedene `### Pitfall #89`-Header (OOS-Eval/IS-Gate, Reward-Shaping-Monotonie, Semantics-Guard) und zwei verschiedene `### Pitfall #93`-Header (oos_covered Lower-Bound, Annualisierungsfaktor) kollidierten auf denselben Nummern — je EIN kanonischer Header (identifiziert per Cross-Referenz aus Axiom A9 bzw. der eigenen Einleitung) behält seine Nummer, die übrigen wurden auf neue, bislang unbenutzte Nummern **#198–#200** umnummeriert (kein Content gelöscht). (4) **Axiom A8** referenzierte fälschlich "Pitfall #88-Konditionierung" (Pitfall #88 ist tatsächlich Leakage-in-OOS-Window, ein anderes Thema) — auf direkte Issue-#468-Referenz korrigiert, kein Pitfall-Header existiert dafür. (5) **§16-Einleitung** um eine Nummerierungs-Konvention ergänzt (globale Eindeutigkeit über die ganze Datei, `grep`-Pflicht vor Vergabe einer neuen Nummer), um künftige Kollisionen zu verhindern. | `automation/AGENTS.md` |
 | 2026-07-18 | **Implementierung Issue-Katalog #695–#702 (Optimizer — DSR-Familien-Decluster, Gate-Konsolidierung, Strategie-Closed-Loop) + reward_semantics_version 12→13 + Purge-Klassifikation (Pitfalls #190–#197).** Acht verzahnte Fixes. **#695/Pitfall #190** (`deflation_family_period_returns` declustert die DSR-Familien-Multiplizität via `cpcv.cluster_effective_configs`, dieselbe Pearson-Schwelle wie PBO — `deflation_n_effective = max(deflation_n, deflation_n_family_effective)`, #652-Invariante gewahrt); **#696/Pitfall #191** (`deflation_n_effective` war ein Fehlname vor #695 — trug die ROHE statt der effektiven Zahl, jetzt korrigiert + `deflation_n_family_raw`/`deflation_n_family_effective` explizit telemetriert); **#697/Pitfall #192** (`min_expectancy` aus `eligible_requires_all` entfernt — |ρ|=0.961 kollinear zu `oos_min_psr`, superseded den #657-Zwischenstand; `reward.assert_eligible_requires_all_not_redundant` als neuer Fail-Loud-Konsument des #679-Alarms; `calibration.calibrate_gate_consolidation_false_positive_rate` verifiziert per Monte-Carlo, dass die FP-Rate durch die Konsolidierung nicht steigt — **EINZIGER** Fix dieses Katalogs mit gestempelter Eligibility-Wirkung); **#698/Pitfall #193** (`invalid_on_continuous_bars`-Flag für `GapContinuationStrategy` — ein Gap auf synthetischen 24/7-Bars misst nur die Differenz zweier aufeinanderfolgender Bars, kein Bounds-Problem); **#699/Pitfall #194** (zwei unabhängige Strategie-Code-Defekte statt eines Bounds-Problems: `AdxAtrMomentumStrategy`s toter `DirectionalMovement.value`-ADX-Gate durch EMA-Steigung ersetzt [dieselbe NautilusTrader-1.230.0-Klasse Defekt wie Pitfall #189]; `TrendPullbackStrategy` fehlte der verbindliche `_check_exits_and_update(bar)`-Aufruf, dadurch 0 Exits ausser Gegensignal; zusätzlich `previously_recommended_override` eskaliert eine wiederholte `search_space_override`-Empfehlung auf `denylist`); **#700/Pitfall #195** (`ZERO_ELIGIBLE_PLATEAU` verlangte `all(evaluated)`, ein GEMISCHTER Cohort — z. B. `SqueezeBreakoutStrategy` mit Trade-Cap-Treffern — fiel dadurch durch beide Early-Stop-Netze; Fix: Bedingung nur noch auf die EVALUIERTEN Trials bezogen, neue `eligibility_curve`-Fensterdiagnose); **#701/Pitfall #196** (`deflation_var_floor`, seit Pitfall #187 als DEPRECATED markiert, nach Verifikation der Unerreichbarkeit von `n_periods` VOLLSTÄNDIG entfernt — `sr0_multiple_testing_robust` verlangt `n_periods` jetzt als Pflicht-Keyword, `theoretical_var_source` immer `'lo2002'`; DSR-Drop-Rejection bleibt konservativ bei `deflation_sr0 is None`); **#702/Pitfall #197** (Purge-Disziplin: GENAU #697 bumpt `reward_semantics_version` [12→13], die übrigen sieben Fixes sind purge-frei [Confirm-/Telemetrie-/Strategie-Code-/Diagnose-only oder Entfernung bereits toten Codes] — Kapitel 7 in `manuals/strategie_optimierung.md` um die katalogspezifische Klassifikationstabelle ergänzt). Test-gesichert: 6 neue Test-Dateien (`test_issue_695`/`697`/`698`/`699`/`700`/`701`, 65 neue Tests) + mehrere bestehende Fixtures korrigiert, die unbeabsichtigt betroffen waren (`test_issue_637`, `test_issue_657`, `test_issue_670`, `test_issue_576`, `test_issue_651`, `test_issue_653`, `test_issue_685`, `test_issue_686`). | `automation/optimizer/confirm.py`, `automation/optimizer/sweep.py`, `automation/optimizer/sweep_diagnostics.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/deflation.py`, `automation/optimizer/reward.py`, `automation/optimizer/calibration.py`, `automation/strategies/adx_atr_momentum.py`, `automation/strategies/trend_pullback.py`, `automation/optimizer/spaces.py`, `automation/config/tournament.json`, `automation/config/optimizer.json`, `automation/config/strategies.json`, `manuals/strategie_optimierung.md`, `automation/AGENTS.md` |
 | 2026-07-17 | **Regime-Roster-Erweiterung: fünf neue Strategien (Issues #689–#693, Guide #688).** `SqueezeBreakoutStrategy` (#689, Volatilitäts-Expansion nach Kontraktion), `OpeningRangeBreakoutStrategy` (#690, Momentum-Ignition am Tagesbeginn), `DonchianRegimeBreakoutStrategy` (#691, Trend-Fortsetzung nur im Trend-Regime), `Rsi2ReversionStrategy` (#692, Kurzfrist-Reversion im übergeordneten Trend), `GapContinuationStrategy` (#693, Overnight-/Event-Gap-Fortsetzung) — jede nach dem 5-Datei-Muster (Strategie-Modul, `strategy_defaults.json`, `strategies.json`-Registrierung, `spaces.py`-Zweig) und ausschliesslich auf `HourlyStrategyBase`-Exit-Verwaltung aufgesetzt. **Trockenlauf-Befund (Pitfall #189):** `DirectionalMovement.value` liefert in der installierten NautilusTrader-Version (1.230.0) konstant `0.0` (verifiziert per direktem Indikatortest, `.pos`/`.neg` funktionieren) — dieselbe Klasse Defekt wie das bereits dokumentierte `AdxAtrMomentumStrategy`-Problem. `DonchianRegimeBreakoutStrategy` nutzt daher den SPEC-vorbereiteten Fallback (EMA-Steigung statt ADX-Schwelle); `adx_period`/`adx_threshold` aus dem Suchraum entfernt (Phantom-Tuning-Vermeidung). Alle fünf Strategien über echte NautilusTrader-BacktestEngine-Läufe (isolierter Subprozess, `run_single_backtest_worker`) auf synthetischen Regime-Daten verifiziert (Trades: Squeeze 7, ORB 68, Donchian 34, RSI2 59, Gap 11) — kein STRUCTURAL_ALL_UNEVALUABLE. 5 neue Test-Dateien (`test_issue_689`–`test_issue_693`), je mit 5-Datei-Checkliste + Backtest-Smoke-Test. Zwei dieser Tests (direkte `Bar`-Konstruktion) sind zusätzliche, bestätigte Instanzen der bereits bekannten `test_issue_489`-`sys.modules`-Mock-Pollution (nur im VOLLEN Suite-Lauf sichtbar, isoliert grün) — keine Regression. | `automation/strategies/squeeze_breakout.py` (neu), `automation/strategies/opening_range_breakout.py` (neu), `automation/strategies/donchian_regime_breakout.py` (neu), `automation/strategies/rsi2_reversion.py` (neu), `automation/strategies/gap_continuation.py` (neu), `automation/config/strategy_defaults.json`, `automation/config/strategies.json`, `automation/optimizer/spaces.py`, `automation/AGENTS.md` |
 | 2026-07-17 | **Implementierung Issue-Katalog #675–#686 (Optimizer — Mathematische Exzellenz, Sitzung 2026-07-17, Lauf 2) + reward_semantics_version 11→12.** Zwölf verzahnte Fixes in vier Kohorten. **Kohorte A (Validierungs-Geometrie):** #675/Pitfall #177 (opt-in `walk_forward.retrain`-Modus in `compute_fold_boundaries`, embargo-sicheres rollierendes IS-Fenster je Fold, additive `rolling_fold_is_oos_divergence`-Diagnose; Default `false`=bit-identisch — echtes Per-Fold-Parameter-Refit ist architektonisch out-of-scope, siehe Docstring); #676/Pitfall #178 (`oos_profitable_folds_frac`-Nenner-Bugfix auf `oos_folds_evaluable` statt `oos_folds_total`; Gate aus dem Default `eligible_requires_all` entfernt — redundant zu `fold_dispersion_weight`+PBO); #677/Pitfall #179 (`oos_min_evaluable_folds` aus demselben Grund aus dem Default entfernt + optionaler relativer Schwellen-Modus). **Kohorte B (Promotion-Kalibrierung):** #678/Pitfall #180 (der behauptete Kalibrier-Deadlock existierte nicht — `calibrate_t_adaptive_confidence` neu, Verifikation bei T≈36 bestätigt `promotion_correction_mode='conjunction'` ERNEUT); #679/Pitfall #181 (`gate_collinearity_redundancy_alarm` — strukturierter Alarm statt reinem Log, PSR-priorisierte Konsolidierungs-Empfehlung); #680/Pitfall #182 (`any_arm_unreachable_policy` Default `'warn'→'recalibrate'`, Mechanik existierte bereits seit #668). **Kohorte C (Suchraum & Deployment):** #681/Pitfall #183 (Diagnose-Closed-Loop über einen SEPARATEN Auto-Cache, `diagnosed_pairs_cache.json` — NIE die menschlich-kuratierte Denylist direkt); #682/Pitfall #184 (`PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL`-Route in `confirm_per_symbol_promotion`, wenn der globale Vektor selbst das Symbol-Holdout besteht und 0 symbol-eligible Trials vorliegen). **Kohorte D (Statistische Verfeinerung):** #683/Pitfall #185 (PBO-Split-Metrik: Gruppen-Mittelwert → Gruppen-Sortino; `cpcv.cluster_effective_configs` reduziert Near-Duplicate-Configs vor der CSCV-Partitionierung); #684/Pitfall #186 (Expectancy-Gate-Fallback bei fehlender Kosten-Telemetrie: `_read_default_round_trip_cost_bps()`, Config-abgeleitet statt der 13×-strengeren statischen Konstante); #685/Pitfall #187 (`deflation_var_floor` mit unmissverständlichem `⚠️ DEPRECATED`-Marker versehen). **Zuletzt:** #686/Pitfall #188 (`reward_semantics_version` 11→12, PRO-Issue begründet — GENAU drei Fixes #676/#677/#684 ändern die gestempelte `oos_eligible`-Semantik; neues Bulk-Purge-Werkzeug `automation.optimizer.purge_stale_studies` ergänzt den bestehenden In-Process-Guard). Alle Fixes test-gesichert (12 neue `test_issue_67[5-9]_*`/`test_issue_68[0-6]_*`-Dateien + mehrere bestehende Fixtures korrigiert, die unbeabsichtigt von den Fixes betroffen waren: `test_issue_550`, `test_issue_563`, `test_issue_615`, `test_issue_619`, `test_issue_637`, `test_issue_649`, `test_issue_663`, `test_issue_672`). Volle Suite (Einzeldateien/-subsets) grün; 18 vorbestehende, ausschliesslich beim VOLLEN Suite-Lauf auftretende Test-Isolations-Fehlschläge (u. a. `test_allocator.py`, `test_sizing_precedence.py`, `test_live_allocator_smoke.py`, `test_live_execution_defaults.py`) sind NACHWEISLICH unabhängig von diesem Katalog (identisch reproduzierbar via `git stash -u` auf dem Ausgangs-Commit `634ef483`: 18/18 identische Fehlschläge, 948 passed ohne die 82 neuen/erweiterten Tests dieses Katalogs). | `automation/backtest_runner.py`, `automation/optimizer/confirm.py`, `automation/optimizer/cpcv.py`, `automation/optimizer/deflation.py`, `automation/optimizer/reward.py`, `automation/optimizer/run_optimization.py`, `automation/optimizer/sweep.py`, `automation/optimizer/sweep_diagnostics.py`, `automation/optimizer/calibration.py`, `automation/optimizer/purge_stale_studies.py` (neu), `automation/config/backtest.json`, `automation/config/tournament.json`, `automation/config/optimizer.json`, `manuals/strategie_optimierung.md`, `automation/AGENTS.md` |
@@ -1499,8 +1533,8 @@ Der `daily_orchestrator.py` und der `backtest_runner.py` nutzen nun ein echtes, 
 *Zuletzt aktualisiert: 2026-07-06 (Issue-Set #559–#571: Mathematische Sanierung der Reward-Landschaft — weiche Sortino-Sättigung, return-verankerter Near-Miss-Gradient, kostenrelatives Expectancy-Gate, Kommissions-Semantik 2×→1×, Shrinkage-Fallback, symmetrische Overfit-/Fold-Dispersions-Strafe, Deflated-Selektion aktiv, Per-Trial-Telemetrie, Budget-Gating; Pitfalls #115–#118 + Kern-Invariante Reward-Gradient. Vorher: Issue-Set #546–#555). Datum und Changelog bei jeder Änderung an dieser Datei aktualisieren.*
 
 ## Known Pitfalls & Architecture Notes
-### 🟢 Pitfall #89 — Reward Shaping Monotonie-Guard & Floor-Plateau (Issue #488)
-**Symptom:** Der Optimizer nutzt das IS-Trade-Shaping (`is_total_trades`) als primäres Optimierungsziel im Unevaluable-Raum, selbst wenn die Strategie keine OOS-Evaluation auslöst und IS keinerlei Performance liefert (`_gate_proximity == 0`). Zudem verschwendet der TPE-Sampler bei rein strukturell unevaluierbaren Symbolen 100 Trials am Flat-Floor.
+### 🟢 Pitfall #199 — Reward Shaping Monotonie-Guard & Floor-Plateau (Issue #488) [Konsolidierung von #91 + #95]
+**Symptom:** Der Optimizer nutzt das IS-Trade-Shaping (`is_total_trades`) als primäres Optimierungsziel im Unevaluable-Raum, selbst wenn die Strategie keine OOS-Evaluation auslöst und IS keinerlei Performance liefert (`_gate_proximity == 0`). Zudem verschwendet der TPE-Sampler bei rein strukturell unevaluierbaren Symbolen 100 Trials am Flat-Floor. *(Diese Zusammenfassung dupliziert #91 und #95 — für Details siehe dort; hier nur als kompakte Querreferenz erhalten.)*
 **Fix/Regel:**
 1. Shaping ist strikt als "Tie-Breaker-Gradient" definiert und darf NIEMALS ein primäres Optimierungsziel sein. Die `activity` (Trade-Fortschritt) muss zwingend durch `_gate_proximity` geclippt werden (`activity := min(activity, _gate_proximity)`).
 2. Der Floor-Plateau Guard implementiert eine strikte Early-Stop Invariante: Wenn die ersten `K` Trials streng nach `n_startup_trials` alle `oos_evaluated=False` sind (All-Unevaluable), wird die Study hart abgebrochen und ein JSON `STUDY_EARLY_STOP` Event mit Reason `STRUCTURAL_ALL_UNEVALUABLE` geloggt. Dieser Guard verändert die Reward-Landschaft mathematisch nicht (reine Compute-Reduktion).
@@ -2454,6 +2488,19 @@ Hygiene (#655, #656), Version+Purge (#658, letzte strukturelle Aktion vor einem 
 - **Eine Korrektur-Konjunktion für Promotion-Entscheidungen ist nie geraten:** ein bit-identischer, dokumentierter Default ODER eine aus einem echten Kalibrierlauf empirisch begründete, reproduzierbare Wahl (Pitfall #165).
 - **Ein OR-Arm-Gate wird sowohl global (Kalibrier-Fixture, Config-Load) als auch lauf-spezifisch (beobachtete Verteilung, Study-Abschluss) auf Erreichbarkeit geprüft:** global "erreichbar" schliesst einen strukturellen Kollaps für ein spezifisches Symbol nicht aus (Pitfall #166).
 
+## Issue-Katalog #663–#672 — Fold-Kommensurabilität, CSCV-Granularität & Regime-symmetrische Gates (Sitzung 2026-07-17, Lauf 1)
+
+Ein Forensik-Lauf auf dem #649–#660-migrierten System deckte zehn weitere, verzahnte Defekte in der
+Fold-/Selektions-Statistik auf: annualisierte Fold-Sortinos sind über Folds nicht kommensurabel (#167),
+PBO/CSCV auf den vier groben Walk-Forward-Folds misst Regime-Transfer statt Overfit (#168), ein
+gleichgewichtetes Fold-Konsistenz-Gate ist an Regime-Heterogenität gekoppelt (#169), und ein absolutes
+Excess-Return-Gate ist im Bärenmarkt blind (#170). Ergänzend: kollineare Gates kompoundieren den
+Type-II-Fehler (#171), ein OR-Arm-Gate kollabiert lautlos auf einer per-Study-unerreichbaren Schwelle
+(#172), `--strategies all` verbrennt Trial-Budget an trade-armen Strategien (#173), ein
+Rückwärtskompat-Boolean darf nie als Telemetrie-Proxy umgedeutet werden (#174), der modale IS-Grund
+verdeckt die tatsächliche Confirm-Ablehnungsursache (#175), und `reward_semantics_version` bumpt nur
+bei tatsächlich default-aktiven Eligibility-Wechseln (#176). Pitfalls #167–#176, Issues #663–#672.
+
 ### 🟢 Pitfall #167 — Eine per-Fold annualisierte Sortino-Serie ist über Folds NICHT kommensurabel [BEHOBEN: GH-#665]
 **Symptom:** `per_fold_oos_sortino` streute über die Kohorte in [−24.6, +15.6] mit Median ≈ −19 in Fold 1–3; dieselben Werte konsumierten PBO/CSCV (Pitfall #168) und die Fold-Median-Telemetrie (`sortino_ratio_fold_median`).
 **Root-Cause:** `_get_annualization_factor(mtm_series)` leitet den Annualisierungsfaktor EMPIRISCH aus der Kalender-Span JEDES Folds ab (`n_periods·31_557_600/total_span_seconds`) — unterschiedliche Kalenderabdeckung (Wochenenden/Feiertage/Lücken) erzeugt einen FOLD-SPEZIFISCHEN Faktor. Zwei Folds mit identischer per-Perioden-Performance, aber unterschiedlicher Kalender-Span, liefern damit unterschiedliche annualisierte Sortinos — jede fold-übergreifende Mittelung/Aggregation dieser Serie ist strukturell falsch (misst teilweise Kalender-Artefakte, nicht Performance-Unterschiede). Zusätzlich ist der annualisierte Wert bei kleinem Fold-T (z. B. T≈137 Bars) statistisch bedeutungslos (dieselbe Pathologie wie Pitfall #134, jetzt auf Fold-Granularität).
@@ -2548,6 +2595,10 @@ Hygiene (#655, #656), Version+Purge (#658, letzte strukturelle Aktion vor einem 
 - **Ein Rückwärtskompat-Boolean behält NUR seine ursprünglich dokumentierte Bedeutung** — er wird nie stillschweigend als Proxy für eine andere, orthogonale Aussage in eine neue Diagnose übersetzt (Pitfall #174).
 - **Zwei ähnlich benannte Felder mit unterschiedlicher Semantik (Promotion-Ursache vs. Diagnose) sind immer durch mindestens eines davon eindeutig als "die tatsächlich blockierende Ursache" gekennzeichnet** (Pitfall #175, Fortsetzung #161).
 - **In einem Katalog mit gemischten Opt-in-/Default-Änderungen wird der Versions-Bump-Entscheid PRO ISSUE einzeln getroffen und im Changelog explizit begründet** — nie pauschal für den ganzen Katalog (Pitfall #176, Fortsetzung #164).
+
+## Issue-Katalog #675–#686 — Optimizer: Mathematische Exzellenz, vier Kohorten (Sitzung 2026-07-17, Lauf 2)
+
+Zwölf verzahnte Fixes in vier Kohorten, `reward_semantics_version` 11→12. **Kohorte A (Validierungs-Geometrie):** opt-in rollierendes IS-Fenster je Fold (#675/Pitfall #177), Fold-Zähler-Nenner-Bugfix + Redundanz-Entfernung (#676/Pitfall #178, #677/Pitfall #179). **Kohorte B (Promotion-Kalibrierung):** ein behaupteter Kalibrier-Deadlock existierte nicht (#678/Pitfall #180), ein strukturierter Kollinearitäts-Alarm ersetzt reines Logging (#679/Pitfall #181), `any_arm_unreachable_policy` auf `'recalibrate'` aktiviert (#680/Pitfall #182). **Kohorte C (Suchraum & Deployment):** Diagnose-Closed-Loop über separaten Auto-Cache statt der kuratierten Denylist (#681/Pitfall #183), `PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL`-Route bei 0 symbol-eligiblen Trials (#682/Pitfall #184). **Kohorte D (Statistische Verfeinerung):** PBO-Split-Metrik auf Gruppen-Sortino umgestellt + Near-Duplicate-Reduktion (#683/Pitfall #185), Expectancy-Gate-Fallback config-abgeleitet (#684/Pitfall #186), `deflation_var_floor` DEPRECATED markiert (#685/Pitfall #187). Zuletzt: `reward_semantics_version`-Bump PRO Issue begründet + Bulk-Purge-Werkzeug (#686/Pitfall #188). Pitfalls #177–#188, Issues #675–#686.
 
 ### 🟢 Pitfall #177 — Ein statisch verankertes IS-Fenster + kontiguierliche OOS-Folds testet Regime-PERSISTENZ, nicht Config-ROBUSTHEIT [BEHOBEN: GH-#675]
 **Symptom:** Die per-Fold-Vorzeichenstruktur war UNIFORM `---+` über ALLE Strategien und Configs (P(letzter Fold>0) 0,62–0,98; P(frühere Folds>0) 0,06–0,13) — kein Config-Effekt, sondern ein reiner Regime-Effekt des Symbols: ein 180-Tage-IS-Modell wurde ohne Neuanpassung auf bis zu 381 Tage entfernte OOS-Daten angewandt.
@@ -2665,6 +2716,21 @@ Hygiene (#655, #656), Version+Purge (#658, letzte strukturelle Aktion vor einem 
 - **Ein Legacy-Fallback-Key trägt IMMER ein unmissverständliches Deprecation-Signal an prominenter Stelle** (Pitfall #187, Fortsetzung #174).
 - **Der Versions-Bump-Entscheid wird PRO Issue einzeln getroffen und explizit begründet; ein Bulk-Purge-Werkzeug ersetzt nie den In-Process-Guard** (Pitfall #188, Fortsetzung #176).
 
+## Issue-Katalog #695–#702 — DSR-Familien-Decluster, Gate-Konsolidierung & Purge-Klassifikation (2026-07-18)
+
+Acht verzahnte Fixes, `reward_semantics_version` 12→13. `deflation_family_period_returns` declustert die
+DSR-Familien-Multiplizität via `cpcv.cluster_effective_configs` — dieselbe near-Duplicate-Reduktion, die
+PBO seit Pitfall #185 nutzt (#695/Pitfall #190); `deflation_n_effective` trug zuvor fälschlich die ROHE
+statt der effektiven Zahl (#696/Pitfall #191); ein strukturierter Kollinearitäts-Alarm blieb erneut ohne
+Fail-Loud-Konsumenten (#697/Pitfall #192 — **einziger** Fix dieses Katalogs mit gestempelter
+Eligibility-Wirkung, daher der alleinige Auslöser des Versions-Bumps); ein Gap-Signal auf kontinuierlichen
+24/7-Bars mass keinen echten Handelspausen-Gap (#698/Pitfall #193); zwei unabhängige Strategie-Code-Defekte
+erzeugten strukturell 0 Round-Trips (#699/Pitfall #194); ein gemischter Evaluierbarkeits-Cohort fiel durch
+beide Early-Stop-Netze (#700/Pitfall #195); ein als DEPRECATED markierter Fallback-Key wurde nach
+Verifikation vollständig entfernt (#701/Pitfall #196); und der Katalog schliesst mit einer expliziten
+Purge-Klassifikationstabelle, die künftigen Agenten die reward_semantics_version-Frage abnimmt
+(#702/Pitfall #197). Pitfalls #190–#197, Issues #695–#702.
+
 ### 🟢 Pitfall #190 — Die familienweite Multiple-Testing-Multiplizität zählte near-identische Configs als unabhängige Schüsse aufs Tor [BEHOBEN: GH-#695]
 **Symptom:** `deflation_n_family` (Pitfall-Fortsetzung #652) summiert die Anzahl eligibler Trials über ALLE Strategien-Studies eines Symbols ROH — ein dichtes Optuna-Suchraum-Grid liefert dabei near-identische Parametrisierungen mit near-identischen `oos_period_returns`-Serien, die je als ein EIGENER unabhängiger "Schuss aufs Tor" in `E[max_N]` (Bailey/López de Prado) gezählt wurden.
 **Root-Cause:** Dieselbe Root-Cause-Klasse wie Pitfall #185 (PBO/CSCV) — nur auf der DSR-Familien-Ebene: die NOMINELLE Trial-Zahl über mehrere Studies ist strukturell grösser als die Zahl EFFEKTIV unabhängiger Hypothesen, weil ein dichtes Grid dieselbe Parametrisierung viele Male in geringfügigen Variationen testet.
@@ -2744,3 +2810,172 @@ Hygiene (#655, #656), Version+Purge (#658, letzte strukturelle Aktion vor einem 
 - **Rule:** Jede Strategie, die im Target-File `config/strategies.json` das Flag `"active": true` aufweist, MUSS zwingend eine korrespondierende Hyperparameter-Mapping-Definition in `automation/optimizer/spaces.py` (Function: `sample_params`) besitzen.
 - **Violation:** Abweichungen resultieren im Fatal Error `STRATEGY_NO_SEARCH_SPACE` (Referenz: Issue #595) und erzwingen einen Immediate Exit der Bootstrapping-Phase.
 - **Zero-Hardcoding Policy:** Optimizer-Search-Spaces (Dictionaries) dürfen ausschliesslich über Optuna-Sampling-Methoden (`trial.suggest_*`) definiert werden. Statische Parameter-Zuweisungen im Optimizer-Scope sind verboten. Sämtliche vererbten Management-Parameter der `HourlyStrategyBase` müssen ebenfalls dynamisch abgebildet werden.
+
+## Epic #702 (Issues #703–#710) — Iterativer Champion-Warm-Start & symbol-skopierte Default-Nachführung
+
+Der Per-Symbol-Pfad hatte bereits seit #565 einen Warm-Start + Shrinkage-Anker
+(`resolve_symbol_shrinkage_seed`), aber zwei Lücken verhinderten „an bestem Punkt anknüpfen" und
+„Defaults nachziehen": (A) `load_global_best` akzeptierte einen Seed AUSSCHLIESSLICH bei
+`status=="READY_FOR_PR"` — bei 0 Promotions blieb `seed_source` dauerhaft `strategy_defaults`,
+die tatsächlich entdeckten (aber noch nicht promoteten) Optima wurden zwischen Sweep-Läufen
+verworfen; (B) es gab keinen Speicher für symbol-getunte Kandidaten ausserhalb des
+menschlich-freigegebenen `strategies.json`-Pfads. Das Epic öffnet diesen Pfad **kontrolliert und
+integritätsneutral** über drei Ebenen (Details: `automation/optimizer/champions.py`-Modul-Docstring):
+
+- **Ebene 1 (Such-Anker, jeder Lauf, niedriges Risiko):** ein neues `data/optimizer/champions/`
+  (`champions.store_champion`, #703) persistiert den besten *erreichten* Holdout-Kandidaten je
+  (Strategie, Symbol) — auch wenn er nicht promotet wurde, sofern er die Rejection-Allowlist und
+  den Qualitäts-Floor besteht. `resolve_symbol_shrinkage_seed` (#704) liest ihn als neue Tier-Stufe
+  ZWISCHEN `global_best` und `strategy_defaults` (`champions.load_champion_seed`); der Seed
+  durchläuft beim nächsten Enqueue erneut VOLLSTÄNDIG alle Eligibility-/Holdout-/DSR-Gates auf
+  frischen Daten — integritätsneutral, solange die Multiplizität via #694/#695 (`cluster_effective_
+  configs`) declustert wird (§ kritische Kopplung unten). Die Guards (reward-version, override-keys,
+  Rejection-Allowlist, R_symbol-Floor, Demotion-Schwelle) sind in EINER zentralen Funktion
+  zusammengezogen, `champions.champion_is_admissible` (#705) — dieselbe Prüfkette gated sowohl das
+  Schreiben (Store) als auch das Lesen (Seed), keine duplizierte Guard-Logik in sweep.py/
+  run_optimization.py.
+- **Ebene 2 (Default-Nachführung, korroboriert, mittleres Risiko):** `champions.maybe_write_back`
+  (#706) schreibt einen Champion NUR nach dem neuen, leeren `automation/config/strategy_symbol_
+  seeds.json` (symbol-skopiert, NIEMALS `strategy_defaults.json` — der globale Cross-Symbol-Prior),
+  wenn er entweder eine echte `READY_FOR_PR`-Promotion ist ODER über `champion_promote_after_runs`
+  region-gleiche Läufe (`champions._same_region`, #707) UND ein fortgeschrittenes Datenfenster
+  (`champion_min_advance_days`, Snooping-Schutz) korroboriert wurde. `optimizer/resolve.py::
+  resolve_params` liest die neue Datei additiv zwischen `strategy_defaults.json` und
+  `strategies.json[params]` (instrument-gated, HI-2-rückwärtskompatibel).
+- **Ebene 3 (Live-Deployment) bleibt UNVERÄNDERT menschlich (HI-3):** kein Teil dieses Epics
+  schreibt je `strategies.json`.
+
+**Anti-Stagnation (#708):** ein einmal starker Champion darf nicht dauerhaft ankern, wenn sich das
+Regime dreht — wird eine region-gleiche Re-Evaluierung `champion_demote_after_runs`-mal in Folge
+UNTER `champion_min_R_symbol` gemessen, demotet `store_champion` den Champion (Store- + Seed-Eintrag
+entfernt, Fallback auf `strategy_defaults`). **Telemetrie (#709):** `optimize_symbol` stempelt bei
+`seed_source=="champion"` `champion_seed_source`/`champion_R_symbol_at_store`/`champion_
+corroboration_count`/`champion_age_days`/`champion_window_advanced`/`champion_writeback_applied`
+als Study-User-Attrs (Log-Parität mit den `shrinkage_*`-Attrs aus #565); eine Demotion emittiert
+zusätzlich ein `CHAMPION_DEMOTED`-JSON-Event. **Test-Suite (#710):**
+`automation/tests/test_issue_702_champion_warmstart.py` (49 Tests) — Guard-Matrix, Store-Merge/
+Korroboration/Demotion, Resolver-Tier-Reihenfolge inkl. HI-2-Rückwärtskompatibilität,
+Writeback-Gate (inkl. Snooping-Schutz auf identischem Fenster), Symbol-Scope (nie
+`strategy_defaults.json`), sowie eine #694-Kopplungs-Sanity (siehe unten).
+
+### Kritische Kopplung an #694/#695
+
+**Iterativer Warm-Start ist ohne Familien-Declustering selbst-sabotierend.** Jeder Lauf enqueued
+denselben Champion erneut; der TPE clustert bei `multivariate=True, group=True` eng um ihn — über
+mehrere Läufe entstehen zunehmend korrelierte Near-Duplicate-Configs. Würde die DSR-Deflation die
+**rohe** Familien-Multiplizität zählen, stiege `N` bei jedem Warm-Start-Lauf, `E[max_N]` und damit
+`SR₀` monoton — die DSR-Schwelle würde sich progressiv selbst zuziehen, obwohl die Kandidaten
+unverändert sind (eine Rückkopplung, die exakt die Grösse verschlechtert, die Warm-Start verbessern
+soll). Diese Kopplung ist bereits geschlossen: `cluster_effective_configs` (#694-Linie, seit Pitfall
+#168 für PBO genutzt) reduziert seit **#695/Pitfall #190** auch die familienweite DSR-Multiplizität
+auf effektiv-unabhängige Configs — near-identische Champion-Reenqueues kollabieren auf ~1 effektive
+Config, die Deflation bleibt über wiederholte Warm-Start-Läufe stabil. `test_issue_702_champion_
+warmstart.py::test_repeated_champion_reenqueue_declusters_to_effective_one` sichert diese
+Vorbedingung ab.
+
+### 🔵 Pitfall #201 — Warm-Start-Seed und Multiple-Testing-Deflation sind gekoppelt [ABGESICHERT: GH-#703/#695]
+**Symptom (hypothetisch, ohne #694/#695 real eingetreten):** Iteratives Re-Enqueue desselben
+Champions ohne Familien-Declustering lässt die DSR-Schwelle über aufeinanderfolgende Sweep-Läufe
+progressiv strenger werden, obwohl die tatsächlich getesteten Kandidaten unverändert bleiben —
+Promotion würde von Lauf zu Lauf schwerer, nicht weil die Strategie schlechter wird, sondern weil
+die Multiple-Testing-Buchhaltung die Near-Duplicate-Population fälschlich als unabhängige Hypothesen
+zählt (siehe „Kritische Kopplung" oben).
+**Fix/Regel:** `champions.py` (Epic #702) wird ERST NACH #694/#695 (`cluster_effective_configs` auf
+der DSR-Familien-Ebene, Pitfall #190) aktiviert — dieselbe Reihenfolge-Vorbedingung, die GitHub-Issue
+#705 §9 explizit macht. Die Kopplung ist test-gesichert (siehe oben), nicht nur dokumentiert.
+**Invariante:** Ein Warm-Start-Mechanismus, der denselben Kandidaten wiederholt in dieselbe Study
+enqueued, MUSS über eine Familien-Declustering-Korrektur verfügen, BEVOR er aktiviert wird — sonst
+zieht sich die Multiple-Testing-Schwelle selbst zu (self-sabotierende Rückkopplung).
+**Betroffen:** `automation/optimizer/champions.py`, `automation/optimizer/cpcv.py` (`cluster_effective_configs`), `automation/optimizer/confirm.py` (Familien-Decluster, #695).
+
+### 🟢 Pitfall #202 — Symbol-getunte Parameter dürfen nie automatisch in den globalen Cross-Symbol-Prior [BEHOBEN: GH-#706]
+**Symptom:** Ein Champion-/Autotuning-Mechanismus, der seinen besten gefundenen Vektor direkt nach
+`strategy_defaults.json` schriebe, würde JEDES Symbol mit dem für EIN Symbol optimierten Vektor
+vergiften. Empirischer Beleg (GitHub-Issue #705 §2, TSLA.ETORO-Lauf 2026-07-18):
+`FlashCrashReversalStrategy` war auf dem Symbol positiv (R_symbol=+0.385), global toxisch
+(R_global=−2.941) — ein realer, kein hypothetischer Fall.
+**Fix/Regel:** `champions.maybe_write_back` schreibt AUSSCHLIESSLICH nach dem neuen, symbol-
+skopierten `automation/config/strategy_symbol_seeds.json` (`seeds[strategy][symbol]`) — niemals
+nach `strategy_defaults.json`. `optimizer/resolve.py::resolve_params` liest die neue Datei additiv
+zwischen `strategy_defaults.json` (Cross-Symbol-Prior, unverändert) und `strategies.json[params]`
+(menschlicher PR, gewinnt immer).
+**Invariante:** Ein automatisch geschriebener Symbol-Seed berührt NIE den globalen Cross-Symbol-
+Default — symbol-getunte Evidenz bleibt strikt symbol-skopiert, unabhängig davon, wie stark sie ist.
+**Betroffen:** `automation/optimizer/champions.py` (`maybe_write_back`, `_write_symbol_seed`), `automation/optimizer/resolve.py`, `automation/config/strategy_symbol_seeds.json` (neu).
+
+### 🟢 Pitfall #203 — Default-Nachführung ohne Fensterfortschritt ist Datenschnüffelei, nicht Optimierung [BEHOBEN: GH-#706]
+**Symptom:** Ein Writeback-Mechanismus, der einen Champion allein aufgrund wiederholter
+Bestätigungen auf DEMSELBEN (oder einem nur trivial fortgeschrittenen) Datenfenster nach
+`strategy_symbol_seeds.json` schreibt, deployt Parameter, die nur auf identischen Daten „bestätigt"
+wurden — exakt die Daten-Schnüffelei-Klasse, gegen die die gesamte DSR-Deflation (#611–#639)
+existiert.
+**Fix/Regel:** `champions.maybe_write_back` verlangt für die korroborations-basierte Route (NICHT
+für eine echte `READY_FOR_PR`-Promotion, die bereits vollständig validiert ist) zusätzlich zur
+Korroboration (`corroboration_count >= champion_promote_after_runs`) einen Fensterfortschritt:
+`catalog_newest_ns` muss um mindestens `champion_min_advance_days` (Default: `backtest.json.
+walk_forward.oos_window_days`) über dem `catalog_newest_ns` der Erst-Sichtung liegen. Test-gesichert
+(`test_writeback_corroborated_but_identical_window_fails_snooping_guard`).
+**Invariante:** Ein korroborations-basierter Writeback verlangt IMMER Korroboration UND
+Fensterfortschritt gemeinsam — Korroboration allein auf statischen Daten ist kein Beleg für
+Generalisierung.
+**Betroffen:** `automation/optimizer/champions.py` (`maybe_write_back`), `automation/config/optimizer.json` (`champion_min_advance_days`).
+
+### 🟢 Pitfall #204 — Seeds nur aus Kandidaten, die den Holdout erreichten UND nicht overfit-/randlösungs-geflaggt sind [BEHOBEN: GH-#703/#705]
+**Symptom:** Ein Champion-Store, der JEDEN Confirm-Ausgang unbesehen persistiert, würde auch
+Kandidaten mit `override-keys==0` (kein Vektor zum Übernehmen, z. B.
+`HOLDOUT_NO_ELIGIBLE_TRIALS`/`REJECT_HOLDOUT_UNREACHABLE` — der Holdout wurde nie erreicht) oder mit
+`REJECT_SELECTION_PBO`/`REJECT_BOUNDARY_SOLUTION` (Overfit-geflaggt bzw. an einer Suchraum-Kante
+klebend) als Seed weiterreichen — beide destabilisieren die Folgesuche, statt sie zu verankern.
+**Fix/Regel:** `champions.champion_is_admissible` (die zentrale #705-Guard-Einheit) verlangt
+nicht-leere `params`, dass der Holdout tatsächlich erreicht wurde, UND eine explizite
+Rejection-Allowlist (`None`/`REJECT_HOLDOUT_DSR_DROP`/`REJECT_HOLDOUT_BOOTSTRAP_CI`/
+`REJECT_HOLDOUT_GATE`) — `REJECT_SELECTION_PBO` und `REJECT_BOUNDARY_SOLUTION` sind explizit
+ausgeschlossen.
+**Invariante:** Ein Seed-Kandidat MUSS den Holdout erreicht haben und darf nicht als Overfit- oder
+Randlösungs-Kandidat geflaggt sein — sonst verankert der Seed die Folgesuche an einem Punkt, der sie
+aktiv in die falsche Richtung zieht.
+**Betroffen:** `automation/optimizer/champions.py` (`champion_is_admissible`, `_ADMISSIBLE_HOLDOUT_REJECT_DETAILS`, `_UNREACHED_HOLDOUT_REJECT_DETAILS`).
+
+### 🟢 Pitfall #205 — Ein Champion ist nicht ewig: ohne Demotion ankert ein stale Optimum die Suche dauerhaft am falschen Punkt [BEHOBEN: GH-#708]
+**Symptom:** Ein Champion-Mechanismus ohne Verfallslogik würde einen einmal starken Kandidaten auf
+unbestimmte Zeit als Anker behalten, selbst wenn sich das Marktregime dreht (z. B. ein in einem
+Bullenmarkt gefundener Champion, re-evaluiert in einem nachfolgenden Bärenmarkt-Fenster) — die Suche
+bliebe dauerhaft an einem nicht mehr repräsentativen Punkt verankert.
+**Fix/Regel:** `champions.store_champion` verfolgt `degrade_streak`: eine region-gleiche
+Re-Evaluierung UNTER `champion_min_R_symbol` erhöht ihn, eine gesunde Re-Evaluierung resettet ihn auf
+0. Erreicht `degrade_streak >= champion_demote_after_runs`, demotet `_demote_champion` den Eintrag
+(Store- + `strategy_symbol_seeds.json`-Eintrag entfernt, `CHAMPION_DEMOTED`-Event, Fallback auf
+`strategy_defaults`).
+**Invariante:** Ein Champion, der wiederholt unter dem Qualitäts-Floor re-evaluiert wird, wird
+IMMER demotet — kein Anker bleibt auf unbestimmte Zeit bestehen, unabhängig davon, wie stark er
+ursprünglich war.
+**Betroffen:** `automation/optimizer/champions.py` (`store_champion`, `_demote_champion`).
+
+### 📋 Neue/geänderte Config-Keys (Epic #702, Issues #703–#710)
+| Key | Datei | Wert | Zweck |
+|---|---|---|---|
+| `champion_enabled` | optimizer.json | *neu* (Default `true`) | Globaler Kill-Switch für Ebene 1+2 (Pitfall #201) |
+| `champion_min_R_symbol` | optimizer.json | *neu* (Default `0.0`) | Qualitäts-Floor fürs Persistieren/Seeding (Pitfall #204) |
+| `champion_promote_after_runs` | optimizer.json | *neu* (Default `2`) | Korroborationen bis Default-Writeback (Pitfall #203) |
+| `champion_demote_after_runs` | optimizer.json | *neu* (Default `2`) | Degrade-Läufe bis Demotion (Pitfall #205) |
+| `champion_min_advance_days` | optimizer.json | *neu* (Default `null` → `backtest.json.walk_forward.oos_window_days`) | Mindest-Fensterfortschritt für Writeback, Snooping-Schutz (Pitfall #203) |
+| `champion_region_eps` | optimizer.json | *neu* (Default `0.10`) | Relative Parameter-Distanz für Regionsgleichheit (Pitfall #202/#205) |
+| `strategy_symbol_seeds.json` | *neu* (Datei) | leer per Default (`{"seeds": {}}`) | Symbol-skopierter, automatisch nachgeführter Default-Prior (Pitfall #202) |
+| `data/optimizer/champions/*.json` | *neu* (Verzeichnis) | leer per Default | Champion-Store, ein File pro (Strategie, Symbol) (Pitfall #201/#204/#205) |
+
+### 🔒 Watertight Invariants (Epic #702, Issues #703–#710) — für künftige Agenten
+- **Ein Warm-Start-Mechanismus, der denselben Kandidaten wiederholt enqueued, braucht IMMER eine
+  Familien-Declustering-Korrektur, bevor er aktiviert wird** — sonst zieht sich die Multiple-Testing-
+  Schwelle selbst zu (Pitfall #201, Kopplung an #694/#695/Pitfall #190).
+- **Ein automatisch geschriebener Symbol-Seed berührt NIE den globalen Cross-Symbol-Default
+  (`strategy_defaults.json`)** — symbol-getunte Evidenz bleibt strikt symbol-skopiert (Pitfall #202).
+- **Ein korroborations-basierter Writeback verlangt IMMER Korroboration UND Fensterfortschritt
+  gemeinsam** — Korroboration allein auf statischen Daten ist Datenschnüffelei (Pitfall #203).
+- **Ein Seed-Kandidat MUSS den Holdout erreicht haben und darf nicht Overfit-/Randlösungs-geflaggt
+  sein** (Pitfall #204).
+- **Ein Champion, der wiederholt unter dem Qualitäts-Floor re-evaluiert wird, wird IMMER demotet** —
+  kein Anker bleibt auf unbestimmte Zeit bestehen (Pitfall #205).
+- **Die Guards fürs Champion-Schreiben UND -Lesen leben in EINER zentralen Funktion
+  (`champion_is_admissible`)** — keine duplizierte Guard-Logik in sweep.py/run_optimization.py.
+- **Ebene 3 (Live-Deployment) bleibt IMMER menschlich (HI-3):** kein Teil dieses Epics schreibt je
+  `strategies.json`.

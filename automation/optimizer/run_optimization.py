@@ -726,18 +726,36 @@ def load_strategy_defaults_params(strategy: str, base_cfg: Path) -> dict:
     return {}
 
 
-def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path) -> tuple[dict, str]:
+def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
+                                  symbol: str | None = None,
+                                  opt_data: dict | None = None,
+                                  catalog_newest_ns: int | None = None) -> tuple[dict, str]:
     """Issue #565 — Shrinkage-/Warm-Start-Referenz für den Per-Symbol-Pfad, mit definiertem
-    Fallback statt Silent-Zero.
+    Fallback statt Silent-Zero. Issue #704 — erweitert um die Champion-Store-Stufe (Ebene 1 des
+    Epics #702) ZWISCHEN ``global_best`` und ``strategy_defaults``.
 
-    Reihenfolge: ``load_global_best`` (Proposal READY_FOR_PR / strategies.json) → strategy_defaults →
-    ``{}``. Gibt ``(seed_params, source)`` zurück, ``source ∈ {'global_best', 'strategy_defaults',
-    'none'}``. Fehlt das echte globale Optimum, ist ``strategy_defaults`` der Prior, gegen den die
+    Reihenfolge: ``load_global_best`` (Proposal READY_FOR_PR / strategies.json) →
+    ``champions.load_champion_seed`` (bester ERREICHTER, aber noch nicht promoteter Holdout-
+    Kandidat, #703/#704) → ``strategy_defaults`` → ``{}``. Gibt ``(seed_params, source)`` zurück,
+    ``source ∈ {'global_best', 'champion', 'strategy_defaults', 'none'}``. Fehlt das echte globale
+    Optimum, ist ``strategy_defaults`` (bzw. der Champion, falls vorhanden) der Prior, gegen den die
     A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen`` NIE still 0 (der Kollaps, bei dem
-    der symbol-getunte Vektor völlig ungezügelt Richtung IS/OOS-CV-Rausch tunt, #565)."""
+    der symbol-getunte Vektor völlig ungezügelt Richtung IS/OOS-CV-Rausch tunt, #565).
+
+    ``symbol``/``opt_data`` sind ADDITIV optional (HI-2): fehlen sie (Legacy-Aufrufer, z. B. das
+    globale ``optimize()`` ohne Symbol-Kontext, oder bestehende Tests), ist das Verhalten
+    bit-identisch zum Pre-#704-Zustand (zwei-stufige Kette ``global_best → strategy_defaults →
+    none``, keine Champion-Stufe) — der Champion-Store ist strikt Per-Symbol-skopiert und ohne
+    ``symbol`` gibt es keinen eindeutigen Store-Pfad."""
     global_best = load_global_best(strategy, base_cfg)
     if global_best:
         return global_best, "global_best"
+    if symbol is not None and opt_data is not None:
+        from automation.optimizer import champions
+        champion = champions.load_champion_seed(strategy, symbol, base_cfg, opt_data=opt_data,
+                                                 catalog_newest_ns=catalog_newest_ns)
+        if champion:
+            return champion, "champion"
     defaults = load_strategy_defaults_params(strategy, base_cfg)
     if defaults:
         return defaults, "strategy_defaults"
@@ -1524,26 +1542,78 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     _check_reward_semantics_version(study, opt_data)
 
     # Gate 2 — Warm-Start + Shrinkage-Referenz. Issue #565: definierter Fallback statt Silent-Zero.
-    # Fehlt das echte globale Optimum (load_global_best leer), wird strategy_defaults der
-    # Warm-Start-Seed UND die Shrinkage-Referenz (param_pen zieht Richtung Default statt ins Leere).
+    # Issue #704 — die Tier-Reihenfolge ist jetzt global_best → champion → strategy_defaults → none
+    # (siehe resolve_symbol_shrinkage_seed-Docstring). Fehlt das echte globale Optimum, wird der
+    # Champion (falls vorhanden) bzw. strategy_defaults der Warm-Start-Seed UND die
+    # Shrinkage-Referenz (param_pen zieht Richtung Anker statt ins Leere).
     # ``shrinkage_inactive`` (Study-User-Attr) markiert LAUT & forensisch sichtbar (analog
-    # Floor-Guard #409/#456), dass KEIN echtes globales Optimum als Anker vorliegt — unabhängig vom
-    # Defaults-Fallback, damit der fehlende Global-Stage-Anker im Standalone-Sweep nie still bleibt.
-    global_best, seed_source = resolve_symbol_shrinkage_seed(strategy, cfg_dir)
-    shrinkage_inactive = seed_source != "global_best"
+    # Floor-Guard #409/#456), dass KEIN validierter Anker (global_best ODER champion) vorliegt —
+    # unabhängig vom Defaults-Fallback, damit der fehlende Anker im Standalone-Sweep nie still bleibt.
+    global_best, seed_source = resolve_symbol_shrinkage_seed(
+        strategy, cfg_dir, symbol=symbol, opt_data=opt_data, catalog_newest_ns=catalog_newest_ns)
+    # Issue #704 — ein Champion ist wie global_best ein ECHTER Anker (der param_pen zieht Richtung
+    # eines real erreichten Holdout-Kandidaten statt ins Leere), auch wenn er noch nicht promotet
+    # ist — shrinkage_inactive bleibt daher False für BEIDE Quellen.
+    shrinkage_inactive = seed_source not in ("global_best", "champion")
     study.set_user_attr("shrinkage_seed_source", seed_source)
     study.set_user_attr("shrinkage_inactive", shrinkage_inactive)
-    if seed_source == "strategy_defaults":
+    if seed_source == "champion":
+        # Issue #709 — Study-User-Attrs & Log-Parität mit #565: jeder Warm-Start-Effekt eines
+        # Champions ist forensisch nachvollziehbar (analog shrinkage_*-Telemetrie).
+        from automation.optimizer import champions as _champions
+        champion_entry = _champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        if champion_entry:
+            lifecycle = champion_entry.get("lifecycle") or {}
+            integrity = champion_entry.get("integrity") or {}
+            corroboration_count = lifecycle.get("corroboration_count")
+            r_symbol_at_store = (champion_entry.get("quality") or {}).get("R_symbol")
+            first_seen_run = lifecycle.get("first_seen_run")
+            study.set_user_attr("champion_seed_source", "champion")
+            study.set_user_attr("champion_R_symbol_at_store", r_symbol_at_store)
+            study.set_user_attr("champion_corroboration_count", corroboration_count)
+            study.set_user_attr("champion_writeback_applied", bool(lifecycle.get("writeback_applied")))
+            # Issue #709 — ``champion_age_runs``: TROTZ des Namens (Issue-Formel "now - first_seen_
+            # run") KEIN Lauf-Zähler — der Champion-Eintrag führt keinen separaten Zähler "Anzahl
+            # Läufe seit Erstsichtung" (nur ``corroboration_count``, der ausschliesslich bei
+            # Regionsgleichheit erhöht wird). Hier daher ehrlich als verstrichene Kalendertage seit
+            # ``first_seen_run`` berechnet (Wall-Clock-Alter), nicht als Lauf-Anzahl.
+            try:
+                import datetime as _dt
+                _first_dt = _dt.datetime.strptime(first_seen_run, "%Y%m%dT%H%M%SZ").replace(
+                    tzinfo=_dt.timezone.utc)
+                champion_age_days = (_dt.datetime.now(_dt.timezone.utc) - _first_dt).total_seconds() / 86400.0
+            except (TypeError, ValueError):
+                champion_age_days = None
+            study.set_user_attr("champion_age_days", champion_age_days)
+            # Issue #709 — ``champion_window_advanced``: dieselbe Snooping-Schutz-Grösse wie
+            # ``maybe_write_back`` (#706), hier rein informativ (KEINE Gate-Wirkung im Enqueue-Pfad).
+            current_ns = integrity.get("catalog_newest_ns")
+            first_ns = lifecycle.get("first_seen_catalog_newest_ns")
+            window_advanced = None
+            if current_ns is not None and first_ns is not None:
+                min_advance_days = opt_data.get("champion_min_advance_days")
+                if min_advance_days is None:
+                    min_advance_days = _champions._default_min_advance_days(cfg_dir)
+                advance_days = (current_ns - first_ns) / 1_000_000_000.0 / 86400.0
+                window_advanced = advance_days >= float(min_advance_days or 0)
+            study.set_user_attr("champion_window_advanced", window_advanced)
+            logging.getLogger("optimizer").info(
+                "[#704] %s/%s: Champion-Seed aktiv (R_symbol=%s, corroboration=%s, source_run=%s) "
+                "— enqueue + param_pen.",
+                strategy, symbol, r_symbol_at_store, corroboration_count, first_seen_run,
+            )
+    elif seed_source == "strategy_defaults":
         logging.getLogger("optimizer").warning(
-            "[#565] %s/%s: kein global_best im Per-Symbol-Sweep (shrinkage_inactive) — Fallback auf "
-            "strategy_defaults als Shrinkage-Referenz & Warm-Start-Seed (param_pen zieht Richtung "
-            "Default statt ins Leere).",
+            "[#565] %s/%s: kein global_best/Champion im Per-Symbol-Sweep (shrinkage_inactive) — "
+            "Fallback auf strategy_defaults als Shrinkage-Referenz & Warm-Start-Seed (param_pen "
+            "zieht Richtung Default statt ins Leere).",
             strategy, symbol,
         )
     elif seed_source == "none":
         logging.getLogger("optimizer").warning(
-            "[#565] %s/%s: WEDER global_best NOCH strategy_defaults auflösbar (shrinkage_inactive) ⇒ "
-            "param_pen ≡ 0, der Per-Symbol-Vektor tunt ungezügelt Richtung CV-Rausch (Overfit-Risiko).",
+            "[#565] %s/%s: WEDER global_best NOCH Champion NOCH strategy_defaults auflösbar "
+            "(shrinkage_inactive) ⇒ param_pen ≡ 0, der Per-Symbol-Vektor tunt ungezügelt Richtung "
+            "CV-Rausch (Overfit-Risiko).",
             strategy, symbol,
         )
     if global_best:
