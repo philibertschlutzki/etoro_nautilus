@@ -45,7 +45,11 @@ def _full_sample(**overrides) -> dict:
         "atr_period": 14, "atr_multiplier": 0.5, "vwap_period": 20,
         "trend_tolerance_pct": 0.02, "bb_touch_window": 24,
         "require_vwap_confirmation": True, "require_bb_touch": True,
-        "cooldown_bars": 12, "atr_trailing_multiplier": 2.0, "max_bars_in_trade": 48,
+        # Issue #714 (GR-01) — Obergrenze 48 → 24 (24-Bar-Zeitbox).
+        "cooldown_bars": 12, "atr_trailing_multiplier": 2.0, "max_bars_in_trade": 24,
+        # Issue #713 — dyn_tp_enabled ist jetzt Teil JEDES Suchraums (FixedTrial verlangt alle
+        # suggest_*-Keys); False hält diesen Test dyn-TP-neutral.
+        "dyn_tp_enabled": False,
     }
     params.update(overrides)
     return params

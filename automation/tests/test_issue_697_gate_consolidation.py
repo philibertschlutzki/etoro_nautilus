@@ -145,7 +145,10 @@ def test_less_collinear_expectancy_gate_would_meaningfully_tighten_fp_rate():
 
 # ── reward_semantics_version: v12 → v13 (#697 ändert die Eligibility-Definition) ─────────────────
 def test_reward_semantics_version_is_13():
-    assert OPT_CFG["reward_semantics_version"] == 13
+    """Issue #711 bumpte die Version weiter auf 14 (time_box_penalty-Term) — dieser Test pinnt
+    nur noch die historische UNTERGRENZE (die v13-Migration ist irreversibel abgeschlossen), die
+    exakte AKTUELLE Version wird in test_issue_711_time_box_penalty.py gepinnt."""
+    assert OPT_CFG["reward_semantics_version"] >= 13
 
 
 def test_version_is_documented_with_v13_changelog_entry():
@@ -209,7 +212,7 @@ def test_fresh_study_stamps_v13_without_error():
 
     study = _FakeStudy()
     _check_reward_semantics_version(study, OPT_CFG)
-    assert study.user_attrs["reward_semantics_version"] == 13
+    assert study.user_attrs["reward_semantics_version"] == OPT_CFG["reward_semantics_version"]
 
 
 def test_matching_v13_version_is_a_no_op():
@@ -217,7 +220,7 @@ def test_matching_v13_version_is_a_no_op():
 
     class _FakeStudy:
         def __init__(self):
-            self._attrs = {"reward_semantics_version": 13}
+            self._attrs = {"reward_semantics_version": OPT_CFG["reward_semantics_version"]}
             self.trials = [object()] * 20
             self.study_name = "study_v13"
             self._storage = None

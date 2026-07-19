@@ -29,6 +29,8 @@ _SCALE_KEYS = (
     "penalty_overfit_weight", "overfit_oos_luck_weight", "penalty_relative_cap",
     "lambda_reg", "penalty_unevaluable_oos", "unevaluable_shaping_span",
     "constraint_distance_penalty_weight",
+    # Issue #711 (v14) — neue additive Reward-Skalen-Konstanten (time_box_penalty).
+    "penalty_time_box_weight", "time_box_bars",
 )
 
 
@@ -49,13 +51,14 @@ _EXPECTED_FINGERPRINT_BY_VERSION = {
     11: _scale_fingerprint(CFG),  # Issue #672 — Eligibility-Bump (#666), Skalen-Konstanten unverändert.
     12: _scale_fingerprint(CFG),  # Issue #686 — Eligibility-Bump (#676/#677/#684), Skalen-Konstanten unverändert.
     13: _scale_fingerprint(CFG),  # Issue #697 — Eligibility-Bump (min_expectancy aus eligible_requires_all entfernt), Skalen-Konstanten unverändert.
+    14: _scale_fingerprint(CFG),  # Issue #711 — neuer additiver time_box_penalty-Term (penalty_time_box_weight/time_box_bars neu in _SCALE_KEYS).
 }
 
 
 def test_reward_semantics_version_at_least_9():
     """Issue #658 bumpte die Version weiter auf 10 (Eligibility-Semantik, #649/#650/#657) — dieser
     Test pinnt nur noch die historische UNTERGRENZE (die v9-Migration ist irreversibel abgeschlossen),
-    die exakte AKTUELLE Version wird in test_issue_658_reward_semantics_bump.py gepinnt."""
+    die exakte AKTUELLE Version wird in test_issue_711_time_box_penalty.py gepinnt."""
     assert CFG["reward_semantics_version"] >= 9
 
 

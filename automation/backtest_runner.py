@@ -1916,6 +1916,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "sortino_ratio": 0.0, "calmar_ratio": 0.0,
         "max_drawdown": 0.0, "total_return": 0.0,
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
+        # Issue #710 — Haltedauer-Metrik in Bars, Schema-konsistent mit dem Nicht-Leer-Pfad.
+        "median_bars_held": 0.0, "p95_bars_held": 0.0,
         "losses_count": 0,
         "median_position_notional": 0.0,
     }
@@ -2117,6 +2119,22 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         avg_hold = 0.0
         med_hold = 0.0
 
+    # Issue #710 — per-Trade-Haltedauer in BARS (nicht Sekunden) für den Time-Box-Penalty-Enabler
+    # (#711). Alle Strategien laufen auf 1h-Bars (siehe DEFAULT_MAX_BARS_IN_TRADE, hourly_
+    # strategy_base.py) ⇒ dieselbe Sekunden→Bars-Konvention wie bereits an anderer Stelle verwendet
+    # (backtest_runner.py: ``hold_h = avg_holding_time_s / 3600.0``). Median statt Mittel (robust
+    # gegen die stark schiefen per-Fold-Verteilungen, siehe #710-Docstring); p95 als Deadline-Näherungs-
+    # Signal. Reine Telemetrie — KEINE Reward-/Gate-Wirkung an dieser Stelle.
+    _BAR_SECONDS = 3600.0
+    if hold_list:
+        bars_held_sorted = sorted(h / _BAR_SECONDS for h in holds_s)
+        median_bars_held = statistics.median(bars_held_sorted)
+        p95_idx = max(0, min(len(bars_held_sorted) - 1, round(0.95 * (len(bars_held_sorted) - 1))))
+        p95_bars_held = bars_held_sorted[p95_idx]
+    else:
+        median_bars_held = 0.0
+        p95_bars_held = 0.0
+
     # Coherence Invariant Check (Issue #528, Task 2.2)
     if hold_list is not None and len(hold_list) > 0 and mtm_series is not None:
         # Evaluierung der flachen Endposition über hold_list (Prüfung des terminalen Elements auf Abwesenheit offener Positionen).
@@ -2169,6 +2187,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "dd_excess":     float(dd_excess),
         "avg_holding_time_s": float(avg_hold),
         "median_holding_time_s": float(med_hold),
+        # Issue #710 — Haltedauer-Metrik in Bars (Enabler für #711 Time-Box-Penalty).
+        "median_bars_held": float(median_bars_held),
+        "p95_bars_held": float(p95_bars_held),
         "losses_count": losses_count,
         "median_position_notional": float(med_notional),
     }

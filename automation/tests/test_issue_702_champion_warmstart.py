@@ -23,8 +23,15 @@ from automation.optimizer import champions, run_optimization as ro, resolve, tri
 
 
 CFG_DIR = Path("automation/config")
+# Issue #711 — dynamisch aus der AKTUELLEN optimizer.json gelesen (statt hartkodiert), damit
+# dieses Fixture jeden künftigen reward_semantics_version-Bump automatisch mitgeht (dasselbe
+# Muster wie test_issue_697_gate_consolidation.py). Tests, die GEZIELT eine VERALTETE Version
+# prüfen wollen, setzen sie explizit (z. B. {**OPT_DATA, "reward_semantics_version": 12}).
+_CURRENT_REWARD_SEMANTICS_VERSION = json.loads(
+    (CFG_DIR / "optimizer.json").read_text("utf-8")
+)["reward_semantics_version"]
 OPT_DATA = {
-    "reward_semantics_version": 13,
+    "reward_semantics_version": _CURRENT_REWARD_SEMANTICS_VERSION,
     "champion_min_R_symbol": 0.0,
     "champion_promote_after_runs": 2,
     "champion_demote_after_runs": 2,
@@ -58,7 +65,8 @@ def _promotion(*, status, symbol_params, R_symbol, R_global=0.0,
     }
 
 
-def _entry(*, params=None, r_symbol=0.5, reward_version=13, status_at_store="READY_FOR_PR",
+def _entry(*, params=None, r_symbol=0.5, reward_version=_CURRENT_REWARD_SEMANTICS_VERSION,
+          status_at_store="READY_FOR_PR",
           holdout_reject_detail=None, degrade_streak=0, corroboration_count=1,
           catalog_newest_ns=1_000_000_000_000, first_seen_catalog_newest_ns=1_000_000_000_000,
           strategy="SmaCrossoverStrategy", symbol="TSLA.ETORO") -> dict:
@@ -444,7 +452,7 @@ def test_optimize_symbol_enqueues_champion_seed_when_no_global_best(tmp_path, mo
                        R_symbol=0.3, is_rejection_detail_override="REJECT_HOLDOUT_DSR_DROP")
     champions.store_champion(study0, "SmaCrossoverStrategy", "TSLA.ETORO", promo,
                              catalog_newest_ns=1000,
-                             opt_data={**OPT_DATA, "reward_semantics_version": 13})
+                             opt_data=OPT_DATA)
 
     study = ro.optimize_symbol("SmaCrossoverStrategy", "TSLA.ETORO", n_trials=1)
     assert study.user_attrs.get("shrinkage_seed_source") == "champion"

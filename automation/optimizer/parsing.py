@@ -102,6 +102,12 @@ class TournamentMetrics:
     # strukturell inert geblieben). None, wenn keine Benchmark-Serie vorlag (rückwärtskompatibel).
     oos_buyhold_return: float | None = None
     oos_excess_return: float | None = None
+    # Issue #710 — Haltedauer-Metrik (Bars, NICHT Sekunden — alle Strategien laufen auf 1h-Bars).
+    # Median (robuste Zentraltendenz gegen schiefe per-Fold-Verteilungen) + p95 (Deadline-Nähe).
+    # Optional[float]=None ⇒ migrationssicher (Legacy-JSONs/Fixtures ohne das Feld laufen unveraendert
+    # grün). Reine Telemetrie in dieser Stufe — der Reward-Term folgt in #711.
+    oos_median_bars_held: float | None = None
+    oos_p95_bars_held: float | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -181,6 +187,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe; fehlt ohne Benchmark-Serie).
     oos_buyhold_return = oos_metrics.get("oos_buyhold_return")
     oos_excess_return = oos_metrics.get("oos_excess_return")
+    # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
+    oos_median_bars_held = oos_metrics.get("median_bars_held")
+    oos_p95_bars_held = oos_metrics.get("p95_bars_held")
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -291,6 +300,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe).
         oos_buyhold_return=float(oos_buyhold_return) if oos_buyhold_return is not None else None,
         oos_excess_return=float(oos_excess_return) if oos_excess_return is not None else None,
+        # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
+        oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,
+        oos_p95_bars_held=float(oos_p95_bars_held) if oos_p95_bars_held is not None else None,
     )
 
     # Pre-Return Invarianten-Check

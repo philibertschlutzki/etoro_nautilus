@@ -51,7 +51,10 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     max_open_positions: int = 1
     atr_period: int = 14
     atr_trailing_multiplier: float = 1.5
-    max_bars_in_trade: int = 48
+    # Issue #714 (GR-01) — 24h-Zeitbox = 24 Bar-Intervalle (1h-Bars), nicht Kalenderzeit. Der
+    # bestehende Bar-Zähler-Exit (siehe _check_exits_and_update) ist der Mechanismus; dieser Default
+    # UND alle Optimizer-Suchraum-Obergrenzen (spaces.py) sind auf <= 24 geklemmt.
+    max_bars_in_trade: int = 24
     profit_target_pct: float | None = None
     cooldown_bars: int = 12
     trend_filter_period: int = 0
@@ -59,10 +62,126 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     min_holding_time: int = 0
     min_signal_strength: float = 0.0
     max_trades_cap: int | None = None
+    # Issue #712 (Req-02+Req-03, opt-in) — vereinheitlichtes dynamisches Take-Profit-Modell,
+    # in der Basisklasse für alle 15 Strategien verfügbar. Default False ⇒ bit-identische
+    # Regression (der statische profit_target_pct-Pfad bleibt unverändert erhalten).
+    dyn_tp_enabled: bool = False
+    dyn_tp_lambda: float = 1.0
+    dyn_tp_gamma: float = 1.5
+    # Issue #715 (GR-02) — Pre-Trade-Spread-Gate (Laufzeit). spread_gate_bps=None ⇒ aus
+    # k_spread · spread_bps_model (backtest.json, Single Source of Truth) abgeleitet.
+    spread_gate_bps: float | None = None
+    k_spread: float = 2.0
+    # Issue #716 (GR-03) — node-weiter Aggregat-Exposure-Cap + harter Notional-Deckel, ZUSÄTZLICH
+    # zum (unverändert bestehenden) per-Strategie max_open_positions. Konservative Defaults
+    # (Schutz gegen Capital Starvation im Paper-Konto, start_capital=10000 USD/backtest.json):
+    # max_aggregate_open_positions=5 ⇒ bei typischem trade_amount_pct=15% (strategy_defaults.json)
+    # sind maximal ~75% Equity gleichzeitig als Position gebunden, deutlich unter der de-facto
+    # ungedeckelten Obergrenze von bis zu 15 Strategien × je max_open_positions. max_order_notional
+    # =2000 USD liegt knapp über dem typischen 15%-Trade (1500 USD) und deckelt Fehl-Sizing
+    # (Balance-Query-Bug, Allocator-Fehlkonfiguration) hart ab, ohne den Normalbetrieb einzuschränken.
+    max_aggregate_open_positions: int = 5
+    max_order_notional: float = 2000.0
 
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
-DEFAULT_MAX_BARS_IN_TRADE = 48  # 48 hours with 1h candles
+# Issue #714 (GR-01) — 24-Bar-Zeitbox (1h-Bars). Auch die HARTE Obergrenze für aus dem Cache
+# geladene Alt-Configs/Studies mit Werten > 24 (Konstruktor-Klemmung unten).
+DEFAULT_MAX_BARS_IN_TRADE = 24
+MAX_BARS_IN_TRADE_HARD_CAP = 24
+
+# Issue #712 (Req-02+Req-03) — Cancel/Replace nur bei |ΔTarget| > 1 Tick (Order-Sturm-Schutz,
+# konsistent mit etoro_rate_limiter.py).
+_DYN_TP_MIN_TICK_DELTA = 1
+
+
+# Issue #715 (GR-02) — gecachte, lazily geladene Resolution der modellierten Normal-Spread (bps)
+# aus backtest.json/instrument_map.json. SINGLE SOURCE OF TRUTH mit dem Backtest-Kostenmodell
+# (dieselbe Symbol-Override -> Asset-Class -> DEFAULT Auflösung wie backtest_runner.resolve_
+# spread_bps, #566) — bewusst als eigenständige, dependency-leichte Kopie gehalten, damit der
+# LIVE-Pfad (momentum_ls_run.py) nicht automation.backtest_runner (inkl. pandas/pyarrow/
+# BacktestEngine) importieren muss. Nie zwei unabhängig gepflegte Spread-Zahlen (#712-Analogie).
+_spread_cfg_cache: dict | None = None
+_instrument_asset_class_cache: dict | None = None
+
+
+def _read_spread_cfg() -> dict:
+    global _spread_cfg_cache
+    if _spread_cfg_cache is not None:
+        return _spread_cfg_cache
+    try:
+        from automation.optimizer.trial_config import config_dir
+        import json as _json_mod
+        with open(config_dir() / "backtest.json", "r", encoding="utf-8") as f:
+            data = _json_mod.load(f) or {}
+        _spread_cfg_cache = {
+            "by_asset_class": data.get("spread_bps_by_asset_class") or {},
+            "by_symbol": data.get("spread_bps_by_symbol") or {},
+        }
+    except (OSError, ValueError):
+        _spread_cfg_cache = {"by_asset_class": {}, "by_symbol": {}}
+    return _spread_cfg_cache
+
+
+def _read_instrument_asset_class(instrument_id_str: str) -> str:
+    global _instrument_asset_class_cache
+    if _instrument_asset_class_cache is None:
+        _instrument_asset_class_cache = {}
+        try:
+            from automation.optimizer.trial_config import config_dir
+            import json as _json_mod
+            with open(config_dir() / "instrument_map.json", "r", encoding="utf-8") as f:
+                data = _json_mod.load(f) or {}
+            for _, inst_data in (data.get("instruments") or {}).items():
+                sym = inst_data.get("symbol")
+                if sym:
+                    _instrument_asset_class_cache[sym] = (inst_data.get("asset_class") or "DEFAULT").upper()
+        except (OSError, ValueError):
+            pass
+    return _instrument_asset_class_cache.get(instrument_id_str, "DEFAULT")
+
+
+def resolve_spread_bps_model(instrument_id_str: str) -> float:
+    """Issue #715 — modellierte Normal-Spread (bps) für ein Instrument: Symbol-Override ->
+    Asset-Class -> DEFAULT (dieselbe Auflösungsreihenfolge wie backtest_runner.resolve_spread_bps,
+    #566). 0.0, wenn keine Konfiguration geladen werden kann (fail-safe: das Gate bleibt dann
+    inaktiv, kein erfundener Schwellenwert)."""
+    cfg = _read_spread_cfg()
+    by_symbol = cfg["by_symbol"]
+    if instrument_id_str in by_symbol:
+        return float(by_symbol[instrument_id_str])
+    by_class = cfg["by_asset_class"]
+    if not by_class:
+        return 0.0
+    asset_class_key = _read_instrument_asset_class(instrument_id_str)
+    return float(by_class.get(asset_class_key, by_class.get("DEFAULT", 4.0)))
+
+
+def compute_dyn_tp_target(
+    entry_price: float,
+    atr_value: float,
+    side: str,
+    bars_in_pos: int,
+    max_bars_in_trade: int,
+    dyn_tp_lambda: float,
+    dyn_tp_gamma: float,
+) -> float:
+    """Issue #712 — vereinheitlichtes dynamisches Take-Profit-Modell (Req-02 e^{-λt}-Decay +
+    Req-03 μ+γ·ATR-Scaling zu EINER kohärenten, deadline-bewussten Zielfunktion vereint):
+
+        TP_long(t)  = entry + γ · ATR_n · exp(−λ · bars_in_pos / max_bars_in_trade)
+        TP_short(t) = entry − γ · ATR_n · exp(−λ · bars_in_pos / max_bars_in_trade)
+
+    ``bars_in_pos=0 ⇒ exp(0)=1 ⇒`` Target ``= entry ± γ·ATR`` (voller Abstand). Je näher die
+    24-Bar-Zeitbox (GR-01, #714) rückt, desto kleiner (aber weiterhin positiv) der Abstand — erzwingt
+    Liquidation bei progressiv kleineren, aber positiven Bewegungen. Reine, deterministische Funktion
+    (kein I/O) — separat unit-testbar von der Cancel/Replace-Order-Mechanik."""
+    span = max(1, int(max_bars_in_trade))
+    decay = math.exp(-float(dyn_tp_lambda) * (float(bars_in_pos) / float(span)))
+    offset = float(dyn_tp_gamma) * float(atr_value) * decay
+    if side == "LONG":
+        return float(entry_price) + offset
+    return float(entry_price) - offset
 
 
 class HourlyStrategyBase(Strategy):
@@ -100,6 +219,11 @@ class HourlyStrategyBase(Strategy):
         self._max_bars_in_trade = getattr(config, "max_bars_in_trade", None)
         if self._max_bars_in_trade is None:
             self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
+        # Issue #714 (GR-01) — harte 24-Bar-Klemmung, damit aus dem Cache geladene Alt-Configs/
+        # Studies mit Werten > 24 (vor der Bounds-Klemmung in spaces.py optimiert) die Invariante
+        # nicht unterlaufen. Untergrenzen bleiben unverändert; bestehendes Bar-Zähler-Exit-Verhalten
+        # bleibt bit-identisch für Positionen <= 24 Bars.
+        self._max_bars_in_trade = min(int(self._max_bars_in_trade), MAX_BARS_IN_TRADE_HARD_CAP)
 
         self._atr_trailing_multiplier = getattr(config, "atr_trailing_multiplier", None)
         if self._atr_trailing_multiplier is None:
@@ -109,6 +233,25 @@ class HourlyStrategyBase(Strategy):
         self._daily_trades: int = 0
         self._current_day: int | None = None
         self._executed_trades: int = 0
+
+        # Issue #712 — dynamischer Take-Profit (opt-in, siehe HourlyStrategyConfig.dyn_tp_enabled).
+        # _dyn_tp_pending_cancel/_dyn_tp_pending_target verwalten das Cancel/Replace GETRENNT von
+        # _pending_cancels (das ausschliesslich dem Exit-Markt-Close-Pfad gehört) — sonst würde ein
+        # Dyn-TP-Replace fälschlich _execute_market_close() auslösen, sobald die Order-Canceled-
+        # Bestätigung eintrifft.
+        self._dyn_tp_order_id = None
+        self._dyn_tp_price: float | None = None
+        self._dyn_tp_entry_price: float | None = None
+        self._dyn_tp_side: str | None = None
+        self._dyn_tp_pending_cancel = None
+        self._dyn_tp_pending_target: float | None = None
+
+        # Issue #717 (GR-04) — Bar-Zähler-Rehydrierung nach Reconnect/Neustart (#714-Root-Cause:
+        # der In-Memory-_bars_in_position-Zähler ist sonst verloren). Vom on_start()-Reconnect-Check
+        # gesetzt; vom NÄCHSTEN _check_exits_and_update-Init-Block konsumiert (statt auf 0 zu
+        # resetten), sodass der reguläre Bar-Zähler-Exit nahtlos weiterläuft.
+        self._bars_in_position_rehydrated: int | None = None
+        self._gr04_subscribed = False
 
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
@@ -121,6 +264,83 @@ class HourlyStrategyBase(Strategy):
 
         if getattr(self, "trend_filter_period", 0) > 0 and getattr(self, "trend_filter_sma", None) is not None:
             self._warmup_trend_filter()
+
+        # Issue #717 (GR-04) — Reconnect-Reconciliation: eine bereits offene Position (Reconnect
+        # INNERHALB desselben Prozesses, oder ein Cache, der Positionen über einen Neustart hinweg
+        # bewahrt) hat einen verlorenen In-Memory-_bars_in_position-Zähler (#714-Root-Cause).
+        # Rekonstruiert ihn aus dem Bar-Cache relativ zu Nautilus' nativem pos.ts_opened (übersteht
+        # den Reconnect via der Position selbst, keine eigene Persistenz nötig) und liquidiert
+        # SOFORT, falls die 24-Bar-Zeitbox bereits (offline) abgelaufen ist.
+        self._reconcile_after_reconnect()
+
+        # Issue #717 (GR-04) — Phantom-Positions-Signal vom Execution-Client (Portfolio-Reconcile
+        # bei (Re-)Connect, siehe etoro_execution._reconcile_positions_on_connect). Der Execution-
+        # Client kann selbst keine neue Order ohne einen von Strategy.order_factory initiierten
+        # Kontext erzeugen — das Signal löst stattdessen den bereits bestehenden, geprüften
+        # _close_position_base-Pfad hier aus (schliesst [EX-2-followup]).
+        if not self._gr04_subscribed and getattr(self, "msgbus", None) is not None:
+            self.msgbus.subscribe(
+                topic=f"events.gr04_close_request.{self.instrument_id}",
+                handler=self._on_gr04_close_request,
+            )
+            self._gr04_subscribed = True
+
+    def _reconcile_after_reconnect(self) -> None:
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if not positions:
+            return
+        pos = positions[0]
+        entry_ns = int(pos.ts_opened)
+        bars_elapsed = self._count_bars_since(entry_ns)
+
+        if bars_elapsed is not None:
+            expired = bars_elapsed >= self._max_bars_in_trade
+            rehydrated_bars = min(bars_elapsed, self._max_bars_in_trade)
+            basis = f"bars_seit_entry={bars_elapsed}"
+        else:
+            # Fallback (Bar-Historie nicht rekonstruierbar, z. B. Cache leer nach Kaltstart):
+            # konservativ per Wall-Clock — die sichere Richtung im Offline-Recovery-Kontext (eher
+            # schliessen als dangeln lassen).
+            now_ns = self.clock.timestamp_ns()
+            elapsed_hours = (now_ns - entry_ns) / 3_600_000_000_000.0
+            expired = elapsed_hours >= 24.0
+            rehydrated_bars = self._max_bars_in_trade if expired else 0
+            basis = f"wall_clock_elapsed_h={elapsed_hours:.2f}"
+
+        self._bars_in_position_rehydrated = rehydrated_bars
+
+        if expired:
+            self._log.warning(
+                f"[{self.instrument_id}] GR-04 Offline-Ablauf nach Reconnect ({basis}, "
+                f"max_bars_in_trade={self._max_bars_in_trade}) — liquidiere sofort."
+            )
+            self._close_position_base(pos)
+
+    def _count_bars_since(self, since_ns: int) -> int | None:
+        """Issue #717 — Anzahl Bars in der Cache-Historie STRIKT NACH ``since_ns``. ``None``, wenn
+        der Bar-Cache (noch) keine Historie für dieses Instrument trägt (Kaltstart) — der Aufrufer
+        fällt dann auf den Wall-Clock-Fallback zurück."""
+        try:
+            bars = self.cache.bars(self.bar_type)
+        except Exception:
+            return None
+        if not bars:
+            return None
+        return sum(1 for b in bars if int(b.ts_event) > since_ns)
+
+    def _on_gr04_close_request(self, msg) -> None:
+        """Issue #717 (GR-04) — Reaktion auf das Phantom-Positions-Signal des Execution-Clients
+        (eine bei eToro bereits geschlossene, in Nautilus noch offene Position). Nutzt den
+        bestehenden, geprüften _close_position_base-Pfad (kein neuer, riskanter Order-Fabrikations-
+        Code in der ExecutionClient nötig)."""
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if not positions:
+            return
+        reason = msg.get("reason", "unknown") if isinstance(msg, dict) else "unknown"
+        self._log.warning(
+            f"[{self.instrument_id}] GR-04 Close-Request empfangen (reason={reason}) — schliesse."
+        )
+        self._close_position_base(positions[0])
 
     def _warmup_trend_filter(self):
 
@@ -291,7 +511,14 @@ class HourlyStrategyBase(Strategy):
         # so this block runs exactly once per position)
         if not self._in_position:
             self._in_position = True
-            self._bars_in_position = 0
+            # Issue #717 (GR-04) — ein von on_start() rehydrierter Bar-Zähler (überlebende Position
+            # nach Reconnect/Neustart) wird HIER übernommen statt auf 0 zurückgesetzt; danach
+            # einmalig konsumiert (kein Effekt auf den nächsten genuinen Neueinstieg).
+            if self._bars_in_position_rehydrated is not None:
+                self._bars_in_position = self._bars_in_position_rehydrated
+                self._bars_in_position_rehydrated = None
+            else:
+                self._bars_in_position = 0
             self._pending_cancels.clear()
             self._trailing_stop_side = "LONG" if pos.side == PositionSide.LONG else "SHORT"
             if self._exit_atr.initialized:
@@ -347,7 +574,13 @@ class HourlyStrategyBase(Strategy):
             self._take_profit_price = None
             self._bars_in_position = 0
             self._pending_cancels.clear()
+            self._reset_dyn_tp_state()
             return True
+
+        # Issue #712 — dynamischer Take-Profit: Cancel/Replace der ruhenden Limit-Order je Bar,
+        # NUR wenn kein Exit diesen Bar ausgelöst hat (die Position bleibt offen).
+        if getattr(self.config, "dyn_tp_enabled", False):
+            self._update_dyn_tp_order()
 
         return False
 
@@ -378,14 +611,97 @@ class HourlyStrategyBase(Strategy):
         )
         self.submit_order(order)
 
+    # ── Issue #712 — dynamischer Take-Profit (opt-in) ───────────────────────────────────────────
+
+    def _reset_dyn_tp_state(self) -> None:
+        self._dyn_tp_order_id = None
+        self._dyn_tp_price = None
+        self._dyn_tp_entry_price = None
+        self._dyn_tp_side = None
+        self._dyn_tp_pending_cancel = None
+        self._dyn_tp_pending_target = None
+
+    def _compute_dyn_tp_target(self) -> float | None:
+        """None, solange die ATR (noch) nicht initialisiert ist (Warmup) — analog zur Trailing-
+        Stop-Initialisierung in _check_exits_and_update."""
+        if self._dyn_tp_entry_price is None or self._dyn_tp_side is None:
+            return None
+        if not self._exit_atr.initialized:
+            return None
+        return compute_dyn_tp_target(
+            entry_price=self._dyn_tp_entry_price,
+            atr_value=self._exit_atr.value,
+            side=self._dyn_tp_side,
+            bars_in_pos=self._bars_in_position,
+            max_bars_in_trade=self._max_bars_in_trade,
+            dyn_tp_lambda=getattr(self.config, "dyn_tp_lambda", 1.0),
+            dyn_tp_gamma=getattr(self.config, "dyn_tp_gamma", 1.5),
+        )
+
+    def _update_dyn_tp_order(self) -> None:
+        """Je-Bar-Update des dynamischen Take-Profit-Ziels. Cancel/Replace NUR bei
+        |ΔTarget| > 1 Tick (Order-Sturm-Schutz, #712-Akzeptanzkriterium)."""
+        if self._dyn_tp_entry_price is None or self._dyn_tp_side is None:
+            return
+        if self._dyn_tp_pending_cancel is not None:
+            return  # Ein Replace ist bereits im Gange — wartet auf on_order_canceled.
+        target = self._compute_dyn_tp_target()
+        if target is None:
+            return
+        instrument = self.cache.instrument(self.instrument_id)
+        if instrument is None:
+            return
+        if self._dyn_tp_price is not None:
+            tick = float(instrument.price_increment)
+            if tick <= 0.0 or abs(target - self._dyn_tp_price) <= _DYN_TP_MIN_TICK_DELTA * tick:
+                return
+        self._submit_dyn_tp_order(target, instrument)
+
+    def _submit_dyn_tp_order(self, target: float, instrument) -> None:
+        positions = self.cache.positions_open(instrument_id=self.instrument_id)
+        if not positions:
+            return
+        pos = positions[0]
+        if self._dyn_tp_order_id is not None:
+            existing = self.cache.order(self._dyn_tp_order_id)
+            if existing is not None and existing.is_open:
+                self._dyn_tp_pending_cancel = self._dyn_tp_order_id
+                self._dyn_tp_pending_target = target
+                self.cancel_order(existing)
+                return
+        price = instrument.make_price(target)
+        exit_side = OrderSide.SELL if self._dyn_tp_side == "LONG" else OrderSide.BUY
+        order = self.order_factory.limit(
+            instrument_id=self.instrument_id,
+            order_side=exit_side,
+            quantity=pos.quantity,
+            price=price,
+            time_in_force=TimeInForce.GTC,
+        )
+        self._dyn_tp_order_id = order.client_order_id
+        self._dyn_tp_price = target
+        self.submit_order(order)
+        self._log.info(f"[{self.instrument_id}] Dyn-TP Limit-Order @ {float(price):.4f} (bars_in_pos={self._bars_in_position})")
+
     def on_order_canceled(self, event) -> None:
         self._log.info(f"[{self.instrument_id}] OrderCanceled: {event}")
         if getattr(self, "current_signal", None) is not None and not self.cache.positions_open(instrument_id=self.instrument_id):
              self.current_signal = None
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
+            if event.client_order_id == self._dyn_tp_order_id:
+                self._dyn_tp_order_id = None
             if not self._pending_cancels:
                 self._execute_market_close()
+            return
+        if self._dyn_tp_pending_cancel is not None and event.client_order_id == self._dyn_tp_pending_cancel:
+            self._dyn_tp_order_id = None
+            self._dyn_tp_pending_cancel = None
+            target = self._dyn_tp_pending_target
+            self._dyn_tp_pending_target = None
+            instrument = self.cache.instrument(self.instrument_id)
+            if target is not None and instrument is not None and self.cache.positions_open(instrument_id=self.instrument_id):
+                self._submit_dyn_tp_order(target, instrument)
 
     def on_order_filled(self, event) -> None:
         self._log.info(f"[{self.instrument_id}] OrderFilled: {event}")
@@ -406,8 +722,32 @@ class HourlyStrategyBase(Strategy):
              self.current_signal = None
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
+            if event.client_order_id == self._dyn_tp_order_id:
+                self._dyn_tp_order_id = None
             if not self._pending_cancels:
                 self._execute_market_close()
+            return
+        # Issue #712 — eine abgelehnte Dyn-TP-Order (initial oder Replace) darf den Zustand nicht
+        # blockieren: zurücksetzen, das nächste _update_dyn_tp_order-Bar versucht es erneut.
+        if event.client_order_id == self._dyn_tp_order_id:
+            self._dyn_tp_order_id = None
+            self._dyn_tp_price = None
+        if self._dyn_tp_pending_cancel is not None and event.client_order_id == self._dyn_tp_pending_cancel:
+            self._dyn_tp_order_id = None
+            self._dyn_tp_pending_cancel = None
+            self._dyn_tp_pending_target = None
+
+    def _resolve_spread_gate_bps(self) -> float:
+        """Issue #715 (GR-02) — effektive Spread-Gate-Schwelle (bps). Ein explizit gesetztes
+        config.spread_gate_bps übersteuert die Ableitung (manueller Override); sonst
+        k_spread · spread_bps_model (Single Source of Truth mit dem Backtest-Kostenmodell,
+        #566) — die bereits eingepreiste Normal-Spread wird so nicht doppelt bestraft, nur
+        Ausweitungen werden abgefangen."""
+        explicit = getattr(self.config, "spread_gate_bps", None)
+        if explicit is not None:
+            return float(explicit)
+        k_spread = float(getattr(self.config, "k_spread", 2.0))
+        return k_spread * resolve_spread_bps_model(str(self.instrument_id))
 
     def _compute_quantity(self, bar: Bar) -> Quantity | None:
         instrument = self.cache.instrument(self.instrument_id)
@@ -418,6 +758,36 @@ class HourlyStrategyBase(Strategy):
         price = float(bar.close)
         if price <= 0:
             return None
+
+        # Issue #715 (GR-02) — Pre-Trade-Spread-Gate: vor JEDER Order den effektiven Spread aus
+        # dem aktuellen QuoteTick prüfen; Signal bei Überschreitung verwerfen + strukturiert loggen.
+        # Kein QuoteTick verfügbar (z. B. Cold-Start) ⇒ Gate inaktiv (fail-open, kein erfundener Wert).
+        quote = self.cache.quote_tick(self.instrument_id)
+        if quote is not None:
+            bid = float(quote.bid_price)
+            ask = float(quote.ask_price)
+            mid = (bid + ask) / 2.0
+            if mid > 0.0:
+                spread_bps = (ask - bid) / mid * 10000.0
+                threshold_bps = self._resolve_spread_gate_bps()
+                if threshold_bps > 0.0 and spread_bps > threshold_bps:
+                    self._log.warning(
+                        f"[{self.instrument_id}] SPREAD_GATE_REJECT: spread={spread_bps:.2f}bps > "
+                        f"threshold={threshold_bps:.2f}bps"
+                    )
+                    return None
+
+        # Issue #716 (GR-03) — node-weiter Aggregat-Exposure-Cap, ZUSÄTZLICH zum (unverändert
+        # bestehenden) per-Strategie max_open_positions-Check in den Subklassen.
+        max_agg = getattr(self.config, "max_aggregate_open_positions", None)
+        if max_agg is not None:
+            n_open = len(self.cache.positions_open())
+            if n_open >= max_agg:
+                self._log.warning(
+                    f"[{self.instrument_id}] AGGREGATE_EXPOSURE_CAP_REJECT: {n_open} offene "
+                    f"Positionen (systemweit) >= max_aggregate_open_positions={max_agg}"
+                )
+                return None
 
         trade_amount_usd_cfg = getattr(self.config, "trade_amount_usd", None)
         trade_amount_pct = getattr(self.config, "trade_amount_pct", None)
@@ -446,6 +816,17 @@ class HourlyStrategyBase(Strategy):
         else:
             # E: Hard Fallback
             trade_amount_usd = 100.0
+
+        # Issue #716 (GR-03) — harter Notional-Deckel: qty = min(equity_fraktion_qty,
+        # floor(max_order_notional / price)), hier äquivalent auf dem USD-Betrag VOR der
+        # Unit-Umrechnung gedeckelt (units = trade_amount_usd / price).
+        max_notional = getattr(self.config, "max_order_notional", None)
+        if max_notional is not None and max_notional > 0.0 and trade_amount_usd > max_notional:
+            self._log.debug(
+                f"[{self.instrument_id}] Notional-Deckel greift: {trade_amount_usd:.2f} USD > "
+                f"max_order_notional={max_notional:.2f} USD — auf Deckel gekappt."
+            )
+            trade_amount_usd = max_notional
 
         MIN_TRADE_USD = 11.0
         if trade_amount_usd < MIN_TRADE_USD:
@@ -515,6 +896,19 @@ class HourlyStrategyBase(Strategy):
                 self.submit_order(order)
                 self._log.info(f"[{self.instrument_id}] Submitted Take Profit Limit Order at {float(price):.4f}")
 
+        # Issue #712 — dynamischer Take-Profit (opt-in, orthogonal zum statischen
+        # profit_target_pct-Pfad oben, der unverändert erhalten bleibt). Initiale Order bei
+        # bars_in_pos=0 (voller γ·ATR-Abstand, exp(0)=1); je-Bar-Updates via
+        # _update_dyn_tp_order in _check_exits_and_update.
+        self._reset_dyn_tp_state()
+        if getattr(self.config, "dyn_tp_enabled", False):
+            self._dyn_tp_entry_price = float(event.avg_px_open)
+            self._dyn_tp_side = "LONG" if event.side == PositionSide.LONG else "SHORT"
+            target = self._compute_dyn_tp_target()
+            instrument = self.cache.instrument(self.instrument_id)
+            if target is not None and instrument is not None:
+                self._submit_dyn_tp_order(target, instrument)
+
     def on_position_closed(self, event) -> None:
         self._in_position = False
         self._trailing_stop_price = None
@@ -522,4 +916,5 @@ class HourlyStrategyBase(Strategy):
         self._take_profit_price = None
         self._bars_in_position = 0
         self._pending_cancels.clear()
+        self._reset_dyn_tp_state()
         self._log.info(f"[{self.instrument_id}] PositionClosed: {event}")

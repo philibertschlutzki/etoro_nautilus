@@ -67,6 +67,36 @@ def _dd_penalty(m: "TournamentMetrics", weights: dict, risk_dd_cap: float | None
     return raw * _penalty_scale_vs_base(weights)
 
 
+def _time_box_penalty(m: "TournamentMetrics", weights: dict) -> float:
+    """Issue #711 (Req-04, chirurgisch) — additiver Deadline-Näherungs-Term
+    ``penalty_time_box_weight · (oos_median_bars_held / time_box_bars)² · penalty_scale_vs_base``.
+
+    Reiner Shaping-/Tie-Breaking-Term im eligiblen Ast (NICHT in ``eligible_requires_all``, NICHT in
+    der Deflations-/DSR-Kette — Lektion #629/#649: ein in die Gates gemischter Term tötet still
+    Kandidaten). ``base`` bleibt ``psr_z`` (#614/#630); dies ist NUR der zusätzliche additive Term aus
+    #708-Req-04 (``Obj = E[R]/σ_R⁻ − β·(t_hold/24)²``), ohne die getestete Base zu ersetzen.
+
+    ``time_box_bars`` (Default 24, GR-01 #714) ist die Normierungs-Deadline in Bars — konfigurierbar
+    (Zero-Hardcoding), aber an dieselbe 24-Bar-Zeitbox gebunden wie der harte Bar-Zähler-Exit.
+    Der konvexe Kern ``(t/T_max)²`` bestraft Deadline-Nähe progressiv und lässt kurze Haltedauern
+    nahezu ungestraft. Wie ``_dd_penalty``/``_penalty_scale_vs_base`` gegen die realisierte
+    ``psr_z``-Base-Streuung skaliert (#631) — sonst wäre β entweder wirkungslos (zu klein) oder
+    dominierte das Ranking (zu gross).
+
+    Fehlt ``m.oos_median_bars_held`` (None — Legacy-JSON/Fixture ohne #710-Feld, oder ein Trial ohne
+    OOS-Trades) ⇒ 0.0 (kein erfundener Wert). Fehlt ``penalty_time_box_weight`` ⇒ 0.0 (Default,
+    bit-identisch/Legacy — siehe optimizer.json)."""
+    weight = float(weights.get("penalty_time_box_weight", 0.0) or 0.0)
+    if weight == 0.0 or m.oos_median_bars_held is None:
+        return 0.0
+    time_box_bars = float(weights.get("time_box_bars", 24.0) or 24.0)
+    if time_box_bars <= 0.0:
+        return 0.0
+    t_norm = float(m.oos_median_bars_held) / time_box_bars
+    raw = weight * (t_norm ** 2)
+    return raw * _penalty_scale_vs_base(weights)
+
+
 _oos_min_trades_cache: int | None = None
 _tournament_cfg_cache: dict | None = None
 
@@ -827,6 +857,7 @@ def compute_reward(
                 "param_pen": 0.0,
                 "turnover": 0.0,
                 "fold_dispersion": 0.0,
+                "time_box_penalty": 0.0,
                 "tie_breaker": 0.0,
                 "floor_clamped": False
             }
@@ -881,6 +912,7 @@ def compute_reward(
                     "param_pen": 0.0,
                     "turnover": 0.0,
                     "fold_dispersion": 0.0,
+                    "time_box_penalty": 0.0,
                     "tie_breaker": 0.0,
                     "floor_clamped": False,
                 }
@@ -944,6 +976,7 @@ def compute_reward(
                 "param_pen": 0.0,
                 "turnover": 0.0,
                 "fold_dispersion": 0.0,
+                "time_box_penalty": 0.0,
                 "tie_breaker": 0.0,
                 "floor_clamped": False
             }
@@ -1089,6 +1122,11 @@ def compute_reward(
                 fold_dispersion_penalty, float(penalty_relative_cap) * cap_scale
             )
 
+    # Issue #711 (Req-04, chirurgisch) — additiver Time-Box-Penalty-Term (Deadline-Näherung), rein
+    # metrisch skaliert, KEIN Gate-Ersatz (siehe _time_box_penalty-Docstring). Fehlt der Key oder
+    # m.oos_median_bars_held ⇒ 0.0 (Default, bit-identisch/Legacy).
+    time_box_penalty = _time_box_penalty(m, weights)
+
     # Issue #559/#638 — return-Tie-Breaker: bricht Rest-Plateaus im eligiblen Ast ökonomisch sinnvoll
     # auf (oos_total_return streut, wo die Base nicht mehr differenziert). Issue #638 — w_ret MUSS so
     # klein sein, dass σ(w_ret·return) ≪ σ(base) bleibt: auf der alten, breiter gestreuten asinh-
@@ -1143,6 +1181,7 @@ def compute_reward(
             - turnover_penalty
             - fold_dispersion_penalty
             - gate_distance_penalty
+            - time_box_penalty
             + return_tie_breaker
         )
         if return_terms:
@@ -1155,6 +1194,7 @@ def compute_reward(
                 "param_pen": param_pen,
                 "turnover": turnover_penalty,
                 "fold_dispersion": fold_dispersion_penalty,
+                "time_box_penalty": time_box_penalty,
                 "tie_breaker": return_tie_breaker,
                 "gate_distance_penalty": gate_distance_penalty,
                 "floor_clamped": False
@@ -1172,6 +1212,7 @@ def compute_reward(
         - turnover_penalty
         - fold_dispersion_penalty
         - gate_distance_penalty
+        - time_box_penalty
         + return_tie_breaker
     )
     if return_terms:
@@ -1184,6 +1225,7 @@ def compute_reward(
             "param_pen": 0.0,
             "turnover": turnover_penalty,
             "fold_dispersion": fold_dispersion_penalty,
+            "time_box_penalty": time_box_penalty,
             "tie_breaker": return_tie_breaker,
             "gate_distance_penalty": gate_distance_penalty,
             "floor_clamped": False
@@ -1204,7 +1246,10 @@ _CALIBRATION_FIXTURE_FOLD_RETURNS = (
     (0.011, 0.010, 0.012, 0.009), (0.015, 0.005, 0.020, 0.000),
     (0.009, 0.011, 0.010, 0.010), (0.025, -0.015, 0.020, -0.005),
 )
-_CALIBRATION_PENALTY_TERM_KEYS = ("dd_penalty", "turnover", "fold_dispersion")
+# Issue #711 — realistische Haltedauer-Spanne (Bars, 1h) von kurzen Micro-Yield-Exits bis nahe der
+# 24-Bar-Zeitbox (GR-01, #714), für die time_box_penalty-Kalibrierprüfung.
+_CALIBRATION_FIXTURE_BARS_HELD = (2.0, 4.0, 6.0, 8.0, 10.0, 14.0, 18.0, 22.0)
+_CALIBRATION_PENALTY_TERM_KEYS = ("dd_penalty", "turnover", "fold_dispersion", "time_box_penalty")
 
 
 def assert_penalty_scale_calibrated(weights: dict) -> None:
@@ -1212,11 +1257,11 @@ def assert_penalty_scale_calibrated(weights: dict) -> None:
 
     Berechnet ``compute_reward`` über das deklarative Kalibrier-Fixture (oben) und prüft:
     ``median(σ_penalty_terms) ≤ σ_base``. Verletzt eine Config diese Grenze, überstimmen die
-    additiven Strafterme (dd_penalty/turnover/fold_dispersion) strukturell die Base-Streuung — exakt
-    der #631-Root-Cause-Fehler (Strafterme wurden gegen die alte, weiter gestreute asinh-Sortino-Base
-    kalibriert und dominieren seit #614/#630 die viel engere psr_z-Streuung). ``ValueError`` bei
-    Verletzung; kein Effekt auf den Reward-Wert selbst (reine Config-Validierung, wie
-    ``assert_any_condition_parity``, #593)."""
+    additiven Strafterme (dd_penalty/turnover/fold_dispersion/time_box_penalty, #711) strukturell die
+    Base-Streuung — exakt der #631-Root-Cause-Fehler (Strafterme wurden gegen die alte, weiter
+    gestreute asinh-Sortino-Base kalibriert und dominieren seit #614/#630 die viel engere psr_z-
+    Streuung). ``ValueError`` bei Verletzung; kein Effekt auf den Reward-Wert selbst (reine Config-
+    Validierung, wie ``assert_any_condition_parity``, #593)."""
     # Defensiv: ein unvollständiges/leeres ``weights`` (z. B. fehlende optimizer.json in Tests/
     # Sonderpfaden) ist NICHT das, was diese Assertion prüfen soll — compute_reward selbst wirft dafür
     # bereits fail-loud KeyErrors an der eigentlichen Aufrufstelle. Diese Kalibrier-Prüfung ist ein
@@ -1231,9 +1276,10 @@ def assert_penalty_scale_calibrated(weights: dict) -> None:
         "oos_min_win_rate": 0.0, "max_drawdown": 0.3,
     }
     all_terms = []
-    for z, dd, n_tr, folds in zip(
+    for z, dd, n_tr, folds, bars_held in zip(
         _CALIBRATION_FIXTURE_PSR_Z, _CALIBRATION_FIXTURE_DD,
         _CALIBRATION_FIXTURE_TRADES, _CALIBRATION_FIXTURE_FOLD_RETURNS,
+        _CALIBRATION_FIXTURE_BARS_HELD,
     ):
         from automation.optimizer.parsing import TournamentMetrics
 
@@ -1243,6 +1289,7 @@ def assert_penalty_scale_calibrated(weights: dict) -> None:
             fully_eligible_pairs=1, is_total_trades=n_tr, oos_total_return=0.01,
             oos_win_rate=0.4, oos_profit_factor=1.3, oos_psr_z=z,
             oos_fold_returns=folds, oos_folds_total=4,
+            oos_median_bars_held=bars_held,
         )
         _, terms = compute_reward(
             m, universe_size=1, weights=weights, risk_dd_cap=tcfg["max_drawdown"],
@@ -1259,7 +1306,16 @@ def assert_penalty_scale_calibrated(weights: dict) -> None:
         statistics.pstdev([t.get(k, 0.0) for t in all_terms])
         for k in _CALIBRATION_PENALTY_TERM_KEYS
     ]
-    median_penalty_sigma = statistics.median(penalty_sigmas)
+    # Issue #711 — analog #534 (_constraint_distance_penalty: "Mittelwert der AKTIVEN Distanzen"):
+    # nur Terme mit sigma > 0 (für DIESE Config überhaupt wirksam) gehen in den Median ein. Ein
+    # strukturell inaktiver Term (z. B. penalty_time_box_weight fehlt/ist 0.0 in einer Config, die
+    # den Key noch nicht kennt) darf die Guard-Schärfe für die ÜBRIGEN, tatsächlich konfigurierten
+    # Terme nicht verwässern — sonst senkt jeder künftige neue additive Term (der für eine gegebene
+    # Config zufällig inaktiv ist) strukturell die Sensitivität für alle bereits aktiven Terme.
+    active_sigmas = [s for s in penalty_sigmas if s > 0.0]
+    if not active_sigmas:
+        return  # keine aktiven Strafterme in dieser Config ⇒ nichts zu kalibrieren
+    median_penalty_sigma = statistics.median(active_sigmas)
     if median_penalty_sigma > sigma_base:
         raise ValueError(
             f"PENALTY_SCALE_MISCALIBRATED (#631): median(σ_penalty_terms)={median_penalty_sigma:.6f} "

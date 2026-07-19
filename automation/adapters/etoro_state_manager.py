@@ -10,21 +10,31 @@ from nautilus_trader.common.enums import LogColor
 
 
 class _StateManager:
-    """Atomic-write JSON persistence for ClientOrderId → eToro positionId mapping.
+    """Atomic-write JSON persistence for ClientOrderId → eToro position entry.
 
     Performance characteristics (post-refactor):
-    - get_all()        : O(1) — returns a shallow copy of the in-memory dict
+    - get_all()        : O(1) — returns a shallow copy of the in-memory mapping (positionId only)
     - set() / delete() : O(1) in-memory; disk write is debounced 500 ms
     - COID resolution  : O(1) via two pre-computed reverse-lookup caches
 
     Reverse-lookup caches (RAM-only, rebuilt on load, never persisted):
     - _req_id_to_coid  : uuid5(coid) → coid  (token matching)
     - _venue_id_to_coid: stored_id   → coid  (positionId / orderId matching)
+
+    Issue #717 (GR-04) — jeder Eintrag ist ein Dict ``{"positionId": str, "entry_ns": int | None,
+    "entry_bar_seq": int | None}`` statt eines blossen Positions-ID-Strings. ``entry_ns`` ist der
+    Ausführungsclient-Zeitstempel (ns) des ERSTEN Fill-Bestätigungs-Events für diesen COID (sticky
+    — ein späterer set()-Aufruf überschreibt einen bereits gestempelten Entry-Anker NICHT);
+    ``entry_bar_seq`` der jüngste bekannte Bar-Zeitstempel (ns) zu diesem Zeitpunkt (Forensik/Bar-
+    Anker). Migrationssicher: alte ``str``-Werte (Pre-#717) werden beim Laden als
+    ``{"positionId": <str>, "entry_ns": None, "entry_bar_seq": None}`` gelesen. ``get()``/
+    ``get_all()`` bleiben ABWÄRTSKOMPATIBEL (liefern weiterhin nur die positionId als String) —
+    neue Konsumenten nutzen ``get_entry()``/``get_all_entries()`` für den vollen Eintrag.
     """
 
     def __init__(self, state_path: str) -> None:
         self._path = Path(state_path)
-        self._mapping: dict[str, str] = {}
+        self._mapping: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
         # O(1) reverse-lookup caches — in-memory only, rebuilt from _mapping on load
@@ -46,7 +56,7 @@ class _StateManager:
                 data = self._path.read_text(encoding="utf-8")
                 loaded = json.loads(data)
                 if isinstance(loaded, dict):
-                    self._mapping = {str(k): str(v) for k, v in loaded.items()}
+                    self._mapping = {str(k): self._coerce_entry(v) for k, v in loaded.items()}
                 else:
                     self._mapping = {}
             except Exception as exc:
@@ -62,24 +72,65 @@ class _StateManager:
         # Rebuild reverse-lookup caches from the loaded mapping
         self._req_id_to_coid.clear()
         self._venue_id_to_coid.clear()
-        for coid, venue_id in self._mapping.items():
+        for coid, entry in self._mapping.items():
             self._req_id_to_coid[str(uuid.uuid5(uuid.NAMESPACE_OID, coid))] = coid
-            self._venue_id_to_coid[venue_id] = coid
+            self._venue_id_to_coid[entry["positionId"]] = coid
+
+    @staticmethod
+    def _coerce_entry(value) -> dict:
+        """Issue #717 — migrationssichere Lesung: ein alter (Pre-#717) ``str``-Wert wird als
+        Entry ohne bekannten Zeitstempel/Bar-Anker interpretiert; ein bereits im neuen Format
+        vorliegender Eintrag wird defensiv normalisiert (fehlende Schlüssel ⇒ None)."""
+        if isinstance(value, dict):
+            return {
+                "positionId": str(value.get("positionId", "")),
+                "entry_ns": value.get("entry_ns"),
+                "entry_bar_seq": value.get("entry_bar_seq"),
+            }
+        return {"positionId": str(value), "entry_ns": None, "entry_bar_seq": None}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def get(self, client_order_id: str) -> str | None:
+        """Abwärtskompatibel: liefert NUR die positionId (String), wie vor #717."""
         async with self._lock:
-            return self._mapping.get(client_order_id)
+            entry = self._mapping.get(client_order_id)
+            return entry["positionId"] if entry else None
 
-    async def set(self, client_order_id: str, position_id: str) -> None:
+    async def get_entry(self, client_order_id: str) -> dict | None:
+        """Issue #717 — voller Entry (``positionId``/``entry_ns``/``entry_bar_seq``) für die
+        Reconnect-Reconciliation. ``None``, wenn der COID unbekannt ist."""
         async with self._lock:
-            # Remove stale venue_id entry if the mapped value is changing
-            old_val = self._mapping.get(client_order_id)
-            if old_val is not None and old_val != position_id:
-                self._venue_id_to_coid.pop(old_val, None)
+            entry = self._mapping.get(client_order_id)
+            return dict(entry) if entry else None
 
-            self._mapping[client_order_id] = position_id
+    async def set(
+        self,
+        client_order_id: str,
+        position_id: str,
+        *,
+        entry_ns: int | None = None,
+        entry_bar_seq: int | None = None,
+    ) -> None:
+        async with self._lock:
+            old = self._mapping.get(client_order_id)
+            old_position_id = old["positionId"] if old else None
+            if old_position_id is not None and old_position_id != position_id:
+                self._venue_id_to_coid.pop(old_position_id, None)
+
+            # Issue #717 — entry_ns/entry_bar_seq sind STICKY: einmal gestempelt (typischerweise
+            # beim ersten Fill-Bestätigungs-Event), überschreibt ein späterer set()-Aufruf (z. B.
+            # eine reine venue_id-Auffrischung) den Entry-Anker NICHT mit None.
+            preserved_entry_ns = (old["entry_ns"] if old and old.get("entry_ns") is not None
+                                   else entry_ns)
+            preserved_entry_bar_seq = (old["entry_bar_seq"] if old and old.get("entry_bar_seq") is not None
+                                        else entry_bar_seq)
+
+            self._mapping[client_order_id] = {
+                "positionId": position_id,
+                "entry_ns": preserved_entry_ns,
+                "entry_bar_seq": preserved_entry_bar_seq,
+            }
 
             # Maintain O(1) reverse-lookup caches
             req_id = str(uuid.uuid5(uuid.NAMESPACE_OID, client_order_id))
@@ -90,17 +141,22 @@ class _StateManager:
 
     async def delete(self, client_order_id: str) -> None:
         async with self._lock:
-            val = self._mapping.pop(client_order_id, None)
-            if val is not None:
-                self._venue_id_to_coid.pop(val, None)
+            entry = self._mapping.pop(client_order_id, None)
+            if entry is not None:
+                self._venue_id_to_coid.pop(entry["positionId"], None)
             req_id = str(uuid.uuid5(uuid.NAMESPACE_OID, client_order_id))
             self._req_id_to_coid.pop(req_id, None)
 
         self._schedule_flush()
 
     def get_all(self) -> dict[str, str]:
-        """Shallow copy of the current mapping (no lock needed — single event loop)."""
-        return dict(self._mapping)
+        """Abwärtskompatibel: Shallow copy von COID -> positionId (String), wie vor #717."""
+        return {k: v["positionId"] for k, v in self._mapping.items()}
+
+    def get_all_entries(self) -> dict[str, dict]:
+        """Issue #717 — voller State (COID -> {positionId, entry_ns, entry_bar_seq}) für die
+        Reconnect-Reconciliation (Portfolio-Diff Nautilus <-> eToro)."""
+        return {k: dict(v) for k, v in self._mapping.items()}
 
     # ── Deferred Flush ────────────────────────────────────────────────────────
 

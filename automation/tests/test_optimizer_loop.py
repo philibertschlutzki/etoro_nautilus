@@ -28,9 +28,11 @@ def _fake_backtest_factory(sortino, dd, evaluated=True, eligible=True, win=3):
     return _fake
 
 def test_spaces_sma_keys():
-    t = optuna.trial.FixedTrial({"sma_period": 20, "cooldown_bars": 10})
+    # Issue #713 — dyn_tp_enabled ist jetzt Teil JEDES Suchraums (FixedTrial verlangt alle
+    # suggest_*-Keys).
+    t = optuna.trial.FixedTrial({"sma_period": 20, "cooldown_bars": 10, "dyn_tp_enabled": False})
     p = spaces.sample_params("SmaCrossoverStrategy", t)
-    assert set(p.keys()) == {"sma_period", "cooldown_bars"}
+    assert set(p.keys()) == {"sma_period", "cooldown_bars", "dyn_tp_enabled"}
 
 def test_optimize_creates_db_and_proposal(tmp_path, monkeypatch):
     monkeypatch.setattr(ro, "run_backtest", _fake_backtest_factory(1.5, 0.1))
