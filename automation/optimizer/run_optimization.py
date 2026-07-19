@@ -30,6 +30,7 @@ from automation.optimizer.reward import (
     gate_collinearity_redundancy_alarm,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
+from automation.optimizer import retention
 from automation.log_manager import emit_execution_event
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
@@ -1650,6 +1651,18 @@ def run(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
         return
     holdout_res = confirm_on_holdout(study, strategy)
     export_proposal(study, strategy, holdout_res)
+    # Issue #733 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm + Export
+    # gelaufen); ihr IS-Trial-Baum wird ab hier nicht mehr gebraucht. Fail-open: ein Retention-
+    # Fehler darf einen erfolgreichen Optimize-Lauf nie im Nachhinein als gescheitert erscheinen
+    # lassen.
+    try:
+        retention.prune_completed_trial_dirs(
+            study.study_name, retention.collect_referenced_trial_dirs())
+    except Exception:
+        logging.getLogger("optimizer").warning(
+            "[#733] Trial-Verzeichnis-Retention für Study '%s' fehlgeschlagen (non-fatal).",
+            study.study_name, exc_info=True,
+        )
 
 if __name__ == "__main__":
     import argparse
