@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shutil
 from pathlib import Path
 
 import optuna
@@ -80,30 +81,58 @@ def purge_stale_studies(*, sweep_dir: Path | None = None, current_version: int |
     """Löscht jede DB-Datei, die MINDESTENS eine stale Study enthält (die Default-Konvention ist
     eine Study je SQLite-Datei, #412/Pitfall #77 — ``Path.unlink`` statt eines selektiven
     Trial-Löschens innerhalb der Datei). ``dry_run=True`` meldet nur, löscht nichts. Rückgabe: die
-    Liste der (potenziell) betroffenen Studies (wie ``find_stale_study_dbs``)."""
+    Liste der (potenziell) betroffenen Studies (wie ``find_stale_study_dbs``).
+
+    Issue #733 (Pitfall #223) — symmetrisches Löschen: eine Study ist ein Löschpaar aus `.db`
+    UND dem zugehörigen ``WORK/study_name/trial_*/``-Baum, nicht nur der SQLite-Datei. Vor diesem
+    Fix hinterliess jeder der 7 dokumentierten Pflicht-Purge-Übergänge (``optimizer.json``-
+    Changelog v7→v14) eine komplette verwaiste Trial-Generation — die `.db` verschwand, der
+    um Grössenordnungen grössere Trial-Baum blieb dauerhaft liegen."""
     logger = logger or logging.getLogger("optimizer")
     stale = find_stale_study_dbs(sweep_dir=sweep_dir, current_version=current_version)
+    # Trial-Bäume liegen als Geschwister von ``sweep/`` unter WORK (``WORK/study_name/trial_*``,
+    # vgl. trial_config.build_trial); ``sweep_dir.parent`` statt der harten WORK-Konstante hält die
+    # Funktion isoliert testbar (ein injizierter ``sweep_dir`` bezieht sich dann auf denselben
+    # temporären Wurzelbaum, nicht auf das reale ``data/optimizer``).
+    work_root = (sweep_dir if sweep_dir is not None else (WORK / "sweep")).parent
     purged_paths: set[str] = set()
     for entry in stale:
         db_path = entry["db_path"]
-        if db_path in purged_paths:
-            continue
+        study_name = entry["study_name"]
+        trial_root = work_root / study_name
+        already_unlinked = db_path in purged_paths
         if dry_run:
-            logger.info(
-                "[DRY-RUN] Würde %s löschen (Study '%s', v%s ≠ aktuell, %d Trials).",
-                db_path, entry["study_name"], entry["stored_version"], entry["n_trials"],
-            )
-        else:
-            try:
-                Path(db_path).unlink()
-                logger.warning(
-                    "♻️ [#686] %s gelöscht (Study '%s', v%s ≠ aktuell, %d Trials) — stale "
-                    "reward_semantics_version.",
-                    db_path, entry["study_name"], entry["stored_version"], entry["n_trials"],
+            if not already_unlinked:
+                logger.info(
+                    "[DRY-RUN] Würde %s löschen (Study '%s', v%s ≠ aktuell, %d Trials).",
+                    db_path, study_name, entry["stored_version"], entry["n_trials"],
                 )
-            except OSError as e:
-                logger.error("Fehler beim Löschen von %s: %s", db_path, e)
-                continue
+            if trial_root.exists():
+                logger.info(
+                    "[DRY-RUN] Würde Trial-Verzeichnis %s löschen (Study '%s').",
+                    trial_root, study_name,
+                )
+        else:
+            if not already_unlinked:
+                try:
+                    Path(db_path).unlink()
+                    logger.warning(
+                        "♻️ [#686] %s gelöscht (Study '%s', v%s ≠ aktuell, %d Trials) — stale "
+                        "reward_semantics_version.",
+                        db_path, study_name, entry["stored_version"], entry["n_trials"],
+                    )
+                except OSError as e:
+                    logger.error("Fehler beim Löschen von %s: %s", db_path, e)
+                    continue
+            if trial_root.exists():
+                try:
+                    shutil.rmtree(trial_root)
+                    logger.warning(
+                        "♻️ [#733] Trial-Verzeichnis %s gelöscht (symmetrisches Löschen zu '%s').",
+                        trial_root, db_path,
+                    )
+                except OSError as e:
+                    logger.error("Fehler beim Löschen von %s: %s", trial_root, e)
         purged_paths.add(db_path)
     return stale
 

@@ -33,6 +33,7 @@ from automation.optimizer.run_optimization import (
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer import champions
+from automation.optimizer import retention
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies,
@@ -737,6 +738,20 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             except Exception:
                 logging.getLogger("optimizer").warning(
                     "[#703] %s/%s: Champion-Store-Schreiben fehlgeschlagen (non-fatal).",
+                    strategy, symbol, exc_info=True,
+                )
+            # Issue #733 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
+            # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum (bis zu n_trials Verzeichnisse,
+            # der grösste Einzeltreiber des data/optimizer-Wachstums) wird ab hier nicht mehr
+            # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.
+            # Fail-open: ein Retention-Fehler darf den Sweep nie crashen (analog Champion-Store).
+            try:
+                study_name = f"study_{strategy}_{_sanitize(symbol)}"
+                retention.prune_completed_trial_dirs(
+                    study_name, retention.collect_referenced_trial_dirs())
+            except Exception:
+                logging.getLogger("optimizer").warning(
+                    "[#733] Trial-Verzeichnis-Retention für %s/%s fehlgeschlagen (non-fatal).",
                     strategy, symbol, exc_info=True,
                 )
         return proposal_path
