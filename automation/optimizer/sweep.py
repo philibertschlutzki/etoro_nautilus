@@ -38,7 +38,9 @@ from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies,
 )
-from automation.log_manager import setup_bot_logging, emit_execution_event, emit_gate1_rejection
+from automation.log_manager import (
+    setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
+)
 
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
@@ -835,12 +837,19 @@ def _resolve_strategies(arg: str) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> list[Path]:
+    # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-
+    # Logger (unten) als auch den Dateinamen des #742-Sweep-Reports (am Ende dieser Funktion) —
+    # dieselbe Provenienz-Kennung verbindet Log-Datei, JSONL-Sidecar (#741) und Report.
+    run_id = default_run_id()
+    main_t0 = time.perf_counter()
+    started_at_utc = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
     # Issue #414 — Logging EINMALIG initialisieren, BEVOR irgendetwas geloggt wird. Sonst hat
     # getLogger("optimizer") im Standalone-Pfad keinen Handler und Pythons lastResort verwirft alle
     # INFO-`[JSON_EVENT]` (#404-Telemetrie) — nur WARNING+ erreicht stderr. setup_bot_logging haengt
-    # einen File- (DEBUG → rotierende JSONL) UND einen Stream-Handler (INFO) an und setzt
-    # propagate=False (kollidiert NICHT mit Optunas eigenem Logger; KEIN set_verbosity, Pitfall #74).
-    setup_bot_logging("optimizer")
+    # einen File- (DEBUG, #740 pro-Lauf NICHT-rotierend) UND einen Stream-Handler (INFO) an und
+    # setzt propagate=False (kollidiert NICHT mit Optunas eigenem Logger; KEIN set_verbosity,
+    # Pitfall #74).
+    setup_bot_logging("optimizer", run_id=run_id)
 
     parser = argparse.ArgumentParser(description="Per-symbol micro-tuning sweep (Ansatz 4). Never enters Phase 5.")
     parser.add_argument("--strategies", default="all", help="'all' (aktive aus strategies.json) oder Komma-Liste")
@@ -891,6 +900,21 @@ def main(argv: list[str] | None = None) -> list[Path]:
     proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs, n_jobs_source=n_jobs_source)
     for p in proposals:
         print(p)
+
+    # Issue #742 — EIN aggregiertes Report-Artefakt am Ende des Laufs, atomar geschrieben. Darf den
+    # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle).
+    try:
+        from automation.optimizer import report as _report
+        report_path = _report.generate_sweep_report(
+            proposals, run_id=run_id, started_at_utc=started_at_utc,
+            wallclock_s=round(time.perf_counter() - main_t0),
+            cli_args={"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols},
+        )
+        print(f"📄 Report: {report_path}")
+    except Exception:
+        logging.getLogger("optimizer").warning(
+            "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
+
     return proposals
 
 

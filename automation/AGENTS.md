@@ -3183,3 +3183,130 @@ hourly_strategy_base.py` (`_on_gr04_close_request`, `on_start`).
 - **`reward_semantics_version` wird bei JEDER `compute_reward`-berührenden Änderung erhöht, mit
   Pflicht-Purge aller Studien vor der neuen Version als letzte Aktion vor dem nächsten Run** —
   unverändert seit #614, hier erneut bestätigt für v13→14.
+
+## Issue-Katalog #740–#746 — Observability & Claude-optimierte Diagnose-Reports (2026-07-19)
+
+Aufbauend auf der bereits vorhandenen LLM-optimierten Logging-Infrastruktur
+(`automation/log_manager.py`) schliesst dieser Katalog die konkreten Beobachtbarkeits-Lücken, die
+über mehrere Forensik-Sitzungen wiederholt echte Zeit gekostet haben: Rotations-Verlust des
+Lauf-Anfangs bei hochvolumigen Sweeps (#740), kein valides JSONL für strukturierte Events (#741),
+kein aggregiertes Sweep-Level-Report-Artefakt (#742), keine dauerhaften Regressionswächter für
+einmalig von Hand verifizierte mathematische Kohärenz (#743), Verwechslungsrisiko zwischen zwei
+ähnlich benannten Rejection-Detail-Feldern (#744), kein wiederverwendbares Trial-Explain-Werkzeug
+(#745), zweistufige Retention bislang undokumentiert (#746). Rein additive Observability — verändert
+KEINE Trading-/Optimierungs-Entscheidung, kein `reward_semantics_version`-Bump, kein SQLite-Purge.
+
+| GH-Issue | Prio | Kernänderung | Dateien |
+|---|---|---|---|
+| **#740** | P0 | `setup_bot_logging(..., run_id=...)`: bei gesetztem `run_id` ein NICHT-rotierender `FileHandler` auf `logs/{log_name}_{run_id}.log` statt des tages-geteilten `RotatingFileHandler` (1 MB×5) — ein Lauf = eine vollständige Datei. `sweep.main()` generiert `run_id` einmalig (`log_manager.default_run_id()`, wiederverwendet `manifest.git_commit()`) und reicht sie durch. Dauerbetrieb-Logger (`momentum_ls_run`, `catalog_service`, …) bleiben ohne `run_id` bit-identisch auf Rotation. Pitfall #214. | `automation/log_manager.py`, `automation/optimizer/sweep.py` |
+| **#741** | P1 | `emit_execution_event` schreibt additiv jedes Event als valide, dekorationsfreie JSON-Zeile nach `logs/{log_name}_{run_id_oder_datum}.events.jsonl` (`_JSONL_SIDECAR_PATHS`-Registry, indiziert über `logger.name` — keine der ~15 bestehenden Aufrufstellen musste angepasst werden). `cleanup_old_logs` erfasst seit diesem Issue zusätzlich `*.jsonl` (vorher nur `*.log*` — die Sidecar-Datei wäre sonst NIE geräumt worden). Pitfall #215. | `automation/log_manager.py`, `.gitignore` |
+| **#742** | P0 | Neues `automation/optimizer/report.py`: EIN aggregiertes `data/optimizer/reports/run_{run_id}.json` (`report_schema_version: 1`) je Sweep-Lauf, atomar geschrieben (`manifest.write_json_atomic` — Tempdatei im Zielverzeichnis + `os.replace`). `generate_sweep_report` (live, am Ende von `sweep.main()`, non-fatal) und `generate_report_for_run` (standalone/nachträglich: entdeckt Proposal-JSONs + lädt jede Study frisch aus ihrer SQLite-Datei, KEIN laufender Sweep nötig) teilen sich denselben Kern (`_build_report`) — garantierte Determinismus-Äquivalenz zwischen beiden Pfaden. Bündelt `manifest.git_commit`/`sha256_file`/`catalog_fingerprint`, `sweep._family_n_from_proposals`, `run_optimization.study_shows_gradient_signal`/`_sanitize`/`resolve_storage`. | `automation/optimizer/report.py` (neu), `automation/optimizer/manifest.py` (`write_json_atomic`) |
+| **#743** | P0 | Neues `automation/optimizer/invariants.py`: 5 REINE Invarianz-Prüfungen über synthetische `user_attrs`-Dicts — `check_sr0_coherence` (#651-Regressionswächter: `deflated_sr0` und `deflated_dsr`/`deflation_dsr_z` müssen ko-präsent sein), `check_n_family_consistency` (#652/#670: `deflation_n_effective == max(deflation_n_eligible, deflation_n_family_effective)`), `check_config_key_registry` (#649: importiert `backtest_runner.OOS_CONDITION_MAP_KEYS`/`_canonical_gate_key` statt einer zweiten Registry-Kopie), `check_rejection_chain_completeness` (#654/#671: kein abgelehntes Proposal ohne `holdout_reject_detail`), `check_reward_term_variance` (Verallgemeinerung von `REWARD_TERM_INERT`, #621, zu einer vollständigen Liste). In jeden #742-Report eingebettet (`invariant_checks`, je Study + ein globaler `check_config_key_registry`-Eintrag); ein FAIL emittiert zusätzlich `emit_execution_event(..., "INVARIANT_CHECK_FAILED", ..., level=ERROR)`. Pitfall #217. | `automation/optimizer/invariants.py` (neu), `automation/optimizer/report.py` |
+| **#744** | P1 | `confirm._dominant_is_rejection_detail`: explizite Docstring-Warnung ("NICHT die Promotion-Ablehnung — siehe `holdout_reject_detail`"). `export_symbol_proposal` spiegelt denselben Wert zusätzlich unter dem unmissverständlich benannten `legacy_modal_is_rejection_detail` (Alias von `dominant_is_rejection_detail`, NICHT von `is_rejection_detail`) — Rückwärtskompatibilität aller bestehenden Feldnamen bleibt gewahrt. Pitfall #216. | `automation/optimizer/confirm.py` |
+| **#745** | P1 | Neues CLI `python -m automation.optimizer.explain_trial --strategy S --symbol SYM --trial N [--format markdown\|json]`: rendert Reward-Dekomposition, Gate-Zustand, Rejection-Kette und Near-Miss-Deltas (`oos_gate_deltas`, knappste Marge zuerst) für EINEN Trial; bei Study-weitem 0-evaluable/0-eligible-Kollaps zusätzlich `sweep_diagnostics.diagnose_trade_frequency`s `binding_cause` (#669, wiederverwendet statt dupliziert). Fehlender Trial/Study ⇒ klare Fehlermeldung auf stderr + Exit-Code 1, nie ein rohes Traceback. Wiederverwendet dieselbe Study-Namens-/Storage-Konvention wie `report.py` (`run_optimization._sanitize`/`resolve_storage`). | `automation/optimizer/explain_trial.py` (neu) |
+| **#746** | P2 | Zweistufige Retention dokumentiert + statisch abgesichert: `data/optimizer/reports/*.json` liegt strukturell ausserhalb von `cleanup_old_logs`s Verzeichnis-/Glob-Reichweite (`logs/*.log*` + `logs/*.jsonl`) — Reports bleiben langlebig (klein, aggregiert), Rohlogs/JSONL-Sidecars unterliegen weiter der 7-Tage-Retention. Pitfall #218. | `automation/AGENTS.md`, `README.md` |
+
+**Merge-Reihenfolge:** #740 → #741 (`run_id`-Konvention) → #742 (`write_json_atomic`, Report-Kern) →
+#743 (Invarianz-Checks, in #742 eingebettet) → #745 (nutzt #742/#743s Datenzugriff). #744 und #746
+sind unabhängig und liefen parallel.
+
+Tests: `test_issue_740_per_run_log.py`, `test_issue_741_jsonl_sidecar.py`,
+`test_issue_742_sweep_report.py`, `test_issue_743_invariant_checks.py`,
+`test_issue_744_rejection_detail_naming.py`, `test_issue_745_explain_trial.py`,
+`test_issue_746_retention_layers.py`.
+
+### 🟢 Pitfall #214 — `RotatingFileHandler(1MB×5)` für hochvolumige, NICHT-daemonartige Workloads verliert den LAUF-ANFANG, nicht nur alte Läufe [BEHOBEN: GH-#740]
+**Symptom:** Ein `--tier all`-Sweep über hunderte/tausende Trials (15 Strategien × n_trials=100
+Default) erzeugt allein an `optimizer_trial_completed`-Events weit mehr als 5 MB, bevor der Lauf
+fertig ist. Der geteilte, tages-basierte `RotatingFileHandler` (max 1 MB, 5 Backups) auf
+`logs/optimizer_<date>.log` überschreibt dann den Ringpuffer-Anfang — dokumentiertes Muster über
+mehrere Forensik-Sitzungen: "Log ist Tail-Fragment" (Sitzung 2026-07-17: Sweep-Start rekonstruiert
+~04:52, sichtbares Log begann erst 05:14).
+**Root-Cause:** Rotation ist für Dauerbetrieb-Logger (kein natürliches Lauf-Ende) korrekt, aber
+für einen EINZELNEN, hochvolumigen Lauf mit definiertem Ende systematisch zu klein dimensioniert —
+der Ringpuffer kennt den Lauf-Anfang nicht als "besonders erhaltenswert".
+**Fix/Regel:** Workloads mit natürlichem Ende (Sweep-/Optimizer-Läufe) bekommen eine PRO-LAUF-Datei
+(`setup_bot_logging(..., run_id=...)` ⇒ nicht-rotierender `FileHandler`), keinen geteilten
+Ringpuffer. Dauerbetrieb-Logger (kein Lauf-Ende) bleiben bewusst auf Rotation.
+
+### 🟢 Pitfall #215 — `[PREFIX] {json}` innerhalb einer formatierten Log-Zeile ist KEIN valides JSONL [BEHOBEN: GH-#741]
+**Symptom:** `sweep.py` bezeichnete das Logging-Format als "rotierende JSONL" (Kommentar), obwohl
+`emit_execution_event` `[JSON_EVENT] {...}` nur als Substring INNERHALB einer
+`StructuredFormatter`-Zeile (`TIMESTAMP | LEVEL | LOGGER | [JSON_EVENT] {...}`) schrieb.
+`json.loads(line)` scheitert ohne vorherige Regex-Extraktion des Präfixes — jede automatisierte
+Auswertung brauchte eine Zusatz-Parsing-Stufe.
+**Root-Cause:** Ein Mensch-lesbares Präfix-Format wurde mit valider JSONL verwechselt — beides
+sind unterschiedliche Anforderungen (Terminal-Lesbarkeit vs. maschinelles Parsing ohne
+Vorverarbeitung).
+**Fix/Regel:** Für automatisiertes Parsing IMMER eine echte, dekorationsfreie JSONL-Sidecar-Datei
+zusätzlich zur Prosa-Logzeile führen — niemals ein Präfix-markiertes Format als "JSONL" bezeichnen
+oder darauf verlassen.
+
+### 🔵 Pitfall #216 — Zwei ähnlich benannte "Ablehnungsgrund"-Felder (modal vs. tatsächliche Promotion-Entscheidung) sind ein wiederkehrendes Verwechslungsrisiko [ABGESICHERT: GH-#744]
+**Symptom:** Bereits Pitfall #161 (GH-#654) entstand aus genau diesem Muster — `is_rejection_detail`
+(damals der modale IS-Study-Grund) wurde mit der tatsächlichen Promotion-Ursache verwechselt.
+`#654`/`#671` trennten die Felder bereits korrekt (`dominant_is_rejection_detail` = modal/sekundär,
+`holdout_reject_detail`/`is_rejection_detail_override` = tatsächliche Ursache) — das STRUKTURELLE
+Risiko (zwei ähnlich benannte Felder im selben Proposal) bleibt aber bestehen, solange nicht
+explizit an der Quelle markiert.
+**Root-Cause:** Namensähnlichkeit zwischen "der modale Sekundärgrund" und "die tatsächliche
+Entscheidung" lädt zu genau der Verwechslung ein, die schon einmal (#654) einen realen Bug
+verursachte — unabhängig davon, ob die Felder aktuell korrekt befüllt sind.
+**Fix/Regel:** Die modale Diagnose-Funktion trägt eine EXPLIZITE Docstring-Warnung ("NICHT die
+Promotion-Ablehnung"); das Proposal spiegelt ihren Wert zusätzlich unter einem unmissverständlich
+"legacy/modal" benannten Feldnamen (`legacy_modal_is_rejection_detail`). Generalisierte Regel: ein
+älteres, ähnlich benanntes Feld neben seinem Nachfolger wird IMMER explizit als "legacy/modal,
+NICHT die [tatsächliche Bedeutung]" gekennzeichnet — nie stillschweigend nebeneinander belassen.
+
+### 🟢 Pitfall #217 — Ein manuell/einmalig verifizierter mathematischer Kohärenz-Fix bleibt ohne Regression-/Invariant-Check jederzeit erneut brechbar [BEHOBEN: GH-#743]
+**Symptom:** Mehrere mathematische Kohärenz-Fixes (SR₀-Konsistenz #651, N-Konsistenz #652/#670,
+Config-Key-vs-Registry #649) wurden jeweils EINMALIG in einer Forensik-Sitzung von Hand verifiziert
+und dokumentiert — aber nie als automatisierter, bei jedem Lauf ausgeführter Check verdrahtet. Ein
+künftiger, scheinbar unabhängiger Refactor hätte jede dieser Invarianten erneut brechen können,
+ohne dass es auffällt.
+**Root-Cause:** Forensische Erkenntnis ("X und Y müssen übereinstimmen") wurde als Sitzungsnotiz
+festgehalten, nicht als Code, der bei jedem künftigen Lauf automatisch dagegen prüft — ein
+Präzedenzfall (`REWARD_TERM_INERT`) existierte bereits, war aber nicht verallgemeinert.
+**Fix/Regel:** Jede von Hand verifizierte mathematische/Konfigurations-Invariante wird als REINE,
+unabhängig testbare Funktion in `automation/optimizer/invariants.py` verdrahtet und bei jedem
+Sweep-Report (#742) automatisch geprüft (PASS/FAIL + die tatsächlich verglichenen Werte, nie
+stillschweigend verschluckt). Ein FAIL emittiert zusätzlich ein `INVARIANT_CHECK_FAILED`-ERROR-Event
+— sofort sichtbar, nicht erst beim Report-Lesen.
+
+### 🟢 Pitfall #218 — Aggregierte Reports und Rohlogs brauchen UNTERSCHIEDLICHE Retention [BEHOBEN: GH-#746]
+**Symptom:** `cleanup_old_logs` (7 Tage, `logs/*.log*`) hätte auch die #740-Pro-Lauf-Logs und das
+#741-JSONL-Sidecar erfasst (beide liegen unter `logs/`) — für Untersuchungen, die nachweislich über
+mehr als 7 Tage liefen (Sitzungshistorie 2026-07-13 bis 2026-07-18 zum selben Sweep-Defekt), wäre
+nach 7 Tagen nur noch erhalten, was manuell in Memory-Notizen festgehalten wurde.
+**Root-Cause:** Ein Report ist klein, aggregiert und lange aufzuheben; ein Rohlog ist teuer und
+wächst schnell. Beide unter dieselbe Cleanup-Regel zu stellen ist ein impliziter, oft falscher
+Tradeoff, der nie bewusst getroffen wurde.
+**Fix/Regel:** Aggregierte Reports (`data/optimizer/reports/*.json`) leben strukturell AUSSERHALB
+des `logs/`-Verzeichnisbaums und sind von `cleanup_old_logs` nie betroffen — unbegrenzte Aufbewahrung,
+manuelle Bereinigung bei Bedarf (konsistent mit `champions/`, das ebenfalls schlank/JSON-only bleibt).
+Rohlogs (Prosa + JSONL-Sidecar) bleiben unter der bestehenden 7-Tage-Regel. Generalisierte Regel:
+ein aggregiertes Artefakt und die Rohdaten, aus denen es abgeleitet wurde, bekommen IMMER getrennte,
+bewusst gewählte Retention-Entscheidungen — nie automatisch dieselbe Regel.
+
+### 📋 Neue/geänderte Config-Keys (Issue-Katalog #740–#746)
+Keine neuen Config-Keys — dieser Katalog ist rein additive Observability/Tooling ohne Einfluss auf
+Trading-/Optimierungs-Parameter.
+
+### 🔒 Watertight Invariants (Issue-Katalog #740–#746) — für künftige Agenten
+- **Ein hochvolumiger Workload mit natürlichem Lauf-Ende (Sweep/Optimizer) bekommt eine PRO-LAUF-
+  Datei, kein geteiltes Rotations-Limit** — die Rotation-Kappung ist für Dauerbetrieb-Logger korrekt,
+  für einen einzelnen langen Lauf strukturell verlustbehaftet (Pitfall #214).
+- **Ein Präfix-markiertes Format (`[TAG] {json}`) innerhalb einer formatierten Zeile ist NIE valides
+  JSONL** — automatisiertes Parsing braucht eine dekorationsfreie Sidecar-Datei (Pitfall #215).
+- **Zwei ähnlich benannte Felder für denselben Diagnose-Bereich (modal vs. tatsächliche
+  Entscheidung) werden IMMER explizit als "legacy/modal, NICHT die tatsächliche Ursache"
+  gekennzeichnet** — nie stillschweigend nebeneinander belassen (Pitfall #216, seit #161/#178 ein
+  wiederkehrendes Muster).
+- **Jede von Hand verifizierte mathematische/Konfigurations-Invariante wird als dauerhafter,
+  automatisierter Check verdrahtet** — eine Sitzungsnotiz ist keine Regression-Absicherung
+  (Pitfall #217).
+- **Ein aggregiertes Report-Artefakt und die Rohdaten, aus denen es abgeleitet wurde, bekommen
+  getrennte Retention-Entscheidungen** — nie automatisch dieselbe Cleanup-Regel (Pitfall #218).
+- **`report.py`/`explain_trial.py` laden Studies IMMER frisch aus SQLite (nie aus Live-Prozess-
+  Zustand)** — das ist die Grundlage der Determinismus-Garantie zwischen dem Live-End-of-Run-Pfad
+  und der standalone/nachträglichen Rekonstruktion (#742).

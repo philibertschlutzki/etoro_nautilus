@@ -8,6 +8,7 @@ __pycache__/
 !logs/.gitkeep
 logs/backtest_2026*
 logs/optimizer_*.log
+logs/*.jsonl
 data/nautilus/
 
 # API Keys & Secrets

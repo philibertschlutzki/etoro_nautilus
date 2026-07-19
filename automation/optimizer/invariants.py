@@ -1,0 +1,205 @@
+"""automation/optimizer/invariants.py
+=====================================
+Issue #743 — wachsende Bibliothek automatisierter mathematischer/Konfigurations-Invarianzen.
+
+Jede Prüfung ist eine REINE Funktion über plain Dicts/Listen (synthetische ``user_attrs``-artige
+Fixtures) — bewusst OHNE Abhängigkeit von Optuna-``Study``/``Trial``-Objekten oder vom
+Report-Generator (#742), damit jede Prüfung unabhängig mit einem PASS- und einem FAIL-Fixture
+unit-testbar ist. #742 ruft diese Funktionen mit den bereits geladenen Proposal-/Trial-Daten auf
+und bettet die Ergebnisse als ``invariant_checks`` in den Sweep-Report ein.
+
+Vorbild/Präzedenzfall: ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621) war bereits EIN
+automatisierter "wirkt dieser Mechanismus überhaupt"-Check — ``check_reward_term_variance`` ist
+seine Verallgemeinerung zu einer vollständigen Liste. Die anderen vier Prüfungen verdrahten
+Forensik-Erkenntnisse, die bislang nur EINMALIG von Hand verifiziert wurden (#651, #652/#670,
+#649, #654/#671), als DAUERHAFTE Regressionswächter (AGENTS.md-Pitfall #217).
+"""
+from __future__ import annotations
+
+import statistics
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class InvariantResult:
+    name: str
+    passed: bool
+    expected: Any
+    actual: Any
+    detail: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "passed": self.passed,
+            "expected": self.expected,
+            "actual": self.actual,
+            "detail": self.detail,
+        }
+
+
+def check_sr0_coherence(holdout_metrics: dict) -> InvariantResult:
+    """Issue #651-Regressionswächter.
+
+    ``confirm.confirm_per_symbol_promotion`` berechnet ``deflated_dsr`` (Entscheidung) UND
+    ``deflation_dsr_z`` (Telemetrie) im selben Codeblock aus EINEM lokalen ``deflation_sr0``
+    (confirm.py — ``deflated_sharpe_ratio(..., sr0=deflation_sr0)`` und
+    ``psr_z(..., sr_star=deflation_sr0)``). Vor #651 divergierten beide Grössen bei kleinen
+    Kohorten (Hourly N=9, Faktor ≈3.48×), weil ``deflated_sharpe_ratio`` SR₀ intern UNGEFLOORT neu
+    berechnete. Auf dem EXPORTIERTEN Proposal ist die Bit-Identität nicht mehr direkt nachrechenbar
+    (die Rohwerte, aus denen SR₀ abgeleitet wurde, werden nicht separat persistiert) — strukturell
+    prüfbar bleibt aber die Ko-Präsenz: ``deflated_dsr``/``deflation_dsr_z`` dürfen NIE ohne ein
+    begleitendes ``deflated_sr0`` auftauchen (sie werden im selben Block aus genau diesem Wert
+    abgeleitet, #651/#701).
+    """
+    sr0 = holdout_metrics.get("deflated_sr0")
+    dsr = holdout_metrics.get("deflated_dsr")
+    dsr_z = holdout_metrics.get("deflation_dsr_z")
+    has_sr0 = sr0 is not None
+    has_dsr_signal = dsr is not None or dsr_z is not None
+    passed = has_sr0 == has_dsr_signal
+    return InvariantResult(
+        name="check_sr0_coherence",
+        passed=passed,
+        expected="deflated_sr0 gesetzt genau dann, wenn deflated_dsr/deflation_dsr_z gesetzt sind (#651)",
+        actual={"deflated_sr0": sr0, "deflated_dsr": dsr, "deflation_dsr_z": dsr_z},
+        detail=("OK" if passed else
+                "deflated_dsr/deflation_dsr_z ohne begleitendes deflated_sr0 (oder umgekehrt) — "
+                "moegliche Wiederkehr der #651-Root-Cause (divergente SR0-Quellen fuer Entscheidung "
+                "vs. Telemetrie)."),
+    )
+
+
+def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
+    """Issue #652/#670-Regressionswächter.
+
+    Die Promotion-Entscheidung nutzt ``deflation_n_effective = max(deflation_n_eligible,
+    deflation_n_family_effective)`` (confirm.py, #652/#695) als Multiplizität für SR₀. Weicht der
+    exportierte ``deflation_n_effective`` von genau dieser Formel ab, hat die Entscheidung eine
+    ANDERE N-/Varianzquelle konsumiert als die Telemetrie ausweist — exakt die #670-Fehlerklasse
+    (eine Nachricht behauptete die falsche Varianzquelle).
+    """
+    n_eligible = holdout_metrics.get("deflation_n_eligible")
+    n_family_eff = holdout_metrics.get("deflation_n_family_effective")
+    n_effective = holdout_metrics.get("deflation_n_effective")
+    if n_eligible is None and n_family_eff is None and n_effective is None:
+        return InvariantResult(
+            name="check_n_family_consistency",
+            passed=True,
+            expected="deflation_n_effective == max(deflation_n_eligible, deflation_n_family_effective)",
+            actual=None,
+            detail="Keine Deflations-Kohorte (deflated_selection=False oder N<2) — nicht anwendbar.",
+        )
+    expected_n = max(n_eligible or 0, n_family_eff or 0)
+    passed = n_effective == expected_n
+    return InvariantResult(
+        name="check_n_family_consistency",
+        passed=passed,
+        expected=expected_n,
+        actual=n_effective,
+        detail=("OK" if passed else
+                f"deflation_n_effective={n_effective} != max(N_eligible={n_eligible}, "
+                f"N_family_effective={n_family_eff})={expected_n} — Entscheidung und Telemetrie "
+                "koennten unterschiedliche N-/Varianzquellen konsumiert haben (#652/#670)."),
+    )
+
+
+def check_config_key_registry(tournament_config: dict) -> InvariantResult:
+    """Issue #649-Regressionswächter.
+
+    Jeder in ``eligible_requires_all``/``eligible_requires_any`` referenzierte Gate-Key MUSS (nach
+    ``oos_``-Normalisierung) auf einen echten ``condition_map``-Handler in
+    ``automation.backtest_runner`` resolven. ``load_tournament_config`` bricht dafuer bereits beim
+    Config-Load fail-loud ab (#649) — diese Pruefung importiert DIESELBE Registry
+    (``OOS_CONDITION_MAP_KEYS``/``_canonical_gate_key``), statt eine zweite, potenziell
+    abweichende Kopie zu pflegen, und dient als Snapshot-Nachweis im Report (Defense-in-Depth: sie
+    prueft die Config, die TATSAECHLICH in diesem Report referenziert wird, nicht nur "irgendwann
+    beim Start").
+    """
+    from automation.backtest_runner import OOS_CONDITION_MAP_KEYS, _canonical_gate_key
+
+    req_all = set(tournament_config.get("eligible_requires_all", []) or [])
+    req_any = set(tournament_config.get("eligible_requires_any", []) or [])
+    used = req_all | req_any
+    unknown = sorted(k for k in used if _canonical_gate_key(k) not in OOS_CONDITION_MAP_KEYS)
+    passed = not unknown
+    return InvariantResult(
+        name="check_config_key_registry",
+        passed=passed,
+        expected=[],
+        actual=unknown,
+        detail=("OK" if passed else
+                f"Gate(s) ohne condition_map-Handler nach oos_-Normalisierung (#649): {unknown}."),
+    )
+
+
+def check_rejection_chain_completeness(proposal: dict) -> InvariantResult:
+    """Ein abgelehntes Proposal (``status != READY_FOR_PR``) MUSS eine konkrete Ablehnungsursache
+    tragen (``holdout_reject_detail``/``is_rejection_detail_override``, #654/#671) — nie
+    stillschweigend ``None``. ``status is None``/``READY_FOR_PR`` gilt als nicht-abgelehnt (kein
+    Fehlschlag der Kette moeglich)."""
+    status = proposal.get("status")
+    detail_val = proposal.get("holdout_reject_detail", proposal.get("is_rejection_detail"))
+    passed = True if status in (None, "READY_FOR_PR") else detail_val is not None
+    return InvariantResult(
+        name="check_rejection_chain_completeness",
+        passed=passed,
+        expected="holdout_reject_detail gesetzt bei status != READY_FOR_PR",
+        actual={"status": status, "holdout_reject_detail": detail_val},
+        detail=("OK" if passed else
+                f"status={status!r}, aber holdout_reject_detail ist None — Ablehnungsursache "
+                "fehlt (#654/#671-Invariante verletzt)."),
+    )
+
+
+_REWARD_TERM_NUMERIC_KEYS = (
+    "base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker",
+)
+
+
+def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01) -> InvariantResult:
+    """Verallgemeinerung von ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621): statt einer
+    einzelnen WARNING-Zeile pro inertem Term liefert diese Pruefung die VOLLSTAENDIGE Liste ueber
+    alle eligiblen Trials einer Study. Ein Term gilt als inert, wenn seine Streuung < ``inert_ratio``
+    der Streuung des Gesamt-Rewards ist — derselbe Schwellenwert wie das Original
+    (``std_k < 0.01 * rew_std``).
+
+    ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (je Trial ``oos_evaluated`` +
+    ``reward_terms``), NICHT Optuna-``Trial``-Objekte — pure Funktion, synthetisch testbar."""
+    eligible_terms = [
+        t.get("reward_terms") for t in trials
+        if t.get("oos_evaluated") is True and t.get("reward_terms")
+        and t["reward_terms"].get("branch") in ("eligible", "per_symbol", "pareto")
+    ]
+    if len(eligible_terms) < 2:
+        return InvariantResult(
+            name="check_reward_term_variance",
+            passed=True,
+            expected=[],
+            actual=[],
+            detail="< 2 eligible Trials mit reward_terms — keine Varianz-Aussage moeglich.",
+        )
+    rew_vals = [
+        (t.get("base", 0.0) - t.get("divergence", 0.0) - t.get("dd_penalty", 0.0)
+         - t.get("param_pen", 0.0) - t.get("turnover", 0.0) - t.get("fold_dispersion", 0.0)
+         + t.get("tie_breaker", 0.0))
+        for t in eligible_terms
+    ]
+    rew_std = statistics.pstdev(rew_vals)
+    inert_terms = []
+    for k in _REWARD_TERM_NUMERIC_KEYS:
+        vals = [float(t.get(k, 0.0)) for t in eligible_terms]
+        std_k = statistics.pstdev(vals)
+        if std_k < inert_ratio * rew_std:
+            inert_terms.append(k)
+    passed = not inert_terms
+    return InvariantResult(
+        name="check_reward_term_variance",
+        passed=passed,
+        expected=[],
+        actual=inert_terms,
+        detail=("OK" if passed else
+                f"Reward-Term(e) praktisch inert (std < {inert_ratio:.2%} von "
+                f"reward_std={rew_std:.6f}): {inert_terms}."),
+    )
