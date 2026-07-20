@@ -1134,7 +1134,15 @@ def _dominant_is_rejection_detail(study) -> str | None:
     alle Trials. Wo ``_dominant_rejection`` nur grob 'oos_not_evaluated' liefert, macht dies die
     tatsächliche dominante Ursache sichtbar (z. B. ``REJECT_OOS_WINDOW_UNREACHABLE`` ⇒ Katalog-H2
     auffrischen statt Parameter tunen; ``REJECT_OOS_MAX_DRAWDOWN`` ⇒ Risiko-Constraint). Trials ohne
-    das Attr (Legacy/gepruned) werden ignoriert; gibt es keine, ist die Kategorie ``None``."""
+    das Attr (Legacy/gepruned) werden ignoriert; gibt es keine, ist die Kategorie ``None``.
+
+    Issue #744 — WARNUNG: dies ist die SEKUNDÄRE IS-Study-Diagnose ("warum scheiterten die meisten
+    IS-Trials"), NICHT die Promotion-Ablehnung. Die tatsächliche, Promotion-blockierende Ursache
+    steht in ``holdout_reject_detail``/``is_rejection_detail_override`` (siehe
+    ``export_symbol_proposal`` unten) — eine Verwechslung der beiden Felder war bereits die
+    #654-Root-Cause. Das Ergebnis dieser Funktion landet im Proposal ausschliesslich unter
+    ``dominant_is_rejection_detail`` (und, unmissverständlich alias-benannt,
+    ``legacy_modal_is_rejection_detail``), NIE unter ``holdout_reject_detail``."""
     details = [t.user_attrs.get("is_rejection_detail") for t in study.trials
                if t.user_attrs.get("is_rejection_detail")]
     if not details:
@@ -1202,6 +1210,12 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # ('warum scheiterten die meisten IS-Trials dieser Study'), NIEMALS die Promotion-
         # blockierende Ursache — unabhängig davon, ob ``holdout_reject_detail`` gesetzt ist.
         "dominant_is_rejection_detail": _dominant_is_rejection_detail(study),
+        # Issue #744 — unmissverständlich benannter Alias VON dominant_is_rejection_detail (nicht
+        # von is_rejection_detail!): macht auf den ersten Blick klar, dass dies die alte, modale
+        # IS-Study-Diagnose ist ("legacy"), nicht die Promotion-Ursache — ohne Rückwärtskompat der
+        # bestehenden Feldnamen zu brechen (beide bleiben erhalten, falls ein externer Konsument
+        # sie liest). Ko-präsent und WERTGLEICH zu dominant_is_rejection_detail per Konstruktion.
+        "legacy_modal_is_rejection_detail": _dominant_is_rejection_detail(study),
         # Issue #615 — der EINE Holdout-trial_dir, aus dem der promotete Vektor (Params/R_symbol/Gate)
         # stammt: macht die Kohärenz-Invariante im Proposal nachvollziehbar.
         "holdout_trial_dir": promotion.get("trial_dir"),

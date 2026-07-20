@@ -33,6 +33,11 @@ LOG_MAX_BYTES   = 1 * 1024 * 1024   # 1 MB (für leichte LLM-Analyse)
 LOG_BACKUP_CNT  = 5                  # 5 Rotations-Dateien à max 1 MB
 LOG_RETENTION_D = 7                  # Dateien älter als 7 Tage löschen
 
+# Issue #741 — pro Logger-Name der Pfad seiner JSONL-Event-Sidecar-Datei (populiert von
+# ``setup_bot_logging``). ``emit_execution_event`` schlägt hier ausschliesslich über
+# ``logger.name`` nach — keine der ~15 bestehenden Aufrufstellen muss den Pfad selbst kennen.
+_JSONL_SIDECAR_PATHS: dict[str, Path] = {}
+
 
 class StructuredFormatter(logging.Formatter):
     """
@@ -71,18 +76,34 @@ class StructuredFormatter(logging.Formatter):
         return line
 
 
+def default_run_id() -> str:
+    """Issue #740 — Default-``run_id`` für einen Einzel-Lauf (Sweep/Optimizer):
+    ``f"{git_commit()}_{timestamp}"``. Wiederverwendet ``manifest.git_commit()`` (Provenienz-
+    Primitive) statt eine zweite Git-Abfrage zu implementieren. Lazy-Import, damit ``log_manager``
+    (ein generisches, von ``automation.optimizer`` UNABHÄNGIGES Basismodul) nicht am Modul-Top-Level
+    von ``automation.optimizer`` abhängt."""
+    from automation.optimizer.manifest import git_commit
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+    return f"{git_commit()}_{ts}"
+
+
 def setup_bot_logging(
     log_name: str,
     log_dir: Path | str | None = None,
     max_bytes: int = LOG_MAX_BYTES,
     backup_count: int = LOG_BACKUP_CNT,
     level: int = logging.DEBUG,
+    run_id: str | None = None,
 ) -> logging.Logger:
     """
     Richtet ein LLM-optimiertes Logging-System für den Trading Bot ein.
 
     Features:
-    - RotatingFileHandler: max 1 MB pro Datei
+    - RotatingFileHandler: max 1 MB pro Datei (Default, Dauerbetrieb-Logger)
+    - Issue #740: bei gesetztem ``run_id`` stattdessen ein NICHT-rotierender ``FileHandler`` auf
+      einer pro-Lauf-eindeutigen Datei — ein einzelner, hochvolumiger Lauf (z. B. ein
+      `--tier all`-Sweep über hunderte Trials) verliert dann nie mehr seinen Anfang an den
+      1 MB×5-Ringpuffer (das dokumentierte „Tail-Fragment"-Muster).
     - StreamHandler: INFO-Level für Terminal-Output
     - StructuredFormatter: klarer, maschinenlesbarer Output
     - Automatischer Log-Cleanup beim Start
@@ -90,9 +111,13 @@ def setup_bot_logging(
     Args:
         log_name:     Name des Loggers und Basis des Log-Dateinamens.
         log_dir:      Verzeichnis für Log-Dateien (Default: PROJECT_ROOT/logs/).
-        max_bytes:    Max. Größe pro Log-Datei in Bytes (Default: 1 MB).
-        backup_count: Anzahl der Rotations-Dateien.
+        max_bytes:    Max. Größe pro Log-Datei in Bytes (Default: 1 MB). Ignoriert bei ``run_id``.
+        backup_count: Anzahl der Rotations-Dateien. Ignoriert bei ``run_id``.
         level:        Log-Level (Default: DEBUG).
+        run_id:       Issue #740 — bei gesetztem Wert schreibt der Logger NICHT-rotierend nach
+                      ``{log_dir}/{log_name}_{run_id}.log`` (ein Lauf = eine vollständige Datei).
+                      ``None`` (Default) erhält das bisherige, tages-geteilte Rotationsverhalten für
+                      Dauerbetrieb-Logger (``momentum_ls_run``, ``catalog_service``, …) bit-identisch.
 
     Returns:
         Konfigurierter Logger.
@@ -102,21 +127,29 @@ def setup_bot_logging(
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    log_path  = log_dir / f"{log_name}_{today_str}.log"
-
     # Log-Cleanup
     cleanup_old_logs(log_dir)
 
     formatter = StructuredFormatter()
 
-    # RotatingFileHandler (max 1 MB, 5 Backups)
-    file_handler = logging.handlers.RotatingFileHandler(
-        str(log_path),
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8",
-    )
+    if run_id:
+        # Issue #740 — pro-Lauf-Datei, KEINE Rotation: der ganze Lauf bleibt in einer Datei.
+        log_path = log_dir / f"{log_name}_{run_id}.log"
+        file_handler: logging.Handler = logging.FileHandler(str(log_path), encoding="utf-8")
+        jsonl_path = log_dir / f"{log_name}_{run_id}.events.jsonl"
+        summary_suffix = "kein Rotationslimit (pro-Lauf-Datei, Issue #740)"
+    else:
+        today_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+        log_path = log_dir / f"{log_name}_{today_str}.log"
+        file_handler = logging.handlers.RotatingFileHandler(
+            str(log_path),
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+        jsonl_path = log_dir / f"{log_name}_{today_str}.events.jsonl"
+        summary_suffix = f"max {max_bytes // 1024} KB, {backup_count} Backups"
+
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
 
@@ -132,9 +165,13 @@ def setup_bot_logging(
     logger.addHandler(stream_handler)
     logger.propagate = False
 
+    # Issue #741 — JSONL-Sidecar-Pfad für diesen Logger-Namen registrieren, EGAL ob rotierend
+    # oder pro-Lauf: ``emit_execution_event`` schlägt ausschliesslich über ``logger.name`` nach.
+    _JSONL_SIDECAR_PATHS[log_name] = jsonl_path
+
     logger.info(
         f"[LogManager] Logger '{log_name}' initialisiert. "
-        f"Log-Datei: {log_path} (max {max_bytes // 1024} KB, {backup_count} Backups)"
+        f"Log-Datei: {log_path} ({summary_suffix})"
     )
     return logger
 
@@ -146,6 +183,11 @@ def cleanup_old_logs(
     """
     Löscht alle Log-Dateien im Verzeichnis, die älter als max_age_days sind.
 
+    Issue #741/#746 — erfasst zusätzlich zu ``*.log*`` (Prosa-Logs + Rotations-Backups) auch die
+    ``*.jsonl``-Sidecar-Dateien (strukturierte Events, #741): beide sind ROHDATEN mit derselben
+    7-Tage-Aufbewahrung. Das aggregierte Report-Artefakt (#742) liegt bewusst AUSSERHALB von
+    ``logs/`` (unter ``data/optimizer/reports/``) und ist von dieser Funktion nie betroffen (#746).
+
     Returns:
         Anzahl der gelöschten Dateien.
     """
@@ -156,7 +198,8 @@ def cleanup_old_logs(
     if not log_dir.exists():
         return 0
 
-    for f in log_dir.glob("*.log*"):
+    candidates = dict.fromkeys(list(log_dir.glob("*.log*")) + list(log_dir.glob("*.jsonl")))
+    for f in candidates:
         try:
             if f.stat().st_mtime < cutoff_ts:
                 f.unlink()
@@ -203,6 +246,28 @@ def emit_execution_event(
         **payload,
     }
     logger.log(level, f"[JSON_EVENT] {json.dumps(event, ensure_ascii=False, default=str)}")
+    _append_jsonl_sidecar(logger.name, event)
+
+
+def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
+    """Issue #741 — hängt ``event`` als EINE valide, dekorationsfreie JSON-Zeile an die für
+    ``logger_name`` registrierte ``.events.jsonl``-Datei an (additiv zur Prosa-Logzeile, die
+    ``[JSON_EVENT] {...}`` weiterhin innerhalb einer formatierten Zeile trägt — für Menschen/
+    Terminal unverändert). Kein registrierter Sidecar-Pfad (Logger nie via ``setup_bot_logging``
+    initialisiert, z. B. in ad-hoc-Tests) ⇒ stiller No-Op. Fail-open: ein Sidecar-Schreibfehler
+    darf den aufrufenden Trading-/Optimizer-Pfad nie crashen (analog Champion-Store/Retention)."""
+    jsonl_path = _JSONL_SIDECAR_PATHS.get(logger_name)
+    if jsonl_path is None:
+        return
+    try:
+        jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(jsonl_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False, default=str))
+            f.write("\n")
+    except OSError:
+        logging.getLogger("log_manager").warning(
+            "[#741] JSONL-Sidecar-Schreiben fehlgeschlagen für %s", jsonl_path, exc_info=True
+        )
 
 
 def emit_gate1_rejection(

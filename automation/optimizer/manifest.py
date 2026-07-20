@@ -1,6 +1,10 @@
 import hashlib
+import json
+import os
 import subprocess
+import tempfile
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 WORK = PROJECT_ROOT / "data" / "optimizer"
@@ -23,6 +27,27 @@ def sha256_file(path: Path) -> str:
         while chunk := f.read(8192):
             h.update(chunk)
     return h.hexdigest()
+
+def write_json_atomic(path: Path, data: Any, *, indent: int = 2) -> None:
+    """Issue #742 — schreibt ``data`` als JSON atomar nach ``path``: erst in eine eindeutige
+    Tempdatei IM SELBEN Verzeichnis (damit ``os.replace`` auf demselben Filesystem bleibt, kein
+    Cross-Device-Fehler), dann ``os.replace`` (POSIX-atomarer Rename) — ein Leser sieht entweder
+    die alte oder die vollständige neue Datei, NIE einen Teilzustand/``.tmp``-Rest im Ergebnis."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=indent, default=str)
+        os.replace(tmp_name, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
 
 def catalog_fingerprint(catalog: Path | None = None) -> str:
     """Returns a stable fingerprint for the given catalog path based on its data.parquet files."""

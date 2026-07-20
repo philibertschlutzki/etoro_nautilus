@@ -343,8 +343,18 @@ Der Prozess, der die besten Strategie-Parameter sucht (Kapitel 9), bewertet Kand
 | `logs/orchestrator_YYYYMMDD.log` | Pipeline-Hauptlog (RotatingFileHandler, 1 MB, 5 Backups) |
 | `logs/live_bot_YYYYMMDD.log` | Bot-Laufzeit-Log |
 | `logs/tournament_YYYY-MM-DD.json` | Vollständiges Turnier-Resultat |
+| `logs/optimizer_{run_id}.log` | Sweep/Optimizer: EIN Lauf = eine nicht-rotierende Datei (Issue #740) |
+| `logs/optimizer_{run_id}.events.jsonl` | Sweep/Optimizer: dieselben strukturierten Events als valides JSONL (Issue #741) |
+| `data/optimizer/reports/run_{run_id}.json` | Aggregierter Sweep-Forensik-Report inkl. Invarianz-Checks (Issue #742/#743) |
 
 > **Git-Hygiene:** Lokale `.log`- und `.json`-Dateien aus `logs/` gehören **nicht** ins Git-Tracking (Repo-Bloat / blockierte Pushes). `git checkout origin/main -- logs/` oder die Dateien explizit unstagen.
+
+> **Zweistufige Retention (Issue #746):** `logs/*.log*` und `logs/*.jsonl` (Rohdaten: Prosa-Logs +
+> JSONL-Event-Sidecars) werden von `log_manager.cleanup_old_logs` nach 7 Tagen automatisch gelöscht.
+> `data/optimizer/reports/*.json` (aggregierte Sweep-Reports) liegt bewusst **ausserhalb** dieses
+> Verzeichnisbaums und unterliegt keiner automatischen Löschung — ein Report ist klein und bündelt
+> die forensisch relevanten Kennzahlen eines Laufs dauerhaft, auch nachdem dessen Rohlogs längst
+> rotiert/gelöscht sind.
 
 ---
 
