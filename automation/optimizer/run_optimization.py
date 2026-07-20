@@ -74,6 +74,31 @@ def _create_study_with_retry(*, study_name: str, storage: str, sampler=None,
             return _create()
 
 
+def _resolve_rdb_storage(storage: str):
+    """Issue #747 — eine SQLite-Storage-URL explizit als ``optuna.storages.RDBStorage`` konstruieren,
+    STATT ``optuna.create_study(storage=<url>)`` die zugrundeliegende SQLAlchemy-``Engine`` intern
+    (und damit fuer den Aufrufer unreferenzierbar) bauen zu lassen. Nur eine explizit gehaltene
+    ``RDBStorage``-Instanz erlaubt spaeter ``.engine.dispose()`` — ohne das haeuft der Per-Symbol-
+    Sweep (``sweep.py``, Phase 1 haelt jede Study in einer Liste) eine offene Engine pro verarbeitetem
+    Paar an (empirisch verifiziert: +2 FDs/Study, unbegrenzt, bis ``OSError(24, "Too many open
+    files")``). Nicht-SQLite-URLs (Postgres-Opt-in, siehe ``resolve_storage``) sowie bereits
+    aufgeloeste Storage-Objekte (Test-Fakes) unveraendert durchreichen — kein Dispose-Bedarf dafuer."""
+    if isinstance(storage, str) and storage.startswith("sqlite"):
+        return optuna.storages.RDBStorage(storage)
+    return storage
+
+
+def _dispose_storage(storage) -> None:
+    """Issue #747 — ``Engine.dispose()`` schliesst den SQLAlchemy-Connection-Pool (und damit dessen
+    offene File-Deskriptoren) einer ``RDBStorage``. Die Engine selbst ist danach NICHT tot — ein
+    nachfolgender Zugriff (z. B. ``study.trials``) baut transparent eine neue Connection auf; Dispose
+    ist daher risikofrei mehrfach aufrufbar und MUSS nach jedem Zugriffsfenster erneut erfolgen.
+    No-Op fuer Storages ohne ``.engine`` (``InMemoryStorage``, Test-Doubles)."""
+    engine = getattr(storage, "engine", None)
+    if engine is not None:
+        engine.dispose()
+
+
 def _preinit_study_storage(study_name: str, *, base_cfg: Path | None = None) -> None:
     """Issue #411 — erzwingt den RDBStorage-Schema-Bootstrap (``create_all``) EINMAL und seriell im
     aufrufenden (Haupt-)Thread, BEVOR mehrere Worker dieselbe (frische) Study-Datei oeffnen. Damit
@@ -1510,6 +1535,10 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     sweep_dir.mkdir(parents=True, exist_ok=True)
     if storage is None:
         storage = resolve_storage(study_name=study_name)   # A4.7: SQLite-Default, ENV/JSON-Opt-in
+    # Issue #747 — explizit konstruierte RDBStorage-Instanz statt Optuna die Engine intern bauen zu
+    # lassen (siehe _resolve_rdb_storage-Docstring). ``rdb_storage`` bleibt hier referenziert, damit
+    # sie nach Studien-Nutzung disposed werden kann.
+    rdb_storage = _resolve_rdb_storage(storage)
 
     reward_mode = opt_data.get("reward_mode", "auto")
     directions = None
@@ -1533,11 +1562,16 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     # optuna.create_study, das bei zwei Workern auf derselben frischen SQLite-Datei crasht.
     study = _create_study_with_retry(
         study_name=study_name,
-        storage=storage,
+        storage=rdb_storage,
         sampler=sampler,
         direction="maximize" if not directions else None,
         directions=directions
     )
+    # Issue #747 — eigene Referenz auf die RDBStorage-Instanz am Study-Objekt halten (KEIN Zugriff
+    # auf Optunas privates ``study._storage``/``_CachedStorage._backend``): der Per-Symbol-Sweep
+    # (sweep.py) braucht sie, um NACH Phase 2 (Confirm/Export/Champion-Store — liest study.trials
+    # erneut und reconnected die Engine damit lazy) ein zweites Mal zu disposen.
+    study._etoro_rdb_storage = rdb_storage
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
@@ -1635,10 +1669,17 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True,
                           strategy=strategy, symbol=symbol)
-    study.optimize(objective, n_trials=n_trials, n_jobs=1,
-                   catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
-    # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
-    _emit_study_summary(study, symbol, study_t0, strategy=strategy)
+    try:
+        study.optimize(objective, n_trials=n_trials, n_jobs=1,
+                       catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
+        # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
+        _emit_study_summary(study, symbol, study_t0, strategy=strategy)
+    finally:
+        # Issue #747 — Engine NACH Phase-1-Nutzung disposen (auch bei einer hier propagierenden
+        # Exception): deckelt die Spitzenlast gleichzeitig offener SQLAlchemy-Engines im Per-Symbol-
+        # Sweep auf ~n_jobs statt auf die Gesamtzahl der Paare. Nachfolgende Lesezugriffe (sweep.py:
+        # familienweite Aggregation, Confirm/Export) reconnecten lazy und disposen dort erneut.
+        _dispose_storage(rdb_storage)
     return study
 
 

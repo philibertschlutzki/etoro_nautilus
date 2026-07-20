@@ -30,6 +30,7 @@ from automation.optimizer.run_optimization import (
     log_active_config,
     _sanitize,
     _preinit_study_storage,
+    _dispose_storage,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer import champions
@@ -536,6 +537,10 @@ def _family_n_from_studies(pairs, studies) -> dict[str, int]:
         trials = getattr(study, "trials", None) or []
         n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
         family_n[symbol] = family_n.get(symbol, 0) + n_eligible
+        # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
+        # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
+        # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
+        _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
     return family_n
 
 
@@ -561,6 +566,8 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
             rets = t.user_attrs.get("oos_period_returns") or []
             if rets:
                 family_returns.setdefault(symbol, []).append([float(x) for x in rets])
+        # Issue #747 — siehe _family_n_from_studies: erneutes Dispose nach dem lazy Reconnect.
+        _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
     return family_returns
 
 
@@ -722,41 +729,47 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
     def _run_confirm_and_export(pair: tuple[str, str, str], study) -> Path:
         strategy, symbol, _reason = pair
-        newest_ns = latest_ts.get(symbol) if latest_ts else None
-        global_params = load_global_best(strategy, config_dir())
-        promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
-                            deflation_n_family=n_family_pre_promotion.get(symbol, 0),
-                            deflation_family_period_returns=family_returns_pre_promotion.get(symbol))
-        proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
-        # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
-        # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die
-        # aktuelle Promotion-Entscheidung noch strategies.json, HI-3); nur im echten Storage-Pfad
-        # (injizierte HI-7-Fakes simulieren keinen Katalog/keine reale champions.WORK-Isolation).
-        # Fail-open: ein Champion-Store-Fehler darf den Sweep nie crashen (analog #531-Backfill).
-        if using_real_optimize:
-            try:
-                champions.store_champion(study, strategy, symbol, promotion,
-                                         catalog_newest_ns=newest_ns, opt_data=opt_data, tier=tier)
-            except Exception:
-                logging.getLogger("optimizer").warning(
-                    "[#703] %s/%s: Champion-Store-Schreiben fehlgeschlagen (non-fatal).",
-                    strategy, symbol, exc_info=True,
-                )
-            # Issue #733 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
-            # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum (bis zu n_trials Verzeichnisse,
-            # der grösste Einzeltreiber des data/optimizer-Wachstums) wird ab hier nicht mehr
-            # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.
-            # Fail-open: ein Retention-Fehler darf den Sweep nie crashen (analog Champion-Store).
-            try:
-                study_name = f"study_{strategy}_{_sanitize(symbol)}"
-                retention.prune_completed_trial_dirs(
-                    study_name, retention.collect_referenced_trial_dirs())
-            except Exception:
-                logging.getLogger("optimizer").warning(
-                    "[#733] Trial-Verzeichnis-Retention für %s/%s fehlgeschlagen (non-fatal).",
-                    strategy, symbol, exc_info=True,
-                )
-        return proposal_path
+        try:
+            newest_ns = latest_ts.get(symbol) if latest_ts else None
+            global_params = load_global_best(strategy, config_dir())
+            promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
+                                deflation_n_family=n_family_pre_promotion.get(symbol, 0),
+                                deflation_family_period_returns=family_returns_pre_promotion.get(symbol))
+            proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
+            # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
+            # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die
+            # aktuelle Promotion-Entscheidung noch strategies.json, HI-3); nur im echten Storage-Pfad
+            # (injizierte HI-7-Fakes simulieren keinen Katalog/keine reale champions.WORK-Isolation).
+            # Fail-open: ein Champion-Store-Fehler darf den Sweep nie crashen (analog #531-Backfill).
+            if using_real_optimize:
+                try:
+                    champions.store_champion(study, strategy, symbol, promotion,
+                                             catalog_newest_ns=newest_ns, opt_data=opt_data, tier=tier)
+                except Exception:
+                    logging.getLogger("optimizer").warning(
+                        "[#703] %s/%s: Champion-Store-Schreiben fehlgeschlagen (non-fatal).",
+                        strategy, symbol, exc_info=True,
+                    )
+                # Issue #733 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
+                # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum (bis zu n_trials Verzeichnisse,
+                # der grösste Einzeltreiber des data/optimizer-Wachstums) wird ab hier nicht mehr
+                # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.
+                # Fail-open: ein Retention-Fehler darf den Sweep nie crashen (analog Champion-Store).
+                try:
+                    study_name = f"study_{strategy}_{_sanitize(symbol)}"
+                    retention.prune_completed_trial_dirs(
+                        study_name, retention.collect_referenced_trial_dirs())
+                except Exception:
+                    logging.getLogger("optimizer").warning(
+                        "[#733] Trial-Verzeichnis-Retention für %s/%s fehlgeschlagen (non-fatal).",
+                        strategy, symbol, exc_info=True,
+                    )
+            return proposal_path
+        finally:
+            # Issue #747 — Confirm/Export/Champion-Store lesen study.trials erneut (lazy Reconnect
+            # nach dem Dispose in optimize_symbol); die Engine hier ein zweites (letztes) Mal
+            # disposen, BEVOR die Study-Referenz mit dem Ende von Phase 2 aus dem Scope faellt.
+            _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
 
     if n_jobs and n_jobs > 1 and len(pairs) > 1:
         from concurrent.futures import ThreadPoolExecutor
