@@ -868,37 +868,45 @@ def main(argv: list[str] | None = None) -> list[Path]:
     parser.add_argument("--strategies", default="all", help="'all' (aktive aus strategies.json) oder Komma-Liste")
     parser.add_argument("--symbols", default="all", help="'all' (Universum) oder Komma-Liste")
     parser.add_argument("--tier", default="deployable", choices=["deployable", "refine", "all"])
-    parser.add_argument("--n-jobs", type=int, default=1, help="Parallele Studies (je eigene SQLite-Datei)")
+    parser.add_argument("--n-jobs", type=int, default=None,
+                        help="Parallele Studies (je eigene SQLite-Datei). Fehlt das Flag, greift "
+                             "optimizer.json['sweep_max_workers'] (Default max(1, cpu_count()-2)).")
     args = parser.parse_args(argv)
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
 
-    # Issue #511: Concurrency Management & Determinism Guard
-    import sys
-    active_argv = argv if argv is not None else sys.argv
-    is_cli_n_jobs = "--n-jobs" in active_argv
+    # Issue #511/#755: Concurrency Management. VORHER erzwang ein gesetzter Seed sweep-weit
+    # n_jobs=1 (Determinismus auf der falschen Ebene — siehe run_optimization.seed_effective-
+    # Docstring: jede Study hat eine EIGENE SQLite-Datei/eigenen Sampler, Determinismus braucht nur
+    # einen PER-STUDY deterministischen Seed, nicht serielle Ausfuehrung). Der Sweep-weite Seed wird
+    # unveraendert aus optimizer.json gelesen und reicht bis in ``optimize_symbol`` durch, wo er via
+    # ``seed_effective`` je Study gehasht wird — hier ist NUR noch die Worker-Anzahl zu bestimmen.
+    is_cli_n_jobs = args.n_jobs is not None
 
     opt_cfg_path = config_dir() / "optimizer.json"
     seed = None
+    sweep_max_workers_cfg = None
     try:
         opt_cfg = json.loads(opt_cfg_path.read_text("utf-8")) if opt_cfg_path.exists() else {}
         seed = opt_cfg.get("seed")
+        sweep_max_workers_cfg = opt_cfg.get("sweep_max_workers")
     except Exception:
         pass
 
-    if seed is not None:
-        if args.n_jobs > 1:
-            raise ValueError(
-                f"[FATAL] Determinism Constraint Violation: Seed ({seed}) erfordert zwingend Sweep-Level n_jobs=1. "
-                f"Erkannter CLI Override: n_jobs={args.n_jobs}. "
-                "Silent Overrides sind in diesem Execution Context strikt untersagt."
-            )
-        eff_n_jobs = 1
-        n_jobs_source = "ENFORCED_BY_SEED"
-    else:
+    if is_cli_n_jobs:
         eff_n_jobs = args.n_jobs
-        n_jobs_source = "CLI" if is_cli_n_jobs else "DEFAULT"
+        n_jobs_source = "CLI"
+    elif sweep_max_workers_cfg:
+        eff_n_jobs = int(sweep_max_workers_cfg)
+        n_jobs_source = "CONFIG_SWEEP_MAX_WORKERS"
+    else:
+        # Issue #755 — Default max(1, cpu_count()-2), konsistent mit der #726-Empfehlung
+        # (ISSUES_concurrent_execution_20260719.md). ``sweep_max_workers`` explizit 0/negativ/nicht
+        # gesetzt ⇒ derselbe Fallback (Zero-Hardcoding-Konvention dieses Moduls).
+        import os
+        eff_n_jobs = max(1, (os.cpu_count() or 3) - 2)
+        n_jobs_source = "DEFAULT_CPU_MINUS_2"
 
     # Issue #403: Config-Quellen + Kern-Schwellen einmalig offenlegen, bevor der Sweep in die
     # (subprocess-stummen) iterativen Trials uebergeht.
@@ -921,7 +929,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         report_path = _report.generate_sweep_report(
             proposals, run_id=run_id, started_at_utc=started_at_utc,
             wallclock_s=round(time.perf_counter() - main_t0),
-            cli_args={"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols},
+            cli_args={"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
+                     # Issue #755 — n_workers je Lauf im Report nachvollziehbar (Determinismus-Nachweis
+                     # bei n_jobs>1, jetzt auch bei gesetztem Seed zulaessig).
+                     "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source},
         )
         print(f"📄 Report: {report_path}")
     except Exception:

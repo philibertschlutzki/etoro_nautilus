@@ -22,8 +22,15 @@ class TournamentMetrics:
     oos_total_return: float = 0.0
     oos_expectancy: float = 0.0
     # Issue #452: OOS-Distanzmetriken fuer kontinuierliche Constraint-Penalties bei
-    # evaluierten, aber nicht eligiblen Trials. Defaults halten bestehende Tests/Fixtures stabil.
-    oos_win_rate: float = 0.0
+    # evaluierten, aber nicht eligiblen Trials.
+    # Issue #759 — VORHER float=0.0: eine FEHLENDE win_rate (kein Trial je evaluiert/kein
+    # win_rate-Key im Metrics-Dict) kollabierte auf denselben Wert wie eine ECHT BEOBACHTETE
+    # win_rate von 0.0. Nachgelagerte Policies (reward.check_any_arm_reachability_live/
+    # resolve_any_arm_policy) konnten die beiden Faelle nicht mehr trennen und rekalibrierten
+    # Schwellen aus einer Verteilung, die teils/ausschliesslich aus Missing-Data-Sentinels bestand
+    # (empirisch: 305/459 [#660]-Warnungen mit p99=0.0000, davon 255 aus Studies mit 0 evaluierten
+    # Trials). float | None = None laesst „nicht messbar" von „gemessen null" unterscheidbar.
+    oos_win_rate: float | None = None
     oos_profit_factor: float | None = None
     # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
     # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
@@ -260,7 +267,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         hit_trade_cap=bool(hit_trade_cap),
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
         oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else 0.0,
-        oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else 0.0,
+        # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).
+        oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else None,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,
         is_best_total_return=float(is_best_total_return),
         is_best_win_rate=float(is_best_win_rate),

@@ -699,6 +699,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # dokumentierte konservative Varianz-Floor (siehe deflation.sr0_multiple_testing_robust).
     deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
+    # Issue #757/#758 — welche Inferenzmethode die DSR tatsächlich lieferte ("stationary_bootstrap"
+    # im Regelfall; "sharpe_formula_fallback" nur bei < 5 persistierten Perioden-Returns, siehe
+    # unten). Telemetriert, damit der #742-Report Eligibility- und Promotion-Inferenzmethode
+    # nebeneinander ausweisen kann (#758-Doppelstandard-Nachweis).
+    deflation_inference_method = None
     deflation_n = 0
     deflation_n_effective = 0
     # Issue #695/#696 — rohe (Σ eligibler Trials) vs. declusterte (korrelations-reduzierte)
@@ -867,27 +872,40 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             # nachgewiesen" (fail-closed, dieselbe Semantik wie ein regulär berechnetes, zu
             # niedriges DSR — kein stiller Promotions-Freifahrtschein durch eine Datenanomalie).
             if deflation_sr0 is not None:
-                from automation.optimizer.deflation import deflated_sharpe_ratio, psr_z
+                from automation.optimizer.deflation import (
+                    deflated_sharpe_ratio, psr_z, bootstrap_psr_z, psr_from_z)
                 promoted_n_periods = getattr(promoted_m_symbol, "oos_n_periods", 0)
                 promoted_skew = getattr(promoted_m_symbol, "oos_ret_skew", 0.0)
                 promoted_kurtosis = getattr(promoted_m_symbol, "oos_ret_kurtosis", 3.0)
+                promoted_period_returns = getattr(promoted_m_symbol, "oos_period_returns", None) or ()
                 # Issue #651 — dasselbe (bereits gefloorte) ``deflation_sr0`` speist SOWOHL die
                 # Entscheidung (``deflation_dsr``, hier) ALS AUCH die Telemetrie (``deflation_dsr_z``,
-                # unten via ``psr_z(..., sr_star=deflation_sr0)``). Vor #651 berechnete
-                # ``deflated_sharpe_ratio`` SR₀ intern aus ``var_sr_trials``/``n_trials`` — UNGEFLOORT —
-                # während ``deflation_dsr_z``/``deflated_sr0`` bereits das GEFLOORTE SR₀ nutzten; beide
-                # Grössen divergierten dadurch bei Small Cohorts (#651-Referenzfall: Hourly N=9, Faktor
-                # ≈3.48× zwischen internem und telemetriertem SR₀). Ein Aufruf, EIN SR₀ — bit-identisch.
-                deflation_dsr = deflated_sharpe_ratio(
-                    promoted_sr_period, promoted_n_periods,
-                    sr0=deflation_sr0,
-                    skew=promoted_skew, kurtosis=promoted_kurtosis)
-                # Issue #636 (#627-Synergie) — die UNBESCHRÄNKTE Effektstärke z_DSR = (ŜR−SR₀)·√(T−1)/σ
-                # als Selektions-Robustheits-Telemetrie, konsistent zur psr_z-Base (#630): eine CDF nahe
-                # 1.0 sättigt und unterscheidet "knapp drüber" nicht von "weit drüber", der z-Score tut es.
-                deflation_dsr_z = psr_z(
-                    promoted_sr_period, promoted_n_periods,
-                    skew=promoted_skew, kurtosis=promoted_kurtosis, sr_star=deflation_sr0)
+                # unten). Ein Aufruf, EIN SR₀ — bit-identisch.
+                #
+                # Issue #757 — BOOTSTRAP-Standardfehler statt psr_z-Sharpe-Sampling-Varianz (dieselbe
+                # Root-Cause wie die Eligibility-PSR, backtest_runner.py): ``promoted_sr_period`` ist
+                # ein Sortino-Punktschätzer, für den psr_z/lo2002_sharpe_variance nicht hergeleitet
+                # sind. Nutzt dieselbe Bootstrap-Infrastruktur wie der Holdout-Bootstrap-CI (#619,
+                # ``promoted_m_symbol.oos_period_returns``) — beseitigt zugleich den #758-Inferenz-
+                # Doppelstandard (Eligibility und Promotion rechnen jetzt auf DERSELBEN Methode).
+                # Fallback auf die Sharpe-Formel NUR, wenn zu wenige Perioden-Returns persistiert
+                # wurden (< 5, Legacy-/Testfixtures ohne oos_period_returns) — sonst käme kein
+                # Bootstrap-SE zustande.
+                if len(promoted_period_returns) >= 5:
+                    deflation_dsr_z, _dsr_se_boot = bootstrap_psr_z(
+                        promoted_period_returns, sr_star=deflation_sr0,
+                        n_boot=int(tournament_cfg.get("psr_bootstrap_resamples", 200)))
+                    deflation_dsr = psr_from_z(deflation_dsr_z)
+                    deflation_inference_method = "stationary_bootstrap"
+                else:
+                    deflation_dsr = deflated_sharpe_ratio(
+                        promoted_sr_period, promoted_n_periods,
+                        sr0=deflation_sr0,
+                        skew=promoted_skew, kurtosis=promoted_kurtosis)
+                    deflation_inference_method = "sharpe_formula_fallback"
+                    deflation_dsr_z = psr_z(
+                        promoted_sr_period, promoted_n_periods,
+                        skew=promoted_skew, kurtosis=promoted_kurtosis, sr_star=deflation_sr0)
             if holdout_passed and (deflation_dsr is None or deflation_dsr < deflation_confidence):
                 holdout_passed = False
                 holdout_reject_detail = "REJECT_HOLDOUT_DSR_DROP"
@@ -1074,6 +1092,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflated_sr0"] = deflation_sr0
         best_result["metrics_symbol"]["deflated_dsr"] = deflation_dsr
         best_result["metrics_symbol"]["deflation_dsr_z"] = deflation_dsr_z
+        # Issue #758 — welche Inferenzmethode DIESE DSR tatsaechlich lieferte; im Regelfall
+        # identisch zur Eligibility-Methode (backtest_runner.psr_inference_method).
+        best_result["metrics_symbol"]["deflation_inference_method"] = deflation_inference_method
         best_result["metrics_symbol"]["deflation_n_eligible"] = deflation_n
         # Issue #670 — ``deflation_used_var_floor`` bleibt aus Rückwärtskompat-Gründen erhalten
         # (bedeutet NUR "λ ≥ 0.5"). Die PRÄZISEN Grössen für die Forensik: ``deflation_lambda`` (das

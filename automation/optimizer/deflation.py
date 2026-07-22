@@ -18,13 +18,22 @@ _EULER_MASCHERONI = 0.5772156649015329
 
 def psr_z(sr, n_periods, *, skew: float = 0.0, kurtosis: float = 3.0,
           sr_star: float = 0.0) -> float | None:
-    """Issue #630 — z-Score der Probabilistic Sharpe/Sortino Ratio (die unbeschränkte Effektstärke).
+    """Issue #630/#757 — z-Score der Probabilistic SHARPE Ratio (die unbeschränkte Effektstärke).
 
     ``z = (ŜR − SR*)·√(T−1) / √(1 − γ₃·ŜR + ((γ₄−1)/4)·ŜR²)``
 
     Das unbeschränkte Argument der CDF Φ. Dient als Ranking-Base anstelle der zu
     rasch sättigenden Wahrscheinlichkeit (CDF), da es monoton skaliert und
     nicht an einer 1.0-Decke klemmt.
+
+    Issue #757 — ACHTUNG: der ``γ₃``/``γ₄``-Korrekturterm im Nenner ist die Delta-Methoden-
+    Herleitung der asymptotischen Sampling-Varianz des **SHARPE**-Schätzers ``μ̂/σ̂`` (Bailey/
+    López de Prado 2012, Lo 2002), mit ``σ̂`` = VOLLSTÄNDIGE Standardabweichung. Für einen
+    **Sortino**-Punktschätzer ``μ̂/DD`` (``DD`` = Downside-Deviation) ist dieser Nenner NICHT
+    hergeleitet — die Sampling-Verteilung von ``DD`` unterscheidet sich von der von ``σ̂``. ``sr``
+    MUSS hier der per-Perioden-**Sharpe** (auf denselben Log-Returns wie der Sortino, #756) sein.
+    Für einen Sortino-Punktschätzer den BOOTSTRAP-Standardfehler verwenden (siehe
+    ``bootstrap_psr_z``/``bootstrap_psr`` unten) — NICHT diese Formel mit einem Sortino-Wert füttern.
 
     ``None`` bei undefinierter Eingabe oder nicht-positivem Varianz-Term (analog PSR).
     """
@@ -39,15 +48,19 @@ def psr_z(sr, n_periods, *, skew: float = 0.0, kurtosis: float = 3.0,
 
 def probabilistic_sharpe_ratio(sr, n_periods, *, skew: float = 0.0, kurtosis: float = 3.0,
                                sr_star: float = 0.0):
-    """Issue #614 — Probabilistic Sharpe/Sortino Ratio (Bailey & López de Prado).
+    """Issue #614/#757 — Probabilistic SHARPE Ratio (Bailey & López de Prado).
 
     ``PSR(SR*) = Φ[ (ŜR − SR*)·√(T−1) / √(1 − γ₃·ŜR + ((γ₄−1)/4)·ŜR²) ]``
 
-    ``ŜR`` = **per-Perioden**-Ratio (Sharpe ODER Sortino — NICHT annualisiert), ``T`` = Anzahl
-    Perioden (OOS-Bars), ``γ₃`` = Schiefe, ``γ₄`` = (NICHT-Exzess-)Kurtosis der Periodenrenditen
-    (Normal ⇒ 3.0). Skalenfrei und in ``[0, 1]`` beschränkt — die asinh-Sättigung (#559) wird damit
-    überflüssig. **Annualisierungs-invariant**: ``ŜR`` ist per-Periode, die Reskalierung mit √A (die
-    Punktschätzer UND Standardfehler gleich multipliziert, #614) fällt vollständig heraus.
+    ``ŜR`` = **per-Perioden**-SHARPE-Ratio (``μ̂/σ̂`` — NICHT annualisiert; siehe ``psr_z``-Docstring
+    zur Sortino-Einschränkung), ``T`` = Anzahl Perioden (OOS-Bars), ``γ₃`` = Schiefe, ``γ₄`` =
+    (NICHT-Exzess-)Kurtosis der Periodenrenditen (Normal ⇒ 3.0). Skalenfrei und in ``[0, 1]``
+    beschränkt — die asinh-Sättigung (#559) wird damit überflüssig. **Annualisierungs-invariant**:
+    ``ŜR`` ist per-Periode, die Reskalierung mit √A (die Punktschätzer UND Standardfehler gleich
+    multipliziert, #614) fällt vollständig heraus.
+
+    Issue #757 — für die tatsächlich im Reward/Eligibility-Pfad verwendete Statistik (per-Perioden-
+    SORTINO) den Bootstrap-Standardfehler nutzen: ``bootstrap_psr``/``bootstrap_psr_z``.
 
     ``None`` bei undefinierter Eingabe (``sr is None``, ``T < 2``) oder nicht-positivem Varianz-Term
     (numerisch degeneriert). Referenz (#614/#618): ``ŜR=0.11386, T=202, γ₃=0, γ₄=3, SR*=0 ⇒ 0.9463``.
@@ -56,6 +69,73 @@ def probabilistic_sharpe_ratio(sr, n_periods, *, skew: float = 0.0, kurtosis: fl
     if z is None:
         return None
     return float(_ND.cdf(z))
+
+
+def psr_from_z(z: float | None) -> float | None:
+    """Φ(z) — die CDF fuer einen bereits (z. B. per Bootstrap) berechneten z-Score. Reine
+    Convenience, damit Aufrufer wie ``bootstrap_psr_z`` nicht ``statistics.NormalDist`` duplizieren
+    muessen. ``None``-durchreichend."""
+    if z is None:
+        return None
+    return float(_ND.cdf(z))
+
+
+def bootstrap_psr_z(period_returns, *, sr_star: float = 0.0, n_boot: int = 200,
+                    block_length: float | None = None, seed: int = 42,
+                    mar: float = 0.0) -> tuple[float | None, float | None]:
+    """Issue #757 — z-Score der PSR mit einem BOOTSTRAP-Standardfehler DER TATSÄCHLICH VERWENDETEN
+    Statistik (per-Perioden-Sortino), statt der ``psr_z``-Sharpe-Sampling-Varianz.
+
+    Root-Cause #757: ``psr_z``/``lo2002_sharpe_variance`` sind die asymptotischen Sampling-Varianzen
+    des SHARPE-Schätzers ``μ̂/σ̂`` (Delta-Methode über ``(μ̂, σ̂²)``), aber der Eligibility-/Promotion-
+    Pfad übergibt ``sortino_period`` — einen Schätzer ``μ̂/DD`` mit ``DD`` = getrimmtes zweites
+    Downside-Moment. Monte-Carlo-Beleg (H0, T=4320): ``P(PSR≥0.75)`` mit dieser Substitution liegt
+    bei 31–32 % statt der nominellen 25 % — die effektive Eligibility-/Promotion-Fehlerrate ist damit
+    systematisch inflationiert.
+
+    Fix: ``z = (ŜR_sortino − SR*) / SE_boot``, wobei ``SE_boot = pstdev(sortino_statistic(r*_b))``
+    über ``n_boot`` Stationary-Bootstrap-Resamples (Politis/Romano, dieselbe Infrastruktur wie der
+    Holdout-Bootstrap-CI, #619) der übergebenen Perioden-Returns. Das ist der korrekte Standardfehler
+    FÜR DIE TATSÄCHLICH VERWENDETE Statistik, berücksichtigt zusätzlich Serienabhängigkeit und
+    Schiefe der (Log-)Returns (#756) OHNE separate γ₃/γ₄-Korrektur, und beseitigt zugleich den
+    Inferenz-Doppelstandard zwischen Eligibility (vorher: i.i.d.-√T) und Holdout-Promotion (bereits
+    Stationary Bootstrap, #758).
+
+    Rückgabe ``(z, se_boot)`` — beide ``None`` bei < 2 Renditen, nicht-finitem Punktschätzer oder
+    degenerierter (``<= 0``) Bootstrap-Streuung. Deterministisch bei festem ``seed``."""
+    from automation.optimizer.bootstrap import (
+        optimal_block_length, stationary_bootstrap_indices, sortino_statistic)
+    import numpy as _np
+    a = _np.asarray(list(period_returns), dtype=float)
+    n = a.size
+    if n < 2:
+        return None, None
+    point = sortino_statistic(a, mar=mar, annualization=1.0)
+    if point != point or not math.isfinite(point):  # NaN/inf
+        return None, None
+    bl = block_length if block_length is not None else optimal_block_length(a)
+    rng = _np.random.default_rng(seed)
+    stats = _np.empty(int(n_boot), dtype=float)
+    for b in range(int(n_boot)):
+        resample = a[stationary_bootstrap_indices(n, bl, rng)]
+        stats[b] = sortino_statistic(resample, mar=mar, annualization=1.0)
+    stats = stats[_np.isfinite(stats)]
+    if stats.size < 2:
+        return None, None
+    se = float(stats.std(ddof=0))
+    if not (se > 0.0):
+        return None, None
+    return (point - float(sr_star)) / se, se
+
+
+def bootstrap_psr(period_returns, *, sr_star: float = 0.0, n_boot: int = 200,
+                  block_length: float | None = None, seed: int = 42,
+                  mar: float = 0.0) -> tuple[float | None, float | None]:
+    """Issue #757 — Probabilistic Sortino Ratio mit Bootstrap-Standardfehler (siehe
+    ``bootstrap_psr_z``-Docstring für die Herleitung/Root-Cause). Rückgabe ``(psr, se_boot)``."""
+    z, se = bootstrap_psr_z(period_returns, sr_star=sr_star, n_boot=n_boot,
+                            block_length=block_length, seed=seed, mar=mar)
+    return psr_from_z(z), se
 
 
 def sample_skew_kurtosis(returns) -> tuple[float, float]:
@@ -101,15 +181,23 @@ def sr0_multiple_testing(var_sr_trials: float, n_trials: int) -> float:
 
 
 def lo2002_sharpe_variance(sr: float, n_periods: int) -> float:
-    """Issue #653 — Lo (2002): asymptotische Stichprobenvarianz eines geschätzten Sharpe/Sortino-
-    Ratios unter i.i.d.-normalverteilten Perioden-Renditen: ``Var[ŜR] ≈ (1 + ŜR²/2) / T``.
+    """Issue #653/#757 — Lo (2002): asymptotische Stichprobenvarianz eines geschätzten SHARPE-
+    Ratios (``μ̂/σ̂``, ``σ̂`` = VOLLSTÄNDIGE Standardabweichung) unter i.i.d.-normalverteilten
+    Perioden-Renditen: ``Var[ŜR] ≈ (1 + ŜR²/2) / T``.
 
-    ``T = n_periods`` (OOS-Perioden je Schätzer), ``ŜR`` = per-Perioden-Ratio. Rein deterministisch
-    (kein I/O). ``sr=0.0`` (der in ``sr0_multiple_testing_robust`` verwendete Default) ist die
-    Varianz UNTER DER NULLHYPOTHESE „kein Edge" — die konservativste, parameterfreie Referenz (keine
-    Annahme über den wahren SR-Level nötig, konsistent mit dem Multiple-Testing-Null-Modell selbst).
-    Skaliert erwartungsgemäss invers mit T: kürzeres OOS-Fenster (kleineres T) ⇒ höhere
-    Schätz-Unsicherheit ⇒ grössere Varianz ⇒ konservativerer Floor."""
+    Issue #757 — NICHT für einen Sortino-Punktschätzer (``μ̂/DD``) verwenden: die Sampling-Verteilung
+    der Downside-Deviation ``DD`` unterscheidet sich von der von ``σ̂``, diese Formel ist dafür nicht
+    hergeleitet. Für den in diesem Codebase tatsächlich verwendeten Sortino den Bootstrap-Standard-
+    fehler nutzen (``bootstrap_psr_z``). Diese Funktion bleibt als FORMELKONFORME Referenz für einen
+    ECHTEN Sharpe-Schätzer erhalten (``sr0_multiple_testing_robust``s Legacy-Blend-Fallback, bevor
+    genug Kohorten-Beobachtungen vorliegen — siehe dortiger Docstring).
+
+    ``T = n_periods`` (OOS-Perioden je Schätzer), ``ŜR`` = per-Perioden-SHARPE-Ratio. Rein
+    deterministisch (kein I/O). ``sr=0.0`` (der in ``sr0_multiple_testing_robust`` verwendete
+    Default) ist die Varianz UNTER DER NULLHYPOTHESE „kein Edge" — die konservativste, parameterfreie
+    Referenz (keine Annahme über den wahren SR-Level nötig, konsistent mit dem Multiple-Testing-
+    Null-Modell selbst). Skaliert erwartungsgemäss invers mit T: kürzeres OOS-Fenster (kleineres T)
+    ⇒ höhere Schätz-Unsicherheit ⇒ grössere Varianz ⇒ konservativerer Floor."""
     if n_periods is None or n_periods <= 1:
         raise ValueError("lo2002_sharpe_variance: n_periods muss > 1 sein (T = OOS-Perioden)")
     return (1.0 + (float(sr) ** 2) / 2.0) / float(n_periods)

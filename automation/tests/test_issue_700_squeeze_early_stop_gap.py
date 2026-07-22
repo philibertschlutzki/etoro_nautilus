@@ -19,7 +19,12 @@ import optuna
 from automation.optimizer import run_optimization as ro
 from automation.optimizer.sweep_diagnostics import eligibility_curve
 
-W = {"penalty_unevaluable_oos": -20.0, "unevaluable_shaping_span": 0.25, "n_startup_trials": 16}
+# Issue #753 — plateau_min_modelled_trials=0 haelt die ZERO_ELIGIBLE-Abbruchschwelle bei den fuer
+# dieses Testmodul urspruenglich gewaehlten Kohortengroessen (n_startup_trials, kein Zusatzbudget) —
+# diese Tests pruefen die #700-Kollaps-KLASSIFIKATION (gemischter Cohort), nicht die #753-Budget-
+# Schwelle selbst (dafuer siehe test_issue_753_plateau_budget.py).
+W = {"penalty_unevaluable_oos": -20.0, "unevaluable_shaping_span": 0.25, "n_startup_trials": 16,
+     "plateau_min_modelled_trials": 0}
 
 
 class _FakeTrial:
@@ -102,7 +107,13 @@ def test_mixed_cohort_with_zero_eligible_now_fires_where_it_previously_fell_thro
         + [_FakeTrial(-9.8, oos_evaluated=False) for _ in range(8)]
     )
     study = _FakeStudy(trials)
-    ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=16, logger=lg,
+    # Issue #753 — n_startup_trials=0 haelt diesen Test auf die #700-Klassifikationsfrage fokussiert
+    # (Detection ueber einen gemischten Cohort), unabhaengig von der #753-Budget-Schwelle: bei
+    # n_startup_trials=16 laege der gesamte "evaluated"-Block VOR dem modellierten Fenster und die
+    # #753-Modelled-Only-Restriktion wuerde ihn maskieren — das waere ein #753-Artefakt dieses
+    # synthetischen Block-Fixtures, keine reale Produktionssituation (dort ist oos_evaluated nicht mit
+    # der Trial-Position korreliert).
+    ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=0, logger=lg,
                               stop_on_plateau=True)
     assert _warned(recs, "Zero-Eligible-Plateau")
     assert not _warned(recs, "Floor-Plateau")
@@ -118,7 +129,8 @@ def test_mixed_cohort_message_reports_evaluated_subset_counts():
         + [_FakeTrial(-9.8, oos_evaluated=False) for _ in range(8)]
     )
     study = _FakeStudy(trials)
-    ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=16, logger=lg)
+    # Issue #753 — s. Kommentar in test_mixed_cohort_with_zero_eligible_now_fires_where_it_previously_fell_through.
+    ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=0, logger=lg)
     msgs = _warned(recs, "Zero-Eligible-Plateau")
     assert msgs
     msg = msgs[0].getMessage()
@@ -195,7 +207,8 @@ def test_event_payload_carries_p_eligible_windows_and_n_evaluated():
         + [_FakeTrial(-9.8, oos_evaluated=False) for _ in range(8)]
     )
     study = _FakeStudy(trials)
-    ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=16, logger=lg,
+    # Issue #753 — s. Kommentar in test_mixed_cohort_with_zero_eligible_now_fires_where_it_previously_fell_through.
+    ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=0, logger=lg,
                               stop_on_plateau=True)
 
     zep = [e for e in events if e.get("event_type") == "ZERO_ELIGIBLE_PLATEAU"]

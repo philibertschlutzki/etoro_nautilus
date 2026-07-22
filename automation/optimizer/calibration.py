@@ -33,7 +33,7 @@ import numpy as np
 from automation.optimizer.bootstrap import bootstrap_ci, ci_lower_bound_passes, sortino_statistic
 from automation.optimizer.cpcv import cpcv_group_boundaries, cpcv_paths, probability_of_backtest_overfitting
 from automation.optimizer.deflation import (
-    deflated_sharpe_ratio, sample_skew_kurtosis, sr0_multiple_testing_robust,
+    deflated_sharpe_ratio, sample_skew_kurtosis, sr0_multiple_testing_robust, bootstrap_psr,
 )
 
 
@@ -164,6 +164,48 @@ def calibrate_t_adaptive_confidence(
     return {
         "n_configs": n_configs, "n_periods": n_periods, "target_fp_rate": target_fp_rate,
         "grid": grid, "selected_confidence": best[1] if best else None,
+    }
+
+
+def calibrate_psr_gate(
+    *, n_periods: int = 200, period_std: float = 0.01, threshold: float = 0.75,
+    n_reps: int = 4000, n_boot: int = 200, seed: int = 42,
+) -> dict:
+    """Issue #757 — Null-Kalibrierlauf für ``tournament.json['oos_min_psr']`` (BOOTSTRAP-basierte
+    PSR, ``deflation.bootstrap_psr``).
+
+    Unter H0 (kein echter Edge — ``n_reps`` unabhängige i.i.d.-N(0, ``period_std``²)-Renditepfade
+    mit ``n_periods`` Perioden) ist die PSR eines korrekt kalibrierten Schätzers UNIFORM auf [0, 1]
+    verteilt ⇒ ``P(PSR >= threshold)`` MUSS exakt ``1 − threshold`` betragen. Root-Cause #757: mit
+    der (vorherigen) ``psr_z``-Sharpe-Sampling-Varianz-Formel auf einem Sortino-Punktschätzer lag
+    diese Rate bei 31–32 % statt der nominellen 25 % (bei ``threshold=0.75``) — die effektive
+    Eligibility-/Promotion-Fehlerrate war damit systematisch inflationiert. Mit dem Bootstrap-
+    Standardfehler MUSS die gemessene Rate das nominelle Niveau innerhalb weniger Prozentpunkte
+    treffen (Akzeptanzkriterium #757: ``P(PSR>=0.75) ∈ [23 %, 27 %]`` bei ``N >= 4000``, ``T ∈
+    {200, 1000, 4320}``).
+
+    Rein & deterministisch (geseedeter RNG), KEIN I/O. ``n_boot``/``n_reps`` sind bewusst getrennt
+    von den Produktions-Defaults (``tournament.json['psr_bootstrap_resamples']``) — ein Betreiber,
+    der ``oos_min_psr`` für eine reale (N, T)-Grössenordnung neu verankern will, ruft diese Funktion
+    mit der TATSÄCHLICHEN OOS-Perioden-Volatilität/-Länge auf.
+
+    Rückgabe: ``{'n_reps', 'n_periods', 'threshold', 'nominal_rate', 'empirical_rate'}``."""
+    rng = np.random.default_rng(seed)
+    hits = 0
+    n_measured = 0
+    for i in range(n_reps):
+        r = rng.normal(0.0, period_std, n_periods)
+        psr, _se = bootstrap_psr(r, sr_star=0.0, n_boot=n_boot, seed=int(rng.integers(0, 2**31 - 1)))
+        if psr is None:
+            continue
+        n_measured += 1
+        if psr >= threshold:
+            hits += 1
+    return {
+        "n_reps": n_reps, "n_measured": n_measured, "n_periods": n_periods,
+        "period_std": period_std, "threshold": threshold,
+        "nominal_rate": 1.0 - threshold,
+        "empirical_rate": (hits / n_measured) if n_measured else None,
     }
 
 

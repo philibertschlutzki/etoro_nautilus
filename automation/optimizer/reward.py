@@ -251,7 +251,8 @@ _ANY_ARM_LIVE_THRESHOLD_KEYS = {"min_win_rate": "oos_min_win_rate"}
 
 
 def check_any_arm_reachability_live(tournament_cfg: dict | None,
-                                    observed_values: dict[str, list] | None) -> list[str]:
+                                    observed_values: dict[str, list] | None, *,
+                                    n_evaluated: int | None = None) -> list[str]:
     """Issue #660 — wie ``check_any_arm_reachability`` (#633), aber gegen die TATSÄCHLICH in EINER
     KONKRETEN Study beobachtete empirische Verteilung (``observed_values``, z. B.
     ``{"min_win_rate": [0.05, 0.08, ...]}`` aus den Trial-User-Attrs), NICHT das statische,
@@ -260,11 +261,22 @@ def check_any_arm_reachability_live(tournament_cfg: dict | None,
     'erreichbar' eingestuft — obwohl die für EIN SPEZIFISCHES Symbol/Tier (z. B. TSLA.ETORO Hourly)
     tatsächlich beobachtete OOS-Win-Rate nie über ~0.11 hinauskam. Der OR-Arm kollabiert für DIESEN
     Lauf lautlos auf ``min_profit_factor``, ohne dass die #633-Prüfung (die noch keine Trials kennt)
-    dies je erkennen könnte. Aufgerufen NACH Studienabschluss (``_emit_study_summary``), wenn genug
-    Trials (>= 5) eine definierte Kennzahl beigetragen haben (sonst kein Urteil auf zu wenig Daten).
+    dies je erkennen könnte. Aufgerufen NACH Studienabschluss (``_emit_study_summary``).
+
+    Issue #759 — Mindest-Stichprobenumfang jetzt ``any_arm_min_observations`` (Default 10 ECHTE
+    Beobachtungen, vorher hartcodiert 5): darunter keine Diagnose (kein Urteil auf zu wenig Daten).
+    ``observed_values`` darf seit #759 KEINE Missing-Data-Sentinels mehr enthalten (die Parsing-
+    Schicht liefert ``None`` durch statt auf 0.0 zu kollabieren, siehe ``parsing.TournamentMetrics.
+    oos_win_rate``) — ``samples`` filtert ``None`` ohnehin bereits (defensiv). Zusätzlich: hat die
+    Study ``n_evaluated == 0`` (kein einziger ausgewerteter Trial), ist JEDE Reachability-Aussage
+    inhaltsleer — sofortiger No-Op, unabhängig von der Sample-Zahl in ``observed_values``.
     Rückgabe: die Namen der betroffenen Klauseln."""
     import logging
 
+    if n_evaluated is not None and n_evaluated <= 0:
+        return []
+
+    min_observations = int((tournament_cfg or {}).get("any_arm_min_observations", 10))
     any_clauses = (tournament_cfg or {}).get("eligible_requires_any", []) or []
     unreachable = []
     for clause in any_clauses:
@@ -275,7 +287,7 @@ def check_any_arm_reachability_live(tournament_cfg: dict | None,
         if threshold is None:
             continue
         samples = [float(v) for v in (observed_values or {}).get(clause, []) if v is not None]
-        if len(samples) < 5:
+        if len(samples) < min_observations:
             continue
         sorted_vals = sorted(samples)
         p99_idx = max(0, min(len(sorted_vals) - 1, round(0.99 * (len(sorted_vals) - 1))))
@@ -303,7 +315,8 @@ _ANY_ARM_UNREACHABLE_POLICIES = frozenset({"warn", "drop_arm", "recalibrate"})
 
 
 def resolve_any_arm_policy(tournament_cfg: dict | None,
-                           observed_values: dict[str, list] | None) -> dict:
+                           observed_values: dict[str, list] | None, *,
+                           n_evaluated: int | None = None) -> dict:
     """Issue #668 — hebt ``check_any_arm_reachability_live`` (#660, reine WARNUNG) auf eine
     KONFIGURIERTE Policy (``tournament.json['any_arm_unreachable_policy']``).
 
@@ -320,10 +333,17 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
     neu gesetzt (mit einem globalen Floor, ``min_win_rate_recalibration_floor``, Default 0.05),
     sodass der Arm ein echter Filter bleibt statt strukturell unerreichbar zu sein.
 
-    Rückgabe: ``{'policy': str, 'dropped_clauses': [...], 'recalibrated_thresholds': {...}}``.
-    Beide Listen/Dicts bleiben leer, wenn kein Arm unerreichbar ist (oder Policy='warn'). Ein
-    unbekannter Policy-Wert bricht FAIL-LOUD ab (``ValueError``, analog
-    ``confirm.py['promotion_correction_mode']``, #659)."""
+    Issue #759 — ``any_arm_decision`` macht explizit, WARUM keine Schwelle geändert wurde: unter
+    ``any_arm_min_observations`` ECHTEN Beobachtungen (oder bei ``n_evaluated == 0``) trifft diese
+    Funktion KEIN Urteil (``'insufficient_data'``) statt eine Schwelle aus einer Verteilung
+    abzuleiten, die (teils) aus fehlenden Werten besteht — Root-Cause des #759-Katalogfundes
+    (``any_arm_unreachable_policy='recalibrate'`` rekalibrierte auf Missing-Data-Sentinels, siehe
+    ``parsing.TournamentMetrics.oos_win_rate``-Docstring).
+
+    Rückgabe: ``{'policy': str, 'dropped_clauses': [...], 'recalibrated_thresholds': {...},
+    'any_arm_decision': str | None}``. Beide Listen/Dicts bleiben leer, wenn kein Arm unerreichbar
+    ist (oder Policy='warn'). Ein unbekannter Policy-Wert bricht FAIL-LOUD ab (``ValueError``,
+    analog ``confirm.py['promotion_correction_mode']``, #659)."""
     tournament_cfg = tournament_cfg or {}
     policy = tournament_cfg.get("any_arm_unreachable_policy", "warn")
     if policy not in _ANY_ARM_UNREACHABLE_POLICIES:
@@ -331,11 +351,27 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
             f"tournament.json: any_arm_unreachable_policy={policy!r} unbekannt. "
             f"Erlaubt: {sorted(_ANY_ARM_UNREACHABLE_POLICIES)}."
         )
-    result = {"policy": policy, "dropped_clauses": [], "recalibrated_thresholds": {}}
+    result = {"policy": policy, "dropped_clauses": [], "recalibrated_thresholds": {},
+             "any_arm_decision": None}
     if policy == "warn":
         return result
 
-    unreachable = check_any_arm_reachability_live(tournament_cfg, observed_values)
+    if n_evaluated is not None and n_evaluated <= 0:
+        result["any_arm_decision"] = "insufficient_data"
+        return result
+
+    min_observations = int(tournament_cfg.get("any_arm_min_observations", 10))
+    any_clauses = tournament_cfg.get("eligible_requires_any", []) or []
+    has_checkable_clause = any(
+        len([v for v in (observed_values or {}).get(c, []) if v is not None]) >= min_observations
+        for c in any_clauses
+    )
+    if not has_checkable_clause:
+        result["any_arm_decision"] = "insufficient_data"
+        return result
+
+    unreachable = check_any_arm_reachability_live(
+        tournament_cfg, observed_values, n_evaluated=n_evaluated)
     if not unreachable:
         return result
 
@@ -352,6 +388,7 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
                 continue
             p99_idx = max(0, min(len(samples) - 1, round(0.99 * (len(samples) - 1))))
             result["recalibrated_thresholds"][threshold_key] = max(floor, samples[p99_idx])
+    result["any_arm_decision"] = "dropped" if policy == "drop_arm" else "recalibrated"
     return result
 
 
@@ -580,7 +617,11 @@ def _any_condition_distance(
                 ratios.append(max(0.0, m.oos_profit_factor) / float(req))
         elif clause == "min_win_rate":
             req = _cfg_value(weights, tournament_cfg, "oos_min_win_rate")
-            if req and req > 0.0:
+            # Issue #759 — analog zu min_sortino/min_profit_factor oben: eine FEHLENDE (None)
+            # win_rate darf diesen OR-Arm nicht mit einer beobachteten Null verwechseln — sie wird
+            # aus der ratios-Betrachtung ausgeschlossen (nicht als 0.0 gewertet), statt den
+            # Naeherungs-Score fälschlich auf "maximal weit vom Gate entfernt" zu setzen.
+            if req and req > 0.0 and m.oos_win_rate is not None:
                 ratios.append(max(0.0, m.oos_win_rate) / float(req))
 
     if not ratios:
@@ -641,7 +682,11 @@ def _normalized_gate_distances(
         "oos_min_expectancy": _shortfall_distance(
             m.oos_expectancy, req_expectancy, scale=expectancy_penalty_scale
         ),
-        "oos_min_win_rate": _shortfall_distance(m.oos_win_rate, req_win_rate),
+        # Issue #759 — None (fehlende Beobachtung) wird HIER, an der Konsumstelle, konservativ als
+        # 0.0 behandelt (worst-case fuer die Distanzstrafe) — die Parsing-Schicht liefert None jetzt
+        # korrekt durch (kein stiller Missing-Data-Sentinel mehr, siehe parsing.TournamentMetrics).
+        "oos_min_win_rate": _shortfall_distance(
+            m.oos_win_rate if m.oos_win_rate is not None else 0.0, req_win_rate),
         "oos_max_drawdown": _excess_distance(m.oos_max_drawdown, risk_dd_cap),
         "any_condition": _any_condition_distance(m, weights, tournament_cfg),
     }
@@ -842,7 +887,8 @@ def compute_reward(
         res = (
             float(m.oos_total_return),
             float(m.oos_expectancy),
-            float(m.oos_win_rate),
+            # Issue #759 — None-fest an der Konsumstelle (analog oos_sortino direkt darunter).
+            float(m.oos_win_rate if m.oos_win_rate is not None else 0.0),
             float(m.oos_sortino if m.oos_sortino is not None else 0.0),
             float(m.oos_max_drawdown),
             float(m.oos_total_trades),

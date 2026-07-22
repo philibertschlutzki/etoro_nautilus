@@ -1209,11 +1209,19 @@ _ALL_WIN_SENTINEL = 50.0
 
 
 def _assert_sortino_return_coherence(oos_metrics: dict, *, tol: float = 1e-4) -> None:
-    """Issue #589 — Kohärenz-Invariant (analog zum #528-Coherence-Check): der gepoolte OOS-Sortino
-    (Risiko-adjustierter Return aus der OOS-Equity-Kurve) und der OOS-total_return beschreiben
-    DENSELBEN Equity-Pfad ⇒ ihre Vorzeichen MÜSSEN übereinstimmen. Eine Verletzung bei
+    """Issue #589/#756 — Kohärenz-Invariant (analog zum #528-Coherence-Check): der gepoolte OOS-
+    Sortino (Risiko-adjustierter Return aus der OOS-Equity-Kurve) und der OOS-total_return
+    beschreiben DENSELBEN Equity-Pfad ⇒ ihre Vorzeichen MÜSSEN übereinstimmen. Eine Verletzung bei
     ``|total_return| > tol`` ist ein Aggregationsdefekt (vorher 245/600 Trials mit return>0 ∧
-    sortino<0). ERROR + Telemetrie-Flag (kein Abbruch — der Reward-Pfad bleibt robust)."""
+    sortino<0). ERROR + Telemetrie-Flag (kein Abbruch — der Reward-Pfad bleibt robust).
+
+    Issue #756 — VOR der Log-Return-Umstellung war eine Verletzungsrate von bis zu 43 % einer Study
+    KEIN Aggregationsdefekt, sondern strukturell erwartbar (arithmetischer Sortino-Zähler vs.
+    geometrischer total_return, Volatilitäts-Drag σ²/2). Seit `period_rets` in `_calculate_stats`
+    auf Log-Returns umgestellt ist, gilt die Kohärenz PER KONSTRUKTION (Σ log(1+rᵢ) = log(1+
+    total_return)) — eine hier noch auftretende Verletzung ist damit ein ECHTER Bug, kein
+    erwartetes Restrauschen mehr. Siehe `automation.optimizer.invariants.check_log_return_coherence`
+    (harter Regressionswächter im #742-Report, im Gegensatz zu diesem WARNING-Pfad hier)."""
     tr = oos_metrics.get("total_return")
     sr = oos_metrics.get("sortino_ratio")
     if tr is None or sr is None:
@@ -1614,6 +1622,36 @@ _sortino_min_trades_cache: int | None = None
 _sortino_mar_cache: float | None = None
 _max_drawdown_cap_cache: float | None = None
 _sortino_downside_floor_cache: float | None = None
+_psr_bootstrap_resamples_cache: int | None = None
+
+
+def _read_psr_bootstrap_resamples() -> int:
+    """Issue #757 (Zero-Hardcoding): Anzahl der Stationary-Bootstrap-Resamples fuer den PSR/PSR_z-
+    Standardfehler (deflation.bootstrap_psr_z) aus tournament.json['psr_bootstrap_resamples'].
+    Gecached (Hot-Path — _calculate_stats laeuft je Trial mehrfach: IS/OOS/Fold-Ebene, ~6x/Trial).
+
+    Default 200 (NICHT das Issue-#757-Vorschlagsmaximum "B ≈ 500-1000"): empirisch gemessen kostet
+    ein einzelner _calculate_stats-Aufruf mit n_boot=500 ≈83ms (200er-OOS-Fenster), mit n_boot=200
+    ≈33ms — bei ~6 Aufrufen/Trial waere 500 ein ~25% Laufzeit-Overhead auf die ~2s Backtest-Zeit
+    eines Trials (vs. ~10% bei 200), was den Sweep-Durchsatz (#755) spuerbar zurueckdreht. 200
+    Resamples halten den Standardfehler-Schaetzer stabil genug (CV(SE) ≈ sqrt(2/(n_boot-1)) ≈ 10%)
+    fuer eine Gate-Entscheidung; Operatoren mit mehr Rechenbudget koennen ueber den Config-Key auf
+    500-1000 erhoehen (praezisere SE-Schaetzung, insb. fuer Studien mit wenigen OOS-Perioden)."""
+    global _psr_bootstrap_resamples_cache
+    if _psr_bootstrap_resamples_cache is not None:
+        return _psr_bootstrap_resamples_cache
+    val = 200
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("psr_bootstrap_resamples")
+            if raw is not None:
+                val = int(raw)
+    except (OSError, ValueError, TypeError):
+        val = 200
+    _psr_bootstrap_resamples_cache = val
+    return val
 _default_round_trip_cost_bps_cache: float | None = None
 
 
@@ -2008,9 +2046,24 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
 
         # Ableitung der per-Period Returns
         # Erster Return darf kein NaN-Artefakt erzeugen, dropna() erledigt das
-        period_rets = mtm_series.pct_change().dropna()
+        #
+        # Issue #756 — LOG-Returns statt einfacher Returns. Root-Cause: `total_return` (oben) ist
+        # GEOMETRISCH kompoundiert (Π(1+rᵢ) − 1); der Sortino-Zähler `period_rets.mean()` war bislang
+        # das ARITHMETISCHE Mittel derselben Renditesequenz. Die Differenz ist der Volatilitäts-Drag
+        # mean(r) − (1/T)·log(1+total_return) ≈ σ²/2 — für jede Strategie mit |mean(r)| < σ²/2
+        # (Edge nahe null, Vola dominant — genau das Regime aller hier gehandelten Strategien)
+        # divergieren die Vorzeichen von Sortino und total_return, OBWOHL beide aus derselben
+        # Equity-Kurve stammen (die #589/#620-„Kohärenzverletzung", bis zu 43 % einer Study).
+        # Mit Log-Returns gilt exakt Σ log(1+rᵢ) = log(1 + total_return) ⇒ sign(mean(log-returns))
+        # ≡ sign(total_return) PER KONSTRUKTION, für jede Sequenz, ohne Toleranz — die Prüfung in
+        # `_assert_sortino_return_coherence` fordert damit keine Invariante mehr, die die
+        # Konstruktion nicht liefern kann. `total_return` selbst bleibt UNVERÄNDERT die geometrische,
+        # ökonomisch korrekte Zielgrösse — nur die Renditedefinition der INFERENZ (Sortino-Zähler/
+        # -Nenner, PSR/DSR, Bootstrap-CI, PBO-Partitionierung) wechselt auf die additive Log-Skala.
+        period_rets = np.log1p(mtm_series.pct_change().dropna())
         # Issue #619 — die per-Perioden-Returns durchreichen (gecappt), damit der Holdout-Pfad einen
         # Stationary-Bootstrap-CI auf dem Sortino rechnen kann (ci_lower > 0 statt Punktschätzer).
+        # Seit #756 auf der Log-Skala (dieselbe Skala wie `sortino_period`/`oos_psr` unten).
         _period_returns_list = [float(x) for x in period_rets.tolist()[:2000]]
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
@@ -2033,6 +2086,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         sortino_annualized = None
         oos_psr = None
         oos_psr_z = None
+        oos_psr_se_boot = None
         ret_skew, ret_kurtosis = 0.0, 3.0
         if n < min_trades_sortino or period_rets.empty:
             sortino = None
@@ -2076,13 +2130,21 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     # sortino_ratio bleibt (rückwärtskompatibel + Kohärenz-Sign-Check #589) der
                     # ANNUALISIERTE Wert; die PSR ist die neue Reward-/Gate-Grösse (#614).
                     sortino = float(sortino_annualized)
+                    # Issue #757 — PSR/PSR_z mit einem BOOTSTRAP-Standardfehler DER TATSÄCHLICH
+                    # VERWENDETEN Statistik (sortino_period), statt psr_z/lo2002_sharpe_variance —
+                    # das sind die Sampling-Varianz-Formeln fuer einen SHARPE-Schätzer (μ̂/σ̂),
+                    # hergeleitet per Delta-Methode ueber (μ̂, σ̂²); die Downside-Deviation hat eine
+                    # andere Sampling-Verteilung. Monte-Carlo-Beleg (H0, T=4320): P(PSR>=0.75) lag
+                    # mit der Substitution bei 31-32% statt der nominellen 25%. sample_skew_kurtosis
+                    # bleibt fuer Telemetrie/Rueckwaertskompat (ret_skew/ret_kurtosis) erhalten.
                     from automation.optimizer.deflation import (
-                        probabilistic_sharpe_ratio as _psr, psr_z as _psr_z, sample_skew_kurtosis as _skku)
+                        bootstrap_psr_z as _boot_psr_z, psr_from_z as _psr_from_z,
+                        sample_skew_kurtosis as _skku)
                     ret_skew, ret_kurtosis = _skku(period_rets.to_numpy())
-                    oos_psr = _psr(sortino_period, n_periods, skew=ret_skew,
-                                   kurtosis=ret_kurtosis, sr_star=0.0)
-                    oos_psr_z = _psr_z(sortino_period, n_periods, skew=ret_skew,
-                                       kurtosis=ret_kurtosis, sr_star=0.0)
+                    oos_psr_z, oos_psr_se_boot = _boot_psr_z(
+                        period_rets.to_numpy(), sr_star=0.0, mar=mar,
+                        n_boot=_read_psr_bootstrap_resamples())
+                    oos_psr = _psr_from_z(oos_psr_z)
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
@@ -2091,6 +2153,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         sortino_annualized = None
         oos_psr = None
         oos_psr_z = None
+        oos_psr_se_boot = None
         n_periods = 0
         ret_skew, ret_kurtosis = 0.0, 3.0
         _period_returns_list = []
@@ -2174,6 +2237,14 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # (Telemetrie). ``psr`` ∈ [0,1] oder None (undefiniert/Guard). ``sortino_annualized`` == sortino_ratio.
         "psr":                float(oos_psr) if oos_psr is not None else None,
         "psr_z":              float(oos_psr_z) if oos_psr_z is not None else None,
+        # Issue #757 — der Bootstrap-Standardfehler, der psr/psr_z zugrunde liegt (Telemetrie/
+        # Diagnose — macht sichtbar, ob/wie breit der SE fuer diesen Trial geschätzt wurde).
+        "psr_se_boot":        float(oos_psr_se_boot) if oos_psr_se_boot is not None else None,
+        # Issue #758 — Eligibility- und Promotion-Inferenzmethode nebeneinander im #742-Report
+        # ausweisbar (Doppelstandard-Nachweis): die Eligibility-PSR hat KEINEN Sharpe-Formel-
+        # Fallback (anders als confirm.py's DSR bei < 5 Perioden-Returns) — ``None`` nur, wenn
+        # PSR/PSR_z selbst undefiniert blieben (kein Trade/Guard/NaN).
+        "psr_inference_method": "stationary_bootstrap" if oos_psr_z is not None else None,
         "sortino_period":     float(sortino_period) if sortino_period is not None else None,
         "sortino_annualized": float(sortino_annualized) if sortino_annualized is not None else None,
         "n_periods":          int(n_periods),

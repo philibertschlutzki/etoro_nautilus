@@ -30,7 +30,10 @@ _HIGH_WIN_RATES = [0.10, 0.12, 0.14, 0.16, 0.18, 0.20]
 # ── resolve_any_arm_policy (pure) ────────────────────────────────────────────────────────────────
 def test_default_warn_policy_is_inert_even_when_unreachable():
     decision = resolve_any_arm_policy(_TCFG_BASE, {"min_win_rate": _LOW_WIN_RATES})
-    assert decision == {"policy": "warn", "dropped_clauses": [], "recalibrated_thresholds": {}}
+    # Issue #759 — any_arm_decision ist ein neues Feld (None bei Policy='warn': #759 trifft in
+    # diesem Zweig kein Urteil, weil 'warn' unveraendert bit-identisch bleibt).
+    assert decision == {"policy": "warn", "dropped_clauses": [], "recalibrated_thresholds": {},
+                        "any_arm_decision": None}
 
 
 def test_unknown_policy_raises_fail_loud():
@@ -61,7 +64,10 @@ def test_recalibrate_policy_never_goes_below_floor():
     tcfg = dict(_TCFG_BASE, any_arm_unreachable_policy="recalibrate",
                min_win_rate_recalibration_floor=0.08)
     # Alle Samples liegen unter dem Floor ⇒ die rekalibrierte Schwelle wird auf den Floor gehoben.
-    decision = resolve_any_arm_policy(tcfg, {"min_win_rate": [0.0, 0.01, 0.02, 0.03, 0.04]})
+    # Issue #759 — mindestens any_arm_min_observations (Default 10) echte Beobachtungen noetig,
+    # sonst any_arm_decision='insufficient_data' statt einer Rekalibrierung.
+    decision = resolve_any_arm_policy(
+        tcfg, {"min_win_rate": [0.0, 0.01, 0.02, 0.03, 0.04, 0.0, 0.01, 0.02, 0.03, 0.04]})
     assert decision["recalibrated_thresholds"]["oos_min_win_rate"] == 0.08
 
 

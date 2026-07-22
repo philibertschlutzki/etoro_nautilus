@@ -153,6 +153,62 @@ def check_rejection_chain_completeness(proposal: dict) -> InvariantResult:
     )
 
 
+def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
+    """Issue #756-Regressionswächter (folgt auf #589/#620).
+
+    Seit `_calculate_stats` (backtest_runner.py) den Sortino-Zähler auf LOG-Returns umgestellt hat,
+    gilt ``sign(oos_sortino_period) == sign(oos_total_return)`` PER KONSTRUKTION für jede
+    Renditesequenz (Σ log(1+rᵢ) = log(1+total_return)) — nicht mehr nur empirisch selten verletzt.
+    Ein Trial mit gesetztem ``oos_coherence_violation`` (dasselbe Flag, das
+    ``_assert_sortino_return_coherence`` stempelt) ist damit ein ECHTER Aggregationsdefekt, keine
+    erwartete Restrate mehr. ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (#621-
+    Konvention, dieselbe Form wie ``check_reward_term_variance``)."""
+    violating = [i for i, t in enumerate(trials) if t.get("oos_coherence_violation") is True]
+    passed = not violating
+    return InvariantResult(
+        name="check_log_return_coherence",
+        passed=passed,
+        expected=0,
+        actual=len(violating),
+        detail=("OK" if passed else
+                f"{len(violating)} Trial(s) mit sign(oos_sortino_period) != sign(oos_total_return) "
+                "TROTZ Log-Return-Umstellung (#756) — echter Aggregationsdefekt, nicht die vor #756 "
+                "erwartete Volatilitäts-Drag-Restrate."),
+    )
+
+
+def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
+    """Issue #759-Regressionswächter.
+
+    Root-Cause #759: ``oos_win_rate`` kollabierte fehlende Werte (kein Trial je evaluiert, kein
+    ``win_rate``-Key im Metrics-Dict) auf ``0.0`` — ununterscheidbar von einer ECHT BEOBACHTETEN
+    Null. Nachgelagerte Policies (``reward.check_any_arm_reachability_live``/
+    ``resolve_any_arm_policy``) rekalibrierten Schwellen aus einer Verteilung, die teils/
+    ausschliesslich aus diesen Missing-Data-Sentinels bestand. Seit #759 liefert die Parsing-Schicht
+    ``None`` korrekt durch (``parsing.TournamentMetrics.oos_win_rate``) — diese Prüfung verifiziert
+    die Invariante FEHLSCHLAGEND, wenn eine Study eine ``oos_win_rate``-Beobachtung fuer einen Trial
+    persistiert, dessen ``oos_evaluated`` gleichzeitig ``False`` ist (der Sentinel-Kollaps waere
+    genau daran erkennbar: ein nie evaluierter Trial "beobachtet" trotzdem eine win_rate).
+
+    ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (#621-Konvention, dieselbe Form wie
+    ``check_reward_term_variance``)."""
+    violating = [
+        i for i, t in enumerate(trials)
+        if t.get("oos_evaluated") is False and t.get("oos_win_rate") is not None
+    ]
+    passed = not violating
+    return InvariantResult(
+        name="check_metric_sentinel_absence",
+        passed=passed,
+        expected=0,
+        actual=len(violating),
+        detail=("OK" if passed else
+                f"{len(violating)} Trial(s) mit oos_win_rate-Beobachtung TROTZ oos_evaluated=False "
+                "— moeglicher Missing-Data-Sentinel-Kollaps (#759-Regression: None faelschlich zu "
+                "0.0 kollabiert)."),
+    )
+
+
 _REWARD_TERM_NUMERIC_KEYS = (
     "base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker",
 )
