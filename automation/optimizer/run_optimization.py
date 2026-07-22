@@ -1046,13 +1046,19 @@ def _classify_is_rejection_detail(metrics) -> str:
 
 
 def derive_n_startup_trials(strategy: str, base_n_startup: int, opt_data: dict) -> int:
-    """Issue #568 — ``n_startup_trials`` an die effektive Dimensionalität koppeln.
+    """Issue #568/#762 — ``n_startup_trials`` an die effektive Dimensionalität koppeln.
 
     Bei ``multivariate=True, group=True`` sollte ``n_startup_trials ≳ k·dim`` sein (``dim`` = Anzahl
     numerischer Suchraum-Parameter), damit der TPE die Kovarianzstruktur überhaupt schätzen kann;
     für Strategien mit vielen Parametern (ComboTrendVwap ~14) sind fixe 16 knapp. Deklarativ über
     ``n_startup_trials_per_dim`` (k): ``n_startup_trials = max(base, ceil(k·dim))``. Fehlt der Key
-    (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding)."""
+    (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding).
+
+    Issue #762 — für ``dim >= n_startup_trials_high_dim_threshold`` ist ``k=2`` knapp für die
+    Kovarianzschätzung (Squeeze dim=9 blieb bei k=2 über 124 Symbole ohne einen einzigen eligiblen
+    Trial). Ist ``n_startup_trials_high_dim_threshold``/``n_startup_trials_per_dim_high_dim`` gültig
+    UND ``dim`` erreicht die Schwelle, ersetzt der höhere Satz ``k`` (Squeeze: 18 → 27, ComboTrendVwap:
+    28 → 42). Fehlt einer der beiden Keys (oder <= 0) ⇒ flaches ``k`` für alle dim (Legacy)."""
     k = opt_data.get("n_startup_trials_per_dim")
     if not k or float(k) <= 0.0:
         return int(base_n_startup)
@@ -1061,6 +1067,11 @@ def derive_n_startup_trials(strategy: str, base_n_startup: int, opt_data: dict) 
         dim = len(bounds.extract_numeric_bounds(strategy))
     except Exception:
         return int(base_n_startup)
+    threshold = opt_data.get("n_startup_trials_high_dim_threshold")
+    k_high = opt_data.get("n_startup_trials_per_dim_high_dim")
+    if (threshold and k_high and float(threshold) > 0.0 and float(k_high) > 0.0
+            and dim >= float(threshold)):
+        k = k_high
     return max(int(base_n_startup), math.ceil(float(k) * dim))
 
 
