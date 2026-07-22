@@ -37,7 +37,7 @@ from automation.optimizer import champions
 from automation.optimizer import retention
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
-    load_continuous_bar_invalid_strategies,
+    load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
 )
 from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
@@ -312,13 +312,15 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     # strukturell nicht-viable Paare werden VOR dem Sweep übersprungen (kein Bounds-Problem, keine
     # 16 nutzlosen Trials je Paar). Leer per Default ⇒ bit-identisch.
     denylist = load_symbol_strategy_denylist()
-    # Issue #681 — der AUTOMATISCH gepflegte Diagnose-Cache (aus einem VORHERIGEN Lauf via
+    # Issue #681/#761 — der AUTOMATISCH gepflegte Diagnose-Cache (aus einem VORHERIGEN Lauf via
     # run_optimization.floor_plateau_callback befüllt): schliesst die Budget-Schleife, OHNE die
     # menschlich-kuratierte Denylist-Config selbst zu mutieren. Nur 'denylist'-empfohlene Paare
     # werden übersprungen — 'search_space_override'-Empfehlungen laufen weiter (Bounds-Kalibrierung
     # ist eine bewusste Kalibrierlauf-/PR-Entscheidung, kein automatischer Skip). Fehlt der Cache
-    # ⇒ {} (bit-identisch).
-    auto_diagnosed = load_diagnosed_pairs_cache()
+    # ⇒ {} (bit-identisch). Issue #761 — VOR der Enumeration gealtert (runs_since_recorded += 1):
+    # ein Paar, das seine expires_after_runs-Frist erreicht hat, wird DIESEN Lauf wieder regulär
+    # enumeriert (Re-Test) statt auf ewig auto-denylisted zu bleiben.
+    auto_diagnosed = age_diagnosed_pairs_cache()
     # Issue #698 — Strategien, deren Signal auf der (system-weit einzigen) kontinuierlichen
     # 24/7-Bar-Semantik strukturell ungültig ist (z. B. GapContinuation Variante A — kein echter
     # Overnight-Gap ohne Handelspausen). Deklarativ aus strategies.json, leer ⇒ bit-identisch.
@@ -387,19 +389,38 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
             # Entscheidung reserviert).
             auto_rec = auto_diagnosed.get((strategy, symbol))
             if auto_rec is not None and auto_rec.get("action") == "denylist":
-                emit_execution_event(log, "SYMBOL_STRATEGY_AUTO_DIAGNOSED_SKIP", {
-                    "strategy": strategy, "symbol": symbol,
-                    "binding_cause": auto_rec.get("binding_cause"),
-                    "median_oos_trades": auto_rec.get("median_oos_trades"),
-                    "median_is_trades": auto_rec.get("median_is_trades"),
-                })
-                log.warning(
-                    "⏭️  %s/%s übersprungen (Issue #681: automatisch aus einem vorherigen "
-                    "Diagnose-Lauf als strukturell nicht-viabel erkannt, binding_cause=%s). Zur "
-                    "PERMANENTEN Deaktivierung symbol_strategy_denylist.json per PR pflegen.",
-                    strategy, symbol, auto_rec.get("binding_cause"),
-                )
-                continue
+                # Issue #761 — ein Cache-Denylist-Eintrag verfällt nach expires_after_runs (Default
+                # 10) und wird DANN genau EINMAL wieder zugelassen (Re-Test), statt das Paar auf
+                # ewig zu zementieren, obwohl Kohorte-A/B-Fixes (#753/#756/#757) die Lage inzwischen
+                # grundlegend geändert haben könnten.
+                if is_diagnosed_pair_expired(auto_rec):
+                    emit_execution_event(log, "SYMBOL_STRATEGY_AUTO_DIAGNOSIS_EXPIRED_RETEST", {
+                        "strategy": strategy, "symbol": symbol,
+                        "binding_cause": auto_rec.get("binding_cause"),
+                        "runs_since_recorded": auto_rec.get("runs_since_recorded"),
+                        "expires_after_runs": auto_rec.get("expires_after_runs"),
+                    })
+                    log.warning(
+                        "🔁 %s/%s: automatische Denylist-Diagnose ist abgelaufen (Issue #761: "
+                        "runs_since_recorded=%s >= expires_after_runs=%s) — wird DIESEN Lauf "
+                        "wieder regulär enumeriert (Re-Test).",
+                        strategy, symbol, auto_rec.get("runs_since_recorded"),
+                        auto_rec.get("expires_after_runs"),
+                    )
+                else:
+                    emit_execution_event(log, "SYMBOL_STRATEGY_AUTO_DIAGNOSED_SKIP", {
+                        "strategy": strategy, "symbol": symbol,
+                        "binding_cause": auto_rec.get("binding_cause"),
+                        "median_oos_trades": auto_rec.get("median_oos_trades"),
+                        "median_is_trades": auto_rec.get("median_is_trades"),
+                    })
+                    log.warning(
+                        "⏭️  %s/%s übersprungen (Issue #681: automatisch aus einem vorherigen "
+                        "Diagnose-Lauf als strukturell nicht-viabel erkannt, binding_cause=%s). Zur "
+                        "PERMANENTEN Deaktivierung symbol_strategy_denylist.json per PR pflegen.",
+                        strategy, symbol, auto_rec.get("binding_cause"),
+                    )
+                    continue
             ok, _reason = is_symbol_tunable(
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
             if not ok:

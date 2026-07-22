@@ -2,6 +2,7 @@ import json as _json
 
 
 _search_space_overrides_cache: dict | None = None
+_auto_proposed_bounds_cache: dict | None = None
 
 
 def _load_search_space_overrides() -> dict:
@@ -24,19 +25,54 @@ def _load_search_space_overrides() -> dict:
     return _search_space_overrides_cache
 
 
+def _load_auto_proposed_bounds() -> dict:
+    """Issue #761 — AUTOMATISCH vorgeschlagene (NICHT kuratierte) Bounds aus dem #681-Diagnose-
+    Cache (``sweep_diagnostics.propose_bounds_widening``, geschrieben von ``run_optimization.
+    floor_plateau_callback`` bei einem ``'search_space_override'``-Befund). Gecached wie
+    ``_load_search_space_overrides``. Fehlt der Cache/ein Eintrag ⇒ ``{}``."""
+    global _auto_proposed_bounds_cache
+    if _auto_proposed_bounds_cache is not None:
+        return _auto_proposed_bounds_cache
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        out: dict = {}
+        for (strategy, symbol), entry in load_diagnosed_pairs_cache().items():
+            proposed = entry.get("proposed_bounds")
+            if proposed:
+                out.setdefault(strategy, {})[symbol] = proposed
+        _auto_proposed_bounds_cache = out
+    except Exception:
+        _auto_proposed_bounds_cache = {}
+    return _auto_proposed_bounds_cache
+
+
 def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
-    """Issue #669 — löst die effektiven ``(low, high)``-Suchraumgrenzen für ``param`` auf: eine
-    konfigurierte symbol-spezifische Überschreibung (``search_space_overrides.json``) hat Vorrang
-    vor den universellen Default-Bounds. Fehlt ``symbol`` ODER ist kein Override für
-    (``strategy``, ``symbol``, ``param``) konfiguriert ⇒ ``(low, high)`` UNVERÄNDERT (bit-identisch,
-    Zero-Hardcoding — kein Symbol-Override ist ohne einen dokumentierten Diagnose-/Kalibrier-Befund
-    voreingestellt, siehe ``sweep_diagnostics.diagnose_trade_frequency``)."""
+    """Issue #669/#761 — löst die effektiven ``(low, high)``-Suchraumgrenzen für ``param`` auf, in
+    Prioritätsreihenfolge: (1) eine kuratierte symbol-spezifische Überschreibung
+    (``search_space_overrides.json``, menschliche PR-Entscheidung), (2) ein AUTOMATISCH
+    vorgeschlagener Bounds-Wert aus dem #681-Diagnose-Cache (``SEARCH_SPACE_AUTO_OVERRIDE`` —
+    die Brücke, damit der NÄCHSTE Lauf nicht identisch an denselben zu engen Bounds scheitert,
+    bis ein Operator die permanente Kalibrierung per PR einträgt), (3) die universellen Default-
+    Bounds. Fehlt ``symbol`` ODER ist weder ein kuratierter noch ein automatischer Override für
+    (``strategy``, ``symbol``, ``param``) vorhanden ⇒ ``(low, high)`` UNVERÄNDERT (bit-identisch,
+    Zero-Hardcoding)."""
     if not symbol:
         return low, high
     entry = (_load_search_space_overrides().get(strategy) or {}).get(symbol) or {}
     bound = entry.get(param)
     if bound and len(bound) == 2:
         return bound[0], bound[1]
+    auto_entry = (_load_auto_proposed_bounds().get(strategy) or {}).get(symbol) or {}
+    auto_bound = auto_entry.get(param)
+    if auto_bound and len(auto_bound) == 2:
+        import logging
+        logging.getLogger("optimizer").info(
+            "[JSON_EVENT] " + _json.dumps({
+                "event_type": "SEARCH_SPACE_AUTO_OVERRIDE",
+                "strategy": strategy, "symbol": symbol, "param": param,
+                "bounds": [auto_bound[0], auto_bound[1]], "default_bounds": [low, high],
+            }))
+        return auto_bound[0], auto_bound[1]
     return low, high
 
 

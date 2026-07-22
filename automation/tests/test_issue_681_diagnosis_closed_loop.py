@@ -121,7 +121,7 @@ def test_has_existing_search_space_override_absent_file_is_false(tmp_path):
 def test_enumerate_tunable_pairs_skips_auto_diagnosed_denylist_pair(monkeypatch):
     monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
     monkeypatch.setattr(sweep, "load_symbol_strategy_denylist", lambda: {})
-    monkeypatch.setattr(sweep, "load_diagnosed_pairs_cache", lambda: {
+    monkeypatch.setattr(sweep, "age_diagnosed_pairs_cache", lambda: {
         ("HourlyMeanReversionStrategy", "A.ETORO"): {
             "strategy": "HourlyMeanReversionStrategy", "symbol": "A.ETORO",
             "action": "denylist", "binding_cause": "signal_quality",
@@ -139,7 +139,7 @@ def test_enumerate_tunable_pairs_does_not_skip_search_space_override_recommendat
     Kalibrierung bleibt eine bewusste Kalibrierlauf-/PR-Entscheidung."""
     monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
     monkeypatch.setattr(sweep, "load_symbol_strategy_denylist", lambda: {})
-    monkeypatch.setattr(sweep, "load_diagnosed_pairs_cache", lambda: {
+    monkeypatch.setattr(sweep, "age_diagnosed_pairs_cache", lambda: {
         ("TrendPullbackStrategy", "A.ETORO"): {
             "strategy": "TrendPullbackStrategy", "symbol": "A.ETORO",
             "action": "search_space_override", "binding_cause": "signal_frequency",
@@ -155,7 +155,7 @@ def test_enumerate_tunable_pairs_does_not_skip_search_space_override_recommendat
 def test_enumerate_tunable_pairs_absent_cache_is_bit_identical(monkeypatch):
     monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
     monkeypatch.setattr(sweep, "load_symbol_strategy_denylist", lambda: {})
-    monkeypatch.setattr(sweep, "load_diagnosed_pairs_cache", lambda: {})
+    monkeypatch.setattr(sweep, "age_diagnosed_pairs_cache", lambda: {})
     bars = {"A.ETORO": 10_000}
     pairs = sweep.enumerate_tunable_pairs(
         ["SmaCrossoverStrategy"], ["A.ETORO"],

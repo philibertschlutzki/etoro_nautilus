@@ -369,17 +369,30 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     from automation.optimizer.sweep_diagnostics import (
                         recommend_diagnosis_action, record_diagnosed_pair,
                         has_existing_search_space_override, load_diagnosed_pairs_cache,
+                        propose_bounds_widening,
                     )
                     # Issue #699 — Eskalations-Check: wurde für dieses Paar bereits in einem
                     # VORHERIGEN Lauf 'search_space_override' empfohlen (und nichts hat sich seither
                     # geändert), diesen Lauf auf 'denylist' eskalieren statt die identische
                     # Empfehlung endlos zu wiederholen (siehe recommend_diagnosis_action-Docstring).
                     _prior = load_diagnosed_pairs_cache().get((strategy, symbol))
+                    # Issue #761 — konkreter Bounds-Vorschlag aus der Trial-Kohorte (Richtung, in
+                    # der oos_total_trades-Proxy is_total_trades mit dem Parameter steigt), statt
+                    # nur der Empfehlung "probiere einen Override".
+                    try:
+                        _trial_param_rows = [{
+                            "params": getattr(t, "params", None) or {},
+                            "is_total_trades": getattr(t, "user_attrs", {}).get("is_total_trades"),
+                        } for t in completed]
+                        _proposed_bounds = propose_bounds_widening(_trial_param_rows, strategy)
+                    except Exception:
+                        _proposed_bounds = {}
                     rec = recommend_diagnosis_action(
                         strategy, symbol, diagnosis,
                         has_existing_override=has_existing_search_space_override(strategy, symbol),
                         previously_recommended_override=bool(
                             _prior and _prior.get("action") == "search_space_override"),
+                        proposed_bounds=_proposed_bounds,
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
