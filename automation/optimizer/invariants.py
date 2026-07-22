@@ -234,6 +234,61 @@ _REWARD_TERM_NUMERIC_KEYS = (
     "base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker",
 )
 
+# Issue #764 — Zielkorridor je Term (Anteil an der SUMME aller Term-Varianzen, siehe
+# ``reward_term_variance_table``). Ein Term dauerhaft UNTER 0.02 traegt praktisch keine
+# unterscheidbare Information zur Reward-Landschaft bei (Kandidat fuer Entfernung); ein Term UEBER
+# 0.30 dominiert die uebrigen sechs (Kandidat fuer Herunterskalierung). Die tatsaechliche
+# Kalibrierung/Entfernung ERFORDERT eine reale Kohorte (>= 50 Studies NACH Kohorte A/B, #753-#763 —
+# die im Issue #764 zitierten Referenzzahlen stammen aus dem GEBROCHENEN Vor-#753-Suchregime und
+# sind fuer eine Entscheidung JETZT keine gueltige Evidenz, siehe Merge-Order-Abhaengigkeit im
+# Issue selbst: "vorher gibt es keine belastbare eligible Kohorte fuer die Kalibrierung").
+_REWARD_TERM_VARIANCE_CORRIDOR = (0.02, 0.30)
+
+
+def _eligible_reward_terms(trials: list[dict]) -> list[dict]:
+    """Gemeinsame Extraktion fuer ``check_reward_term_variance``/``reward_term_variance_table``:
+    die ``reward_terms``-Dicts aller Trials, die tatsaechlich OOS-evaluiert wurden UND einer
+    eligiblen/pareto-Kohorte angehoeren (der einzige Ast, auf dem ein Terme-Vergleich sinnvoll ist —
+    ein unevaluierbarer Trial traegt keine Reward-Term-Zerlegung)."""
+    return [
+        t.get("reward_terms") for t in trials
+        if t.get("oos_evaluated") is True and t.get("reward_terms")
+        and t["reward_terms"].get("branch") in ("eligible", "per_symbol", "pareto")
+    ]
+
+
+def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
+    """Issue #764 — die VOLLSTAENDIGE Varianz-Tabelle je Reward-Term fuer den #742-Report, statt nur
+    der binaeren inert/nicht-inert-Klassifikation von ``check_reward_term_variance``: je Term
+    ``std`` (Streuung ueber die eligible Kohorte) und ``var_contrib`` (Anteil der Term-VARIANZ an der
+    SUMME aller sieben Term-Varianzen, ``var_k / Σ var_j`` — die Groesse, gegen die der
+    ``_REWARD_TERM_VARIANCE_CORRIDOR`` gemessen wird). ``in_target_corridor`` markiert Terme
+    ausserhalb ``[0.02, 0.30]`` (Kandidaten fuer Entfernung bzw. Herunterskalierung, siehe #764 —
+    die tatsaechliche Entscheidung braucht eine reale Kohorte, diese Tabelle liefert nur die Evidenz
+    dafuer).
+
+    Leere Liste bei < 2 eligiblen Trials mit ``reward_terms`` (keine Varianz-Aussage moeglich,
+    konsistent zu ``check_reward_term_variance``)."""
+    eligible_terms = _eligible_reward_terms(trials)
+    if len(eligible_terms) < 2:
+        return []
+    lo, hi = _REWARD_TERM_VARIANCE_CORRIDOR
+    variances = {
+        k: statistics.pvariance([float(t.get(k, 0.0)) for t in eligible_terms])
+        for k in _REWARD_TERM_NUMERIC_KEYS
+    }
+    total_var = sum(variances.values()) or 1.0
+    table = []
+    for k in _REWARD_TERM_NUMERIC_KEYS:
+        var_contrib = variances[k] / total_var
+        table.append({
+            "term": k,
+            "std": round(variances[k] ** 0.5, 6),
+            "var_contrib": round(var_contrib, 6),
+            "in_target_corridor": bool(lo <= var_contrib <= hi),
+        })
+    return table
+
 
 def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01) -> InvariantResult:
     """Verallgemeinerung von ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621): statt einer
@@ -244,11 +299,7 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
 
     ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (je Trial ``oos_evaluated`` +
     ``reward_terms``), NICHT Optuna-``Trial``-Objekte — pure Funktion, synthetisch testbar."""
-    eligible_terms = [
-        t.get("reward_terms") for t in trials
-        if t.get("oos_evaluated") is True and t.get("reward_terms")
-        and t["reward_terms"].get("branch") in ("eligible", "per_symbol", "pareto")
-    ]
+    eligible_terms = _eligible_reward_terms(trials)
     if len(eligible_terms) < 2:
         return InvariantResult(
             name="check_reward_term_variance",

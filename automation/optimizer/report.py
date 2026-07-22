@@ -203,6 +203,10 @@ def _study_record(proposal: dict, study) -> tuple[dict[str, Any], list[_inv.Inva
                 a.get("oos_evaluated") is True for a in trial_attrs) else None),
             "promotion": holdout_metrics.get("deflation_inference_method"),
         },
+        # Issue #764 — die vollstaendige Reward-Term-Varianz-Tabelle (var_contrib je Term gegen den
+        # [0.02, 0.30]-Zielkorridor), statt nur der binaeren inert-Liste aus check_reward_term_
+        # variance (Akzeptanzkriterium #764: "Report enthaelt die Term-Varianz-Tabelle je Study").
+        "reward_term_variance": _inv.reward_term_variance_table(trial_attrs),
     }
     return record, checks
 
