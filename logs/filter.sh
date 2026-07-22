@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # Config variables
-readonly INPUT_LOG="optimizer_6b44a3b0_20260720T181509145590.log"
+readonly INPUT_LOG="optimizer_ec87551e_20260722T160352478562.log"
 readonly OUTPUT_LOG="optimizer_warnings.log"
 
 # Main processing block
