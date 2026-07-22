@@ -66,3 +66,27 @@ def normalized_param_distance(sampled: dict, reference: dict,
         total += (a - b) ** 2
         count += 1
     return total / count if count else 0.0
+
+
+def theoretical_max_oos_trades(strategy: str, *, walk_forward: dict,
+                               bars_per_day: int = 24) -> int | None:
+    """Issue #762 — obere Schranke der ueber die GESAMTE gepoolte OOS-Spanne (alle Folds)
+    erreichbaren Round-Trips, gerechnet an der SCHNELLSTEN im Suchraum zulaessigen
+    Parameterkombination (``cooldown_bars``- UND ``max_bars_in_trade``-UNTERGRENZE): jede
+    zusaetzliche Handelsfrequenz-Bremse (Signalrate, vorzeitiger ATR-Trailing-Exit vor
+    ``max_bars_in_trade``) kann die REALE Trade-Zahl nur SENKEN, nie erhoehen. Liegt schon diese
+    obere Schranke unter ``oos_min_trades``, ist das mechanisch belegt ein Bounds-Bug (der
+    Suchraum laesst gar keinen ausreichend schnellen Zyklus zu) — kein Signalqualitaets-Befund.
+
+    Pure, I/O-frei (``walk_forward`` wird injiziert, analog ``gate.required_bars``). Gibt ``None``
+    zurueck, wenn die Strategie kein ``cooldown_bars``/``max_bars_in_trade``-Zyklusmodell hat (die
+    Schranke ist dafuer nicht definierbar — keine falsch-positive Warnung)."""
+    bounds_map = extract_numeric_bounds(strategy)
+    if "cooldown_bars" not in bounds_map or "max_bars_in_trade" not in bounds_map:
+        return None
+    cooldown_lo, _ = bounds_map["cooldown_bars"]
+    max_bars_lo, _ = bounds_map["max_bars_in_trade"]
+    cycle_bars = max(1.0, float(cooldown_lo) + float(max_bars_lo))
+    total_oos_bars = (float(walk_forward["splits"]) * float(walk_forward["oos_window_days"])
+                      * float(bars_per_day))
+    return int(total_oos_bars // cycle_bars)

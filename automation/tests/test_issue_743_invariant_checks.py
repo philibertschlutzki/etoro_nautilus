@@ -80,6 +80,99 @@ def test_config_key_registry_fail_unknown_gate():
     assert "totally_made_up_gate_key" in result.actual
 
 
+# ─── check_config_key_registry: #765 Schema-Drift-Erweiterung ─────────────────────────────────
+def test_config_key_registry_fail_stale_all_membership_claim():
+    """#765-Root-Cause-Signatur: min_sortino/oos_min_sortino_note-Klasse — der Schema-Text
+    behauptet weiterhin 'in eligible_requires_all (HART)', obwohl der Key laengst NICHT MEHR
+    gelistet ist."""
+    result = inv.check_config_key_registry({
+        "eligible_requires_all": ["min_trades", "max_drawdown"],
+        "eligible_requires_any": [],
+        "_schema": {"fields": {
+            "min_sortino": "Mindest-Sortino. SEIT #593 in eligible_requires_all (HART).",
+        }},
+    })
+    assert result.passed is False
+    assert any("min_sortino" in p and "eligible_requires_all" in p for p in result.actual)
+
+
+def test_config_key_registry_fail_stale_any_membership_claim():
+    result = inv.check_config_key_registry({
+        "eligible_requires_all": [],
+        "eligible_requires_any": ["min_win_rate"],
+        "_schema": {"fields": {
+            "min_profit_factor": "Weiches Filter, in eligible_requires_any (aktiver OR-Arm).",
+        }},
+    })
+    assert result.passed is False
+    assert any("min_profit_factor" in p and "eligible_requires_any" in p for p in result.actual)
+
+
+def test_config_key_registry_pass_accurate_membership_claim():
+    """Ein Schema-Text, dessen Marker-Behauptung tatsaechlich zutrifft, ist KEIN Fund."""
+    result = inv.check_config_key_registry({
+        "eligible_requires_all": ["min_trades"],
+        "eligible_requires_any": [],
+        "_schema": {"fields": {
+            "min_trades": "Mindestanzahl Trades, in eligible_requires_all (HART).",
+        }},
+    })
+    assert result.passed is True
+    assert result.actual == []
+
+
+def test_config_key_registry_pass_oos_prefixed_claim_matches_unprefixed_list_entry():
+    """Marker-Text auf einem oos_-praefigierten Key ist erfuellt, wenn die UNPRAEFIGIERTE Form in
+    der Liste steht (dieselbe Normalisierung wie der #649-Handler-Check)."""
+    result = inv.check_config_key_registry({
+        "eligible_requires_all": ["min_psr"],
+        "eligible_requires_any": [],
+        "_schema": {"fields": {
+            "oos_min_psr": "Mindest-PSR, in eligible_requires_all (HART).",
+        }},
+    })
+    assert result.passed is True
+
+
+def test_config_key_registry_note_suffix_resolves_to_base_key():
+    """Ein '<key>_note'-Begleitfeld wird auf denselben Gate-Key wie sein Stammfeld gepruft (das
+    #765-Reproduktionsmuster: oos_min_sortino_note behauptet ueber oos_min_sortino)."""
+    result = inv.check_config_key_registry({
+        "eligible_requires_all": ["min_trades"],
+        "eligible_requires_any": [],
+        "_schema": {"fields": {
+            "oos_min_sortino_note": "SEIT #593 wirkt oos_min_sortino in eligible_requires_all (HART).",
+        }},
+    })
+    assert result.passed is False
+    assert any("oos_min_sortino_note" in p for p in result.actual)
+
+
+def test_config_key_registry_pass_negated_or_conditional_mentions_are_not_flagged():
+    """Texte, die eligible_requires_all/_any NUR in negierten/bedingten Kontexten erwaehnen (ohne
+    den exakten Marker), duerfen NICHT als Falsch-Positive markiert werden — das reale Muster von
+    min_expectancy/oos_min_profitable_folds_frac in der Produktions-Config."""
+    result = inv.check_config_key_registry({
+        "eligible_requires_all": ["min_trades"],
+        "eligible_requires_any": [],
+        "_schema": {"fields": {
+            "min_expectancy": "SEIT #697 NICHT MEHR in eligible_requires_all gelistet.",
+            "oos_min_evaluable_folds": "Muss in eligible_requires_all gelistet sein, um zu greifen.",
+        }},
+    })
+    assert result.passed is True
+    assert result.actual == []
+
+
+def test_config_key_registry_pass_against_real_tournament_config():
+    """Nachweis: die tatsaechliche automation/config/tournament.json ist nach dem #765-Fix gruen."""
+    import json
+    from pathlib import Path
+    tcfg = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
+    result = inv.check_config_key_registry(tcfg)
+    assert result.passed is True, result.detail
+
+
 # ─── check_rejection_chain_completeness (#654/#671-Regressionswächter) ────────────────────────
 
 def test_rejection_chain_pass_ready_for_pr():

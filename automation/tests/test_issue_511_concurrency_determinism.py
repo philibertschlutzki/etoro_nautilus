@@ -4,40 +4,41 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from automation.optimizer.sweep import main
 
-def test_determinism_guard_forces_n_jobs_to_1(tmp_path):
-    """Prüft Issue #511: Sweep erzwingt n_jobs=1 bei aktivem Seed zur Determinismus-Garantie, wirft aber einen ValueError bei CLI overrides."""
+def test_seed_no_longer_forces_n_jobs_to_1_or_raises(tmp_path):
+    """Issue #755 (superseded #511): Determinismus wird seither PER STUDY erzwungen
+    (``run_optimization.seed_effective``), nicht mehr durch sweep-weite Serialisierung. Ein
+    gesetzter Seed darf ``--n-jobs > 1`` weder ablehnen noch stillschweigend auf 1 zwingen — jede
+    Study hat eine eigene SQLite-Datei/eigenen Sampler, Studies teilen keinen Sampler-Zustand."""
     base_cfg = tmp_path
 
-    # Setup Mock-Configs
     (base_cfg / "strategies.json").write_text(json.dumps({"strategies": [{"strategy_class": "TestStrat", "active": True}]}))
     (base_cfg / "tournament.json").write_text(json.dumps({}))
     (base_cfg / "backtest.json").write_text(json.dumps({
         "walk_forward": {"is_window_days": 100, "oos_window_days": 10, "splits": 2, "holdout_days": 5}
     }))
 
-    # 1. Fall: Seed ist in config definiert (wie in optimizer.json)
+    # Seed ist in config definiert (wie in optimizer.json) UND --n-jobs > 1 explizit gesetzt.
     (base_cfg / "optimizer.json").write_text(json.dumps({"seed": 42}))
-
-    # CLI args mit n-jobs override (sollte nun scheitern)
     argv = ["--strategies", "TestStrat", "--symbols", "AAPL", "--n-jobs", "6"]
 
-    # Test execution expect ValueError
     with patch("automation.optimizer.sweep.config_dir", return_value=base_cfg), \
          patch("automation.optimizer.sweep.run_per_symbol_sweep") as mock_run:
+        main(argv)  # darf NICHT mehr werfen (#755)
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs["n_jobs"] == 6, "CLI --n-jobs muss trotz gesetztem Seed respektiert werden."
+        assert kwargs.get("n_jobs_source") == "CLI"
 
-        with pytest.raises(ValueError, match="Determinism Constraint Violation"):
-            main(argv)
-
-    # CLI args OHNE override
+    # OHNE CLI-Override faellt der Default auf sweep_max_workers/cpu_count-2 zurueck — NICHT mehr
+    # zwangsweise auf 1.
     argv_no_override = ["--strategies", "TestStrat", "--symbols", "AAPL"]
     with patch("automation.optimizer.sweep.config_dir", return_value=base_cfg), \
          patch("automation.optimizer.sweep.run_per_symbol_sweep") as mock_run:
-
         main(argv_no_override)
         mock_run.assert_called_once()
         kwargs = mock_run.call_args.kwargs
-        assert kwargs["n_jobs"] == 1, "Determinism guard failed: n_jobs not forced to 1 when seed=42."
-        assert kwargs.get("n_jobs_source") == "ENFORCED_BY_SEED"
+        assert kwargs["n_jobs"] >= 1
+        assert kwargs.get("n_jobs_source") in ("CONFIG_SWEEP_MAX_WORKERS", "DEFAULT_CPU_MINUS_2")
 
 def test_determinism_guard_respects_n_jobs_without_seed(tmp_path):
     """Prüft Issue #511: Ohne Seed darf n_jobs > 1 von der CLI bestehen bleiben."""

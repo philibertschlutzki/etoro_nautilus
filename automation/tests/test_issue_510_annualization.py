@@ -52,7 +52,8 @@ def test_annualization_path_parity():
     assert sortino_config is not None
     assert sortino_fallback is not None
 
-    period_rets = mtm_series.pct_change().dropna()
+    # Issue #756 — period_rets sind seit der Log-Return-Umstellung np.log1p(pct_change()).
+    period_rets = np.log1p(mtm_series.pct_change().dropna())
     mar = 0.0
     downside_diff = (period_rets - mar).clip(upper=0.0)
     dd_dev = float(np.sqrt((downside_diff ** 2).mean()))

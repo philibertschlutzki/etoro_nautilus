@@ -85,6 +85,123 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     }
 
 
+# Issue #761 — die frequenz-treibenden Parameter, deren Bounds bei einem ``'signal_frequency'``/
+# ``'hold_duration'``-Kollaps ein plausibler Hebel sind (Cooldown/Haltedauer-Obergrenze und die
+# Signal-Trägheits-Fenster der Trend-/Regime-Indikatoren). Nicht jede Strategie sampelt jeden
+# dieser Parameter — ``propose_bounds_widening`` überspringt fehlende Keys stillschweigend.
+_FREQUENCY_DRIVING_PARAMS = (
+    "cooldown_bars", "max_bars_in_trade", "ema_period", "adx_period", "keltner_period",
+)
+
+
+def _widen_bounds_toward(direction_by_param: dict[str, str],
+                         current_bounds: dict[str, tuple[float, float]], *,
+                         widen_fraction: float) -> dict[str, list[float]]:
+    """Issue #761/#763 — gemeinsame Weitungs-Arithmetik: ``direction_by_param[param] == "low"``
+    senkt die Untergrenze um ``widen_fraction`` der aktuellen Spannweite ab (Obergrenze bleibt),
+    ``"high"`` hebt die Obergrenze an (Untergrenze bleibt). Parameter ohne bekannte Bounds werden
+    übersprungen (defensiv)."""
+    proposals: dict[str, list[float]] = {}
+    for param, direction in direction_by_param.items():
+        if param not in current_bounds:
+            continue
+        lo, hi = current_bounds[param]
+        span = (hi - lo) or 1.0
+        if direction == "low":
+            proposals[param] = [round(lo - widen_fraction * span, 6), hi]
+        else:
+            proposals[param] = [lo, round(hi + widen_fraction * span, 6)]
+    return proposals
+
+
+def propose_bounds_from_boundary_hits(
+    directions: dict[str, str], strategy: str, *,
+    current_bounds: dict[str, tuple[float, float]] | None = None,
+    widen_fraction: float = 0.3,
+) -> dict[str, list[float]]:
+    """Issue #763 — schliesst die Randlösungs-Diagnose (``run_optimization._boundary_hit_
+    directions``) zu einem KONKRETEN Bounds-Vorschlag, analog ``propose_bounds_widening``, aber
+    OHNE Korrelationsschätzung: klebt der Gewinner-Parameter an der UNTEREN Grenze
+    (``directions[param] == "low"``), wird die Untergrenze um ``widen_fraction`` (Default 30 %) der
+    aktuellen Spannweite abgesenkt; bei ``"high"`` wird die Obergrenze angehoben. Root-Cause #763:
+    ein Winner, der zur Hälfte an Suchraumgrenzen klebt, könnte dort ein echtes Optimum ODER ein
+    Suchraum-Artefakt gefunden haben — nur ein Re-Run mit ausgeweiteten Bounds unterscheidet die
+    beiden Fälle; dieser Vorschlag ist die Voraussetzung dafür (schreibt in den #761-Cache).
+
+    ``current_bounds`` Default: ``bounds.extract_numeric_bounds(strategy)``. Rückgabe:
+    ``{param: [new_low, new_high]}`` — NUR für Parameter aus ``directions``, deren Bounds bekannt
+    sind. Rein, deterministisch, kein I/O (ausser dem optionalen ``extract_numeric_bounds``-
+    Lookup)."""
+    if current_bounds is None:
+        try:
+            from automation.optimizer.bounds import extract_numeric_bounds
+            current_bounds = extract_numeric_bounds(strategy)
+        except Exception:
+            current_bounds = {}
+    return _widen_bounds_toward(directions, current_bounds, widen_fraction=widen_fraction)
+
+
+def propose_bounds_widening(
+    trial_rows: list[dict], strategy: str, *,
+    current_bounds: dict[str, tuple[float, float]] | None = None,
+    widen_fraction: float = 0.3, min_samples: int = 8, correlation_threshold: float = 0.3,
+) -> dict[str, list[float]]:
+    """Issue #761 — schliesst die #669-Diagnose zu einem KONKRETEN Bounds-Vorschlag: für jeden
+    frequenz-treibenden Parameter (``_FREQUENCY_DRIVING_PARAMS``), den diese Strategie tatsächlich
+    sampelt, wird die Spearman-Rangkorrelation zwischen dem gesampelten Parameterwert und
+    ``is_total_trades`` (derselben Aktivitäts-Grösse, die ``diagnose_trade_frequency`` schon für die
+    ``'signal_frequency'``-Klassifikation nutzt) über die Trial-Kohorte bestimmt.
+
+    Eine hinreichend starke Korrelation (``|ρ| > correlation_threshold``, Default 0.3, über
+    mindestens ``min_samples`` Trials mit definiertem Parameter+Aktivität) zeigt an, IN WELCHE
+    RICHTUNG der Suchraum verengt ist: eine NEGATIVE Korrelation (grösserer Parameterwert ⇒ weniger
+    Trades, z. B. längerer Cooldown) schlägt vor, die UNTERGRENZE abzusenken (Suchraum nach unten
+    weiten); eine POSITIVE Korrelation schlägt vor, die OBERGRENZE anzuheben. Die Weitung selbst ist
+    ``widen_fraction`` (Default 30 %) der aktuellen Spannweite — konservativ, kein Sprung ins
+    Unbekannte.
+
+    ``trial_rows``: Liste von ``{'params': {...}, 'is_total_trades': int}`` (aus den Trial-User-
+    Attrs des STRUCTURAL_ALL_UNEVALUABLE-Kollaps-Cohorts, ``run_optimization.floor_plateau_
+    callback``). ``current_bounds`` Default: ``bounds.extract_numeric_bounds(strategy)``.
+
+    Rückgabe: ``{param: [new_low, new_high]}`` — NUR für Parameter mit einer hinreichend starken,
+    hinreichend gestützten Korrelation. Leeres Dict, wenn kein Parameter qualifiziert (kein
+    Bounds-Problem erkennbar, oder die Strategie sampelt keinen der Kandidaten-Parameter). Rein,
+    deterministisch, kein I/O (ausser dem optionalen ``extract_numeric_bounds``-Lookup)."""
+    if current_bounds is None:
+        try:
+            from automation.optimizer.bounds import extract_numeric_bounds
+            current_bounds = extract_numeric_bounds(strategy)
+        except Exception:
+            current_bounds = {}
+
+    from automation.optimizer.reward import _spearman_rank_correlation
+
+    direction_by_param: dict[str, str] = {}
+    for param in _FREQUENCY_DRIVING_PARAMS:
+        if param not in current_bounds:
+            continue
+        xs: list[float] = []
+        ys: list[float] = []
+        for row in trial_rows:
+            params = row.get("params") or {}
+            trades = row.get("is_total_trades")
+            if param not in params or trades is None:
+                continue
+            try:
+                xs.append(float(params[param]))
+                ys.append(float(trades))
+            except (TypeError, ValueError):
+                continue
+        if len(xs) < min_samples:
+            continue
+        rho = _spearman_rank_correlation(xs, ys)
+        if rho is None or abs(rho) < correlation_threshold:
+            continue
+        direction_by_param[param] = "low" if rho < 0 else "high"
+    return _widen_bounds_toward(direction_by_param, current_bounds, widen_fraction=widen_fraction)
+
+
 def eligibility_curve(trials: list[dict], *, window: int = 16) -> list[float]:
     """Issue #700 — die per-Trial ``oos_eligible``-Fraktion je kontiguierlichem Fenster von
     ``window`` Trials (in Trial-Reihenfolge), NICHT nur die aggregierte Gesamtzahl. Unterscheidet
@@ -133,7 +250,8 @@ def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Pat
 
 def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                has_existing_override: bool = False,
-                               previously_recommended_override: bool = False) -> dict:
+                               previously_recommended_override: bool = False,
+                               proposed_bounds: dict | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -163,8 +281,14 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     Mal auf ``'denylist'`` eskaliert — die Override-Chance wird genau EINMAL gewährt, dann greift
     der Budget-Skip. Default ``False`` ⇒ bit-identisch zum Pre-#699-Verhalten.
 
+    Issue #761 — ``proposed_bounds`` (aus ``propose_bounds_widening``, vom Aufrufer berechnet) wird
+    NUR bei ``action == 'search_space_override'`` in die Empfehlung übernommen — ein konkreter,
+    verengter/geweiteter Bereich statt nur der Empfehlung "probiere einen Override". ``sweep.py``
+    wendet ihn im NÄCHSTEN Lauf automatisch an (``SEARCH_SPACE_AUTO_OVERRIDE``-Telemetrie), bis ein
+    Operator den kuratierten Override in ``search_space_overrides.json`` einträgt.
+
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
-    'median_oos_trades', 'median_is_trades'}``."""
+    'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
     if cause in ("none", "no_data", None):
         action = "none"
@@ -177,22 +301,33 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
             action = "denylist"
     else:
         action = "denylist"
-    return {
+    result = {
         "strategy": strategy, "symbol": symbol, "action": action, "binding_cause": cause,
         "median_oos_trades": diagnosis.get("median_oos_trades"),
         "median_is_trades": diagnosis.get("median_is_trades"),
     }
+    if action == "search_space_override" and proposed_bounds:
+        result["proposed_bounds"] = proposed_bounds
+    return result
+
+
+_DEFAULT_EXPIRES_AFTER_RUNS = 10
 
 
 def _diagnosed_pairs_cache_path(work_dir: Path | None = None) -> Path:
     if work_dir is None:
         from automation.optimizer.manifest import WORK
         work_dir = WORK
-    return Path(work_dir) / "diagnosed_pairs_cache.json"
+    # Issue #761 — unter data/optimizer/diagnostics/ (NICHT direkt unter WORK): der Cache ist
+    # orthogonal zur reward_semantics_version-Purge-Grenze (purge_stale_studies.py leert
+    # WORK/sweep/*.db + WORK/<study_name>/trial_*/, beides study-namens-adressiert) und soll auch
+    # einen manuellen "WORK-Verzeichnis leeren"-Reflex überleben — die Diagnose selbst bleibt
+    # gültig, unabhängig davon, ob Studies purged wurden (#733/#701-Anschluss).
+    return Path(work_dir) / "diagnostics" / "diagnosed_pairs_cache.json"
 
 
 def load_diagnosed_pairs_cache(work_dir: Path | None = None) -> dict[tuple[str, str], dict]:
-    """Issue #681 — der AUTOMATISCH gepflegte Diagnose-Cache (``data/optimizer/
+    """Issue #681/#761 — der AUTOMATISCH gepflegte Diagnose-Cache (``data/optimizer/diagnostics/
     diagnosed_pairs_cache.json``) — bewusst GETRENNT von der menschlich-kuratierten
     ``symbol_strategy_denylist.json``: dieser Cache schliesst NUR die Budget-Schleife
     (``enumerate_tunable_pairs`` überspringt ein ``'denylist'``-empfohlenes Paar automatisch ab dem
@@ -213,20 +348,61 @@ def load_diagnosed_pairs_cache(work_dir: Path | None = None) -> dict[tuple[str, 
     return out
 
 
-def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None) -> Path:
-    """Issue #681 — schreibt/aktualisiert den (Symbol, Strategie)-Diagnose-Eintrag im automatisch
-    gepflegten Cache (siehe ``load_diagnosed_pairs_cache``-Docstring). Ein No-Op-Eintrag
-    (``action == 'none'``) wird NICHT gespeichert (kein Kollaps ⇒ nichts zu cachen). Idempotent:
-    ein erneuter Diagnose-Lauf für dasselbe Paar überschreibt den vorherigen Eintrag."""
-    if recommendation.get("action") == "none":
-        return _diagnosed_pairs_cache_path(work_dir)
+def _save_diagnosed_pairs_cache(cache: dict[tuple[str, str], dict], *,
+                                work_dir: Path | None = None) -> Path:
     path = _diagnosed_pairs_cache_path(work_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    cache = load_diagnosed_pairs_cache(work_dir)
-    cache[(recommendation["strategy"], recommendation["symbol"])] = recommendation
     payload = {"pairs": list(cache.values())}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
+
+
+def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None) -> Path:
+    """Issue #681/#761 — schreibt/aktualisiert den (Symbol, Strategie)-Diagnose-Eintrag im
+    automatisch gepflegten Cache (siehe ``load_diagnosed_pairs_cache``-Docstring). Ein No-Op-Eintrag
+    (``action == 'none'``) wird NICHT gespeichert (kein Kollaps ⇒ nichts zu cachen). Idempotent:
+    ein erneuter Diagnose-Lauf für dasselbe Paar überschreibt den vorherigen Eintrag UND setzt
+    ``runs_since_recorded`` auf 0 zurück (frischer Befund, neue Ablauf-Frist beginnt).
+
+    Issue #761 — jeder gespeicherte Eintrag trägt ``expires_after_runs`` (aus der Empfehlung, sonst
+    Default 10) und ``runs_since_recorded=0``. ``enumerate_tunable_pairs`` (sweep.py) lässt ein
+    Paar, dessen ``runs_since_recorded >= expires_after_runs`` erreicht hat, genau EINMAL wieder zu
+    (Re-Test) — ein einmaliger Befund zementiert das Paar sonst dauerhaft, auch wenn Kohorte-A/B-
+    Fixes (#753/#756/#757) die Lage grundlegend ändern."""
+    if recommendation.get("action") == "none":
+        return _diagnosed_pairs_cache_path(work_dir)
+    cache = load_diagnosed_pairs_cache(work_dir)
+    entry = dict(recommendation)
+    entry.setdefault("expires_after_runs", _DEFAULT_EXPIRES_AFTER_RUNS)
+    entry["runs_since_recorded"] = 0
+    cache[(recommendation["strategy"], recommendation["symbol"])] = entry
+    return _save_diagnosed_pairs_cache(cache, work_dir=work_dir)
+
+
+def age_diagnosed_pairs_cache(*, work_dir: Path | None = None) -> dict[tuple[str, str], dict]:
+    """Issue #761 — EINMAL je Sweep-Lauf aufgerufen (``sweep.run_per_symbol_sweep``, VOR der
+    Paar-Enumeration): erhöht ``runs_since_recorded`` jedes Cache-Eintrags um 1. Ein Paar, das DIESEN
+    Lauf tatsächlich neu diagnostiziert wird, überschreibt seinen Eintrag danach ohnehin via
+    ``record_diagnosed_pair`` (``runs_since_recorded`` zurück auf 0) — das Altern hier betrifft nur
+    Paare, die WEGEN des Cache-Skips gar nicht erst re-diagnostiziert wurden. Kein Cache ⇒ No-Op.
+    Rückgabe: der gealterte Cache (für ``enumerate_tunable_pairs``, ohne ihn ein zweites Mal von der
+    Platte zu laden)."""
+    cache = load_diagnosed_pairs_cache(work_dir)
+    if not cache:
+        return cache
+    for entry in cache.values():
+        entry["runs_since_recorded"] = int(entry.get("runs_since_recorded", 0)) + 1
+    _save_diagnosed_pairs_cache(cache, work_dir=work_dir)
+    return cache
+
+
+def is_diagnosed_pair_expired(entry: dict) -> bool:
+    """Issue #761 — ``True``, wenn ein 'denylist'-Cache-Eintrag seine Ablauf-Frist erreicht hat
+    (``runs_since_recorded >= expires_after_runs``) und daher DIESEN Lauf wieder regulär enumeriert
+    (re-getestet) werden soll, statt automatisch übersprungen zu werden."""
+    expires_after = int(entry.get("expires_after_runs", _DEFAULT_EXPIRES_AFTER_RUNS))
+    runs_since = int(entry.get("runs_since_recorded", 0))
+    return runs_since >= expires_after
 
 
 def load_continuous_bar_invalid_strategies(base_cfg: Path | None = None) -> frozenset[str]:

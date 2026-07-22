@@ -3310,3 +3310,174 @@ Trading-/Optimierungs-Parameter.
 - **`report.py`/`explain_trial.py` laden Studies IMMER frisch aus SQLite (nie aus Live-Prozess-
   Zustand)** — das ist die Grundlage der Determinismus-Garantie zwischen dem Live-End-of-Run-Pfad
   und der standalone/nachträglichen Rekonstruktion (#742).
+
+### 🟢 Pitfall #219 — Ein Abbruch-Guard darf nie an dieselbe Grösse gekoppelt sein, die den Beginn der Suche markiert [BEHOBEN: GH-#753]
+**Symptom:** `floor_plateau_callback` brach eine Study beim `ZERO_ELIGIBLE`-Kollaps exakt bei
+`n_startup_trials + floor_plateau_k` abgeschlossenen Trials ab — derselben Grenze, ab der
+`TPESampler(n_startup_trials=...)` ERST beginnt, den Suchraum zu MODELLIEREN (die ersten
+`n_startup_trials` Trials sind reine Zufallsziehungen). Der Guard tötete die Study also GENAU am
+Punkt, an dem die Bayes-Optimierung ihre Arbeit aufnehmen würde, und meldete "0 von 16
+Zufallsziehungen feasible" als strukturellen Suchraum-Befund — SqueezeBreakoutStrategy (dim=9,
+n_startup=18) war der stärkste Einzelbeleg über 124 Symbole.
+**Root-Cause:** `n_startup_trials` ist die untere Schranke, ab der ein Sampler modelliert — kein
+Abbruch-Trigger. Trigger (wie viele Trials seit dem Modellierungs-Beginn ohne Erfolg) und Warmlauf
+(wie viele Zufalls-Startpunkte) sind zwei unabhängige Konzepte, die an DIESELBE Config-Grösse
+gekoppelt waren.
+**Fix/Regel:** Getrennte, deklarative Keys — `plateau_min_modelled_trials` (Anzahl ZUSÄTZLICHER
+Trials NACH `n_startup_trials`, bevor der `ZERO_ELIGIBLE`-Zweig überhaupt urteilen darf) statt der
+gemeinsamen Kopplung an `n_startup_trials + floor_plateau_k`. Generalisierte Regel: ein
+Abbruch-Guard wird NIE an dieselbe Grösse gekoppelt, die den Beginn der eigentlichen
+(nicht-zufälligen) Suche markiert — Trigger und Warmlauf brauchen getrennte Keys.
+
+### 🟢 Pitfall #220 — „0 von N Zufallsziehungen feasible" ist keine Aussage über den Suchraum [BEHOBEN: GH-#753]
+**Symptom:** Ein `STRUCTURAL_ALL_UNEVALUABLE`/`ZERO_ELIGIBLE`-Urteil stützte sich auf die
+Eligibility-Passrate über ALLE bisherigen Trials, inklusive der reinen Zufalls-Startup-Phase — bei
+einem eng constrained Suchraum (z. B. `cooldown_bars`×`max_bars_in_trade` gegen ein kurzes
+OOS-Fenster) ist eine feasible Region PER KONSTRUKTION klein, und 0 Treffer unter 16 Zufallsziehungen
+ist genau das erwartbare Ergebnis, kein Strukturbefund.
+**Root-Cause:** Ein constrained Sampler (TPE mit `constraints_func`) existiert GENAU dafür, die
+feasible Region zu FINDEN — nicht dafür, sie bereits in den ersten reinen Zufallsziehungen zu
+TREFFEN. Ein Abbruch wegen `p_eligible == 0` über die Zufalls-Startup-Trials verwechselt die
+Baseline-Trefferquote mit dem eigentlichen Sampler-Fortschritt.
+**Fix/Regel:** Fortschritt wird über die MODELLIERTEN Trials gemessen (`_modelled_trials`, Index
+`>= n_startup_trials`, `run_optimization.py`), zusätzlich über Constraint-ANNÄHERUNG
+(`constraint_improvement_rate`, #754) statt reiner Passrate — eine Study, die sich der feasiblen
+Region nähert, aber sie noch nicht erreicht hat, zeigt damit trotzdem messbaren Fortschritt.
+Generalisierte Regel: "0 von N Zufallsziehungen feasible" ist erst dann eine belastbare Aussage über
+den Suchraum, wenn N modellierte (nicht reine Zufalls-) Trials umfasst — und Constraint-Annäherung
+ist dafür das schärfere Signal als die reine Passrate.
+
+### 🟢 Pitfall #221 — Ein Eskalations-Gate, das auf der Zielmenge misst, die es erst erzeugen soll, ist zirkulär [BEHOBEN: GH-#754]
+**Symptom:** Höheres Trial-Budget (nächstes Tier) wurde ausschliesslich über
+`evaluable_fraction > 0 ∧ pstdev(reward | eligible) > τ` gerechtfertigt — bei LEERER feasibler Region
+(`p_eligible == 0`, nach #753 der Normalfall, während die Suche noch läuft) IMMER `False`. Eine
+Study brauchte dann eligible Trials, um mehr Budget zu bekommen, UND mehr Budget, um eligible Trials
+zu finden — eine strukturelle Selbstblockade.
+**Root-Cause:** Das einzige Fortschrittsmass war ausschliesslich AUF der Zielmenge (feasible Region)
+definiert, die das Eskalations-Gate selbst erst ermöglichen soll — ein Gate, das seine eigene
+Voraussetzung misst, kann sie nie erfüllen, solange die Zielmenge leer ist.
+**Fix/Regel:** `study_shows_gradient_signal` bekam einen ZWEITEN, GLEICHRANGIGEN Arm
+(`constraint_improvement_rate`: relative Verbesserung der minimalen Gesamt-Constraint-Verletzung
+zwischen erster und zweiter Hälfte der modellierten Trials) — dieser Arm ist AUCH bei leerer
+feasibler Region definiert. Generalisierte Regel: Fortschrittsmasse für ein Eskalations-Gate müssen
+auch dann einen Wert liefern, wenn die Zielmenge, die sie beurteilen sollen, noch leer ist — sonst
+ist das Gate zirkulär.
+
+### 🟢 Pitfall #222 — Arithmetisches Mittel und geometrische Kompoundierung derselben Equity-Kurve sind nicht vorzeichengleich [BEHOBEN: GH-#756]
+**Symptom:** `sign(oos_sortino_period)` wich in bis zu 43 % der Trials einer Study von
+`sign(oos_total_return)` ab, obwohl `tournament.json`s `aggregation_note` behauptete, beide seien
+"per Konstruktion kohärent" (dieselbe Divergenz motivierte ursprünglich fälschlich #589, das den
+Aggregationspfad statt der Renditedefinition korrigierte).
+**Root-Cause:** Der Sortino-Zähler war das ARITHMETISCHE Mittel der Perioden-Returns, `total_return`
+ist GEOMETRISCH kompoundiert; die Differenz (Volatilitäts-Drag ≈ σ²/2) lässt bei jeder Strategie mit
+`|mean(r)| < σ²/2` (Edge nahe null, Volatilität dominant) die Vorzeichen divergieren —
+mathematisch, nicht als Datenqualitätsproblem.
+**Fix/Regel:** Perioden-Returns werden als LOG-Returns berechnet (`np.log1p(pct_change)`,
+`backtest_runner._calculate_stats`) ⇒ `Σ log(1+rᵢ) = log(1+total_return)` ⇒
+`sign(sortino)==sign(total_return)` gilt seither TATSÄCHLICH per Konstruktion, ohne Toleranz.
+Generalisierte Regel: `sign(mean(r)) == sign(Π(1+r)−1)` als Invariante zu prüfen prüft eine
+mathematische Falschaussage — Log-Returns sind die einzige Renditedefinition, unter der Zähler und
+Nenner denselben Pfad beschreiben.
+
+### 🟢 Pitfall #223 — Der Standardfehler gehört zur Statistik, nicht zur Formel-Familie [BEHOBEN: GH-#757]
+**Symptom:** Ein H0-Monte-Carlo-Test zeigte `P(PSR ≥ 0.75)` bei 31–32 % statt der nominellen 25 % —
+die effektive Eligibility-/Promotion-Fehlerrate von `oos_min_psr` war systematisch inflationiert
+(`T ∈ {200, 1000, 4320}`, `N ≥ 4000`).
+**Root-Cause:** `psr_z`/`lo2002_sharpe_variance` sind die asymptotischen Sampling-Varianz-Formeln
+eines SHARPE-Schätzers (μ̂/σ̂, Delta-Methode über (μ̂, σ̂²)); der Eligibility-/Promotion-Pfad übergab
+aber `sortino_period` (μ̂/Downside-Deviation) — eine ANDERE Sampling-Verteilung, für die diese
+Varianzterme nicht hergeleitet sind. Eine Kennzahl in eine fremde Signifikanzformel eingesetzt macht
+die nominelle Fehlerrate ungültig, unabhängig davon, wie plausibel die Formel aussieht.
+**Fix/Regel:** Stationary-Bootstrap-Standardfehler (`deflation.bootstrap_psr_z`, Politis/Romano)
+statt der Sharpe-Sampling-Formel — korrekt FÜR DIE TATSÄCHLICH VERWENDETE Statistik, verifiziert via
+`automation/optimizer/calibration.py::calibrate_psr_gate` (`P(PSR≥0.75) ∈ [23 %, 27 %]`).
+Generalisierte Regel: jedes Gate mit einer behaupteten nominellen Fehlerrate braucht einen
+H0-Monte-Carlo-Test, der genau diese Rate verifiziert — eine Signifikanzformel ist an ihre
+Schätzer-Familie gebunden, nicht an einen beliebigen Punktschätzer mit ähnlicher Form.
+
+### 🟢 Pitfall #224 — Zwei Inferenzmethoden im selben Selektionspfad sind ein Filter, kein Test [BEHOBEN: GH-#758]
+**Symptom:** Die Eligibility-Stufe (`backtest_runner._calculate_stats`) und die Promotion-Stufe
+(`confirm.py`s Holdout-DSR) nutzten vor #757/#758 unterschiedliche Inferenzverfahren für denselben
+statistischen Grundbegriff (PSR/DSR) — eine Ablehnung auf dem Holdout konnte tatsächlich aus der
+Diskrepanz zwischen den beiden Verfahren stammen, wurde aber der Holdout-Stufe selbst zugeschrieben.
+**Root-Cause:** Zwei verschiedene Inferenzmethoden im selben Selektionspfad wirken wie ein
+zusätzlicher, UNKONTROLLIERTER Filter (jede Divergenz zwischen den Verfahren selektiert Kandidaten,
+die zufällig auf der einen Seite der einen Schwelle liegen, auf der anderen aber nicht) — kein
+zusätzlicher, informativer statistischer Test.
+**Fix/Regel:** Beide Stufen verwenden seit #757/#758 DIESELBE Bootstrap-Inferenz
+(`bootstrap_psr_z`) — Weg B aus #757 vereinheitlicht dies automatisch; telemetriert als
+`deflation_inference_method` (`stationary_bootstrap` im Regelfall, `sharpe_formula_fallback` nur bei
+< 5 Holdout-Perioden-Returns, ein dokumentierter Rest-Abweichungsfall statt eines stillen
+Doppelstandards). Generalisierte Regel: zwei Inferenzmethoden im selben Selektionspfad sind KEIN
+zusätzlicher Test — sie erzeugen einen unkontrollierten, undokumentierten Filter, dessen Ablehnungen
+der falschen Stufe zugeschrieben werden.
+
+### 🟢 Pitfall #225 — `None → 0.0` in der Parsing-Schicht vernichtet die Unterscheidung „nicht messbar" / „gemessen null" [BEHOBEN: GH-#759]
+**Symptom:** `oos_win_rate` kollabierte fehlende Werte (kein Trial evaluiert, kein `win_rate`-Key)
+auf `0.0` — dieselbe Zahl wie eine ECHT beobachtete Null-Win-Rate. `any_arm_unreachable_policy=
+'recalibrate'` rekalibrierte die Schwelle dadurch teils/ausschliesslich aus Missing-Data-Sentinels
+(empirisch: 305/459 `[#660]`-Warnungen mit `p99=0.0000`, davon 255 aus Studies mit 0 evaluierten
+Trials).
+**Root-Cause:** Die Parsing-Schicht (`parsing.TournamentMetrics`) setzte einen Default (`0.0`) VOR
+jeder nachgelagerten Policy-Entscheidung — dieselbe Zahl bedeutete gleichzeitig "nicht messbar" UND
+"gemessen null", und keine nachgelagerte Policy konnte die beiden Fälle mehr unterscheiden.
+**Fix/Regel:** `TournamentMetrics.oos_win_rate` ist seit #759 `float | None` (kein `0.0`-Default im
+Parser); Defaults gehören an die KONSUMSTELLE, nie in den Parser. `resolve_any_arm_policy` verlangt
+zusätzlich einen Mindest-Stichprobenumfang ECHTER (None-gefilterter) Beobachtungen
+(`any_arm_min_observations`) — eine kleine, aber ECHTE Stichprobe (3–4 Beobachtungen) dient sonst
+fälschlich als belastbare Rekalibrierungs-Basis. Generalisierte Regel: `None → 0.0` in der
+Parsing-Schicht vernichtet die Unterscheidung "nicht messbar" von "gemessen null" — Defaults werden
+IMMER an der Konsumstelle gesetzt, nie im Parser, UND Diagnosen brauchen einen Mindest-
+Stichprobenumfang echter Beobachtungen.
+
+### 🟢 Pitfall #226 — Die aktive Gate-Menge ist Config, keine Code-Konstante [BEHOBEN: GH-#760]
+**Symptom:** `_GATE_COLLINEARITY_KEYS`/`_GATE_COLLINEARITY_TO_CONJUNCTION_KEY` (`reward.py`) waren
+ein eingefrorenes Tupel, das die zum Zeitpunkt seiner Einführung aktiven `eligible_requires_all`-Gates
+hardcodierte. Spätere Katalog-Fixes (#676/#677/#697), die Gates aus dem DEFAULT entfernten, liessen
+die Kollinearitäts-Warnung lautlos weiter Gates diagnostizieren, die es nicht mehr gab — während die
+tatsächlich wirksamen Gates ungeprüft blieben.
+**Root-Cause:** Eine Code-Konstante, die eine LIVE-Config-Menge (`eligible_requires_all`) spiegeln
+soll, driftet lautlos von ihr weg, sobald sich die Config ändert, ohne dass der Code mitgezogen wird
+— dieselbe Fehlerklasse wie #649 (Config-Key vs. Handler-Registry), nur eine Ebene tiefer
+(Diagnose-Ebene statt Gate-Ebene selbst).
+**Fix/Regel:** `_active_gate_collinearity_keys(tournament_cfg)` leitet die aktive Gate-Menge
+JEDESMAL LIVE aus `tournament_cfg['eligible_requires_all']` ab (mit `oos_`-Normalisierung) statt aus
+einer eingefrorenen Code-Konstante; die hartcodierten Tupel wurden VOLLSTÄNDIG entfernt
+(regressionsgesichert über `test_no_hardcoded_gate_name_list_remains_in_reward_module`).
+Generalisierte Regel: eine Menge, die eine Config-Struktur spiegeln soll, wird IMMER live aus der
+Config abgeleitet — nie als Code-Konstante eingefroren, so bequem das zum Zeitpunkt der Einführung
+auch scheint.
+
+### 📋 Neue/geänderte Config-Keys (Issue-Katalog #753–#767)
+- `optimizer.json.plateau_min_modelled_trials` (Default 48, Fallback `max(32, 2·n_startup_trials)`)
+  — Pitfall #219, #753.
+- `optimizer.json.tier_escalation_min_constraint_progress` (Default 0.05) — Pitfall #221, #754.
+- `optimizer.json.sweep_max_workers` (Default `null` ⇒ `max(1, cpu−2)`) — #755 (Per-Study-Seed statt
+  Sweep-Serialisierung; `seed_effective`/`n_trials_budget`/`n_startup_trials` neu als Study-User-Attrs).
+- `optimizer.json.n_startup_trials_high_dim_threshold` (Default 8) /
+  `optimizer.json.n_startup_trials_per_dim_high_dim` (Default 3) — #762 (Squeeze dim=9: 18→27
+  Startpunkte, ComboTrendVwap dim=14: 28→42).
+- `tournament.json.any_arm_min_observations` (Default 10) — Pitfall #225, #759.
+- `tournament.json.psr_bootstrap_resamples` (Default 200) — Pitfall #223, #757.
+- `optimizer.json.reward_semantics_version` 14 → 15 — #766 (auslösend #756/#757, siehe dortiger
+  Changelog-Eintrag für die explizite #764-Präzisierung).
+
+### 🔒 Watertight Invariants (Issue-Katalog #753–#767) — für künftige Agenten
+- **`check_log_return_coherence`** (`invariants.py`) — `sign(oos_sortino_period) ==
+  sign(oos_total_return)` gilt seit #756 PER KONSTRUKTION; ein verbleibender
+  `oos_coherence_violation` ist ein echter Aggregationsdefekt, keine erwartete Restrate mehr
+  (Pitfall #222).
+- **`check_metric_sentinel_absence`** (`invariants.py`) — regressionsgesichert gegen ein erneutes
+  `None → 0.0`-Sentinel-Collapse in der Parsing-Schicht (Pitfall #225).
+- **`check_config_key_registry`** (`invariants.py`) prüft seit #765 ZUSÄTZLICH, dass kein
+  `_schema.fields`-Text eine AKTUELLE `eligible_requires_all`/`eligible_requires_any`-Mitgliedschaft
+  behauptet (via den deklarierten Markern `"in eligible_requires_all (HART)"`/`"in
+  eligible_requires_any (aktiver OR-Arm)"`), die die tatsächliche Liste nicht widerspiegelt
+  (Pitfall #226-Fehlerklasse auf der Dokumentations-Ebene statt der Code-Ebene).
+- **`reward_term_variance_table`** (`invariants.py`, #764) liefert `var_contrib` je Reward-Term
+  gegen den `[0.02, 0.30]`-Zielkorridor als First-Class-Feld im `#742`-Report — eine tatsächliche
+  Gewichts-Rekalibrierung/Term-Entfernung bleibt bewusst zurückgestellt (braucht eine reale Kohorte
+  ≥ 50 Studies NACH Kohorte A/B, siehe `optimizer.json`s v15-Changelog).
+- **`bounds.theoretical_max_oos_trades`** (#762) — obere Schranke der an der schnellsten im
+  Suchraum zulässigen Zyklus-Konfiguration erreichbaren OOS-Trades; ein Wert unter `oos_min_trades`
+  ist mechanisch ein Bounds-Bug, kein Signalqualitäts-Befund.

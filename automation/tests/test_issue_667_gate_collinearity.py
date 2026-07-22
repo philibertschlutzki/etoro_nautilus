@@ -19,6 +19,15 @@ from automation.optimizer.reward import (
 )
 from automation.optimizer.calibration import calibrate_promotion_correction_mode
 
+# Issue #760 — gate_rank_correlation_matrix/assert_gate_collinearity_guard leiten die geprüften
+# Keys jetzt zur Laufzeit aus tournament_cfg ab (keine eingefrorene Code-Konstante mehr); dieses
+# Fixture reproduziert exakt den #667-4-Key-Satz (oos_min_expectancy, oos_min_profitable_folds_frac,
+# any_condition, oos_min_psr).
+_TCFG = {
+    "eligible_requires_all": ["oos_min_expectancy", "oos_min_profitable_folds_frac", "oos_min_psr"],
+    "eligible_requires_any": ["min_profit_factor", "min_win_rate"],
+}
+
 
 # ── Spearman-Rangkorrelation (rein) ──────────────────────────────────────────────────────────────
 def test_spearman_perfect_positive_correlation():
@@ -71,7 +80,7 @@ def _collinear_cohort(n=30):
 
 
 def test_gate_rank_correlation_matrix_detects_perfect_collinearity():
-    result = gate_rank_correlation_matrix(_collinear_cohort())
+    result = gate_rank_correlation_matrix(_collinear_cohort(), _TCFG)
     assert result["n_samples"] == 30
     for pair, rho in result["correlations"].items():
         assert rho is not None
@@ -80,12 +89,12 @@ def test_gate_rank_correlation_matrix_detects_perfect_collinearity():
 
 def test_gate_rank_correlation_matrix_skips_incomplete_rows():
     cohort = _collinear_cohort(10) + [{"oos_min_expectancy": 0.1}]  # unvollständige Zeile
-    result = gate_rank_correlation_matrix(cohort)
+    result = gate_rank_correlation_matrix(cohort, _TCFG)
     assert result["n_samples"] == 10  # die unvollständige Zeile trägt nicht bei
 
 
 def test_gate_rank_correlation_matrix_empty_cohort():
-    result = gate_rank_correlation_matrix([])
+    result = gate_rank_correlation_matrix([], _TCFG)
     assert result["n_samples"] == 0
     assert all(rho is None for rho in result["correlations"].values())
 
@@ -101,7 +110,7 @@ def test_gate_rank_correlation_matrix_uncorrelated_gates():
             "oos_min_profit_factor": rng.uniform(-1, 1),
             "oos_min_psr": rng.uniform(-1, 1),
         })
-    result = gate_rank_correlation_matrix(cohort)
+    result = gate_rank_correlation_matrix(cohort, _TCFG)
     for pair, rho in result["correlations"].items():
         assert rho is not None
         assert abs(rho) < 0.5, f"{pair}: unerwartet hohe Korrelation bei unabhängigen Zufallsgrössen"
@@ -110,7 +119,7 @@ def test_gate_rank_correlation_matrix_uncorrelated_gates():
 # ── Regressions-Wächter (Akzeptanzkriterium #667) ────────────────────────────────────────────────
 def test_collinearity_guard_warns_on_redundant_gates(caplog):
     with caplog.at_level(logging.WARNING, logger="optimizer"):
-        result = assert_gate_collinearity_guard(_collinear_cohort(), threshold=0.95)
+        result = assert_gate_collinearity_guard(_collinear_cohort(), _TCFG, threshold=0.95)
     assert any("Gate-Kollinearität" in r.message for r in caplog.records)
     assert result["n_samples"] == 30
 
@@ -125,7 +134,7 @@ def test_collinearity_guard_silent_for_uncorrelated_gates(caplog):
         "oos_min_psr": rng.uniform(-1, 1),
     } for _ in range(40)]
     with caplog.at_level(logging.WARNING, logger="optimizer"):
-        assert_gate_collinearity_guard(cohort, threshold=0.95)
+        assert_gate_collinearity_guard(cohort, _TCFG, threshold=0.95)
     assert not any("Gate-Kollinearität" in r.message for r in caplog.records)
 
 

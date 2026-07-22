@@ -16,7 +16,12 @@ import optuna
 
 from automation.optimizer import run_optimization as ro
 
-W = {"penalty_unevaluable_oos": -20.0, "unevaluable_shaping_span": 0.25, "n_startup_trials": 16}
+# Issue #753 — plateau_min_modelled_trials=0 haelt die ZERO_ELIGIBLE-Abbruchschwelle bei den fuer
+# dieses Testmodul urspruenglich gewaehlten Kohortengroessen (n_startup_trials, kein Zusatzbudget) —
+# diese Tests pruefen die KLASSIFIKATION (mixed/homogener Cohort), nicht die #753-Budget-Schwelle
+# selbst (dafuer siehe test_issue_753_plateau_budget.py).
+W = {"penalty_unevaluable_oos": -20.0, "unevaluable_shaping_span": 0.25, "n_startup_trials": 16,
+     "plateau_min_modelled_trials": 0}
 
 
 class _FakeTrial:

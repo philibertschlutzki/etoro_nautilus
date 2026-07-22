@@ -22,7 +22,8 @@ def test_recalibrate_policy_produces_nonempty_thresholds_against_real_config():
     any_arm_recalibrated_thresholds ist bei aktiver Recalibration NICHT leer."""
     # Realistische, strukturell unter der globalen 0.15-Schwelle liegende Win-Rate-Verteilung
     # (TSLA.ETORO Hourly-Tier-Groessenordnung, siehe oos_min_win_rate-Schema, max ~0.11 beobachtet).
-    observed_win_rates = [0.02, 0.05, 0.08, 0.03, 0.06, 0.11, 0.04, 0.07]
+    # Issue #759 — mindestens any_arm_min_observations (Default 10) echte Beobachtungen noetig.
+    observed_win_rates = [0.02, 0.05, 0.08, 0.03, 0.06, 0.11, 0.04, 0.07, 0.05, 0.06]
     decision = resolve_any_arm_policy(TCFG, {"min_win_rate": observed_win_rates})
     assert decision["policy"] == "recalibrate"
     assert decision["recalibrated_thresholds"] != {}
@@ -35,6 +36,6 @@ def test_recalibrate_policy_produces_nonempty_thresholds_against_real_config():
 def test_no_silent_collapse_when_arm_is_actually_reachable():
     """Liegt die beobachtete Verteilung UEBER der Schwelle (Arm tatsaechlich erreichbar), aendert
     'recalibrate' nichts — kein unnoetiges Nachschaerfen eines funktionierenden Arms."""
-    observed_win_rates = [0.20, 0.25, 0.30, 0.22, 0.28, 0.35, 0.40, 0.18]
+    observed_win_rates = [0.20, 0.25, 0.30, 0.22, 0.28, 0.35, 0.40, 0.18, 0.24, 0.26]
     decision = resolve_any_arm_policy(TCFG, {"min_win_rate": observed_win_rates})
     assert decision["recalibrated_thresholds"] == {}

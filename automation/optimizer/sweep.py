@@ -37,7 +37,7 @@ from automation.optimizer import champions
 from automation.optimizer import retention
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
-    load_continuous_bar_invalid_strategies,
+    load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
 )
 from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
@@ -312,13 +312,15 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     # strukturell nicht-viable Paare werden VOR dem Sweep übersprungen (kein Bounds-Problem, keine
     # 16 nutzlosen Trials je Paar). Leer per Default ⇒ bit-identisch.
     denylist = load_symbol_strategy_denylist()
-    # Issue #681 — der AUTOMATISCH gepflegte Diagnose-Cache (aus einem VORHERIGEN Lauf via
+    # Issue #681/#761 — der AUTOMATISCH gepflegte Diagnose-Cache (aus einem VORHERIGEN Lauf via
     # run_optimization.floor_plateau_callback befüllt): schliesst die Budget-Schleife, OHNE die
     # menschlich-kuratierte Denylist-Config selbst zu mutieren. Nur 'denylist'-empfohlene Paare
     # werden übersprungen — 'search_space_override'-Empfehlungen laufen weiter (Bounds-Kalibrierung
     # ist eine bewusste Kalibrierlauf-/PR-Entscheidung, kein automatischer Skip). Fehlt der Cache
-    # ⇒ {} (bit-identisch).
-    auto_diagnosed = load_diagnosed_pairs_cache()
+    # ⇒ {} (bit-identisch). Issue #761 — VOR der Enumeration gealtert (runs_since_recorded += 1):
+    # ein Paar, das seine expires_after_runs-Frist erreicht hat, wird DIESEN Lauf wieder regulär
+    # enumeriert (Re-Test) statt auf ewig auto-denylisted zu bleiben.
+    auto_diagnosed = age_diagnosed_pairs_cache()
     # Issue #698 — Strategien, deren Signal auf der (system-weit einzigen) kontinuierlichen
     # 24/7-Bar-Semantik strukturell ungültig ist (z. B. GapContinuation Variante A — kein echter
     # Overnight-Gap ohne Handelspausen). Deklarativ aus strategies.json, leer ⇒ bit-identisch.
@@ -387,19 +389,38 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
             # Entscheidung reserviert).
             auto_rec = auto_diagnosed.get((strategy, symbol))
             if auto_rec is not None and auto_rec.get("action") == "denylist":
-                emit_execution_event(log, "SYMBOL_STRATEGY_AUTO_DIAGNOSED_SKIP", {
-                    "strategy": strategy, "symbol": symbol,
-                    "binding_cause": auto_rec.get("binding_cause"),
-                    "median_oos_trades": auto_rec.get("median_oos_trades"),
-                    "median_is_trades": auto_rec.get("median_is_trades"),
-                })
-                log.warning(
-                    "⏭️  %s/%s übersprungen (Issue #681: automatisch aus einem vorherigen "
-                    "Diagnose-Lauf als strukturell nicht-viabel erkannt, binding_cause=%s). Zur "
-                    "PERMANENTEN Deaktivierung symbol_strategy_denylist.json per PR pflegen.",
-                    strategy, symbol, auto_rec.get("binding_cause"),
-                )
-                continue
+                # Issue #761 — ein Cache-Denylist-Eintrag verfällt nach expires_after_runs (Default
+                # 10) und wird DANN genau EINMAL wieder zugelassen (Re-Test), statt das Paar auf
+                # ewig zu zementieren, obwohl Kohorte-A/B-Fixes (#753/#756/#757) die Lage inzwischen
+                # grundlegend geändert haben könnten.
+                if is_diagnosed_pair_expired(auto_rec):
+                    emit_execution_event(log, "SYMBOL_STRATEGY_AUTO_DIAGNOSIS_EXPIRED_RETEST", {
+                        "strategy": strategy, "symbol": symbol,
+                        "binding_cause": auto_rec.get("binding_cause"),
+                        "runs_since_recorded": auto_rec.get("runs_since_recorded"),
+                        "expires_after_runs": auto_rec.get("expires_after_runs"),
+                    })
+                    log.warning(
+                        "🔁 %s/%s: automatische Denylist-Diagnose ist abgelaufen (Issue #761: "
+                        "runs_since_recorded=%s >= expires_after_runs=%s) — wird DIESEN Lauf "
+                        "wieder regulär enumeriert (Re-Test).",
+                        strategy, symbol, auto_rec.get("runs_since_recorded"),
+                        auto_rec.get("expires_after_runs"),
+                    )
+                else:
+                    emit_execution_event(log, "SYMBOL_STRATEGY_AUTO_DIAGNOSED_SKIP", {
+                        "strategy": strategy, "symbol": symbol,
+                        "binding_cause": auto_rec.get("binding_cause"),
+                        "median_oos_trades": auto_rec.get("median_oos_trades"),
+                        "median_is_trades": auto_rec.get("median_is_trades"),
+                    })
+                    log.warning(
+                        "⏭️  %s/%s übersprungen (Issue #681: automatisch aus einem vorherigen "
+                        "Diagnose-Lauf als strukturell nicht-viabel erkannt, binding_cause=%s). Zur "
+                        "PERMANENTEN Deaktivierung symbol_strategy_denylist.json per PR pflegen.",
+                        strategy, symbol, auto_rec.get("binding_cause"),
+                    )
+                    continue
             ok, _reason = is_symbol_tunable(
                 symbol, n_params, available_bars=available_bars.get(symbol, 0), config=config)
             if not ok:
@@ -868,37 +889,45 @@ def main(argv: list[str] | None = None) -> list[Path]:
     parser.add_argument("--strategies", default="all", help="'all' (aktive aus strategies.json) oder Komma-Liste")
     parser.add_argument("--symbols", default="all", help="'all' (Universum) oder Komma-Liste")
     parser.add_argument("--tier", default="deployable", choices=["deployable", "refine", "all"])
-    parser.add_argument("--n-jobs", type=int, default=1, help="Parallele Studies (je eigene SQLite-Datei)")
+    parser.add_argument("--n-jobs", type=int, default=None,
+                        help="Parallele Studies (je eigene SQLite-Datei). Fehlt das Flag, greift "
+                             "optimizer.json['sweep_max_workers'] (Default max(1, cpu_count()-2)).")
     args = parser.parse_args(argv)
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
 
-    # Issue #511: Concurrency Management & Determinism Guard
-    import sys
-    active_argv = argv if argv is not None else sys.argv
-    is_cli_n_jobs = "--n-jobs" in active_argv
+    # Issue #511/#755: Concurrency Management. VORHER erzwang ein gesetzter Seed sweep-weit
+    # n_jobs=1 (Determinismus auf der falschen Ebene — siehe run_optimization.seed_effective-
+    # Docstring: jede Study hat eine EIGENE SQLite-Datei/eigenen Sampler, Determinismus braucht nur
+    # einen PER-STUDY deterministischen Seed, nicht serielle Ausfuehrung). Der Sweep-weite Seed wird
+    # unveraendert aus optimizer.json gelesen und reicht bis in ``optimize_symbol`` durch, wo er via
+    # ``seed_effective`` je Study gehasht wird — hier ist NUR noch die Worker-Anzahl zu bestimmen.
+    is_cli_n_jobs = args.n_jobs is not None
 
     opt_cfg_path = config_dir() / "optimizer.json"
     seed = None
+    sweep_max_workers_cfg = None
     try:
         opt_cfg = json.loads(opt_cfg_path.read_text("utf-8")) if opt_cfg_path.exists() else {}
         seed = opt_cfg.get("seed")
+        sweep_max_workers_cfg = opt_cfg.get("sweep_max_workers")
     except Exception:
         pass
 
-    if seed is not None:
-        if args.n_jobs > 1:
-            raise ValueError(
-                f"[FATAL] Determinism Constraint Violation: Seed ({seed}) erfordert zwingend Sweep-Level n_jobs=1. "
-                f"Erkannter CLI Override: n_jobs={args.n_jobs}. "
-                "Silent Overrides sind in diesem Execution Context strikt untersagt."
-            )
-        eff_n_jobs = 1
-        n_jobs_source = "ENFORCED_BY_SEED"
-    else:
+    if is_cli_n_jobs:
         eff_n_jobs = args.n_jobs
-        n_jobs_source = "CLI" if is_cli_n_jobs else "DEFAULT"
+        n_jobs_source = "CLI"
+    elif sweep_max_workers_cfg:
+        eff_n_jobs = int(sweep_max_workers_cfg)
+        n_jobs_source = "CONFIG_SWEEP_MAX_WORKERS"
+    else:
+        # Issue #755 — Default max(1, cpu_count()-2), konsistent mit der #726-Empfehlung
+        # (ISSUES_concurrent_execution_20260719.md). ``sweep_max_workers`` explizit 0/negativ/nicht
+        # gesetzt ⇒ derselbe Fallback (Zero-Hardcoding-Konvention dieses Moduls).
+        import os
+        eff_n_jobs = max(1, (os.cpu_count() or 3) - 2)
+        n_jobs_source = "DEFAULT_CPU_MINUS_2"
 
     # Issue #403: Config-Quellen + Kern-Schwellen einmalig offenlegen, bevor der Sweep in die
     # (subprocess-stummen) iterativen Trials uebergeht.
@@ -921,7 +950,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         report_path = _report.generate_sweep_report(
             proposals, run_id=run_id, started_at_utc=started_at_utc,
             wallclock_s=round(time.perf_counter() - main_t0),
-            cli_args={"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols},
+            cli_args={"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
+                     # Issue #755 — n_workers je Lauf im Report nachvollziehbar (Determinismus-Nachweis
+                     # bei n_jobs>1, jetzt auch bei gesetztem Seed zulaessig).
+                     "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source},
         )
         print(f"📄 Report: {report_path}")
     except Exception:

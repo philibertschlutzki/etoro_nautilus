@@ -35,7 +35,10 @@ import optuna
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
 from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic
-from automation.optimizer.run_optimization import _sanitize, resolve_storage, study_shows_gradient_signal
+from automation.optimizer.run_optimization import (
+    _sanitize, resolve_storage, study_shows_gradient_signal, _modelled_trials,
+    _constraint_violation_progress,
+)
 from automation.optimizer.sweep import _family_n_from_proposals
 from automation.optimizer.trial_config import config_dir
 
@@ -63,6 +66,20 @@ def _gradient_tau(base_cfg: Path | None = None) -> float:
     except (OSError, ValueError, TypeError):
         pass
     return tau
+
+
+def _gradient_tau_c(base_cfg: Path | None = None) -> float:
+    """Issue #754 — dieselbe Config-Quelle/Default wie ``run_optimization._emit_study_summary`` fuer
+    den Constraint-Fortschritts-Arm des Gradienten-Gates."""
+    tau_c = 0.05
+    try:
+        opt_path = (base_cfg or config_dir()) / "optimizer.json"
+        if opt_path.exists():
+            tau_c = float((json.loads(opt_path.read_text("utf-8")) or {}).get(
+                "tier_escalation_min_constraint_progress", tau_c))
+    except (OSError, ValueError, TypeError):
+        pass
+    return tau_c
 
 
 def _load_study_for_proposal(proposal: dict):
@@ -119,7 +136,24 @@ def _study_record(proposal: dict, study) -> tuple[dict[str, Any], list[_inv.Inva
         if getattr(t, "user_attrs", {}).get("oos_eligible") is True
         and isinstance(getattr(t, "value", None), (int, float))
     ]
-    gradient_signal = study_shows_gradient_signal(feasible_rewards, p_eligible, _gradient_tau())
+    # Issue #753/#754/#755 — dieselbe TRI-STATE-Logik wie ``_emit_study_summary``: eine vorzeitig
+    # gestoppte Study (floor_plateau_warned/zero_eligible_plateau_warned) liefert gradient_signal=
+    # None (Eskalationsfrage unbeantwortet), sonst reward- ODER constraint-fortschritts-basiert.
+    study_user_attrs = getattr(study, "user_attrs", None) or {} if study is not None else {}
+    n_startup_for_report = study_user_attrs.get("n_startup_trials")
+    if n_startup_for_report is not None:
+        modelled = _modelled_trials(trials, int(n_startup_for_report))
+    else:
+        modelled = trials
+    _, _, constraint_improvement_rate = _constraint_violation_progress(modelled)
+    early_stopped = bool(study_user_attrs.get("floor_plateau_warned")) or bool(
+        study_user_attrs.get("zero_eligible_plateau_warned"))
+    if early_stopped:
+        gradient_signal = None
+    else:
+        gradient_signal = study_shows_gradient_signal(
+            feasible_rewards, p_eligible, _gradient_tau(),
+            constraint_improvement_rate=constraint_improvement_rate, tau_c=_gradient_tau_c())
 
     near_miss_deltas: dict[str, Any] = {}
     scored = [t for t in trials if isinstance(getattr(t, "value", None), (int, float))]
@@ -133,6 +167,11 @@ def _study_record(proposal: dict, study) -> tuple[dict[str, Any], list[_inv.Inva
         _inv.check_n_family_consistency(holdout_metrics),
         _inv.check_rejection_chain_completeness(proposal),
         _inv.check_reward_term_variance(trial_attrs),
+        # Issue #756 — nach der Log-Return-Umstellung ist eine verbleibende Kohärenzverletzung ein
+        # echter Bug, kein erwartetes Restrauschen mehr; harter Regressionswächter statt WARNING.
+        _inv.check_log_return_coherence(trial_attrs),
+        # Issue #759 — Missing-Data-Sentinel-Kollaps-Regressionswächter (oos_win_rate).
+        _inv.check_metric_sentinel_absence(trial_attrs),
     ]
 
     record = {
@@ -144,10 +183,30 @@ def _study_record(proposal: dict, study) -> tuple[dict[str, Any], list[_inv.Inva
         "p_eligible": p_eligible,
         "best_reward": best_reward,
         "gradient_signal": gradient_signal,
+        "constraint_improvement_rate": constraint_improvement_rate,
+        # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
+        "seed_effective": study_user_attrs.get("seed_effective"),
+        "n_trials_budget": study_user_attrs.get("n_trials_budget"),
         "coherence_violations": coherence_violations,
         "promotion_outcome": proposal.get("status"),
         "rejection_chain": _rejection_chain(proposal),
         "near_miss_deltas": near_miss_deltas,
+        # Issue #758 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER: Weg B aus #757
+        # (Bootstrap fuer beide Stufen) beseitigt den Doppelstandard automatisch — im Regelfall
+        # sind beide Werte identisch ("stationary_bootstrap"); "sharpe_formula_fallback" bei der
+        # Promotion ist der einzige (dokumentierte) Rest-Abweichungsfall (< 5 Holdout-Perioden-
+        # Returns persistiert). Die Eligibility-Seite (backtest_runner._calculate_stats) hat KEINEN
+        # Fallback-Zweig — strukturell konstant "stationary_bootstrap", sobald PSR ueberhaupt
+        # definiert war (>= 1 eligible/evaluable Trial mit definiertem psr_z).
+        "inference_method": {
+            "eligibility": ("stationary_bootstrap" if any(
+                a.get("oos_evaluated") is True for a in trial_attrs) else None),
+            "promotion": holdout_metrics.get("deflation_inference_method"),
+        },
+        # Issue #764 — die vollstaendige Reward-Term-Varianz-Tabelle (var_contrib je Term gegen den
+        # [0.02, 0.30]-Zielkorridor), statt nur der binaeren inert-Liste aus check_reward_term_
+        # variance (Akzeptanzkriterium #764: "Report enthaelt die Term-Varianz-Tabelle je Study").
+        "reward_term_variance": _inv.reward_term_variance_table(trial_attrs),
     }
     return record, checks
 

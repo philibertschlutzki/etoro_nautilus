@@ -157,6 +157,75 @@ def _stop_study_safely(study, logger: logging.Logger) -> None:
         logger.debug("study.stop() außerhalb eines optimize()-Kontexts ignoriert (Issue #456).")
 
 
+def seed_effective(seed, study_name: str) -> int | None:
+    """Issue #755 — deterministischer PER-STUDY-Seed statt sweep-weiter Serialisierung.
+
+    Root-Cause #755: ``sweep.main`` erzwang bislang ``n_jobs=1`` fuer den GESAMTEN Sweep, sobald
+    ``optimizer.json['seed']`` gesetzt war — Determinismus wurde auf der falschen Ebene erzwungen.
+    Jede Study hat eine EIGENE SQLite-Datei (``resolve_storage``, #400) und einen eigenen Sampler;
+    zwei Studies unterschiedlicher (Strategie, Symbol)-Paare teilen keinerlei Sampler-Zustand.
+    Reproduzierbarkeit erfordert nur, dass JEDE Study einen deterministischen Seed erhaelt — nicht,
+    dass sie nacheinander laufen.
+
+    ``seed_effective = seed XOR stable_hash(study_name)`` (Blake2b, 8 Byte) ist fuer einen gegebenen
+    ``study_name`` konstant — ueber Prozessgrenzen und unabhaengig von der Ausfuehrungsreihenfolge —
+    und fuer verschiedene ``study_name`` unterschiedlich (kein sweep-weit identischer Sampler-Seed
+    mehr, der die Studies bei identischer Trial-Struktur korreliert haette). ``seed is None`` (kein
+    Determinismus verlangt) bleibt ``None`` (Optuna waehlt einen echten Zufalls-Seed)."""
+    if seed is None:
+        return None
+    import hashlib
+    h = int.from_bytes(hashlib.blake2b(study_name.encode("utf-8"), digest_size=8).digest(), "big")
+    # numpy.random.RandomState (Optuna-Sampler-Backend) verlangt einen Seed in [0, 2**32 - 1] — der
+    # volle 64-Bit-Hash wird daher maskiert, NICHT nur XOR-verknuepft (sonst ValueError bei Studies,
+    # deren Hash das obere Byte setzt).
+    return (int(seed) ^ h) & 0xFFFFFFFF
+
+
+def _trial_number(idx: int, t) -> int:
+    """Issue #753/#754 — Optuna-Trial-Nummer eines Trials, mit Fallback auf die Position in der
+    aufrufenden Liste fuer Test-Doubles ohne ``.number`` (dort ist Erzeugungsreihenfolge == Nummer)."""
+    n = getattr(t, "number", None)
+    return int(n) if n is not None else idx
+
+
+def _modelled_trials(completed: list, n_startup_trials: int) -> list:
+    """Issue #753/#754 — die Teilmenge der ``completed``-Kohorte, die vom TPESampler MODELLIERT
+    (nicht als Zufalls-Startup gezogen) wurde: Trial-Nummer >= n_startup_trials."""
+    return [t for idx, t in enumerate(completed) if _trial_number(idx, t) >= int(n_startup_trials)]
+
+
+def _trial_constraint_violation(t) -> float | None:
+    """Issue #753/#754 — die im Objective gestempelte ``oos_constraint_violations``-Tupel (#612/#635,
+    ``<= 0`` = feasible) EINES Trials auf einen Skalar (Summe der Komponenten) reduziert. ``None``,
+    wenn der Stempel fehlt (Pruned/Legacy/Test-Fixture ohne Constraint-Telemetrie)."""
+    v = getattr(t, "user_attrs", {}).get("oos_constraint_violations")
+    if not v:
+        return None
+    try:
+        return float(sum(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _constraint_violation_progress(trials) -> tuple[float | None, float | None, float | None]:
+    """Issue #753/#754 — minimale Constraint-Verletzung ueber die erste/zweite Haelfte einer
+    (typischerweise: MODELLIERTEN) Trial-Kohorte, plus die relative Verbesserung dazwischen.
+    ``constraint_improvement_rate = (min_first - min_last) / min_first`` — misst "naehert sich der
+    Sampler der feasiblen Region an?", unabhaengig davon, ob die feasible Region je erreicht wurde
+    (im Gegensatz zur reward-basierten Streuung, die eine NICHT-LEERE feasible Region voraussetzt).
+    ``(None, None, None)``, wenn keine Trial-Constraint-Telemetrie vorliegt."""
+    values = [v for v in (_trial_constraint_violation(t) for t in trials) if v is not None]
+    if not values:
+        return None, None, None
+    half = max(1, len(values) // 2)
+    first = min(values[:half])
+    tail = values[half:]
+    last = min(tail) if tail else first
+    rate = (first - last) / first if first > 0 else 0.0
+    return first, last, rate
+
+
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
@@ -207,16 +276,52 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                      if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
     # Issue #488 — Floor-Plateau Guard Hardening: Monitor K trials strictly post n_startup_trials.
     K = int(weights.get("floor_plateau_k", 0)) if weights else 0
-    if len(completed) < max(1, int(n_startup_trials)) + K:
+    # Issue #753 — ZWEI GETRENNTE Schwellen statt einer gemeinsamen Kopplung an n_startup_trials.
+    # Root-Cause #753: der alte Guard band den ZERO_ELIGIBLE-Abbruch an dieselbe Grösse
+    # (n_startup_trials + K), die bei TPESampler(n_startup_trials=...) die UNTERE Grenze markiert, ab
+    # der der Sampler ueberhaupt erst modelliert (die ersten n_startup_trials Trials sind reine
+    # Zufallsziehungen). Der Guard toetete die Study damit GENAU an dem Punkt, an dem die
+    # Bayes-Optimierung beginnen wuerde — "0 von n_startup_trials Zufallsziehungen feasible" ist KEINE
+    # Aussage ueber den Suchraum (die feasible Region ist per Konstruktion klein; ein constrained TPE
+    # ist genau dafuer da, sie ueber mehr als eine Zufallsstichprobe zu finden). Der
+    # STRUCTURAL_ALL_UNEVALUABLE-Zweig ist davon NICHT betroffen (Aussage ueber Datengeometrie/
+    # Trade-Frequenz, nicht Signalqualitaet) und bleibt bei n_startup_trials + K (bit-identisch).
+    _pmt_raw = weights.get("plateau_min_modelled_trials") if weights else None
+    try:
+        plateau_min_modelled_trials = int(_pmt_raw) if _pmt_raw is not None else None
+    except (TypeError, ValueError):
+        plateau_min_modelled_trials = None
+    if plateau_min_modelled_trials is None:
+        # Fehlender/ungueltiger Key ⇒ Fallback max(32, 2·n_startup_trials) — NICHT 0 (der Legacy-Wert
+        # IST der Bug, siehe #753 Root-Cause 1).
+        plateau_min_modelled_trials = max(32, 2 * int(n_startup_trials))
+    min_for_structural = max(1, int(n_startup_trials)) + K
+    min_for_zero_eligible = max(1, int(n_startup_trials)) + plateau_min_modelled_trials
+    if len(completed) < min(min_for_structural, min_for_zero_eligible):
         return
     if study.user_attrs.get("floor_plateau_warned") or study.user_attrs.get("zero_eligible_plateau_warned"):
         return
+
+    # Issue #753 — die "modellierten" Trials (Index >= n_startup_trials, ueber die Optuna-Trial-Nummer,
+    # NICHT ueber die Position in ``completed`` — ausgefallene/gepruente Trials duerfen die Zaehlung
+    # nicht verschieben). FakeTrial-Doubles ohne ``.number`` (Bestandstests) fallen auf die
+    # Listenposition zurueck (dort ist Erzeugungsreihenfolge == Trial-Nummer).
+    modelled_completed = _modelled_trials(completed, int(n_startup_trials))
+
+    # Issue #753 (Umsetzung 5) — min./max. Constraint-Verletzung ueber die erste/zweite Haelfte der
+    # MODELLIERTEN Trials — macht im STUDY_EARLY_STOP-Event nachvollziehbar, ob der TPE der feasiblen
+    # Region naeher kommt (Stagnation) oder ob die Suche schlicht nie stattfand (0 modellierte Trials).
+    min_constraint_violation_first, min_constraint_violation_last, _ = _constraint_violation_progress(
+        modelled_completed)
 
     # Issue #413 — evaluable-basierter Primaer-Guard. Tragen die Trials das oos_evaluated-Attr, ist
     # „kein Trial je evaluable" der korrekte Kollaps-Indikator (unabhaengig vom geshapeten Reward-Wert).
     evaluated_flags = [getattr(t, "user_attrs", {}).get("oos_evaluated") for t in completed]
     if any(f is not None for f in evaluated_flags):
-        if all(f is False for f in evaluated_flags):
+        # Issue #753 — der STRUCTURAL_ALL_UNEVALUABLE-Zweig ist eine Aussage ueber Datengeometrie/
+        # Trade-Frequenz, nicht ueber Signalqualitaet, und bleibt bewusst an der ALTEN, engeren
+        # Schwelle (n_startup_trials + K, bit-identisch zum Status quo).
+        if all(f is False for f in evaluated_flags) and len(completed) >= min_for_structural:
             study.set_user_attr("floor_plateau_warned", True)
             # Issue #669 — Suchraum-Diagnose-Artefakt: trennt Signal-Frequenz von Haltedauer als
             # bindende Ursache des STRUCTURAL_ALL_UNEVALUABLE-Kollapses (statt nur "kein Trial je
@@ -264,17 +369,30 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     from automation.optimizer.sweep_diagnostics import (
                         recommend_diagnosis_action, record_diagnosed_pair,
                         has_existing_search_space_override, load_diagnosed_pairs_cache,
+                        propose_bounds_widening,
                     )
                     # Issue #699 — Eskalations-Check: wurde für dieses Paar bereits in einem
                     # VORHERIGEN Lauf 'search_space_override' empfohlen (und nichts hat sich seither
                     # geändert), diesen Lauf auf 'denylist' eskalieren statt die identische
                     # Empfehlung endlos zu wiederholen (siehe recommend_diagnosis_action-Docstring).
                     _prior = load_diagnosed_pairs_cache().get((strategy, symbol))
+                    # Issue #761 — konkreter Bounds-Vorschlag aus der Trial-Kohorte (Richtung, in
+                    # der oos_total_trades-Proxy is_total_trades mit dem Parameter steigt), statt
+                    # nur der Empfehlung "probiere einen Override".
+                    try:
+                        _trial_param_rows = [{
+                            "params": getattr(t, "params", None) or {},
+                            "is_total_trades": getattr(t, "user_attrs", {}).get("is_total_trades"),
+                        } for t in completed]
+                        _proposed_bounds = propose_bounds_widening(_trial_param_rows, strategy)
+                    except Exception:
+                        _proposed_bounds = {}
                     rec = recommend_diagnosis_action(
                         strategy, symbol, diagnosis,
                         has_existing_override=has_existing_search_space_override(strategy, symbol),
                         previously_recommended_override=bool(
                             _prior and _prior.get("action") == "search_space_override"),
+                        proposed_bounds=_proposed_bounds,
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -291,7 +409,12 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "reason": "STRUCTURAL_ALL_UNEVALUABLE",
                     "current_trial": len(completed),
                     "startup_limit": max(1, int(n_startup_trials)),
-                    "k_limit": K
+                    "k_limit": K,
+                    # Issue #753 — im STRUCTURAL_ALL_UNEVALUABLE-Zweig strukturell fast immer 0 (die
+                    # Study kollabiert bereits VOR n_startup_trials abgeschlossenen modellierten Trials).
+                    "n_modelled_trials": len(modelled_completed),
+                    "min_constraint_violation_first": min_constraint_violation_first,
+                    "min_constraint_violation_last": min_constraint_violation_last,
                 }))
                 _stop_study_safely(study, logger)
             return
@@ -314,9 +437,21 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             getattr(t, "user_attrs", {}).get("oos_eligible") for t in completed
             if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
         ]
-        if (eligible_flags_of_evaluated
-                and any(f is not None for f in eligible_flags_of_evaluated)
-                and all(f is not True for f in eligible_flags_of_evaluated)):
+        # Issue #753 (Umsetzung 3) — die ABBRUCH-ENTSCHEIDUNG wird AUSSCHLIESSLICH ueber die
+        # MODELLIERTEN Trials (Index >= n_startup_trials) getroffen: die Zufalls-Startup-Phase darf
+        # das Urteil "der Suchraum erzeugt strukturell keinen eligiblen Lauf" nicht mitbestimmen — das
+        # waere exakt der #753-Fehlschluss (16 uniforme Ziehungen verfehlen die feasible Region per
+        # Konstruktion; das ist erwartet, keine Aussage ueber den Suchraum). Telemetrie (n_evaluated,
+        # median_oos_trades, ...) bleibt auf der VOLLEN Kohorte fuer Diagnose-Kontext.
+        eligible_flags_of_evaluated_modelled = [
+            getattr(t, "user_attrs", {}).get("oos_eligible") for t in modelled_completed
+            if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+        ]
+        if len(completed) < min_for_zero_eligible:
+            return
+        if (eligible_flags_of_evaluated_modelled
+                and any(f is not None for f in eligible_flags_of_evaluated_modelled)
+                and all(f is not True for f in eligible_flags_of_evaluated_modelled)):
             study.set_user_attr("zero_eligible_plateau_warned", True)
             n_evaluated = len(eligible_flags_of_evaluated)
             oos_trade_counts = [
@@ -388,7 +523,14 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "reason": "STRUCTURAL_ZERO_ELIGIBLE",
                     "current_trial": len(completed),
                     "startup_limit": max(1, int(n_startup_trials)),
-                    "k_limit": K
+                    "k_limit": K,
+                    # Issue #753 — belegt im Report, ob abgebrochen wurde, weil die Suche stagnierte
+                    # (viele modellierte Trials, keine Annaeherung an die feasible Region) oder weil
+                    # sie nie stattfand (n_modelled_trials klein/0).
+                    "n_modelled_trials": len(modelled_completed),
+                    "min_constraint_violation_first": min_constraint_violation_first,
+                    "min_constraint_violation_last": min_constraint_violation_last,
+                    "plateau_min_modelled_trials": plateau_min_modelled_trials,
                 }))
                 _stop_study_safely(study, logger)
         return
@@ -904,13 +1046,19 @@ def _classify_is_rejection_detail(metrics) -> str:
 
 
 def derive_n_startup_trials(strategy: str, base_n_startup: int, opt_data: dict) -> int:
-    """Issue #568 — ``n_startup_trials`` an die effektive Dimensionalität koppeln.
+    """Issue #568/#762 — ``n_startup_trials`` an die effektive Dimensionalität koppeln.
 
     Bei ``multivariate=True, group=True`` sollte ``n_startup_trials ≳ k·dim`` sein (``dim`` = Anzahl
     numerischer Suchraum-Parameter), damit der TPE die Kovarianzstruktur überhaupt schätzen kann;
     für Strategien mit vielen Parametern (ComboTrendVwap ~14) sind fixe 16 knapp. Deklarativ über
     ``n_startup_trials_per_dim`` (k): ``n_startup_trials = max(base, ceil(k·dim))``. Fehlt der Key
-    (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding)."""
+    (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding).
+
+    Issue #762 — für ``dim >= n_startup_trials_high_dim_threshold`` ist ``k=2`` knapp für die
+    Kovarianzschätzung (Squeeze dim=9 blieb bei k=2 über 124 Symbole ohne einen einzigen eligiblen
+    Trial). Ist ``n_startup_trials_high_dim_threshold``/``n_startup_trials_per_dim_high_dim`` gültig
+    UND ``dim`` erreicht die Schwelle, ersetzt der höhere Satz ``k`` (Squeeze: 18 → 27, ComboTrendVwap:
+    28 → 42). Fehlt einer der beiden Keys (oder <= 0) ⇒ flaches ``k`` für alle dim (Legacy)."""
     k = opt_data.get("n_startup_trials_per_dim")
     if not k or float(k) <= 0.0:
         return int(base_n_startup)
@@ -919,6 +1067,11 @@ def derive_n_startup_trials(strategy: str, base_n_startup: int, opt_data: dict) 
         dim = len(bounds.extract_numeric_bounds(strategy))
     except Exception:
         return int(base_n_startup)
+    threshold = opt_data.get("n_startup_trials_high_dim_threshold")
+    k_high = opt_data.get("n_startup_trials_per_dim_high_dim")
+    if (threshold and k_high and float(threshold) > 0.0 and float(k_high) > 0.0
+            and dim >= float(threshold)):
+        k = k_high
     return max(int(base_n_startup), math.ceil(float(k) * dim))
 
 
@@ -941,23 +1094,38 @@ def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
 
 
 def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
-                                tau: float) -> bool:
-    """Issue #568 — Gradienten-Gate für die Tier-Eskalation.
+                                tau: float, *, constraint_improvement_rate: float | None = None,
+                                tau_c: float = 0.05) -> bool:
+    """Issue #568/#754 — Gradienten-Gate für die Tier-Eskalation, ZWEI GLEICHRANGIGE Arme.
 
-    Höheres Trial-Budget (nächstes Tier) rechtfertigt sich nur, wenn die untere Study überhaupt
-    Signal zeigt: ``evaluable_fraction > 0`` UND ``pstdev(reward) > τ``. Auf einer flachen
-    (Plateau/Deckel-)Landschaft ist zusätzliches Budget wirkungslos (100 → 200 Trials lieferten
-    identische best_value). Reine, deterministische Funktion (separat testbar)."""
-    if not rewards or evaluable_fraction <= 0.0 or len(rewards) < 2:
-        return False
-    return statistics.pstdev([float(r) for r in rewards]) > float(tau)
+    Höheres Trial-Budget (nächstes Tier) rechtfertigt sich, wenn EINER von zwei Armen Signal zeigt:
+
+    1. Reward-Arm (#568, unveraendert): ``evaluable_fraction > 0`` UND ``pstdev(reward) > τ`` — die
+       Study hat eine NICHT-LEERE feasible Region UND streut dort.
+    2. Constraint-Arm (#754, NEU): ``constraint_improvement_rate > τ_c`` — der Sampler naehert sich
+       der feasiblen Region an (relative Verbesserung der minimalen Gesamt-Constraint-Verletzung
+       zwischen erster und zweiter Haelfte der modellierten Trials), UNABHAENGIG davon, ob die
+       feasible Region je erreicht wurde.
+
+    Root-Cause #754: der reine Reward-Arm ist bei LEERER feasibler Region (``p_eligible == 0``, nach
+    #753 der Normalfall waehrend die Suche noch laeuft) IMMER ``False`` — eine Study braucht dann
+    eligible Trials, um mehr Budget zu bekommen, UND mehr Budget, um eligible Trials zu finden
+    (Selbstblockade). Der Constraint-Arm ist auch bei leerer feasibler Region definiert und misst die
+    tatsaechlich relevante Frage in diesem Regime: "naehert sich der Sampler an?", nicht "streut der
+    Reward innerhalb einer Region, die noch gar nicht erreicht wurde?". Reine, deterministische
+    Funktion (separat testbar)."""
+    reward_signal = bool(rewards) and evaluable_fraction > 0.0 and len(rewards) >= 2 and (
+        statistics.pstdev([float(r) for r in rewards]) > float(tau))
+    constraint_signal = (constraint_improvement_rate is not None
+                        and float(constraint_improvement_rate) > float(tau_c))
+    return bool(reward_signal or constraint_signal)
 
 
-def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
-    """Issue #597 — Anteil der numerischen Gewinner-Parameter, die innerhalb von 2 % einer
-    Suchraumgrenze liegen. Ein Wert > 0.3 ist ein Alarm: entweder ist der Suchraum falsch gewählt
-    oder der Reward drückt die Lösung in die Ecke (Randlösungs-Signatur, z. B. Trade-Frequenz
-    maximieren). ``None``, wenn Strategie/Bounds/Winner nicht verfügbar sind (defensiv)."""
+def _boundary_hit_analysis(study, strategy: str | None) -> tuple[dict[str, str], int] | None:
+    """Issue #597/#763 — gemeinsame Extraktion für ``_boundary_hit_fraction`` UND die
+    Richtungs-Diagnose ``_boundary_hit_directions``: liefert ``({param: "low"|"high"}`` je
+    Grenz-Parameter, Gesamtzahl numerischer Gewinner-Parameter)``, oder ``None`` wenn Strategie/
+    Bounds/Winner nicht verfügbar sind (defensiv)."""
     if not strategy:
         return None
     try:
@@ -974,26 +1142,57 @@ def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
                if k in b and isinstance(v, (int, float)) and not isinstance(v, bool)]
     if not numeric:
         return None
-    hits = 0
+    directions: dict[str, str] = {}
     for k, v in numeric:
         lo, hi = b[k]
         span = (hi - lo) or 1.0
         norm = (float(v) - lo) / span
-        if norm <= 0.02 or norm >= 0.98:
-            hits += 1
-    return hits / len(numeric)
+        if norm <= 0.02:
+            directions[k] = "low"
+        elif norm >= 0.98:
+            directions[k] = "high"
+    return directions, len(numeric)
 
 
-def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | None = None) -> None:
+def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
+    """Issue #597 — Anteil der numerischen Gewinner-Parameter, die innerhalb von 2 % einer
+    Suchraumgrenze liegen. Ein Wert > 0.3 ist ein Alarm: entweder ist der Suchraum falsch gewählt
+    oder der Reward drückt die Lösung in die Ecke (Randlösungs-Signatur, z. B. Trade-Frequenz
+    maximieren). ``None``, wenn Strategie/Bounds/Winner nicht verfügbar sind (defensiv)."""
+    analysis = _boundary_hit_analysis(study, strategy)
+    if analysis is None:
+        return None
+    directions, total = analysis
+    return len(directions) / total
+
+
+def _boundary_hit_directions(study, strategy: str | None) -> dict[str, str] | None:
+    """Issue #763 — WELCHE Gewinner-Parameter an WELCHER Suchraumgrenze kleben (``"low"``/
+    ``"high"``, 2 %-Toleranz, identisch zu ``_boundary_hit_fraction``), statt nur der aggregierten
+    Fraktion. Root-Cause #763: die reine Fraktion sagt, DASS eine Randlösung vorliegt, aber nicht,
+    WELCHER Parameter in WELCHE Richtung ausgeweitet werden müsste — genau die Information, die
+    ``sweep_diagnostics.propose_bounds_from_boundary_hits`` (#761-Cache-Brücke) braucht, um einen
+    konkreten ``proposed_bounds``-Kandidaten zu schreiben. ``None`` unter denselben Bedingungen wie
+    ``_boundary_hit_fraction``."""
+    analysis = _boundary_hit_analysis(study, strategy)
+    if analysis is None:
+        return None
+    directions, _total = analysis
+    return directions
+
+
+def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | None = None,
+                        n_startup_trials: int | None = None) -> None:
     """Issue #415 — Per-Study-Timing-/Evaluierbarkeits-Summary nach ``study.optimize``.
 
     Defensiv gegen Test-Doubles (``DummyStudy`` ohne ``trials``/``best_value``): jeder Zugriff ist
     ``getattr``-/try-gekapselt, sodass die Summary nie den Lauf crasht. Aggregiert die per-Trial
     ``backtest_ms`` (User-Attr) zu Total/Median und zaehlt evaluable Trials (``oos_evaluated``).
 
-    Issue #568/#640 — zusätzlich das Gradienten-Signal (``feasible_reward_pstdev``,
-    ``feasible_p_eligible``, ``gradient_signal``) ausweisen, damit eine (aussichtslose) Study NICHT
-    in höhere Tiers eskaliert wird und der Eskalations-Entscheid aus dem Log nachvollziehbar ist."""
+    Issue #568/#640/#754 — zusätzlich das Gradienten-Signal (``feasible_reward_pstdev``,
+    ``feasible_p_eligible``, ``constraint_improvement_rate``, ``gradient_signal``) ausweisen, damit
+    eine (aussichtslose) Study NICHT in höhere Tiers eskaliert wird und der Eskalations-Entscheid aus
+    dem Log nachvollziehbar ist."""
     trials = list(getattr(study, "trials", None) or [])
     durs = [v for t in trials
             if (v := getattr(t, "user_attrs", {}).get("backtest_ms")) is not None]
@@ -1023,11 +1222,13 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     rewards = [float(r) for r in rewards if isinstance(r, (int, float))]
     evaluable_fraction = (evaluable / len(trials)) if trials else 0.0
     tau = 1e-3
+    tau_c = 0.05
     try:
         opt_path = config_dir() / "optimizer.json"
         if opt_path.exists():
-            tau = float((json.loads(opt_path.read_text("utf-8")) or {}).get(
-                "tier_escalation_min_signal", tau))
+            _opt_data_gs = json.loads(opt_path.read_text("utf-8")) or {}
+            tau = float(_opt_data_gs.get("tier_escalation_min_signal", tau))
+            tau_c = float(_opt_data_gs.get("tier_escalation_min_constraint_progress", tau_c))
     except Exception:
         pass
     # Issue #640 — gradient_signal (und die feasible-Diagnose) NICHT mehr auf dem globalen,
@@ -1048,13 +1249,44 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     # reward_pstdev bleibt als ROHE, globale Diagnose-Telemetrie erhalten (Populations-Streuung über
     # ALLE Trials) — ist aber seit #640 NICHT mehr die Grundlage von gradient_signal.
     reward_pstdev = statistics.pstdev(rewards) if len(rewards) >= 2 else 0.0
-    gradient_signal = study_shows_gradient_signal(feasible_rewards, p_eligible, tau)
-    if not gradient_signal:
+
+    # Issue #754 — Constraint-Fortschritt ueber die MODELLIERTEN Trials (Index >= n_startup_trials,
+    # dieselbe Restriktion wie #753): auch bei LEERER feasibler Region (p_eligible == 0, waehrend die
+    # Suche noch laeuft der Normalfall) definiert, im Gegensatz zur reward-basierten Streuung.
+    _n_startup_for_gs = int(n_startup_trials) if n_startup_trials is not None else 0
+    _modelled_for_gs = _modelled_trials(trials, _n_startup_for_gs)
+    (min_constraint_violation_first, min_constraint_violation_last,
+     constraint_improvement_rate) = _constraint_violation_progress(_modelled_for_gs)
+
+    # Issue #754 — Root-Cause: das Gradienten-Gate war ZIRKULAER — eine Study braucht eligible
+    # Trials, um mehr Budget zu bekommen, UND mehr Budget, um eligible Trials zu finden. Eine per
+    # #753 VORZEITIG gestoppte Study (Basisbudget nicht ausgeschoepft) liefert daher NICHT `False`
+    # (widerlegt), sondern `None` (unbekannt) — die Eskalationsfrage ist schlicht unbeantwortet,
+    # nicht mit "kein Signal gefunden" zu verwechseln.
+    _study_user_attrs = getattr(study, "user_attrs", None) or {}
+    _early_stopped = bool(_study_user_attrs.get("floor_plateau_warned")) or bool(
+        _study_user_attrs.get("zero_eligible_plateau_warned"))
+    if _early_stopped:
+        gradient_signal = None
+    else:
+        gradient_signal = study_shows_gradient_signal(
+            feasible_rewards, p_eligible, tau,
+            constraint_improvement_rate=constraint_improvement_rate, tau_c=tau_c)
+
+    if gradient_signal is None:
+        logging.getLogger("optimizer").info(
+            "[#640] %s: Study vorzeitig beendet — Eskalationsfrage unbeantwortet (kein Basisbudget "
+            "ausgeschoepft, gradient_signal=None). feasible_p_eligible=%.2f, "
+            "feasible_reward_pstdev=%.4f, constraint_improvement_rate=%s.",
+            symbol, p_eligible, feasible_reward_pstdev, constraint_improvement_rate,
+        )
+    elif not gradient_signal:
         logging.getLogger("optimizer").warning(
-            "[#640] %s: kein Gradienten-Signal im feasiblen Bereich (feasible_p_eligible=%.2f, "
-            "feasible_reward_pstdev=%.4f ≤ τ=%.4f) ⇒ KEINE Tier-Eskalation gerechtfertigt "
+            "[#640] %s: kein Gradienten-Signal (weder feasibler Reward-Streuung noch Constraint-"
+            "Annaeherung) — feasible_p_eligible=%.2f, feasible_reward_pstdev=%.4f ≤ τ=%.4f, "
+            "constraint_improvement_rate=%s ≤ τ_c=%.4f ⇒ KEINE Tier-Eskalation gerechtfertigt "
             "(zusätzliches Budget auf flacher Feasible-Region-Landschaft ist wirkungslos).",
-            symbol, p_eligible, feasible_reward_pstdev, tau,
+            symbol, p_eligible, feasible_reward_pstdev, tau, constraint_improvement_rate, tau_c,
         )
 
     # Issue #592 — Deflations-Telemetrie auf der REWARD-Skala (je Study sichtbar, nicht nur im
@@ -1112,13 +1344,17 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 deflation_var, deflation_n, min_cohort=min_cohort,
                 n_periods=deflation_t_periods)
 
-    # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
+    # Issue #597/#763 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der
+    # Suchraumgrenze, PLUS welcher Parameter an welcher Grenze klebt — #763 Akzeptanzkriterium #1).
     boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
+    boundary_hit_directions = _boundary_hit_directions(study, strategy)
     if boundary_hit_fraction is not None and boundary_hit_fraction > 0.3:
+        directions_str = ", ".join(
+            f"{p}={d}" for p, d in sorted((boundary_hit_directions or {}).items()))
         logging.getLogger("optimizer").warning(
             "[#597] %s: boundary_hit_fraction=%.2f > 0.3 — der Gewinner klebt an den Suchraumgrenzen "
-            "(Randlösung). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
-            symbol, boundary_hit_fraction,
+            "(Randlösung: %s). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
+            symbol, boundary_hit_fraction, directions_str,
         )
 
     # Issue #660 — LIVE-Reachability-Check der eligible_requires_any-Klauseln GEGEN DIE TATSÄCHLICH
@@ -1132,31 +1368,42 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     any_arm_live_unreachable = []
     # Issue #668 — hebt die reine #660-Warnung auf eine KONFIGURIERTE Policy (warn/drop_arm/
     # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
-    any_arm_policy_decision = {"policy": "warn", "dropped_clauses": [], "recalibrated_thresholds": {}}
+    any_arm_policy_decision = {"policy": "warn", "dropped_clauses": [], "recalibrated_thresholds": {},
+                               "any_arm_decision": None}
     try:
         opt_path_arm = config_dir() / "tournament.json"
         if opt_path_arm.exists():
             _tcfg_arm = json.loads(opt_path_arm.read_text("utf-8")) or {}
+            # Issue #759 — n_evaluated durchreichen: eine Reachability-Aussage ohne einen einzigen
+            # ausgewerteten Trial ist inhaltsleer (siehe check_any_arm_reachability_live-Docstring).
             any_arm_live_unreachable = check_any_arm_reachability_live(
-                _tcfg_arm, {"min_win_rate": live_win_rates})
+                _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
             any_arm_policy_decision = resolve_any_arm_policy(
-                _tcfg_arm, {"min_win_rate": live_win_rates})
+                _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
     except Exception:
         any_arm_live_unreachable = []
 
-    # Issue #667 — Rang-Korrelationsmatrix der vier eligible-Gates (Redundanz-Diagnose) über die
-    # gestempelten Per-Trial oos_gate_deltas (#554/#668). Reine Telemetrie/Warnung — ändert NIE eine
-    # Gate-/Reward-Entscheidung; welches Gate ggf. konsolidiert wird, ist eine bewusste PR-Wahl.
+    # Issue #667/#760 — Rang-Korrelationsmatrix der AKTIVEN eligible-Gates (aus tournament.json
+    # abgeleitet, keine eingefrorene Code-Konstante mehr) über die gestempelten Per-Trial
+    # oos_gate_deltas (#554/#668). Reine Telemetrie/Warnung — ändert NIE eine Gate-/Reward-
+    # Entscheidung; welches Gate ggf. konsolidiert wird, ist eine bewusste PR-Wahl.
     gate_deltas_cohort = [getattr(t, "user_attrs", {}).get("oos_gate_deltas") for t in trials]
+    _tcfg_gate: dict = {}
     try:
-        gate_collinearity = assert_gate_collinearity_guard(gate_deltas_cohort)
+        opt_path_gate = config_dir() / "tournament.json"
+        if opt_path_gate.exists():
+            _tcfg_gate = json.loads(opt_path_gate.read_text("utf-8")) or {}
     except Exception:
-        gate_collinearity = {"n_samples": 0, "correlations": {}}
+        _tcfg_gate = {}
+    try:
+        gate_collinearity = assert_gate_collinearity_guard(gate_deltas_cohort, _tcfg_gate)
+    except Exception:
+        gate_collinearity = {"n_samples": 0, "keys": [], "correlations": {}, "non_correlable_keys": []}
     # Issue #679 — dieselbe Kohorte, aber als STRUKTURIERTER Redundanz-ALARM statt nur eines
     # WARNING-Logs: welches Gate-Paar kollinear ist UND welches (niedriger priorisierte, siehe
     # reward._GATE_CONSOLIDATION_PRIORITY) Gate der Konsolidierungs-Kandidat waere.
     try:
-        gate_collinearity_alarm = gate_collinearity_redundancy_alarm(gate_deltas_cohort)
+        gate_collinearity_alarm = gate_collinearity_redundancy_alarm(gate_deltas_cohort, _tcfg_gate)
     except Exception:
         gate_collinearity_alarm = {"n_samples": 0, "alarms": [], "redundant_candidates": {}}
 
@@ -1232,7 +1479,12 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # begründet, nicht mehr auf reward_pstdev/evaluable_fraction.
         "feasible_reward_pstdev": feasible_reward_pstdev,
         "feasible_p_eligible": p_eligible,
+        # Issue #754 — gradient_signal ist jetzt TRI-STATE (true/false/null): null bedeutet "Study
+        # vorzeitig gestoppt, Eskalationsfrage unbeantwortet" (NICHT "kein Signal gefunden").
         "gradient_signal": gradient_signal,
+        "constraint_improvement_rate": constraint_improvement_rate,
+        "min_constraint_violation_first": min_constraint_violation_first,
+        "min_constraint_violation_last": min_constraint_violation_last,
         # Issue #611/#618 — DSR-Telemetrie (per-Perioden-Sortino-Skala) + p_eligible (Gate-Passrate,
         # identisch zu feasible_p_eligible — hier unter dem historischen Namen für die DSR-Kohorte).
         # Monotonie-Invariante (#611): SR₀ steigt NICHT mit p_eligible (kein Bernoulli-Artefakt mehr).
@@ -1251,6 +1503,9 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "coherence_violations": coherence_violations,
         # Issue #597 — Randlösungs-Signatur.
         "boundary_hit_fraction": boundary_hit_fraction,
+        # Issue #763 — je Grenz-Parameter, ob "low" oder "high" (Richtungsinformation für den
+        # #761-Bounds-Vorschlag; leeres Dict, wenn boundary_hit_fraction None/0 ist).
+        "boundary_hit_directions": boundary_hit_directions or {},
         # Issue #660 — live (studien-eigene) OR-Arm-Reachability, ergänzend zum #633-Config-Load-
         # Fixture-Check: Klauseln, deren konfigurierte Schwelle über dem beobachteten p99 DIESER
         # Study liegt.
@@ -1540,13 +1795,18 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     # sie nach Studien-Nutzung disposed werden kann.
     rdb_storage = _resolve_rdb_storage(storage)
 
+    # Issue #755 — PER-STUDY-Seed statt eines sweep-weit IDENTISCHEN Seeds (der die Sweep-Level-
+    # Serialisierung ``n_jobs=1`` in sweep.main erzwungen hatte). Konstant fuer diesen study_name,
+    # unabhaengig von Ausfuehrungsreihenfolge/Parallelitaet.
+    seed_eff = seed_effective(seed, study_name)
+
     reward_mode = opt_data.get("reward_mode", "auto")
     directions = None
     if reward_mode == "pareto":
         directions = ["maximize", "maximize", "maximize", "maximize", "minimize", "minimize"]
         def constraints_func(trial):
             return trial.user_attrs.get("constraints", (0.0, 0.0))
-        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
+        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed_eff)
     else:
         # Issue #612 — Feasibility in den Sampler (siehe optimize_symbol): constraints_func liest die
         # gestempelten OOS-Gate-Verletzungen; Optuna 4.9 bevorzugt feasible nativ vor infeasible.
@@ -1554,7 +1814,7 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
             multivariate=True,
             group=True,
             n_startup_trials=n_startup_trials,
-            seed=seed,
+            seed=seed_eff,
             constraints_func=_oos_constraints_func,
         )
 
@@ -1655,6 +1915,12 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         study.enqueue_trial(global_best)
 
     study.set_user_attr("data_snapshot_sha256", catalog_fingerprint())
+    # Issue #755 — Sweep-Report-Telemetrie: der tatsaechlich verwendete Per-Study-Seed + Budget,
+    # damit der #742-Report je Study nachvollziehbar macht, WELCHER Seed/WELCHES Budget lief (Voraus-
+    # setzung fuer den Determinismus-Nachweis bei n_jobs>1).
+    study.set_user_attr("seed_effective", seed_eff)
+    study.set_user_attr("n_trials_budget", n_trials)
+    study.set_user_attr("n_startup_trials", n_startup_trials)
 
     objective = make_symbol_objective(
         strategy, symbol, global_best,
@@ -1673,7 +1939,8 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         study.optimize(objective, n_trials=n_trials, n_jobs=1,
                        catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
         # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
-        _emit_study_summary(study, symbol, study_t0, strategy=strategy)
+        _emit_study_summary(study, symbol, study_t0, strategy=strategy,
+                           n_startup_trials=n_startup_trials)
     finally:
         # Issue #747 — Engine NACH Phase-1-Nutzung disposen (auch bei einer hier propagierenden
         # Exception): deckelt die Spitzenlast gleichzeitig offener SQLAlchemy-Engines im Per-Symbol-
