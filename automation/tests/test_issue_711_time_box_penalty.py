@@ -166,7 +166,10 @@ def test_calibration_guard_catches_time_box_miscalibration_combined_with_classic
 
 # ── reward_semantics_version 13 → 14 ──────────────────────────────────────────────────────────
 def test_reward_semantics_version_is_14():
-    assert OPT_CFG["reward_semantics_version"] == 14
+    # Issue #766 — forward-kompatibel (analog test_issue_686/658/672): der v14-Bump ist ein
+    # historischer Meilenstein, der v15-Bump (#766) hebt die LIVE-Version weiter an, ohne diesen
+    # Test zu brechen — die v14-Changelog-Pruefung unten bleibt unabhaengig davon exakt pinnbar.
+    assert OPT_CFG["reward_semantics_version"] >= 14
 
 
 def test_version_is_documented_with_v14_changelog_entry():
@@ -215,4 +218,4 @@ def test_fresh_study_stamps_v14_without_error():
 
     study = _FakeStudy()
     _check_reward_semantics_version(study, OPT_CFG)
-    assert study.user_attrs["reward_semantics_version"] == 14
+    assert study.user_attrs["reward_semantics_version"] == OPT_CFG["reward_semantics_version"]

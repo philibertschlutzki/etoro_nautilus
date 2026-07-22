@@ -52,6 +52,7 @@ _EXPECTED_FINGERPRINT_BY_VERSION = {
     12: _scale_fingerprint(CFG),  # Issue #686 — Eligibility-Bump (#676/#677/#684), Skalen-Konstanten unverändert.
     13: _scale_fingerprint(CFG),  # Issue #697 — Eligibility-Bump (min_expectancy aus eligible_requires_all entfernt), Skalen-Konstanten unverändert.
     14: _scale_fingerprint(CFG),  # Issue #711 — neuer additiver time_box_penalty-Term (penalty_time_box_weight/time_box_bars neu in _SCALE_KEYS).
+    15: _scale_fingerprint(CFG),  # Issue #766 — #756/#757 aendern die Sortino-/PSR-BERECHNUNG (Log-Returns, Bootstrap-SE), nicht die _SCALE_KEYS-Konstanten selbst; #764 aenderte in dieser Sitzung keine Gewichte (siehe Changelog-Praezisierung). Skalen-Konstanten unveraendert.
 }
 
 
