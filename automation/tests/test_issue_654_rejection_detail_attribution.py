@@ -196,10 +196,13 @@ def test_pbo_overfit_sets_correct_override(tmp_path, monkeypatch):
 
 
 def test_boundary_overfit_sets_correct_override(tmp_path, monkeypatch):
-    """Randlösungs-Veto (> 30% der Params an der Suchraumgrenze) ⇒ REJECT_BOUNDARY_SOLUTION."""
+    """Randlösungs-Veto (> 30 %, aber < 50 % der Params an der Suchraumgrenze) ⇒
+    REJECT_BOUNDARY_SOLUTION. Issue #763 — ab 0.5 gilt stattdessen HOLD_BOUNDARY_UNRESOLVED (siehe
+    test_boundary_unresolved_hold_sets_correct_override_and_writes_diagnosis_cache unten), 0.4
+    bleibt im ursprünglichen #622-Tier."""
     global_params = {"price_breakout_period": 20}
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setattr(ro, "_boundary_hit_fraction", lambda *a, **k: 0.9)  # erzwungene Randlösung
+    monkeypatch.setattr(ro, "_boundary_hit_fraction", lambda *a, **k: 0.4)  # erzwungene Randlösung
     monkeypatch.setattr(ro, "run_backtest", _cohort_factory([0.02, 0.025]))
     study = ro.optimize_symbol("DynamicBreakoutStrategy", "TSLA.ETORO", n_trials=2)
 
@@ -212,6 +215,41 @@ def test_boundary_overfit_sets_correct_override(tmp_path, monkeypatch):
     )
     assert res["status"] == "REJECTED_BOUNDARY_SOLUTION"
     assert res["is_rejection_detail_override"] == "REJECT_BOUNDARY_SOLUTION"
+
+
+def test_boundary_unresolved_hold_sets_correct_override_and_writes_diagnosis_cache(
+        tmp_path, monkeypatch):
+    """Issue #763 — >= 0.5 (die Hälfte der Gewinner-Parameter an der Grenze) ist ein STÄRKERES
+    Signal als der #622-Veto: HOLD_BOUNDARY_UNRESOLVED statt eines terminalen REJECT, UND der
+    Bounds-Vorschlag (Richtung aus _boundary_hit_directions) landet im #761-Diagnose-Cache."""
+    global_params = {"price_breakout_period": 20}
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(ro, "_boundary_hit_fraction", lambda *a, **k: 0.9)  # erzwungene Randlösung
+    monkeypatch.setattr(ro, "_boundary_hit_directions",
+                        lambda *a, **k: {"cooldown_bars": "low", "max_bars_in_trade": "high"})
+    monkeypatch.setattr(ro, "run_backtest", _cohort_factory([0.02, 0.025]))
+    study = ro.optimize_symbol("DynamicBreakoutStrategy", "TSLA.ETORO", n_trials=2)
+
+    recorded = []
+    from automation.optimizer import sweep_diagnostics as sd
+    monkeypatch.setattr(sd, "record_diagnosed_pair", lambda rec, **k: recorded.append(rec))
+
+    symbol_result = _result_payload(sortino_ratio=2.0, dd=0.05, sortino_period=0.5, n_periods=400)
+    global_result = _result_payload(sortino_ratio=0.5, dd=0.05, sortino_period=0.01, n_periods=400)
+    res = confirm.confirm_per_symbol_promotion(
+        study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
+        run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
+                                      global_result=global_result),
+    )
+    assert res["status"] == "HOLD_BOUNDARY_UNRESOLVED"
+    assert res["is_rejection_detail_override"] == "HOLD_BOUNDARY_UNRESOLVED"
+    assert res["promote"] is False
+    assert len(recorded) == 1
+    assert recorded[0]["strategy"] == "DynamicBreakoutStrategy"
+    assert recorded[0]["symbol"] == "TSLA.ETORO"
+    assert recorded[0]["binding_cause"] == "boundary_solution"
+    assert "cooldown_bars" in recorded[0]["proposed_bounds"]
+    assert "max_bars_in_trade" in recorded[0]["proposed_bounds"]
 
 
 def test_ready_for_pr_has_no_rejection_override(tmp_path, monkeypatch):

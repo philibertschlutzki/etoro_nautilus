@@ -1121,11 +1121,11 @@ def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
     return bool(reward_signal or constraint_signal)
 
 
-def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
-    """Issue #597 — Anteil der numerischen Gewinner-Parameter, die innerhalb von 2 % einer
-    Suchraumgrenze liegen. Ein Wert > 0.3 ist ein Alarm: entweder ist der Suchraum falsch gewählt
-    oder der Reward drückt die Lösung in die Ecke (Randlösungs-Signatur, z. B. Trade-Frequenz
-    maximieren). ``None``, wenn Strategie/Bounds/Winner nicht verfügbar sind (defensiv)."""
+def _boundary_hit_analysis(study, strategy: str | None) -> tuple[dict[str, str], int] | None:
+    """Issue #597/#763 — gemeinsame Extraktion für ``_boundary_hit_fraction`` UND die
+    Richtungs-Diagnose ``_boundary_hit_directions``: liefert ``({param: "low"|"high"}`` je
+    Grenz-Parameter, Gesamtzahl numerischer Gewinner-Parameter)``, oder ``None`` wenn Strategie/
+    Bounds/Winner nicht verfügbar sind (defensiv)."""
     if not strategy:
         return None
     try:
@@ -1142,14 +1142,43 @@ def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
                if k in b and isinstance(v, (int, float)) and not isinstance(v, bool)]
     if not numeric:
         return None
-    hits = 0
+    directions: dict[str, str] = {}
     for k, v in numeric:
         lo, hi = b[k]
         span = (hi - lo) or 1.0
         norm = (float(v) - lo) / span
-        if norm <= 0.02 or norm >= 0.98:
-            hits += 1
-    return hits / len(numeric)
+        if norm <= 0.02:
+            directions[k] = "low"
+        elif norm >= 0.98:
+            directions[k] = "high"
+    return directions, len(numeric)
+
+
+def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
+    """Issue #597 — Anteil der numerischen Gewinner-Parameter, die innerhalb von 2 % einer
+    Suchraumgrenze liegen. Ein Wert > 0.3 ist ein Alarm: entweder ist der Suchraum falsch gewählt
+    oder der Reward drückt die Lösung in die Ecke (Randlösungs-Signatur, z. B. Trade-Frequenz
+    maximieren). ``None``, wenn Strategie/Bounds/Winner nicht verfügbar sind (defensiv)."""
+    analysis = _boundary_hit_analysis(study, strategy)
+    if analysis is None:
+        return None
+    directions, total = analysis
+    return len(directions) / total
+
+
+def _boundary_hit_directions(study, strategy: str | None) -> dict[str, str] | None:
+    """Issue #763 — WELCHE Gewinner-Parameter an WELCHER Suchraumgrenze kleben (``"low"``/
+    ``"high"``, 2 %-Toleranz, identisch zu ``_boundary_hit_fraction``), statt nur der aggregierten
+    Fraktion. Root-Cause #763: die reine Fraktion sagt, DASS eine Randlösung vorliegt, aber nicht,
+    WELCHER Parameter in WELCHE Richtung ausgeweitet werden müsste — genau die Information, die
+    ``sweep_diagnostics.propose_bounds_from_boundary_hits`` (#761-Cache-Brücke) braucht, um einen
+    konkreten ``proposed_bounds``-Kandidaten zu schreiben. ``None`` unter denselben Bedingungen wie
+    ``_boundary_hit_fraction``."""
+    analysis = _boundary_hit_analysis(study, strategy)
+    if analysis is None:
+        return None
+    directions, _total = analysis
+    return directions
 
 
 def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | None = None,
@@ -1315,13 +1344,17 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 deflation_var, deflation_n, min_cohort=min_cohort,
                 n_periods=deflation_t_periods)
 
-    # Issue #597 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der Suchraumgrenze).
+    # Issue #597/#763 — Randlösungs-Telemetrie (Anteil der Gewinner-Parameter an der
+    # Suchraumgrenze, PLUS welcher Parameter an welcher Grenze klebt — #763 Akzeptanzkriterium #1).
     boundary_hit_fraction = _boundary_hit_fraction(study, strategy)
+    boundary_hit_directions = _boundary_hit_directions(study, strategy)
     if boundary_hit_fraction is not None and boundary_hit_fraction > 0.3:
+        directions_str = ", ".join(
+            f"{p}={d}" for p, d in sorted((boundary_hit_directions or {}).items()))
         logging.getLogger("optimizer").warning(
             "[#597] %s: boundary_hit_fraction=%.2f > 0.3 — der Gewinner klebt an den Suchraumgrenzen "
-            "(Randlösung). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
-            symbol, boundary_hit_fraction,
+            "(Randlösung: %s). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
+            symbol, boundary_hit_fraction, directions_str,
         )
 
     # Issue #660 — LIVE-Reachability-Check der eligible_requires_any-Klauseln GEGEN DIE TATSÄCHLICH
@@ -1470,6 +1503,9 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "coherence_violations": coherence_violations,
         # Issue #597 — Randlösungs-Signatur.
         "boundary_hit_fraction": boundary_hit_fraction,
+        # Issue #763 — je Grenz-Parameter, ob "low" oder "high" (Richtungsinformation für den
+        # #761-Bounds-Vorschlag; leeres Dict, wenn boundary_hit_fraction None/0 ist).
+        "boundary_hit_directions": boundary_hit_directions or {},
         # Issue #660 — live (studien-eigene) OR-Arm-Reachability, ergänzend zum #633-Config-Load-
         # Fixture-Check: Klauseln, deren konfigurierte Schwelle über dem beobachteten p99 DIESER
         # Study liegt.

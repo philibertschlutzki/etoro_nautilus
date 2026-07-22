@@ -94,6 +94,53 @@ _FREQUENCY_DRIVING_PARAMS = (
 )
 
 
+def _widen_bounds_toward(direction_by_param: dict[str, str],
+                         current_bounds: dict[str, tuple[float, float]], *,
+                         widen_fraction: float) -> dict[str, list[float]]:
+    """Issue #761/#763 — gemeinsame Weitungs-Arithmetik: ``direction_by_param[param] == "low"``
+    senkt die Untergrenze um ``widen_fraction`` der aktuellen Spannweite ab (Obergrenze bleibt),
+    ``"high"`` hebt die Obergrenze an (Untergrenze bleibt). Parameter ohne bekannte Bounds werden
+    übersprungen (defensiv)."""
+    proposals: dict[str, list[float]] = {}
+    for param, direction in direction_by_param.items():
+        if param not in current_bounds:
+            continue
+        lo, hi = current_bounds[param]
+        span = (hi - lo) or 1.0
+        if direction == "low":
+            proposals[param] = [round(lo - widen_fraction * span, 6), hi]
+        else:
+            proposals[param] = [lo, round(hi + widen_fraction * span, 6)]
+    return proposals
+
+
+def propose_bounds_from_boundary_hits(
+    directions: dict[str, str], strategy: str, *,
+    current_bounds: dict[str, tuple[float, float]] | None = None,
+    widen_fraction: float = 0.3,
+) -> dict[str, list[float]]:
+    """Issue #763 — schliesst die Randlösungs-Diagnose (``run_optimization._boundary_hit_
+    directions``) zu einem KONKRETEN Bounds-Vorschlag, analog ``propose_bounds_widening``, aber
+    OHNE Korrelationsschätzung: klebt der Gewinner-Parameter an der UNTEREN Grenze
+    (``directions[param] == "low"``), wird die Untergrenze um ``widen_fraction`` (Default 30 %) der
+    aktuellen Spannweite abgesenkt; bei ``"high"`` wird die Obergrenze angehoben. Root-Cause #763:
+    ein Winner, der zur Hälfte an Suchraumgrenzen klebt, könnte dort ein echtes Optimum ODER ein
+    Suchraum-Artefakt gefunden haben — nur ein Re-Run mit ausgeweiteten Bounds unterscheidet die
+    beiden Fälle; dieser Vorschlag ist die Voraussetzung dafür (schreibt in den #761-Cache).
+
+    ``current_bounds`` Default: ``bounds.extract_numeric_bounds(strategy)``. Rückgabe:
+    ``{param: [new_low, new_high]}`` — NUR für Parameter aus ``directions``, deren Bounds bekannt
+    sind. Rein, deterministisch, kein I/O (ausser dem optionalen ``extract_numeric_bounds``-
+    Lookup)."""
+    if current_bounds is None:
+        try:
+            from automation.optimizer.bounds import extract_numeric_bounds
+            current_bounds = extract_numeric_bounds(strategy)
+        except Exception:
+            current_bounds = {}
+    return _widen_bounds_toward(directions, current_bounds, widen_fraction=widen_fraction)
+
+
 def propose_bounds_widening(
     trial_rows: list[dict], strategy: str, *,
     current_bounds: dict[str, tuple[float, float]] | None = None,
@@ -130,7 +177,7 @@ def propose_bounds_widening(
 
     from automation.optimizer.reward import _spearman_rank_correlation
 
-    proposals: dict[str, list[float]] = {}
+    direction_by_param: dict[str, str] = {}
     for param in _FREQUENCY_DRIVING_PARAMS:
         if param not in current_bounds:
             continue
@@ -151,13 +198,8 @@ def propose_bounds_widening(
         rho = _spearman_rank_correlation(xs, ys)
         if rho is None or abs(rho) < correlation_threshold:
             continue
-        lo, hi = current_bounds[param]
-        span = (hi - lo) or 1.0
-        if rho < 0:
-            proposals[param] = [round(lo - widen_fraction * span, 6), hi]
-        else:
-            proposals[param] = [lo, round(hi + widen_fraction * span, 6)]
-    return proposals
+        direction_by_param[param] = "low" if rho < 0 else "high"
+    return _widen_bounds_toward(direction_by_param, current_bounds, widen_fraction=widen_fraction)
 
 
 def eligibility_curve(trials: list[dict], *, window: int = 16) -> list[float]:

@@ -991,17 +991,54 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # keine Lösung (Bounds falsch ODER der Reward drückt in die Ecke) ⇒ FAIL-LOUD, kein READY_FOR_PR
     # (vorher nur eine folgenlose #597-WARNING). Lazy-Import (run_optimization importiert confirm).
     boundary_frac = None
+    boundary_directions = None
     try:
-        from automation.optimizer.run_optimization import _boundary_hit_fraction
+        from automation.optimizer.run_optimization import (
+            _boundary_hit_fraction, _boundary_hit_directions)
         boundary_frac = _boundary_hit_fraction(study, strategy)
+        boundary_directions = _boundary_hit_directions(study, strategy)
     except Exception:
         boundary_frac = None
+        boundary_directions = None
     boundary_overfit = bool(boundary_frac is not None and boundary_frac > 0.3)
     if boundary_overfit:
         logging.getLogger("optimizer").warning(
             f"[Boundary #622] {symbol}: boundary_hit_fraction={boundary_frac:.2f} > 0.3 ⇒ "
             f"REJECTED_BOUNDARY_SOLUTION (Bounds prüfen ODER Reward-Konditionierung)"
         )
+
+    # Issue #763 — >= 0.5 ist ein STÄRKERES Signal als der #622-Veto (die HÄLFTE der Gewinner-
+    # Parameter klebt an der Grenze): statt eines terminalen REJECTED_BOUNDARY_SOLUTION erzeugt das
+    # HOLD_BOUNDARY_UNRESOLVED — nur ein Re-Run mit ausgeweiteten Bounds kann entscheiden, ob der
+    # Rand ein echtes Optimum oder ein Suchraum-Artefakt ist. Die betroffenen Parameter+Richtung
+    # werden dafür als proposed_bounds-Kandidat in den #761-Diagnose-Cache geschrieben (derselbe
+    # Auto-Override-Mechanismus wie bei einem 'signal_frequency'-Kollaps — kein manueller
+    # Config-Edit nötig, bevor der nächste Sweep das Symbol/die Strategie erneut versucht).
+    boundary_unresolved = bool(boundary_frac is not None and boundary_frac >= 0.5)
+    if boundary_unresolved:
+        directions_str = ", ".join(f"{p}={d}" for p, d in sorted((boundary_directions or {}).items()))
+        logging.getLogger("optimizer").warning(
+            f"[Boundary #763] {symbol}: boundary_hit_fraction={boundary_frac:.2f} >= 0.5 "
+            f"({directions_str}) ⇒ HOLD_BOUNDARY_UNRESOLVED — Re-Run mit ausgeweiteten Bounds nötig, "
+            f"bevor Rand-Optimum vs. Suchraum-Artefakt unterscheidbar ist."
+        )
+        try:
+            from automation.optimizer.sweep_diagnostics import (
+                propose_bounds_from_boundary_hits, record_diagnosed_pair)
+            proposed_bounds = propose_bounds_from_boundary_hits(
+                boundary_directions or {}, strategy)
+            if proposed_bounds:
+                record_diagnosed_pair({
+                    "strategy": strategy, "symbol": symbol,
+                    "action": "search_space_override",
+                    "binding_cause": "boundary_solution",
+                    "proposed_bounds": proposed_bounds,
+                })
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                f"[Boundary #763] {symbol}: proposed_bounds konnten nicht in den #761-Cache "
+                f"geschrieben werden (non-fatal, HOLD_BOUNDARY_UNRESOLVED bleibt wirksam)."
+            )
 
     # Issue #655 — R_symbol/R_global sind seit #655 ``None`` (statt eines numerischen −20-Sentinels),
     # sobald der jeweilige Holdout-Backtest NIE OOS-evaluierbar war (compute_reward(holdout=True)
@@ -1032,6 +1069,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     if pbo_overfit:
         status = "REJECTED_SELECTION_OVERFIT"
         is_rejection_detail_override = "REJECT_SELECTION_PBO"
+    elif boundary_unresolved:
+        # Issue #763 — >= 0.5 ist STRIKT stärker als der #622-Veto (impliziert boundary_overfit=True)
+        # und muss daher VOR der #622-Verzweigung geprüft werden: ein HOLD ist etwas anderes als ein
+        # terminaler REJECT — der proposed_bounds-Kandidat liegt bereits im #761-Cache (oben).
+        status = "HOLD_BOUNDARY_UNRESOLVED"
+        is_rejection_detail_override = "HOLD_BOUNDARY_UNRESOLVED"
     elif boundary_overfit:
         status = "REJECTED_BOUNDARY_SOLUTION"
         is_rejection_detail_override = "REJECT_BOUNDARY_SOLUTION"
@@ -1133,6 +1176,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
 _CONFIRM_STAGE_REJECTIONS = frozenset({
     "REJECT_HOLDOUT_GATE", "REJECT_HOLDOUT_DSR_DROP", "REJECT_HOLDOUT_BOOTSTRAP_CI",
     "REJECT_SELECTION_PBO", "REJECT_BOUNDARY_SOLUTION", "REJECT_NO_EDGE_OVER_GLOBAL",
+    # Issue #763 — HOLD_BOUNDARY_UNRESOLVED ist ebenfalls eine Confirm-/Holdout-Pfad-Ursache (der
+    # modale Per-Trial-IS-Grund erklärt nicht, warum die Promotion pausiert wurde).
+    "HOLD_BOUNDARY_UNRESOLVED",
 })
 
 
