@@ -105,8 +105,21 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     )
 
 
+# Issue #765 — deklarierte Marker-Konvention fuer eine SCHEMA-TEXT-Aussage "dieser Key ist AKTUELL
+# ein hartes/aktives Konjunktions-Mitglied". Bewusst KEINE Freitext-/NLP-Erkennung von Formulierungen
+# wie "NICHT MEHR in eligible_requires_all" oder "muss ... gelistet sein, um zu greifen" (mehrere
+# bestehende Schema-Texte — min_expectancy, oos_min_profitable_folds_frac, oos_min_evaluable_folds —
+# erwaehnen den Listennamen GENAU IN SOLCHEN NEGIERTEN/BEDINGTEN Kontexten; ein reiner Substring-Scan
+# ohne diesen exakten Marker wuerde sie als Falsch-Positive markieren). Ein Schema-Text OHNE diesen
+# Marker macht schlicht KEINE geprueft Aussage (nichts zu verifizieren) — das ist die Root-Cause-
+# Lehre aus #765: die zwei tatsaechlich stale Behauptungen (min_sortino/oos_min_sortino_note)
+# verwendeten beide bereits zufaellig genau ``"in eligible_requires_all (HART)"``.
+_ELIGIBLE_ALL_CLAIM_MARKER = "in eligible_requires_all (HART)"
+_ELIGIBLE_ANY_CLAIM_MARKER = "in eligible_requires_any (aktiver OR-Arm)"
+
+
 def check_config_key_registry(tournament_config: dict) -> InvariantResult:
-    """Issue #649/#760-Regressionswächter.
+    """Issue #649/#760/#765-Regressionswächter.
 
     Jeder in ``eligible_requires_all``/``eligible_requires_any`` referenzierte Gate-Key MUSS (nach
     ``oos_``-Normalisierung) auf einen echten ``condition_map``-Handler in
@@ -124,7 +137,14 @@ def check_config_key_registry(tournament_config: dict) -> InvariantResult:
     wie #649, nur eine Ebene tiefer: Handler vorhanden, aber die Kollinearitäts-Diagnose sieht ihn
     trotzdem nie, weil kein Delta gestempelt wird). ``min_evaluable_folds`` ist der einzige aktuell
     bekannte strukturell delta-freie Gate-Key (reiner Fold-Zähler).
-    """
+
+    Issue #765 — ZUSÄTZLICH: ``_schema.fields``-Texte, die (via ``_ELIGIBLE_ALL_CLAIM_MARKER``/
+    ``_ELIGIBLE_ANY_CLAIM_MARKER``) explizit eine AKTUELLE Konjunktions-Mitgliedschaft behaupten,
+    muessen mit der TATSAECHLICHEN ``eligible_requires_all``/``eligible_requires_any``-Liste
+    uebereinstimmen (nach ``oos_``-Normalisierung) — Root-Cause #765: ``min_sortino``/
+    ``oos_min_sortino_note`` behaupteten weiterhin '#593 in eligible_requires_all (HART)', obwohl
+    #614 den Sortino laengst durch ``oos_min_psr`` ersetzt hatte (dieselbe Fehlerklasse wie #649,
+    hier bislang nur als Doku-Drift statt eines toten Handlers)."""
     from automation.backtest_runner import (
         OOS_CONDITION_MAP_KEYS, OOS_GATE_DELTA_KEYS, _canonical_gate_key,
     )
@@ -141,7 +161,25 @@ def check_config_key_registry(tournament_config: dict) -> InvariantResult:
         if _canonical_gate_key(k) in OOS_CONDITION_MAP_KEYS
         and _canonical_gate_key(k) not in OOS_GATE_DELTA_KEYS
     )
-    problems = unknown + [f"{k} (kein oos_gate_deltas-Handler, #760)" for k in no_delta_column]
+    # Issue #765 — Schema-Text-Drift: eine explizite Marker-Behauptung, die die tatsaechliche Liste
+    # nicht (mehr) widerspiegelt.
+    canonical_all = {_canonical_gate_key(k) for k in req_all}
+    canonical_any = {_canonical_gate_key(k) for k in req_any}
+    schema_fields = (tournament_config.get("_schema") or {}).get("fields") or {}
+    stale_claims = []
+    for field_key, text in schema_fields.items():
+        if not isinstance(text, str):
+            continue
+        # Issue #765 — ein ``<key>_note``-Begleitfeld (z. B. ``oos_min_sortino_note``) beschreibt
+        # denselben Gate-Key wie sein Stamm-Feld; das ``_note``-Suffix VOR der ``oos_``-Normalisierung
+        # entfernen, sonst vergleicht die Pruefung faelschlich den literalen Feldnamen.
+        subject_key = field_key[:-5] if field_key.endswith("_note") else field_key
+        if _ELIGIBLE_ALL_CLAIM_MARKER in text and _canonical_gate_key(subject_key) not in canonical_all:
+            stale_claims.append(f"{field_key} (behauptet eligible_requires_all, #765)")
+        if _ELIGIBLE_ANY_CLAIM_MARKER in text and _canonical_gate_key(subject_key) not in canonical_any:
+            stale_claims.append(f"{field_key} (behauptet eligible_requires_any, #765)")
+    problems = (unknown + [f"{k} (kein oos_gate_deltas-Handler, #760)" for k in no_delta_column]
+                + stale_claims)
     passed = not problems
     return InvariantResult(
         name="check_config_key_registry",
@@ -151,7 +189,8 @@ def check_config_key_registry(tournament_config: dict) -> InvariantResult:
         detail=("OK" if passed else
                 f"Gate(s) ohne condition_map-Handler nach oos_-Normalisierung (#649): {unknown}; "
                 f"Gate(s) in eligible_requires_all ohne oos_gate_deltas-Spalte (#760): "
-                f"{no_delta_column}."),
+                f"{no_delta_column}; Schema-Text(e) mit stale Konjunktions-Behauptung (#765): "
+                f"{stale_claims}."),
     )
 
 
