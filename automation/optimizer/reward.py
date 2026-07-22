@@ -392,12 +392,33 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
     return result
 
 
-# Issue #667 — die VIER eligible-Gates, die im 138-rejected-evaluable-Trials-Symptom fast immer
-# GEMEINSAM fallen (expectancy 70 %, profitable_folds 69 %, requires_any[PF|WR] 68 %, psr 66 %) —
-# effektiv eine einzige latente "net-of-cost-profitabel"-Achse, 4× redundant kodiert.
-_GATE_COLLINEARITY_KEYS = (
-    "oos_min_expectancy", "oos_min_profitable_folds_frac", "any_condition", "oos_min_psr",
-)
+def _active_gate_collinearity_keys(tournament_cfg: dict | None) -> list[str]:
+    """Issue #760 — leitet die zu prüfenden Gate-Keys ZUR LAUFZEIT aus der AKTIVEN
+    ``eligible_requires_all``-Konjunktion ab, statt aus einer eingefrorenen Code-Konstante
+    (der #667-Stand, ``_GATE_COLLINEARITY_KEYS``, driftete lautlos von der Config weg: #676/#697
+    entfernten Gates aus dem Default, ohne dass die Kollinearitäts-Diagnose es je bemerkt hätte —
+    426 ``[#667]``-Warnungen bezogen sich zuletzt auf ``oos_min_expectancy``, das seit #697 gar
+    nicht mehr Teil der Konjunktion ist).
+
+    Jeder Konjunktions-Key wird auf seinen ``oos_``-präfigierten ``oos_gate_deltas``-Spaltennamen
+    normiert (die Delta-Dicts sind durchgehend präfigiert, ``eligible_requires_all`` schreibt manche
+    Klauseln OHNE Präfix — ``min_trades`` statt ``oos_min_trades``, siehe
+    ``backtest_runner._canonical_gate_key`` für die spiegelbildliche Normalisierung Richtung
+    ``condition_map``). ``'any_condition'`` wird als Proxy für die GESAMTE
+    ``eligible_requires_any``-Disjunktion angehängt, sofern die Config überhaupt einen ANY-Arm
+    deklariert — order-preserving dedupliziert."""
+    tournament_cfg = tournament_cfg or {}
+    requires_all = tournament_cfg.get("eligible_requires_all") or []
+    keys = [k if k.startswith("oos_") else f"oos_{k}" for k in requires_all]
+    if tournament_cfg.get("eligible_requires_any"):
+        keys.append("any_condition")
+    seen: set = set()
+    ordered: list[str] = []
+    for k in keys:
+        if k not in seen:
+            seen.add(k)
+            ordered.append(k)
+    return ordered
 
 
 def _spearman_rank_correlation(x: list, y: list) -> float | None:
@@ -445,46 +466,53 @@ def _any_condition_delta_from_gate_deltas(deltas: dict | None) -> float | None:
     return max(candidates) if candidates else None
 
 
-def gate_rank_correlation_matrix(trial_gate_deltas: list) -> dict:
-    """Issue #667 — Rang-Korrelationsmatrix (Spearman) der VIER eligible-Gates (``_GATE_COLLINEARITY_KEYS``)
-    über eine Kohorte von Trials, aus deren gestempelten ``oos_gate_deltas`` (#554/#668 — pro Trial
-    als User-Attr verfügbar). Nur Trials mit ALLEN vier definierten Deltas fliessen ein (Zero-
-    Hardcoding: fehlende Gates werden nicht künstlich mit 0 aufgefüllt, das würde eine falsche
-    Korrelation vortäuschen).
+def gate_rank_correlation_matrix(trial_gate_deltas: list, tournament_cfg: dict | None = None) -> dict:
+    """Issue #667/#760 — Rang-Korrelationsmatrix (Spearman) der AKTIVEN eligible-Gates (siehe
+    ``_active_gate_collinearity_keys`` — zur Laufzeit aus ``tournament_cfg`` abgeleitet, KEINE
+    eingefrorene Code-Konstante mehr) über eine Kohorte von Trials, aus deren gestempelten
+    ``oos_gate_deltas`` (#554/#668 — pro Trial als User-Attr verfügbar). Nur Trials mit ALLEN
+    aktiven Deltas fliessen ein (Zero-Hardcoding: fehlende Gates werden nicht künstlich mit 0
+    aufgefüllt, das würde eine falsche Korrelation vortäuschen).
 
-    Rückgabe ``{'n_samples': int, 'correlations': {(gate_a, gate_b): rho_or_None, ...}}`` — ein
-    Eintrag je der ``C(4,2)=6`` Gate-Paare. Rein, deterministisch."""
-    series: dict[str, list] = {k: [] for k in _GATE_COLLINEARITY_KEYS}
+    ``tournament_cfg=None`` (kein ``eligible_requires_all``/``_any`` bekannt) liefert eine leere
+    Key-Menge — bewusst KEIN Fallback auf eine geratene Gate-Liste.
+
+    Rückgabe ``{'n_samples': int, 'keys': [...], 'correlations': {(gate_a, gate_b): rho_or_None,
+    ...}, 'non_correlable_keys': [...]}``. ``non_correlable_keys`` — Issue #760 — sind aktive Keys,
+    die über die GESAMTE Kohorte NIE ein Delta beigetragen haben (keine ``oos_gate_deltas``-Spalte
+    in den vorliegenden Trial-Daten) und daher explizit als nicht-korrelierbar telemetriert werden,
+    statt still als durchgehend ``None`` in der Matrix zu verschwinden. Rein, deterministisch."""
+    keys = _active_gate_collinearity_keys(tournament_cfg)
+    series: dict[str, list] = {k: [] for k in keys}
     for deltas in trial_gate_deltas:
         deltas = deltas or {}
-        row = {
-            "oos_min_expectancy": deltas.get("oos_min_expectancy"),
-            "oos_min_profitable_folds_frac": deltas.get("oos_min_profitable_folds_frac"),
-            "any_condition": _any_condition_delta_from_gate_deltas(deltas),
-            "oos_min_psr": deltas.get("oos_min_psr"),
-        }
+        row = {}
+        for k in keys:
+            row[k] = _any_condition_delta_from_gate_deltas(deltas) if k == "any_condition" else deltas.get(k)
         if any(v is None for v in row.values()):
             continue
         for k, v in row.items():
             series[k].append(float(v))
 
-    keys = list(_GATE_COLLINEARITY_KEYS)
     correlations = {}
     for i, k1 in enumerate(keys):
         for k2 in keys[i + 1:]:
             correlations[(k1, k2)] = _spearman_rank_correlation(series[k1], series[k2])
     n_samples = len(series[keys[0]]) if keys else 0
-    return {"n_samples": n_samples, "correlations": correlations}
+    non_correlable_keys = [k for k in keys if not series[k]]
+    return {"n_samples": n_samples, "keys": keys, "correlations": correlations,
+            "non_correlable_keys": non_correlable_keys}
 
 
-def assert_gate_collinearity_guard(trial_gate_deltas: list, *, threshold: float = 0.95) -> dict:
-    """Issue #667 — Redundanz-Wächter: warnt FAIL-LOUD-artig (WARNING-Log, KEIN Abbruch — die
+def assert_gate_collinearity_guard(trial_gate_deltas: list, tournament_cfg: dict | None = None, *,
+                                   threshold: float = 0.95) -> dict:
+    """Issue #667/#760 — Redundanz-Wächter: warnt FAIL-LOUD-artig (WARNING-Log, KEIN Abbruch — die
     Kollinearität selbst automatisiert nicht, WELCHES Gate entfernt wird; das bleibt eine bewusste,
-    im PR dokumentierte Entscheidung), sobald zwei der vier eligible-Gates ``|ρ| > threshold`` über
-    das Kalibrier-/Studien-Fixture zeigen (Bezug: Root-Cause #667 — 4× redundant kodierte
-    "net-of-cost-profitabel"-Achse). Rückgabe: die volle Korrelationsmatrix (Telemetrie/Tests)."""
+    im PR dokumentierte Entscheidung), sobald zwei der AKTIVEN eligible-Gates (``tournament_cfg``,
+    siehe ``_active_gate_collinearity_keys``) ``|ρ| > threshold`` über das Kalibrier-/Studien-
+    Fixture zeigen. Rückgabe: die volle Korrelationsmatrix (Telemetrie/Tests)."""
     import logging
-    result = gate_rank_correlation_matrix(trial_gate_deltas)
+    result = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)
     for (k1, k2), rho in result["correlations"].items():
         if rho is not None and abs(rho) > threshold:
             logging.getLogger("optimizer").warning(
@@ -506,7 +534,8 @@ _GATE_CONSOLIDATION_PRIORITY = (
 )
 
 
-def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, *, threshold: float = 0.9) -> dict:
+def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: dict | None = None,
+                                       *, threshold: float = 0.9) -> dict:
     """Issue #679 — hebt die #667-Kollinearitäts-DIAGNOSE (bislang NUR ein WARNING-Log) auf einen
     STRUKTURIERTEN, maschinenlesbaren Redundanz-ALARM: ``eligible_requires_all`` addiert korrelierte
     Klauseln, deren gemeinsame Passrate ≈ der strengsten Einzelklausel entspricht, aber jede
@@ -524,7 +553,7 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, *, threshold: fl
     "wird als Redundanz-Alarm ausgewertet, nicht nur geloggt") — sie macht den Alarm aber
     STRUKTURIERT auswertbar (Tooling/Dashboards/Tests können darauf reagieren), statt nur eine
     Log-Zeile zu emittieren."""
-    result = gate_rank_correlation_matrix(trial_gate_deltas)
+    result = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)
     priority = {k: i for i, k in enumerate(_GATE_CONSOLIDATION_PRIORITY)}
     alarms = []
     redundant_candidates: dict[str, float] = {}
@@ -544,22 +573,9 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, *, threshold: fl
     }
 
 
-# Issue #697 — Mapping von den _GATE_COLLINEARITY_KEYS (Telemetrie-Domain-Namen, gestempelt aus
-# oos_gate_deltas) auf den TATSÄCHLICHEN eligible_requires_all-Konjunktions-Mitgliedsnamen
-# (tournament.json-Config-Key). 'min_expectancy' (nicht 'oos_min_expectancy') ist der Klausel-Name
-# in eligible_requires_all (siehe backtest_runner._evaluate_oos_eligibility). 'any_condition' hat
-# KEIN Gegenstück in eligible_requires_all — sie repräsentiert die GESAMTE eligible_requires_any-
-# Disjunktion, kein einzelnes ALL-Gate — daher None (wird von der Validierung uebersprungen).
-_GATE_COLLINEARITY_TO_CONJUNCTION_KEY = {
-    "oos_min_expectancy": "min_expectancy",
-    "oos_min_profitable_folds_frac": "oos_min_profitable_folds_frac",
-    "oos_min_psr": "oos_min_psr",
-    "any_condition": None,
-}
-
-
 def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible_requires_all: list,
-                                               *, threshold: float = 0.9) -> list[str]:
+                                               tournament_cfg: dict | None = None, *,
+                                               threshold: float = 0.9) -> list[str]:
     """Issue #697 — konsumiert den #679-Redundanz-ALARM (bislang reine Telemetrie OHNE Konsument,
     Root-Cause #697: ``eligible_requires_all`` behielt ``min_expectancy`` UND ``oos_min_psr``
     trotz dokumentierter |ρ|=0.961-Kollinearität, weil nichts die Alarm-Ausgabe gegen die Config
@@ -571,17 +587,31 @@ def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible
     ``_GATE_CONSOLIDATION_PRIORITY``), wird das jetzt LAUT (ERROR-Log statt stiller WARNING-
     Diagnose) — statt erneut folgenlos zu bleiben.
 
+    Issue #760 — die Delta-Key→Konjunktions-Key-Rückübersetzung ist jetzt aus ``eligible_requires_
+    all`` SELBST abgeleitet (``oos_``-Präfix-Normalisierung, spiegelbildlich zu
+    ``_active_gate_collinearity_keys``), statt einer zweiten, separat gepflegten hartcodierten
+    Zuordnungstabelle — die driftete sonst genauso lautlos weg wie ``_GATE_COLLINEARITY_KEYS``
+    selbst. ``'any_condition'`` hat strukturell KEIN Gegenstück in ``eligible_requires_all`` (sie
+    repräsentiert die GESAMTE ``eligible_requires_any``-Disjunktion) und wird daher nie gematcht.
+
     Rückgabe: sortierte Liste der noch unkonsolidierten Konjunktions-Mitglieder (leer ⇒ die Config
     ist konsistent mit der aktuellen Alarm-Ausgabe — der Regelfall nach #697). Bricht den Lauf NICHT
     ab (welches Gate konsolidiert wird, bleibt eine bewusste, dokumentierte Entscheidung, siehe
     ``gate_collinearity_redundancy_alarm``-Docstring) — macht die Inkonsistenz aber unübersehbar."""
     import logging
-    alarm = gate_collinearity_redundancy_alarm(trial_gate_deltas, threshold=threshold)
+    if tournament_cfg is None:
+        tournament_cfg = {"eligible_requires_all": eligible_requires_all}
+    alarm = gate_collinearity_redundancy_alarm(trial_gate_deltas, tournament_cfg, threshold=threshold)
     conjunction = set(eligible_requires_all or [])
+    # Delta-Key (z. B. "oos_min_expectancy") → Original-Konjunktions-Schreibweise (z. B.
+    # "min_expectancy" ODER "oos_min_psr", je nachdem wie eligible_requires_all den Key notiert).
+    delta_to_conjunction = {
+        (k if k.startswith("oos_") else f"oos_{k}"): k for k in conjunction
+    }
     still_redundant = []
     for candidate, rho in alarm["redundant_candidates"].items():
-        conj_key = _GATE_COLLINEARITY_TO_CONJUNCTION_KEY.get(candidate, candidate)
-        if conj_key is None or conj_key not in conjunction:
+        conj_key = delta_to_conjunction.get(candidate)
+        if conj_key is None:
             continue
         still_redundant.append(conj_key)
         logging.getLogger("optimizer").error(

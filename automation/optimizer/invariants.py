@@ -106,7 +106,7 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
 
 
 def check_config_key_registry(tournament_config: dict) -> InvariantResult:
-    """Issue #649-Regressionswächter.
+    """Issue #649/#760-Regressionswächter.
 
     Jeder in ``eligible_requires_all``/``eligible_requires_any`` referenzierte Gate-Key MUSS (nach
     ``oos_``-Normalisierung) auf einen echten ``condition_map``-Handler in
@@ -116,21 +116,42 @@ def check_config_key_registry(tournament_config: dict) -> InvariantResult:
     abweichende Kopie zu pflegen, und dient als Snapshot-Nachweis im Report (Defense-in-Depth: sie
     prueft die Config, die TATSAECHLICH in diesem Report referenziert wird, nicht nur "irgendwann
     beim Start").
+
+    Issue #760 — ZUSÄTZLICH: jeder Key muss entweder eine ``oos_gate_deltas``-Spalte besitzen
+    (``OOS_CONDITION_MAP_KEYS``-Geschwister-Registry ``OOS_GATE_DELTA_KEYS``) oder explizit als
+    delta-frei bekannt sein — sonst würde ein reaktivierter Key mit Handler, aber ohne Delta-Spalte,
+    lautlos aus ``reward.gate_rank_correlation_matrix`` (#760) verschwinden (dieselbe Drift-Klasse
+    wie #649, nur eine Ebene tiefer: Handler vorhanden, aber die Kollinearitäts-Diagnose sieht ihn
+    trotzdem nie, weil kein Delta gestempelt wird). ``min_evaluable_folds`` ist der einzige aktuell
+    bekannte strukturell delta-freie Gate-Key (reiner Fold-Zähler).
     """
-    from automation.backtest_runner import OOS_CONDITION_MAP_KEYS, _canonical_gate_key
+    from automation.backtest_runner import (
+        OOS_CONDITION_MAP_KEYS, OOS_GATE_DELTA_KEYS, _canonical_gate_key,
+    )
 
     req_all = set(tournament_config.get("eligible_requires_all", []) or [])
     req_any = set(tournament_config.get("eligible_requires_any", []) or [])
     used = req_all | req_any
     unknown = sorted(k for k in used if _canonical_gate_key(k) not in OOS_CONDITION_MAP_KEYS)
-    passed = not unknown
+    # Issue #760 — nur ELIGIBLE_REQUIRES_ALL-Mitglieder werden korrelationsseitig ueberhaupt
+    # betrachtet (eligible_requires_any fliesst nur gebündelt als "any_condition"-Proxy ein, siehe
+    # reward._active_gate_collinearity_keys) — die Delta-Spalten-Pruefung gilt daher nur fuer ALL.
+    no_delta_column = sorted(
+        k for k in req_all
+        if _canonical_gate_key(k) in OOS_CONDITION_MAP_KEYS
+        and _canonical_gate_key(k) not in OOS_GATE_DELTA_KEYS
+    )
+    problems = unknown + [f"{k} (kein oos_gate_deltas-Handler, #760)" for k in no_delta_column]
+    passed = not problems
     return InvariantResult(
         name="check_config_key_registry",
         passed=passed,
         expected=[],
-        actual=unknown,
+        actual=problems,
         detail=("OK" if passed else
-                f"Gate(s) ohne condition_map-Handler nach oos_-Normalisierung (#649): {unknown}."),
+                f"Gate(s) ohne condition_map-Handler nach oos_-Normalisierung (#649): {unknown}; "
+                f"Gate(s) in eligible_requires_all ohne oos_gate_deltas-Spalte (#760): "
+                f"{no_delta_column}."),
     )
 
 

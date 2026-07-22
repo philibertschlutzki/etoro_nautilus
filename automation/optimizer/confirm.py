@@ -948,7 +948,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     from automation.optimizer.reward import assert_eligible_requires_all_not_redundant
     gate_deltas_cohort = [getattr(t, "user_attrs", {}).get("oos_gate_deltas") for t in study.trials]
     unconsolidated_gates = assert_eligible_requires_all_not_redundant(
-        gate_deltas_cohort, tournament_cfg.get("eligible_requires_all", []))
+        gate_deltas_cohort, tournament_cfg.get("eligible_requires_all", []), tournament_cfg)
 
     # Issue #659 — gestapelte Multiple-Testing-Korrekturen kompoundieren den Type-II-Fehler. Die
     # Promotion verlangt per Default (``promotion_correction_mode`` fehlt/"conjunction", bit-

@@ -19,15 +19,23 @@ from pathlib import Path
 
 import pytest
 
-from automation.optimizer.reward import (
-    assert_eligible_requires_all_not_redundant, _GATE_COLLINEARITY_TO_CONJUNCTION_KEY,
-)
+from automation.optimizer.reward import assert_eligible_requires_all_not_redundant
 from automation.optimizer.calibration import calibrate_gate_consolidation_false_positive_rate
 
 CFG_PATH = Path("automation/config/tournament.json")
 CFG = json.loads(CFG_PATH.read_text("utf-8"))
 OPT_CFG_PATH = Path("automation/config/optimizer.json")
 OPT_CFG = json.loads(OPT_CFG_PATH.read_text("utf-8"))
+
+# Issue #760 — assert_eligible_requires_all_not_redundant leitet die korrelierten Keys jetzt aus
+# tournament_cfg['eligible_requires_all']/['eligible_requires_any'] ab (keine eingefrorene Code-
+# Konstante mehr). Dieses Fixture reproduziert den #667/#679/#697-Szenario-Key-Satz (oos_min_
+# expectancy, oos_min_profitable_folds_frac, any_condition, oos_min_psr) — unabhängig vom jeweils
+# als zweites Argument übergebenen (ggf. hypothetischen) eligible_requires_all der Einzeltests.
+_TCFG = {
+    "eligible_requires_all": ["oos_min_expectancy", "oos_min_profitable_folds_frac", "oos_min_psr"],
+    "eligible_requires_any": ["min_profit_factor"],
+}
 
 
 # ── Config: min_expectancy raus, oos_min_psr bleibt hart ─────────────────────────────────────────
@@ -73,7 +81,7 @@ def test_no_finding_when_conjunction_already_consolidated():
         _deltas(e, e, profitable_folds_frac=100 - e, any_condition=-e)
         for e in [0.001, 0.002, 0.003, 0.004, -0.001]
     ]
-    result = assert_eligible_requires_all_not_redundant(cohort, CFG["eligible_requires_all"])
+    result = assert_eligible_requires_all_not_redundant(cohort, CFG["eligible_requires_all"], _TCFG)
     assert result == []
 
 
@@ -86,7 +94,7 @@ def test_finding_fires_if_min_expectancy_is_reintroduced():
         for e in [0.001, 0.002, 0.003, 0.004, -0.001]
     ]
     reintroduced_conjunction = ["min_trades", "max_drawdown", "min_expectancy", "oos_min_psr"]
-    result = assert_eligible_requires_all_not_redundant(cohort, reintroduced_conjunction)
+    result = assert_eligible_requires_all_not_redundant(cohort, reintroduced_conjunction, _TCFG)
     assert result == ["min_expectancy"]
 
 
@@ -98,20 +106,27 @@ def test_psr_itself_never_flagged():
         for e in [0.001, 0.002, 0.003, 0.004, 0.005, -0.001]
     ]
     result = assert_eligible_requires_all_not_redundant(
-        cohort, ["min_trades", "max_drawdown", "min_expectancy", "oos_min_psr"])
+        cohort, ["min_trades", "max_drawdown", "min_expectancy", "oos_min_psr"], _TCFG)
     assert "oos_min_psr" not in result
 
 
-def test_any_condition_never_mapped_to_a_conjunction_key():
+def test_any_condition_never_flagged_as_a_conjunction_member():
     """'any_condition' repräsentiert die GESAMTE eligible_requires_any-Disjunktion, kein einzelnes
-    eligible_requires_all-Mitglied — die Mapping-Tabelle darf es nie auf einen Konjunktions-Key
-    abbilden (sonst würde die Validierung fälschlich eligible_requires_any-Klauseln als
-    eligible_requires_all-Mitglieder behandeln)."""
-    assert _GATE_COLLINEARITY_TO_CONJUNCTION_KEY["any_condition"] is None
+    eligible_requires_all-Mitglied — Issue #760: selbst wenn sie als Korrelations-Kandidat auftaucht
+    (hier via any_condition=e perfekt kollinear konstruiert), kann sie NIE auf einen echten
+    Konjunktions-Key zurückübersetzt werden (ihre Delta-Key-Form 'any_condition' hat keine
+    'oos_'-gestrippte Entsprechung, die je in eligible_requires_all auftreten könnte)."""
+    cohort = [
+        _deltas(e, e, profitable_folds_frac=e, any_condition=e)
+        for e in [0.001, 0.002, 0.003, 0.004, 0.005, -0.001]
+    ]
+    result = assert_eligible_requires_all_not_redundant(
+        cohort, ["min_trades", "max_drawdown", "min_expectancy", "oos_min_psr"], _TCFG)
+    assert "any_condition" not in result
 
 
 def test_empty_cohort_yields_no_finding():
-    assert assert_eligible_requires_all_not_redundant([], CFG["eligible_requires_all"]) == []
+    assert assert_eligible_requires_all_not_redundant([], CFG["eligible_requires_all"], _TCFG) == []
 
 
 # ── calibration.calibrate_gate_consolidation_false_positive_rate: Null-Kalibrierbeleg ────────────

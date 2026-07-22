@@ -1326,19 +1326,27 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     except Exception:
         any_arm_live_unreachable = []
 
-    # Issue #667 — Rang-Korrelationsmatrix der vier eligible-Gates (Redundanz-Diagnose) über die
-    # gestempelten Per-Trial oos_gate_deltas (#554/#668). Reine Telemetrie/Warnung — ändert NIE eine
-    # Gate-/Reward-Entscheidung; welches Gate ggf. konsolidiert wird, ist eine bewusste PR-Wahl.
+    # Issue #667/#760 — Rang-Korrelationsmatrix der AKTIVEN eligible-Gates (aus tournament.json
+    # abgeleitet, keine eingefrorene Code-Konstante mehr) über die gestempelten Per-Trial
+    # oos_gate_deltas (#554/#668). Reine Telemetrie/Warnung — ändert NIE eine Gate-/Reward-
+    # Entscheidung; welches Gate ggf. konsolidiert wird, ist eine bewusste PR-Wahl.
     gate_deltas_cohort = [getattr(t, "user_attrs", {}).get("oos_gate_deltas") for t in trials]
+    _tcfg_gate: dict = {}
     try:
-        gate_collinearity = assert_gate_collinearity_guard(gate_deltas_cohort)
+        opt_path_gate = config_dir() / "tournament.json"
+        if opt_path_gate.exists():
+            _tcfg_gate = json.loads(opt_path_gate.read_text("utf-8")) or {}
     except Exception:
-        gate_collinearity = {"n_samples": 0, "correlations": {}}
+        _tcfg_gate = {}
+    try:
+        gate_collinearity = assert_gate_collinearity_guard(gate_deltas_cohort, _tcfg_gate)
+    except Exception:
+        gate_collinearity = {"n_samples": 0, "keys": [], "correlations": {}, "non_correlable_keys": []}
     # Issue #679 — dieselbe Kohorte, aber als STRUKTURIERTER Redundanz-ALARM statt nur eines
     # WARNING-Logs: welches Gate-Paar kollinear ist UND welches (niedriger priorisierte, siehe
     # reward._GATE_CONSOLIDATION_PRIORITY) Gate der Konsolidierungs-Kandidat waere.
     try:
-        gate_collinearity_alarm = gate_collinearity_redundancy_alarm(gate_deltas_cohort)
+        gate_collinearity_alarm = gate_collinearity_redundancy_alarm(gate_deltas_cohort, _tcfg_gate)
     except Exception:
         gate_collinearity_alarm = {"n_samples": 0, "alarms": [], "redundant_candidates": {}}
 

@@ -381,6 +381,19 @@ OOS_CONDITION_MAP_KEYS = frozenset({
     "min_evaluable_folds",
 })
 
+# Issue #760 — kanonische Registry der ``condition_map``-Handler, die tatsächlich eine
+# ``oos_gate_deltas``-Spalte stempeln (siehe die ``oos_gate_deltas[...]=``-Zuweisungen weiter unten
+# in dieser Funktion). ``min_evaluable_folds`` ist ein reiner Fold-Zähler-Gate ohne kontinuierliches
+# Delta-Signal — strukturell delta-frei, nicht versehentlich vergessen. Konsumiert von
+# ``invariants.check_config_key_registry`` (#760), damit ein in ``eligible_requires_all``/``_any``
+# reaktivierter Key, der weder einen Handler NOCH eine Delta-Spalte hat, fail-loud auffällt, statt
+# lautlos aus der #667/#760-Kollinearitätsdiagnose zu verschwinden.
+OOS_GATE_DELTA_KEYS = frozenset({
+    "min_trades", "min_total_return", "min_expectancy", "max_drawdown", "min_win_rate",
+    "min_sortino", "min_psr", "min_profit_factor", "min_excess_return",
+    "min_profitable_folds_frac",
+})
+
 
 def load_tournament_config(project_root: str | None = None) -> dict:
     """Lädt tournament.json aus automation/config/.
