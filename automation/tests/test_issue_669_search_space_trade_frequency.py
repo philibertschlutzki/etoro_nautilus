@@ -47,12 +47,14 @@ def _trial(oos_evaluated, oos_eligible, oos_total_trades=0, is_total_trades=0, h
     }
 
 
-def test_signal_frequency_binding_cause_when_is_activity_too_low():
-    """0 evaluable, IS-Aktivität selbst bereits < oos_min_trades ⇒ Signal-Frequenz-Problem
-    (Bounds-Kalibrierung ist der richtige Hebel, TrendPullback/AdxAtr-Symptom)."""
+def test_signal_sparse_binding_cause_when_is_activity_too_low_but_nonzero():
+    """0 evaluable, IS-Aktivität > 0 aber < oos_min_trades ⇒ Issue #769: 'signal_sparse'
+    (PARAMETERABHÄNGIG, Bounds-Kalibrierung ist der richtige Hebel, TrendPullback/AdxAtr-Symptom).
+    Vor #769 hiess diese Kategorie 'signal_frequency' und war ununterscheidbar von 'signal_absent'
+    (median_is_trades==0 UND max==0, echte Datengeometrie, siehe test_issue_769_*)."""
     trials = [_trial(False, False, is_total_trades=3) for _ in range(16)]
     diag = diagnose_trade_frequency(trials, oos_min_trades=20)
-    assert diag["binding_cause"] == "signal_frequency"
+    assert diag["binding_cause"] == "signal_sparse"
     assert diag["n_evaluable"] == 0
 
 

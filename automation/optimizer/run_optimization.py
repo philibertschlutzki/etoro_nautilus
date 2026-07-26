@@ -195,6 +195,60 @@ def _modelled_trials(completed: list, n_startup_trials: int) -> list:
     return [t for idx, t in enumerate(completed) if _trial_number(idx, t) >= int(n_startup_trials)]
 
 
+_STOP_REASONS = frozenset({
+    "BUDGET_EXHAUSTED", "STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE",
+    "NO_GRADIENT_SIGNAL", "EXCEPTION",
+})
+
+
+def compute_budget_execution(trials: list, *, n_trials_budget: int | None,
+                             n_startup_trials: int | None,
+                             study_user_attrs: dict | None = None) -> dict:
+    """Issue #770 — der Budget-Ausfuehrungsgrad als ERSTKLASSIGE, EINMALIG berechnete Study-Kennzahl,
+    gemeinsam genutzt von ``_emit_study_summary`` (Live-Event) UND ``report._study_record``
+    (persistierter Report) — dieselbe Zahl an beiden Stellen statt zweier potenziell divergierender
+    Rekonstruktionen (dieselbe Lektion wie #670: eine Kennzahl, eine Quelle).
+
+    Root-Cause #770: weder das ``optimizer_study_completed``-Event noch der ``#742``-Report trugen
+    ein Feld, das "wie viel des konfigurierten Budgets wurde tatsaechlich ausgefuehrt" beantwortet —
+    die #768-Luecke (44,2 % statt 100 %) blieb nach dem #753-Merge deshalb unbemerkt (das Symptom
+    "Study wurde frueh gestoppt" sah nach beabsichtigtem Verhalten aus).
+
+    Rueckgabe: ``{n_trials_budgeted, n_trials_completed, budget_executed_fraction, stop_reason,
+    n_modelled_trials_completed}``. ``budget_executed_fraction`` ist ``None``, wenn kein Budget
+    bekannt ist (z. B. globaler Pfad/Legacy-Tests ohne ``n_trials_budget``-User-Attr) — kein
+    stiller Default, der eine Luecke verdeckt."""
+    attrs = study_user_attrs or {}
+    n_completed = len(trials)
+    n_modelled = len(_modelled_trials(trials, int(n_startup_trials) if n_startup_trials is not None else 0))
+    budgeted = None
+    if n_trials_budget is not None:
+        try:
+            budgeted = int(n_trials_budget)
+        except (TypeError, ValueError):
+            budgeted = None
+    fraction = (n_completed / budgeted) if budgeted else None
+    if attrs.get("floor_plateau_warned"):
+        stop_reason = "STRUCTURAL_ALL_UNEVALUABLE"
+    elif attrs.get("zero_eligible_plateau_warned"):
+        stop_reason = "STRUCTURAL_ZERO_ELIGIBLE"
+    elif budgeted is None or n_completed >= budgeted:
+        stop_reason = "BUDGET_EXHAUSTED"
+    else:
+        # Issue #770 — weder ein Plateau-Flag noch das volle Budget: der Sweep-Worker warf eine
+        # Exception (durch ``study.optimize(..., catch=(...))`` abgefangen), BEVOR das Budget
+        # ausgeschoepft war. Die einzige derzeit verdrahtete Alternativursache; NO_GRADIENT_SIGNAL
+        # bleibt ein deklarierter Zukunfts-Wert (kein Codepfad stoppt heute allein deswegen).
+        stop_reason = "EXCEPTION"
+    return {
+        "n_trials_budgeted": budgeted,
+        "n_trials_completed": n_completed,
+        "budget_executed_fraction": round(fraction, 4) if fraction is not None else None,
+        "stop_reason": stop_reason,
+        "n_modelled_trials_completed": n_modelled,
+    }
+
+
 def _trial_constraint_violation(t) -> float | None:
     """Issue #753/#754 — die im Objective gestempelte ``oos_constraint_violations``-Tupel (#612/#635,
     ``<= 0`` = feasible) EINES Trials auf einen Skalar (Summe der Komponenten) reduziert. ``None``,
@@ -295,8 +349,23 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
         # Fehlender/ungueltiger Key ⇒ Fallback max(32, 2·n_startup_trials) — NICHT 0 (der Legacy-Wert
         # IST der Bug, siehe #753 Root-Cause 1).
         plateau_min_modelled_trials = max(32, 2 * int(n_startup_trials))
+    # Issue #768 — die FLACHE Basis oben an die effektive Suchraum-Dimension koppeln (dieselbe
+    # Fehlerklasse wie #753 selbst, eine Ebene hoeher): ohne diese Kopplung faellt der vor dem
+    # Zero-Eligible-Urteil ausgefuehrte Budgetanteil monoton mit dim (64% bei dim=2, 32% bei dim=14).
+    plateau_min_modelled_trials = derive_plateau_min_modelled_trials(
+        strategy, plateau_min_modelled_trials, weights or {})
     min_for_structural = max(1, int(n_startup_trials)) + K
     min_for_zero_eligible = max(1, int(n_startup_trials)) + plateau_min_modelled_trials
+    # Issue #768 — Obergrenze gegen Budget-Ueberschreitung: der Guard darf nie NACH dem regulaeren
+    # Budget-Ende urteilen. ``n_trials_budget`` wird von ``optimize_symbol`` als Study-User-Attr
+    # gestempelt (VOR dem ersten Callback-Aufruf); fehlt es (z. B. globaler Pfad/Legacy-Tests), bleibt
+    # die Schwelle ungedeckelt (bit-identisch zu HEAD).
+    _n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
+    if _n_trials_budget is not None:
+        try:
+            min_for_zero_eligible = min(min_for_zero_eligible, int(_n_trials_budget))
+        except (TypeError, ValueError):
+            pass
     if len(completed) < min(min_for_structural, min_for_zero_eligible):
         return
     if study.user_attrs.get("floor_plateau_warned") or study.user_attrs.get("zero_eligible_plateau_warned"):
@@ -318,11 +387,17 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     # „kein Trial je evaluable" der korrekte Kollaps-Indikator (unabhaengig vom geshapeten Reward-Wert).
     evaluated_flags = [getattr(t, "user_attrs", {}).get("oos_evaluated") for t in completed]
     if any(f is not None for f in evaluated_flags):
-        # Issue #753 — der STRUCTURAL_ALL_UNEVALUABLE-Zweig ist eine Aussage ueber Datengeometrie/
-        # Trade-Frequenz, nicht ueber Signalqualitaet, und bleibt bewusst an der ALTEN, engeren
-        # Schwelle (n_startup_trials + K, bit-identisch zum Status quo).
+        # Issue #753/#769 — der STRUCTURAL_ALL_UNEVALUABLE-Zweig urteilt ab ``min_for_structural``
+        # (n_startup_trials + K) NUR, wenn die Nicht-Evaluierbarkeit PARAMETERUNABHAENGIG ist
+        # (binding_cause=='signal_absent', echte Datengeometrie/Indikator-Degeneration). Ist sie
+        # PARAMETERABHAENGIG ('signal_sparse'/'hold_duration' — die Strategie feuert, erreicht aber
+        # oos_min_trades nicht, eine Funktion tunebarer Frequenz-/Haltedauer-Parameter), gilt
+        # dieselbe hoehere Modellierungsschwelle wie im ZERO_ELIGIBLE-Zweig (min_for_zero_eligible,
+        # #768) — Root-Cause #769: die alte, unbedingte Kopplung an min_for_structural urteilte auf
+        # NULL TPE-modellierten Trials (n_startup_trials + K=0), obwohl AGENTS.md-Pitfall #219/#220
+        # genau das als behoben markiert. Die Diagnose muss daher VOR der Abbruch-Entscheidung
+        # stehen, nicht erst danach.
         if all(f is False for f in evaluated_flags) and len(completed) >= min_for_structural:
-            study.set_user_attr("floor_plateau_warned", True)
             # Issue #669 — Suchraum-Diagnose-Artefakt: trennt Signal-Frequenz von Haltedauer als
             # bindende Ursache des STRUCTURAL_ALL_UNEVALUABLE-Kollapses (statt nur "kein Trial je
             # evaluable" zu melden) — macht sichtbar, OB eine Bounds-Kalibrierung (spaces.py) hier
@@ -344,6 +419,14 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "hit_trade_cap": getattr(t, "user_attrs", {}).get("hit_trade_cap"),
             } for t in completed]
             diagnosis = diagnose_trade_frequency(_trial_dicts, oos_min_trades=_oos_min_trades)
+            # Issue #769 — 'signal_absent' (parameterunabhaengig) bleibt bei der engeren
+            # min_for_structural-Schwelle; jede andere Ursache erfordert min_for_zero_eligible.
+            required_for_structural = (
+                min_for_structural if diagnosis["binding_cause"] == "signal_absent"
+                else min_for_zero_eligible)
+            if len(completed) < required_for_structural:
+                return
+            study.set_user_attr("floor_plateau_warned", True)
             logger.warning(
                 "🚨 Floor-Plateau erkannt: kein evaluable Trial nach %d Trials — das Symbol erzeugt "
                 "nie evaluierbare OOS-Trades (Pitfall #75-Klasse). Bindende Ursache (#669): %s "
@@ -1093,6 +1176,31 @@ def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
     return max(int(base_n_trials), math.ceil(float(k) * dim))
 
 
+def derive_plateau_min_modelled_trials(strategy: str | None, base: int, opt_data: dict) -> int:
+    """Issue #768 — koppelt die ZERO_ELIGIBLE-Modellierungsschwelle (``plateau_min_modelled_trials``)
+    an die effektive Suchraum-Dimension, strukturgleich zu ``derive_n_trials``/``derive_n_startup_
+    trials``.
+
+    Root-Cause #768: ``n_trials`` (~20·dim) und ``n_startup_trials`` (~2-3·dim) skalieren beide mit
+    der Dimension, ``plateau_min_modelled_trials`` (#753) blieb eine FLACHE Konstante (48) — der vor
+    dem Zero-Eligible-Urteil ausgefuehrte Budgetanteil fiel dadurch monoton von 64% (dim=2) auf 32%
+    (dim=14), exakt invers zur Anforderung (ein hoeher-dimensionaler Raum braucht MEHR modellierte
+    Trials fuer ein belastbares "strukturell kein eligibler Lauf"-Urteil, nicht weniger).
+
+    Deklarativ ueber ``plateau_min_modelled_trials_per_dim`` (k): ``max(base, ceil(k·dim))``. Fehlt
+    der Key (oder <= 0) oder ist ``strategy`` unbekannt ⇒ ``base`` (Legacy, bit-identisch,
+    Zero-Hardcoding) — dieselbe Fallback-Konvention wie ``derive_n_trials``."""
+    k = opt_data.get("plateau_min_modelled_trials_per_dim") if opt_data else None
+    if not k or float(k) <= 0.0 or not strategy:
+        return int(base)
+    try:
+        from automation.optimizer import bounds
+        dim = len(bounds.extract_numeric_bounds(strategy))
+    except Exception:
+        return int(base)
+    return max(int(base), math.ceil(float(k) * dim))
+
+
 def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
                                 tau: float, *, constraint_improvement_rate: float | None = None,
                                 tau_c: float = 0.05) -> bool:
@@ -1459,11 +1567,31 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             if std_k < 0.01 * rew_std:
                 logging.getLogger("optimizer").warning("REWARD_TERM_INERT: %s", k)
 
+    # Issue #770 — Budget-Ausfuehrungsgrad, dieselbe Berechnung wie ``report._study_record``.
+    budget_execution = compute_budget_execution(
+        trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
+        n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs)
+    if (budget_execution["budget_executed_fraction"] is not None
+            and budget_execution["budget_executed_fraction"] < 0.5):
+        logging.getLogger("optimizer").warning(
+            "[#770] %s: budget_executed_fraction=%.2f (< 50%%) — stop_reason=%s. Ein grosser Teil "
+            "des konfigurierten Suchbudgets (%s/%s Trials) wurde nicht ausgefuehrt.",
+            symbol, budget_execution["budget_executed_fraction"], budget_execution["stop_reason"],
+            budget_execution["n_trials_completed"], budget_execution["n_trials_budgeted"],
+        )
+
     emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
         "study_name": getattr(study, "study_name", None),
         "symbol": symbol,
         "n_trials": len(trials),
         "evaluable_trials": evaluable,
+        # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl (siehe
+        # compute_budget_execution-Docstring).
+        "n_trials_budgeted": budget_execution["n_trials_budgeted"],
+        "n_trials_completed": budget_execution["n_trials_completed"],
+        "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+        "stop_reason": budget_execution["stop_reason"],
+        "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "best_value": best_value,
         "backtest_ms_total": sum(durs) if durs else 0,
         "backtest_ms_median": int(statistics.median(durs)) if durs else None,

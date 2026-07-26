@@ -394,7 +394,21 @@ def _metrics_dict(m) -> dict:
         "oos_evaluated": m.oos_evaluated,
         "oos_eligible": m.oos_eligible,
         "oos_total_trades": m.oos_total_trades,
+        # Issue #786 — dieselbe Struktur wie ``oos_gate_deltas`` der OOS-Trials (der Holdout-
+        # Backtest durchlaeuft denselben Aggregationspfad, ``parsing.TournamentMetrics`` parst sie
+        # bereits), hier auf dem HOLDOUT-Fenster statt der OOS-Folds.
+        "holdout_gate_deltas": dict(getattr(m, "oos_gate_deltas", None) or {}),
     }
+
+
+def _holdout_binding_gate(gate_deltas: dict | None) -> str | None:
+    """Issue #786 — das Gate mit dem NEGATIVSTEN normierten Delta (das am staerksten verfehlte) ueber
+    die tatsaechlich numerisch vorliegenden Eintraege von ``holdout_gate_deltas``. ``None`` bei
+    leerem/fehlendem Dict (kein Urteil moeglich)."""
+    numeric = {k: v for k, v in (gate_deltas or {}).items() if isinstance(v, (int, float))}
+    if not numeric:
+        return None
+    return min(numeric, key=lambda k: numeric[k])
 
 
 def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
@@ -624,29 +638,118 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Micro-Tuning-Anspruch) — aber eine reale, testbare Kante auf diesem Symbol. Root-Cause
         # (#565/#682): der Per-Symbol-Pfad verlangte bislang einen symbol-eligiblen Trial als
         # ZWINGENDE Voraussetzung, auch wenn der globale Vektor selbst längst eligible war.
+        #
+        # Issue #783 — DREI Haertungen gegen den #742-Befund (alle 37 promoteten Studies dieser
+        # Route hatten n_eligible=0 UND einen VORZEITIGEN #768-Plateau-Abbruch, ununterscheidbar
+        # von einer holdout-validierten Promotion im Report):
+        # (1) EIGENER Status ('PROMOTE_GLOBAL_DEFAULT', nicht 'READY_FOR_PR' — das Label bleibt
+        #     ausschliesslich fuer holdout-validierte Symbol-Kandidaten reserviert, AGENTS.md
+        #     Pitfall #234).
+        # (2) Budget-Vorbedingung: ein Plateau-Abbruch (#768/#769) darf keine Deployment-
+        #     Entscheidung ausloesen — die Route ist nur zulaessig, wenn budget_executed_fraction
+        #     ueber der deklarativen Schwelle liegt; sonst greift der reguläre
+        #     HOLDOUT_NO_ELIGIBLE_TRIALS-Pfad unveraendert.
+        # (3) Deflation: R_global durchlaeuft dieselbe DSR-Kette wie ein symbolgetunter Kandidat.
+        #     Ohne lokale eligible-Trial-Kohorte fuer DIESE Study faellt die Shrinkage-Gewichtung
+        #     vollstaendig auf die theoretische Lo-2002-Referenz zurueck (variance_n_trials=0 ⇒
+        #     λ=1) — dieselbe Funktion (sr0_multiple_testing_robust), dieselbe Formel wie der
+        #     reguläre Pfad, nur ohne empirische Kohortenvarianz. Multiplizitaet = familienweite
+        #     Zahl (der globale Vektor wurde ueber das GESAMTE Universum selektiert, mindestens so
+        #     gross wie eine Per-Symbol-Suche, nicht null).
+        budget_execution = None
+        try:
+            from automation.optimizer.run_optimization import compute_budget_execution as _cbe
+            _study_attrs = getattr(study, "user_attrs", None) or {}
+            budget_execution = _cbe(
+                list(getattr(study, "trials", None) or []),
+                n_trials_budget=_study_attrs.get("n_trials_budget"),
+                n_startup_trials=_study_attrs.get("n_startup_trials"),
+                study_user_attrs=_study_attrs,
+            )
+        except Exception:
+            budget_execution = None
+        min_budget_for_global_default = float(
+            (global_weights or {}).get("global_default_promotion_min_budget_execution", 0.9))
+        budget_sufficient = bool(
+            budget_execution and budget_execution.get("budget_executed_fraction") is not None
+            and budget_execution["budget_executed_fraction"] >= min_budget_for_global_default)
+
         global_default_promotable = bool(
-            _holdout_gate_passed(
+            budget_sufficient
+            and _holdout_gate_passed(
                 m_global, risk_dd_cap,
                 sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
             )
             and R_global is not None and R_global > 0.0
         )
+        g_sr0 = g_dsr = g_dsr_z = None
+        if global_default_promotable:
+            # Issue #783 (3) — Deflation auf R_global mit familienweiter Multiplizitaet, voll
+            # theoretischer Varianz-Referenz (keine lokale Kohorte fuer diese Study).
+            from automation.optimizer.deflation import (
+                sr0_multiple_testing_robust, bootstrap_psr_z, psr_from_z, psr_z, deflated_sharpe_ratio)
+            g_deflated_selection = bool(tournament_cfg.get("deflated_selection", False))
+            g_deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
+            g_deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
+            g_inference_method = None
+            g_n_family = int(deflation_n_family or 0)
+            g_sr_period = getattr(m_global, "oos_sortino_period", None)
+            g_n_periods = getattr(m_global, "oos_n_periods", None)
+            if g_deflated_selection and g_n_family > 0 and g_sr_period is not None and g_n_periods:
+                g_sr0, _, _, _ = sr0_multiple_testing_robust(
+                    0.0, g_n_family, min_cohort=g_deflation_min_cohort,
+                    n_periods=int(g_n_periods), variance_n_trials=0)
+                g_period_returns = getattr(m_global, "oos_period_returns", None) or ()
+                if len(g_period_returns) >= 5:
+                    g_dsr_z, _ = bootstrap_psr_z(
+                        g_period_returns, sr_star=g_sr0,
+                        n_boot=int(tournament_cfg.get("psr_bootstrap_resamples", 200)))
+                    g_dsr = psr_from_z(g_dsr_z)
+                    g_inference_method = "stationary_bootstrap"
+                else:
+                    g_ret_skew = getattr(m_global, "oos_ret_skew", 0.0)
+                    g_ret_kurtosis = getattr(m_global, "oos_ret_kurtosis", 3.0)
+                    g_dsr = deflated_sharpe_ratio(
+                        g_sr_period, int(g_n_periods), sr0=g_sr0,
+                        skew=g_ret_skew, kurtosis=g_ret_kurtosis)
+                    g_dsr_z = psr_z(g_sr_period, int(g_n_periods),
+                                   skew=g_ret_skew, kurtosis=g_ret_kurtosis, sr_star=g_sr0)
+                    g_inference_method = "sharpe_formula_fallback"
+                if g_dsr is not None and g_dsr < g_deflation_confidence:
+                    logging.getLogger("optimizer").warning(
+                        f"[#783] {symbol}/{strategy}: PROMOTE_GLOBAL_DEFAULT-Kandidat scheitert an "
+                        f"der Deflation (DSR={g_dsr:.4f} < {g_deflation_confidence}, "
+                        f"N_family={g_n_family}) ⇒ HOLDOUT_NO_ELIGIBLE_TRIALS bleibt bestehen."
+                    )
+                    global_default_promotable = False
+
         if global_default_promotable:
             emit_execution_event(logging.getLogger("optimizer"), "PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL", {
                 "symbol": symbol,
                 "strategy": strategy,
                 "R_global": R_global,
                 "n_trials": len(getattr(study, "trials", []) or []),
+                "budget_executed_fraction": budget_execution.get("budget_executed_fraction") if budget_execution else None,
             })
             logging.getLogger("optimizer").info(
-                f"[#682] {symbol}/{strategy}: kein symbol-eligibler Trial, aber der GLOBALE "
-                f"Default besteht das Symbol-Holdout-Gate selbst (R_global={R_global:.4f} > 0) ⇒ "
-                f"PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL (R_symbol := R_global, kein "
-                f"Micro-Tuning-Anspruch — EXPLIZITE Entscheidung statt stillem HOLDOUT_NO_ELIGIBLE)."
+                f"[#682/#783] {symbol}/{strategy}: kein symbol-eligibler Trial, aber der GLOBALE "
+                f"Default besteht das Symbol-Holdout-Gate selbst (R_global={R_global:.4f} > 0, "
+                f"budget_executed_fraction={budget_execution.get('budget_executed_fraction') if budget_execution else None}) "
+                f"⇒ PROMOTE_GLOBAL_DEFAULT (R_symbol := R_global, kein Micro-Tuning-Anspruch — "
+                f"EXPLIZITE Entscheidung, EIGENER Status statt READY_FOR_PR)."
             )
+            metrics_global_out = _metrics_dict(m_global)
+            metrics_global_out["holdout_binding_gate"] = _holdout_binding_gate(
+                metrics_global_out["holdout_gate_deltas"])
+            if g_sr0 is not None:
+                metrics_global_out["deflated_sr0"] = g_sr0
+                metrics_global_out["deflated_dsr"] = g_dsr
+                metrics_global_out["deflation_dsr_z"] = g_dsr_z
+                metrics_global_out["deflation_inference_method"] = g_inference_method
+                metrics_global_out["deflation_n_family"] = g_n_family
             return {
                 "promote": True,
-                "status": "READY_FOR_PR",
+                "status": "PROMOTE_GLOBAL_DEFAULT",
                 "is_rejection_detail_override": None,
                 "promotion_route": "global_default_on_symbol",
                 "symbol_params": dict(global_params),
@@ -655,7 +758,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 "promotion_margin": promotion_margin,
                 "holdout_passed": True,
                 "trial_dir": None,
-                "metrics_symbol": _metrics_dict(m_global),
+                "budget_executed_fraction": budget_execution.get("budget_executed_fraction") if budget_execution else None,
+                "metrics_symbol": metrics_global_out,
                 "metrics_global": _metrics_dict(m_global),
             }
 
@@ -1092,6 +1196,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "promote": promote,
         "status": status,
         "is_rejection_detail_override": is_rejection_detail_override,
+        # Issue #783 (Akzeptanzkriterium #3) — JEDER promotete Kandidat traegt eine nicht-leere
+        # promotion_route, nicht nur die #682-Default-Route: unterscheidbar von einem kuenftigen,
+        # noch unbenannten Promotions-Pfad, und macht das Feld selbst zu einem verlaesslichen
+        # Pflichtfeld statt eines nur gelegentlich gesetzten Sonderfalls.
+        "promotion_route": "per_symbol_holdout_validated" if promote else None,
         # Issue #615 — Params, R_symbol, holdout_passed und trial_dir stammen ALLE aus promoted_m_symbol.
         "symbol_params": promoted_symbol_params,
         "R_symbol": R_symbol,
@@ -1102,6 +1211,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "metrics_symbol": _metrics_dict(promoted_m_symbol),
         "metrics_global": _metrics_dict(m_global)
     }
+    # Issue #786 — das bindende Holdout-Gate (negativstes normiertes Delta) fuer JEDE Study mit
+    # einem erreichten Holdout-Lauf, nicht nur bei REJECT_HOLDOUT_GATE — macht die haeufigste
+    # Ablehnungsursache des gesamten Systems (74,5% der Studies mit eligiblen Trials) attribuierbar.
+    best_result["metrics_symbol"]["holdout_binding_gate"] = _holdout_binding_gate(
+        best_result["metrics_symbol"]["holdout_gate_deltas"])
 
     # Issue #668 — die explizite Any-Arm-Policy-Entscheidung im Winner-Eintrag, sobald sie eine
     # Wirkung hatte (Trials wurden gerettet oder wären ohne Policy gerettet worden) — sichtbar,

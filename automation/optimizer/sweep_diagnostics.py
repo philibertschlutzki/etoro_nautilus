@@ -14,9 +14,14 @@ import json
 import statistics
 from pathlib import Path
 
-# Issue #669 — die vier möglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible Trial).
+# Issue #669/#769 — die moeglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible
+# Trial). Issue #769 — 'signal_frequency' wurde in 'signal_absent' (parameterunabhaengig, echte
+# Datengeometrie) und 'signal_sparse' (parameterabhaengig, tunebar) AUFGESPALTEN: die alte Kategorie
+# warf beide Faelle zusammen (median_is_trades==0 UND median_is_trades==9 galten identisch als
+# 'signal_frequency'), obwohl sie entgegengesetzte Handlungsempfehlungen verlangen (AGENTS.md
+# Pitfall #229).
 _BINDING_CAUSES = frozenset(
-    {"signal_frequency", "hold_duration", "signal_quality", "none", "no_data"}
+    {"signal_absent", "signal_sparse", "hold_duration", "signal_quality", "none", "no_data"}
 )
 
 
@@ -26,14 +31,20 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     ``oos_total_trades``, ``is_total_trades``, ``hit_trade_cap`` — bereits als Trial-User-Attrs
     gestempelt, run_optimization.make_symbol_objective).
 
-    Trennt (Akzeptanzkriterium #669):
-      * ``'signal_frequency'`` — 0 evaluable UND die IS-Aktivität (``is_total_trades``, Median)
-        bleibt bereits UNTER ``oos_min_trades`` ⇒ der Suchraum erzeugt zu selten überhaupt ein
-        Signal (Bounds zu eng, z. B. Signal-Schwellen/Cooldown).
-      * ``'hold_duration'`` — 0 evaluable, IS-Aktivität AUSREICHEND, aber die Mehrheit der Trials
-        trifft die Haltedauer-/Trade-Cap-Grenze (``hit_trade_cap``) ⇒ Signale entstehen, überleben
-        aber nicht bis zur Realisierung im OOS-Fenster (Haltedauer-Obergrenze zu lang/kurz falsch
-        kalibriert).
+    Trennt (Akzeptanzkriterium #669/#769):
+      * ``'signal_absent'`` — 0 evaluable UND die IS-Aktivität ist über ALLE abgeschlossenen Trials
+        NULL (``median_is_trades == 0`` UND ``max(is_total_trades) == 0``) ⇒ PARAMETERUNABHÄNGIG:
+        die Strategie feuert im gesamten Suchraum nie (echte Datengeometrie-/Indikator-Degeneration).
+        Ein constrained TPE kann das nicht lösen — Bounds-Kalibrierung ist hier ein No-Op.
+      * ``'signal_sparse'`` — 0 evaluable UND ``0 < median_is_trades < oos_min_trades`` ODER
+        ``max(is_total_trades) > 0`` (die Strategie feuert bei MANCHEN Parameterkombinationen,
+        median bleibt aber unter der Schwelle) ⇒ PARAMETERABHÄNGIG/tunebar (Frequenz-Parameter wie
+        ``cooldown_bars``/Signal-Schwellen) — ein constrained TPE ist genau dafür da, diese Richtung
+        zu finden (Root-Cause #769: der alte Guard urteilte hier auf NULL modellierten Trials).
+      * ``'hold_duration'`` — 0 evaluable, IS-Aktivität AUSREICHEND (``median_is_trades >=
+        oos_min_trades``), aber die Mehrheit der Trials trifft die Haltedauer-/Trade-Cap-Grenze
+        (``hit_trade_cap``) ⇒ Signale entstehen, überleben aber nicht bis zur Realisierung im
+        OOS-Fenster (Haltedauer-Obergrenze zu lang/kurz falsch kalibriert) — ebenfalls tunebar.
       * ``'signal_quality'`` — ALLE Trials wurden evaluiert (echte OOS-Backtests, genug Trades),
         aber KEINER war je eligible ⇒ ein Suchraum-/Bounds-Problem ist NICHT die Ursache; die
         Strategie ist auf diesem Symbol/Tier strukturell nicht kanten-fähig (oder das Gate ist zu
@@ -41,12 +52,12 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
       * ``'none'`` — mindestens ein Trial war eligible (kein Kollaps).
 
     Rückgabe: ``{'n_trials', 'n_evaluable', 'n_eligible', 'median_oos_trades', 'median_is_trades',
-    'frac_hit_trade_cap', 'binding_cause'}``. Rein, deterministisch, kein I/O."""
+    'max_is_trades', 'frac_hit_trade_cap', 'binding_cause'}``. Rein, deterministisch, kein I/O."""
     n = len(trials)
     if n == 0:
         return {
             "n_trials": 0, "n_evaluable": 0, "n_eligible": 0,
-            "median_oos_trades": None, "median_is_trades": None,
+            "median_oos_trades": None, "median_is_trades": None, "max_is_trades": None,
             "frac_hit_trade_cap": None, "binding_cause": "no_data",
         }
 
@@ -59,15 +70,23 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     if n_evaluable == 0:
         is_trade_counts = [int(t.get("is_total_trades") or 0) for t in trials]
         median_is_trades = statistics.median(is_trade_counts) if is_trade_counts else 0
+        max_is_trades = max(is_trade_counts) if is_trade_counts else 0
         if median_is_trades < oos_min_trades:
-            binding_cause = "signal_frequency"
+            # Issue #769 — 'signal_absent' NUR, wenn die IS-Aktivität ÜBER JEDEN Trial null ist
+            # (echte Datengeometrie); jede Restaktivität (max > 0) ist ein Beleg, dass MANCHE
+            # Parameterkombinationen sehr wohl feuern ⇒ 'signal_sparse' (parameterabhängig).
+            if median_is_trades == 0 and max_is_trades == 0:
+                binding_cause = "signal_absent"
+            else:
+                binding_cause = "signal_sparse"
         elif frac_hit_cap > 0.5:
             binding_cause = "hold_duration"
         else:
-            binding_cause = "signal_frequency"
+            binding_cause = "signal_sparse"
         return {
             "n_trials": n, "n_evaluable": 0, "n_eligible": 0,
             "median_oos_trades": median_oos_trades, "median_is_trades": median_is_trades,
+            "max_is_trades": max_is_trades,
             "frac_hit_trade_cap": frac_hit_cap, "binding_cause": binding_cause,
         }
 
@@ -257,14 +276,18 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
     bei JEDEM Lauf neu enumeriert (Root-Cause #681).
 
-    Fallunterscheidung nach ``binding_cause`` (#669):
+    Fallunterscheidung nach ``binding_cause`` (#669/#769):
       * ``'signal_quality'`` (ALLE Trials evaluiert, 0 eligible) — Bounds-Kalibrierung hilft NICHT
         (kein Frequenz-, ein Qualitätsproblem) ⇒ ``'denylist'``.
-      * ``'signal_frequency'``/``'hold_duration'`` (0 evaluable) UND die Strategie ist für
-        Symbol-Bounds-Overrides verdrahtet (``WIRED_OVERRIDE_STRATEGIES``) UND es existiert noch
-        KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-Kalibrierung probieren,
-        BEVOR das Paar aufgegeben wird). Existiert bereits ein Override (Bounds-Kalibrierung wurde
-        schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf ``'denylist'``.
+      * ``'signal_absent'`` (0 evaluable, IS-Aktivität über JEDEN Trial null) — PARAMETERUNABHÄNGIG:
+        kein Override kann eine Strategie zum Feuern bringen, die im gesamten Suchraum nie feuert
+        ⇒ ``'denylist'`` (Bounds-Kalibrierung wäre hier ein No-Op, #769).
+      * ``'signal_sparse'``/``'hold_duration'`` (0 evaluable, PARAMETERABHÄNGIG) UND die Strategie
+        ist für Symbol-Bounds-Overrides verdrahtet (``WIRED_OVERRIDE_STRATEGIES``) UND es existiert
+        noch KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-Kalibrierung
+        probieren, BEVOR das Paar aufgegeben wird). Existiert bereits ein Override (Bounds-
+        Kalibrierung wurde schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf
+        ``'denylist'``.
       * Frequenzproblem bei einer NICHT verdrahteten Strategie ⇒ ``'denylist'`` (ein Override hätte
         ohnehin keine Wirkung, spaces.py._bounds_for ist fail-open no-op für sie).
       * ``'none'``/``'no_data'`` ⇒ ``'none'`` (kein Kollaps, nichts zu tun).
@@ -292,9 +315,12 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     cause = diagnosis.get("binding_cause")
     if cause in ("none", "no_data", None):
         action = "none"
-    elif cause == "signal_quality":
+    elif cause in ("signal_quality", "signal_absent"):
+        # Issue #769 — 'signal_absent' ist PARAMETERUNABHÄNGIG (echte Datengeometrie über den
+        # gesamten Suchraum) — ein Bounds-Override kann eine Strategie nicht zum Feuern bringen,
+        # die nirgends feuert, daher wie 'signal_quality' direkt 'denylist'.
         action = "denylist"
-    elif cause in ("signal_frequency", "hold_duration"):
+    elif cause in ("signal_sparse", "hold_duration"):
         if strategy in WIRED_OVERRIDE_STRATEGIES and not has_existing_override:
             action = "denylist" if previously_recommended_override else "search_space_override"
         else:

@@ -71,8 +71,13 @@ def test_report_exposes_inference_method_for_both_stages():
         "holdout": {"symbol": {"deflation_inference_method": "stationary_bootstrap"}},
     }
     record, _checks = _study_record(proposal, _S())
-    assert record["inference_method"]["eligibility"] == "stationary_bootstrap"
-    assert record["inference_method"]["promotion"] == "stationary_bootstrap"
+    # Issue #791 — inference_method ist jetzt {method, applied, skipped_reason} statt eines
+    # nackten Strings/None (Root-Cause #791: None war von "Methode fehlgeschlagen" nicht
+    # unterscheidbar und blockierte keine Promotion).
+    assert record["inference_method"]["eligibility"]["method"] == "stationary_bootstrap"
+    assert record["inference_method"]["eligibility"]["applied"] is True
+    assert record["inference_method"]["promotion"]["method"] == "stationary_bootstrap"
+    assert record["inference_method"]["promotion"]["applied"] is True
 
 
 def test_report_inference_method_none_when_no_evaluated_trials():
@@ -84,5 +89,8 @@ def test_report_inference_method_none_when_no_evaluated_trials():
         user_attrs = {}
 
     record, _checks = _study_record({"symbol": "X", "strategy": "Y"}, _S())
-    assert record["inference_method"]["eligibility"] is None
-    assert record["inference_method"]["promotion"] is None
+    assert record["inference_method"]["eligibility"]["method"] is None
+    assert record["inference_method"]["eligibility"]["applied"] is False
+    assert record["inference_method"]["eligibility"]["skipped_reason"] == "NO_EVALUATED_TRIALS"
+    assert record["inference_method"]["promotion"]["method"] is None
+    assert record["inference_method"]["promotion"]["applied"] is False

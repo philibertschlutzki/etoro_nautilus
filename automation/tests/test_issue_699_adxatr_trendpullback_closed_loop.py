@@ -40,7 +40,7 @@ def test_first_occurrence_recommends_override_not_denylist():
     assert "AdxAtrMomentumStrategy" in WIRED_OVERRIDE_STRATEGIES
     rec = recommend_diagnosis_action(
         "AdxAtrMomentumStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         has_existing_override=False, previously_recommended_override=False,
     )
     assert rec["action"] == "search_space_override"
@@ -52,7 +52,7 @@ def test_repeated_occurrence_without_override_escalates_to_denylist():
     Wiederholen derselben folgenlosen Empfehlung)."""
     rec = recommend_diagnosis_action(
         "AdxAtrMomentumStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         has_existing_override=False, previously_recommended_override=True,
     )
     assert rec["action"] == "denylist"
@@ -65,7 +65,7 @@ def test_escalation_does_not_apply_once_override_actually_exists():
     Gründen (keine Doppel-Zählung/Verwechslung)."""
     rec = recommend_diagnosis_action(
         "AdxAtrMomentumStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         has_existing_override=True, previously_recommended_override=False,
     )
     assert rec["action"] == "denylist"
@@ -76,12 +76,12 @@ def test_escalation_only_applies_to_wired_strategies():
     override ist dort ein No-Op (kein Zustand, der jemals 'search_space_override' war)."""
     rec_first = recommend_diagnosis_action(
         "SmaCrossoverStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         previously_recommended_override=False,
     )
     rec_second = recommend_diagnosis_action(
         "SmaCrossoverStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         previously_recommended_override=True,
     )
     assert rec_first["action"] == rec_second["action"] == "denylist"
@@ -150,11 +150,17 @@ def test_repeated_structural_collapse_escalates_to_denylist_across_two_runs(tmp_
     """Simuliert #699 wörtlich: Lauf 1 (STRUCTURAL_ALL_UNEVALUABLE, 0 evaluable, IS-Aktivität
     unter oos_min_trades) schreibt 'search_space_override' in den Auto-Cache. Lauf 2 (derselbe
     Kollaps, kein Override wurde eingetragen) MUSS jetzt 'denylist' schreiben — der frühere Bug
-    hätte hier erneut 'search_space_override' geschrieben (Endlosschleife)."""
+    hätte hier erneut 'search_space_override' geschrieben (Endlosschleife).
+
+    Issue #769 — die Kohorte hat konstant ``is_total_trades=3`` (> 0, < oos_min_trades=20) ⇒
+    ``binding_cause='signal_sparse'`` (parameterabhängig), die den Abbruch erst bei der #768-
+    Modellierungsschwelle (``min_for_zero_eligible`` = n_startup_trials(16) + plateau_min_modelled_
+    trials(32, da ``W`` keinen ``plateau_min_modelled_trials``-Key setzt) = 48) statt bei
+    ``n_startup_trials`` (16) zulässt — daher 48 statt der Pre-#769 20 Trials je Lauf."""
     monkeypatch.setattr("automation.optimizer.manifest.WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: tmp_path)
 
-    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)]
+    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)]
     study1 = _FakeStudy(trials)
     lg = _quiet_logger("test699_run1")
     ro.floor_plateau_callback(study1, trials[-1], weights=W, n_startup_trials=16, logger=lg,
@@ -166,7 +172,7 @@ def test_repeated_structural_collapse_escalates_to_denylist_across_two_runs(tmp_
     assert rec1["action"] == "search_space_override"
 
     # Lauf 2 — fabrikneue Study (frischer Sweep), IDENTISCHER Kollaps, KEIN Override eingetragen.
-    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)])
+    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)])
     lg2 = _quiet_logger("test699_run2")
     ro.floor_plateau_callback(study2, study2.trials[-1], weights=W, n_startup_trials=16, logger=lg2,
                               strategy="AdxAtrMomentumStrategy", symbol="TSLA.ETORO")
@@ -180,11 +186,14 @@ def test_adding_a_real_override_prevents_escalation(tmp_path, monkeypatch):
     """Wird zwischen Lauf 1 und Lauf 2 tatsächlich ein Override in search_space_overrides.json
     eingetragen, greift NICHT die #699-Eskalation (die Bounds-Kalibrierung wurde ja umgesetzt) —
     die reguläre #681-has_existing_override-Logik übernimmt (weiterhin 'denylist', aber aus dem
-    richtigen, unterscheidbaren Grund: der Override existiert UND wirkte nicht)."""
+    richtigen, unterscheidbaren Grund: der Override existiert UND wirkte nicht).
+
+    Issue #769 — 48 statt 20 Trials je Lauf (siehe Docstring des vorigen Tests: 'signal_sparse'
+    erfordert die #768-Modellierungsschwelle, nicht n_startup_trials)."""
     monkeypatch.setattr("automation.optimizer.manifest.WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: tmp_path)
 
-    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)]
+    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)]
     study1 = _FakeStudy(trials)
     ro.floor_plateau_callback(study1, trials[-1], weights=W, n_startup_trials=16,
                               logger=_quiet_logger("test699b_run1"),
@@ -195,7 +204,7 @@ def test_adding_a_real_override_prevents_escalation(tmp_path, monkeypatch):
         "overrides": {"TrendPullbackStrategy": {"TSLA.ETORO": {"ema_period": [50, 150]}}}
     }), "utf-8")
 
-    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)])
+    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)])
     ro.floor_plateau_callback(study2, study2.trials[-1], weights=W, n_startup_trials=16,
                               logger=_quiet_logger("test699b_run2"),
                               strategy="TrendPullbackStrategy", symbol="TSLA.ETORO")

@@ -1,7 +1,7 @@
 """Issue #681 — Die #669-Diagnose feuert, aber die Deaktivierungsliste ist nicht closed-loop.
 
 1. ``recommend_diagnosis_action`` schliesst die Diagnose (binding_cause) zu einer konkreten Aktion:
-   'signal_quality' ⇒ immer 'denylist'; 'signal_frequency'/'hold_duration' ⇒ 'search_space_override'
+   'signal_quality' ⇒ immer 'denylist'; 'signal_sparse'/'hold_duration' ⇒ 'search_space_override'
    NUR für verdrahtete Strategien OHNE existierenden Override, sonst 'denylist'.
 2. ``record_diagnosed_pair``/``load_diagnosed_pairs_cache`` — der automatisch gepflegte Cache
    (GETRENNT von der menschlich-kuratierten symbol_strategy_denylist.json).
@@ -35,33 +35,33 @@ def test_signal_quality_always_recommends_denylist():
     assert rec["binding_cause"] == "signal_quality"
 
 
-def test_signal_frequency_wired_strategy_without_override_recommends_bounds_override():
+def test_signal_sparse_wired_strategy_without_override_recommends_bounds_override():
     assert "TrendPullbackStrategy" in WIRED_OVERRIDE_STRATEGIES
     rec = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 3},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 3},
         has_existing_override=False,
     )
     assert rec["action"] == "search_space_override"
 
 
-def test_signal_frequency_wired_strategy_with_existing_override_escalates_to_denylist():
+def test_signal_sparse_wired_strategy_with_existing_override_escalates_to_denylist():
     """Bounds-Kalibrierung wurde bereits versucht (Override existiert) und das Paar ist TROTZDEM
     tot ⇒ Eskalation auf 'denylist' statt endloser Wiederholung derselben Empfehlung."""
     rec = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 3},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 3},
         has_existing_override=True,
     )
     assert rec["action"] == "denylist"
 
 
-def test_signal_frequency_non_wired_strategy_recommends_denylist_directly():
+def test_signal_sparse_non_wired_strategy_recommends_denylist_directly():
     """Ein Override haette fuer eine nicht verdrahtete Strategie ohnehin keine Wirkung
     (spaces._bounds_for ist fail-open No-Op) ⇒ direkt Denylist, kein nutzloser Override-Vorschlag."""
     rec = recommend_diagnosis_action(
         "ComboTrendVwapStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 1},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 1},
     )
     assert rec["action"] == "denylist"
 
@@ -93,11 +93,11 @@ def test_none_action_is_not_persisted(tmp_path):
 def test_cache_entry_is_idempotently_overwritten(tmp_path):
     rec1 = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0}, has_existing_override=False)
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0}, has_existing_override=False)
     record_diagnosed_pair(rec1, work_dir=tmp_path)
     rec2 = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0}, has_existing_override=True)
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0}, has_existing_override=True)
     record_diagnosed_pair(rec2, work_dir=tmp_path)
     cache = load_diagnosed_pairs_cache(tmp_path)
     assert len(cache) == 1
@@ -142,7 +142,7 @@ def test_enumerate_tunable_pairs_does_not_skip_search_space_override_recommendat
     monkeypatch.setattr(sweep, "age_diagnosed_pairs_cache", lambda: {
         ("TrendPullbackStrategy", "A.ETORO"): {
             "strategy": "TrendPullbackStrategy", "symbol": "A.ETORO",
-            "action": "search_space_override", "binding_cause": "signal_frequency",
+            "action": "search_space_override", "binding_cause": "signal_sparse",
         },
     })
     bars = {"A.ETORO": 10_000}

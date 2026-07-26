@@ -5,9 +5,16 @@ Symptom: VolatilityBreakoutPumpStrategy bestand auf TSLA das Symbol-Holdout-Gate
 globalen Default (Sortino 4.64, R_global=+1.71), aber die Per-Symbol-Study fand 0 eligible Trials
 ⇒ HOLDOUT_NO_ELIGIBLE_TRIALS — ein global-viabler Kandidat verschwand lautlos.
 
-Fix: besteht der globale Vektor das Symbol-Holdout-Gate SELBST und ist sein Reward positiv, wird er
-als Symbol-Kandidat promotet (R_symbol := R_global), mit einer EXPLIZITEN Entscheidung
-(PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL) statt eines stillen HOLDOUT_NO_ELIGIBLE_TRIALS.
+Fix (#682): besteht der globale Vektor das Symbol-Holdout-Gate SELBST und ist sein Reward positiv,
+wird er als Symbol-Kandidat promotet (R_symbol := R_global).
+
+Issue #783 — DREI Härtungen, nachdem der #742-Report zeigte, dass ALLE 37 promoteten Studies dieser
+Route aus einem vorzeitigen #768-Plateau-Abbruch stammten und im Report von einer echten,
+holdout-validierten Promotion nicht unterscheidbar waren:
+  1. EIGENER Status ``PROMOTE_GLOBAL_DEFAULT`` (nicht ``READY_FOR_PR``).
+  2. Budget-Vorbedingung: die Route ist nur zulässig, wenn ``budget_executed_fraction`` über der
+     deklarativen Schwelle (Default 0.9) liegt.
+  3. Deflation auf R_global mit familienweiter Multiplizität (theoretische Referenzvarianz).
 """
 import json
 
@@ -40,8 +47,21 @@ def _patch(tmp_path, monkeypatch, *, top_k=5):
     monkeypatch.setattr(cmod, "config_dir", lambda: tmp_path)
 
 
+def _patch_budget_execution(monkeypatch, *, fraction: float):
+    """Issue #783 — ``compute_budget_execution`` wird von ``confirm.py`` LAZY aus
+    ``run_optimization`` importiert; hier direkt auf der Quelle gepatcht (einfacher/robuster als
+    echte Optuna-Trials in die leere Test-Study einzufügen)."""
+    monkeypatch.setattr(
+        "automation.optimizer.run_optimization.compute_budget_execution",
+        lambda *a, **k: {"budget_executed_fraction": fraction, "n_trials_budgeted": 100,
+                         "n_trials_completed": int(fraction * 100), "stop_reason": "BUDGET_EXHAUSTED",
+                         "n_modelled_trials_completed": 0},
+    )
+
+
 def test_global_default_promoted_when_no_symbol_eligible_trials(tmp_path, monkeypatch):
     _patch(tmp_path, monkeypatch)
+    _patch_budget_execution(monkeypatch, fraction=1.0)
     events = []
     monkeypatch.setattr(cmod, "emit_execution_event",
                         lambda logger, name, payload: events.append((name, payload)))
@@ -62,7 +82,9 @@ def test_global_default_promoted_when_no_symbol_eligible_trials(tmp_path, monkey
                                             global_params)
 
     assert res["promote"] is True
-    assert res["status"] == "READY_FOR_PR"
+    # Issue #783 — EIGENER Status, NICHT READY_FOR_PR (das bleibt fuer holdout-validierte
+    # Symbol-Kandidaten reserviert).
+    assert res["status"] == "PROMOTE_GLOBAL_DEFAULT"
     assert res["is_rejection_detail_override"] is None
     assert res["promotion_route"] == "global_default_on_symbol"
     assert res["symbol_params"] == global_params
@@ -73,10 +95,32 @@ def test_global_default_promoted_when_no_symbol_eligible_trials(tmp_path, monkey
     assert not any(name == "HOLDOUT_NO_ELIGIBLE_TRIALS" for name, _ in events)
 
 
+def test_global_default_not_promoted_when_budget_execution_insufficient(tmp_path, monkeypatch):
+    """Akzeptanzkriterium #783/2: budget_executed_fraction=0.45 ⇒ keine #682-Promotion — ein
+    Plateau-Abbruch (#768/#769) darf keine Deployment-Entscheidung auslösen."""
+    _patch(tmp_path, monkeypatch)
+    _patch_budget_execution(monkeypatch, fraction=0.45)
+    events = []
+    monkeypatch.setattr(cmod, "emit_execution_event",
+                        lambda logger, name, payload: events.append((name, payload)))
+    monkeypatch.setattr(cmod, "_holdout_metrics_for_params",
+                        lambda strategy, symbol, params, **kw: _mk(sortino=4.64, ret=0.20, dd=0.05))
+    monkeypatch.setattr(cmod, "compute_reward", lambda m, **kw: 1.71)
+
+    study = _empty_study()
+    res = cmod.confirm_per_symbol_promotion(study, "VolatilityBreakoutPumpStrategy", "TSLA.ETORO", {})
+
+    assert res["promote"] is False
+    assert res["status"] == "REJECTED_ON_HOLDOUT"
+    assert res["is_rejection_detail_override"] == "HOLDOUT_NO_ELIGIBLE_TRIALS"
+    assert not any(name == "PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL" for name, _ in events)
+
+
 def test_global_default_not_promoted_when_holdout_gate_fails(tmp_path, monkeypatch):
     """Scheitert der globale Vektor SELBST am Symbol-Holdout-Gate (z. B. negativer Sortino), bleibt
     es beim regulären fail-loud HOLDOUT_NO_ELIGIBLE_TRIALS — keine unbegründete Promotion."""
     _patch(tmp_path, monkeypatch)
+    _patch_budget_execution(monkeypatch, fraction=1.0)
     events = []
     monkeypatch.setattr(cmod, "emit_execution_event",
                         lambda logger, name, payload: events.append((name, payload)))
@@ -100,6 +144,7 @@ def test_global_default_not_promoted_when_reward_non_positive(tmp_path, monkeypa
     """Der globale Vektor besteht das Punkt-Gate (Sortino > 0, DD im Rahmen), aber sein Reward ist
     NICHT positiv (z. B. eine grosse Divergenz-/DD-Strafe) ⇒ keine Promotion ohne echten Edge."""
     _patch(tmp_path, monkeypatch)
+    _patch_budget_execution(monkeypatch, fraction=1.0)
     monkeypatch.setattr(cmod, "_holdout_metrics_for_params",
                         lambda strategy, symbol, params, **kw: _mk(sortino=0.2, ret=0.01, dd=0.05))
     monkeypatch.setattr(cmod, "compute_reward", lambda m, **kw: -0.1)
@@ -112,6 +157,7 @@ def test_global_default_not_promoted_when_reward_non_positive(tmp_path, monkeypa
 
 def test_exported_proposal_carries_promotion_route(tmp_path, monkeypatch):
     _patch(tmp_path, monkeypatch)
+    _patch_budget_execution(monkeypatch, fraction=1.0)
     monkeypatch.setattr(cmod, "WORK", tmp_path)
     monkeypatch.setattr(cmod, "emit_execution_event", lambda *a, **k: None)
     monkeypatch.setattr(cmod, "_holdout_metrics_for_params",
@@ -125,6 +171,6 @@ def test_exported_proposal_carries_promotion_route(tmp_path, monkeypatch):
     from pathlib import Path
     p = cmod.export_symbol_proposal(study, "VolatilityBreakoutPumpStrategy", "TSLA.ETORO", res)
     written = json.loads(Path(p).read_text("utf-8"))
-    assert written["status"] == "READY_FOR_PR"
+    assert written["status"] == "PROMOTE_GLOBAL_DEFAULT"
     assert written["promotion_route"] == "global_default_on_symbol"
     assert written["proposed_instrument_override"] == global_params

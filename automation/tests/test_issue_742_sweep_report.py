@@ -95,9 +95,19 @@ def test_report_schema_and_atomic_write(wired_storage):
     assert rec["n_evaluable"] == 5
     assert rec["promotion_outcome"] == "REJECTED_ON_HOLDOUT"
 
+    # Issue #785 — decision_chain attribuiert die Ablehnung praezise auf die STUFE, die sie
+    # tatsaechlich verursacht hat (REJECT_HOLDOUT_DSR_DROP ⇒ 'deflation', nicht pauschal
+    # 'confirm_or_selection' fuer JEDE Holdout-Ablehnung wie vor #785); is_gate ist hier bestanden
+    # (n_eligible=3 > 0), erscheint also nicht mehr in der abgeleiteten rejection_chain-Sicht.
     stages = [c["stage"] for c in rec["rejection_chain"]]
-    assert stages == ["is_gate", "confirm_or_selection"]
-    assert rec["rejection_chain"][1]["detail"] == "REJECT_HOLDOUT_DSR_DROP"
+    assert stages == ["deflation"]
+    assert rec["rejection_chain"][0]["detail"] == "REJECT_HOLDOUT_DSR_DROP"
+
+    decision_stages = {c["stage"]: c["passed"] for c in rec["decision_chain"]}
+    assert decision_stages["is_gate"] is True
+    assert decision_stages["confirm_or_selection"] is True
+    assert decision_stages["holdout"] is True
+    assert decision_stages["deflation"] is False
 
     assert "cross_study" in data and "n_family" in data["cross_study"]
     assert isinstance(data["invariant_checks"], list) and data["invariant_checks"]
