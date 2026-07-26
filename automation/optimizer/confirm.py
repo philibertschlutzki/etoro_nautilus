@@ -510,6 +510,30 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
 
     status ∈ {'READY_FOR_PR', 'REJECTED_NO_EDGE_OVER_GLOBAL', 'REJECTED_ON_HOLDOUT'}.
     """
+    # Issue #773 — eine Study, deren #756-Renditeserien-Identitaet (run_optimization.check_
+    # study_coherence_violation_rate) fail-loud verletzt wurde, wird NICHT promotet — der
+    # Kohaerenz-Defekt kontaminiert den gesamten Deflations-/Bootstrap-/PBO-Pfad (#771), ein
+    # Confirm-Lauf darauf waere ein kontaminiertes Urteil.
+    if bool((getattr(study, "user_attrs", None) or {}).get("coherence_violation_rate_exceeded")):
+        import logging as _logging
+        emit_execution_event(_logging.getLogger("optimizer"), "STUDY_REJECTED_ON_COHERENCE_VIOLATION", {
+            "symbol": symbol, "strategy": strategy,
+        })
+        return {
+            "promote": False,
+            "status": "REJECTED_ON_HOLDOUT",
+            "is_rejection_detail_override": "REJECT_COHERENCE_VIOLATION",
+            "promotion_route": None,
+            "symbol_params": {},
+            "R_symbol": 0.0,
+            "R_global": None,
+            "promotion_margin": 0.0,
+            "holdout_passed": False,
+            "trial_dir": None,
+            "metrics_symbol": {},
+            "metrics_global": {},
+        }
+
     cfg_dir = config_dir()
     backtest_path = cfg_dir / "backtest.json"
     wf_cfg = {}
@@ -1293,6 +1317,9 @@ _CONFIRM_STAGE_REJECTIONS = frozenset({
     # Issue #763 — HOLD_BOUNDARY_UNRESOLVED ist ebenfalls eine Confirm-/Holdout-Pfad-Ursache (der
     # modale Per-Trial-IS-Grund erklärt nicht, warum die Promotion pausiert wurde).
     "HOLD_BOUNDARY_UNRESOLVED",
+    # Issue #773 — die Study wurde VOR jedem Holdout-Backtest wegen einer verletzten
+    # Renditeserien-Kohaerenz abgelehnt; der modale IS-Per-Trial-Grund erklaert diese Ursache nicht.
+    "REJECT_COHERENCE_VIOLATION",
 })
 
 

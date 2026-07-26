@@ -53,6 +53,8 @@ _DECISION_STAGE_NAMES = ("is_gate", "confirm_or_selection", "holdout", "deflatio
 _STAGE_FOR_REJECT_DETAIL = {
     "HOLDOUT_NO_ELIGIBLE_TRIALS": "confirm_or_selection",
     "REJECT_HOLDOUT_UNREACHABLE": "confirm_or_selection",
+    # Issue #773 — die Kohaerenz-Invariante wird VOR jedem Holdout-Backtest geprueft.
+    "REJECT_COHERENCE_VIOLATION": "confirm_or_selection",
     "REJECT_HOLDOUT_GATE": "holdout",
     "REJECT_NO_EDGE_OVER_GLOBAL": "holdout",
     "REJECT_HOLDOUT_DSR_DROP": "deflation",

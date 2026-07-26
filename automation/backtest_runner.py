@@ -958,6 +958,26 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     return True
 
 
+def _resolve_asset_class_for_symbol(inst_id_str: str) -> str:
+    """Issue #566/#775 — Asset-Class-Lookup über ``instrument_map.json`` (Symbol → ``asset_class``),
+    Single Source of Truth für JEDEN Aufrufer, der eine Asset-Class-Konstante für die
+    Spread-/Kostenauflösung braucht (Worker-Kostenauflösung UND der #775-Kosten-Fallback-Reader —
+    vorher zwei potenziell divergierende Kopien derselben Lookup-Schleife). ``'DEFAULT'`` bei
+    fehlendem Eintrag/fehlender Datei (fail-open, kein Crash für ein unbekanntes Symbol)."""
+    asset_class_key = "DEFAULT"
+    try:
+        instrument_map_path = str(config_dir() / "instrument_map.json")
+        with open(instrument_map_path, "r", encoding="utf-8") as f:
+            inst_map = json.load(f).get("instruments", {})
+        for _, inst_data in inst_map.items():
+            if inst_data.get("symbol") == inst_id_str:
+                asset_class_key = inst_data.get("asset_class", "DEFAULT").upper()
+                break
+    except Exception:
+        pass
+    return asset_class_key
+
+
 def resolve_spread_bps(inst_id_str: str,
                        spread_bps_by_asset_class: dict | None,
                        spread_bps_by_symbol: dict | None,
@@ -1697,27 +1717,37 @@ def _read_psr_bootstrap_resamples() -> int:
         val = 200
     _psr_bootstrap_resamples_cache = val
     return val
-_default_round_trip_cost_bps_cache: float | None = None
+_default_round_trip_cost_bps_cache: dict[str, float] = {}
 
 
-def _read_default_round_trip_cost_bps() -> float:
-    """Issue #684 — Config-abgeleiteter DEFAULT-Round-Trip-Kostenwert (bps), Single Source of
+def _read_default_round_trip_cost_bps(inst_id_str: str | None = None) -> float:
+    """Issue #684/#775 — Config-abgeleiteter DEFAULT-Round-Trip-Kostenwert (bps), Single Source of
     Truth mit dem realen Kostenmodell (``backtest.json``: ``commission_bps`` +
-    ``spread_bps_by_asset_class['DEFAULT']`` — identische Formel wie ``c_rt = spread_bps +
-    commission_bps`` an der Stelle, die ``round_trip_cost_bps`` überhaupt erst stempelt).
+    ``resolve_spread_bps`` — identische Auflösungskette wie an der Stelle, die
+    ``round_trip_cost_bps`` überhaupt erst stempelt).
 
     Root-Cause (#684): das kostenrelative Expectancy-Gate (``oos_min_expectancy_k_alpha``) fällt bei
     FEHLENDER Kosten-Telemetrie (``oos_metrics['round_trip_cost_bps'] is None``) auf das STATISCHE
     ``oos_min_expectancy`` (0.001) zurück — eine ZWEITE, unabhängig gepflegte Schwelle, die zufällig
     ~13× strenger ist als der kostenrelative Regelpfad (``k_alpha·c_rt`` ≈ 7.5e-5 bei c_rt=3bps).
     Dieser Reader liefert stattdessen einen aus DEMSELBEN Kostenmodell abgeleiteten Schätzwert, damit
-    der Fallback dieselbe Grössenordnung wie der Regelpfad trägt (≤ 2× konsistent), statt einer
-    unabhängig geratenen Konstante. Gecached (Hot-Path). Fehlt ``backtest.json``/der Schlüssel ⇒
-    5.0 (= DEFAULT-Asset-Class-Spread 4.0 + commission_bps-Fallback 1.0, der dokumentierte
-    Cross-Asset-Referenzwert aus backtest.json._schema)."""
-    global _default_round_trip_cost_bps_cache
-    if _default_round_trip_cost_bps_cache is not None:
-        return _default_round_trip_cost_bps_cache
+    der Fallback dieselbe Grössenordnung wie der Regelpfad trägt, statt einer unabhängig geratenen
+    Konstante.
+
+    Root-Cause (#775): dieser Reader nutzte BISLANG unconditional den ``DEFAULT``-Asset-Class-Spread
+    (4.0 bps), obwohl die Symbol→Asset-Class-Auflösungskette (``resolve_spread_bps``/
+    ``_resolve_asset_class_for_symbol``, #566) bereits existiert. Für Krypto (16 bps real) war der
+    Fallback damit 3,2× zu locker, für FOREX (2,5 bps) 2× zu streng. Ist ``inst_id_str`` gesetzt,
+    wird derselbe Auflösungspfad wie im Worker konsultiert (Symbol-Override → Asset-Class →
+    DEFAULT); fehlt es (Legacy-Aufrufer ohne bekanntes Symbol), bleibt das DEFAULT-Asset-Class-
+    Verhalten bit-identisch zu Pre-#775.
+
+    Gecached PRO SYMBOL (Hot-Path — kein zusätzliches File-I/O je Trial nach dem ersten Treffer).
+    Fehlt ``backtest.json``/der Schlüssel ⇒ 5.0 (= DEFAULT-Asset-Class-Spread 4.0 + commission_bps-
+    Fallback 1.0, der dokumentierte Cross-Asset-Referenzwert aus backtest.json._schema)."""
+    cache_key = inst_id_str or "__default__"
+    if cache_key in _default_round_trip_cost_bps_cache:
+        return _default_round_trip_cost_bps_cache[cache_key]
     val = 5.0
     try:
         cfg_path = config_dir() / "backtest.json"
@@ -1725,12 +1755,21 @@ def _read_default_round_trip_cost_bps() -> float:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             commission_bps = float(data.get("commission_bps", 1.0))
-            spread_default = float(
-                (data.get("spread_bps_by_asset_class") or {}).get("DEFAULT", 4.0))
-            val = commission_bps + spread_default
+            spread_by_asset_class = data.get("spread_bps_by_asset_class") or {}
+            spread_by_symbol = data.get("spread_bps_by_symbol") or {}
+            if inst_id_str:
+                asset_class_key = "DEFAULT"
+                has_symbol_override = bool(inst_id_str in spread_by_symbol)
+                if spread_by_asset_class and not has_symbol_override:
+                    asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
+                spread_resolved = resolve_spread_bps(
+                    inst_id_str, spread_by_asset_class, spread_by_symbol, asset_class_key)
+            else:
+                spread_resolved = float(spread_by_asset_class.get("DEFAULT", 4.0))
+            val = commission_bps + spread_resolved
     except (OSError, ValueError, TypeError):
         val = 5.0
-    _default_round_trip_cost_bps_cache = val
+    _default_round_trip_cost_bps_cache[cache_key] = val
     return val
 
 def _read_sortino_mar() -> float:
@@ -3819,19 +3858,7 @@ def run_single_backtest_worker(
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
             if spread_bps_by_asset_class and not has_symbol_override:
-                import json
-                instrument_map_path = str(config_dir() / "instrument_map.json")
-                try:
-                    with open(instrument_map_path, "r", encoding="utf-8") as f:
-                        inst_map = json.load(f).get("instruments", {})
-
-                    # find the asset class by matching the symbol
-                    for _, inst_data in inst_map.items():
-                        if inst_data.get("symbol") == inst_id_str:
-                            asset_class_key = inst_data.get("asset_class", "DEFAULT").upper()
-                            break
-                except Exception as e:
-                    pass
+                asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
 
             spread_bps = resolve_spread_bps(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)

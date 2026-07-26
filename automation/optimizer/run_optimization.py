@@ -637,6 +637,62 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             _stop_study_safely(study, logger)
 
 
+def check_study_coherence_violation_rate(study, opt_data: dict, *,
+                                         logger: logging.Logger | None = None) -> bool:
+    """Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,
+    wenn der Anteil ``oos_coherence_violation``-markierter Trials (#589/#620/#756/#771) ueber
+    ``optimizer.json.max_coherence_violation_rate`` liegt.
+
+    Root-Cause #773: ``invariants.check_log_return_coherence`` (#743) war bis dahin ein reiner
+    REPORT-Nachtrag — er entsteht erst NACH Abschluss des gesamten Sweeps und wird nicht
+    ausgewertet. Ein Lauf konnte Stunden mit hunderten Verletzungen der #756-Identitaet
+    durchlaufen, ohne dass irgendetwas anschlug (dieselbe Fehlerklasse hat zwei Kataloge
+    ueberlebt: #589/#620 → #756 → #771). Diese Pruefung macht die Invariante SELBST fail-loud,
+    nicht nur ihre nachtraegliche Meldung.
+
+    Setzt bei Ueberschreitung ``study.user_attrs['coherence_violation_rate_exceeded'] = True``
+    (von ``export_symbol_proposal``/``confirm.py`` als Promotions-Sperre zu konsultieren) und
+    emittiert ``INVARIANT_CHECK_FAILED`` + ``STUDY_ABORTED_ON_INVARIANT``. Aendert NIE einen
+    Reward-Wert (Observability-Invariante wie bei ``floor_plateau_callback``). Rueckgabe: ``True``,
+    wenn die Schwelle ueberschritten wurde."""
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+    max_rate = opt_data.get("max_coherence_violation_rate")
+    if max_rate is None:
+        return False
+    trials = [t for t in getattr(study, "trials", None) or []
+             if getattr(t, "user_attrs", {}).get("oos_evaluated") is True]
+    n_evaluated = len(trials)
+    if n_evaluated == 0:
+        return False
+    violations = sum(1 for t in trials if t.user_attrs.get("oos_coherence_violation") is True)
+    rate = violations / n_evaluated
+    if rate <= float(max_rate):
+        return False
+    emit_execution_event(logger, "INVARIANT_CHECK_FAILED", {
+        "scope": getattr(study, "study_name", None), "check": "check_log_return_coherence",
+        "expected": f"<= {max_rate}", "actual": rate,
+        "detail": f"{violations}/{n_evaluated} Trials mit oos_coherence_violation "
+                 f"(#756-Identitaet verletzt) > max_coherence_violation_rate={max_rate}.",
+    }, level=logging.ERROR)
+    logger.error(
+        "[#773] %s: coherence_violation_rate=%.4f (%d/%d) > max_coherence_violation_rate=%s ⇒ "
+        "STUDY_ABORTED_ON_INVARIANT — Study wird nicht promotet.",
+        getattr(study, "study_name", None), rate, violations, n_evaluated, max_rate,
+    )
+    logger.info("[JSON_EVENT] " + json.dumps({
+        "event_type": "STUDY_ABORTED_ON_INVARIANT",
+        "check": "check_log_return_coherence",
+        "coherence_violation_rate": rate, "n_evaluated": n_evaluated,
+        "n_violations": violations, "threshold": float(max_rate),
+    }))
+    try:
+        study.set_user_attr("coherence_violation_rate_exceeded", True)
+    except Exception:
+        pass
+    return True
+
+
 def _check_reward_semantics_version(study, opt_data: dict,
                                     logger: logging.Logger | None = None) -> None:
     """Issue #410 (P3) — Reward-Semantik-Versionierung & Study-Hygiene.
@@ -2069,6 +2125,8 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
         _emit_study_summary(study, symbol, study_t0, strategy=strategy,
                            n_startup_trials=n_startup_trials)
+        # Issue #773 — Kohaerenz-Invariante fail-loud statt eines reinen Report-Nachtrags.
+        check_study_coherence_violation_rate(study, opt_data)
     finally:
         # Issue #747 — Engine NACH Phase-1-Nutzung disposen (auch bei einer hier propagierenden
         # Exception): deckelt die Spitzenlast gleichzeitig offener SQLAlchemy-Engines im Per-Symbol-

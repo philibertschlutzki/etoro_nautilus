@@ -115,6 +115,12 @@ class TournamentMetrics:
     # grün). Reine Telemetrie in dieser Stufe — der Reward-Term folgt in #711.
     oos_median_bars_held: float | None = None
     oos_p95_bars_held: float | None = None
+    # Issue #562/#774 — Round-Trip-Kosten (bps, spread + commission) derselben Single Source of
+    # Truth, die bereits das kostenrelative Expectancy-Gate speist (backtest_runner.
+    # _evaluate_oos_eligibility). #774 konsumiert denselben Wert für die Turnover-Reward-Strafe
+    # (asset-class-aufgelöst statt einer TSLA-kalibrierten globalen Konstante). None, wenn Spread/
+    # Kommission nicht auflösbar waren (rückwärtskompatibel).
+    round_trip_cost_bps: float | None = None
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -197,6 +203,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
     oos_median_bars_held = oos_metrics.get("median_bars_held")
     oos_p95_bars_held = oos_metrics.get("p95_bars_held")
+
+    # Issue #774 — dieselbe Round-Trip-Kosten-Telemetrie, die bereits das Expectancy-Gate speist
+    # (backtest_runner._evaluate_oos_eligibility, #562/#684). None-safe.
+    round_trip_cost_bps = oos_metrics.get("round_trip_cost_bps")
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -311,6 +321,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
         oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,
         oos_p95_bars_held=float(oos_p95_bars_held) if oos_p95_bars_held is not None else None,
+        # Issue #774 — Round-Trip-Kosten (bps), None-safe.
+        round_trip_cost_bps=float(round_trip_cost_bps) if round_trip_cost_bps is not None else None,
     )
 
     # Pre-Return Invarianten-Check

@@ -1161,7 +1161,21 @@ def compute_reward(
     # The penalty increases linearly with the number of OOS trades.
     # Issue #631 — mit penalty_scale_vs_base gegen die realisierte Base-Streuung rekalibriert
     # (siehe _penalty_scale_vs_base). Fehlt der Key ⇒ Faktor 1.0 (Legacy, bit-identisch).
-    turnover_penalty = m.oos_total_trades * penalty_turnover_weight * _penalty_scale_vs_base(weights)
+    #
+    # Issue #774 — Root-Cause: ``penalty_turnover_weight`` (0.0003 = 3 bps) ist EXPLIZIT aus TSLA
+    # (spread 2 bps + commission 1 bps) hergeleitet. Das Universum enthält 8 Krypto-Symbole mit
+    # 16 bps Round-Trip-Kosten (spread_bps_by_asset_class.CRYPTO=15) — die angesetzte Strafe war dort
+    # 5,3× zu klein, der Optimizer unterschätzte die Kosten hochfrequenter Konfigurationen GENAU dort,
+    # wo sie am höchsten sind. Fix: ``round_trip_cost_bps`` (#562, bereits pro Trial gestempelt,
+    # dieselbe Quelle wie das kostenrelative Expectancy-Gate) treibt die Strafe, sobald verfügbar —
+    # ``penalty_turnover_weight`` wird zum FALLBACK für fehlende Kosten-Telemetrie (Zero-Hardcoding,
+    # bit-identischer Legacy-Pfad, kein Verhaltensbruch für Trials ohne die Telemetrie).
+    c_rt_bps = getattr(m, "round_trip_cost_bps", None)
+    if c_rt_bps is not None:
+        turnover_penalty = (m.oos_total_trades * (float(c_rt_bps) / 10_000.0)
+                           * _penalty_scale_vs_base(weights))
+    else:
+        turnover_penalty = m.oos_total_trades * penalty_turnover_weight * _penalty_scale_vs_base(weights)
 
     # Issue #589/#590 — Fold-Dispersions-Strafe auf den per-Fold-RETURNS (die gut konditionierte
     # Größe; nach #589 NICHT mehr auf den Fold-Sortinos). #590 — normiert über ``oos_folds_total``,

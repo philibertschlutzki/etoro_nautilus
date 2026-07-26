@@ -956,6 +956,11 @@ def main(argv: list[str] | None = None) -> list[Path]:
                      "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source},
         )
         print(f"📄 Report: {report_path}")
+        # Issue #773 — der Report war bislang rein informativ; der CLI-Entrypoint (__main__ unten)
+        # liest diesen Pfad, um bei mindestens einem FAIL-Invarianten-Check einen Non-Zero-Exit-Code
+        # zurueckzugeben, statt eines rein informativen Artefakts.
+        global _LAST_REPORT_PATH
+        _LAST_REPORT_PATH = report_path
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
@@ -963,5 +968,27 @@ def main(argv: list[str] | None = None) -> list[Path]:
     return proposals
 
 
+# Issue #773 — siehe Kommentar in main() oben.
+_LAST_REPORT_PATH: "Path | None" = None
+
+
+def _report_has_failing_invariant(report_path) -> bool:
+    """Issue #773 — liest das generierte #742-Report-Artefakt und meldet, ob mindestens ein
+    Invarianten-Check FAILED ist. Fail-open (``False``) bei jedem Lese-/Parse-Fehler — ein
+    defektes Report-Artefakt soll den Exit-Code nicht zusaetzlich verschlechtern."""
+    try:
+        data = json.loads(Path(report_path).read_text("utf-8"))
+        return any(not c.get("passed", True) for c in data.get("invariant_checks", []))
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
     main()
+    if _LAST_REPORT_PATH is not None and _report_has_failing_invariant(_LAST_REPORT_PATH):
+        import sys as _sys
+        logging.getLogger("optimizer").error(
+            "[#773] Mindestens ein Invarianten-Check ist FAILED (%s) — Exit-Code 1.",
+            _LAST_REPORT_PATH,
+        )
+        _sys.exit(1)
