@@ -175,8 +175,47 @@ def test_config_key_registry_pass_against_real_tournament_config():
 
 # ─── check_rejection_chain_completeness (#654/#671-Regressionswächter) ────────────────────────
 
-def test_rejection_chain_pass_ready_for_pr():
+def test_rejection_chain_pass_ready_for_pr_with_complete_decision_chain():
+    chain = [
+        {"stage": "is_gate", "passed": True, "detail": None},
+        {"stage": "confirm_or_selection", "passed": True, "detail": None},
+        {"stage": "holdout", "passed": True, "detail": None},
+    ]
+    result = inv.check_rejection_chain_completeness(
+        {"status": "READY_FOR_PR", "holdout_reject_detail": None}, decision_chain=chain)
+    assert result.passed is True
+
+
+def test_rejection_chain_fails_ready_for_pr_with_missing_stage():
+    """Issue #785 — Root-Cause-Regressionstest: status==READY_FOR_PR liess den Check VORHER
+    unbedingt durchgehen; genau hier fehlte allen 37 #682-Records die confirm_or_selection-Stufe."""
+    chain = [
+        {"stage": "is_gate", "passed": True, "detail": None},
+        {"stage": "holdout", "passed": True, "detail": None},
+    ]  # confirm_or_selection fehlt
+    result = inv.check_rejection_chain_completeness(
+        {"status": "READY_FOR_PR", "holdout_reject_detail": None}, decision_chain=chain)
+    assert result.passed is False
+    assert "confirm_or_selection" in result.actual["missing_stages"]
+
+
+def test_rejection_chain_fails_ready_for_pr_with_no_decision_chain_at_all():
+    """Fehlt decision_chain komplett (Legacy-Aufrufer ohne Report-Kontext) ⇒ FAIL, kein stiller
+    Freifahrtschein fuer promote=True."""
     result = inv.check_rejection_chain_completeness({"status": "READY_FOR_PR", "holdout_reject_detail": None})
+    assert result.passed is False
+
+
+def test_rejection_chain_pass_promote_global_default_with_complete_chain():
+    """Issue #783/#785 — die #682-Default-Route traegt jetzt die Stufen is_gate,
+    confirm_or_selection(passed=True, detail='GLOBAL_DEFAULT'), holdout(passed=True)."""
+    chain = [
+        {"stage": "is_gate", "passed": True, "detail": None},
+        {"stage": "confirm_or_selection", "passed": True, "detail": "GLOBAL_DEFAULT"},
+        {"stage": "holdout", "passed": True, "detail": None},
+    ]
+    result = inv.check_rejection_chain_completeness(
+        {"status": "PROMOTE_GLOBAL_DEFAULT", "holdout_reject_detail": None}, decision_chain=chain)
     assert result.passed is True
 
 

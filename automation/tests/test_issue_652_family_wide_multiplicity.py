@@ -182,25 +182,28 @@ def test_family_n_never_shrinks_below_per_study_n(tmp_path, monkeypatch):
 
 
 def test_family_n_from_studies_sums_across_strategies_of_same_symbol():
-    """`sweep._family_n_from_studies` summiert die eligiblen Trials über ALLE Strategien-Studies
-    DESSELBEN Symbols — die Grundlage für `deflation_n_family` (Phase-1-Ergebnis, vor jeder
-    Promotion bekannt)."""
+    """`sweep._family_n_from_studies` summiert die evaluierten Trials (#784 — VERSUCHE, nicht
+    ÜBERLEBENDE) über ALLE Strategien-Studies DESSELBEN Symbols — die Grundlage für
+    `deflation_n_family` (Phase-1-Ergebnis, vor jeder Promotion bekannt)."""
     class _T:
-        def __init__(self, eligible):
-            self.user_attrs = {"oos_eligible": eligible}
+        def __init__(self, evaluated):
+            self.user_attrs = {"oos_evaluated": evaluated}
 
     class _Study:
         def __init__(self, trials):
             self.trials = trials
+            self.user_attrs = {}
 
     pairs = [
         ("StratA", "TSLA.ETORO", "OK"), ("StratB", "TSLA.ETORO", "OK"),
         ("StratA", "AAPL.ETORO", "OK"),
     ]
     studies = [
-        _Study([_T(True), _T(True), _T(False)]),   # 2 eligible
-        _Study([_T(True)] * 5),                     # 5 eligible
-        _Study([_T(True)] * 3),                     # 3 eligible (anderes Symbol)
+        _Study([_T(True), _T(True), _T(False)]),   # 2 evaluiert
+        _Study([_T(True)] * 5),                     # 5 evaluiert
+        _Study([_T(True)] * 3),                     # 3 evaluiert (anderes Symbol)
     ]
-    family_n = sweep._family_n_from_studies(pairs, studies)
+    # 'attempted'-Modus (kein Budget-Floor) reproduziert die reine Summe der evaluierten Trials.
+    family_n = sweep._family_n_from_studies(
+        pairs, studies, tournament_cfg={"deflation_family_floor_mode": "attempted"})
     assert family_n == {"TSLA.ETORO": 7, "AAPL.ETORO": 3}

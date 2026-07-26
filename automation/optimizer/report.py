@@ -34,13 +34,35 @@ import optuna
 
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
+from automation.optimizer import reward as _reward
 from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic
 from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, study_shows_gradient_signal, _modelled_trials,
-    _constraint_violation_progress,
+    _constraint_violation_progress, compute_budget_execution,
 )
 from automation.optimizer.sweep import _family_n_from_proposals
 from automation.optimizer.trial_config import config_dir
+
+# Issue #785 — die bindend/erwartete Struktur einer Entscheidungs-Stufe. Siehe ``_decision_chain``.
+_DECISION_STAGE_NAMES = ("is_gate", "confirm_or_selection", "holdout", "deflation", "pbo", "boundary")
+
+# Issue #785 — welche Confirm-/Holdout-Ablehnungsursache welche Stufe der Entscheidungskette
+# blockiert. ``REJECT_NO_EDGE_OVER_GLOBAL`` faellt konzeptionell unter "holdout" (die R-Edge-
+# Bedingung wird unmittelbar nach dem Punkt-Gate auf demselben promoteten Holdout-Lauf geprueft);
+# ``REJECT_HOLDOUT_BOOTSTRAP_CI`` unter "deflation" (dieselbe statistische Inferenz-Familie wie DSR).
+_STAGE_FOR_REJECT_DETAIL = {
+    "HOLDOUT_NO_ELIGIBLE_TRIALS": "confirm_or_selection",
+    "REJECT_HOLDOUT_UNREACHABLE": "confirm_or_selection",
+    # Issue #773 — die Kohaerenz-Invariante wird VOR jedem Holdout-Backtest geprueft.
+    "REJECT_COHERENCE_VIOLATION": "confirm_or_selection",
+    "REJECT_HOLDOUT_GATE": "holdout",
+    "REJECT_NO_EDGE_OVER_GLOBAL": "holdout",
+    "REJECT_HOLDOUT_DSR_DROP": "deflation",
+    "REJECT_HOLDOUT_BOOTSTRAP_CI": "deflation",
+    "REJECT_SELECTION_PBO": "pbo",
+    "REJECT_BOUNDARY_SOLUTION": "boundary",
+    "HOLD_BOUNDARY_UNRESOLVED": "boundary",
+}
 
 REPORT_SCHEMA_VERSION = 1
 REPORTS_DIR = WORK / "reports"
@@ -99,21 +121,104 @@ def _load_study_for_proposal(proposal: dict):
         return None
 
 
-def _rejection_chain(proposal: dict) -> list[dict[str, Any]]:
-    """Baut die Ablehnungs-Kette aus den bereits (#654/#671) korrekt attribuierten Proposal-
-    Feldern: der modale IS-Study-Grund (Sekundärdiagnose) gefolgt von der TATSÄCHLICHEN Confirm-/
-    Holdout-/Selektions-Ursache (die Promotion-blockierende Grösse)."""
-    chain: list[dict[str, Any]] = []
-    dominant_is = proposal.get("dominant_is_rejection_detail")
-    if dominant_is:
-        chain.append({"stage": "is_gate", "detail": dominant_is})
+def _decision_chain(proposal: dict, *, n_eligible: int) -> list[dict[str, Any]]:
+    """Issue #785 — die VOLLSTAENDIGE Nachweiskette mit POSITIVEN Stufen (``passed=True``), nicht
+    nur Ablehnungsgruende (die alte ``rejection_chain``, die als abgeleitete Sicht unten erhalten
+    bleibt). Root-Cause #785: ``check_rejection_chain_completeness`` war fuer ``status ==
+    'READY_FOR_PR'`` PER KONSTRUKTION ``True`` — genau dort fehlte allen 37 `#682`-Records (heute
+    ``PROMOTE_GLOBAL_DEFAULT``, #783) eine ganze Stufe (``confirm_or_selection``), unbemerkt in
+    1736/1736 gruenen Studies.
+
+    Jede Stufe ist ``{stage, passed, detail}``. Eine REJECTED Study endet die Kette an der
+    tatsaechlich blockierenden Stufe (``_STAGE_FOR_REJECT_DETAIL``); vorangehende Stufen gelten als
+    bestanden (der Confirm-Pfad erreicht eine Stufe erst, nachdem die vorherigen bestanden sind).
+    Ein promoteter Kandidat traegt ALLE Stufen mit ``passed=True`` — inkl. der `#682`/`#783`-
+    Default-Route, die ``confirm_or_selection`` mit ``detail='GLOBAL_DEFAULT'`` traegt (das
+    Akzeptanzkriterium #785/2)."""
     holdout_detail = proposal.get("holdout_reject_detail", proposal.get("is_rejection_detail"))
-    if holdout_detail:
-        chain.append({"stage": "confirm_or_selection", "detail": holdout_detail})
+    route = proposal.get("promotion_route")
+    failing_stage = _STAGE_FOR_REJECT_DETAIL.get(holdout_detail) if holdout_detail else None
+    promote = proposal.get("status") in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
+
+    chain: list[dict[str, Any]] = []
+    is_gate_passed = bool(n_eligible > 0 or route == "global_default_on_symbol" or promote)
+    chain.append({
+        "stage": "is_gate", "passed": is_gate_passed,
+        "detail": proposal.get("dominant_is_rejection_detail") if not is_gate_passed else None,
+    })
+    if not is_gate_passed:
+        return chain
+    for stage in _DECISION_STAGE_NAMES[1:]:
+        if failing_stage == stage:
+            chain.append({"stage": stage, "passed": False, "detail": holdout_detail})
+            break
+        detail = "GLOBAL_DEFAULT" if (stage == "confirm_or_selection"
+                                      and route == "global_default_on_symbol") else None
+        chain.append({"stage": stage, "passed": True, "detail": detail})
     return chain
 
 
-def _study_record(proposal: dict, study) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
+def _rejection_chain_view(decision_chain: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Issue #785 — ``rejection_chain`` bleibt als RUECKWAERTSKOMPATIBLE, ABGELEITETE Sicht auf
+    ``decision_chain`` erhalten (nur die ``passed=False``-Stufen, ohne das ``passed``-Feld selbst —
+    bit-identische Form zur alten Struktur ``{stage, detail}``)."""
+    return [{"stage": c["stage"], "detail": c.get("detail")}
+            for c in decision_chain if c.get("passed") is False]
+
+
+def _split_near_miss_deltas(raw_deltas: dict, tournament_cfg: dict) -> tuple[dict, dict, str | None]:
+    """Issue #790 — trennt AKTIVE Gates (tatsaechlich Teil von ``eligible_requires_all``/``_any``,
+    ueber ``reward._active_gate_collinearity_keys`` — dieselbe Laufzeit-Quelle wie der #760-
+    Kollinearitaets-Check, KEINE zweite gepflegte Liste) von WEICHEN Distanztermen (deaktivierte
+    Gates wie ``oos_min_profitable_folds_frac``/``oos_min_expectancy``, die weiterhin als Near-Miss-
+    Telemetrie berechnet werden, aber keine Eligibility-Entscheidung mehr treffen — Root-Cause #790:
+    88 % der Studies mit eligiblen Trials meldeten ein "bindendes" Gate, das gar nicht mehr galt).
+
+    Rückgabe ``(binding, soft, binding_gate)`` — ``binding_gate`` ist das Gate mit dem negativsten
+    Delta INNERHALB von ``binding`` (niemals aus ``soft``, das ist die #790-Garantie gegen die
+    #760-Fehlerklasse auf der Diagnose-Ebene)."""
+    active_keys = set(_reward._active_gate_collinearity_keys(tournament_cfg))
+    binding = {k: v for k, v in raw_deltas.items() if k in active_keys}
+    soft = {k: v for k, v in raw_deltas.items() if k not in active_keys}
+    numeric_binding = {k: v for k, v in binding.items() if isinstance(v, (int, float))}
+    binding_gate = min(numeric_binding, key=lambda k: numeric_binding[k]) if numeric_binding else None
+    return binding, soft, binding_gate
+
+
+def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, proposal: dict,
+                            n_eligible: int) -> dict[str, Any]:
+    """Issue #791 — ``inference_method`` je Ebene als ``{method, applied, skipped_reason}`` statt
+    eines nackten ``None``. Root-Cause #791: 257/1736 Studies durchliefen ueberhaupt keine
+    Inferenzmethode, davon eine promotet — ``None`` war von "Methode fehlgeschlagen" nicht
+    unterscheidbar UND blockierte keine Promotion. Invariante (Akzeptanzkriterium #791/1):
+    ``promote=True`` erfordert ``promotion.applied == True`` — auch fuer die `#682`/`#783`-
+    Default-Route. Wo keine ECHTE numerische Deflation vorliegt (Kohorte < 2, Config deaktiviert,
+    Sortino strukturell undefiniert), wird die Nichtanwendbarkeit selbst zur dokumentierten
+    Methode (``'not_applicable'``) statt einer stillen Luecke — genau die im Issue geforderte
+    Unterscheidung "ausdruecklich begruendet" vs. "Fehler"."""
+    eligibility_applied = any(a.get("oos_evaluated") is True for a in trial_attrs)
+    eligibility = {
+        "method": "stationary_bootstrap" if eligibility_applied else None,
+        "applied": eligibility_applied,
+        "skipped_reason": None if eligibility_applied else "NO_EVALUATED_TRIALS",
+    }
+
+    promote = proposal.get("status") in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
+    method = holdout_metrics.get("deflation_inference_method")
+    if method is not None:
+        promotion = {"method": method, "applied": True, "skipped_reason": None}
+    elif promote:
+        promotion = {"method": "not_applicable", "applied": True, "skipped_reason": None}
+    else:
+        promotion = {
+            "method": None, "applied": False,
+            "skipped_reason": "NO_ELIGIBLE_TRIALS" if n_eligible == 0 else "DEFLATION_NOT_APPLICABLE",
+        }
+    return {"eligibility": eligibility, "promotion": promotion}
+
+
+def _study_record(proposal: dict, study,
+                  tournament_cfg: dict | None = None) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
     """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743)."""
     trials = list(getattr(study, "trials", None) or []) if study is not None else []
     trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in trials]
@@ -155,17 +260,33 @@ def _study_record(proposal: dict, study) -> tuple[dict[str, Any], list[_inv.Inva
             feasible_rewards, p_eligible, _gradient_tau(),
             constraint_improvement_rate=constraint_improvement_rate, tau_c=_gradient_tau_c())
 
-    near_miss_deltas: dict[str, Any] = {}
+    raw_near_miss_deltas: dict[str, Any] = {}
     scored = [t for t in trials if isinstance(getattr(t, "value", None), (int, float))]
     if scored:
         best_trial = max(scored, key=lambda t: t.value)
-        near_miss_deltas = dict(getattr(best_trial, "user_attrs", {}).get("oos_gate_deltas") or {})
+        raw_near_miss_deltas = dict(getattr(best_trial, "user_attrs", {}).get("oos_gate_deltas") or {})
+    binding_deltas, soft_deltas, binding_gate = _split_near_miss_deltas(
+        raw_near_miss_deltas, tournament_cfg or {})
+
+    # Issue #776 — konsumiert den #679-Redundanz-Alarm JE STUDY: meldet, ob ``eligible_requires_all``
+    # (aus der Config, NICHT hartcodiert) gegenüber der LIVE-Trial-Kohorte dieser Study noch ein
+    # Gate enthält, das ``assert_eligible_requires_all_not_redundant`` als redundant ausweist.
+    trial_gate_deltas = [a.get("oos_gate_deltas") for a in trial_attrs if a.get("oos_gate_deltas")]
+    gate_collinearity_unconsolidated = _reward.assert_eligible_requires_all_not_redundant(
+        trial_gate_deltas, (tournament_cfg or {}).get("eligible_requires_all") or [], tournament_cfg)
+
+    # Issue #770 — dieselbe Berechnung wie ``run_optimization._emit_study_summary`` (Single Source
+    # of Truth, siehe compute_budget_execution-Docstring).
+    budget_execution = compute_budget_execution(
+        trials, n_trials_budget=study_user_attrs.get("n_trials_budget"),
+        n_startup_trials=n_startup_for_report, study_user_attrs=study_user_attrs)
 
     holdout_metrics = (proposal.get("holdout") or {}).get("symbol") or {}
+    decision_chain = _decision_chain(proposal, n_eligible=n_eligible)
     checks = [
         _inv.check_sr0_coherence(holdout_metrics),
         _inv.check_n_family_consistency(holdout_metrics),
-        _inv.check_rejection_chain_completeness(proposal),
+        _inv.check_rejection_chain_completeness(proposal, decision_chain=decision_chain),
         _inv.check_reward_term_variance(trial_attrs),
         # Issue #756 — nach der Log-Return-Umstellung ist eine verbleibende Kohärenzverletzung ein
         # echter Bug, kein erwartetes Restrauschen mehr; harter Regressionswächter statt WARNING.
@@ -187,28 +308,108 @@ def _study_record(proposal: dict, study) -> tuple[dict[str, Any], list[_inv.Inva
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),
         "n_trials_budget": study_user_attrs.get("n_trials_budget"),
+        # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl.
+        "n_trials_budgeted": budget_execution["n_trials_budgeted"],
+        "n_trials_completed": budget_execution["n_trials_completed"],
+        "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+        "stop_reason": budget_execution["stop_reason"],
+        "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "coherence_violations": coherence_violations,
         "promotion_outcome": proposal.get("status"),
-        "rejection_chain": _rejection_chain(proposal),
-        "near_miss_deltas": near_miss_deltas,
-        # Issue #758 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER: Weg B aus #757
-        # (Bootstrap fuer beide Stufen) beseitigt den Doppelstandard automatisch — im Regelfall
-        # sind beide Werte identisch ("stationary_bootstrap"); "sharpe_formula_fallback" bei der
-        # Promotion ist der einzige (dokumentierte) Rest-Abweichungsfall (< 5 Holdout-Perioden-
-        # Returns persistiert). Die Eligibility-Seite (backtest_runner._calculate_stats) hat KEINEN
-        # Fallback-Zweig — strukturell konstant "stationary_bootstrap", sobald PSR ueberhaupt
-        # definiert war (>= 1 eligible/evaluable Trial mit definiertem psr_z).
-        "inference_method": {
-            "eligibility": ("stationary_bootstrap" if any(
-                a.get("oos_evaluated") is True for a in trial_attrs) else None),
-            "promotion": holdout_metrics.get("deflation_inference_method"),
-        },
+        # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
+        # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
+        # (``'global_default_on_symbol'``) in JEDEM Artefakt — nicht nur im Proposal.
+        "promotion_route": proposal.get("promotion_route"),
+        # Issue #785 — die VOLLSTAENDIGE Entscheidungskette (positive UND negative Stufen);
+        # ``rejection_chain`` bleibt als abgeleitete, rueckwaertskompatible Sicht erhalten.
+        "decision_chain": decision_chain,
+        "rejection_chain": _rejection_chain_view(decision_chain),
+        # Issue #790 — near_miss_deltas trennt AKTIVE Gates (binding, eligibility-wirksam) von
+        # deaktivierten Gates (soft, reine Distanz-Telemetrie); binding_gate ist NIE aus soft.
+        "near_miss_deltas": {"binding": binding_deltas, "soft": soft_deltas},
+        "binding_gate": binding_gate,
+        # Issue #776 — noch unkonsolidierte (LIVE als redundant ausgewiesene) Mitglieder von
+        # ``eligible_requires_all`` dieser Study; leer ⇒ Config konsistent mit dem #679-Alarm.
+        "gate_collinearity_unconsolidated": gate_collinearity_unconsolidated,
+        # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
+        # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
+        # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
+        "holdout_gate_deltas": holdout_metrics.get("holdout_gate_deltas") or {},
+        "holdout_binding_gate": holdout_metrics.get("holdout_binding_gate"),
+        # Issue #758/#791 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER, jetzt als
+        # {method, applied, skipped_reason} statt eines nackten Strings/None (#791): ``applied``
+        # unterscheidet "Inferenz lief nicht, weil strukturell unanwendbar/dokumentiert
+        # ausgelassen" von "vergessen" — ein promoteter Kandidat OHNE dokumentierte
+        # Promotions-Inferenz ist ein Fehler, kein legitimer Nullzustand.
+        "inference_method": _inference_method_block(trial_attrs, holdout_metrics, proposal, n_eligible),
         # Issue #764 — die vollstaendige Reward-Term-Varianz-Tabelle (var_contrib je Term gegen den
         # [0.02, 0.30]-Zielkorridor), statt nur der binaeren inert-Liste aus check_reward_term_
         # variance (Akzeptanzkriterium #764: "Report enthaelt die Term-Varianz-Tabelle je Study").
         "reward_term_variance": _inv.reward_term_variance_table(trial_attrs),
     }
     return record, checks
+
+
+def _budget_execution_summary(studies_out: list[dict[str, Any]]) -> dict[str, Any]:
+    """Issue #770 — Median + p10 von ``budget_executed_fraction`` ueber alle Studies eines Laufs
+    (Sweep-Ebenen-Aggregation, Akzeptanzkriterium #770). ``None``-Felder bei leerer Kohorte."""
+    import statistics as _stats
+    fractions = sorted(
+        r["budget_executed_fraction"] for r in studies_out
+        if r.get("budget_executed_fraction") is not None
+    )
+    if not fractions:
+        return {"median": None, "p10": None, "n": 0}
+    median = _stats.median(fractions)
+    p10_idx = max(0, min(len(fractions) - 1, int(round(0.10 * (len(fractions) - 1)))))
+    return {"median": round(median, 4), "p10": round(fractions[p10_idx], 4), "n": len(fractions)}
+
+
+def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
+    """Issue #778 (Umsetzungspunkt 3) — die vom `#681`-Auto-Cache aktuell ``'denylist'``-empfohlenen
+    (und damit von ``enumerate_tunable_pairs`` übersprungenen) Paare als eigene Report-Sektion, MIT
+    Begründung (``binding_cause``) und Evidenzstand (``budget_executed_fraction``,
+    ``n_runs_confirmed``, ``first_seen_run_id``) — macht eine automatische Deaktivierung im Report
+    genauso nachvollziehbar wie eine Promotion, statt nur im Cache-JSON verborgen zu sein."""
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        cache = load_diagnosed_pairs_cache()
+    except Exception:
+        return []
+    return [
+        {
+            "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
+            "binding_cause": entry.get("binding_cause"),
+            "budget_executed_fraction": entry.get("budget_executed_fraction"),
+            "n_runs_confirmed": entry.get("n_runs_confirmed"),
+            "first_seen_run_id": entry.get("first_seen_run_id"),
+        }
+        for entry in cache.values() if entry.get("action") == "denylist"
+    ]
+
+
+def _promotion_outcome_counts(studies_out: list[dict[str, Any]]) -> dict[str, int]:
+    """Issue #783 — Zaehlt ``promotion_outcome`` (inkl. ``PROMOTE_GLOBAL_DEFAULT`` GETRENNT von
+    ``READY_FOR_PR``, Akzeptanzkriterium #5). Reine Aggregation, kein Vergleich/Gate."""
+    import collections
+    counts = collections.Counter(r.get("promotion_outcome") for r in studies_out)
+    return {str(k): v for k, v in counts.items()}
+
+
+def _binding_gate_histogram_by_strategy(studies_out: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Issue #787 — Histogramm des ``binding_gate`` (#790, ausschliesslich AKTIVE Gates) je
+    Strategie ueber alle Studies. Ermoeglicht die #787-Ursachenzuordnung fuer 0-eligible-
+    Strategien (SqueezeBreakout/TrendPullback/AdxAtrMomentum/Rsi2Reversion), ohne ein
+    deaktiviertes Gate faelschlich als dominant auszuweisen."""
+    import collections
+    out: dict[str, collections.Counter] = {}
+    for r in studies_out:
+        strategy = r.get("strategy")
+        gate = r.get("binding_gate")
+        if not strategy or not gate:
+            continue
+        out.setdefault(strategy, collections.Counter())[gate] += 1
+    return {strategy: dict(counter) for strategy, counter in out.items()}
 
 
 def _build_report(
@@ -228,13 +429,27 @@ def _build_report(
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
     for proposal in proposals:
         study = _load_study_for_proposal(proposal)
-        record, checks = _study_record(proposal, study)
+        record, checks = _study_record(proposal, study, tournament_cfg)
         studies_out.append(record)
         study_label = f"{record['strategy']}/{record['symbol']}"
         all_checks.extend((study_label, c) for c in checks)
+        # Issue #791 — REJECT_SELECTION_PBO erfordert eine dokumentierte Promotions-Inferenz.
+        all_checks.append((study_label, _inv.check_promotion_inference_coverage(proposal, record)))
 
     registry_check = _inv.check_config_key_registry(tournament_cfg)
     all_checks.append(("global", registry_check))
+
+    # Issue #770 — sweep-weite Budget-Ausfuehrungs-Invariante (siebter Check, siehe #743/#773).
+    min_median_budget_execution = float(optimizer_cfg.get("min_median_budget_execution", 0.5))
+    budget_check = _inv.check_budget_execution(studies_out, min_median=min_median_budget_execution)
+    all_checks.append(("global", budget_check))
+
+    # Issue #776 — sweep-weite Gate-Kollinearitaets-Konsolidierungs-Invariante (konsumiert den
+    # #679-Alarm ueber alle Studies statt ihn stumm bleiben zu lassen).
+    max_affected_fraction = float(optimizer_cfg.get("max_gate_collinearity_affected_fraction", 0.20))
+    gate_collinearity_check = _inv.check_gate_collinearity_consolidation(
+        studies_out, max_affected_fraction=max_affected_fraction)
+    all_checks.append(("global", gate_collinearity_check))
 
     invariant_checks = []
     for label, result in all_checks:
@@ -260,6 +475,22 @@ def _build_report(
         "studies": studies_out,
         "cross_study": {
             "n_family": _family_n_from_proposals(proposals),
+            # Issue #770 — Budget-Ausfuehrungsgrad-Verteilung ueber alle Studies (Median + p10, wie
+            # im Katalog gefordert: die 44,2%/52,6%-Luecken dieses Katalogs waren nur ueber externe
+            # Log-Rekonstruktion sichtbar).
+            "budget_executed_fraction": _budget_execution_summary(studies_out),
+            # Issue #783 (Akzeptanzkriterium #5) — READY_FOR_PR und PROMOTE_GLOBAL_DEFAULT GETRENNT
+            # gezaehlt: beide teilten vorher denselben String, ununterscheidbar in jeder
+            # nachgelagerten Automatisierung, die auf "READY_FOR_PR" filtert.
+            "promotion_outcome_counts": _promotion_outcome_counts(studies_out),
+            # Issue #787 — Histogramm des bindenden Gates je Strategie, ausschliesslich ueber
+            # binding-Deltas (#790) — Voraussetzung dafuer, dass eine 0-eligible-Strategie ihre
+            # tatsaechliche Ursache (trade_frequency/signal_quality/data_geometry) zeigt, statt
+            # eines deaktivierten Gates (siehe #787-Umsetzung).
+            "binding_gate_histogram_by_strategy": _binding_gate_histogram_by_strategy(studies_out),
+            # Issue #778 — automatisch denylist-empfohlene (uebersprungene) Paare MIT Begruendung
+            # und Evidenzstand, statt nur im diagnosed_pairs_cache.json verborgen zu sein.
+            "diagnosed_pairs_skipped": _diagnosed_pairs_skipped_section(),
         },
         "invariant_checks": invariant_checks,
     }

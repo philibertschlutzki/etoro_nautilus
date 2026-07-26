@@ -14,9 +14,14 @@ import json
 import statistics
 from pathlib import Path
 
-# Issue #669 — die vier möglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible Trial).
+# Issue #669/#769 — die moeglichen bindenden Ursachen. 'none' ⇒ kein Kollaps (mind. 1 eligible
+# Trial). Issue #769 — 'signal_frequency' wurde in 'signal_absent' (parameterunabhaengig, echte
+# Datengeometrie) und 'signal_sparse' (parameterabhaengig, tunebar) AUFGESPALTEN: die alte Kategorie
+# warf beide Faelle zusammen (median_is_trades==0 UND median_is_trades==9 galten identisch als
+# 'signal_frequency'), obwohl sie entgegengesetzte Handlungsempfehlungen verlangen (AGENTS.md
+# Pitfall #229).
 _BINDING_CAUSES = frozenset(
-    {"signal_frequency", "hold_duration", "signal_quality", "none", "no_data"}
+    {"signal_absent", "signal_sparse", "hold_duration", "signal_quality", "none", "no_data"}
 )
 
 
@@ -26,14 +31,20 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     ``oos_total_trades``, ``is_total_trades``, ``hit_trade_cap`` — bereits als Trial-User-Attrs
     gestempelt, run_optimization.make_symbol_objective).
 
-    Trennt (Akzeptanzkriterium #669):
-      * ``'signal_frequency'`` — 0 evaluable UND die IS-Aktivität (``is_total_trades``, Median)
-        bleibt bereits UNTER ``oos_min_trades`` ⇒ der Suchraum erzeugt zu selten überhaupt ein
-        Signal (Bounds zu eng, z. B. Signal-Schwellen/Cooldown).
-      * ``'hold_duration'`` — 0 evaluable, IS-Aktivität AUSREICHEND, aber die Mehrheit der Trials
-        trifft die Haltedauer-/Trade-Cap-Grenze (``hit_trade_cap``) ⇒ Signale entstehen, überleben
-        aber nicht bis zur Realisierung im OOS-Fenster (Haltedauer-Obergrenze zu lang/kurz falsch
-        kalibriert).
+    Trennt (Akzeptanzkriterium #669/#769):
+      * ``'signal_absent'`` — 0 evaluable UND die IS-Aktivität ist über ALLE abgeschlossenen Trials
+        NULL (``median_is_trades == 0`` UND ``max(is_total_trades) == 0``) ⇒ PARAMETERUNABHÄNGIG:
+        die Strategie feuert im gesamten Suchraum nie (echte Datengeometrie-/Indikator-Degeneration).
+        Ein constrained TPE kann das nicht lösen — Bounds-Kalibrierung ist hier ein No-Op.
+      * ``'signal_sparse'`` — 0 evaluable UND ``0 < median_is_trades < oos_min_trades`` ODER
+        ``max(is_total_trades) > 0`` (die Strategie feuert bei MANCHEN Parameterkombinationen,
+        median bleibt aber unter der Schwelle) ⇒ PARAMETERABHÄNGIG/tunebar (Frequenz-Parameter wie
+        ``cooldown_bars``/Signal-Schwellen) — ein constrained TPE ist genau dafür da, diese Richtung
+        zu finden (Root-Cause #769: der alte Guard urteilte hier auf NULL modellierten Trials).
+      * ``'hold_duration'`` — 0 evaluable, IS-Aktivität AUSREICHEND (``median_is_trades >=
+        oos_min_trades``), aber die Mehrheit der Trials trifft die Haltedauer-/Trade-Cap-Grenze
+        (``hit_trade_cap``) ⇒ Signale entstehen, überleben aber nicht bis zur Realisierung im
+        OOS-Fenster (Haltedauer-Obergrenze zu lang/kurz falsch kalibriert) — ebenfalls tunebar.
       * ``'signal_quality'`` — ALLE Trials wurden evaluiert (echte OOS-Backtests, genug Trades),
         aber KEINER war je eligible ⇒ ein Suchraum-/Bounds-Problem ist NICHT die Ursache; die
         Strategie ist auf diesem Symbol/Tier strukturell nicht kanten-fähig (oder das Gate ist zu
@@ -41,12 +52,12 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
       * ``'none'`` — mindestens ein Trial war eligible (kein Kollaps).
 
     Rückgabe: ``{'n_trials', 'n_evaluable', 'n_eligible', 'median_oos_trades', 'median_is_trades',
-    'frac_hit_trade_cap', 'binding_cause'}``. Rein, deterministisch, kein I/O."""
+    'max_is_trades', 'frac_hit_trade_cap', 'binding_cause'}``. Rein, deterministisch, kein I/O."""
     n = len(trials)
     if n == 0:
         return {
             "n_trials": 0, "n_evaluable": 0, "n_eligible": 0,
-            "median_oos_trades": None, "median_is_trades": None,
+            "median_oos_trades": None, "median_is_trades": None, "max_is_trades": None,
             "frac_hit_trade_cap": None, "binding_cause": "no_data",
         }
 
@@ -59,15 +70,23 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
     if n_evaluable == 0:
         is_trade_counts = [int(t.get("is_total_trades") or 0) for t in trials]
         median_is_trades = statistics.median(is_trade_counts) if is_trade_counts else 0
+        max_is_trades = max(is_trade_counts) if is_trade_counts else 0
         if median_is_trades < oos_min_trades:
-            binding_cause = "signal_frequency"
+            # Issue #769 — 'signal_absent' NUR, wenn die IS-Aktivität ÜBER JEDEN Trial null ist
+            # (echte Datengeometrie); jede Restaktivität (max > 0) ist ein Beleg, dass MANCHE
+            # Parameterkombinationen sehr wohl feuern ⇒ 'signal_sparse' (parameterabhängig).
+            if median_is_trades == 0 and max_is_trades == 0:
+                binding_cause = "signal_absent"
+            else:
+                binding_cause = "signal_sparse"
         elif frac_hit_cap > 0.5:
             binding_cause = "hold_duration"
         else:
-            binding_cause = "signal_frequency"
+            binding_cause = "signal_sparse"
         return {
             "n_trials": n, "n_evaluable": 0, "n_eligible": 0,
             "median_oos_trades": median_oos_trades, "median_is_trades": median_is_trades,
+            "max_is_trades": max_is_trades,
             "frac_hit_trade_cap": frac_hit_cap, "binding_cause": binding_cause,
         }
 
@@ -97,10 +116,16 @@ _FREQUENCY_DRIVING_PARAMS = (
 def _widen_bounds_toward(direction_by_param: dict[str, str],
                          current_bounds: dict[str, tuple[float, float]], *,
                          widen_fraction: float) -> dict[str, list[float]]:
-    """Issue #761/#763 — gemeinsame Weitungs-Arithmetik: ``direction_by_param[param] == "low"``
+    """Issue #761/#763/#777 — gemeinsame Weitungs-Arithmetik: ``direction_by_param[param] == "low"``
     senkt die Untergrenze um ``widen_fraction`` der aktuellen Spannweite ab (Obergrenze bleibt),
     ``"high"`` hebt die Obergrenze an (Untergrenze bleibt). Parameter ohne bekannte Bounds werden
-    übersprungen (defensiv)."""
+    übersprungen (defensiv).
+
+    Issue #777 — ``max_bars_in_trade`` bleibt HART durch die `#714`-Zeitbox-Obergrenze gedeckelt
+    (``spaces._MAX_BARS_IN_TRADE_CAP``, Single Source of Truth) — ein automatischer Bounds-
+    Vorschlag darf diese GR-01-Invariante nie überschreiben, egal wie stark der Boundary-Hit-/
+    Kollaps-Befund eine Weitung nahelegt."""
+    from automation.optimizer.spaces import _MAX_BARS_IN_TRADE_CAP
     proposals: dict[str, list[float]] = {}
     for param, direction in direction_by_param.items():
         if param not in current_bounds:
@@ -110,7 +135,10 @@ def _widen_bounds_toward(direction_by_param: dict[str, str],
         if direction == "low":
             proposals[param] = [round(lo - widen_fraction * span, 6), hi]
         else:
-            proposals[param] = [lo, round(hi + widen_fraction * span, 6)]
+            new_hi = round(hi + widen_fraction * span, 6)
+            if param == "max_bars_in_trade":
+                new_hi = min(new_hi, float(_MAX_BARS_IN_TRADE_CAP))
+            proposals[param] = [lo, new_hi]
     return proposals
 
 
@@ -251,20 +279,26 @@ def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Pat
 def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                has_existing_override: bool = False,
                                previously_recommended_override: bool = False,
-                               proposed_bounds: dict | None = None) -> dict:
+                               proposed_bounds: dict | None = None,
+                               budget_executed_fraction: float | None = None,
+                               n_runs_confirmed: int = 0) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
     bei JEDEM Lauf neu enumeriert (Root-Cause #681).
 
-    Fallunterscheidung nach ``binding_cause`` (#669):
+    Fallunterscheidung nach ``binding_cause`` (#669/#769):
       * ``'signal_quality'`` (ALLE Trials evaluiert, 0 eligible) — Bounds-Kalibrierung hilft NICHT
         (kein Frequenz-, ein Qualitätsproblem) ⇒ ``'denylist'``.
-      * ``'signal_frequency'``/``'hold_duration'`` (0 evaluable) UND die Strategie ist für
-        Symbol-Bounds-Overrides verdrahtet (``WIRED_OVERRIDE_STRATEGIES``) UND es existiert noch
-        KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-Kalibrierung probieren,
-        BEVOR das Paar aufgegeben wird). Existiert bereits ein Override (Bounds-Kalibrierung wurde
-        schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf ``'denylist'``.
+      * ``'signal_absent'`` (0 evaluable, IS-Aktivität über JEDEN Trial null) — PARAMETERUNABHÄNGIG:
+        kein Override kann eine Strategie zum Feuern bringen, die im gesamten Suchraum nie feuert
+        ⇒ ``'denylist'`` (Bounds-Kalibrierung wäre hier ein No-Op, #769).
+      * ``'signal_sparse'``/``'hold_duration'`` (0 evaluable, PARAMETERABHÄNGIG) UND die Strategie
+        ist für Symbol-Bounds-Overrides verdrahtet (``WIRED_OVERRIDE_STRATEGIES``) UND es existiert
+        noch KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-Kalibrierung
+        probieren, BEVOR das Paar aufgegeben wird). Existiert bereits ein Override (Bounds-
+        Kalibrierung wurde schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf
+        ``'denylist'``.
       * Frequenzproblem bei einer NICHT verdrahteten Strategie ⇒ ``'denylist'`` (ein Override hätte
         ohnehin keine Wirkung, spaces.py._bounds_for ist fail-open no-op für sie).
       * ``'none'``/``'no_data'`` ⇒ ``'none'`` (kein Kollaps, nichts zu tun).
@@ -287,24 +321,50 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     wendet ihn im NÄCHSTEN Lauf automatisch an (``SEARCH_SPACE_AUTO_OVERRIDE``-Telemetrie), bis ein
     Operator den kuratierten Override in ``search_space_overrides.json`` einträgt.
 
+    Issue #778 — die 'denylist'-Eskalation für ``'signal_absent'`` (die PARAMETERUNABHÄNGIGE #769-
+    Ursache) erfordert jetzt ZUSÄTZLICH AUSREICHENDE EVIDENZ: ``budget_executed_fraction >= 0.9``
+    (der Vorlauf muss überwiegend ausgeführt worden sein, #770) UND ``n_runs_confirmed >= 2`` (die
+    Ursache muss sich über mindestens zwei Läufe bestätigt haben). Root-Cause #778: AdxAtrMomentum
+    (116/124 Symbole) und TrendPullback (100/124) wären sonst NACH NUR 16 ZUFALLSZIEHUNGEN (13 %
+    Budgetausführung, #769) dauerhaft deaktiviert worden — eine verfrühte Evidenzbasis für eine
+    schwer reversible Entscheidung. Fehlende Evidenz (``budget_executed_fraction=None`` oder
+    ``n_runs_confirmed=0``, der Default für Legacy-/Test-Aufrufer) ⇒ ``'none'`` (bit-identisch zu
+    "noch nichts entschieden"), NIE mehr direkt 'denylist'.
+
+    Issue #778 — ``'signal_sparse'``/``'hold_duration'`` (PARAMETERABHÄNGIG) eskaliert seither NIE
+    mehr auf 'denylist' — die frühere ``previously_recommended_override``-Eskalation (#699) hätte
+    genau dieselbe verfrühte Deaktivierung auf Basis einer einzigen, mutmasslich budget-limitierten
+    Suche riskiert. Bleibt ein Override-Versuch wirkungslos, bleibt das Paar in Rotation (``'none'``)
+    statt endgültig ausgeschlossen zu werden — Bounds-Kalibrierung ist der einzige Hebel.
+
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
+    sufficient_evidence = (
+        budget_executed_fraction is not None and budget_executed_fraction >= 0.9
+        and n_runs_confirmed >= 2
+    )
     if cause in ("none", "no_data", None):
         action = "none"
     elif cause == "signal_quality":
+        # Issue #669 — ALLE Trials wurden evaluiert (kein Budget-/Frequenz-Zweifel); unveraendert
+        # direkt 'denylist' (der #778-Evidenz-Gate gilt spezifisch der #769-Ursache 'signal_absent').
         action = "denylist"
-    elif cause in ("signal_frequency", "hold_duration"):
+    elif cause == "signal_absent":
+        action = "denylist" if sufficient_evidence else "none"
+    elif cause in ("signal_sparse", "hold_duration"):
         if strategy in WIRED_OVERRIDE_STRATEGIES and not has_existing_override:
-            action = "denylist" if previously_recommended_override else "search_space_override"
+            action = "search_space_override"
         else:
-            action = "denylist"
+            action = "none"
     else:
-        action = "denylist"
+        action = "none"
     result = {
         "strategy": strategy, "symbol": symbol, "action": action, "binding_cause": cause,
         "median_oos_trades": diagnosis.get("median_oos_trades"),
         "median_is_trades": diagnosis.get("median_is_trades"),
+        "budget_executed_fraction": budget_executed_fraction,
+        "n_runs_confirmed": n_runs_confirmed,
     }
     if action == "search_space_override" and proposed_bounds:
         result["proposed_bounds"] = proposed_bounds
@@ -357,7 +417,8 @@ def _save_diagnosed_pairs_cache(cache: dict[tuple[str, str], dict], *,
     return path
 
 
-def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None) -> Path:
+def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
+                          run_id: str | None = None) -> Path:
     """Issue #681/#761 — schreibt/aktualisiert den (Symbol, Strategie)-Diagnose-Eintrag im
     automatisch gepflegten Cache (siehe ``load_diagnosed_pairs_cache``-Docstring). Ein No-Op-Eintrag
     (``action == 'none'``) wird NICHT gespeichert (kein Kollaps ⇒ nichts zu cachen). Idempotent:
@@ -368,14 +429,38 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None)
     Default 10) und ``runs_since_recorded=0``. ``enumerate_tunable_pairs`` (sweep.py) lässt ein
     Paar, dessen ``runs_since_recorded >= expires_after_runs`` erreicht hat, genau EINMAL wieder zu
     (Re-Test) — ein einmaliger Befund zementiert das Paar sonst dauerhaft, auch wenn Kohorte-A/B-
-    Fixes (#753/#756/#757) die Lage grundlegend ändern."""
-    if recommendation.get("action") == "none":
+    Fixes (#753/#756/#757) die Lage grundlegend ändern.
+
+    Issue #778 — jeder Eintrag trägt zusätzlich ``first_seen_run_id`` (der ``run_id`` des Laufs, in
+    dem diese (``action``, ``binding_cause``)-Kombination ERSTMALIG auftrat) und
+    ``n_runs_confirmed`` (wie oft sie seither IN FOLGE bestätigt wurde, inkl. dieses Laufs) — die
+    Reproduzierbarkeits-Grundlage für ``recommend_diagnosis_action``s Evidenz-Gate. Ändert sich
+    ``action`` ODER ``binding_cause`` gegenüber dem Vorgänger-Eintrag, beginnt die Zählung bei 1
+    (neuer Befund, keine Fortsetzung einer Bestätigungsserie). ``run_id=None`` (Default, Legacy-/
+    Test-Aufrufer) ⇒ ``first_seen_run_id`` bleibt ``None``, ``n_runs_confirmed`` wird unverändert
+    gezählt (die Zählung selbst braucht keine Run-Identität, nur die Wiederholung).
+
+    Issue #778 — die Persistenz-Bedingung ist jetzt ``binding_cause`` (nicht mehr ``action``): eine
+    ``'none'``-Empfehlung mit einer ECHTEN diagnostizierten Ursache (z. B. ``'signal_absent'`` ohne
+    (noch) ausreichende Evidenz) WIRD gespeichert — sonst könnte ``n_runs_confirmed`` nie über
+    mehrere Läufe akkumulieren (die Eskalationsbedingung selbst wäre unerreichbar). Nur ein echter
+    Nicht-Befund (``binding_cause in (None, 'none', 'no_data')``) bleibt ungespeichert."""
+    if recommendation.get("binding_cause") in (None, "none", "no_data"):
         return _diagnosed_pairs_cache_path(work_dir)
     cache = load_diagnosed_pairs_cache(work_dir)
+    key = (recommendation["strategy"], recommendation["symbol"])
+    prior = cache.get(key)
     entry = dict(recommendation)
     entry.setdefault("expires_after_runs", _DEFAULT_EXPIRES_AFTER_RUNS)
     entry["runs_since_recorded"] = 0
-    cache[(recommendation["strategy"], recommendation["symbol"])] = entry
+    if (prior and prior.get("action") == entry.get("action")
+            and prior.get("binding_cause") == entry.get("binding_cause")):
+        entry["n_runs_confirmed"] = int(prior.get("n_runs_confirmed", 1)) + 1
+        entry["first_seen_run_id"] = prior.get("first_seen_run_id", run_id)
+    else:
+        entry["n_runs_confirmed"] = 1
+        entry["first_seen_run_id"] = run_id
+    cache[key] = entry
     return _save_diagnosed_pairs_cache(cache, work_dir=work_dir)
 
 

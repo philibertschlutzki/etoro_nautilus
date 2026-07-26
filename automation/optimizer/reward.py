@@ -504,14 +504,32 @@ def gate_rank_correlation_matrix(trial_gate_deltas: list, tournament_cfg: dict |
             "non_correlable_keys": non_correlable_keys}
 
 
+def _gate_collinearity_threshold(tournament_cfg: dict | None) -> float:
+    """Issue #792 — EINE deklarative Schwelle (``tournament.json.gate_collinearity_threshold``,
+    Default 0.90 — die schärfere der beiden zuvor koexistierenden Werte 0.90/0.95) für ALLE DREI
+    Kollinearitäts-Einstiegspunkte (``assert_gate_collinearity_guard``,
+    ``gate_collinearity_redundancy_alarm``, ``assert_eligible_requires_all_not_redundant``).
+
+    Root-Cause #792: die drei Funktionen trugen ZWEI unabhängige Code-Defaults (0.95 vs. 0.90) für
+    dieselbe Frage ("sind zwei Gates redundant?") — ein Graubereich (0.90–0.95), in dem der
+    [#697]-ERROR feuerte und die [#667]-WARNUNG schwieg, ohne dass die Differenz irgendwo begründet
+    war (695 [#667]-Warnungen bei > 0.95 vs. 287 [#697]-Errors bei > 0.90 im selben Lauf)."""
+    return float((tournament_cfg or {}).get("gate_collinearity_threshold", 0.90))
+
+
 def assert_gate_collinearity_guard(trial_gate_deltas: list, tournament_cfg: dict | None = None, *,
-                                   threshold: float = 0.95) -> dict:
-    """Issue #667/#760 — Redundanz-Wächter: warnt FAIL-LOUD-artig (WARNING-Log, KEIN Abbruch — die
-    Kollinearität selbst automatisiert nicht, WELCHES Gate entfernt wird; das bleibt eine bewusste,
-    im PR dokumentierte Entscheidung), sobald zwei der AKTIVEN eligible-Gates (``tournament_cfg``,
-    siehe ``_active_gate_collinearity_keys``) ``|ρ| > threshold`` über das Kalibrier-/Studien-
-    Fixture zeigen. Rückgabe: die volle Korrelationsmatrix (Telemetrie/Tests)."""
+                                   threshold: float | None = None) -> dict:
+    """Issue #667/#760/#792 — Redundanz-Wächter: warnt FAIL-LOUD-artig (WARNING-Log, KEIN Abbruch —
+    die Kollinearität selbst automatisiert nicht, WELCHES Gate entfernt wird; das bleibt eine
+    bewusste, im PR dokumentierte Entscheidung), sobald zwei der AKTIVEN eligible-Gates
+    (``tournament_cfg``, siehe ``_active_gate_collinearity_keys``) ``|ρ| > threshold`` über das
+    Kalibrier-/Studien-Fixture zeigen. ``threshold=None`` (Default) liest die EINE deklarative
+    Schwelle aus ``tournament_cfg`` (#792, ``_gate_collinearity_threshold``) — ein explizit
+    übergebener Wert überschreibt sie (Tests/Kalibrierläufe). Rückgabe: die volle
+    Korrelationsmatrix (Telemetrie/Tests)."""
     import logging
+    if threshold is None:
+        threshold = _gate_collinearity_threshold(tournament_cfg)
     result = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)
     for (k1, k2), rho in result["correlations"].items():
         if rho is not None and abs(rho) > threshold:
@@ -535,7 +553,7 @@ _GATE_CONSOLIDATION_PRIORITY = (
 
 
 def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: dict | None = None,
-                                       *, threshold: float = 0.9) -> dict:
+                                       *, threshold: float | None = None) -> dict:
     """Issue #679 — hebt die #667-Kollinearitäts-DIAGNOSE (bislang NUR ein WARNING-Log) auf einen
     STRUKTURIERTEN, maschinenlesbaren Redundanz-ALARM: ``eligible_requires_all`` addiert korrelierte
     Klauseln, deren gemeinsame Passrate ≈ der strengsten Einzelklausel entspricht, aber jede
@@ -552,7 +570,10 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: 
     wird, bleibt eine bewusste, dokumentierte Config-/PR-Entscheidung, #679-Akzeptanzkriterium:
     "wird als Redundanz-Alarm ausgewertet, nicht nur geloggt") — sie macht den Alarm aber
     STRUKTURIERT auswertbar (Tooling/Dashboards/Tests können darauf reagieren), statt nur eine
-    Log-Zeile zu emittieren."""
+    Log-Zeile zu emittieren. Issue #792 — ``threshold=None`` liest dieselbe deklarative Schwelle
+    wie ``assert_gate_collinearity_guard`` (Single Source of Truth, kein zweiter Code-Default)."""
+    if threshold is None:
+        threshold = _gate_collinearity_threshold(tournament_cfg)
     result = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)
     priority = {k: i for i, k in enumerate(_GATE_CONSOLIDATION_PRIORITY)}
     alarms = []
@@ -575,7 +596,7 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: 
 
 def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible_requires_all: list,
                                                tournament_cfg: dict | None = None, *,
-                                               threshold: float = 0.9) -> list[str]:
+                                               threshold: float | None = None) -> list[str]:
     """Issue #697 — konsumiert den #679-Redundanz-ALARM (bislang reine Telemetrie OHNE Konsument,
     Root-Cause #697: ``eligible_requires_all`` behielt ``min_expectancy`` UND ``oos_min_psr``
     trotz dokumentierter |ρ|=0.961-Kollinearität, weil nichts die Alarm-Ausgabe gegen die Config
@@ -601,6 +622,8 @@ def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible
     import logging
     if tournament_cfg is None:
         tournament_cfg = {"eligible_requires_all": eligible_requires_all}
+    if threshold is None:
+        threshold = _gate_collinearity_threshold(tournament_cfg)
     alarm = gate_collinearity_redundancy_alarm(trial_gate_deltas, tournament_cfg, threshold=threshold)
     conjunction = set(eligible_requires_all or [])
     # Delta-Key (z. B. "oos_min_expectancy") → Original-Konjunktions-Schreibweise (z. B.
@@ -1161,7 +1184,21 @@ def compute_reward(
     # The penalty increases linearly with the number of OOS trades.
     # Issue #631 — mit penalty_scale_vs_base gegen die realisierte Base-Streuung rekalibriert
     # (siehe _penalty_scale_vs_base). Fehlt der Key ⇒ Faktor 1.0 (Legacy, bit-identisch).
-    turnover_penalty = m.oos_total_trades * penalty_turnover_weight * _penalty_scale_vs_base(weights)
+    #
+    # Issue #774 — Root-Cause: ``penalty_turnover_weight`` (0.0003 = 3 bps) ist EXPLIZIT aus TSLA
+    # (spread 2 bps + commission 1 bps) hergeleitet. Das Universum enthält 8 Krypto-Symbole mit
+    # 16 bps Round-Trip-Kosten (spread_bps_by_asset_class.CRYPTO=15) — die angesetzte Strafe war dort
+    # 5,3× zu klein, der Optimizer unterschätzte die Kosten hochfrequenter Konfigurationen GENAU dort,
+    # wo sie am höchsten sind. Fix: ``round_trip_cost_bps`` (#562, bereits pro Trial gestempelt,
+    # dieselbe Quelle wie das kostenrelative Expectancy-Gate) treibt die Strafe, sobald verfügbar —
+    # ``penalty_turnover_weight`` wird zum FALLBACK für fehlende Kosten-Telemetrie (Zero-Hardcoding,
+    # bit-identischer Legacy-Pfad, kein Verhaltensbruch für Trials ohne die Telemetrie).
+    c_rt_bps = getattr(m, "round_trip_cost_bps", None)
+    if c_rt_bps is not None:
+        turnover_penalty = (m.oos_total_trades * (float(c_rt_bps) / 10_000.0)
+                           * _penalty_scale_vs_base(weights))
+    else:
+        turnover_penalty = m.oos_total_trades * penalty_turnover_weight * _penalty_scale_vs_base(weights)
 
     # Issue #589/#590 — Fold-Dispersions-Strafe auf den per-Fold-RETURNS (die gut konditionierte
     # Größe; nach #589 NICHT mehr auf den Fold-Sortinos). #590 — normiert über ``oos_folds_total``,

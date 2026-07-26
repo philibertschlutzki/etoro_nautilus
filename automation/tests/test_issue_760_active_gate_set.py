@@ -62,15 +62,16 @@ def test_changing_eligible_requires_all_changes_checked_keys_without_code_change
 
 def test_production_config_no_longer_flags_stale_667_gates():
     """Regressionsbeleg: die AKTIVE tournament.json enthält weder oos_min_expectancy (seit #697)
-    noch oos_min_profitable_folds_frac (seit #676) mehr in eligible_requires_all — die Kollinearitäts-
-    Diagnose darf sich also nie mehr auf diese beiden Gates beziehen."""
+    noch oos_min_profitable_folds_frac (seit #676) noch oos_min_excess_return (seit #776) mehr in
+    eligible_requires_all — die Kollinearitäts-Diagnose darf sich also nie mehr auf diese drei Gates
+    beziehen."""
     cfg = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
     keys = _active_gate_collinearity_keys(cfg)
     assert "oos_min_expectancy" not in keys
     assert "oos_min_profitable_folds_frac" not in keys
+    assert "oos_min_excess_return" not in keys
     # Die tatsächlich aktiven Gates werden dagegen geprüft.
     assert "oos_min_psr" in keys
-    assert "oos_min_excess_return" in keys
     assert "oos_min_trades" in keys
     assert "oos_max_drawdown" in keys
 

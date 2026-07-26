@@ -19,11 +19,13 @@ Verwendung:
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import logging.handlers
 import os
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,61 @@ LOG_RETENTION_D = 7                  # Dateien älter als 7 Tage löschen
 # ``setup_bot_logging``). ``emit_execution_event`` schlägt hier ausschliesslich über
 # ``logger.name`` nach — keine der ~15 bestehenden Aufrufstellen muss den Pfad selbst kennen.
 _JSONL_SIDECAR_PATHS: dict[str, Path] = {}
+
+# Issue #780 — pro Logger-Name der ``run_id`` DIESES Prozess-Laufs (populiert von
+# ``setup_bot_logging``, EINMAL je Sweep — im Gegensatz zu strategy/symbol/study_name unten NICHT
+# thread-lokal, weil ein Lauf genau EINE run_id über alle parallelen Worker-Threads hinweg hat).
+_ACTIVE_RUN_IDS: dict[str, str] = {}
+
+# Issue #780 — Im parallelen Sweep (ThreadPoolExecutor, #755) laufen mehrere Studies gleichzeitig
+# in EINEN Logger; ohne Study-Identität pro Record ist eine Warnung/ein Event nicht mehr eindeutig
+# zuordenbar (reihenfolgebasierte Heuristiken lieferten nachweislich falsche Zahlen — 590 statt 705
+# Zero-Eligible-Zuordnungen, siehe #780-Katalog). ``ContextVar`` statt Thread-Local: jeder native
+# Thread (inkl. jedes ``ThreadPoolExecutor``-Worker-Threads) erhält implizit einen EIGENEN,
+# unabhängigen Root-Context — ``bind_study_context`` gesetzt INNERHALB von ``optimize_symbol``
+# (das selbst im Worker-Thread läuft) ist daher automatisch pro Study isoliert, ohne dass die ~20
+# bestehenden Log-Call-Sites selbst strategy/symbol durchreichen müssen.
+_current_strategy: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "optimizer_strategy", default=None)
+_current_symbol: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "optimizer_symbol", default=None)
+_current_study_name: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "optimizer_study_name", default=None)
+
+
+@contextmanager
+def bind_study_context(*, strategy: str | None = None, symbol: str | None = None,
+                       study_name: str | None = None):
+    """Issue #780 — bindet strategy/symbol/study_name für die Laufzeit des ``with``-Blocks (und
+    jeden daraus aufgerufenen Code, auch tief verschachtelt) an DIESEN Thread/Task, OHNE dass eine
+    einzige der ~20 ``logger.warning(...)``/``emit_execution_event(...)``-Call-Sites einen neuen
+    Parameter erhält. ``StructuredFormatter`` (Prosa-Zeilen-Präfix) UND ``emit_execution_event``
+    (JSONL-Sidecar-Pflichtfelder) lesen denselben Kontext. Reentrant-sicher: verschachtelte Aufrufe
+    stellen beim Verlassen exakt den vorherigen Wert wieder her (auch ``None``, falls unset)."""
+    tokens = (
+        _current_strategy.set(strategy) if strategy is not None else None,
+        _current_symbol.set(symbol) if symbol is not None else None,
+        _current_study_name.set(study_name) if study_name is not None else None,
+    )
+    try:
+        yield
+    finally:
+        if tokens[0] is not None:
+            _current_strategy.reset(tokens[0])
+        if tokens[1] is not None:
+            _current_symbol.reset(tokens[1])
+        if tokens[2] is not None:
+            _current_study_name.reset(tokens[2])
+
+
+def _current_study_context() -> dict[str, str | None]:
+    """Issue #780 — der aktuell gebundene Kontext (fehlt ein Feld ⇒ ``None``, ausserhalb jedes
+    ``bind_study_context``-Blocks bit-identisch zu 'kein Kontext bekannt')."""
+    return {
+        "strategy": _current_strategy.get(),
+        "symbol": _current_symbol.get(),
+        "study_name": _current_study_name.get(),
+    }
 
 
 class StructuredFormatter(logging.Formatter):
@@ -62,6 +119,14 @@ class StructuredFormatter(logging.Formatter):
         emoji   = self._LEVEL_EMOJIS.get(level, "  ")
         name    = record.name[:30].ljust(30)
         message = record.getMessage()
+
+        # Issue #780 — einheitliches [strategy/symbol]-Präfix aus dem ambient bind_study_context
+        # (contextvars, siehe oben): jede Warnung im parallelen Sweep ist damit ohne Reihenfolge-
+        # Heuristik einer Study zuordenbar. Ausserhalb jedes bind_study_context-Blocks (z. B.
+        # Nicht-Optimizer-Logger) bleibt das Präfix leer — bit-identisch zu HEAD.
+        ctx = _current_study_context()
+        if ctx["strategy"] or ctx["symbol"]:
+            message = f"[{ctx['strategy'] or '?'}/{ctx['symbol'] or '?'}] {message}"
 
         line = f"{ts} | {emoji} {level:<8} | {name} | {message}"
 
@@ -168,6 +233,12 @@ def setup_bot_logging(
     # Issue #741 — JSONL-Sidecar-Pfad für diesen Logger-Namen registrieren, EGAL ob rotierend
     # oder pro-Lauf: ``emit_execution_event`` schlägt ausschliesslich über ``logger.name`` nach.
     _JSONL_SIDECAR_PATHS[log_name] = jsonl_path
+    # Issue #780 — dieselbe run_id (falls gesetzt) für JEDES ``emit_execution_event`` dieses
+    # Loggers verfügbar machen, ohne dass jede Call-Site sie selbst kennen/durchreichen muss.
+    if run_id:
+        _ACTIVE_RUN_IDS[log_name] = run_id
+    else:
+        _ACTIVE_RUN_IDS.pop(log_name, None)
 
     logger.info(
         f"[LogManager] Logger '{log_name}' initialisiert. "
@@ -240,9 +311,15 @@ def emit_execution_event(
         payload:    Event-Daten (beliebiges Dict).
         level:      Log-Level (Default: INFO).
     """
+    # Issue #780 — strategy/symbol/study_name/run_id sind ab jetzt PFLICHTFELDER jeder JSONL-Zeile
+    # (Schema-Validierungs-Akzeptanzkriterium): aus dem ambient bind_study_context/run_id-Registry
+    # vorbelegt, ein EXPLIZIT im payload übergebener Wert überschreibt ihn (Rückwärtskompatibilität
+    # für die ~15 bestehenden Call-Sites, die strategy/symbol bereits selbst im payload tragen).
     event = {
         "event_type":   event_type,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        **_current_study_context(),
+        "run_id": _ACTIVE_RUN_IDS.get(logger.name),
         **payload,
     }
     logger.log(level, f"[JSON_EVENT] {json.dumps(event, ensure_ascii=False, default=str)}")

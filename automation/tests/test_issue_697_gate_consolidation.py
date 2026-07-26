@@ -44,9 +44,9 @@ def test_min_expectancy_removed_from_eligible_requires_all():
 
 
 def test_eligible_requires_all_matches_documented_default():
-    assert CFG["eligible_requires_all"] == [
-        "min_trades", "max_drawdown", "oos_min_psr", "oos_min_excess_return",
-    ]
+    """Issue #776 entfernte 'oos_min_excess_return' (fünfte Redundanz, |ρ|>=0.98 mit oos_min_psr/
+    oos_max_drawdown) — die Konjunktion enthält seither genau EIN risikoadjustiertes Rendite-Gate."""
+    assert CFG["eligible_requires_all"] == ["min_trades", "max_drawdown", "oos_min_psr"]
 
 
 def test_oos_min_psr_and_cost_floor_keys_still_present_in_schema():

@@ -200,11 +200,11 @@ def test_confirm_without_family_matrix_stays_bit_identical(tmp_path, monkeypatch
 
 def test_family_period_returns_from_studies_groups_by_symbol():
     """``sweep._family_period_returns_from_studies`` sammelt die ``oos_period_returns`` ALLER
-    eligiblen Trials ALLER Strategien-Studies DESSELBEN Symbols (analog ``_family_n_from_studies``,
-    aber als Matrix statt eines Zählers)."""
+    evaluierten Trials (#784 — dieselbe erweiterte Menge wie ``_family_n_from_studies``, seit #784
+    NICHT mehr nur eligible) ALLER Strategien-Studies DESSELBEN Symbols (Matrix statt Zähler)."""
     class _T:
-        def __init__(self, eligible, rets):
-            self.user_attrs = {"oos_eligible": eligible, "oos_period_returns": rets}
+        def __init__(self, evaluated, rets):
+            self.user_attrs = {"oos_evaluated": evaluated, "oos_period_returns": rets}
 
     class _Study:
         def __init__(self, trials):

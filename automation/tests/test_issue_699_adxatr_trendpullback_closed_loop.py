@@ -17,9 +17,16 @@ Zwei unabhängige Root-Causes behoben:
 3. Closed-Loop-Lücke (`recommend_diagnosis_action`): eine `'search_space_override'`-Empfehlung
    ohne Eskalationspfad wiederholte sich identisch bei jedem Lauf, solange niemand tatsächlich
    einen Override einträgt — genau das #699-Symptom ("jeder Lauf verbrennt 3×16 Trials für
-   dieselben nicht-viablen Paare"). Fix: `previously_recommended_override` eskaliert auf
-   `'denylist'`, sobald die Override-Empfehlung EINMAL ignoriert wurde und das Paar weiterhin
-   scheitert.
+   dieselben nicht-viablen Paare"). Der #699-Fix liess `previously_recommended_override` auf
+   `'denylist'` eskalieren, sobald die Override-Empfehlung EINMAL ignoriert wurde.
+
+   Issue #778 (P2) — ÜBERHOLT genau diese Eskalation: AdxAtrMomentum (116/124 Symbole) und
+   TrendPullback (100/124) wurden bisher AUSSCHLIESSLICH nach 16 Zufallsziehungen (13 % Budget-
+   ausführung, #769) beurteilt — die #699-Eskalation hätte sie auf dieser verfrühten Evidenzbasis
+   dauerhaft denylisted. Seit #778 eskaliert `'signal_sparse'`/`'hold_duration'` NIE mehr auf
+   `'denylist'` (PARAMETERABHÄNGIG — Bounds-Kalibrierung bleibt der einzige Hebel, das Paar bleibt
+   in Rotation statt endgültig ausgeschlossen zu werden); `previously_recommended_override` ist
+   seither ein wirkungsloser Legacy-Kwarg (rückwärtskompatibel angenommen, aber ignoriert).
 """
 import json
 import logging
@@ -40,51 +47,53 @@ def test_first_occurrence_recommends_override_not_denylist():
     assert "AdxAtrMomentumStrategy" in WIRED_OVERRIDE_STRATEGIES
     rec = recommend_diagnosis_action(
         "AdxAtrMomentumStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         has_existing_override=False, previously_recommended_override=False,
     )
     assert rec["action"] == "search_space_override"
 
 
-def test_repeated_occurrence_without_override_escalates_to_denylist():
-    """Kernkriterium #699: dieselbe Ursache, KEIN Override wurde inzwischen eingetragen, UND die
-    Empfehlung wurde bereits einmal ausgesprochen ⇒ Eskalation auf 'denylist' (kein endloses
-    Wiederholen derselben folgenlosen Empfehlung)."""
+def test_repeated_occurrence_without_override_no_longer_escalates_to_denylist():
+    """Issue #778 überholt das #699-Kernkriterium: dieselbe Ursache, KEIN Override wurde inzwischen
+    eingetragen, UND die Empfehlung wurde bereits einmal ausgesprochen ⇒ KEINE Eskalation mehr
+    ('signal_sparse' ist PARAMETERABHÄNGIG — eine verfrühte Denylist-Entscheidung auf Basis einer
+    einzigen, mutmasslich budget-limitierten Suche ist genau das #778-Risiko)."""
     rec = recommend_diagnosis_action(
         "AdxAtrMomentumStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         has_existing_override=False, previously_recommended_override=True,
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "search_space_override"
 
 
-def test_escalation_does_not_apply_once_override_actually_exists():
-    """Existiert inzwischen ein ECHTER Override (Bounds-Kalibrierung wurde umgesetzt), greift die
-    reguläre #681-Eskalation (has_existing_override), nicht die #699-previously_recommended-
-    Eskalation — beide Wege landen bei 'denylist', aber aus unterschiedlichen, unabhängigen
-    Gründen (keine Doppel-Zählung/Verwechslung)."""
+def test_existing_override_that_still_fails_no_longer_escalates_to_denylist():
+    """Issue #778 — existiert inzwischen ein ECHTER Override (Bounds-Kalibrierung wurde umgesetzt)
+    und das Paar scheitert TROTZDEM, wird es NICHT mehr denylisted ('signal_sparse' eskaliert nie
+    mehr) — es bleibt in Rotation (`'none'`), da ein Override-Fehlschlag allein keine hinreichende
+    Evidenz für eine dauerhafte Deaktivierung ist."""
     rec = recommend_diagnosis_action(
         "AdxAtrMomentumStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         has_existing_override=True, previously_recommended_override=False,
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "none"
 
 
 def test_escalation_only_applies_to_wired_strategies():
-    """Eine NICHT verdrahtete Strategie empfiehlt ohnehin immer 'denylist' — previously_recommended_
-    override ist dort ein No-Op (kein Zustand, der jemals 'search_space_override' war)."""
+    """Eine NICHT verdrahtete Strategie kann per Definition keinen Override probieren — seit #778
+    ist das Ergebnis 'none' (nicht mehr 'denylist'), unabhängig von previously_recommended_override
+    (seither ein wirkungsloser Legacy-Kwarg)."""
     rec_first = recommend_diagnosis_action(
         "SmaCrossoverStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         previously_recommended_override=False,
     )
     rec_second = recommend_diagnosis_action(
         "SmaCrossoverStrategy", "TSLA.ETORO",
-        {"binding_cause": "signal_frequency", "median_oos_trades": 0, "median_is_trades": 5},
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         previously_recommended_override=True,
     )
-    assert rec_first["action"] == rec_second["action"] == "denylist"
+    assert rec_first["action"] == rec_second["action"] == "none"
 
 
 def test_default_previously_recommended_override_is_bit_identical():
@@ -146,15 +155,24 @@ def _quiet_logger(name):
     return lg
 
 
-def test_repeated_structural_collapse_escalates_to_denylist_across_two_runs(tmp_path, monkeypatch):
-    """Simuliert #699 wörtlich: Lauf 1 (STRUCTURAL_ALL_UNEVALUABLE, 0 evaluable, IS-Aktivität
-    unter oos_min_trades) schreibt 'search_space_override' in den Auto-Cache. Lauf 2 (derselbe
-    Kollaps, kein Override wurde eingetragen) MUSS jetzt 'denylist' schreiben — der frühere Bug
-    hätte hier erneut 'search_space_override' geschrieben (Endlosschleife)."""
+def test_repeated_structural_collapse_no_longer_escalates_to_denylist_across_two_runs(
+        tmp_path, monkeypatch):
+    """Issue #778 überholt das wörtliche #699-Szenario: Lauf 1 (STRUCTURAL_ALL_UNEVALUABLE, 0
+    evaluable, IS-Aktivität unter oos_min_trades) schreibt 'search_space_override' in den Auto-
+    Cache. Lauf 2 (derselbe Kollaps, kein Override wurde eingetragen) schreibt seit #778 WEITERHIN
+    'search_space_override' (keine Eskalation) — AdxAtrMomentum/TrendPullback wurden im #778-
+    Katalog nach genau diesem Muster nach nur zwei 16-Trial-Läufen denylisted, obwohl nie mit
+    vollem Budget gesucht wurde.
+
+    Issue #769 — die Kohorte hat konstant ``is_total_trades=3`` (> 0, < oos_min_trades=20) ⇒
+    ``binding_cause='signal_sparse'`` (parameterabhängig), die den Abbruch erst bei der #768-
+    Modellierungsschwelle (``min_for_zero_eligible`` = n_startup_trials(16) + plateau_min_modelled_
+    trials(32, da ``W`` keinen ``plateau_min_modelled_trials``-Key setzt) = 48) statt bei
+    ``n_startup_trials`` (16) zulässt — daher 48 statt der Pre-#769 20 Trials je Lauf."""
     monkeypatch.setattr("automation.optimizer.manifest.WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: tmp_path)
 
-    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)]
+    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)]
     study1 = _FakeStudy(trials)
     lg = _quiet_logger("test699_run1")
     ro.floor_plateau_callback(study1, trials[-1], weights=W, n_startup_trials=16, logger=lg,
@@ -166,25 +184,32 @@ def test_repeated_structural_collapse_escalates_to_denylist_across_two_runs(tmp_
     assert rec1["action"] == "search_space_override"
 
     # Lauf 2 — fabrikneue Study (frischer Sweep), IDENTISCHER Kollaps, KEIN Override eingetragen.
-    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)])
+    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)])
     lg2 = _quiet_logger("test699_run2")
     ro.floor_plateau_callback(study2, study2.trials[-1], weights=W, n_startup_trials=16, logger=lg2,
                               strategy="AdxAtrMomentumStrategy", symbol="TSLA.ETORO")
 
     cache_after_run2 = load_diagnosed_pairs_cache(tmp_path)
     rec2 = cache_after_run2[("AdxAtrMomentumStrategy", "TSLA.ETORO")]
-    assert rec2["action"] == "denylist"
+    assert rec2["action"] == "search_space_override"
 
 
-def test_adding_a_real_override_prevents_escalation(tmp_path, monkeypatch):
+def test_adding_a_real_override_that_still_fails_yields_none_not_denylist(tmp_path, monkeypatch):
     """Wird zwischen Lauf 1 und Lauf 2 tatsächlich ein Override in search_space_overrides.json
-    eingetragen, greift NICHT die #699-Eskalation (die Bounds-Kalibrierung wurde ja umgesetzt) —
-    die reguläre #681-has_existing_override-Logik übernimmt (weiterhin 'denylist', aber aus dem
-    richtigen, unterscheidbaren Grund: der Override existiert UND wirkte nicht)."""
+    eingetragen und das Paar scheitert TROTZDEM, greift seit #778 KEINE Eskalation mehr auf
+    'denylist' (`'signal_sparse'` eskaliert nie) — das Paar bleibt in Rotation ('none').
+
+    Issue #769 — 48 statt 20 Trials je Lauf (siehe Docstring des vorigen Tests: 'signal_sparse'
+    erfordert die #768-Modellierungsschwelle, nicht n_startup_trials)."""
+    from automation.optimizer import trial_config
     monkeypatch.setattr("automation.optimizer.manifest.WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: tmp_path)
+    # has_existing_search_space_override (sweep_diagnostics.py) importiert config_dir frisch aus
+    # trial_config statt der hier gepatchten ro.config_dir-Bindung zu nutzen — beide Patches sind
+    # fuer eine end-to-end-Isolation dieses Pfads noetig.
+    monkeypatch.setattr(trial_config, "config_dir", lambda: tmp_path)
 
-    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)]
+    trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)]
     study1 = _FakeStudy(trials)
     ro.floor_plateau_callback(study1, trials[-1], weights=W, n_startup_trials=16,
                               logger=_quiet_logger("test699b_run1"),
@@ -195,11 +220,14 @@ def test_adding_a_real_override_prevents_escalation(tmp_path, monkeypatch):
         "overrides": {"TrendPullbackStrategy": {"TSLA.ETORO": {"ema_period": [50, 150]}}}
     }), "utf-8")
 
-    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(20)])
+    study2 = _FakeStudy([_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)])
     ro.floor_plateau_callback(study2, study2.trials[-1], weights=W, n_startup_trials=16,
                               logger=_quiet_logger("test699b_run2"),
                               strategy="TrendPullbackStrategy", symbol="TSLA.ETORO")
-    assert load_diagnosed_pairs_cache(tmp_path)[("TrendPullbackStrategy", "TSLA.ETORO")]["action"] == "denylist"
+    # Issue #778 — eine 'none'-Empfehlung MIT echter binding_cause wird jetzt persistiert (sonst
+    # könnte n_runs_confirmed nie akkumulieren) ⇒ der Cache-Eintrag spiegelt den AKTUELLEN Befund.
+    cache_after_run2 = load_diagnosed_pairs_cache(tmp_path)
+    assert cache_after_run2[("TrendPullbackStrategy", "TSLA.ETORO")]["action"] == "none"
 
 
 # ── spaces.py: adx_period nicht mehr gesampelt (tote Konfiguration, Phantom-Tuning-Vermeidung) ───

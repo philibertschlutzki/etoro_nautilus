@@ -958,6 +958,26 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     return True
 
 
+def _resolve_asset_class_for_symbol(inst_id_str: str) -> str:
+    """Issue #566/#775 — Asset-Class-Lookup über ``instrument_map.json`` (Symbol → ``asset_class``),
+    Single Source of Truth für JEDEN Aufrufer, der eine Asset-Class-Konstante für die
+    Spread-/Kostenauflösung braucht (Worker-Kostenauflösung UND der #775-Kosten-Fallback-Reader —
+    vorher zwei potenziell divergierende Kopien derselben Lookup-Schleife). ``'DEFAULT'`` bei
+    fehlendem Eintrag/fehlender Datei (fail-open, kein Crash für ein unbekanntes Symbol)."""
+    asset_class_key = "DEFAULT"
+    try:
+        instrument_map_path = str(config_dir() / "instrument_map.json")
+        with open(instrument_map_path, "r", encoding="utf-8") as f:
+            inst_map = json.load(f).get("instruments", {})
+        for _, inst_data in inst_map.items():
+            if inst_data.get("symbol") == inst_id_str:
+                asset_class_key = inst_data.get("asset_class", "DEFAULT").upper()
+                break
+    except Exception:
+        pass
+    return asset_class_key
+
+
 def resolve_spread_bps(inst_id_str: str,
                        spread_bps_by_asset_class: dict | None,
                        spread_bps_by_symbol: dict | None,
@@ -1249,6 +1269,38 @@ def _assert_sortino_return_coherence(oos_metrics: dict, *, tol: float = 1e-4) ->
             "müssen kohärent sein (derselbe Equity-Pfad).", sr, tr, tol,
         )
         oos_metrics["oos_coherence_violation"] = True
+
+
+def assert_return_series_identity(total_return: float, period_rets, *, tol: float = 1e-9) -> bool:
+    """Issue #771 — die #756-Identität ``Σ log(1+rᵢ) = log(1+total_return)`` MASCHINELL geprüft,
+    statt nur im Docstring behauptet (AGENTS.md Pitfall #230). Gilt PER KONSTRUKTION genau dann,
+    wenn ``total_return`` und ``period_rets`` aus DERSELBEN Bar-Menge stammen — nach #771 ist das
+    im Walk-Forward-Pfad der Fall (beide aus ``mtm_series``), im ``mtm_frames``-Fallback-Pfad
+    (nicht-kontiguierliche Segmente) kann eine Restlücke bleiben (siehe ``NON_CONTIGUOUS_FOLD_
+    SEGMENTS``-Telemetrie in ``_calculate_stats``).
+
+    ``period_rets`` ist die pandas-Series der LOG-Returns (``np.log1p(mtm_series.pct_change())``).
+    Rückgabe ``True`` bei einer Verletzung (für Tests/Telemetrie) — ERROR-Log +
+    ``RETURN_SERIES_IDENTITY_VIOLATION``-Event, ändert selbst NIE ``total_return``/``period_rets``
+    (reine Diagnose, kein Reward-Pfad)."""
+    if period_rets is None or len(period_rets) == 0:
+        return False
+    try:
+        log_sum = float(period_rets.sum())
+        target = math.log1p(float(total_return))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    gap = log_sum - target
+    if abs(gap) > tol:
+        import logging
+        logging.getLogger("optimizer").error(
+            "RETURN_SERIES_IDENTITY_VIOLATION (#771): Σlog(1+rᵢ)=%.10g != log(1+total_return)=%.10g "
+            "(Differenz=%.3e > tol=%.0e) — total_return und die Renditeserie der Inferenz stammen "
+            "NICHT aus derselben Bar-Menge (#756-Identität verletzt).",
+            log_sum, target, gap, tol,
+        )
+        return True
+    return False
 
 
 def _assert_is_oos_sortino_coherence(is_basis: str | None, is_sortino, oos_basis: str | None, oos_sortino) -> bool:
@@ -1665,27 +1717,37 @@ def _read_psr_bootstrap_resamples() -> int:
         val = 200
     _psr_bootstrap_resamples_cache = val
     return val
-_default_round_trip_cost_bps_cache: float | None = None
+_default_round_trip_cost_bps_cache: dict[str, float] = {}
 
 
-def _read_default_round_trip_cost_bps() -> float:
-    """Issue #684 — Config-abgeleiteter DEFAULT-Round-Trip-Kostenwert (bps), Single Source of
+def _read_default_round_trip_cost_bps(inst_id_str: str | None = None) -> float:
+    """Issue #684/#775 — Config-abgeleiteter DEFAULT-Round-Trip-Kostenwert (bps), Single Source of
     Truth mit dem realen Kostenmodell (``backtest.json``: ``commission_bps`` +
-    ``spread_bps_by_asset_class['DEFAULT']`` — identische Formel wie ``c_rt = spread_bps +
-    commission_bps`` an der Stelle, die ``round_trip_cost_bps`` überhaupt erst stempelt).
+    ``resolve_spread_bps`` — identische Auflösungskette wie an der Stelle, die
+    ``round_trip_cost_bps`` überhaupt erst stempelt).
 
     Root-Cause (#684): das kostenrelative Expectancy-Gate (``oos_min_expectancy_k_alpha``) fällt bei
     FEHLENDER Kosten-Telemetrie (``oos_metrics['round_trip_cost_bps'] is None``) auf das STATISCHE
     ``oos_min_expectancy`` (0.001) zurück — eine ZWEITE, unabhängig gepflegte Schwelle, die zufällig
     ~13× strenger ist als der kostenrelative Regelpfad (``k_alpha·c_rt`` ≈ 7.5e-5 bei c_rt=3bps).
     Dieser Reader liefert stattdessen einen aus DEMSELBEN Kostenmodell abgeleiteten Schätzwert, damit
-    der Fallback dieselbe Grössenordnung wie der Regelpfad trägt (≤ 2× konsistent), statt einer
-    unabhängig geratenen Konstante. Gecached (Hot-Path). Fehlt ``backtest.json``/der Schlüssel ⇒
-    5.0 (= DEFAULT-Asset-Class-Spread 4.0 + commission_bps-Fallback 1.0, der dokumentierte
-    Cross-Asset-Referenzwert aus backtest.json._schema)."""
-    global _default_round_trip_cost_bps_cache
-    if _default_round_trip_cost_bps_cache is not None:
-        return _default_round_trip_cost_bps_cache
+    der Fallback dieselbe Grössenordnung wie der Regelpfad trägt, statt einer unabhängig geratenen
+    Konstante.
+
+    Root-Cause (#775): dieser Reader nutzte BISLANG unconditional den ``DEFAULT``-Asset-Class-Spread
+    (4.0 bps), obwohl die Symbol→Asset-Class-Auflösungskette (``resolve_spread_bps``/
+    ``_resolve_asset_class_for_symbol``, #566) bereits existiert. Für Krypto (16 bps real) war der
+    Fallback damit 3,2× zu locker, für FOREX (2,5 bps) 2× zu streng. Ist ``inst_id_str`` gesetzt,
+    wird derselbe Auflösungspfad wie im Worker konsultiert (Symbol-Override → Asset-Class →
+    DEFAULT); fehlt es (Legacy-Aufrufer ohne bekanntes Symbol), bleibt das DEFAULT-Asset-Class-
+    Verhalten bit-identisch zu Pre-#775.
+
+    Gecached PRO SYMBOL (Hot-Path — kein zusätzliches File-I/O je Trial nach dem ersten Treffer).
+    Fehlt ``backtest.json``/der Schlüssel ⇒ 5.0 (= DEFAULT-Asset-Class-Spread 4.0 + commission_bps-
+    Fallback 1.0, der dokumentierte Cross-Asset-Referenzwert aus backtest.json._schema)."""
+    cache_key = inst_id_str or "__default__"
+    if cache_key in _default_round_trip_cost_bps_cache:
+        return _default_round_trip_cost_bps_cache[cache_key]
     val = 5.0
     try:
         cfg_path = config_dir() / "backtest.json"
@@ -1693,12 +1755,21 @@ def _read_default_round_trip_cost_bps() -> float:
             with open(cfg_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             commission_bps = float(data.get("commission_bps", 1.0))
-            spread_default = float(
-                (data.get("spread_bps_by_asset_class") or {}).get("DEFAULT", 4.0))
-            val = commission_bps + spread_default
+            spread_by_asset_class = data.get("spread_bps_by_asset_class") or {}
+            spread_by_symbol = data.get("spread_bps_by_symbol") or {}
+            if inst_id_str:
+                asset_class_key = "DEFAULT"
+                has_symbol_override = bool(inst_id_str in spread_by_symbol)
+                if spread_by_asset_class and not has_symbol_override:
+                    asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
+                spread_resolved = resolve_spread_bps(
+                    inst_id_str, spread_by_asset_class, spread_by_symbol, asset_class_key)
+            else:
+                spread_resolved = float(spread_by_asset_class.get("DEFAULT", 4.0))
+            val = commission_bps + spread_resolved
     except (OSError, ValueError, TypeError):
         val = 5.0
-    _default_round_trip_cost_bps_cache = val
+    _default_round_trip_cost_bps_cache[cache_key] = val
     return val
 
 def _read_sortino_mar() -> float:
@@ -2019,16 +2090,44 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     # die dominante Reward-Penalty bei realer paralleler/fraktionaler Allokation. Fallback (keine
     # Equity-Kurve, z. B. Direkt-Unit-Calls von ``_calculate_stats``): sequentielles Aufzinsen
     # (Abwärtskompatibilität im Sonderfall nicht-überlappender Full-Capital-Trades).
-    if mtm_frames is not None and len(mtm_frames) > 0:
+    #
+    # Issue #771 — VOR diesem Fix nahm die per-Segment-Kompoundierung (``mtm_frames``) PRIORITÄT
+    # vor der vollen konkatenierten Serie (``mtm_series``), obwohl ``period_rets`` (unten) IMMER
+    # aus ``mtm_series`` gebildet wird. Root-Cause: ``mtm_series`` ist im Walk-Forward-Pfad bereits
+    # exakt die konkatenierte, deduplizierte ``mtm_frames``-Serie (``sweep._split_and_stats``
+    # baut ``oos_mtm = pd.concat(oos_frames)`` und übergibt BEIDE) — die per-Segment-Kompoundierung
+    # unterschlägt daher (a) die ``splits − 1`` Nahtstellen-Returns an den Fold-Übergängen und
+    # (b) jedes Segment mit ``len(seg) <= 1`` oder ``seg.iloc[0] == 0.0`` VOLLSTÄNDIG — beides
+    # Bar-Returns, die in ``period_rets`` (Sortino/PSR/DSR/Bootstrap-CI/PBO) weiterhin auftauchen.
+    # ``mtm_series`` ist jetzt die PRIMÄRE Quelle; ``mtm_frames`` bleibt NUR als Fallback für den
+    # Fall einer nicht nutzbaren/fehlenden ``mtm_series`` (z. B. Direkt-Unit-Calls, die nur
+    # Segmente statt einer vorgebauten konkatenierten Serie übergeben — siehe
+    # ``test_segmented_compounding_gap_handling``).
+    n_segments_skipped = 0
+    if (mtm_series is not None and not mtm_series.empty and len(mtm_series) > 1
+            and float(mtm_series.iloc[0]) != 0.0):
+        total_return = float(mtm_series.iloc[-1]) / float(mtm_series.iloc[0]) - 1.0
+    elif mtm_frames is not None and len(mtm_frames) > 0:
+        # Issue #771 — Fallback NUR für nicht nutzbare ``mtm_series``. Ein übersprungenes Segment
+        # (``len(seg) <= 1`` oder Startwert 0) ist hier ein Fehlerzustand, kein Normalfall — er wird
+        # gezählt und als ``NON_CONTIGUOUS_FOLD_SEGMENTS`` telemetriert (``n_segments_skipped`` im
+        # Rückgabe-Dict), statt den fehlenden Beitrag still zu unterschlagen.
         comp = 1.0
         for seg in mtm_frames:
             if len(seg) > 1 and float(seg.iloc[0]) != 0.0:
                 seg_ret = float(seg.iloc[-1]) / float(seg.iloc[0]) - 1.0
                 comp *= (1.0 + seg_ret)
+            else:
+                n_segments_skipped += 1
         total_return = comp - 1.0
-    elif (mtm_series is not None and not mtm_series.empty and len(mtm_series) > 1
-            and float(mtm_series.iloc[0]) != 0.0):
-        total_return = float(mtm_series.iloc[-1]) / float(mtm_series.iloc[0]) - 1.0
+        if n_segments_skipped > 0:
+            import logging
+            logging.getLogger("optimizer").warning(
+                "NON_CONTIGUOUS_FOLD_SEGMENTS (#771): %d von %d mtm_frames-Segment(en) beim "
+                "Fallback-Pfad uebersprungen (leer/Startwert 0) — total_return unterschlaegt deren "
+                "Beitrag; period_rets (falls verfuegbar) enthaelt ihn weiterhin.",
+                n_segments_skipped, len(mtm_frames),
+            )
     else:
         # Fallback ohne verwertbare Equity-Kurve (z. B. spärliche OOS-Slices mit nur
         # einem Datenpunkt am Fold-Rand): sequentielles Aufzinsen der realisierten,
@@ -2078,6 +2177,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Stationary-Bootstrap-CI auf dem Sortino rechnen kann (ci_lower > 0 statt Punktschätzer).
         # Seit #756 auf der Log-Skala (dieselbe Skala wie `sortino_period`/`oos_psr` unten).
         _period_returns_list = [float(x) for x in period_rets.tolist()[:2000]]
+        # Issue #771 — die #756-Identität maschinell geprüft (nicht nur behauptet): Σlog(1+rᵢ) muss
+        # log(1+total_return) entsprechen, sofern total_return und period_rets aus derselben
+        # mtm_series stammen (nach #771 der Regelfall; der mtm_frames-Fallback kann bei
+        # nicht-kontiguierlichen Segmenten weiterhin eine Restlücke haben, siehe
+        # NON_CONTIGUOUS_FOLD_SEGMENTS oben).
+        return_series_identity_violation = assert_return_series_identity(total_return, period_rets)
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
         annualization_factor = _get_annualization_factor(mtm_series)
@@ -2171,6 +2276,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         ret_skew, ret_kurtosis = 0.0, 3.0
         _period_returns_list = []
         dd_excess = 0.0
+        return_series_identity_violation = False
 
         # Call the unified helper to maintain structural symmetry (Issue #510 requirement)
         annualization_factor = _get_annualization_factor(None)
@@ -2276,6 +2382,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "p95_bars_held": float(p95_bars_held),
         "losses_count": losses_count,
         "median_position_notional": float(med_notional),
+        # Issue #771 — Diagnose-Telemetrie der Renditeserien-Identität (siehe
+        # assert_return_series_identity-Docstring). n_segments_skipped > 0 nur im mtm_frames-
+        # Fallback-Pfad erreichbar (nicht-kontiguierliche Segmente).
+        "n_segments_skipped": n_segments_skipped,
+        "return_series_identity_violation": return_series_identity_violation,
     }
 
 
@@ -2710,43 +2821,67 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 end_excl = pd.to_datetime(e_ns_, unit="ns") - pd.Timedelta(nanoseconds=1)
                 return series.loc[start_dt:end_excl]
 
+            def _fold_segments_half_open(series, boundaries) -> list:
+                """Issue #772 — gemeinsame Extraktion der NICHT-leeren, halb-offen geschnittenen
+                Fold-Segmente einer Zeitserie über ``fold_boundaries`` — Single Source of Truth für
+                Strategie-Equity UND Benchmark (vorher zwei inline kopierte Schleifen; Divergenz-
+                Falle analog ``compute_fold_boundaries``, AGENTS.md Pitfall #231)."""
+                if series is None or series.empty:
+                    return []
+                out = []
+                for _, s_ns_, e_ns_ in boundaries:
+                    seg = _slice_half_open(series, s_ns_, e_ns_)
+                    if not seg.empty:
+                        out.append(seg)
+                return out
+
+            def _concat_half_open(frames: list):
+                """Issue #772 — konkateniert + dedupliziert + sortiert eine Liste von Fold-
+                Segmenten (Sicherheitsnetz gegen doppelt gezählte Grenz-Bars bei kontiguierlichen
+                Folds, jetzt i. d. R. No-Op, da die Segmente disjunkt sind)."""
+                if not frames:
+                    return None
+                concat = pd.concat(frames)
+                return concat[~concat.index.duplicated(keep="last")].sort_index()
+
             is_mtm = _slice_half_open(mtm_series, start_ns, start_ns + is_window_ns)
 
-            oos_frames = []
-            for _, s_ns, e_ns in fold_boundaries:
-                seg = _slice_half_open(mtm_series, s_ns, e_ns)
-                if not seg.empty:
-                    oos_frames.append(seg)
-            oos_mtm = pd.concat(oos_frames) if oos_frames else None
-            # Dedup bleibt als Sicherheitsnetz (jetzt i. d. R. No-Op, da die Segmente disjunkt sind).
-            oos_mtm = oos_mtm[~oos_mtm.index.duplicated(keep="last")].sort_index() if oos_mtm is not None else None
+            oos_frames = _fold_segments_half_open(mtm_series, fold_boundaries)
+            oos_mtm = _concat_half_open(oos_frames)
 
-            # Issue #552/#632 — Buy&Hold-Benchmark-Return des Symbols über EXAKT dieselbe (halb-offene)
-            # OOS-Fensterung wie der Strategie-Return. Damit misst das (opt-in) Excess-Gate ALPHA
-            # (Strategie − Markt) statt bloßes Long-Bias-Beta. Rein additive Telemetrie; fehlt die
-            # Benchmark-Serie ⇒ oos_buyhold_return bleibt None (Legacy-Gate).
+            # Issue #552/#772 — Buy&Hold-Benchmark-Return des Symbols über EXAKT dieselbe (halb-
+            # offene, konkatenierte, deduplizierte) OOS-Fensterung wie der Strategie-Return —
+            # DERSELBE Helper (``_fold_segments_half_open``/``_concat_half_open``) wie für
+            # ``oos_mtm`` oben, keine zweite, potenziell divergierende Kopie der Schleife. Damit
+            # misst das (opt-in) Excess-Gate ALPHA (Strategie − Markt) statt bloßes Long-Bias-Beta.
+            # Rein additive Telemetrie; fehlt die Benchmark-Serie ⇒ oos_buyhold_return bleibt None
+            # (Legacy-Gate).
             #
-            # Issue #632 — PER-FOLD KOMPOUNDIERT, exakt wie der Strategie-Return (``mtm_frames`` /
-            # `total_return` oben in ``_calculate_stats``, Zeile ~1416-1422: ``comp *= (1+seg_ret)``
-            # je Fold). Der frühere Code konkatenierte alle Fold-Segmente zu EINER Serie und bildete
-            # ``letzter_Bar / erster_Bar − 1`` über die VOLLE Spanne Fold-0-Start → Fold-(n-1)-Ende —
-            # das schließt die IS-Fenster + Embargos ZWISCHEN den OOS-Folds mit ein (bei 4 Folds ≈ die
-            # doppelte Zeit-im-Markt gegenüber den tatsächlichen 4×OOS-Tagen). Der Benchmark wurde damit
-            # für ungefähr die doppelte Marktexposition gutgeschrieben, was in einem steigenden Markt
-            # ``excess_return = strat − bench`` systematisch < 0 trieb, unabhängig vom echten Alpha der
-            # Strategie. Fix: dieselbe Fold-für-Fold-Kompoundierung wie beim Strategie-Return — Zähler
-            # (Strategie) und Nenner (Benchmark) decken jetzt BIT-IDENTISCH dieselbe Bar-Menge ab.
+            # Issue #772 — NICHT MEHR per-Fold kompoundiert (das war #632s bewusste Entscheidung,
+            # WEIL `total_return` es damals war): #771 stellt `total_return` auf die volle
+            # konkatenierte Spanne um (dieselbe Bar-Menge wie `period_rets`) — der Benchmark muss
+            # SYMMETRISCH mitgezogen werden, sonst kehrt der #552-Span-Bug mit umgekehrtem Vorzeichen
+            # zurück (AGENTS.md Pitfall #231). Zähler (Strategie) und Nenner (Benchmark) decken damit
+            # weiterhin BIT-IDENTISCH dieselbe Bar-Menge ab — jetzt die volle Fold-Union statt der
+            # Pro-Fold-Kompoundierung.
             if benchmark_series is not None and not benchmark_series.empty:
-                comp_b = 1.0
-                any_bench_fold = False
-                for _, s_ns, e_ns in fold_boundaries:
-                    bseg = _slice_half_open(benchmark_series, s_ns, e_ns)
-                    if len(bseg) > 1 and float(bseg.iloc[0]) != 0.0:
-                        any_bench_fold = True
-                        bseg_ret = float(bseg.iloc[-1]) / float(bseg.iloc[0]) - 1.0
-                        comp_b *= (1.0 + bseg_ret)
-                if any_bench_fold:
-                    oos_buyhold_return = comp_b - 1.0
+                bench_frames = _fold_segments_half_open(benchmark_series, fold_boundaries)
+                bench_oos_concat = _concat_half_open(bench_frames)
+                if (bench_oos_concat is not None and len(bench_oos_concat) > 1
+                        and float(bench_oos_concat.iloc[0]) != 0.0):
+                    oos_buyhold_return = float(bench_oos_concat.iloc[-1]) / float(bench_oos_concat.iloc[0]) - 1.0
+                    # Issue #772 — Index-Gleichheits-Assertion: Strategie- und Benchmark-OOS-Serie
+                    # müssen bitgleich dieselbe Bar-Menge beschreiben (Akzeptanzkriterium #772/1) —
+                    # nur eine Längen-Prüfung würde eine verschobene, aber gleich lange Indexmenge
+                    # nicht erkennen.
+                    if oos_mtm is not None and not oos_mtm.index.equals(bench_oos_concat.index):
+                        import logging
+                        logging.getLogger("optimizer").error(
+                            "BENCHMARK_SPAN_MISMATCH (#772): Strategie-OOS-Index (%d Bars) != "
+                            "Benchmark-OOS-Index (%d Bars) — excess_return vergleicht keine "
+                            "bitgleiche Bar-Menge mehr.",
+                            len(oos_mtm), len(bench_oos_concat),
+                        )
         elif mtm_series is not None and not mtm_series.empty:
             is_mtm = mtm_series
 
@@ -3723,19 +3858,7 @@ def run_single_backtest_worker(
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
             if spread_bps_by_asset_class and not has_symbol_override:
-                import json
-                instrument_map_path = str(config_dir() / "instrument_map.json")
-                try:
-                    with open(instrument_map_path, "r", encoding="utf-8") as f:
-                        inst_map = json.load(f).get("instruments", {})
-
-                    # find the asset class by matching the symbol
-                    for _, inst_data in inst_map.items():
-                        if inst_data.get("symbol") == inst_id_str:
-                            asset_class_key = inst_data.get("asset_class", "DEFAULT").upper()
-                            break
-                except Exception as e:
-                    pass
+                asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
 
             spread_bps = resolve_spread_bps(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)

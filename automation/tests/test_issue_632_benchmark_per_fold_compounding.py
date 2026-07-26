@@ -9,8 +9,18 @@ Endpunkt-Quotient jede Kursbewegung, die während der ausgeschlossenen Lücke pa
 einziger Lücken-Bar im Array steht — der Benchmark wird für Marktbewegung gutgeschrieben, die
 ausserhalb der tatsächlichen OOS-Beobachtungsfenster liegt.
 
-Fix: der Benchmark wird PER-FOLD kompoundiert, exakt wie ``total_return`` (``mtm_frames`` in
-``_calculate_stats``) — Zähler und Nenner decken jetzt bit-identisch dieselbe Bar-Menge ab.
+Fix #632 (damals): der Benchmark wird PER-FOLD kompoundiert, exakt wie ``total_return`` (damals
+``mtm_frames`` in ``_calculate_stats``) — Zähler und Nenner deckten bit-identisch dieselbe Bar-Menge ab.
+
+Issue #772 (AGENTS.md Pitfall #231) — #771 hat den STRATEGIE-Zähler (``total_return``) UMGEKEHRT:
+er wird jetzt aus der VOLLEN, konkatenierten OOS-Fold-Union gebildet (Begründung #771: eine
+offene Position kann einen Fold-Übergang überspannen — die per-Segment-Kompoundierung unterschlug
+dieses reale Bar-Return). #632 hatte den Benchmark bewusst PER-FOLD kompoundiert, WEIL der
+Strategie-Return es damals war — jetzt muss der Benchmark SYMMETRISCH mitgezogen werden (Zähler
+und Nenner müssen weiterhin bitgleiche Bar-Mengen abdecken), sonst kehrt der #552-Span-Bug mit
+umgekehrtem Vorzeichen zurück. Der erste Test unten dokumentiert daher jetzt bewusst den
+UMGEKEHRTEN Erwartungswert (100 % statt 0 %) — siehe ``test_issue_772_benchmark_symmetry.py`` für
+die Index-Gleichheits-Invariante, die das absichert.
 """
 from unittest.mock import MagicMock
 
@@ -29,11 +39,16 @@ def _fill(iid, price, qty, ts_ns, side):
             "ts_event": ts_ns, "side": side, "commission": 0}
 
 
-def test_benchmark_ignores_price_drift_during_the_is_embargo_gap():
-    """Kernszenario: der Benchmark ist FLACH innerhalb JEDES OOS-Folds, steigt aber stark WÄHREND der
-    Lücke (IS-Fenster + Embargo) zwischen den Folds. Der alte Endpunkt-Quotient über die volle Spanne
-    kreditiert den Benchmark fälschlich mit dem Lücken-Anstieg; die per-Fold-Kompoundierung (Fix)
-    liefert exakt 0 % — der Benchmark bewegte sich während der TATSÄCHLICHEN OOS-Fenster nicht."""
+def test_benchmark_reflects_the_jump_visible_at_the_fold_boundary_seam():
+    """Kernszenario: der Benchmark ist FLACH innerhalb JEDES OOS-Folds, springt aber WÄHREND der
+    Lücke (IS-Fenster + Embargo) zwischen den Folds von 100 auf 200 (bereits bei Fold1-Start
+    erreicht). Issue #772 — seit #771 den Strategie-Zähler auf die VOLLE konkatenierte OOS-Fold-
+    Union umgestellt hat (Begründung: eine offene Position kann einen Fold-Übergang überspannen),
+    muss der Benchmark SYMMETRISCH über dieselbe konkatenierte Fold-Union gebildet werden — der
+    Endpunkt-Quotient über die konkatenierte Serie (erster Bar von Fold0, letzter Bar von Fold1)
+    liefert daher bewusst 100 %, NICHT mehr 0 % (der Pre-#772-Erwartungswert). Das ist keine
+    Regression zum #552-Bug: der eigentliche #552-Fehler war eine ASYMMETRIE zwischen Zähler und
+    Nenner, nicht der Umstand, dass der Endpunkt-Quotient allein verwendet wird."""
     start_ns = 1000 * DAY_NS
     # is_window=2d, oos_window=2d, splits=2, embargo=1d ⇒
     #   IS:      [start, start+2d)
@@ -73,15 +88,9 @@ def test_benchmark_ignores_price_drift_during_the_is_embargo_gap():
     oos = res["oos_metrics"]
 
     assert "oos_buyhold_return" in oos
-    # Fix (#632): der Benchmark ist innerhalb JEDES OOS-Folds flach ⇒ per-Fold-kompoundiert 0 %.
-    assert oos["oos_buyhold_return"] == pytest.approx(0.0, abs=1e-9)
-
-    # Gegenprobe: der ALTE (fehlerhafte) Endpunkt-Quotient über die volle Spanne hätte den
-    # Lücken-Sprung eingepreist ⇒ +100 %. Das ist explizit NICHT mehr das Ergebnis.
-    old_buggy = close.loc[pd.to_datetime(f0 + HOUR_NS, unit="ns"):].iloc[-1] / \
-        close.loc[pd.to_datetime(f0, unit="ns"):].iloc[0] - 1.0
-    assert oos["oos_buyhold_return"] != pytest.approx(old_buggy, abs=1e-6)
-    assert old_buggy > 0.5  # Sanity: der alte Endpunkt-Quotient zeigt tatsächlich den Lücken-Sprung.
+    # Issue #772 — der Endpunkt-Quotient über die KONKATENIERTE Fold-Union (erster Bar Fold0, letzter
+    # Bar Fold1) sieht den Sprung, der bereits bei Fold1-Start abgeschlossen ist ⇒ +100 %.
+    assert oos["oos_buyhold_return"] == pytest.approx(1.0, abs=1e-9)
 
 
 def test_strategy_and_benchmark_cover_bit_identical_bar_set():

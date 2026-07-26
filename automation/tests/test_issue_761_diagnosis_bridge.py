@@ -1,7 +1,7 @@
 """Issue #761 (P1) — Die Closed-Loop-Diagnose schreibt nur in den Cache; Denylist und Overrides
 sind seit vier Katalogen leer.
 
-Root-Cause: `binding_cause = "signal_frequency"` empfiehlt `search_space_override`, aber kein
+Root-Cause: `binding_cause = "signal_sparse"` (vor #769: `"signal_frequency"`) empfiehlt `search_space_override`, aber kein
 Mechanismus erzeugt einen kalibrierten Bounds-Vorschlag — ein Override kann nur ein Mensch
 eintragen. AdxAtrMomentumStrategy/TrendPullbackStrategy verbrannten wiederholt ihr volles
 Trial-Budget (1984/1920 Trials über den Referenzlauf) ohne Ertrag.
@@ -79,7 +79,7 @@ def test_param_not_in_current_bounds_is_skipped():
 
 # ── recommend_diagnosis_action includes proposed_bounds only for search_space_override ────────────
 def test_proposed_bounds_only_attached_for_search_space_override_action():
-    diagnosis = {"binding_cause": "signal_frequency", "median_oos_trades": 5, "median_is_trades": 3}
+    diagnosis = {"binding_cause": "signal_sparse", "median_oos_trades": 5, "median_is_trades": 3}
     rec = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO", diagnosis,
         has_existing_override=False, proposed_bounds={"cooldown_bars": [1.0, 36.0]})
