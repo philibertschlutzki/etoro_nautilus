@@ -48,9 +48,11 @@ def test_the_four_previously_dead_prefixed_clauses_resolve_to_a_handler():
     Issue #676/#677 — 'oos_min_profitable_folds_frac' UND 'oos_min_evaluable_folds' wurden bewusst
     aus dem DEFAULT ``eligible_requires_all`` entfernt (anti-monotone, redundante Fold-Zähler-Gates
     bei nicht-stationaeren Einzelasset-Zielen, siehe tournament.json-Schema/AGENTS.md Pitfall
-    #143/#144). Das ist eine Konjunktions-Mitgliedschafts-Entscheidung, KEIN Rueckfall in die
-    #649-Root-Cause (beide Handler existieren weiterhin und resolven korrekt — ein Operator kann
-    beide Keys jederzeit wieder in eligible_requires_all aufnehmen, ohne Code-Aenderung)."""
+    #143/#144). Issue #776 entfernte ZUSAETZLICH 'oos_min_excess_return' (>=0.98-kollinear mit
+    oos_min_psr/oos_max_drawdown, siehe tournament.json-Schema #776). Das sind allesamt Konjunktions-
+    Mitgliedschafts-Entscheidungen, KEIN Rueckfall in die #649-Root-Cause (alle Handler existieren
+    weiterhin und resolven korrekt — ein Operator kann jeden Key jederzeit wieder in
+    eligible_requires_all aufnehmen, ohne Code-Aenderung)."""
     dead_before_fix = [
         "oos_min_profitable_folds_frac", "oos_min_evaluable_folds",
         "oos_min_psr", "oos_min_excess_return",
@@ -58,9 +60,9 @@ def test_the_four_previously_dead_prefixed_clauses_resolve_to_a_handler():
     for clause in dead_before_fix:
         assert _canonical_gate_key(clause) in OOS_CONDITION_MAP_KEYS
 
-    # Die zwei UEBRIGEN (#676/#677-unberuehrten) Klauseln bleiben DEFAULT-Mitglieder von
-    # eligible_requires_all (die eigentliche #649-Regression waere ihr stilles Verschwinden).
-    still_default = ["oos_min_psr", "oos_min_excess_return"]
+    # Der EINE VERBLEIBENDE Key bleibt DEFAULT-Mitglied von eligible_requires_all (die eigentliche
+    # #649-Regression waere sein stilles Verschwinden).
+    still_default = ["oos_min_psr"]
     for clause in still_default:
         assert clause in TCFG["eligible_requires_all"], f"{clause} fehlt in eligible_requires_all"
 
@@ -92,19 +94,25 @@ def test_real_config_loads_without_raising():
     assert cfg["eligible_requires_all"]
 
 
-# ── Invariante (#649-Akzeptanzkriterium): kein Trial mit negativem Excess-Return ODER PSR < Schwelle
-# erreicht oos_eligible == True, sobald die Benchmark-/PSR-Telemetrie vorliegt. ─────────────────────
-def test_negative_excess_return_trial_is_not_eligible():
+# ── Invariante: PSR < Schwelle erreicht oos_eligible == True nie, sobald die PSR-Telemetrie
+# vorliegt. Issue #776 — negativer Excess-Return verwirft NICHT MEHR selbst (das Gate ist seit #776
+# eine WEICHE Near-Miss-Distanz, siehe tournament.json['_schema']['fields']['eligible_requires_all']
+# #776-Absatz); PSR bleibt das EINE harte risikoadjustierte Rendite-Gate. ─────────────────────────────
+def test_negative_excess_return_no_longer_blocks_eligibility():
+    """Regressionsbeleg #776: 'oos_min_excess_return' ist seit #776 KEIN Konjunktions-Mitglied mehr
+    — ein Trial mit negativem Excess-Return, das alle VERBLEIBENDEN Gates (min_trades, max_drawdown,
+    oos_min_psr) erfüllt, ist eligible (der Alpha-Gedanke bleibt über die weiche Near-Miss-Distanz
+    UND die Confirm-Holdout-Stufe erhalten, siehe reward._normalized_gate_distances)."""
     oos = {
         "total_trades": 300, "max_drawdown": 0.05, "win_rate": 0.5, "total_return": 0.1,
         "expectancy": 0.01, "sortino_ratio": 1.5, "psr": 0.9,
         "profit_factor": 1.3, "median_position_notional": 1000.0,
         "oos_folds_total": 4, "oos_fold_sortinos": [1.5, 1.4, 1.6, 1.5],
-        "oos_excess_return": -0.01,   # unterbietet Buy&Hold ⇒ muss das Alpha-Gate verwerfen
+        "oos_excess_return": -0.01,   # unterbietet Buy&Hold, aber kein hartes Gate mehr seit #776
     }
     ev = _evaluate_oos_eligibility(oos, TCFG)
-    assert ev["oos_eligible"] is False
-    assert any("oos_min_excess_return" in r for r in ev["oos_rejection_reasons"])
+    assert ev["oos_eligible"] is True
+    assert not any("oos_min_excess_return" in r for r in ev["oos_rejection_reasons"])
 
 
 def test_low_psr_trial_is_not_eligible():

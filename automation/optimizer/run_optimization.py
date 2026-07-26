@@ -31,7 +31,7 @@ from automation.optimizer.reward import (
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
-from automation.log_manager import emit_execution_event
+from automation.log_manager import emit_execution_event, bind_study_context
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
 
@@ -467,15 +467,31 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             "params": getattr(t, "params", None) or {},
                             "is_total_trades": getattr(t, "user_attrs", {}).get("is_total_trades"),
                         } for t in completed]
-                        _proposed_bounds = propose_bounds_widening(_trial_param_rows, strategy)
+                        # Issue #777 — deklarativer Weitungsfaktor statt des Funktions-Parameter-
+                        # Defaults (0.3); fehlt der Key ⇒ 0.3 (bit-identisch, Zero-Hardcoding).
+                        _widen_fraction = float(weights.get("bounds_widening_factor", 0.3)) if weights else 0.3
+                        _proposed_bounds = propose_bounds_widening(
+                            _trial_param_rows, strategy, widen_fraction=_widen_fraction)
                     except Exception:
                         _proposed_bounds = {}
+                    # Issue #778 — Evidenz fuer eine 'signal_absent'-Eskalation: das Budget DIESES
+                    # Laufs (#770) UND wie oft dieselbe (action, binding_cause) bereits IN FOLGE
+                    # bestaetigt wurde (aus dem Vorlauf-Cache-Eintrag, VOR diesem Lauf).
+                    _budget_execution_for_diagnosis = compute_budget_execution(
+                        completed, n_trials_budget=_n_trials_budget,
+                        n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs)
                     rec = recommend_diagnosis_action(
                         strategy, symbol, diagnosis,
                         has_existing_override=has_existing_search_space_override(strategy, symbol),
                         previously_recommended_override=bool(
                             _prior and _prior.get("action") == "search_space_override"),
                         proposed_bounds=_proposed_bounds,
+                        budget_executed_fraction=_budget_execution_for_diagnosis["budget_executed_fraction"],
+                        n_runs_confirmed=(
+                            int(_prior.get("n_runs_confirmed", 0))
+                            if _prior and _prior.get("binding_cause") == diagnosis.get("binding_cause")
+                            else 0
+                        ),
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -1823,8 +1839,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         trial.set_user_attr("oos_constraint_violations", _compute_oos_constraints(metrics, t_data))
         # Issue #618 — der PER-PERIODEN-Sortino + PSR je Trial (für die DSR-Kohorten-Varianz V[ŜR_trials]
         # in confirm; Multiple-Testing-Korrektur auf der per-Perioden-Skala, NICHT der Reward-Skala #611).
-        trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
-        trial.set_user_attr("oos_psr", metrics.oos_psr)
+        # Issue #788 — NUR gesetzt, wenn der Trial tatsächlich evaluiert wurde (dieselbe Sentinel-
+        # Frage wie #759/oos_win_rate: ein nicht evaluierter Trial darf für KEINE OOS-Metrik eine
+        # Beobachtung tragen, weder None noch ein impliziter 0.0-Fallback — der Key entfällt ganz).
+        if metrics.oos_evaluated:
+            if metrics.oos_sortino_period is not None:
+                trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
+            if metrics.oos_psr is not None:
+                trial.set_user_attr("oos_psr", metrics.oos_psr)
         # Issue #653 — T (Anzahl OOS-Perioden) je Trial, damit confirm.py den theoretischen
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
@@ -1842,8 +1864,21 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # (_emit_study_summary) die tatsächlich BEOBACHTETE Symbol-/Strategie-spezifische
         # Win-Rate-Verteilung gegen die konfigurierte oos_min_win_rate-Schwelle prüfen kann (LIVE,
         # nicht nur das statische Cross-Strategy-Kalibrier-Fixture aus #633).
-        if metrics.oos_win_rate is not None:
-            trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
+        # Issue #788 — dieselbe oos_evaluated-Torwaechter-Bedingung gilt ab hier fuer JEDE OOS-
+        # Metrik (profit_factor, expectancy, total_return, sortino): oos_expectancy/oos_total_return
+        # fallen in der Parsing-Schicht (TournamentMetrics) auf 0.0 statt None zurueck, wenn die
+        # zugrundeliegende oos_metrics.json keinen Wert traegt — OHNE das ``oos_evaluated``-Gate hier
+        # waere ein 0.0-Fallback fuer einen NIE evaluierten Trial ununterscheidbar von einer echten
+        # Null-Beobachtung (dieselbe #759-Fehlerklasse, nur an vier weiteren Metriken).
+        if metrics.oos_evaluated:
+            if metrics.oos_win_rate is not None:
+                trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
+            if metrics.oos_profit_factor is not None:
+                trial.set_user_attr("oos_profit_factor", metrics.oos_profit_factor)
+            trial.set_user_attr("oos_expectancy", metrics.oos_expectancy)
+            trial.set_user_attr("oos_total_return", metrics.oos_total_return)
+            if metrics.oos_sortino is not None:
+                trial.set_user_attr("oos_sortino", metrics.oos_sortino)
         # Issue #668 — die maschinenlesbaren Gate-Deltas je Trial (bereits im JSON_EVENT emittiert,
         # #554) zusätzlich als User-Attr persistiert: erlaubt confirm.py, die eligible_requires_any-
         # Klausel für BEREITS ABGESCHLOSSENE Trials retroaktiv unter einer angepassten Policy
@@ -1970,6 +2005,13 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
     study_name = f"study_{strategy}_{_sanitize(symbol)}"
+    # Issue #780 — bindet strategy/symbol/study_name fuer die GESAMTE restliche Lebensdauer dieser
+    # Study (jede Log-Zeile/jedes Event ab hier, ueber alle verschachtelten Aufrufe hinweg: Objective,
+    # floor_plateau_callback, _emit_study_summary, ...) an DIESEN Thread — Manuelles Enter/Exit statt
+    # eines ``with``-Blocks, um den bestehenden Funktionskoerper nicht komplett neu einzuruecken;
+    # das Exit steht im bestehenden ``finally:`` unten, symmetrisch zum Storage-Dispose.
+    _study_ctx_cm = bind_study_context(strategy=strategy, symbol=symbol, study_name=study_name)
+    _study_ctx_cm.__enter__()
     sweep_dir = WORK / "sweep"
     sweep_dir.mkdir(parents=True, exist_ok=True)
     if storage is None:
@@ -2133,6 +2175,8 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         # Sweep auf ~n_jobs statt auf die Gesamtzahl der Paare. Nachfolgende Lesezugriffe (sweep.py:
         # familienweite Aggregation, Confirm/Export) reconnecten lazy und disposen dort erneut.
         _dispose_storage(rdb_storage)
+        # Issue #780 — symmetrisches Exit des Study-Log-Kontexts (siehe Enter oben).
+        _study_ctx_cm.__exit__(None, None, None)
     return study
 
 

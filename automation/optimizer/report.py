@@ -268,6 +268,13 @@ def _study_record(proposal: dict, study,
     binding_deltas, soft_deltas, binding_gate = _split_near_miss_deltas(
         raw_near_miss_deltas, tournament_cfg or {})
 
+    # Issue #776 — konsumiert den #679-Redundanz-Alarm JE STUDY: meldet, ob ``eligible_requires_all``
+    # (aus der Config, NICHT hartcodiert) gegenüber der LIVE-Trial-Kohorte dieser Study noch ein
+    # Gate enthält, das ``assert_eligible_requires_all_not_redundant`` als redundant ausweist.
+    trial_gate_deltas = [a.get("oos_gate_deltas") for a in trial_attrs if a.get("oos_gate_deltas")]
+    gate_collinearity_unconsolidated = _reward.assert_eligible_requires_all_not_redundant(
+        trial_gate_deltas, (tournament_cfg or {}).get("eligible_requires_all") or [], tournament_cfg)
+
     # Issue #770 — dieselbe Berechnung wie ``run_optimization._emit_study_summary`` (Single Source
     # of Truth, siehe compute_budget_execution-Docstring).
     budget_execution = compute_budget_execution(
@@ -321,6 +328,9 @@ def _study_record(proposal: dict, study,
         # deaktivierten Gates (soft, reine Distanz-Telemetrie); binding_gate ist NIE aus soft.
         "near_miss_deltas": {"binding": binding_deltas, "soft": soft_deltas},
         "binding_gate": binding_gate,
+        # Issue #776 — noch unkonsolidierte (LIVE als redundant ausgewiesene) Mitglieder von
+        # ``eligible_requires_all`` dieser Study; leer ⇒ Config konsistent mit dem #679-Alarm.
+        "gate_collinearity_unconsolidated": gate_collinearity_unconsolidated,
         # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
         # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
@@ -353,6 +363,29 @@ def _budget_execution_summary(studies_out: list[dict[str, Any]]) -> dict[str, An
     median = _stats.median(fractions)
     p10_idx = max(0, min(len(fractions) - 1, int(round(0.10 * (len(fractions) - 1)))))
     return {"median": round(median, 4), "p10": round(fractions[p10_idx], 4), "n": len(fractions)}
+
+
+def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
+    """Issue #778 (Umsetzungspunkt 3) — die vom `#681`-Auto-Cache aktuell ``'denylist'``-empfohlenen
+    (und damit von ``enumerate_tunable_pairs`` übersprungenen) Paare als eigene Report-Sektion, MIT
+    Begründung (``binding_cause``) und Evidenzstand (``budget_executed_fraction``,
+    ``n_runs_confirmed``, ``first_seen_run_id``) — macht eine automatische Deaktivierung im Report
+    genauso nachvollziehbar wie eine Promotion, statt nur im Cache-JSON verborgen zu sein."""
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        cache = load_diagnosed_pairs_cache()
+    except Exception:
+        return []
+    return [
+        {
+            "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
+            "binding_cause": entry.get("binding_cause"),
+            "budget_executed_fraction": entry.get("budget_executed_fraction"),
+            "n_runs_confirmed": entry.get("n_runs_confirmed"),
+            "first_seen_run_id": entry.get("first_seen_run_id"),
+        }
+        for entry in cache.values() if entry.get("action") == "denylist"
+    ]
 
 
 def _promotion_outcome_counts(studies_out: list[dict[str, Any]]) -> dict[str, int]:
@@ -411,6 +444,13 @@ def _build_report(
     budget_check = _inv.check_budget_execution(studies_out, min_median=min_median_budget_execution)
     all_checks.append(("global", budget_check))
 
+    # Issue #776 — sweep-weite Gate-Kollinearitaets-Konsolidierungs-Invariante (konsumiert den
+    # #679-Alarm ueber alle Studies statt ihn stumm bleiben zu lassen).
+    max_affected_fraction = float(optimizer_cfg.get("max_gate_collinearity_affected_fraction", 0.20))
+    gate_collinearity_check = _inv.check_gate_collinearity_consolidation(
+        studies_out, max_affected_fraction=max_affected_fraction)
+    all_checks.append(("global", gate_collinearity_check))
+
     invariant_checks = []
     for label, result in all_checks:
         d = result.to_dict()
@@ -448,6 +488,9 @@ def _build_report(
             # tatsaechliche Ursache (trade_frequency/signal_quality/data_geometry) zeigt, statt
             # eines deaktivierten Gates (siehe #787-Umsetzung).
             "binding_gate_histogram_by_strategy": _binding_gate_histogram_by_strategy(studies_out),
+            # Issue #778 — automatisch denylist-empfohlene (uebersprungene) Paare MIT Begruendung
+            # und Evidenzstand, statt nur im diagnosed_pairs_cache.json verborgen zu sein.
+            "diagnosed_pairs_skipped": _diagnosed_pairs_skipped_section(),
         },
         "invariant_checks": invariant_checks,
     }

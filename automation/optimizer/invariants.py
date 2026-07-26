@@ -304,24 +304,41 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     )
 
 
+# Issue #788 — dieselbe Sentinel-Frage wie #759 (dort nur oos_win_rate) gilt fuer JEDE OOS-Metrik,
+# die make_symbol_objective als Trial-User-Attr persistiert: ein nicht evaluierter Trial darf fuer
+# KEINE davon eine Beobachtung tragen. Deklarative Liste statt sechs Einzel-Wächtern.
+_SENTINEL_GUARDED_METRIC_KEYS = (
+    "oos_win_rate", "oos_profit_factor", "oos_expectancy", "oos_total_return",
+    "oos_sortino", "oos_psr", "oos_sortino_period",
+)
+
+
 def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
-    """Issue #759-Regressionswächter.
+    """Issue #759/#788-Regressionswächter.
 
     Root-Cause #759: ``oos_win_rate`` kollabierte fehlende Werte (kein Trial je evaluiert, kein
     ``win_rate``-Key im Metrics-Dict) auf ``0.0`` — ununterscheidbar von einer ECHT BEOBACHTETEN
     Null. Nachgelagerte Policies (``reward.check_any_arm_reachability_live``/
     ``resolve_any_arm_policy``) rekalibrierten Schwellen aus einer Verteilung, die teils/
     ausschliesslich aus diesen Missing-Data-Sentinels bestand. Seit #759 liefert die Parsing-Schicht
-    ``None`` korrekt durch (``parsing.TournamentMetrics.oos_win_rate``) — diese Prüfung verifiziert
-    die Invariante FEHLSCHLAGEND, wenn eine Study eine ``oos_win_rate``-Beobachtung fuer einen Trial
-    persistiert, dessen ``oos_evaluated`` gleichzeitig ``False`` ist (der Sentinel-Kollaps waere
-    genau daran erkennbar: ein nie evaluierter Trial "beobachtet" trotzdem eine win_rate).
+    ``None`` korrekt durch (``parsing.TournamentMetrics.oos_win_rate``) — die ERZEUGUNGSSEITE
+    (``run_optimization.make_symbol_objective``) stempelte aber weiterhin eine Beobachtung fuer
+    NICHT evaluierte Trials (9612 betroffene Trials in 386/1736 Studies, Root-Cause-Katalog #788).
+
+    Issue #788 — auf ALLE OOS-Metriken derselben Erzeugungsstelle erweitert (nicht mehr nur
+    ``oos_win_rate``): ``oos_profit_factor``/``oos_expectancy``/``oos_total_return``/``oos_sortino``/
+    ``oos_psr``/``oos_sortino_period`` (siehe ``_SENTINEL_GUARDED_METRIC_KEYS``). Diese Prüfung
+    verifiziert die Invariante FEHLSCHLAGEND, wenn eine Study fuer EINEN dieser Keys eine
+    Beobachtung fuer einen Trial persistiert, dessen ``oos_evaluated`` gleichzeitig ``False`` ist
+    (der Sentinel-Kollaps waere genau daran erkennbar: ein nie evaluierter Trial "beobachtet"
+    trotzdem eine Metrik).
 
     ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (#621-Konvention, dieselbe Form wie
     ``check_reward_term_variance``)."""
     violating = [
         i for i, t in enumerate(trials)
-        if t.get("oos_evaluated") is False and t.get("oos_win_rate") is not None
+        if t.get("oos_evaluated") is False
+        and any(t.get(k) is not None for k in _SENTINEL_GUARDED_METRIC_KEYS)
     ]
     passed = not violating
     return InvariantResult(
@@ -330,9 +347,9 @@ def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
         expected=0,
         actual=len(violating),
         detail=("OK" if passed else
-                f"{len(violating)} Trial(s) mit oos_win_rate-Beobachtung TROTZ oos_evaluated=False "
-                "— moeglicher Missing-Data-Sentinel-Kollaps (#759-Regression: None faelschlich zu "
-                "0.0 kollabiert)."),
+                f"{len(violating)} Trial(s) mit einer OOS-Metrik-Beobachtung TROTZ "
+                "oos_evaluated=False — moeglicher Missing-Data-Sentinel-Kollaps (#759/#788-"
+                "Regression: None/0.0 faelschlich als echte Beobachtung gestempelt)."),
     )
 
 
@@ -394,6 +411,40 @@ def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
             "in_target_corridor": bool(lo <= var_contrib <= hi),
         })
     return table
+
+
+def check_gate_collinearity_consolidation(study_records: list[dict], *,
+                                          max_affected_fraction: float = 0.20) -> InvariantResult:
+    """Issue #776/#792-Regressionswächter.
+
+    ``reward.assert_eligible_requires_all_not_redundant`` markiert bereits JE STUDY, ob
+    ``eligible_requires_all`` noch ein von der LIVE-Kohorte als redundant ausgewiesenes
+    Gate-Paar enthält (siehe ``report._study_record``s ``gate_collinearity_unconsolidated``-Feld).
+    Diese sweep-weite Prüfung konsumiert den #679-Alarm ENDLICH (Root-Cause #776: der Alarm war
+    reine Telemetrie ohne Konsument) — FAIL, wenn >= 20 % der Studies eines Laufs ein
+    unkonsolidiertes Gate melden. Bricht NICHT automatisch die Config (welches Gate konsolidiert
+    wird, bleibt eine bewusste PR-Entscheidung) — macht die Notwendigkeit aber unübersehbar."""
+    with_data = [r for r in study_records if "gate_collinearity_unconsolidated" in r]
+    if not with_data:
+        return InvariantResult(
+            name="check_gate_collinearity_consolidation",
+            passed=True,
+            expected=f"< {max_affected_fraction:.0%} Studies mit unkonsolidiertem Gate",
+            actual=None,
+            detail="Keine Studies mit Gate-Kollinearitäts-Telemetrie — nicht anwendbar.",
+        )
+    affected = sum(1 for r in with_data if r.get("gate_collinearity_unconsolidated"))
+    fraction = affected / len(with_data)
+    passed = fraction < max_affected_fraction
+    return InvariantResult(
+        name="check_gate_collinearity_consolidation",
+        passed=passed,
+        expected=f"< {max_affected_fraction:.0%} Studies mit unkonsolidiertem Gate",
+        actual=round(fraction, 4),
+        detail=("OK" if passed else
+                f"{affected}/{len(with_data)} Studies ({fraction:.1%}) melden ein von der LIVE-"
+                "Kohorte als redundant ausgewiesenes eligible_requires_all-Gate (#776/#679-Alarm)."),
+    )
 
 
 def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5) -> InvariantResult:

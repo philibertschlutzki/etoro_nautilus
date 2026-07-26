@@ -2,11 +2,17 @@
 
 1. ``recommend_diagnosis_action`` schliesst die Diagnose (binding_cause) zu einer konkreten Aktion:
    'signal_quality' ⇒ immer 'denylist'; 'signal_sparse'/'hold_duration' ⇒ 'search_space_override'
-   NUR für verdrahtete Strategien OHNE existierenden Override, sonst 'denylist'.
+   NUR für verdrahtete Strategien OHNE existierenden Override, sonst 'none'.
 2. ``record_diagnosed_pair``/``load_diagnosed_pairs_cache`` — der automatisch gepflegte Cache
    (GETRENNT von der menschlich-kuratierten symbol_strategy_denylist.json).
 3. ``enumerate_tunable_pairs`` überspringt ein 'denylist'-empfohlenes Auto-Cache-Paar automatisch ab
    dem nächsten Lauf; 'search_space_override'-Empfehlungen werden NICHT automatisch übersprungen.
+
+Issue #778 — 'signal_sparse'/'hold_duration' eskaliert seither NIE mehr auf 'denylist' (weder über
+einen existierenden, wirkungslosen Override noch über eine nicht verdrahtete Strategie) — eine
+PARAMETERABHÄNGIGE Ursache rechtfertigt keine dauerhafte Deaktivierung; das Paar bleibt in Rotation
+('none'). Nur 'signal_absent' (PARAMETERUNABHÄNGIG) kann noch auf 'denylist' eskalieren, und nur mit
+ausreichender Evidenz (siehe test_issue_778_denylist_evidence.py).
 """
 import json
 
@@ -45,25 +51,26 @@ def test_signal_sparse_wired_strategy_without_override_recommends_bounds_overrid
     assert rec["action"] == "search_space_override"
 
 
-def test_signal_sparse_wired_strategy_with_existing_override_escalates_to_denylist():
-    """Bounds-Kalibrierung wurde bereits versucht (Override existiert) und das Paar ist TROTZDEM
-    tot ⇒ Eskalation auf 'denylist' statt endloser Wiederholung derselben Empfehlung."""
+def test_signal_sparse_wired_strategy_with_existing_override_no_longer_escalates_to_denylist():
+    """Issue #778 — Bounds-Kalibrierung wurde bereits versucht (Override existiert) und das Paar
+    ist TROTZDEM tot ⇒ KEINE Eskalation mehr ('signal_sparse' ist PARAMETERABHÄNGIG, eine
+    dauerhafte Deaktivierung auf dieser Basis wäre verfrüht) — das Paar bleibt in Rotation."""
     rec = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 3},
         has_existing_override=True,
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "none"
 
 
-def test_signal_sparse_non_wired_strategy_recommends_denylist_directly():
-    """Ein Override haette fuer eine nicht verdrahtete Strategie ohnehin keine Wirkung
-    (spaces._bounds_for ist fail-open No-Op) ⇒ direkt Denylist, kein nutzloser Override-Vorschlag."""
+def test_signal_sparse_non_wired_strategy_no_longer_recommends_denylist():
+    """Issue #778 — eine nicht verdrahtete Strategie kann keinen Override probieren, wird aber
+    seither auch NICHT mehr denylisted ('signal_sparse' eskaliert nie) — bleibt in Rotation."""
     rec = recommend_diagnosis_action(
         "ComboTrendVwapStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 1},
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "none"
 
 
 def test_no_collapse_recommends_none():
@@ -91,6 +98,9 @@ def test_none_action_is_not_persisted(tmp_path):
 
 
 def test_cache_entry_is_idempotently_overwritten(tmp_path):
+    """Issue #778 — der zweite Aufruf (existierender Override, weiterhin 'signal_sparse') liefert
+    seither 'none' statt 'denylist'; der Cache-Eintrag wird trotzdem überschrieben (idempotent),
+    NICHT auf dem ersten Fund ('search_space_override') zementiert."""
     rec1 = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0}, has_existing_override=False)
@@ -101,7 +111,7 @@ def test_cache_entry_is_idempotently_overwritten(tmp_path):
     record_diagnosed_pair(rec2, work_dir=tmp_path)
     cache = load_diagnosed_pairs_cache(tmp_path)
     assert len(cache) == 1
-    assert cache[("TrendPullbackStrategy", "TSLA.ETORO")]["action"] == "denylist"
+    assert cache[("TrendPullbackStrategy", "TSLA.ETORO")]["action"] == "none"
 
 
 def test_has_existing_search_space_override_reads_real_schema(tmp_path):

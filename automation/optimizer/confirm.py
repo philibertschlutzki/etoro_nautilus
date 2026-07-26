@@ -1138,10 +1138,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Issue #763 — >= 0.5 ist ein STÄRKERES Signal als der #622-Veto (die HÄLFTE der Gewinner-
     # Parameter klebt an der Grenze): statt eines terminalen REJECTED_BOUNDARY_SOLUTION erzeugt das
     # HOLD_BOUNDARY_UNRESOLVED — nur ein Re-Run mit ausgeweiteten Bounds kann entscheiden, ob der
-    # Rand ein echtes Optimum oder ein Suchraum-Artefakt ist. Die betroffenen Parameter+Richtung
-    # werden dafür als proposed_bounds-Kandidat in den #761-Diagnose-Cache geschrieben (derselbe
-    # Auto-Override-Mechanismus wie bei einem 'signal_frequency'-Kollaps — kein manueller
-    # Config-Edit nötig, bevor der nächste Sweep das Symbol/die Strategie erneut versucht).
+    # Rand ein echtes Optimum oder ein Suchraum-Artefakt ist.
     boundary_unresolved = bool(boundary_frac is not None and boundary_frac >= 0.5)
     if boundary_unresolved:
         directions_str = ", ".join(f"{p}={d}" for p, d in sorted((boundary_directions or {}).items()))
@@ -1150,11 +1147,22 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             f"({directions_str}) ⇒ HOLD_BOUNDARY_UNRESOLVED — Re-Run mit ausgeweiteten Bounds nötig, "
             f"bevor Rand-Optimum vs. Suchraum-Artefakt unterscheidbar ist."
         )
+
+    # Issue #777 — der Bounds-Vorschlag wird für JEDE Randlösung geschrieben (``boundary_overfit``,
+    # frac > 0.3 — dieselbe Schwelle wie die #622-Warnung), nicht mehr nur für die STÄRKERE
+    # ``boundary_unresolved``-Schwelle (>= 0.5). Root-Cause #777: `[#597]` meldete 32 Studies mit
+    # frac 0,33–0,50 — GENAU der Bereich zwischen den beiden Schwellen, für den vor diesem Fix nie
+    # ein Vorschlag entstand (die #622-Warnung blieb reine Prosa). Der Vorschlag geht über
+    # ``record_diagnosed_pair`` in denselben `#761`-Cache, den ``spaces._load_auto_proposed_bounds``
+    # bereits liest — derselbe Auto-Override-Mechanismus wie bei einem 'signal_frequency'-Kollaps,
+    # kein manueller Config-Edit nötig, bevor der nächste Sweep das Paar erneut versucht.
+    if boundary_overfit:
         try:
             from automation.optimizer.sweep_diagnostics import (
                 propose_bounds_from_boundary_hits, record_diagnosed_pair)
+            _widen_fraction = float((global_weights or {}).get("bounds_widening_factor", 0.3))
             proposed_bounds = propose_bounds_from_boundary_hits(
-                boundary_directions or {}, strategy)
+                boundary_directions or {}, strategy, widen_fraction=_widen_fraction)
             if proposed_bounds:
                 record_diagnosed_pair({
                     "strategy": strategy, "symbol": symbol,
@@ -1165,7 +1173,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         except Exception:
             logging.getLogger("optimizer").warning(
                 f"[Boundary #763] {symbol}: proposed_bounds konnten nicht in den #761-Cache "
-                f"geschrieben werden (non-fatal, HOLD_BOUNDARY_UNRESOLVED bleibt wirksam)."
+                f"geschrieben werden (non-fatal, {'HOLD_BOUNDARY_UNRESOLVED' if boundary_unresolved else 'REJECTED_BOUNDARY_SOLUTION'} bleibt wirksam)."
             )
 
     # Issue #655 — R_symbol/R_global sind seit #655 ``None`` (statt eines numerischen −20-Sentinels),

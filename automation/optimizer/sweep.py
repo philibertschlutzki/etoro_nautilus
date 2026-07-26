@@ -539,25 +539,41 @@ def _family_n_from_proposals(proposals) -> dict[str, int]:
     return family_n
 
 
-def _family_n_from_studies(pairs, studies) -> dict[str, int]:
+def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None) -> dict[str, int]:
     """Issue #652 — familienweise Multiple-Testing-N je Symbol AUS DEN STUDY-OBJEKTEN SELBST
     (nicht aus den exportierten Proposals — die existieren an dieser Stelle noch nicht, siehe
-    ``_family_n_from_proposals`` für die post-hoc-Variante der reinen Sweep-Telemetrie). Summe der
-    eligiblen Trials über ALLE Strategien-Studies desselben Symbols, BEVOR irgendeine Promotion-
-    Entscheidung fällt — genau das schliesst die #652-Lücke: die Promotions-DSR nutzte bislang
-    ausschliesslich das per-Study-N, weil die familienweite Zahl erst NACH allen Promotions bekannt
-    war (``sweep_completed``-Event). ``pairs``/``studies`` müssen index-parallel sein (wie von der
-    Phase-1-Dispatch-Schleife in ``run_per_symbol_sweep`` erzeugt).
+    ``_family_n_from_proposals`` für die post-hoc-Variante der reinen Sweep-Telemetrie). Summe über
+    ALLE Strategien-Studies desselben Symbols, BEVOR irgendeine Promotion-Entscheidung fällt — genau
+    das schliesst die #652-Lücke: die Promotions-DSR nutzte bislang ausschliesslich das per-Study-N,
+    weil die familienweite Zahl erst NACH allen Promotions bekannt war (``sweep_completed``-Event).
+    ``pairs``/``studies`` müssen index-parallel sein (wie von der Phase-1-Dispatch-Schleife in
+    ``run_per_symbol_sweep`` erzeugt).
 
-    Issue #695 — dies bleibt die ROHE (un-declusterte) Familien-Multiplizität (Σ eligibler Trials,
-    ohne jede Korrelations-Reduktion). Die deklusterte Variante (Σ EFFEKTIV-unabhängiger Configs)
-    liefert ``_family_period_returns_from_studies`` (die per-Trial-Return-Vektoren, aus denen
-    ``confirm_per_symbol_promotion`` selbst deklustert, analog zu ``_study_pbo``)."""
+    Issue #784 — zählt ``oos_evaluated is True`` (VERSUCHE), nicht mehr ``oos_eligible is True``
+    (ÜBERLEBENDE). Root-Cause #784: die Deflated Sharpe Ratio korrigiert für die Multiplizität der
+    SUCHE (N gezogene Kandidaten) — der Eligibility-Filter ist selbst ein Selektionsschritt und
+    gehört IN die Korrektur, nicht davor. Über die zählenden eligiblen statt evaluierten Trials
+    unterschätzte ``n_family`` die reale Multiplizität um den Kehrwert der Eligibility-Passrate
+    (13,0 % Passrate ⇒ Faktor 7,7, #784-Katalog) UND koppelte die Deflationsschwelle invers an die
+    Budgetausführung (ein per #768/#769 früh abgebrochener Study wurde dadurch MILDER deflatiert,
+    Spearman(n_family, Budgetausführung)=+0,220 — die Korrektur bestrafte gründliche Suche).
+
+    Issue #784, Umsetzungspunkt 3 — ``tournament_cfg['deflation_family_floor_mode']`` (Default
+    ``'budgeted'``) hebt die je-Study-Zahl zusätzlich auf ``n_trials_budget`` an, WENN dieser Wert
+    (User-Attr, von ``run_optimization`` gestempelt) grösser ist als die tatsächlich evaluierten
+    Trials dieser Study: ein Abbruch reduziert die gezogenen Kandidaten, aber der Suchraum, aus dem
+    selektiert wurde, war der volle geplante. ``'attempted'`` reproduziert das Verhalten OHNE
+    Budget-Untergrenze (bit-identisch bis auf die #784-Umstellung von eligible→evaluated selbst)."""
+    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "budgeted")
     family_n: dict[str, int] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
-        n_eligible = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
-        family_n[symbol] = family_n.get(symbol, 0) + n_eligible
+        n_evaluated = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
+        if floor_mode == "budgeted":
+            n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
+            if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
+                n_evaluated = max(n_evaluated, int(n_trials_budget))
+        family_n[symbol] = family_n.get(symbol, 0) + n_evaluated
         # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
         # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
         # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
@@ -577,12 +593,27 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
     Config-Zählung).
 
     Nur Trials MIT nicht-leeren ``oos_period_returns`` fliessen ein (Korrelation braucht eine
-    Return-Serie); ``pairs``/``studies`` müssen index-parallel sein, wie ``_family_n_from_studies``."""
+    Return-Serie); ``pairs``/``studies`` müssen index-parallel sein, wie ``_family_n_from_studies``.
+
+    Issue #784 — liest seit dem #784-Fix ``oos_evaluated is True`` (dieselbe erweiterte Menge wie
+    ``_family_n_from_studies``), nicht mehr ``oos_eligible is True``: die Korrelations-Declusterung
+    (``cpcv.cluster_effective_configs`` in ``confirm.py``) ist das statistisch saubere Mittel gegen
+    die dadurch grössere Rohzahl, kein Vorfilter auf Gewinner-Trials VOR der Declusterung.
+
+    BEKANNTE RESTLÜCKE (#784, nicht Teil der gemessenen Akzeptanzkriterien): ``trial.user_attrs
+    ['oos_period_returns']`` wird in ``run_optimization.make_symbol_objective`` weiterhin NUR für
+    ``oos_eligible``-Trials gestempelt (#663/#665, bewusste Storage-Kosten-Begrenzung) — die hier
+    gesammelte Matrix sieht die erweiterte ``oos_evaluated``-Kohorte also nur über den erweiterten
+    FILTER, nicht über zusätzliche REIHEN (evaluierte-aber-ineligible Trials tragen faktisch fast
+    immer ein leeres ``rets`` und fallen daher aus der Matrix). Der ROHE Zähler
+    (``_family_n_from_studies``, das eigentliche #784-Akzeptanzkriterium) ist davon NICHT betroffen
+    — nur die per Decluster GEGLÄTTETE ``deflation_n_family_effective`` bleibt konservativ (eher zu
+    klein als zu gross, also keine neue Über-Deflations-Gefahr) auf der eligiblen Teilmenge."""
     family_returns: dict[str, list[list[float]]] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
         for t in trials:
-            if getattr(t, "user_attrs", {}).get("oos_eligible") is not True:
+            if getattr(t, "user_attrs", {}).get("oos_evaluated") is not True:
                 continue
             rets = t.user_attrs.get("oos_period_returns") or []
             if rets:
@@ -742,7 +773,14 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
     # Issue #652 — familienweite Multiplizität je Symbol, AUS DEN STUDIES (Phase 1 bereits
     # abgeschlossen), BEVOR irgendeine Promotion (Phase 2) läuft.
-    n_family_pre_promotion = _family_n_from_studies(pairs, studies)
+    # Issue #784 — deflation_family_floor_mode steuert die Budget-Untergrenze innerhalb von
+    # _family_n_from_studies; fail-open (leere Config) auf den bit-identischen 'budgeted'-Default.
+    try:
+        _tournament_cfg_for_family = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        _tournament_cfg_for_family = {}
+    n_family_pre_promotion = _family_n_from_studies(
+        pairs, studies, tournament_cfg=_tournament_cfg_for_family)
     # Issue #695 — dieselbe Phase-1-Grundlage, aber als familienweite Return-MATRIX statt nur eines
     # Zählers, damit confirm.confirm_per_symbol_promotion die rohe Familien-N vor der SR₀-Berechnung
     # korrelations-declustern kann (siehe _family_period_returns_from_studies-Docstring).
