@@ -31,10 +31,12 @@ from automation.optimizer.run_optimization import (
     _sanitize,
     _preinit_study_storage,
     _dispose_storage,
+    derive_n_trials,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer import champions
 from automation.optimizer import retention
+from automation.optimizer import disk_guard
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
@@ -737,6 +739,30 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                                     latest_ts=latest_ts, start_ns=start_ns,
                                     holdout_window_reach_target_ns=holdout_window_reach_target_ns)
 
+    # Issue #795 — Speicher-Preflight VOR dem ersten Trial: bricht mit einer konkreten
+    # Handlungsempfehlung ab, wenn der GEPLANTE Lauf das Budget/den freien Platz übersteigen würde,
+    # statt Stunden später in ENOSPC zu laufen. Nur im echten Storage-Pfad (injizierte HI-7-Fakes
+    # erzeugen keine echten Trial-Verzeichnisse).
+    if using_real_optimize and pairs:
+        # ``pairs`` leer ⇒ nichts geplant, nichts zu budgetieren (ein bereits knapper freier Platz
+        # unabhaengig von DIESEM Lauf darf einen No-Op-Sweep nicht fail-loud abbrechen).
+        _expected_trials = sum(
+            derive_n_trials(strategy, opt_data.get("n_trials", 100), opt_data)
+            for strategy, _symbol, _reason in pairs
+        )
+        _expected_bytes = disk_guard.estimate_expected_bytes(
+            _expected_trials, opt_data.get("bytes_per_trial_estimate", 30000))
+        _budget_gb = float(opt_data.get("disk_budget_gb") or 200)
+        _reserve_gb = float(opt_data.get("disk_reserve_gb") or 50)
+        emit_execution_event(logging.getLogger("optimizer"), "DISK_BUDGET_PREFLIGHT", {
+            "expected_trials": _expected_trials,
+            "expected_bytes": _expected_bytes,
+            "budget_bytes": int(_budget_gb * disk_guard.GIB),
+            "free_bytes": disk_guard.free_bytes(WORK) if WORK.exists() else None,
+        })
+        disk_guard.assert_preflight_budget(
+            WORK, expected_bytes=_expected_bytes, budget_gb=_budget_gb, reserve_gb=_reserve_gb)
+
     # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).
     # enumerate_tunable_pairs dedupliziert bereits; diese Assertion ist der Guertel-und-Hosentraeger-
     # Schutz, falls eine kuenftige Aenderung (oder ein injizierter Paar-Set im Test) doch zwei Paare
@@ -773,6 +799,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ``deflation_n_family`` je Symbol.
     def _run_optimize(pair: tuple[str, str, str]):
         strategy, symbol, _reason = pair
+        # Issue #795 — ein zuvor gesetztes disk_guard.sweep_abort_requested (DISK_BUDGET_EXCEEDED
+        # in einer parallel laufenden Study) laesst NEUE Paare nicht mehr starten; bereits laufende
+        # Studies werden durch ihren eigenen disk_budget_callback gestoppt. Geordnetes Sweep-Ende
+        # statt eines harten ENOSPC-Absturzes (siehe disk_guard-Moduldoc).
+        if disk_guard.sweep_abort_requested.is_set():
+            logging.getLogger("optimizer").warning(
+                "[#795] Sweep-Abbruch angefordert (Speicherbudget überschritten) — %s/%s wird "
+                "übersprungen.", strategy, symbol,
+            )
+            return None
         newest_ns = latest_ts.get(symbol) if latest_ts else None
         # Issue #531 — die REAL vorhandene Bar-Spanne (Tage) an build_trial durchreichen, damit die
         # Manifest-Konstruktion gegen die tatsächliche Datenlage (nicht nur data_history_days) prüft.
@@ -802,8 +838,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # korrelations-declustern kann (siehe _family_period_returns_from_studies-Docstring).
     family_returns_pre_promotion = _family_period_returns_from_studies(pairs, studies)
 
-    def _run_confirm_and_export(pair: tuple[str, str, str], study) -> Path:
+    def _run_confirm_and_export(pair: tuple[str, str, str], study) -> Path | None:
         strategy, symbol, _reason = pair
+        if study is None:
+            # Issue #795 — kein Study-Objekt (Paar wurde wegen disk_guard.sweep_abort_requested
+            # uebersprungen, siehe _run_optimize): kein Confirm/Export moeglich, kein Proposal.
+            logging.getLogger("optimizer").warning(
+                "[#795] %s/%s übersprungen (kein Study-Objekt aus Phase 1) — kein Proposal "
+                "exportiert.", strategy, symbol,
+            )
+            return None
         try:
             newest_ns = latest_ts.get(symbol) if latest_ts else None
             global_params = load_global_best(strategy, config_dir())
@@ -853,6 +897,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 lambda ps: _run_confirm_and_export(ps[0], ps[1]), zip(pairs, studies)))
     else:
         proposals = [_run_confirm_and_export(p, s) for p, s in zip(pairs, studies)]
+    # Issue #795 — übersprungene Paare (kein Study-Objekt aus Phase 1, siehe _run_optimize/
+    # _run_confirm_and_export) tragen kein Proposal; die Rückgabe bleibt eine reine Path-Liste.
+    proposals = [p for p in proposals if p is not None]
 
     # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
     # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne

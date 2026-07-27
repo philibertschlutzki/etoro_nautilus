@@ -31,6 +31,7 @@ from automation.optimizer.reward import (
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
+from automation.optimizer import disk_guard
 from automation.log_manager import emit_execution_event, bind_study_context
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
@@ -669,6 +670,57 @@ def retention_callback(study, trial, *, logger: logging.Logger | None = None) ->
         log.warning("[#794] Trial-Retention-Callback fehlgeschlagen (non-fatal).", exc_info=True)
 
 
+def disk_budget_callback(study, trial, *, opt_data: dict | None = None,
+                         logger: logging.Logger | None = None) -> None:
+    """Issue #795 — Optuna-Callback (Signatur ``(study, trial)``, analog ``floor_plateau_callback``/
+    ``retention_callback``): misst alle ``disk_check_interval_trials`` Trials den Verbrauch von
+    ``data/optimizer`` gegen ``disk_budget_gb``/``disk_reserve_gb`` (``disk_guard.check_budget``).
+
+    * ``STATUS_PRESSURE`` ⇒ WARNING + sofortige aggressive Räumung über ALLE abgeschlossenen
+      Studies (``retention.prune_orphaned_trial_dirs``).
+    * ``STATUS_EXCEEDED`` ⇒ ERROR + ``study.stop()`` UND ``disk_guard.sweep_abort_requested.set()``
+      — der Sweep-Dispatcher (``sweep.py``, #799) prüft dieses Flag zwischen zwei Symbolen für ein
+      geordnetes Lauf-Ende statt eines harten ``ENOSPC``-Absturzes.
+
+    Fail-open: ein Fehler in dieser Prüfung darf einen laufenden Sweep nie crashen (analog
+    #703/#733/#794)."""
+    log = logger or logging.getLogger("optimizer")
+    opt_data = opt_data or {}
+    interval = int(opt_data.get("disk_check_interval_trials") or 200)
+    # Issue #795 — (trial.number + 1) statt trial.number: trial.number ist 0-indiziert, ``% interval``
+    # allein wuerde auf JEDEM Trial 0 feuern (0 % irgendetwas == 0) statt erst nach ``interval``
+    # abgeschlossenen Trials. Das Gate soll NACH dem 200./400./...-ten Trial pruefen, nicht sofort.
+    if interval <= 0 or (trial.number + 1) % interval != 0:
+        return
+    try:
+        budget_gb = float(opt_data.get("disk_budget_gb") or 200)
+        reserve_gb = float(opt_data.get("disk_reserve_gb") or 50)
+        status = disk_guard.check_budget(WORK, budget_gb=budget_gb, reserve_gb=reserve_gb)
+        if status == disk_guard.STATUS_PRESSURE:
+            log.warning(
+                "[#795] DISK_BUDGET_PRESSURE: data/optimizer nähert sich dem Budget (%.0f GB) "
+                "oder der freien Reserve (%.0f GB) — räume verwaiste Trial-Verzeichnisse "
+                "aggressiv.", budget_gb, reserve_gb,
+            )
+            emit_execution_event(log, "DISK_BUDGET_PRESSURE", {
+                "budget_gb": budget_gb, "reserve_gb": reserve_gb, "trial_number": trial.number,
+            })
+            retention.prune_orphaned_trial_dirs(WORK, logger=log)
+        elif status == disk_guard.STATUS_EXCEEDED:
+            log.error(
+                "[#795] DISK_BUDGET_EXCEEDED: data/optimizer hat das Budget (%.0f GB) oder die "
+                "freie Reserve (%.0f GB) überschritten — Study wird gestoppt, geordnetes "
+                "Sweep-Ende angefordert.", budget_gb, reserve_gb,
+            )
+            emit_execution_event(log, "DISK_BUDGET_EXCEEDED", {
+                "budget_gb": budget_gb, "reserve_gb": reserve_gb, "trial_number": trial.number,
+            }, level=logging.ERROR)
+            disk_guard.sweep_abort_requested.set()
+            _stop_study_safely(study, log)
+    except Exception:
+        log.warning("[#795] Disk-Budget-Callback fehlgeschlagen (non-fatal).", exc_info=True)
+
+
 def check_study_coherence_violation_rate(study, opt_data: dict, *,
                                          logger: logging.Logger | None = None) -> bool:
     """Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,
@@ -982,12 +1034,13 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # jeder Trial gegen das FALSCHE eingefrorene walk_forward laufen.
     study_config_dir = freeze_study_config(
         study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
+    disk_guard_cb = partial(disk_budget_callback, opt_data=opt_data)
     study.optimize(
         make_objective(strategy, study_config_dir=study_config_dir),
         n_trials=n_trials,
         n_jobs=n_jobs,
         catch=(json.JSONDecodeError, OSError),
-        callbacks=[floor_guard, retention_callback]
+        callbacks=[floor_guard, retention_callback, disk_guard_cb]
     )
     return study
 
@@ -2237,10 +2290,11 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True,
                           strategy=strategy, symbol=symbol)
+    disk_guard_cb = partial(disk_budget_callback, opt_data=opt_data)
     try:
         study.optimize(objective, n_trials=n_trials, n_jobs=1,
                        catch=(json.JSONDecodeError, OSError),
-                       callbacks=[floor_guard, retention_callback])
+                       callbacks=[floor_guard, retention_callback, disk_guard_cb])
         # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
         _emit_study_summary(study, symbol, study_t0, strategy=strategy,
                            n_startup_trials=n_startup_trials)
