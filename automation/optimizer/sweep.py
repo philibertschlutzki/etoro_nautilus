@@ -148,6 +148,42 @@ def assert_strategy_space_parity(strategies: list[str]) -> None:
         )
 
 
+def _parse_version_tuple(version_str: str) -> tuple[int, ...]:
+    """Parst die fuehrenden numerischen Komponenten einer Versions-Zeichenkette (z. B. ``'2.3.3'``
+    -> ``(2, 3, 3)``); ein nicht-numerischer Suffix (rc/dev/post, z. B. ``'3.0.0.dev0+abc'``) bricht
+    das Parsing an dieser Stelle ab und liefert die bis dahin gelesenen Komponenten."""
+    parts: list[int] = []
+    for chunk in version_str.split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def assert_pandas_version_supported() -> None:
+    """Issue #802 — FAIL-LOUD beim Sweep-Start: die installierte ``pandas``-Version muss innerhalb
+    des in ``requirements.txt`` gepinnten Bereichs (``>=2.2,<4.0``) liegen. #801/#802 zeigten, dass
+    ``pct_change()``'s ``fill_method``-Semantik sich zwischen pandas 2.0/2.1/3.0 aenderte und die
+    #756-Log-Return-Identitaet dadurch eine Funktion der Installationsumgebung statt der
+    Konfiguration war — dieser Guard macht eine ungetestete pandas-Version zu einem expliziten
+    Abbruch statt eines stillen numerischen Unterschieds (Pitfall #237)."""
+    import pandas as pd
+    version = _parse_version_tuple(pd.__version__)
+    if version < (2, 2) or version >= (4, 0):
+        raise ValueError(
+            f"UNSUPPORTED_PANDAS_VERSION (#802): installierte pandas-Version {pd.__version__} "
+            f"liegt ausserhalb des unterstuetzten Bereichs >=2.2,<4.0 (siehe "
+            f"automation/requirements.txt) — die #756/#801-Log-Return-Identitaet ist nur in diesem "
+            f"Bereich versionsstabil verifiziert."
+        )
+
+
 def _assert_gate_reward_parity() -> None:
     """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
     ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität)."""
@@ -683,6 +719,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if using_real_optimize:
         assert_strategy_space_parity(strategies)
         _assert_gate_reward_parity()
+        # Issue #802 — pandas-Versions-Preflight (Zero-Hardcoding: Bereich stammt aus
+        # requirements.txt, hier nur maschinell durchgesetzt).
+        assert_pandas_version_supported()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()

@@ -124,6 +124,11 @@ class TournamentMetrics:
     # Issue #798 — True, sobald backtest_runner die Perioden-Renditeserie auf period_returns_cap
     # gekappt hat (n_periods > cap). False ⇒ rückwärtskompatibel zu Pre-#798-JSONs.
     period_returns_truncated: bool = False
+    # Issue #801 — True, sobald die OOS-Equity-Kurve waehrend des Fensters nicht-positiv wurde
+    # (backtest_runner.assert_positive_equity/EQUITY_NONPOSITIVE). Der Trial gilt dann als
+    # oekonomisch ruiniert (sortino/psr sind None, total_return bleibt erhalten). False ⇒
+    # rückwärtskompatibel zu Pre-#801-JSONs.
+    oos_equity_ruined: bool = False
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -213,6 +218,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #798 — Truncation-Telemetrie fuer die gekappte Perioden-Renditeserie (None-safe ⇒ False,
     # rückwärtskompatibel zu Pre-#798-JSONs, die das Feld noch nicht schreiben).
     period_returns_truncated = bool(oos_metrics.get("period_returns_truncated") or False)
+    # Issue #801 — Ruin-Telemetrie (None-safe ⇒ False, rückwärtskompatibel zu Pre-#801-JSONs).
+    oos_equity_ruined = bool(oos_metrics.get("equity_ruined") or False)
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -330,6 +337,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #774 — Round-Trip-Kosten (bps), None-safe.
         round_trip_cost_bps=float(round_trip_cost_bps) if round_trip_cost_bps is not None else None,
         period_returns_truncated=period_returns_truncated,
+        oos_equity_ruined=oos_equity_ruined,
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,

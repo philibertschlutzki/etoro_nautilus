@@ -40,9 +40,13 @@ def test_sortino_target_downside_deviation_calculation(mock_sortino_config):
 
     # Test 2: Reference validation against numpy
     # numpy formula for RMS target downside deviation with MAR=0.0
-    # Issue #756 — period_rets sind seit der Log-Return-Umstellung np.log1p(pct_change()), nicht
-    # mehr die einfachen Returns; die Referenzrechnung muss dieselbe Transformation anwenden.
-    period_rets1 = np.log1p(mtm_series1.pct_change().dropna())
+    # Issue #756 — period_rets sind seit der Log-Return-Umstellung Log-Returns, nicht mehr die
+    # einfachen Returns; die Referenzrechnung muss dieselbe Transformation anwenden.
+    # Issue #801/#802 — Produktionscode bildet period_rets seit #801 algebraisch (np.diff(np.log)),
+    # nicht mehr ueber den pandas pct-change/log1p-Umweg — auf einer strikt positiven Serie ohne NaN
+    # sind beide Formeln algebraisch identisch; fill_method=None explizit, damit diese
+    # Referenzrechnung versionsstabil bleibt (#802).
+    period_rets1 = np.log1p(mtm_series1.pct_change(fill_method=None).dropna())
     downside_diff = period_rets1.clip(upper=0.0)
     dd_dev_ref = float(np.sqrt((downside_diff ** 2).mean()))
     mean_ret = period_rets1.mean()

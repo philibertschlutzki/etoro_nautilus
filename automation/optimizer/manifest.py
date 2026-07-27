@@ -49,6 +49,22 @@ def write_json_atomic(path: Path, data: Any, *, indent: int = 2) -> None:
         raise
 
 
+def library_versions() -> dict:
+    """Issue #802 — Provenienz der Inferenz-relevanten Bibliotheksversionen (``pandas`` allen voran:
+    #801/#802 zeigten, dass die Gueltigkeit der Log-Return-Identitaet von der installierten
+    ``pandas``-Version abhing, nicht nur von der Konfiguration). Best-effort: eine fehlende/nicht
+    importierbare Bibliothek liefert ``None`` statt den Report-Aufbau zu crashen (analog
+    ``git_commit``/``catalog_fingerprint`` oben)."""
+    versions: dict[str, str | None] = {}
+    for name in ("pandas", "numpy", "optuna", "nautilus_trader"):
+        try:
+            mod = __import__(name)
+            versions[name] = getattr(mod, "__version__", None)
+        except Exception:
+            versions[name] = None
+    return versions
+
+
 def catalog_fingerprint(catalog: Path | None = None) -> str:
     """Returns a stable fingerprint for the given catalog path based on its data.parquet files."""
     if catalog is None:

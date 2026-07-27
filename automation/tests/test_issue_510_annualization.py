@@ -52,8 +52,10 @@ def test_annualization_path_parity():
     assert sortino_config is not None
     assert sortino_fallback is not None
 
-    # Issue #756 — period_rets sind seit der Log-Return-Umstellung np.log1p(pct_change()).
-    period_rets = np.log1p(mtm_series.pct_change().dropna())
+    # Issue #756 — period_rets sind seit der Log-Return-Umstellung Log-Returns.
+    # Issue #802 — fill_method=None explizit (versionsstabile pct_change-Semantik); auf dieser
+    # strikt positiven, NaN-freien Testserie identisch zur algebraischen Produktionsformel (#801).
+    period_rets = np.log1p(mtm_series.pct_change(fill_method=None).dropna())
     mar = 0.0
     downside_diff = (period_rets - mar).clip(upper=0.0)
     dd_dev = float(np.sqrt((downside_diff ** 2).mean()))
@@ -62,7 +64,7 @@ def test_annualization_path_parity():
     # Issue #588 — der Sortino wird NICHT mehr an der Quelle geklemmt (nur der reine Numerik-Guard
     # ≫ 15 greift). Die Pfad-Parität gilt für den UNGEKLEMMTEN Wert.
     expected_config_sortino = ((mean_ret - mar) / dd_dev) * math.sqrt(111.0)
-    n_periods = len(mtm_series.pct_change().dropna())
+    n_periods = len(mtm_series.pct_change(fill_method=None).dropna())
     total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
     derived_factor = n_periods * 31_557_600.0 / total_span_seconds
     expected_fallback_sortino = ((mean_ret - mar) / dd_dev) * math.sqrt(derived_factor)
@@ -82,7 +84,7 @@ def test_annualization_path_parity_strict():
     pnl_list = [10.0, -5.0, 15.0]
     hold_list = [(3600*1e9, 1.0)] * 3
 
-    n_periods = len(mtm_series.pct_change().dropna())
+    n_periods = len(mtm_series.pct_change(fill_method=None).dropna())
     total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
     derived_factor = n_periods * 31_557_600.0 / total_span_seconds
 

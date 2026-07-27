@@ -35,7 +35,7 @@ import optuna
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
 from automation.optimizer import reward as _reward
-from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic
+from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions
 from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, study_shows_gradient_signal, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution,
@@ -467,6 +467,9 @@ def _build_report(
         "run_id": run_id,
         "git_commit": git_commit(),
         "reward_semantics_version": optimizer_cfg.get("reward_semantics_version"),
+        # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
+        # im Nachhinein einer Installationsumgebung zuordenbar ist.
+        "library_versions": library_versions(),
         "tournament_config_sha256": sha256_file(tournament_path) if tournament_path.exists() else None,
         "catalog_fingerprint": catalog_fingerprint(),
         "started_at_utc": started_at_utc,
