@@ -281,6 +281,33 @@ def _constraint_violation_progress(trials) -> tuple[float | None, float | None, 
     return first, last, rate
 
 
+def plateau_stop_missed_probability(m_modelled: int, remaining_budget: int) -> tuple[float, float]:
+    """Issue #806 — sequentielles Abbruchkriterium (Rule of Three) fuer das ZERO_ELIGIBLE-Plateau,
+    statt einer festen Trialzahl ohne Fehlermodell (``derive_plateau_min_modelled_trials`` selbst
+    ist ein Skalierungsgesetz, keine statistische Aussage — Root-Cause #806: die Frage "kann ich
+    jetzt schliessen, dass es keinen eligiblen Punkt gibt?" ist eine WAHRSCHEINLICHKEITSFRAGE, keine
+    Budgetfrage, siehe HEAD ~55 % Budget-Plateau ueber alle Dimensionen).
+
+    Bei 0 eligiblen Trials aus ``m_modelled`` modellierten Versuchen ist die obere 95-%-Konfidenz-
+    grenze fuer die (unbekannte) Eligibility-Rate ``p_hi = 3/m_modelled`` (Rule of Three). Mit
+    ``remaining_budget`` (``r``) verbleibenden Trials ist
+    ``P(mindestens 1 eligibler Trial im Rest) ≈ 1 − (1 − p_hi)^r`` die Wahrscheinlichkeit, dass ein
+    Weiterlaufen noch etwas findet.
+
+    Rueckgabe ``(p_hi, missed_probability)`` mit ``missed_probability`` genau dieser Grösse
+    (trotz des Namens des zugehoerigen Config-Keys ``plateau_stop_max_missed_probability`` — der
+    Abbruch feuert, sobald sie UNTER die Schranke faellt, siehe Akzeptanzkriterium #806). Rein,
+    deterministisch. ``m_modelled <= 0`` ⇒ ``(1.0, 1.0)`` (keine Information ⇒ niemals abbrechen).
+    ``remaining_budget <= 0`` ⇒ ``missed_probability = 0.0`` (kein Restbudget mehr, in dem noch
+    etwas gefunden werden koennte)."""
+    if m_modelled <= 0:
+        return 1.0, 1.0
+    p_hi = min(1.0, 3.0 / m_modelled)
+    if remaining_budget <= 0:
+        return p_hi, 0.0
+    return p_hi, 1.0 - (1.0 - p_hi) ** remaining_budget
+
+
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
@@ -390,8 +417,11 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     # Issue #753 (Umsetzung 5) — min./max. Constraint-Verletzung ueber die erste/zweite Haelfte der
     # MODELLIERTEN Trials — macht im STUDY_EARLY_STOP-Event nachvollziehbar, ob der TPE der feasiblen
     # Region naeher kommt (Stagnation) oder ob die Suche schlicht nie stattfand (0 modellierte Trials).
-    min_constraint_violation_first, min_constraint_violation_last, _ = _constraint_violation_progress(
-        modelled_completed)
+    # Issue #806 — ``constraint_improvement_rate`` (drittes Element, vorher verworfen als ``_``) ist
+    # der Constraint-Arm des sequentiellen Plateau-Stopps unten: naehert sich der Sampler der
+    # feasiblen Region an, wird der Rule-of-Three-Abbruch unterdrueckt.
+    min_constraint_violation_first, min_constraint_violation_last, constraint_improvement_rate = (
+        _constraint_violation_progress(modelled_completed))
 
     # Issue #413 — evaluable-basierter Primaer-Guard. Tragen die Trials das oos_evaluated-Attr, ist
     # „kein Trial je evaluable" der korrekte Kollaps-Indikator (unabhaengig vom geshapeten Reward-Wert).
@@ -565,6 +595,32 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
         if (eligible_flags_of_evaluated_modelled
                 and any(f is not None for f in eligible_flags_of_evaluated_modelled)
                 and all(f is not True for f in eligible_flags_of_evaluated_modelled)):
+            # Issue #806 — ``min_for_zero_eligible`` ist seither nur noch die UNTERGRENZE (der Test
+            # darf nicht VOR einer Mindestmenge modellierter Trials greifen); OB tatsaechlich
+            # abgebrochen wird, entscheidet ab hier ein sequentielles Kriterium (Rule of Three) statt
+            # der festen Trialzahl selbst — Root-Cause #806: HEAD urteilte bei einem flachen,
+            # dimensionsunabhaengigen ~55%-Budgetanteil ohne jedes Fehlermodell.
+            m_modelled = len(modelled_completed)
+            remaining_budget = None
+            if _n_trials_budget is not None:
+                try:
+                    remaining_budget = max(0, int(_n_trials_budget) - len(completed))
+                except (TypeError, ValueError):
+                    remaining_budget = None
+            p_hi = missed_probability = None
+            if remaining_budget is not None:
+                p_hi, missed_probability = plateau_stop_missed_probability(
+                    m_modelled, remaining_budget)
+                max_missed_probability = float((weights or {}).get(
+                    "plateau_stop_max_missed_probability", 0.05))
+                # Issue #806 — Constraint-Arm: naehert sich der Sampler der feasiblen Region an
+                # (dieselbe Groesse wie in ``study_shows_gradient_signal``), wird der sequentielle
+                # Abbruch unterdrueckt — genau der Fall, den Rule-of-Three allein nicht sieht.
+                tau_c = float((weights or {}).get("tier_escalation_min_constraint_progress", 0.05))
+                constraint_signal = (constraint_improvement_rate is not None
+                                     and constraint_improvement_rate > tau_c)
+                if missed_probability >= max_missed_probability or constraint_signal:
+                    return
             study.set_user_attr("zero_eligible_plateau_warned", True)
             n_evaluated = len(eligible_flags_of_evaluated)
             oos_trade_counts = [
@@ -646,6 +702,12 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "min_constraint_violation_first": min_constraint_violation_first,
                     "min_constraint_violation_last": min_constraint_violation_last,
                     "plateau_min_modelled_trials": plateau_min_modelled_trials,
+                    # Issue #806 — sequentielles Abbruchkriterium (Rule of Three): None, wenn
+                    # n_trials_budget unbekannt war (Fallback auf die feste Untergrenze, bit-
+                    # identisch zu Pre-#806).
+                    "p_hi": p_hi,
+                    "remaining_budget": remaining_budget,
+                    "missed_probability": missed_probability,
                 }))
                 _stop_study_safely(study, logger)
         return
