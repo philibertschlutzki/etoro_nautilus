@@ -29,7 +29,9 @@ def _make_trial(tmp_path):
     return tmp_path, mp
 
 
-def test_stdout_stderr_persisted_on_success(tmp_path, monkeypatch):
+def test_stdout_stderr_not_persisted_on_success_by_default(tmp_path, monkeypatch):
+    """Issue #797 — migriert von #416: seit #794 wird trial_dir bei Erfolg Sekunden spaeter
+    ohnehin geloescht, die Default-Policy 'on_failure' schreibt im Erfolgsfall daher NICHTS mehr."""
     trial_dir, mp = _make_trial(tmp_path)
 
     def ok_run(argv, **kw):
@@ -41,6 +43,26 @@ def test_stdout_stderr_persisted_on_success(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner.subprocess, "run", ok_run)
     out = runner.run_backtest(trial_dir, mp)
+
+    assert out == trial_dir / "tournament_result.json"
+    assert not (trial_dir / "logs" / "backtest_stdout.log").exists()
+    assert not (trial_dir / "logs" / "backtest_stderr.log").exists()
+
+
+def test_stdout_stderr_persisted_on_success_with_always_policy(tmp_path, monkeypatch):
+    """Issue #797 — policy='always' bewahrt die #416-Erfolgsfall-Persistenz weiterhin, jetzt
+    gekappt statt unbegrenzt (siehe test_issue_797_subprocess_log_policy.py fuer die Kappung)."""
+    trial_dir, mp = _make_trial(tmp_path)
+
+    def ok_run(argv, **kw):
+        (trial_dir / "tournament_result.json").write_text("{}", "utf-8")
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout="📅 Backtest-Zeitfenster: 2024-01-01 bis 2024-06-29 (180.0 Tage)\nfills=42",
+            stderr="some warning trail")
+
+    monkeypatch.setattr(runner.subprocess, "run", ok_run)
+    out = runner.run_backtest(trial_dir, mp, subprocess_log_policy="always")
 
     assert out == trial_dir / "tournament_result.json"
     stdout_log = trial_dir / "logs" / "backtest_stdout.log"
@@ -67,7 +89,9 @@ def test_crash_path_still_raises_and_prints(tmp_path, monkeypatch, capsys):
 
 
 def test_persist_tolerates_missing_streams(tmp_path, monkeypatch):
-    """Mock ohne stdout/stderr-Attribute (SimpleNamespace) darf nicht crashen (getattr-Default)."""
+    """Mock ohne stdout/stderr-Attribute (SimpleNamespace) darf nicht crashen (getattr-Default).
+    Issue #797 — policy='always', damit der Erfolgsfall (statt des per Default stillen
+    on_failure-Pfads) tatsaechlich den getattr-defensiven Schreibpfad durchlaeuft."""
     trial_dir, mp = _make_trial(tmp_path)
 
     def bare_run(argv, **kw):
@@ -75,7 +99,7 @@ def test_persist_tolerates_missing_streams(tmp_path, monkeypatch):
         return types.SimpleNamespace(returncode=0)  # KEIN stdout/stderr
 
     monkeypatch.setattr(runner.subprocess, "run", bare_run)
-    out = runner.run_backtest(trial_dir, mp)
+    out = runner.run_backtest(trial_dir, mp, subprocess_log_policy="always")
     assert out == trial_dir / "tournament_result.json"
     assert (trial_dir / "logs" / "backtest_stdout.log").read_text("utf-8") == ""
 

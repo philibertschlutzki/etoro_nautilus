@@ -780,9 +780,10 @@ def make_objective(
         cfg_dir = config_dir()
         optimizer_path = cfg_dir / "optimizer.json"
         seed = 42
+        opt_data: dict = {}
         if optimizer_path.exists():
             with open(optimizer_path, "r", encoding="utf-8") as f:
-                opt_data = json.load(f)
+                opt_data = json.load(f) or {}
                 seed = opt_data.get("seed", 42)
 
         trial_dir, manifest_path = build_trial(
@@ -799,7 +800,12 @@ def make_objective(
 
         _t0 = time.perf_counter()
         try:
-            output_path = run_backtest(trial_dir, manifest_path, config_dir=study_config_dir)
+            # Issue #797 — Subprocess-Log-Policy aus optimizer.json (Default "on_failure").
+            output_path = run_backtest(
+                trial_dir, manifest_path, config_dir=study_config_dir,
+                subprocess_log_policy=opt_data.get("subprocess_log_policy", "on_failure"),
+                subprocess_log_tail_bytes=opt_data.get("subprocess_log_tail_bytes", 32768),
+            )
             metrics = parse_tournament(output_path)
         except BacktestRunError as e:
             raise optuna.TrialPruned(f"Subprocess failed: {e}")
@@ -1785,10 +1791,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
 
         cfg_dir = config_dir()
         seed = 42
+        opt_data: dict = {}
         optimizer_path = cfg_dir / "optimizer.json"
         if optimizer_path.exists():
             with open(optimizer_path, "r", encoding="utf-8") as f:
-                seed = (json.load(f) or {}).get("seed", 42)
+                opt_data = json.load(f) or {}
+                seed = opt_data.get("seed", 42)
 
         trial_dir, manifest_path = build_trial(
             strategy_class=strategy,
@@ -1810,7 +1818,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # ``(trial_dir, manifest_path)``) unveraendert funktionieren (Signatur-Kompat, Pitfall #33).
         _t0 = time.perf_counter()
         try:
-            output_path = run_backtest(trial_dir, manifest_path, config_dir=study_config_dir)
+            # Issue #797 — Subprocess-Log-Policy aus optimizer.json (Default "on_failure").
+            output_path = run_backtest(
+                trial_dir, manifest_path, config_dir=study_config_dir,
+                subprocess_log_policy=opt_data.get("subprocess_log_policy", "on_failure"),
+                subprocess_log_tail_bytes=opt_data.get("subprocess_log_tail_bytes", 32768),
+            )
             metrics = parse_tournament(output_path)
         except BacktestRunError as e:
             raise optuna.TrialPruned(f"Subprocess failed: {e}")

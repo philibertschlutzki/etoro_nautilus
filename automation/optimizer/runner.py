@@ -9,17 +9,45 @@ class BacktestRunError(RuntimeError):
     """Subprocess-Backtest fehlgeschlagen (returncode != 0 oder kein Output)."""
 
 
-def _persist_subprocess_logs(trial_dir: Path, stdout: str, stderr: str) -> None:
-    """Issue #416 — Subprozess-stdout/stderr pro Trial nach ``trial_dir/logs/`` schreiben — AUCH im
-    Erfolgsfall. Vorher wurde der Output bei ``returncode==0`` komplett verworfen (``capture_output``),
-    sodass die reichhaltige Backtest-Diagnose (Daten-Fenster via `_format_backtest_window`/#403,
-    `[OOS-Drop]`-Trail/#257, Per-Pair-Trade-Counts, Tournament-Rejections) je erfolgreichem Trial
-    verloren ging → Per-Trial-Fehleranalyse unmoeglich. Das ``logs/``-Verzeichnis existiert seit
-    Pitfall #62/#346; ``mkdir(exist_ok=True)`` ist defensiv."""
+def _tail_with_marker(text: str, tail_bytes: int) -> str:
+    """Issue #797 — kappt ``text`` auf die letzten ``tail_bytes`` Bytes; ueberschreitet ``text`` die
+    Grenze, wird eine erste Zeile ``[TRUNCATED: N Bytes verworfen]`` vorangestellt (NIE stilles
+    Abschneiden). Passt ``text`` bereits, wird es unveraendert zurueckgegeben (kein Marker ohne
+    tatsaechliche Truncation)."""
+    data = text.encode("utf-8")
+    if len(data) <= tail_bytes:
+        return text
+    discarded = len(data) - tail_bytes
+    tail_text = data[-tail_bytes:].decode("utf-8", errors="replace")
+    return f"[TRUNCATED: {discarded} Bytes verworfen]\n{tail_text}"
+
+
+def _persist_subprocess_logs(trial_dir: Path, stdout: str, stderr: str, *, failed: bool,
+                             policy: str = "on_failure", tail_bytes: int = 32768) -> None:
+    """Issue #797 — ersetzt die #416-Immer-Persistenz durch eine konfigurierbare Policy:
+    ``policy in {"on_failure", "always", "never"}``.
+
+    * ``failed=True`` ⇒ IMMER die vollstaendigen Streams (Forensik-Pfad unveraendert zu #416) —
+      es sei denn ``policy=="never"`` (expliziter Opt-out aus JEDER Log-Persistenz).
+    * ``failed=False`` und ``policy=="on_failure"`` (Default) ⇒ nichts schreiben. Root-Cause #797:
+      seit #794 wird ``trial_dir`` bei Erfolg Sekunden spaeter ohnehin geloescht — die volle
+      Erfolgsfall-Persistenz aus #416 war nur so lange sinnvoll, wie das Verzeichnis ueberlebte.
+    * ``failed=False`` und ``policy=="always"`` ⇒ gekappter Tail je Stream (``_tail_with_marker``).
+    * ``policy=="never"`` ⇒ nie schreiben, auch nicht im Fehlerfall (expliziter Opt-out).
+    """
+    if policy == "never":
+        return
+    if not failed and policy == "on_failure":
+        return
     log_dir = Path(trial_dir) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    (log_dir / "backtest_stdout.log").write_text(stdout, encoding="utf-8")
-    (log_dir / "backtest_stderr.log").write_text(stderr, encoding="utf-8")
+    if failed:
+        (log_dir / "backtest_stdout.log").write_text(stdout, encoding="utf-8")
+        (log_dir / "backtest_stderr.log").write_text(stderr, encoding="utf-8")
+        return
+    # failed=False, policy=="always": gekappter Tail statt der vollen Streams.
+    (log_dir / "backtest_stdout.log").write_text(_tail_with_marker(stdout, tail_bytes), encoding="utf-8")
+    (log_dir / "backtest_stderr.log").write_text(_tail_with_marker(stderr, tail_bytes), encoding="utf-8")
 
 
 def _record_timing(timings: dict | None, t0: float) -> None:
@@ -55,7 +83,9 @@ def _run_backtest_inprocess(trial_dir: Path, manifest_path: Path) -> Path:
 
 
 def run_backtest(trial_dir: Path, manifest_path: Path, *, mode: str = "subprocess",
-                 timings: dict | None = None, config_dir: Path | None = None) -> Path:
+                 timings: dict | None = None, config_dir: Path | None = None,
+                 subprocess_log_policy: str = "on_failure",
+                 subprocess_log_tail_bytes: int = 32768) -> Path:
     """mode='subprocess' (Default, unverändert) ruft backtest_runner.py als Subprozess
        (check=False, timeout=10800); mode='inprocess' ruft den In-Process-Entry (A4.9).
        catalog_path wird aus dem Manifest (global_settings.catalog_path) gelesen.
@@ -71,7 +101,13 @@ def run_backtest(trial_dir: Path, manifest_path: Path, *, mode: str = "subproces
        Issue #796 — ``config_dir`` erlaubt EINE eingefrorene Study-Config (via
        ``trial_config.freeze_study_config``) statt der Pro-Trial-Kopie unter ``trial_dir/config``
        zu referenzieren; fehlt der Parameter (Default ``None``), bleibt das Verhalten bit-identisch
-       zu HEAD (``trial_dir/config``, wie es ``build_trial(copy_config=True)`` anlegt)."""
+       zu HEAD (``trial_dir/config``, wie es ``build_trial(copy_config=True)`` anlegt).
+
+       Issue #797 — ``subprocess_log_policy``/``subprocess_log_tail_bytes`` steuern, ob/wie
+       stdout/stderr im ERFOLGSFALL persistiert werden (siehe ``_persist_subprocess_logs``-
+       Docstring). Default ``"on_failure"`` ⇒ im Erfolgsfall wird ``trial_dir/logs/`` nicht
+       beschrieben (bit-identisch zu vor #416 im Erfolgsfall); ein Fehlschlag schreibt IMMER
+       vollstaendig, unabhaengig von der Policy."""
     if mode == "inprocess":
         t0 = time.perf_counter()
         try:
@@ -105,10 +141,13 @@ def run_backtest(trial_dir: Path, manifest_path: Path, *, mode: str = "subproces
     result = subprocess.run(argv, env=env, timeout=10800, check=False, capture_output=True, text=True)
     _record_timing(timings, t0)
 
-    # Issue #416 — Output IMMER persistieren (auch im Erfolgsfall), bevor ueber returncode
-    # entschieden wird. getattr, da Test-Mocks (SimpleNamespace) stdout/stderr nicht setzen muessen.
+    # Issue #797 — ``failed`` bestimmt VOR der Policy-Anwendung, ob die volle Forensik erzwungen
+    # wird (siehe _persist_subprocess_logs). getattr, da Test-Mocks (SimpleNamespace) stdout/stderr
+    # nicht setzen muessen (#416-Kompat).
+    failed = result.returncode != 0 or not output_path.exists()
     _persist_subprocess_logs(trial_dir, getattr(result, "stdout", "") or "",
-                             getattr(result, "stderr", "") or "")
+                             getattr(result, "stderr", "") or "", failed=failed,
+                             policy=subprocess_log_policy, tail_bytes=subprocess_log_tail_bytes)
 
     if result.returncode != 0 or not output_path.exists():
         print(f"Subprocess crashed with return code {result.returncode}, skipping trial...")
