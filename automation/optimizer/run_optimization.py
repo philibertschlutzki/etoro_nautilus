@@ -653,6 +653,22 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             _stop_study_safely(study, logger)
 
 
+def retention_callback(study, trial, *, logger: logging.Logger | None = None) -> None:
+    """Issue #794 — Optuna-Callback (Signatur ``(study, trial)``, analog ``floor_plateau_callback``):
+    gibt nach JEDEM abgeschlossenen Trial jedes ``trial_*``-Verzeichnis dieser Study frei, das weder
+    der/die aktuell beste(n) eligible(n) Trial(s) noch ein fehlgeschlagener (PRUNED/FAIL) Trial ist
+    (siehe ``retention.release_non_best_trial_dirs``-Docstring). Damit liegt je Study zu jedem
+    Zeitpunkt höchstens 1 Trial-Verzeichnis (plus die fehlgeschlagenen) — die Spitzenlast sinkt von
+    O(n_trials) auf O(1) statt erst nach Abschluss der gesamten Study (#733) freigegeben zu werden.
+
+    Fail-open: ein Retention-Fehler darf einen laufenden Sweep nie crashen (analog #703/#733)."""
+    log = logger or logging.getLogger("optimizer")
+    try:
+        retention.release_non_best_trial_dirs(study, work_dir=WORK, logger=log)
+    except Exception:
+        log.warning("[#794] Trial-Retention-Callback fehlgeschlagen (non-fatal).", exc_info=True)
+
+
 def check_study_coherence_violation_rate(study, opt_data: dict, *,
                                          logger: logging.Logger | None = None) -> bool:
     """Issue #773 — Study-Abschluss-Check: bricht eine Study fail-loud aus dem Promotions-Pfad,
@@ -971,7 +987,7 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
         n_trials=n_trials,
         n_jobs=n_jobs,
         catch=(json.JSONDecodeError, OSError),
-        callbacks=[floor_guard]
+        callbacks=[floor_guard, retention_callback]
     )
     return study
 
@@ -2223,13 +2239,27 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
                           strategy=strategy, symbol=symbol)
     try:
         study.optimize(objective, n_trials=n_trials, n_jobs=1,
-                       catch=(json.JSONDecodeError, OSError), callbacks=[floor_guard])
+                       catch=(json.JSONDecodeError, OSError),
+                       callbacks=[floor_guard, retention_callback])
         # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
         _emit_study_summary(study, symbol, study_t0, strategy=strategy,
                            n_startup_trials=n_startup_trials)
         # Issue #773 — Kohaerenz-Invariante fail-loud statt eines reinen Report-Nachtrags.
         check_study_coherence_violation_rate(study, opt_data)
     finally:
+        # Issue #794 — Study-Ebene als Sicherheitsnetz (die #794-Trial-Ebene oben laeuft je Trial;
+        # dieser Aufruf raeumt zusaetzlich auf, falls study.optimize() vorzeitig abgebrochen wurde,
+        # BEVOR der Retention-Callback den letzten Trial noch sehen konnte). Fail-open: ein
+        # Retention-Fehler darf einen erfolgreichen Optimize-Lauf nie im Nachhinein als
+        # gescheitert erscheinen lassen (analog #703/#733).
+        try:
+            retention.prune_completed_trial_dirs(
+                study_name, retention.collect_referenced_trial_dirs(), work_dir=WORK)
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#794] Study-Retention für '%s' fehlgeschlagen (non-fatal).",
+                study_name, exc_info=True,
+            )
         # Issue #747 — Engine NACH Phase-1-Nutzung disposen (auch bei einer hier propagierenden
         # Exception): deckelt die Spitzenlast gleichzeitig offener SQLAlchemy-Engines im Per-Symbol-
         # Sweep auf ~n_jobs statt auf die Gesamtzahl der Paare. Nachfolgende Lesezugriffe (sweep.py:

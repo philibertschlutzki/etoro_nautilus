@@ -649,6 +649,22 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if confirm is None:
         confirm = _confirm
 
+    # Issue #794 — Lauf-Start-Purge: raeumt jedes trial_*/-Verzeichnis abgebrochener Vorlaeufe ab,
+    # BEVOR der neue Lauf beginnt (champions/ und offene proposal_*.json bleiben unberuehrt, siehe
+    # retention.collect_referenced_trial_dirs). Nur im echten Storage-Pfad; fail-open, da eine
+    # fehlgeschlagene Aufraeumaktion den Lauf nicht verhindern darf (analog #703/#733).
+    if using_real_optimize:
+        try:
+            _orphaned = retention.prune_orphaned_trial_dirs(WORK)
+            if _orphaned:
+                logging.getLogger("optimizer").info(
+                    "[#794] Lauf-Start-Purge: %d verwaiste Trial-Verzeichnis(se) aus vorherigen "
+                    "Laeufen entfernt.", len(_orphaned),
+                )
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#794] Lauf-Start-Purge fehlgeschlagen (non-fatal).", exc_info=True)
+
     # Issue #595/#593 — FAIL-LOUD-Preflight VOR dem ersten Trial (nur im echten Pfad; injizierte
     # HI-7-Fakes nutzen frei benannte Strategien und überspringen den Guard). (1) Jede aktive
     # Strategie MUSS einen Suchraum in spaces.py haben. (2) Gate- und Reward-Klauseln müssen
