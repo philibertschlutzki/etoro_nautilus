@@ -200,6 +200,8 @@ def test_sweep_skips_remaining_pairs_once_abort_flag_is_set(monkeypatch, tmp_pat
     from automation.optimizer import sweep
 
     pairs = [("S", "A.ETORO", "OK"), ("S", "B.ETORO", "OK"), ("S", "C.ETORO", "OK")]
+    # Issue #799 — der Sweep-Fortschritts-Checkpoint schreibt nach WORK; isoliert halten.
+    monkeypatch.setattr(sweep, "WORK", tmp_path)
     monkeypatch.setattr(sweep, "enumerate_tunable_pairs", lambda *a, **k: pairs)
     monkeypatch.setattr(sweep, "export_symbol_proposal",
                         lambda study, s, sym, prom: tmp_path / f"proposal_{sym}.json")

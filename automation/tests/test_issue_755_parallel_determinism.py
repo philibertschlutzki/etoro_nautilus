@@ -75,7 +75,7 @@ def test_sweep_main_allows_n_jobs_greater_one_with_seed_set(monkeypatch, capsys)
 def test_sweep_main_passes_effective_n_jobs_to_run_per_symbol_sweep(monkeypatch):
     captured = {}
 
-    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source):
+    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source, **_kwargs):
         captured["n_jobs"] = n_jobs
         captured["n_jobs_source"] = n_jobs_source
         return []
@@ -95,7 +95,7 @@ def test_sweep_main_default_n_jobs_uses_sweep_max_workers_config(monkeypatch, tm
 
     captured = {}
 
-    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source):
+    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source, **_kwargs):
         captured["n_jobs"] = n_jobs
         captured["n_jobs_source"] = n_jobs_source
         return []
@@ -116,7 +116,7 @@ def test_sweep_main_default_n_jobs_falls_back_to_cpu_minus_2(monkeypatch, tmp_pa
 
     captured = {}
 
-    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source):
+    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source, **_kwargs):
         captured["n_jobs"] = n_jobs
         captured["n_jobs_source"] = n_jobs_source
         return []

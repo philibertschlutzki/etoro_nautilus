@@ -56,6 +56,8 @@ def test_sweep_dispatch_writes_proposals_no_backtest(monkeypatch, tmp_path):
     def fake_confirm(study, strategy, symbol, global_params, **k):
         return {"promote": True, "status": "READY_FOR_PR", "symbol_params": {}}
 
+    # Issue #799 — der Sweep-Fortschritts-Checkpoint schreibt nach WORK; isoliert halten.
+    monkeypatch.setattr(sweep, "WORK", tmp_path)
     monkeypatch.setattr(sweep, "enumerate_tunable_pairs",
                         lambda *a, **k: [("SmaCrossoverStrategy", "A.ETORO", "OK")])
     monkeypatch.setattr(sweep, "export_symbol_proposal",
