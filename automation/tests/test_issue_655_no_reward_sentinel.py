@@ -111,7 +111,7 @@ def _factory_global_never_trades(tuned_keyvals, sortino_tuned, dd=0.05):
     """Der symbol-getunte Vektor evaluiert normal; der GLOBALE Vektor produziert auf diesem
     Symbol/Holdout NIE OOS-Trades (AdxAtr/TrendPullback-Signatur, #656) — R_global muss None sein,
     nicht -20.0."""
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         params = json.loads(Path(manifest_path).read_text("utf-8"))["strategies"][0]["params"]
         is_tuned = all(params.get(k) == v for k, v in tuned_keyvals.items())
         out = Path(trial_dir) / "tournament_result.json"

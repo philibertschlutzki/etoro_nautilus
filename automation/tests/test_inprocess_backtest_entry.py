@@ -105,10 +105,23 @@ def test_build_trial_copy_config_flag(tmp_path, monkeypatch):
                                           trial_number=0, seed=42, now=now, holdout_days=45, n_folds=4)
     assert (td_copy / "config" / "backtest.json").exists()
 
-    # config-sharing: the per-trial copy is skipped
+    # Issue #796 — copy_config=False OHNE study_config_dir ist ein Konfigurationsfehler (kein
+    # stiller Fallback auf die Repo-Config, die ein falsches walk_forward tragen wuerde).
+    with pytest.raises(ValueError):
+        trial_config.build_trial("SmaCrossoverStrategy", {}, study_name="s_share_missing",
+                                 trial_number=0, seed=42, now=now, holdout_days=45,
+                                 n_folds=4, copy_config=False)
+
+    # config-sharing: EINE eingefrorene Study-Config (freeze_study_config) statt einer Pro-Trial-Kopie
+    wf_settings = trial_config.resolve_wf_settings(
+        Path("automation/config"), holdout_days=45, n_folds=4)
+    study_cfg_dir = trial_config.freeze_study_config("s_share", wf_settings,
+                                                      base_cfg=Path("automation/config"))
+    assert (study_cfg_dir / "backtest.json").exists()
     td_share, mp_share = trial_config.build_trial("SmaCrossoverStrategy", {}, study_name="s_share",
                                                   trial_number=0, seed=42, now=now, holdout_days=45,
-                                                  n_folds=4, copy_config=False)
+                                                  n_folds=4, copy_config=False,
+                                                  study_config_dir=study_cfg_dir)
     assert not (td_share / "config" / "backtest.json").exists()
     # the manifest is still written and self-describing
     gs = json.loads(Path(mp_share).read_text("utf-8"))["global_settings"]

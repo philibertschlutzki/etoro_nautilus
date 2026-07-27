@@ -92,7 +92,7 @@ def _cohort_factory(sortino_periods, n_periods=200):
     (treibt ``deflation_n``/``deflation_var`` in confirm), unabhängig von den gesampelten Params."""
     it = itertools.cycle(sortino_periods)
 
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         sp = next(it)
         return _write_result(trial_dir, _result_payload(
             sortino_ratio=sp, dd=0.05, sortino_period=sp, n_periods=n_periods))
@@ -103,7 +103,7 @@ def _holdout_factory(global_params, *, symbol_result, global_result):
     """Dispatcht nach exakter Param-Gleichheit mit ``global_params`` — robust unabhängig davon,
     welcher konkrete Study-Trial als Median-Rang promotet wird (alle Nicht-global-Params-Vektoren
     erhalten denselben ``symbol_result``)."""
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         params = json.loads(Path(manifest_path).read_text("utf-8"))["strategies"][0]["params"]
         payload = global_result if params == global_params else symbol_result
         return _write_result(trial_dir, payload)

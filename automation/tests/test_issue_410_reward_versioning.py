@@ -123,7 +123,7 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(trial_config, "config_dir", lambda: Path("automation/config"))
 
 
-def _fake_backtest(trial_dir, manifest_path):
+def _fake_backtest(trial_dir, manifest_path, **_kwargs):
     out = Path(trial_dir) / "tournament_result.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"fully_eligible_pairs": 1, "aggregate_winner": {

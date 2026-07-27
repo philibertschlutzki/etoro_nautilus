@@ -83,7 +83,7 @@ def _cohort_factory(sortino_periods, n_periods=200):
     import itertools
     it = itertools.cycle(sortino_periods)
 
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         sp = next(it)
         return _write_result(trial_dir, _result_payload(
             sortino_ratio=sp, dd=0.05, sortino_period=sp, n_periods=n_periods))
@@ -91,7 +91,7 @@ def _cohort_factory(sortino_periods, n_periods=200):
 
 
 def _holdout_factory(global_params, *, symbol_result, global_result):
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         params = json.loads(Path(manifest_path).read_text("utf-8"))["strategies"][0]["params"]
         payload = global_result if params == global_params else symbol_result
         return _write_result(trial_dir, payload)
@@ -193,7 +193,7 @@ def test_no_eligible_trials_keeps_modal_is_reason_as_dominant_rejection(tmp_path
     # Alle Trials scheitern bereits IS-seitig (kein oos_eligible) ⇒ eligible_trials bleibt leer.
     _isolate(monkeypatch, tmp_path)
 
-    def _all_ineligible(trial_dir: Path, manifest_path: Path) -> Path:
+    def _all_ineligible(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         return _write_result(trial_dir, _result_payload(
             sortino_ratio=-1.0, dd=0.9, sortino_period=-0.02, n_periods=200, eligible=False,
             total_return=-0.5))

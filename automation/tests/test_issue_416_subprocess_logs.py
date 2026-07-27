@@ -119,7 +119,7 @@ def test_trial_event_carries_data_window_and_rejection(tmp_path, monkeypatch):
     """End-to-end: das Per-Trial-Event traegt data_window_days und rejection_reason."""
     _isolate(monkeypatch, tmp_path)
 
-    def fake_backtest(trial_dir, manifest_path):
+    def fake_backtest(trial_dir, manifest_path, **_kwargs):
         out = Path(trial_dir) / "tournament_result.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({

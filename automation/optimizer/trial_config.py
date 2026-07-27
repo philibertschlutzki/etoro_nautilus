@@ -60,6 +60,87 @@ def compute_walk_forward_window(
     start = end - dt.timedelta(days=is_window_days + embargo_period_days + n_folds * oos_window_days)
     return start, end
 
+def _wf_settings_from_bt_data(
+    bt_data: dict,
+    *,
+    holdout_days: int | None = None,
+    n_folds: int | None = None,
+    oos_window_days_override: int | None = None,
+) -> dict:
+    """Issue #796 — aus ``build_trial`` extrahiert (rein, kein I/O), damit die Walk-Forward-
+    ``wf_settings`` NIE zwischen der Pro-Trial-Manifest-Konstruktion und ``freeze_study_config``
+    (EINE eingefrorene Config je Study) divergieren (Pitfall #80/#82, hier auf die Config-
+    Harmonisierung statt die Fenster-Arithmetik angewendet). Nimmt ein BEREITS geladenes
+    ``bt_data``-Dict entgegen — kein zweiter ``backtest.json``-Read je Trial (siehe
+    ``resolve_wf_settings`` fuer die I/O-Variante)."""
+    wf = bt_data.get("walk_forward", {})
+    if holdout_days is None:
+        holdout_days = wf.get("holdout_days", 45)
+    if n_folds is None:
+        n_folds = wf.get("splits", 1)
+
+    is_window_days = wf.get("is_window_days", 120)
+    oos_window_days = oos_window_days_override if oos_window_days_override is not None else wf.get("oos_window_days", 30)
+    embargo_period_days = wf.get("embargo_period_days", 0)
+    return {
+        "is_window_days": is_window_days,
+        "oos_window_days": oos_window_days,
+        "splits": n_folds,
+        "holdout_days": holdout_days,
+        "embargo_period_days": embargo_period_days,
+        "walk_forward_active": True,
+    }
+
+
+def resolve_wf_settings(
+    base_cfg: Path | None = None,
+    *,
+    holdout_days: int | None = None,
+    n_folds: int | None = None,
+    oos_window_days_override: int | None = None,
+) -> dict:
+    """I/O-Variante von ``_wf_settings_from_bt_data`` fuer Aufrufer OHNE bereits geladenes
+    ``bt_data`` (``confirm.py``/``run_optimization.py`` vor ``freeze_study_config``, je Study
+    EINMAL — kein Hot-Path). ``build_trial`` selbst nutzt ``_wf_settings_from_bt_data`` direkt auf
+    seinem ohnehin geladenen ``bt_data``, um den ``backtest.json``-Read nicht je Trial zu
+    verdoppeln."""
+    if base_cfg is None:
+        base_cfg = config_dir()
+    backtest_cfg_path = base_cfg / "backtest.json"
+    with open(backtest_cfg_path, "r", encoding="utf-8") as f:
+        bt_data = json.load(f)
+    return _wf_settings_from_bt_data(
+        bt_data, holdout_days=holdout_days, n_folds=n_folds,
+        oos_window_days_override=oos_window_days_override,
+    )
+
+
+def freeze_study_config(study_name: str, wf_settings: dict, *, base_cfg: Path | None = None) -> Path:
+    """Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial (135.067 Bytes ×
+    Trials im vollen Sweep, siehe Issue-Katalog #794-#800 / #796). Legt ``WORK/<study_name>/config/``
+    idempotent an (``exist_ok=True`` — sicher bei mehrfachem Aufruf, z. B. Retry desselben Symbols),
+    kopiert die Basis-JSONs GENAU EINMAL und schreibt ``backtest.json.walk_forward = wf_settings``
+    hinein — dieselbe Harmonisierung, die ``build_trial(copy_config=True)`` bisher PRO TRIAL
+    wiederholt hat. Der zurückgegebene Pfad wird an ``build_trial(copy_config=False,
+    study_config_dir=...)`` UND an ``runner.run_backtest(config_dir=...)`` durchgereicht. Liegt
+    unter ``WORK/<study_name>/config`` — kein ``trial_*``-Verzeichnis, damit von der Retention
+    (#794) niemals als verwaistes Trial-Verzeichnis geloescht."""
+    if base_cfg is None:
+        base_cfg = config_dir()
+    study_cfg_dir = WORK / study_name / "config"
+    study_cfg_dir.mkdir(parents=True, exist_ok=True)
+    for p in base_cfg.glob("*.json"):
+        shutil.copy2(p, study_cfg_dir / p.name)
+    copied_bt_path = study_cfg_dir / "backtest.json"
+    if copied_bt_path.exists():
+        with open(copied_bt_path, "r", encoding="utf-8") as f:
+            copied_bt_data = json.load(f)
+        copied_bt_data["walk_forward"] = dict(wf_settings)
+        with open(copied_bt_path, "w", encoding="utf-8") as f:
+            json.dump(copied_bt_data, f, indent=2)
+    return study_cfg_dir
+
+
 def build_trial(
     strategy_class: str,
     sampled: dict,
@@ -74,6 +155,7 @@ def build_trial(
     base_cfg: Path | None = None,
     instruments: list[str] | None = None,
     copy_config: bool = True,
+    study_config_dir: Path | None = None,
     catalog_newest_ns: int | None = None,
     catalog_span_days: float | None = None,
 ) -> tuple[Path, Path]:
@@ -94,23 +176,29 @@ def build_trial(
     with open(backtest_cfg_path, "r", encoding="utf-8") as f:
         bt_data = json.load(f)
 
-    wf = bt_data.get("walk_forward", {})
-    if holdout_days is None:
-        holdout_days = wf.get("holdout_days", 45)
-    if n_folds is None:
-        n_folds = wf.get("splits", 1)
-
-    is_window_days = wf.get("is_window_days", 120)
-    oos_window_days = oos_window_days_override if oos_window_days_override is not None else wf.get("oos_window_days", 30)
+    # Issue #796 — ``wf_settings`` ueber denselben Pfad wie ``freeze_study_config`` aufloesen
+    # (Single Source of Truth, siehe ``_wf_settings_from_bt_data``-Docstring); KEINE zweite Inline-
+    # Berechnung mehr (Divergenz-Falle Pitfall #80/#82, hier auf die Config-Harmonisierung statt
+    # die Fenster-Arithmetik angewendet). Nutzt das HIER bereits geladene ``bt_data`` — kein
+    # zweiter ``backtest.json``-Read je Trial.
+    wf_settings = _wf_settings_from_bt_data(
+        bt_data, holdout_days=holdout_days, n_folds=n_folds,
+        oos_window_days_override=oos_window_days_override,
+    )
+    is_window_days = wf_settings["is_window_days"]
+    oos_window_days = wf_settings["oos_window_days"]
+    n_folds = wf_settings["splits"]
+    holdout_days = wf_settings["holdout_days"]
+    embargo_period_days = wf_settings["embargo_period_days"]
 
     # Issue #445 — Fail-Loud-Startup-Assertion: die Walk-Forward-Geometrie darf die dokumentierte
     # Datenhistorie nicht übersteigen (Single Source of Truth = walk_forward.data_history_days).
     # Sonst zehrt das Holdout-Fenster die Reserve auf, und der Spätstarter-Filter (backtest_runner)
     # verwirft alle Symbole erst spät und still ("Keine Instrumente"). Hier früh & erklärend abbrechen.
     # No-Op, wenn data_history_days fehlt (z. B. minimale Inline-Test-Configs) ⇒ rückwärtskompatibel.
+    wf = bt_data.get("walk_forward", {})
     data_history_days = wf.get("data_history_days")
     if data_history_days is not None:
-        embargo_period_days = wf.get("embargo_period_days", 0)
         required_total = is_window_days + (n_folds * oos_window_days) + embargo_period_days + holdout_days
         if required_total > data_history_days:
             raise ValueError(
@@ -144,20 +232,9 @@ def build_trial(
 
     # Self-describing manifest (ISSUE-OPT-374): the effective walk-forward geometry and
     # start_capital must travel inside the manifest's global_settings, not only via the
-    # copied backtest.json side-channel. Built once and reused for both sinks (DRY).
+    # copied backtest.json side-channel. Built once (via ``resolve_wf_settings`` above) and
+    # reused for both sinks (DRY) — Issue #548 (Pitfall #109): der Embargo reist darin bereits mit.
     start_capital = bt_data.get("start_capital", 10000.0)
-    # Issue #548 (Pitfall #109) — der Embargo MUSS mit ins Manifest/kopierte backtest.json wandern.
-    # Der Backtest-Subprozess liest walk_forward.embargo_period_days via .get(key, 0); fehlt der Key,
-    # greift still der 0-Default und der Leakage-Schutz (#466) ist wirkungslos (kein Purge-Gap).
-    embargo_period_days = wf.get("embargo_period_days", 0)
-    wf_settings = {
-        "is_window_days": is_window_days,
-        "oos_window_days": oos_window_days,
-        "splits": n_folds,
-        "holdout_days": holdout_days,
-        "embargo_period_days": embargo_period_days,
-        "walk_forward_active": True,
-    }
 
     # Calculate dates — Issue #457: an die geteilte, reine Fenster-Funktion delegieren (Single
     # Source of Truth). KEINE Inline-Datums-Arithmetik mehr hier; das Sweep-Preflight (#455) nutzt
@@ -174,17 +251,20 @@ def build_trial(
 
     # Setup directories
     trial_dir = WORK / study_name / f"trial_{trial_number:04d}"
-    trial_cfg_dir = trial_dir / "config"
-    trial_cfg_dir.mkdir(parents=True, exist_ok=True)
 
     # NEU: Logs-Verzeichnis für den Backtest-Subprozess anlegen (Fix Issue #346)
     (trial_dir / "logs").mkdir(parents=True, exist_ok=True)
 
-    # A4.9 Config-Sharing: copy_config=False überspringt die Pro-Trial-Kopie (spart 40k+ Kopien
-    # pro Sweep). Erlaubt, weil das Manifest seit ISSUE-OPT-374 self-describing ist (walk_forward
-    # + start_capital in global_settings); der Aufrufer stellt eine eingefrorene Study-config/ via
-    # ETORO_CONFIG_DIR bereit. Default True ⇒ bit-identisches Verhalten (Kopie pro Trial).
+    # A4.9/#796 Config-Sharing: copy_config=False überspringt die Pro-Trial-Kopie (135.067 Bytes ×
+    # Trials im vollen Sweep, siehe Issue-Katalog #794-#800). Erlaubt, weil das Manifest seit
+    # ISSUE-OPT-374 self-describing ist (walk_forward + start_capital in global_settings); der
+    # Aufrufer MUSS eine per ``freeze_study_config`` eingefrorene Study-``config/`` via
+    # ``study_config_dir`` bereitstellen UND denselben Pfad an
+    # ``runner.run_backtest(config_dir=...)`` durchreichen. Default ``True`` ⇒ bit-identisches
+    # Verhalten (Kopie pro Trial, ``trial_dir/config`` wird angelegt).
     if copy_config:
+        trial_cfg_dir = trial_dir / "config"
+        trial_cfg_dir.mkdir(parents=True, exist_ok=True)
         # Copy all JSON files from base_cfg
         for p in base_cfg.glob("*.json"):
             shutil.copy2(p, trial_cfg_dir / p.name)
@@ -197,6 +277,16 @@ def build_trial(
             copied_bt_data["walk_forward"] = dict(wf_settings)
             with open(copied_bt_path, "w", encoding="utf-8") as f:
                 json.dump(copied_bt_data, f, indent=2)
+    elif study_config_dir is None or not Path(study_config_dir).is_dir():
+        # Issue #796 — Fail-Loud-Waechter: KEIN stiller Fallback auf die Repo-Config (sie traegt
+        # potenziell ein FALSCHES walk_forward fuer diesen Trial). ``trial_dir/config`` wird in
+        # diesem Zweig bewusst NICHT angelegt — genau die Speicherersparnis, die #796 hebt.
+        raise ValueError(
+            "build_trial(copy_config=False) verlangt einen existierenden study_config_dir "
+            f"(Issue #796) — erhalten: {study_config_dir!r}. Zuerst "
+            "trial_config.freeze_study_config(study_name, wf_settings) aufrufen und den "
+            "zurueckgegebenen Pfad hier UND an runner.run_backtest(config_dir=...) durchreichen."
+        )
 
     resolved_params = resolve_params(strategy_class, sampled, base_cfg)
 

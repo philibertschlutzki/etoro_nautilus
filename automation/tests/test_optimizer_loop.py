@@ -6,7 +6,7 @@ from automation.optimizer import spaces, confirm
 from automation.optimizer import trial_config
 
 def _fake_backtest_factory(sortino, dd, evaluated=True, eligible=True, win=3):
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         out = Path(trial_dir) / "tournament_result.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({

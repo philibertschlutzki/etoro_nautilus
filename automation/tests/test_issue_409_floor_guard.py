@@ -115,7 +115,7 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(trial_config, "config_dir", lambda: Path("automation/config"))
 
 
-def _saturated_backtest(trial_dir, manifest_path):
+def _saturated_backtest(trial_dir, manifest_path, **_kwargs):
     """Jeder Trial liefert exakt den saturierten Unevaluable-Floor (−9.75): aggregate_winner null,
     aber IS handelt reichlich mit Top-Performance ⇒ progress=1.0 ⇒ reward = penalty + span."""
     out = Path(trial_dir) / "tournament_result.json"

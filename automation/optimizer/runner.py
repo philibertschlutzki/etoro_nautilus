@@ -55,17 +55,23 @@ def _run_backtest_inprocess(trial_dir: Path, manifest_path: Path) -> Path:
 
 
 def run_backtest(trial_dir: Path, manifest_path: Path, *, mode: str = "subprocess",
-                 timings: dict | None = None) -> Path:
+                 timings: dict | None = None, config_dir: Path | None = None) -> Path:
     """mode='subprocess' (Default, unverändert) ruft backtest_runner.py als Subprozess
        (check=False, timeout=10800); mode='inprocess' ruft den In-Process-Entry (A4.9).
        catalog_path wird aus dem Manifest (global_settings.catalog_path) gelesen.
-       Env: ETORO_CONFIG_DIR=trial_dir/config, ETORO_LOGS_DIR=trial_dir/logs, PYTHONUNBUFFERED=1.
+       Env: ETORO_CONFIG_DIR=config_dir (Default trial_dir/config, siehe Issue #796),
+       ETORO_LOGS_DIR=trial_dir/logs, PYTHONUNBUFFERED=1.
        argv: [python, automation/backtest_runner.py, --momentum, --catalog-path <cat>,
               --config <manifest_path>, --output <trial_dir/tournament_result.json>]
        Gibt den Output-Pfad zurück; raise BacktestRunError, falls Output fehlt (Subprozess).
 
        Issue #415 — misst die Wall-Clock-Dauer in BEIDEN Modi. Ist ``timings`` ein Dict, werden
-       ``duration_s``/``backtest_ms`` hineingeschrieben (Out-Param ⇒ keine Signatur-Aenderung)."""
+       ``duration_s``/``backtest_ms`` hineingeschrieben (Out-Param ⇒ keine Signatur-Aenderung).
+
+       Issue #796 — ``config_dir`` erlaubt EINE eingefrorene Study-Config (via
+       ``trial_config.freeze_study_config``) statt der Pro-Trial-Kopie unter ``trial_dir/config``
+       zu referenzieren; fehlt der Parameter (Default ``None``), bleibt das Verhalten bit-identisch
+       zu HEAD (``trial_dir/config``, wie es ``build_trial(copy_config=True)`` anlegt)."""
     if mode == "inprocess":
         t0 = time.perf_counter()
         try:
@@ -83,7 +89,7 @@ def run_backtest(trial_dir: Path, manifest_path: Path, *, mode: str = "subproces
     output_path = trial_dir / "tournament_result.json"
 
     env = os.environ.copy()
-    env["ETORO_CONFIG_DIR"] = str(trial_dir / "config")
+    env["ETORO_CONFIG_DIR"] = str(config_dir) if config_dir is not None else str(trial_dir / "config")
     env["ETORO_LOGS_DIR"] = str(trial_dir / "logs")
     env["PYTHONUNBUFFERED"] = "1"
 

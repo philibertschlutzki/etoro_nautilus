@@ -21,7 +21,7 @@ from pathlib import Path
 warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
 from automation.optimizer.manifest import WORK, catalog_fingerprint
 from automation.optimizer.spaces import sample_params
-from automation.optimizer.trial_config import build_trial, config_dir
+from automation.optimizer.trial_config import build_trial, config_dir, freeze_study_config, resolve_wf_settings
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import (
@@ -765,8 +765,14 @@ def make_objective(
     run_backtest=run_backtest,
     build_trial=build_trial,
     parse_tournament=parse_tournament,
-    compute_reward=compute_reward
+    compute_reward=compute_reward,
+    study_config_dir: Path | None = None,
 ):
+    """Issue #796 — ``study_config_dir`` (eine per ``trial_config.freeze_study_config`` eingefrorene
+    Study-Config) ist optional: ``None`` (Default, z. B. wenn diese Funktion isoliert/in Tests ohne
+    vorheriges Freeze aufgerufen wird) reproduziert das Alt-Verhalten bit-identisch
+    (``copy_config=True``, eine Config-Kopie je Trial). Der Aufrufer (``optimize``) friert die
+    Study-Config genau einmal ein und reicht den Pfad hier durch."""
     def objective(trial):
         sampled = sample_params(strategy, trial)
         trial.set_user_attr("sampled_params", sampled)
@@ -786,12 +792,14 @@ def make_objective(
             trial_number=trial.number,
             seed=seed,
             n_folds=4,
-            holdout_days=45
+            holdout_days=45,
+            copy_config=study_config_dir is None,
+            study_config_dir=study_config_dir,
         )
 
         _t0 = time.perf_counter()
         try:
-            output_path = run_backtest(trial_dir, manifest_path)
+            output_path = run_backtest(trial_dir, manifest_path, config_dir=study_config_dir)
             metrics = parse_tournament(output_path)
         except BacktestRunError as e:
             raise optuna.TrialPruned(f"Subprocess failed: {e}")
@@ -946,8 +954,14 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True)
+    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
+    # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
+    # build_trial uebergibt (siehe make_objective) — muessen hier identisch sein, sonst wuerde
+    # jeder Trial gegen das FALSCHE eingefrorene walk_forward laufen.
+    study_config_dir = freeze_study_config(
+        study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
     study.optimize(
-        make_objective(strategy),
+        make_objective(strategy, study_config_dir=study_config_dir),
         n_trials=n_trials,
         n_jobs=n_jobs,
         catch=(json.JSONDecodeError, OSError),
@@ -1749,14 +1763,19 @@ def _read_deflation_config() -> tuple[bool, float]:
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial,
                           catalog_newest_ns: int | None = None,
-                          catalog_span_days: float | None = None):
+                          catalog_span_days: float | None = None,
+                          study_config_dir: Path | None = None):
     """Wie make_objective, aber single-symbol: build_trial(instruments=[symbol]) und
        compute_reward(universe_size=1, sampled, global_params, strategy) (Per-Symbol-Reward
        mit param_pen Richtung global_params, A4.3).
 
        Issue #531: ``catalog_span_days`` (reale Bar-Spanne in Tagen) wird an ``build_trial``
        durchgereicht, damit die Manifest-Konstruktion fail-loud gegen die tatsächliche Datenlage
-       prüft (REJECT_DATA_INSUFFICIENT_GEOMETRY statt stiller .loc-Klemmung)."""
+       prüft (REJECT_DATA_INSUFFICIENT_GEOMETRY statt stiller .loc-Klemmung).
+
+       Issue #796 — ``study_config_dir`` (siehe ``make_objective``-Docstring): ``None`` (Default)
+       reproduziert das Alt-Verhalten bit-identisch (Config-Kopie je Trial); ``_optimize_symbol_impl``
+       friert die Study-Config einmal ein und reicht den Pfad hier durch."""
     def objective(trial):
         # Issue #669 — symbol-spezifische Suchraum-Bounds-Überschreibungen (opt-in, leer per
         # Default) NUR im Per-Symbol-Pfad; der globale Multi-Symbol-Pfad (make_objective) bleibt
@@ -1782,6 +1801,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             instruments=[symbol],
             catalog_newest_ns=catalog_newest_ns,
             catalog_span_days=catalog_span_days,
+            copy_config=study_config_dir is None,
+            study_config_dir=study_config_dir,
         )
 
         # Issue #415 — Per-Trial-Wall-Clock. perf_counter UM den run_backtest-Aufruf herum (statt via
@@ -1789,7 +1810,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # ``(trial_dir, manifest_path)``) unveraendert funktionieren (Signatur-Kompat, Pitfall #33).
         _t0 = time.perf_counter()
         try:
-            output_path = run_backtest(trial_dir, manifest_path)
+            output_path = run_backtest(trial_dir, manifest_path, config_dir=study_config_dir)
             metrics = parse_tournament(output_path)
         except BacktestRunError as e:
             raise optuna.TrialPruned(f"Subprocess failed: {e}")
@@ -1970,7 +1991,30 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
        {WORK}/sweep/study_{strategy}_{_sanitize(symbol)}.db, Manifest mit instruments=[symbol]
        (universe_size==1 ⇒ Per-Symbol-Reward), Warm-Start am globalen Optimum (Gate 2 via
        study.enqueue_trial). n_jobs=1 wird erzwungen (SQLite-Reproduzierbarkeit, Pitfall #68).
-       Das globale `optimize`/`make_objective` bleibt unverändert."""
+       Das globale `optimize`/`make_objective` bleibt unverändert.
+
+       Issue #800 — dünner Wrapper: der ``with bind_study_context(...)``-Block deckt den
+       GESAMTEN Körper von ``_optimize_symbol_impl`` ab (Storage-Aufloesung, Sampler-Konstruktion,
+       ``create_study``, Warm-Start-Seeding UND ``study.optimize``). Vorher stand das manuelle
+       ``__enter__()`` VOR und das ``__exit__()`` NACH ~150 Zeilen Setup, sodass jede Exception in
+       diesem Fenster (z. B. ``ENOSPC`` waehrend ``create_study``) das Exit uebersprang: der
+       ContextVar blieb im Worker-Thread gesetzt und der naechste, andere Study im selben Thread
+       erbte das ``[strategy/symbol]``-Log-Praefix der abgestuerzten Study."""
+    study_name = f"study_{strategy}_{_sanitize(symbol)}"
+    with bind_study_context(strategy=strategy, symbol=symbol, study_name=study_name):
+        return _optimize_symbol_impl(
+            strategy, symbol, n_trials,
+            storage=storage, catalog_newest_ns=catalog_newest_ns,
+            catalog_span_days=catalog_span_days, study_name=study_name,
+        )
+
+
+def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = None,
+                    *, storage: str | None = None, catalog_newest_ns: int | None = None,
+                    catalog_span_days: float | None = None, study_name: str):
+    """Issue #800 — unveraenderter Koerper von ``optimize_symbol`` (eine Einrueckungsebene, keine
+       Logikaenderung ausser der jetzt von aussen uebergebenen ``study_name`` und dem entfernten
+       manuellen Context-Enter/Exit, siehe ``optimize_symbol``-Docstring)."""
     study_t0 = time.perf_counter()  # Issue #415 — Per-Study-Wall-Clock
     cfg_dir = config_dir()
     conf_n_trials, n_startup_trials, seed = 100, 16, 42
@@ -2004,14 +2048,11 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     # TPE bei multivariate=True,group=True genügend Startpunkte hat. Legacy, wenn der Key fehlt.
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)
 
-    study_name = f"study_{strategy}_{_sanitize(symbol)}"
-    # Issue #780 — bindet strategy/symbol/study_name fuer die GESAMTE restliche Lebensdauer dieser
-    # Study (jede Log-Zeile/jedes Event ab hier, ueber alle verschachtelten Aufrufe hinweg: Objective,
-    # floor_plateau_callback, _emit_study_summary, ...) an DIESEN Thread — Manuelles Enter/Exit statt
-    # eines ``with``-Blocks, um den bestehenden Funktionskoerper nicht komplett neu einzuruecken;
-    # das Exit steht im bestehenden ``finally:`` unten, symmetrisch zum Storage-Dispose.
-    _study_ctx_cm = bind_study_context(strategy=strategy, symbol=symbol, study_name=study_name)
-    _study_ctx_cm.__enter__()
+    # Issue #780/#800 — strategy/symbol/study_name sind fuer die GESAMTE Lebensdauer dieser Study
+    # (jede Log-Zeile/jedes Event, ueber alle verschachtelten Aufrufe: Objective, floor_plateau_
+    # callback, _emit_study_summary, ...) an diesen Thread gebunden. Der Bind selbst passiert jetzt
+    # im ``with``-Block des ``optimize_symbol``-Wrappers (deckt DIESEN gesamten Koerper ab, siehe
+    # dessen Docstring) — hier kein manuelles Enter/Exit mehr.
     sweep_dir = WORK / "sweep"
     sweep_dir.mkdir(parents=True, exist_ok=True)
     if storage is None:
@@ -2148,11 +2189,17 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
     study.set_user_attr("n_trials_budget", n_trials)
     study.set_user_attr("n_startup_trials", n_startup_trials)
 
+    # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
+    # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
+    # build_trial uebergibt (siehe make_symbol_objective) — muessen hier identisch sein.
+    study_config_dir = freeze_study_config(
+        study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
     objective = make_symbol_objective(
         strategy, symbol, global_best,
         run_backtest=run_backtest, build_trial=build_trial,
         catalog_newest_ns=catalog_newest_ns,
         catalog_span_days=catalog_span_days,
+        study_config_dir=study_config_dir,
     )
     # Issue #409 — Fail-Loud-Guard: warnt, sobald nach n_startup_trials alle Trials am
     # Unevaluable-Floor kleben (Pitfall #75). Config einmalig gebunden (kein Per-Trial-IO).
@@ -2175,8 +2222,8 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
         # Sweep auf ~n_jobs statt auf die Gesamtzahl der Paare. Nachfolgende Lesezugriffe (sweep.py:
         # familienweite Aggregation, Confirm/Export) reconnecten lazy und disposen dort erneut.
         _dispose_storage(rdb_storage)
-        # Issue #780 — symmetrisches Exit des Study-Log-Kontexts (siehe Enter oben).
-        _study_ctx_cm.__exit__(None, None, None)
+        # Issue #780 — der Study-Log-Kontext wird jetzt vom ``with``-Block in ``optimize_symbol``
+        # symmetrisch geschlossen (siehe dort); kein manuelles Exit mehr hier.
     return study
 
 

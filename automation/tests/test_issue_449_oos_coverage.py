@@ -327,7 +327,7 @@ def test_production_optimize_symbol_binds_stop_on_plateau(tmp_path, monkeypatch)
 
     monkeypatch.setattr(ro, "floor_plateau_callback", _spy)
 
-    def _fake(trial_dir, manifest_path):
+    def _fake(trial_dir, manifest_path, **_kwargs):
         out = Path(trial_dir) / "tournament_result.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({"fully_eligible_pairs": 0, "aggregate_winner": None,

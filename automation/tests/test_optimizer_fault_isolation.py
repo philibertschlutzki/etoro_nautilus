@@ -37,7 +37,7 @@ def test_objective_penalizes_empty_tournament(monkeypatch, tmp_path):
     out = tmp_path / "tournament_result.json"
     out.write_text(json.dumps({"fully_eligible_pairs": 0, "aggregate_winner": None}))
     obj = make_objective("ComboTrendVwapStrategy",
-                         run_backtest=lambda td, mp: out,
+                         run_backtest=lambda td, mp, **kw: out,
                          build_trial=lambda **k: (tmp_path, tmp_path / "m.json"))
     study = optuna.create_study(direction="maximize")
     study.optimize(obj, n_trials=1, catch=(json.JSONDecodeError, OSError))
@@ -45,7 +45,7 @@ def test_objective_penalizes_empty_tournament(monkeypatch, tmp_path):
 
 def test_confirm_handles_subprocess_failure():
     from automation.optimizer.confirm import confirm_on_holdout
-    def boom(td, mp): raise BacktestRunError("holdout died")
+    def boom(td, mp, **kw): raise BacktestRunError("holdout died")
     fake_build = lambda **k: (Path("/tmp/x"), Path("/tmp/x/m.json"))
     study = optuna.create_study(direction="maximize")
     study.add_trial(optuna.trial.create_trial(
