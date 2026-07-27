@@ -145,6 +145,29 @@ def log_active_config(context: str, *, base_cfg: Path | None = None, extra: dict
             print(f"   {str(k):<18}: {v}")
     print("=" * 60)
 
+def _reemit_inference_diagnostics(logger: logging.Logger, metrics, trial_number: int) -> None:
+    """Issue #804 — re-emittiert jede in ``backtest_runner._calculate_stats`` (laeuft im Backtest-
+    SUBPROZESS, ``runner.py``) gesammelte Inferenzpfad-Diagnose (``EQUITY_NONPOSITIVE``,
+    ``PERIOD_RETURNS_NOT_FINITE``, ``RETURN_SERIES_IDENTITY_VIOLATION``/``_UNDEFINED``,
+    ``NON_CONTIGUOUS_FOLD_SEGMENTS``, ``SORTINO_GUARD_TRIPPED``, ``COHERENCE_INVARIANT_VIOLATION``)
+    als EIGENES ``INFERENCE_DIAGNOSTIC``-ERROR-Ereignis im ELTERNPROZESS-Log.
+
+    Root-Cause #804: alle diese Diagnosen liefen bislang NUR ueber ``logging`` im Subprozess — der
+    Stream landet in ``trial_dir/logs/backtest_stdout.log``, einer Datei, die kein Aggregator liest
+    und die #794 Sekunden spaeter loescht (0 Treffer ueber ein vollstaendiges 5490-Zeilen-Lauf-Log,
+    trotz 35 ``STUDY_ABORTED_ON_INVARIANT`` im Elternprozess). ``strategy``/``symbol``/``study_name``
+    werden von ``emit_execution_event`` automatisch aus ``bind_study_context`` injiziert (#780) —
+    hier nur ``trial_number`` zusaetzlich, das kein ambienter Kontext ist. No-Op, wenn
+    ``metrics.inference_diagnostics`` leer ist (Normalfall, Pre-#804-JSONs eingeschlossen)."""
+    for diag in metrics.inference_diagnostics or ():
+        emit_execution_event(logger, "INFERENCE_DIAGNOSTIC", {
+            "trial_number": trial_number,
+            "code": diag.get("code"),
+            "detail": diag.get("detail"),
+            "value": diag.get("value"),
+        }, level=logging.ERROR)
+
+
 def _stop_study_safely(study, logger: logging.Logger) -> None:
     """Issue #456 — ``study.stop()`` crash-sicher aufrufen. Eine Study AUSSERHALB eines aktiven
     ``optimize()``-Kontexts (oder ein Test-Double ohne ``stop``) darf nicht zum Crash führen — die
@@ -1016,6 +1039,9 @@ def make_objective(
 
         outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
         import logging
+        # Issue #804 — jede im Subprozess gesammelte Inferenzpfad-Diagnose erneut im
+        # Elternprozess-Log emittieren, BEVOR das Trial-Summary-Event geloggt wird.
+        _reemit_inference_diagnostics(logging.getLogger("optimizer"), metrics, trial.number)
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "trial_number": trial.number,
             "backtest_ms": backtest_ms,
@@ -2080,6 +2106,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         except BacktestRunError as e:
             raise optuna.TrialPruned(f"Subprocess failed: {e}")
         backtest_ms = round((time.perf_counter() - _t0) * 1000)
+        # Issue #804 — jede im Subprozess gesammelte Inferenzpfad-Diagnose erneut im
+        # Elternprozess-Log emittieren (strategy/symbol/study_name via bind_study_context, #780).
+        _reemit_inference_diagnostics(logging.getLogger("optimizer"), metrics, trial.number)
 
         tournament_path = cfg_dir / "tournament.json"
         risk_dd_cap = 0.30
@@ -2139,6 +2168,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         trial.set_user_attr("oos_n_periods", metrics.oos_n_periods)
         # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
         trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
+        # Issue #804 — die strukturierten Inferenzpfad-Diagnosen je Trial persistieren, damit der
+        # #742-Report sie je Study zu inference_diagnostics_by_code aggregieren kann (report.py).
+        trial.set_user_attr("inference_diagnostics", list(metrics.inference_diagnostics))
         # Issue #656 — Trade-Count-Telemetrie je Trial (bereits im Log-Event vorhanden, hier
         # zusätzlich als User-Attr persistiert), damit der Zero-Eligible-Plateau-Guard
         # (floor_plateau_callback) eine Trade-Count-Diagnose bilden kann, ohne die volle Metrics

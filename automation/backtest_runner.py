@@ -1291,6 +1291,15 @@ def _assert_sortino_return_coherence(oos_metrics: dict, *, tol: float = 1e-4) ->
             "müssen kohärent sein (derselbe Equity-Pfad).", sr, tr, tol,
         )
         oos_metrics["oos_coherence_violation"] = True
+        # Issue #804 — strukturierter Rueckkanal: dieselbe Verletzung zusaetzlich in
+        # oos_metrics['inference_diagnostics'] (existiert bereits, sobald _calculate_stats zuvor
+        # lief) statt ausschliesslich im Subprozess-Log, das der Elternprozess nie sieht.
+        oos_metrics.setdefault("inference_diagnostics", []).append({
+            "code": "COHERENCE_INVARIANT_VIOLATION",
+            "detail": f"sign(oos_sortino={sr:.6g}) != sign(oos_total_return={tr:.6g}) bei "
+                     f"|return| > {tol:.0e}.",
+            "value": sr,
+        })
 
 
 def assert_positive_equity(mtm_series) -> tuple[bool, int]:
@@ -1314,7 +1323,8 @@ def assert_positive_equity(mtm_series) -> tuple[bool, int]:
     return False, int(non_positive[0])
 
 
-def assert_return_series_identity(total_return: float, period_rets, *, tol: float = 1e-9) -> bool:
+def assert_return_series_identity(total_return: float, period_rets, *, tol: float = 1e-9,
+                                  diagnostics: list | None = None) -> bool:
     """Issue #771 — die #756-Identität ``Σ log(1+rᵢ) = log(1+total_return)`` MASCHINELL geprüft,
     statt nur im Docstring behauptet (AGENTS.md Pitfall #230). Gilt PER KONSTRUKTION genau dann,
     wenn ``total_return`` und ``period_rets`` aus DERSELBEN Bar-Menge stammen — nach #771 ist das
@@ -1333,7 +1343,16 @@ def assert_return_series_identity(total_return: float, period_rets, *, tol: floa
     ``ValueError`` ab und lieferte ``False`` — genau der Bug, der 35 Study-Abbrüche mit einer
     NACHWEISLICH FALSCHEN Begründung erzeugte (die Kurve war nicht „inkohärent aggregiert", sie
     war schlicht ruiniert). Dieser Zustand wird jetzt als ``RETURN_SERIES_IDENTITY_UNDEFINED``
-    telemetriert und als Verletzung (``True``) gewertet."""
+    telemetriert und als Verletzung (``True``) gewertet.
+
+    Issue #804 — ``diagnostics`` (optional, Default ``None``) ist die strukturierte Rueckkanal-Liste
+    (``metrics['inference_diagnostics']``): jede hier geloggte Verletzung wird ZUSAETZLICH als
+    ``{'code', 'detail', 'value'}``-Dict angehaengt, falls eine Liste uebergeben wird. Root-Cause
+    #804: alle vier Inferenzpfad-Diagnosen liefen bislang NUR ueber ``logging`` im Backtest-
+    SUBPROZESS (``runner.py``, ``subprocess.run(capture_output=True)``) — der Optimizer-Elternprozess
+    (und damit der `#742`-Report) sah davon NICHTS, der Log-Stream landete in einer Datei, die kein
+    Aggregator liest und die #794 Sekunden spaeter loescht. ``None`` (Default, alle Bestandsaufrufer)
+    bleibt bit-identisch (kein Diagnostics-Overhead ausserhalb von `_calculate_stats`)."""
     if period_rets is None or len(period_rets) == 0:
         return False
     try:
@@ -1346,6 +1365,12 @@ def assert_return_series_identity(total_return: float, period_rets, *, tol: floa
             "Verletzung der #756-Identität, nicht 'keine Verletzung'.",
             total_return,
         )
+        if diagnostics is not None:
+            diagnostics.append({
+                "code": "RETURN_SERIES_IDENTITY_UNDEFINED",
+                "detail": "total_return <= -1 — log1p(1+total_return) nicht definierbar.",
+                "value": float(total_return),
+            })
         return True
     except (TypeError, OverflowError):
         return False
@@ -1361,6 +1386,12 @@ def assert_return_series_identity(total_return: float, period_rets, *, tol: floa
             "PERIOD_RETURNS_NOT_FINITE (#801): Σlog(1+rᵢ) ist nicht endlich (NaN/±inf) — die "
             "Renditeserie der Inferenz enthält einen nicht-finiten Wert.",
         )
+        if diagnostics is not None:
+            diagnostics.append({
+                "code": "PERIOD_RETURNS_NOT_FINITE",
+                "detail": "Σlog(1+rᵢ) ist nicht endlich (NaN/±inf).",
+                "value": log_sum,
+            })
         return True
     # Issue #801 — Toleranz von einer rein ABSOLUTEN (1e-9) auf eine zusätzlich RELATIVE Schranke
     # gehoben: bei T ≈ 4000+ Summanden akkumuliert Gleitkomma-Rundung über eine absolute
@@ -1375,6 +1406,13 @@ def assert_return_series_identity(total_return: float, period_rets, *, tol: floa
             "NICHT aus derselben Bar-Menge (#756-Identität verletzt).",
             log_sum, target, gap, eff_tol,
         )
+        if diagnostics is not None:
+            diagnostics.append({
+                "code": "RETURN_SERIES_IDENTITY_VIOLATION",
+                "detail": f"Σlog(1+rᵢ)={log_sum:.10g} != log(1+total_return)={target:.10g} "
+                         f"(Δ={gap:.3e} > tol={eff_tol:.3e}).",
+                "value": gap,
+            })
         return True
     return False
 
@@ -2149,6 +2187,17 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     if not pnl_list:
         return NULL
 
+    # Issue #804 — strukturierter Rueckkanal fuer die vier (jetzt: sieben) Inferenzpfad-Diagnosen
+    # dieser Funktion. Root-Cause #804: ``_calculate_stats`` laeuft im Backtest-SUBPROZESS
+    # (runner.py, ``subprocess.run(capture_output=True)``); ``logging.getLogger("optimizer").error``
+    # allein landet in ``trial_dir/logs/backtest_stdout.log`` — einer Datei, die kein Aggregator
+    # liest und die #794 Sekunden spaeter loescht. Jede Verletzung wird HIER ZUSAETZLICH als
+    # ``{'code', 'detail', 'value'}``-Dict gesammelt und am Ende als ``inference_diagnostics`` in
+    # das Rueckgabe-Dict gehoben — dasselbe Dict, das ``tournament_result.json`` persistiert, sodass
+    # ``run_optimization`` es im ELTERNPROZESS erneut emittieren kann (siehe parsing.py/
+    # run_optimization.py).
+    _inference_diagnostics: list[dict] = []
+
     n = len(pnl_list)
     wins = sum(1 for v in pnl_list if v > 0)
     gross_profit = sum(v for v in pnl_list if v > 0)
@@ -2231,6 +2280,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 "Beitrag; period_rets (falls verfuegbar) enthaelt ihn weiterhin.",
                 n_segments_skipped, len(mtm_frames),
             )
+            _inference_diagnostics.append({
+                "code": "NON_CONTIGUOUS_FOLD_SEGMENTS",
+                "detail": f"{n_segments_skipped} von {len(mtm_frames)} mtm_frames-Segment(en) "
+                         f"uebersprungen (leer/Startwert 0).",
+                "value": n_segments_skipped,
+            })
     else:
         # Fallback ohne verwertbare Equity-Kurve (z. B. spärliche OOS-Slices mit nur
         # einem Datenpunkt am Fold-Rand): sequentielles Aufzinsen der realisierten,
@@ -2277,6 +2332,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 "vernichtet').",
                 equity_ruin_index, float(mtm_series.iloc[equity_ruin_index]),
             )
+            _inference_diagnostics.append({
+                "code": "EQUITY_NONPOSITIVE",
+                "detail": f"Equity-Kurve wird bei Bar-Index {equity_ruin_index} nicht-positiv "
+                         f"(Wert={float(mtm_series.iloc[equity_ruin_index]):.6g}).",
+                "value": float(mtm_series.iloc[equity_ruin_index]),
+            })
             period_rets = pd.Series([], dtype=float)
             _period_returns_list = []
             _period_returns_truncated = False
@@ -2315,6 +2376,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     "einen nicht-finiten Wert trotz positiver Equity — unerwarteter Datenfehler; "
                     "sortino/psr werden NICHT berechnet.",
                 )
+                _inference_diagnostics.append({
+                    "code": "PERIOD_RETURNS_NOT_FINITE",
+                    "detail": "algebraische Log-Rendite-Serie enthaelt einen nicht-finiten Wert "
+                             "trotz positiver Equity.",
+                    "value": None,
+                })
                 equity_ruined = True  # dieselbe Konsequenz: keine Inferenz auf einer Restmenge.
                 period_rets = pd.Series([], dtype=float)
                 _period_returns_list = []
@@ -2330,7 +2397,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 # Issue #771/#801 — die #756-Identität maschinell geprüft (nicht nur behauptet):
                 # Σlog(1+rᵢ) muss log(1+total_return) entsprechen (jetzt PER KONSTRUKTION exakt,
                 # siehe assert_return_series_identity-Docstring).
-                return_series_identity_violation = assert_return_series_identity(total_return, period_rets)
+                return_series_identity_violation = assert_return_series_identity(
+                    total_return, period_rets, diagnostics=_inference_diagnostics)
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
         annualization_factor = _get_annualization_factor(mtm_series)
@@ -2391,6 +2459,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                         "verworfen (#614/#665; sortino/psr=None).",
                         sortino_annualized, sortino_numeric_guard, _eff_guard, len(period_rets), dd_dev,
                     )
+                    _inference_diagnostics.append({
+                        "code": "SORTINO_GUARD_TRIPPED",
+                        "detail": f"|sortino_annualized|={sortino_annualized:.6g} > "
+                                 f"guard={_eff_guard:.6g} (n_periods={n_periods}, dd_dev={dd_dev:.6g}).",
+                        "value": float(sortino_annualized),
+                    })
                     sortino = None
                     sortino_period = None
                     sortino_annualized = None
@@ -2529,6 +2603,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # (siehe assert_positive_equity/EQUITY_NONPOSITIVE oben) — der Trial gilt dann als
         # oekonomisch ruiniert; sortino/psr sind None, total_return bleibt erhalten.
         "equity_ruined": bool(equity_ruined),
+        # Issue #804 — strukturierter Rueckkanal der Inferenzpfad-Diagnosen dieser Funktion
+        # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
+        # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED), damit run_optimization sie im
+        # ELTERNPROZESS-Log erneut emittieren kann (siehe Docstring oben). Leer, wenn keine
+        # Verletzung auftrat (Normalfall).
+        "inference_diagnostics": list(_inference_diagnostics),
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),

@@ -313,6 +313,41 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     )
 
 
+def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
+    """Issue #804 — sechster Regressionswächter: über die GESAMTE Study hinweg dürfen KEINE
+    strukturierten Inferenzpfad-Diagnosen (``EQUITY_NONPOSITIVE``, ``PERIOD_RETURNS_NOT_FINITE``,
+    ``RETURN_SERIES_IDENTITY_VIOLATION``/``_UNDEFINED``, ``NON_CONTIGUOUS_FOLD_SEGMENTS``,
+    ``SORTINO_GUARD_TRIPPED``, ``COHERENCE_INVARIANT_VIOLATION`` — aus ``backtest_runner.
+    _calculate_stats``, je Trial unter ``inference_diagnostics`` gestempelt, #804) aufgetreten sein.
+
+    Root-Cause #804: diese Diagnosen liefen bislang NUR im Backtest-SUBPROZESS über ``logging`` —
+    0 Treffer über ein vollstaendiges Lauf-Log trotz 35 ``STUDY_ABORTED_ON_INVARIANT`` im
+    Elternprozess. Dieser Check macht ihre Abwesenheit (oder Praesenz) zu einer MASCHINELL
+    ueberpruefbaren #742-Report-Aussage, nicht nur einer live emittierten Log-Zeile (siehe
+    ``run_optimization._reemit_inference_diagnostics`` fuer die Live-Emission je Trial).
+
+    ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (#621-Konvention). Rein additiv/
+    observational — WARNING-Klasse, kein Abbruch (analog ``check_log_return_coherence``)."""
+    total = 0
+    by_code: dict[str, int] = {}
+    for t in trials:
+        for diag in t.get("inference_diagnostics") or ():
+            code = diag.get("code") if isinstance(diag, dict) else None
+            if code:
+                total += 1
+                by_code[code] = by_code.get(code, 0) + 1
+    passed = total == 0
+    return InvariantResult(
+        name="check_inference_diagnostics_absent",
+        passed=passed,
+        expected=0,
+        actual=total,
+        detail=("OK" if passed else
+                f"{total} Inferenzpfad-Diagnose(n) über die Study ({by_code}) — siehe "
+                f"INFERENCE_DIAGNOSTIC-Ereignisse im Optimizer-Log für Details je Trial."),
+    )
+
+
 # Issue #788 — dieselbe Sentinel-Frage wie #759 (dort nur oos_win_rate) gilt fuer JEDE OOS-Metrik,
 # die make_symbol_objective als Trial-User-Attr persistiert: ein nicht evaluierter Trial darf fuer
 # KEINE davon eine Beobachtung tragen. Deklarative Liste statt sechs Einzel-Wächtern.

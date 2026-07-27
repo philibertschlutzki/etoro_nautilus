@@ -129,6 +129,12 @@ class TournamentMetrics:
     # oekonomisch ruiniert (sortino/psr sind None, total_return bleibt erhalten). False ⇒
     # rückwärtskompatibel zu Pre-#801-JSONs.
     oos_equity_ruined: bool = False
+    # Issue #804 — die strukturierten Inferenzpfad-Diagnosen aus backtest_runner._calculate_stats
+    # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
+    # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED/COHERENCE_INVARIANT_VIOLATION), gehoben aus
+    # ``oos_metrics['inference_diagnostics']`` — Tupel von ``{'code','detail','value'}``-Dicts.
+    # Leeres Tuple ⇒ keine Verletzung ODER Pre-#804-JSON (rückwärtskompatibel).
+    inference_diagnostics: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -220,6 +226,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     period_returns_truncated = bool(oos_metrics.get("period_returns_truncated") or False)
     # Issue #801 — Ruin-Telemetrie (None-safe ⇒ False, rückwärtskompatibel zu Pre-#801-JSONs).
     oos_equity_ruined = bool(oos_metrics.get("equity_ruined") or False)
+    # Issue #804 — strukturierte Inferenzpfad-Diagnosen (None-safe ⇒ leeres Tuple).
+    inference_diagnostics = tuple(oos_metrics.get("inference_diagnostics") or ())
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -338,6 +346,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         round_trip_cost_bps=float(round_trip_cost_bps) if round_trip_cost_bps is not None else None,
         period_returns_truncated=period_returns_truncated,
         oos_equity_ruined=oos_equity_ruined,
+        inference_diagnostics=inference_diagnostics,
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,
