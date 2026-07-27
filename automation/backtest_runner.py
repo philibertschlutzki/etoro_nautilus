@@ -1717,6 +1717,31 @@ def _read_psr_bootstrap_resamples() -> int:
         val = 200
     _psr_bootstrap_resamples_cache = val
     return val
+
+
+_period_returns_cap_cache: int | None = None
+
+
+def _read_period_returns_cap() -> int:
+    """Issue #798 (Speicher-Katalog #794-#800) — Kappungsgrenze der per-Perioden-Renditeserie
+    (``oos_period_returns``, Bootstrap-CI im Holdout-Gate) aus ``optimizer.json['period_returns_cap']``.
+    Ersetzt die zuvor hartkodierte ``[:2000]``-Konstante (Zero-Hardcoding). Gecached (Hot-Path).
+    Fehlt der Key (oder ist ungueltig) ⇒ Default 2000 (bit-identisch zum Vorwert)."""
+    global _period_returns_cap_cache
+    if _period_returns_cap_cache is not None:
+        return _period_returns_cap_cache
+    val = 2000
+    try:
+        cfg_path = config_dir() / "optimizer.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("period_returns_cap")
+            if raw is not None:
+                val = int(raw)
+    except (OSError, ValueError, TypeError):
+        val = 2000
+    _period_returns_cap_cache = val
+    return val
 _default_round_trip_cost_bps_cache: dict[str, float] = {}
 
 
@@ -2176,7 +2201,10 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Issue #619 — die per-Perioden-Returns durchreichen (gecappt), damit der Holdout-Pfad einen
         # Stationary-Bootstrap-CI auf dem Sortino rechnen kann (ci_lower > 0 statt Punktschätzer).
         # Seit #756 auf der Log-Skala (dieselbe Skala wie `sortino_period`/`oos_psr` unten).
-        _period_returns_list = [float(x) for x in period_rets.tolist()[:2000]]
+        _period_returns_cap = _read_period_returns_cap()
+        _full_period_rets_list = period_rets.tolist()
+        _period_returns_list = [float(x) for x in _full_period_rets_list[:_period_returns_cap]]
+        _period_returns_truncated = len(_full_period_rets_list) > _period_returns_cap
         # Issue #771 — die #756-Identität maschinell geprüft (nicht nur behauptet): Σlog(1+rᵢ) muss
         # log(1+total_return) entsprechen, sofern total_return und period_rets aus derselben
         # mtm_series stammen (nach #771 der Regelfall; der mtm_frames-Fallback kann bei
@@ -2275,6 +2303,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         n_periods = 0
         ret_skew, ret_kurtosis = 0.0, 3.0
         _period_returns_list = []
+        _period_returns_truncated = False
         dd_excess = 0.0
         return_series_identity_violation = False
 
@@ -2370,6 +2399,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "ret_skew":           float(ret_skew),
         "ret_kurtosis":       float(ret_kurtosis),
         "period_returns":     _period_returns_list,   # Issue #619 — für den Bootstrap-CI im Holdout.
+        # Issue #798 — True, sobald n_periods > period_returns_cap: ein gekappter Bootstrap-Input
+        # darf nie stillschweigend als vollstaendig gelten (die Serie selbst bleibt gekappt gleich).
+        "period_returns_truncated": bool(_period_returns_truncated),
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
