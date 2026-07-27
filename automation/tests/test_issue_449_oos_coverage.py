@@ -265,8 +265,10 @@ def _silent_logger(name):
 
 
 def test_plateau_stop_optin_calls_stop_evaluable_branch():
+    # Issue #805 — 6 statt 3 Trials (min_for_structural = n_startup_trials(3) + Default-Zuschlag(3),
+    # ersetzt das entfernte floor_plateau_k=0).
     lg = _silent_logger("t456a")
-    trials = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(3)]
+    trials = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(6)]
     study = _FakeStudy(trials)
     ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=3,
                               logger=lg, stop_on_plateau=True)
@@ -304,8 +306,9 @@ def test_plateau_no_stop_when_some_evaluable():
 
 def test_plateau_stop_is_crash_safe():
     """study.stop() darf werfen (Study außerhalb optimize()) ⇒ kein Crash, Warnung genügt."""
+    # Issue #805 — 6 statt 3 Trials (siehe test_plateau_stop_optin_calls_stop_evaluable_branch).
     lg = _silent_logger("t456e")
-    trials = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(3)]
+    trials = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(6)]
     study = _FakeStudy(trials, stop_raises=True)
     ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=3,
                               logger=lg, stop_on_plateau=True)  # darf NICHT werfen

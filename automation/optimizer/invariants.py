@@ -289,7 +289,16 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     Ein Trial mit gesetztem ``oos_coherence_violation`` (dasselbe Flag, das
     ``_assert_sortino_return_coherence`` stempelt) ist damit ein ECHTER Aggregationsdefekt, keine
     erwartete Restrate mehr. ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (#621-
-    Konvention, dieselbe Form wie ``check_reward_term_variance``)."""
+    Konvention, dieselbe Form wie ``check_reward_term_variance``).
+
+    Issue #803 — dieser REPORT-Check bleibt bestehen (Regressionswächter über den GESAMTEN Lauf),
+    ist aber seit #803 nicht mehr die einzige Instanz, die auf ``oos_coherence_violation`` reagiert:
+    ``backtest_runner._evaluate_oos_eligibility`` disqualifiziert JEDEN betroffenen Trial bereits
+    individuell (``REJECT_OOS_INVALID_METRICS``), und
+    ``run_optimization.check_study_coherence_violation_rate``/
+    ``coherence_violation_early_abort_callback`` beenden eine systematisch betroffene Study bereits
+    waehrend ``study.optimize()``. Ein ``passed=False`` hier ist damit ein STAERKERES Signal als vor
+    #803 (die Trial-/Study-Ebene haetten dieselbe Kohorte bereits abgefangen)."""
     violating = [i for i, t in enumerate(trials) if t.get("oos_coherence_violation") is True]
     passed = not violating
     return InvariantResult(

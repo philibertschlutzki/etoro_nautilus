@@ -32,6 +32,7 @@ from automation.optimizer.run_optimization import (
     _preinit_study_storage,
     _dispose_storage,
     derive_n_trials,
+    assert_structural_min_modelled_trials_valid,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer import champions
@@ -712,6 +713,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             logging.getLogger("optimizer").warning(
                 "[#794] Lauf-Start-Purge fehlgeschlagen (non-fatal).", exc_info=True)
 
+    # Issue #703 — vollständige optimizer.json EINMAL vor dem Dispatch geladen (Champion-Store-
+    # Gates: reward_semantics_version + champion_*-Keys), wiederverwendet über die Closure von
+    # ``_run_confirm_and_export`` statt pro Paar erneut von der Platte gelesen zu werden. Issue #805
+    # — jetzt auch VOR dem Preflight-Block geladen, damit assert_structural_min_modelled_trials_valid
+    # (unten) sie konsumieren kann, ohne die Datei ein zweites Mal zu lesen.
+    opt_data = _load_optimizer_config()
+
     # Issue #595/#593 — FAIL-LOUD-Preflight VOR dem ersten Trial (nur im echten Pfad; injizierte
     # HI-7-Fakes nutzen frei benannte Strategien und überspringen den Guard). (1) Jede aktive
     # Strategie MUSS einen Suchraum in spaces.py haben. (2) Gate- und Reward-Klauseln müssen
@@ -722,13 +730,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #802 — pandas-Versions-Preflight (Zero-Hardcoding: Bereich stammt aus
         # requirements.txt, hier nur maschinell durchgesetzt).
         assert_pandas_version_supported()
+        # Issue #805 — structural_min_modelled_trials_per_dim<=0 waere derselbe degenerierte
+        # Zustand wie das entfernte floor_plateau_k=0 (#488/#753/#769) — fail-loud statt eines
+        # stillen NULL-modellierten-Trials-Urteils.
+        assert_structural_min_modelled_trials_valid(opt_data)
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
-    # Issue #703 — vollständige optimizer.json EINMAL vor dem Dispatch geladen (Champion-Store-
-    # Gates: reward_semantics_version + champion_*-Keys), wiederverwendet über die Closure von
-    # ``_run_confirm_and_export`` statt pro Paar erneut von der Platte gelesen zu werden.
-    opt_data = _load_optimizer_config()
     available_bars = count_available_bars(syms)
 
     # Issue #531 — Pre-Sweep-Backfill-Hook: Symbole, deren REAL vorhandene Bar-Spanne die volle

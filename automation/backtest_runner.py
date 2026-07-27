@@ -837,6 +837,21 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         if median_notional < 10.0:
             reasons.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
 
+    # Issue #803 — ein Trial mit einer nachweislich UNGUELTIGEN Risikokennzahl (Kohaerenz-
+    # Verletzung #589/#620/#756/#771, ODER oekonomischer Ruin #801) ist NIE selektionsfaehig,
+    # unabhaengig davon, ob er die uebrigen Gates zufaellig besteht. Root-Cause #803: vorher
+    # disqualifizierte NUR die STUDY-weite Verletzungsrate (``check_study_coherence_violation_rate``,
+    # #773) — ein einzelner ungueltiger Trial blieb individuell eligible und konnte Study-Gewinner
+    # werden. Diese Klausel ist bewusst UNBEDINGT (kein ``eligible_requires_all``-Opt-in): eine
+    # nachweislich falsche Kennzahl darf niemals ein Gate bestehen, das genau diese Kennzahl prueft.
+    if oos_metrics.get("oos_coherence_violation") or oos_metrics.get("equity_ruined"):
+        reasons.append(
+            "REJECT_OOS_INVALID_METRICS: oos_coherence_violation="
+            f"{bool(oos_metrics.get('oos_coherence_violation'))}, equity_ruined="
+            f"{bool(oos_metrics.get('equity_ruined'))} — Risikokennzahl nicht selektionsfaehig "
+            "(#801/#803)."
+        )
+
     return {
         "oos_evaluated": True,
         "oos_eligible": len(reasons) == 0,

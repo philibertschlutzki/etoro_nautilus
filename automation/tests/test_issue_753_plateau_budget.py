@@ -7,9 +7,11 @@ Zufallsziehungen; der Guard toetete die Study exakt an dem Punkt, an dem die Bay
 beginnen wuerde — "0 von n_startup_trials Zufallsziehungen feasible" ist KEINE Aussage ueber den
 Suchraum (die feasible Region ist per Konstruktion klein).
 
-Fix: zwei getrennte Schwellen. `min_for_structural` (Datengeometrie/Trade-Frequenz, unveraendert
-`n_startup_trials + floor_plateau_k`) und `min_for_zero_eligible` (Signalqualitaet, NEU
-`n_startup_trials + plateau_min_modelled_trials`, Default-Fallback `max(32, 2*n_startup_trials)`).
+Fix: zwei getrennte Schwellen. `min_for_structural` (Datengeometrie/Trade-Frequenz, seit #805
+`n_startup_trials + derive_structural_min_modelled_trials(...)` statt der entfernten flachen
+`floor_plateau_k`-Konstante — siehe test_issue_805_structural_min_modelled.py fuer die #805-Migration
+dieser Schwelle) und `min_for_zero_eligible` (Signalqualitaet, NEU `n_startup_trials +
+plateau_min_modelled_trials`, Default-Fallback `max(32, 2*n_startup_trials)`).
 Die ZERO_ELIGIBLE-Abbruchentscheidung wird ausschliesslich ueber die MODELLIERTEN Trials (Index >=
 n_startup_trials) getroffen — die Zufalls-Startup-Phase darf das Urteil nicht mitbestimmen.
 """
@@ -82,22 +84,26 @@ def test_zero_eligible_no_stop_below_budget_stop_at_budget():
     assert study64.stopped is True, "musste bei 64 Trials (== 16+48) stoppen"
 
 
-# ── Akzeptanzkriterium 2: STRUCTURAL_ALL_UNEVALUABLE bleibt bit-identisch bei n_startup+K ────────
+# ── Akzeptanzkriterium 2: STRUCTURAL_ALL_UNEVALUABLE bleibt unbeeinflusst von plateau_min_modelled_trials
 def test_structural_all_unevaluable_unaffected_by_plateau_min_modelled_trials():
-    W = {"n_startup_trials": 3, "floor_plateau_k": 0,
+    # Issue #805 — floor_plateau_k entfernt; structural_min_modelled_trials_per_dim=2 (ohne
+    # strategy=... uebergeben ⇒ flacher Zuschlag ceil(2)=2) haelt denselben Test-Aufbau lebendig
+    # (n_startup_trials + Zuschlag = 3+2 = 5), nur der Zuschlag darf seit #805 nie mehr 0 sein.
+    W = {"n_startup_trials": 3, "structural_min_modelled_trials_per_dim": 2,
          # Absichtlich riesig — darf den STRUCTURAL-Zweig NICHT beeinflussen.
          "plateau_min_modelled_trials": 10_000}
-    unevaluable = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(2)]
+    unevaluable = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(4)]
     study_below = _FakeStudy(unevaluable)
     ro.floor_plateau_callback(study_below, study_below.trials[-1], weights=W, n_startup_trials=3,
                               logger=_quiet_logger("t753_struct_below"), stop_on_plateau=True)
     assert study_below.stopped is False
 
-    at_threshold = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(3)]
+    at_threshold = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(5)]
     study_at = _FakeStudy(at_threshold)
     ro.floor_plateau_callback(study_at, study_at.trials[-1], weights=W, n_startup_trials=3,
                               logger=_quiet_logger("t753_struct_at"), stop_on_plateau=True)
-    assert study_at.stopped is True, "STRUCTURAL_ALL_UNEVALUABLE muss weiterhin bei n_startup+K stoppen"
+    assert study_at.stopped is True, (
+        "STRUCTURAL_ALL_UNEVALUABLE muss weiterhin bei n_startup+structural_extra stoppen")
 
 
 # ── Akzeptanzkriterium 3: p_eligible ignoriert die Startup-Kohorte ────────────────────────────────

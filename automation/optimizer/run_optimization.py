@@ -329,8 +329,11 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
         # Fallback for FakeStudy in tests
         completed = [t for t in study.trials
                      if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
-    # Issue #488 — Floor-Plateau Guard Hardening: Monitor K trials strictly post n_startup_trials.
-    K = int(weights.get("floor_plateau_k", 0)) if weights else 0
+    # Issue #805 — ERSETZT das entfernte ``floor_plateau_k`` (dritte Wiederkehr derselben
+    # Fehlerklasse: #488 -> #753 -> #769 -> #805): eine dimensionsskalierte Mindestzahl MODELLIERTER
+    # Trials statt einer flachen (und auf 0 stehen gebliebenen) Konstante — siehe
+    # ``derive_structural_min_modelled_trials``-Docstring fuer die volle Root-Cause.
+    structural_extra = derive_structural_min_modelled_trials(strategy, weights or {})
     # Issue #753 — ZWEI GETRENNTE Schwellen statt einer gemeinsamen Kopplung an n_startup_trials.
     # Root-Cause #753: der alte Guard band den ZERO_ELIGIBLE-Abbruch an dieselbe Grösse
     # (n_startup_trials + K), die bei TPESampler(n_startup_trials=...) die UNTERE Grenze markiert, ab
@@ -340,7 +343,8 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     # Aussage ueber den Suchraum (die feasible Region ist per Konstruktion klein; ein constrained TPE
     # ist genau dafuer da, sie ueber mehr als eine Zufallsstichprobe zu finden). Der
     # STRUCTURAL_ALL_UNEVALUABLE-Zweig ist davon NICHT betroffen (Aussage ueber Datengeometrie/
-    # Trade-Frequenz, nicht Signalqualitaet) und bleibt bei n_startup_trials + K (bit-identisch).
+    # Trade-Frequenz, nicht Signalqualitaet) und bleibt bei n_startup_trials + structural_extra —
+    # NUR der additive Zuschlag selbst ist seit #805 nie mehr 0 (siehe dort).
     _pmt_raw = weights.get("plateau_min_modelled_trials") if weights else None
     try:
         plateau_min_modelled_trials = int(_pmt_raw) if _pmt_raw is not None else None
@@ -355,19 +359,24 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     # Zero-Eligible-Urteil ausgefuehrte Budgetanteil monoton mit dim (64% bei dim=2, 32% bei dim=14).
     plateau_min_modelled_trials = derive_plateau_min_modelled_trials(
         strategy, plateau_min_modelled_trials, weights or {})
-    min_for_structural = max(1, int(n_startup_trials)) + K
+    min_for_structural = max(1, int(n_startup_trials)) + structural_extra
     min_for_zero_eligible = max(1, int(n_startup_trials)) + plateau_min_modelled_trials
-    # Issue #768 — Obergrenze gegen Budget-Ueberschreitung: der Guard darf nie NACH dem regulaeren
-    # Budget-Ende urteilen. ``n_trials_budget`` wird von ``optimize_symbol`` als Study-User-Attr
-    # gestempelt (VOR dem ersten Callback-Aufruf); fehlt es (z. B. globaler Pfad/Legacy-Tests), bleibt
-    # die Schwelle ungedeckelt (bit-identisch zu HEAD).
+    # Issue #768/#805 — Obergrenze gegen Budget-Ueberschreitung: der Guard darf nie NACH dem
+    # regulaeren Budget-Ende urteilen. ``n_trials_budget`` wird von ``optimize_symbol`` als
+    # Study-User-Attr gestempelt (VOR dem ersten Callback-Aufruf); fehlt es (z. B. globaler
+    # Pfad/Legacy-Tests), bleibt die Schwelle ungedeckelt (bit-identisch zu HEAD).
     _n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
     if _n_trials_budget is not None:
         try:
             min_for_zero_eligible = min(min_for_zero_eligible, int(_n_trials_budget))
+            min_for_structural = min(min_for_structural, int(_n_trials_budget))
         except (TypeError, ValueError):
             pass
-    if len(completed) < min(min_for_structural, min_for_zero_eligible):
+    # Issue #805 — dieser Vorab-Kurzschluss gate(t) AUCH den Legacy-Fallback-Zweig weiter unten
+    # (kein oos_evaluated-Attr, Issue #409), der KEINE Aussage ueber "modellierte" Trials trifft und
+    # daher weiterhin bei genau ``n_startup_trials`` urteilen darf/soll (unveraendert seit #409) —
+    # NICHT erst beim (seit #805 stets >= n_startup_trials + 1) hoeheren ``min_for_structural``.
+    if len(completed) < min(int(n_startup_trials), min_for_structural, min_for_zero_eligible):
         return
     if study.user_attrs.get("floor_plateau_warned") or study.user_attrs.get("zero_eligible_plateau_warned"):
         return
@@ -499,7 +508,8 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
 
             # Issue #456 / #488 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
-            should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
+            should_stop = stop_on_plateau or (
+                weights and weights.get("structural_min_modelled_trials_per_dim") is not None)
             if should_stop:
                 # Log JSON termination event explicitly exactly when stopping (only once).
                 # Wait, study.set_user_attr("floor_plateau_warned", True) ensures this block runs ONCE.
@@ -509,7 +519,10 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "reason": "STRUCTURAL_ALL_UNEVALUABLE",
                     "current_trial": len(completed),
                     "startup_limit": max(1, int(n_startup_trials)),
-                    "k_limit": K,
+                    # Issue #805 — ersetzt "k_limit" (floor_plateau_k, entfernt): der dimensions-
+                    # skalierte additive Zuschlag auf n_startup_trials (nie mehr 0, siehe
+                    # derive_structural_min_modelled_trials).
+                    "structural_min_modelled_trials": structural_extra,
                     # Issue #753 — im STRUCTURAL_ALL_UNEVALUABLE-Zweig strukturell fast immer 0 (die
                     # Study kollabiert bereits VOR n_startup_trials abgeschlossenen modellierten Trials).
                     "n_modelled_trials": len(modelled_completed),
@@ -616,14 +629,16 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 except Exception:
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
 
-            should_stop = stop_on_plateau or (weights and weights.get("floor_plateau_k") is not None)
+            should_stop = stop_on_plateau or (
+                weights and weights.get("structural_min_modelled_trials_per_dim") is not None)
             if should_stop:
                 logger.info("[JSON_EVENT] " + _json.dumps({
                     "event_type": "STUDY_EARLY_STOP",
                     "reason": "STRUCTURAL_ZERO_ELIGIBLE",
                     "current_trial": len(completed),
                     "startup_limit": max(1, int(n_startup_trials)),
-                    "k_limit": K,
+                    # Issue #805 — ersetzt "k_limit" (floor_plateau_k, entfernt).
+                    "structural_min_modelled_trials": structural_extra,
                     # Issue #753 — belegt im Report, ob abgebrochen wurde, weil die Suche stagnierte
                     # (viele modellierte Trials, keine Annaeherung an die feasible Region) oder weil
                     # sie nie stattfand (n_modelled_trials klein/0).
@@ -753,6 +768,18 @@ def check_study_coherence_violation_rate(study, opt_data: dict, *,
     rate = violations / n_evaluated
     if rate <= float(max_rate):
         return False
+    # Issue #803 — Budget-Ausfuehrungsgrad ZUM AKTUELLEN AUFRUFZEITPUNKT: macht den frueheren
+    # Abbruch (periodischer Callback, siehe coherence_violation_early_abort_callback) messbar,
+    # statt implizit erst am vollen Budget zu urteilen.
+    all_trials = getattr(study, "trials", None) or []
+    n_trials_when_aborted = len(all_trials)
+    n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
+    budget_executed_fraction = None
+    if n_trials_budget:
+        try:
+            budget_executed_fraction = round(n_trials_when_aborted / float(n_trials_budget), 4)
+        except (TypeError, ValueError, ZeroDivisionError):
+            budget_executed_fraction = None
     emit_execution_event(logger, "INVARIANT_CHECK_FAILED", {
         "scope": getattr(study, "study_name", None), "check": "check_log_return_coherence",
         "expected": f"<= {max_rate}", "actual": rate,
@@ -769,12 +796,40 @@ def check_study_coherence_violation_rate(study, opt_data: dict, *,
         "check": "check_log_return_coherence",
         "coherence_violation_rate": rate, "n_evaluated": n_evaluated,
         "n_violations": violations, "threshold": float(max_rate),
+        # Issue #803 — frueher Abbruch statt vollem Budget (Akzeptanzkriterium: 35/64
+        # Verletzungen brechen spaetestens bei Trial 32 ab ⇒ budget_executed_fraction <= 0.55).
+        "n_trials_when_aborted": n_trials_when_aborted,
+        "budget_executed_fraction": budget_executed_fraction,
     }))
     try:
         study.set_user_attr("coherence_violation_rate_exceeded", True)
     except Exception:
         pass
     return True
+
+
+def coherence_violation_early_abort_callback(study, trial, *, opt_data: dict | None = None,
+                                             logger: logging.Logger | None = None,
+                                             check_interval_trials: int = 32) -> None:
+    """Issue #803 — Optuna-Callback (Signatur ``(study, trial)``, analog ``disk_budget_callback``/
+    ``retention_callback``): prueft alle ``check_interval_trials`` Trials (Default 32), ob die
+    Kohaerenz-Verletzungsrate (``check_study_coherence_violation_rate``, #773) bereits ueberschritten
+    ist, statt erst NACH ``study.optimize()`` (nach dem VOLLEN Budget, Root-Cause #803). Eine
+    pathologische Study (z. B. 35/64 Verletzungen) endet damit nach ~10 % statt 100 % des Budgets.
+
+    Fail-open: ein Fehler in dieser Pruefung darf einen laufenden Sweep nie crashen (analog
+    #703/#733/#794/#795)."""
+    log = logger or logging.getLogger("optimizer")
+    opt_data = opt_data or {}
+    # Issue #803 — (trial.number + 1), analog disk_budget_callback (#795): trial.number ist
+    # 0-indiziert, ``% interval`` allein wuerde auf JEDEM Trial 0 feuern.
+    if check_interval_trials <= 0 or (trial.number + 1) % check_interval_trials != 0:
+        return
+    try:
+        if check_study_coherence_violation_rate(study, opt_data, logger=log):
+            _stop_study_safely(study, log)
+    except Exception:
+        log.warning("[#803] Kohaerenz-Fruehabbruch-Callback fehlgeschlagen (non-fatal).", exc_info=True)
 
 
 def _check_reward_semantics_version(study, opt_data: dict,
@@ -1035,12 +1090,15 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     study_config_dir = freeze_study_config(
         study_name, resolve_wf_settings(cfg_dir, holdout_days=45, n_folds=4), base_cfg=cfg_dir)
     disk_guard_cb = partial(disk_budget_callback, opt_data=opt_data)
+    # Issue #803 — periodischer Fruehabbruch bei systematischer Kohaerenz-Verletzung (statt erst
+    # nach dem vollen Budget zu urteilen).
+    coherence_guard_cb = partial(coherence_violation_early_abort_callback, opt_data=opt_data)
     study.optimize(
         make_objective(strategy, study_config_dir=study_config_dir),
         n_trials=n_trials,
         n_jobs=n_jobs,
         catch=(json.JSONDecodeError, OSError),
-        callbacks=[floor_guard, retention_callback, disk_guard_cb]
+        callbacks=[floor_guard, retention_callback, disk_guard_cb, coherence_guard_cb]
     )
     return study
 
@@ -1360,6 +1418,69 @@ def derive_plateau_min_modelled_trials(strategy: str | None, base: int, opt_data
     except Exception:
         return int(base)
     return max(int(base), math.ceil(float(k) * dim))
+
+
+def derive_structural_min_modelled_trials(strategy: str | None, opt_data: dict) -> int:
+    """Issue #805 — ERSETZT das entfernte ``floor_plateau_k`` (dritte Wiederkehr derselben
+    Fehlerklasse: #488 -> #753 -> #769 -> #805). Strukturgleich zu ``derive_plateau_min_modelled_
+    trials`` (#768), aber fuer den STRUCTURAL_ALL_UNEVALUABLE-Zweig: ``min_for_structural =
+    n_startup_trials + derive_structural_min_modelled_trials(...)``.
+
+    Root-Cause #805: ``floor_plateau_k`` blieb auf dem seit #488 gesetzten Default 0 — ``min_for_
+    structural`` kollabierte damit auf EXAKT ``n_startup_trials``, die Grenze, ab der ``TPESampler``
+    ueberhaupt erst zu MODELLIEREN beginnt (0 modellierte Trials vor dem STRUCTURAL-Urteil).
+
+    Deklarativ ueber ``structural_min_modelled_trials_per_dim`` (k, Default 3): ``ceil(k · dim)``.
+    Ein explizit gesetzter Wert ``<= 0`` wuerde denselben degenerierten Zustand wiederherstellen und
+    ist daher ein Konfigurationsfehler (siehe ``assert_structural_min_modelled_trials_valid`` — die
+    Pruefung laeuft beim Sweep-Start, NICHT hier: diese Funktion faellt defensiv auf den Default 3
+    zurueck, statt lautlos 0 zuzulassen, falls sie dennoch mit einem ungueltigen Wert aufgerufen
+    wird, z. B. direkt aus einem Test ohne die Start-Preflight). Fehlt ``strategy`` oder scheitert
+    die Dimensionsermittlung ⇒ ``k`` selbst als flache Konstante (kein Bounds-Zugriff noetig,
+    Zero-Hardcoding-Fallback, analog ``derive_plateau_min_modelled_trials``)."""
+    raw_k = opt_data.get("structural_min_modelled_trials_per_dim", 3) if opt_data else 3
+    try:
+        k = float(raw_k)
+    except (TypeError, ValueError):
+        k = 3.0
+    if k <= 0.0:
+        k = 3.0
+    if not strategy:
+        return max(1, math.ceil(k))
+    try:
+        from automation.optimizer import bounds
+        dim = len(bounds.extract_numeric_bounds(strategy))
+    except Exception:
+        return max(1, math.ceil(k))
+    return max(1, math.ceil(k * dim))
+
+
+def assert_structural_min_modelled_trials_valid(opt_data: dict) -> None:
+    """Issue #805 — FAIL-LOUD beim Sweep-Start: ``structural_min_modelled_trials_per_dim`` <= 0
+    (EXPLIZIT gesetzt) wuerde den STRUCTURAL_ALL_UNEVALUABLE-Abbruch wieder auf NULL TPE-
+    modellierten Trials urteilen lassen — dieselbe degenerierte Semantik wie das entfernte
+    ``floor_plateau_k=0`` (dritte Wiederkehr derselben Fehlerklasse, #488/#753/#769/#805). Ein
+    fehlender Key ist KEIN Fehler (Default 3, siehe ``derive_structural_min_modelled_trials``);
+    nur ein explizit gesetzter Wert <= 0 wird abgelehnt (analog
+    ``confirm.py['promotion_correction_mode']``, #659)."""
+    if opt_data is None or "structural_min_modelled_trials_per_dim" not in opt_data:
+        return
+    raw = opt_data.get("structural_min_modelled_trials_per_dim")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"STRUCTURAL_MIN_MODELLED_TRIALS_INVALID (#805): "
+            f"optimizer.json['structural_min_modelled_trials_per_dim']={raw!r} ist keine Zahl."
+        )
+    if val <= 0.0:
+        raise ValueError(
+            f"STRUCTURAL_MIN_MODELLED_TRIALS_DEGENERATE (#805): "
+            f"optimizer.json['structural_min_modelled_trials_per_dim']={raw!r} <= 0 wuerde den "
+            f"STRUCTURAL_ALL_UNEVALUABLE-Abbruch wieder auf NULL TPE-modellierten Trials urteilen "
+            f"lassen — dieselbe Fehlerklasse wie das entfernte 'floor_plateau_k=0' (#488/#753/#769). "
+            f"Entferne den Key (Default 3) oder setze einen Wert > 0."
+        )
 
 
 def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
@@ -2291,15 +2412,23 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
                           n_startup_trials=n_startup_trials, stop_on_plateau=True,
                           strategy=strategy, symbol=symbol)
     disk_guard_cb = partial(disk_budget_callback, opt_data=opt_data)
+    # Issue #803 — periodischer Fruehabbruch bei systematischer Kohaerenz-Verletzung (statt erst
+    # nach dem vollen Budget zu urteilen, siehe check_study_coherence_violation_rate-Docstring).
+    coherence_guard_cb = partial(coherence_violation_early_abort_callback, opt_data=opt_data)
     try:
         study.optimize(objective, n_trials=n_trials, n_jobs=1,
                        catch=(json.JSONDecodeError, OSError),
-                       callbacks=[floor_guard, retention_callback, disk_guard_cb])
+                       callbacks=[floor_guard, retention_callback, disk_guard_cb, coherence_guard_cb])
         # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
         _emit_study_summary(study, symbol, study_t0, strategy=strategy,
                            n_startup_trials=n_startup_trials)
         # Issue #773 — Kohaerenz-Invariante fail-loud statt eines reinen Report-Nachtrags.
-        check_study_coherence_violation_rate(study, opt_data)
+        # Issue #803 — Sicherheitsnetz fuer den Fall, dass der periodische Callback (alle 32 Trials)
+        # keine exakte Intervallgrenze traf, BEVOR das Budget erschoepft war; hat der Callback die
+        # Study bereits als ueberschritten markiert, wuerde diese erneute Pruefung dasselbe
+        # STUDY_ABORTED_ON_INVARIANT-Ereignis ein zweites Mal emittieren — daher uebersprungen.
+        if not (getattr(study, "user_attrs", None) or {}).get("coherence_violation_rate_exceeded"):
+            check_study_coherence_violation_rate(study, opt_data)
     finally:
         # Issue #794 — Study-Ebene als Sicherheitsnetz (die #794-Trial-Ebene oben laeuft je Trial;
         # dieser Aufruf raeumt zusaetzlich auf, falls study.optimize() vorzeitig abgebrochen wurde,
