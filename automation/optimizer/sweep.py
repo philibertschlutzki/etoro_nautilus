@@ -41,6 +41,7 @@ from automation.optimizer import disk_guard
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
+    check_bar_quality, diagnose_symbol_degeneracy, record_diagnosed_pair,
 )
 from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
@@ -234,6 +235,78 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
                 n = 0
         out[sym] = n
     return out
+
+
+# Issue #807 — Sentinel-"Strategie" fuer symbolweite (statt paar-weise) diagnosed_pairs_cache-
+# Eintraege: EIN Eintrag pro degenerierten Symbol statt 14 unabhaengiger Strategie-Eintraege.
+_SYMBOL_DEGENERACY_SENTINEL_STRATEGY = "__SYMBOL_DATA_DEGENERATE__"
+
+
+def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = None, *,
+                                    max_ticks: int = 200_000) -> dict | None:
+    """Issue #807 — liest eine BESCHRAENKTE Stichprobe roher Quote-Ticks (``bid_price``/
+    ``ask_price``/``ts_event``, direkt via pyarrow — analog ``count_available_bars`` oben, OHNE die
+    volle NautilusTrader-``ParquetDataCatalog``-Materialisierung) und aggregiert sie zu
+    synthetischen 1h-Mid-Price-Bars (High/Low/Close) fuer die Bar-Qualitaetspruefung
+    (``sweep_diagnostics.check_bar_quality``).
+
+    Liest bewusst nur die LETZTEN ``max_ticks`` Zeilen (rueckwaerts ueber die Row-Groups) statt der
+    vollen Historie — haelt den Preflight unter der <2s-Vorgabe (#807-Akzeptanzkriterium)
+    unabhaengig von der Gesamtgroesse des Katalogs; die juengste Teilspanne ist fuer die
+    AKTUELLE Bar-Qualitaet ohnehin die massgebliche.
+
+    Rueckgabe ``None`` bei fehlender Datei, fehlenden Spalten, leerer Bar-Serie oder JEDEM
+    Lesefehler (fail-open — ein eigener Lesefehler darf den Sweep nie blockieren; Gate 1
+    [Datenspanne] bleibt die unabhaengige, bereits bestehende Absicherung)."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+    pq_file = Path(catalog_path) / "data" / "quote_tick" / symbol / "data.parquet"
+    if not pq_file.exists():
+        return None
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import pandas as pd
+        pf = pq.ParquetFile(str(pq_file))
+        cols = [c for c in ("bid_price", "ask_price", "ts_event") if c in pf.schema.names]
+        if len(cols) < 3:
+            return None
+        tables = []
+        n_read = 0
+        for rg in range(pf.metadata.num_row_groups - 1, -1, -1):
+            t = pf.read_row_group(rg, columns=cols)
+            tables.append(t)
+            n_read += t.num_rows
+            if n_read >= max_ticks:
+                break
+        table = pa.concat_tables(list(reversed(tables)))
+        df = table.to_pandas()
+        if len(df) > max_ticks:
+            df = df.tail(max_ticks)
+        if df.empty:
+            return None
+        df["mid"] = (df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0
+        df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
+        df = df.set_index("ts").sort_index()
+        bars = df["mid"].resample("1h").agg(["max", "min", "last"]).dropna()
+        if bars.empty:
+            return None
+        return {
+            "highs": bars["max"].tolist(),
+            "lows": bars["min"].tolist(),
+            "closes": bars["last"].tolist(),
+        }
+    except Exception:
+        return None
 
 
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
@@ -666,7 +739,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
                          optimize_symbol=None, confirm=None,
-                         run_id: str | None = None) -> list[Path]:
+                         run_id: str | None = None, bar_quality_fn=None) -> list[Path]:
     """Dispatcht für jedes enumerierte Paar optimize_symbol → confirm_per_symbol_promotion →
     export_symbol_proposal und gibt die Proposal-Pfade zurück. Betritt NIE Phase 5.
 
@@ -686,6 +759,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     ``run_id`` auf (z. B. nach einem Absturz), werden bereits abgeschlossene Symbole übersprungen
     (deren bereits exportierte Proposals werden von der Platte nachgeladen, keine Duplikat-Arbeit).
     Ein abweichender/fehlender ``run_id`` im Checkpoint ⇒ frischer Lauf (Checkpoint wird verworfen).
+
+    Issue #807 — ``bar_quality_fn`` (Default ``None`` ⇒ ``_load_symbol_bar_quality_sample``, echter
+    Katalog-Zugriff) ist injizierbar (HI-7): ein Test uebergibt eine reine Fake-Funktion
+    ``symbol -> {"highs", "lows", "closes"} | None`` statt echte Parquet-Dateien zu lesen.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
@@ -789,6 +866,89 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _wf.get("splits"), _wf.get("oos_window_days"), _wf.get("holdout_days"),
         None if _avail_span is None else round(_avail_span, 1), _covers,
     )
+
+    # Issue #807 — Bar-QUALITAETS-Preflight VOR Phase 1 je Symbol (Preflight statt Post-Mortem):
+    # ``HYPE.ETORO`` bestand Gate 1 (Datenspanne, oben) UND erzeugte trotzdem ueber SECHS
+    # strukturell verschiedene Strategien 0 auswertbare Trials — je eigenem
+    # ``STRUCTURAL_ALL_UNEVALUABLE``-Ereignis, eigenem Diagnose-Aufruf, eigenem Cache-Eintrag
+    # (14 × 16 = 224 verbrannte Trials, 14 falsch etikettierte Cache-Eintraege). Root-Cause war die
+    # BAR-QUALITAET (degenerierte/konstante Bars), nicht die Datenspanne. Ein Symbol mit
+    # degenerierten Bars wird hier EINMAL abgewiesen (``REJECT_DATA_DEGENERATE``), bevor auch nur
+    # eine einzige Study fuer es gestartet wird — analog dem bestehenden Gate-1-Pfad. Nur im echten
+    # Storage-Pfad (injizierte HI-7-Fakes haben keinen echten Katalog); ``bar_quality_fn`` bleibt
+    # aber unabhaengig davon injizierbar, damit dieser Block selbst ohne echten Katalog testbar ist.
+    if (using_real_optimize or bar_quality_fn is not None) and syms:
+        _load_sample = bar_quality_fn or _load_symbol_bar_quality_sample
+        _bar_quality_cfg = opt_data.get("bar_quality") or {}
+        _degenerate_syms = []
+        _log = logging.getLogger("optimizer")
+        for _sym in syms:
+            try:
+                _sample = _load_sample(_sym)
+            except Exception:
+                _sample = None  # fail-open — ein eigener Lesefehler blockiert den Sweep nie.
+            if _sample is None:
+                continue
+            _quality = check_bar_quality(
+                _sample["highs"], _sample["lows"], _sample["closes"],
+                max_frac_high_eq_low=_bar_quality_cfg.get("max_frac_high_eq_low", 0.5),
+                max_frac_identical_consecutive_closes=_bar_quality_cfg.get(
+                    "max_frac_identical_consecutive_closes", 0.5),
+                min_distinct_closes=_bar_quality_cfg.get("min_distinct_closes", 10),
+            )
+            if _quality["passed"]:
+                continue
+            _degenerate_syms.append(_sym)
+            emit_execution_event(_log, "REJECT_DATA_DEGENERATE", {"symbol": _sym, **_quality},
+                                 level=logging.WARNING)
+            _log.warning(
+                "[#807] %s: REJECT_DATA_DEGENERATE — Bar-Qualitaet degeneriert (%s). Symbol wird "
+                "VOR Phase 1 fuer ALLE Strategien abgewiesen (0 Studies), statt N unabhaengige "
+                "Suchraum-Diagnosen zu verbrennen.", _sym, _quality["reason"],
+            )
+            # Issue #807 (analog #799s Checkpoint) — NICHT auf using_real_optimize gegated: der
+            # Rueckschrieb ist billige, deterministische JSON-I/O relativ zu WORK (in Tests bereits
+            # isoliert) und soll unabhaengig davon testbar sein, ob optimize_symbol injiziert wurde.
+            try:
+                record_diagnosed_pair({
+                    "strategy": _SYMBOL_DEGENERACY_SENTINEL_STRATEGY, "symbol": _sym,
+                    "action": "denylist", "binding_cause": "data_degenerate",
+                    "median_is_trades": None, "median_oos_trades": None,
+                }, work_dir=WORK, run_id=run_id)
+            except Exception:
+                _log.debug("[#807] Diagnose-Rueckschrieb fehlgeschlagen (non-fatal).",
+                          exc_info=True)
+        if _degenerate_syms:
+            syms = [s for s in syms if s not in _degenerate_syms]
+            available_bars = count_available_bars(syms)
+
+        # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
+        # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
+        # verbleibendem Symbol via diagnose_symbol_degeneracy. Mehrere strukturell verschiedene
+        # Strategien mit binding_cause=='signal_absent' UND median_is_trades==0 sind ein Beleg fuer
+        # ein Datenproblem, das der Bar-Qualitaets-Preflight (noch) nicht erfasst hat — die
+        # Bar-Qualitaet selbst bleibt aber die NOTWENDIGE Bedingung fuer eine tatsaechliche
+        # Ablehnung; dieser Check weist selbst nie ein Symbol ab (Akzeptanzkriterium #807).
+        if syms:
+            _diag_cache = load_diagnosed_pairs_cache(work_dir=WORK)
+            _min_strategies = int(opt_data.get("symbol_degeneracy_min_strategies", 3))
+            for _sym in syms:
+                _per_strategy = [
+                    v for (strat, sym), v in _diag_cache.items()
+                    if sym == _sym and strat != _SYMBOL_DEGENERACY_SENTINEL_STRATEGY
+                ]
+                if not _per_strategy:
+                    continue
+                _agg = diagnose_symbol_degeneracy(_sym, _per_strategy, min_strategies=_min_strategies)
+                if _agg["is_degenerate"]:
+                    logging.getLogger("optimizer").warning(
+                        "[#807] %s: SYMBOL_DATA_DEGENERATE (Sekundaer-Signal aus %d gecachten "
+                        "Diagnosen, %d/%d 'signal_absent') — der Bar-Qualitaets-Preflight erfasste "
+                        "dies (noch) nicht; das Symbol wird DENNOCH nicht automatisch abgewiesen "
+                        "(Bar-Qualitaet ist die notwendige Bedingung, keine Diagnosezahl allein).",
+                        _sym, _agg["n_strategies_checked"], _agg["n_signal_absent"],
+                        _agg["min_strategies"],
+                    )
 
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,

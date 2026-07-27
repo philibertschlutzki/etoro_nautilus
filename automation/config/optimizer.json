@@ -67,7 +67,9 @@
       "disk_budget_gb": "Issue #795 (Speicher-Katalog #794\u2013#800) \u2014 harte Obergrenze (GB) fuer den Gesamtverbrauch von data/optimizer je Lauf, durchgesetzt von disk_guard.check_budget (laufender Optuna-Callback, run_optimization.disk_budget_callback) UND disk_guard.assert_preflight_budget (Preflight VOR dem ersten Trial, sweep.run_per_symbol_sweep). Root-Cause: kein Aufruf von shutil.disk_usage/statvfs existierte repo-weit vor #795 \u2014 ein Lauf endete in sqlite3.OperationalError: database or disk is full statt kontrolliert. Fehlt der Key \u21d2 200.",
       "disk_reserve_gb": "Issue #795 \u2014 freier Restplatz (GB), unter den das Dateisystem NIE fallen darf (unabhaengig vom disk_budget_gb-Verbrauch von data/optimizer selbst \u2014 andere Prozesse/Verzeichnisse teilen sich dasselbe Dateisystem). EXCEEDED, sobald der freie Platz darunter faellt; PRESSURE bereits bei 2x dieser Reserve (Vorwarnung). Fehlt der Key \u21d2 50.",
       "disk_check_interval_trials": "Issue #795 \u2014 Messintervall (Trials, laufweit) fuer den disk_budget_callback: os.walk ueber den gesamten data/optimizer-Baum ist bei zehntausenden Verzeichnissen nicht kostenlos, daher NICHT nach jedem einzelnen Trial, sondern alle disk_check_interval_trials Trials (ueber trial.number % interval == 0 im Callback). Fehlt der Key \u21d2 200.",
-      "bytes_per_trial_estimate": "Issue #795 \u2014 geschaetzte Bytes je Trial fuer den Preflight (assert_preflight_budget): erwartete_bytes = \u03a3_pairs derive_n_trials(strategy) \u00b7 bytes_per_trial_estimate. Default 30000 (30 KB) ist die Schaetzung NACH #796 (keine Pro-Trial-Config-Kopie mehr, \u2212135 KB) und #797/#798 (kein voller Log-/period_returns-Ueberschuss im Erfolgsfall) \u2014 vorher lag der reale Wert bei ~582 KB/Trial. Fehlt der Key \u21d2 30000."
+      "bytes_per_trial_estimate": "Issue #795 \u2014 geschaetzte Bytes je Trial fuer den Preflight (assert_preflight_budget): erwartete_bytes = \u03a3_pairs derive_n_trials(strategy) \u00b7 bytes_per_trial_estimate. Default 30000 (30 KB) ist die Schaetzung NACH #796 (keine Pro-Trial-Config-Kopie mehr, \u2212135 KB) und #797/#798 (kein voller Log-/period_returns-Ueberschuss im Erfolgsfall) \u2014 vorher lag der reale Wert bei ~582 KB/Trial. Fehlt der Key \u21d2 30000.",
+      "bar_quality": "Issue #807 \u2014 Schwellen fuer den Bar-QUALITAETS-Preflight (sweep_diagnostics.check_bar_quality, sweep._load_symbol_bar_quality_sample), der VOR Phase 1 je Symbol degenerierte/konstante Bars erkennt (HYPE.ETORO-Symptom: sechs strukturell verschiedene Strategien scheiterten unabhaengig mit STRUCTURAL_ALL_UNEVALUABLE, obwohl das Symbol Gate 1 [Datenspanne] bestand \u2014 die Ursache war die Bar-QUALITAET, nicht die Datenspanne). Drei Unterschluessel: max_frac_high_eq_low (Anteil Bars mit high==low, Default 0.5), max_frac_identical_consecutive_closes (Anteil Bars mit identischem Vorgaenger-Close, Default 0.5), min_distinct_closes (Mindestzahl DISTINKTER Close-Werte ueber die Stichprobe, Default 10). Ein Symbol, das durchfaellt, wird EINMAL mit REJECT_DATA_DEGENERATE abgewiesen (0 gestartete Studies), statt N unabhaengige, falsch etikettierte Suchraum-Diagnosen zu erzeugen. Fehlender Key/Unterschluessel \u21d2 die jeweiligen Defaults oben (bit-identisch, Zero-Hardcoding).",
+      "symbol_degeneracy_min_strategies": "Issue #807 \u2014 Mindestzahl STRUKTURELL VERSCHIEDENER Strategien, die unabhaengig voneinander binding_cause=='signal_absent' UND median_is_trades==0 melden muessen, bevor sweep_diagnostics.diagnose_symbol_degeneracy ein Symbol als SYMBOL_DATA_DEGENERATE einstuft (reine Aggregations-Telemetrie, ergaenzt den bar_quality-Preflight als Sekundaer-Signal). Ein einzelner zufaelliger signal_absent-Befund darf ein gesundes Symbol NICHT abwerten. Fehlt der Key \u21d2 3."
     }
   },
   "n_trials": 100,
@@ -135,5 +137,11 @@
   "disk_budget_gb": 200,
   "disk_reserve_gb": 50,
   "disk_check_interval_trials": 200,
-  "bytes_per_trial_estimate": 30000
+  "bytes_per_trial_estimate": 30000,
+  "bar_quality": {
+    "max_frac_high_eq_low": 0.5,
+    "max_frac_identical_consecutive_closes": 0.5,
+    "min_distinct_closes": 10
+  },
+  "symbol_degeneracy_min_strategies": 3
 }
