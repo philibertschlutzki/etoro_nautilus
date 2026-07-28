@@ -317,6 +317,9 @@ def _study_record(proposal: dict, study,
     checks = [
         _inv.check_sr0_coherence(holdout_metrics),
         _inv.check_n_family_consistency(holdout_metrics),
+        # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
+        # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.
+        _inv.check_deflation_cluster_coverage(holdout_metrics),
         _inv.check_rejection_chain_completeness(proposal, decision_chain=decision_chain),
         _inv.check_reward_term_variance(trial_attrs),
         # Issue #756 — nach der Log-Return-Umstellung ist eine verbleibende Kohärenzverletzung ein

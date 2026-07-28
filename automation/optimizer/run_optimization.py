@@ -2260,11 +2260,15 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         trial.set_user_attr("oos_fold_sortinos", list(metrics.oos_fold_sortinos))
         # Issue #665 — die kanonische, annualisierungs-invariante Parallelgrösse.
         trial.set_user_attr("oos_fold_sortino_periods", list(metrics.oos_fold_sortino_periods))
-        # Issue #663/#665 — die gepoolte OOS-Per-Perioden-Return-Serie NUR für eligible Trials
-        # gestempelt (Storage-Kosten begrenzt): die neue Sweep-Level-PBO (#663) braucht die gepoolte
-        # OOS-Serie je eligiblem Trial, um sie in eine EIGENE, feinere CSCV-Partition (S≥8–16 Gruppen)
-        # zu splitten, statt auf den 4 groben Walk-Forward-Folds zu rechnen (siehe confirm._study_pbo).
-        if metrics.oos_eligible:
+        # Issue #663/#665/#813 — die gepoolte OOS-Per-Perioden-Return-Serie für JEDEN oos_evaluated
+        # Trial gestempelt (bis #813 NUR für eligible Trials — Root-Cause #813: die familienweite
+        # DSR-Multiplizitätszahl zählt seit #784 ALLE oos_evaluated-Trials, die Declusterung
+        # [cpcv.cluster_effective_configs] fand ihre Renditeserien aber nur in der viel kleineren
+        # eligiblen Teilmenge — deflation_n_effective stieg um Faktor ~7,7, die tatsächlich
+        # declusterte Config-Zahl blieb konstant ⇒ systematische Über-Deflation). Storage-Kosten
+        # sind seit #798 [period_returns_cap, gekürzte Serie] und #794 [kontinuierliche Retention]
+        # tragbar; die Serie liegt in user_attrs, nicht auf der Platte.
+        if metrics.oos_evaluated:
             trial.set_user_attr("oos_period_returns", list(metrics.oos_period_returns))
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,

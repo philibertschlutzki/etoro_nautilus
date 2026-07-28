@@ -743,15 +743,19 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
     (``cpcv.cluster_effective_configs`` in ``confirm.py``) ist das statistisch saubere Mittel gegen
     die dadurch grössere Rohzahl, kein Vorfilter auf Gewinner-Trials VOR der Declusterung.
 
-    BEKANNTE RESTLÜCKE (#784, nicht Teil der gemessenen Akzeptanzkriterien): ``trial.user_attrs
-    ['oos_period_returns']`` wird in ``run_optimization.make_symbol_objective`` weiterhin NUR für
-    ``oos_eligible``-Trials gestempelt (#663/#665, bewusste Storage-Kosten-Begrenzung) — die hier
-    gesammelte Matrix sieht die erweiterte ``oos_evaluated``-Kohorte also nur über den erweiterten
-    FILTER, nicht über zusätzliche REIHEN (evaluierte-aber-ineligible Trials tragen faktisch fast
-    immer ein leeres ``rets`` und fallen daher aus der Matrix). Der ROHE Zähler
-    (``_family_n_from_studies``, das eigentliche #784-Akzeptanzkriterium) ist davon NICHT betroffen
-    — nur die per Decluster GEGLÄTTETE ``deflation_n_family_effective`` bleibt konservativ (eher zu
-    klein als zu gross, also keine neue Über-Deflations-Gefahr) auf der eligiblen Teilmenge."""
+    Issue #813 — GESCHLOSSENE RESTLÜCKE (war bis #813 offen): ``trial.user_attrs['oos_period_
+    returns']`` wurde in ``run_optimization.make_symbol_objective`` bis #813 NUR für ``oos_eligible``-
+    Trials gestempelt (#663/#665) — die hier gesammelte Matrix sah die erweiterte ``oos_evaluated``-
+    Kohorte (#784) also nur über den erweiterten FILTER, nicht über zusätzliche REIHEN (evaluierte-
+    aber-ineligible Trials trugen faktisch fast immer ein leeres ``rets`` und fielen daher aus der
+    Matrix) — die Correlation-Declusterung (``cpcv.cluster_effective_configs`` in ``confirm.py``)
+    operierte damit weiterhin auf der ALTEN, kleinen Menge, während der ROHE Zähler
+    (``_family_n_from_studies``) bereits die grosse #784-Kohorte zählte: ``deflation_n_effective``
+    stieg um Faktor ~7,7, die tatsächlich declusterte Config-Zahl blieb konstant ⇒ systematische
+    Über-Deflation. Seit #813 stempelt ``run_optimization`` ``oos_period_returns`` für JEDEN
+    ``oos_evaluated`` Trial — Zähler und Decluster-Matrix operieren jetzt auf derselben Menge
+    (``confirm.deflation_cluster_coverage`` telemetriert den verbleibenden Deckungsgrad,
+    ``invariants.check_deflation_cluster_coverage`` bricht bei < 0.9 als Regressionswächter)."""
     family_returns: dict[str, list[list[float]]] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []

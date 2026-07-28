@@ -105,6 +105,45 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     )
 
 
+def check_deflation_cluster_coverage(holdout_metrics: dict, *, min_coverage: float = 0.9) -> InvariantResult:
+    """Issue #813-Regressionswächter.
+
+    ``sweep._family_n_from_studies`` zählt seit #784 ``oos_evaluated`` (Versuche); die familienweite
+    Decluster-Matrix (``sweep._family_period_returns_from_studies`` → ``confirm.deflation_cluster_
+    coverage``) fand ihre Renditeserien vor #813 nur in der viel kleineren ``oos_eligible``-
+    Teilmenge (``oos_period_returns`` wurde nur für eligible Trials gestempelt) — ``deflation_n_
+    effective`` stieg dadurch um den Kehrwert der Eligibility-Passrate (empirisch ~7,7×), während
+    die tatsächlich declusterte Config-Zahl auf der alten, kleinen Menge stehen blieb: systematische
+    Über-Deflation. ``deflation_cluster_coverage`` (#813) ist der Anteil der gezählten Kandidaten,
+    für die überhaupt eine Renditeserie vorlag — unter ``min_coverage`` (Default 0.9, siehe
+    #813-Katalogtext) ist das ein Invarianten-FAIL: die Declusterung sieht nicht (mehr) genug von
+    der gezählten Kohorte, um ``E[max_N]`` auf einer repräsentativen Stichprobe zu bilden.
+
+    ``None``/fehlende Werte (keine Deflations-Kohorte oder ``deflation_n_family == 0``) ⇒ nicht
+    anwendbar (PASS, kein Urteil möglich)."""
+    coverage = holdout_metrics.get("deflation_cluster_coverage")
+    n_family = holdout_metrics.get("deflation_n_family")
+    if coverage is None or not n_family:
+        return InvariantResult(
+            name="check_deflation_cluster_coverage",
+            passed=True,
+            expected=f">= {min_coverage}",
+            actual=None,
+            detail="Keine Familien-Kohorte (deflation_n_family=0 oder Coverage unbekannt) — nicht anwendbar.",
+        )
+    passed = coverage >= min_coverage
+    return InvariantResult(
+        name="check_deflation_cluster_coverage",
+        passed=passed,
+        expected=f">= {min_coverage}",
+        actual=coverage,
+        detail=("OK" if passed else
+                f"deflation_cluster_coverage={coverage:.3f} < {min_coverage} — die Decluster-Matrix "
+                f"sieht nur einen Bruchteil der gezählten (oos_evaluated) Kandidaten; E[max_N] "
+                "riskiert eine systematische Über-Deflation (#813)."),
+    )
+
+
 # Issue #765 — deklarierte Marker-Konvention fuer eine SCHEMA-TEXT-Aussage "dieser Key ist AKTUELL
 # ein hartes/aktives Konjunktions-Mitglied". Bewusst KEINE Freitext-/NLP-Erkennung von Formulierungen
 # wie "NICHT MEHR in eligible_requires_all" oder "muss ... gelistet sein, um zu greifen" (mehrere
