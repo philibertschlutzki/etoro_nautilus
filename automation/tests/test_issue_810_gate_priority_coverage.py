@@ -82,15 +82,24 @@ def _protected_cohort():
 
 
 def test_protected_gate_never_becomes_the_redundant_candidate():
-    tcfg = {"eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr"],
-            "gate_consolidation_priority": ["min_trades", "max_drawdown", "oos_min_psr"],
+    """Issue #811 — protected Gates werden VOR der Jaccard-Messung VOLLSTAENDIG aus der
+    Kandidatenmatrix entfernt (staerker als die #810-Garantie "wird nie Kandidat"): max_drawdown
+    taucht daher in KEINEM Paar mehr auf, obwohl es (rho=-1) perfekt mit oos_min_psr korreliert.
+    Ein GENUIN Jaccard-redundantes Paar unter den verbleibenden (nicht-protected) Kandidaten
+    (oos_min_psr/oos_min_expectancy, identisches Pass-Muster) feuert dagegen normal — die
+    Protected-Ausnahme unterdrueckt nur Paare, an denen ein protected Gate beteiligt ist."""
+    tcfg = {"eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr", "oos_min_expectancy"],
+            "gate_consolidation_priority": ["min_trades", "max_drawdown", "oos_min_psr",
+                                            "oos_min_expectancy"],
             "gate_consolidation_protected": ["max_drawdown"]}
-    result = gate_collinearity_redundancy_alarm(_protected_cohort(), tcfg)
+    cohort = [{"oos_min_trades": 100.0, "oos_max_drawdown": -e, "oos_min_psr": e,
+              "oos_min_expectancy": e} for e in [0.01, 0.02, 0.03, 0.04, 0.05, -0.01]]
+    result = gate_collinearity_redundancy_alarm(cohort, tcfg)
     assert "oos_max_drawdown" not in result["redundant_candidates"]
-    # oos_min_psr ist NICHT protected und niedriger priorisiert als max_drawdown in dieser Config
-    # (Index 1) -> wird bei der Kollision zum Kandidaten, obwohl max_drawdown Index 1 hat (max_
-    # drawdown gewinnt NUR ueber protected, nicht ueber die reine Prioritaets-Reihenfolge).
-    assert "oos_min_psr" in result["redundant_candidates"]
+    # oos_min_expectancy hat ein zu oos_min_psr identisches Pass-Muster (Jaccard=1.0) und ist
+    # niedriger priorisiert -> wird trotz der protected-Ausnahme fuer max_drawdown zum Kandidaten.
+    assert "oos_min_expectancy" in result["redundant_candidates"]
+    assert "oos_min_psr" not in result["redundant_candidates"]
 
 
 def test_min_trades_and_max_drawdown_are_never_flagged_on_the_real_config():

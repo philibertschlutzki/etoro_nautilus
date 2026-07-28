@@ -2055,10 +2055,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "gate_collinearity": {
             f"{k1}|{k2}": rho for (k1, k2), rho in gate_collinearity.get("correlations", {}).items()
         },
-        # Issue #679 — strukturierter Redundanz-Alarm (nicht nur geloggt): pro kollinearem Paar
-        # welches Gate behalten werden soll (PSR-priorisiert) und welches der Konsolidierungs-
+        # Issue #679/#811 — strukturierter Redundanz-Alarm (nicht nur geloggt): pro Paar mit
+        # praktisch identischer PASS-Menge (Jaccard) UND vernachlässigbarem marginalem Eigenbeitrag
+        # welches Gate behalten werden soll (prioritätsbasiert) und welches der Konsolidierungs-
         # Kandidat ist. ``redundant_candidates`` fasst je Kandidat-Gate die stärkste beobachtete
-        # Kollinearität zusammen — leer, solange kein Paar die Schwelle überschreitet.
+        # Jaccard-Übereinstimmung zusammen — leer, solange kein Paar beide Schwellen überschreitet.
         "gate_collinearity_alarm": gate_collinearity_alarm.get("alarms", []),
         "gate_collinearity_redundant_candidates": gate_collinearity_alarm.get("redundant_candidates", {}),
         "reward_terms_aggregates": term_aggregates,

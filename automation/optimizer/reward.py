@@ -517,6 +517,92 @@ def _gate_collinearity_threshold(tournament_cfg: dict | None) -> float:
     return float((tournament_cfg or {}).get("gate_collinearity_threshold", 0.90))
 
 
+def _gate_redundancy_jaccard_threshold(tournament_cfg: dict | None) -> float:
+    """Issue #811 — deklarative Jaccard-Schwelle (``tournament.json['gate_redundancy_jaccard']``,
+    Default 0.95) fuer "ist die PASS-MENGE zweier Gates praktisch identisch". Bewusst GETRENNT von
+    ``_gate_collinearity_threshold`` (#792, Spearman-|ρ| auf den rohen Delta-WERTEN, bleibt reine
+    ``assert_gate_collinearity_guard``-Telemetrie) — Root-Cause #811: eine hohe Rangkorrelation der
+    Deltas beweist nur, dass zwei Gates derselben latenten "Aktivitaets-Achse" folgen (z. B.
+    Trade-Frequenz), NICHT dass sie dieselbe Zulassungs-ENTSCHEIDUNG treffen; disjunkte Pass-Mengen
+    bei stark kovariierenden Deltas sind der explizite HEAD-Bug, den #811 behebt."""
+    return float((tournament_cfg or {}).get("gate_redundancy_jaccard", 0.95))
+
+
+def _gate_redundancy_marginal_threshold(tournament_cfg: dict | None) -> float:
+    """Issue #811 — deklarative Schwelle (``tournament.json['gate_redundancy_marginal']``,
+    Default 0.02) fuer die marginale Passraten-Differenz Δ_B = P(eligible ohne Gate B) − P(eligible
+    mit Gate B) (siehe ``gate_marginal_pass_rate_delta``). Ein Gate gilt erst dann als redundanter
+    Konsolidierungs-Kandidat, wenn es ZUSAETZLICH zur hohen Jaccard-Uebereinstimmung mit seinem
+    hoeher priorisierten Partner auch selbst kaum noch EIGENSTAENDIG filtert — sonst koennte ein
+    zufaellig (kleine Kohorte) perfekt uebereinstimmendes Paar vorschnell konsolidiert werden, obwohl
+    das niedriger priorisierte Gate tatsaechlich zusaetzliche Trials ausschliesst."""
+    return float((tournament_cfg or {}).get("gate_redundancy_marginal", 0.02))
+
+
+def _gate_pass_flags(trial_gate_deltas: list, keys: list) -> dict:
+    """Issue #811 — pro Key die PASS/FAIL-Flagfolge ueber die Kohorte (``delta >= 0.0`` — dieselbe
+    Vorzeichenkonvention wie ``oos_gate_deltas`` selbst: bestanden, wenn actual >= threshold).
+    ``None`` an Position i, wenn das Delta fuer dieses Gate bei Trial i fehlt (Zero-Hardcoding: kein
+    kuenstliches Auffuellen mit False/True, das wuerde eine falsche Passrate vortaeuschen). Parallel
+    zu ``trial_gate_deltas`` indiziert — Position i in JEDER Liste entspricht demselben Trial."""
+    flags: dict[str, list] = {k: [] for k in keys}
+    for deltas in trial_gate_deltas:
+        deltas = deltas or {}
+        for k in keys:
+            v = _any_condition_delta_from_gate_deltas(deltas) if k == "any_condition" else deltas.get(k)
+            flags[k].append(None if v is None else (float(v) >= 0.0))
+    return flags
+
+
+def _jaccard_of_pass_sets(flags_a: list, flags_b: list) -> float | None:
+    """Issue #811 — Jaccard-Aehnlichkeit |A∩B|/|A∪B| zweier PASS-Mengen (aus ``_gate_pass_flags``),
+    ausgewertet nur ueber Trials, an denen BEIDE Gates ein definiertes Flag haben (fehlende Werte
+    werden uebersprungen, nicht als False gewertet — sonst wuerde eine Datenluecke als
+    Uebereinstimmung/Divergenz fehlinterpretiert). ``None``, wenn es keine gemeinsam definierten
+    Trials gibt ODER die Vereinigung der Pass-Mengen leer ist (Jaccard bei leerer Vereinigung ist
+    undefiniert, nicht 0 — analog zur Null-Varianz-``None``-Konvention in
+    ``_spearman_rank_correlation``)."""
+    inter = union = 0
+    for a, b in zip(flags_a, flags_b):
+        if a is None or b is None:
+            continue
+        if a or b:
+            union += 1
+            if a and b:
+                inter += 1
+    return (inter / union) if union else None
+
+
+def gate_marginal_pass_rate_delta(trial_gate_deltas: list, tournament_cfg: dict | None,
+                                  gate: str) -> float | None:
+    """Issue #811 — Δ_gate = P(eligible ueber ALLE aktiven Gates OHNE ``gate``) − P(eligible ueber
+    ALLE aktiven Gates MIT ``gate``), ausgewertet ueber die Trials, an denen JEDES aktive Gate
+    (``_active_gate_collinearity_keys`` — die VOLLE Konjunktion, nicht nur die Kandidatenmenge:
+    Eligibilitaet ist eine Eigenschaft der GESAMTEN Config, strukturelle/protected Gates eingerechnet)
+    ein definiertes Delta hat. Da Entfernen eines Gates die eligible Menge nur vergroessern oder
+    gleich lassen kann, ist Δ_gate >= 0; ein Wert nahe 0 heisst, ``gate`` schliesst so gut wie KEINE
+    zusaetzlichen Trials aus, die nicht ohnehin schon durch die uebrigen aktiven Gates ausgeschlossen
+    waeren — das Gate ist redundant im STRENGEN Sinn (nicht nur pass-set-aehnlich zu einem einzelnen
+    Partner). ``None``, wenn ``gate`` nicht aktiv ist oder kein Trial alle aktiven Deltas traegt."""
+    keys = _active_gate_collinearity_keys(tournament_cfg)
+    if gate not in keys:
+        return None
+    other_keys = [k for k in keys if k != gate]
+    flags = _gate_pass_flags(trial_gate_deltas, keys)
+    considered = without_b = with_b = 0
+    for i in range(len(trial_gate_deltas)):
+        gate_flag = flags[gate][i]
+        other_flags = [flags[k][i] for k in other_keys]
+        if gate_flag is None or any(f is None for f in other_flags):
+            continue
+        considered += 1
+        if all(other_flags):
+            without_b += 1
+            if gate_flag:
+                with_b += 1
+    return ((without_b - with_b) / considered) if considered else None
+
+
 def assert_gate_collinearity_guard(trial_gate_deltas: list, tournament_cfg: dict | None = None, *,
                                    threshold: float | None = None) -> dict:
     """Issue #667/#760/#792 — Redundanz-Wächter: warnt FAIL-LOUD-artig (WARNING-Log, KEIN Abbruch —
@@ -526,7 +612,12 @@ def assert_gate_collinearity_guard(trial_gate_deltas: list, tournament_cfg: dict
     Kalibrier-/Studien-Fixture zeigen. ``threshold=None`` (Default) liest die EINE deklarative
     Schwelle aus ``tournament_cfg`` (#792, ``_gate_collinearity_threshold``) — ein explizit
     übergebener Wert überschreibt sie (Tests/Kalibrierläufe). Rückgabe: die volle
-    Korrelationsmatrix (Telemetrie/Tests)."""
+    Korrelationsmatrix (Telemetrie/Tests).
+
+    Issue #811 — diese Funktion bleibt bewusst UNVERÄNDERT gegenüber der Jaccard-Umstellung in
+    ``gate_collinearity_redundancy_alarm``: die Spearman-Matrix ist forensisch nützliche #742-
+    Report-Telemetrie (zeigt, welche Gates derselben latenten Aktivitäts-Achse folgen), verliert
+    aber ihre Alarm-/Konsolidierungs-Funktion an die Pass-Set-Messung."""
     import logging
     if threshold is None:
         threshold = _gate_collinearity_threshold(tournament_cfg)
@@ -609,60 +700,75 @@ def assert_gate_priority_coverage(tournament_cfg: dict | None) -> None:
 
 
 def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: dict | None = None,
-                                       *, threshold: float | None = None) -> dict:
-    """Issue #679 — hebt die #667-Kollinearitäts-DIAGNOSE (bislang NUR ein WARNING-Log) auf einen
-    STRUKTURIERTEN, maschinenlesbaren Redundanz-ALARM: ``eligible_requires_all`` addiert korrelierte
-    Klauseln, deren gemeinsame Passrate ≈ der strengsten Einzelklausel entspricht, aber jede
-    zusätzliche korrelierte Klausel senkt die eligible-Rate weiter, ohne echte False-Positive-
+                                       *, jaccard_threshold: float | None = None,
+                                       marginal_threshold: float | None = None) -> dict:
+    """Issue #679/#811 — hebt die #667-Kollinearitäts-DIAGNOSE auf einen STRUKTURIERTEN,
+    maschinenlesbaren Redundanz-ALARM: ``eligible_requires_all`` addiert redundante Klauseln, deren
+    gemeinsame Passrate ≈ der strengsten Einzelklausel entspricht, ohne echte False-Positive-
     Kontrolle beizutragen (das leistet die DSR/PBO-Ebene bereits).
 
-    Für jedes Gate-Paar mit ``|ρ| > threshold`` (Default 0.9, aus dem Issue-Text) wird — via
-    ``_gate_consolidation_priority`` (#810, deklarativ aus ``tournament.json``; das aktive Gate
+    Root-Cause #811: die Vorgänger-Version massaß Redundanz an der Spearman-Rangkorrelation der
+    rohen ``oos_gate_deltas``-WERTE (``gate_rank_correlation_matrix``) — das beweist nur, dass zwei
+    Gates derselben latenten "Aktivitäts-Achse" folgen (z. B. Trade-Frequenz treibt sowohl
+    ``oos_min_trades`` als auch ``oos_max_drawdown``-Margen), NICHT dass sie dieselbe Zulassungs-
+    ENTSCHEIDUNG treffen: 105 Studies zeigten ρ(min_trades, max_drawdown) > 0.9 bei disjunkten
+    PASS-Mengen — der HEAD-Bug, den diese Funktion jetzt behebt. Redundanz wird stattdessen an der
+    tatsächlichen ENTSCHEIDUNGSMENGE gemessen: Jaccard-Ähnlichkeit der PASS-Mengen (``delta >= 0``,
+    ``_jaccard_of_pass_sets``) ZWEIER Gates, UND der marginale eigenständige Beitrag des schwächer
+    priorisierten Gates (``gate_marginal_pass_rate_delta`` — schliesst es tatsächlich noch Trials
+    aus, die sonst durchgingen?). Beide Kriterien müssen zutreffen: ``Jaccard > jaccard_threshold``
+    (Default 0.95) UND ``Δ_candidate < marginal_threshold`` (Default 0.02) — reine Pass-Set-
+    Übereinstimmung allein könnte in einer kleinen Kohorte Zufall sein; erst der zusätzlich fast
+    inexistente Eigenbeitrag macht die Konsolidierungs-Empfehlung robust.
+
+    Issue #811 — strukturelle Vorbedingungen/harte Risikogrenzen (``gate_consolidation_protected``,
+    #810) werden VOR der Messung VOLLSTÄNDIG aus der Kandidatenmatrix entfernt (stärker als die
+    #810-Garantie "wird nie Kandidat" — sie tauchen jetzt in KEINEM Paar mehr auf): eine hohe
+    Übereinstimmung zwischen einer Evaluierbarkeits-Vorbedingung (``min_trades``) und einem
+    Qualitätsgate ist keine Redundanz im #679-Sinn, sondern eine Kategorienverwechslung. Für jedes
+    verbleibende Kandidaten-Paar wird — via ``_gate_consolidation_priority`` (#810; das aktive Gate
     ohne Eintrag bricht bereits VOR dieser Schleife über ``assert_gate_priority_coverage`` ab) —
-    das NIEDRIGER priorisierte Gate als ``redundant_candidate`` markiert. Issue #810 — Gates in
-    ``gate_consolidation_protected`` (z. B. ``min_trades``/``max_drawdown``) werden NIE als
-    ``redundant_candidate`` markiert, UNABHÄNGIG von ihrer Priorität: eine hohe Korrelation
-    zwischen einer strukturellen Vorbedingung/harten Risikogrenze und einem Qualitätsgate ist keine
-    Redundanz im #679-Sinn, sondern eine Kategorienverwechslung (#811). Sind BEIDE Gates eines
-    Paares protected, wird KEIN Alarm für dieses Paar erzeugt (keine sinnvolle Konsolidierungs-
-    Empfehlung zwischen zwei gleichermassen unantastbaren Gates möglich). Rückgabe:
-    ``{'n_samples', 'alarms': [{'keep', 'redundant_candidate', 'rho'}], 'redundant_candidates': {...}}``
-    — ``alarms`` ist leer, wenn keine Kollinearität über der Schwelle liegt (kein Alarm, reine
-    Diagnose bleibt über ``assert_gate_collinearity_guard`` verfügbar). Diese Funktion selbst
-    KONSOLIDIERT NICHTS automatisch (welches Gate tatsächlich aus ``eligible_requires_all`` entfernt
-    wird, bleibt eine bewusste, dokumentierte Config-/PR-Entscheidung, #679-Akzeptanzkriterium:
-    "wird als Redundanz-Alarm ausgewertet, nicht nur geloggt") — sie macht den Alarm aber
-    STRUKTURIERT auswertbar (Tooling/Dashboards/Tests können darauf reagieren), statt nur eine
-    Log-Zeile zu emittieren. Issue #792 — ``threshold=None`` liest dieselbe deklarative Schwelle
-    wie ``assert_gate_collinearity_guard`` (Single Source of Truth, kein zweiter Code-Default)."""
-    if threshold is None:
-        threshold = _gate_collinearity_threshold(tournament_cfg)
+    das NIEDRIGER priorisierte Gate als ``redundant_candidate`` markiert (der marginale Beitrag wird
+    IMMER für dieses niedriger priorisierte Gate berechnet — es ist der Konsolidierungs-Kandidat).
+
+    Rückgabe: ``{'n_samples': len(trial_gate_deltas), 'alarms': [{'keep', 'redundant_candidate',
+    'jaccard', 'marginal_delta'}], 'redundant_candidates': {candidate: {'jaccard', 'marginal_delta'}}}``
+    — ``alarms`` ist leer, wenn kein Paar beide Schwellen überschreitet (kein Alarm, die rohe
+    Spearman-Diagnose bleibt über ``assert_gate_collinearity_guard`` als reine Report-Telemetrie,
+    #742, verfügbar — sie verliert nur ihre Alarm-Funktion). Diese Funktion selbst KONSOLIDIERT
+    NICHTS automatisch (welches Gate tatsächlich aus ``eligible_requires_all`` entfernt wird, bleibt
+    eine bewusste, dokumentierte Config-/PR-Entscheidung) — sie macht den Alarm aber STRUKTURIERT
+    auswertbar (Tooling/Dashboards/Tests können darauf reagieren), statt nur eine Log-Zeile zu
+    emittieren."""
     assert_gate_priority_coverage(tournament_cfg)
-    result = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)
-    priority = {k: i for i, k in enumerate(_gate_consolidation_priority(tournament_cfg))}
+    if jaccard_threshold is None:
+        jaccard_threshold = _gate_redundancy_jaccard_threshold(tournament_cfg)
+    if marginal_threshold is None:
+        marginal_threshold = _gate_redundancy_marginal_threshold(tournament_cfg)
+    active_keys = _active_gate_collinearity_keys(tournament_cfg)
     protected = _gate_consolidation_protected(tournament_cfg)
+    candidate_keys = [k for k in active_keys if k not in protected]
+    flags = _gate_pass_flags(trial_gate_deltas, candidate_keys)
+    priority = {k: i for i, k in enumerate(_gate_consolidation_priority(tournament_cfg))}
     alarms = []
-    redundant_candidates: dict[str, float] = {}
-    for (k1, k2), rho in result["correlations"].items():
-        if rho is None or abs(rho) <= threshold:
-            continue
-        k1_protected, k2_protected = k1 in protected, k2 in protected
-        if k1_protected and k2_protected:
-            # Issue #810 — zwei protected Gates: keine sinnvolle Konsolidierungsempfehlung.
-            continue
-        if k1_protected:
-            keep, candidate = k1, k2
-        elif k2_protected:
-            keep, candidate = k2, k1
-        else:
+    redundant_candidates: dict[str, dict] = {}
+    for i, k1 in enumerate(candidate_keys):
+        for k2 in candidate_keys[i + 1:]:
+            jaccard = _jaccard_of_pass_sets(flags[k1], flags[k2])
+            if jaccard is None or jaccard <= jaccard_threshold:
+                continue
             # Höhere Prioritaet (kleinerer Index) wird behalten; die andere ist der Kandidat.
             keep, candidate = (k1, k2) if priority[k1] < priority[k2] else (k2, k1)
-        alarms.append({"keep": keep, "redundant_candidate": candidate, "rho": rho})
-        prev = redundant_candidates.get(candidate)
-        if prev is None or abs(rho) > abs(prev):
-            redundant_candidates[candidate] = rho
+            marginal = gate_marginal_pass_rate_delta(trial_gate_deltas, tournament_cfg, candidate)
+            if marginal is None or marginal >= marginal_threshold:
+                continue
+            alarms.append({"keep": keep, "redundant_candidate": candidate,
+                           "jaccard": jaccard, "marginal_delta": marginal})
+            prev = redundant_candidates.get(candidate)
+            if prev is None or jaccard > prev["jaccard"]:
+                redundant_candidates[candidate] = {"jaccard": jaccard, "marginal_delta": marginal}
     return {
-        "n_samples": result["n_samples"],
+        "n_samples": len(trial_gate_deltas),
         "alarms": alarms,
         "redundant_candidates": redundant_candidates,
     }
@@ -670,7 +776,8 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: 
 
 def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible_requires_all: list,
                                                tournament_cfg: dict | None = None, *,
-                                               threshold: float | None = None) -> list[str]:
+                                               jaccard_threshold: float | None = None,
+                                               marginal_threshold: float | None = None) -> list[str]:
     """Issue #697 — konsumiert den #679-Redundanz-ALARM (bislang reine Telemetrie OHNE Konsument,
     Root-Cause #697: ``eligible_requires_all`` behielt ``min_expectancy`` UND ``oos_min_psr``
     trotz dokumentierter |ρ|=0.961-Kollinearität, weil nichts die Alarm-Ausgabe gegen die Config
@@ -706,10 +813,10 @@ def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible
     import logging
     if tournament_cfg is None:
         tournament_cfg = {"eligible_requires_all": eligible_requires_all}
-    if threshold is None:
-        threshold = _gate_collinearity_threshold(tournament_cfg)
     try:
-        alarm = gate_collinearity_redundancy_alarm(trial_gate_deltas, tournament_cfg, threshold=threshold)
+        alarm = gate_collinearity_redundancy_alarm(
+            trial_gate_deltas, tournament_cfg,
+            jaccard_threshold=jaccard_threshold, marginal_threshold=marginal_threshold)
     except ValueError:
         logging.getLogger("optimizer").warning(
             "[#810] gate_collinearity_redundancy_alarm konnte die Prioritätsabdeckung nicht "
@@ -725,17 +832,18 @@ def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible
         (k if k.startswith("oos_") else f"oos_{k}"): k for k in conjunction
     }
     still_redundant = []
-    for candidate, rho in alarm["redundant_candidates"].items():
+    for candidate, info in alarm["redundant_candidates"].items():
         conj_key = delta_to_conjunction.get(candidate)
         if conj_key is None:
             continue
         still_redundant.append(conj_key)
         logging.getLogger("optimizer").error(
-            "[#697] eligible_requires_all enthält weiterhin '%s' — gate_collinearity_redundancy_"
-            "alarm markiert es als redundant (|ρ|=%.3f > %.2f über %d Trials). Konsolidierung auf "
-            "das schärfste Gate (tournament.json['gate_consolidation_priority']) erwägen "
+            "[#697/#811] eligible_requires_all enthält weiterhin '%s' — gate_collinearity_"
+            "redundancy_alarm markiert es als redundant (Jaccard=%.3f, marginaler Eigenbeitrag "
+            "Δ=%.3f über %d Trials). Konsolidierung auf das schärfste Gate "
+            "(tournament.json['gate_consolidation_priority']) erwägen "
             "(tournament.json['eligible_requires_all']).",
-            conj_key, abs(rho), threshold, alarm["n_samples"],
+            conj_key, info["jaccard"], info["marginal_delta"], alarm["n_samples"],
         )
     return sorted(still_redundant)
 
