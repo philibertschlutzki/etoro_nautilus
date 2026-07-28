@@ -27,7 +27,7 @@ from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import (
     compute_reward, assert_penalty_scale_calibrated, check_any_arm_reachability,
     check_any_arm_reachability_live, resolve_any_arm_policy, assert_gate_collinearity_guard,
-    gate_collinearity_redundancy_alarm,
+    gate_collinearity_redundancy_alarm, selection_rule_fingerprint,
 )
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
@@ -1879,6 +1879,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     # recalibrate). Default 'warn' liefert eine leere Entscheidung (bit-identisch zu #660).
     any_arm_policy_decision = {"policy": "warn", "dropped_clauses": [], "recalibrated_thresholds": {},
                                "any_arm_decision": None}
+    _tcfg_arm: dict = {}
     try:
         opt_path_arm = config_dir() / "tournament.json"
         if opt_path_arm.exists():
@@ -1891,6 +1892,18 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 _tcfg_arm, {"min_win_rate": live_win_rates}, n_evaluated=evaluable)
     except Exception:
         any_arm_live_unreachable = []
+
+    # Issue #812 — Fingerabdruck der EFFEKTIV wirksamen Gate-Konfiguration DIESER Study (Schwellen
+    # inkl. aller #668-Policy-Anpassungen, siehe reward.selection_rule_fingerprint-Docstring) — als
+    # study.user_attr gestempelt, damit report._study_record ihn ohne erneute Live-Kohorten-
+    # Berechnung auslesen kann (Single Source of Truth: die tatsaechlich wirksame Policy-
+    # Entscheidung entsteht HIER, aus der vollen Trial-Kohorte). Voraussetzung fuer eine gueltige
+    # familienweite DSR-Multiplizitaetskorrektur (sweep._family_n_from_studies, Pitfall #248).
+    selection_fingerprint = selection_rule_fingerprint(_tcfg_arm, any_arm_policy_decision)
+    try:
+        study.set_user_attr("selection_rule_fingerprint", selection_fingerprint)
+    except Exception:
+        pass
 
     # Issue #667/#760 — Rang-Korrelationsmatrix der AKTIVEN eligible-Gates (aus tournament.json
     # abgeleitet, keine eingefrorene Code-Konstante mehr) über die gestempelten Per-Trial
@@ -2049,6 +2062,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "any_arm_unreachable_policy": any_arm_policy_decision.get("policy"),
         "any_arm_reduced": any_arm_policy_decision.get("dropped_clauses"),
         "any_arm_recalibrated_thresholds": any_arm_policy_decision.get("recalibrated_thresholds"),
+        # Issue #812 — SHA-256 ueber die effektiv wirksame Gate-Konfiguration dieser Study (siehe
+        # reward.selection_rule_fingerprint). Studies mit unterschiedlichem Fingerprint duerfen
+        # NICHT in derselben DSR-Multiplizitaets-Familie gezaehlt werden (Pitfall #248).
+        "selection_rule_fingerprint": selection_fingerprint,
         # Issue #667 — Gate-Kollinearitäts-Diagnose. Tupel-Schlüssel sind nicht JSON-serialisierbar
         # ⇒ "gate_a|gate_b"-Stringform für das strukturierte Event.
         "gate_collinearity_n_samples": gate_collinearity.get("n_samples"),

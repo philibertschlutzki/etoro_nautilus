@@ -336,6 +336,10 @@ def _study_record(proposal: dict, study,
         "n_evaluable": n_evaluable,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,
+        # Issue #812 — SHA-256 ueber die effektiv wirksame Gate-Konfiguration dieser Study
+        # (reward.selection_rule_fingerprint, gestempelt in run_optimization._emit_study_summary).
+        # ``None`` fuer Studies aus einem Lauf vor #812 (rueckwaertskompatibel, analog seed_effective).
+        "selection_rule_fingerprint": study_user_attrs.get("selection_rule_fingerprint"),
         "best_reward": best_reward,
         "gradient_signal": gradient_signal,
         # Issue #808 — welcher der drei Arme (discovery/reward_variance/constraint_progress/none)
@@ -454,6 +458,30 @@ def _binding_gate_histogram_by_strategy(studies_out: list[dict[str, Any]]) -> di
     return {strategy: dict(counter) for strategy, counter in out.items()}
 
 
+def _selection_rule_families(studies_out: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Issue #812 — gruppiert die Studies je Symbol nach ihrem ``selection_rule_fingerprint``:
+    Studies mit demselben Fingerprint wandten garantiert dieselbe EFFEKTIVE Selektionsregel an
+    (siehe ``reward.selection_rule_fingerprint``) und dürfen in EINER DSR-Multiplizitäts-Familie
+    gezählt werden. Mehr als EIN Fingerprint je Symbol macht sichtbar, dass die Familie tatsächlich
+    in getrennte Selektionsprozeduren zerfällt (Pitfall #248, z. B. weil ``any_arm_unreachable_
+    policy='drop_arm'`` bei einer Study griff, bei einer anderen desselben Symbols aber nicht) —
+    das ist das im Akzeptanzkriterium #812 geforderte "im Report als separate Familien
+    ausgewiesen". Studies ohne Fingerprint (ein Lauf vor #812) landen unter ``'unknown'``.
+
+    Rückgabe: ``{symbol: {fingerprint_or_'unknown': n_family}}`` — ``n_family`` je Bucket ist die
+    Summe von ``n_evaluable`` (dieselbe ``oos_evaluated``-Zählung wie
+    ``sweep._family_n_from_studies``, #784), NICHT die blosse Study-Anzahl."""
+    out: dict[str, dict[str, int]] = {}
+    for r in studies_out:
+        symbol = r.get("symbol")
+        if not symbol:
+            continue
+        fingerprint = r.get("selection_rule_fingerprint") or "unknown"
+        bucket = out.setdefault(symbol, {})
+        bucket[fingerprint] = bucket.get(fingerprint, 0) + int(r.get("n_evaluable") or 0)
+    return out
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -536,6 +564,10 @@ def _build_report(
             # Issue #778 — automatisch denylist-empfohlene (uebersprungene) Paare MIT Begruendung
             # und Evidenzstand, statt nur im diagnosed_pairs_cache.json verborgen zu sein.
             "diagnosed_pairs_skipped": _diagnosed_pairs_skipped_section(),
+            # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
+            # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
+            # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.
+            "selection_rule_families": _selection_rule_families(studies_out),
         },
         "invariant_checks": invariant_checks,
     }

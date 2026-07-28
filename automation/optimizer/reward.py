@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import statistics
@@ -328,10 +329,21 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
     ``'warn'`` (Default) — bit-identisch zu #660: reine Diagnose, keine Verhaltensänderung.
     ``'drop_arm'`` — jede strukturell unerreichbare Klausel (``check_any_arm_reachability_live``)
     wird EXPLIZIT als gedroppt zurückgegeben (``dropped_clauses``) — die Disjunktion wird bewusst
-    auf die übrigen Arme reduziert, statt still zu kollabieren.
-    ``'recalibrate'`` — die Schwelle wird SYMBOL-spezifisch auf das p99 der beobachteten Verteilung
-    neu gesetzt (mit einem globalen Floor, ``min_win_rate_recalibration_floor``, Default 0.05),
-    sodass der Arm ein echter Filter bleibt statt strukturell unerreichbar zu sein.
+    auf die übrigen Arme reduziert, statt still zu kollabieren. Issue #812 — SEIT #812 DEFAULT
+    (vorher ``'recalibrate'``): die Regel bleibt damit über ALLE Studies identisch ("bestehe PF,
+    oder bestehe WR, sofern WR auf diesem Paar überhaupt erreichbar ist"), Voraussetzung für eine
+    gültige familienweite DSR-Multiplizitätskorrektur (Pitfall #248) — ``'recalibrate'`` macht die
+    Selektionsprozedur STUDY-abhängig (siehe unten).
+    ``'recalibrate'`` — die Schwelle wird SYMBOL-spezifisch auf das rohe p99 der beobachteten
+    Verteilung neu gesetzt, sodass der Arm ein echter Filter bleibt statt strukturell unerreichbar
+    zu sein. Issue #812 — bleibt NUR als Option für explizite Kalibrierläufe erhalten: da die
+    effektive Schwelle dann PRO STUDY unterschiedlich ist, ist in diesem Modus KEIN DSR-Vergleich
+    über Studies hinweg zulässig (E[max_N] ist aus N allein nicht mehr berechenbar, wenn N
+    Kandidaten aus unterschiedlich strengen Selektionsprozeduren mischt) — eine WARNING macht das
+    bei jeder tatsächlichen Rekalibrierung explizit. Der globale Floor
+    (``min_win_rate_recalibration_floor``) entfiel mit dem Default-Wechsel (toter Schlüssel, seit
+    #812 entfernt) — das rohe p99 ist bereits durch ``any_arm_min_observations`` (#759) gegen
+    Kleinstichproben abgesichert.
 
     Issue #759 — ``any_arm_decision`` macht explizit, WARUM keine Schwelle geändert wurde: unter
     ``any_arm_min_observations`` ECHTEN Beobachtungen (oder bei ``n_evaluated == 0``) trifft diese
@@ -375,7 +387,6 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
     if not unreachable:
         return result
 
-    floor = float(tournament_cfg.get("min_win_rate_recalibration_floor", 0.05))
     for clause in unreachable:
         threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(clause)
         if threshold_key is None:
@@ -387,9 +398,67 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
             if not samples:
                 continue
             p99_idx = max(0, min(len(samples) - 1, round(0.99 * (len(samples) - 1))))
-            result["recalibrated_thresholds"][threshold_key] = max(floor, samples[p99_idx])
+            result["recalibrated_thresholds"][threshold_key] = samples[p99_idx]
+    if result["recalibrated_thresholds"]:
+        import logging
+        logging.getLogger("optimizer").warning(
+            "[#812] any_arm_unreachable_policy='recalibrate' hat %s study-spezifisch rekalibriert "
+            "— die effektive Selektionsregel dieser Study weicht damit von Studies ohne "
+            "Rekalibrierung ab (siehe reward.selection_rule_fingerprint). KEIN DSR-Vergleich ueber "
+            "Studies hinweg zulaessig, solange dieser Modus aktiv ist (E[max_N] setzt eine ueber "
+            "die Familie konstante Selektionsprozedur voraus, Pitfall #248).",
+            sorted(result["recalibrated_thresholds"]),
+        )
     result["any_arm_decision"] = "dropped" if policy == "drop_arm" else "recalibrated"
     return result
+
+
+def _effective_gate_thresholds(tournament_cfg: dict | None,
+                               any_arm_policy_decision: dict | None = None) -> dict:
+    """Issue #812 — das EFFEKTIV wirksame Schwellen-Dict einer Study: ``eligible_requires_all``-
+    Klauseln mit ihren konfigurierten Schwellen, plus ``eligible_requires_any``-Klauseln NACH
+    Anwendung der #668-Policy (``resolve_any_arm_policy``) — gedroppte Klauseln (``drop_arm``)
+    fehlen, rekalibrierte Klauseln (``recalibrate``) tragen ihre study-spezifische statt der
+    Config-Schwelle. Das ist die Grundlage von ``selection_rule_fingerprint``: zwei Studies mit
+    demselben Fingerprint haben garantiert dieselbe EFFEKTIVE Selektionsregel angewendet."""
+    tournament_cfg = tournament_cfg or {}
+    any_arm_policy_decision = any_arm_policy_decision or {}
+    dropped = set(any_arm_policy_decision.get("dropped_clauses") or [])
+    recalibrated = any_arm_policy_decision.get("recalibrated_thresholds") or {}
+    effective: dict = {}
+    for k in tournament_cfg.get("eligible_requires_all") or []:
+        effective[k] = tournament_cfg.get(k)
+    for k in tournament_cfg.get("eligible_requires_any") or []:
+        if k in dropped:
+            continue
+        threshold_key = _ANY_ARM_LIVE_THRESHOLD_KEYS.get(k)
+        if threshold_key is not None and threshold_key in recalibrated:
+            effective[k] = recalibrated[threshold_key]
+        else:
+            effective[k] = tournament_cfg.get(k)
+    return effective
+
+
+def selection_rule_fingerprint(tournament_cfg: dict | None,
+                               any_arm_policy_decision: dict | None = None) -> str:
+    """Issue #812 — SHA-256-Hexdigest über die EFFEKTIV wirksame Gate-Konfiguration einer Study
+    (``_effective_gate_thresholds`` — Schwellen inklusive aller #668-Policy-Anpassungen dieser
+    Study). Root-Cause #812: die Deflated Sharpe Ratio korrigiert für das Maximum von ``N``
+    Kandidaten, die DERSELBEN Selektionsprozedur unterworfen wurden; ``any_arm_unreachable_
+    policy='recalibrate'`` macht die Prozedur je (Strategie, Symbol) verschieden, ohne dass dies
+    irgendwo maschinell sichtbar/durchsetzbar war — ``E[max_N]`` ist aus ``N`` allein dann nicht
+    mehr berechenbar.
+
+    Zwei Studies mit demselben Fingerprint haben garantiert dieselbe effektive Selektionsregel
+    angewendet und dürfen in DERSELBEN Multiplizitäts-Familie gezählt werden; unterschiedliche
+    Fingerprints innerhalb eines Symbols (z. B. weil ``drop_arm`` bei einer Study, aber nicht bei
+    einer anderen griff) müssen als getrennte Familien geführt werden (siehe
+    ``sweep._family_n_from_studies``, ``report._build_report``'s ``selection_rule_families``).
+    Deterministisch (``json.dumps(..., sort_keys=True)`` vor dem Hash) — dieselbe effektive
+    Konfiguration liefert IMMER denselben Fingerprint, unabhängig von der Dict-Iterationsreihenfolge."""
+    effective = _effective_gate_thresholds(tournament_cfg, any_arm_policy_decision)
+    payload = json.dumps(effective, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _active_gate_collinearity_keys(tournament_cfg: dict | None) -> list[str]:

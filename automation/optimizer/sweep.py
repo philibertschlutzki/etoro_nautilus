@@ -681,9 +681,22 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     (User-Attr, von ``run_optimization`` gestempelt) grösser ist als die tatsächlich evaluierten
     Trials dieser Study: ein Abbruch reduziert die gezogenen Kandidaten, aber der Suchraum, aus dem
     selektiert wurde, war der volle geplante. ``'attempted'`` reproduziert das Verhalten OHNE
-    Budget-Untergrenze (bit-identisch bis auf die #784-Umstellung von eligible→evaluated selbst)."""
+    Budget-Untergrenze (bit-identisch bis auf die #784-Umstellung von eligible→evaluated selbst).
+
+    Issue #812 — summiert weiterhin PRO SYMBOL (unverändertes Interface für confirm.py), warnt aber
+    (WARNING-Log), wenn die Studies eines Symbols unterschiedliche ``selection_rule_fingerprint``
+    tragen: eine über die Familie NICHT konstante Selektionsregel (z. B. ``any_arm_unreachable_
+    policy='drop_arm'`` griff bei einer Study, aber nicht bei einer anderen) verletzt die
+    Voraussetzung der DSR-Multiplizitätskorrektur (Pitfall #248). Die nach Fingerprint
+    aufgeschlüsselte ``n_family``-Zahl lebt im #742-Report (``report._selection_rule_families``)."""
     floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "budgeted")
     family_n: dict[str, int] = {}
+    # Issue #812 — die DSR-Multiplizitaetskorrektur setzt eine ueber die Familie KONSTANTE
+    # Selektionsregel voraus (Pitfall #248); ``selection_rule_fingerprint`` (reward.py, gestempelt
+    # in run_optimization._emit_study_summary) macht eine Abweichung sichtbar, statt sie lautlos in
+    # dieser Summe zu verstecken. Wird HIER (noch) konservativ als EINE Familie weitergezaehlt — die
+    # Aufschluesselung nach Fingerprint lebt im #742-Report (report._selection_rule_families).
+    symbol_fingerprints: dict[str, set] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
         n_evaluated = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
@@ -692,10 +705,22 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
             if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
                 n_evaluated = max(n_evaluated, int(n_trials_budget))
         family_n[symbol] = family_n.get(symbol, 0) + n_evaluated
+        fingerprint = (getattr(study, "user_attrs", None) or {}).get("selection_rule_fingerprint")
+        if fingerprint is not None:
+            symbol_fingerprints.setdefault(symbol, set()).add(fingerprint)
         # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
         # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
         # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
         _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
+    for symbol, fingerprints in symbol_fingerprints.items():
+        if len(fingerprints) > 1:
+            logging.getLogger("optimizer").warning(
+                "[#812] %s: %d verschiedene selection_rule_fingerprint ueber die Familie — die "
+                "DSR-Multiplizitaetskorrektur setzt eine ueber die Familie konstante Selektions-"
+                "regel voraus (Pitfall #248). Aufschluesselung: #742-Report['cross_study']"
+                "['selection_rule_families'][%r].",
+                symbol, len(fingerprints), symbol,
+            )
     return family_n
 
 
