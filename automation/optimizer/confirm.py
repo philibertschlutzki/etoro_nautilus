@@ -954,11 +954,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 # ``variance_n_trials=deflation_n`` (per-Study) treibt das #653-Shrinkage-Gewicht — die
                 # Verlässlichkeit von V[ŜR_trials] hängt von der TATSÄCHLICH beobachteten Kohorte ab,
                 # nicht von der (grösseren) familienweiten Multiplizität (siehe deflation.py-Docstring).
+                # Issue #814 — der explizite, dokumentierte Ersatz fuer die vorherige stille
+                # Aufblaehung von deflation_n_effective auf das geplante Budget
+                # (deflation_family_floor_mode='budgeted', seit #814 nicht mehr Default): ein
+                # additiver SR0-Term statt einer Verzerrung von E[max_N] selbst. None/0 (Default)
+                # ⇒ bit-identisch ohne den Term.
+                deflation_search_space_penalty = tournament_cfg.get("deflation_search_space_penalty")
                 (deflation_sr0, deflation_used_var_floor, deflation_lambda,
                  deflation_theoretical_var_source) = sr0_multiple_testing_robust(
                     deflation_var, deflation_n_effective,
                     min_cohort=deflation_min_cohort,
                     n_periods=deflation_t_periods, variance_n_trials=deflation_n,
+                    search_space_penalty=deflation_search_space_penalty,
                 )
                 logging.getLogger("optimizer").info(
                     f"[DSR #618/#653/#670] {symbol}: SR₀={deflation_sr0:.4f} via stetigem "
@@ -1325,6 +1332,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_used_var_floor"] = deflation_used_var_floor
         best_result["metrics_symbol"]["deflation_lambda"] = deflation_lambda
         best_result["metrics_symbol"]["deflation_theoretical_var_source"] = deflation_theoretical_var_source
+        # Issue #814 — der additive Suchraum-Kapazitäts-Term, falls konfiguriert (None/0 im Regelfall).
+        best_result["metrics_symbol"]["deflation_search_space_penalty"] = deflation_search_space_penalty
         # Issue #652 — die familienweite Multiplizität, die tatsächlich in die SR₀-Berechnung
         # eingeflossen ist (N_effective = max(per-Study-N, N_family)), plus die rohe übergebene
         # Familien-Zahl — beide sichtbar im Proposal, damit die effektive SR₀-Hürde je promoteter

@@ -676,12 +676,22 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     Budgetausführung (ein per #768/#769 früh abgebrochener Study wurde dadurch MILDER deflatiert,
     Spearman(n_family, Budgetausführung)=+0,220 — die Korrektur bestrafte gründliche Suche).
 
-    Issue #784, Umsetzungspunkt 3 — ``tournament_cfg['deflation_family_floor_mode']`` (Default
-    ``'budgeted'``) hebt die je-Study-Zahl zusätzlich auf ``n_trials_budget`` an, WENN dieser Wert
-    (User-Attr, von ``run_optimization`` gestempelt) grösser ist als die tatsächlich evaluierten
-    Trials dieser Study: ein Abbruch reduziert die gezogenen Kandidaten, aber der Suchraum, aus dem
-    selektiert wurde, war der volle geplante. ``'attempted'`` reproduziert das Verhalten OHNE
-    Budget-Untergrenze (bit-identisch bis auf die #784-Umstellung von eligible→evaluated selbst).
+    Issue #784, Umsetzungspunkt 3 — ``tournament_cfg['deflation_family_floor_mode']`` steuert, ob die
+    je-Study-Zahl zusätzlich auf ``n_trials_budget`` angehoben wird (``'budgeted'``), WENN dieser
+    Wert (User-Attr, von ``run_optimization`` gestempelt) grösser ist als die tatsächlich
+    evaluierten Trials dieser Study, oder nicht (``'attempted'``, SEIT #814 DEFAULT — zählt NUR die
+    tatsächlich gezogenen Kandidaten).
+
+    Issue #814 — ``'budgeted'`` ist SEIT #814 NICHT MEHR Default: Root-Cause #814 — ein Trial, der
+    NIE gezogen wurde, hat keinen Sharpe-Schätzer und kann das Maximum unter H0 nicht beeinflusst
+    haben; ihn über ``n_trials_budget`` mitzuzählen ist keine konservative Wahl, sondern eine
+    Fehlspezifikation der Nullverteilung — UND reproduziert denselben Kopplungsfehler, den #784
+    beseitigen wollte, nur mit umgekehrtem Vorzeichen (eine früh abgebrochene Study wird jetzt
+    HÄRTER deflatiert als eine vollständig durchlaufene). ``'budgeted'`` bleibt als Option für eine
+    KONSERVATIVE SENSITIVITÄTSANALYSE erhalten; die Suchraum-Kapazität wandert, falls gewünscht, in
+    den separaten, additiven ``deflation.sr0_multiple_testing_robust``-Term
+    ``search_space_penalty`` (``tournament.json['deflation_search_space_penalty']``, Default
+    ``None`` = aus), statt N selbst zu verzerren.
 
     Issue #812 — summiert weiterhin PRO SYMBOL (unverändertes Interface für confirm.py), warnt aber
     (WARNING-Log), wenn die Studies eines Symbols unterschiedliche ``selection_rule_fingerprint``
@@ -689,7 +699,11 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     policy='drop_arm'`` griff bei einer Study, aber nicht bei einer anderen) verletzt die
     Voraussetzung der DSR-Multiplizitätskorrektur (Pitfall #248). Die nach Fingerprint
     aufgeschlüsselte ``n_family``-Zahl lebt im #742-Report (``report._selection_rule_families``)."""
-    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "budgeted")
+    # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
+    # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
+    # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
+    # dokumentierte Config-Wert zurueck.
+    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "attempted")
     family_n: dict[str, int] = {}
     # Issue #812 — die DSR-Multiplizitaetskorrektur setzt eine ueber die Familie KONSTANTE
     # Selektionsregel voraus (Pitfall #248); ``selection_rule_fingerprint`` (reward.py, gestempelt
@@ -1167,8 +1181,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # disposen, BEVOR die Study-Referenz aus dem Scope faellt.
             _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
 
-    # Issue #784 — deflation_family_floor_mode steuert die Budget-Untergrenze innerhalb von
-    # _family_n_from_studies; fail-open (leere Config) auf den bit-identischen 'budgeted'-Default.
+    # Issue #784/#814 — deflation_family_floor_mode steuert die Budget-Untergrenze innerhalb von
+    # _family_n_from_studies; fail-open (leere Config) auf den #814-Default 'attempted'.
     try:
         _tournament_cfg_for_family = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
     except (OSError, ValueError):

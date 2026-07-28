@@ -221,6 +221,7 @@ def sr0_multiple_testing_robust(
     var_sr_trials: float | None, n_trials: int, *,
     min_cohort: int = 10, n_periods: int, sr_estimate: float = 0.0,
     variance_n_trials: int | None = None,
+    search_space_penalty: float | None = None,
 ) -> tuple[float, bool, float, str]:
     """Issue #636/#653/#685/#701 — robuste SR₀-Schätzung gegen Small-Cohort-Degeneration, STETIG in N.
 
@@ -272,6 +273,18 @@ def sr0_multiple_testing_robust(
     mehr). ``floor_dominant`` bedeutet ausschliesslich „das Shrinkage-Gewicht λ ist ≥ 0.5" (die
     theoretische Lo-2002-Referenz dominiert die Blend-Gewichtung), NICHT „welche Konstante".
 
+    Issue #814 — ``search_space_penalty`` (Default ``None`` = aus, ``tournament.json['deflation_
+    search_space_penalty']``) ist der EXPLIZITE, dokumentierte Ersatz für die vorherige stille
+    Aufblähung von ``n_trials`` auf das geplante Budget (``deflation_family_floor_mode='budgeted'``,
+    seit #814 nicht mehr Default). Root-Cause #814: ein Trial, der NIE gezogen wurde, hat keinen
+    Sharpe-Schätzer und kann das ``max()`` unter H0 nicht beeinflusst haben — ihn über ``n_trials``
+    mitzuzählen ist eine Fehlspezifikation der Nullverteilung, keine konservative Wahl. Der
+    „Suchraum-Kapazität"-Gedanke (den ``'budgeted'`` eigentlich ausdrücken wollte) bleibt als
+    SEPARATER, additiver Term auf ``SR₀`` verfügbar, falls ein Operator ihn explizit will — er
+    verzerrt dann NICHT mehr ``E[max_N]`` selbst. Wird auf das nach der Shrinkage berechnete ``SR₀``
+    addiert (``sr0_final = sr0_multiple_testing(effective_var, n_trials) + search_space_penalty``);
+    ``None``/``0`` ⇒ bit-identisch zum reinen Multiplizitäts-``SR₀`` (kein Term).
+
     Rückgabe ``(sr0, floor_dominant, shrinkage_lambda, theoretical_var_source)`` — ``floor_dominant``
     bleibt aus Rückwärtskompat-Gründen erhalten (``λ ≥ 0.5``, äquivalent zu
     ``variance_n_trials <= min_cohort``), aber ``shrinkage_lambda``/``theoretical_var_source`` sind
@@ -290,8 +303,10 @@ def sr0_multiple_testing_robust(
     weight = _cohort_shrinkage_weight(reliability_n, min_cohort)
     effective_var = weight * theoretical_var + (1.0 - weight) * observed
     floor_dominant = weight >= 0.5
-    return (sr0_multiple_testing(effective_var, n_trials), floor_dominant, weight,
-            theoretical_var_source)
+    sr0 = sr0_multiple_testing(effective_var, n_trials)
+    if search_space_penalty:
+        sr0 += float(search_space_penalty)
+    return (sr0, floor_dominant, weight, theoretical_var_source)
 
 
 def deflated_sharpe_ratio(sr, n_periods, *, sr0: float,
