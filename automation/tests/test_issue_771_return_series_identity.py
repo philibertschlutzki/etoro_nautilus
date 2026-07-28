@@ -52,7 +52,9 @@ def test_identity_holds_over_random_multi_fold_curves(seed):
             pnl_list=[1.0], hold_list=[], starting_capital=10_000.0,
             mtm_series=mtm_series, mtm_frames=frames,
         )
-        period_rets = np.log1p(mtm_series.pct_change().dropna())
+        # Issue #802 — fill_method=None explizit (versionsstabile pct_change-Semantik); auf dieser
+        # strikt positiven, NaN-freien Testserie identisch zur algebraischen Produktionsformel.
+        period_rets = np.log1p(mtm_series.pct_change(fill_method=None).dropna())
         log_sum = float(period_rets.sum())
         target = np.log1p(metrics["total_return"])
         assert abs(log_sum - target) < 1e-9, f"seed={seed} n_folds={n_folds}: {log_sum} vs {target}"
@@ -83,7 +85,7 @@ def test_seam_return_is_reflected_in_both_total_return_and_period_rets():
     assert metrics["total_return"] == pytest.approx(full_span, abs=1e-9)
     assert metrics["total_return"] != pytest.approx(per_segment_compounded, abs=1e-6)
 
-    period_rets = np.log1p(mtm_series.pct_change().dropna())
+    period_rets = np.log1p(mtm_series.pct_change(fill_method=None).dropna())
     # Der Naht-Return (105 -> 150) ist eine der vier Perioden-Returns.
     assert len(period_rets) == 3
     seam_ret = np.log(150.0 / 105.0)
@@ -98,7 +100,7 @@ def test_assert_return_series_identity_fires_on_artificial_per_segment_total_ret
     fold0 = pd.Series([100.0, 105.0], index=pd.date_range("2024-01-01", periods=2, freq="h"))
     fold1 = pd.Series([150.0, 151.5], index=pd.date_range("2024-01-05", periods=2, freq="h"))
     mtm_series = _concat([fold0, fold1])
-    period_rets = np.log1p(mtm_series.pct_change().dropna())
+    period_rets = np.log1p(mtm_series.pct_change(fill_method=None).dropna())
 
     per_segment_compounded_total_return = (105.0 / 100.0) * (151.5 / 150.0) - 1.0
     assert assert_return_series_identity(per_segment_compounded_total_return, period_rets) is True

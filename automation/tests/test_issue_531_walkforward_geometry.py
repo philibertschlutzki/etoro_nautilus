@@ -24,7 +24,7 @@ from automation.optimizer.gate import (
 from automation.log_manager import emit_gate1_rejection
 from automation.historical_fetcher import ensure_walkforward_history
 from automation.optimizer import sweep
-from automation.optimizer.trial_config import build_trial
+from automation.optimizer.trial_config import build_trial, freeze_study_config, resolve_wf_settings, config_dir
 
 UTC = dt.timezone.utc
 
@@ -196,21 +196,28 @@ def test_build_trial_fail_loud_on_insufficient_catalog_span():
 
 def test_build_trial_noop_without_catalog_span(tmp_path):
     now = dt.datetime(2026, 5, 18, tzinfo=UTC)
+    # Issue #796 — copy_config=False verlangt eine per freeze_study_config eingefrorene Config.
+    wf_settings = resolve_wf_settings(config_dir(), holdout_days=45, n_folds=4)
+    study_cfg_dir = freeze_study_config("issue531_noop", wf_settings)
     # Ohne catalog_span_days bleibt das Verhalten bit-identisch (rückwärtskompatibel).
     trial_dir, manifest_path = build_trial(
         "ComboTrendVwapStrategy", {}, study_name="issue531_noop",
         trial_number=0, seed=42, now=now, holdout_days=45, n_folds=4,
-        instruments=["TSLA.ETORO"], copy_config=False,
+        instruments=["TSLA.ETORO"], copy_config=False, study_config_dir=study_cfg_dir,
     )
     assert manifest_path.exists()
 
 
 def test_build_trial_passes_with_sufficient_catalog_span():
     now = dt.datetime(2026, 5, 18, tzinfo=UTC)
+    # Issue #796 — copy_config=False verlangt eine per freeze_study_config eingefrorene Config.
+    wf_settings = resolve_wf_settings(config_dir(), holdout_days=45, n_folds=4)
+    study_cfg_dir = freeze_study_config("issue531_ok", wf_settings)
     # 450 ≥ 405 ⇒ die Geometrie passt, kein Reject.
     trial_dir, manifest_path = build_trial(
         "ComboTrendVwapStrategy", {}, study_name="issue531_ok",
         trial_number=0, seed=42, now=now, holdout_days=45, n_folds=4,
         instruments=["TSLA.ETORO"], copy_config=False, catalog_span_days=450.0,
+        study_config_dir=study_cfg_dir,
     )
     assert manifest_path.exists()

@@ -3,7 +3,7 @@ import json
 import hashlib
 from collections import Counter
 from pathlib import Path
-from automation.optimizer.trial_config import build_trial, config_dir
+from automation.optimizer.trial_config import build_trial, config_dir, freeze_study_config, resolve_wf_settings
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
@@ -101,21 +101,30 @@ def confirm_on_holdout(
             bt_data = json.load(f)
             holdout_days_cfg = bt_data.get("walk_forward", {}).get("holdout_days", 45)
 
+    # Issue #796 — EINE eingefrorene Config fuer diesen Holdout-Trial statt einer Pro-Trial-Kopie
+    # (der Holdout-Studyname ist eindeutig je Confirm-Aufruf, daher genuegt ein einmaliges Freeze).
+    holdout_study_name = f"{study.study_name}_holdout"
+    holdout_wf_settings = resolve_wf_settings(
+        cfg_dir, holdout_days=0, n_folds=1, oos_window_days_override=holdout_days_cfg)
+    holdout_cfg_dir = freeze_study_config(holdout_study_name, holdout_wf_settings, base_cfg=cfg_dir)
+
     # Erzeuge Holdout-Trial mit holdout_days=0 und n_folds=1, aber OOS override auf Holdout-Länge
     trial_dir, manifest_path = build_trial(
         strategy_class=strategy,
         sampled=sampled,
-        study_name=f"{study.study_name}_holdout",
+        study_name=holdout_study_name,
         trial_number=best_trial.number,
         seed=seed,
         holdout_days=0,
         n_folds=1,
-        oos_window_days_override=holdout_days_cfg
+        oos_window_days_override=holdout_days_cfg,
+        copy_config=False,
+        study_config_dir=holdout_cfg_dir,
     )
 
     # Subprozess/Backtest ausführen
     try:
-        output_path = run_backtest(trial_dir, manifest_path)
+        output_path = run_backtest(trial_dir, manifest_path, config_dir=holdout_cfg_dir)
         metrics = parse_tournament(output_path)
     except BacktestRunError:
         return {
@@ -437,6 +446,12 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
     tag = hashlib.sha1(json.dumps(params or {}, sort_keys=True, default=str).encode()).hexdigest()[:8]
     study_name = f"confirm_{strategy}_{symbol.replace('.', '_')}_{tag}"
 
+    # Issue #796 — EINE eingefrorene Config statt einer Pro-Trial-Kopie (der Studyname ist per
+    # Param-Hash eindeutig, ein einmaliges Freeze genuegt).
+    holdout_wf_settings = resolve_wf_settings(
+        cfg_dir, holdout_days=0, n_folds=1, oos_window_days_override=holdout_days_cfg)
+    holdout_cfg_dir = freeze_study_config(study_name, holdout_wf_settings, base_cfg=cfg_dir)
+
     trial_dir, manifest_path = build_trial(
         strategy_class=strategy,
         sampled=params,
@@ -448,8 +463,10 @@ def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
         oos_window_days_override=holdout_days_cfg,
         instruments=[symbol],
         catalog_newest_ns=catalog_newest_ns,
+        copy_config=False,
+        study_config_dir=holdout_cfg_dir,
     )
-    output_path = run_backtest(trial_dir, manifest_path)
+    output_path = run_backtest(trial_dir, manifest_path, config_dir=holdout_cfg_dir)
     m = parse_tournament(output_path)
     # Issue #615 — die trial_dir-Identität AN die Metriken heften (kein Signatur-Bruch ⇒ bestehende
     # Mocks von _holdout_metrics_for_params bleiben gültig). Macht die Kohärenz-Invariante

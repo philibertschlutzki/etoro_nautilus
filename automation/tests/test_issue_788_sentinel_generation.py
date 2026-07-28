@@ -32,7 +32,7 @@ def _isolate(monkeypatch, tmp_path):
 
 
 def _fake_backtest(payload):
-    def _fake(trial_dir, manifest_path):
+    def _fake(trial_dir, manifest_path, **_kwargs):
         out = Path(trial_dir) / "tournament_result.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload), "utf-8")

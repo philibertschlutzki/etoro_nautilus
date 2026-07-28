@@ -837,6 +837,21 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         if median_notional < 10.0:
             reasons.append(f"Micro-Sizing: Median notional < 10.0 (value: {median_notional:.4f})")
 
+    # Issue #803 — ein Trial mit einer nachweislich UNGUELTIGEN Risikokennzahl (Kohaerenz-
+    # Verletzung #589/#620/#756/#771, ODER oekonomischer Ruin #801) ist NIE selektionsfaehig,
+    # unabhaengig davon, ob er die uebrigen Gates zufaellig besteht. Root-Cause #803: vorher
+    # disqualifizierte NUR die STUDY-weite Verletzungsrate (``check_study_coherence_violation_rate``,
+    # #773) — ein einzelner ungueltiger Trial blieb individuell eligible und konnte Study-Gewinner
+    # werden. Diese Klausel ist bewusst UNBEDINGT (kein ``eligible_requires_all``-Opt-in): eine
+    # nachweislich falsche Kennzahl darf niemals ein Gate bestehen, das genau diese Kennzahl prueft.
+    if oos_metrics.get("oos_coherence_violation") or oos_metrics.get("equity_ruined"):
+        reasons.append(
+            "REJECT_OOS_INVALID_METRICS: oos_coherence_violation="
+            f"{bool(oos_metrics.get('oos_coherence_violation'))}, equity_ruined="
+            f"{bool(oos_metrics.get('equity_ruined'))} — Risikokennzahl nicht selektionsfaehig "
+            "(#801/#803)."
+        )
+
     return {
         "oos_evaluated": True,
         "oos_eligible": len(reasons) == 0,
@@ -1254,7 +1269,14 @@ def _assert_sortino_return_coherence(oos_metrics: dict, *, tol: float = 1e-4) ->
     auf Log-Returns umgestellt ist, gilt die Kohärenz PER KONSTRUKTION (Σ log(1+rᵢ) = log(1+
     total_return)) — eine hier noch auftretende Verletzung ist damit ein ECHTER Bug, kein
     erwartetes Restrauschen mehr. Siehe `automation.optimizer.invariants.check_log_return_coherence`
-    (harter Regressionswächter im #742-Report, im Gegensatz zu diesem WARNING-Pfad hier)."""
+    (harter Regressionswächter im #742-Report, im Gegensatz zu diesem WARNING-Pfad hier).
+
+    Issue #801 — die „PER KONSTRUKTION"-Garantie gilt NUR unter der Vorbedingung, dass die
+    Equity-Kurve während des gesamten Fensters strikt positiv blieb (``assert_positive_equity``)
+    UND jeder Log-Return finit ist (``PERIOD_RETURNS_NOT_FINITE``-Guard in ``_calculate_stats``).
+    Beide Fälle setzen ``equity_ruined=True`` und leeren ``period_rets`` VOR diesem Check —
+    eine Kurve mit Nulldurchgang erreicht diese Funktion also nie mit einem undefinierten
+    Log-Return; sie erreicht sie mit ``sortino_ratio=None`` (früher Return oben, kein Trigger)."""
     tr = oos_metrics.get("total_return")
     sr = oos_metrics.get("sortino_ratio")
     if tr is None or sr is None:
@@ -1269,9 +1291,40 @@ def _assert_sortino_return_coherence(oos_metrics: dict, *, tol: float = 1e-4) ->
             "müssen kohärent sein (derselbe Equity-Pfad).", sr, tr, tol,
         )
         oos_metrics["oos_coherence_violation"] = True
+        # Issue #804 — strukturierter Rueckkanal: dieselbe Verletzung zusaetzlich in
+        # oos_metrics['inference_diagnostics'] (existiert bereits, sobald _calculate_stats zuvor
+        # lief) statt ausschliesslich im Subprozess-Log, das der Elternprozess nie sieht.
+        oos_metrics.setdefault("inference_diagnostics", []).append({
+            "code": "COHERENCE_INVARIANT_VIOLATION",
+            "detail": f"sign(oos_sortino={sr:.6g}) != sign(oos_total_return={tr:.6g}) bei "
+                     f"|return| > {tol:.0e}.",
+            "value": sr,
+        })
 
 
-def assert_return_series_identity(total_return: float, period_rets, *, tol: float = 1e-9) -> bool:
+def assert_positive_equity(mtm_series) -> tuple[bool, int]:
+    """Issue #801 — Positivitäts-Gate auf der Equity-Kurve. Ein ``AccountType.MARGIN``-Konto
+    (gehebelte 1h-Krypto-Notional) kann während des Backtests durch Null gehen — das ist ein
+    REALER Zustand, kein Randfall (empirisch: 44,3 % der Kurven mit Nulldurchgang liefern einen
+    ENDLICHEN, aber VORZEICHENVERKEHRTEN Sortino, Monte-Carlo-Beleg im Issue-Katalog). Sobald die
+    Kurve einmal ≤ 0 wird, ist jede nachfolgende Log-Rendite (``log(mtm_t/mtm_{t-1})``) undefiniert
+    (Division durch/Logarithmus von ≤ 0) — die Inferenz darf dann nicht stillschweigend auf einer
+    Teilmenge der Bars weiterrechnen.
+
+    Rückgabe ``(True, -1)``, wenn die gesamte Serie strikt positiv ist, sonst
+    ``(False, erster_nicht_positiver_index)``. Rein (kein I/O, keine Mutation)."""
+    if mtm_series is None or len(mtm_series) == 0:
+        return True, -1
+    import numpy as np
+    values = mtm_series.to_numpy(dtype=float)
+    non_positive = np.where(values <= 0.0)[0]
+    if non_positive.size == 0:
+        return True, -1
+    return False, int(non_positive[0])
+
+
+def assert_return_series_identity(total_return: float, period_rets, *, tol: float = 1e-9,
+                                  diagnostics: list | None = None) -> bool:
     """Issue #771 — die #756-Identität ``Σ log(1+rᵢ) = log(1+total_return)`` MASCHINELL geprüft,
     statt nur im Docstring behauptet (AGENTS.md Pitfall #230). Gilt PER KONSTRUKTION genau dann,
     wenn ``total_return`` und ``period_rets`` aus DERSELBEN Bar-Menge stammen — nach #771 ist das
@@ -1279,26 +1332,87 @@ def assert_return_series_identity(total_return: float, period_rets, *, tol: floa
     (nicht-kontiguierliche Segmente) kann eine Restlücke bleiben (siehe ``NON_CONTIGUOUS_FOLD_
     SEGMENTS``-Telemetrie in ``_calculate_stats``).
 
-    ``period_rets`` ist die pandas-Series der LOG-Returns (``np.log1p(mtm_series.pct_change())``).
-    Rückgabe ``True`` bei einer Verletzung (für Tests/Telemetrie) — ERROR-Log +
-    ``RETURN_SERIES_IDENTITY_VIOLATION``-Event, ändert selbst NIE ``total_return``/``period_rets``
-    (reine Diagnose, kein Reward-Pfad)."""
+    ``period_rets`` ist die pandas-Series der LOG-Returns (algebraisch aus ``np.diff(np.log(mtm))``
+    seit #801, siehe ``_calculate_stats``). Rückgabe ``True`` bei einer Verletzung (für
+    Tests/Telemetrie) — ERROR-Log + ``RETURN_SERIES_IDENTITY_VIOLATION``-Event, ändert selbst NIE
+    ``total_return``/``period_rets`` (reine Diagnose, kein Reward-Pfad).
+
+    Issue #801 — ``total_return <= -1`` macht ``math.log1p`` NICHT „keine Verletzung", sondern
+    ist der KATASTROPHALSTE Fall: ein Konto, das mehr als sein volles Kapital verloren hat, kann
+    per Definition keine wohldefinierte Log-Return-Identität haben. Der frühere Code fing das
+    ``ValueError`` ab und lieferte ``False`` — genau der Bug, der 35 Study-Abbrüche mit einer
+    NACHWEISLICH FALSCHEN Begründung erzeugte (die Kurve war nicht „inkohärent aggregiert", sie
+    war schlicht ruiniert). Dieser Zustand wird jetzt als ``RETURN_SERIES_IDENTITY_UNDEFINED``
+    telemetriert und als Verletzung (``True``) gewertet.
+
+    Issue #804 — ``diagnostics`` (optional, Default ``None``) ist die strukturierte Rueckkanal-Liste
+    (``metrics['inference_diagnostics']``): jede hier geloggte Verletzung wird ZUSAETZLICH als
+    ``{'code', 'detail', 'value'}``-Dict angehaengt, falls eine Liste uebergeben wird. Root-Cause
+    #804: alle vier Inferenzpfad-Diagnosen liefen bislang NUR ueber ``logging`` im Backtest-
+    SUBPROZESS (``runner.py``, ``subprocess.run(capture_output=True)``) — der Optimizer-Elternprozess
+    (und damit der `#742`-Report) sah davon NICHTS, der Log-Stream landete in einer Datei, die kein
+    Aggregator liest und die #794 Sekunden spaeter loescht. ``None`` (Default, alle Bestandsaufrufer)
+    bleibt bit-identisch (kein Diagnostics-Overhead ausserhalb von `_calculate_stats`)."""
     if period_rets is None or len(period_rets) == 0:
         return False
     try:
-        log_sum = float(period_rets.sum())
         target = math.log1p(float(total_return))
+    except ValueError:
+        import logging
+        logging.getLogger("optimizer").error(
+            "RETURN_SERIES_IDENTITY_UNDEFINED (#801): total_return=%.6g <= -1 — log1p(1+total_return) "
+            "ist nicht definierbar (Equity-Kurve durch/unter Null). Das ist die STÄRKSTE mögliche "
+            "Verletzung der #756-Identität, nicht 'keine Verletzung'.",
+            total_return,
+        )
+        if diagnostics is not None:
+            diagnostics.append({
+                "code": "RETURN_SERIES_IDENTITY_UNDEFINED",
+                "detail": "total_return <= -1 — log1p(1+total_return) nicht definierbar.",
+                "value": float(total_return),
+            })
+        return True
+    except (TypeError, OverflowError):
+        return False
+    try:
+        # Issue #801 (Pitfall #240) — skipna=False erzwungen: eine stillschweigend NaN-reduzierte
+        # Summe waere eine Aussage ueber eine Teilmenge der Bars, keine ueber die volle Serie.
+        log_sum = float(period_rets.sum(skipna=False))
     except (TypeError, ValueError, OverflowError):
         return False
+    if not math.isfinite(log_sum):
+        import logging
+        logging.getLogger("optimizer").error(
+            "PERIOD_RETURNS_NOT_FINITE (#801): Σlog(1+rᵢ) ist nicht endlich (NaN/±inf) — die "
+            "Renditeserie der Inferenz enthält einen nicht-finiten Wert.",
+        )
+        if diagnostics is not None:
+            diagnostics.append({
+                "code": "PERIOD_RETURNS_NOT_FINITE",
+                "detail": "Σlog(1+rᵢ) ist nicht endlich (NaN/±inf).",
+                "value": log_sum,
+            })
+        return True
+    # Issue #801 — Toleranz von einer rein ABSOLUTEN (1e-9) auf eine zusätzlich RELATIVE Schranke
+    # gehoben: bei T ≈ 4000+ Summanden akkumuliert Gleitkomma-Rundung über eine absolute
+    # 1e-9-Schranke hinaus, ohne dass die Identität tatsächlich verletzt ist.
+    eff_tol = max(tol, 1e-12 * abs(log_sum))
     gap = log_sum - target
-    if abs(gap) > tol:
+    if abs(gap) > eff_tol:
         import logging
         logging.getLogger("optimizer").error(
             "RETURN_SERIES_IDENTITY_VIOLATION (#771): Σlog(1+rᵢ)=%.10g != log(1+total_return)=%.10g "
-            "(Differenz=%.3e > tol=%.0e) — total_return und die Renditeserie der Inferenz stammen "
+            "(Differenz=%.3e > tol=%.3e) — total_return und die Renditeserie der Inferenz stammen "
             "NICHT aus derselben Bar-Menge (#756-Identität verletzt).",
-            log_sum, target, gap, tol,
+            log_sum, target, gap, eff_tol,
         )
+        if diagnostics is not None:
+            diagnostics.append({
+                "code": "RETURN_SERIES_IDENTITY_VIOLATION",
+                "detail": f"Σlog(1+rᵢ)={log_sum:.10g} != log(1+total_return)={target:.10g} "
+                         f"(Δ={gap:.3e} > tol={eff_tol:.3e}).",
+                "value": gap,
+            })
         return True
     return False
 
@@ -1657,7 +1771,9 @@ def rolling_fold_is_oos_divergence(mtm_series, fold_boundaries: list[tuple[int, 
     def _bar_sortino(seg):
         if seg is None or len(seg) < 3:
             return None
-        rets = seg.pct_change().dropna()
+        # Issue #802 — fill_method=None explizit: pct_change()'s Default-Fuellverhalten
+        # unterscheidet sich zwischen pandas-Versionen (deprecated seit 2.1, entfernt in 3.0).
+        rets = seg.pct_change(fill_method=None).dropna()
         if len(rets) < 2:
             return None
         mean_r = float(rets.mean())
@@ -1716,6 +1832,31 @@ def _read_psr_bootstrap_resamples() -> int:
     except (OSError, ValueError, TypeError):
         val = 200
     _psr_bootstrap_resamples_cache = val
+    return val
+
+
+_period_returns_cap_cache: int | None = None
+
+
+def _read_period_returns_cap() -> int:
+    """Issue #798 (Speicher-Katalog #794-#800) — Kappungsgrenze der per-Perioden-Renditeserie
+    (``oos_period_returns``, Bootstrap-CI im Holdout-Gate) aus ``optimizer.json['period_returns_cap']``.
+    Ersetzt die zuvor hartkodierte ``[:2000]``-Konstante (Zero-Hardcoding). Gecached (Hot-Path).
+    Fehlt der Key (oder ist ungueltig) ⇒ Default 2000 (bit-identisch zum Vorwert)."""
+    global _period_returns_cap_cache
+    if _period_returns_cap_cache is not None:
+        return _period_returns_cap_cache
+    val = 2000
+    try:
+        cfg_path = config_dir() / "optimizer.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("period_returns_cap")
+            if raw is not None:
+                val = int(raw)
+    except (OSError, ValueError, TypeError):
+        val = 2000
+    _period_returns_cap_cache = val
     return val
 _default_round_trip_cost_bps_cache: dict[str, float] = {}
 
@@ -2046,6 +2187,17 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     if not pnl_list:
         return NULL
 
+    # Issue #804 — strukturierter Rueckkanal fuer die vier (jetzt: sieben) Inferenzpfad-Diagnosen
+    # dieser Funktion. Root-Cause #804: ``_calculate_stats`` laeuft im Backtest-SUBPROZESS
+    # (runner.py, ``subprocess.run(capture_output=True)``); ``logging.getLogger("optimizer").error``
+    # allein landet in ``trial_dir/logs/backtest_stdout.log`` — einer Datei, die kein Aggregator
+    # liest und die #794 Sekunden spaeter loescht. Jede Verletzung wird HIER ZUSAETZLICH als
+    # ``{'code', 'detail', 'value'}``-Dict gesammelt und am Ende als ``inference_diagnostics`` in
+    # das Rueckgabe-Dict gehoben — dasselbe Dict, das ``tournament_result.json`` persistiert, sodass
+    # ``run_optimization`` es im ELTERNPROZESS erneut emittieren kann (siehe parsing.py/
+    # run_optimization.py).
+    _inference_diagnostics: list[dict] = []
+
     n = len(pnl_list)
     wins = sum(1 for v in pnl_list if v > 0)
     gross_profit = sum(v for v in pnl_list if v > 0)
@@ -2128,6 +2280,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 "Beitrag; period_rets (falls verfuegbar) enthaelt ihn weiterhin.",
                 n_segments_skipped, len(mtm_frames),
             )
+            _inference_diagnostics.append({
+                "code": "NON_CONTIGUOUS_FOLD_SEGMENTS",
+                "detail": f"{n_segments_skipped} von {len(mtm_frames)} mtm_frames-Segment(en) "
+                         f"uebersprungen (leer/Startwert 0).",
+                "value": n_segments_skipped,
+            })
     else:
         # Fallback ohne verwertbare Equity-Kurve (z. B. spärliche OOS-Slices mit nur
         # einem Datenpunkt am Fold-Rand): sequentielles Aufzinsen der realisierten,
@@ -2156,33 +2314,91 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Aber halt, cummax() startet neu am Anfang der Sliced Serie!
         # Falls es eine Series ist, passt cummax() für die aktuell übergebene Sektion.
 
-        # Ableitung der per-Period Returns
-        # Erster Return darf kein NaN-Artefakt erzeugen, dropna() erledigt das
-        #
-        # Issue #756 — LOG-Returns statt einfacher Returns. Root-Cause: `total_return` (oben) ist
-        # GEOMETRISCH kompoundiert (Π(1+rᵢ) − 1); der Sortino-Zähler `period_rets.mean()` war bislang
-        # das ARITHMETISCHE Mittel derselben Renditesequenz. Die Differenz ist der Volatilitäts-Drag
-        # mean(r) − (1/T)·log(1+total_return) ≈ σ²/2 — für jede Strategie mit |mean(r)| < σ²/2
-        # (Edge nahe null, Vola dominant — genau das Regime aller hier gehandelten Strategien)
-        # divergieren die Vorzeichen von Sortino und total_return, OBWOHL beide aus derselben
-        # Equity-Kurve stammen (die #589/#620-„Kohärenzverletzung", bis zu 43 % einer Study).
-        # Mit Log-Returns gilt exakt Σ log(1+rᵢ) = log(1 + total_return) ⇒ sign(mean(log-returns))
-        # ≡ sign(total_return) PER KONSTRUKTION, für jede Sequenz, ohne Toleranz — die Prüfung in
-        # `_assert_sortino_return_coherence` fordert damit keine Invariante mehr, die die
-        # Konstruktion nicht liefern kann. `total_return` selbst bleibt UNVERÄNDERT die geometrische,
-        # ökonomisch korrekte Zielgrösse — nur die Renditedefinition der INFERENZ (Sortino-Zähler/
-        # -Nenner, PSR/DSR, Bootstrap-CI, PBO-Partitionierung) wechselt auf die additive Log-Skala.
-        period_rets = np.log1p(mtm_series.pct_change().dropna())
-        # Issue #619 — die per-Perioden-Returns durchreichen (gecappt), damit der Holdout-Pfad einen
-        # Stationary-Bootstrap-CI auf dem Sortino rechnen kann (ci_lower > 0 statt Punktschätzer).
-        # Seit #756 auf der Log-Skala (dieselbe Skala wie `sortino_period`/`oos_psr` unten).
-        _period_returns_list = [float(x) for x in period_rets.tolist()[:2000]]
-        # Issue #771 — die #756-Identität maschinell geprüft (nicht nur behauptet): Σlog(1+rᵢ) muss
-        # log(1+total_return) entsprechen, sofern total_return und period_rets aus derselben
-        # mtm_series stammen (nach #771 der Regelfall; der mtm_frames-Fallback kann bei
-        # nicht-kontiguierlichen Segmenten weiterhin eine Restlücke haben, siehe
-        # NON_CONTIGUOUS_FOLD_SEGMENTS oben).
-        return_series_identity_violation = assert_return_series_identity(total_return, period_rets)
+        # Issue #801 — Positivitäts-Gate VOR jeder Log-Rendite-Berechnung. Eine Equity-Kurve, die
+        # einmal ≤ 0 wird (reale Konsequenz eines gehebelten MARGIN-Kontos auf 1h-Krypto-Bars, kein
+        # Randfall), macht jede nachfolgende log(mtm_t/mtm_{t-1}) undefiniert — die Inferenz darf
+        # dann nicht stillschweigend über eine Teilmenge der Bars weiterrechnen (Monte-Carlo-Beleg
+        # im Issue-Katalog: 44,3 % Vorzeichen-Flips bei Kurven mit Nulldurchgang, siehe
+        # ``assert_positive_equity``-Docstring).
+        equity_is_positive, equity_ruin_index = assert_positive_equity(mtm_series)
+        equity_ruined = not equity_is_positive
+        if equity_ruined:
+            import logging
+            logging.getLogger("optimizer").error(
+                "EQUITY_NONPOSITIVE (#801): Equity-Kurve wird bei Bar-Index %d nicht-positiv "
+                "(Wert=%.6g) — der Trial gilt als ökonomisch ruiniert. sortino/psr/period_returns "
+                "werden NICHT berechnet (die Log-Return-Identität ist nur unter durchgehend "
+                "positiver Equity definiert); total_return bleibt erhalten (Telemetrie 'Konto "
+                "vernichtet').",
+                equity_ruin_index, float(mtm_series.iloc[equity_ruin_index]),
+            )
+            _inference_diagnostics.append({
+                "code": "EQUITY_NONPOSITIVE",
+                "detail": f"Equity-Kurve wird bei Bar-Index {equity_ruin_index} nicht-positiv "
+                         f"(Wert={float(mtm_series.iloc[equity_ruin_index]):.6g}).",
+                "value": float(mtm_series.iloc[equity_ruin_index]),
+            })
+            period_rets = pd.Series([], dtype=float)
+            _period_returns_list = []
+            _period_returns_truncated = False
+            return_series_identity_violation = False
+        else:
+            # Ableitung der per-Period Returns.
+            #
+            # Issue #756 — LOG-Returns statt einfacher Returns. Root-Cause: `total_return` (oben) ist
+            # GEOMETRISCH kompoundiert (Π(1+rᵢ) − 1); der Sortino-Zähler `period_rets.mean()` war bislang
+            # das ARITHMETISCHE Mittel derselben Renditesequenz. Die Differenz ist der Volatilitäts-Drag
+            # mean(r) − (1/T)·log(1+total_return) ≈ σ²/2 — für jede Strategie mit |mean(r)| < σ²/2
+            # (Edge nahe null, Vola dominant — genau das Regime aller hier gehandelten Strategien)
+            # divergieren die Vorzeichen von Sortino und total_return, OBWOHL beide aus derselben
+            # Equity-Kurve stammen (die #589/#620-„Kohärenzverletzung", bis zu 43 % einer Study).
+            # `total_return` selbst bleibt UNVERÄNDERT die geometrische, ökonomisch korrekte
+            # Zielgrösse — nur die Renditedefinition der INFERENZ (Sortino-Zähler/-Nenner, PSR/DSR,
+            # Bootstrap-CI, PBO-Partitionierung) wechselt auf die additive Log-Skala.
+            #
+            # Issue #801/#802 — ALGEBRAISCH (``np.diff(np.log(mtm))``) statt über den pandas
+            # pct-change/log1p-Umweg: auf einer (durch das Gate oben) garantiert positiven Serie
+            # gilt ``Σ period_rets = log(mtm[-1]) − log(mtm[0]) = log(1+total_return)`` EXAKT, ohne
+            # Zwischenschritt über ``1+r`` und ohne die ``log1p``-Definitionslücke bei ``r ≤ −1``
+            # (die Wurzel der 35 fälschlich abgebrochenen Studies im Issue-Katalog). Umgeht ausserdem
+            # ``pct_change()``s ``fill_method``-Semantik, die sich zwischen pandas-Versionen ändert
+            # (pandas ≥ 2.1 deprecated, ≥ 3.0 kein Filling mehr — #802).
+            log_px = np.log(mtm_series.to_numpy(dtype=float))
+            period_rets = pd.Series(np.diff(log_px), index=mtm_series.index[1:])
+
+            # Issue #801 (Pitfall #240) — Endlichkeits-Check VOR jeder Aggregation statt eines
+            # impliziten ``skipna=True``: ein nicht-finiter Wert trotz positiver Equity wäre ein
+            # unerwarteter Datenfehler, kein Normalfall, der stillschweigend übersprungen werden darf.
+            if not np.isfinite(period_rets.to_numpy()).all():
+                import logging
+                logging.getLogger("optimizer").error(
+                    "PERIOD_RETURNS_NOT_FINITE (#801): die algebraische Log-Rendite-Serie enthält "
+                    "einen nicht-finiten Wert trotz positiver Equity — unerwarteter Datenfehler; "
+                    "sortino/psr werden NICHT berechnet.",
+                )
+                _inference_diagnostics.append({
+                    "code": "PERIOD_RETURNS_NOT_FINITE",
+                    "detail": "algebraische Log-Rendite-Serie enthaelt einen nicht-finiten Wert "
+                             "trotz positiver Equity.",
+                    "value": None,
+                })
+                equity_ruined = True  # dieselbe Konsequenz: keine Inferenz auf einer Restmenge.
+                period_rets = pd.Series([], dtype=float)
+                _period_returns_list = []
+                _period_returns_truncated = False
+                return_series_identity_violation = False
+            else:
+                # Issue #619 — die per-Perioden-Returns durchreichen (gecappt), damit der Holdout-
+                # Pfad einen Stationary-Bootstrap-CI auf dem Sortino rechnen kann.
+                _period_returns_cap = _read_period_returns_cap()
+                _full_period_rets_list = period_rets.tolist()
+                _period_returns_list = [float(x) for x in _full_period_rets_list[:_period_returns_cap]]
+                _period_returns_truncated = len(_full_period_rets_list) > _period_returns_cap
+                # Issue #771/#801 — die #756-Identität maschinell geprüft (nicht nur behauptet):
+                # Σlog(1+rᵢ) muss log(1+total_return) entsprechen (jetzt PER KONSTRUKTION exakt,
+                # siehe assert_return_series_identity-Docstring).
+                return_series_identity_violation = assert_return_series_identity(
+                    total_return, period_rets, diagnostics=_inference_diagnostics)
 
         # Issue #510: Unified Calculation & Dynamic Frequency Fallback.
         annualization_factor = _get_annualization_factor(mtm_series)
@@ -2210,15 +2426,17 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             sortino = None
         else:
             # Issue #545: Target-Downside-Deviation (RMS without mean-centering)
+            # Issue #801 (Pitfall #240) — skipna=False erzwungen: eine NaN-uebersprungene Aggregation
+            # waere eine Aussage ueber eine Teilmenge der Bars, keine ueber die volle Serie.
             downside_diff = (period_rets - mar).clip(upper=0.0)
-            dd_dev = float(np.sqrt((downside_diff ** 2).mean()))
+            dd_dev = float(np.sqrt((downside_diff ** 2).mean(skipna=False)))
 
             if pd.isna(dd_dev):
                 sortino = None
             else:
                 downside_floor = _read_sortino_downside_floor()
                 dd_dev = max(dd_dev, downside_floor)
-                mean_ret = period_rets.mean()
+                mean_ret = period_rets.mean(skipna=False)
                 # Issue #614 — der PER-PERIODEN-Sortino ist die statistisch tragende Grösse (fliesst
                 # in die PSR); der annualisierte Wert ist reine Telemetrie (sortino_ratio/annualized).
                 sortino_period = float((mean_ret - mar) / dd_dev)
@@ -2241,6 +2459,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                         "verworfen (#614/#665; sortino/psr=None).",
                         sortino_annualized, sortino_numeric_guard, _eff_guard, len(period_rets), dd_dev,
                     )
+                    _inference_diagnostics.append({
+                        "code": "SORTINO_GUARD_TRIPPED",
+                        "detail": f"|sortino_annualized|={sortino_annualized:.6g} > "
+                                 f"guard={_eff_guard:.6g} (n_periods={n_periods}, dd_dev={dd_dev:.6g}).",
+                        "value": float(sortino_annualized),
+                    })
                     sortino = None
                     sortino_period = None
                     sortino_annualized = None
@@ -2266,6 +2490,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
+        equity_ruined = False  # Issue #801 — ohne Equity-Kurve nicht beurteilbar, Default False.
         sortino = None
         sortino_period = None
         sortino_annualized = None
@@ -2275,6 +2500,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         n_periods = 0
         ret_skew, ret_kurtosis = 0.0, 3.0
         _period_returns_list = []
+        _period_returns_truncated = False
         dd_excess = 0.0
         return_series_identity_violation = False
 
@@ -2370,6 +2596,19 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "ret_skew":           float(ret_skew),
         "ret_kurtosis":       float(ret_kurtosis),
         "period_returns":     _period_returns_list,   # Issue #619 — für den Bootstrap-CI im Holdout.
+        # Issue #798 — True, sobald n_periods > period_returns_cap: ein gekappter Bootstrap-Input
+        # darf nie stillschweigend als vollstaendig gelten (die Serie selbst bleibt gekappt gleich).
+        "period_returns_truncated": bool(_period_returns_truncated),
+        # Issue #801 — True, sobald die Equity-Kurve waehrend des Fensters nicht-positiv wurde
+        # (siehe assert_positive_equity/EQUITY_NONPOSITIVE oben) — der Trial gilt dann als
+        # oekonomisch ruiniert; sortino/psr sind None, total_return bleibt erhalten.
+        "equity_ruined": bool(equity_ruined),
+        # Issue #804 — strukturierter Rueckkanal der Inferenzpfad-Diagnosen dieser Funktion
+        # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
+        # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED), damit run_optimization sie im
+        # ELTERNPROZESS-Log erneut emittieren kann (siehe Docstring oben). Leer, wenn keine
+        # Verletzung auftrat (Normalfall).
+        "inference_diagnostics": list(_inference_diagnostics),
         "calmar_ratio":  float(calmar) if calmar is not None else None,
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),

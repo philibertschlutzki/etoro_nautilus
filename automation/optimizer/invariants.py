@@ -289,7 +289,16 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     Ein Trial mit gesetztem ``oos_coherence_violation`` (dasselbe Flag, das
     ``_assert_sortino_return_coherence`` stempelt) ist damit ein ECHTER Aggregationsdefekt, keine
     erwartete Restrate mehr. ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (#621-
-    Konvention, dieselbe Form wie ``check_reward_term_variance``)."""
+    Konvention, dieselbe Form wie ``check_reward_term_variance``).
+
+    Issue #803 — dieser REPORT-Check bleibt bestehen (Regressionswächter über den GESAMTEN Lauf),
+    ist aber seit #803 nicht mehr die einzige Instanz, die auf ``oos_coherence_violation`` reagiert:
+    ``backtest_runner._evaluate_oos_eligibility`` disqualifiziert JEDEN betroffenen Trial bereits
+    individuell (``REJECT_OOS_INVALID_METRICS``), und
+    ``run_optimization.check_study_coherence_violation_rate``/
+    ``coherence_violation_early_abort_callback`` beenden eine systematisch betroffene Study bereits
+    waehrend ``study.optimize()``. Ein ``passed=False`` hier ist damit ein STAERKERES Signal als vor
+    #803 (die Trial-/Study-Ebene haetten dieselbe Kohorte bereits abgefangen)."""
     violating = [i for i, t in enumerate(trials) if t.get("oos_coherence_violation") is True]
     passed = not violating
     return InvariantResult(
@@ -301,6 +310,41 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
                 f"{len(violating)} Trial(s) mit sign(oos_sortino_period) != sign(oos_total_return) "
                 "TROTZ Log-Return-Umstellung (#756) — echter Aggregationsdefekt, nicht die vor #756 "
                 "erwartete Volatilitäts-Drag-Restrate."),
+    )
+
+
+def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
+    """Issue #804 — sechster Regressionswächter: über die GESAMTE Study hinweg dürfen KEINE
+    strukturierten Inferenzpfad-Diagnosen (``EQUITY_NONPOSITIVE``, ``PERIOD_RETURNS_NOT_FINITE``,
+    ``RETURN_SERIES_IDENTITY_VIOLATION``/``_UNDEFINED``, ``NON_CONTIGUOUS_FOLD_SEGMENTS``,
+    ``SORTINO_GUARD_TRIPPED``, ``COHERENCE_INVARIANT_VIOLATION`` — aus ``backtest_runner.
+    _calculate_stats``, je Trial unter ``inference_diagnostics`` gestempelt, #804) aufgetreten sein.
+
+    Root-Cause #804: diese Diagnosen liefen bislang NUR im Backtest-SUBPROZESS über ``logging`` —
+    0 Treffer über ein vollstaendiges Lauf-Log trotz 35 ``STUDY_ABORTED_ON_INVARIANT`` im
+    Elternprozess. Dieser Check macht ihre Abwesenheit (oder Praesenz) zu einer MASCHINELL
+    ueberpruefbaren #742-Report-Aussage, nicht nur einer live emittierten Log-Zeile (siehe
+    ``run_optimization._reemit_inference_diagnostics`` fuer die Live-Emission je Trial).
+
+    ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (#621-Konvention). Rein additiv/
+    observational — WARNING-Klasse, kein Abbruch (analog ``check_log_return_coherence``)."""
+    total = 0
+    by_code: dict[str, int] = {}
+    for t in trials:
+        for diag in t.get("inference_diagnostics") or ():
+            code = diag.get("code") if isinstance(diag, dict) else None
+            if code:
+                total += 1
+                by_code[code] = by_code.get(code, 0) + 1
+    passed = total == 0
+    return InvariantResult(
+        name="check_inference_diagnostics_absent",
+        passed=passed,
+        expected=0,
+        actual=total,
+        detail=("OK" if passed else
+                f"{total} Inferenzpfad-Diagnose(n) über die Study ({by_code}) — siehe "
+                f"INFERENCE_DIAGNOSTIC-Ereignisse im Optimizer-Log für Details je Trial."),
     )
 
 

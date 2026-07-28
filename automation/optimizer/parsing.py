@@ -121,6 +121,20 @@ class TournamentMetrics:
     # (asset-class-aufgelöst statt einer TSLA-kalibrierten globalen Konstante). None, wenn Spread/
     # Kommission nicht auflösbar waren (rückwärtskompatibel).
     round_trip_cost_bps: float | None = None
+    # Issue #798 — True, sobald backtest_runner die Perioden-Renditeserie auf period_returns_cap
+    # gekappt hat (n_periods > cap). False ⇒ rückwärtskompatibel zu Pre-#798-JSONs.
+    period_returns_truncated: bool = False
+    # Issue #801 — True, sobald die OOS-Equity-Kurve waehrend des Fensters nicht-positiv wurde
+    # (backtest_runner.assert_positive_equity/EQUITY_NONPOSITIVE). Der Trial gilt dann als
+    # oekonomisch ruiniert (sortino/psr sind None, total_return bleibt erhalten). False ⇒
+    # rückwärtskompatibel zu Pre-#801-JSONs.
+    oos_equity_ruined: bool = False
+    # Issue #804 — die strukturierten Inferenzpfad-Diagnosen aus backtest_runner._calculate_stats
+    # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
+    # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED/COHERENCE_INVARIANT_VIOLATION), gehoben aus
+    # ``oos_metrics['inference_diagnostics']`` — Tupel von ``{'code','detail','value'}``-Dicts.
+    # Leeres Tuple ⇒ keine Verletzung ODER Pre-#804-JSON (rückwärtskompatibel).
+    inference_diagnostics: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -207,6 +221,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #774 — dieselbe Round-Trip-Kosten-Telemetrie, die bereits das Expectancy-Gate speist
     # (backtest_runner._evaluate_oos_eligibility, #562/#684). None-safe.
     round_trip_cost_bps = oos_metrics.get("round_trip_cost_bps")
+    # Issue #798 — Truncation-Telemetrie fuer die gekappte Perioden-Renditeserie (None-safe ⇒ False,
+    # rückwärtskompatibel zu Pre-#798-JSONs, die das Feld noch nicht schreiben).
+    period_returns_truncated = bool(oos_metrics.get("period_returns_truncated") or False)
+    # Issue #801 — Ruin-Telemetrie (None-safe ⇒ False, rückwärtskompatibel zu Pre-#801-JSONs).
+    oos_equity_ruined = bool(oos_metrics.get("equity_ruined") or False)
+    # Issue #804 — strukturierte Inferenzpfad-Diagnosen (None-safe ⇒ leeres Tuple).
+    inference_diagnostics = tuple(oos_metrics.get("inference_diagnostics") or ())
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -323,7 +344,26 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_p95_bars_held=float(oos_p95_bars_held) if oos_p95_bars_held is not None else None,
         # Issue #774 — Round-Trip-Kosten (bps), None-safe.
         round_trip_cost_bps=float(round_trip_cost_bps) if round_trip_cost_bps is not None else None,
+        period_returns_truncated=period_returns_truncated,
+        oos_equity_ruined=oos_equity_ruined,
+        inference_diagnostics=inference_diagnostics,
     )
+
+    # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,
+    # nachdem sie hier in metrics.oos_period_returns gehoben wurde (confirm._study_pbo/CSCV und der
+    # Holdout-Bootstrap-CI lesen aus trial.user_attrs, nicht aus tournament_result.json). Strippen +
+    # Zurueckschreiben macht ein erhaltenes tournament_result.json (der aktuell beste Trial, #794)
+    # schlanker, unabhaengig davon, ob dieser konkrete Trial am Ende erhalten bleibt (best-effort,
+    # ein Schreibfehler darf das bereits vollstaendige Parsing-Ergebnis nicht ungueltig machen).
+    if oos_metrics.pop("period_returns", None) is not None:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+        except OSError:
+            logging.getLogger("optimizer").debug(
+                "[#798] Konnte gekürztes tournament_result.json %s nicht zurückschreiben "
+                "(non-fatal, Parsing-Ergebnis bleibt gültig).", path,
+            )
 
     # Pre-Return Invarianten-Check
     if data.get("universe_size") == 1:

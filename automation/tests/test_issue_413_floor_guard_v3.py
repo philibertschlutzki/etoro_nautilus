@@ -56,11 +56,19 @@ def _warned(recs):
 
 
 def test_guard_fires_when_no_trial_evaluable_with_shaped_values():
-    """KERNFALL (den der alte Guard verschluckt): Sub-Floor-Werte −9.85…−9.93, alle unevaluable."""
+    """KERNFALL (den der alte Guard verschluckt): Sub-Floor-Werte −9.85…−9.93, alle unevaluable.
+
+    Issue #805 — min_for_structural ist seit #805 n_startup_trials + struktureller Zuschlag (hier
+    kein strategy=... uebergeben ⇒ flacher Default-Zuschlag 3) statt n_startup_trials + floor_
+    plateau_k(=0): 6 statt 3 abgeschlossene Trials noetig (kein Abbruchurteil mehr auf NULL
+    modellierten Trials)."""
     lg, recs = _capturing_logger("test413a")
     trials = [_FakeTrial(-9.85, oos_evaluated=False),
               _FakeTrial(-9.90, oos_evaluated=False),
-              _FakeTrial(-9.93, oos_evaluated=False)]
+              _FakeTrial(-9.93, oos_evaluated=False),
+              _FakeTrial(-9.87, oos_evaluated=False),
+              _FakeTrial(-9.91, oos_evaluated=False),
+              _FakeTrial(-9.88, oos_evaluated=False)]
     study = _FakeStudy(trials)
     ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=3, logger=lg)
     assert _warned(recs), "Guard MUSS bei 0 evaluable Trials feuern, auch unter −9.75"
@@ -77,8 +85,9 @@ def test_guard_silent_when_some_trial_evaluable():
 
 
 def test_guard_warns_once_per_study():
+    # Issue #805 — 6 statt 5 Trials (min_for_structural = n_startup_trials(3) + Default-Zuschlag(3)).
     lg, recs = _capturing_logger("test413c")
-    trials = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(5)]
+    trials = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(6)]
     study = _FakeStudy(trials)
     for _ in range(4):
         ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=3, logger=lg)
@@ -114,7 +123,7 @@ def _isolate(monkeypatch, tmp_path):
 def _fake_backtest(payload):
     import json
 
-    def _fake(trial_dir, manifest_path):
+    def _fake(trial_dir, manifest_path, **_kwargs):
         out = Path(trial_dir) / "tournament_result.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload), "utf-8")

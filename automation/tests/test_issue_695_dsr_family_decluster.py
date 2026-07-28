@@ -115,7 +115,7 @@ def _write_result(trial_dir, payload):
 def _cohort_factory(sortino_periods, n_periods=200):
     it = itertools.cycle(sortino_periods)
 
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         sp = next(it)
         return _write_result(trial_dir, _result_payload(
             sortino_ratio=sp, dd=0.05, sortino_period=sp, n_periods=n_periods))
@@ -123,7 +123,7 @@ def _cohort_factory(sortino_periods, n_periods=200):
 
 
 def _holdout_factory(global_params, *, symbol_result, global_result):
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         params = json.loads(Path(manifest_path).read_text("utf-8"))["strategies"][0]["params"]
         payload = global_result if params == global_params else symbol_result
         return _write_result(trial_dir, payload)

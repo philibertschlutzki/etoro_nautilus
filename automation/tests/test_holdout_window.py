@@ -47,7 +47,7 @@ def test_confirm_passes_holdout_days_as_oos_override(monkeypatch):
     def spy_build(**kw):
         captured.update(kw)
         return (Path("/tmp/x"), Path("/tmp/x/m.json"))
-    def fake_run(td, mp): return Path("/tmp/x/tournament_result.json")
+    def fake_run(td, mp, **kw): return Path("/tmp/x/tournament_result.json")
 
     def cmod_dummy_metrics():
         return TournamentMetrics(

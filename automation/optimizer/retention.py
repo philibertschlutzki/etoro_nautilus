@@ -23,6 +23,8 @@ import logging
 import shutil
 from pathlib import Path
 
+import optuna
+
 from automation.optimizer.manifest import WORK
 
 
@@ -116,4 +118,104 @@ def prune_completed_trial_dirs(
                 trial_dir, study_name,
             )
         pruned.append(trial_dir)
+    return pruned
+
+
+def release_trial_dir(trial_dir: Path, *, keep: bool, logger: logging.Logger | None = None) -> bool:
+    """Issue #794 — kontinuierliche Trial-Retention (Haupthebel, Gegenstueck zur #733-Study-Ebene).
+
+    Löscht ``trial_dir`` SOFORT per ``shutil.rmtree``, wenn ``keep=False``. Das Trial-Verzeichnis
+    wird nach dem Parsen des Ergebnisses von KEINEM Konsumenten mehr gelesen — Ausnahmen sind der
+    aktuell beste Trial der Study (Confirm/Holdout referenziert ihn) und ein Trial, dessen
+    Subprozess fehlgeschlagen ist (Forensik). Gibt ``True`` zurück, wenn tatsächlich gelöscht
+    wurde (``False`` bei ``keep=True`` oder wenn das Verzeichnis bereits fehlt — idempotent)."""
+    logger = logger or logging.getLogger("optimizer")
+    trial_dir = Path(trial_dir)
+    if keep or not trial_dir.exists():
+        return False
+    try:
+        shutil.rmtree(trial_dir)
+    except OSError as e:
+        logger.warning("[#794] Konnte Trial-Verzeichnis %s nicht freigeben: %s", trial_dir, e)
+        return False
+    return True
+
+
+def release_non_best_trial_dirs(
+    study,
+    *,
+    work_dir: Path | None = None,
+    logger: logging.Logger | None = None,
+) -> list[Path]:
+    """Issue #794 — kontinuierliche Trial-Retention als Optuna-Callback: nach JEDEM abgeschlossenen
+    Trial wird der gesamte ``trial_*/``-Baum dieser Study gegen die aktuell gerechtfertigte Menge
+    abgeglichen — der/die aktuell beste(n) eligible(n) Trial(s) (``study.best_trial``/
+    ``study.best_trials`` im Pareto-Fall, defensiv über ``try/except ValueError`` für Studies ohne
+    abgeschlossenen Trial) PLUS jeder Trial, dessen Zustand NICHT ``COMPLETE`` ist (PRUNED/FAIL —
+    der Forensik-Pfad für einen fehlgeschlagenen Subprozess, siehe ``runner.BacktestRunError``).
+
+    Bewusst als Neuabgleich statt als manuell verfolgter „vorheriger bester Trial": ein Wechsel des
+    besten Trials gibt seinen Vorgänger automatisch frei, ohne eine zusätzliche Zustandsvariable
+    zu pflegen (self-healing — kein verwaister Zeiger möglich). Fail-open pro Verzeichnis (siehe
+    ``release_trial_dir``); ein Fehler bei einem Pfad überspringt nur diesen.
+    """
+    if work_dir is None:
+        work_dir = WORK
+    logger = logger or logging.getLogger("optimizer")
+    study_dir = work_dir / study.study_name
+    released: list[Path] = []
+    if not study_dir.exists():
+        return released
+
+    keep_numbers: set[int] = set()
+    try:
+        if len(getattr(study, "directions", None) or ["maximize"]) > 1:
+            keep_numbers.update(t.number for t in study.best_trials)
+        else:
+            keep_numbers.add(study.best_trial.number)
+    except ValueError:
+        pass  # keine abgeschlossenen (feasiblen) Trials -> nichts als "bester" zu schuetzen
+
+    for t in study.trials:
+        if t.state != optuna.trial.TrialState.COMPLETE:
+            keep_numbers.add(t.number)
+
+    for trial_dir in sorted(study_dir.glob("trial_*")):
+        if not trial_dir.is_dir():
+            continue
+        try:
+            n = int(trial_dir.name.rsplit("_", 1)[-1])
+        except ValueError:
+            continue
+        if n in keep_numbers:
+            continue
+        if release_trial_dir(trial_dir, keep=False, logger=logger):
+            released.append(trial_dir)
+    return released
+
+
+def prune_orphaned_trial_dirs(
+    work_dir: Path | None = None,
+    *,
+    dry_run: bool = False,
+    logger: logging.Logger | None = None,
+) -> list[Path]:
+    """Issue #794 — Lauf-Start-Purge: räumt JEDES ``trial_*/``-Verzeichnis unter JEDEM ``study_*/``
+    ab, das weder von ``champions/`` noch von einem offenen ``proposal_*.json`` referenziert wird.
+    Räumt die Altlast abgebrochener Vorläufe ab, bevor ein neuer Lauf beginnt. Sicher, solange kein
+    Sweep läuft: ein Trial-Verzeichnis trägt keine Ergebnisse, die nicht bereits in der Optuna-
+    SQLite (``trial.user_attrs``) oder in ``champions/``/``proposal_*.json`` stehen (siehe
+    Issue-Katalog §6, manuelle Vorwegnahme)."""
+    if work_dir is None:
+        work_dir = WORK
+    logger = logger or logging.getLogger("optimizer")
+    pruned: list[Path] = []
+    if not work_dir.exists():
+        return pruned
+    keep = collect_referenced_trial_dirs(work_dir)
+    for study_dir in sorted(work_dir.glob("study_*")):
+        if not study_dir.is_dir():
+            continue
+        pruned.extend(prune_completed_trial_dirs(
+            study_dir.name, keep, work_dir=work_dir, dry_run=dry_run, logger=logger))
     return pruned

@@ -84,6 +84,8 @@ def test_run_per_symbol_sweep_rejects_duplicate_study_names(monkeypatch, tmp_pat
 def test_run_per_symbol_sweep_accepts_unique_study_names(monkeypatch, tmp_path):
     """Eindeutige Paare passieren die Assertion und werden dispatcht."""
     pairs = [("S", "A.ETORO", "OK"), ("S", "B.ETORO", "OK")]
+    # Issue #799 — der Sweep-Fortschritts-Checkpoint schreibt nach WORK; isoliert halten.
+    monkeypatch.setattr(sweep, "WORK", tmp_path)
     monkeypatch.setattr(sweep, "enumerate_tunable_pairs", lambda *a, **k: pairs)
     monkeypatch.setattr(sweep, "count_available_bars", lambda *a, **k: {})
     monkeypatch.setattr(sweep, "_load_gate_config", lambda: _GATE_CFG)

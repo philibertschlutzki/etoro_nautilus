@@ -40,7 +40,7 @@ def _isolate(monkeypatch, tmp_path):
 
 def _factory_by_params(tuned_keyvals, sortino_tuned, sortino_global, dd=0.05):
     """High Sortino when the manifest params carry the tuned values, else low."""
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         params = json.loads(Path(manifest_path).read_text("utf-8"))["strategies"][0]["params"]
         is_tuned = all(params.get(k) == v for k, v in tuned_keyvals.items())
         s = sortino_tuned if is_tuned else sortino_global

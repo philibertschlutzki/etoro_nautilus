@@ -56,7 +56,7 @@ def _isolate(monkeypatch, tmp_path):
 
 
 def _fake_backtest_factory():
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         out = Path(trial_dir) / "tournament_result.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({"fully_eligible_pairs": 1, "aggregate_winner": {

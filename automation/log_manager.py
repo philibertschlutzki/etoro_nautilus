@@ -78,12 +78,30 @@ def bind_study_context(*, strategy: str | None = None, symbol: str | None = None
     try:
         yield
     finally:
+        # Issue #800 — ein ``ValueError`` aus ``ContextVar.reset()`` ("was created in a different
+        # Context") bedeutet NIE "keine Verletzung": der Token wurde in einem Context erzeugt, der
+        # beim Reset-Versuch nicht mehr der aktive ist (z. B. GC-Finalisierung eines Generators nach
+        # einem Fehler VOR dem ``__exit__``, siehe #800-Root-Cause). Das darf die eigentliche
+        # Ausnahme, die gerade propagiert, nicht unter 35 Folgefehlern begraben — daher hier
+        # verschluckt (nur ``logger.debug``), NICHT erneut geworfen und NICHT print()ed.
         if tokens[0] is not None:
-            _current_strategy.reset(tokens[0])
+            try:
+                _current_strategy.reset(tokens[0])
+            except ValueError:
+                logging.getLogger("optimizer").debug(
+                    "[#800] _current_strategy.reset() Token-Mismatch (anderer Context) ignoriert.")
         if tokens[1] is not None:
-            _current_symbol.reset(tokens[1])
+            try:
+                _current_symbol.reset(tokens[1])
+            except ValueError:
+                logging.getLogger("optimizer").debug(
+                    "[#800] _current_symbol.reset() Token-Mismatch (anderer Context) ignoriert.")
         if tokens[2] is not None:
-            _current_study_name.reset(tokens[2])
+            try:
+                _current_study_name.reset(tokens[2])
+            except ValueError:
+                logging.getLogger("optimizer").debug(
+                    "[#800] _current_study_name.reset() Token-Mismatch (anderer Context) ignoriert.")
 
 
 def _current_study_context() -> dict[str, str | None]:

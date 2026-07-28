@@ -18,7 +18,7 @@ def _isolate(monkeypatch, tmp_path):
 
 
 def _fake_factory(captured):
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         m = json.loads(Path(manifest_path).read_text("utf-8"))
         captured.append(m)   # hold the manifest for assertions
         out = Path(trial_dir) / "tournament_result.json"

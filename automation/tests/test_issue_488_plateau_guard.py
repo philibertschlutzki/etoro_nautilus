@@ -43,7 +43,11 @@ def _capturing_logger(name):
     return lg, recs
 
 def test_json_event():
-    W_k = {"penalty_unevaluable_oos": -10.0, "unevaluable_shaping_span": 0.25, "n_startup_trials": 3, "floor_plateau_k": 5}
+    # Issue #805 — floor_plateau_k entfernt, ersetzt durch structural_min_modelled_trials_per_dim
+    # (hier ohne strategy=... uebergeben ⇒ flacher Zuschlag ceil(k)=5, bit-identisch zum
+    # urspruenglichen K=5 dieses Tests).
+    W_k = {"penalty_unevaluable_oos": -10.0, "unevaluable_shaping_span": 0.25, "n_startup_trials": 3,
+           "structural_min_modelled_trials_per_dim": 5}
     lg, recs = _capturing_logger("test488")
     trials = [_FakeTrial(-9.85, oos_evaluated=False) for _ in range(8)]
     study = _FakeStudy(trials)

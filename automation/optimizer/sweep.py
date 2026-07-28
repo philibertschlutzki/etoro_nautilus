@@ -23,7 +23,7 @@ from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
-from automation.optimizer.manifest import WORK
+from automation.optimizer.manifest import WORK, write_json_atomic
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
     load_global_best,
@@ -31,13 +31,17 @@ from automation.optimizer.run_optimization import (
     _sanitize,
     _preinit_study_storage,
     _dispose_storage,
+    derive_n_trials,
+    assert_structural_min_modelled_trials_valid,
 )
 from automation.optimizer.confirm import confirm_per_symbol_promotion as _confirm, export_symbol_proposal
 from automation.optimizer import champions
 from automation.optimizer import retention
+from automation.optimizer import disk_guard
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
+    check_bar_quality, diagnose_symbol_degeneracy, record_diagnosed_pair,
 )
 from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
@@ -146,6 +150,42 @@ def assert_strategy_space_parity(strategies: list[str]) -> None:
         )
 
 
+def _parse_version_tuple(version_str: str) -> tuple[int, ...]:
+    """Parst die fuehrenden numerischen Komponenten einer Versions-Zeichenkette (z. B. ``'2.3.3'``
+    -> ``(2, 3, 3)``); ein nicht-numerischer Suffix (rc/dev/post, z. B. ``'3.0.0.dev0+abc'``) bricht
+    das Parsing an dieser Stelle ab und liefert die bis dahin gelesenen Komponenten."""
+    parts: list[int] = []
+    for chunk in version_str.split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def assert_pandas_version_supported() -> None:
+    """Issue #802 — FAIL-LOUD beim Sweep-Start: die installierte ``pandas``-Version muss innerhalb
+    des in ``requirements.txt`` gepinnten Bereichs (``>=2.2,<4.0``) liegen. #801/#802 zeigten, dass
+    ``pct_change()``'s ``fill_method``-Semantik sich zwischen pandas 2.0/2.1/3.0 aenderte und die
+    #756-Log-Return-Identitaet dadurch eine Funktion der Installationsumgebung statt der
+    Konfiguration war — dieser Guard macht eine ungetestete pandas-Version zu einem expliziten
+    Abbruch statt eines stillen numerischen Unterschieds (Pitfall #237)."""
+    import pandas as pd
+    version = _parse_version_tuple(pd.__version__)
+    if version < (2, 2) or version >= (4, 0):
+        raise ValueError(
+            f"UNSUPPORTED_PANDAS_VERSION (#802): installierte pandas-Version {pd.__version__} "
+            f"liegt ausserhalb des unterstuetzten Bereichs >=2.2,<4.0 (siehe "
+            f"automation/requirements.txt) — die #756/#801-Log-Return-Identitaet ist nur in diesem "
+            f"Bereich versionsstabil verifiziert."
+        )
+
+
 def _assert_gate_reward_parity() -> None:
     """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
     ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität)."""
@@ -195,6 +235,78 @@ def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[s
                 n = 0
         out[sym] = n
     return out
+
+
+# Issue #807 — Sentinel-"Strategie" fuer symbolweite (statt paar-weise) diagnosed_pairs_cache-
+# Eintraege: EIN Eintrag pro degenerierten Symbol statt 14 unabhaengiger Strategie-Eintraege.
+_SYMBOL_DEGENERACY_SENTINEL_STRATEGY = "__SYMBOL_DATA_DEGENERATE__"
+
+
+def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = None, *,
+                                    max_ticks: int = 200_000) -> dict | None:
+    """Issue #807 — liest eine BESCHRAENKTE Stichprobe roher Quote-Ticks (``bid_price``/
+    ``ask_price``/``ts_event``, direkt via pyarrow — analog ``count_available_bars`` oben, OHNE die
+    volle NautilusTrader-``ParquetDataCatalog``-Materialisierung) und aggregiert sie zu
+    synthetischen 1h-Mid-Price-Bars (High/Low/Close) fuer die Bar-Qualitaetspruefung
+    (``sweep_diagnostics.check_bar_quality``).
+
+    Liest bewusst nur die LETZTEN ``max_ticks`` Zeilen (rueckwaerts ueber die Row-Groups) statt der
+    vollen Historie — haelt den Preflight unter der <2s-Vorgabe (#807-Akzeptanzkriterium)
+    unabhaengig von der Gesamtgroesse des Katalogs; die juengste Teilspanne ist fuer die
+    AKTUELLE Bar-Qualitaet ohnehin die massgebliche.
+
+    Rueckgabe ``None`` bei fehlender Datei, fehlenden Spalten, leerer Bar-Serie oder JEDEM
+    Lesefehler (fail-open — ein eigener Lesefehler darf den Sweep nie blockieren; Gate 1
+    [Datenspanne] bleibt die unabhaengige, bereits bestehende Absicherung)."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+    pq_file = Path(catalog_path) / "data" / "quote_tick" / symbol / "data.parquet"
+    if not pq_file.exists():
+        return None
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import pandas as pd
+        pf = pq.ParquetFile(str(pq_file))
+        cols = [c for c in ("bid_price", "ask_price", "ts_event") if c in pf.schema.names]
+        if len(cols) < 3:
+            return None
+        tables = []
+        n_read = 0
+        for rg in range(pf.metadata.num_row_groups - 1, -1, -1):
+            t = pf.read_row_group(rg, columns=cols)
+            tables.append(t)
+            n_read += t.num_rows
+            if n_read >= max_ticks:
+                break
+        table = pa.concat_tables(list(reversed(tables)))
+        df = table.to_pandas()
+        if len(df) > max_ticks:
+            df = df.tail(max_ticks)
+        if df.empty:
+            return None
+        df["mid"] = (df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0
+        df["ts"] = pd.to_datetime(df["ts_event"], unit="ns", utc=True)
+        df = df.set_index("ts").sort_index()
+        bars = df["mid"].resample("1h").agg(["max", "min", "last"]).dropna()
+        if bars.empty:
+            return None
+        return {
+            "highs": bars["max"].tolist(),
+            "lows": bars["min"].tolist(),
+            "closes": bars["last"].tolist(),
+        }
+    except Exception:
+        return None
 
 
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
@@ -626,7 +738,8 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
-                         optimize_symbol=None, confirm=None) -> list[Path]:
+                         optimize_symbol=None, confirm=None,
+                         run_id: str | None = None, bar_quality_fn=None) -> list[Path]:
     """Dispatcht für jedes enumerierte Paar optimize_symbol → confirm_per_symbol_promotion →
     export_symbol_proposal und gibt die Proposal-Pfade zurück. Betritt NIE Phase 5.
 
@@ -638,6 +751,18 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     ``ThreadPoolExecutor`` (vorher wurde der Parameter ignoriert / strikt sequenziell). Die
     Ausgabereihenfolge bleibt deterministisch (``executor.map`` bewahrt die Eingabereihenfolge);
     fuer ``n_jobs <= 1`` bleibt der Pfad bit-identisch sequenziell.
+
+    Issue #799 — der Dispatch ist jetzt PRO SYMBOL transaktional statt einer globalen Zwei-Phasen-
+    Barriere über ALLE Paare (siehe Docstring von ``_run_confirm_and_export`` weiter unten für die
+    Root-Cause). ``run_id`` (Default ``default_run_id()``) treibt den Fortschritts-Checkpoint
+    ``{WORK}/sweep_progress.json``: ruft ein Aufrufer diese Funktion ERNEUT mit DEMSELBEN
+    ``run_id`` auf (z. B. nach einem Absturz), werden bereits abgeschlossene Symbole übersprungen
+    (deren bereits exportierte Proposals werden von der Platte nachgeladen, keine Duplikat-Arbeit).
+    Ein abweichender/fehlender ``run_id`` im Checkpoint ⇒ frischer Lauf (Checkpoint wird verworfen).
+
+    Issue #807 — ``bar_quality_fn`` (Default ``None`` ⇒ ``_load_symbol_bar_quality_sample``, echter
+    Katalog-Zugriff) ist injizierbar (HI-7): ein Test uebergibt eine reine Fake-Funktion
+    ``symbol -> {"highs", "lows", "closes"} | None`` statt echte Parquet-Dateien zu lesen.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
@@ -649,6 +774,29 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if confirm is None:
         confirm = _confirm
 
+    # Issue #794 — Lauf-Start-Purge: raeumt jedes trial_*/-Verzeichnis abgebrochener Vorlaeufe ab,
+    # BEVOR der neue Lauf beginnt (champions/ und offene proposal_*.json bleiben unberuehrt, siehe
+    # retention.collect_referenced_trial_dirs). Nur im echten Storage-Pfad; fail-open, da eine
+    # fehlgeschlagene Aufraeumaktion den Lauf nicht verhindern darf (analog #703/#733).
+    if using_real_optimize:
+        try:
+            _orphaned = retention.prune_orphaned_trial_dirs(WORK)
+            if _orphaned:
+                logging.getLogger("optimizer").info(
+                    "[#794] Lauf-Start-Purge: %d verwaiste Trial-Verzeichnis(se) aus vorherigen "
+                    "Laeufen entfernt.", len(_orphaned),
+                )
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#794] Lauf-Start-Purge fehlgeschlagen (non-fatal).", exc_info=True)
+
+    # Issue #703 — vollständige optimizer.json EINMAL vor dem Dispatch geladen (Champion-Store-
+    # Gates: reward_semantics_version + champion_*-Keys), wiederverwendet über die Closure von
+    # ``_run_confirm_and_export`` statt pro Paar erneut von der Platte gelesen zu werden. Issue #805
+    # — jetzt auch VOR dem Preflight-Block geladen, damit assert_structural_min_modelled_trials_valid
+    # (unten) sie konsumieren kann, ohne die Datei ein zweites Mal zu lesen.
+    opt_data = _load_optimizer_config()
+
     # Issue #595/#593 — FAIL-LOUD-Preflight VOR dem ersten Trial (nur im echten Pfad; injizierte
     # HI-7-Fakes nutzen frei benannte Strategien und überspringen den Guard). (1) Jede aktive
     # Strategie MUSS einen Suchraum in spaces.py haben. (2) Gate- und Reward-Klauseln müssen
@@ -656,13 +804,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if using_real_optimize:
         assert_strategy_space_parity(strategies)
         _assert_gate_reward_parity()
+        # Issue #802 — pandas-Versions-Preflight (Zero-Hardcoding: Bereich stammt aus
+        # requirements.txt, hier nur maschinell durchgesetzt).
+        assert_pandas_version_supported()
+        # Issue #805 — structural_min_modelled_trials_per_dim<=0 waere derselbe degenerierte
+        # Zustand wie das entfernte floor_plateau_k=0 (#488/#753/#769) — fail-loud statt eines
+        # stillen NULL-modellierten-Trials-Urteils.
+        assert_structural_min_modelled_trials_valid(opt_data)
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
-    # Issue #703 — vollständige optimizer.json EINMAL vor dem Dispatch geladen (Champion-Store-
-    # Gates: reward_semantics_version + champion_*-Keys), wiederverwendet über die Closure von
-    # ``_run_confirm_and_export`` statt pro Paar erneut von der Platte gelesen zu werden.
-    opt_data = _load_optimizer_config()
     available_bars = count_available_bars(syms)
 
     # Issue #531 — Pre-Sweep-Backfill-Hook: Symbole, deren REAL vorhandene Bar-Spanne die volle
@@ -716,10 +867,117 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         None if _avail_span is None else round(_avail_span, 1), _covers,
     )
 
+    # Issue #807 — Bar-QUALITAETS-Preflight VOR Phase 1 je Symbol (Preflight statt Post-Mortem):
+    # ``HYPE.ETORO`` bestand Gate 1 (Datenspanne, oben) UND erzeugte trotzdem ueber SECHS
+    # strukturell verschiedene Strategien 0 auswertbare Trials — je eigenem
+    # ``STRUCTURAL_ALL_UNEVALUABLE``-Ereignis, eigenem Diagnose-Aufruf, eigenem Cache-Eintrag
+    # (14 × 16 = 224 verbrannte Trials, 14 falsch etikettierte Cache-Eintraege). Root-Cause war die
+    # BAR-QUALITAET (degenerierte/konstante Bars), nicht die Datenspanne. Ein Symbol mit
+    # degenerierten Bars wird hier EINMAL abgewiesen (``REJECT_DATA_DEGENERATE``), bevor auch nur
+    # eine einzige Study fuer es gestartet wird — analog dem bestehenden Gate-1-Pfad. Nur im echten
+    # Storage-Pfad (injizierte HI-7-Fakes haben keinen echten Katalog); ``bar_quality_fn`` bleibt
+    # aber unabhaengig davon injizierbar, damit dieser Block selbst ohne echten Katalog testbar ist.
+    if (using_real_optimize or bar_quality_fn is not None) and syms:
+        _load_sample = bar_quality_fn or _load_symbol_bar_quality_sample
+        _bar_quality_cfg = opt_data.get("bar_quality") or {}
+        _degenerate_syms = []
+        _log = logging.getLogger("optimizer")
+        for _sym in syms:
+            try:
+                _sample = _load_sample(_sym)
+            except Exception:
+                _sample = None  # fail-open — ein eigener Lesefehler blockiert den Sweep nie.
+            if _sample is None:
+                continue
+            _quality = check_bar_quality(
+                _sample["highs"], _sample["lows"], _sample["closes"],
+                max_frac_high_eq_low=_bar_quality_cfg.get("max_frac_high_eq_low", 0.5),
+                max_frac_identical_consecutive_closes=_bar_quality_cfg.get(
+                    "max_frac_identical_consecutive_closes", 0.5),
+                min_distinct_closes=_bar_quality_cfg.get("min_distinct_closes", 10),
+            )
+            if _quality["passed"]:
+                continue
+            _degenerate_syms.append(_sym)
+            emit_execution_event(_log, "REJECT_DATA_DEGENERATE", {"symbol": _sym, **_quality},
+                                 level=logging.WARNING)
+            _log.warning(
+                "[#807] %s: REJECT_DATA_DEGENERATE — Bar-Qualitaet degeneriert (%s). Symbol wird "
+                "VOR Phase 1 fuer ALLE Strategien abgewiesen (0 Studies), statt N unabhaengige "
+                "Suchraum-Diagnosen zu verbrennen.", _sym, _quality["reason"],
+            )
+            # Issue #807 (analog #799s Checkpoint) — NICHT auf using_real_optimize gegated: der
+            # Rueckschrieb ist billige, deterministische JSON-I/O relativ zu WORK (in Tests bereits
+            # isoliert) und soll unabhaengig davon testbar sein, ob optimize_symbol injiziert wurde.
+            try:
+                record_diagnosed_pair({
+                    "strategy": _SYMBOL_DEGENERACY_SENTINEL_STRATEGY, "symbol": _sym,
+                    "action": "denylist", "binding_cause": "data_degenerate",
+                    "median_is_trades": None, "median_oos_trades": None,
+                }, work_dir=WORK, run_id=run_id)
+            except Exception:
+                _log.debug("[#807] Diagnose-Rueckschrieb fehlgeschlagen (non-fatal).",
+                          exc_info=True)
+        if _degenerate_syms:
+            syms = [s for s in syms if s not in _degenerate_syms]
+            available_bars = count_available_bars(syms)
+
+        # Issue #807 — Sekundaer-Signal (rein informativ, blockiert NICHTS): aggregiert bereits
+        # gecachte per-Strategie-Diagnosen (aus VORHERIGEN Laeufen, #681-Closed-Loop) je
+        # verbleibendem Symbol via diagnose_symbol_degeneracy. Mehrere strukturell verschiedene
+        # Strategien mit binding_cause=='signal_absent' UND median_is_trades==0 sind ein Beleg fuer
+        # ein Datenproblem, das der Bar-Qualitaets-Preflight (noch) nicht erfasst hat — die
+        # Bar-Qualitaet selbst bleibt aber die NOTWENDIGE Bedingung fuer eine tatsaechliche
+        # Ablehnung; dieser Check weist selbst nie ein Symbol ab (Akzeptanzkriterium #807).
+        if syms:
+            _diag_cache = load_diagnosed_pairs_cache(work_dir=WORK)
+            _min_strategies = int(opt_data.get("symbol_degeneracy_min_strategies", 3))
+            for _sym in syms:
+                _per_strategy = [
+                    v for (strat, sym), v in _diag_cache.items()
+                    if sym == _sym and strat != _SYMBOL_DEGENERACY_SENTINEL_STRATEGY
+                ]
+                if not _per_strategy:
+                    continue
+                _agg = diagnose_symbol_degeneracy(_sym, _per_strategy, min_strategies=_min_strategies)
+                if _agg["is_degenerate"]:
+                    logging.getLogger("optimizer").warning(
+                        "[#807] %s: SYMBOL_DATA_DEGENERATE (Sekundaer-Signal aus %d gecachten "
+                        "Diagnosen, %d/%d 'signal_absent') — der Bar-Qualitaets-Preflight erfasste "
+                        "dies (noch) nicht; das Symbol wird DENNOCH nicht automatisch abgewiesen "
+                        "(Bar-Qualitaet ist die notwendige Bedingung, keine Diagnosezahl allein).",
+                        _sym, _agg["n_strategies_checked"], _agg["n_signal_absent"],
+                        _agg["min_strategies"],
+                    )
+
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
                                     latest_ts=latest_ts, start_ns=start_ns,
                                     holdout_window_reach_target_ns=holdout_window_reach_target_ns)
+
+    # Issue #795 — Speicher-Preflight VOR dem ersten Trial: bricht mit einer konkreten
+    # Handlungsempfehlung ab, wenn der GEPLANTE Lauf das Budget/den freien Platz übersteigen würde,
+    # statt Stunden später in ENOSPC zu laufen. Nur im echten Storage-Pfad (injizierte HI-7-Fakes
+    # erzeugen keine echten Trial-Verzeichnisse).
+    if using_real_optimize and pairs:
+        # ``pairs`` leer ⇒ nichts geplant, nichts zu budgetieren (ein bereits knapper freier Platz
+        # unabhaengig von DIESEM Lauf darf einen No-Op-Sweep nicht fail-loud abbrechen).
+        _expected_trials = sum(
+            derive_n_trials(strategy, opt_data.get("n_trials", 100), opt_data)
+            for strategy, _symbol, _reason in pairs
+        )
+        _expected_bytes = disk_guard.estimate_expected_bytes(
+            _expected_trials, opt_data.get("bytes_per_trial_estimate", 30000))
+        _budget_gb = float(opt_data.get("disk_budget_gb") or 200)
+        _reserve_gb = float(opt_data.get("disk_reserve_gb") or 50)
+        emit_execution_event(logging.getLogger("optimizer"), "DISK_BUDGET_PREFLIGHT", {
+            "expected_trials": _expected_trials,
+            "expected_bytes": _expected_bytes,
+            "budget_bytes": int(_budget_gb * disk_guard.GIB),
+            "free_bytes": disk_guard.free_bytes(WORK) if WORK.exists() else None,
+        })
+        disk_guard.assert_preflight_budget(
+            WORK, expected_bytes=_expected_bytes, budget_gb=_budget_gb, reserve_gb=_reserve_gb)
 
     # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).
     # enumerate_tunable_pairs dedupliziert bereits; diese Assertion ist der Guertel-und-Hosentraeger-
@@ -749,51 +1007,96 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Nebenlaeufigkeit fuer diesen IO-/Subprozess-gebundenen Workload, und (2) die injizierbaren
     # optimize_symbol/confirm (HI-7) ohne Pickling nutzbar bleiben.
     #
-    # Issue #652 — ZWEI Phasen statt eines einzigen optimize+confirm+export-Schritts je Paar: die
-    # familienweite Multiple-Testing-Zahl (Σ eligibler Trials über ALLE Strategien-Studies desselben
-    # Symbols) muss VOR jeder Promotions-Entscheidung bekannt sein, kann aber erst nach Abschluss
-    # ALLER Studies eines Symbols berechnet werden. Phase 1 sammelt die Studies (weiterhin über
-    # n_jobs parallelisiert); Phase 2 (Confirm + Export) läuft danach mit der bereits bekannten
-    # ``deflation_n_family`` je Symbol.
+    # Issue #799 — PRO SYMBOL transaktional statt einer globalen Zwei-Phasen-Barriere über ALLE
+    # Paare (#652). Root-Cause #799: ``executor.map(_run_optimize, pairs)`` war eine Barriere über
+    # ALLE 1736 Paare eines vollen Sweeps — ein einziger Fehler (oder eine propagierende Exception)
+    # in irgendeinem Paar verwarf die Ergebnisse ALLER bereits abgeschlossenen Studies, und
+    # Phase 2 (Retention, #794) lief nie an, solange Phase 1 nicht vollständig durch war (17-21h bei
+    # 1736 Paaren). Die familienweite Multiplizität (#652) braucht nur alle Studies EINES Symbols,
+    # nicht aller Symbole — die Barriere war also breiter als die fachliche Anforderung.
+    #
+    # Jetzt: äussere Schleife über Symbole (sequenziell); innere Parallelisierung über die
+    # Strategien EINES Symbols (ThreadPoolExecutor(max_workers=n_jobs)); nach jedem Symbol sofort
+    # Confirm + Export + Champion-Store + Retention (#794) — ein Fehler kostet höchstens das
+    # aktuelle Symbol, nicht den gesamten Lauf.
+    pairs_by_symbol: dict[str, list[tuple[str, str, str]]] = {}
+    for _pair in pairs:
+        pairs_by_symbol.setdefault(_pair[1], []).append(_pair)
+
+    # Issue #799 — der Fortschritts-Checkpoint ist NICHT an using_real_optimize gekoppelt (anders
+    # als Champion-Store/Retention/Preinit/Backfill): er verfolgt den Dispatch-Fortschritt selbst,
+    # unabhaengig davon, ob optimize_symbol/confirm injizierte HI-7-Fakes oder die echte
+    # Implementierung sind — das macht ihn mit injizierten Fakes testbar (siehe
+    # test_issue_799_per_symbol_transaction.py) UND nuetzlich fuer einen HI-7-Dry-Run.
+    if run_id is None:
+        run_id = default_run_id()
+    checkpoint_path = WORK / "sweep_progress.json"
+    completed_symbols: set[str] = set()
+    failed_pairs: list[dict] = []
+    try:
+        if checkpoint_path.exists():
+            _checkpoint = json.loads(checkpoint_path.read_text("utf-8"))
+            if _checkpoint.get("run_id") == run_id:
+                completed_symbols = set(_checkpoint.get("completed_symbols") or [])
+                failed_pairs = list(_checkpoint.get("failed_pairs") or [])
+    except (OSError, ValueError):
+        pass  # kaputter/fehlender Checkpoint ⇒ frischer Lauf (nicht fatal)
+
+    def _write_checkpoint() -> None:
+        # Issue #799 — atomarer Fortschritts-Checkpoint (manifest.write_json_atomic, #742-Muster).
+        # Fail-open: ein Schreibfehler darf einen erfolgreichen Sweep nie crashen.
+        try:
+            write_json_atomic(checkpoint_path, {
+                "run_id": run_id,
+                "completed_symbols": sorted(completed_symbols),
+                "failed_pairs": failed_pairs,
+            })
+        except OSError:
+            logging.getLogger("optimizer").warning(
+                "[#799] Sweep-Checkpoint konnte nicht geschrieben werden (non-fatal).", exc_info=True)
+
     def _run_optimize(pair: tuple[str, str, str]):
         strategy, symbol, _reason = pair
-        newest_ns = latest_ts.get(symbol) if latest_ts else None
-        # Issue #531 — die REAL vorhandene Bar-Spanne (Tage) an build_trial durchreichen, damit die
-        # Manifest-Konstruktion gegen die tatsächliche Datenlage (nicht nur data_history_days) prüft.
-        span_days = available_bars.get(symbol, 0) / 24.0
-        return optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns,
-                               catalog_span_days=span_days)
+        # Issue #799 — Per-Paar-Fehlerisolation: JEDE Exception (nicht nur die vom Backtest-
+        # Subprozess) wird hier gefangen, protokolliert (STUDY_FAILED) und liefert None statt die
+        # gesamte Symbol-Charge (bzw. vor #799: den gesamten Sweep) zu verwerfen. Ein None-Eintrag
+        # fliesst weder in n_family (#652/#784) noch in Phase 2 (siehe _run_confirm_and_export).
+        try:
+            newest_ns = latest_ts.get(symbol) if latest_ts else None
+            # Issue #531 — die REAL vorhandene Bar-Spanne (Tage) an build_trial durchreichen, damit
+            # die Manifest-Konstruktion gegen die tatsächliche Datenlage prüft.
+            span_days = available_bars.get(symbol, 0) / 24.0
+            return optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns,
+                                   catalog_span_days=span_days)
+        except Exception as e:
+            logging.getLogger("optimizer").error(
+                "[#799] STUDY_FAILED: %s/%s (%s): %s", strategy, symbol, type(e).__name__, e,
+                exc_info=True,
+            )
+            emit_execution_event(logging.getLogger("optimizer"), "STUDY_FAILED", {
+                "strategy": strategy, "symbol": symbol, "exception_type": type(e).__name__,
+            }, level=logging.ERROR)
+            failed_pairs.append({"strategy": strategy, "symbol": symbol,
+                                 "exception_type": type(e).__name__})
+            return None
 
-    if n_jobs and n_jobs > 1 and len(pairs) > 1:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(n_jobs, len(pairs))) as executor:
-            studies = list(executor.map(_run_optimize, pairs))
-    else:
-        studies = [_run_optimize(p) for p in pairs]
-
-    # Issue #652 — familienweite Multiplizität je Symbol, AUS DEN STUDIES (Phase 1 bereits
-    # abgeschlossen), BEVOR irgendeine Promotion (Phase 2) läuft.
-    # Issue #784 — deflation_family_floor_mode steuert die Budget-Untergrenze innerhalb von
-    # _family_n_from_studies; fail-open (leere Config) auf den bit-identischen 'budgeted'-Default.
-    try:
-        _tournament_cfg_for_family = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
-    except (OSError, ValueError):
-        _tournament_cfg_for_family = {}
-    n_family_pre_promotion = _family_n_from_studies(
-        pairs, studies, tournament_cfg=_tournament_cfg_for_family)
-    # Issue #695 — dieselbe Phase-1-Grundlage, aber als familienweite Return-MATRIX statt nur eines
-    # Zählers, damit confirm.confirm_per_symbol_promotion die rohe Familien-N vor der SR₀-Berechnung
-    # korrelations-declustern kann (siehe _family_period_returns_from_studies-Docstring).
-    family_returns_pre_promotion = _family_period_returns_from_studies(pairs, studies)
-
-    def _run_confirm_and_export(pair: tuple[str, str, str], study) -> Path:
+    def _run_confirm_and_export(pair: tuple[str, str, str], study,
+                                n_family_map: dict[str, int],
+                                family_returns_map: dict[str, list]) -> Path | None:
+        """Issue #652/#799 — Confirm + Export + Champion-Store + Retention EINES Paares, mit der
+        auf das eigene Symbol beschränkten familienweiten Multiplizität (``n_family_map``/
+        ``family_returns_map`` — von der Symbol-Schleife unten übergeben, siehe deren Docstring)."""
         strategy, symbol, _reason = pair
+        if study is None:
+            # Issue #799 — kein Study-Objekt (Paar in _run_optimize fehlgeschlagen, STUDY_FAILED
+            # bereits protokolliert): kein Confirm/Export möglich, kein Proposal.
+            return None
         try:
             newest_ns = latest_ts.get(symbol) if latest_ts else None
             global_params = load_global_best(strategy, config_dir())
             promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
-                                deflation_n_family=n_family_pre_promotion.get(symbol, 0),
-                                deflation_family_period_returns=family_returns_pre_promotion.get(symbol))
+                                deflation_n_family=n_family_map.get(symbol, 0),
+                                deflation_family_period_returns=family_returns_map.get(symbol))
             proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
             # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
             # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die
@@ -809,9 +1112,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                         "[#703] %s/%s: Champion-Store-Schreiben fehlgeschlagen (non-fatal).",
                         strategy, symbol, exc_info=True,
                     )
-                # Issue #733 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
-                # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum (bis zu n_trials Verzeichnisse,
-                # der grösste Einzeltreiber des data/optimizer-Wachstums) wird ab hier nicht mehr
+                # Issue #733/#794 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
+                # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum wird ab hier nicht mehr
                 # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.
                 # Fail-open: ein Retention-Fehler darf den Sweep nie crashen (analog Champion-Store).
                 try:
@@ -827,16 +1129,59 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         finally:
             # Issue #747 — Confirm/Export/Champion-Store lesen study.trials erneut (lazy Reconnect
             # nach dem Dispose in optimize_symbol); die Engine hier ein zweites (letztes) Mal
-            # disposen, BEVOR die Study-Referenz mit dem Ende von Phase 2 aus dem Scope faellt.
+            # disposen, BEVOR die Study-Referenz aus dem Scope faellt.
             _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
 
-    if n_jobs and n_jobs > 1 and len(pairs) > 1:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(n_jobs, len(pairs))) as executor:
-            proposals = list(executor.map(
-                lambda ps: _run_confirm_and_export(ps[0], ps[1]), zip(pairs, studies)))
-    else:
-        proposals = [_run_confirm_and_export(p, s) for p, s in zip(pairs, studies)]
+    # Issue #784 — deflation_family_floor_mode steuert die Budget-Untergrenze innerhalb von
+    # _family_n_from_studies; fail-open (leere Config) auf den bit-identischen 'budgeted'-Default.
+    try:
+        _tournament_cfg_for_family = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        _tournament_cfg_for_family = {}
+
+    proposals: list[Path] = []
+    for symbol, symbol_pairs in pairs_by_symbol.items():
+        if symbol in completed_symbols:
+            logging.getLogger("optimizer").info(
+                "[#799] %s bereits abgeschlossen (Checkpoint, run_id=%s) — übersprungen.",
+                symbol, run_id,
+            )
+            for strategy, sym, _reason in symbol_pairs:
+                _existing = WORK / f"proposal_{strategy}_{sym}.json"
+                if _existing.exists():
+                    proposals.append(_existing)
+            continue
+        # Issue #795 — zwischen zwei Symbolen geprüft (nicht nur innerhalb von _run_optimize):
+        # ein zuvor gesetztes disk_guard.sweep_abort_requested lässt kein neues Symbol mehr
+        # beginnen ⇒ geordnetes Sweep-Ende statt eines harten ENOSPC-Absturzes.
+        if disk_guard.sweep_abort_requested.is_set():
+            logging.getLogger("optimizer").warning(
+                "[#795] Sweep-Abbruch angefordert (Speicherbudget überschritten) — verbleibende "
+                "Symbole (ab '%s') werden nicht mehr gestartet.", symbol,
+            )
+            break
+
+        if n_jobs and n_jobs > 1 and len(symbol_pairs) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(n_jobs, len(symbol_pairs))) as executor:
+                symbol_studies = list(executor.map(_run_optimize, symbol_pairs))
+        else:
+            symbol_studies = [_run_optimize(p) for p in symbol_pairs]
+
+        # Issue #652 — familienweite Multiplizität NUR über die Studies DIESES Symbols (alle
+        # Strategien dieses Symbols sind jetzt abgeschlossen); #695 liefert dieselbe Grundlage als
+        # Return-Matrix für die Korrelations-Declusterung in confirm.py.
+        symbol_n_family = _family_n_from_studies(
+            symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+        symbol_family_returns = _family_period_returns_from_studies(symbol_pairs, symbol_studies)
+
+        for pair, study in zip(symbol_pairs, symbol_studies):
+            proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns)
+            if proposal is not None:
+                proposals.append(proposal)
+
+        completed_symbols.add(symbol)
+        _write_checkpoint()
 
     # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
     # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne
@@ -977,7 +1322,13 @@ def main(argv: list[str] | None = None) -> list[Path]:
                              "strategien": len(strategies),
                              "symbole": "all" if symbols is None else len(symbols)})
 
-    proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs, n_jobs_source=n_jobs_source)
+    # Issue #799 — derselbe run_id treibt sowohl das Logging (oben) als auch den Sweep-Fortschritts-
+    # Checkpoint; ein Neustart mit demselben run_id (z. B. ein externes Resume-Tooling, das den
+    # letzten Checkpoint ausliest und run_id erneut übergibt) überspringt bereits abgeschlossene
+    # Symbole. Ohne einen solchen expliziten Wiederaufruf erzeugt jeder main()-Aufruf einen neuen
+    # run_id ⇒ frischer Checkpoint (unverändertes Verhalten für den Normalfall).
+    proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs,
+                                     n_jobs_source=n_jobs_source, run_id=run_id)
     for p in proposals:
         print(p)
 

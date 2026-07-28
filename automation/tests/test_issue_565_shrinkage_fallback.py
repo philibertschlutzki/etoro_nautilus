@@ -28,7 +28,7 @@ def _isolate(monkeypatch, tmp_path):
 
 
 def _fake_factory(captured):
-    def _fake(trial_dir: Path, manifest_path: Path) -> Path:
+    def _fake(trial_dir: Path, manifest_path: Path, **_kwargs) -> Path:
         captured.append(json.loads(Path(manifest_path).read_text("utf-8")))
         out = Path(trial_dir) / "tournament_result.json"
         out.parent.mkdir(parents=True, exist_ok=True)

@@ -527,6 +527,103 @@ def load_continuous_bar_invalid_strategies(base_cfg: Path | None = None) -> froz
     return frozenset(out)
 
 
+def diagnose_symbol_degeneracy(symbol: str, per_strategy_diagnoses: list[dict], *,
+                               min_strategies: int = 3) -> dict:
+    """Issue #807 — aggregiert ``diagnose_trade_frequency``-Befunde MEHRERER Strategien DESSELBEN
+    Symbols zu EINER symbolweiten Aussage, statt dasselbe Datenproblem N-mal unabhaengig (einmal je
+    Strategie) zu diagnostizieren.
+
+    Root-Cause #807: ``HYPE.ETORO`` erzeugte ueber SECHS strukturell voellig verschiedene Strategien
+    (SmaCrossover, MeanReversion, DynamicBreakout, FlashCrashReversal, VolatilityBreakoutPump,
+    ComboTrendVwap) null auswertbare Trials — jeweils mit eigenem ``STRUCTURAL_ALL_UNEVALUABLE``-
+    Ereignis, eigenem ``diagnose_trade_frequency``-Aufruf und eigenem Cache-Eintrag (14 × 16 = 224
+    verbrannte Trials, 14 falsch etikettierte Cache-Eintraege). ``HYPE`` bestand Gate 1 (Datenspanne)
+    — die Ursache liegt in der BAR-QUALITAET (degenerierte/konstante Bars), nicht in der Datenspanne
+    ODER in 14 unabhaengigen Suchraum-Problemen.
+
+    Ein Symbol gilt als ``SYMBOL_DATA_DEGENERATE``, sobald mindestens ``min_strategies`` (Default 3)
+    STRUKTURELL VERSCHIEDENE Strategien ``binding_cause == 'signal_absent'`` UND
+    ``median_is_trades == 0`` melden — ``'signal_absent'`` ist per Definition (``diagnose_trade_
+    frequency``) bereits PARAMETERUNABHAENGIG (die Strategie feuert im GESAMTEN Suchraum nie); mehrere
+    strukturell unterschiedliche Strategien, die UNABHAENGIG voneinander alle parameterunabhaengig
+    scheitern, sind kein Zufall der Suchraum-Bounds mehr, sondern ein Beleg fuer ein Datenproblem.
+
+    ``per_strategy_diagnoses`` ist eine Liste von ``diagnose_trade_frequency``-Rueckgabe-Dicts (ein
+    Eintrag je bereits geprueften (Symbol, Strategie)-Paar). Rein, deterministisch, kein I/O."""
+    n_checked = len(per_strategy_diagnoses)
+    n_signal_absent = sum(
+        1 for d in per_strategy_diagnoses
+        if d.get("binding_cause") == "signal_absent" and d.get("median_is_trades") == 0
+    )
+    is_degenerate = n_signal_absent >= min_strategies
+    return {
+        "symbol": symbol,
+        "n_strategies_checked": n_checked,
+        "n_signal_absent": n_signal_absent,
+        "min_strategies": min_strategies,
+        "is_degenerate": is_degenerate,
+    }
+
+
+def check_bar_quality(highs: list[float], lows: list[float], closes: list[float], *,
+                      max_frac_high_eq_low: float = 0.5,
+                      max_frac_identical_consecutive_closes: float = 0.5,
+                      min_distinct_closes: int = 10) -> dict:
+    """Issue #807 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
+    degenerierte/konstante Bars VOR Phase 1 eines Symbols, statt erst nach 14 × 16 verbrannten
+    Trials ueber 14 unabhaengige ``STRUCTURAL_ALL_UNEVALUABLE``-Diagnosen (siehe
+    ``diagnose_symbol_degeneracy``-Docstring fuer den vollen Root-Cause-Befund, ``HYPE.ETORO``
+    Pitfall #446 zu ``volume=1.0``-artigen degenerierten Bars).
+
+    Drei Kennzahlen ueber die uebergebene Bar-Kohorte (bereits aggregiert — diese Funktion selbst
+    macht KEIN I/O, keine Bar-Aggregation):
+      * ``frac_high_eq_low`` — Anteil Bars mit ``high == low`` (keinerlei Intra-Bar-Bewegung).
+      * ``frac_identical_consecutive_closes`` — Anteil Bars, deren Close IDENTISCH zum
+        Vorgaenger-Close ist (der Preis "steht still").
+      * ``n_distinct_closes`` — Anzahl DISTINKTER Close-Werte ueber die gesamte Kohorte (ein
+        Symbol mit nur einer Handvoll je wiederholter Preis-Level ist strukturell degeneriert,
+        unabhaengig von der Bar-Zahl).
+
+    ``passed=False``, sobald EINE der drei Schwellen verletzt ist (``max_frac_high_eq_low``,
+    ``max_frac_identical_consecutive_closes``, ``min_distinct_closes`` — alle aus
+    ``optimizer.json['bar_quality']``, Zero-Hardcoding). Leere Eingabe ⇒ ``passed=False``
+    (keine Bars ⇒ nichts zu handeln, dieselbe Konsequenz wie degenerierte Bars — kein stiller
+    Pass). Rein, deterministisch, kein I/O."""
+    n = len(closes)
+    if n == 0:
+        return {
+            "n_bars": 0, "frac_high_eq_low": None, "frac_identical_consecutive_closes": None,
+            "n_distinct_closes": 0, "passed": False, "reason": "no_bars",
+        }
+    frac_high_eq_low = sum(1 for h, l in zip(highs, lows) if h == l) / n
+    if n > 1:
+        frac_identical = sum(
+            1 for i in range(1, n) if closes[i] == closes[i - 1]
+        ) / (n - 1)
+    else:
+        frac_identical = 0.0
+    n_distinct = len(set(closes))
+
+    reasons = []
+    if frac_high_eq_low > max_frac_high_eq_low:
+        reasons.append(f"frac_high_eq_low={frac_high_eq_low:.3f} > {max_frac_high_eq_low}")
+    if frac_identical > max_frac_identical_consecutive_closes:
+        reasons.append(
+            f"frac_identical_consecutive_closes={frac_identical:.3f} > "
+            f"{max_frac_identical_consecutive_closes}")
+    if n_distinct < min_distinct_closes:
+        reasons.append(f"n_distinct_closes={n_distinct} < {min_distinct_closes}")
+
+    return {
+        "n_bars": n,
+        "frac_high_eq_low": frac_high_eq_low,
+        "frac_identical_consecutive_closes": frac_identical,
+        "n_distinct_closes": n_distinct,
+        "passed": not reasons,
+        "reason": "; ".join(reasons) if reasons else "OK",
+    }
+
+
 def load_symbol_strategy_denylist(base_cfg: Path | None = None) -> dict[tuple[str, str], str]:
     """Issue #669 — deklarative (Strategie, Symbol)-Deaktivierungsliste aus
     ``symbol_strategy_denylist.json`` (Zero-Hardcoding): ``{(strategy, symbol): reason}``.

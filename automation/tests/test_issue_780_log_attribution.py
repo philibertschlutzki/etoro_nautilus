@@ -183,7 +183,7 @@ def test_optimize_symbol_binds_context_for_the_full_study_lifetime(tmp_path, mon
     observed = []
     real_set_user_attr_targets = []
 
-    def _fake_backtest(trial_dir, manifest_path):
+    def _fake_backtest(trial_dir, manifest_path, **_kwargs):
         from pathlib import Path
         observed.append(dict(_current_study_context()))
         out = Path(trial_dir) / "tournament_result.json"

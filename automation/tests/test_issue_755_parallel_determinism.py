@@ -20,6 +20,7 @@ import pytest
 
 from automation.optimizer import run_optimization as ro
 from automation.optimizer import sweep
+from automation.optimizer import trial_config
 
 
 # ── seed_effective: reine Funktion ─────────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ def test_sweep_main_allows_n_jobs_greater_one_with_seed_set(monkeypatch, capsys)
 def test_sweep_main_passes_effective_n_jobs_to_run_per_symbol_sweep(monkeypatch):
     captured = {}
 
-    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source):
+    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source, **_kwargs):
         captured["n_jobs"] = n_jobs
         captured["n_jobs_source"] = n_jobs_source
         return []
@@ -94,7 +95,7 @@ def test_sweep_main_default_n_jobs_uses_sweep_max_workers_config(monkeypatch, tm
 
     captured = {}
 
-    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source):
+    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source, **_kwargs):
         captured["n_jobs"] = n_jobs
         captured["n_jobs_source"] = n_jobs_source
         return []
@@ -115,7 +116,7 @@ def test_sweep_main_default_n_jobs_falls_back_to_cpu_minus_2(monkeypatch, tmp_pa
 
     captured = {}
 
-    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source):
+    def _fake_run(strategies, symbols, *, tier, n_jobs, n_jobs_source, **_kwargs):
         captured["n_jobs"] = n_jobs
         captured["n_jobs_source"] = n_jobs_source
         return []
@@ -130,9 +131,14 @@ def test_sweep_main_default_n_jobs_falls_back_to_cpu_minus_2(monkeypatch, tmp_pa
 # ── optimize_symbol: TPESampler erhaelt seed_effective, nicht den rohen seed ───────────────────────
 def test_optimize_symbol_seeds_sampler_with_seed_effective_not_raw_seed(monkeypatch, tmp_path):
     monkeypatch.setattr(ro, "WORK", tmp_path)
+    monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: tmp_path / "config")
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
     (tmp_path / "config" / "optimizer.json").write_text(json.dumps({"seed": 42}), "utf-8")
+    # Issue #796 — optimize_symbol friert jetzt vor study.optimize eine Study-Config ein.
+    (tmp_path / "config" / "backtest.json").write_text(json.dumps(
+        {"walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4, "holdout_days": 45}}
+    ), "utf-8")
 
     sampler_calls = []
 

@@ -9,6 +9,12 @@ manchen Parametern, parameterabhaengig/tunebar) in dieselbe Kategorie — beide 
 Fix: `diagnose_trade_frequency` trennt `'signal_absent'` (median==0 UND max==0, parameter-
 unabhaengig, Abbruch bleibt bei `min_for_structural` zulaessig) von `'signal_sparse'`
 (parameterabhaengig, Abbruch erst ab der #768-Schwelle `min_for_zero_eligible`).
+
+Issue #805 — `floor_plateau_k` (Default 0, die Wurzel des #805-Katalogs: `min_for_structural`
+kollabierte dadurch auf EXAKT `n_startup_trials`) ist seither ENTFERNT und durch
+`structural_min_modelled_trials_per_dim` (Default 3, NIE 0) ersetzt. Die Tests unten, die vorher
+`floor_plateau_k: 0` setzten, sind auf den neuen Default/Key migriert — siehe
+test_issue_805_structural_min_modelled.py fuer die dedizierten #805-Tests.
 """
 import logging
 
@@ -95,17 +101,19 @@ def _quiet_logger(name):
 
 def test_signal_sparse_does_not_stop_at_n_startup_only_at_zero_eligible_threshold():
     # W hat kein plateau_min_modelled_trials_per_dim ⇒ Basis bleibt max(32, 2*16)=32 ⇒
-    # min_for_zero_eligible = 16+32 = 48. min_for_structural = 16+0 = 16.
-    W = {"n_startup_trials": 16, "floor_plateau_k": 0}
-    trials = [_FakeTrial(-9.8, is_total_trades=5) for _ in range(20)]  # >= min_for_structural(16)
+    # min_for_zero_eligible = 16+32 = 48. Issue #805 — floor_plateau_k entfernt; ohne
+    # structural_min_modelled_trials_per_dim-Key greift der Default 3 ⇒ min_for_structural = 19
+    # (irrelevant fuer diesen Test: signal_sparse urteilt ohnehin ueber min_for_zero_eligible).
+    W = {"n_startup_trials": 16}
+    trials = [_FakeTrial(-9.8, is_total_trades=5) for _ in range(20)]  # >= min_for_structural(19)
     study = _FakeStudy(trials)
     ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=16,
                               logger=_quiet_logger("t769_no_stop_at_16"), stop_on_plateau=True)
-    assert study.stopped is False, "signal_sparse darf NICHT bei n_startup(+K) stoppen (Root-Cause #769)"
+    assert study.stopped is False, "signal_sparse darf NICHT bei n_startup(+structural_extra) stoppen (Root-Cause #769)"
 
 
 def test_signal_sparse_stops_at_the_768_threshold():
-    W = {"n_startup_trials": 16, "floor_plateau_k": 0}
+    W = {"n_startup_trials": 16}
     trials = [_FakeTrial(-9.8, is_total_trades=5) for _ in range(48)]  # == min_for_zero_eligible
     study = _FakeStudy(trials)
     ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=16,
@@ -114,33 +122,25 @@ def test_signal_sparse_stops_at_the_768_threshold():
 
 
 def test_signal_absent_still_stops_at_the_narrow_structural_threshold():
-    """Bit-identisch zu Pre-#769: median_is_trades==0 UND max==0 ⇒ Abbruch bleibt bei
-    n_startup_trials + floor_plateau_k zulaessig (kein unnoetiges Budget fuer echte Datengeometrie)."""
-    W = {"n_startup_trials": 16, "floor_plateau_k": 0}
-    trials = [_FakeTrial(-9.8, is_total_trades=0) for _ in range(16)]
+    """median_is_trades==0 UND max==0 ⇒ Abbruch bleibt bei der ENGEN STRUCTURAL-Schwelle zulaessig
+    (kein unnoetiges Budget fuer echte Datengeometrie) — seit #805 ist diese Schwelle
+    n_startup_trials + structural_min_modelled_trials_per_dim-abgeleiteter Zuschlag (hier explizit 1,
+    ohne strategy=... ⇒ flach) statt des entfernten floor_plateau_k=0 (die Schwelle darf seit #805
+    nie mehr EXAKT n_startup_trials sein, siehe test_issue_805_structural_min_modelled.py)."""
+    W = {"n_startup_trials": 16, "structural_min_modelled_trials_per_dim": 1}
+    trials = [_FakeTrial(-9.8, is_total_trades=0) for _ in range(17)]
     study = _FakeStudy(trials)
     ro.floor_plateau_callback(study, trials[-1], weights=W, n_startup_trials=16,
                               logger=_quiet_logger("t769_absent_stop"), stop_on_plateau=True)
     assert study.stopped is True
 
 
-def test_floor_plateau_k_explicit_zero_does_not_change_should_stop_behavior():
-    """Akzeptanzkriterium #769/3: floor_plateau_k explizit mit Wert 0 gesetzt aendert should_stop
-    nicht gegenueber HEAD — Produktion bindet stop_on_plateau=True ohnehin explizit."""
+def test_structural_min_modelled_trials_per_dim_replaces_floor_plateau_k_in_real_config():
+    """Akzeptanzkriterium #805: floor_plateau_k existiert nicht mehr in der ausgelieferten Config;
+    structural_min_modelled_trials_per_dim ist gesetzt und STRIKT > 0 (nie wieder der degenerierte
+    0-Wert, der #805 ausloeste)."""
     import json
     from automation.optimizer.trial_config import config_dir
     real_cfg = json.loads((config_dir() / "optimizer.json").read_text("utf-8"))
-    assert real_cfg.get("floor_plateau_k") == 0
-    W_explicit = {"n_startup_trials": 16, "floor_plateau_k": 0}
-    W_implicit = {"n_startup_trials": 16}
-    trials = [_FakeTrial(-9.8, is_total_trades=0) for _ in range(16)]
-
-    study_explicit = _FakeStudy(list(trials))
-    ro.floor_plateau_callback(study_explicit, study_explicit.trials[-1], weights=W_explicit,
-                              n_startup_trials=16, logger=_quiet_logger("t769_explicit"),
-                              stop_on_plateau=True)
-    study_implicit = _FakeStudy(list(trials))
-    ro.floor_plateau_callback(study_implicit, study_implicit.trials[-1], weights=W_implicit,
-                              n_startup_trials=16, logger=_quiet_logger("t769_implicit"),
-                              stop_on_plateau=True)
-    assert study_explicit.stopped == study_implicit.stopped is True
+    assert "floor_plateau_k" not in real_cfg
+    assert real_cfg.get("structural_min_modelled_trials_per_dim", 0) > 0

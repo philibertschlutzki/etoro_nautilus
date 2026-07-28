@@ -7,9 +7,15 @@ Volatilitäts-Drag mean(r) − (1/T)·log(1+total_return) ≈ σ²/2 — für je
 |mean(r)| < σ²/2 (Edge nahe null, Vola dominant) divergieren die Vorzeichen. `tournament.json
 ['aggregation_note']` behauptete Kohärenz "per Konstruktion", was mathematisch falsch war.
 
-Fix: `period_rets = np.log1p(mtm_series.pct_change().dropna())`. Damit gilt exakt
+Fix: `period_rets = np.log1p(mtm_series.pct_change(fill_method=None).dropna())`. Damit gilt exakt
 Σ log(1+rᵢ) = log(1+total_return) ⇒ sign(mean(period_rets)) ≡ sign(total_return) PER KONSTRUKTION,
 für jede Sequenz, ohne Toleranz.
+
+Issue #801/#802 — die Produktion (`_calculate_stats`) bildet `period_rets` seit #801 algebraisch
+(`np.diff(np.log(mtm))`) statt über pandas' pct-change/log1p-Umweg (fill_method-versionsabhängig),
+UND nur unter der Vorbedingung strikt positiver Equity (`assert_positive_equity`); die
+"PER KONSTRUKTION"-Garantie oben gilt seither unter genau dieser Vorbedingung, siehe
+`test_issue_801_log_return_identity.py`.
 """
 import numpy as np
 import pandas as pd

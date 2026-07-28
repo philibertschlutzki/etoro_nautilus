@@ -35,7 +35,7 @@ import optuna
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
 from automation.optimizer import reward as _reward
-from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic
+from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions
 from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, study_shows_gradient_signal, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution,
@@ -228,6 +228,18 @@ def _study_record(proposal: dict, study,
     n_eligible = sum(1 for a in trial_attrs if a.get("oos_eligible") is True)
     p_eligible = round(n_eligible / n_trials, 4) if n_trials else 0.0
     coherence_violations = sum(1 for a in trial_attrs if a.get("oos_coherence_violation") is True)
+    # Issue #804 — Aggregat je Study: wie oft jeder strukturierte Inferenzpfad-Diagnose-Code
+    # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
+    # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED/COHERENCE_INVARIANT_VIOLATION) über ALLE
+    # Trials dieser Study auftrat — macht sichtbar, OHNE ein Trial-Verzeichnis zu öffnen, ob/wie oft
+    # der Subprozess eine Invariante verletzt hat (siehe run_optimization._reemit_inference_
+    # diagnostics für die Live-Emission je Trial).
+    inference_diagnostics_by_code: dict[str, int] = {}
+    for a in trial_attrs:
+        for diag in a.get("inference_diagnostics") or ():
+            code = diag.get("code") if isinstance(diag, dict) else None
+            if code:
+                inference_diagnostics_by_code[code] = inference_diagnostics_by_code.get(code, 0) + 1
 
     best_reward = None
     if study is not None:
@@ -293,6 +305,9 @@ def _study_record(proposal: dict, study,
         _inv.check_log_return_coherence(trial_attrs),
         # Issue #759 — Missing-Data-Sentinel-Kollaps-Regressionswächter (oos_win_rate).
         _inv.check_metric_sentinel_absence(trial_attrs),
+        # Issue #804 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus dem
+        # Backtest-Subprozess sind jetzt maschinell im #742-Report überprüfbar, nicht nur live geloggt.
+        _inv.check_inference_diagnostics_absent(trial_attrs),
     ]
 
     record = {
@@ -315,6 +330,10 @@ def _study_record(proposal: dict, study,
         "stop_reason": budget_execution["stop_reason"],
         "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "coherence_violations": coherence_violations,
+        # Issue #804 — je Study, wie oft jeder Inferenzpfad-Diagnose-Code auftrat (leeres Dict im
+        # Normalfall). Macht eine Subprozess-Invariantenverletzung im #742-Report sichtbar, ohne ein
+        # Trial-Verzeichnis zu öffnen oder trial_dir/logs/ zu lesen.
+        "inference_diagnostics_by_code": inference_diagnostics_by_code,
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -467,6 +486,9 @@ def _build_report(
         "run_id": run_id,
         "git_commit": git_commit(),
         "reward_semantics_version": optimizer_cfg.get("reward_semantics_version"),
+        # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
+        # im Nachhinein einer Installationsumgebung zuordenbar ist.
+        "library_versions": library_versions(),
         "tournament_config_sha256": sha256_file(tournament_path) if tournament_path.exists() else None,
         "catalog_fingerprint": catalog_fingerprint(),
         "started_at_utc": started_at_utc,
