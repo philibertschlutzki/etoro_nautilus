@@ -110,16 +110,6 @@
       "strategy_class": "Rsi2ReversionStrategy",
       "config_class": "Rsi2ReversionConfig",
       "params": {}
-    },
-    {
-      "strategy_module": "automation.strategies.gap_continuation",
-      "strategy_class": "GapContinuationStrategy",
-      "config_class": "GapContinuationConfig",
-      "params": {},
-      "tournament_overrides": {
-        "min_trades": 8
-      },
-      "invalid_on_continuous_bars": true
     }
   ]
 }
