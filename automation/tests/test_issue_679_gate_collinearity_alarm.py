@@ -11,6 +11,10 @@ from automation.optimizer.reward import gate_collinearity_redundancy_alarm
 _TCFG = {
     "eligible_requires_all": ["oos_min_expectancy", "oos_min_profitable_folds_frac", "oos_min_psr"],
     "eligible_requires_any": ["min_profit_factor"],
+    # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag (fail-loud sonst).
+    "gate_consolidation_priority": [
+        "oos_min_psr", "oos_min_expectancy", "oos_min_profitable_folds_frac", "any_condition",
+    ],
 }
 
 

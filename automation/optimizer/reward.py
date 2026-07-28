@@ -543,13 +543,69 @@ def assert_gate_collinearity_guard(trial_gate_deltas: list, tournament_cfg: dict
     return result
 
 
-# Issue #679 — Konsolidierungs-Priorität für kollineare eligible-Gates: PSR (skalenfrei,
-# fenster-/annualisierungs-invariant, T-bewusst, #614) ist das statistisch schärfste Gate und wird
-# IMMER als "zu behaltendes" Gate empfohlen; die übrigen drei werden in dieser Reihenfolge als
-# Konsolidierungs-Kandidat markiert, sobald sie mit einem HÖHER priorisierten Gate kollinear sind.
-_GATE_CONSOLIDATION_PRIORITY = (
-    "oos_min_psr", "oos_min_expectancy", "oos_min_profitable_folds_frac", "any_condition",
-)
+def _gate_consolidation_priority(tournament_cfg: dict | None) -> tuple[str, ...]:
+    """Issue #810 — ERSETZT die eingefrorene Code-Konstante ``_GATE_CONSOLIDATION_PRIORITY``
+    (Root-Cause #810: die Tabelle wurde bei der #776-Konsolidierung nicht mitgezogen — weder
+    ``min_trades`` noch ``max_drawdown`` [seit #776 Teil von ``eligible_requires_all``] standen
+    darin, beide fielen über ``priority.get(k, 99)`` auf denselben Sentinel, und der Redundanz-
+    Alarm empfahl fälschlich die Entfernung von ``max_drawdown``, der harten Risikogrenze, die
+    #776 ausdrücklich behalten hat — Pitfall #134 in einer Prioritätstabelle statt einer Kennzahl).
+
+    Deklarativ aus ``tournament.json['gate_consolidation_priority']``, normiert auf ``oos_``-
+    präfigierte Delta-Keys (identisch zu ``_active_gate_collinearity_keys`` — ``'any_condition'``
+    bleibt dabei UNPRÄFIGIERT, sie ist kein ``oos_gate_deltas``-Spaltenname, sondern der feste
+    Proxy-Literal für die gesamte ``eligible_requires_any``-Disjunktion). Reihenfolge = Priorität
+    (Index 0 hat die höchste Priorität). Fehlt der Key (oder ist leer) ⇒ ``ValueError``: es gibt
+    KEINEN stillen Fallback-Default für eine sicherheitsrelevante Prioritätsordnung."""
+    tournament_cfg = tournament_cfg or {}
+    raw = tournament_cfg.get("gate_consolidation_priority")
+    if not raw:
+        raise ValueError(
+            "GATE_CONSOLIDATION_PRIORITY_MISSING (#810): tournament.json['gate_consolidation_"
+            "priority'] fehlt oder ist leer. Eine Prioritätsordnung ohne diese Tabelle wäre "
+            "derselbe stille priority.get(k, 99)-Sentinel-Fehler, den #810 behebt (Pitfall #134)."
+        )
+    return tuple(_normalize_gate_priority_key(k) for k in raw)
+
+
+def _normalize_gate_priority_key(k: str) -> str:
+    """Issue #810 — dieselbe Normalisierung wie ``_active_gate_collinearity_keys``: jeder Key wird
+    ``oos_``-präfigiert, AUSSER er ist bereits präfigiert oder der feste ``'any_condition'``-Proxy
+    (kein echter ``oos_gate_deltas``-Spaltenname, darf NIE ``oos_``-präfigiert werden)."""
+    if k == "any_condition" or k.startswith("oos_"):
+        return k
+    return f"oos_{k}"
+
+
+def _gate_consolidation_protected(tournament_cfg: dict | None) -> frozenset[str]:
+    """Issue #810 — Gates, die NIE als ``redundant_candidate`` markiert werden, unabhängig von ρ
+    UND unabhängig von ihrer Position in ``_gate_consolidation_priority`` (deklarativ aus
+    ``tournament.json['gate_consolidation_protected']``, normiert auf ``oos_``-präfigierte Keys).
+    Eine hohe Korrelation zwischen einer strukturellen Vorbedingung/harten Risikogrenze und einem
+    Qualitätsgate ist keine Redundanz im #679-Sinn, sondern eine Kategorienverwechslung (#811).
+    Fehlt der Key ⇒ leere Menge (keine zusätzliche Härte, rückwärtskompatibel — die
+    Prioritätstabelle selbst bleibt trotzdem Pflicht, siehe ``_gate_consolidation_priority``)."""
+    tournament_cfg = tournament_cfg or {}
+    raw = tournament_cfg.get("gate_consolidation_protected") or []
+    return frozenset(_normalize_gate_priority_key(k) for k in raw)
+
+
+def assert_gate_priority_coverage(tournament_cfg: dict | None) -> None:
+    """Issue #810 — FAIL-LOUD beim Start (analog ``assert_any_condition_parity``): JEDES aktive
+    Gate (``_active_gate_collinearity_keys`` — die ``eligible_requires_all``-Konjunktion plus
+    ``'any_condition'``, falls ``eligible_requires_any`` gesetzt ist) MUSS einen Eintrag in
+    ``gate_consolidation_priority`` haben. Ein aktives Gate OHNE Prioritätseintrag ist jetzt ein
+    Konfigurationsfehler (``ValueError``), kein stiller ``priority.get(k, 99)``-Sentinel mehr —
+    genau der Root-Cause-Mechanismus, der #810 auslöste."""
+    active_keys = _active_gate_collinearity_keys(tournament_cfg)
+    priority_keys = set(_gate_consolidation_priority(tournament_cfg))
+    missing = [k for k in active_keys if k not in priority_keys]
+    if missing:
+        raise ValueError(
+            f"GATE_PRIORITY_COVERAGE_MISSING (#810): aktive(s) Gate(s) ohne Eintrag in "
+            f"tournament.json['gate_consolidation_priority']: {missing}. Jedes aktive Gate "
+            f"braucht eine explizite, begründete Priorität (Pitfall #134)."
+        )
 
 
 def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: dict | None = None,
@@ -561,8 +617,15 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: 
     Kontrolle beizutragen (das leistet die DSR/PBO-Ebene bereits).
 
     Für jedes Gate-Paar mit ``|ρ| > threshold`` (Default 0.9, aus dem Issue-Text) wird — via
-    ``_GATE_CONSOLIDATION_PRIORITY`` (PSR hat die höchste Prioritaet, wird nie als redundant
-    markiert) — das NIEDRIGER priorisierte Gate als ``redundant_candidate`` markiert. Rückgabe:
+    ``_gate_consolidation_priority`` (#810, deklarativ aus ``tournament.json``; das aktive Gate
+    ohne Eintrag bricht bereits VOR dieser Schleife über ``assert_gate_priority_coverage`` ab) —
+    das NIEDRIGER priorisierte Gate als ``redundant_candidate`` markiert. Issue #810 — Gates in
+    ``gate_consolidation_protected`` (z. B. ``min_trades``/``max_drawdown``) werden NIE als
+    ``redundant_candidate`` markiert, UNABHÄNGIG von ihrer Priorität: eine hohe Korrelation
+    zwischen einer strukturellen Vorbedingung/harten Risikogrenze und einem Qualitätsgate ist keine
+    Redundanz im #679-Sinn, sondern eine Kategorienverwechslung (#811). Sind BEIDE Gates eines
+    Paares protected, wird KEIN Alarm für dieses Paar erzeugt (keine sinnvolle Konsolidierungs-
+    Empfehlung zwischen zwei gleichermassen unantastbaren Gates möglich). Rückgabe:
     ``{'n_samples', 'alarms': [{'keep', 'redundant_candidate', 'rho'}], 'redundant_candidates': {...}}``
     — ``alarms`` ist leer, wenn keine Kollinearität über der Schwelle liegt (kein Alarm, reine
     Diagnose bleibt über ``assert_gate_collinearity_guard`` verfügbar). Diese Funktion selbst
@@ -574,15 +637,26 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: 
     wie ``assert_gate_collinearity_guard`` (Single Source of Truth, kein zweiter Code-Default)."""
     if threshold is None:
         threshold = _gate_collinearity_threshold(tournament_cfg)
+    assert_gate_priority_coverage(tournament_cfg)
     result = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)
-    priority = {k: i for i, k in enumerate(_GATE_CONSOLIDATION_PRIORITY)}
+    priority = {k: i for i, k in enumerate(_gate_consolidation_priority(tournament_cfg))}
+    protected = _gate_consolidation_protected(tournament_cfg)
     alarms = []
     redundant_candidates: dict[str, float] = {}
     for (k1, k2), rho in result["correlations"].items():
         if rho is None or abs(rho) <= threshold:
             continue
-        # Höhere Prioritaet (kleinerer Index) wird behalten; die andere ist der Konsolidierungs-Kandidat.
-        keep, candidate = (k1, k2) if priority.get(k1, 99) < priority.get(k2, 99) else (k2, k1)
+        k1_protected, k2_protected = k1 in protected, k2 in protected
+        if k1_protected and k2_protected:
+            # Issue #810 — zwei protected Gates: keine sinnvolle Konsolidierungsempfehlung.
+            continue
+        if k1_protected:
+            keep, candidate = k1, k2
+        elif k2_protected:
+            keep, candidate = k2, k1
+        else:
+            # Höhere Prioritaet (kleinerer Index) wird behalten; die andere ist der Kandidat.
+            keep, candidate = (k1, k2) if priority[k1] < priority[k2] else (k2, k1)
         alarms.append({"keep": keep, "redundant_candidate": candidate, "rho": rho})
         prev = redundant_candidates.get(candidate)
         if prev is None or abs(rho) > abs(prev):
@@ -605,7 +679,7 @@ def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible
     gegen eine künftige Regression — reaktiviert ein Operator versehentlich ein Gate, das die LIVE
     Kohorte (``trial_gate_deltas``, aus ``oos_gate_deltas``-User-Attrs) als redundant gegenüber
     einem höher priorisierten, ebenfalls konjunktiv geforderten Gate ausweist (siehe
-    ``_GATE_CONSOLIDATION_PRIORITY``), wird das jetzt LAUT (ERROR-Log statt stiller WARNING-
+    ``_gate_consolidation_priority``, #810), wird das jetzt LAUT (ERROR-Log statt stiller WARNING-
     Diagnose) — statt erneut folgenlos zu bleiben.
 
     Issue #760 — die Delta-Key→Konjunktions-Key-Rückübersetzung ist jetzt aus ``eligible_requires_
@@ -618,13 +692,32 @@ def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible
     Rückgabe: sortierte Liste der noch unkonsolidierten Konjunktions-Mitglieder (leer ⇒ die Config
     ist konsistent mit der aktuellen Alarm-Ausgabe — der Regelfall nach #697). Bricht den Lauf NICHT
     ab (welches Gate konsolidiert wird, bleibt eine bewusste, dokumentierte Entscheidung, siehe
-    ``gate_collinearity_redundancy_alarm``-Docstring) — macht die Inkonsistenz aber unübersehbar."""
+    ``gate_collinearity_redundancy_alarm``-Docstring) — macht die Inkonsistenz aber unübersehbar.
+
+    Issue #810 — ``gate_collinearity_redundancy_alarm`` selbst ist jetzt fail-loud, sobald ein
+    aktives Gate keinen Prioritätseintrag hat (``assert_gate_priority_coverage``); DIESE Funktion
+    bleibt aber bei ihrem dokumentierten "bricht den Lauf NICHT ab"-Vertrag — ein Aufrufer aus
+    ``report._study_record``/``confirm.confirm_per_symbol_promotion`` darf an einer unvollständigen
+    Diagnose-Config nicht crashen. Eine fehlende Prioritätsabdeckung wird hier daher als "Redundanz
+    nicht bestimmbar" behandelt (WARNING-Log, leere Liste) statt propagiert — der eigentliche
+    Fail-Loud-Ort für eine fehlende ``gate_consolidation_priority``-Abdeckung ist der
+    Sweep-Start-Preflight (``sweep._assert_gate_reward_parity``), nicht jeder einzelne
+    Study-/Confirm-Aufruf."""
     import logging
     if tournament_cfg is None:
         tournament_cfg = {"eligible_requires_all": eligible_requires_all}
     if threshold is None:
         threshold = _gate_collinearity_threshold(tournament_cfg)
-    alarm = gate_collinearity_redundancy_alarm(trial_gate_deltas, tournament_cfg, threshold=threshold)
+    try:
+        alarm = gate_collinearity_redundancy_alarm(trial_gate_deltas, tournament_cfg, threshold=threshold)
+    except ValueError:
+        logging.getLogger("optimizer").warning(
+            "[#810] gate_collinearity_redundancy_alarm konnte die Prioritätsabdeckung nicht "
+            "auflösen (unvollständige tournament_cfg) — Redundanz-Check für diesen Aufruf "
+            "übersprungen (non-fatal; der Sweep-Start-Preflight bleibt der Fail-Loud-Ort).",
+            exc_info=True,
+        )
+        return []
     conjunction = set(eligible_requires_all or [])
     # Delta-Key (z. B. "oos_min_expectancy") → Original-Konjunktions-Schreibweise (z. B.
     # "min_expectancy" ODER "oos_min_psr", je nachdem wie eligible_requires_all den Key notiert).
@@ -640,8 +733,8 @@ def assert_eligible_requires_all_not_redundant(trial_gate_deltas: list, eligible
         logging.getLogger("optimizer").error(
             "[#697] eligible_requires_all enthält weiterhin '%s' — gate_collinearity_redundancy_"
             "alarm markiert es als redundant (|ρ|=%.3f > %.2f über %d Trials). Konsolidierung auf "
-            "das schärfste Gate (reward._GATE_CONSOLIDATION_PRIORITY) erwägen (tournament.json "
-            "['eligible_requires_all']).",
+            "das schärfste Gate (tournament.json['gate_consolidation_priority']) erwägen "
+            "(tournament.json['eligible_requires_all']).",
             conj_key, abs(rho), threshold, alarm["n_samples"],
         )
     return sorted(still_redundant)

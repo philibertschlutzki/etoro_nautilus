@@ -59,7 +59,11 @@ def _cohort():
 def test_same_threshold_yields_same_candidate_set_across_all_three_entry_points():
     tcfg = {"eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr",
                                       "oos_min_excess_return"],
-            "gate_collinearity_threshold": 0.90}
+            "gate_collinearity_threshold": 0.90,
+            # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag.
+            "gate_consolidation_priority": ["oos_min_psr", "max_drawdown", "min_trades",
+                                            "oos_min_excess_return"],
+            "gate_consolidation_protected": ["min_trades", "max_drawdown"]}
     cohort = _cohort()
 
     guard_result = assert_gate_collinearity_guard(cohort, tcfg)
@@ -85,7 +89,11 @@ def test_explicit_threshold_override_still_wins_over_config():
     cohort = _cohort()
     tcfg = {"eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr",
                                       "oos_min_excess_return"],
-            "gate_collinearity_threshold": 0.90}
+            "gate_collinearity_threshold": 0.90,
+            # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag.
+            "gate_consolidation_priority": ["oos_min_psr", "max_drawdown", "min_trades",
+                                            "oos_min_excess_return"],
+            "gate_consolidation_protected": ["min_trades", "max_drawdown"]}
     # Ein Schwellen-Override auf 0.999 lässt denselben (~0.95-korrelierten) Befund verschwinden.
     strict_alarm = gate_collinearity_redundancy_alarm(cohort, tcfg, threshold=0.999)
     assert strict_alarm["alarms"] == []

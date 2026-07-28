@@ -63,7 +63,14 @@ def test_assert_not_redundant_still_fires_if_excess_return_is_reintroduced():
         for e in [0.01, 0.02, 0.03, 0.04, 0.05, -0.01]
     ]
     reintroduced = ["min_trades", "max_drawdown", "oos_min_psr", "oos_min_excess_return"]
-    tcfg = {"eligible_requires_all": reintroduced}
+    # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag; oos_min_excess_return steht
+    # bewusst NACH oos_min_psr/max_drawdown (niedrigste Priorität, historisch das entfernte Gate).
+    tcfg = {
+        "eligible_requires_all": reintroduced,
+        "gate_consolidation_priority": ["oos_min_psr", "max_drawdown", "min_trades",
+                                        "oos_min_excess_return"],
+        "gate_consolidation_protected": ["min_trades", "max_drawdown"],
+    }
     result = assert_eligible_requires_all_not_redundant(cohort, reintroduced, tcfg)
     assert "oos_min_excess_return" in result
 
@@ -91,8 +98,14 @@ def test_study_record_reports_unconsolidated_field_empty_on_current_config():
 
 
 def test_study_record_flags_reintroduced_redundant_gate():
-    tcfg = {"eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr",
-                                      "oos_min_excess_return"]}
+    tcfg = {
+        "eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr",
+                                  "oos_min_excess_return"],
+        # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag.
+        "gate_consolidation_priority": ["oos_min_psr", "max_drawdown", "min_trades",
+                                        "oos_min_excess_return"],
+        "gate_consolidation_protected": ["min_trades", "max_drawdown"],
+    }
     deltas = [{"oos_min_trades": 100.0, "oos_max_drawdown": -e, "oos_min_psr": e,
               "oos_min_excess_return": e}
               for e in [0.01, 0.02, 0.03, 0.04, 0.05, -0.01]]
