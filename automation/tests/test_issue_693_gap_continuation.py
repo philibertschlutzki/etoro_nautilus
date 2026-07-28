@@ -84,12 +84,15 @@ def test_module_imports_cleanly():
 
 
 def test_registered_in_strategies_json():
+    """Issue #809 — active=false seit der #809-Deaktivierung (kein Session-Kalender verfuegbar,
+    siehe strategies.json's _note); der Rest der Registrierung (Modul/Klasse/Overrides) bleibt
+    fuer eine kuenftige Re-Aktivierung unveraendert bestehen."""
     import json
     data = json.loads(Path("automation/config/strategies.json").read_text("utf-8"))
     entries = [s for s in data["strategies"] if s["strategy_class"] == "GapContinuationStrategy"]
     assert len(entries) == 1
     entry = entries[0]
-    assert entry["active"] is True
+    assert entry["active"] is False
     assert entry["strategy_module"] == "automation.strategies.gap_continuation"
     assert entry["config_class"] == "GapContinuationConfig"
     assert entry["tournament_overrides"]["min_trades"] == 8

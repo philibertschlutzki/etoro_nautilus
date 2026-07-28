@@ -38,9 +38,12 @@ def test_flat_constraint_progress_with_empty_feasible_region_no_signal():
 
 def test_missing_constraint_improvement_rate_falls_back_to_reward_arm_only():
     """Kein constraint_improvement_rate übergeben (None) ⇒ bit-identisches Verhalten zum #568-Status
-    quo (nur der Reward-Arm zählt)."""
-    assert study_shows_gradient_signal([5.0, 5.0, 5.0], evaluable_fraction=1.0, tau=1e-3) is False
-    assert study_shows_gradient_signal([1.0, 3.0, 5.0], evaluable_fraction=1.0, tau=1e-3) is True
+    quo (nur der Reward-Arm zählt). Issue #808 — >= 5 eligible Trials, damit dieser Test oberhalb
+    des neuen Entdeckungs-Arms bleibt (siehe test_issue_808_tier_escalation_discovery_arm.py)."""
+    assert study_shows_gradient_signal(
+        [5.0, 5.0, 5.0, 5.0, 5.0], evaluable_fraction=1.0, tau=1e-3) is False
+    assert study_shows_gradient_signal(
+        [1.0, 3.0, 5.0, 2.0, 4.0], evaluable_fraction=1.0, tau=1e-3) is True
 
 
 def test_either_arm_triggers_signal():

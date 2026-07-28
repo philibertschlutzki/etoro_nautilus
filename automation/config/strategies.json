@@ -132,7 +132,7 @@
       "_note": "Issue #692 — Connors-RSI(2)-Pullback-/Bounce-Reversion mit EMA-Trend-Filter."
     },
     {
-      "active": true,
+      "active": false,
       "strategy_module": "automation.strategies.gap_continuation",
       "strategy_class": "GapContinuationStrategy",
       "config_class": "GapContinuationConfig",
@@ -140,8 +140,7 @@
       "tournament_overrides": {
         "min_trades": 8
       },
-      "invalid_on_continuous_bars": true,
-      "_note": "Issue #693 — nur Gap-Tage → wenige Trades; min_trades gesenkt. Issue #698 — auf den synthetischen, kontinuierlichen 24/7-1h-Bars dieses Systems existiert kein echter Overnight-Gap (Variante A degeneriert zur Differenz zweier aufeinanderfolgender Bars, keine Continuation-Edge); daher via invalid_on_continuous_bars vollständig übersprungen (strategies_skipped: SKIPPED_INVALID_ON_CONTINUOUS_BARS) statt stillen 16-Trial-Budget-Verbrauchs. Re-Aktivierungspfad: eine RTH-session-bewusste Variante B (session_open_hour), sobald ein Session-Kalender für ein Symbol verfügbar ist."
+      "_note": "Issue #693 — nur Gap-Tage → wenige Trades; min_trades gesenkt (Telemetrie-Rest, greift nur bei einer Re-Aktivierung). Issue #698 — auf den synthetischen, kontinuierlichen 24/7-1h-Bars dieses Systems existiert kein echter Overnight-Gap (Variante A degeneriert zur Differenz zweier aufeinanderfolgender Bars, keine Continuation-Edge); zunächst via invalid_on_continuous_bars zur LAUFZEIT übersprungen (strategies_skipped: SKIPPED_INVALID_ON_CONTINUOUS_BARS). Issue #809 — ein Laufzeit-Skip ist eine Stilllegung, keine Lösung: der Roster war damit faktisch 14 statt 15 Strategien, ohne dass strategies.json dies aussagt. Der vorgeschlagene Default (Variante B, session_open_hour-basierter EQUITY-Overnight-Gap + expliziter CRYPTO-Denylist-Eintrag) ist NICHT umsetzbar — dieses System hat keinen RTH-Session-Kalender (sweep_diagnostics.py: 'die einzige in diesem System verfügbare Bar-Semantik, kein RTH-Session-Katalog'); jede session_open_hour-Berechnung wäre auf denselben kontinuierlichen Bars erfunden, kein echtes Signal. Stattdessen Variante A (die von #809 selbst als 'ehrlicher' benannte Alternative): active=false, explizit und begründet hier deklariert statt einer stillen Laufzeit-Ausnahme. invalid_on_continuous_bars entfernt (redundant — eine inaktive Strategie wird nie enumeriert). Re-Aktivierungspfad unverändert: eine RTH-session-bewusste Variante B, sobald ein echter Session-Kalender für mindestens die EQUITY-Symbole verfügbar ist."
     }
   ]
 }

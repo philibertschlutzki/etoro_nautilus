@@ -6,10 +6,20 @@ Tagesbeginn-Gap. Auf den synthetischen, kontinuierlichen 24/7-1h-Bars existiert 
 Overnight-Gap — die Strategie misst strukturell die Differenz zweier aufeinanderfolgender Bars,
 keine Continuation-Edge. Kein Bounds-Weiten (`gap_threshold_pct`) behebt eine ungültige Messung.
 
-Fix: `strategies.json` deklariert `invalid_on_continuous_bars: true` für GapContinuation;
-`sweep.enumerate_tunable_pairs` überspringt eine so markierte Strategie VOLLSTÄNDIG (kein
-Budget-Verbrauch je Symbol) und weist sie im `sweep_completed`-Event als `strategies_skipped` mit
-Grund `SKIPPED_INVALID_ON_CONTINUOUS_BARS` aus.
+Fix (Stand #698): `strategies.json` deklariert `invalid_on_continuous_bars: true` für
+GapContinuation; `sweep.enumerate_tunable_pairs` überspringt eine so markierte Strategie
+VOLLSTÄNDIG (kein Budget-Verbrauch je Symbol) und weist sie im `sweep_completed`-Event als
+`strategies_skipped` mit Grund `SKIPPED_INVALID_ON_CONTINUOUS_BARS` aus. Der GENERISCHE
+Mechanismus (`load_continuous_bar_invalid_strategies`/`enumerate_tunable_pairs`) bleibt für
+künftige Strategien mit derselben Bar-Semantik-Degeneration bestehen und wird unten weiter
+getestet (mit synthetischen Fixtures, nicht mehr über die REALE `strategies.json`).
+
+Issue #809 — für GapContinuation SELBST ist der Laufzeit-Skip inzwischen SUPERSEDED: ein
+still übersprungenes Budget ist eine "Stilllegung, keine Lösung" (der Roster war faktisch 14
+statt 15 Strategien, ohne dass die Config das aussagt). GapContinuation ist jetzt EXPLIZIT
+`strategies.json['active'] = false` (mit vollständiger #809-Begründung im `_note`-Feld) statt
+weiterhin über `invalid_on_continuous_bars` markiert zu sein — siehe
+`test_issue_809_gap_continuation_deactivated.py`.
 """
 import json
 import subprocess
@@ -24,10 +34,13 @@ _GATE_CFG = {
 }
 
 
-# ── strategies.json: GapContinuation ist deklarativ markiert ────────────────────────────────────
-def test_real_strategies_json_flags_gap_continuation():
+# ── strategies.json: GapContinuation ist seit #809 explizit deaktiviert, nicht mehr geflaggt ────
+def test_real_strategies_json_no_longer_flags_gap_continuation():
+    """Issue #809 — invalid_on_continuous_bars wurde von GapContinuation entfernt (redundant: eine
+    inaktive Strategie wird nie enumeriert, siehe test_issue_809_gap_continuation_deactivated.py
+    für den Ersatz-Nachweis über active=false)."""
     flagged = load_continuous_bar_invalid_strategies()
-    assert "GapContinuationStrategy" in flagged
+    assert "GapContinuationStrategy" not in flagged
 
 
 def test_other_active_strategies_are_not_flagged():

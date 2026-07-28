@@ -60,15 +60,17 @@ def test_recalibrate_policy_sets_p99_threshold():
     assert decision["recalibrated_thresholds"]["oos_min_win_rate"] == pytest.approx(expected_p99)
 
 
-def test_recalibrate_policy_never_goes_below_floor():
+def test_recalibrate_policy_has_no_floor_since_812():
+    """Issue #812 — der globale Floor (min_win_rate_recalibration_floor) entfiel mit dem
+    Default-Wechsel auf 'drop_arm' (toter Schluessel, entfernt): die rekalibrierte Schwelle ist
+    IMMER das rohe p99, auch wenn ein aufrufer den (nicht mehr gelesenen) Alt-Schluessel setzt."""
     tcfg = dict(_TCFG_BASE, any_arm_unreachable_policy="recalibrate",
                min_win_rate_recalibration_floor=0.08)
-    # Alle Samples liegen unter dem Floor ⇒ die rekalibrierte Schwelle wird auf den Floor gehoben.
+    samples = [0.0, 0.01, 0.02, 0.03, 0.04, 0.0, 0.01, 0.02, 0.03, 0.04]
     # Issue #759 — mindestens any_arm_min_observations (Default 10) echte Beobachtungen noetig,
     # sonst any_arm_decision='insufficient_data' statt einer Rekalibrierung.
-    decision = resolve_any_arm_policy(
-        tcfg, {"min_win_rate": [0.0, 0.01, 0.02, 0.03, 0.04, 0.0, 0.01, 0.02, 0.03, 0.04]})
-    assert decision["recalibrated_thresholds"]["oos_min_win_rate"] == 0.08
+    decision = resolve_any_arm_policy(tcfg, {"min_win_rate": samples})
+    assert decision["recalibrated_thresholds"]["oos_min_win_rate"] == max(samples)
 
 
 def test_reachable_arm_yields_no_decision_regardless_of_policy():

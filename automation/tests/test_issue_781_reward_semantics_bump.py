@@ -90,7 +90,9 @@ def test_fresh_study_stamps_v16_without_error():
 
     study = _FakeStudy()
     _check_reward_semantics_version(study, CFG)
-    assert study.user_attrs["reward_semantics_version"] == CFG["reward_semantics_version"] == 16
+    # Issue #815 — nicht mehr hart auf 16 gepinnt (die exakte AKTUELLE Version wird seither in
+    # test_issue_815_reward_semantics_bump.py gepinnt, analog zur v9->v10-Uebergabe in #637).
+    assert study.user_attrs["reward_semantics_version"] == CFG["reward_semantics_version"]
 
 
 def test_matching_v16_version_is_a_no_op():

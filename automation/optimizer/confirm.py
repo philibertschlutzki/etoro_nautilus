@@ -502,13 +502,17 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     aus einem dichten Optuna-Suchraum-Grid) zählen darin als ebenso viele „unabhängige Schüsse aufs
     Tor" wie tatsächlich unabhängige Parametrisierungen — derselbe Root-Cause, den der PBO-Pfad
     (``_study_pbo``) bereits je Study via ``cpcv.cluster_effective_configs`` korrigiert. Ist diese
-    Liste (je eligiblem Trial ALLER Studies des Symbols dessen ``oos_period_returns``, siehe
-    ``sweep._family_period_returns_from_studies``) übergeben, wird sie VOR der SR₀-Berechnung auf
-    die Pearson-Korrelation ihrer vollen Return-Serie (Schwelle ``pbo_cluster_threshold``) reduziert
-    ⇒ ``deflation_n_family_effective`` (declusterte Familienzahl), die ANSTELLE der rohen Zahl das
-    ``E[max_N]`` in ``sr0_multiple_testing_robust`` speist. Fehlt die Liste (Legacy-Aufrufer/Unit-
-    Tests, die nur den Skalar ``deflation_n_family`` kennen) ⇒ ``deflation_n_family_effective ==
-    deflation_n_family_raw`` (kein Clustering möglich, bit-identisch zum Pre-#695-Verhalten). Die
+    Liste (Issue #813 — je ``oos_evaluated`` Trial ALLER Studies des Symbols dessen
+    ``oos_period_returns``, seit #813 NICHT mehr nur je eligiblem Trial — siehe
+    ``sweep._family_period_returns_from_studies``, dieselbe erweiterte Menge wie ``deflation_n_
+    family`` [#784] selbst; die Coverage-Lücke [``deflation_cluster_coverage``, #813] zwischen einer
+    ELIGIBLE-only- und einer EVALUATED-Stempelung war Root-Cause einer systematischen Über-Deflation)
+    übergeben, wird sie VOR der SR₀-Berechnung auf die Pearson-Korrelation ihrer vollen Return-Serie
+    (Schwelle ``pbo_cluster_threshold``) reduziert ⇒ ``deflation_n_family_effective`` (declusterte
+    Familienzahl), die ANSTELLE der rohen Zahl das ``E[max_N]`` in ``sr0_multiple_testing_robust``
+    speist. Fehlt die Liste (Legacy-Aufrufer/Unit-Tests, die nur den Skalar ``deflation_n_family``
+    kennen) ⇒ ``deflation_n_family_effective == deflation_n_family_raw`` (kein Clustering möglich,
+    bit-identisch zum Pre-#695-Verhalten). Die
     #652-Invariante bleibt gewahrt: ``deflation_n_effective = max(deflation_n, deflation_n_family_
     effective)`` unterschreitet NIE das lokal bekannte per-Study-N.
 
@@ -855,6 +859,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # familienweite Config-Zahl, getrennt telemetriert (siehe Docstring/#696-Feldnamen unten).
     deflation_n_family_raw = 0
     deflation_n_family_effective = 0
+    # Issue #813 — Anteil der gezaehlten Kandidaten (deflation_n_family, die rohe oos_evaluated-
+    # Zaehlung, #784), fuer die ueberhaupt eine Renditeserie vorlag (len(family_rows), VOR dem
+    # Decluster). None, solange keine Familien-Kohorte vorliegt (nicht anwendbar).
+    deflation_cluster_coverage = None
     deflation_var = None
     # Issue #670 — ``deflation_used_var_floor`` (Rückwärtskompat-Name) bedeutet AUSSCHLIESSLICH
     # "Shrinkage-Gewicht λ ≥ 0.5" (die theoretische Referenz dominiert die Blend-Gewichtung),
@@ -880,13 +888,21 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Tor" wie tatsächlich unabhängige Parametrisierungen und überschätzt damit systematisch die
         # Multiple-Testing-Hürde (Root-Cause #695: derselbe Confirm-Lauf declustert für PBO, aber
         # nicht für DSR — inkonsistente Config-Zählung zweier Korrekturen im selben Pfad).
-        deflation_n_family_raw = int(deflation_n_family or 0)
+        deflation_n_family_counted = int(deflation_n_family or 0)
+        deflation_n_family_raw = deflation_n_family_counted
         deflation_n_family_effective = deflation_n_family_raw
         if deflation_family_period_returns:
             cluster_threshold = float(
                 tournament_cfg.get("pbo_cluster_threshold", _PBO_DEFAULT_CLUSTER_THRESHOLD))
             family_rows = [[float(x) for x in r] for r in deflation_family_period_returns if r]
             deflation_n_family_raw = max(deflation_n_family_raw, len(family_rows))
+            # Issue #813 — Coverage bezieht sich auf die GEZAEHLTE (oos_evaluated) Kandidatenzahl,
+            # nicht auf das per max() nach oben korrigierte deflation_n_family_raw (das wuerde die
+            # Coverage tautologisch auf <= 1 zwingen, selbst wenn die Renditeserie-Abdeckung in
+            # Wahrheit luecken hat, weil family_rows > deflation_n_family_counted vorkommen kann,
+            # z. B. bei mehreren Strategien-Studies mit ueberlappenden Zaehlungen).
+            if deflation_n_family_counted > 0:
+                deflation_cluster_coverage = len(family_rows) / deflation_n_family_counted
             if len(family_rows) >= 2:
                 from automation.optimizer.cpcv import cluster_effective_configs
                 n_obs_family = min(len(r) for r in family_rows)
@@ -938,11 +954,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 # ``variance_n_trials=deflation_n`` (per-Study) treibt das #653-Shrinkage-Gewicht — die
                 # Verlässlichkeit von V[ŜR_trials] hängt von der TATSÄCHLICH beobachteten Kohorte ab,
                 # nicht von der (grösseren) familienweiten Multiplizität (siehe deflation.py-Docstring).
+                # Issue #814 — der explizite, dokumentierte Ersatz fuer die vorherige stille
+                # Aufblaehung von deflation_n_effective auf das geplante Budget
+                # (deflation_family_floor_mode='budgeted', seit #814 nicht mehr Default): ein
+                # additiver SR0-Term statt einer Verzerrung von E[max_N] selbst. None/0 (Default)
+                # ⇒ bit-identisch ohne den Term.
+                deflation_search_space_penalty = tournament_cfg.get("deflation_search_space_penalty")
                 (deflation_sr0, deflation_used_var_floor, deflation_lambda,
                  deflation_theoretical_var_source) = sr0_multiple_testing_robust(
                     deflation_var, deflation_n_effective,
                     min_cohort=deflation_min_cohort,
                     n_periods=deflation_t_periods, variance_n_trials=deflation_n,
+                    search_space_penalty=deflation_search_space_penalty,
                 )
                 logging.getLogger("optimizer").info(
                     f"[DSR #618/#653/#670] {symbol}: SR₀={deflation_sr0:.4f} via stetigem "
@@ -1309,6 +1332,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_used_var_floor"] = deflation_used_var_floor
         best_result["metrics_symbol"]["deflation_lambda"] = deflation_lambda
         best_result["metrics_symbol"]["deflation_theoretical_var_source"] = deflation_theoretical_var_source
+        # Issue #814 — der additive Suchraum-Kapazitäts-Term, falls konfiguriert (None/0 im Regelfall).
+        best_result["metrics_symbol"]["deflation_search_space_penalty"] = deflation_search_space_penalty
         # Issue #652 — die familienweite Multiplizität, die tatsächlich in die SR₀-Berechnung
         # eingeflossen ist (N_effective = max(per-Study-N, N_family)), plus die rohe übergebene
         # Familien-Zahl — beide sichtbar im Proposal, damit die effektive SR₀-Hürde je promoteter
@@ -1326,6 +1351,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_n_family_raw"] = deflation_n_family_raw
         best_result["metrics_symbol"]["deflation_n_family_effective"] = deflation_n_family_effective
         best_result["metrics_symbol"]["deflation_n_effective"] = deflation_n_effective
+        # Issue #813 — Anteil der gezaehlten (oos_evaluated) Kandidaten, fuer die ueberhaupt eine
+        # Renditeserie zur Declusterung vorlag; < min_deflation_cluster_coverage ist ein Invarianten-
+        # FAIL (invariants.check_deflation_cluster_coverage) — vor #813 lag dieser Wert bei ~13 %
+        # (oos_period_returns wurde nur fuer eligible Trials gestempelt, deflation_n_family zaehlt
+        # seit #784 aber ALLE oos_evaluated Trials).
+        best_result["metrics_symbol"]["deflation_cluster_coverage"] = deflation_cluster_coverage
 
     return best_result
 

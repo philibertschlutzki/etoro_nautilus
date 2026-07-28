@@ -59,7 +59,11 @@ def _cohort():
 def test_same_threshold_yields_same_candidate_set_across_all_three_entry_points():
     tcfg = {"eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr",
                                       "oos_min_excess_return"],
-            "gate_collinearity_threshold": 0.90}
+            "gate_collinearity_threshold": 0.90,
+            # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag.
+            "gate_consolidation_priority": ["oos_min_psr", "max_drawdown", "min_trades",
+                                            "oos_min_excess_return"],
+            "gate_consolidation_protected": ["min_trades", "max_drawdown"]}
     cohort = _cohort()
 
     guard_result = assert_gate_collinearity_guard(cohort, tcfg)
@@ -74,32 +78,55 @@ def test_same_threshold_yields_same_candidate_set_across_all_three_entry_points(
     not_redundant_result = set(assert_eligible_requires_all_not_redundant(
         cohort, tcfg["eligible_requires_all"], tcfg))
 
-    # Genau ein Paar liegt über der Schwelle (psr/excess_return) — dieselbe Erkenntnis muss in
-    # ALLEN DREI Funktionen ankommen, mit derselben (config-gelesenen) Schwelle.
+    # Genau ein Paar liegt über der Spearman-Schwelle (psr/excess_return, reine #667-Telemetrie) —
+    # UND dasselbe Paar wird unabhängig davon auch von der #811-Jaccard-Pass-Set-Messung (eigene
+    # Default-Schwellen gate_redundancy_jaccard/gate_redundancy_marginal, siehe #811) als redundant
+    # erkannt, obwohl die beiden Fragen seit #811 bewusst entkoppelte Metriken sind.
     assert over_threshold_pairs == {("oos_min_psr", "oos_min_excess_return")}
     assert alarm_candidates == {"oos_min_excess_return"}
     assert not_redundant_result == {"oos_min_excess_return"}
 
 
 def test_explicit_threshold_override_still_wins_over_config():
+    """Issue #811 — gate_collinearity_redundancy_alarm/assert_eligible_requires_all_not_redundant
+    nehmen seit #811 ``jaccard_threshold``/``marginal_threshold`` statt eines einzelnen
+    ``threshold`` (die Redundanz-Frage ist jetzt zweidimensional: Pass-Set-Übereinstimmung UND
+    marginaler Eigenbeitrag). Ein expliziter ``jaccard_threshold``-Override (> 1.0, jenseits des
+    maximal moeglichen Jaccard-Werts) unterdrueckt jeden Alarm, unabhängig von der Config."""
     cohort = _cohort()
     tcfg = {"eligible_requires_all": ["min_trades", "max_drawdown", "oos_min_psr",
                                       "oos_min_excess_return"],
-            "gate_collinearity_threshold": 0.90}
-    # Ein Schwellen-Override auf 0.999 lässt denselben (~0.95-korrelierten) Befund verschwinden.
-    strict_alarm = gate_collinearity_redundancy_alarm(cohort, tcfg, threshold=0.999)
+            "gate_collinearity_threshold": 0.90,
+            # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag.
+            "gate_consolidation_priority": ["oos_min_psr", "max_drawdown", "min_trades",
+                                            "oos_min_excess_return"],
+            "gate_consolidation_protected": ["min_trades", "max_drawdown"]}
+    strict_alarm = gate_collinearity_redundancy_alarm(cohort, tcfg, jaccard_threshold=1.01)
     assert strict_alarm["alarms"] == []
     strict_not_redundant = assert_eligible_requires_all_not_redundant(
-        cohort, tcfg["eligible_requires_all"], tcfg, threshold=0.999)
+        cohort, tcfg["eligible_requires_all"], tcfg, jaccard_threshold=1.01)
     assert strict_not_redundant == []
 
 
-def test_no_hardcoded_095_default_remains_in_reward_module():
-    """Akzeptanzkriterium (#792): keine der drei Funktionen traegt mehr einen eigenen
-    0.90/0.95-Code-Default in der Signatur — alle resolven ueber _gate_collinearity_threshold."""
+def test_no_hardcoded_default_remains_for_the_guard_threshold():
+    """Akzeptanzkriterium (#792): assert_gate_collinearity_guard traegt keinen eigenen
+    0.90/0.95-Code-Default in der Signatur — resolved ueber _gate_collinearity_threshold. Issue
+    #811 — gate_collinearity_redundancy_alarm/assert_eligible_requires_all_not_redundant sind seit
+    #811 KEINE Konsumenten von ``_gate_collinearity_threshold`` mehr (eigene
+    jaccard_threshold/marginal_threshold-Parameter, siehe test_issue_811_*), daher hier bewusst
+    NICHT mehr Teil dieser Schleife."""
     import inspect
     import automation.optimizer.reward as reward_mod
-    for fn_name in ("assert_gate_collinearity_guard", "gate_collinearity_redundancy_alarm",
-                    "assert_eligible_requires_all_not_redundant"):
+    sig = inspect.signature(reward_mod.assert_gate_collinearity_guard)
+    assert sig.parameters["threshold"].default is None
+
+
+def test_alarm_functions_default_their_own_jaccard_and_marginal_thresholds_to_none():
+    """Issue #811 — analoges Zero-Hardcoding-Kriterium fuer die beiden neuen Parameter: kein
+    Code-Default in der Signatur, beide resolven ueber die deklarativen tournament.json-Keys."""
+    import inspect
+    import automation.optimizer.reward as reward_mod
+    for fn_name in ("gate_collinearity_redundancy_alarm", "assert_eligible_requires_all_not_redundant"):
         sig = inspect.signature(getattr(reward_mod, fn_name))
-        assert sig.parameters["threshold"].default is None
+        assert sig.parameters["jaccard_threshold"].default is None
+        assert sig.parameters["marginal_threshold"].default is None

@@ -35,6 +35,10 @@ OPT_CFG = json.loads(OPT_CFG_PATH.read_text("utf-8"))
 _TCFG = {
     "eligible_requires_all": ["oos_min_expectancy", "oos_min_profitable_folds_frac", "oos_min_psr"],
     "eligible_requires_any": ["min_profit_factor"],
+    # Issue #810 — jedes aktive Gate braucht einen Prioritätseintrag (fail-loud sonst).
+    "gate_consolidation_priority": [
+        "oos_min_psr", "oos_min_expectancy", "oos_min_profitable_folds_frac", "any_condition",
+    ],
 }
 
 
@@ -99,8 +103,8 @@ def test_finding_fires_if_min_expectancy_is_reintroduced():
 
 
 def test_psr_itself_never_flagged():
-    """oos_min_psr hat die höchste Konsolidierungs-Priorität (reward._GATE_CONSOLIDATION_PRIORITY)
-    und wird nie selbst als redundanter Kandidat gemeldet."""
+    """oos_min_psr hat die höchste Konsolidierungs-Priorität (tournament.json
+    ['gate_consolidation_priority'], #810) und wird nie selbst als redundanter Kandidat gemeldet."""
     cohort = [
         _deltas(e, e, profitable_folds_frac=e, any_condition=e)
         for e in [0.001, 0.002, 0.003, 0.004, 0.005, -0.001]

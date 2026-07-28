@@ -39,13 +39,15 @@ class _Study:
 
 
 # ── Config: deklarativer Floor-Modus ───────────────────────────────────────────────────────────
-def test_config_declares_budgeted_as_default_floor_mode():
-    assert CFG["deflation_family_floor_mode"] == "budgeted"
+def test_config_declares_attempted_as_default_floor_mode():
+    # Issue #814 — der Default wanderte von 'budgeted' (#784) weiter auf 'attempted'.
+    assert CFG["deflation_family_floor_mode"] == "attempted"
 
 
 def test_schema_documents_the_784_rationale():
     doc = CFG["_schema"]["fields"]["deflation_family_floor_mode"]
     assert "#784" in doc
+    assert "#814" in doc
 
 
 # ── Akzeptanzkriterium #784/1: n_family_raw zählt Versuche, nicht Überlebende ─────────────────────
@@ -76,12 +78,15 @@ def test_budgeted_mode_lifts_early_stopped_study_to_planned_budget():
     assert attempted["NKE.ETORO"] == 8
 
 
-def test_missing_floor_mode_key_defaults_to_budgeted():
+def test_missing_floor_mode_key_defaults_to_attempted():
+    """Issue #814 — der Code-Fallback (kein Key in tournament_cfg) wanderte mit dem Default von
+    'budgeted' auf 'attempted': 'budgeted' war eine Fehlspezifikation der Nullverteilung, kein
+    rueckwaertskompatibler Legacy-Zustand, der erhalten bleiben musste."""
     early_stopped = _Study([_T(evaluated=True)] * 8, n_trials_budget=120)
     pairs = [("StratA", "NKE.ETORO", "OK")]
     family_n = sweep._family_n_from_studies(pairs, [early_stopped], tournament_cfg={})
-    assert family_n["NKE.ETORO"] == 120
-    assert sweep._family_n_from_studies(pairs, [early_stopped], tournament_cfg=None)["NKE.ETORO"] == 120
+    assert family_n["NKE.ETORO"] == 8
+    assert sweep._family_n_from_studies(pairs, [early_stopped], tournament_cfg=None)["NKE.ETORO"] == 8
 
 
 def test_budgeted_floor_never_lowers_n_family_below_actually_evaluated():

@@ -188,13 +188,19 @@ def assert_pandas_version_supported() -> None:
 
 def _assert_gate_reward_parity() -> None:
     """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
-    ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität)."""
-    from automation.optimizer.reward import assert_any_condition_parity
+    ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität).
+
+    Issue #810 — zusätzlich: JEDES aktive Gate (``eligible_requires_all``/``_any``) MUSS einen
+    Eintrag in ``tournament.json['gate_consolidation_priority']`` haben (Root-Cause #810: ein
+    fehlender Eintrag fiel bislang auf einen stillen Sentinel, der den Redundanz-Alarm zur
+    Entfernung einer harten Risikogrenze verleitete, statt den Sweep-Start abzubrechen)."""
+    from automation.optimizer.reward import assert_any_condition_parity, assert_gate_priority_coverage
     try:
         cfg = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
     except (OSError, ValueError):
         return
     assert_any_condition_parity(cfg)
+    assert_gate_priority_coverage(cfg)
 
 
 def count_available_bars(symbols, *, catalog_path: Path | None = None) -> dict[str, int]:
@@ -670,14 +676,41 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     Budgetausführung (ein per #768/#769 früh abgebrochener Study wurde dadurch MILDER deflatiert,
     Spearman(n_family, Budgetausführung)=+0,220 — die Korrektur bestrafte gründliche Suche).
 
-    Issue #784, Umsetzungspunkt 3 — ``tournament_cfg['deflation_family_floor_mode']`` (Default
-    ``'budgeted'``) hebt die je-Study-Zahl zusätzlich auf ``n_trials_budget`` an, WENN dieser Wert
-    (User-Attr, von ``run_optimization`` gestempelt) grösser ist als die tatsächlich evaluierten
-    Trials dieser Study: ein Abbruch reduziert die gezogenen Kandidaten, aber der Suchraum, aus dem
-    selektiert wurde, war der volle geplante. ``'attempted'`` reproduziert das Verhalten OHNE
-    Budget-Untergrenze (bit-identisch bis auf die #784-Umstellung von eligible→evaluated selbst)."""
-    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "budgeted")
+    Issue #784, Umsetzungspunkt 3 — ``tournament_cfg['deflation_family_floor_mode']`` steuert, ob die
+    je-Study-Zahl zusätzlich auf ``n_trials_budget`` angehoben wird (``'budgeted'``), WENN dieser
+    Wert (User-Attr, von ``run_optimization`` gestempelt) grösser ist als die tatsächlich
+    evaluierten Trials dieser Study, oder nicht (``'attempted'``, SEIT #814 DEFAULT — zählt NUR die
+    tatsächlich gezogenen Kandidaten).
+
+    Issue #814 — ``'budgeted'`` ist SEIT #814 NICHT MEHR Default: Root-Cause #814 — ein Trial, der
+    NIE gezogen wurde, hat keinen Sharpe-Schätzer und kann das Maximum unter H0 nicht beeinflusst
+    haben; ihn über ``n_trials_budget`` mitzuzählen ist keine konservative Wahl, sondern eine
+    Fehlspezifikation der Nullverteilung — UND reproduziert denselben Kopplungsfehler, den #784
+    beseitigen wollte, nur mit umgekehrtem Vorzeichen (eine früh abgebrochene Study wird jetzt
+    HÄRTER deflatiert als eine vollständig durchlaufene). ``'budgeted'`` bleibt als Option für eine
+    KONSERVATIVE SENSITIVITÄTSANALYSE erhalten; die Suchraum-Kapazität wandert, falls gewünscht, in
+    den separaten, additiven ``deflation.sr0_multiple_testing_robust``-Term
+    ``search_space_penalty`` (``tournament.json['deflation_search_space_penalty']``, Default
+    ``None`` = aus), statt N selbst zu verzerren.
+
+    Issue #812 — summiert weiterhin PRO SYMBOL (unverändertes Interface für confirm.py), warnt aber
+    (WARNING-Log), wenn die Studies eines Symbols unterschiedliche ``selection_rule_fingerprint``
+    tragen: eine über die Familie NICHT konstante Selektionsregel (z. B. ``any_arm_unreachable_
+    policy='drop_arm'`` griff bei einer Study, aber nicht bei einer anderen) verletzt die
+    Voraussetzung der DSR-Multiplizitätskorrektur (Pitfall #248). Die nach Fingerprint
+    aufgeschlüsselte ``n_family``-Zahl lebt im #742-Report (``report._selection_rule_families``)."""
+    # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
+    # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
+    # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
+    # dokumentierte Config-Wert zurueck.
+    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "attempted")
     family_n: dict[str, int] = {}
+    # Issue #812 — die DSR-Multiplizitaetskorrektur setzt eine ueber die Familie KONSTANTE
+    # Selektionsregel voraus (Pitfall #248); ``selection_rule_fingerprint`` (reward.py, gestempelt
+    # in run_optimization._emit_study_summary) macht eine Abweichung sichtbar, statt sie lautlos in
+    # dieser Summe zu verstecken. Wird HIER (noch) konservativ als EINE Familie weitergezaehlt — die
+    # Aufschluesselung nach Fingerprint lebt im #742-Report (report._selection_rule_families).
+    symbol_fingerprints: dict[str, set] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
         n_evaluated = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
@@ -686,10 +719,22 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
             if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
                 n_evaluated = max(n_evaluated, int(n_trials_budget))
         family_n[symbol] = family_n.get(symbol, 0) + n_evaluated
+        fingerprint = (getattr(study, "user_attrs", None) or {}).get("selection_rule_fingerprint")
+        if fingerprint is not None:
+            symbol_fingerprints.setdefault(symbol, set()).add(fingerprint)
         # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
         # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
         # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
         _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
+    for symbol, fingerprints in symbol_fingerprints.items():
+        if len(fingerprints) > 1:
+            logging.getLogger("optimizer").warning(
+                "[#812] %s: %d verschiedene selection_rule_fingerprint ueber die Familie — die "
+                "DSR-Multiplizitaetskorrektur setzt eine ueber die Familie konstante Selektions-"
+                "regel voraus (Pitfall #248). Aufschluesselung: #742-Report['cross_study']"
+                "['selection_rule_families'][%r].",
+                symbol, len(fingerprints), symbol,
+            )
     return family_n
 
 
@@ -712,15 +757,19 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
     (``cpcv.cluster_effective_configs`` in ``confirm.py``) ist das statistisch saubere Mittel gegen
     die dadurch grössere Rohzahl, kein Vorfilter auf Gewinner-Trials VOR der Declusterung.
 
-    BEKANNTE RESTLÜCKE (#784, nicht Teil der gemessenen Akzeptanzkriterien): ``trial.user_attrs
-    ['oos_period_returns']`` wird in ``run_optimization.make_symbol_objective`` weiterhin NUR für
-    ``oos_eligible``-Trials gestempelt (#663/#665, bewusste Storage-Kosten-Begrenzung) — die hier
-    gesammelte Matrix sieht die erweiterte ``oos_evaluated``-Kohorte also nur über den erweiterten
-    FILTER, nicht über zusätzliche REIHEN (evaluierte-aber-ineligible Trials tragen faktisch fast
-    immer ein leeres ``rets`` und fallen daher aus der Matrix). Der ROHE Zähler
-    (``_family_n_from_studies``, das eigentliche #784-Akzeptanzkriterium) ist davon NICHT betroffen
-    — nur die per Decluster GEGLÄTTETE ``deflation_n_family_effective`` bleibt konservativ (eher zu
-    klein als zu gross, also keine neue Über-Deflations-Gefahr) auf der eligiblen Teilmenge."""
+    Issue #813 — GESCHLOSSENE RESTLÜCKE (war bis #813 offen): ``trial.user_attrs['oos_period_
+    returns']`` wurde in ``run_optimization.make_symbol_objective`` bis #813 NUR für ``oos_eligible``-
+    Trials gestempelt (#663/#665) — die hier gesammelte Matrix sah die erweiterte ``oos_evaluated``-
+    Kohorte (#784) also nur über den erweiterten FILTER, nicht über zusätzliche REIHEN (evaluierte-
+    aber-ineligible Trials trugen faktisch fast immer ein leeres ``rets`` und fielen daher aus der
+    Matrix) — die Correlation-Declusterung (``cpcv.cluster_effective_configs`` in ``confirm.py``)
+    operierte damit weiterhin auf der ALTEN, kleinen Menge, während der ROHE Zähler
+    (``_family_n_from_studies``) bereits die grosse #784-Kohorte zählte: ``deflation_n_effective``
+    stieg um Faktor ~7,7, die tatsächlich declusterte Config-Zahl blieb konstant ⇒ systematische
+    Über-Deflation. Seit #813 stempelt ``run_optimization`` ``oos_period_returns`` für JEDEN
+    ``oos_evaluated`` Trial — Zähler und Decluster-Matrix operieren jetzt auf derselben Menge
+    (``confirm.deflation_cluster_coverage`` telemetriert den verbleibenden Deckungsgrad,
+    ``invariants.check_deflation_cluster_coverage`` bricht bei < 0.9 als Regressionswächter)."""
     family_returns: dict[str, list[list[float]]] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
@@ -1132,8 +1181,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # disposen, BEVOR die Study-Referenz aus dem Scope faellt.
             _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
 
-    # Issue #784 — deflation_family_floor_mode steuert die Budget-Untergrenze innerhalb von
-    # _family_n_from_studies; fail-open (leere Config) auf den bit-identischen 'budgeted'-Default.
+    # Issue #784/#814 — deflation_family_floor_mode steuert die Budget-Untergrenze innerhalb von
+    # _family_n_from_studies; fail-open (leere Config) auf den #814-Default 'attempted'.
     try:
         _tournament_cfg_for_family = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
     except (OSError, ValueError):

@@ -3,15 +3,21 @@ automation/strategies/gap_continuation.py
 ===========================================
 GapContinuationStrategy — Issue #693 (SPEC_05).
 
-Regime: Overnight-/Event-Gap-Fortsetzung. Springt der erste Bar eines neuen Kalendertags
-gegenüber dem Schlusskurs des Vortags um mehr als `gap_threshold_pct`, handelt die Strategie
-in Gap-Richtung (Aufwärts-Gap → Long, Abwärts-Gap → Short).
+**Issue #809 — DEAKTIVIERT (``strategies.json['active'] = false``).** Regime: Overnight-/
+Event-Gap-Fortsetzung. Springt der erste Bar eines neuen Kalendertags gegenüber dem Schlusskurs
+des Vortags um mehr als `gap_threshold_pct`, handelt die Strategie in Gap-Richtung
+(Aufwärts-Gap → Long, Abwärts-Gap → Short).
 
 24/7-Boundary-Caveat (Variante A, siehe SPEC_05): die Daten sind 24/7-1h-Bars, ein "Gap" im
 klassischen Session-Sinn existiert daher nur, wenn zwischen zwei Kalendertagen tatsächlich
-eine Kurslücke liegt (z. B. Wochenend-/Feiertags-Gaps, starke Nacht-Moves). Eine präzisere,
-RTH-Session-basierte Variante B (`session_open_hour`) ist im SPEC skizziert, aber hier nicht
-implementiert.
+eine Kurslücke liegt (z. B. Wochenend-/Feiertags-Gaps, starke Nacht-Moves) — auf den
+synthetischen, kontinuierlichen Bars dieses Systems degeneriert das strukturell zur Differenz
+zweier aufeinanderfolgender Bars, keine echte Continuation-Edge. Eine präzisere,
+RTH-Session-basierte Variante B (`session_open_hour`) ist im SPEC skizziert, aber NICHT
+implementierbar, solange dieses System keinen RTH-Session-Kalender besitzt (siehe
+`strategies.json`'s `_note` für die volle #809-Begründung). Deaktiviert statt eines stillen
+Laufzeit-Skips (`invalid_on_continuous_bars`, #698) — der Klassen-Code bleibt zur
+Re-Aktivierung erhalten, sobald ein echter Session-Kalender verfügbar ist.
 
 Exit-Logik (via HourlyStrategyBase): ATR-Trailing-Stop + Zeit-Exit (~1 Handelstag).
 """

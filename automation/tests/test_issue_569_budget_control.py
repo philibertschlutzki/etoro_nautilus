@@ -44,23 +44,39 @@ def test_n_startup_monotone_in_k():
 
 
 # ── Gradienten-Gate für die Eskalation ───────────────────────────────────────────────────────
+# Issue #808 — der Reward-Varianz-Arm (dieser Abschnitt) ist seither NUR NOCH ab
+# tier_escalation_min_eligible_for_variance (Default 5) eligiblen Trials massgeblich; darunter
+# entscheidet der neue Entdeckungs-Arm (siehe test_issue_808_tier_escalation_discovery_arm.py)
+# UNABHAENGIG von der Streuung der (zu wenigen) Reward-Werte. Alle Fixtures hier haben daher
+# >= 5 eligible Trials, damit sie weiterhin gezielt NUR den Reward-Varianz-Arm pruefen.
 def test_flat_landscape_shows_no_signal():
-    """Deckel/Plateau: identische Rewards ⇒ kein Signal ⇒ keine Eskalation gerechtfertigt."""
-    assert study_shows_gradient_signal([5.0, 5.0, 5.0, 5.0], evaluable_fraction=1.0, tau=1e-3) is False
+    """Deckel/Plateau: identische Rewards (>= 5, oberhalb des Entdeckungs-Arms) ⇒ kein Signal ⇒
+    keine Eskalation gerechtfertigt."""
+    assert study_shows_gradient_signal(
+        [5.0, 5.0, 5.0, 5.0, 5.0], evaluable_fraction=1.0, tau=1e-3) is False
 
 
 def test_informative_landscape_shows_signal():
-    assert study_shows_gradient_signal([1.0, 2.5, 4.0, 5.5], evaluable_fraction=1.0, tau=1e-3) is True
+    assert study_shows_gradient_signal(
+        [1.0, 2.5, 4.0, 5.5, 3.0], evaluable_fraction=1.0, tau=1e-3) is True
 
 
 def test_no_evaluable_trials_no_signal():
-    """evaluable_fraction=0 (alle unevaluable) ⇒ nie eskalieren, egal wie die Rewards streuen."""
-    assert study_shows_gradient_signal([-9.9, -9.7, -9.8], evaluable_fraction=0.0, tau=1e-3) is False
+    """evaluable_fraction=0 (alle unevaluable) ⇒ nie eskalieren, egal wie die Rewards streuen —
+    gilt seit #808 auch fuer den Entdeckungs-Arm (derselbe evaluable_fraction>0-Guard)."""
+    assert study_shows_gradient_signal(
+        [-9.9, -9.7, -9.8], evaluable_fraction=0.0, tau=1e-3) is False
 
 
 def test_degenerate_inputs_no_signal():
     assert study_shows_gradient_signal([], 1.0, 1e-3) is False
-    assert study_shows_gradient_signal([3.0], 1.0, 1e-3) is False  # < 2 Trials
+
+
+def test_single_eligible_trial_is_a_discovery_signal_not_degenerate():
+    """Issue #808 — Root-Cause: GENAU EIN eligibler Trial war vorher 'zu wenig Stichprobe' und
+    lieferte KEIN Signal — dabei ist er der staerkste denkbare Beleg, dass die feasible Region
+    NICHT leer ist. Ersetzt die alte '< 2 Trials ⇒ kein Signal'-Annahme."""
+    assert study_shows_gradient_signal([3.0], evaluable_fraction=1.0, tau=1e-3) is True
 
 
 # ── _emit_study_summary weist das Gradienten-Signal aus (Log-Nachweis der Nicht-Eskalation) ──
@@ -91,12 +107,14 @@ def test_study_summary_emits_gradient_signal(monkeypatch):
     captured = []
     monkeypatch.setattr(ro, "emit_execution_event",
                         lambda logger, name, payload: captured.append((name, payload)))
-    # Flache Study (Deckel): alle Rewards identisch, alle eligible ⇒ gradient_signal False.
-    flat = _DummyStudy([5.0, 5.0, 5.0], [True, True, True])
+    # Flache Study (Deckel): alle Rewards identisch (>= 5, oberhalb des #808-Entdeckungs-Arms),
+    # alle eligible ⇒ gradient_signal False.
+    flat = _DummyStudy([5.0, 5.0, 5.0, 5.0, 5.0], [True] * 5)
     _emit_study_summary(flat, "TSLA.ETORO", time.perf_counter())
     name, payload = captured[-1]
     assert name == "optimizer_study_completed"
     assert payload["gradient_signal"] is False
+    assert payload["gradient_signal_arm"] == "none"
     assert payload["feasible_reward_pstdev"] == 0.0
     assert payload["feasible_p_eligible"] == 1.0
     # Issue #640 — die globale Roh-Diagnose bleibt zusaetzlich erhalten, ist aber NICHT mehr die
@@ -104,11 +122,12 @@ def test_study_summary_emits_gradient_signal(monkeypatch):
     assert payload["reward_pstdev"] == 0.0
     assert payload["evaluable_fraction"] == 1.0
 
-    # Informative Study (Streuung IM FEASIBLEN Bereich) ⇒ gradient_signal True.
+    # Informative Study (Streuung IM FEASIBLEN Bereich, >= 5 eligible) ⇒ gradient_signal True.
     captured.clear()
-    signal = _DummyStudy([1.0, 3.0, 5.0], [True, True, True])
+    signal = _DummyStudy([1.0, 3.0, 5.0, 2.0, 4.0], [True] * 5)
     _emit_study_summary(signal, "AAA.ETORO", time.perf_counter())
     assert captured[-1][1]["gradient_signal"] is True
+    assert captured[-1][1]["gradient_signal_arm"] == "reward_variance"
 
 
 def test_global_variance_alone_does_not_trigger_gradient_signal(monkeypatch):
@@ -130,15 +149,18 @@ def test_global_variance_alone_does_not_trigger_gradient_signal(monkeypatch):
     class _S:
         study_name = "study_mixed"
         # Grosse globale Streuung (Unevaluable ~ -20, Failure ~ -50, Eligible konstant 2.0), aber
-        # die eligiblen Trials selbst sind IDENTISCH ⇒ kein Signal im feasiblen Bereich.
+        # die eligiblen Trials selbst sind IDENTISCH ⇒ kein Signal im feasiblen Bereich. Issue #808
+        # — FUENF (nicht drei) identische eligible Trials, damit dieser Test weiterhin gezielt NUR
+        # den Reward-Varianz-Arm prueft (< 5 eligible waere seit #808 ein Entdeckungs-Signal).
         trials = [_T(-20.0, False), _T(-50.0, False), _T(-19.5, False),
-                  _T(2.0, True), _T(2.0, True), _T(2.0, True)]
+                  _T(2.0, True), _T(2.0, True), _T(2.0, True), _T(2.0, True), _T(2.0, True)]
         best_value = 2.0
 
     _emit_study_summary(_S(), "MIX.ETORO", time.perf_counter())
 
     payload = captured[-1][1]
     assert payload["gradient_signal"] is False
+    assert payload["gradient_signal_arm"] == "none"
     assert payload["feasible_reward_pstdev"] == 0.0
     # Die globale Streuung ist gross — genau der Wert, den #640 NICHT mehr als Grundlage nutzt.
     assert payload["reward_pstdev"] > 1.0
