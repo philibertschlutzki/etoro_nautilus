@@ -11,7 +11,7 @@ einzige Lese-Schritt einer künftigen Forensik-Sitzung.
 
 Wiederverwendung statt Doppel-Bau: ``manifest.git_commit``/``sha256_file`` für Provenienz,
 ``sweep._family_n_from_proposals`` für die Cross-Study-Kennzahl, ``run_optimization.
-study_shows_gradient_signal``/``_sanitize``/``resolve_storage`` für die Study-Metriken/Storage-
+gradient_signal_arm``/``_sanitize``/``resolve_storage`` für die Study-Metriken/Storage-
 Auflösung, ``invariants.py`` (#743) für die mathematischen Regressionswächter.
 
 Zwei Aufrufpfade, EIN gemeinsamer Kern (``_build_report``), garantieren Determinismus:
@@ -37,7 +37,7 @@ from automation.optimizer import invariants as _inv
 from automation.optimizer import reward as _reward
 from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions
 from automation.optimizer.run_optimization import (
-    _sanitize, resolve_storage, study_shows_gradient_signal, _modelled_trials,
+    _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution,
 )
 from automation.optimizer.sweep import _family_n_from_proposals
@@ -102,6 +102,20 @@ def _gradient_tau_c(base_cfg: Path | None = None) -> float:
     except (OSError, ValueError, TypeError):
         pass
     return tau_c
+
+
+def _gradient_min_eligible_for_variance(base_cfg: Path | None = None) -> int:
+    """Issue #808 — dieselbe Config-Quelle/Default wie ``run_optimization._emit_study_summary`` fuer
+    die Entdeckungs-Arm-Schwelle des Gradienten-Gates."""
+    min_eligible = 5
+    try:
+        opt_path = (base_cfg or config_dir()) / "optimizer.json"
+        if opt_path.exists():
+            min_eligible = int((json.loads(opt_path.read_text("utf-8")) or {}).get(
+                "tier_escalation_min_eligible_for_variance", min_eligible))
+    except (OSError, ValueError, TypeError):
+        pass
+    return min_eligible
 
 
 def _load_study_for_proposal(proposal: dict):
@@ -267,10 +281,15 @@ def _study_record(proposal: dict, study,
         study_user_attrs.get("zero_eligible_plateau_warned"))
     if early_stopped:
         gradient_signal = None
+        gradient_signal_arm_value = None
     else:
-        gradient_signal = study_shows_gradient_signal(
+        # Issue #808 — EINE Klassifikation (gradient_signal_arm), gradient_signal ist deren
+        # bool-Projektion (arm != 'none').
+        gradient_signal_arm_value = gradient_signal_arm(
             feasible_rewards, p_eligible, _gradient_tau(),
-            constraint_improvement_rate=constraint_improvement_rate, tau_c=_gradient_tau_c())
+            constraint_improvement_rate=constraint_improvement_rate, tau_c=_gradient_tau_c(),
+            min_eligible_for_variance=_gradient_min_eligible_for_variance())
+        gradient_signal = gradient_signal_arm_value != "none"
 
     raw_near_miss_deltas: dict[str, Any] = {}
     scored = [t for t in trials if isinstance(getattr(t, "value", None), (int, float))]
@@ -319,6 +338,10 @@ def _study_record(proposal: dict, study,
         "p_eligible": p_eligible,
         "best_reward": best_reward,
         "gradient_signal": gradient_signal,
+        # Issue #808 — welcher der drei Arme (discovery/reward_variance/constraint_progress/none)
+        # das obige gradient_signal traegt. None ⇒ wie gradient_signal selbst unbeantwortet
+        # (Early-Stop).
+        "gradient_signal_arm": gradient_signal_arm_value,
         "constraint_improvement_rate": constraint_improvement_rate,
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),

@@ -1571,32 +1571,54 @@ def assert_structural_min_modelled_trials_valid(opt_data: dict) -> None:
         )
 
 
-def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
-                                tau: float, *, constraint_improvement_rate: float | None = None,
-                                tau_c: float = 0.05) -> bool:
-    """Issue #568/#754 — Gradienten-Gate für die Tier-Eskalation, ZWEI GLEICHRANGIGE Arme.
+def gradient_signal_arm(rewards: list[float], evaluable_fraction: float,
+                        tau: float, *, constraint_improvement_rate: float | None = None,
+                        tau_c: float = 0.05, min_eligible_for_variance: int = 5) -> str:
+    """Issue #568/#754/#808 — klassifiziert, WELCHER von DREI gleichrangigen Armen des Gradienten-
+    Gates der Tier-Eskalation feuert: ``'discovery'``, ``'reward_variance'``, ``'constraint_progress'``
+    oder ``'none'`` (kein Arm). ``study_shows_gradient_signal`` (bool-Wrapper, Bestandsschnittstelle)
+    ist genau ``arm != 'none'``.
 
-    Höheres Trial-Budget (nächstes Tier) rechtfertigt sich, wenn EINER von zwei Armen Signal zeigt:
-
-    1. Reward-Arm (#568, unveraendert): ``evaluable_fraction > 0`` UND ``pstdev(reward) > τ`` — die
-       Study hat eine NICHT-LEERE feasible Region UND streut dort.
-    2. Constraint-Arm (#754, NEU): ``constraint_improvement_rate > τ_c`` — der Sampler naehert sich
+    1. **Entdeckungs-Arm** (#808, NEU, wird ZUERST geprueft): ``1 <= n_eligible <
+       min_eligible_for_variance`` (Default 5) ⇒ ``'discovery'``. Root-Cause #808: ``pstdev`` einer
+       ein- bis vierelementigen Menge ist NICHT „klein", sondern statistisch UNSCHAETZBAR/trivial —
+       gegen ``τ`` geprueft, verwarf das GENAU DEN Fall, der den staerksten Beleg fuer mehr Budget
+       liefert (die feasible Region ist NACHWEISLICH nicht leer). Der erste eligible Trial ist ein
+       Eskalationsgrund, kein Ausschlussgrund.
+    2. **Reward-Arm** (#568, NUR NOCH ab ``n_eligible >= min_eligible_for_variance``):
+       ``evaluable_fraction > 0`` UND ``pstdev(reward) > τ`` — die Study hat eine NICHT-LEERE
+       feasible Region UND streut dort MESSBAR (genug Stichprobe fuer eine Varianzschaetzung).
+    3. **Constraint-Arm** (#754): ``constraint_improvement_rate > τ_c`` — der Sampler naehert sich
        der feasiblen Region an (relative Verbesserung der minimalen Gesamt-Constraint-Verletzung
        zwischen erster und zweiter Haelfte der modellierten Trials), UNABHAENGIG davon, ob die
        feasible Region je erreicht wurde.
 
-    Root-Cause #754: der reine Reward-Arm ist bei LEERER feasibler Region (``p_eligible == 0``, nach
-    #753 der Normalfall waehrend die Suche noch laeuft) IMMER ``False`` — eine Study braucht dann
-    eligible Trials, um mehr Budget zu bekommen, UND mehr Budget, um eligible Trials zu finden
-    (Selbstblockade). Der Constraint-Arm ist auch bei leerer feasibler Region definiert und misst die
-    tatsaechlich relevante Frage in diesem Regime: "naehert sich der Sampler an?", nicht "streut der
-    Reward innerhalb einer Region, die noch gar nicht erreicht wurde?". Reine, deterministische
-    Funktion (separat testbar)."""
-    reward_signal = bool(rewards) and evaluable_fraction > 0.0 and len(rewards) >= 2 and (
-        statistics.pstdev([float(r) for r in rewards]) > float(tau))
-    constraint_signal = (constraint_improvement_rate is not None
-                        and float(constraint_improvement_rate) > float(tau_c))
-    return bool(reward_signal or constraint_signal)
+    Root-Cause #754 (Constraint-Arm): der reine Reward-Arm ist bei LEERER feasibler Region
+    (``p_eligible == 0``, nach #753 der Normalfall waehrend die Suche noch laeuft) IMMER ``False`` —
+    eine Study braucht dann eligible Trials, um mehr Budget zu bekommen, UND mehr Budget, um
+    eligible Trials zu finden (Selbstblockade). Reine, deterministische Funktion (separat testbar)."""
+    n_eligible = len(rewards)
+    if rewards and evaluable_fraction > 0.0 and 1 <= n_eligible < min_eligible_for_variance:
+        return "discovery"
+    if (rewards and evaluable_fraction > 0.0 and n_eligible >= min_eligible_for_variance
+            and statistics.pstdev([float(r) for r in rewards]) > float(tau)):
+        return "reward_variance"
+    if constraint_improvement_rate is not None and float(constraint_improvement_rate) > float(tau_c):
+        return "constraint_progress"
+    return "none"
+
+
+def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
+                                tau: float, *, constraint_improvement_rate: float | None = None,
+                                tau_c: float = 0.05, min_eligible_for_variance: int = 5) -> bool:
+    """Issue #568/#754/#808 — bool-Wrapper um ``gradient_signal_arm`` (Bestandsschnittstelle,
+    Rueckwaertskompatibel: alle drei Arme zaehlen gleichrangig). Siehe ``gradient_signal_arm``-
+    Docstring fuer die volle Root-Cause je Arm."""
+    return gradient_signal_arm(
+        rewards, evaluable_fraction, tau,
+        constraint_improvement_rate=constraint_improvement_rate, tau_c=tau_c,
+        min_eligible_for_variance=min_eligible_for_variance,
+    ) != "none"
 
 
 def _boundary_hit_analysis(study, strategy: str | None) -> tuple[dict[str, str], int] | None:
@@ -1701,12 +1723,16 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     evaluable_fraction = (evaluable / len(trials)) if trials else 0.0
     tau = 1e-3
     tau_c = 0.05
+    min_eligible_for_variance = 5
     try:
         opt_path = config_dir() / "optimizer.json"
         if opt_path.exists():
             _opt_data_gs = json.loads(opt_path.read_text("utf-8")) or {}
             tau = float(_opt_data_gs.get("tier_escalation_min_signal", tau))
             tau_c = float(_opt_data_gs.get("tier_escalation_min_constraint_progress", tau_c))
+            # Issue #808 — Schwelle des Entdeckungs-Arms (siehe gradient_signal_arm-Docstring).
+            min_eligible_for_variance = int(_opt_data_gs.get(
+                "tier_escalation_min_eligible_for_variance", min_eligible_for_variance))
     except Exception:
         pass
     # Issue #640 — gradient_signal (und die feasible-Diagnose) NICHT mehr auf dem globalen,
@@ -1746,10 +1772,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         _study_user_attrs.get("zero_eligible_plateau_warned"))
     if _early_stopped:
         gradient_signal = None
+        gradient_signal_arm_value = None
     else:
-        gradient_signal = study_shows_gradient_signal(
+        # Issue #808 — EINE Klassifikation (gradient_signal_arm), gradient_signal ist deren
+        # bool-Projektion (arm != 'none') statt einer zweiten, separat berechneten Grösse.
+        gradient_signal_arm_value = gradient_signal_arm(
             feasible_rewards, p_eligible, tau,
-            constraint_improvement_rate=constraint_improvement_rate, tau_c=tau_c)
+            constraint_improvement_rate=constraint_improvement_rate, tau_c=tau_c,
+            min_eligible_for_variance=min_eligible_for_variance)
+        gradient_signal = gradient_signal_arm_value != "none"
 
     if gradient_signal is None:
         logging.getLogger("optimizer").info(
@@ -1980,6 +2011,10 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Issue #754 — gradient_signal ist jetzt TRI-STATE (true/false/null): null bedeutet "Study
         # vorzeitig gestoppt, Eskalationsfrage unbeantwortet" (NICHT "kein Signal gefunden").
         "gradient_signal": gradient_signal,
+        # Issue #808 — WELCHER der drei Arme (discovery/reward_variance/constraint_progress/none)
+        # das obige gradient_signal traegt. None ⇒ wie gradient_signal selbst unbeantwortet
+        # (Early-Stop).
+        "gradient_signal_arm": gradient_signal_arm_value,
         "constraint_improvement_rate": constraint_improvement_rate,
         "min_constraint_violation_first": min_constraint_violation_first,
         "min_constraint_violation_last": min_constraint_violation_last,
