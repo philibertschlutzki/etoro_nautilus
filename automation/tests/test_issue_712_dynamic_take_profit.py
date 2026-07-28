@@ -72,14 +72,17 @@ def test_dyn_tp_disabled_by_default():
 
 
 def test_all_15_strategy_configs_have_dyn_tp_fields():
-    """Issue #713-Voraussetzung: dyn_tp_enabled/lambda/gamma müssen echte *Config-Felder aller
-    15 Strategien sein (sonst stilles Verwerfen, Pitfall #446)."""
+    """Issue #713-Voraussetzung: dyn_tp_enabled/lambda/gamma müssen echte *Config-Felder ALLER
+    15 REGISTRIERTEN Strategien sein (sonst stilles Verwerfen, Pitfall #446) — unabhängig vom
+    `active`-Flag: eine deaktivierte Strategie (Issue #809 — GapContinuation, kein Session-Kalender
+    verfügbar) bleibt eine reale Config-Klasse im Code und muss bei einer künftigen Re-Aktivierung
+    dieselbe Feld-Invariante erfüllen."""
     import json
     from pathlib import Path
     import importlib
 
     data = json.loads(Path("automation/config/strategies.json").read_text("utf-8"))
-    strategies = [s for s in data["strategies"] if s.get("active", True) is not False]
+    strategies = [s for s in data["strategies"] if s.get("strategy_class")]
     assert len(strategies) == 15
     for strat in strategies:
         mod = importlib.import_module(strat["strategy_module"])
