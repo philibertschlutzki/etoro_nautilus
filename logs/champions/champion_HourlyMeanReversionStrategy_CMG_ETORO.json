@@ -1,0 +1,38 @@
+{
+  "strategy": "HourlyMeanReversionStrategy",
+  "symbol": "CMG.ETORO",
+  "tier": "all",
+  "params": {
+    "keltner_period": 21,
+    "keltner_atr_period": 12,
+    "keltner_multiplier": 3.0456125744797244,
+    "cooldown_bars": 21,
+    "atr_trailing_multiplier": 2.2412451815093224,
+    "max_bars_in_trade": 16,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.28411295575264545,
+    "R_global": -2.1727023989249714,
+    "reward": 0.7639050050121932
+  },
+  "provenance": {
+    "run_id": "20260729T031802Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_HourlyMeanReversionStrategy_CMG_ETORO_89d7868c/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 17,
+    "data_snapshot_sha256": "e1a490917e2d08cb99fd6d292b80e6c127b3321afafd25124c917ffedf7ff742",
+    "catalog_newest_ns": 1785258000000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260729T031802Z",
+    "first_seen_catalog_newest_ns": 1785258000000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.28411295575264545,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

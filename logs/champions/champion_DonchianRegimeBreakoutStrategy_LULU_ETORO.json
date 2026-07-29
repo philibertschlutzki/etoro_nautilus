@@ -1,0 +1,38 @@
+{
+  "strategy": "DonchianRegimeBreakoutStrategy",
+  "symbol": "LULU.ETORO",
+  "tier": "all",
+  "params": {
+    "donchian_period": 50,
+    "ema_period": 30,
+    "cooldown_bars": 12,
+    "atr_period": 21,
+    "atr_trailing_multiplier": 2.631114267304014,
+    "max_bars_in_trade": 19,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.8992244740261737,
+    "R_global": 0.3992538411231166,
+    "reward": 1.56400897592334
+  },
+  "provenance": {
+    "run_id": "20260728T172156Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_DonchianRegimeBreakoutStrategy_LULU_ETORO_c6b0e786/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 16,
+    "data_snapshot_sha256": "52b2063ee205e30c6f338c350e67c1381d3823f27bc934410feef52629013821",
+    "catalog_newest_ns": 1785211200000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260728T172156Z",
+    "first_seen_catalog_newest_ns": 1785211200000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.8992244740261737,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

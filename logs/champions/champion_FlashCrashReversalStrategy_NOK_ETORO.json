@@ -1,0 +1,42 @@
+{
+  "strategy": "FlashCrashReversalStrategy",
+  "symbol": "NOK.ETORO",
+  "tier": "all",
+  "params": {
+    "bb_period": 10,
+    "bb_std_dev": 2.0036529290214617,
+    "rsi_period": 8,
+    "rsi_oversold": 26,
+    "atr_period": 7,
+    "cooldown_bars": 32,
+    "atr_trailing_multiplier": 0.8927204964063357,
+    "max_bars_in_trade": 11,
+    "dyn_tp_enabled": true,
+    "dyn_tp_lambda": 2.628150497336004,
+    "dyn_tp_gamma": 0.7304884447036236
+  },
+  "quality": {
+    "R_symbol": 0.6369540714569796,
+    "R_global": -0.10338892911218402,
+    "reward": 4.280509699472827
+  },
+  "provenance": {
+    "run_id": "20260728T065000Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_FlashCrashReversalStrategy_NOK_ETORO_c8be123f/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 16,
+    "data_snapshot_sha256": "52b2063ee205e30c6f338c350e67c1381d3823f27bc934410feef52629013821",
+    "catalog_newest_ns": 1785178800000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260728T065000Z",
+    "first_seen_catalog_newest_ns": 1785178800000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.6369540714569796,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

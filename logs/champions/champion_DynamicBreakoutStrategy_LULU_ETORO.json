@@ -1,0 +1,36 @@
+{
+  "strategy": "DynamicBreakoutStrategy",
+  "symbol": "LULU.ETORO",
+  "tier": "all",
+  "params": {
+    "price_breakout_period": 21,
+    "cooldown_bars": 25,
+    "atr_trailing_multiplier": 2.7599552451985025,
+    "max_bars_in_trade": 24,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.4274775563745649,
+    "R_global": -1.5405758292546752,
+    "reward": 0.9492811516562758
+  },
+  "provenance": {
+    "run_id": "20260728T172029Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_DynamicBreakoutStrategy_LULU_ETORO_40c2767d/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 16,
+    "data_snapshot_sha256": "52b2063ee205e30c6f338c350e67c1381d3823f27bc934410feef52629013821",
+    "catalog_newest_ns": 1785211200000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260728T172029Z",
+    "first_seen_catalog_newest_ns": 1785211200000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.4274775563745649,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}
