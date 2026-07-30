@@ -165,7 +165,10 @@ def test_fingerprint_identical_across_two_studies_with_the_same_effective_policy
 class _T:
     def __init__(self, evaluated=True, eligible=False):
         self.value = 1.0
-        self.user_attrs = {"oos_evaluated": evaluated, "oos_eligible": eligible}
+        # Issue #822 — _family_n_from_studies zaehlt seit dem Fix
+        # oos_selection_statistic_available statt oos_evaluated.
+        self.user_attrs = {"oos_evaluated": evaluated, "oos_eligible": eligible,
+                           "oos_selection_statistic_available": evaluated}
 
 
 class _Study:

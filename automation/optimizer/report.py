@@ -255,6 +255,19 @@ def _study_record(proposal: dict, study,
             if code:
                 inference_diagnostics_by_code[code] = inference_diagnostics_by_code.get(code, 0) + 1
 
+    # Issue #832 Fix Punkt 1 — je-Study-Aggregat der Haltedauer (Sekunden): das MAXIMUM über alle
+    # oos_evaluated Trials (Rohmaterial für summary_de.py Abschnitt 4 "Trades mit der längsten
+    # Haltedauer" — siehe cross_study['longest_holding_studies'], _build_report). P95 folgt
+    # demselben Trial mit dem groessten Maximum (repräsentativ für DESSEN Verteilung, keine
+    # zusaetzliche Kreuz-Trial-Perzentilberechnung noetig).
+    max_holding_time_s: float | None = None
+    p95_holding_time_s: float | None = None
+    for a in trial_attrs:
+        candidate = a.get("oos_max_holding_time_s")
+        if candidate is not None and (max_holding_time_s is None or candidate > max_holding_time_s):
+            max_holding_time_s = candidate
+            p95_holding_time_s = a.get("oos_p95_holding_time_s")
+
     best_reward = None
     if study is not None:
         try:
@@ -364,6 +377,16 @@ def _study_record(proposal: dict, study,
         # Normalfall). Macht eine Subprozess-Invariantenverletzung im #742-Report sichtbar, ohne ein
         # Trial-Verzeichnis zu öffnen oder trial_dir/logs/ zu lesen.
         "inference_diagnostics_by_code": inference_diagnostics_by_code,
+        # Issue #825 Fix Punkt 3 — expliziter Alias auf denselben #804-Zähler: wie viele Trials
+        # dieser Study waehrend des OOS-Fensters wirtschaftlich ruiniert wurden (Equity <= 0,
+        # backtest_runner.assert_positive_equity/EQUITY_NONPOSITIVE). Diese Trials sind bereits
+        # ueber REJECT_OOS_INVALID_METRICS (#801/#803) NIE oos_eligible und damit NIE
+        # promotionsfaehig — dieses Feld macht nur die HAEUFIGKEIT sichtbar, ohne die Zaehl-Logik
+        # zu duplizieren.
+        "liquidated_trials": inference_diagnostics_by_code.get("EQUITY_NONPOSITIVE", 0),
+        # Issue #832 Fix Punkt 1 — je-Study Haltedauer-Extrema (Sekunden), siehe Aggregat oben.
+        "max_holding_time_s": max_holding_time_s,
+        "p95_holding_time_s": p95_holding_time_s,
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -385,6 +408,21 @@ def _study_record(proposal: dict, study,
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
         "holdout_gate_deltas": holdout_metrics.get("holdout_gate_deltas") or {},
         "holdout_binding_gate": holdout_metrics.get("holdout_binding_gate"),
+        # Issue #832 Fix Punkt 2/3 — monetäre Holdout-Kennzahlen (confirm._metrics_dict), für
+        # summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ohne zweiten Datenzugriff.
+        "holdout_total_return": holdout_metrics.get("oos_total_return"),
+        "holdout_expectancy": holdout_metrics.get("oos_expectancy"),
+        "holdout_win_rate": holdout_metrics.get("oos_win_rate"),
+        "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
+        "holdout_buyhold_return": holdout_metrics.get("oos_buyhold_return"),
+        "holdout_excess_return": holdout_metrics.get("oos_excess_return"),
+        "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
+        # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
+        # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
+        # unter promotion_family_scope='per_strategy' identisch zu holdout_metrics.deflation_n_
+        # family). NICHT mit dem (jetzt nicht mehr für die Deflation verwendeten) symbolweiten
+        # cross_study['n_family'] verwechseln (#625, post-hoc Sweep-Telemetrie).
+        "n_family_stage1": holdout_metrics.get("deflation_n_family"),
         # Issue #758/#791 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER, jetzt als
         # {method, applied, skipped_reason} statt eines nackten Strings/None (#791): ``applied``
         # unterscheidet "Inferenz lief nicht, weil strukturell unanwendbar/dokumentiert
@@ -414,6 +452,52 @@ def _budget_execution_summary(studies_out: list[dict[str, Any]]) -> dict[str, An
     return {"median": round(median, 4), "p10": round(fractions[p10_idx], 4), "n": len(fractions)}
 
 
+def _diagnosed_pairs_all() -> list[dict[str, Any]]:
+    """Issue #829 Fix Punkt 5 — ALLE Einträge des Auto-Diagnose-Caches (nicht nur die
+    ``action == 'denylist'``-Teilmenge von ``_diagnosed_pairs_skipped_section``), als Eingabe für
+    ``invariants.check_diagnosis_actionability``."""
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        cache = load_diagnosed_pairs_cache()
+    except Exception:
+        return []
+    return list(cache.values())
+
+
+def _diagnosed_pairs_section() -> list[dict[str, Any]]:
+    """Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Einträge (nicht nur die ``'denylist'``-
+    Teilmenge von ``_diagnosed_pairs_skipped_section``) mit ``action``, ``binding_cause``,
+    ``n_runs_confirmed`` und ``expires_after_runs`` je Eintrag: die Deaktivierungs-/Deprioritisierungs-
+    Entscheidungen müssen genauso nachvollziehbar sein wie die Promotion-Entscheidungen, nicht nur
+    im Cache-JSON verborgen."""
+    return [
+        {
+            "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
+            "action": entry.get("action"), "binding_cause": entry.get("binding_cause"),
+            "n_runs_confirmed": entry.get("n_runs_confirmed"),
+            "expires_after_runs": entry.get("expires_after_runs"),
+            "budget_executed_fraction": entry.get("budget_executed_fraction"),
+        }
+        for entry in _diagnosed_pairs_all()
+    ]
+
+
+def _boundary_solutions_section() -> list[dict[str, Any]]:
+    """Issue #831 Fix Punkt 4 — Randlösungen (``binding_cause == 'boundary_solution'``, aus
+    ``confirm.py``/``run_optimization._emit_study_summary``, beide seit #831) als eigene
+    Report-Sektion: ``{strategy, symbol, fraction, params, proposed_bounds}`` je Study, deren
+    Gewinner an der Suchraumgrenze klebt (``boundary_hit_fraction > 0.3``, #597/#763)."""
+    return [
+        {
+            "strategy": e.get("strategy"), "symbol": e.get("symbol"),
+            "fraction": e.get("boundary_hit_fraction"),
+            "params": e.get("boundary_params"),
+            "proposed_bounds": e.get("proposed_bounds"),
+        }
+        for e in _diagnosed_pairs_all() if e.get("binding_cause") == "boundary_solution"
+    ]
+
+
 def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     """Issue #778 (Umsetzungspunkt 3) — die vom `#681`-Auto-Cache aktuell ``'denylist'``-empfohlenen
     (und damit von ``enumerate_tunable_pairs`` übersprungenen) Paare als eigene Report-Sektion, MIT
@@ -435,6 +519,70 @@ def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
         }
         for entry in cache.values() if entry.get("action") == "denylist"
     ]
+
+
+def _champions_summary(opt_data: dict) -> dict[str, Any]:
+    """Issue #818 (#742-Report-Zaehlerpaar) — ``cross_study.champions``:
+    ``{stored, admissible, corroborated, written_back, skipped_by_reason}`` über den AKTUELLEN
+    Champion-Store-Stand (``data/optimizer/champions/*.json``, exkl. ``_stale/``, #821). Liest den
+    Store direkt (dieselbe Quelle, aus der ``resolve_symbol_shrinkage_seed`` seedet) statt der
+    Sweep-Log-Events — robust gegen einen Report, der nachträglich (``--report-only``, #833) ohne
+    Live-Sweep-Kontext erzeugt wird. Fail-open (leere Zusammenfassung) bei jedem Lesefehler — ein
+    Report darf wegen des Champion-Stores nie crashen."""
+    import collections
+    from automation.optimizer import champions as _champions_mod
+
+    empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
+             "skipped_by_reason": {}, "semantics_migrated": 0}
+    try:
+        champions_dir = _champions_mod._champions_dir()
+        paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
+    except OSError:
+        return empty
+
+    stored = 0
+    admissible = 0
+    corroborated = 0
+    written_back = 0
+    semantics_migrated = 0
+    skipped_by_reason: collections.Counter = collections.Counter()
+    promote_after = int(opt_data.get("champion_promote_after_runs", 2))
+    for path in paths:
+        entry = _load_json(path)
+        if not isinstance(entry, dict):
+            continue
+        stored += 1
+        lifecycle = entry.get("lifecycle") or {}
+        # Issue #834 Akzeptanzkriterium 3 — je Eintrag, ob ``champions.maybe_write_back`` (#819)
+        # ihn ueber einen ``reward_semantics_version``-Bump hinweg MIGRIERT hat (params ueberleben
+        # den Bump, quality wird 'stale'), statt ihn zu purgen. Der Purge (purge_stale_studies.py)
+        # betrifft ausschliesslich die Optuna-SQLite-Studies (WORK/sweep/*.db), NIE den
+        # Champion-Store selbst — dieser Zaehler ist der report-seitige Nachweis dafuer.
+        if lifecycle.get("semantics_migrated_from") is not None:
+            semantics_migrated += 1
+        try:
+            ok, reason = _champions_mod.champion_is_admissible(entry, opt_data)
+        except Exception:
+            ok, reason = False, "ADMISSIBILITY_CHECK_ERROR"
+        if not ok:
+            skipped_by_reason[reason or "UNKNOWN"] += 1
+            continue
+        admissible += 1
+        if int(lifecycle.get("corroboration_count", 0) or 0) >= promote_after:
+            corroborated += 1
+        if lifecycle.get("writeback_applied"):
+            written_back += 1
+        else:
+            try:
+                stale = _champions_mod.champion_quality_stale(entry, opt_data)
+            except Exception:
+                stale = False
+            skipped_by_reason["QUALITY_STALE" if stale else "NOT_WRITTEN_BACK"] += 1
+    return {
+        "stored": stored, "admissible": admissible, "corroborated": corroborated,
+        "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
+        "semantics_migrated": semantics_migrated,
+    }
 
 
 def _promotion_outcome_counts(studies_out: list[dict[str, Any]]) -> dict[str, int]:
@@ -485,6 +633,47 @@ def _selection_rule_families(studies_out: list[dict[str, Any]]) -> dict[str, dic
     return out
 
 
+def _longest_holding_studies(studies_out: list[dict[str, Any]], *, top_k: int = 10) -> list[dict[str, Any]]:
+    """Issue #832 Fix Punkt 1/3 — Top-``top_k`` Studies nach ``max_holding_time_s`` absteigend, für
+    summary_de.py Abschnitt 4 ("Trades mit der längsten Haltedauer"). Rein additiv aus dem bereits
+    je Study berechneten Aggregat (``report._study_record``) — KEINE erneute Trial-Iteration."""
+    with_data = [r for r in studies_out if r.get("max_holding_time_s") is not None]
+    ranked = sorted(with_data, key=lambda r: r["max_holding_time_s"], reverse=True)
+    return [
+        {
+            "strategy": r.get("strategy"), "symbol": r.get("symbol"),
+            "max_holding_time_s": r["max_holding_time_s"],
+            "p95_holding_time_s": r.get("p95_holding_time_s"),
+        }
+        for r in ranked[:top_k]
+    ]
+
+
+def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    """Issue #826 Fix Punkt 2 — Akzeptanzkriterium 2: ``n_family_stage1``/``n_family_stage2``
+    GETRENNT im Report ausgewiesen. ``n_family_stage1``: je Symbol die N1-Zahl JEDER Strategie
+    (``record['n_family_stage1']``, aus ``holdout.symbol.deflation_n_family`` — unter dem Default
+    ``promotion_family_scope='per_strategy'`` die tatsächlich für die Deflation verwendete Zahl).
+    ``n_family_stage2``: je Symbol die Zahl der Strategien mit N1 > 0 (dieselbe Definition wie
+    ``sweep._family_n_stage2_from_studies``, hier post-hoc aus den exportierten Proposals statt aus
+    den Study-Objekten — reine Telemetrie, siehe deren Docstring für den Deferral-Status von
+    ``promotion_family_scope='per_symbol_best'``)."""
+    stage1: dict[str, dict[str, int]] = {}
+    stage2: dict[str, int] = {}
+    for r in studies_out:
+        symbol = r.get("symbol")
+        strategy = r.get("strategy")
+        n1 = r.get("n_family_stage1")
+        if not symbol or not strategy or n1 is None:
+            continue
+        n1 = int(n1)
+        stage1.setdefault(symbol, {})[strategy] = n1
+        stage2.setdefault(symbol, 0)
+        if n1 > 0:
+            stage2[symbol] += 1
+    return stage1, stage2
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -492,6 +681,9 @@ def _build_report(
     started_at_utc: str | None,
     wallclock_s: float | None,
     cli_args: dict | None,
+    run_status: str = "complete",
+    symbols_completed: int | None = None,
+    symbols_planned: int | None = None,
 ) -> dict:
     tournament_path = config_dir() / "tournament.json"
     optimizer_path = config_dir() / "optimizer.json"
@@ -509,6 +701,8 @@ def _build_report(
         # Issue #791 — REJECT_SELECTION_PBO erfordert eine dokumentierte Promotions-Inferenz.
         all_checks.append((study_label, _inv.check_promotion_inference_coverage(proposal, record)))
 
+    n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
+
     registry_check = _inv.check_config_key_registry(tournament_cfg)
     all_checks.append(("global", registry_check))
 
@@ -523,6 +717,23 @@ def _build_report(
     gate_collinearity_check = _inv.check_gate_collinearity_consolidation(
         studies_out, max_affected_fraction=max_affected_fraction)
     all_checks.append(("global", gate_collinearity_check))
+
+    # Issue #818 — achter Invarianten-Check: der Champion-Store-Writeback-Pfad (Ebene 2, #706)
+    # muss NACHWEISLICH erreichbar sein, nicht nur getestet/dokumentiert (Pitfall #237).
+    champions_summary = _champions_summary(optimizer_cfg)
+    champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
+    all_checks.append(("global", champion_writeback_check))
+
+    # Issue #829 — neunter Invarianten-Check: ein Evidenzschwellen-Deadlock (Pitfall #258) macht
+    # sich als viele diagnosed_pairs_cache-Einträge derselben (strategy, binding_cause)-Kombination
+    # mit action=='none' bemerkbar.
+    diagnosis_actionability_check = _inv.check_diagnosis_actionability(_diagnosed_pairs_all())
+    all_checks.append(("global", diagnosis_actionability_check))
+
+    # Issue #832 Fix Punkt 1 — zehnter Invarianten-Check: kein Trade darf laenger halten als die
+    # #714/GR-01-Zeitbox-Obergrenze (24 Bars) — ein Treffer ist ein Bug im Exit-Pfad.
+    holding_time_cap_check = _inv.check_holding_time_cap(studies_out)
+    all_checks.append(("global", holding_time_cap_check))
 
     invariant_checks = []
     for label, result in all_checks:
@@ -548,6 +759,14 @@ def _build_report(
         "started_at_utc": started_at_utc,
         "wallclock_s": wallclock_s,
         "cli_args": cli_args or {},
+        # Issue #833 Fix Punkt 3 — ein Report entsteht seit diesem Fix AUCH bei einem vorzeitigen
+        # Sweep-Abbruch (disk_guard/wallclock_guard/SIGINT/SIGTERM/unerwartete Exception, siehe
+        # sweep.main()); run_status macht den Abbruchgrund maschinenlesbar, statt nur implizit aus
+        # einer unvollstaendigen studies[]-Liste erschlossen werden zu muessen. Default 'complete'
+        # (bit-identisch fuer jeden Aufrufer, der die drei neuen Kwargs nicht setzt).
+        "run_status": run_status,
+        "symbols_completed": symbols_completed,
+        "symbols_planned": symbols_planned,
         "studies": studies_out,
         "cross_study": {
             "n_family": _family_n_from_proposals(proposals),
@@ -567,10 +786,29 @@ def _build_report(
             # Issue #778 — automatisch denylist-empfohlene (uebersprungene) Paare MIT Begruendung
             # und Evidenzstand, statt nur im diagnosed_pairs_cache.json verborgen zu sein.
             "diagnosed_pairs_skipped": _diagnosed_pairs_skipped_section(),
+            # Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Eintraege (denylist UND deprioritized
+            # UND none-mit-Ursache), nicht nur die uebersprungene Teilmenge oben.
+            "diagnosed_pairs": _diagnosed_pairs_section(),
+            # Issue #831 Fix Punkt 4 — Randlösungen (boundary_hit_fraction > 0.3) mit ihrem
+            # konkreten Bounds-Vorschlag, unabhängig davon, ob die Study eligible Trials hatte.
+            "boundary_solutions": _boundary_solutions_section(),
             # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.
             "selection_rule_families": _selection_rule_families(studies_out),
+            # Issue #818 — stored/admissible/corroborated/written_back/skipped_by_reason über den
+            # aktuellen Champion-Store-Stand (Epic #702 Ebene 1+2 Reachability-Telemetrie).
+            "champions": champions_summary,
+            # Issue #826 Fix Punkt 2 (Akzeptanzkriterium 2) — n_family_stage1 (je Symbol/Strategie,
+            # die tatsächlich verwendete Per-Strategie-Multiplizität N1) UND n_family_stage2 (je
+            # Symbol, Zahl der Strategien mit N1 > 0) GETRENNT ausgewiesen — NICHT zu verwechseln mit
+            # dem obigen cross_study['n_family'] (#625, symbolweite Summe über deflation_n_eligible).
+            "n_family_stage1": n_family_stage1,
+            "n_family_stage2": n_family_stage2,
+            # Issue #832 Fix Punkt 1/3 — Top-K Studies nach Haltedauer (Sekunden), fuer
+            # summary_de.py Abschnitt 4 "Trades mit der laengsten Haltedauer".
+            "longest_holding_studies": _longest_holding_studies(
+                studies_out, top_k=int(optimizer_cfg.get("report_longest_trades_k", 10))),
         },
         "invariant_checks": invariant_checks,
     }
@@ -585,13 +823,20 @@ def generate_sweep_report(
     wallclock_s: float | None = None,
     cli_args: dict | None = None,
     reports_dir: Path | None = None,
+    run_status: str = "complete",
+    symbols_completed: int | None = None,
+    symbols_planned: int | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
 
     ``proposals`` sind die von ``run_per_symbol_sweep`` zurückgegebenen Proposal-Pfade (oder
     bereits geparste Dicts, Test-Pfad) — jede referenzierte Study wird FRISCH aus ihrer SQLite-
     Datei geladen (kein Live-Zustand aus dem Sweep-Lauf selbst nötig), was diesen Pfad bit-
-    identisch mit ``generate_report_for_run`` macht (Determinismus-Garantie, #742-Akzeptanz)."""
+    identisch mit ``generate_report_for_run`` macht (Determinismus-Garantie, #742-Akzeptanz).
+
+    Issue #833 Fix Punkt 3 — ``run_status``/``symbols_completed``/``symbols_planned`` werden NUR
+    durchgereicht (siehe ``_build_report``); Default ``run_status='complete'`` ⇒ bit-identisch für
+    jeden Aufrufer, der einen abgeschlossenen Lauf reportet (der bisherige Normalfall)."""
     parsed = []
     for p in proposals:
         payload = p if isinstance(p, dict) else _load_json(Path(p))
@@ -601,6 +846,8 @@ def generate_sweep_report(
     report = _build_report(
         parsed, run_id=run_id, started_at_utc=started_at_utc,
         wallclock_s=wallclock_s, cli_args=cli_args,
+        run_status=run_status, symbols_completed=symbols_completed,
+        symbols_planned=symbols_planned,
     )
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
@@ -616,6 +863,9 @@ def generate_report_for_run(
     wallclock_s: float | None = None,
     cli_args: dict | None = None,
     reports_dir: Path | None = None,
+    run_status: str = "complete",
+    symbols_completed: int | None = None,
+    symbols_planned: int | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
 
@@ -624,7 +874,13 @@ def generate_report_for_run(
     ``proposal_{strategy}.json`` am vorhandenen ``symbol``-Feld) und delegiert an denselben Kern
     wie ``generate_sweep_report`` — deckt den Fall "ein alter, bereits gelaufener Sweep soll
     nachträglich reportet werden, für den kein Live-Log mehr existiert" ab (die Proposal-JSONs
-    UND die SQLite-Studies sind beide durabel, #742-Ist-Zustand)."""
+    UND die SQLite-Studies sind beide durabel, #742-Ist-Zustand).
+
+    Issue #833 Fix Punkt 3 — DAS ist der Kern des Abbruch-Artefakts (siehe ``sweep.main()``): ein
+    Sweep, der abbricht BEVOR er seinen eigenen ``generate_sweep_report``-Aufruf erreicht, hat
+    seine bereits abgeschlossenen Symbole trotzdem als ``proposal_*.json`` auf der Platte — diese
+    Funktion baut daraus denselben Report, den ein vollständiger Lauf erzeugt hätte, nur mit
+    ``run_status`` != 'complete'. Fix Punkt 4 (``--report-only``) ruft exakt diese Funktion auf."""
     base = Path(proposals_dir or WORK)
     proposal_paths = sorted(
         p for p in base.glob("proposal_*.json")
@@ -633,6 +889,8 @@ def generate_report_for_run(
     return generate_sweep_report(
         proposal_paths, run_id=run_id, started_at_utc=started_at_utc,
         wallclock_s=wallclock_s, cli_args=cli_args, reports_dir=reports_dir,
+        run_status=run_status, symbols_completed=symbols_completed,
+        symbols_planned=symbols_planned,
     )
 
 

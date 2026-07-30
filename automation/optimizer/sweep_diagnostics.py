@@ -250,12 +250,26 @@ def eligibility_curve(trials: list[dict], *, window: int = 16) -> list[float]:
     return fractions
 
 
-# Issue #681 — Strategien, für die spaces.py._bounds_for tatsächlich Symbol-Overrides auflöst
-# (#669). Nur für diese ist ein "search_space_override"-Vorschlag sinnvoll — für jede andere
-# Strategie hätte ein Bounds-Override keine Wirkung (fail-open, aber nutzlos), daher direkt Denylist.
-WIRED_OVERRIDE_STRATEGIES = frozenset({
-    "TrendPullbackStrategy", "AdxAtrMomentumStrategy", "HourlyMeanReversionStrategy",
-})
+def _strategy_supports_search_space_override(strategy: str) -> bool:
+    """Issue #831 Fix Punkt 2 — ERSETZT die vorherige ``WIRED_OVERRIDE_STRATEGIES``-Allowlist (eine
+    seit #681 EINGEFRORENE, handgepflegte 3-Strategien-Teilmenge — ``{'TrendPullbackStrategy',
+    'AdxAtrMomentumStrategy', 'HourlyMeanReversionStrategy'}`` von 14 aktiven Strategien).
+
+    Root-Cause #831: ``spaces._bounds_for`` liest den ``search_space_overrides.json``-/#761-Auto-
+    Cache-Override-Pfad UNIVERSELL für JEDEN numerischen ``suggest_*``-Aufruf JEDER Strategie — die
+    Allowlist war eine künstliche, nie nachgezogene Einschränkung derselben bereits universellen
+    Mechanik (dieselbe Fehlerklasse wie das eingefrorene ``reward._GATE_COLLINEARITY_KEYS``-Tupel
+    aus #760: eine Strategie-Erweiterung von 10 auf 14 zog die Allowlist nie mit). Eine Strategie
+    ist override-fähig GENAU DANN, wenn ``bounds.extract_numeric_bounds(strategy)`` einen NICHT-
+    LEEREN Bereich liefert — das ruft ``spaces.sample_params`` tatsächlich auf und beweist damit
+    beide Vorbedingungen zugleich (der Override-Pfad wird gelesen UND es gibt mindestens einen
+    numerischen Parameter, den eine Weitung überhaupt betreffen könnte). ``False`` für eine
+    unbekannte Strategie (propagiertes ``ValueError``, defensiv abgefangen)."""
+    try:
+        from automation.optimizer import bounds as _bounds
+        return bool(_bounds.extract_numeric_bounds(strategy))
+    except Exception:
+        return False
 
 
 def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Path | None = None) -> bool:
@@ -276,12 +290,22 @@ def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Pat
     return bool(entry)
 
 
+# Issue #830 Fix Punkt 3 — die Ablauf-Frist (record_diagnosed_pair/is_diagnosed_pair_expired) je
+# ``binding_cause`` GETRENNT: ``'signal_absent'`` ist ein strukturelles, dauerhaftes Urteil (echte
+# Datengeometrie) und behält die alte Frist (10 Läufe); ``'signal_quality'`` ist häufiger ein
+# REGIME-Urteil (siehe #830-Root-Cause) und verfällt schneller (3 Läufe) — ein Re-Test lohnt sich
+# hier eher, weil sich das Marktregime zwischen Läufen ändern kann. Fehlender Eintrag ⇒
+# ``_DEFAULT_EXPIRES_AFTER_RUNS`` (unveränderte Rückfalllösung für alle übrigen Ursachen).
+_EXPIRES_AFTER_RUNS_BY_CAUSE = {"signal_absent": 10, "signal_quality": 3}
+
+
 def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                has_existing_override: bool = False,
                                previously_recommended_override: bool = False,
                                proposed_bounds: dict | None = None,
                                budget_executed_fraction: float | None = None,
-                               n_runs_confirmed: int = 0) -> dict:
+                               n_runs_confirmed: int = 0,
+                               stop_reason: str | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -289,15 +313,20 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
 
     Fallunterscheidung nach ``binding_cause`` (#669/#769):
       * ``'signal_quality'`` (ALLE Trials evaluiert, 0 eligible) — Bounds-Kalibrierung hilft NICHT
-        (kein Frequenz-, ein Qualitätsproblem) ⇒ ``'denylist'``.
+        (kein Frequenz-, ein Qualitätsproblem). SEIT #830 GESTUFT statt unbedingt: volle Evidenz
+        (``n_runs_confirmed >= 2`` UND ``budget_executed_fraction >= 0.9``) ⇒ ``'denylist'``;
+        mindestens EINE Bestätigung, aber (noch) nicht volle Evidenz ⇒ ``'deprioritized'``
+        (reduziertes statt volles Budget, Suchraum bleibt erreichbar); keine Bestätigung
+        (``n_runs_confirmed == 0``) ⇒ ``'none'``.
       * ``'signal_absent'`` (0 evaluable, IS-Aktivität über JEDEN Trial null) — PARAMETERUNABHÄNGIG:
         kein Override kann eine Strategie zum Feuern bringen, die im gesamten Suchraum nie feuert
         ⇒ ``'denylist'`` (Bounds-Kalibrierung wäre hier ein No-Op, #769).
       * ``'signal_sparse'``/``'hold_duration'`` (0 evaluable, PARAMETERABHÄNGIG) UND die Strategie
-        ist für Symbol-Bounds-Overrides verdrahtet (``WIRED_OVERRIDE_STRATEGIES``) UND es existiert
-        noch KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-Kalibrierung
-        probieren, BEVOR das Paar aufgegeben wird). Existiert bereits ein Override (Bounds-
-        Kalibrierung wurde schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf
+        ist override-fähig (``_strategy_supports_search_space_override`` — Issue #831, ABGELEITET
+        aus ``bounds.extract_numeric_bounds``, nicht mehr eine eingefrorene Allowlist) UND es
+        existiert noch KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-
+        Kalibrierung probieren, BEVOR das Paar aufgegeben wird). Existiert bereits ein Override
+        (Bounds-Kalibrierung wurde schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf
         ``'denylist'``.
       * Frequenzproblem bei einer NICHT verdrahteten Strategie ⇒ ``'denylist'`` (ein Override hätte
         ohnehin keine Wirkung, spaces.py._bounds_for ist fail-open no-op für sie).
@@ -331,6 +360,21 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     ``n_runs_confirmed=0``, der Default für Legacy-/Test-Aufrufer) ⇒ ``'none'`` (bit-identisch zu
     "noch nichts entschieden"), NIE mehr direkt 'denylist'.
 
+    Issue #829 — ``budget_executed_fraction >= 0.9`` ist für ``'signal_absent'`` STRUKTURELL NIE
+    erreichbar: ``run_optimization.py`` stoppt eine Study mit ``STRUCTURAL_ALL_UNEVALUABLE`` (#805)
+    bereits bei ``n_startup_trials + structural_min_modelled_trials`` — für AdxAtrMomentum/
+    TrendPullback beobachtet bei 28 %/46 % des Budgets. #778s Schwelle und #805s früher Abbruch
+    blockierten sich damit gegenseitig: die Ursache, die den Mechanismus ausgelöst hat, konnte die
+    Schwelle NIE erreichen (Pitfall #258, dieselbe Fehlerklasse wie #754 eine Ebene weiter). Root-
+    Cause-Korrektur: ``sufficient_evidence`` zielt jetzt auf das GEMESSENE ERGEBNIS statt auf den
+    Budgetanteil — ``stop_reason == 'STRUCTURAL_ALL_UNEVALUABLE'`` ALLEIN ist bereits die
+    aussagekräftigere Evidenz (dieser Wert wird von ``compute_budget_execution`` NUR gesetzt,
+    NACHDEM die Study ihre eigene ``len(completed) >= n_startup_trials +
+    structural_min_modelled_trials``-Vorbedingung bereits erfüllt hat — ``budget_executed_fraction``
+    bleibt als ALTERNATIVER, weiterhin gültiger Nachweispfad erhalten (z. B. für eine Study, die aus
+    einem anderen Grund bis zum vollen Budget lief). Fehlendes ``stop_reason`` (Default ``None``,
+    Legacy-/Test-Aufrufer) ⇒ bit-identisch zum Pre-#829-Verhalten (nur der Budgetanteil zählt).
+
     Issue #778 — ``'signal_sparse'``/``'hold_duration'`` (PARAMETERABHÄNGIG) eskaliert seither NIE
     mehr auf 'denylist' — die frühere ``previously_recommended_override``-Eskalation (#699) hätte
     genau dieselbe verfrühte Deaktivierung auf Basis einer einzigen, mutmasslich budget-limitierten
@@ -340,20 +384,44 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
-    sufficient_evidence = (
-        budget_executed_fraction is not None and budget_executed_fraction >= 0.9
-        and n_runs_confirmed >= 2
+    # Issue #829 — zwei UNABHAENGIGE Nachweispfade fuer "das Ergebnis ist verlaesslich vollstaendig
+    # ausgewertet": entweder der eigene strukturelle Stop-Grund der Study (STRUCTURAL_ALL_
+    # UNEVALUABLE, siehe Docstring) ODER ein hoher Budgetanteil. n_runs_confirmed bleibt in JEDEM
+    # Fall Pflicht (die Mehrlauf-Bestaetigung ist der eigentliche Schutz, #778).
+    sufficient_evidence = n_runs_confirmed >= 2 and (
+        stop_reason == "STRUCTURAL_ALL_UNEVALUABLE"
+        or (budget_executed_fraction is not None and budget_executed_fraction >= 0.9)
     )
     if cause in ("none", "no_data", None):
         action = "none"
     elif cause == "signal_quality":
-        # Issue #669 — ALLE Trials wurden evaluiert (kein Budget-/Frequenz-Zweifel); unveraendert
-        # direkt 'denylist' (der #778-Evidenz-Gate gilt spezifisch der #769-Ursache 'signal_absent').
-        action = "denylist"
+        # Issue #830 — unterliegt seit diesem Fix demselben Evidenzregime wie 'signal_absent'
+        # (#829/#778): volle Deaktivierung ('denylist') NUR nach n_runs_confirmed >= 2 UND
+        # budget_executed_fraction >= 0.9 (bewusst OHNE den #829-stop_reason-Kurzschluss — dieser
+        # gilt spezifisch der STRUCTURAL_ALL_UNEVALUABLE-Semantik von 'signal_absent'; hier ist der
+        # Budgetanteil die richtige, tatsaechlich erreichbare Messgroesse, da diese Studies fast
+        # immer das volle Budget ausfuehren, #830-Symptom). Root-Cause #830: vorher deaktivierte
+        # EINE einzige Beobachtung (n=1) das Paar unbedingt fuer 10 Laeufe — ein Typ-II-Verstaerker,
+        # der bevorzugt die Paare entfernt, deren Nicht-Ergebnis regimebedingt war. Statt direkt
+        # 'none' bei fehlender Evidenz: ab der ERSTEN Bestaetigung (n_runs_confirmed >= 1)
+        # 'deprioritized' — der Suchraum bleibt erreichbar (reduziertes statt volles Budget, siehe
+        # run_optimization._apply_deprioritized_budget), statt entweder jeden Lauf voll zu suchen
+        # oder nach einer einzigen Beobachtung komplett zu verschwinden. n_runs_confirmed == 0 (kein
+        # Vorlauf-Eintrag) bleibt 'none' — bit-identisch zu "noch nichts entschieden".
+        quality_sufficient_evidence = (
+            n_runs_confirmed >= 2
+            and budget_executed_fraction is not None and budget_executed_fraction >= 0.9
+        )
+        if quality_sufficient_evidence:
+            action = "denylist"
+        elif n_runs_confirmed >= 1:
+            action = "deprioritized"
+        else:
+            action = "none"
     elif cause == "signal_absent":
         action = "denylist" if sufficient_evidence else "none"
     elif cause in ("signal_sparse", "hold_duration"):
-        if strategy in WIRED_OVERRIDE_STRATEGIES and not has_existing_override:
+        if _strategy_supports_search_space_override(strategy) and not has_existing_override:
             action = "search_space_override"
         else:
             action = "none"
@@ -365,6 +433,14 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         "median_is_trades": diagnosis.get("median_is_trades"),
         "budget_executed_fraction": budget_executed_fraction,
         "n_runs_confirmed": n_runs_confirmed,
+        # Issue #829 — welcher der beiden Nachweispfade zur Empfehlung fuehrte, im Report/Cache
+        # nachvollziehbar (nicht nur die binaere sufficient_evidence-Entscheidung).
+        "stop_reason": stop_reason,
+        # Issue #830 Fix Punkt 3 — je binding_cause unterschiedliche Ablauf-Frist (siehe
+        # _EXPIRES_AFTER_RUNS_BY_CAUSE); record_diagnosed_pair uebernimmt diesen Wert (setdefault
+        # greift nur, wenn er fehlt — Legacy-/Test-Aufrufer ohne diese Zeile bleiben unveraendert
+        # beim alten globalen Default).
+        "expires_after_runs": _EXPIRES_AFTER_RUNS_BY_CAUSE.get(cause, _DEFAULT_EXPIRES_AFTER_RUNS),
     }
     if action == "search_space_override" and proposed_bounds:
         result["proposed_bounds"] = proposed_bounds

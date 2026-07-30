@@ -403,6 +403,19 @@ def _metrics_dict(m) -> dict:
         "oos_evaluated": m.oos_evaluated,
         "oos_eligible": m.oos_eligible,
         "oos_total_trades": m.oos_total_trades,
+        # Issue #832 Fix Punkt 2/3 (Katalog #828-#835, GitHub-Issue #751) — monetäre Holdout-
+        # Kennzahlen, die summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ausschliesslich aus dem
+        # #742-Report-JSON lesen können muss (kein zweiter Datenzugriff auf tournament_result.json/
+        # trial_dir). Dieselbe Single Source of Truth wie das restliche metrics_symbol-Dict —
+        # TournamentMetrics parst sie bereits (parsing.py), sie waren nur bislang nicht Teil DIESER
+        # kuratierten Teilmenge. ``getattr``-defensiv (analog ``oos_gate_deltas`` unten): manche
+        # Aufrufer/Tests übergeben ein minimales Metrics-Double ohne diese Felder.
+        "oos_total_return": getattr(m, "oos_total_return", None),
+        "oos_expectancy": getattr(m, "oos_expectancy", None),
+        "oos_win_rate": getattr(m, "oos_win_rate", None),
+        "oos_profit_factor": getattr(m, "oos_profit_factor", None),
+        "oos_buyhold_return": getattr(m, "oos_buyhold_return", None),
+        "oos_excess_return": getattr(m, "oos_excess_return", None),
         # Issue #786 — dieselbe Struktur wie ``oos_gate_deltas`` der OOS-Trials (der Holdout-
         # Backtest durchlaeuft denselben Aggregationspfad, ``parsing.TournamentMetrics`` parst sie
         # bereits), hier auf dem HOLDOUT-Fenster statt der OOS-Folds.
@@ -483,7 +496,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                  *, run_backtest=run_backtest, build_trial=build_trial,
                                  catalog_newest_ns: int | None = None,
                                  deflation_n_family: int | None = None,
-                                 deflation_family_period_returns: list | None = None) -> dict:
+                                 deflation_family_period_returns: list | None = None,
+                                 deflation_n_family_excluded_no_statistic: dict | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
@@ -1204,11 +1218,20 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             proposed_bounds = propose_bounds_from_boundary_hits(
                 boundary_directions or {}, strategy, widen_fraction=_widen_fraction)
             if proposed_bounds:
+                # Issue #831 Fix Punkt 4 — fraction/params zusätzlich zum Vorschlag selbst
+                # gestempelt, damit report._boundary_solutions_section() die volle
+                # {strategy, symbol, fraction, params, proposed_bounds}-Form ausweisen kann.
+                try:
+                    _boundary_params = dict(getattr(study.best_trial, "params", {}) or {})
+                except Exception:
+                    _boundary_params = {}
                 record_diagnosed_pair({
                     "strategy": strategy, "symbol": symbol,
                     "action": "search_space_override",
                     "binding_cause": "boundary_solution",
                     "proposed_bounds": proposed_bounds,
+                    "boundary_hit_fraction": boundary_frac,
+                    "boundary_params": _boundary_params,
                 })
         except Exception:
             logging.getLogger("optimizer").warning(
@@ -1340,6 +1363,15 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Kandidat nachvollziehbar ist (Akzeptanzkriterium #652). ``deflation_n_family`` (Legacy-Name)
         # bleibt bit-identisch der roh übergebene Skalar (Rückwärtskompat, siehe test_issue_652).
         best_result["metrics_symbol"]["deflation_n_family"] = int(deflation_n_family or 0)
+        # Issue #822 Fix Punkt 3 — wie viele familienweite Kandidaten aus der Zaehlung
+        # AUSGESCHLOSSEN wurden, weil sie trotz ``oos_evaluated=True`` KEINE verwertbare
+        # Selektions-Teststatistik trugen (``oos_selection_statistic_available=False``),
+        # aufgeschluesselt nach Grund (``sortino_guard``/``equity_ruined``/``other``) — macht den
+        # Nicht-Ausgang der #822-Zaehlung genauso sichtbar wie das Ergebnis selbst (Lehre aus
+        # #783/#786). ``None``/fehlend (Legacy-Aufrufer) ⇒ leeres Dict, bit-identisch.
+        if deflation_n_family_excluded_no_statistic is not None:
+            best_result["metrics_symbol"]["deflation_n_family_excluded_no_statistic"] = dict(
+                deflation_n_family_excluded_no_statistic)
         # Issue #695/#696 — ``deflation_n_effective`` (Legacy-Name, #652) war bislang ein Fehlname:
         # sie trug die ROHE (un-declusterte) Familien-Multiplizität, obwohl der Name "effektiv"
         # suggeriert (dieselbe Fehldeutungsklasse wie #670 bei ``deflation_used_var_floor``). Seit

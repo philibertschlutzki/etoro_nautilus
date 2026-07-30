@@ -32,8 +32,12 @@ def _sortino_for_target(target_ratio: float) -> float:
     series = pd.Series(mtm, index=idx)
     # Issue #614 — dieser #588-Test prüft die NO-CLIP-Rangordnung oberhalb der alten Grenze (15), nicht
     # den Datenfehler-Guard (25, separat getestet). Guard hochsetzen, damit die Ordnung sichtbar bleibt.
+    # Issue #823 — nur 1 Downside-Beobachtung im synthetischen Fixture, < Default 30
+    # sortino_min_downside_observations; dieser Test prueft die No-Clip-Rangordnung, nicht die
+    # Mindest-Stichprobe.
     with patch("automation.backtest_runner._get_annualization_factor", return_value=1.0), \
-         patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+         patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9), \
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
         stats = _calculate_stats([1.0] * 30 + [-1.0], [(3600 * 10**9, 1.0)] * 31, 1000.0,
                                  mtm_series=series, min_trades_for_sortino=5)
     return stats["sortino_ratio"]
@@ -84,7 +88,10 @@ def test_numeric_guard_trips_and_logs():
     caplog = _CapturingHandler()
     logging.getLogger("optimizer").addHandler(caplog)
     try:
-        with patch("automation.backtest_runner._get_annualization_factor", return_value=1e10):
+        # Issue #823 — nur 1 Downside-Beobachtung; der numerische Guard (nicht die #823-Mindest-
+        # Stichprobe) ist Gegenstand dieses Tests.
+        with patch("automation.backtest_runner._get_annualization_factor", return_value=1e10), \
+             patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
             stats = _calculate_stats([1.0] * 10 + [-1e-9], [(3600 * 10**9, 1.0)] * 11, 1000.0,
                                      mtm_series=series, min_trades_for_sortino=5)
     finally:

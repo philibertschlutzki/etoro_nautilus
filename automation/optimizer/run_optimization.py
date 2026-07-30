@@ -555,6 +555,12 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             if _prior and _prior.get("binding_cause") == diagnosis.get("binding_cause")
                             else 0
                         ),
+                        # Issue #829 — derselbe study.set_user_attr("floor_plateau_warned", True)-
+                        # Aufruf (oben, VOR diesem Block) macht compute_budget_execution's
+                        # stop_reason bereits zu 'STRUCTURAL_ALL_UNEVALUABLE'; dieser Wert BEWEIST,
+                        # dass die Study ihre eigene len(completed) >= required_for_structural-
+                        # Vorbedingung (Zeile 490 oben) bereits erfuellt hat.
+                        stop_reason=_budget_execution_for_diagnosis["stop_reason"],
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -690,19 +696,34 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "binding_cause": "signal_quality",
             })
 
-            # Issue #681 — dieselbe Closed-Loop-Aktion wie im STRUCTURAL_ALL_UNEVALUABLE-Zweig:
-            # 'signal_quality' resolved IMMER auf 'denylist' (Bounds-Kalibrierung hilft hier per
-            # binding_cause-Definition nicht) — in den Auto-Cache geschrieben, NICHT in die
-            # menschlich-kuratierte Denylist-Config.
+            # Issue #681/#830 — dieselbe Closed-Loop-Anbindung wie im STRUCTURAL_ALL_UNEVALUABLE-
+            # Zweig: 'signal_quality' unterliegt seit #830 demselben Evidenzregime wie 'signal_
+            # absent' (#829) — n_runs_confirmed>=2 UND budget_executed_fraction>=0.9, BEIDE hier
+            # tatsaechlich erreichbar (diese Studies fuehren fast immer das VOLLE Budget aus, siehe
+            # #830-Root-Cause). Root-Cause #830: vorher deaktivierte eine EINZIGE Beobachtung das
+            # Paar unbedingt fuer 10 Laeufe (Typ-II-Verstaerker) — in den Auto-Cache geschrieben,
+            # NICHT in die menschlich-kuratierte Denylist-Config.
             if strategy is not None and symbol is not None:
                 try:
                     from automation.optimizer.sweep_diagnostics import (
                         recommend_diagnosis_action, record_diagnosed_pair,
+                        load_diagnosed_pairs_cache,
                     )
+                    _prior_quality = load_diagnosed_pairs_cache().get((strategy, symbol))
+                    _budget_execution_for_quality = compute_budget_execution(
+                        completed, n_trials_budget=_n_trials_budget,
+                        n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs)
                     rec = recommend_diagnosis_action(
                         strategy, symbol, {"binding_cause": "signal_quality",
                                            "median_oos_trades": median_oos_trades,
                                            "median_is_trades": None},
+                        budget_executed_fraction=_budget_execution_for_quality["budget_executed_fraction"],
+                        n_runs_confirmed=(
+                            int(_prior_quality.get("n_runs_confirmed", 0))
+                            if _prior_quality and _prior_quality.get("binding_cause") == "signal_quality"
+                            else 0
+                        ),
+                        stop_reason=_budget_execution_for_quality["stop_reason"],
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -1232,6 +1253,27 @@ def resolve_storage(*, study_name: str, base_cfg: Path | None = None) -> str:
     return url
 
 
+def _tunable_params_only(strategy: str, params: dict) -> dict:
+    """Issue #820 Fix Punkt 4 — filtert ``params`` auf Schlüssel, die ``bounds.
+    extract_numeric_bounds`` als TATSÄCHLICH tunbar (numerischer ``suggest_*``-Aufruf in
+    ``spaces.sample_params``) ausweist. Root-Cause #820: ``strategies.json[strategy].params``
+    kann ein nicht-tunbares Boolean-Flag tragen (z. B. ComboTrendVwapStrategy: ``{"allow_short":
+    true}``) — als Dict ist das wahr (truthy), ``load_global_best`` kehrte damit zurück, OBWOHL
+    kein einziger Optimierungs-Parameter enthalten war, und verdeckte die Champion-Stufe
+    (``resolve_symbol_shrinkage_seed``) für die GESAMTE Strategie dauerhaft und lautlos. Ein Dict,
+    das nach dieser Filterung leer ist, ist ``{}`` (kein globales Optimum) — ``strategy`` unbekannt
+    (``ValueError`` aus ``extract_numeric_bounds``) lässt ``params`` unangetastet (kein
+    Suchraum-Wissen verfügbar, fail-open statt eines False-Negatives)."""
+    if not params:
+        return {}
+    from automation.optimizer import bounds
+    try:
+        tunable_keys = bounds.extract_numeric_bounds(strategy)
+    except ValueError:
+        return dict(params)
+    return {k: v for k, v in params.items() if k in tunable_keys}
+
+
 def load_global_best(strategy: str, base_cfg: Path) -> dict:
     """Quelle des globalen Optimums (Warm-Start-Samen, Gate 2):
        proposal_{strategy}.json['proposed_params_override'] falls vorhanden UND status
@@ -1239,6 +1281,12 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
 
     Bewusste Entscheidung (A4.5a Rückfrage): Ein Proposal mit status != READY_FOR_PR
     (z. B. REJECTED_ON_HOLDOUT) wird NICHT als Samen genutzt — Fallback auf strategies.json.
+
+    Issue #820 Fix Punkt 4 — BEIDE Quellen werden auf tatsächlich tunbare Parameter gefiltert
+    (``_tunable_params_only``), bevor sie als "globales Optimum" zurückgegeben werden: ein Dict,
+    das nur nicht-tunbare Flags (z. B. ``allow_short``) trägt, ist wahrheitswertlich ``True``,
+    aber KEIN Optimierungsergebnis — ``resolve_symbol_shrinkage_seed`` würde die Champion-/
+    Defaults-Stufe sonst nie erreichen (siehe dortiger Docstring, #705 §9).
     """
     proposal_path = WORK / f"proposal_{strategy}.json"
     if proposal_path.exists():
@@ -1246,9 +1294,9 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
             with open(proposal_path, "r", encoding="utf-8") as f:
                 data = json.load(f) or {}
             if data.get("status") == "READY_FOR_PR":
-                override = data.get("proposed_params_override") or {}
+                override = _tunable_params_only(strategy, data.get("proposed_params_override") or {})
                 if override:
-                    return dict(override)
+                    return override
         except (OSError, ValueError):
             pass
 
@@ -1259,7 +1307,9 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
                 strats = json.load(f) or {}
             for s in strats.get("strategies", []):
                 if s.get("strategy_class") == strategy:
-                    return dict(s.get("params") or {})
+                    params = _tunable_params_only(strategy, s.get("params") or {})
+                    if params:
+                        return params
         except (OSError, ValueError):
             pass
 
@@ -1481,6 +1531,29 @@ def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
     except Exception:
         return int(base_n_trials)
     return max(int(base_n_trials), math.ceil(float(k) * dim))
+
+
+def _apply_deprioritized_budget(strategy: str, symbol: str, n_trials: int, opt_data: dict) -> int:
+    """Issue #830 Fix Punkt 2 — skaliert ``n_trials`` mit ``deprioritized_budget_factor`` (Default
+    0.5), wenn der Auto-Diagnose-Cache (#681/#761) für ``(strategy, symbol)`` ``action ==
+    'deprioritized'`` trägt (siehe ``sweep_diagnostics.recommend_diagnosis_action``: ein Paar,
+    dessen einziger Ablehnungsgrund ``signal_quality`` ist, aber noch keine volle #830-Evidenz für
+    ``'denylist'`` erreicht hat). Root-Cause #830: die Alternative — jeden Lauf das volle Budget
+    ODER nach einer einzigen Beobachtung komplett verschwinden — ist ein Typ-II-Verstärker; ein
+    reduziertes Budget hält den Suchraum erreichbar bei gesenkten Kosten.
+
+    Mindestens 1 Trial (``math.ceil``, nie 0 — ein ``deprioritized`` Paar ist NICHT faktisch ein
+    Denylist-Eintrag). Fail-open: ein Cache-Lesefehler lässt ``n_trials`` unverändert (dieselbe
+    Konvention wie ``load_diagnosed_pairs_cache`` selbst)."""
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        entry = load_diagnosed_pairs_cache().get((strategy, symbol))
+    except Exception:
+        return n_trials
+    if entry is None or entry.get("action") != "deprioritized":
+        return n_trials
+    factor = float(opt_data.get("deprioritized_budget_factor", 0.5))
+    return max(1, math.ceil(n_trials * factor))
 
 
 def derive_plateau_min_modelled_trials(strategy: str | None, base: int, opt_data: dict) -> int:
@@ -1707,6 +1780,44 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             "häuft sich; Aggregationspfad prüfen.", getattr(study, "study_name", "?"),
             coherence_violations, len(trials),
         )
+
+    # Issue #823 Fix Punkt 4 — Guard-Trips sind eine Diagnose, kein stilles Verwerfen: übersteigt
+    # der Anteil der SORTINO_GUARD_TRIPPED-Trips (an ALLEN oos_evaluated Trials) eine konfigurierte
+    # Schwelle, ist die Suche faktisch zensiert (der Guard löscht systematisch das obere Ende der
+    # Zielverteilung) — das Ergebnis dieser Study ist dann NICHT als reguläres 0-/N-eligible-
+    # Resultat interpretierbar. STUDY_GUARD_DOMINATED macht diesen Zustand sichtbar, statt ihn als
+    # gewöhnliches Suchergebnis zu berichten (ändert KEINE Gate-/Reward-Entscheidung).
+    guard_tripped = sum(
+        1 for t in trials
+        if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+        and any(d.get("code") == "SORTINO_GUARD_TRIPPED"
+               for d in (getattr(t, "user_attrs", {}).get("inference_diagnostics") or [])
+               if isinstance(d, dict))
+    )
+    guard_trip_fraction_warn = 0.10
+    try:
+        opt_path_guard = config_dir() / "optimizer.json"
+        if opt_path_guard.exists():
+            guard_trip_fraction_warn = float(
+                (json.loads(opt_path_guard.read_text("utf-8")) or {}).get(
+                    "sortino_guard_trip_fraction_warn", guard_trip_fraction_warn))
+    except Exception:
+        pass
+    study_guard_dominated = bool(
+        evaluable > 0 and (guard_tripped / evaluable) > guard_trip_fraction_warn)
+    if study_guard_dominated:
+        try:
+            study.set_user_attr("study_guard_dominated", True)
+        except Exception:
+            pass
+        logging.getLogger("optimizer").warning(
+            "[#823] %s: STUDY_GUARD_DOMINATED — %d/%d evaluierte Trials (%.1f%%) mit "
+            "SORTINO_GUARD_TRIPPED (> %.0f%%) — die Suche ist faktisch zensiert (der Guard löscht "
+            "systematisch das obere Ende der Zielverteilung); dieses Ergebnis ist NICHT als "
+            "reguläres Eligibility-Resultat interpretierbar.",
+            getattr(study, "study_name", "?"), guard_tripped, evaluable,
+            100.0 * guard_tripped / evaluable, 100.0 * guard_trip_fraction_warn,
+        )
     try:
         best_value = study.best_value
     except Exception:
@@ -1865,6 +1976,51 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             "(Randlösung: %s). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
             symbol, boundary_hit_fraction, directions_str,
         )
+        # Issue #831 Fix Punkt 1 — confirm.py schreibt seit #777 denselben Bounds-Vorschlag/Cache-
+        # Eintrag (binding_cause='boundary_solution'), aber NUR für Studies, die confirm_per_symbol_
+        # promotion tatsächlich erreichen (>= 1 eligibler Trial, siehe dortiges `if not eligible_
+        # trials: return`). Eine Study, die VOLLSTÄNDIG durchläuft, aber NIE einen eligiblen Trial
+        # produziert (STRUCTURAL_ALL_UNEVALUABLE/ZERO_ELIGIBLE_PLATEAU), erreicht diesen Code in
+        # confirm.py NIE — das war die #831-Lücke. n_eligible==0 hier UND confirm.py's eigenes Gate
+        # sind exklusiv (genau einer der beiden Pfade feuert je Study/Lauf) — kein doppeltes
+        # record_diagnosed_pair für dasselbe Paar im selben Lauf (das würde n_runs_confirmed
+        # fälschlich zweimal statt einmal pro Lauf inkrementieren).
+        n_eligible_for_boundary = sum(
+            1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
+        if n_eligible_for_boundary == 0 and strategy is not None:
+            try:
+                from automation.optimizer.sweep_diagnostics import (
+                    propose_bounds_from_boundary_hits, record_diagnosed_pair,
+                )
+                _widen_fraction_boundary = 0.3
+                try:
+                    _opt_path_boundary = config_dir() / "optimizer.json"
+                    if _opt_path_boundary.exists():
+                        _widen_fraction_boundary = float(
+                            (json.loads(_opt_path_boundary.read_text("utf-8")) or {})
+                            .get("bounds_widening_factor", 0.3))
+                except Exception:
+                    pass
+                proposed_bounds_boundary = propose_bounds_from_boundary_hits(
+                    boundary_hit_directions or {}, strategy, widen_fraction=_widen_fraction_boundary)
+                if proposed_bounds_boundary:
+                    try:
+                        _boundary_params = dict(getattr(study.best_trial, "params", {}) or {})
+                    except Exception:
+                        _boundary_params = {}
+                    record_diagnosed_pair({
+                        "strategy": strategy, "symbol": symbol,
+                        "action": "search_space_override",
+                        "binding_cause": "boundary_solution",
+                        "proposed_bounds": proposed_bounds_boundary,
+                        "boundary_hit_fraction": boundary_hit_fraction,
+                        "boundary_params": _boundary_params,
+                    })
+            except Exception:
+                logging.getLogger("optimizer").debug(
+                    "[#831] %s/%s: Boundary-Bounds-Vorschlag konnte nicht in den #761-Cache "
+                    "geschrieben werden (non-fatal).", strategy, symbol, exc_info=True,
+                )
 
     # Issue #660 — LIVE-Reachability-Check der eligible_requires_any-Klauseln GEGEN DIE TATSÄCHLICH
     # in DIESER Study beobachtete empirische Verteilung (nicht nur das statische #633-Cross-Strategy-
@@ -2215,6 +2371,17 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                 trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
             if metrics.oos_psr is not None:
                 trial.set_user_attr("oos_psr", metrics.oos_psr)
+        # Issue #822 — ``oos_selection_statistic_available``: True GENAU DANN, wenn der Trial eine
+        # verwertbare Selektions-Teststatistik trägt (``oos_psr`` — die Grösse, auf der die
+        # Selektion seit #697 rankt). Ein Trial mit ``SORTINO_GUARD_TRIPPED`` (#823) oder
+        # ``EQUITY_NONPOSITIVE`` (#825) ist ``oos_evaluated=True`` (er hat gehandelt), aber trägt
+        # KEINEN Sortino/PSR — er hat das Maximum unter H₀ nicht beeinflusst und darf die
+        # familienweite Multiplizität (``sweep._family_n_from_studies``) nicht mitzählen (dieselbe
+        # Argumentationslogik wie #814 für nie gezogene Trials, hier eine Ebene tiefer: ein Trial,
+        # dessen Statistik VERWORFEN wurde, hat ebenso keinen Schätzer). ``oos_evaluated`` bleibt
+        # UNVERÄNDERT als Aktivitäts-Telemetrie erhalten (#770-Budgetbilanz, #769-Diagnose).
+        trial.set_user_attr("oos_selection_statistic_available", bool(
+            metrics.oos_evaluated and metrics.oos_psr is not None))
         # Issue #653 — T (Anzahl OOS-Perioden) je Trial, damit confirm.py den theoretischen
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
@@ -2270,6 +2437,13 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # tragbar; die Serie liegt in user_attrs, nicht auf der Platte.
         if metrics.oos_evaluated:
             trial.set_user_attr("oos_period_returns", list(metrics.oos_period_returns))
+        # Issue #832 Fix Punkt 1 — Haltedauer in Sekunden je Trial persistiert (Rohmaterial fuer
+        # report._study_record's je-Study-Aggregat, das summary_de.py Abschnitt 4 speist).
+        if metrics.oos_evaluated:
+            if metrics.oos_max_holding_time_s is not None:
+                trial.set_user_attr("oos_max_holding_time_s", metrics.oos_max_holding_time_s)
+            if metrics.oos_p95_holding_time_s is not None:
+                trial.set_user_attr("oos_p95_holding_time_s", metrics.oos_p95_holding_time_s)
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
@@ -2398,6 +2572,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         # Ein EXPLIZIT übergebenes n_trials (Test/CLI --n-trials) ist bewusst gewählt und wird exakt
         # respektiert. Legacy ohne den Key.
         n_trials = derive_n_trials(strategy, n_trials, opt_data)
+        # Issue #830 Fix Punkt 2 — ein als 'deprioritized' diagnostiziertes Paar (signal_quality mit
+        # mindestens einer, aber noch keiner vollen #830-Bestätigung) erhält ein reduziertes statt
+        # volles Budget, statt entweder jeden Lauf voll zu suchen oder komplett zu verschwinden.
+        n_trials = _apply_deprioritized_budget(strategy, symbol, n_trials, opt_data)
     # Issue #568 — n_startup_trials an die Parameterzahl der Strategie koppeln (>= k·dim), damit der
     # TPE bei multivariate=True,group=True genügend Startpunkte hat. Legacy, wenn der Key fehlt.
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)

@@ -22,7 +22,7 @@ from automation.optimizer.sweep_diagnostics import (
     record_diagnosed_pair,
     load_diagnosed_pairs_cache,
     has_existing_search_space_override,
-    WIRED_OVERRIDE_STRATEGIES,
+    _strategy_supports_search_space_override,
 )
 
 _GATE_CFG = {
@@ -32,17 +32,23 @@ _GATE_CFG = {
 
 
 # ── recommend_diagnosis_action: Fallunterscheidung nach binding_cause ───────────────────────────
-def test_signal_quality_always_recommends_denylist():
+def test_signal_quality_without_confirmation_recommends_none():
+    """Issue #830 — 'signal_quality' resolvte bis #830 UNBEDINGT auf 'denylist' (eine einzige
+    Beobachtung deaktivierte das Paar 10 Laeufe lang, Typ-II-Verstaerker). Seit #830 braucht es
+    dieselbe Art Evidenzregime wie 'signal_absent' (#829); ohne jede Bestaetigung (n_runs_
+    confirmed=0, hier implizit) bleibt es 'none' — siehe
+    test_issue_830_signal_quality_deprioritized.py fuer den vollen Evidenz-Stufenbau."""
     rec = recommend_diagnosis_action(
         "HourlyMeanReversionStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_quality", "median_oos_trades": 214, "median_is_trades": None},
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "none"
     assert rec["binding_cause"] == "signal_quality"
 
 
 def test_signal_sparse_wired_strategy_without_override_recommends_bounds_override():
-    assert "TrendPullbackStrategy" in WIRED_OVERRIDE_STRATEGIES
+    # Issue #831 — WIRED_OVERRIDE_STRATEGIES entfernt; ABGELEITETE Override-Faehigkeit ersetzt sie.
+    assert _strategy_supports_search_space_override("TrendPullbackStrategy") is True
     rec = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 3},
@@ -63,11 +69,27 @@ def test_signal_sparse_wired_strategy_with_existing_override_no_longer_escalates
     assert rec["action"] == "none"
 
 
-def test_signal_sparse_non_wired_strategy_no_longer_recommends_denylist():
-    """Issue #778 — eine nicht verdrahtete Strategie kann keinen Override probieren, wird aber
-    seither auch NICHT mehr denylisted ('signal_sparse' eskaliert nie) — bleibt in Rotation."""
+def test_signal_sparse_previously_unwired_strategy_now_recommends_bounds_override():
+    """Issue #831 — ComboTrendVwapStrategy war NIE in der (jetzt entfernten) WIRED_OVERRIDE_
+    STRATEGIES-Allowlist (3 von 14 aktiven Strategien), obwohl spaces._bounds_for den Override-Pfad
+    für JEDE Strategie liest — die Allowlist war eine künstliche Einschränkung. Mit der ABGELEITETEN
+    Prüfung (bounds.extract_numeric_bounds liefert 14 Parameter) ist ComboTrendVwap jetzt ebenfalls
+    override-fähig, statt (vor #831) fälschlich auf 'none' zu fallen."""
     rec = recommend_diagnosis_action(
         "ComboTrendVwapStrategy", "TSLA.ETORO",
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 1},
+    )
+    assert rec["action"] == "search_space_override"
+
+
+def test_signal_sparse_unknown_strategy_no_longer_recommends_denylist():
+    """Issue #778 — eine Strategie ohne (auflösbaren) Suchraum kann keinen Override probieren, wird
+    aber seither auch NICHT mehr denylisted ('signal_sparse' eskaliert nie) — bleibt in Rotation.
+    Eine unbekannte Strategie (kein Eintrag in spaces.py) ist der Grenzfall: ``bounds.extract_
+    numeric_bounds`` wirft, ``_strategy_supports_search_space_override`` faengt das defensiv als
+    ``False`` ab."""
+    rec = recommend_diagnosis_action(
+        "NoSuchStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 1},
     )
     assert rec["action"] == "none"
@@ -82,13 +104,16 @@ def test_no_collapse_recommends_none():
 
 # ── Auto-Cache: record/load round-trip ──────────────────────────────────────────────────────────
 def test_record_and_load_diagnosed_pairs_cache_roundtrip(tmp_path):
+    """Issue #830 — ohne Bestaetigung (n_runs_confirmed=0, implizit) ist die Empfehlung 'none'
+    (nicht mehr unbedingt 'denylist', siehe test_signal_quality_without_confirmation_recommends_
+    none) -- der Round-Trip selbst ist unabhaengig vom konkreten action-Wert."""
     rec = recommend_diagnosis_action(
         "HourlyMeanReversionStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_quality", "median_oos_trades": 214},
     )
     record_diagnosed_pair(rec, work_dir=tmp_path)
     cache = load_diagnosed_pairs_cache(tmp_path)
-    assert cache[("HourlyMeanReversionStrategy", "TSLA.ETORO")]["action"] == "denylist"
+    assert cache[("HourlyMeanReversionStrategy", "TSLA.ETORO")]["action"] == "none"
 
 
 def test_none_action_is_not_persisted(tmp_path):

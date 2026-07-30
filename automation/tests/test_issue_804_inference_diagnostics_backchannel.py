@@ -66,6 +66,10 @@ def test_non_contiguous_fold_segments_produces_a_diagnostic():
 def test_sortino_guard_tripped_produces_a_diagnostic(monkeypatch):
     import automation.backtest_runner as br
     monkeypatch.setattr(br, "_read_sortino_numeric_guard", lambda: 1e-9)  # trivial ueberschritten
+    # Issue #823 — 0 Downside-Beobachtungen (streng steigende Serie); dieser Test prueft SORTINO_
+    # GUARD_TRIPPED, nicht die #823-Mindest-Downside-Stichprobe (die bei 0 Beobachtungen zuerst
+    # griffe, mit einem eigenen, hier nicht erwarteten Code).
+    monkeypatch.setattr(br, "_read_sortino_min_downside_observations", lambda: 0)
     vals = [1000.0]
     rng_vals = [1000.0 * (1.05 ** i) for i in range(1, 30)]
     vals = vals + rng_vals

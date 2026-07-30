@@ -81,13 +81,17 @@ def test_two_confirmed_runs_with_full_budget_escalates_to_denylist():
 
 
 def test_signal_quality_unaffected_by_the_778_evidence_gate():
-    """'signal_quality' (ALLE Trials evaluiert, kein Budget-Zweifel) bleibt unveraendert direkt
-    'denylist' — der #778-Evidenz-Gate gilt spezifisch der #769-Ursache 'signal_absent'."""
+    """'signal_quality' (ALLE Trials evaluiert, kein Budget-Zweifel) war zum Zeitpunkt von #778
+    unveraendert direkt 'denylist' — der #778-Evidenz-Gate galt damals spezifisch der #769-Ursache
+    'signal_absent'. SEIT #830 unterliegt 'signal_quality' einem EIGENEN (aber strukturell
+    analogen) Evidenzregime; siehe test_issue_830_signal_quality_deprioritized.py fuer das
+    aktuelle Verhalten (n_runs_confirmed=0 -> 'none', ohne Bestaetigung, keine sofortige
+    Deaktivierung mehr nach einer einzigen Beobachtung)."""
     rec = recommend_diagnosis_action(
         "HourlyMeanReversionStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_quality", "median_oos_trades": 214, "median_is_trades": None},
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "none"
 
 
 # ── record_diagnosed_pair: first_seen_run_id / n_runs_confirmed ───────────────────────────────────

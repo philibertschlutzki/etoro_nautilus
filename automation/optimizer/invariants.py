@@ -157,6 +157,46 @@ _ELIGIBLE_ALL_CLAIM_MARKER = "in eligible_requires_all (HART)"
 _ELIGIBLE_ANY_CLAIM_MARKER = "in eligible_requires_any (aktiver OR-Arm)"
 
 
+def check_family_n_statistic_coverage(trials: list[dict], *,
+                                      deflation_n_family_raw: int | None) -> InvariantResult:
+    """Issue #822-Regressionswächter.
+
+    ``sweep._family_n_from_studies`` zählte bis #822 ``oos_evaluated is True`` (blosse Aktivität)
+    statt ``oos_selection_statistic_available is True`` (eine verwertbare Selektions-Teststatistik,
+    ``oos_psr``) — ein Trial mit ``SORTINO_GUARD_TRIPPED``/``EQUITY_NONPOSITIVE`` ist
+    ``oos_evaluated=True``, trägt aber keinen Sortino/PSR und hat das Maximum unter H₀ nicht
+    beeinflusst (dieselbe Argumentation wie #814 für nie gezogene Trials). Diese Prüfung
+    rekonstruiert die Zahl der Trials MIT tatsächlich vorhandener Teststatistik unabhängig aus den
+    ``trials``-User-Attrs (``oos_selection_statistic_available``) und vergleicht sie gegen die
+    TATSÄCHLICH in die Deflation eingeflossene Zahl (``deflation_n_family_raw``) — FAIL, wenn
+    Letztere die rekonstruierte Zahl übersteigt (der Zähler hätte Trials ohne Teststatistik
+    mitgezählt, exakt die #822-Root-Cause).
+
+    ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (pure/synthetisch testbar, analog
+    ``check_reward_term_variance``). ``deflation_n_family_raw is None`` ⇒ nicht anwendbar (PASS)."""
+    if deflation_n_family_raw is None:
+        return InvariantResult(
+            name="check_family_n_statistic_coverage",
+            passed=True,
+            expected="deflation_n_family_raw <= Trials mit oos_selection_statistic_available",
+            actual=None,
+            detail="deflation_n_family_raw unbekannt — nicht anwendbar.",
+        )
+    n_with_statistic = sum(
+        1 for t in trials if (t or {}).get("oos_selection_statistic_available") is True)
+    passed = deflation_n_family_raw <= n_with_statistic
+    return InvariantResult(
+        name="check_family_n_statistic_coverage",
+        passed=passed,
+        expected=f"<= {n_with_statistic}",
+        actual=deflation_n_family_raw,
+        detail=("OK" if passed else
+                f"deflation_n_family_raw={deflation_n_family_raw} > {n_with_statistic} Trials mit "
+                "oos_selection_statistic_available=True — die Zaehlung zaehlt Trials ohne "
+                "verwertbare Teststatistik mit (#822-Regression)."),
+    )
+
+
 def check_config_key_registry(tournament_config: dict) -> InvariantResult:
     """Issue #649/#760/#765-Regressionswächter.
 
@@ -607,4 +647,122 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
         detail=("OK" if passed else
                 f"Reward-Term(e) praktisch inert (std < {inert_ratio:.2%} von "
                 f"reward_std={rew_std:.6f}): {inert_terms}."),
+    )
+
+
+def check_champion_writeback_reachability(champions_summary: dict) -> InvariantResult:
+    """Issue #818-Regressionswächter (achter Invarianten-Check, siehe #742/#749).
+
+    ``champions.maybe_write_back`` (Ebene 2 des Epics #702, Issue #706) hatte KEINE Produktions-
+    Call-Site — die dokumentierte, getestete Funktion wurde vom laufenden Sweep nie aufgerufen
+    (76 von 76 Store-Einträgen trugen ``lifecycle.writeback_applied == false``, exakt die
+    Fehlerklasse aus Pitfall #237: ein Fix gilt als "gemergt", sobald der Code existiert, statt
+    sobald ein gemessenes Akzeptanzkriterium in einem realen Lauf erfüllt ist).
+
+    FAIL, wenn der Champion-Store nicht-leer ist (``stored > 0``) UND KEIN einziger Eintrag jemals
+    zurückgeschrieben wurde (``written_back == 0``) — die reine Anwesenheit von Champions ohne
+    JEDEN Writeback-Erfolg über potenziell viele Läufe hinweg ist der direkte Fingerabdruck einer
+    unerreichbaren Ebene 2. ``champions_summary`` ist ``report._champions_summary()``'s
+    ``{'stored', 'admissible', 'corroborated', 'written_back', 'skipped_by_reason'}``-Dict."""
+    stored = int(champions_summary.get("stored") or 0)
+    written_back = int(champions_summary.get("written_back") or 0)
+    if stored == 0:
+        return InvariantResult(
+            name="check_champion_writeback_reachability",
+            passed=True,
+            expected="written_back > 0, sobald stored > 0",
+            actual={"stored": 0, "written_back": 0},
+            detail="Kein Champion-Store-Eintrag — nicht anwendbar.",
+        )
+    passed = written_back > 0
+    return InvariantResult(
+        name="check_champion_writeback_reachability",
+        passed=passed,
+        expected="written_back > 0, sobald stored > 0",
+        actual={"stored": stored, "written_back": written_back},
+        detail=("OK" if passed else
+                f"{stored} Champion-Store-Eintraege, aber 0 Writebacks ueber den gesamten "
+                "Store-Stand — Ebene 2 (#706) ist vermutlich unerreichbar (#818-Regression: "
+                "maybe_write_back ohne Produktions-Call-Site)."),
+    )
+
+
+def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int = 50) -> InvariantResult:
+    """Issue #829 Fix Punkt 5 (neunter Invarianten-Check, Pitfall #258) — die maschinelle Form der
+    Frage "warum ändert sich hier nichts?": FAIL, wenn ``diagnosed_pairs_cache.json`` (aus
+    ``sweep_diagnostics.load_diagnosed_pairs_cache``, hier als Liste ihrer Einträge übergeben) für
+    dieselbe ``(strategy, binding_cause)``-Kombination MINDESTENS ``min_count`` Paare mit
+    ``action == 'none'`` trägt.
+
+    Root-Cause #829/#258: zwei Evidenzschwellen desselben Mechanismus (eine Abbruchregel, die den
+    Budgetanteil kappt — #805 — und eine Aktionsregel, die einen Mindest-Budgetanteil verlangt —
+    #778) können einen Deadlock bilden, in dem die Ursache, die den Mechanismus auslösen soll, die
+    Schwelle STRUKTURELL nie erreicht (im Referenzlauf: 138 Studies über zwei Strategien,
+    ``action == 'none'`` in JEDEM Fall). Ein Diagnose-Cache, der über viele Symbole hinweg
+    ausschliesslich ``'none'`` für dieselbe Ursache meldet, ist der direkte Fingerabdruck eines
+    solchen Deadlocks — unabhängig davon, ob die konkrete Ursache ``signal_absent`` (#829) oder eine
+    künftige, strukturell ähnliche Kombination ist."""
+    from collections import Counter
+    none_counts: Counter = Counter()
+    for entry in diagnosed_pairs or []:
+        if entry.get("action") != "none":
+            continue
+        key = (entry.get("strategy"), entry.get("binding_cause"))
+        if key[0] is None or key[1] is None:
+            continue
+        none_counts[key] += 1
+    offenders = {f"{strategy}/{cause}": n for (strategy, cause), n in none_counts.items() if n >= min_count}
+    passed = not offenders
+    return InvariantResult(
+        name="check_diagnosis_actionability",
+        passed=passed,
+        expected=f"< {min_count} Paare je (strategy, binding_cause) mit action=='none'",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} (strategy, binding_cause)-Kombination(en) melden >= {min_count} "
+                f"Paare mit action=='none': {offenders} — vermutlich ein Evidenzschwellen-Deadlock "
+                "(Pitfall #258), analog #829."),
+    )
+
+
+def check_holding_time_cap(study_records: list[dict], *,
+                           bar_seconds: float = 3600.0, max_bars_in_trade_cap: float = 24.0,
+                           tolerance_bars: float = 0.01) -> InvariantResult:
+    """Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Plausibilitätswächter: KEIN
+    Trade darf länger halten als die #714/GR-01-Zeitbox-Obergrenze für ``max_bars_in_trade``
+    (``spaces._MAX_BARS_IN_TRADE_CAP`` = 24 Bars, Single Source of Truth über ALLE Strategien —
+    ``HourlyStrategyBase`` erzwingt den Zeit-Exit unabhängig vom je Trial gesampelten Wert). Ein
+    Treffer ist ein Bug im Exit-Pfad, keine Dateneigenart — zugleich ein Test des
+    Zeitbox-Vertrags, nicht nur eine Diagnose der Haltedauer selbst.
+
+    Prüft ``report._study_record``s ``max_holding_time_s`` (Sekunden, das MAXIMUM über alle
+    ``oos_evaluated`` Trials einer Study) gegen ``max_bars_in_trade_cap`` Bars — die je-Trial-
+    ``max_bars_in_trade``-Grenze KANN kleiner sein (Suchraum), NIE grösser als dieser globale
+    Deckel; die Prüfung auf dem globalen Deckel ist damit die korrekte (konservativste) obere
+    Schranke, ohne je Trial dessen konkreten gesampelten Wert nachladen zu müssen."""
+    with_data = [r for r in study_records if r.get("max_holding_time_s") is not None]
+    if not with_data:
+        return InvariantResult(
+            name="check_holding_time_cap",
+            passed=True,
+            expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
+            actual=None,
+            detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
+                   "nicht anwendbar.",
+        )
+    cap_s = (max_bars_in_trade_cap + tolerance_bars) * bar_seconds
+    offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": round(r["max_holding_time_s"] / bar_seconds, 4)
+        for r in with_data if r["max_holding_time_s"] > cap_s
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_holding_time_cap",
+        passed=passed,
+        expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies überschreiten die #714/GR-01-Zeitbox-Obergrenze "
+                f"({max_bars_in_trade_cap} Bars): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase "
+                "erzwingt den Zeit-Exit nicht), keine Dateneigenart."),
     )

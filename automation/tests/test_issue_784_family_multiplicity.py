@@ -26,7 +26,11 @@ CFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 class _T:
     def __init__(self, evaluated, eligible=False, rets=None):
-        attrs = {"oos_evaluated": evaluated, "oos_eligible": eligible}
+        # Issue #822 — _family_n_from_studies zaehlt seit dem Fix
+        # oos_selection_statistic_available statt oos_evaluated; dieses Fixture testet die
+        # #784-Versuche-vs-Ueberlebende-Unterscheidung, nicht die #822-Teststatistik-Unterscheidung.
+        attrs = {"oos_evaluated": evaluated, "oos_eligible": eligible,
+                "oos_selection_statistic_available": evaluated}
         if rets is not None:
             attrs["oos_period_returns"] = rets
         self.user_attrs = attrs

@@ -8,6 +8,7 @@ clippte auf den Maximal-Reward. Fixes: (1) ``losses_count == 0`` ist KEIN Aussti
 Unsicherheit bestraft (Normierung über ``oos_folds_total``); (3) Gate ``min_evaluable_folds``.
 """
 import math
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -46,7 +47,11 @@ def test_small_downside_fold_yields_finite_positive_sortino():
     series = pd.Series(vals, index=idx)
     pnls = [3.0] * 25 + [-2.0] * 13
     holds = [(3600 * 10**9, 1.0)] * 38
-    stats = _calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
+    # Issue #823 — 20 Downside-Perioden im Fixture, < Default 30 sortino_min_downside_
+    # observations; dieser Test prueft die Guard-vs-finiter-Sortino-Grenze, nicht die
+    # Mindest-Stichprobe.
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+        stats = _calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
     sortino = stats["sortino_ratio"]
     assert sortino is not None
     assert math.isfinite(sortino) and sortino > 0.0

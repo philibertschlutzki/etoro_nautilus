@@ -38,6 +38,7 @@ from automation.optimizer.confirm import confirm_per_symbol_promotion as _confir
 from automation.optimizer import champions
 from automation.optimizer import retention
 from automation.optimizer import disk_guard
+from automation.optimizer import wallclock_guard
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
@@ -698,34 +699,27 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     tragen: eine über die Familie NICHT konstante Selektionsregel (z. B. ``any_arm_unreachable_
     policy='drop_arm'`` griff bei einer Study, aber nicht bei einer anderen) verletzt die
     Voraussetzung der DSR-Multiplizitätskorrektur (Pitfall #248). Die nach Fingerprint
-    aufgeschlüsselte ``n_family``-Zahl lebt im #742-Report (``report._selection_rule_families``)."""
-    # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
-    # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
-    # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
-    # dokumentierte Config-Wert zurueck.
-    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "attempted")
+    aufgeschlüsselte ``n_family``-Zahl lebt im #742-Report (``report._selection_rule_families``).
+
+    Issue #822 — zählt seit diesem Fix ``oos_selection_statistic_available is True`` (Trials MIT
+    einer verwertbaren Selektions-Teststatistik, ``oos_psr``), NICHT MEHR ``oos_evaluated is True``
+    (blosse Aktivität). Root-Cause #822: ein Trial mit ``SORTINO_GUARD_TRIPPED`` (#823) oder
+    ``EQUITY_NONPOSITIVE`` (#825) ist ``oos_evaluated=True``, trägt aber keinen Sortino/PSR — er hat
+    das Maximum unter H₀ NICHT beeinflusst und darf die Multiplizität nicht erhöhen (dieselbe
+    Argumentationslogik wie #814, eine Ebene tiefer: ein Trial, dessen Statistik VERWORFEN wurde,
+    ist äquivalent zu einem nie gezogenen Trial). ``oos_evaluated`` bleibt als reine
+    Aktivitäts-Telemetrie (#770/#769) unverändert erhalten.
+
+    Issue #826 — diese SYMBOLWEITE Summe wird seit #826 NICHT MEHR direkt an ``confirm(...)``
+    durchgereicht (siehe ``_family_n_per_study_from_studies`` für das je-Study-N1, das die
+    tatsächlich getroffene Per-Strategie-Entscheidung korrekt bedient). Bleibt als Rückwärtskompat-/
+    Telemetrie-Funktion erhalten (u. a. für bestehende Tests und eine potenzielle
+    ``promotion_family_scope='per_symbol_best'``-Stufe-2-Referenzgrösse)."""
+    per_study, symbol_fingerprints = _family_n_per_study_from_studies(
+        pairs, studies, tournament_cfg=tournament_cfg)
     family_n: dict[str, int] = {}
-    # Issue #812 — die DSR-Multiplizitaetskorrektur setzt eine ueber die Familie KONSTANTE
-    # Selektionsregel voraus (Pitfall #248); ``selection_rule_fingerprint`` (reward.py, gestempelt
-    # in run_optimization._emit_study_summary) macht eine Abweichung sichtbar, statt sie lautlos in
-    # dieser Summe zu verstecken. Wird HIER (noch) konservativ als EINE Familie weitergezaehlt — die
-    # Aufschluesselung nach Fingerprint lebt im #742-Report (report._selection_rule_families).
-    symbol_fingerprints: dict[str, set] = {}
-    for (_strategy, symbol, _reason), study in zip(pairs, studies):
-        trials = getattr(study, "trials", None) or []
-        n_evaluated = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
-        if floor_mode == "budgeted":
-            n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
-            if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
-                n_evaluated = max(n_evaluated, int(n_trials_budget))
+    for (_strategy, symbol), n_evaluated in per_study.items():
         family_n[symbol] = family_n.get(symbol, 0) + n_evaluated
-        fingerprint = (getattr(study, "user_attrs", None) or {}).get("selection_rule_fingerprint")
-        if fingerprint is not None:
-            symbol_fingerprints.setdefault(symbol, set()).add(fingerprint)
-        # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
-        # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
-        # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
-        _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
     for symbol, fingerprints in symbol_fingerprints.items():
         if len(fingerprints) > 1:
             logging.getLogger("optimizer").warning(
@@ -736,6 +730,184 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
                 symbol, len(fingerprints), symbol,
             )
     return family_n
+
+
+def _family_n_per_study_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                     ) -> tuple[dict[tuple[str, str], int], dict[str, set]]:
+    """Issue #826 Fix Punkt 1 — gemeinsamer Zaehl-Kernel: liefert das #822-N JE EINZELNER Study
+    (``{(strategy, symbol): n}``), OHNE es über die Strategien eines Symbols zu summieren, plus die
+    ``selection_rule_fingerprint``-Mengen je Symbol (für die #812-Heterogenitätswarnung). Sowohl
+    ``_family_n_from_studies`` (Rückwärtskompat: symbolweite Summe) als auch
+    ``_family_n_stage1_from_studies``/``_family_n_stage2_from_studies`` (#826, die tatsächlich an
+    ``confirm(...)`` durchgereichte Per-Strategie-Zahl) bauen auf DIESER EINEN Zählung auf — dieselbe
+    Trial-Iteration + dasselbe ``_dispose_storage``-Nachziehen (#747) darf nicht divergieren."""
+    # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
+    # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
+    # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
+    # dokumentierte Config-Wert zurueck.
+    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "attempted")
+    per_study: dict[tuple[str, str], int] = {}
+    symbol_fingerprints: dict[str, set] = {}
+    for (strategy, symbol, _reason), study in zip(pairs, studies):
+        trials = getattr(study, "trials", None) or []
+        n_evaluated = sum(
+            1 for t in trials
+            if getattr(t, "user_attrs", {}).get("oos_selection_statistic_available") is True
+        )
+        if floor_mode == "budgeted":
+            n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
+            if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
+                n_evaluated = max(n_evaluated, int(n_trials_budget))
+        per_study[(strategy, symbol)] = per_study.get((strategy, symbol), 0) + n_evaluated
+        fingerprint = (getattr(study, "user_attrs", None) or {}).get("selection_rule_fingerprint")
+        if fingerprint is not None:
+            symbol_fingerprints.setdefault(symbol, set()).add(fingerprint)
+        # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
+        # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
+        # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
+        _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
+    return per_study, symbol_fingerprints
+
+
+def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                  ) -> dict[tuple[str, str], int]:
+    """Issue #826 Fix Punkt 1/2 — N1: die Multiple-Testing-Multiplizität EINER EINZELNEN Study
+    (Strategie, Symbol), NICHT symbolweit über alle Strategien summiert. Root-Cause #826:
+    ``export_symbol_proposal``/die Promotion-Entscheidung ist je (Strategie, Symbol) unabhängig —
+    ``_family_n_from_studies`` lieferte bislang trotzdem eine Symbol-weite Summe über ALLE
+    Strategien-Studies als Multiplizität für JEDE einzelne davon (Roster-/Budget-Kopplung, siehe
+    Katalog #750 #826). Unter ``promotion_family_scope='per_strategy'`` (Default, siehe
+    ``_resolve_promotion_family_scope``) ist DIESES N1 die an ``confirm(...)`` durchgereichte Zahl."""
+    per_study, _fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    return per_study
+
+
+def _family_n_stage2_from_studies(pairs, studies, *, tournament_cfg: dict | None = None) -> dict[str, int]:
+    """Issue #826 Fix Punkt 1/2 — N2: je Symbol die Zahl der Strategien, die ÜBERHAUPT einen
+    Kandidaten mit Selektions-Teststatistik geliefert haben (N1 > 0). Reine Telemetrie
+    (``report.cross_study['n_family_stage2']``) für eine HYPOTHETISCHE zweite Korrekturstufe
+    (``promotion_family_scope='per_symbol_best'``) — diese Stufe ist NICHT aktiv (siehe
+    ``_resolve_promotion_family_scope``: fail-loud, mangels H0-Kalibrierung der Stufen-Komposition,
+    Katalog #750 #826 Fix Punkt 4)."""
+    per_study, _fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    stage2: dict[str, int] = {}
+    for (_strategy, symbol), n in per_study.items():
+        stage2.setdefault(symbol, 0)
+        if n > 0:
+            stage2[symbol] += 1
+    return stage2
+
+
+def _family_fingerprints_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                      ) -> dict[str, set]:
+    """Issue #827 Fix Punkt 3 — reine ``selection_rule_fingerprint``-Mengen je Symbol (Kernel-
+    Wiederverwendung, siehe ``_family_n_per_study_from_studies``). Genutzt von der Symbol-Schleife
+    für ``selection_rule_homogeneity_policy='fail'`` (Symbol-Abbruch VOR jedem Confirm-Aufruf, siehe
+    ``_resolve_selection_rule_homogeneity_policy``)."""
+    _per_study, fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    return fingerprints
+
+
+_PROMOTION_FAMILY_SCOPES = ("per_strategy", "per_symbol_best")
+
+
+def _resolve_promotion_family_scope(tournament_cfg: dict | None) -> str:
+    """Issue #826 Fix Punkt 2 — deklariert, welchem Geltungsbereich die familienweite
+    Multiplizitätskorrektur tatsächlich folgt (``tournament.json['promotion_family_scope']``,
+    Default ``'per_strategy'``): DAS ist der Status quo der tatsächlich getroffenen Entscheidung
+    (``export_symbol_proposal`` promotet je (Strategie, Symbol) unabhängig, #826-Root-Cause) und
+    verwendet N1 (``_family_n_stage1_from_studies``) statt der bisherigen Symbol-weiten Summe.
+
+    ``'per_symbol_best'`` (zweistufige Korrektur über zusätzlich N2, siehe
+    ``_family_n_stage2_from_studies``) ist DEKLARIERT, aber ABSICHTLICH NICHT implementiert: die
+    Komposition ``SR₀_gesamt`` aus den beiden Stufen ist laut Katalog #750 #826 Fix Punkt 1
+    ausdrücklich NICHT ``E[max_{N1·N2}]`` und setzt eine eigene H0-Kalibrierung voraus (Fix Punkt 4,
+    gemeinsam mit #824 Punkt 3/4 geplant — in diesem Environment nicht durchführbar, kein Monte-
+    Carlo-Kalibrierlauf möglich). Eine unkalibrierte Formel still anzuwenden wäre keine konservative
+    Wahl, sondern dieselbe Fehlspezifikationsklasse wie #814/#822 — daher FAIL-LOUD (analog #810s
+    ``_GATE_CONSOLIDATION_PRIORITY``), bis der Kalibrierlauf vorliegt."""
+    scope = (tournament_cfg or {}).get("promotion_family_scope", "per_strategy")
+    if scope not in _PROMOTION_FAMILY_SCOPES:
+        raise ValueError(
+            f"promotion_family_scope: unbekannter Wert {scope!r} (tournament.json), erwartet "
+            f"eines von {_PROMOTION_FAMILY_SCOPES}."
+        )
+    if scope == "per_symbol_best":
+        raise ValueError(
+            "promotion_family_scope='per_symbol_best' ist deklariert, aber die zweistufige SR0-"
+            "Komposition (Katalog #750 #826 Fix Punkt 1) ist noch NICHT implementiert — sie "
+            "erfordert einen eigenen H0-Kalibrierlauf (Fix Punkt 4), der in diesem Environment "
+            "nicht durchführbar ist. 'per_strategy' verwenden, bis der Kalibrierlauf vorliegt."
+        )
+    return scope
+
+
+_SELECTION_RULE_HOMOGENEITY_POLICIES = ("partition", "fail")
+
+
+def _resolve_selection_rule_homogeneity_policy(tournament_cfg: dict | None) -> str:
+    """Issue #827 Fix Punkt 3 — Policy für eine INNERHALB eines Symbols heterogene
+    ``selection_rule_fingerprint``-Menge (mehrere Studies desselben Symbols wandten NACHWEISLICH
+    unterschiedliche effektive Selektionsregeln an, z. B. weil ``any_arm_unreachable_policy=
+    'drop_arm'`` bei einer Study griff, bei einer anderen nicht — Pitfall #248/#812).
+
+    ``'partition'`` (Default) — bit-identisch zum Status quo: die ``[#812]``-WARNUNG wird geloggt,
+    der Sweep läuft unverändert weiter. Seit #826 ist die aktive DSR-Multiplizität ohnehin JE STUDY
+    (N1, ``promotion_family_scope='per_strategy'``) — eine heterogene Familie beeinflusst die
+    tatsächlich getroffene Deflations-Entscheidung damit NICHT MEHR direkt (das war die #827-
+    Root-Cause: die Voraussetzung war verletzt, wurde aber vor #826 trotzdem auf eine gemeinsame,
+    symbolweite Zahl angewandt — nach #826 gibt es diese gemeinsame Zahl für die Deflation nicht
+    mehr). ``'partition'`` bleibt als ALLGEMEINE Config-Konsistenz-Warnung sinnvoll (zeigt Drift
+    zwischen Studies desselben Symbols, unabhängig von der Deflation).
+
+    ``'fail'`` — bricht NUR DIESES EINE Symbol fail-loud ab (``SYMBOL_ABORTED_ON_SELECTION_
+    HETEROGENEITY``: kein Proposal für IRGENDEINE Strategie dieses Symbols, andere Symbole laufen
+    unverändert weiter, analog der #799-Per-Symbol-Fehlerisolation) — für Kalibrierläufe, in denen
+    eine über die Familie konstante Selektionsregel eine harte Vorbedingung ist (z. B. der #824/#826
+    Punkt-4-H0-Kalibrierlauf). Fehlt der Key ⇒ 'partition'."""
+    policy = (tournament_cfg or {}).get("selection_rule_homogeneity_policy", "partition")
+    if policy not in _SELECTION_RULE_HOMOGENEITY_POLICIES:
+        raise ValueError(
+            f"selection_rule_homogeneity_policy: unbekannter Wert {policy!r} (tournament.json), "
+            f"erwartet eines von {_SELECTION_RULE_HOMOGENEITY_POLICIES}."
+        )
+    return policy
+
+
+# Issue #822 — Rückübersetzung eines ``inference_diagnostics``-Codes (#804) auf den Aggregations-
+# Grund für ``deflation_n_family_excluded_no_statistic``.
+_NO_STATISTIC_DIAGNOSTIC_REASON = {
+    "SORTINO_GUARD_TRIPPED": "sortino_guard",
+    "EQUITY_NONPOSITIVE": "equity_ruined",
+}
+
+
+def _family_n_excluded_breakdown_from_studies(pairs, studies) -> dict[str, dict[str, int]]:
+    """Issue #822 Fix Punkt 3 — je Symbol, wie viele ``oos_evaluated`` Trials AUSGESCHLOSSEN wurden
+    (``oos_selection_statistic_available is False``), aufgeschlüsselt nach dem diagnostizierten
+    Grund (``sortino_guard``/``equity_ruined``/``other``). Rein additive Telemetrie für
+    ``confirm.confirm_per_symbol_promotion``s ``deflation_n_family_excluded_no_statistic`` — ändert
+    NIE die gezählte Familien-Multiplizität selbst (``_family_n_from_studies``)."""
+    import collections
+    breakdown: dict[str, collections.Counter] = {}
+    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+        trials = getattr(study, "trials", None) or []
+        counter = breakdown.setdefault(symbol, collections.Counter())
+        for t in trials:
+            attrs = getattr(t, "user_attrs", {}) or {}
+            if attrs.get("oos_evaluated") is not True:
+                continue
+            if attrs.get("oos_selection_statistic_available") is True:
+                continue
+            codes = {d.get("code") for d in (attrs.get("inference_diagnostics") or [])
+                    if isinstance(d, dict)}
+            reasons = {_NO_STATISTIC_DIAGNOSTIC_REASON[c] for c in codes
+                      if c in _NO_STATISTIC_DIAGNOSTIC_REASON}
+            if not reasons:
+                reasons = {"other"}
+            for reason in reasons:
+                counter[reason] += 1
+    return {symbol: dict(counter) for symbol, counter in breakdown.items()}
 
 
 def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[float]]]:
@@ -784,6 +956,54 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
     return family_returns
 
 
+def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> None:
+    """Issue #818 — ``champions.maybe_write_back`` hatte KEINE Produktions-Call-Site (getestet,
+    dokumentiert, nie ausgeführt — exakt die Pitfall-#237-Fehlerklasse). Ebene 2 des Epics #702
+    (Default-Nachführung nach ``strategy_symbol_seeds.json``) läuft erst ab hier tatsächlich.
+
+    ``champions.load_champion_entry`` (statt des frisch gebauten Kandidaten aus
+    ``store_champion``) liest den MERGE-/Korroborations-STAND, nicht den soeben gebauten
+    Kandidaten — nur der Store-Stand trägt den tatsächlichen ``corroboration_count``. Emittiert
+    IMMER ein strukturiertes ``CHAMPION_WRITEBACK``-Event (auch bei einem Nicht-Erfolg) —
+    ``skipped_reason`` macht den Grund für ein *nicht* erfolgtes Rückschreiben genauso sichtbar
+    wie das Rückschreiben selbst (Lehre aus #783/#786: ein unaufgeschlüsselter Nicht-Ausgang ist
+    die teuerste Telemetrie-Lücke im System).
+
+    Fail-open: ein Fehler in dieser Funktion darf den Sweep nie crashen (analog Champion-Store/
+    Retention) — der Aufrufer (``_run_confirm_and_export``) muss NICHT selbst absichern."""
+    log = logging.getLogger("optimizer")
+    try:
+        entry = champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        applied = False
+        skipped_reason = "NO_ADMISSIBLE_ENTRY"
+        advance_days = None
+        corroboration_count = None
+        if entry is not None:
+            lifecycle = entry.get("lifecycle") or {}
+            integrity = entry.get("integrity") or {}
+            corroboration_count = lifecycle.get("corroboration_count")
+            current_ns = integrity.get("catalog_newest_ns")
+            first_ns = lifecycle.get("first_seen_catalog_newest_ns")
+            if current_ns is not None and first_ns is not None:
+                advance_days = (current_ns - first_ns) / 1_000_000_000.0 / 86400.0
+            applied = champions.maybe_write_back(entry, opt_data)
+            if not applied:
+                if champions.champion_quality_stale(entry, opt_data):
+                    skipped_reason = "QUALITY_STALE"
+                else:
+                    skipped_reason = "NOT_CORROBORATED_OR_WINDOW_NOT_ADVANCED"
+        emit_execution_event(log, "CHAMPION_WRITEBACK", {
+            "strategy": strategy, "symbol": symbol,
+            "corroboration_count": corroboration_count,
+            "advance_days": advance_days,
+            "applied": applied,
+            "skipped_reason": None if applied else skipped_reason,
+        })
+    except Exception:
+        log.warning("[#818] %s/%s: Champion-Writeback fehlgeschlagen (non-fatal).",
+                    strategy, symbol, exc_info=True)
+
+
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
@@ -812,6 +1032,35 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     Issue #807 — ``bar_quality_fn`` (Default ``None`` ⇒ ``_load_symbol_bar_quality_sample``, echter
     Katalog-Zugriff) ist injizierbar (HI-7): ein Test uebergibt eine reine Fake-Funktion
     ``symbol -> {"highs", "lows", "closes"} | None`` statt echte Parquet-Dateien zu lesen.
+
+    Issue #828 (Katalog #828-#835, GitHub-Issue #751) — Scope-Entscheidung: der Dispatch bleibt
+    weiterhin PRO SYMBOL synchron (die #652-Familieninvariante UND die #799-Transaktionsgrenze
+    setzen genau das voraus — alle Strategien-Studies EINES Symbols müssen abgeschlossen sein,
+    bevor dessen familienweite Multiplizität/Confirm/Export/Checkpoint laufen). Implementiert sind
+    Fix Punkt 3 (``max_workers`` ist nicht mehr an ``len(symbol_pairs)`` gedeckelt) und Fix Punkt 5
+    (``wallclock_guard``/``sweep_max_wallclock_h``, siehe dort). BEWUSST NICHT implementiert: Fix
+    Punkt 1 (Pipelining — Studies werden über die GESAMTE Laufzeit in einen gemeinsamen Pool mit
+    Look-Ahead ``pipeline_depth`` eingereiht, nicht mehr strikt symbolweise seriell gewartet) und
+    Fix Punkt 2 (Largest-First-Scheduling, das nur INNERHALB eines solchen gemeinsamen Fensters
+    etwas bewirkt). Root-Cause der Deferral: eine Restrukturierung der Dispatch-Schleife, auf die
+    > 15 bestehende Tests (#799/#747/#755/#400/#412/#414/#415/#511/#595/#698/#795/#807 u. a.) für
+    die KORREKTHEIT der Familien-/Checkpoint-/Determinismus-Invarianten angewiesen sind, ist ohne
+    einen echten Mehrsymbol-Produktionslauf (122 Symbole, mehrere Stunden) NICHT empirisch gegen
+    die Akzeptanzkriterien (≥ 80 % Worker-Auslastung, ≤ 24 h Hochrechnung) verifizierbar — dieses
+    Environment hat keinen realen Marktdaten-Katalog dafür. Eine blind implementierte Pipeline-
+    Restrukturierung riskiert eine STILLE Korrektheitsregression (z. B. eine Familien-N-
+    Fehlberechnung durch eine Symbolgrenzen-Überschreitung) — strukturell dieselbe Klasse Risiko
+    wie die bereits an anderer Stelle in dieser Kohorte zurückgestellten Arbeiten (#823 T-adaptiver
+    Guard, #824/#826 H0-Kalibrierung, #825 Liquidations-Engine). Fix Punkt 4 (SuccessiveHalving-
+    Pruner) ist ebenfalls NICHT implementiert: der Zwischenwert für ``trial.report()`` (der
+    fold-weise Reward) wird erst NACH dem vollständigen Rückkehren des Backtest-Subprozesses
+    bekannt (``run_backtest``/``metrics.oos_fold_sortinos``, siehe ``make_symbol_objective`` —
+    JEDER Fold läuft bereits im Subprozess, bevor der Elternprozess irgendein Zwischenergebnis
+    sieht) — ein Pruner könnte an dieser Stelle KEINE Rechenzeit sparen (die teure Arbeit ist
+    bereits erledigt), nur die TPE-Stichprobenwahl nachträglich beeinflussen. Das entspricht nicht
+    dem im Issue behaupteten Nutzen ("jeder Trial läuft bis zum Ende") und würde eine echte
+    Subprozess-IPC-Restrukturierung (fold-weises Zwischen-Reporting) voraussetzen, um den
+    tatsächlichen Durchsatzgewinn zu erzielen — ebenfalls zurückgestellt.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
@@ -1099,6 +1348,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "run_id": run_id,
                 "completed_symbols": sorted(completed_symbols),
                 "failed_pairs": failed_pairs,
+                # Issue #833 Fix Punkt 3 — Gesamtzahl der fuer DIESEN Lauf geplanten Symbole, damit
+                # ein Abbruch-Report (sweep.main()) "symbols_completed / symbols_planned" ausweisen
+                # kann, OHNE die Enumeration ein zweites Mal auszufuehren.
+                "symbols_planned": len(pairs_by_symbol),
             })
         except OSError:
             logging.getLogger("optimizer").warning(
@@ -1131,21 +1384,40 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
     def _run_confirm_and_export(pair: tuple[str, str, str], study,
                                 n_family_map: dict[str, int],
-                                family_returns_map: dict[str, list]) -> Path | None:
-        """Issue #652/#799 — Confirm + Export + Champion-Store + Retention EINES Paares, mit der
-        auf das eigene Symbol beschränkten familienweiten Multiplizität (``n_family_map``/
-        ``family_returns_map`` — von der Symbol-Schleife unten übergeben, siehe deren Docstring)."""
+                                family_returns_map: dict[str, list],
+                                n_family_excluded_map: dict[str, dict] | None = None,
+                                *,
+                                n_family_stage1_map: dict[tuple[str, str], int] | None = None,
+                                family_scope: str = "per_strategy") -> Path | None:
+        """Issue #652/#799/#822/#826 — Confirm + Export + Champion-Store + Retention EINES Paares.
+
+        Issue #826 — die an ``confirm(...)`` durchgereichte Multiplizität ist seit diesem Fix N1
+        (``n_family_stage1_map[(strategy, symbol)]``, die eigene Study-Zahl DIESES Paares), NICHT
+        MEHR ``n_family_map.get(symbol, 0)`` (die Symbol-weite Summe über ALLE Strategien-Studies —
+        das war die #826-Root-Cause: eine PER-STRATEGIE-Entscheidung erhielt eine SYMBOL-weite
+        Multiplizität). ``family_scope`` kommt bereits aufgelöst/validiert von der Symbol-Schleife
+        (``_resolve_promotion_family_scope`` — 'per_symbol_best' bricht dort VOR jedem Confirm-Aufruf
+        fail-loud ab, siehe deren Docstring); ``n_family_map``/``family_returns_map`` bleiben für die
+        Decluster-Matrix (``deflation_family_period_returns``, unverändert symbolweit, #695) und den
+        #822-Ausschluss-Breakdown (``n_family_excluded_map``) erhalten."""
         strategy, symbol, _reason = pair
         if study is None:
             # Issue #799 — kein Study-Objekt (Paar in _run_optimize fehlgeschlagen, STUDY_FAILED
             # bereits protokolliert): kein Confirm/Export möglich, kein Proposal.
             return None
+        if family_scope != "per_strategy":
+            # Unerreichbar in Produktion (siehe _resolve_promotion_family_scope), aber explizit statt
+            # eines stillen Fallbacks für direkte Unit-Test-Aufrufer dieser Funktion.
+            raise ValueError(f"_run_confirm_and_export: unbekannter family_scope {family_scope!r}")
         try:
             newest_ns = latest_ts.get(symbol) if latest_ts else None
             global_params = load_global_best(strategy, config_dir())
+            deflation_n_family_value = (n_family_stage1_map or {}).get((strategy, symbol), 0)
             promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
-                                deflation_n_family=n_family_map.get(symbol, 0),
-                                deflation_family_period_returns=family_returns_map.get(symbol))
+                                deflation_n_family=deflation_n_family_value,
+                                deflation_family_period_returns=family_returns_map.get(symbol),
+                                deflation_n_family_excluded_no_statistic=(
+                                    (n_family_excluded_map or {}).get(symbol)))
             proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
             # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
             # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die
@@ -1155,12 +1427,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             if using_real_optimize:
                 try:
                     champions.store_champion(study, strategy, symbol, promotion,
-                                             catalog_newest_ns=newest_ns, opt_data=opt_data, tier=tier)
+                                             catalog_newest_ns=newest_ns, opt_data=opt_data, tier=tier,
+                                             run_id=run_id)
                 except Exception:
                     logging.getLogger("optimizer").warning(
                         "[#703] %s/%s: Champion-Store-Schreiben fehlgeschlagen (non-fatal).",
                         strategy, symbol, exc_info=True,
                     )
+                else:
+                    _attempt_champion_writeback(strategy, symbol, opt_data)
                 # Issue #733/#794 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
                 # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum wird ab hier nicht mehr
                 # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.
@@ -1187,6 +1462,30 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _tournament_cfg_for_family = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
     except (OSError, ValueError):
         _tournament_cfg_for_family = {}
+    # Issue #826 Fix Punkt 2 — EINMAL vor jeder Optimierung aufgelöst/validiert (fail-loud VOR
+    # kostspieliger Arbeit, nicht erst beim ersten Confirm-Aufruf): 'per_symbol_best' bricht den
+    # Sweep hier sofort ab, siehe _resolve_promotion_family_scope-Docstring.
+    _family_scope = _resolve_promotion_family_scope(_tournament_cfg_for_family)
+    # Issue #827 Fix Punkt 3 — ebenfalls einmal vorab validiert (unbekannter Wert ⇒ sofortiger
+    # Abbruch); die eigentliche Heterogenitäts-PRÜFUNG läuft je Symbol (erst NACH dessen Studies).
+    _homogeneity_policy = _resolve_selection_rule_homogeneity_policy(_tournament_cfg_for_family)
+    # Issue #828 Fix Punkt 5 — Laufzeit-Budget (analog disk_guard, #795). Fehlt der Key ⇒ 24
+    # (Issue-Vorschlag, aktiver Default); EXPLIZIT null ⇒ deaktiviert (dict.get mit Default
+    # greift nur bei fehlendem Key, nicht bei einem vorhandenen null-Wert). Fail-open (kaputte/
+    # fehlende Config-Datei) ⇒ ebenfalls 24, NICHT deaktiviert — dieselbe Fail-safe-Haltung wie
+    # disk_budget_gb/disk_reserve_gb (ein Konfigurationsfehler darf die Laufzeit-Absicherung nicht
+    # lautlos abschalten).
+    try:
+        _sweep_max_wallclock_h = (
+            json.loads((config_dir() / "optimizer.json").read_text("utf-8")) or {}
+        ).get("sweep_max_wallclock_h", 24)
+    except (OSError, ValueError):
+        _sweep_max_wallclock_h = 24
+
+    # Issue #833 Fix Punkt 3 — Checkpoint EINMAL vor dem ersten Symbol geschrieben, damit
+    # symbols_planned auch dann verfuegbar ist, wenn der Lauf schon im allerersten Symbol
+    # abbricht (VOR dem ersten regulaeren _write_checkpoint()-Aufruf weiter unten).
+    _write_checkpoint()
 
     proposals: list[Path] = []
     for symbol, symbol_pairs in pairs_by_symbol.items():
@@ -1209,13 +1508,58 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "Symbole (ab '%s') werden nicht mehr gestartet.", symbol,
             )
             break
+        # Issue #828 Fix Punkt 5 — dasselbe Muster für das Laufzeit-Budget: kein hartes
+        # ENOSPC-Äquivalent, aber ein 62-h-Lauf ohne Obergrenze ist operativ nicht steuerbar.
+        # Laufende Studies werden NICHT abgebrochen, nur keine neuen mehr gestartet.
+        if wallclock_guard.check_wallclock_budget(
+            time.perf_counter() - sweep_t0, max_hours=_sweep_max_wallclock_h,
+        ):
+            wallclock_guard.sweep_wallclock_exceeded.set()
+            logging.getLogger("optimizer").warning(
+                "[#828] Laufzeit-Budget überschritten (sweep_max_wallclock_h=%s) — verbleibende "
+                "Symbole (ab '%s') werden nicht mehr gestartet.", _sweep_max_wallclock_h, symbol,
+            )
+            break
 
         if n_jobs and n_jobs > 1 and len(symbol_pairs) > 1:
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=min(n_jobs, len(symbol_pairs))) as executor:
+            # Issue #828 Fix Punkt 3 — max_workers ist NICHT mehr auf len(symbol_pairs) gedeckelt
+            # (vorher `min(n_jobs, len(symbol_pairs))`: bei 14 Strategien/Symbol und n_jobs=22
+            # blieben 8 der 22 konfigurierten Worker über den GESAMTEN Lauf hinweg ungenutzt, egal
+            # wie n_jobs gesetzt war). Die Deckelung war nie die eigentliche Bremse — solange der
+            # Dispatch pro Symbol synchron bleibt (Fix Punkt 1, Pipelining über Symbolgrenzen
+            # hinweg, ist NICHT Teil dieses Fixes — siehe Docstring von run_per_symbol_sweep),
+            # nutzt ein Pool dieser einen Symbol-Batch ohnehin nie mehr als len(symbol_pairs)
+            # Worker gleichzeitig; die explizite Entkopplung verhindert nur, dass die Deckelung
+            # unbemerkt wiederkehrt, sobald Pipelining nachgerüstet wird.
+            with ThreadPoolExecutor(max_workers=n_jobs) as executor:
                 symbol_studies = list(executor.map(_run_optimize, symbol_pairs))
         else:
             symbol_studies = [_run_optimize(p) for p in symbol_pairs]
+
+        # Issue #827 Fix Punkt 3 — 'fail': dieses Symbol bricht VOR jedem Confirm-Aufruf ab, wenn
+        # seine Studies nachweislich unterschiedliche selection_rule_fingerprint tragen (verletzte
+        # DSR-Homogenitäts-Voraussetzung, Pitfall #248/#812). Deterministische, config-/code-
+        # bedingte Bedingung (kein transienter Fehler) — completed_symbols wird trotzdem gesetzt,
+        # damit ein Checkpoint-Resume nicht endlos denselben Abbruch wiederholt.
+        if _homogeneity_policy == "fail":
+            symbol_fingerprints_for_abort = _family_fingerprints_from_studies(
+                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+            n_fingerprints = len(symbol_fingerprints_for_abort.get(symbol, set()))
+            if n_fingerprints > 1:
+                logging.getLogger("optimizer").error(
+                    "[#827] SYMBOL_ABORTED_ON_SELECTION_HETEROGENEITY: %s trägt %d verschiedene "
+                    "selection_rule_fingerprint über seine Strategien-Studies "
+                    "(selection_rule_homogeneity_policy='fail') — kein Proposal für irgendeine "
+                    "Strategie dieses Symbols.",
+                    symbol, n_fingerprints,
+                )
+                emit_execution_event(logging.getLogger("optimizer"),
+                    "SYMBOL_ABORTED_ON_SELECTION_HETEROGENEITY",
+                    {"symbol": symbol, "n_fingerprints": n_fingerprints}, level=logging.ERROR)
+                completed_symbols.add(symbol)
+                _write_checkpoint()
+                continue
 
         # Issue #652 — familienweite Multiplizität NUR über die Studies DIESES Symbols (alle
         # Strategien dieses Symbols sind jetzt abgeschlossen); #695 liefert dieselbe Grundlage als
@@ -1223,9 +1567,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         symbol_n_family = _family_n_from_studies(
             symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
         symbol_family_returns = _family_period_returns_from_studies(symbol_pairs, symbol_studies)
+        # Issue #822 — Aufschlüsselung, wie viele oos_evaluated Trials je Symbol AUS der obigen
+        # Zählung ausgeschlossen wurden (keine Selektions-Teststatistik), nach Grund.
+        symbol_n_family_excluded = _family_n_excluded_breakdown_from_studies(symbol_pairs, symbol_studies)
+        # Issue #826 Fix Punkt 1 — N1 JE STUDY (nicht symbolweit summiert): die tatsächlich an
+        # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
+        symbol_n_family_stage1 = _family_n_stage1_from_studies(
+            symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
 
         for pair, study in zip(symbol_pairs, symbol_studies):
-            proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns)
+            proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns,
+                                               symbol_n_family_excluded,
+                                               n_family_stage1_map=symbol_n_family_stage1,
+                                               family_scope=_family_scope)
             if proposal is not None:
                 proposals.append(proposal)
 
@@ -1303,6 +1657,10 @@ def _resolve_strategies(arg: str) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> list[Path]:
+    # Issue #773/#833 — EINE global-Deklaration fuer die GESAMTE Funktion (Python verbietet
+    # mehrere `global`-Statements fuer denselben Namen in verschiedenen Zweigen EINER Funktion,
+    # wenn dazwischen bereits zugewiesen wurde — "name is assigned to before global declaration").
+    global _LAST_REPORT_PATH
     # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-
     # Logger (unten) als auch den Dateinamen des #742-Sweep-Reports (am Ende dieser Funktion) —
     # dieselbe Provenienz-Kennung verbindet Log-Datei, JSONL-Sidecar (#741) und Report.
@@ -1324,7 +1682,21 @@ def main(argv: list[str] | None = None) -> list[Path]:
     parser.add_argument("--n-jobs", type=int, default=None,
                         help="Parallele Studies (je eigene SQLite-Datei). Fehlt das Flag, greift "
                              "optimizer.json['sweep_max_workers'] (Default max(1, cpu_count()-2)).")
+    # Issue #833 Fix Punkt 4 — rekonstruiert den #742-Report aus den bereits auf der Platte
+    # liegenden Proposals/Studies eines FRÜHEREN (ggf. abgebrochenen) Laufs, OHNE selbst zu
+    # optimieren. Nutzt exakt denselben Kern (report.generate_report_for_run) wie der Abbruch-Pfad
+    # unten — genau der Fall "ein Lauf endete ohne Report" (siehe Katalog-#750-Nachtrag).
+    parser.add_argument("--report-only", metavar="RUN_ID", default=None,
+                        help="Erzeugt/rekonstruiert nur den Report fuer RUN_ID aus den vorhandenen "
+                             "proposal_*.json (keine neue Optimierung).")
     args = parser.parse_args(argv)
+
+    if args.report_only:
+        from automation.optimizer import report as _report
+        report_path = _report.generate_report_for_run(run_id=args.report_only)
+        print(f"📄 Report: {report_path}")
+        _LAST_REPORT_PATH = report_path
+        return []
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
@@ -1376,32 +1748,109 @@ def main(argv: list[str] | None = None) -> list[Path]:
     # letzten Checkpoint ausliest und run_id erneut übergibt) überspringt bereits abgeschlossene
     # Symbole. Ohne einen solchen expliziten Wiederaufruf erzeugt jeder main()-Aufruf einen neuen
     # run_id ⇒ frischer Checkpoint (unverändertes Verhalten für den Normalfall).
-    proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs,
-                                     n_jobs_source=n_jobs_source, run_id=run_id)
+    #
+    # Issue #833 Fix Punkt 3 — ein Abbruch (disk_guard/wallclock_guard laufen bereits GRACEFUL,
+    # via `break`; SIGINT/unerwartete Exceptions propagierten bisher UNGEFANGEN aus main() heraus,
+    # BEVOR der #742-Report-Block weiter unten je erreicht wurde) erzeugt seither TROTZDEM ein
+    # Report-Artefakt — aus genau den Proposals, die bereits auf der Platte liegen (dieselbe
+    # Quelle, die auch ``--report-only``/``generate_report_for_run`` nutzt). SIGTERM wird auf
+    # denselben KeyboardInterrupt-Pfad wie SIGINT umgeleitet (Python behandelt SIGINT bereits
+    # nativ als KeyboardInterrupt; SIGTERMs Default waere ein sofortiger, unkatalogisierter Exit).
+    import signal as _signal
+
+    def _sigterm_to_keyboard_interrupt(signum, frame):
+        raise KeyboardInterrupt("SIGTERM")
+
+    run_status = "complete"
+    caught_exc: BaseException | None = None
+    proposals: list[Path] = []
+    _prior_sigterm_handler = _signal.signal(_signal.SIGTERM, _sigterm_to_keyboard_interrupt)
+    try:
+        proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs,
+                                         n_jobs_source=n_jobs_source, run_id=run_id)
+        if wallclock_guard.sweep_wallclock_exceeded.is_set():
+            run_status = "aborted_wallclock"
+        elif disk_guard.sweep_abort_requested.is_set():
+            run_status = "aborted_disk"
+    except KeyboardInterrupt as e:
+        run_status = "aborted_signal"
+        caught_exc = e
+        logging.getLogger("optimizer").warning(
+            "[#833] Sweep durch SIGINT/SIGTERM unterbrochen — erzeuge Teil-Report aus den bislang "
+            "exportierten Proposals.")
+    except Exception as e:
+        run_status = "aborted_error"
+        caught_exc = e
+        logging.getLogger("optimizer").error(
+            "[#833] Sweep durch eine unerwartete Exception abgebrochen — erzeuge Teil-Report aus "
+            "den bislang exportierten Proposals.", exc_info=True)
+    finally:
+        _signal.signal(_signal.SIGTERM, _prior_sigterm_handler)
+
     for p in proposals:
         print(p)
+
+    # Issue #833 Fix Punkt 3 — symbols_completed/symbols_planned aus dem #799-Checkpoint (die
+    # Enumeration wird NICHT ein zweites Mal ausgefuehrt); fail-open (None/None), falls der
+    # Checkpoint fehlt/kaputt ist oder der Sweep VOR dessen erstem Schreiben abbrach.
+    symbols_completed: int | None = None
+    symbols_planned: int | None = None
+    try:
+        _checkpoint = json.loads((WORK / "sweep_progress.json").read_text("utf-8"))
+        if _checkpoint.get("run_id") == run_id:
+            symbols_completed = len(_checkpoint.get("completed_symbols") or [])
+            symbols_planned = _checkpoint.get("symbols_planned")
+    except (OSError, ValueError):
+        pass
 
     # Issue #742 — EIN aggregiertes Report-Artefakt am Ende des Laufs, atomar geschrieben. Darf den
     # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle).
     try:
         from automation.optimizer import report as _report
-        report_path = _report.generate_sweep_report(
-            proposals, run_id=run_id, started_at_utc=started_at_utc,
-            wallclock_s=round(time.perf_counter() - main_t0),
-            cli_args={"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
-                     # Issue #755 — n_workers je Lauf im Report nachvollziehbar (Determinismus-Nachweis
-                     # bei n_jobs>1, jetzt auch bei gesetztem Seed zulaessig).
-                     "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source},
-        )
+        _cli_args = {"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
+                    # Issue #755 — n_workers je Lauf im Report nachvollziehbar (Determinismus-Nachweis
+                    # bei n_jobs>1, jetzt auch bei gesetztem Seed zulaessig).
+                    "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source}
+        _wallclock_s = round(time.perf_counter() - main_t0)
+        if run_status == "complete":
+            report_path = _report.generate_sweep_report(
+                proposals, run_id=run_id, started_at_utc=started_at_utc,
+                wallclock_s=_wallclock_s, cli_args=_cli_args, run_status=run_status,
+                symbols_completed=symbols_completed, symbols_planned=symbols_planned,
+            )
+        else:
+            # Issue #833 — die IN-MEMORY proposals-Liste kann bei einer Exception mitten im
+            # Symbol-Loop unvollstaendig/veraltet sein (die Exception verliess run_per_symbol_
+            # sweep, BEVOR es zurueckkehren konnte); generate_report_for_run entdeckt stattdessen
+            # ALLE proposal_*.json, die tatsaechlich auf der Platte liegen (dieselbe Quelle wie
+            # --report-only), unabhaengig davon, wo genau der Abbruch stattfand.
+            report_path = _report.generate_report_for_run(
+                run_id=run_id, started_at_utc=started_at_utc,
+                wallclock_s=_wallclock_s, cli_args=_cli_args, run_status=run_status,
+                symbols_completed=symbols_completed, symbols_planned=symbols_planned,
+            )
         print(f"📄 Report: {report_path}")
         # Issue #773 — der Report war bislang rein informativ; der CLI-Entrypoint (__main__ unten)
         # liest diesen Pfad, um bei mindestens einem FAIL-Invarianten-Check einen Non-Zero-Exit-Code
         # zurueckzugeben, statt eines rein informativen Artefakts.
-        global _LAST_REPORT_PATH
         _LAST_REPORT_PATH = report_path
+        # Issue #832 Fix Punkt 2 — direkt NACH generate_sweep_report/generate_report_for_run,
+        # fail-open: liest AUSSCHLIESSLICH das gerade geschriebene Report-JSON (summary_de.py
+        # nimmt keine zweite Datenquelle) und erbt damit automatisch dieselbe #833-Abbruchfestigkeit
+        # (ein Teilreport erzeugt trotzdem eine — kleinere — Zusammenfassung).
+        from automation.optimizer import summary_de as _summary_de
+        summary_path = _summary_de.write_german_summary_for_report_path(report_path)
+        if summary_path is not None:
+            print(f"📝 Zusammenfassung: {summary_path}")
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
+
+    # Issue #833 — der urspruengliche Abbruch (SIGINT/SIGTERM/unerwartete Exception) wird nach dem
+    # Report-Versuch WEITERGEREICHT: das Artefakt ist ein Nebeneffekt auf dem Weg nach draussen,
+    # kein stilles Verschlucken des eigentlichen Fehlers (Exit-Code/Traceback bleiben sichtbar).
+    if caught_exc is not None:
+        raise caught_exc
 
     return proposals
 
