@@ -437,6 +437,61 @@ def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     ]
 
 
+def _champions_summary(opt_data: dict) -> dict[str, Any]:
+    """Issue #818 (#742-Report-Zaehlerpaar) — ``cross_study.champions``:
+    ``{stored, admissible, corroborated, written_back, skipped_by_reason}`` über den AKTUELLEN
+    Champion-Store-Stand (``data/optimizer/champions/*.json``, exkl. ``_stale/``, #821). Liest den
+    Store direkt (dieselbe Quelle, aus der ``resolve_symbol_shrinkage_seed`` seedet) statt der
+    Sweep-Log-Events — robust gegen einen Report, der nachträglich (``--report-only``, #833) ohne
+    Live-Sweep-Kontext erzeugt wird. Fail-open (leere Zusammenfassung) bei jedem Lesefehler — ein
+    Report darf wegen des Champion-Stores nie crashen."""
+    import collections
+    from automation.optimizer import champions as _champions_mod
+
+    empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
+             "skipped_by_reason": {}}
+    try:
+        champions_dir = _champions_mod._champions_dir()
+        paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
+    except OSError:
+        return empty
+
+    stored = 0
+    admissible = 0
+    corroborated = 0
+    written_back = 0
+    skipped_by_reason: collections.Counter = collections.Counter()
+    promote_after = int(opt_data.get("champion_promote_after_runs", 2))
+    for path in paths:
+        entry = _load_json(path)
+        if not isinstance(entry, dict):
+            continue
+        stored += 1
+        try:
+            ok, reason = _champions_mod.champion_is_admissible(entry, opt_data)
+        except Exception:
+            ok, reason = False, "ADMISSIBILITY_CHECK_ERROR"
+        if not ok:
+            skipped_by_reason[reason or "UNKNOWN"] += 1
+            continue
+        admissible += 1
+        lifecycle = entry.get("lifecycle") or {}
+        if int(lifecycle.get("corroboration_count", 0) or 0) >= promote_after:
+            corroborated += 1
+        if lifecycle.get("writeback_applied"):
+            written_back += 1
+        else:
+            try:
+                stale = _champions_mod.champion_quality_stale(entry, opt_data)
+            except Exception:
+                stale = False
+            skipped_by_reason["QUALITY_STALE" if stale else "NOT_WRITTEN_BACK"] += 1
+    return {
+        "stored": stored, "admissible": admissible, "corroborated": corroborated,
+        "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
+    }
+
+
 def _promotion_outcome_counts(studies_out: list[dict[str, Any]]) -> dict[str, int]:
     """Issue #783 — Zaehlt ``promotion_outcome`` (inkl. ``PROMOTE_GLOBAL_DEFAULT`` GETRENNT von
     ``READY_FOR_PR``, Akzeptanzkriterium #5). Reine Aggregation, kein Vergleich/Gate."""
@@ -524,6 +579,12 @@ def _build_report(
         studies_out, max_affected_fraction=max_affected_fraction)
     all_checks.append(("global", gate_collinearity_check))
 
+    # Issue #818 — achter Invarianten-Check: der Champion-Store-Writeback-Pfad (Ebene 2, #706)
+    # muss NACHWEISLICH erreichbar sein, nicht nur getestet/dokumentiert (Pitfall #237).
+    champions_summary = _champions_summary(optimizer_cfg)
+    champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
+    all_checks.append(("global", champion_writeback_check))
+
     invariant_checks = []
     for label, result in all_checks:
         d = result.to_dict()
@@ -571,6 +632,9 @@ def _build_report(
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.
             "selection_rule_families": _selection_rule_families(studies_out),
+            # Issue #818 — stored/admissible/corroborated/written_back/skipped_by_reason über den
+            # aktuellen Champion-Store-Stand (Epic #702 Ebene 1+2 Reachability-Telemetrie).
+            "champions": champions_summary,
         },
         "invariant_checks": invariant_checks,
     }

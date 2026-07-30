@@ -1,5 +1,10 @@
 """Epic #702 (Issues #703-#710) — Iterativer Champion-Warm-Start & symbol-skopierte
-Default-Nachführung.
+Default-Nachführung. Gehärtet durch den Issue-Katalog #817-#821 (GitHub-Issue #749) — siehe die
+jeweiligen ``test_issue_817_*``/``test_issue_818_*``/``test_issue_819_*``/``test_issue_820_*``/
+``test_issue_821_*``-Dateien für die Regressionstests DIESER Härtung; dieses Modul deckt weiterhin
+den ursprünglichen #702-Kern ab und wird nur dort angepasst, wo sich das GRUNDVERHALTEN geändert
+hat (REJECT_HOLDOUT_GATE ist nicht mehr pauschal zulässig, ein reward_semantics_version-Mismatch
+ist nicht mehr hart inadmissibel, ``store_champion`` verlangt jetzt ``run_id``).
 
 Drei Ebenen (siehe GitHub-Issue #705 §3 + ``automation/optimizer/champions.py``-Docstring):
   Ebene 1 (Such-Anker, jeder Lauf): ``champions.store_champion`` / ``load_champion_seed`` /
@@ -33,6 +38,7 @@ _CURRENT_REWARD_SEMANTICS_VERSION = json.loads(
 OPT_DATA = {
     "reward_semantics_version": _CURRENT_REWARD_SEMANTICS_VERSION,
     "champion_min_R_symbol": 0.0,
+    "champion_min_tuning_edge": 0.0,
     "champion_promote_after_runs": 2,
     "champion_demote_after_runs": 2,
     "champion_min_advance_days": 30,
@@ -49,7 +55,8 @@ class _FakeStudy:
 
 
 def _promotion(*, status, symbol_params, R_symbol, R_global=0.0,
-              is_rejection_detail_override=None, trial_dir="trial_0001") -> dict:
+              is_rejection_detail_override=None, trial_dir="trial_0001",
+              metrics_symbol=None) -> dict:
     return {
         "promote": status == "READY_FOR_PR",
         "status": status,
@@ -60,29 +67,35 @@ def _promotion(*, status, symbol_params, R_symbol, R_global=0.0,
         "promotion_margin": 0.1,
         "holdout_passed": status not in ("REJECTED_ON_HOLDOUT",),
         "trial_dir": trial_dir,
-        "metrics_symbol": {},
+        "metrics_symbol": metrics_symbol or {},
         "metrics_global": {},
     }
 
 
-def _entry(*, params=None, r_symbol=0.5, reward_version=_CURRENT_REWARD_SEMANTICS_VERSION,
+def _entry(*, params=None, r_symbol=0.5, r_global=0.0,
+          reward_version=_CURRENT_REWARD_SEMANTICS_VERSION,
           status_at_store="READY_FOR_PR",
-          holdout_reject_detail=None, degrade_streak=0, corroboration_count=1,
+          holdout_reject_detail=None, holdout_binding_gate=None, holdout_gate_deltas=None,
+          degrade_streak=0, corroboration_count=1, last_seen_run="20260101T000000Z",
           catalog_newest_ns=1_000_000_000_000, first_seen_catalog_newest_ns=1_000_000_000_000,
           strategy="SmaCrossoverStrategy", symbol="TSLA.ETORO") -> dict:
     return {
         "strategy": strategy, "symbol": symbol, "tier": "all",
         "params": params if params is not None else {"sma_period": 20},
-        "quality": {"R_symbol": r_symbol, "R_global": 0.0, "reward": 1.0},
+        "quality": {"R_symbol": r_symbol, "R_global": r_global, "reward": 1.0},
         "provenance": {"run_id": "20260101T000000Z", "source_trial_dir": "x",
                        "holdout_reject_detail": holdout_reject_detail,
-                       "status_at_store": status_at_store},
+                       "status_at_store": status_at_store,
+                       "holdout_binding_gate": holdout_binding_gate,
+                       "holdout_gate_deltas": holdout_gate_deltas or {}},
         "integrity": {"reward_semantics_version": reward_version, "data_snapshot_sha256": "abc",
-                      "catalog_newest_ns": catalog_newest_ns},
+                      "params_schema_version": None, "catalog_newest_ns": catalog_newest_ns},
         "lifecycle": {"first_seen_run": "20260101T000000Z",
                       "first_seen_catalog_newest_ns": first_seen_catalog_newest_ns,
                       "corroboration_count": corroboration_count, "last_R_symbol": r_symbol,
-                      "degrade_streak": degrade_streak, "writeback_applied": False},
+                      "last_seen_run": last_seen_run,
+                      "degrade_streak": degrade_streak, "writeback_applied": False,
+                      "snapshot_rollover_count": 0, "semantics_migrated_from": None},
     }
 
 
@@ -140,12 +153,13 @@ def test_inadmissible_rejection_not_allowlisted(detail):
     assert ok is False and reason == "REJECTION_NOT_ALLOWLISTED"
 
 
-@pytest.mark.parametrize("detail", [
-    "REJECT_HOLDOUT_DSR_DROP", "REJECT_HOLDOUT_BOOTSTRAP_CI", "REJECT_HOLDOUT_GATE",
-])
+@pytest.mark.parametrize("detail", ["REJECT_HOLDOUT_DSR_DROP", "REJECT_HOLDOUT_BOOTSTRAP_CI"])
 def test_admissible_rejection_allowlist(detail):
-    """Diese drei Rejection-Details tragen einen validen, evaluierten Parametervektor, der den
-    Holdout ERREICHT hat — sie bleiben seed-würdig trotz gescheiterter Promotion."""
+    """Diese zwei Rejection-Details tragen einen validen, evaluierten Parametervektor, der den
+    Holdout-Gate SELBST bestanden hat (nur an der Multiplizitäts-/Konfidenzkorrektur gescheitert)
+    — sie bleiben seed-würdig trotz gescheiterter Promotion. ``REJECT_HOLDOUT_GATE`` ist SEIT
+    #817 NICHT mehr Teil dieser einfachen Allowlist (siehe test_issue_817_holdout_gate_allowlist.py
+    für dessen eigenes, strengeres Zulassungskriterium)."""
     ok, _ = champions.champion_is_admissible(
         _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail=detail), OPT_DATA)
     assert ok is True
@@ -163,9 +177,14 @@ def test_inadmissible_r_symbol_none():
     assert ok is False and reason == "BELOW_QUALITY_FLOOR"
 
 
-def test_inadmissible_reward_semantics_mismatch():
-    ok, reason = champions.champion_is_admissible(_entry(reward_version=12), OPT_DATA)
-    assert ok is False and reason == "REWARD_SEMANTICS_MISMATCH"
+def test_reward_semantics_mismatch_is_quality_stale_not_inadmissible():
+    """Issue #819 — ein reiner reward_semantics_version-Mismatch schliesst NICHT mehr aus (der
+    Parametervektor bleibt seed-fähig, siehe champion_quality_stale für die Writeback-Sperre)."""
+    entry = _entry(reward_version=12)
+    ok, reason = champions.champion_is_admissible(entry, OPT_DATA)
+    assert ok is True and reason is None
+    assert champions.champion_quality_stale(entry, OPT_DATA) is True
+    assert champions.champion_quality_stale(_entry(), OPT_DATA) is False
 
 
 def test_inadmissible_reward_semantics_missing_in_opt_data():
@@ -188,6 +207,27 @@ def test_champion_disabled_kill_switch():
     assert ok is False and reason == "CHAMPION_DISABLED"
 
 
+# ── Issue #820 — relatives Qualitätskriterium (Tuning-Edge) ────────────────────────────────────
+def test_inadmissible_no_tuning_edge_when_not_better_than_global():
+    ok, reason = champions.champion_is_admissible(
+        _entry(r_symbol=0.5, r_global=0.6), OPT_DATA)
+    assert ok is False and reason == "NO_TUNING_EDGE"
+
+
+def test_admissible_when_r_symbol_exceeds_global_by_margin():
+    ok, _ = champions.champion_is_admissible(
+        _entry(r_symbol=0.5, r_global=0.6), {**OPT_DATA, "champion_min_tuning_edge": -0.2})
+    assert ok is True
+
+
+def test_admissible_with_no_global_baseline():
+    """Fehlt R_global (nie OOS-evaluiert), gilt die Edge-Bedingung trivial als erfüllt."""
+    entry = _entry(r_symbol=0.1)
+    entry["quality"]["R_global"] = None
+    ok, _ = champions.champion_is_admissible(entry, OPT_DATA)
+    assert ok is True
+
+
 # ── store_champion (#703) — Persistenz + Merge-Logik ────────────────────────────────────────────
 def test_store_champion_persists_admissible_candidate(tmp_path, monkeypatch):
     _isolate(monkeypatch, tmp_path)
@@ -195,13 +235,24 @@ def test_store_champion_persists_admissible_candidate(tmp_path, monkeypatch):
     promotion = _promotion(status="REJECTED_ON_HOLDOUT", symbol_params={"sma_period": 33},
                            R_symbol=0.4, is_rejection_detail_override="REJECT_HOLDOUT_DSR_DROP")
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion,
-                                    catalog_newest_ns=1000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     assert path is not None and path.exists()
     stored = json.loads(path.read_text("utf-8"))
     assert stored["params"] == {"sma_period": 33}
     assert stored["quality"]["R_symbol"] == 0.4
     assert stored["provenance"]["status_at_store"] == "REJECTED_ON_HOLDOUT"
     assert stored["lifecycle"]["corroboration_count"] == 1
+    assert stored["lifecycle"]["last_seen_run"] == "run1"
+
+
+def test_store_champion_requires_run_id(tmp_path, monkeypatch):
+    """Issue #821 — run_id ist ein Pflichtparameter; kein automatisch geminteter Zeitstempel mehr."""
+    _isolate(monkeypatch, tmp_path)
+    study = _FakeStudy()
+    promotion = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 33}, R_symbol=1.0)
+    with pytest.raises(ValueError):
+        champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion,
+                                 catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="")
 
 
 def test_store_champion_never_touches_strategies_json(tmp_path, monkeypatch):
@@ -210,7 +261,7 @@ def test_store_champion_never_touches_strategies_json(tmp_path, monkeypatch):
     study = _FakeStudy()
     promotion = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 33}, R_symbol=1.0)
     champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     assert not (tmp_path / "strategies.json").exists()
     assert (tmp_path / "champions" / "champion_SmaCrossoverStrategy_TSLA_ETORO.json").exists()
 
@@ -222,7 +273,7 @@ def test_store_champion_returns_none_for_zero_override_keys(tmp_path, monkeypatc
     promotion = _promotion(status="REJECTED_ON_HOLDOUT", symbol_params={}, R_symbol=0.0,
                            is_rejection_detail_override="HOLDOUT_NO_ELIGIBLE_TRIALS")
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion,
-                                    catalog_newest_ns=1000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     assert path is None
     assert not (tmp_path / "champions").exists() or not list((tmp_path / "champions").glob("*.json"))
 
@@ -233,7 +284,7 @@ def test_store_champion_returns_none_below_quality_floor(tmp_path, monkeypatch):
     promotion = _promotion(status="REJECTED_ON_HOLDOUT", symbol_params={"sma_period": 33},
                            R_symbol=-0.4, is_rejection_detail_override="REJECT_HOLDOUT_DSR_DROP")
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion,
-                                    catalog_newest_ns=1000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     assert path is None
 
 
@@ -244,7 +295,7 @@ def test_store_champion_returns_none_for_disallowed_rejection(tmp_path, monkeypa
     promotion = _promotion(status="REJECTED_SELECTION_OVERFIT", symbol_params={"sma_period": 33},
                            R_symbol=0.4, is_rejection_detail_override=detail)
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion,
-                                    catalog_newest_ns=1000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     assert path is None
 
 
@@ -253,45 +304,68 @@ def test_store_champion_disabled_via_kill_switch(tmp_path, monkeypatch):
     study = _FakeStudy()
     promotion = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 33}, R_symbol=1.0)
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promotion,
-                                    catalog_newest_ns=1000, opt_data={**OPT_DATA, "champion_enabled": False})
+                                    catalog_newest_ns=1000, opt_data={**OPT_DATA, "champion_enabled": False},
+                                    run_id="run1")
     assert path is None
 
 
-def test_store_champion_reward_version_mismatch_discards_old(tmp_path, monkeypatch):
+def test_store_champion_reward_version_mismatch_preserves_history(tmp_path, monkeypatch):
+    """Issue #819 — ein reward_semantics_version-Mismatch verwirft den Eintrag NICHT mehr
+    vollständig: params/corroboration_count überleben den Bump, nur quality wird neu gesetzt."""
     _isolate(monkeypatch, tmp_path)
     study = _FakeStudy()
     # Ersteintrag unter v12 speichern (opt_data mit alter Version).
     old_opt = {**OPT_DATA, "reward_semantics_version": 12}
     promo_old = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 10}, R_symbol=0.9)
     champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo_old,
-                             catalog_newest_ns=1000, opt_data=old_opt)
-    # Neuer Kandidat unter v13 (aktuell) -> der v12-Eintrag ist NICHT vergleichbar, wird ersetzt.
+                             catalog_newest_ns=1000, opt_data=old_opt, run_id="run1")
+    # Neuer Kandidat unter der AKTUELLEN Version, ANDERER Lauf -> quality_stale-Merge.
     promo_new = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 44}, R_symbol=0.5)
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo_new,
-                                    catalog_newest_ns=2000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=2000, opt_data=OPT_DATA, run_id="run2")
     stored = json.loads(path.read_text("utf-8"))
-    assert stored["params"] == {"sma_period": 44}
-    assert stored["lifecycle"]["corroboration_count"] == 1  # kein Carry-over von v12
+    assert stored["params"] == {"sma_period": 44}  # der frisch bewertete Kandidat gewinnt
+    assert stored["lifecycle"]["corroboration_count"] == 2  # Historie erhalten, run-gegated erhöht
+    assert stored["lifecycle"]["semantics_migrated_from"] == 12
+    assert stored["integrity"]["reward_semantics_version"] == _CURRENT_REWARD_SEMANTICS_VERSION
 
 
 def test_store_champion_corroborates_same_region(tmp_path, monkeypatch):
-    """Issue #707 — region-gleiche Kandidaten erhöhen corroboration_count und übernehmen den
-    besseren R_symbol-Vektor."""
+    """Issue #707 — region-gleiche Kandidaten AUS VERSCHIEDENEN LÄUFEN erhöhen corroboration_count
+    und übernehmen den besseren R_symbol-Vektor (Issue #821 — run_id-gegated, s. eigener Test
+    unten für den Negativfall "gleiche run_id")."""
     _isolate(monkeypatch, tmp_path)
     study = _FakeStudy()
     promo1 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 20, "cooldown_bars": 5},
                         R_symbol=0.5)
     champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo1,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     # minimal abweichender, aber region-gleicher (kleine Distanz) UND besserer Kandidat.
     promo2 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 21, "cooldown_bars": 5},
                         R_symbol=0.8)
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo2,
-                                    catalog_newest_ns=2000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=2000, opt_data=OPT_DATA, run_id="run2")
     stored = json.loads(path.read_text("utf-8"))
     assert stored["lifecycle"]["corroboration_count"] == 2
     assert stored["params"]["sma_period"] == 21  # besserer R_symbol übernommen
     assert stored["lifecycle"]["first_seen_catalog_newest_ns"] == 1000  # Erstsichtung erhalten
+
+
+def test_store_champion_same_run_id_does_not_double_count(tmp_path, monkeypatch):
+    """Issue #821 — zwei store_champion-Aufrufe MIT DERSELBEN run_id (z. B. ein Confirm-Retry
+    innerhalb desselben Sweeps) erhöhen corroboration_count NICHT."""
+    _isolate(monkeypatch, tmp_path)
+    study = _FakeStudy()
+    promo1 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 20, "cooldown_bars": 5},
+                        R_symbol=0.5)
+    champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo1,
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
+    promo2 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 21, "cooldown_bars": 5},
+                        R_symbol=0.8)
+    path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo2,
+                                    catalog_newest_ns=2000, opt_data=OPT_DATA, run_id="run1")
+    stored = json.loads(path.read_text("utf-8"))
+    assert stored["lifecycle"]["corroboration_count"] == 1
 
 
 def test_store_champion_different_region_worse_keeps_existing(tmp_path, monkeypatch):
@@ -299,11 +373,11 @@ def test_store_champion_different_region_worse_keeps_existing(tmp_path, monkeypa
     study = _FakeStudy()
     promo1 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 20}, R_symbol=0.9)
     champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo1,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     # Weit entfernte Region, schlechterer R_symbol -> darf den etablierten Champion NICHT verdrängen.
     promo2 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 99}, R_symbol=0.1)
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo2,
-                                    catalog_newest_ns=2000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=2000, opt_data=OPT_DATA, run_id="run2")
     stored = json.loads(path.read_text("utf-8"))
     assert stored["params"]["sma_period"] == 20
     assert stored["lifecycle"]["corroboration_count"] == 1
@@ -314,10 +388,10 @@ def test_store_champion_different_region_better_replaces(tmp_path, monkeypatch):
     study = _FakeStudy()
     promo1 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 20}, R_symbol=0.2)
     champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo1,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     promo2 = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 99}, R_symbol=0.9)
     path = champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo2,
-                                    catalog_newest_ns=2000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=2000, opt_data=OPT_DATA, run_id="run2")
     stored = json.loads(path.read_text("utf-8"))
     assert stored["params"]["sma_period"] == 99
     assert stored["lifecycle"]["corroboration_count"] == 1  # frischer Lifecycle
@@ -330,7 +404,7 @@ def test_store_champion_demotes_after_repeated_degradation(tmp_path, monkeypatch
     strategy, symbol = "SmaCrossoverStrategy", "TSLA.ETORO"
     promo_good = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 20}, R_symbol=0.9)
     champions.store_champion(study, strategy, symbol, promo_good,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
 
     champion_path = tmp_path / "champions" / f"champion_{strategy}_TSLA_ETORO.json"
     assert champion_path.exists()
@@ -340,13 +414,13 @@ def test_store_champion_demotes_after_repeated_degradation(tmp_path, monkeypatch
     degraded_low = _promotion(status="REJECTED_ON_HOLDOUT", symbol_params={"sma_period": 21},
                               R_symbol=-0.2, is_rejection_detail_override="REJECT_HOLDOUT_GATE")
     champions.store_champion(study, strategy, symbol, degraded_low,
-                             catalog_newest_ns=2000, opt_data=OPT_DATA)
+                             catalog_newest_ns=2000, opt_data=OPT_DATA, run_id="run2")
     assert champion_path.exists()  # degrade_streak=1, noch nicht demotet
     stored_after_1 = json.loads(champion_path.read_text("utf-8"))
     assert stored_after_1["lifecycle"]["degrade_streak"] == 1
 
     champions.store_champion(study, strategy, symbol, degraded_low,
-                             catalog_newest_ns=3000, opt_data=OPT_DATA)
+                             catalog_newest_ns=3000, opt_data=OPT_DATA, run_id="run3")
     assert not champion_path.exists()  # degrade_streak=2 >= champion_demote_after_runs -> demotet
 
 
@@ -356,15 +430,15 @@ def test_store_champion_degrade_streak_resets_on_healthy_reevaluation(tmp_path, 
     strategy, symbol = "SmaCrossoverStrategy", "TSLA.ETORO"
     promo_good = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 20}, R_symbol=0.9)
     champions.store_champion(study, strategy, symbol, promo_good,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     degraded_low = _promotion(status="REJECTED_ON_HOLDOUT", symbol_params={"sma_period": 21},
                               R_symbol=-0.2, is_rejection_detail_override="REJECT_HOLDOUT_GATE")
     champions.store_champion(study, strategy, symbol, degraded_low,
-                             catalog_newest_ns=2000, opt_data=OPT_DATA)
+                             catalog_newest_ns=2000, opt_data=OPT_DATA, run_id="run2")
     # eine erneute, region-gleiche Evaluierung WIEDER über dem Floor -> degrade_streak resettet.
     healthy_again = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 22}, R_symbol=0.7)
     path = champions.store_champion(study, strategy, symbol, healthy_again,
-                                    catalog_newest_ns=3000, opt_data=OPT_DATA)
+                                    catalog_newest_ns=3000, opt_data=OPT_DATA, run_id="run3")
     stored = json.loads(path.read_text("utf-8"))
     assert stored["lifecycle"]["degrade_streak"] == 0
 
@@ -375,7 +449,7 @@ def test_load_champion_seed_reads_admissible_entry(tmp_path, monkeypatch):
     study = _FakeStudy()
     promo = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 33}, R_symbol=0.9)
     champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     seed = champions.load_champion_seed("SmaCrossoverStrategy", "TSLA.ETORO", CFG_DIR,
                                         opt_data=OPT_DATA)
     assert seed == {"sma_period": 33}
@@ -388,16 +462,31 @@ def test_load_champion_seed_empty_for_missing_entry(tmp_path, monkeypatch):
     assert seed == {}
 
 
-def test_load_champion_seed_empty_for_stale_reward_version(tmp_path, monkeypatch):
-    """Scenario #2 (Issue #705 §8) — Reward-Version-Mismatch -> Champion verworfen."""
+def test_load_champion_seed_survives_stale_reward_version(tmp_path, monkeypatch):
+    """Issue #819 — ein reward_semantics_version-Mismatch entwertet nur die QUALITY-Bewertung; der
+    Parametervektor bleibt als Seed lesbar (er durchläuft beim Enqueue ohnehin erneut ALLE Gates
+    auf frischen Daten)."""
     _isolate(monkeypatch, tmp_path)
     study = _FakeStudy()
     promo = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 33}, R_symbol=0.9)
     champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo,
-                             catalog_newest_ns=1000, opt_data=OPT_DATA)
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
     stale_opt = {**OPT_DATA, "reward_semantics_version": 999}  # Study/Config inzwischen weitergebumpt
     seed = champions.load_champion_seed("SmaCrossoverStrategy", "TSLA.ETORO", CFG_DIR,
                                         opt_data=stale_opt)
+    assert seed == {"sma_period": 33}
+
+
+def test_load_champion_seed_empty_when_config_missing_reward_version(tmp_path, monkeypatch):
+    """Eine degenerierte Config (reward_semantics_version fehlt ganz) bleibt inadmissibel."""
+    _isolate(monkeypatch, tmp_path)
+    study = _FakeStudy()
+    promo = _promotion(status="READY_FOR_PR", symbol_params={"sma_period": 33}, R_symbol=0.9)
+    champions.store_champion(study, "SmaCrossoverStrategy", "TSLA.ETORO", promo,
+                             catalog_newest_ns=1000, opt_data=OPT_DATA, run_id="run1")
+    broken_opt = {**OPT_DATA, "reward_semantics_version": None}
+    seed = champions.load_champion_seed("SmaCrossoverStrategy", "TSLA.ETORO", CFG_DIR,
+                                        opt_data=broken_opt)
     assert seed == {}
 
 
@@ -452,7 +541,7 @@ def test_optimize_symbol_enqueues_champion_seed_when_no_global_best(tmp_path, mo
                        R_symbol=0.3, is_rejection_detail_override="REJECT_HOLDOUT_DSR_DROP")
     champions.store_champion(study0, "SmaCrossoverStrategy", "TSLA.ETORO", promo,
                              catalog_newest_ns=1000,
-                             opt_data=OPT_DATA)
+                             opt_data=OPT_DATA, run_id="run1")
 
     study = ro.optimize_symbol("SmaCrossoverStrategy", "TSLA.ETORO", n_trials=1)
     assert study.user_attrs.get("shrinkage_seed_source") == "champion"
@@ -532,6 +621,7 @@ def test_writeback_disabled_via_kill_switch(tmp_path, monkeypatch):
 
 
 def test_writeback_reward_version_mismatch_fails(tmp_path, monkeypatch):
+    """Issue #819 — ein quality_stale Eintrag bleibt SEED-fähig, aber NICHT writeback-fähig."""
     monkeypatch.setattr(champions, "WORK", tmp_path)
     entry = _entry(status_at_store="READY_FOR_PR", reward_version=1)
     ok = champions.maybe_write_back(entry, OPT_DATA, base_cfg=tmp_path)

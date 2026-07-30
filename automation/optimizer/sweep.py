@@ -784,6 +784,54 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
     return family_returns
 
 
+def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> None:
+    """Issue #818 — ``champions.maybe_write_back`` hatte KEINE Produktions-Call-Site (getestet,
+    dokumentiert, nie ausgeführt — exakt die Pitfall-#237-Fehlerklasse). Ebene 2 des Epics #702
+    (Default-Nachführung nach ``strategy_symbol_seeds.json``) läuft erst ab hier tatsächlich.
+
+    ``champions.load_champion_entry`` (statt des frisch gebauten Kandidaten aus
+    ``store_champion``) liest den MERGE-/Korroborations-STAND, nicht den soeben gebauten
+    Kandidaten — nur der Store-Stand trägt den tatsächlichen ``corroboration_count``. Emittiert
+    IMMER ein strukturiertes ``CHAMPION_WRITEBACK``-Event (auch bei einem Nicht-Erfolg) —
+    ``skipped_reason`` macht den Grund für ein *nicht* erfolgtes Rückschreiben genauso sichtbar
+    wie das Rückschreiben selbst (Lehre aus #783/#786: ein unaufgeschlüsselter Nicht-Ausgang ist
+    die teuerste Telemetrie-Lücke im System).
+
+    Fail-open: ein Fehler in dieser Funktion darf den Sweep nie crashen (analog Champion-Store/
+    Retention) — der Aufrufer (``_run_confirm_and_export``) muss NICHT selbst absichern."""
+    log = logging.getLogger("optimizer")
+    try:
+        entry = champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        applied = False
+        skipped_reason = "NO_ADMISSIBLE_ENTRY"
+        advance_days = None
+        corroboration_count = None
+        if entry is not None:
+            lifecycle = entry.get("lifecycle") or {}
+            integrity = entry.get("integrity") or {}
+            corroboration_count = lifecycle.get("corroboration_count")
+            current_ns = integrity.get("catalog_newest_ns")
+            first_ns = lifecycle.get("first_seen_catalog_newest_ns")
+            if current_ns is not None and first_ns is not None:
+                advance_days = (current_ns - first_ns) / 1_000_000_000.0 / 86400.0
+            applied = champions.maybe_write_back(entry, opt_data)
+            if not applied:
+                if champions.champion_quality_stale(entry, opt_data):
+                    skipped_reason = "QUALITY_STALE"
+                else:
+                    skipped_reason = "NOT_CORROBORATED_OR_WINDOW_NOT_ADVANCED"
+        emit_execution_event(log, "CHAMPION_WRITEBACK", {
+            "strategy": strategy, "symbol": symbol,
+            "corroboration_count": corroboration_count,
+            "advance_days": advance_days,
+            "applied": applied,
+            "skipped_reason": None if applied else skipped_reason,
+        })
+    except Exception:
+        log.warning("[#818] %s/%s: Champion-Writeback fehlgeschlagen (non-fatal).",
+                    strategy, symbol, exc_info=True)
+
+
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
@@ -1155,12 +1203,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             if using_real_optimize:
                 try:
                     champions.store_champion(study, strategy, symbol, promotion,
-                                             catalog_newest_ns=newest_ns, opt_data=opt_data, tier=tier)
+                                             catalog_newest_ns=newest_ns, opt_data=opt_data, tier=tier,
+                                             run_id=run_id)
                 except Exception:
                     logging.getLogger("optimizer").warning(
                         "[#703] %s/%s: Champion-Store-Schreiben fehlgeschlagen (non-fatal).",
                         strategy, symbol, exc_info=True,
                     )
+                else:
+                    _attempt_champion_writeback(strategy, symbol, opt_data)
                 # Issue #733/#794 — Normalfall-Retention: die Study ist jetzt abgeschlossen (Confirm +
                 # Export + Champion-Store gelaufen). Ihr IS-Trial-Baum wird ab hier nicht mehr
                 # gebraucht — ausser ein aktuell referenzierter trial_dir läge (defensiv) darin.

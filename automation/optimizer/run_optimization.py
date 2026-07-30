@@ -1232,6 +1232,27 @@ def resolve_storage(*, study_name: str, base_cfg: Path | None = None) -> str:
     return url
 
 
+def _tunable_params_only(strategy: str, params: dict) -> dict:
+    """Issue #820 Fix Punkt 4 — filtert ``params`` auf Schlüssel, die ``bounds.
+    extract_numeric_bounds`` als TATSÄCHLICH tunbar (numerischer ``suggest_*``-Aufruf in
+    ``spaces.sample_params``) ausweist. Root-Cause #820: ``strategies.json[strategy].params``
+    kann ein nicht-tunbares Boolean-Flag tragen (z. B. ComboTrendVwapStrategy: ``{"allow_short":
+    true}``) — als Dict ist das wahr (truthy), ``load_global_best`` kehrte damit zurück, OBWOHL
+    kein einziger Optimierungs-Parameter enthalten war, und verdeckte die Champion-Stufe
+    (``resolve_symbol_shrinkage_seed``) für die GESAMTE Strategie dauerhaft und lautlos. Ein Dict,
+    das nach dieser Filterung leer ist, ist ``{}`` (kein globales Optimum) — ``strategy`` unbekannt
+    (``ValueError`` aus ``extract_numeric_bounds``) lässt ``params`` unangetastet (kein
+    Suchraum-Wissen verfügbar, fail-open statt eines False-Negatives)."""
+    if not params:
+        return {}
+    from automation.optimizer import bounds
+    try:
+        tunable_keys = bounds.extract_numeric_bounds(strategy)
+    except ValueError:
+        return dict(params)
+    return {k: v for k, v in params.items() if k in tunable_keys}
+
+
 def load_global_best(strategy: str, base_cfg: Path) -> dict:
     """Quelle des globalen Optimums (Warm-Start-Samen, Gate 2):
        proposal_{strategy}.json['proposed_params_override'] falls vorhanden UND status
@@ -1239,6 +1260,12 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
 
     Bewusste Entscheidung (A4.5a Rückfrage): Ein Proposal mit status != READY_FOR_PR
     (z. B. REJECTED_ON_HOLDOUT) wird NICHT als Samen genutzt — Fallback auf strategies.json.
+
+    Issue #820 Fix Punkt 4 — BEIDE Quellen werden auf tatsächlich tunbare Parameter gefiltert
+    (``_tunable_params_only``), bevor sie als "globales Optimum" zurückgegeben werden: ein Dict,
+    das nur nicht-tunbare Flags (z. B. ``allow_short``) trägt, ist wahrheitswertlich ``True``,
+    aber KEIN Optimierungsergebnis — ``resolve_symbol_shrinkage_seed`` würde die Champion-/
+    Defaults-Stufe sonst nie erreichen (siehe dortiger Docstring, #705 §9).
     """
     proposal_path = WORK / f"proposal_{strategy}.json"
     if proposal_path.exists():
@@ -1246,9 +1273,9 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
             with open(proposal_path, "r", encoding="utf-8") as f:
                 data = json.load(f) or {}
             if data.get("status") == "READY_FOR_PR":
-                override = data.get("proposed_params_override") or {}
+                override = _tunable_params_only(strategy, data.get("proposed_params_override") or {})
                 if override:
-                    return dict(override)
+                    return override
         except (OSError, ValueError):
             pass
 
@@ -1259,7 +1286,9 @@ def load_global_best(strategy: str, base_cfg: Path) -> dict:
                 strats = json.load(f) or {}
             for s in strats.get("strategies", []):
                 if s.get("strategy_class") == strategy:
-                    return dict(s.get("params") or {})
+                    params = _tunable_params_only(strategy, s.get("params") or {})
+                    if params:
+                        return params
         except (OSError, ValueError):
             pass
 

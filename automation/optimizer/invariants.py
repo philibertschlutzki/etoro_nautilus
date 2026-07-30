@@ -608,3 +608,40 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
                 f"Reward-Term(e) praktisch inert (std < {inert_ratio:.2%} von "
                 f"reward_std={rew_std:.6f}): {inert_terms}."),
     )
+
+
+def check_champion_writeback_reachability(champions_summary: dict) -> InvariantResult:
+    """Issue #818-Regressionswächter (achter Invarianten-Check, siehe #742/#749).
+
+    ``champions.maybe_write_back`` (Ebene 2 des Epics #702, Issue #706) hatte KEINE Produktions-
+    Call-Site — die dokumentierte, getestete Funktion wurde vom laufenden Sweep nie aufgerufen
+    (76 von 76 Store-Einträgen trugen ``lifecycle.writeback_applied == false``, exakt die
+    Fehlerklasse aus Pitfall #237: ein Fix gilt als "gemergt", sobald der Code existiert, statt
+    sobald ein gemessenes Akzeptanzkriterium in einem realen Lauf erfüllt ist).
+
+    FAIL, wenn der Champion-Store nicht-leer ist (``stored > 0``) UND KEIN einziger Eintrag jemals
+    zurückgeschrieben wurde (``written_back == 0``) — die reine Anwesenheit von Champions ohne
+    JEDEN Writeback-Erfolg über potenziell viele Läufe hinweg ist der direkte Fingerabdruck einer
+    unerreichbaren Ebene 2. ``champions_summary`` ist ``report._champions_summary()``'s
+    ``{'stored', 'admissible', 'corroborated', 'written_back', 'skipped_by_reason'}``-Dict."""
+    stored = int(champions_summary.get("stored") or 0)
+    written_back = int(champions_summary.get("written_back") or 0)
+    if stored == 0:
+        return InvariantResult(
+            name="check_champion_writeback_reachability",
+            passed=True,
+            expected="written_back > 0, sobald stored > 0",
+            actual={"stored": 0, "written_back": 0},
+            detail="Kein Champion-Store-Eintrag — nicht anwendbar.",
+        )
+    passed = written_back > 0
+    return InvariantResult(
+        name="check_champion_writeback_reachability",
+        passed=passed,
+        expected="written_back > 0, sobald stored > 0",
+        actual={"stored": stored, "written_back": written_back},
+        detail=("OK" if passed else
+                f"{stored} Champion-Store-Eintraege, aber 0 Writebacks ueber den gesamten "
+                "Store-Stand — Ebene 2 (#706) ist vermutlich unerreichbar (#818-Regression: "
+                "maybe_write_back ohne Produktions-Call-Site)."),
+    )
