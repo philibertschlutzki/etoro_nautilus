@@ -157,6 +157,46 @@ _ELIGIBLE_ALL_CLAIM_MARKER = "in eligible_requires_all (HART)"
 _ELIGIBLE_ANY_CLAIM_MARKER = "in eligible_requires_any (aktiver OR-Arm)"
 
 
+def check_family_n_statistic_coverage(trials: list[dict], *,
+                                      deflation_n_family_raw: int | None) -> InvariantResult:
+    """Issue #822-Regressionswächter.
+
+    ``sweep._family_n_from_studies`` zählte bis #822 ``oos_evaluated is True`` (blosse Aktivität)
+    statt ``oos_selection_statistic_available is True`` (eine verwertbare Selektions-Teststatistik,
+    ``oos_psr``) — ein Trial mit ``SORTINO_GUARD_TRIPPED``/``EQUITY_NONPOSITIVE`` ist
+    ``oos_evaluated=True``, trägt aber keinen Sortino/PSR und hat das Maximum unter H₀ nicht
+    beeinflusst (dieselbe Argumentation wie #814 für nie gezogene Trials). Diese Prüfung
+    rekonstruiert die Zahl der Trials MIT tatsächlich vorhandener Teststatistik unabhängig aus den
+    ``trials``-User-Attrs (``oos_selection_statistic_available``) und vergleicht sie gegen die
+    TATSÄCHLICH in die Deflation eingeflossene Zahl (``deflation_n_family_raw``) — FAIL, wenn
+    Letztere die rekonstruierte Zahl übersteigt (der Zähler hätte Trials ohne Teststatistik
+    mitgezählt, exakt die #822-Root-Cause).
+
+    ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (pure/synthetisch testbar, analog
+    ``check_reward_term_variance``). ``deflation_n_family_raw is None`` ⇒ nicht anwendbar (PASS)."""
+    if deflation_n_family_raw is None:
+        return InvariantResult(
+            name="check_family_n_statistic_coverage",
+            passed=True,
+            expected="deflation_n_family_raw <= Trials mit oos_selection_statistic_available",
+            actual=None,
+            detail="deflation_n_family_raw unbekannt — nicht anwendbar.",
+        )
+    n_with_statistic = sum(
+        1 for t in trials if (t or {}).get("oos_selection_statistic_available") is True)
+    passed = deflation_n_family_raw <= n_with_statistic
+    return InvariantResult(
+        name="check_family_n_statistic_coverage",
+        passed=passed,
+        expected=f"<= {n_with_statistic}",
+        actual=deflation_n_family_raw,
+        detail=("OK" if passed else
+                f"deflation_n_family_raw={deflation_n_family_raw} > {n_with_statistic} Trials mit "
+                "oos_selection_statistic_available=True — die Zaehlung zaehlt Trials ohne "
+                "verwertbare Teststatistik mit (#822-Regression)."),
+    )
+
+
 def check_config_key_registry(tournament_config: dict) -> InvariantResult:
     """Issue #649/#760/#765-Regressionswächter.
 

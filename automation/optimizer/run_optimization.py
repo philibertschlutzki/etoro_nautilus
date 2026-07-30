@@ -1736,6 +1736,44 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             "häuft sich; Aggregationspfad prüfen.", getattr(study, "study_name", "?"),
             coherence_violations, len(trials),
         )
+
+    # Issue #823 Fix Punkt 4 — Guard-Trips sind eine Diagnose, kein stilles Verwerfen: übersteigt
+    # der Anteil der SORTINO_GUARD_TRIPPED-Trips (an ALLEN oos_evaluated Trials) eine konfigurierte
+    # Schwelle, ist die Suche faktisch zensiert (der Guard löscht systematisch das obere Ende der
+    # Zielverteilung) — das Ergebnis dieser Study ist dann NICHT als reguläres 0-/N-eligible-
+    # Resultat interpretierbar. STUDY_GUARD_DOMINATED macht diesen Zustand sichtbar, statt ihn als
+    # gewöhnliches Suchergebnis zu berichten (ändert KEINE Gate-/Reward-Entscheidung).
+    guard_tripped = sum(
+        1 for t in trials
+        if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+        and any(d.get("code") == "SORTINO_GUARD_TRIPPED"
+               for d in (getattr(t, "user_attrs", {}).get("inference_diagnostics") or [])
+               if isinstance(d, dict))
+    )
+    guard_trip_fraction_warn = 0.10
+    try:
+        opt_path_guard = config_dir() / "optimizer.json"
+        if opt_path_guard.exists():
+            guard_trip_fraction_warn = float(
+                (json.loads(opt_path_guard.read_text("utf-8")) or {}).get(
+                    "sortino_guard_trip_fraction_warn", guard_trip_fraction_warn))
+    except Exception:
+        pass
+    study_guard_dominated = bool(
+        evaluable > 0 and (guard_tripped / evaluable) > guard_trip_fraction_warn)
+    if study_guard_dominated:
+        try:
+            study.set_user_attr("study_guard_dominated", True)
+        except Exception:
+            pass
+        logging.getLogger("optimizer").warning(
+            "[#823] %s: STUDY_GUARD_DOMINATED — %d/%d evaluierte Trials (%.1f%%) mit "
+            "SORTINO_GUARD_TRIPPED (> %.0f%%) — die Suche ist faktisch zensiert (der Guard löscht "
+            "systematisch das obere Ende der Zielverteilung); dieses Ergebnis ist NICHT als "
+            "reguläres Eligibility-Resultat interpretierbar.",
+            getattr(study, "study_name", "?"), guard_tripped, evaluable,
+            100.0 * guard_tripped / evaluable, 100.0 * guard_trip_fraction_warn,
+        )
     try:
         best_value = study.best_value
     except Exception:
@@ -2244,6 +2282,17 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                 trial.set_user_attr("oos_sortino_period", metrics.oos_sortino_period)
             if metrics.oos_psr is not None:
                 trial.set_user_attr("oos_psr", metrics.oos_psr)
+        # Issue #822 — ``oos_selection_statistic_available``: True GENAU DANN, wenn der Trial eine
+        # verwertbare Selektions-Teststatistik trägt (``oos_psr`` — die Grösse, auf der die
+        # Selektion seit #697 rankt). Ein Trial mit ``SORTINO_GUARD_TRIPPED`` (#823) oder
+        # ``EQUITY_NONPOSITIVE`` (#825) ist ``oos_evaluated=True`` (er hat gehandelt), aber trägt
+        # KEINEN Sortino/PSR — er hat das Maximum unter H₀ nicht beeinflusst und darf die
+        # familienweite Multiplizität (``sweep._family_n_from_studies``) nicht mitzählen (dieselbe
+        # Argumentationslogik wie #814 für nie gezogene Trials, hier eine Ebene tiefer: ein Trial,
+        # dessen Statistik VERWORFEN wurde, hat ebenso keinen Schätzer). ``oos_evaluated`` bleibt
+        # UNVERÄNDERT als Aktivitäts-Telemetrie erhalten (#770-Budgetbilanz, #769-Diagnose).
+        trial.set_user_attr("oos_selection_statistic_available", bool(
+            metrics.oos_evaluated and metrics.oos_psr is not None))
         # Issue #653 — T (Anzahl OOS-Perioden) je Trial, damit confirm.py den theoretischen
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).

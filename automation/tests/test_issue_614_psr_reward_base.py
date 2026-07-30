@@ -6,6 +6,7 @@ gewinn. Die PSR (Probabilistic Sharpe/Sortino Ratio) ist skalenfrei, in [0,1], a
 und bezieht T + Schiefe + Kurtosis explizit ein.
 """
 import math
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -94,7 +95,11 @@ def test_extreme_annualized_sortino_trips_guard(caplog):
     series = pd.Series([1000.0 * (1.003 ** i) for i in range(13)], index=idx)  # streng steigend
     pnls = [5.0] * 12
     holds = [(3600 * 10**9, 1.0)] * 12
-    with caplog.at_level(logging.WARNING, logger="optimizer"):
+    # Issue #823 — 0 Downside-Beobachtungen (streng steigende Serie); dieser Test prueft den
+    # Numerik-Guard (SORTINO_GUARD_TRIPPED), nicht die #823-Mindest-Downside-Stichprobe (die bei
+    # exakt 0 Beobachtungen zuerst griffe, mit einem eigenen, hier nicht erwarteten Code).
+    with caplog.at_level(logging.WARNING, logger="optimizer"), \
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0):
         stats = br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
     assert stats["sortino_ratio"] is None
     assert stats["psr"] is None

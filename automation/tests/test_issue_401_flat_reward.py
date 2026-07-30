@@ -62,7 +62,8 @@ def test_sortino_threshold_is_configurable_low_sample():
     # den Datenfehler-Guard (25). Guard hochsetzen, damit der synthetische Low-Sample-Sortino nicht
     # als Datenfehler verworfen wird.
     from unittest.mock import patch
-    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9), \
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
         stats = _calculate_stats(pnl_list, hold_list=[], starting_capital=10000.0,
                                  min_trades_for_sortino=2, mtm_series=mtm)
     assert stats["sortino_ratio"] is not None

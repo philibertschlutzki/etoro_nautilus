@@ -698,7 +698,16 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     tragen: eine über die Familie NICHT konstante Selektionsregel (z. B. ``any_arm_unreachable_
     policy='drop_arm'`` griff bei einer Study, aber nicht bei einer anderen) verletzt die
     Voraussetzung der DSR-Multiplizitätskorrektur (Pitfall #248). Die nach Fingerprint
-    aufgeschlüsselte ``n_family``-Zahl lebt im #742-Report (``report._selection_rule_families``)."""
+    aufgeschlüsselte ``n_family``-Zahl lebt im #742-Report (``report._selection_rule_families``).
+
+    Issue #822 — zählt seit diesem Fix ``oos_selection_statistic_available is True`` (Trials MIT
+    einer verwertbaren Selektions-Teststatistik, ``oos_psr``), NICHT MEHR ``oos_evaluated is True``
+    (blosse Aktivität). Root-Cause #822: ein Trial mit ``SORTINO_GUARD_TRIPPED`` (#823) oder
+    ``EQUITY_NONPOSITIVE`` (#825) ist ``oos_evaluated=True``, trägt aber keinen Sortino/PSR — er hat
+    das Maximum unter H₀ NICHT beeinflusst und darf die Multiplizität nicht erhöhen (dieselbe
+    Argumentationslogik wie #814, eine Ebene tiefer: ein Trial, dessen Statistik VERWORFEN wurde,
+    ist äquivalent zu einem nie gezogenen Trial). ``oos_evaluated`` bleibt als reine
+    Aktivitäts-Telemetrie (#770/#769) unverändert erhalten."""
     # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
     # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
     # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
@@ -713,7 +722,10 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     symbol_fingerprints: dict[str, set] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
-        n_evaluated = sum(1 for t in trials if getattr(t, "user_attrs", {}).get("oos_evaluated") is True)
+        n_evaluated = sum(
+            1 for t in trials
+            if getattr(t, "user_attrs", {}).get("oos_selection_statistic_available") is True
+        )
         if floor_mode == "budgeted":
             n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
             if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
@@ -736,6 +748,42 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
                 symbol, len(fingerprints), symbol,
             )
     return family_n
+
+
+# Issue #822 — Rückübersetzung eines ``inference_diagnostics``-Codes (#804) auf den Aggregations-
+# Grund für ``deflation_n_family_excluded_no_statistic``.
+_NO_STATISTIC_DIAGNOSTIC_REASON = {
+    "SORTINO_GUARD_TRIPPED": "sortino_guard",
+    "EQUITY_NONPOSITIVE": "equity_ruined",
+}
+
+
+def _family_n_excluded_breakdown_from_studies(pairs, studies) -> dict[str, dict[str, int]]:
+    """Issue #822 Fix Punkt 3 — je Symbol, wie viele ``oos_evaluated`` Trials AUSGESCHLOSSEN wurden
+    (``oos_selection_statistic_available is False``), aufgeschlüsselt nach dem diagnostizierten
+    Grund (``sortino_guard``/``equity_ruined``/``other``). Rein additive Telemetrie für
+    ``confirm.confirm_per_symbol_promotion``s ``deflation_n_family_excluded_no_statistic`` — ändert
+    NIE die gezählte Familien-Multiplizität selbst (``_family_n_from_studies``)."""
+    import collections
+    breakdown: dict[str, collections.Counter] = {}
+    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+        trials = getattr(study, "trials", None) or []
+        counter = breakdown.setdefault(symbol, collections.Counter())
+        for t in trials:
+            attrs = getattr(t, "user_attrs", {}) or {}
+            if attrs.get("oos_evaluated") is not True:
+                continue
+            if attrs.get("oos_selection_statistic_available") is True:
+                continue
+            codes = {d.get("code") for d in (attrs.get("inference_diagnostics") or [])
+                    if isinstance(d, dict)}
+            reasons = {_NO_STATISTIC_DIAGNOSTIC_REASON[c] for c in codes
+                      if c in _NO_STATISTIC_DIAGNOSTIC_REASON}
+            if not reasons:
+                reasons = {"other"}
+            for reason in reasons:
+                counter[reason] += 1
+    return {symbol: dict(counter) for symbol, counter in breakdown.items()}
 
 
 def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[float]]]:
@@ -1179,10 +1227,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
     def _run_confirm_and_export(pair: tuple[str, str, str], study,
                                 n_family_map: dict[str, int],
-                                family_returns_map: dict[str, list]) -> Path | None:
-        """Issue #652/#799 — Confirm + Export + Champion-Store + Retention EINES Paares, mit der
+                                family_returns_map: dict[str, list],
+                                n_family_excluded_map: dict[str, dict] | None = None) -> Path | None:
+        """Issue #652/#799/#822 — Confirm + Export + Champion-Store + Retention EINES Paares, mit der
         auf das eigene Symbol beschränkten familienweiten Multiplizität (``n_family_map``/
-        ``family_returns_map`` — von der Symbol-Schleife unten übergeben, siehe deren Docstring)."""
+        ``family_returns_map``/``n_family_excluded_map`` — von der Symbol-Schleife unten übergeben,
+        siehe deren Docstring)."""
         strategy, symbol, _reason = pair
         if study is None:
             # Issue #799 — kein Study-Objekt (Paar in _run_optimize fehlgeschlagen, STUDY_FAILED
@@ -1193,7 +1243,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             global_params = load_global_best(strategy, config_dir())
             promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
                                 deflation_n_family=n_family_map.get(symbol, 0),
-                                deflation_family_period_returns=family_returns_map.get(symbol))
+                                deflation_family_period_returns=family_returns_map.get(symbol),
+                                deflation_n_family_excluded_no_statistic=(
+                                    (n_family_excluded_map or {}).get(symbol)))
             proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
             # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
             # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die
@@ -1274,9 +1326,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         symbol_n_family = _family_n_from_studies(
             symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
         symbol_family_returns = _family_period_returns_from_studies(symbol_pairs, symbol_studies)
+        # Issue #822 — Aufschlüsselung, wie viele oos_evaluated Trials je Symbol AUS der obigen
+        # Zählung ausgeschlossen wurden (keine Selektions-Teststatistik), nach Grund.
+        symbol_n_family_excluded = _family_n_excluded_breakdown_from_studies(symbol_pairs, symbol_studies)
 
         for pair, study in zip(symbol_pairs, symbol_studies):
-            proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns)
+            proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns,
+                                               symbol_n_family_excluded)
             if proposal is not None:
                 proposals.append(proposal)
 

@@ -48,7 +48,10 @@ def test_budgeted_mode_still_declared_as_a_valid_option_in_the_schema_text():
 # ── sweep._family_n_from_studies: Code-Fallback folgt dem neuen Default ────────────────────────────
 class _T:
     def __init__(self, evaluated=True):
-        self.user_attrs = {"oos_evaluated": evaluated}
+        # Issue #822 — _family_n_from_studies zaehlt seit dem Fix
+        # oos_selection_statistic_available statt oos_evaluated.
+        self.user_attrs = {"oos_evaluated": evaluated,
+                           "oos_selection_statistic_available": evaluated}
 
 
 class _Study:

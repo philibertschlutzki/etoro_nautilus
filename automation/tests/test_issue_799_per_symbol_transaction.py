@@ -21,7 +21,10 @@ _GATE_CFG = {
 
 class _FakeTrial:
     def __init__(self, oos_evaluated=True):
-        self.user_attrs = {"oos_evaluated": oos_evaluated}
+        # Issue #822 — _family_n_from_studies zaehlt seit dem Fix
+        # oos_selection_statistic_available statt oos_evaluated.
+        self.user_attrs = {"oos_evaluated": oos_evaluated,
+                           "oos_selection_statistic_available": oos_evaluated}
 
 
 class _FakeStudy:

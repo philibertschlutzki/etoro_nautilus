@@ -1804,6 +1804,64 @@ _sortino_mar_cache: float | None = None
 _max_drawdown_cap_cache: float | None = None
 _sortino_downside_floor_cache: float | None = None
 _psr_bootstrap_resamples_cache: int | None = None
+_sortino_min_downside_observations_cache: int | None = None
+
+
+def _read_sortino_min_downside_observations() -> int:
+    """Issue #823 (Zero-Hardcoding) — Mindestzahl an DOWNSIDE-Beobachtungen (Perioden mit
+    ``return < mar`` auf der INFORMATIVEN Teilmenge, siehe ``_informative_period_returns``), bevor
+    ``_calculate_stats`` einen Sortino/PSR berechnet. Root-Cause #823: eine Downside-Deviation aus
+    zu wenigen negativen Beobachtungen ist ein degenerierter Nenner (numerisches Rauschen, kein
+    Datenfehler) — die alte Fehlerklasse behandelte das ununterscheidbar vom Numerik-Guard
+    (``SORTINO_GUARD_TRIPPED``). Unterschreitung ⇒ ``sortino=None`` mit dem EIGENEN Code
+    ``SORTINO_INSUFFICIENT_DOWNSIDE`` (keine Verwechslung mit einem numerischen Ausreisser).
+    tournament.json['sortino_min_downside_observations']. Gecached (Hot-Path). Fehlt der Schlüssel
+    ⇒ 30 (Issue-#823-Vorschlag)."""
+    global _sortino_min_downside_observations_cache
+    if _sortino_min_downside_observations_cache is not None:
+        return _sortino_min_downside_observations_cache
+    val = 30
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_min_downside_observations")
+            if raw is not None:
+                val = int(raw)
+    except (OSError, ValueError, TypeError):
+        val = 30
+    _sortino_min_downside_observations_cache = val
+    return val
+
+
+def _informative_period_returns(period_rets: pd.Series) -> pd.Series:
+    """Issue #823 (Root-Cause) — die für Sortino/PSR-INFERENZ informative Teilmenge von
+    ``period_rets``: Bars mit tatsächlicher Rendite ungleich 0. Ein durchgehendes Kalenderraster
+    (z. B. 24/7-Bars für ein RTH-Instrument, oder Bars ohne offene Position) trägt exakt
+    Log-Return 0 pro flacher/Nicht-Handels-Bar — diese Bars gehen NICHT in den ökonomischen
+    ``total_return`` verloren (die #801-Summenidentität bleibt exakt gewahrt, 0-Beiträge ändern die
+    Summe nicht), verzerren aber JEDEN auf ``len(period_rets)`` normierten Schätzer (Mittelwert,
+    Downside-Deviation, Annualisierung) als Funktion eines Nenners, der die Zahl der INFORMATIVEN
+    Beobachtungen um ein Vielfaches übersteigt (AGENTS.md Pitfall #255)."""
+    return period_rets[period_rets != 0.0]
+
+
+def _informative_annualization_factor(mtm_series, n_informative: int) -> float:
+    """Issue #823 — annualisiert die INFORMATIVE Bar-Frequenz (``n_informative`` Bars mit
+    tatsächlicher Rendite über dieselbe REALE Zeitspanne des vollen ``mtm_series``-Index), statt
+    der vollen (ggf. 24/7-aufgefüllten) Kalender-Bar-Frequenz (``_get_annualization_factor``).
+    Derselbe explizite Config-Override (``annualization_periods_per_year``) hat weiterhin höchste
+    Präzedenz. Fällt auf ``_get_annualization_factor`` zurück, wenn kein verwertbarer Zeit-Index
+    vorliegt (Legacy-Direct-Unit-Calls) oder ``n_informative == 0``."""
+    config_factor = _read_annualization_periods()
+    if config_factor is not None:
+        return float(config_factor)
+    if (mtm_series is not None and len(mtm_series) > 1
+            and isinstance(mtm_series.index, pd.DatetimeIndex) and n_informative > 0):
+        total_span_seconds = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
+        if total_span_seconds > 0:
+            return n_informative * 31_557_600.0 / total_span_seconds
+    return _get_annualization_factor(mtm_series)
 
 
 def _read_psr_bootstrap_resamples() -> int:
@@ -2415,78 +2473,108 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # die Annualisierung (·√A) multipliziert Punktschätzer UND Standardfehler gleich ⇒ kein
         # Informationsgewinn (bei T≈200 std 20.97, Range [−43, +227] — statistisch bedeutungslos).
         # Gate/Reward nutzen die PSR (skalenfrei, in [0,1], bezieht T + Schiefe + Kurtosis ein).
-        n_periods = int(len(period_rets))
-        sortino_period = None
-        sortino_annualized = None
-        oos_psr = None
-        oos_psr_z = None
-        oos_psr_se_boot = None
-        ret_skew, ret_kurtosis = 0.0, 3.0
-        if n < min_trades_sortino or period_rets.empty:
-            sortino = None
-        else:
+        # Issue #823 (Root-Cause) — die für die INFERENZ (Mittelwert, Downside-Deviation,
+        # Annualisierung) massgebliche Teilmenge sind die Bars MIT tatsächlicher Rendite, nicht
+        # die volle (ggf. 24/7-aufgefüllte) Kalender-Bar-Achse. Der ökonomische ``total_return``
+        # bleibt UNVERÄNDERT über die volle Kurve (#801-Summenidentität oben bereits gegen die
+        # VOLLE Serie geprüft — flache Bars tragen Log-Return exakt 0 bei, ihr Herausfiltern hier
+        # ändert die Summe nicht). ``n_periods`` (⇒ ``oos_n_periods``-Telemetrie, DSR-Lo2002-
+        # Varianz in confirm.py) ist ab hier die INFORMATIVE Zahl.
+        informative_rets = _informative_period_returns(period_rets)
+        n_periods = int(len(informative_rets))
+
+        def _compute_sortino():
+            """Issue #823 — als lokale Funktion gekapselt (statt tief verschachtelter
+            if/elif-Bloecke), damit jede Ausschluss-Bedingung per fruehem ``return`` behandelt
+            werden kann. Liest/schreibt ausschliesslich die umschliessenden Closures (period_rets,
+            mar, mtm_series, sortino_numeric_guard, _inference_diagnostics)."""
+            if n < min_trades_sortino or informative_rets.empty:
+                return None, None, None, None, None, 0.0, 3.0, None
             # Issue #545: Target-Downside-Deviation (RMS without mean-centering)
             # Issue #801 (Pitfall #240) — skipna=False erzwungen: eine NaN-uebersprungene Aggregation
             # waere eine Aussage ueber eine Teilmenge der Bars, keine ueber die volle Serie.
-            downside_diff = (period_rets - mar).clip(upper=0.0)
+            downside_diff = (informative_rets - mar).clip(upper=0.0)
             dd_dev = float(np.sqrt((downside_diff ** 2).mean(skipna=False)))
-
             if pd.isna(dd_dev):
-                sortino = None
-            else:
-                downside_floor = _read_sortino_downside_floor()
-                dd_dev = max(dd_dev, downside_floor)
-                mean_ret = period_rets.mean(skipna=False)
-                # Issue #614 — der PER-PERIODEN-Sortino ist die statistisch tragende Grösse (fliesst
-                # in die PSR); der annualisierte Wert ist reine Telemetrie (sortino_ratio/annualized).
-                sortino_period = float((mean_ret - mar) / dd_dev)
-                sortino_annualized = sortino_period * math.sqrt(annualization_factor)
-                # Issue #588/#614 — Numerik-/Datenfehler-Guard auf dem ANNUALISIERTEN Sortino, jetzt bei
-                # 25.0 (tournament.json): jenseits davon ist ein OOS-Sortino bei T≈200 ein Datenfehler,
-                # kein Ergebnis. Fail-loud (SORTINO_GUARD_TRIPPED) und als undefiniert (None) behandeln —
-                # sortino UND psr fallen aus (kein extremer Fold-Artefakt passiert das Gate stumm).
-                if pd.isna(sortino_annualized) or not np.isfinite(sortino_annualized):
-                    sortino = None
-                    sortino_period = None
-                    sortino_annualized = None
-                elif abs(sortino_annualized) > _effective_sortino_numeric_guard(
-                        sortino_numeric_guard, n_periods):
-                    import logging
-                    _eff_guard = _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods)
-                    logging.getLogger("optimizer").warning(
-                        "SORTINO_GUARD_TRIPPED: |sortino_annualized|=%.6g > guard=%.6g "
-                        "(effective_guard=%.6g, n_periods=%d, dd_dev=%.6g) — als Datenfehler "
-                        "verworfen (#614/#665; sortino/psr=None).",
-                        sortino_annualized, sortino_numeric_guard, _eff_guard, len(period_rets), dd_dev,
-                    )
-                    _inference_diagnostics.append({
-                        "code": "SORTINO_GUARD_TRIPPED",
-                        "detail": f"|sortino_annualized|={sortino_annualized:.6g} > "
-                                 f"guard={_eff_guard:.6g} (n_periods={n_periods}, dd_dev={dd_dev:.6g}).",
-                        "value": float(sortino_annualized),
-                    })
-                    sortino = None
-                    sortino_period = None
-                    sortino_annualized = None
-                else:
-                    # sortino_ratio bleibt (rückwärtskompatibel + Kohärenz-Sign-Check #589) der
-                    # ANNUALISIERTE Wert; die PSR ist die neue Reward-/Gate-Grösse (#614).
-                    sortino = float(sortino_annualized)
-                    # Issue #757 — PSR/PSR_z mit einem BOOTSTRAP-Standardfehler DER TATSÄCHLICH
-                    # VERWENDETEN Statistik (sortino_period), statt psr_z/lo2002_sharpe_variance —
-                    # das sind die Sampling-Varianz-Formeln fuer einen SHARPE-Schätzer (μ̂/σ̂),
-                    # hergeleitet per Delta-Methode ueber (μ̂, σ̂²); die Downside-Deviation hat eine
-                    # andere Sampling-Verteilung. Monte-Carlo-Beleg (H0, T=4320): P(PSR>=0.75) lag
-                    # mit der Substitution bei 31-32% statt der nominellen 25%. sample_skew_kurtosis
-                    # bleibt fuer Telemetrie/Rueckwaertskompat (ret_skew/ret_kurtosis) erhalten.
-                    from automation.optimizer.deflation import (
-                        bootstrap_psr_z as _boot_psr_z, psr_from_z as _psr_from_z,
-                        sample_skew_kurtosis as _skku)
-                    ret_skew, ret_kurtosis = _skku(period_rets.to_numpy())
-                    oos_psr_z, oos_psr_se_boot = _boot_psr_z(
-                        period_rets.to_numpy(), sr_star=0.0, mar=mar,
-                        n_boot=_read_psr_bootstrap_resamples())
-                    oos_psr = _psr_from_z(oos_psr_z)
+                return None, None, None, None, None, 0.0, 3.0, None
+
+            # Issue #823 Fix Punkt 2 — Mindestzahl an DOWNSIDE-Beobachtungen VOR jeder weiteren
+            # Berechnung: ein Nenner aus zu wenigen negativen Perioden ist ein degenerierter
+            # Schätzer (numerisches Rauschen), kein numerischer Ausreisser — eigener Code
+            # (SORTINO_INSUFFICIENT_DOWNSIDE), damit die Telemetrie beides unterscheidet.
+            downside_obs = int((downside_diff < 0.0).sum())
+            min_downside_obs = _read_sortino_min_downside_observations()
+            if downside_obs < min_downside_obs:
+                import logging
+                logging.getLogger("optimizer").info(
+                    "SORTINO_INSUFFICIENT_DOWNSIDE: downside_obs=%d < %d (n_periods=%d) — "
+                    "Downside-Deviation-Nenner zu duenn besetzt, kein numerischer Ausreisser "
+                    "(#823; sortino/psr=None).",
+                    downside_obs, min_downside_obs, n_periods,
+                )
+                _inference_diagnostics.append({
+                    "code": "SORTINO_INSUFFICIENT_DOWNSIDE",
+                    "detail": f"downside_obs={downside_obs} < {min_downside_obs} "
+                             f"(n_periods={n_periods}).",
+                    "value": downside_obs,
+                })
+                return None, None, None, None, None, 0.0, 3.0, None
+
+            downside_floor = _read_sortino_downside_floor()
+            dd_dev = max(dd_dev, downside_floor)
+            mean_ret = informative_rets.mean(skipna=False)
+            effective_annualization_factor = _informative_annualization_factor(mtm_series, n_periods)
+            # Issue #614 — der PER-PERIODEN-Sortino ist die statistisch tragende Grösse (fliesst
+            # in die PSR); der annualisierte Wert ist reine Telemetrie (sortino_ratio/annualized).
+            sortino_period_v = float((mean_ret - mar) / dd_dev)
+            sortino_annualized_v = sortino_period_v * math.sqrt(effective_annualization_factor)
+            # Issue #588/#614 — Numerik-/Datenfehler-Guard auf dem ANNUALISIERTEN Sortino, jetzt bei
+            # 25.0 (tournament.json): jenseits davon ist ein OOS-Sortino bei T≈200 ein Datenfehler,
+            # kein Ergebnis. Fail-loud (SORTINO_GUARD_TRIPPED) und als undefiniert (None) behandeln —
+            # sortino UND psr fallen aus (kein extremer Fold-Artefakt passiert das Gate stumm).
+            if pd.isna(sortino_annualized_v) or not np.isfinite(sortino_annualized_v):
+                return None, None, None, None, None, 0.0, 3.0, None
+            if abs(sortino_annualized_v) > _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods):
+                import logging
+                _eff_guard = _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods)
+                logging.getLogger("optimizer").warning(
+                    "SORTINO_GUARD_TRIPPED: |sortino_annualized|=%.6g > guard=%.6g "
+                    "(effective_guard=%.6g, n_periods=%d, dd_dev=%.6g) — als Datenfehler "
+                    "verworfen (#614/#665; sortino/psr=None).",
+                    sortino_annualized_v, sortino_numeric_guard, _eff_guard, n_periods, dd_dev,
+                )
+                _inference_diagnostics.append({
+                    "code": "SORTINO_GUARD_TRIPPED",
+                    "detail": f"|sortino_annualized|={sortino_annualized_v:.6g} > "
+                             f"guard={_eff_guard:.6g} (n_periods={n_periods}, dd_dev={dd_dev:.6g}).",
+                    "value": float(sortino_annualized_v),
+                })
+                return None, None, None, None, None, 0.0, 3.0, None
+
+            # sortino_ratio bleibt (rückwärtskompatibel + Kohärenz-Sign-Check #589) der
+            # ANNUALISIERTE Wert; die PSR ist die neue Reward-/Gate-Grösse (#614).
+            sortino_v = float(sortino_annualized_v)
+            # Issue #757 — PSR/PSR_z mit einem BOOTSTRAP-Standardfehler DER TATSÄCHLICH
+            # VERWENDETEN Statistik (sortino_period), statt psr_z/lo2002_sharpe_variance — das sind
+            # die Sampling-Varianz-Formeln fuer einen SHARPE-Schätzer (μ̂/σ̂), hergeleitet per
+            # Delta-Methode ueber (μ̂, σ̂²); die Downside-Deviation hat eine andere Sampling-
+            # Verteilung. Monte-Carlo-Beleg (H0, T=4320): P(PSR>=0.75) lag mit der Substitution
+            # bei 31-32% statt der nominellen 25%. Issue #824 (separat) haertet den BOOTSTRAP-
+            # Resampling-Nenner der PSR-SE; #823 aendert hier nur den PUNKTSCHÄTZER-Nenner
+            # (dd_dev/mean_ret/Annualisierung) — die Bootstrap-Serie bleibt bewusst die VOLLE
+            # ``period_rets`` bis #824.
+            from automation.optimizer.deflation import (
+                bootstrap_psr_z as _boot_psr_z, psr_from_z as _psr_from_z,
+                sample_skew_kurtosis as _skku)
+            skew_v, kurtosis_v = _skku(period_rets.to_numpy())
+            psr_z_v, psr_se_boot_v = _boot_psr_z(
+                period_rets.to_numpy(), sr_star=0.0, mar=mar,
+                n_boot=_read_psr_bootstrap_resamples())
+            psr_v = _psr_from_z(psr_z_v)
+            return sortino_v, sortino_period_v, sortino_annualized_v, psr_v, psr_z_v, skew_v, kurtosis_v, psr_se_boot_v
+
+        (sortino, sortino_period, sortino_annualized, oos_psr, oos_psr_z,
+         ret_skew, ret_kurtosis, oos_psr_se_boot) = _compute_sortino()
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0

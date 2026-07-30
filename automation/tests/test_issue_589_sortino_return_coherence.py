@@ -37,7 +37,11 @@ def test_pooled_sortino_return_correlation_above_0_6():
     from unittest.mock import patch
     rng = np.random.default_rng(12345)
     sortinos, returns = [], []
-    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+    # Issue #823 — dieser Test prueft die Sortino<->Return-Kohaerenz, nicht die Mindest-
+    # Downside-Stichprobe (Default 30); ohne den Patch koennten Trials mit < 30 Downside-
+    # Beobachtungen die Korrelationsstichprobe unter das Akzeptanzkriterium (>= 50) druecken.
+    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9), \
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
       for _ in range(100):
         # Drift dominiert (breite Spanne), Volatilität variiert nur mild ⇒ gepoolter Sortino und
         # Return werden beide primär vom Drift getrieben (die ökonomisch realistische Kohärenz).

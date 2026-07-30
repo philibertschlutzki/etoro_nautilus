@@ -156,7 +156,12 @@ def test_backtest_runner_uses_bootstrap_psr_not_sharpe_formula(monkeypatch):
     pnls = [r if r != 0 else 0.001 for r in rets]
     holds = [(3600 * 10**9, 1.0)] * len(pnls)
 
-    br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=3)
+    # Issue #823 — die Downside-Beobachtungszahl dieses 60-Perioden-Zufallsfixtures liegt nahe der
+    # Default-Mindestschwelle (30); dieser Test prueft ausschliesslich, DASS bootstrap_psr_z
+    # aufgerufen wird, nicht die #823-Mindest-Stichprobe.
+    with monkeypatch.context() as m:
+        m.setattr(br, "_read_sortino_min_downside_observations", lambda: 1)
+        br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=3)
     assert calls["bootstrap"] >= 1, "backtest_runner._calculate_stats muss bootstrap_psr_z aufrufen"
 
 

@@ -187,7 +187,11 @@ def test_family_n_from_studies_sums_across_strategies_of_same_symbol():
     `deflation_n_family` (Phase-1-Ergebnis, vor jeder Promotion bekannt)."""
     class _T:
         def __init__(self, evaluated):
-            self.user_attrs = {"oos_evaluated": evaluated}
+            # Issue #822 — _family_n_from_studies zaehlt seit dem Fix
+            # oos_selection_statistic_available statt oos_evaluated; dieses Fixture testet die
+            # Summations-/Scoping-Mechanik, nicht die #822-Unterscheidung selbst.
+            self.user_attrs = {"oos_evaluated": evaluated,
+                               "oos_selection_statistic_available": evaluated}
 
     class _Study:
         def __init__(self, trials):

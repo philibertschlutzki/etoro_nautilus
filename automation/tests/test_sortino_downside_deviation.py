@@ -8,8 +8,12 @@ from automation.backtest_runner import _calculate_stats, _read_sortino_numeric_g
 
 @pytest.fixture
 def mock_sortino_config():
+    # Issue #823 — die Fixtures dieses Moduls haben nur wenige Perioden (< Default 30 sortino_
+    # min_downside_observations); dieses Modul prueft die Downside-Deviation-Formel, nicht die
+    # #823-Mindest-Stichprobe.
     with patch("automation.backtest_runner._read_sortino_mar", return_value=0.0), \
-         patch("automation.backtest_runner._read_sortino_min_trades", return_value=2):
+         patch("automation.backtest_runner._read_sortino_min_trades", return_value=2), \
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
         yield
 
 def test_sortino_target_downside_deviation_calculation(mock_sortino_config):

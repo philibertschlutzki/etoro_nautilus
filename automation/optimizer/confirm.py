@@ -483,7 +483,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                  *, run_backtest=run_backtest, build_trial=build_trial,
                                  catalog_newest_ns: int | None = None,
                                  deflation_n_family: int | None = None,
-                                 deflation_family_period_returns: list | None = None) -> dict:
+                                 deflation_family_period_returns: list | None = None,
+                                 deflation_n_family_excluded_no_statistic: dict | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
@@ -1340,6 +1341,15 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Kandidat nachvollziehbar ist (Akzeptanzkriterium #652). ``deflation_n_family`` (Legacy-Name)
         # bleibt bit-identisch der roh übergebene Skalar (Rückwärtskompat, siehe test_issue_652).
         best_result["metrics_symbol"]["deflation_n_family"] = int(deflation_n_family or 0)
+        # Issue #822 Fix Punkt 3 — wie viele familienweite Kandidaten aus der Zaehlung
+        # AUSGESCHLOSSEN wurden, weil sie trotz ``oos_evaluated=True`` KEINE verwertbare
+        # Selektions-Teststatistik trugen (``oos_selection_statistic_available=False``),
+        # aufgeschluesselt nach Grund (``sortino_guard``/``equity_ruined``/``other``) — macht den
+        # Nicht-Ausgang der #822-Zaehlung genauso sichtbar wie das Ergebnis selbst (Lehre aus
+        # #783/#786). ``None``/fehlend (Legacy-Aufrufer) ⇒ leeres Dict, bit-identisch.
+        if deflation_n_family_excluded_no_statistic is not None:
+            best_result["metrics_symbol"]["deflation_n_family_excluded_no_statistic"] = dict(
+                deflation_n_family_excluded_no_statistic)
         # Issue #695/#696 — ``deflation_n_effective`` (Legacy-Name, #652) war bislang ein Fehlname:
         # sie trug die ROHE (un-declusterte) Familien-Multiplizität, obwohl der Name "effektiv"
         # suggeriert (dieselbe Fehldeutungsklasse wie #670 bei ``deflation_used_var_floor``). Seit

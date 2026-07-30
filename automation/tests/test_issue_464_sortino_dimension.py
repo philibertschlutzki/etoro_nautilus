@@ -22,7 +22,11 @@ def test_issue_464_sortino_dimension():
 
     # Calculate for series 1
     # We'll mock the configuration to test it properly, but we can also just use the default.
-    metrics1 = _calculate_stats(pnl_list1, hold_list1, starting_capital, mtm_series=mtm_series1, min_trades_for_sortino=2)
+    # Issue #823 — die synthetischen Fixtures haben nur 9 Perioden (< sortino_min_downside_
+    # observations Default 30); dieser Test prueft Frequenz-/Dimensionsskalierung, nicht die
+    # Mindest-Stichprobe.
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+        metrics1 = _calculate_stats(pnl_list1, hold_list1, starting_capital, mtm_series=mtm_series1, min_trades_for_sortino=2)
     sortino1 = metrics1["sortino_ratio"]
 
     # Serie 2: Doppelte Trade-Frequenz, halbe Periode (3.5D freq)
@@ -33,7 +37,8 @@ def test_issue_464_sortino_dimension():
 
     pnl_list2 = pnl_list1 * 2
     hold_list2 = hold_list1 * 2
-    metrics2 = _calculate_stats(pnl_list2, hold_list2, starting_capital, mtm_series=mtm_series2, min_trades_for_sortino=2)
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+        metrics2 = _calculate_stats(pnl_list2, hold_list2, starting_capital, mtm_series=mtm_series2, min_trades_for_sortino=2)
     sortino2 = metrics2["sortino_ratio"]
 
     print(f"Sortino 1: {sortino1}, Sortino 2: {sortino2}")
