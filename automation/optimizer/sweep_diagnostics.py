@@ -276,6 +276,15 @@ def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Pat
     return bool(entry)
 
 
+# Issue #830 Fix Punkt 3 — die Ablauf-Frist (record_diagnosed_pair/is_diagnosed_pair_expired) je
+# ``binding_cause`` GETRENNT: ``'signal_absent'`` ist ein strukturelles, dauerhaftes Urteil (echte
+# Datengeometrie) und behält die alte Frist (10 Läufe); ``'signal_quality'`` ist häufiger ein
+# REGIME-Urteil (siehe #830-Root-Cause) und verfällt schneller (3 Läufe) — ein Re-Test lohnt sich
+# hier eher, weil sich das Marktregime zwischen Läufen ändern kann. Fehlender Eintrag ⇒
+# ``_DEFAULT_EXPIRES_AFTER_RUNS`` (unveränderte Rückfalllösung für alle übrigen Ursachen).
+_EXPIRES_AFTER_RUNS_BY_CAUSE = {"signal_absent": 10, "signal_quality": 3}
+
+
 def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                has_existing_override: bool = False,
                                previously_recommended_override: bool = False,
@@ -290,7 +299,11 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
 
     Fallunterscheidung nach ``binding_cause`` (#669/#769):
       * ``'signal_quality'`` (ALLE Trials evaluiert, 0 eligible) — Bounds-Kalibrierung hilft NICHT
-        (kein Frequenz-, ein Qualitätsproblem) ⇒ ``'denylist'``.
+        (kein Frequenz-, ein Qualitätsproblem). SEIT #830 GESTUFT statt unbedingt: volle Evidenz
+        (``n_runs_confirmed >= 2`` UND ``budget_executed_fraction >= 0.9``) ⇒ ``'denylist'``;
+        mindestens EINE Bestätigung, aber (noch) nicht volle Evidenz ⇒ ``'deprioritized'``
+        (reduziertes statt volles Budget, Suchraum bleibt erreichbar); keine Bestätigung
+        (``n_runs_confirmed == 0``) ⇒ ``'none'``.
       * ``'signal_absent'`` (0 evaluable, IS-Aktivität über JEDEN Trial null) — PARAMETERUNABHÄNGIG:
         kein Override kann eine Strategie zum Feuern bringen, die im gesamten Suchraum nie feuert
         ⇒ ``'denylist'`` (Bounds-Kalibrierung wäre hier ein No-Op, #769).
@@ -367,9 +380,29 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     if cause in ("none", "no_data", None):
         action = "none"
     elif cause == "signal_quality":
-        # Issue #669 — ALLE Trials wurden evaluiert (kein Budget-/Frequenz-Zweifel); unveraendert
-        # direkt 'denylist' (der #778-Evidenz-Gate gilt spezifisch der #769-Ursache 'signal_absent').
-        action = "denylist"
+        # Issue #830 — unterliegt seit diesem Fix demselben Evidenzregime wie 'signal_absent'
+        # (#829/#778): volle Deaktivierung ('denylist') NUR nach n_runs_confirmed >= 2 UND
+        # budget_executed_fraction >= 0.9 (bewusst OHNE den #829-stop_reason-Kurzschluss — dieser
+        # gilt spezifisch der STRUCTURAL_ALL_UNEVALUABLE-Semantik von 'signal_absent'; hier ist der
+        # Budgetanteil die richtige, tatsaechlich erreichbare Messgroesse, da diese Studies fast
+        # immer das volle Budget ausfuehren, #830-Symptom). Root-Cause #830: vorher deaktivierte
+        # EINE einzige Beobachtung (n=1) das Paar unbedingt fuer 10 Laeufe — ein Typ-II-Verstaerker,
+        # der bevorzugt die Paare entfernt, deren Nicht-Ergebnis regimebedingt war. Statt direkt
+        # 'none' bei fehlender Evidenz: ab der ERSTEN Bestaetigung (n_runs_confirmed >= 1)
+        # 'deprioritized' — der Suchraum bleibt erreichbar (reduziertes statt volles Budget, siehe
+        # run_optimization._apply_deprioritized_budget), statt entweder jeden Lauf voll zu suchen
+        # oder nach einer einzigen Beobachtung komplett zu verschwinden. n_runs_confirmed == 0 (kein
+        # Vorlauf-Eintrag) bleibt 'none' — bit-identisch zu "noch nichts entschieden".
+        quality_sufficient_evidence = (
+            n_runs_confirmed >= 2
+            and budget_executed_fraction is not None and budget_executed_fraction >= 0.9
+        )
+        if quality_sufficient_evidence:
+            action = "denylist"
+        elif n_runs_confirmed >= 1:
+            action = "deprioritized"
+        else:
+            action = "none"
     elif cause == "signal_absent":
         action = "denylist" if sufficient_evidence else "none"
     elif cause in ("signal_sparse", "hold_duration"):
@@ -388,6 +421,11 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         # Issue #829 — welcher der beiden Nachweispfade zur Empfehlung fuehrte, im Report/Cache
         # nachvollziehbar (nicht nur die binaere sufficient_evidence-Entscheidung).
         "stop_reason": stop_reason,
+        # Issue #830 Fix Punkt 3 — je binding_cause unterschiedliche Ablauf-Frist (siehe
+        # _EXPIRES_AFTER_RUNS_BY_CAUSE); record_diagnosed_pair uebernimmt diesen Wert (setdefault
+        # greift nur, wenn er fehlt — Legacy-/Test-Aufrufer ohne diese Zeile bleiben unveraendert
+        # beim alten globalen Default).
+        "expires_after_runs": _EXPIRES_AFTER_RUNS_BY_CAUSE.get(cause, _DEFAULT_EXPIRES_AFTER_RUNS),
     }
     if action == "search_space_override" and proposed_bounds:
         result["proposed_bounds"] = proposed_bounds

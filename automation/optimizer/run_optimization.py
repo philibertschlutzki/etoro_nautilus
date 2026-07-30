@@ -696,19 +696,34 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "binding_cause": "signal_quality",
             })
 
-            # Issue #681 — dieselbe Closed-Loop-Aktion wie im STRUCTURAL_ALL_UNEVALUABLE-Zweig:
-            # 'signal_quality' resolved IMMER auf 'denylist' (Bounds-Kalibrierung hilft hier per
-            # binding_cause-Definition nicht) — in den Auto-Cache geschrieben, NICHT in die
-            # menschlich-kuratierte Denylist-Config.
+            # Issue #681/#830 — dieselbe Closed-Loop-Anbindung wie im STRUCTURAL_ALL_UNEVALUABLE-
+            # Zweig: 'signal_quality' unterliegt seit #830 demselben Evidenzregime wie 'signal_
+            # absent' (#829) — n_runs_confirmed>=2 UND budget_executed_fraction>=0.9, BEIDE hier
+            # tatsaechlich erreichbar (diese Studies fuehren fast immer das VOLLE Budget aus, siehe
+            # #830-Root-Cause). Root-Cause #830: vorher deaktivierte eine EINZIGE Beobachtung das
+            # Paar unbedingt fuer 10 Laeufe (Typ-II-Verstaerker) — in den Auto-Cache geschrieben,
+            # NICHT in die menschlich-kuratierte Denylist-Config.
             if strategy is not None and symbol is not None:
                 try:
                     from automation.optimizer.sweep_diagnostics import (
                         recommend_diagnosis_action, record_diagnosed_pair,
+                        load_diagnosed_pairs_cache,
                     )
+                    _prior_quality = load_diagnosed_pairs_cache().get((strategy, symbol))
+                    _budget_execution_for_quality = compute_budget_execution(
+                        completed, n_trials_budget=_n_trials_budget,
+                        n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs)
                     rec = recommend_diagnosis_action(
                         strategy, symbol, {"binding_cause": "signal_quality",
                                            "median_oos_trades": median_oos_trades,
                                            "median_is_trades": None},
+                        budget_executed_fraction=_budget_execution_for_quality["budget_executed_fraction"],
+                        n_runs_confirmed=(
+                            int(_prior_quality.get("n_runs_confirmed", 0))
+                            if _prior_quality and _prior_quality.get("binding_cause") == "signal_quality"
+                            else 0
+                        ),
+                        stop_reason=_budget_execution_for_quality["stop_reason"],
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -1516,6 +1531,29 @@ def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
     except Exception:
         return int(base_n_trials)
     return max(int(base_n_trials), math.ceil(float(k) * dim))
+
+
+def _apply_deprioritized_budget(strategy: str, symbol: str, n_trials: int, opt_data: dict) -> int:
+    """Issue #830 Fix Punkt 2 — skaliert ``n_trials`` mit ``deprioritized_budget_factor`` (Default
+    0.5), wenn der Auto-Diagnose-Cache (#681/#761) für ``(strategy, symbol)`` ``action ==
+    'deprioritized'`` trägt (siehe ``sweep_diagnostics.recommend_diagnosis_action``: ein Paar,
+    dessen einziger Ablehnungsgrund ``signal_quality`` ist, aber noch keine volle #830-Evidenz für
+    ``'denylist'`` erreicht hat). Root-Cause #830: die Alternative — jeden Lauf das volle Budget
+    ODER nach einer einzigen Beobachtung komplett verschwinden — ist ein Typ-II-Verstärker; ein
+    reduziertes Budget hält den Suchraum erreichbar bei gesenkten Kosten.
+
+    Mindestens 1 Trial (``math.ceil``, nie 0 — ein ``deprioritized`` Paar ist NICHT faktisch ein
+    Denylist-Eintrag). Fail-open: ein Cache-Lesefehler lässt ``n_trials`` unverändert (dieselbe
+    Konvention wie ``load_diagnosed_pairs_cache`` selbst)."""
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        entry = load_diagnosed_pairs_cache().get((strategy, symbol))
+    except Exception:
+        return n_trials
+    if entry is None or entry.get("action") != "deprioritized":
+        return n_trials
+    factor = float(opt_data.get("deprioritized_budget_factor", 0.5))
+    return max(1, math.ceil(n_trials * factor))
 
 
 def derive_plateau_min_modelled_trials(strategy: str | None, base: int, opt_data: dict) -> int:
@@ -2482,6 +2520,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         # Ein EXPLIZIT übergebenes n_trials (Test/CLI --n-trials) ist bewusst gewählt und wird exakt
         # respektiert. Legacy ohne den Key.
         n_trials = derive_n_trials(strategy, n_trials, opt_data)
+        # Issue #830 Fix Punkt 2 — ein als 'deprioritized' diagnostiziertes Paar (signal_quality mit
+        # mindestens einer, aber noch keiner vollen #830-Bestätigung) erhält ein reduziertes statt
+        # volles Budget, statt entweder jeden Lauf voll zu suchen oder komplett zu verschwinden.
+        n_trials = _apply_deprioritized_budget(strategy, symbol, n_trials, opt_data)
     # Issue #568 — n_startup_trials an die Parameterzahl der Strategie koppeln (>= k·dim), damit der
     # TPE bei multivariate=True,group=True genügend Startpunkte hat. Legacy, wenn der Key fehlt.
     n_startup_trials = derive_n_startup_trials(strategy, n_startup_trials, opt_data)

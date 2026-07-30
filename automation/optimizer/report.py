@@ -439,6 +439,24 @@ def _diagnosed_pairs_all() -> list[dict[str, Any]]:
     return list(cache.values())
 
 
+def _diagnosed_pairs_section() -> list[dict[str, Any]]:
+    """Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Einträge (nicht nur die ``'denylist'``-
+    Teilmenge von ``_diagnosed_pairs_skipped_section``) mit ``action``, ``binding_cause``,
+    ``n_runs_confirmed`` und ``expires_after_runs`` je Eintrag: die Deaktivierungs-/Deprioritisierungs-
+    Entscheidungen müssen genauso nachvollziehbar sein wie die Promotion-Entscheidungen, nicht nur
+    im Cache-JSON verborgen."""
+    return [
+        {
+            "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
+            "action": entry.get("action"), "binding_cause": entry.get("binding_cause"),
+            "n_runs_confirmed": entry.get("n_runs_confirmed"),
+            "expires_after_runs": entry.get("expires_after_runs"),
+            "budget_executed_fraction": entry.get("budget_executed_fraction"),
+        }
+        for entry in _diagnosed_pairs_all()
+    ]
+
+
 def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     """Issue #778 (Umsetzungspunkt 3) — die vom `#681`-Auto-Cache aktuell ``'denylist'``-empfohlenen
     (und damit von ``enumerate_tunable_pairs`` übersprungenen) Paare als eigene Report-Sektion, MIT
@@ -686,6 +704,9 @@ def _build_report(
             # Issue #778 — automatisch denylist-empfohlene (uebersprungene) Paare MIT Begruendung
             # und Evidenzstand, statt nur im diagnosed_pairs_cache.json verborgen zu sein.
             "diagnosed_pairs_skipped": _diagnosed_pairs_skipped_section(),
+            # Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Eintraege (denylist UND deprioritized
+            # UND none-mit-Ursache), nicht nur die uebersprungene Teilmenge oben.
+            "diagnosed_pairs": _diagnosed_pairs_section(),
             # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.

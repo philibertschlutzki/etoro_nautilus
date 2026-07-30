@@ -32,12 +32,17 @@ _GATE_CFG = {
 
 
 # ── recommend_diagnosis_action: Fallunterscheidung nach binding_cause ───────────────────────────
-def test_signal_quality_always_recommends_denylist():
+def test_signal_quality_without_confirmation_recommends_none():
+    """Issue #830 — 'signal_quality' resolvte bis #830 UNBEDINGT auf 'denylist' (eine einzige
+    Beobachtung deaktivierte das Paar 10 Laeufe lang, Typ-II-Verstaerker). Seit #830 braucht es
+    dieselbe Art Evidenzregime wie 'signal_absent' (#829); ohne jede Bestaetigung (n_runs_
+    confirmed=0, hier implizit) bleibt es 'none' — siehe
+    test_issue_830_signal_quality_deprioritized.py fuer den vollen Evidenz-Stufenbau."""
     rec = recommend_diagnosis_action(
         "HourlyMeanReversionStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_quality", "median_oos_trades": 214, "median_is_trades": None},
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "none"
     assert rec["binding_cause"] == "signal_quality"
 
 
@@ -82,13 +87,16 @@ def test_no_collapse_recommends_none():
 
 # ── Auto-Cache: record/load round-trip ──────────────────────────────────────────────────────────
 def test_record_and_load_diagnosed_pairs_cache_roundtrip(tmp_path):
+    """Issue #830 — ohne Bestaetigung (n_runs_confirmed=0, implizit) ist die Empfehlung 'none'
+    (nicht mehr unbedingt 'denylist', siehe test_signal_quality_without_confirmation_recommends_
+    none) -- der Round-Trip selbst ist unabhaengig vom konkreten action-Wert."""
     rec = recommend_diagnosis_action(
         "HourlyMeanReversionStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_quality", "median_oos_trades": 214},
     )
     record_diagnosed_pair(rec, work_dir=tmp_path)
     cache = load_diagnosed_pairs_cache(tmp_path)
-    assert cache[("HourlyMeanReversionStrategy", "TSLA.ETORO")]["action"] == "denylist"
+    assert cache[("HourlyMeanReversionStrategy", "TSLA.ETORO")]["action"] == "none"
 
 
 def test_none_action_is_not_persisted(tmp_path):
