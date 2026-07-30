@@ -1348,6 +1348,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "run_id": run_id,
                 "completed_symbols": sorted(completed_symbols),
                 "failed_pairs": failed_pairs,
+                # Issue #833 Fix Punkt 3 — Gesamtzahl der fuer DIESEN Lauf geplanten Symbole, damit
+                # ein Abbruch-Report (sweep.main()) "symbols_completed / symbols_planned" ausweisen
+                # kann, OHNE die Enumeration ein zweites Mal auszufuehren.
+                "symbols_planned": len(pairs_by_symbol),
             })
         except OSError:
             logging.getLogger("optimizer").warning(
@@ -1477,6 +1481,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         ).get("sweep_max_wallclock_h", 24)
     except (OSError, ValueError):
         _sweep_max_wallclock_h = 24
+
+    # Issue #833 Fix Punkt 3 — Checkpoint EINMAL vor dem ersten Symbol geschrieben, damit
+    # symbols_planned auch dann verfuegbar ist, wenn der Lauf schon im allerersten Symbol
+    # abbricht (VOR dem ersten regulaeren _write_checkpoint()-Aufruf weiter unten).
+    _write_checkpoint()
 
     proposals: list[Path] = []
     for symbol, symbol_pairs in pairs_by_symbol.items():
@@ -1648,6 +1657,10 @@ def _resolve_strategies(arg: str) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> list[Path]:
+    # Issue #773/#833 — EINE global-Deklaration fuer die GESAMTE Funktion (Python verbietet
+    # mehrere `global`-Statements fuer denselben Namen in verschiedenen Zweigen EINER Funktion,
+    # wenn dazwischen bereits zugewiesen wurde — "name is assigned to before global declaration").
+    global _LAST_REPORT_PATH
     # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-
     # Logger (unten) als auch den Dateinamen des #742-Sweep-Reports (am Ende dieser Funktion) —
     # dieselbe Provenienz-Kennung verbindet Log-Datei, JSONL-Sidecar (#741) und Report.
@@ -1669,7 +1682,21 @@ def main(argv: list[str] | None = None) -> list[Path]:
     parser.add_argument("--n-jobs", type=int, default=None,
                         help="Parallele Studies (je eigene SQLite-Datei). Fehlt das Flag, greift "
                              "optimizer.json['sweep_max_workers'] (Default max(1, cpu_count()-2)).")
+    # Issue #833 Fix Punkt 4 — rekonstruiert den #742-Report aus den bereits auf der Platte
+    # liegenden Proposals/Studies eines FRÜHEREN (ggf. abgebrochenen) Laufs, OHNE selbst zu
+    # optimieren. Nutzt exakt denselben Kern (report.generate_report_for_run) wie der Abbruch-Pfad
+    # unten — genau der Fall "ein Lauf endete ohne Report" (siehe Katalog-#750-Nachtrag).
+    parser.add_argument("--report-only", metavar="RUN_ID", default=None,
+                        help="Erzeugt/rekonstruiert nur den Report fuer RUN_ID aus den vorhandenen "
+                             "proposal_*.json (keine neue Optimierung).")
     args = parser.parse_args(argv)
+
+    if args.report_only:
+        from automation.optimizer import report as _report
+        report_path = _report.generate_report_for_run(run_id=args.report_only)
+        print(f"📄 Report: {report_path}")
+        _LAST_REPORT_PATH = report_path
+        return []
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
@@ -1721,32 +1748,101 @@ def main(argv: list[str] | None = None) -> list[Path]:
     # letzten Checkpoint ausliest und run_id erneut übergibt) überspringt bereits abgeschlossene
     # Symbole. Ohne einen solchen expliziten Wiederaufruf erzeugt jeder main()-Aufruf einen neuen
     # run_id ⇒ frischer Checkpoint (unverändertes Verhalten für den Normalfall).
-    proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs,
-                                     n_jobs_source=n_jobs_source, run_id=run_id)
+    #
+    # Issue #833 Fix Punkt 3 — ein Abbruch (disk_guard/wallclock_guard laufen bereits GRACEFUL,
+    # via `break`; SIGINT/unerwartete Exceptions propagierten bisher UNGEFANGEN aus main() heraus,
+    # BEVOR der #742-Report-Block weiter unten je erreicht wurde) erzeugt seither TROTZDEM ein
+    # Report-Artefakt — aus genau den Proposals, die bereits auf der Platte liegen (dieselbe
+    # Quelle, die auch ``--report-only``/``generate_report_for_run`` nutzt). SIGTERM wird auf
+    # denselben KeyboardInterrupt-Pfad wie SIGINT umgeleitet (Python behandelt SIGINT bereits
+    # nativ als KeyboardInterrupt; SIGTERMs Default waere ein sofortiger, unkatalogisierter Exit).
+    import signal as _signal
+
+    def _sigterm_to_keyboard_interrupt(signum, frame):
+        raise KeyboardInterrupt("SIGTERM")
+
+    run_status = "complete"
+    caught_exc: BaseException | None = None
+    proposals: list[Path] = []
+    _prior_sigterm_handler = _signal.signal(_signal.SIGTERM, _sigterm_to_keyboard_interrupt)
+    try:
+        proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs,
+                                         n_jobs_source=n_jobs_source, run_id=run_id)
+        if wallclock_guard.sweep_wallclock_exceeded.is_set():
+            run_status = "aborted_wallclock"
+        elif disk_guard.sweep_abort_requested.is_set():
+            run_status = "aborted_disk"
+    except KeyboardInterrupt as e:
+        run_status = "aborted_signal"
+        caught_exc = e
+        logging.getLogger("optimizer").warning(
+            "[#833] Sweep durch SIGINT/SIGTERM unterbrochen — erzeuge Teil-Report aus den bislang "
+            "exportierten Proposals.")
+    except Exception as e:
+        run_status = "aborted_error"
+        caught_exc = e
+        logging.getLogger("optimizer").error(
+            "[#833] Sweep durch eine unerwartete Exception abgebrochen — erzeuge Teil-Report aus "
+            "den bislang exportierten Proposals.", exc_info=True)
+    finally:
+        _signal.signal(_signal.SIGTERM, _prior_sigterm_handler)
+
     for p in proposals:
         print(p)
+
+    # Issue #833 Fix Punkt 3 — symbols_completed/symbols_planned aus dem #799-Checkpoint (die
+    # Enumeration wird NICHT ein zweites Mal ausgefuehrt); fail-open (None/None), falls der
+    # Checkpoint fehlt/kaputt ist oder der Sweep VOR dessen erstem Schreiben abbrach.
+    symbols_completed: int | None = None
+    symbols_planned: int | None = None
+    try:
+        _checkpoint = json.loads((WORK / "sweep_progress.json").read_text("utf-8"))
+        if _checkpoint.get("run_id") == run_id:
+            symbols_completed = len(_checkpoint.get("completed_symbols") or [])
+            symbols_planned = _checkpoint.get("symbols_planned")
+    except (OSError, ValueError):
+        pass
 
     # Issue #742 — EIN aggregiertes Report-Artefakt am Ende des Laufs, atomar geschrieben. Darf den
     # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle).
     try:
         from automation.optimizer import report as _report
-        report_path = _report.generate_sweep_report(
-            proposals, run_id=run_id, started_at_utc=started_at_utc,
-            wallclock_s=round(time.perf_counter() - main_t0),
-            cli_args={"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
-                     # Issue #755 — n_workers je Lauf im Report nachvollziehbar (Determinismus-Nachweis
-                     # bei n_jobs>1, jetzt auch bei gesetztem Seed zulaessig).
-                     "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source},
-        )
+        _cli_args = {"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
+                    # Issue #755 — n_workers je Lauf im Report nachvollziehbar (Determinismus-Nachweis
+                    # bei n_jobs>1, jetzt auch bei gesetztem Seed zulaessig).
+                    "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source}
+        _wallclock_s = round(time.perf_counter() - main_t0)
+        if run_status == "complete":
+            report_path = _report.generate_sweep_report(
+                proposals, run_id=run_id, started_at_utc=started_at_utc,
+                wallclock_s=_wallclock_s, cli_args=_cli_args, run_status=run_status,
+                symbols_completed=symbols_completed, symbols_planned=symbols_planned,
+            )
+        else:
+            # Issue #833 — die IN-MEMORY proposals-Liste kann bei einer Exception mitten im
+            # Symbol-Loop unvollstaendig/veraltet sein (die Exception verliess run_per_symbol_
+            # sweep, BEVOR es zurueckkehren konnte); generate_report_for_run entdeckt stattdessen
+            # ALLE proposal_*.json, die tatsaechlich auf der Platte liegen (dieselbe Quelle wie
+            # --report-only), unabhaengig davon, wo genau der Abbruch stattfand.
+            report_path = _report.generate_report_for_run(
+                run_id=run_id, started_at_utc=started_at_utc,
+                wallclock_s=_wallclock_s, cli_args=_cli_args, run_status=run_status,
+                symbols_completed=symbols_completed, symbols_planned=symbols_planned,
+            )
         print(f"📄 Report: {report_path}")
         # Issue #773 — der Report war bislang rein informativ; der CLI-Entrypoint (__main__ unten)
         # liest diesen Pfad, um bei mindestens einem FAIL-Invarianten-Check einen Non-Zero-Exit-Code
         # zurueckzugeben, statt eines rein informativen Artefakts.
-        global _LAST_REPORT_PATH
         _LAST_REPORT_PATH = report_path
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
+
+    # Issue #833 — der urspruengliche Abbruch (SIGINT/SIGTERM/unerwartete Exception) wird nach dem
+    # Report-Versuch WEITERGEREICHT: das Artefakt ist ein Nebeneffekt auf dem Weg nach draussen,
+    # kein stilles Verschlucken des eigentlichen Fehlers (Exit-Code/Traceback bleiben sichtbar).
+    if caught_exc is not None:
+        raise caught_exc
 
     return proposals
 

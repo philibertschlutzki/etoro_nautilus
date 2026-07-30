@@ -631,6 +631,9 @@ def _build_report(
     started_at_utc: str | None,
     wallclock_s: float | None,
     cli_args: dict | None,
+    run_status: str = "complete",
+    symbols_completed: int | None = None,
+    symbols_planned: int | None = None,
 ) -> dict:
     tournament_path = config_dir() / "tournament.json"
     optimizer_path = config_dir() / "optimizer.json"
@@ -701,6 +704,14 @@ def _build_report(
         "started_at_utc": started_at_utc,
         "wallclock_s": wallclock_s,
         "cli_args": cli_args or {},
+        # Issue #833 Fix Punkt 3 — ein Report entsteht seit diesem Fix AUCH bei einem vorzeitigen
+        # Sweep-Abbruch (disk_guard/wallclock_guard/SIGINT/SIGTERM/unerwartete Exception, siehe
+        # sweep.main()); run_status macht den Abbruchgrund maschinenlesbar, statt nur implizit aus
+        # einer unvollstaendigen studies[]-Liste erschlossen werden zu muessen. Default 'complete'
+        # (bit-identisch fuer jeden Aufrufer, der die drei neuen Kwargs nicht setzt).
+        "run_status": run_status,
+        "symbols_completed": symbols_completed,
+        "symbols_planned": symbols_planned,
         "studies": studies_out,
         "cross_study": {
             "n_family": _family_n_from_proposals(proposals),
@@ -753,13 +764,20 @@ def generate_sweep_report(
     wallclock_s: float | None = None,
     cli_args: dict | None = None,
     reports_dir: Path | None = None,
+    run_status: str = "complete",
+    symbols_completed: int | None = None,
+    symbols_planned: int | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
 
     ``proposals`` sind die von ``run_per_symbol_sweep`` zurückgegebenen Proposal-Pfade (oder
     bereits geparste Dicts, Test-Pfad) — jede referenzierte Study wird FRISCH aus ihrer SQLite-
     Datei geladen (kein Live-Zustand aus dem Sweep-Lauf selbst nötig), was diesen Pfad bit-
-    identisch mit ``generate_report_for_run`` macht (Determinismus-Garantie, #742-Akzeptanz)."""
+    identisch mit ``generate_report_for_run`` macht (Determinismus-Garantie, #742-Akzeptanz).
+
+    Issue #833 Fix Punkt 3 — ``run_status``/``symbols_completed``/``symbols_planned`` werden NUR
+    durchgereicht (siehe ``_build_report``); Default ``run_status='complete'`` ⇒ bit-identisch für
+    jeden Aufrufer, der einen abgeschlossenen Lauf reportet (der bisherige Normalfall)."""
     parsed = []
     for p in proposals:
         payload = p if isinstance(p, dict) else _load_json(Path(p))
@@ -769,6 +787,8 @@ def generate_sweep_report(
     report = _build_report(
         parsed, run_id=run_id, started_at_utc=started_at_utc,
         wallclock_s=wallclock_s, cli_args=cli_args,
+        run_status=run_status, symbols_completed=symbols_completed,
+        symbols_planned=symbols_planned,
     )
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
@@ -784,6 +804,9 @@ def generate_report_for_run(
     wallclock_s: float | None = None,
     cli_args: dict | None = None,
     reports_dir: Path | None = None,
+    run_status: str = "complete",
+    symbols_completed: int | None = None,
+    symbols_planned: int | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
 
@@ -792,7 +815,13 @@ def generate_report_for_run(
     ``proposal_{strategy}.json`` am vorhandenen ``symbol``-Feld) und delegiert an denselben Kern
     wie ``generate_sweep_report`` — deckt den Fall "ein alter, bereits gelaufener Sweep soll
     nachträglich reportet werden, für den kein Live-Log mehr existiert" ab (die Proposal-JSONs
-    UND die SQLite-Studies sind beide durabel, #742-Ist-Zustand)."""
+    UND die SQLite-Studies sind beide durabel, #742-Ist-Zustand).
+
+    Issue #833 Fix Punkt 3 — DAS ist der Kern des Abbruch-Artefakts (siehe ``sweep.main()``): ein
+    Sweep, der abbricht BEVOR er seinen eigenen ``generate_sweep_report``-Aufruf erreicht, hat
+    seine bereits abgeschlossenen Symbole trotzdem als ``proposal_*.json`` auf der Platte — diese
+    Funktion baut daraus denselben Report, den ein vollständiger Lauf erzeugt hätte, nur mit
+    ``run_status`` != 'complete'. Fix Punkt 4 (``--report-only``) ruft exakt diese Funktion auf."""
     base = Path(proposals_dir or WORK)
     proposal_paths = sorted(
         p for p in base.glob("proposal_*.json")
@@ -801,6 +830,8 @@ def generate_report_for_run(
     return generate_sweep_report(
         proposal_paths, run_id=run_id, started_at_utc=started_at_utc,
         wallclock_s=wallclock_s, cli_args=cli_args, reports_dir=reports_dir,
+        run_status=run_status, symbols_completed=symbols_completed,
+        symbols_planned=symbols_planned,
     )
 
 
