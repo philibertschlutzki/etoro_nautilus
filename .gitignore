@@ -26,3 +26,4 @@ automation/.env
 *.rej
 #logs/
 data/
+!data/optimizer/champions/*
