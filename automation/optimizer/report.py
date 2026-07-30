@@ -533,7 +533,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     from automation.optimizer import champions as _champions_mod
 
     empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
-             "skipped_by_reason": {}}
+             "skipped_by_reason": {}, "semantics_migrated": 0}
     try:
         champions_dir = _champions_mod._champions_dir()
         paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
@@ -544,6 +544,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     admissible = 0
     corroborated = 0
     written_back = 0
+    semantics_migrated = 0
     skipped_by_reason: collections.Counter = collections.Counter()
     promote_after = int(opt_data.get("champion_promote_after_runs", 2))
     for path in paths:
@@ -551,6 +552,14 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
         if not isinstance(entry, dict):
             continue
         stored += 1
+        lifecycle = entry.get("lifecycle") or {}
+        # Issue #834 Akzeptanzkriterium 3 — je Eintrag, ob ``champions.maybe_write_back`` (#819)
+        # ihn ueber einen ``reward_semantics_version``-Bump hinweg MIGRIERT hat (params ueberleben
+        # den Bump, quality wird 'stale'), statt ihn zu purgen. Der Purge (purge_stale_studies.py)
+        # betrifft ausschliesslich die Optuna-SQLite-Studies (WORK/sweep/*.db), NIE den
+        # Champion-Store selbst — dieser Zaehler ist der report-seitige Nachweis dafuer.
+        if lifecycle.get("semantics_migrated_from") is not None:
+            semantics_migrated += 1
         try:
             ok, reason = _champions_mod.champion_is_admissible(entry, opt_data)
         except Exception:
@@ -559,7 +568,6 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
             skipped_by_reason[reason or "UNKNOWN"] += 1
             continue
         admissible += 1
-        lifecycle = entry.get("lifecycle") or {}
         if int(lifecycle.get("corroboration_count", 0) or 0) >= promote_after:
             corroborated += 1
         if lifecycle.get("writeback_applied"):
@@ -573,6 +581,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     return {
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
         "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
+        "semantics_migrated": semantics_migrated,
     }
 
 

@@ -55,6 +55,7 @@ _EXPECTED_FINGERPRINT_BY_VERSION = {
     15: _scale_fingerprint(CFG),  # Issue #766 — #756/#757 aendern die Sortino-/PSR-BERECHNUNG (Log-Returns, Bootstrap-SE), nicht die _SCALE_KEYS-Konstanten selbst; #764 aenderte in dieser Sitzung keine Gewichte (siehe Changelog-Praezisierung). Skalen-Konstanten unveraendert.
     16: _scale_fingerprint(CFG),  # Issue #781 — #771/#772/#776/#784/#788 sind Eligibility-/Renditeserie-/Multiplizitaets-Bumps; #774/#775 widmet penalty_turnover_weight zum FALLBACK um (kein neuer Skalen-Key), Skalen-Konstanten unveraendert.
     17: _scale_fingerprint(CFG),  # Issue #815 — #801/#802/#803 sind Inferenz-Korrektheit-/Eligibility-Bumps, #812/#813/#814 sind Selektionsregel-/Multiplizitaets-Bumps; keiner fuehrt einen neuen Reward-Skalen-Key ein oder aendert einen bestehenden, Skalen-Konstanten unveraendert.
+    18: _scale_fingerprint(CFG),  # Issue #834 — #822/#826 sind Selektionsregel-/Multiplizitaets-Bumps, #823/#824 sind Inferenz-Korrektheit-Bumps der Sortino-/PSR-Schaetzer; keiner fuehrt einen neuen Reward-Skalen-Key ein oder aendert einen bestehenden, Skalen-Konstanten unveraendert.
 }
 
 
