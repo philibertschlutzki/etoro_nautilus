@@ -4,12 +4,11 @@ __pycache__/
 *.pyc
 
 # Trading Daten & Logs
-#logs/*
-!logs/.gitkeep
-logs/backtest_2026*
-logs/optimizer_*.log
-logs/*.jsonl
-data/nautilus/
+/logs/*
+!/logs/.gitkeep
+/logs/backtest_2026*
+/logs/optimizer_*.log
+/logs/*.jsonl
 
 # API Keys & Secrets
 *.env
@@ -24,6 +23,8 @@ automation/.env
 # Patch artifacts
 *.orig
 *.rej
-#logs/
-data/
-!data/optimizer/champions/*
+
+# Repository Data Exclusions & Champions Exception
+/data/*
+/data/optimizer/
+!/data/optimizer/champions/
