@@ -457,6 +457,22 @@ def _diagnosed_pairs_section() -> list[dict[str, Any]]:
     ]
 
 
+def _boundary_solutions_section() -> list[dict[str, Any]]:
+    """Issue #831 Fix Punkt 4 — Randlösungen (``binding_cause == 'boundary_solution'``, aus
+    ``confirm.py``/``run_optimization._emit_study_summary``, beide seit #831) als eigene
+    Report-Sektion: ``{strategy, symbol, fraction, params, proposed_bounds}`` je Study, deren
+    Gewinner an der Suchraumgrenze klebt (``boundary_hit_fraction > 0.3``, #597/#763)."""
+    return [
+        {
+            "strategy": e.get("strategy"), "symbol": e.get("symbol"),
+            "fraction": e.get("boundary_hit_fraction"),
+            "params": e.get("boundary_params"),
+            "proposed_bounds": e.get("proposed_bounds"),
+        }
+        for e in _diagnosed_pairs_all() if e.get("binding_cause") == "boundary_solution"
+    ]
+
+
 def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     """Issue #778 (Umsetzungspunkt 3) — die vom `#681`-Auto-Cache aktuell ``'denylist'``-empfohlenen
     (und damit von ``enumerate_tunable_pairs`` übersprungenen) Paare als eigene Report-Sektion, MIT
@@ -707,6 +723,9 @@ def _build_report(
             # Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Eintraege (denylist UND deprioritized
             # UND none-mit-Ursache), nicht nur die uebersprungene Teilmenge oben.
             "diagnosed_pairs": _diagnosed_pairs_section(),
+            # Issue #831 Fix Punkt 4 — Randlösungen (boundary_hit_fraction > 0.3) mit ihrem
+            # konkreten Bounds-Vorschlag, unabhängig davon, ob die Study eligible Trials hatte.
+            "boundary_solutions": _boundary_solutions_section(),
             # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.

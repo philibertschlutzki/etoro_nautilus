@@ -250,12 +250,26 @@ def eligibility_curve(trials: list[dict], *, window: int = 16) -> list[float]:
     return fractions
 
 
-# Issue #681 — Strategien, für die spaces.py._bounds_for tatsächlich Symbol-Overrides auflöst
-# (#669). Nur für diese ist ein "search_space_override"-Vorschlag sinnvoll — für jede andere
-# Strategie hätte ein Bounds-Override keine Wirkung (fail-open, aber nutzlos), daher direkt Denylist.
-WIRED_OVERRIDE_STRATEGIES = frozenset({
-    "TrendPullbackStrategy", "AdxAtrMomentumStrategy", "HourlyMeanReversionStrategy",
-})
+def _strategy_supports_search_space_override(strategy: str) -> bool:
+    """Issue #831 Fix Punkt 2 — ERSETZT die vorherige ``WIRED_OVERRIDE_STRATEGIES``-Allowlist (eine
+    seit #681 EINGEFRORENE, handgepflegte 3-Strategien-Teilmenge — ``{'TrendPullbackStrategy',
+    'AdxAtrMomentumStrategy', 'HourlyMeanReversionStrategy'}`` von 14 aktiven Strategien).
+
+    Root-Cause #831: ``spaces._bounds_for`` liest den ``search_space_overrides.json``-/#761-Auto-
+    Cache-Override-Pfad UNIVERSELL für JEDEN numerischen ``suggest_*``-Aufruf JEDER Strategie — die
+    Allowlist war eine künstliche, nie nachgezogene Einschränkung derselben bereits universellen
+    Mechanik (dieselbe Fehlerklasse wie das eingefrorene ``reward._GATE_COLLINEARITY_KEYS``-Tupel
+    aus #760: eine Strategie-Erweiterung von 10 auf 14 zog die Allowlist nie mit). Eine Strategie
+    ist override-fähig GENAU DANN, wenn ``bounds.extract_numeric_bounds(strategy)`` einen NICHT-
+    LEEREN Bereich liefert — das ruft ``spaces.sample_params`` tatsächlich auf und beweist damit
+    beide Vorbedingungen zugleich (der Override-Pfad wird gelesen UND es gibt mindestens einen
+    numerischen Parameter, den eine Weitung überhaupt betreffen könnte). ``False`` für eine
+    unbekannte Strategie (propagiertes ``ValueError``, defensiv abgefangen)."""
+    try:
+        from automation.optimizer import bounds as _bounds
+        return bool(_bounds.extract_numeric_bounds(strategy))
+    except Exception:
+        return False
 
 
 def has_existing_search_space_override(strategy: str, symbol: str, base_cfg: Path | None = None) -> bool:
@@ -308,10 +322,11 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         kein Override kann eine Strategie zum Feuern bringen, die im gesamten Suchraum nie feuert
         ⇒ ``'denylist'`` (Bounds-Kalibrierung wäre hier ein No-Op, #769).
       * ``'signal_sparse'``/``'hold_duration'`` (0 evaluable, PARAMETERABHÄNGIG) UND die Strategie
-        ist für Symbol-Bounds-Overrides verdrahtet (``WIRED_OVERRIDE_STRATEGIES``) UND es existiert
-        noch KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-Kalibrierung
-        probieren, BEVOR das Paar aufgegeben wird). Existiert bereits ein Override (Bounds-
-        Kalibrierung wurde schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf
+        ist override-fähig (``_strategy_supports_search_space_override`` — Issue #831, ABGELEITET
+        aus ``bounds.extract_numeric_bounds``, nicht mehr eine eingefrorene Allowlist) UND es
+        existiert noch KEIN Override für dieses Paar ⇒ ``'search_space_override'`` (Bounds-
+        Kalibrierung probieren, BEVOR das Paar aufgegeben wird). Existiert bereits ein Override
+        (Bounds-Kalibrierung wurde schon versucht) UND das Paar ist TROTZDEM tot ⇒ Eskalation auf
         ``'denylist'``.
       * Frequenzproblem bei einer NICHT verdrahteten Strategie ⇒ ``'denylist'`` (ein Override hätte
         ohnehin keine Wirkung, spaces.py._bounds_for ist fail-open no-op für sie).
@@ -406,7 +421,7 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     elif cause == "signal_absent":
         action = "denylist" if sufficient_evidence else "none"
     elif cause in ("signal_sparse", "hold_duration"):
-        if strategy in WIRED_OVERRIDE_STRATEGIES and not has_existing_override:
+        if _strategy_supports_search_space_override(strategy) and not has_existing_override:
             action = "search_space_override"
         else:
             action = "none"

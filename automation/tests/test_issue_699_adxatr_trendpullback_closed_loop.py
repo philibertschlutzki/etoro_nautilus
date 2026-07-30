@@ -37,14 +37,15 @@ import pytest
 from automation.optimizer import run_optimization as ro
 from automation.optimizer.sweep_diagnostics import (
     recommend_diagnosis_action, record_diagnosed_pair, load_diagnosed_pairs_cache,
-    WIRED_OVERRIDE_STRATEGIES,
+    _strategy_supports_search_space_override,
 )
 from automation.optimizer.bounds import extract_numeric_bounds
 
 
 # ── recommend_diagnosis_action: Eskalation nach einem ignorierten Override-Vorschlag ─────────────
 def test_first_occurrence_recommends_override_not_denylist():
-    assert "AdxAtrMomentumStrategy" in WIRED_OVERRIDE_STRATEGIES
+    # Issue #831 — WIRED_OVERRIDE_STRATEGIES entfernt; ABGELEITETE Override-Faehigkeit ersetzt sie.
+    assert _strategy_supports_search_space_override("AdxAtrMomentumStrategy") is True
     rec = recommend_diagnosis_action(
         "AdxAtrMomentumStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
@@ -79,17 +80,20 @@ def test_existing_override_that_still_fails_no_longer_escalates_to_denylist():
     assert rec["action"] == "none"
 
 
-def test_escalation_only_applies_to_wired_strategies():
-    """Eine NICHT verdrahtete Strategie kann per Definition keinen Override probieren — seit #778
-    ist das Ergebnis 'none' (nicht mehr 'denylist'), unabhängig von previously_recommended_override
-    (seither ein wirkungsloser Legacy-Kwarg)."""
+def test_escalation_only_applies_to_override_capable_strategies():
+    """Eine Strategie OHNE auflösbaren Suchraum kann per Definition keinen Override probieren — seit
+    #778 ist das Ergebnis 'none' (nicht mehr 'denylist'), unabhängig von
+    previously_recommended_override (seither ein wirkungsloser Legacy-Kwarg). Issue #831 —
+    'SmaCrossoverStrategy' waere unter der (jetzt entfernten) WIRED_OVERRIDE_STRATEGIES-Allowlist
+    ein Beispiel gewesen, ist aber unter der neuen ABGELEITETEN Pruefung tatsaechlich override-
+    faehig (echter Suchraum) — eine unbekannte Strategie ist der korrekte Grenzfall."""
     rec_first = recommend_diagnosis_action(
-        "SmaCrossoverStrategy", "TSLA.ETORO",
+        "NoSuchStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         previously_recommended_override=False,
     )
     rec_second = recommend_diagnosis_action(
-        "SmaCrossoverStrategy", "TSLA.ETORO",
+        "NoSuchStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 5},
         previously_recommended_override=True,
     )

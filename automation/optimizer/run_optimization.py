@@ -1976,6 +1976,51 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             "(Randlösung: %s). Suchraum prüfen ODER Reward-Konditionierung (Turnover/Drawdown).",
             symbol, boundary_hit_fraction, directions_str,
         )
+        # Issue #831 Fix Punkt 1 — confirm.py schreibt seit #777 denselben Bounds-Vorschlag/Cache-
+        # Eintrag (binding_cause='boundary_solution'), aber NUR für Studies, die confirm_per_symbol_
+        # promotion tatsächlich erreichen (>= 1 eligibler Trial, siehe dortiges `if not eligible_
+        # trials: return`). Eine Study, die VOLLSTÄNDIG durchläuft, aber NIE einen eligiblen Trial
+        # produziert (STRUCTURAL_ALL_UNEVALUABLE/ZERO_ELIGIBLE_PLATEAU), erreicht diesen Code in
+        # confirm.py NIE — das war die #831-Lücke. n_eligible==0 hier UND confirm.py's eigenes Gate
+        # sind exklusiv (genau einer der beiden Pfade feuert je Study/Lauf) — kein doppeltes
+        # record_diagnosed_pair für dasselbe Paar im selben Lauf (das würde n_runs_confirmed
+        # fälschlich zweimal statt einmal pro Lauf inkrementieren).
+        n_eligible_for_boundary = sum(
+            1 for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True)
+        if n_eligible_for_boundary == 0 and strategy is not None:
+            try:
+                from automation.optimizer.sweep_diagnostics import (
+                    propose_bounds_from_boundary_hits, record_diagnosed_pair,
+                )
+                _widen_fraction_boundary = 0.3
+                try:
+                    _opt_path_boundary = config_dir() / "optimizer.json"
+                    if _opt_path_boundary.exists():
+                        _widen_fraction_boundary = float(
+                            (json.loads(_opt_path_boundary.read_text("utf-8")) or {})
+                            .get("bounds_widening_factor", 0.3))
+                except Exception:
+                    pass
+                proposed_bounds_boundary = propose_bounds_from_boundary_hits(
+                    boundary_hit_directions or {}, strategy, widen_fraction=_widen_fraction_boundary)
+                if proposed_bounds_boundary:
+                    try:
+                        _boundary_params = dict(getattr(study.best_trial, "params", {}) or {})
+                    except Exception:
+                        _boundary_params = {}
+                    record_diagnosed_pair({
+                        "strategy": strategy, "symbol": symbol,
+                        "action": "search_space_override",
+                        "binding_cause": "boundary_solution",
+                        "proposed_bounds": proposed_bounds_boundary,
+                        "boundary_hit_fraction": boundary_hit_fraction,
+                        "boundary_params": _boundary_params,
+                    })
+            except Exception:
+                logging.getLogger("optimizer").debug(
+                    "[#831] %s/%s: Boundary-Bounds-Vorschlag konnte nicht in den #761-Cache "
+                    "geschrieben werden (non-fatal).", strategy, symbol, exc_info=True,
+                )
 
     # Issue #660 — LIVE-Reachability-Check der eligible_requires_any-Klauseln GEGEN DIE TATSÄCHLICH
     # in DIESER Study beobachtete empirische Verteilung (nicht nur das statische #633-Cross-Strategy-

@@ -1205,11 +1205,20 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             proposed_bounds = propose_bounds_from_boundary_hits(
                 boundary_directions or {}, strategy, widen_fraction=_widen_fraction)
             if proposed_bounds:
+                # Issue #831 Fix Punkt 4 — fraction/params zusätzlich zum Vorschlag selbst
+                # gestempelt, damit report._boundary_solutions_section() die volle
+                # {strategy, symbol, fraction, params, proposed_bounds}-Form ausweisen kann.
+                try:
+                    _boundary_params = dict(getattr(study.best_trial, "params", {}) or {})
+                except Exception:
+                    _boundary_params = {}
                 record_diagnosed_pair({
                     "strategy": strategy, "symbol": symbol,
                     "action": "search_space_override",
                     "binding_cause": "boundary_solution",
                     "proposed_bounds": proposed_bounds,
+                    "boundary_hit_fraction": boundary_frac,
+                    "boundary_params": _boundary_params,
                 })
         except Exception:
             logging.getLogger("optimizer").warning(

@@ -22,7 +22,7 @@ from automation.optimizer.sweep_diagnostics import (
     record_diagnosed_pair,
     load_diagnosed_pairs_cache,
     has_existing_search_space_override,
-    WIRED_OVERRIDE_STRATEGIES,
+    _strategy_supports_search_space_override,
 )
 
 _GATE_CFG = {
@@ -47,7 +47,8 @@ def test_signal_quality_without_confirmation_recommends_none():
 
 
 def test_signal_sparse_wired_strategy_without_override_recommends_bounds_override():
-    assert "TrendPullbackStrategy" in WIRED_OVERRIDE_STRATEGIES
+    # Issue #831 — WIRED_OVERRIDE_STRATEGIES entfernt; ABGELEITETE Override-Faehigkeit ersetzt sie.
+    assert _strategy_supports_search_space_override("TrendPullbackStrategy") is True
     rec = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 3},
@@ -68,11 +69,27 @@ def test_signal_sparse_wired_strategy_with_existing_override_no_longer_escalates
     assert rec["action"] == "none"
 
 
-def test_signal_sparse_non_wired_strategy_no_longer_recommends_denylist():
-    """Issue #778 — eine nicht verdrahtete Strategie kann keinen Override probieren, wird aber
-    seither auch NICHT mehr denylisted ('signal_sparse' eskaliert nie) — bleibt in Rotation."""
+def test_signal_sparse_previously_unwired_strategy_now_recommends_bounds_override():
+    """Issue #831 — ComboTrendVwapStrategy war NIE in der (jetzt entfernten) WIRED_OVERRIDE_
+    STRATEGIES-Allowlist (3 von 14 aktiven Strategien), obwohl spaces._bounds_for den Override-Pfad
+    für JEDE Strategie liest — die Allowlist war eine künstliche Einschränkung. Mit der ABGELEITETEN
+    Prüfung (bounds.extract_numeric_bounds liefert 14 Parameter) ist ComboTrendVwap jetzt ebenfalls
+    override-fähig, statt (vor #831) fälschlich auf 'none' zu fallen."""
     rec = recommend_diagnosis_action(
         "ComboTrendVwapStrategy", "TSLA.ETORO",
+        {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 1},
+    )
+    assert rec["action"] == "search_space_override"
+
+
+def test_signal_sparse_unknown_strategy_no_longer_recommends_denylist():
+    """Issue #778 — eine Strategie ohne (auflösbaren) Suchraum kann keinen Override probieren, wird
+    aber seither auch NICHT mehr denylisted ('signal_sparse' eskaliert nie) — bleibt in Rotation.
+    Eine unbekannte Strategie (kein Eintrag in spaces.py) ist der Grenzfall: ``bounds.extract_
+    numeric_bounds`` wirft, ``_strategy_supports_search_space_override`` faengt das defensiv als
+    ``False`` ab."""
+    rec = recommend_diagnosis_action(
+        "NoSuchStrategy", "TSLA.ETORO",
         {"binding_cause": "signal_sparse", "median_oos_trades": 0, "median_is_trades": 1},
     )
     assert rec["action"] == "none"
