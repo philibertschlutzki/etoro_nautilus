@@ -797,6 +797,16 @@ def _family_n_stage2_from_studies(pairs, studies, *, tournament_cfg: dict | None
     return stage2
 
 
+def _family_fingerprints_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                      ) -> dict[str, set]:
+    """Issue #827 Fix Punkt 3 — reine ``selection_rule_fingerprint``-Mengen je Symbol (Kernel-
+    Wiederverwendung, siehe ``_family_n_per_study_from_studies``). Genutzt von der Symbol-Schleife
+    für ``selection_rule_homogeneity_policy='fail'`` (Symbol-Abbruch VOR jedem Confirm-Aufruf, siehe
+    ``_resolve_selection_rule_homogeneity_policy``)."""
+    _per_study, fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    return fingerprints
+
+
 _PROMOTION_FAMILY_SCOPES = ("per_strategy", "per_symbol_best")
 
 
@@ -829,6 +839,38 @@ def _resolve_promotion_family_scope(tournament_cfg: dict | None) -> str:
             "nicht durchführbar ist. 'per_strategy' verwenden, bis der Kalibrierlauf vorliegt."
         )
     return scope
+
+
+_SELECTION_RULE_HOMOGENEITY_POLICIES = ("partition", "fail")
+
+
+def _resolve_selection_rule_homogeneity_policy(tournament_cfg: dict | None) -> str:
+    """Issue #827 Fix Punkt 3 — Policy für eine INNERHALB eines Symbols heterogene
+    ``selection_rule_fingerprint``-Menge (mehrere Studies desselben Symbols wandten NACHWEISLICH
+    unterschiedliche effektive Selektionsregeln an, z. B. weil ``any_arm_unreachable_policy=
+    'drop_arm'`` bei einer Study griff, bei einer anderen nicht — Pitfall #248/#812).
+
+    ``'partition'`` (Default) — bit-identisch zum Status quo: die ``[#812]``-WARNUNG wird geloggt,
+    der Sweep läuft unverändert weiter. Seit #826 ist die aktive DSR-Multiplizität ohnehin JE STUDY
+    (N1, ``promotion_family_scope='per_strategy'``) — eine heterogene Familie beeinflusst die
+    tatsächlich getroffene Deflations-Entscheidung damit NICHT MEHR direkt (das war die #827-
+    Root-Cause: die Voraussetzung war verletzt, wurde aber vor #826 trotzdem auf eine gemeinsame,
+    symbolweite Zahl angewandt — nach #826 gibt es diese gemeinsame Zahl für die Deflation nicht
+    mehr). ``'partition'`` bleibt als ALLGEMEINE Config-Konsistenz-Warnung sinnvoll (zeigt Drift
+    zwischen Studies desselben Symbols, unabhängig von der Deflation).
+
+    ``'fail'`` — bricht NUR DIESES EINE Symbol fail-loud ab (``SYMBOL_ABORTED_ON_SELECTION_
+    HETEROGENEITY``: kein Proposal für IRGENDEINE Strategie dieses Symbols, andere Symbole laufen
+    unverändert weiter, analog der #799-Per-Symbol-Fehlerisolation) — für Kalibrierläufe, in denen
+    eine über die Familie konstante Selektionsregel eine harte Vorbedingung ist (z. B. der #824/#826
+    Punkt-4-H0-Kalibrierlauf). Fehlt der Key ⇒ 'partition'."""
+    policy = (tournament_cfg or {}).get("selection_rule_homogeneity_policy", "partition")
+    if policy not in _SELECTION_RULE_HOMOGENEITY_POLICIES:
+        raise ValueError(
+            f"selection_rule_homogeneity_policy: unbekannter Wert {policy!r} (tournament.json), "
+            f"erwartet eines von {_SELECTION_RULE_HOMOGENEITY_POLICIES}."
+        )
+    return policy
 
 
 # Issue #822 — Rückübersetzung eines ``inference_diagnostics``-Codes (#804) auf den Aggregations-
@@ -1390,6 +1432,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # kostspieliger Arbeit, nicht erst beim ersten Confirm-Aufruf): 'per_symbol_best' bricht den
     # Sweep hier sofort ab, siehe _resolve_promotion_family_scope-Docstring.
     _family_scope = _resolve_promotion_family_scope(_tournament_cfg_for_family)
+    # Issue #827 Fix Punkt 3 — ebenfalls einmal vorab validiert (unbekannter Wert ⇒ sofortiger
+    # Abbruch); die eigentliche Heterogenitäts-PRÜFUNG läuft je Symbol (erst NACH dessen Studies).
+    _homogeneity_policy = _resolve_selection_rule_homogeneity_policy(_tournament_cfg_for_family)
 
     proposals: list[Path] = []
     for symbol, symbol_pairs in pairs_by_symbol.items():
@@ -1419,6 +1464,30 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 symbol_studies = list(executor.map(_run_optimize, symbol_pairs))
         else:
             symbol_studies = [_run_optimize(p) for p in symbol_pairs]
+
+        # Issue #827 Fix Punkt 3 — 'fail': dieses Symbol bricht VOR jedem Confirm-Aufruf ab, wenn
+        # seine Studies nachweislich unterschiedliche selection_rule_fingerprint tragen (verletzte
+        # DSR-Homogenitäts-Voraussetzung, Pitfall #248/#812). Deterministische, config-/code-
+        # bedingte Bedingung (kein transienter Fehler) — completed_symbols wird trotzdem gesetzt,
+        # damit ein Checkpoint-Resume nicht endlos denselben Abbruch wiederholt.
+        if _homogeneity_policy == "fail":
+            symbol_fingerprints_for_abort = _family_fingerprints_from_studies(
+                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+            n_fingerprints = len(symbol_fingerprints_for_abort.get(symbol, set()))
+            if n_fingerprints > 1:
+                logging.getLogger("optimizer").error(
+                    "[#827] SYMBOL_ABORTED_ON_SELECTION_HETEROGENEITY: %s trägt %d verschiedene "
+                    "selection_rule_fingerprint über seine Strategien-Studies "
+                    "(selection_rule_homogeneity_policy='fail') — kein Proposal für irgendeine "
+                    "Strategie dieses Symbols.",
+                    symbol, n_fingerprints,
+                )
+                emit_execution_event(logging.getLogger("optimizer"),
+                    "SYMBOL_ABORTED_ON_SELECTION_HETEROGENEITY",
+                    {"symbol": symbol, "n_fingerprints": n_fingerprints}, level=logging.ERROR)
+                completed_symbols.add(symbol)
+                _write_checkpoint()
+                continue
 
         # Issue #652 — familienweite Multiplizität NUR über die Studies DIESES Symbols (alle
         # Strategien dieses Symbols sind jetzt abgeschlossen); #695 liefert dieselbe Grundlage als
