@@ -2559,16 +2559,22 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             # die Sampling-Varianz-Formeln fuer einen SHARPE-Schätzer (μ̂/σ̂), hergeleitet per
             # Delta-Methode ueber (μ̂, σ̂²); die Downside-Deviation hat eine andere Sampling-
             # Verteilung. Monte-Carlo-Beleg (H0, T=4320): P(PSR>=0.75) lag mit der Substitution
-            # bei 31-32% statt der nominellen 25%. Issue #824 (separat) haertet den BOOTSTRAP-
-            # Resampling-Nenner der PSR-SE; #823 aendert hier nur den PUNKTSCHÄTZER-Nenner
-            # (dd_dev/mean_ret/Annualisierung) — die Bootstrap-Serie bleibt bewusst die VOLLE
-            # ``period_rets`` bis #824.
+            # bei 31-32% statt der nominellen 25%.
+            # Issue #824 — der Bootstrap resampelt seit diesem Fix dieselbe INFORMATIVE Teilmenge
+            # (#823) statt der vollen, ggf. 24/7-aufgefuellten Kalender-Bar-Achse: ein Resampling
+            # ueber ueberwiegend Null-Beitraege unterschaetzte den Standardfehler um den Faktor
+            # sqrt(T/T_informativ) (Pitfall #255 — jede Standardfehler-Rechnung muss die informative
+            # Laenge verwenden, nicht nur die Annualisierung/den Punktschätzer aus #823).
+            # ``optimal_block_length`` (bootstrap.py, bereits vorhanden seit #619) schaetzt die
+            # Bootstrap-Blocklaenge weiterhin AUS der informativen Serie selbst (Serienabhaengigkeit
+            # der tatsaechlich gehandelten Perioden, nicht des Kalenderrasters).
             from automation.optimizer.deflation import (
                 bootstrap_psr_z as _boot_psr_z, psr_from_z as _psr_from_z,
                 sample_skew_kurtosis as _skku)
-            skew_v, kurtosis_v = _skku(period_rets.to_numpy())
+            informative_arr = informative_rets.to_numpy()
+            skew_v, kurtosis_v = _skku(informative_arr)
             psr_z_v, psr_se_boot_v = _boot_psr_z(
-                period_rets.to_numpy(), sr_star=0.0, mar=mar,
+                informative_arr, sr_star=0.0, mar=mar,
                 n_boot=_read_psr_bootstrap_resamples())
             psr_v = _psr_from_z(psr_z_v)
             return sortino_v, sortino_period_v, sortino_annualized_v, psr_v, psr_z_v, skew_v, kurtosis_v, psr_se_boot_v
@@ -2681,6 +2687,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "sortino_period":     float(sortino_period) if sortino_period is not None else None,
         "sortino_annualized": float(sortino_annualized) if sortino_annualized is not None else None,
         "n_periods":          int(n_periods),
+        # Issue #824 — expliziter Alias: der Stichprobenumfang, den die PSR-Bootstrap-SE (und der
+        # #823-Punktschätzer) TATSÄCHLICH gesehen haben (die informative Teilmenge, #823). Separates
+        # Feld statt einer stillen Neuinterpretation von ``n_periods`` — beide sind seit #823/#824
+        # identisch, ``n_effective_observations`` macht das für Report-Konsumenten explizit benannt.
+        "n_effective_observations": int(n_periods),
         "ret_skew":           float(ret_skew),
         "ret_kurtosis":       float(ret_kurtosis),
         "period_returns":     _period_returns_list,   # Issue #619 — für den Bootstrap-CI im Holdout.
