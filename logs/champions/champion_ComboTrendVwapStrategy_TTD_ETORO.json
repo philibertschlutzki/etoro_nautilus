@@ -1,0 +1,48 @@
+{
+  "strategy": "ComboTrendVwapStrategy",
+  "symbol": "TTD.ETORO",
+  "tier": "all",
+  "params": {
+    "macd_signal_period": 12,
+    "macd_fast": 8,
+    "macd_slow": 27,
+    "sma_period": 21,
+    "bb_period": 15,
+    "bb_std_dev": 1.0435274302069795,
+    "atr_period": 13,
+    "atr_multiplier": 1.1383674121907836,
+    "vwap_period": 17,
+    "trend_tolerance_pct": 0.034533749209990354,
+    "bb_touch_window": 83,
+    "require_vwap_confirmation": true,
+    "require_bb_touch": true,
+    "cooldown_bars": 14,
+    "atr_trailing_multiplier": 3.08271275307593,
+    "max_bars_in_trade": 19,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.09684192438596388,
+    "R_global": -0.11399091505497494,
+    "reward": 1.141808847748668
+  },
+  "provenance": {
+    "run_id": "20260729T085127Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_ComboTrendVwapStrategy_TTD_ETORO_0b3fb770/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 17,
+    "data_snapshot_sha256": "e1a490917e2d08cb99fd6d292b80e6c127b3321afafd25124c917ffedf7ff742",
+    "catalog_newest_ns": 1785258000000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260729T085127Z",
+    "first_seen_catalog_newest_ns": 1785258000000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.09684192438596388,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

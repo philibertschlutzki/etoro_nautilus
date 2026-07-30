@@ -1,0 +1,38 @@
+{
+  "strategy": "MeanReversionStrategy",
+  "symbol": "CVE.ETORO",
+  "tier": "all",
+  "params": {
+    "keltner_period": 21,
+    "keltner_atr_period": 31,
+    "keltner_multiplier": 2.943892280256657,
+    "cooldown_bars": 11,
+    "atr_trailing_multiplier": 0.47773940054508135,
+    "max_bars_in_trade": 24,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.1980295505904742,
+    "R_global": -1.8383155750179854,
+    "reward": 3.0497772770962226
+  },
+  "provenance": {
+    "run_id": "20260730T002232Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_MeanReversionStrategy_CVE_ETORO_a722e9d3/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 17,
+    "data_snapshot_sha256": "e1a490917e2d08cb99fd6d292b80e6c127b3321afafd25124c917ffedf7ff742",
+    "catalog_newest_ns": 1785258000000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260730T002232Z",
+    "first_seen_catalog_newest_ns": 1785258000000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.1980295505904742,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

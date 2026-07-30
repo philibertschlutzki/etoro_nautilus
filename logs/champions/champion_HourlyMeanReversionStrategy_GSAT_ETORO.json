@@ -1,0 +1,38 @@
+{
+  "strategy": "HourlyMeanReversionStrategy",
+  "symbol": "GSAT.ETORO",
+  "tier": "all",
+  "params": {
+    "keltner_period": 18,
+    "keltner_atr_period": 33,
+    "keltner_multiplier": 3.2728046748592967,
+    "cooldown_bars": 18,
+    "atr_trailing_multiplier": 1.324205939999968,
+    "max_bars_in_trade": 20,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.25215409029723135,
+    "R_global": 0.08794658171696108,
+    "reward": 3.6052014657522173
+  },
+  "provenance": {
+    "run_id": "20260728T142547Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_HourlyMeanReversionStrategy_GSAT_ETORO_ed8f308d/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 16,
+    "data_snapshot_sha256": "52b2063ee205e30c6f338c350e67c1381d3823f27bc934410feef52629013821",
+    "catalog_newest_ns": 1785178800000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260728T142547Z",
+    "first_seen_catalog_newest_ns": 1785178800000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.25215409029723135,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

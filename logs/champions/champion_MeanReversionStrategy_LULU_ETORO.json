@@ -1,0 +1,38 @@
+{
+  "strategy": "MeanReversionStrategy",
+  "symbol": "LULU.ETORO",
+  "tier": "all",
+  "params": {
+    "keltner_period": 25,
+    "keltner_atr_period": 22,
+    "keltner_multiplier": 3.107560331706036,
+    "cooldown_bars": 24,
+    "atr_trailing_multiplier": 1.5047900711733568,
+    "max_bars_in_trade": 20,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.6041894068161747,
+    "R_global": -0.18335680809471608,
+    "reward": 1.2718669320180958
+  },
+  "provenance": {
+    "run_id": "20260729T064744Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_MeanReversionStrategy_LULU_ETORO_c4333ccc/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 17,
+    "data_snapshot_sha256": "e1a490917e2d08cb99fd6d292b80e6c127b3321afafd25124c917ffedf7ff742",
+    "catalog_newest_ns": 1785258000000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260729T064744Z",
+    "first_seen_catalog_newest_ns": 1785258000000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.6041894068161747,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

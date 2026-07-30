@@ -1,0 +1,37 @@
+{
+  "strategy": "VwapExhaustionStrategy",
+  "symbol": "RBLX.ETORO",
+  "tier": "all",
+  "params": {
+    "vwap_period": 17,
+    "deviation_threshold": 0.027873517780974685,
+    "cooldown_bars": 34,
+    "atr_trailing_multiplier": 0.6011304340585544,
+    "max_bars_in_trade": 19,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.8394090875512291,
+    "R_global": 0.38079438065787696,
+    "reward": 2.3456597215110895
+  },
+  "provenance": {
+    "run_id": "20260729T180915Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_VwapExhaustionStrategy_RBLX_ETORO_48b1c7dc/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 17,
+    "data_snapshot_sha256": "e1a490917e2d08cb99fd6d292b80e6c127b3321afafd25124c917ffedf7ff742",
+    "catalog_newest_ns": 1785258000000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260729T180915Z",
+    "first_seen_catalog_newest_ns": 1785258000000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.8394090875512291,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

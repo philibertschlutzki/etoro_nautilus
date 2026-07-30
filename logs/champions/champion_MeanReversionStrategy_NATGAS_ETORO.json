@@ -1,0 +1,38 @@
+{
+  "strategy": "MeanReversionStrategy",
+  "symbol": "NATGAS.ETORO",
+  "tier": "all",
+  "params": {
+    "keltner_period": 13,
+    "keltner_atr_period": 33,
+    "keltner_multiplier": 3.363306217458532,
+    "cooldown_bars": 24,
+    "atr_trailing_multiplier": 1.7760362175719953,
+    "max_bars_in_trade": 16,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.031642793291601794,
+    "R_global": -1.5400389658686289,
+    "reward": 0.9074096057701014
+  },
+  "provenance": {
+    "run_id": "20260730T005147Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_MeanReversionStrategy_NATGAS_ETORO_2e104bba/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 17,
+    "data_snapshot_sha256": "e1a490917e2d08cb99fd6d292b80e6c127b3321afafd25124c917ffedf7ff742",
+    "catalog_newest_ns": 1785258000000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260730T005147Z",
+    "first_seen_catalog_newest_ns": 1785258000000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.031642793291601794,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}

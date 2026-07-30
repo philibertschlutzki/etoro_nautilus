@@ -1,0 +1,34 @@
+{
+  "strategy": "SmaCrossoverStrategy",
+  "symbol": "LRCX.ETORO",
+  "tier": "all",
+  "params": {
+    "sma_period": 33,
+    "cooldown_bars": 26,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.1267257202145206,
+    "R_global": -0.45835553720551864,
+    "reward": 2.0261931112259957
+  },
+  "provenance": {
+    "run_id": "20260729T021558Z",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_SmaCrossoverStrategy_LRCX_ETORO_0abdbb1d/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT"
+  },
+  "integrity": {
+    "reward_semantics_version": 17,
+    "data_snapshot_sha256": "e1a490917e2d08cb99fd6d292b80e6c127b3321afafd25124c917ffedf7ff742",
+    "catalog_newest_ns": 1785258000000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "20260729T021558Z",
+    "first_seen_catalog_newest_ns": 1785258000000000000,
+    "corroboration_count": 1,
+    "last_R_symbol": 0.1267257202145206,
+    "degrade_streak": 0,
+    "writeback_applied": false
+  }
+}
