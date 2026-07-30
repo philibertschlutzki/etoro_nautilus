@@ -707,37 +707,18 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
     das Maximum unter H₀ NICHT beeinflusst und darf die Multiplizität nicht erhöhen (dieselbe
     Argumentationslogik wie #814, eine Ebene tiefer: ein Trial, dessen Statistik VERWORFEN wurde,
     ist äquivalent zu einem nie gezogenen Trial). ``oos_evaluated`` bleibt als reine
-    Aktivitäts-Telemetrie (#770/#769) unverändert erhalten."""
-    # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
-    # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
-    # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
-    # dokumentierte Config-Wert zurueck.
-    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "attempted")
+    Aktivitäts-Telemetrie (#770/#769) unverändert erhalten.
+
+    Issue #826 — diese SYMBOLWEITE Summe wird seit #826 NICHT MEHR direkt an ``confirm(...)``
+    durchgereicht (siehe ``_family_n_per_study_from_studies`` für das je-Study-N1, das die
+    tatsächlich getroffene Per-Strategie-Entscheidung korrekt bedient). Bleibt als Rückwärtskompat-/
+    Telemetrie-Funktion erhalten (u. a. für bestehende Tests und eine potenzielle
+    ``promotion_family_scope='per_symbol_best'``-Stufe-2-Referenzgrösse)."""
+    per_study, symbol_fingerprints = _family_n_per_study_from_studies(
+        pairs, studies, tournament_cfg=tournament_cfg)
     family_n: dict[str, int] = {}
-    # Issue #812 — die DSR-Multiplizitaetskorrektur setzt eine ueber die Familie KONSTANTE
-    # Selektionsregel voraus (Pitfall #248); ``selection_rule_fingerprint`` (reward.py, gestempelt
-    # in run_optimization._emit_study_summary) macht eine Abweichung sichtbar, statt sie lautlos in
-    # dieser Summe zu verstecken. Wird HIER (noch) konservativ als EINE Familie weitergezaehlt — die
-    # Aufschluesselung nach Fingerprint lebt im #742-Report (report._selection_rule_families).
-    symbol_fingerprints: dict[str, set] = {}
-    for (_strategy, symbol, _reason), study in zip(pairs, studies):
-        trials = getattr(study, "trials", None) or []
-        n_evaluated = sum(
-            1 for t in trials
-            if getattr(t, "user_attrs", {}).get("oos_selection_statistic_available") is True
-        )
-        if floor_mode == "budgeted":
-            n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
-            if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
-                n_evaluated = max(n_evaluated, int(n_trials_budget))
+    for (_strategy, symbol), n_evaluated in per_study.items():
         family_n[symbol] = family_n.get(symbol, 0) + n_evaluated
-        fingerprint = (getattr(study, "user_attrs", None) or {}).get("selection_rule_fingerprint")
-        if fingerprint is not None:
-            symbol_fingerprints.setdefault(symbol, set()).add(fingerprint)
-        # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
-        # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
-        # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
-        _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
     for symbol, fingerprints in symbol_fingerprints.items():
         if len(fingerprints) > 1:
             logging.getLogger("optimizer").warning(
@@ -748,6 +729,106 @@ def _family_n_from_studies(pairs, studies, *, tournament_cfg: dict | None = None
                 symbol, len(fingerprints), symbol,
             )
     return family_n
+
+
+def _family_n_per_study_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                     ) -> tuple[dict[tuple[str, str], int], dict[str, set]]:
+    """Issue #826 Fix Punkt 1 — gemeinsamer Zaehl-Kernel: liefert das #822-N JE EINZELNER Study
+    (``{(strategy, symbol): n}``), OHNE es über die Strategien eines Symbols zu summieren, plus die
+    ``selection_rule_fingerprint``-Mengen je Symbol (für die #812-Heterogenitätswarnung). Sowohl
+    ``_family_n_from_studies`` (Rückwärtskompat: symbolweite Summe) als auch
+    ``_family_n_stage1_from_studies``/``_family_n_stage2_from_studies`` (#826, die tatsächlich an
+    ``confirm(...)`` durchgereichte Per-Strategie-Zahl) bauen auf DIESER EINEN Zählung auf — dieselbe
+    Trial-Iteration + dasselbe ``_dispose_storage``-Nachziehen (#747) darf nicht divergieren."""
+    # Issue #814 — Default 'attempted' (vorher 'budgeted'): 'budgeted' war keine konservative Wahl,
+    # sondern eine Fehlspezifikation der Nullverteilung (ein nie gezogener Trial hat keinen Sharpe-
+    # Schaetzer). Ein fehlender Key faellt daher NICHT mehr auf die alte, jetzt als fehlerhaft
+    # dokumentierte Config-Wert zurueck.
+    floor_mode = (tournament_cfg or {}).get("deflation_family_floor_mode", "attempted")
+    per_study: dict[tuple[str, str], int] = {}
+    symbol_fingerprints: dict[str, set] = {}
+    for (strategy, symbol, _reason), study in zip(pairs, studies):
+        trials = getattr(study, "trials", None) or []
+        n_evaluated = sum(
+            1 for t in trials
+            if getattr(t, "user_attrs", {}).get("oos_selection_statistic_available") is True
+        )
+        if floor_mode == "budgeted":
+            n_trials_budget = (getattr(study, "user_attrs", None) or {}).get("n_trials_budget")
+            if isinstance(n_trials_budget, (int, float)) and not isinstance(n_trials_budget, bool):
+                n_evaluated = max(n_evaluated, int(n_trials_budget))
+        per_study[(strategy, symbol)] = per_study.get((strategy, symbol), 0) + n_evaluated
+        fingerprint = (getattr(study, "user_attrs", None) or {}).get("selection_rule_fingerprint")
+        if fingerprint is not None:
+            symbol_fingerprints.setdefault(symbol, set()).add(fingerprint)
+        # Issue #747 — ``study.trials`` reconnected die (in optimize_symbol bereits disposte) Engine
+        # lazy; ohne erneutes Dispose HIER waeren nach dieser Schleife wieder ALLE Studies gleichzeitig
+        # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
+        _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
+    return per_study, symbol_fingerprints
+
+
+def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
+                                  ) -> dict[tuple[str, str], int]:
+    """Issue #826 Fix Punkt 1/2 — N1: die Multiple-Testing-Multiplizität EINER EINZELNEN Study
+    (Strategie, Symbol), NICHT symbolweit über alle Strategien summiert. Root-Cause #826:
+    ``export_symbol_proposal``/die Promotion-Entscheidung ist je (Strategie, Symbol) unabhängig —
+    ``_family_n_from_studies`` lieferte bislang trotzdem eine Symbol-weite Summe über ALLE
+    Strategien-Studies als Multiplizität für JEDE einzelne davon (Roster-/Budget-Kopplung, siehe
+    Katalog #750 #826). Unter ``promotion_family_scope='per_strategy'`` (Default, siehe
+    ``_resolve_promotion_family_scope``) ist DIESES N1 die an ``confirm(...)`` durchgereichte Zahl."""
+    per_study, _fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    return per_study
+
+
+def _family_n_stage2_from_studies(pairs, studies, *, tournament_cfg: dict | None = None) -> dict[str, int]:
+    """Issue #826 Fix Punkt 1/2 — N2: je Symbol die Zahl der Strategien, die ÜBERHAUPT einen
+    Kandidaten mit Selektions-Teststatistik geliefert haben (N1 > 0). Reine Telemetrie
+    (``report.cross_study['n_family_stage2']``) für eine HYPOTHETISCHE zweite Korrekturstufe
+    (``promotion_family_scope='per_symbol_best'``) — diese Stufe ist NICHT aktiv (siehe
+    ``_resolve_promotion_family_scope``: fail-loud, mangels H0-Kalibrierung der Stufen-Komposition,
+    Katalog #750 #826 Fix Punkt 4)."""
+    per_study, _fingerprints = _family_n_per_study_from_studies(pairs, studies, tournament_cfg=tournament_cfg)
+    stage2: dict[str, int] = {}
+    for (_strategy, symbol), n in per_study.items():
+        stage2.setdefault(symbol, 0)
+        if n > 0:
+            stage2[symbol] += 1
+    return stage2
+
+
+_PROMOTION_FAMILY_SCOPES = ("per_strategy", "per_symbol_best")
+
+
+def _resolve_promotion_family_scope(tournament_cfg: dict | None) -> str:
+    """Issue #826 Fix Punkt 2 — deklariert, welchem Geltungsbereich die familienweite
+    Multiplizitätskorrektur tatsächlich folgt (``tournament.json['promotion_family_scope']``,
+    Default ``'per_strategy'``): DAS ist der Status quo der tatsächlich getroffenen Entscheidung
+    (``export_symbol_proposal`` promotet je (Strategie, Symbol) unabhängig, #826-Root-Cause) und
+    verwendet N1 (``_family_n_stage1_from_studies``) statt der bisherigen Symbol-weiten Summe.
+
+    ``'per_symbol_best'`` (zweistufige Korrektur über zusätzlich N2, siehe
+    ``_family_n_stage2_from_studies``) ist DEKLARIERT, aber ABSICHTLICH NICHT implementiert: die
+    Komposition ``SR₀_gesamt`` aus den beiden Stufen ist laut Katalog #750 #826 Fix Punkt 1
+    ausdrücklich NICHT ``E[max_{N1·N2}]`` und setzt eine eigene H0-Kalibrierung voraus (Fix Punkt 4,
+    gemeinsam mit #824 Punkt 3/4 geplant — in diesem Environment nicht durchführbar, kein Monte-
+    Carlo-Kalibrierlauf möglich). Eine unkalibrierte Formel still anzuwenden wäre keine konservative
+    Wahl, sondern dieselbe Fehlspezifikationsklasse wie #814/#822 — daher FAIL-LOUD (analog #810s
+    ``_GATE_CONSOLIDATION_PRIORITY``), bis der Kalibrierlauf vorliegt."""
+    scope = (tournament_cfg or {}).get("promotion_family_scope", "per_strategy")
+    if scope not in _PROMOTION_FAMILY_SCOPES:
+        raise ValueError(
+            f"promotion_family_scope: unbekannter Wert {scope!r} (tournament.json), erwartet "
+            f"eines von {_PROMOTION_FAMILY_SCOPES}."
+        )
+    if scope == "per_symbol_best":
+        raise ValueError(
+            "promotion_family_scope='per_symbol_best' ist deklariert, aber die zweistufige SR0-"
+            "Komposition (Katalog #750 #826 Fix Punkt 1) ist noch NICHT implementiert — sie "
+            "erfordert einen eigenen H0-Kalibrierlauf (Fix Punkt 4), der in diesem Environment "
+            "nicht durchführbar ist. 'per_strategy' verwenden, bis der Kalibrierlauf vorliegt."
+        )
+    return scope
 
 
 # Issue #822 — Rückübersetzung eines ``inference_diagnostics``-Codes (#804) auf den Aggregations-
@@ -1228,21 +1309,36 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     def _run_confirm_and_export(pair: tuple[str, str, str], study,
                                 n_family_map: dict[str, int],
                                 family_returns_map: dict[str, list],
-                                n_family_excluded_map: dict[str, dict] | None = None) -> Path | None:
-        """Issue #652/#799/#822 — Confirm + Export + Champion-Store + Retention EINES Paares, mit der
-        auf das eigene Symbol beschränkten familienweiten Multiplizität (``n_family_map``/
-        ``family_returns_map``/``n_family_excluded_map`` — von der Symbol-Schleife unten übergeben,
-        siehe deren Docstring)."""
+                                n_family_excluded_map: dict[str, dict] | None = None,
+                                *,
+                                n_family_stage1_map: dict[tuple[str, str], int] | None = None,
+                                family_scope: str = "per_strategy") -> Path | None:
+        """Issue #652/#799/#822/#826 — Confirm + Export + Champion-Store + Retention EINES Paares.
+
+        Issue #826 — die an ``confirm(...)`` durchgereichte Multiplizität ist seit diesem Fix N1
+        (``n_family_stage1_map[(strategy, symbol)]``, die eigene Study-Zahl DIESES Paares), NICHT
+        MEHR ``n_family_map.get(symbol, 0)`` (die Symbol-weite Summe über ALLE Strategien-Studies —
+        das war die #826-Root-Cause: eine PER-STRATEGIE-Entscheidung erhielt eine SYMBOL-weite
+        Multiplizität). ``family_scope`` kommt bereits aufgelöst/validiert von der Symbol-Schleife
+        (``_resolve_promotion_family_scope`` — 'per_symbol_best' bricht dort VOR jedem Confirm-Aufruf
+        fail-loud ab, siehe deren Docstring); ``n_family_map``/``family_returns_map`` bleiben für die
+        Decluster-Matrix (``deflation_family_period_returns``, unverändert symbolweit, #695) und den
+        #822-Ausschluss-Breakdown (``n_family_excluded_map``) erhalten."""
         strategy, symbol, _reason = pair
         if study is None:
             # Issue #799 — kein Study-Objekt (Paar in _run_optimize fehlgeschlagen, STUDY_FAILED
             # bereits protokolliert): kein Confirm/Export möglich, kein Proposal.
             return None
+        if family_scope != "per_strategy":
+            # Unerreichbar in Produktion (siehe _resolve_promotion_family_scope), aber explizit statt
+            # eines stillen Fallbacks für direkte Unit-Test-Aufrufer dieser Funktion.
+            raise ValueError(f"_run_confirm_and_export: unbekannter family_scope {family_scope!r}")
         try:
             newest_ns = latest_ts.get(symbol) if latest_ts else None
             global_params = load_global_best(strategy, config_dir())
+            deflation_n_family_value = (n_family_stage1_map or {}).get((strategy, symbol), 0)
             promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
-                                deflation_n_family=n_family_map.get(symbol, 0),
+                                deflation_n_family=deflation_n_family_value,
                                 deflation_family_period_returns=family_returns_map.get(symbol),
                                 deflation_n_family_excluded_no_statistic=(
                                     (n_family_excluded_map or {}).get(symbol)))
@@ -1290,6 +1386,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _tournament_cfg_for_family = json.loads((config_dir() / "tournament.json").read_text("utf-8"))
     except (OSError, ValueError):
         _tournament_cfg_for_family = {}
+    # Issue #826 Fix Punkt 2 — EINMAL vor jeder Optimierung aufgelöst/validiert (fail-loud VOR
+    # kostspieliger Arbeit, nicht erst beim ersten Confirm-Aufruf): 'per_symbol_best' bricht den
+    # Sweep hier sofort ab, siehe _resolve_promotion_family_scope-Docstring.
+    _family_scope = _resolve_promotion_family_scope(_tournament_cfg_for_family)
 
     proposals: list[Path] = []
     for symbol, symbol_pairs in pairs_by_symbol.items():
@@ -1329,10 +1429,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #822 — Aufschlüsselung, wie viele oos_evaluated Trials je Symbol AUS der obigen
         # Zählung ausgeschlossen wurden (keine Selektions-Teststatistik), nach Grund.
         symbol_n_family_excluded = _family_n_excluded_breakdown_from_studies(symbol_pairs, symbol_studies)
+        # Issue #826 Fix Punkt 1 — N1 JE STUDY (nicht symbolweit summiert): die tatsächlich an
+        # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
+        symbol_n_family_stage1 = _family_n_stage1_from_studies(
+            symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
 
         for pair, study in zip(symbol_pairs, symbol_studies):
             proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns,
-                                               symbol_n_family_excluded)
+                                               symbol_n_family_excluded,
+                                               n_family_stage1_map=symbol_n_family_stage1,
+                                               family_scope=_family_scope)
             if proposal is not None:
                 proposals.append(proposal)
 

@@ -392,6 +392,12 @@ def _study_record(proposal: dict, study,
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
         "holdout_gate_deltas": holdout_metrics.get("holdout_gate_deltas") or {},
         "holdout_binding_gate": holdout_metrics.get("holdout_binding_gate"),
+        # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
+        # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
+        # unter promotion_family_scope='per_strategy' identisch zu holdout_metrics.deflation_n_
+        # family). NICHT mit dem (jetzt nicht mehr für die Deflation verwendeten) symbolweiten
+        # cross_study['n_family'] verwechseln (#625, post-hoc Sweep-Telemetrie).
+        "n_family_stage1": holdout_metrics.get("deflation_n_family"),
         # Issue #758/#791 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER, jetzt als
         # {method, applied, skipped_reason} statt eines nackten Strings/None (#791): ``applied``
         # unterscheidet "Inferenz lief nicht, weil strukturell unanwendbar/dokumentiert
@@ -547,6 +553,31 @@ def _selection_rule_families(studies_out: list[dict[str, Any]]) -> dict[str, dic
     return out
 
 
+def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    """Issue #826 Fix Punkt 2 — Akzeptanzkriterium 2: ``n_family_stage1``/``n_family_stage2``
+    GETRENNT im Report ausgewiesen. ``n_family_stage1``: je Symbol die N1-Zahl JEDER Strategie
+    (``record['n_family_stage1']``, aus ``holdout.symbol.deflation_n_family`` — unter dem Default
+    ``promotion_family_scope='per_strategy'`` die tatsächlich für die Deflation verwendete Zahl).
+    ``n_family_stage2``: je Symbol die Zahl der Strategien mit N1 > 0 (dieselbe Definition wie
+    ``sweep._family_n_stage2_from_studies``, hier post-hoc aus den exportierten Proposals statt aus
+    den Study-Objekten — reine Telemetrie, siehe deren Docstring für den Deferral-Status von
+    ``promotion_family_scope='per_symbol_best'``)."""
+    stage1: dict[str, dict[str, int]] = {}
+    stage2: dict[str, int] = {}
+    for r in studies_out:
+        symbol = r.get("symbol")
+        strategy = r.get("strategy")
+        n1 = r.get("n_family_stage1")
+        if not symbol or not strategy or n1 is None:
+            continue
+        n1 = int(n1)
+        stage1.setdefault(symbol, {})[strategy] = n1
+        stage2.setdefault(symbol, 0)
+        if n1 > 0:
+            stage2[symbol] += 1
+    return stage1, stage2
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -570,6 +601,8 @@ def _build_report(
         all_checks.extend((study_label, c) for c in checks)
         # Issue #791 — REJECT_SELECTION_PBO erfordert eine dokumentierte Promotions-Inferenz.
         all_checks.append((study_label, _inv.check_promotion_inference_coverage(proposal, record)))
+
+    n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
 
     registry_check = _inv.check_config_key_registry(tournament_cfg)
     all_checks.append(("global", registry_check))
@@ -642,6 +675,12 @@ def _build_report(
             # Issue #818 — stored/admissible/corroborated/written_back/skipped_by_reason über den
             # aktuellen Champion-Store-Stand (Epic #702 Ebene 1+2 Reachability-Telemetrie).
             "champions": champions_summary,
+            # Issue #826 Fix Punkt 2 (Akzeptanzkriterium 2) — n_family_stage1 (je Symbol/Strategie,
+            # die tatsächlich verwendete Per-Strategie-Multiplizität N1) UND n_family_stage2 (je
+            # Symbol, Zahl der Strategien mit N1 > 0) GETRENNT ausgewiesen — NICHT zu verwechseln mit
+            # dem obigen cross_study['n_family'] (#625, symbolweite Summe über deflation_n_eligible).
+            "n_family_stage1": n_family_stage1,
+            "n_family_stage2": n_family_stage2,
         },
         "invariant_checks": invariant_checks,
     }

@@ -75,7 +75,16 @@ def test_failure_in_one_symbol_does_not_lose_prior_or_later_symbols(monkeypatch,
 
 def test_symbol_level_family_n_is_scoped_to_its_own_studies(monkeypatch, tmp_path):
     """Zwei Strategien auf Symbol A (10 Trials je Study) und eine dritte Strategie auf Symbol B
-    (10 Trials): deflation_n_family fuer A darf NICHT durch B's Trials aufgeblaeht werden."""
+    (10 Trials): deflation_n_family fuer S1/S2 (A) darf NICHT durch die jeweils ANDERE Strategie
+    desselben Symbols aufgeblaeht werden.
+
+    Issue #826 — VOR diesem Fix erhielt JEDE Strategie eines Symbols dieselbe SYMBOL-weite Summe
+    (20 fuer A = S1 + S2). Das war exakt die #826-Root-Cause: eine PER-STRATEGIE-Entscheidung
+    (``export_symbol_proposal`` je (Strategie, Symbol)) erhielt eine SYMBOL-weite Multiplizitaet —
+    eine Erweiterung des Rosters um weitere Strategien haette die Promotion-Huerde JEDER
+    bestehenden Strategie erhoeht, ohne dass sich deren eigene Evidenz geaendert haette. Unter dem
+    neuen Default ``promotion_family_scope='per_strategy'`` erhaelt JEDE Study nur ihr EIGENES N1
+    (``sweep._family_n_stage1_from_studies``)."""
     pairs = [("S1", "A.ETORO", "OK"), ("S2", "A.ETORO", "OK"), ("S3", "B.ETORO", "OK")]
     captured_family_n = {}
 
@@ -83,7 +92,7 @@ def test_symbol_level_family_n_is_scoped_to_its_own_studies(monkeypatch, tmp_pat
         return _FakeStudy(n_trials=10)
 
     def fake_confirm(study, s, sym, gp, *, deflation_n_family=0, deflation_family_period_returns=None, **k):
-        captured_family_n[sym] = deflation_n_family
+        captured_family_n[(s, sym)] = deflation_n_family
         return {"promote": False, "status": "REJECTED", "symbol_params": {}}
 
     _patch_common(monkeypatch, tmp_path, pairs)
@@ -91,8 +100,34 @@ def test_symbol_level_family_n_is_scoped_to_its_own_studies(monkeypatch, tmp_pat
         ["S1", "S2", "S3"], ["A.ETORO", "B.ETORO"], tier="all", n_jobs=1,
         optimize_symbol=fake_opt, confirm=fake_confirm,
     )
-    assert captured_family_n["A.ETORO"] == 20  # 2 Studies x 10 evaluierte Trials
-    assert captured_family_n["B.ETORO"] == 10  # 1 Study x 10 evaluierte Trials
+    assert captured_family_n[("S1", "A.ETORO")] == 10  # NICHT 20 (S2s Trials zaehlen nicht mit)
+    assert captured_family_n[("S2", "A.ETORO")] == 10  # NICHT 20 (S1s Trials zaehlen nicht mit)
+    assert captured_family_n[("S3", "B.ETORO")] == 10  # 1 Study x 10 evaluierte Trials
+
+
+def test_family_n_from_studies_still_sums_across_strategies_as_pure_telemetry(monkeypatch, tmp_path):
+    """Issue #826 — die symbolweite Summe (``sweep._family_n_from_studies``) bleibt als
+    Rueckwaertskompat-/Telemetrie-Groesse bestehen, fliesst aber seit diesem Fix NICHT mehr in
+    ``deflation_n_family`` ein (siehe vorheriger Test) — hier ueber ``sweep._family_n_from_studies``
+    direkt nachgewiesen, unabhaengig vom Confirm-Aufruf."""
+    from automation.optimizer import sweep as sweep_module
+
+    class _T:
+        def __init__(self):
+            self.user_attrs = {"oos_selection_statistic_available": True}
+
+    class _S:
+        def __init__(self, n):
+            self.trials = [_T() for _ in range(n)]
+            self.user_attrs = {}
+
+    pairs = [("S1", "A.ETORO", "OK"), ("S2", "A.ETORO", "OK")]
+    studies = [_S(10), _S(10)]
+    assert sweep_module._family_n_from_studies(pairs, studies, tournament_cfg={}) == {"A.ETORO": 20}
+    stage1 = sweep_module._family_n_stage1_from_studies(pairs, studies, tournament_cfg={})
+    assert stage1 == {("S1", "A.ETORO"): 10, ("S2", "A.ETORO"): 10}
+    stage2 = sweep_module._family_n_stage2_from_studies(pairs, studies, tournament_cfg={})
+    assert stage2 == {"A.ETORO": 2}
 
 
 def test_checkpoint_written_after_each_symbol(monkeypatch, tmp_path):
