@@ -685,3 +685,41 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
                 "Store-Stand — Ebene 2 (#706) ist vermutlich unerreichbar (#818-Regression: "
                 "maybe_write_back ohne Produktions-Call-Site)."),
     )
+
+
+def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int = 50) -> InvariantResult:
+    """Issue #829 Fix Punkt 5 (neunter Invarianten-Check, Pitfall #258) — die maschinelle Form der
+    Frage "warum ändert sich hier nichts?": FAIL, wenn ``diagnosed_pairs_cache.json`` (aus
+    ``sweep_diagnostics.load_diagnosed_pairs_cache``, hier als Liste ihrer Einträge übergeben) für
+    dieselbe ``(strategy, binding_cause)``-Kombination MINDESTENS ``min_count`` Paare mit
+    ``action == 'none'`` trägt.
+
+    Root-Cause #829/#258: zwei Evidenzschwellen desselben Mechanismus (eine Abbruchregel, die den
+    Budgetanteil kappt — #805 — und eine Aktionsregel, die einen Mindest-Budgetanteil verlangt —
+    #778) können einen Deadlock bilden, in dem die Ursache, die den Mechanismus auslösen soll, die
+    Schwelle STRUKTURELL nie erreicht (im Referenzlauf: 138 Studies über zwei Strategien,
+    ``action == 'none'`` in JEDEM Fall). Ein Diagnose-Cache, der über viele Symbole hinweg
+    ausschliesslich ``'none'`` für dieselbe Ursache meldet, ist der direkte Fingerabdruck eines
+    solchen Deadlocks — unabhängig davon, ob die konkrete Ursache ``signal_absent`` (#829) oder eine
+    künftige, strukturell ähnliche Kombination ist."""
+    from collections import Counter
+    none_counts: Counter = Counter()
+    for entry in diagnosed_pairs or []:
+        if entry.get("action") != "none":
+            continue
+        key = (entry.get("strategy"), entry.get("binding_cause"))
+        if key[0] is None or key[1] is None:
+            continue
+        none_counts[key] += 1
+    offenders = {f"{strategy}/{cause}": n for (strategy, cause), n in none_counts.items() if n >= min_count}
+    passed = not offenders
+    return InvariantResult(
+        name="check_diagnosis_actionability",
+        passed=passed,
+        expected=f"< {min_count} Paare je (strategy, binding_cause) mit action=='none'",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} (strategy, binding_cause)-Kombination(en) melden >= {min_count} "
+                f"Paare mit action=='none': {offenders} — vermutlich ein Evidenzschwellen-Deadlock "
+                "(Pitfall #258), analog #829."),
+    )

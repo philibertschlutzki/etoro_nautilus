@@ -427,6 +427,18 @@ def _budget_execution_summary(studies_out: list[dict[str, Any]]) -> dict[str, An
     return {"median": round(median, 4), "p10": round(fractions[p10_idx], 4), "n": len(fractions)}
 
 
+def _diagnosed_pairs_all() -> list[dict[str, Any]]:
+    """Issue #829 Fix Punkt 5 — ALLE Einträge des Auto-Diagnose-Caches (nicht nur die
+    ``action == 'denylist'``-Teilmenge von ``_diagnosed_pairs_skipped_section``), als Eingabe für
+    ``invariants.check_diagnosis_actionability``."""
+    try:
+        from automation.optimizer.sweep_diagnostics import load_diagnosed_pairs_cache
+        cache = load_diagnosed_pairs_cache()
+    except Exception:
+        return []
+    return list(cache.values())
+
+
 def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     """Issue #778 (Umsetzungspunkt 3) — die vom `#681`-Auto-Cache aktuell ``'denylist'``-empfohlenen
     (und damit von ``enumerate_tunable_pairs`` übersprungenen) Paare als eigene Report-Sektion, MIT
@@ -624,6 +636,12 @@ def _build_report(
     champions_summary = _champions_summary(optimizer_cfg)
     champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
     all_checks.append(("global", champion_writeback_check))
+
+    # Issue #829 — neunter Invarianten-Check: ein Evidenzschwellen-Deadlock (Pitfall #258) macht
+    # sich als viele diagnosed_pairs_cache-Einträge derselben (strategy, binding_cause)-Kombination
+    # mit action=='none' bemerkbar.
+    diagnosis_actionability_check = _inv.check_diagnosis_actionability(_diagnosed_pairs_all())
+    all_checks.append(("global", diagnosis_actionability_check))
 
     invariant_checks = []
     for label, result in all_checks:

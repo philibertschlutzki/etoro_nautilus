@@ -281,7 +281,8 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                previously_recommended_override: bool = False,
                                proposed_bounds: dict | None = None,
                                budget_executed_fraction: float | None = None,
-                               n_runs_confirmed: int = 0) -> dict:
+                               n_runs_confirmed: int = 0,
+                               stop_reason: str | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -331,6 +332,21 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     ``n_runs_confirmed=0``, der Default für Legacy-/Test-Aufrufer) ⇒ ``'none'`` (bit-identisch zu
     "noch nichts entschieden"), NIE mehr direkt 'denylist'.
 
+    Issue #829 — ``budget_executed_fraction >= 0.9`` ist für ``'signal_absent'`` STRUKTURELL NIE
+    erreichbar: ``run_optimization.py`` stoppt eine Study mit ``STRUCTURAL_ALL_UNEVALUABLE`` (#805)
+    bereits bei ``n_startup_trials + structural_min_modelled_trials`` — für AdxAtrMomentum/
+    TrendPullback beobachtet bei 28 %/46 % des Budgets. #778s Schwelle und #805s früher Abbruch
+    blockierten sich damit gegenseitig: die Ursache, die den Mechanismus ausgelöst hat, konnte die
+    Schwelle NIE erreichen (Pitfall #258, dieselbe Fehlerklasse wie #754 eine Ebene weiter). Root-
+    Cause-Korrektur: ``sufficient_evidence`` zielt jetzt auf das GEMESSENE ERGEBNIS statt auf den
+    Budgetanteil — ``stop_reason == 'STRUCTURAL_ALL_UNEVALUABLE'`` ALLEIN ist bereits die
+    aussagekräftigere Evidenz (dieser Wert wird von ``compute_budget_execution`` NUR gesetzt,
+    NACHDEM die Study ihre eigene ``len(completed) >= n_startup_trials +
+    structural_min_modelled_trials``-Vorbedingung bereits erfüllt hat — ``budget_executed_fraction``
+    bleibt als ALTERNATIVER, weiterhin gültiger Nachweispfad erhalten (z. B. für eine Study, die aus
+    einem anderen Grund bis zum vollen Budget lief). Fehlendes ``stop_reason`` (Default ``None``,
+    Legacy-/Test-Aufrufer) ⇒ bit-identisch zum Pre-#829-Verhalten (nur der Budgetanteil zählt).
+
     Issue #778 — ``'signal_sparse'``/``'hold_duration'`` (PARAMETERABHÄNGIG) eskaliert seither NIE
     mehr auf 'denylist' — die frühere ``previously_recommended_override``-Eskalation (#699) hätte
     genau dieselbe verfrühte Deaktivierung auf Basis einer einzigen, mutmasslich budget-limitierten
@@ -340,9 +356,13 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
-    sufficient_evidence = (
-        budget_executed_fraction is not None and budget_executed_fraction >= 0.9
-        and n_runs_confirmed >= 2
+    # Issue #829 — zwei UNABHAENGIGE Nachweispfade fuer "das Ergebnis ist verlaesslich vollstaendig
+    # ausgewertet": entweder der eigene strukturelle Stop-Grund der Study (STRUCTURAL_ALL_
+    # UNEVALUABLE, siehe Docstring) ODER ein hoher Budgetanteil. n_runs_confirmed bleibt in JEDEM
+    # Fall Pflicht (die Mehrlauf-Bestaetigung ist der eigentliche Schutz, #778).
+    sufficient_evidence = n_runs_confirmed >= 2 and (
+        stop_reason == "STRUCTURAL_ALL_UNEVALUABLE"
+        or (budget_executed_fraction is not None and budget_executed_fraction >= 0.9)
     )
     if cause in ("none", "no_data", None):
         action = "none"
@@ -365,6 +385,9 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         "median_is_trades": diagnosis.get("median_is_trades"),
         "budget_executed_fraction": budget_executed_fraction,
         "n_runs_confirmed": n_runs_confirmed,
+        # Issue #829 — welcher der beiden Nachweispfade zur Empfehlung fuehrte, im Report/Cache
+        # nachvollziehbar (nicht nur die binaere sufficient_evidence-Entscheidung).
+        "stop_reason": stop_reason,
     }
     if action == "search_space_override" and proposed_bounds:
         result["proposed_bounds"] = proposed_bounds

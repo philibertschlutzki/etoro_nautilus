@@ -555,6 +555,12 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             if _prior and _prior.get("binding_cause") == diagnosis.get("binding_cause")
                             else 0
                         ),
+                        # Issue #829 — derselbe study.set_user_attr("floor_plateau_warned", True)-
+                        # Aufruf (oben, VOR diesem Block) macht compute_budget_execution's
+                        # stop_reason bereits zu 'STRUCTURAL_ALL_UNEVALUABLE'; dieser Wert BEWEIST,
+                        # dass die Study ihre eigene len(completed) >= required_for_structural-
+                        # Vorbedingung (Zeile 490 oben) bereits erfuellt hat.
+                        stop_reason=_budget_execution_for_diagnosis["stop_reason"],
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
