@@ -38,6 +38,7 @@ from automation.optimizer.confirm import confirm_per_symbol_promotion as _confir
 from automation.optimizer import champions
 from automation.optimizer import retention
 from automation.optimizer import disk_guard
+from automation.optimizer import wallclock_guard
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
@@ -1031,6 +1032,35 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     Issue #807 — ``bar_quality_fn`` (Default ``None`` ⇒ ``_load_symbol_bar_quality_sample``, echter
     Katalog-Zugriff) ist injizierbar (HI-7): ein Test uebergibt eine reine Fake-Funktion
     ``symbol -> {"highs", "lows", "closes"} | None`` statt echte Parquet-Dateien zu lesen.
+
+    Issue #828 (Katalog #828-#835, GitHub-Issue #751) — Scope-Entscheidung: der Dispatch bleibt
+    weiterhin PRO SYMBOL synchron (die #652-Familieninvariante UND die #799-Transaktionsgrenze
+    setzen genau das voraus — alle Strategien-Studies EINES Symbols müssen abgeschlossen sein,
+    bevor dessen familienweite Multiplizität/Confirm/Export/Checkpoint laufen). Implementiert sind
+    Fix Punkt 3 (``max_workers`` ist nicht mehr an ``len(symbol_pairs)`` gedeckelt) und Fix Punkt 5
+    (``wallclock_guard``/``sweep_max_wallclock_h``, siehe dort). BEWUSST NICHT implementiert: Fix
+    Punkt 1 (Pipelining — Studies werden über die GESAMTE Laufzeit in einen gemeinsamen Pool mit
+    Look-Ahead ``pipeline_depth`` eingereiht, nicht mehr strikt symbolweise seriell gewartet) und
+    Fix Punkt 2 (Largest-First-Scheduling, das nur INNERHALB eines solchen gemeinsamen Fensters
+    etwas bewirkt). Root-Cause der Deferral: eine Restrukturierung der Dispatch-Schleife, auf die
+    > 15 bestehende Tests (#799/#747/#755/#400/#412/#414/#415/#511/#595/#698/#795/#807 u. a.) für
+    die KORREKTHEIT der Familien-/Checkpoint-/Determinismus-Invarianten angewiesen sind, ist ohne
+    einen echten Mehrsymbol-Produktionslauf (122 Symbole, mehrere Stunden) NICHT empirisch gegen
+    die Akzeptanzkriterien (≥ 80 % Worker-Auslastung, ≤ 24 h Hochrechnung) verifizierbar — dieses
+    Environment hat keinen realen Marktdaten-Katalog dafür. Eine blind implementierte Pipeline-
+    Restrukturierung riskiert eine STILLE Korrektheitsregression (z. B. eine Familien-N-
+    Fehlberechnung durch eine Symbolgrenzen-Überschreitung) — strukturell dieselbe Klasse Risiko
+    wie die bereits an anderer Stelle in dieser Kohorte zurückgestellten Arbeiten (#823 T-adaptiver
+    Guard, #824/#826 H0-Kalibrierung, #825 Liquidations-Engine). Fix Punkt 4 (SuccessiveHalving-
+    Pruner) ist ebenfalls NICHT implementiert: der Zwischenwert für ``trial.report()`` (der
+    fold-weise Reward) wird erst NACH dem vollständigen Rückkehren des Backtest-Subprozesses
+    bekannt (``run_backtest``/``metrics.oos_fold_sortinos``, siehe ``make_symbol_objective`` —
+    JEDER Fold läuft bereits im Subprozess, bevor der Elternprozess irgendein Zwischenergebnis
+    sieht) — ein Pruner könnte an dieser Stelle KEINE Rechenzeit sparen (die teure Arbeit ist
+    bereits erledigt), nur die TPE-Stichprobenwahl nachträglich beeinflussen. Das entspricht nicht
+    dem im Issue behaupteten Nutzen ("jeder Trial läuft bis zum Ende") und würde eine echte
+    Subprozess-IPC-Restrukturierung (fold-weises Zwischen-Reporting) voraussetzen, um den
+    tatsächlichen Durchsatzgewinn zu erzielen — ebenfalls zurückgestellt.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
@@ -1435,6 +1465,18 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Issue #827 Fix Punkt 3 — ebenfalls einmal vorab validiert (unbekannter Wert ⇒ sofortiger
     # Abbruch); die eigentliche Heterogenitäts-PRÜFUNG läuft je Symbol (erst NACH dessen Studies).
     _homogeneity_policy = _resolve_selection_rule_homogeneity_policy(_tournament_cfg_for_family)
+    # Issue #828 Fix Punkt 5 — Laufzeit-Budget (analog disk_guard, #795). Fehlt der Key ⇒ 24
+    # (Issue-Vorschlag, aktiver Default); EXPLIZIT null ⇒ deaktiviert (dict.get mit Default
+    # greift nur bei fehlendem Key, nicht bei einem vorhandenen null-Wert). Fail-open (kaputte/
+    # fehlende Config-Datei) ⇒ ebenfalls 24, NICHT deaktiviert — dieselbe Fail-safe-Haltung wie
+    # disk_budget_gb/disk_reserve_gb (ein Konfigurationsfehler darf die Laufzeit-Absicherung nicht
+    # lautlos abschalten).
+    try:
+        _sweep_max_wallclock_h = (
+            json.loads((config_dir() / "optimizer.json").read_text("utf-8")) or {}
+        ).get("sweep_max_wallclock_h", 24)
+    except (OSError, ValueError):
+        _sweep_max_wallclock_h = 24
 
     proposals: list[Path] = []
     for symbol, symbol_pairs in pairs_by_symbol.items():
@@ -1457,10 +1499,31 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 "Symbole (ab '%s') werden nicht mehr gestartet.", symbol,
             )
             break
+        # Issue #828 Fix Punkt 5 — dasselbe Muster für das Laufzeit-Budget: kein hartes
+        # ENOSPC-Äquivalent, aber ein 62-h-Lauf ohne Obergrenze ist operativ nicht steuerbar.
+        # Laufende Studies werden NICHT abgebrochen, nur keine neuen mehr gestartet.
+        if wallclock_guard.check_wallclock_budget(
+            time.perf_counter() - sweep_t0, max_hours=_sweep_max_wallclock_h,
+        ):
+            wallclock_guard.sweep_wallclock_exceeded.set()
+            logging.getLogger("optimizer").warning(
+                "[#828] Laufzeit-Budget überschritten (sweep_max_wallclock_h=%s) — verbleibende "
+                "Symbole (ab '%s') werden nicht mehr gestartet.", _sweep_max_wallclock_h, symbol,
+            )
+            break
 
         if n_jobs and n_jobs > 1 and len(symbol_pairs) > 1:
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=min(n_jobs, len(symbol_pairs))) as executor:
+            # Issue #828 Fix Punkt 3 — max_workers ist NICHT mehr auf len(symbol_pairs) gedeckelt
+            # (vorher `min(n_jobs, len(symbol_pairs))`: bei 14 Strategien/Symbol und n_jobs=22
+            # blieben 8 der 22 konfigurierten Worker über den GESAMTEN Lauf hinweg ungenutzt, egal
+            # wie n_jobs gesetzt war). Die Deckelung war nie die eigentliche Bremse — solange der
+            # Dispatch pro Symbol synchron bleibt (Fix Punkt 1, Pipelining über Symbolgrenzen
+            # hinweg, ist NICHT Teil dieses Fixes — siehe Docstring von run_per_symbol_sweep),
+            # nutzt ein Pool dieser einen Symbol-Batch ohnehin nie mehr als len(symbol_pairs)
+            # Worker gleichzeitig; die explizite Entkopplung verhindert nur, dass die Deckelung
+            # unbemerkt wiederkehrt, sobald Pipelining nachgerüstet wird.
+            with ThreadPoolExecutor(max_workers=n_jobs) as executor:
                 symbol_studies = list(executor.map(_run_optimize, symbol_pairs))
         else:
             symbol_studies = [_run_optimize(p) for p in symbol_pairs]
