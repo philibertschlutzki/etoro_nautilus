@@ -1834,6 +1834,14 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # liest diesen Pfad, um bei mindestens einem FAIL-Invarianten-Check einen Non-Zero-Exit-Code
         # zurueckzugeben, statt eines rein informativen Artefakts.
         _LAST_REPORT_PATH = report_path
+        # Issue #832 Fix Punkt 2 — direkt NACH generate_sweep_report/generate_report_for_run,
+        # fail-open: liest AUSSCHLIESSLICH das gerade geschriebene Report-JSON (summary_de.py
+        # nimmt keine zweite Datenquelle) und erbt damit automatisch dieselbe #833-Abbruchfestigkeit
+        # (ein Teilreport erzeugt trotzdem eine — kleinere — Zusammenfassung).
+        from automation.optimizer import summary_de as _summary_de
+        summary_path = _summary_de.write_german_summary_for_report_path(report_path)
+        if summary_path is not None:
+            print(f"📝 Zusammenfassung: {summary_path}")
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)

@@ -255,6 +255,19 @@ def _study_record(proposal: dict, study,
             if code:
                 inference_diagnostics_by_code[code] = inference_diagnostics_by_code.get(code, 0) + 1
 
+    # Issue #832 Fix Punkt 1 — je-Study-Aggregat der Haltedauer (Sekunden): das MAXIMUM über alle
+    # oos_evaluated Trials (Rohmaterial für summary_de.py Abschnitt 4 "Trades mit der längsten
+    # Haltedauer" — siehe cross_study['longest_holding_studies'], _build_report). P95 folgt
+    # demselben Trial mit dem groessten Maximum (repräsentativ für DESSEN Verteilung, keine
+    # zusaetzliche Kreuz-Trial-Perzentilberechnung noetig).
+    max_holding_time_s: float | None = None
+    p95_holding_time_s: float | None = None
+    for a in trial_attrs:
+        candidate = a.get("oos_max_holding_time_s")
+        if candidate is not None and (max_holding_time_s is None or candidate > max_holding_time_s):
+            max_holding_time_s = candidate
+            p95_holding_time_s = a.get("oos_p95_holding_time_s")
+
     best_reward = None
     if study is not None:
         try:
@@ -371,6 +384,9 @@ def _study_record(proposal: dict, study,
         # promotionsfaehig — dieses Feld macht nur die HAEUFIGKEIT sichtbar, ohne die Zaehl-Logik
         # zu duplizieren.
         "liquidated_trials": inference_diagnostics_by_code.get("EQUITY_NONPOSITIVE", 0),
+        # Issue #832 Fix Punkt 1 — je-Study Haltedauer-Extrema (Sekunden), siehe Aggregat oben.
+        "max_holding_time_s": max_holding_time_s,
+        "p95_holding_time_s": p95_holding_time_s,
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -392,6 +408,15 @@ def _study_record(proposal: dict, study,
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
         "holdout_gate_deltas": holdout_metrics.get("holdout_gate_deltas") or {},
         "holdout_binding_gate": holdout_metrics.get("holdout_binding_gate"),
+        # Issue #832 Fix Punkt 2/3 — monetäre Holdout-Kennzahlen (confirm._metrics_dict), für
+        # summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ohne zweiten Datenzugriff.
+        "holdout_total_return": holdout_metrics.get("oos_total_return"),
+        "holdout_expectancy": holdout_metrics.get("oos_expectancy"),
+        "holdout_win_rate": holdout_metrics.get("oos_win_rate"),
+        "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
+        "holdout_buyhold_return": holdout_metrics.get("oos_buyhold_return"),
+        "holdout_excess_return": holdout_metrics.get("oos_excess_return"),
+        "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
         # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
         # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
         # unter promotion_family_scope='per_strategy' identisch zu holdout_metrics.deflation_n_
@@ -599,6 +624,22 @@ def _selection_rule_families(studies_out: list[dict[str, Any]]) -> dict[str, dic
     return out
 
 
+def _longest_holding_studies(studies_out: list[dict[str, Any]], *, top_k: int = 10) -> list[dict[str, Any]]:
+    """Issue #832 Fix Punkt 1/3 — Top-``top_k`` Studies nach ``max_holding_time_s`` absteigend, für
+    summary_de.py Abschnitt 4 ("Trades mit der längsten Haltedauer"). Rein additiv aus dem bereits
+    je Study berechneten Aggregat (``report._study_record``) — KEINE erneute Trial-Iteration."""
+    with_data = [r for r in studies_out if r.get("max_holding_time_s") is not None]
+    ranked = sorted(with_data, key=lambda r: r["max_holding_time_s"], reverse=True)
+    return [
+        {
+            "strategy": r.get("strategy"), "symbol": r.get("symbol"),
+            "max_holding_time_s": r["max_holding_time_s"],
+            "p95_holding_time_s": r.get("p95_holding_time_s"),
+        }
+        for r in ranked[:top_k]
+    ]
+
+
 def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
     """Issue #826 Fix Punkt 2 — Akzeptanzkriterium 2: ``n_family_stage1``/``n_family_stage2``
     GETRENNT im Report ausgewiesen. ``n_family_stage1``: je Symbol die N1-Zahl JEDER Strategie
@@ -680,6 +721,11 @@ def _build_report(
     diagnosis_actionability_check = _inv.check_diagnosis_actionability(_diagnosed_pairs_all())
     all_checks.append(("global", diagnosis_actionability_check))
 
+    # Issue #832 Fix Punkt 1 — zehnter Invarianten-Check: kein Trade darf laenger halten als die
+    # #714/GR-01-Zeitbox-Obergrenze (24 Bars) — ein Treffer ist ein Bug im Exit-Pfad.
+    holding_time_cap_check = _inv.check_holding_time_cap(studies_out)
+    all_checks.append(("global", holding_time_cap_check))
+
     invariant_checks = []
     for label, result in all_checks:
         d = result.to_dict()
@@ -750,6 +796,10 @@ def _build_report(
             # dem obigen cross_study['n_family'] (#625, symbolweite Summe über deflation_n_eligible).
             "n_family_stage1": n_family_stage1,
             "n_family_stage2": n_family_stage2,
+            # Issue #832 Fix Punkt 1/3 — Top-K Studies nach Haltedauer (Sekunden), fuer
+            # summary_de.py Abschnitt 4 "Trades mit der laengsten Haltedauer".
+            "longest_holding_studies": _longest_holding_studies(
+                studies_out, top_k=int(optimizer_cfg.get("report_longest_trades_k", 10))),
         },
         "invariant_checks": invariant_checks,
     }

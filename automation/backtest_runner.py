@@ -2239,6 +2239,8 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "avg_holding_time_s": 0.0, "median_holding_time_s": 0.0,
         # Issue #710 — Haltedauer-Metrik in Bars, Schema-konsistent mit dem Nicht-Leer-Pfad.
         "median_bars_held": 0.0, "p95_bars_held": 0.0,
+        # Issue #832 — Max-/Min-/P95-Haltedauer in Sekunden, Schema-konsistent mit dem Nicht-Leer-Pfad.
+        "max_holding_time_s": 0.0, "min_holding_time_s": 0.0, "p95_holding_time_s": 0.0,
         "losses_count": 0,
         "median_position_notional": 0.0,
     }
@@ -2637,6 +2639,25 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         median_bars_held = 0.0
         p95_bars_held = 0.0
 
+    # Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Max-/Min-/P95-Haltedauer in
+    # SEKUNDEN, dieselbe Aggregations-Arithmetik wie median_bars_held/p95_bars_held (#710) direkt
+    # darüber, nur ohne die Bars-Konvertierung. Rohmaterial für den #832-Report-Abschnitt "Trades
+    # mit der längsten Haltedauer" — AGGREGAT-Statistik über die bereits vorhandene ``hold_list``,
+    # bewusst OHNE Einzel-Trade-Identität (Entry-/Exit-Zeitstempel, Richtung): das würde eine neue
+    # State-Verfolgung in der FIFO-Match-Schleife von ``extract_metrics`` voraussetzen (die
+    # Round-Trip-Aggregation trägt aktuell keinen Entry-Zeitstempel/keine Richtung je Position) —
+    # siehe ``automation/optimizer/summary_de.py``-Docstring für die vollständige Scope-Begründung.
+    if hold_list:
+        holds_s_sorted = sorted(holds_s)
+        max_holding_time_s = holds_s_sorted[-1]
+        min_holding_time_s = holds_s_sorted[0]
+        p95_holding_idx = max(0, min(len(holds_s_sorted) - 1, round(0.95 * (len(holds_s_sorted) - 1))))
+        p95_holding_time_s = holds_s_sorted[p95_holding_idx]
+    else:
+        max_holding_time_s = 0.0
+        min_holding_time_s = 0.0
+        p95_holding_time_s = 0.0
+
     # Coherence Invariant Check (Issue #528, Task 2.2)
     if hold_list is not None and len(hold_list) > 0 and mtm_series is not None:
         # Evaluierung der flachen Endposition über hold_list (Prüfung des terminalen Elements auf Abwesenheit offener Positionen).
@@ -2718,6 +2739,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Issue #710 — Haltedauer-Metrik in Bars (Enabler für #711 Time-Box-Penalty).
         "median_bars_held": float(median_bars_held),
         "p95_bars_held": float(p95_bars_held),
+        # Issue #832 Fix Punkt 1 — Max-/Min-/P95-Haltedauer in Sekunden (#742-Report-Abschnitt
+        # "Trades mit der laengsten Haltedauer", siehe summary_de.py).
+        "max_holding_time_s": float(max_holding_time_s),
+        "min_holding_time_s": float(min_holding_time_s),
+        "p95_holding_time_s": float(p95_holding_time_s),
         "losses_count": losses_count,
         "median_position_notional": float(med_notional),
         # Issue #771 — Diagnose-Telemetrie der Renditeserien-Identität (siehe

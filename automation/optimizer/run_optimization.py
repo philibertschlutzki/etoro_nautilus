@@ -2437,6 +2437,13 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # tragbar; die Serie liegt in user_attrs, nicht auf der Platte.
         if metrics.oos_evaluated:
             trial.set_user_attr("oos_period_returns", list(metrics.oos_period_returns))
+        # Issue #832 Fix Punkt 1 — Haltedauer in Sekunden je Trial persistiert (Rohmaterial fuer
+        # report._study_record's je-Study-Aggregat, das summary_de.py Abschnitt 4 speist).
+        if metrics.oos_evaluated:
+            if metrics.oos_max_holding_time_s is not None:
+                trial.set_user_attr("oos_max_holding_time_s", metrics.oos_max_holding_time_s)
+            if metrics.oos_p95_holding_time_s is not None:
+                trial.set_user_attr("oos_p95_holding_time_s", metrics.oos_p95_holding_time_s)
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,

@@ -723,3 +723,46 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
                 f"Paare mit action=='none': {offenders} — vermutlich ein Evidenzschwellen-Deadlock "
                 "(Pitfall #258), analog #829."),
     )
+
+
+def check_holding_time_cap(study_records: list[dict], *,
+                           bar_seconds: float = 3600.0, max_bars_in_trade_cap: float = 24.0,
+                           tolerance_bars: float = 0.01) -> InvariantResult:
+    """Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Plausibilitätswächter: KEIN
+    Trade darf länger halten als die #714/GR-01-Zeitbox-Obergrenze für ``max_bars_in_trade``
+    (``spaces._MAX_BARS_IN_TRADE_CAP`` = 24 Bars, Single Source of Truth über ALLE Strategien —
+    ``HourlyStrategyBase`` erzwingt den Zeit-Exit unabhängig vom je Trial gesampelten Wert). Ein
+    Treffer ist ein Bug im Exit-Pfad, keine Dateneigenart — zugleich ein Test des
+    Zeitbox-Vertrags, nicht nur eine Diagnose der Haltedauer selbst.
+
+    Prüft ``report._study_record``s ``max_holding_time_s`` (Sekunden, das MAXIMUM über alle
+    ``oos_evaluated`` Trials einer Study) gegen ``max_bars_in_trade_cap`` Bars — die je-Trial-
+    ``max_bars_in_trade``-Grenze KANN kleiner sein (Suchraum), NIE grösser als dieser globale
+    Deckel; die Prüfung auf dem globalen Deckel ist damit die korrekte (konservativste) obere
+    Schranke, ohne je Trial dessen konkreten gesampelten Wert nachladen zu müssen."""
+    with_data = [r for r in study_records if r.get("max_holding_time_s") is not None]
+    if not with_data:
+        return InvariantResult(
+            name="check_holding_time_cap",
+            passed=True,
+            expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
+            actual=None,
+            detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
+                   "nicht anwendbar.",
+        )
+    cap_s = (max_bars_in_trade_cap + tolerance_bars) * bar_seconds
+    offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": round(r["max_holding_time_s"] / bar_seconds, 4)
+        for r in with_data if r["max_holding_time_s"] > cap_s
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_holding_time_cap",
+        passed=passed,
+        expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies überschreiten die #714/GR-01-Zeitbox-Obergrenze "
+                f"({max_bars_in_trade_cap} Bars): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase "
+                "erzwingt den Zeit-Exit nicht), keine Dateneigenart."),
+    )

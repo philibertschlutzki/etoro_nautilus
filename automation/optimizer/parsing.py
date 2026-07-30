@@ -115,6 +115,11 @@ class TournamentMetrics:
     # grün). Reine Telemetrie in dieser Stufe — der Reward-Term folgt in #711.
     oos_median_bars_held: float | None = None
     oos_p95_bars_held: float | None = None
+    # Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Haltedauer in SEKUNDEN
+    # (Rohmaterial fuer summary_de.py Abschnitt 4 "Trades mit der laengsten Haltedauer"), direkt
+    # aus backtest_runner._calculate_stats. None ⇒ migrationssicher (Legacy-JSONs ohne das Feld).
+    oos_max_holding_time_s: float | None = None
+    oos_p95_holding_time_s: float | None = None
     # Issue #562/#774 — Round-Trip-Kosten (bps, spread + commission) derselben Single Source of
     # Truth, die bereits das kostenrelative Expectancy-Gate speist (backtest_runner.
     # _evaluate_oos_eligibility). #774 konsumiert denselben Wert für die Turnover-Reward-Strafe
@@ -217,6 +222,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
     oos_median_bars_held = oos_metrics.get("median_bars_held")
     oos_p95_bars_held = oos_metrics.get("p95_bars_held")
+    # Issue #832 — Haltedauer in Sekunden (None-safe ⇒ rückwärtskompatibel zu Pre-#832-JSONs).
+    oos_max_holding_time_s = oos_metrics.get("max_holding_time_s")
+    oos_p95_holding_time_s = oos_metrics.get("p95_holding_time_s")
 
     # Issue #774 — dieselbe Round-Trip-Kosten-Telemetrie, die bereits das Expectancy-Gate speist
     # (backtest_runner._evaluate_oos_eligibility, #562/#684). None-safe.
@@ -342,6 +350,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
         oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,
         oos_p95_bars_held=float(oos_p95_bars_held) if oos_p95_bars_held is not None else None,
+        oos_max_holding_time_s=float(oos_max_holding_time_s) if oos_max_holding_time_s is not None else None,
+        oos_p95_holding_time_s=float(oos_p95_holding_time_s) if oos_p95_holding_time_s is not None else None,
         # Issue #774 — Round-Trip-Kosten (bps), None-safe.
         round_trip_cost_bps=float(round_trip_cost_bps) if round_trip_cost_bps is not None else None,
         period_returns_truncated=period_returns_truncated,

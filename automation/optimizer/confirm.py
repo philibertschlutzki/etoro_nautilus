@@ -403,6 +403,19 @@ def _metrics_dict(m) -> dict:
         "oos_evaluated": m.oos_evaluated,
         "oos_eligible": m.oos_eligible,
         "oos_total_trades": m.oos_total_trades,
+        # Issue #832 Fix Punkt 2/3 (Katalog #828-#835, GitHub-Issue #751) — monetäre Holdout-
+        # Kennzahlen, die summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ausschliesslich aus dem
+        # #742-Report-JSON lesen können muss (kein zweiter Datenzugriff auf tournament_result.json/
+        # trial_dir). Dieselbe Single Source of Truth wie das restliche metrics_symbol-Dict —
+        # TournamentMetrics parst sie bereits (parsing.py), sie waren nur bislang nicht Teil DIESER
+        # kuratierten Teilmenge. ``getattr``-defensiv (analog ``oos_gate_deltas`` unten): manche
+        # Aufrufer/Tests übergeben ein minimales Metrics-Double ohne diese Felder.
+        "oos_total_return": getattr(m, "oos_total_return", None),
+        "oos_expectancy": getattr(m, "oos_expectancy", None),
+        "oos_win_rate": getattr(m, "oos_win_rate", None),
+        "oos_profit_factor": getattr(m, "oos_profit_factor", None),
+        "oos_buyhold_return": getattr(m, "oos_buyhold_return", None),
+        "oos_excess_return": getattr(m, "oos_excess_return", None),
         # Issue #786 — dieselbe Struktur wie ``oos_gate_deltas`` der OOS-Trials (der Holdout-
         # Backtest durchlaeuft denselben Aggregationspfad, ``parsing.TournamentMetrics`` parst sie
         # bereits), hier auf dem HOLDOUT-Fenster statt der OOS-Folds.
