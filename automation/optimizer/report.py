@@ -364,6 +364,13 @@ def _study_record(proposal: dict, study,
         # Normalfall). Macht eine Subprozess-Invariantenverletzung im #742-Report sichtbar, ohne ein
         # Trial-Verzeichnis zu öffnen oder trial_dir/logs/ zu lesen.
         "inference_diagnostics_by_code": inference_diagnostics_by_code,
+        # Issue #825 Fix Punkt 3 — expliziter Alias auf denselben #804-Zähler: wie viele Trials
+        # dieser Study waehrend des OOS-Fensters wirtschaftlich ruiniert wurden (Equity <= 0,
+        # backtest_runner.assert_positive_equity/EQUITY_NONPOSITIVE). Diese Trials sind bereits
+        # ueber REJECT_OOS_INVALID_METRICS (#801/#803) NIE oos_eligible und damit NIE
+        # promotionsfaehig — dieses Feld macht nur die HAEUFIGKEIT sichtbar, ohne die Zaehl-Logik
+        # zu duplizieren.
+        "liquidated_trials": inference_diagnostics_by_code.get("EQUITY_NONPOSITIVE", 0),
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
