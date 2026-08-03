@@ -28,6 +28,11 @@ class InvariantResult:
     expected: Any
     actual: Any
     detail: str
+    # Issue #849 — Schweregrad, damit Sektion 5 des #832-Berichts nach Dringlichkeit statt nach
+    # Auftrittsreihenfolge sortieren kann. "blocking" macht eine Study ungültig (siehe #839
+    # check_holding_time_cap); Default "medium" für alle bisherigen Checks (rückwärtskompatibel —
+    # kein bestehender Aufrufer muss das Feld setzen).
+    severity: str = "medium"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,7 +41,53 @@ class InvariantResult:
             "expected": self.expected,
             "actual": self.actual,
             "detail": self.detail,
+            "severity": self.severity,
         }
+
+
+# Issue #714/GR-01 — dieselbe konservative obere Schranke wie
+# ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``spaces._MAX_BARS_IN_TRADE_CAP``. Absichtlich
+# hier als eigene Konstante (statt eines Imports) gehalten: ``invariants.py`` ist bewusst frei von
+# einer nautilus_trader-Abhängigkeit (siehe Moduldocstring — reine Funktionen über plain Dicts).
+_MAX_BARS_IN_TRADE_CAP = 24.0
+_BAR_SECONDS = 3600.0
+
+
+def compute_trial_timebox_violations(trial_attrs: list[dict], *,
+                                     max_bars_in_trade_cap: float = _MAX_BARS_IN_TRADE_CAP,
+                                     bar_seconds: float = _BAR_SECONDS,
+                                     tolerance_bars: float = 0.01) -> dict[str, Any]:
+    """Issue #839 — je-Trial-Zeitbox-Verletzung: vergleicht die tatsächlich beobachtete Haltedauer
+    (``oos_max_holding_time_s``, seit #832 je Trial persistiert) gegen den für DIESEN Trial
+    GESAMPELTEN ``max_bars_in_trade`` (``sampled_params``, seit #669 je Trial mitgeführt) — fehlt
+    dieser Wert (Strategie sampelt ihn nicht), gegen den globalen #714/GR-01-Deckel (dieselbe
+    konservative obere Schranke wie ``check_holding_time_cap``).
+
+    Ein Treffer bedeutet: dieser Trial wurde auf einer Simulation bewertet, die den eigenen
+    Zeit-Exit-Vertrag verletzt hat (Bug im Exit-Pfad, siehe #836/#837) — seine Metriken sind dann
+    keine gültige Grundlage für Eligibility/Reward/Promotion. Reine Funktion über bereits geladene
+    ``trial.user_attrs``-Dicts, unabhängig von Optuna-Objekten (siehe Moduldocstring)."""
+    violation_trades = 0
+    evaluated_trades = 0
+    for attrs in trial_attrs or []:
+        holding_s = attrs.get("oos_max_holding_time_s")
+        if holding_s is None:
+            continue
+        evaluated_trades += 1
+        sampled = attrs.get("sampled_params") or {}
+        cap_bars = sampled.get("max_bars_in_trade")
+        if cap_bars is None:
+            cap_bars = max_bars_in_trade_cap
+        cap_s = (float(cap_bars) + tolerance_bars) * bar_seconds
+        if holding_s > cap_s:
+            violation_trades += 1
+    fraction = round(violation_trades / evaluated_trades, 4) if evaluated_trades else 0.0
+    return {
+        "timebox_violation_trades": violation_trades,
+        "timebox_evaluated_trades": evaluated_trades,
+        "timebox_violation_fraction": fraction,
+        "timebox_violated": violation_trades > 0,
+    }
 
 
 def check_sr0_coherence(holdout_metrics: dict) -> InvariantResult:
@@ -749,6 +800,7 @@ def check_holding_time_cap(study_records: list[dict], *,
             actual=None,
             detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
                    "nicht anwendbar.",
+            severity="blocking",
         )
     cap_s = (max_bars_in_trade_cap + tolerance_bars) * bar_seconds
     offenders = {
@@ -761,6 +813,7 @@ def check_holding_time_cap(study_records: list[dict], *,
         passed=passed,
         expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
         actual=offenders if offenders else None,
+        severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies überschreiten die #714/GR-01-Zeitbox-Obergrenze "
                 f"({max_bars_in_trade_cap} Bars): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase "

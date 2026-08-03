@@ -48,6 +48,12 @@ from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
 )
 
+# Issue #839 — analog wallclock_guard.sweep_wallclock_exceeded/disk_guard.sweep_abort_requested:
+# prozessweites Signal, WELCHE Fail-Fast-Invariante (optimizer.json['fail_fast_invariants']) den
+# Abbruch ausgeloest hat (None = keiner). Von run_per_symbol_sweep gesetzt, von main() gelesen, um
+# run_status='aborted_invariant' zu waehlen.
+sweep_fail_fast_invariant: str | None = None
+
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
     """Symbol-Universum aus data/universe/momentum_ls.json (robust gegen Dicts)."""
@@ -1482,6 +1488,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     except (OSError, ValueError):
         _sweep_max_wallclock_h = 24
 
+    # Issue #839 — Fail-Fast-Preflight: statt 24 h Rechenzeit zu verbrennen, bevor eine gebrochene
+    # Simulation (z. B. #836/#837-Klasse) als ungültig erkannt wird, wird eine der gelisteten
+    # Invarianten bereits nach den ersten ``fail_fast_min_symbols`` abgeschlossenen Symbolen
+    # geprüft. Default ``["check_holding_time_cap"]`` (die #714/GR-01-Zeitbox-Invariante) — leer
+    # ⇒ deaktiviert (bit-identisch zum Pre-#839-Verhalten).
+    global sweep_fail_fast_invariant
+    sweep_fail_fast_invariant = None
+    _fail_fast_invariants = opt_data.get("fail_fast_invariants", ["check_holding_time_cap"]) or []
+    _fail_fast_min_symbols = int(opt_data.get("fail_fast_min_symbols", 2))
+
     # Issue #833 Fix Punkt 3 — Checkpoint EINMAL vor dem ersten Symbol geschrieben, damit
     # symbols_planned auch dann verfuegbar ist, wenn der Lauf schon im allerersten Symbol
     # abbricht (VOR dem ersten regulaeren _write_checkpoint()-Aufruf weiter unten).
@@ -1585,6 +1601,37 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
         completed_symbols.add(symbol)
         _write_checkpoint()
+
+        # Issue #839 — Fail-Fast-Preflight-Probe: EINMAL, sobald genug Symbole für eine belastbare
+        # Aussage abgeschlossen sind. Reine Lesefunktion (``report._build_report`` schreibt nichts
+        # auf die Platte) über die bereits im Speicher gesammelten Proposal-Pfade dieses Laufs —
+        # kein zusätzlicher Backtest, keine Doppelarbeit.
+        if (using_real_optimize and _fail_fast_invariants
+                and len(completed_symbols) >= _fail_fast_min_symbols
+                and sweep_fail_fast_invariant is None):
+            try:
+                from automation.optimizer import report as _report_probe_mod
+                _probe_report = _report_probe_mod._build_report(
+                    proposals, run_id=run_id, started_at_utc=None, wallclock_s=None, cli_args=None)
+                sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
+                    _probe_report.get("invariant_checks"), _fail_fast_invariants)
+            except Exception:
+                logging.getLogger("optimizer").warning(
+                    "[#839] Fail-Fast-Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
+                    "fort).", exc_info=True,
+                )
+            if sweep_fail_fast_invariant is not None:
+                logging.getLogger("optimizer").error(
+                    "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) — Sweep bricht sofort "
+                    "ab (run_status=aborted_invariant), statt nach allen Symbolen spät zu "
+                    "scheitern.", sweep_fail_fast_invariant, len(completed_symbols),
+                )
+                emit_execution_event(
+                    logging.getLogger("optimizer"), "SWEEP_ABORTED_ON_FAIL_FAST_INVARIANT",
+                    {"check": sweep_fail_fast_invariant, "symbols_completed": len(completed_symbols)},
+                    level=logging.ERROR,
+                )
+                break
 
     # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
     # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne
@@ -1768,7 +1815,9 @@ def main(argv: list[str] | None = None) -> list[Path]:
     try:
         proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs,
                                          n_jobs_source=n_jobs_source, run_id=run_id)
-        if wallclock_guard.sweep_wallclock_exceeded.is_set():
+        if sweep_fail_fast_invariant is not None:
+            run_status = "aborted_invariant"
+        elif wallclock_guard.sweep_wallclock_exceeded.is_set():
             run_status = "aborted_wallclock"
         elif disk_guard.sweep_abort_requested.is_set():
             run_status = "aborted_disk"
@@ -1857,6 +1906,17 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
 # Issue #773 — siehe Kommentar in main() oben.
 _LAST_REPORT_PATH: "Path | None" = None
+
+
+def _first_failing_fail_fast_invariant(invariant_checks: list[dict], fail_fast_invariants: list[str]) -> str | None:
+    """Issue #839 — reine Entscheidungsfunktion: welcher (falls einer) der in
+    ``optimizer.json['fail_fast_invariants']`` gelisteten Check-Namen in ``invariant_checks``
+    (z. B. aus ``report._build_report(...)['invariant_checks']``) FAILt. ``None`` ⇒ keiner der
+    gelisteten Checks ist verletzt (der Sweep läuft weiter)."""
+    for chk in invariant_checks or []:
+        if chk.get("name") in fail_fast_invariants and not chk.get("passed", True):
+            return chk.get("name")
+    return None
 
 
 def _report_has_failing_invariant(report_path) -> bool:

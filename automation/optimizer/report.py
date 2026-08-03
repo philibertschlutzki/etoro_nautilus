@@ -268,6 +268,11 @@ def _study_record(proposal: dict, study,
             max_holding_time_s = candidate
             p95_holding_time_s = a.get("oos_p95_holding_time_s")
 
+    # Issue #839 — je-Trial-Zeitbox-Verletzung (nicht nur das Study-Maximum aus #832 oben): eine
+    # gemessene GR-01-Verletzung erhält hier eine Konsequenz (REJECT_INVALID_TIMEBOX in confirm.py
+    # konsumiert dieselbe Berechnung; siehe invariants.compute_trial_timebox_violations).
+    timebox = _inv.compute_trial_timebox_violations(trial_attrs)
+
     best_reward = None
     if study is not None:
         try:
@@ -387,6 +392,12 @@ def _study_record(proposal: dict, study,
         # Issue #832 Fix Punkt 1 — je-Study Haltedauer-Extrema (Sekunden), siehe Aggregat oben.
         "max_holding_time_s": max_holding_time_s,
         "p95_holding_time_s": p95_holding_time_s,
+        # Issue #839 — je-Trial-Zeitbox-Verletzung, aggregiert je Study (siehe
+        # invariants.compute_trial_timebox_violations für die Berechnung je Trial).
+        "timebox_violation_trades": timebox["timebox_violation_trades"],
+        "timebox_evaluated_trades": timebox["timebox_evaluated_trades"],
+        "timebox_violation_fraction": timebox["timebox_violation_fraction"],
+        "timebox_violated": timebox["timebox_violated"],
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route

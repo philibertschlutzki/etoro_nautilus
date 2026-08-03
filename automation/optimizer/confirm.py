@@ -9,6 +9,7 @@ from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
 from automation.optimizer.manifest import WORK
 from automation.log_manager import emit_execution_event
+from automation.optimizer import invariants as _inv
 
 # Issue #659 — gültige Werte für tournament.json['promotion_correction_mode']. "conjunction"
 # (Default, fehlt der Key) ist bit-identisch zum Pre-#659-Verhalten (DSR UND Bootstrap-CI UND PBO
@@ -616,9 +617,43 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     cfg_dir = config_dir()
     risk_dd_cap = 0.30
     tournament_path = cfg_dir / "tournament.json"
+    _early_tournament_cfg: dict = {}
     if tournament_path.exists():
         with open(tournament_path, "r", encoding="utf-8") as f:
-            risk_dd_cap = (json.load(f) or {}).get("max_drawdown", 0.30)
+            _early_tournament_cfg = json.load(f) or {}
+            risk_dd_cap = _early_tournament_cfg.get("max_drawdown", 0.30)
+
+    # Issue #839 — eine Study, deren Simulation den #714/GR-01-Zeitbox-Vertrag verletzt (Bug im
+    # Exit-Pfad, #836/#837), wird VOR jedem statistischen Gate verworfen (und VOR dem teuren
+    # Holdout-Backtest des globalen Baseline-Vektors weiter unten) — ihre Metriken sind unter einem
+    # anderen Handelsvertrag entstanden als dem konfigurierten, jede nachgelagerte Eligibility-/
+    # Reward-/Deflations-Entscheidung wäre ein kontaminiertes Urteil (analog #773s Behandlung von
+    # coherence_violation_rate_exceeded oben).
+    import logging as _logging_early
+    _timebox_tolerance = float(_early_tournament_cfg.get("timebox_violation_tolerance", 0.0))
+    _timebox_trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in (getattr(study, "trials", None) or [])]
+    _timebox = _inv.compute_trial_timebox_violations(_timebox_trial_attrs)
+    if _timebox["timebox_violation_fraction"] > _timebox_tolerance:
+        emit_execution_event(_logging_early.getLogger("optimizer"), "STUDY_REJECTED_ON_TIMEBOX_VIOLATION", {
+            "symbol": symbol, "strategy": strategy,
+            "timebox_violation_fraction": _timebox["timebox_violation_fraction"],
+            "timebox_violation_trades": _timebox["timebox_violation_trades"],
+            "timebox_evaluated_trades": _timebox["timebox_evaluated_trades"],
+        }, level=_logging_early.ERROR)
+        return {
+            "promote": False,
+            "status": "REJECTED_ON_HOLDOUT",
+            "is_rejection_detail_override": "REJECT_INVALID_TIMEBOX",
+            "promotion_route": None,
+            "symbol_params": {},
+            "R_symbol": 0.0,
+            "R_global": None,
+            "promotion_margin": 0.0,
+            "holdout_passed": False,
+            "trial_dir": None,
+            "metrics_symbol": {},
+            "metrics_global": {},
+        }
 
     promotion_margin = 0.10
     optimizer_path = cfg_dir / "optimizer.json"

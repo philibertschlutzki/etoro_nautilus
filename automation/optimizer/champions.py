@@ -224,7 +224,10 @@ def _configured_admissible_reject_details(opt_data: dict) -> frozenset[str]:
     raw = opt_data.get("champion_admissible_reject_details")
     if raw is None:
         return _DEFAULT_ADMISSIBLE_HOLDOUT_REJECT_DETAILS
-    return frozenset(raw) - {"REJECT_HOLDOUT_GATE"}
+    # Issue #839 — REJECT_INVALID_TIMEBOX (Simulation verletzt den #714/GR-01-Zeitbox-Vertrag)
+    # darf NIE zulässig sein, ebensowenig wie REJECT_HOLDOUT_GATE: der Parametervektor ist unter
+    # einer bekanntermassen fehlerhaften Simulation nicht als "bewährt" belegbar.
+    return frozenset(raw) - {"REJECT_HOLDOUT_GATE", "REJECT_INVALID_TIMEBOX"}
 
 
 def _holdout_gate_shortfall_relative(gate_deltas: dict, binding_gate: str,

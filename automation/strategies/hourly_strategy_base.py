@@ -21,6 +21,7 @@ Usage in a strategy:
 """
 from __future__ import annotations
 
+import enum
 import logging
 import traceback
 import pandas as pd
@@ -39,8 +40,19 @@ from nautilus_trader.trading.strategy import Strategy
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.indicators import SimpleMovingAverage
 from automation.momentum_ls_allocator import MomentumLSAllocator
+from automation.log_manager import emit_execution_event
 
 log = logging.getLogger(__name__)
+
+
+class ExitReason(enum.Enum):
+    """Issue #838 — Enum statt stringbasierter Exit-Klassifikation (`"Trailing Stop" not in
+    exit_reason`), damit eine Umformulierung der Log-Meldung die Semantik nicht mehr ändern kann."""
+
+    TRAILING_STOP = "TRAILING_STOP"
+    TIME_BOX = "TIME_BOX"
+    SIGNAL_REVERSAL = "SIGNAL_REVERSAL"
+    PROFIT_TARGET = "PROFIT_TARGET"
 
 
 class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
@@ -62,6 +74,9 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     min_holding_time: int = 0
     min_signal_strength: float = 0.0
     max_trades_cap: int | None = None
+    # Issue #836 — Bars, die der Watchdog wartet, bevor er einen ausgelösten, aber nie bestätigten
+    # Exit (Cancel/Fill/Reject-Event blieb aus) mit einem erzwungenen Markt-Close abschliesst.
+    exit_close_max_bars: int = 2
     # Issue #712 (Req-02+Req-03, opt-in) — vereinheitlichtes dynamisches Take-Profit-Modell,
     # in der Basisklasse für alle 15 Strategien verfügbar. Default False ⇒ bit-identische
     # Regression (der statische profit_target_pct-Pfad bleibt unverändert erhalten).
@@ -215,7 +230,18 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_side: str | None = None
         self._bars_in_position: int = 0
         self._in_position: bool = False
+        # Issue #837 — entkoppelt die Trailing-Stop-Initialisierung vom _in_position-Flag:
+        # _in_position bleibt jetzt waehrend eines laufenden (asynchronen) Exit-Versuchs True,
+        # darf also nie mehr eine Neuverankerung des Trailing-Stops ausloesen koennen.
+        self._trailing_initialised: bool = False
         self._pending_cancels: set = set()
+        # Issue #836 — Fortsetzungs-Zustand eines ausgeloesten, aber noch nicht bestaetigten Exits.
+        # Wird ausschliesslich in on_position_closed() auf None zurueckgesetzt (der einzige Ort, der
+        # eine BESTAETIGTE Transaktion beschreibt).
+        self._exit_pending: str | None = None
+        self._exit_pending_kind: "ExitReason | None" = None
+        self._exit_pending_bars: int = 0
+        self._exit_market_close_submitted: bool = False
         self._max_bars_in_trade = getattr(config, "max_bars_in_trade", None)
         if self._max_bars_in_trade is None:
             self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
@@ -233,6 +259,23 @@ class HourlyStrategyBase(Strategy):
         self._daily_trades: int = 0
         self._current_day: int | None = None
         self._executed_trades: int = 0
+
+        # Issue #838 (Pitfall #263) — min_holding_time und max_bars_in_trade sind zwei unabhaengig
+        # sampelbare Parameter mit einer impliziten Ordnungsbeziehung. Ohne Klemmung wuerde
+        # min_holding_time >= max_bars_in_trade den Zeit-Exit dauerhaft unterdruecken koennen
+        # (analog zur bestehenden MAX_BARS_IN_TRADE_HARD_CAP-Klemmung oben).
+        min_holding_time_cfg = int(getattr(config, "min_holding_time", 0) or 0)
+        if min_holding_time_cfg >= self._max_bars_in_trade:
+            clamped = max(0, self._max_bars_in_trade - 1)
+            self._log.warning(
+                f"[{config.instrument_id}] min_holding_time="
+                f"{min_holding_time_cfg} >= max_bars_in_trade={self._max_bars_in_trade} — geklemmt auf "
+                f"{clamped} (Issue #838)."
+            )
+            self._min_holding_time = clamped
+        else:
+            self._min_holding_time = min_holding_time_cfg
+        self._exit_close_max_bars = max(1, int(getattr(config, "exit_close_max_bars", None) or 2))
 
         # Issue #712 — dynamischer Take-Profit (opt-in, siehe HourlyStrategyConfig.dyn_tp_enabled).
         # _dyn_tp_pending_cancel/_dyn_tp_pending_target verwalten das Cancel/Replace GETRENNT von
@@ -466,13 +509,11 @@ class HourlyStrategyBase(Strategy):
         return 0.0
 
     def _check_exits_and_update(self, bar: Bar) -> bool:
-        if getattr(self.config, "max_trades_cap", None) and self._executed_trades >= self.config.max_trades_cap:
-            return True
-
         """
         Called at the START of every on_bar() in subclasses.
         Updates ATR, trailing stop level, and bar counter.
-        Returns True if an exit order was submitted (caller should return immediately).
+        Returns True if an exit order was submitted OR is already in flight (caller should return
+        immediately in both cases — no new signals while a close is unresolved).
         Returns False if no exit triggered (caller continues with signal logic).
 
         NOTE regarding Slippage vs. Native Orders:
@@ -482,6 +523,11 @@ class HourlyStrategyBase(Strategy):
         Crucially, this ensures absolute consistency between historical backtests (which use 1h bars)
         and the Walk-Forward/Out-of-Sample live execution, maintaining the statistical integrity of the
         gating thresholds.
+
+        Issue #836/#837 — a triggered exit is asynchronous (a resting order may need to be
+        cancelled first). All state describing a CONFIRMED transaction (`_in_position`,
+        `_bars_in_position`, the trailing stop) is therefore only ever reset in
+        `on_position_closed`/`on_position_opened` — never here, and never in `_close_position_base`.
         """
         current_day = pd.Timestamp(bar.ts_init).day
         if self._current_day != current_day:
@@ -498,12 +544,15 @@ class HourlyStrategyBase(Strategy):
                 self._trailing_stop_price = None
                 self._trailing_stop_side = None
                 self._bars_in_position = 0
+            self._trailing_initialised = False
+            self._exit_pending = None
+            self._exit_pending_kind = None
+            self._exit_pending_bars = 0
+            self._exit_market_close_submitted = False
             self._pending_cancels.clear()
             return False
 
         pos = positions[0]
-
-
 
         close = float(bar.close)
 
@@ -520,6 +569,12 @@ class HourlyStrategyBase(Strategy):
             else:
                 self._bars_in_position = 0
             self._pending_cancels.clear()
+
+        # Issue #837 — von _in_position entkoppelt: einmalig pro Position, nie erneut ausgelöst
+        # durch einen fehlgeschlagenen/verzögerten Exit-Versuch (der _in_position unverändert
+        # True lässt).
+        if not self._trailing_initialised:
+            self._trailing_initialised = True
             self._trailing_stop_side = "LONG" if pos.side == PositionSide.LONG else "SHORT"
             if self._exit_atr.initialized:
                 atr_val = self._exit_atr.value
@@ -530,7 +585,8 @@ class HourlyStrategyBase(Strategy):
             else:
                 self._trailing_stop_price = None
 
-
+        # Issue #837 (AK-1) — der Bar-Zähler läuft weiter, solange die Position offen ist, auch
+        # während ein Exit-Versuch noch unbestätigt ist (_exit_pending).
         self._bars_in_position += 1
 
         # Update trailing stop (only moves in favourable direction)
@@ -542,6 +598,13 @@ class HourlyStrategyBase(Strategy):
             else:
                 new_stop = close + self._atr_trailing_multiplier * atr_val
                 self._trailing_stop_price = min(self._trailing_stop_price, new_stop)
+
+        # Issue #836 — ein Exit ist bereits unterwegs: keinen zweiten Exit auslösen (kein
+        # Doppel-Close, keine Order-Flut). Der Watchdog erzwingt den Close, falls die
+        # Cancel/Fill/Reject-Bestätigung ausbleibt.
+        if self._exit_pending is not None:
+            self._exit_close_watchdog(bar)
+            return True
 
         # Exit condition 1: ATR Trailing Stop hit
         exit_reason = None
@@ -555,26 +618,26 @@ class HourlyStrategyBase(Strategy):
                     f"ATR Trailing Stop SHORT hit @ {close:.4f} >= {self._trailing_stop_price:.4f}"
                 )
 
+        exit_kind = ExitReason.TRAILING_STOP if exit_reason is not None else None
 
-        # Exit condition 2: Time-based exit (48 bars)
+        # Exit condition 2: Time-based exit (24 bars, GR-01/#714)
         if exit_reason is None and self._bars_in_position >= self._max_bars_in_trade:
             exit_reason = f"Time-exit after {self._bars_in_position} bars"
+            exit_kind = ExitReason.TIME_BOX
 
-        # Apply min_holding_time guard to exits that are not trailing stops (e.g. time exits, signals, etc)
-        if exit_reason is not None and getattr(self.config, "min_holding_time", 0) > 0:
-            if "Trailing Stop" not in exit_reason and self._bars_in_position < self.config.min_holding_time:
-                exit_reason = None # Ignore the exit if holding time is not reached
+        # Issue #838 — min_holding_time greift ausdrücklich NICHT bei TRAILING_STOP oder TIME_BOX
+        # (die beiden einzigen Exit-Arten, die dieser Block auslösen kann): der Konstruktor klemmt
+        # min_holding_time bereits hart unter max_bars_in_trade (Pitfall #263), und keiner der
+        # beiden mechanismuskritischen Exits darf durch eine zukünftige Fehlkonfiguration dauerhaft
+        # unterdrückbar sein.
 
         if exit_reason:
             self._log.info(f"[{self.instrument_id}] EXIT: {exit_reason}")
+            self._exit_pending = exit_reason
+            self._exit_pending_kind = exit_kind
+            self._exit_pending_bars = 0
+            self._exit_market_close_submitted = False
             self._close_position_base(pos)
-            self._in_position = False
-            self._trailing_stop_price = None
-            self._trailing_stop_side = None
-            self._take_profit_price = None
-            self._bars_in_position = 0
-            self._pending_cancels.clear()
-            self._reset_dyn_tp_state()
             return True
 
         # Issue #712 — dynamischer Take-Profit: Cancel/Replace der ruhenden Limit-Order je Bar,
@@ -583,6 +646,40 @@ class HourlyStrategyBase(Strategy):
             self._update_dyn_tp_order()
 
         return False
+
+    def _exit_close_watchdog(self, bar: Bar) -> None:
+        """Issue #836 — erzwingt den Markt-Close, falls seit dem Auslösen des Exits
+        `exit_close_max_bars` Bars vergangen sind, ohne dass eine Cancel/Fill/Reject-Bestätigung
+        `_execute_market_close()` bereits ausgelöst hat. Fail-loud statt still hängen."""
+        if self._exit_market_close_submitted:
+            return
+        self._exit_pending_bars += 1
+        if self._exit_pending_bars < self._exit_close_max_bars:
+            return
+
+        open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
+        payload = {
+            "instrument": str(self.instrument_id),
+            "exit_reason": self._exit_pending,
+            "bars_waited": self._exit_pending_bars,
+            "open_orders": [str(o.client_order_id) for o in open_orders],
+        }
+        emit_execution_event(log, "EXIT_CLOSE_STALLED", payload, level=logging.ERROR)
+        self._log.error(
+            f"[{self.instrument_id}] EXIT_CLOSE_STALLED nach {self._exit_pending_bars} Bars "
+            f"(exit_reason={self._exit_pending}) — erzwinge Markt-Close."
+        )
+        self._pending_cancels.clear()
+        self._execute_market_close()
+
+    def _entry_allowed(self) -> bool:
+        """Issue #838 — Trade-Caps gehören ausschliesslich in den Entry-Pfad (hier, konsumiert von
+        `_compute_quantity`, gemeinsam mit `max_daily_trades`). Ein Cap darf niemals die Auswertung
+        von Trailing-Stop, Zeit-Exit oder ATR-Update in `_check_exits_and_update` blockieren."""
+        max_cap = getattr(self.config, "max_trades_cap", None)
+        if max_cap is not None and self._executed_trades >= max_cap:
+            return False
+        return True
 
     def _close_position_base(self, pos) -> None:
         """Submits a market order to close the given position. Cancels pending limits first."""
@@ -601,6 +698,12 @@ class HourlyStrategyBase(Strategy):
             if not positions:
                 return
             pos = positions[0]
+
+        # Issue #836 — sobald der Markt-Close tatsächlich abgesetzt wird, ist das Fortsetzungs-Token
+        # dieses Exit-Versuchs konsumiert: der Watchdog darf nicht erneut auslösen, während auf die
+        # Fill-Bestätigung (on_position_closed) gewartet wird.
+        if self._exit_pending is not None:
+            self._exit_market_close_submitted = True
 
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
         order = self.order_factory.market(
@@ -789,6 +892,16 @@ class HourlyStrategyBase(Strategy):
                 )
                 return None
 
+        # Issue #838 — max_trades_cap sperrt AUSSCHLIESSLICH Entries. Ein Early-Return in
+        # _check_exits_and_update hätte auch Trailing-Stop/Zeit-Exit/ATR-Update mitgesperrt und
+        # jede zu diesem Zeitpunkt offene Position bis Datenreihenende gehalten (#836/#837-Klasse).
+        if not self._entry_allowed():
+            self._log.warning(
+                f"[{self.instrument_id}] MAX_TRADES_CAP_REJECT: {self._executed_trades} Trades "
+                f"erreicht (Limit: {self.config.max_trades_cap})."
+            )
+            return None
+
         trade_amount_usd_cfg = getattr(self.config, "trade_amount_usd", None)
         trade_amount_pct = getattr(self.config, "trade_amount_pct", None)
 
@@ -861,11 +974,17 @@ class HourlyStrategyBase(Strategy):
         """Reset exit state when a new position opens. _check_exits_and_update initializes
         trailing stop on the first bar after entry."""
         self._in_position = False  # triggers init block in _check_exits_and_update
+        self._trailing_initialised = False  # Issue #837 — entkoppelte Neuverankerung, einmalig pro Position
         self._bars_in_position = 0
         self._pending_cancels.clear()
         self._trailing_stop_price = None
         self._trailing_stop_side = None
         self._take_profit_price = None
+        # Issue #836 — eine neue Position beginnt garantiert ohne einen laufenden Exit-Versuch.
+        self._exit_pending = None
+        self._exit_pending_kind = None
+        self._exit_pending_bars = 0
+        self._exit_market_close_submitted = False
         self._daily_trades += 1
         self._executed_trades += 1
         self._log.info(f"[{self.instrument_id}] PositionOpened: {event} (Trade {self._daily_trades} today, {self._executed_trades} total)")
@@ -910,11 +1029,18 @@ class HourlyStrategyBase(Strategy):
                 self._submit_dyn_tp_order(target, instrument)
 
     def on_position_closed(self, event) -> None:
+        # Issue #837 — dies ist der EINZIGE Ort ausserhalb von on_position_opened, der _in_position
+        # auf False setzt: eine bestätigte Transaktion. Ebenso der einzige Ort, der _exit_pending
+        # (#836) konsumiert.
         self._in_position = False
         self._trailing_stop_price = None
         self._trailing_stop_side = None
         self._take_profit_price = None
         self._bars_in_position = 0
         self._pending_cancels.clear()
+        self._exit_pending = None
+        self._exit_pending_kind = None
+        self._exit_pending_bars = 0
+        self._exit_market_close_submitted = False
         self._reset_dyn_tp_state()
         self._log.info(f"[{self.instrument_id}] PositionClosed: {event}")
