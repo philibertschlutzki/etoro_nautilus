@@ -1368,6 +1368,15 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # bleibt, wie stark die Near-Duplicate-Reduktion N tatsächlich reduziert hat.
     best_result["metrics_symbol"]["pbo_n_configs_raw"] = pbo_telemetry.get("pbo_n_configs_raw")
     best_result["metrics_symbol"]["pbo_metric"] = pbo_telemetry.get("pbo_metric")
+    # Issue #847 — explizit benannter Alias auf die bereits declusterte Config-Zahl
+    # (``pbo_n_configs`` ist laut ``_study_pbo``-Docstring bereits die effektive Zahl; der
+    # ausdrückliche Name macht das ohne Docstring-Lektüre nachvollziehbar) + die Schwelle, GEGEN
+    # DIE ``pbo_overfit`` oben entschieden wurde — ohne sie ist ein exportiertes ``pbo``-Urteil
+    # nicht nachprüfbar (Root-Cause #847: PBO=0.89 war nicht von einem Cluster-Artefakt
+    # unterscheidbar ohne die effektive Konfigurationszahl UND die Schwelle nebeneinander).
+    best_result["metrics_symbol"]["pbo_n_configs_effective"] = pbo_telemetry.get("pbo_n_configs")
+    if study_pbo is not None:
+        best_result["metrics_symbol"]["pbo_threshold"] = 0.5
     # Issue #697 — sichtbar machen, falls die Konjunktion trotz #697-Konsolidierung noch ein von der
     # LIVE-Kohorte als redundant markiertes Gate enthält (Regelfall: leere Liste).
     if unconsolidated_gates:

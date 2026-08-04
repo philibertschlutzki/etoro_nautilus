@@ -220,8 +220,24 @@ def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, prop
 
     promote = proposal.get("status") in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
     method = holdout_metrics.get("deflation_inference_method")
+    # Issue #847 — 17 REJECT_SELECTION_PBO-Ablehnungen trugen `inference_method.promotion:
+    # {applied: False}`, obwohl eine CSCV/PBO-Inferenz TATSÄCHLICH gelaufen war (deflation_
+    # inference_method ist DSR-spezifisch und bleibt bei einer reinen PBO-Ablehnung None — dieser
+    # Block sah also keine gelaufene Methode). `holdout_metrics['pbo']` ist nicht-None GENAU dann,
+    # wenn `_study_pbo` ein Urteil gefällt hat (siehe confirm.py) — das IST die dokumentierte
+    # Promotions-Inferenz für diesen Ausgang, unabhängig davon, ob sie zur Ablehnung führte.
+    pbo_value = holdout_metrics.get("pbo")
     if method is not None:
         promotion = {"method": method, "applied": True, "skipped_reason": None}
+    elif pbo_value is not None:
+        promotion = {
+            "method": "cscv", "applied": True, "skipped_reason": None,
+            "pbo": pbo_value,
+            "pbo_n_groups": holdout_metrics.get("pbo_n_groups"),
+            "pbo_n_configs_raw": holdout_metrics.get("pbo_n_configs_raw"),
+            "pbo_n_configs_effective": holdout_metrics.get("pbo_n_configs"),
+            "pbo_threshold": holdout_metrics.get("pbo_threshold"),
+        }
     elif promote:
         promotion = {"method": "not_applicable", "applied": True, "skipped_reason": None}
     else:
