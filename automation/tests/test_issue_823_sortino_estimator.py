@@ -76,7 +76,11 @@ def test_sufficient_downside_observations_computes_sortino():
     for r in rets:
         vals.append(vals[-1] * (1 + r))
     series = pd.Series(vals, index=idx)
-    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=25):
+    # Issue #844 — sortino_numeric_guard_min_periods ist jetzt real gesetzt (1600); bei 60
+    # Perioden deaktiviert, da dieser Test die downside_observations-Schwelle prueft, nicht den
+    # T-bewussten Numerik-Guard.
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=25), \
+         patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         stats = _calculate_stats([1.0] * 30 + [-1.0] * 30, [(3600 * 10**9, 1.0)] * 60, 1000.0,
                                  mtm_series=series, min_trades_for_sortino=10)
     codes = [d["code"] for d in stats["inference_diagnostics"]]

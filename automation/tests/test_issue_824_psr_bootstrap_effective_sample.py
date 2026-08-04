@@ -53,7 +53,11 @@ def test_bootstrap_se_does_not_shrink_with_added_flat_padding():
     rng = np.random.default_rng(11)
     informative = rng.normal(0.0005, 0.012, 50).tolist()
 
-    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+    # Issue #844 — sortino_numeric_guard_min_periods ist jetzt real gesetzt (1600); bei 50
+    # Perioden deaktiviert, damit der T-bewusste Guard psr_se_boot hier nicht auf None kippt
+    # (nicht Testgegenstand — dieser Test prueft die Bootstrap-SE-Stabilitaet gegen Padding).
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+         patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         series_no_padding = _series_with_flat_padding(informative, n_flat_bars=0)
         stats_no_padding = _calculate_stats(
             [1.0] * 25 + [-1.0] * 25, [(3600 * 10**9, 1.0)] * 50, 1000.0,

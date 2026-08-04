@@ -194,6 +194,41 @@ def assert_pandas_version_supported() -> None:
         )
 
 
+def assert_required_config_keys_valid() -> None:
+    """Issue #844 (Pitfall #267, 5. Wiederkehr) — FAIL-LOUD beim Sweep-Start: jeder in
+    ``automation/config/_required_keys.json`` als ``required`` markierte Key muss in seiner
+    Config-Datei existieren, darf nicht ``null`` sein und keinen ``reject_values``-Eintrag tragen.
+    ``sortino_numeric_guard_min_periods`` (#665/#823) blieb trotz eines dokumentierten Fixes NIE
+    tatsächlich gesetzt — dieser Preflight verhindert, dass ein registrierter Key erneut still
+    fehlen kann, statt den Defekt erst nach einem vollen Sweep-Lauf zu bemerken. Exit-Code 2
+    (fail-loud), analog ``main()``'s ``--resume``-Validierung. Fehlt ``_required_keys.json``
+    selbst ⇒ No-Op (die Registry ist opt-in additiv, kein Pflichtartefakt)."""
+    spec_path = config_dir() / "_required_keys.json"
+    if not spec_path.exists():
+        return
+    try:
+        spec = json.loads(spec_path.read_text("utf-8")) or {}
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"❌ [#844] {spec_path} nicht lesbar: {e} — Exit-Code 2.") from e
+
+    configs: dict[str, dict] = {}
+    for filename in spec:
+        if filename in ("schema_version", "_comment"):
+            continue
+        cfg_path = config_dir() / filename
+        try:
+            configs[filename] = json.loads(cfg_path.read_text("utf-8")) or {} if cfg_path.exists() else {}
+        except (OSError, ValueError):
+            configs[filename] = {}
+
+    from automation.optimizer import invariants as _inv
+    result = _inv.check_required_config_keys(configs, spec)
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#844] REQUIRED_CONFIG_KEYS_VIOLATION: {result.detail}", file=_sys.stderr)
+        _sys.exit(2)
+
+
 def _assert_gate_reward_parity() -> None:
     """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
     ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität).
@@ -1132,6 +1167,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Zustand wie das entfernte floor_plateau_k=0 (#488/#753/#769) — fail-loud statt eines
         # stillen NULL-modellierten-Trials-Urteils.
         assert_structural_min_modelled_trials_valid(opt_data)
+        # Issue #844 — Config-Key-Registry-Preflight (_required_keys.json): ein Key, der stillschweigend
+        # fehlen und einen Mechanismus lautlos deaktivieren kann (Pitfall #267), bricht den Lauf jetzt
+        # VOR dem ersten Symbol ab, statt erst nach vollem Durchlauf im Report aufzufallen.
+        assert_required_config_keys_valid()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()

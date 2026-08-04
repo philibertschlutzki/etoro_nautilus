@@ -821,6 +821,49 @@ def check_holding_time_cap(study_records: list[dict], *,
     )
 
 
+def check_required_config_keys(configs: dict[str, dict], required_keys_spec: dict) -> InvariantResult:
+    """Issue #844 (Pitfall #267, 5. Wiederkehr nach #488/#753/#769/#805) — FAIL, wenn ein in
+    ``required_keys_spec`` (``automation/config/_required_keys.json``) als ``required`` markierter
+    Key in seiner Config-Datei fehlt, ``null`` ist, oder einen ``reject_values``-Eintrag trägt.
+
+    ``configs``: ``{"tournament.json": {...bereits geladen...}, "optimizer.json": {...}}``.
+    ``required_keys_spec``: ``{"tournament.json": {key: {"required": bool, "reject_values": [...]}},
+    ...}`` — Metadaten-Keys wie ``schema_version``/``_comment`` werden ignoriert.
+
+    Reine Funktion über bereits geladene Dicts — kein Datei-I/O hier (der Aufrufer, z. B.
+    ``sweep.assert_required_config_keys_valid``, lädt beide Dateien)."""
+    offenders: dict[str, str] = {}
+    for filename, fields in (required_keys_spec or {}).items():
+        if not isinstance(fields, dict):
+            continue  # schema_version/_comment — keine Feld-Spezifikation
+        cfg = configs.get(filename) or {}
+        for key, spec in fields.items():
+            if not isinstance(spec, dict) or not spec.get("required", False):
+                continue
+            offender_key = f"{filename}::{key}"
+            if key not in cfg:
+                offenders[offender_key] = "fehlt"
+                continue
+            value = cfg.get(key)
+            if value is None:
+                offenders[offender_key] = "ist null"
+                continue
+            reject_values = spec.get("reject_values") or []
+            if value in reject_values:
+                offenders[offender_key] = f"verbotener Wert {value!r}"
+    passed = not offenders
+    return InvariantResult(
+        name="check_required_config_keys",
+        passed=passed,
+        expected="alle in _required_keys.json als required markierten Keys gesetzt, nicht null, "
+                 "kein reject_values-Treffer",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Config-Key(s) verletzen die #844-Registry: {offenders}"),
+    )
+
+
 def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: int = 3) -> InvariantResult:
     """Issue #841 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als ``max_age_runs``
     abgeschlossenen Sweep-Läufen nicht abgedeckt wurde (niemals abgedeckt zählt als maximal alt).
