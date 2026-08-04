@@ -2675,6 +2675,32 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         min_holding_time_s = 0.0
         p95_holding_time_s = 0.0
 
+    # Issue #850 — exposure_fraction: Anteil der Fenster-Zeit mit offener Position. Rohmaterial:
+    # dieselbe ``hold_list`` wie oben (avg_holding_time_s/max_holding_time_s), KEINE neue
+    # State-Verfolgung in der FIFO-Match-Schleife (dieselbe Scope-Entscheidung wie summary_de.py's
+    # longest_trades-Docstring). Summe der Haltezeiten aller Round-Trips geteilt durch die
+    # Fenster-Spanne — bei mehreren Folds (``mtm_frames``, z. B. OOS) die SUMME der Einzel-Fold-
+    # Spannen (schliesst Embargo-Luecken ZWISCHEN Folds aus der Spanne aus, statt sie faelschlich
+    # als "Fenster-Zeit ohne Handelsmoeglichkeit" mitzuzaehlen); sonst die Spanne der einzelnen
+    # ``mtm_series``. Auf [0, 1] geklemmt (Schutz gegen > 1 bei — hier nicht erwarteten —
+    # ueberlappenden Positionen). None ohne auswertbare Fenster-Spanne (nicht beurteilbar).
+    exposure_fraction: float | None = None
+    if hold_list:
+        _window_span_s = None
+        if mtm_frames:
+            _fold_spans = [
+                (f.index[-1] - f.index[0]).total_seconds() for f in mtm_frames
+                if len(f.index) >= 2 and isinstance(f.index, pd.DatetimeIndex)
+            ]
+            if _fold_spans:
+                _window_span_s = sum(_fold_spans)
+        elif (mtm_series is not None and len(mtm_series.index) >= 2
+              and isinstance(mtm_series.index, pd.DatetimeIndex)):
+            _window_span_s = (mtm_series.index[-1] - mtm_series.index[0]).total_seconds()
+        if _window_span_s and _window_span_s > 0:
+            _total_held_s = sum(holds_s)
+            exposure_fraction = max(0.0, min(1.0, _total_held_s / _window_span_s))
+
     # Coherence Invariant Check (Issue #528, Task 2.2)
     if hold_list is not None and len(hold_list) > 0 and mtm_series is not None:
         # Evaluierung der flachen Endposition über hold_list (Prüfung des terminalen Elements auf Abwesenheit offener Positionen).
@@ -2768,6 +2794,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "max_holding_time_s": float(max_holding_time_s),
         "min_holding_time_s": float(min_holding_time_s),
         "p95_holding_time_s": float(p95_holding_time_s),
+        # Issue #850 — Anteil der Fenster-Zeit mit offener Position (siehe Berechnungskommentar
+        # oben). None ⇒ nicht beurteilbar (keine mtm_series/hold_list, rückwärtskompatibel).
+        "exposure_fraction": float(exposure_fraction) if exposure_fraction is not None else None,
         "losses_count": losses_count,
         "median_position_notional": float(med_notional),
         # Issue #771 — Diagnose-Telemetrie der Renditeserien-Identität (siehe

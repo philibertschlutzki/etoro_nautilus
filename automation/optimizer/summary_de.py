@@ -40,6 +40,11 @@ _RUN_STATUS_LABELS_DE = {
     "aborted_error": "abgebrochen (unerwartete Exception)",
 }
 
+# Issue #850 — Floor für den excess_per_exposure-Nenner (Abschnitt 2.3): eine exposure_fraction
+# nahe 0 (kaum Marktzeit) darf den normierten Excess nicht gegen unendlich treiben — 1 % ist eine
+# reine Anzeige-Sicherung, kein kalibrierter Schwellenwert.
+_EXPOSURE_EPSILON = 0.01
+
 
 def _fmt_pct(x: float | None, *, digits: int = 1) -> str:
     return f"{x * 100:.{digits}f} %" if x is not None else "k. A."
@@ -175,20 +180,54 @@ def _section_2_monetary_result(report: dict) -> str:
             )
     lines.append("")
 
-    # 2.3 Vergleich gegen Buy & Hold
+    # Issue #850 — Abschnitt 2.3 mass vorher das SYMBOL, nicht die Strategie: holdout_excess_return
+    # ist im Bärenmarkt näherungsweise −Buy&Hold, also eine Symbol-Konstante (Varianzanteil Symbol
+    # 99,1 % auf den Katalog-Daten). Vier Änderungen: (1) Strategie-/B&H-Return + Zeit im Markt
+    # zusätzlich zur Excess-Spalte, (2) Sortierung nach Strategie-Return statt Excess, (3) ein
+    # negativer B&H-Return unterdrückt die "schlägt Buy & Hold"-Wertung (trivial positiver Excess
+    # gegen einen fallenden Markt ist kein Alpha-Nachweis), (4) excess_per_exposure normiert den
+    # Excess auf die tatsächlich eingegangene Marktzeit.
     lines.append("### 2.3 Vergleich gegen Buy & Hold je Symbol")
     lines.append("")
     with_benchmark = [r for r in studies if r.get("holdout_excess_return") is not None]
     if not with_benchmark:
         lines.append("Keine Benchmark-Vergleichsdaten in diesem Lauf verfügbar.")
     else:
-        lines.append("| Strategie | Symbol | Excess-Return ggü. Buy & Hold | Vorzeichen |")
-        lines.append("|---|---|---:|---|")
-        for r in sorted(with_benchmark, key=lambda r: r.get("holdout_excess_return") or 0.0, reverse=True):
+        lines.append(
+            "| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | "
+            "Excess/Exposure | Vorzeichen |"
+        )
+        lines.append("|---|---|---:|---:|---:|---:|---:|---|")
+        for r in sorted(with_benchmark, key=lambda r: r.get("holdout_total_return") or 0.0, reverse=True):
             excess = r["holdout_excess_return"]
-            sign = "positiv (schlägt Buy & Hold)" if excess > 0 else (
-                "negativ (unter Buy & Hold)" if excess < 0 else "neutral")
-            lines.append(f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(excess)} | {sign} |")
+            buyhold = r.get("holdout_buyhold_return")
+            exposure = r.get("holdout_exposure_fraction")
+            excess_per_exposure = (
+                excess / max(exposure if exposure is not None else 0.0, _EXPOSURE_EPSILON)
+            )
+            if buyhold is not None and buyhold < 0:
+                sign = "B&H negativ — Excess trivial positiv"
+            elif excess > 0:
+                sign = "positiv (schlägt Buy & Hold)"
+            elif excess < 0:
+                sign = "negativ (unter Buy & Hold)"
+            else:
+                sign = "neutral"
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
+                f"{_fmt_pct(buyhold)} | {_fmt_pct(excess)} | {_fmt_pct(exposure)} | "
+                f"{_fmt_pct(excess_per_exposure)} | {sign} |"
+            )
+        lines.append("")
+        decomposition = (report.get("cross_study") or {}).get("excess_variance_decomposition")
+        if decomposition and decomposition.get("symbol_share") is not None:
+            lines.append(
+                "Anteil der Streuung, der auf das Symbol statt auf die Strategie entfällt: "
+                f"{_fmt_pct(decomposition['symbol_share'])} (Strategie + Rest: "
+                f"{_fmt_pct(decomposition.get('strategy_share'))}, n={decomposition.get('n_rows', 0)}) "
+                "— ein hoher Symbol-Anteil bedeutet: der Excess-Return ist in diesem Lauf kein "
+                "Strategie-Unterscheidungsmerkmal (#850, Pitfall #268)."
+            )
     lines.append("")
 
     # 2.4 Kostenbasis

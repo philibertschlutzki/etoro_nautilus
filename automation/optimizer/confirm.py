@@ -417,6 +417,10 @@ def _metrics_dict(m) -> dict:
         "oos_profit_factor": getattr(m, "oos_profit_factor", None),
         "oos_buyhold_return": getattr(m, "oos_buyhold_return", None),
         "oos_excess_return": getattr(m, "oos_excess_return", None),
+        # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
+        # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
+        # unterscheiden kann.
+        "oos_exposure_fraction": getattr(m, "oos_exposure_fraction", None),
         # Issue #786 — dieselbe Struktur wie ``oos_gate_deltas`` der OOS-Trials (der Holdout-
         # Backtest durchlaeuft denselben Aggregationspfad, ``parsing.TournamentMetrics`` parst sie
         # bereits), hier auf dem HOLDOUT-Fenster statt der OOS-Folds.

@@ -449,6 +449,10 @@ def _study_record(proposal: dict, study,
         "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
         "holdout_buyhold_return": holdout_metrics.get("oos_buyhold_return"),
         "holdout_excess_return": holdout_metrics.get("oos_excess_return"),
+        # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position (siehe
+        # backtest_runner._calculate_stats "exposure_fraction"), Rohmaterial für summary_de.py
+        # Abschnitt 2.3 (Excess-Return vs. echtes Alpha) und cross_study.excess_variance_decomposition.
+        "holdout_exposure_fraction": holdout_metrics.get("oos_exposure_fraction"),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
         # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
         # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
@@ -689,6 +693,48 @@ def _selection_rule_families(studies_out: list[dict[str, Any]]) -> dict[str, dic
     return out
 
 
+def _excess_variance_decomposition(studies_out: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Issue #850 — einfache Ein-Weg-Varianzzerlegung von ``holdout_excess_return`` NACH SYMBOL
+    (Quadratsummen-Zerlegung, analog einer einfaktoriellen ANOVA): ``symbol_share`` ist der Anteil
+    der GESAMT-Streuung, der bereits durch die reine Symbol-Gruppierung erklärt wird
+    (Zwischen-Gruppen-Quadratsumme / Gesamt-Quadratsumme); ``strategy_share`` ist der Rest
+    (Streuung INNERHALB eines Symbols — Strategie-Unterschied UND Restrauschen, hier bewusst NICHT
+    weiter getrennt, siehe Issue-Text "Strategie + Rest").
+
+    Root-Cause #850/Pitfall #268: 14 strukturell verschiedene Strategien lieferten auf demselben
+    Symbol Holdout-Excess-Returns innerhalb weniger Prozentpunkte, bei einem absoluten Niveau von
+    über 20 — der Excess-Return maß im Bärenmarkt näherungsweise NUR ``−Buy&Hold`` (eine
+    Symbol-Konstante), nicht die Handelsleistung der Strategie. ``None`` bei < 2 Symbolen ODER
+    < 2 Datenpunkten insgesamt (Varianz nicht definiert) — reine additive Diagnose-Telemetrie."""
+    rows = [
+        (r.get("symbol"), r.get("holdout_excess_return"))
+        for r in studies_out
+        if r.get("holdout_excess_return") is not None and r.get("symbol") is not None
+    ]
+    if len(rows) < 2:
+        return None
+    by_symbol: dict[str, list[float]] = {}
+    for symbol, excess in rows:
+        by_symbol.setdefault(symbol, []).append(float(excess))
+    if len(by_symbol) < 2:
+        return None
+    all_values = [v for values in by_symbol.values() for v in values]
+    grand_mean = sum(all_values) / len(all_values)
+    ss_total = sum((v - grand_mean) ** 2 for v in all_values)
+    if ss_total <= 0:
+        return {"symbol_share": None, "strategy_share": None, "n_rows": len(all_values)}
+    ss_between = sum(
+        len(values) * (sum(values) / len(values) - grand_mean) ** 2
+        for values in by_symbol.values()
+    )
+    symbol_share = ss_between / ss_total
+    return {
+        "symbol_share": symbol_share,
+        "strategy_share": max(0.0, 1.0 - symbol_share),
+        "n_rows": len(all_values),
+    }
+
+
 def _longest_holding_studies(studies_out: list[dict[str, Any]], *, top_k: int = 10) -> list[dict[str, Any]]:
     """Issue #832 Fix Punkt 1/3 — Top-``top_k`` Studies nach ``max_holding_time_s`` absteigend, für
     summary_de.py Abschnitt 4 ("Trades mit der längsten Haltedauer"). Rein additiv aus dem bereits
@@ -894,6 +940,9 @@ def _build_report(
             # summary_de.py Abschnitt 4 "Trades mit der laengsten Haltedauer".
             "longest_holding_studies": _longest_holding_studies(
                 studies_out, top_k=int(optimizer_cfg.get("report_longest_trades_k", 10))),
+            # Issue #850 — {symbol_share, strategy_share, n_rows} über holdout_excess_return;
+            # None bei < 2 Symbolen mit Benchmark-Daten (siehe Docstring).
+            "excess_variance_decomposition": _excess_variance_decomposition(studies_out),
         },
         "invariant_checks": invariant_checks,
     }
