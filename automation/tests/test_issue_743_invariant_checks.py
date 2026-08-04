@@ -274,4 +274,10 @@ def test_reward_term_variance_pass_when_insufficient_data():
 def test_invariant_result_to_dict_has_expected_keys():
     result = inv.check_sr0_coherence({})
     d = result.to_dict()
-    assert set(d.keys()) == {"name", "passed", "expected", "actual", "detail"}
+    # Issue #849 — "severity" ist seit Kohorte D ein fuenftes Feld (Default "medium"), damit
+    # Berichtssektion 5 nach Dringlichkeit statt Auftrittsreihenfolge sortieren kann. "check" ist
+    # ein Uebergangs-Alias auf denselben Wert wie "name" (summary_de.py las bislang "check", das
+    # to_dict() nie schrieb -- 519x "**None**" im Bericht), bis alle Konsumenten auf "name"
+    # migriert sind.
+    assert set(d.keys()) == {"name", "check", "passed", "expected", "actual", "detail", "severity"}
+    assert d["name"] == d["check"]

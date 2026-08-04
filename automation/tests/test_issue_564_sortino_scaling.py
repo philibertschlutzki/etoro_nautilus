@@ -136,8 +136,11 @@ def test_monotonic_edge_scaling():
         # returns: +m, -20, +m, +m...
         series = pd.Series([100.0, 100.0+m, 100.0+m-20.0, 100.0+m*2-20.0, 100.0+m*3-20.0, 100.0+m*4-20.0, 100.0+m*5-20.0, 100.0+m*6-20.0, 100.0+m*7-20.0, 100.0+m*8-20.0], index=idx)
         # Issue #823 — synthetisches 10-Perioden-Fixture, < Default 30 sortino_min_downside_
-        # observations; dieser Test prueft Monotonie, nicht die Mindest-Stichprobe.
-        with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+        # observations; dieser Test prueft Monotonie, nicht die Mindest-Stichprobe. Issue #844 —
+        # sortino_numeric_guard_min_periods ist jetzt real gesetzt (1600); bei nur 9 Perioden
+        # deaktiviert, um den T-bewussten Guard nicht zu treffen (nicht Testgegenstand hier).
+        with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+             patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
             stats = br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
         sortinos.append(stats.get("sortino_ratio"))
     assert sortinos[0] < sortinos[1] < sortinos[2], f"Sortino should scale monotonically: {sortinos}"

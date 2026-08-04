@@ -23,7 +23,7 @@ from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
-from automation.optimizer.manifest import WORK, write_json_atomic
+from automation.optimizer.manifest import WORK, write_json_atomic, catalog_fingerprint, library_versions
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
     load_global_best,
@@ -39,6 +39,7 @@ from automation.optimizer import champions
 from automation.optimizer import retention
 from automation.optimizer import disk_guard
 from automation.optimizer import wallclock_guard
+from automation.optimizer import symbol_coverage
 from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
@@ -47,6 +48,12 @@ from automation.optimizer.sweep_diagnostics import (
 from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
 )
+
+# Issue #839 — analog wallclock_guard.sweep_wallclock_exceeded/disk_guard.sweep_abort_requested:
+# prozessweites Signal, WELCHE Fail-Fast-Invariante (optimizer.json['fail_fast_invariants']) den
+# Abbruch ausgeloest hat (None = keiner). Von run_per_symbol_sweep gesetzt, von main() gelesen, um
+# run_status='aborted_invariant' zu waehlen.
+sweep_fail_fast_invariant: str | None = None
 
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
@@ -185,6 +192,64 @@ def assert_pandas_version_supported() -> None:
             f"automation/requirements.txt) — die #756/#801-Log-Return-Identitaet ist nur in diesem "
             f"Bereich versionsstabil verifiziert."
         )
+
+
+def assert_required_config_keys_valid() -> None:
+    """Issue #844 (Pitfall #267, 5. Wiederkehr) — FAIL-LOUD beim Sweep-Start: jeder in
+    ``automation/config/_required_keys.json`` als ``required`` markierte Key muss in seiner
+    Config-Datei existieren, darf nicht ``null`` sein und keinen ``reject_values``-Eintrag tragen.
+    ``sortino_numeric_guard_min_periods`` (#665/#823) blieb trotz eines dokumentierten Fixes NIE
+    tatsächlich gesetzt — dieser Preflight verhindert, dass ein registrierter Key erneut still
+    fehlen kann, statt den Defekt erst nach einem vollen Sweep-Lauf zu bemerken. Exit-Code 2
+    (fail-loud), analog ``main()``'s ``--resume``-Validierung. Fehlt ``_required_keys.json``
+    selbst ⇒ No-Op (die Registry ist opt-in additiv, kein Pflichtartefakt)."""
+    spec_path = config_dir() / "_required_keys.json"
+    if not spec_path.exists():
+        return
+    try:
+        spec = json.loads(spec_path.read_text("utf-8")) or {}
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"❌ [#844] {spec_path} nicht lesbar: {e} — Exit-Code 2.") from e
+
+    configs: dict[str, dict] = {}
+    for filename in spec:
+        if filename in ("schema_version", "_comment"):
+            continue
+        cfg_path = config_dir() / filename
+        try:
+            configs[filename] = json.loads(cfg_path.read_text("utf-8")) or {} if cfg_path.exists() else {}
+        except (OSError, ValueError):
+            configs[filename] = {}
+
+    from automation.optimizer import invariants as _inv
+    result = _inv.check_required_config_keys(configs, spec)
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#844] REQUIRED_CONFIG_KEYS_VIOLATION: {result.detail}", file=_sys.stderr)
+        _sys.exit(2)
+
+
+def assert_pinned_library_versions_valid() -> None:
+    """Issue #852 (P2) — FAIL-LOUD beim Sweep-Start, gemeinsam mit ``assert_required_config_keys_
+    valid`` (#844): jede installierte Bibliotheksversion, die in ``optimizer.json[
+    'pinned_library_versions']`` gepinnt ist, muss innerhalb ihres Bereichs (``requirements.txt``-
+    Format, z. B. ``'>=4.9,<5.0'``) liegen. Root-Cause: ``optuna`` stand ohne jede Versionsangabe
+    in ``requirements.txt``, obwohl derselbe Kommentar dort (#802) erklärt, warum das für ``pandas``
+    inakzeptabel war — der numerische Ausgang der Selektion (TPESampler-Defaults,
+    ``constraints_func``-Interaktion, ``TrialState.PRUNED``-Semantik) hängt sonst an der
+    Installationsumgebung statt der Konfiguration. Exit-Code 2 (fail-loud), analog
+    ``assert_pandas_version_supported``. Fehlt der Config-Key ⇒ No-Op (leeres Pin-Dict, kein
+    Drift-Check aktiv — rückwärtskompatibel)."""
+    from automation.optimizer import invariants as _inv
+    opt_data = _load_optimizer_config()
+    pinned = opt_data.get("pinned_library_versions") or {}
+    if not pinned:
+        return
+    result = _inv.check_library_version_drift(library_versions(), pinned)
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#852] LIBRARY_VERSION_DRIFT: {result.detail}", file=_sys.stderr)
+        _sys.exit(2)
 
 
 def _assert_gate_reward_parity() -> None:
@@ -1008,7 +1073,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
                          optimize_symbol=None, confirm=None,
-                         run_id: str | None = None, bar_quality_fn=None) -> list[Path]:
+                         run_id: str | None = None, bar_quality_fn=None,
+                         max_wallclock_h_override: float | None = None) -> list[Path]:
     """Dispatcht für jedes enumerierte Paar optimize_symbol → confirm_per_symbol_promotion →
     export_symbol_proposal und gibt die Proposal-Pfade zurück. Betritt NIE Phase 5.
 
@@ -1061,6 +1127,21 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     dem im Issue behaupteten Nutzen ("jeder Trial läuft bis zum Ende") und würde eine echte
     Subprozess-IPC-Restrukturierung (fold-weises Zwischen-Reporting) voraussetzen, um den
     tatsächlichen Durchsatzgewinn zu erzielen — ebenfalls zurückgestellt.
+
+    Issue #840/#841/#842 (Katalog #840-#843, GitHub-Issue #754) — implementiert: ``--resume``/
+    ``--run-id`` (CLI-Einstieg in den #799-Checkpoint, siehe ``sweep.main()``), das
+    Symbol-Abdeckungs-Ledger (``symbol_coverage.py``, treibt ``sweep_symbol_order_policy``) und
+    das Laufzeit-Budget 24→72h + ``--max-wallclock-h`` + Vorab-Prognose. Issue #843
+    (Pipelining über Symbolgrenzen hinweg, ``pipeline_depth``) bleibt AUS DEMSELBEN, oben
+    ausgeführten Grund weiterhin zurückgestellt: dieses Environment hat nach wie vor keinen
+    echten Mehrsymbol-Produktionslauf, gegen den eine Restrukturierung der Dispatch-Schleife
+    empirisch verifiziert werden könnte (AK-1 in #843 verlangt bitgleiche ``n_family``/
+    ``deflation_n_effective``/``selection_rule_fingerprint`` über einen echten 3-Symbol-Referenz-
+    lauf) — eine blind implementierte Restrukturierung risikiert exakt die stille
+    Korrektheitsregression, die #843 selbst als Grund für die ursprüngliche Zurückstellung nennt.
+    #841 (Ledger) + #842 (Budget) lösen die vom Nutzer geforderte Vollabdeckung bereits OHNE
+    Pipelining (in einem 72-h-Lauf oder mehreren fortgesetzten Etappen); #843 bleibt ein reiner
+    Durchsatz-Hebel für eine spätere Sitzung mit Zugriff auf einen realen Katalog.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
@@ -1109,6 +1190,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Zustand wie das entfernte floor_plateau_k=0 (#488/#753/#769) — fail-loud statt eines
         # stillen NULL-modellierten-Trials-Urteils.
         assert_structural_min_modelled_trials_valid(opt_data)
+        # Issue #844 — Config-Key-Registry-Preflight (_required_keys.json): ein Key, der stillschweigend
+        # fehlen und einen Mechanismus lautlos deaktivieren kann (Pitfall #267), bricht den Lauf jetzt
+        # VOR dem ersten Symbol ab, statt erst nach vollem Durchlauf im Report aufzufallen.
+        assert_required_config_keys_valid()
+        # Issue #852 — Bibliotheksversions-Drift-Preflight (teilt den Preflight-Einstieg mit #844):
+        # eine installierte Version ausserhalb des gepinnten Bereichs bricht VOR dem ersten Symbol ab.
+        assert_pinned_library_versions_valid()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
@@ -1321,6 +1409,22 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     for _pair in pairs:
         pairs_by_symbol.setdefault(_pair[1], []).append(_pair)
 
+    # Issue #841 — Symbol-Dispatch-Reihenfolge: 'least_recently_covered' (Default) rotiert das
+    # Universum über mehrere Läufe hinweg, statt bei einem Laufzeit-Budget < Vollabdeckung immer
+    # denselben Universums-Kopf zu bedienen. 'universe' reproduziert die bisherige (reine
+    # Einfüge-)Reihenfolge bitgleich (Rückwärtskompatibilität). NICHT an using_real_optimize
+    # gekoppelt (analog dem #799-Checkpoint direkt darunter) — mit injizierten HI-7-Fakes testbar.
+    _coverage_path = WORK / "symbol_coverage.json"
+    _symbol_order_policy = opt_data.get("sweep_symbol_order_policy", "least_recently_covered")
+    _coverage_ledger = symbol_coverage.load_coverage(path=_coverage_path)
+    _coverage_ledger = symbol_coverage.start_new_run(_coverage_ledger)
+    # Issue #841 — EINMAL berechnet (nicht je Symbol — ``catalog_fingerprint`` durchläuft den
+    # gesamten Daten-Katalog) und für alle Symbole dieses Laufs wiederverwendet.
+    _coverage_data_snapshot_sha256 = catalog_fingerprint() if using_real_optimize else None
+    _ordered_symbols = symbol_coverage.order_symbols(
+        list(pairs_by_symbol.keys()), _coverage_ledger, policy=_symbol_order_policy)
+    pairs_by_symbol = {sym: pairs_by_symbol[sym] for sym in _ordered_symbols}
+
     # Issue #799 — der Fortschritts-Checkpoint ist NICHT an using_real_optimize gekoppelt (anders
     # als Champion-Store/Retention/Preinit/Backfill): er verfolgt den Dispatch-Fortschritt selbst,
     # unabhaengig davon, ob optimize_symbol/confirm injizierte HI-7-Fakes oder die echte
@@ -1352,10 +1456,34 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # ein Abbruch-Report (sweep.main()) "symbols_completed / symbols_planned" ausweisen
                 # kann, OHNE die Enumeration ein zweites Mal auszufuehren.
                 "symbols_planned": len(pairs_by_symbol),
+                # Issue #840 Punkt 5 — SHA-256 über Strategien + reward_semantics_version +
+                # simulation_semantics_version (#854); main() validiert dies gegen den aktuellen
+                # Stand, BEVOR ein --resume startet (sonst mischt der Resume Studies zweier
+                # Semantiken in dieselbe #652-Familie).
+                "strategies_fingerprint": _strategies_fingerprint(strategies, opt_data),
             })
         except OSError:
             logging.getLogger("optimizer").warning(
                 "[#799] Sweep-Checkpoint konnte nicht geschrieben werden (non-fatal).", exc_info=True)
+
+    def _record_coverage(symbol: str) -> None:
+        # Issue #841 — geschrieben am selben Punkt wie der #799-Checkpoint: JEDES verarbeitete
+        # Symbol (auch eines, dessen Pairs vollständig Gate-1-verworfen wurden oder das an der
+        # #827-Heterogenität scheiterte) gilt als abgedeckt — es wurde nachweislich diesen Lauf
+        # geprüft, unabhängig vom Ergebnis. Fail-open: ein Schreibfehler darf den Sweep nie crashen.
+        nonlocal _coverage_ledger
+        try:
+            _coverage_ledger = symbol_coverage.record_symbol_completion(
+                _coverage_ledger, symbol, run_id=run_id,
+                run_index=_coverage_ledger.get("total_runs_started", 0),
+                completed_at_utc=dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+                data_snapshot_sha256=_coverage_data_snapshot_sha256,
+            )
+            symbol_coverage.write_coverage(_coverage_ledger, path=_coverage_path)
+        except OSError:
+            logging.getLogger("optimizer").warning(
+                "[#841] Symbol-Coverage-Ledger konnte nicht geschrieben werden (non-fatal).",
+                exc_info=True)
 
     def _run_optimize(pair: tuple[str, str, str]):
         strategy, symbol, _reason = pair
@@ -1475,12 +1603,34 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # fehlende Config-Datei) ⇒ ebenfalls 24, NICHT deaktiviert — dieselbe Fail-safe-Haltung wie
     # disk_budget_gb/disk_reserve_gb (ein Konfigurationsfehler darf die Laufzeit-Absicherung nicht
     # lautlos abschalten).
-    try:
-        _sweep_max_wallclock_h = (
-            json.loads((config_dir() / "optimizer.json").read_text("utf-8")) or {}
-        ).get("sweep_max_wallclock_h", 24)
-    except (OSError, ValueError):
-        _sweep_max_wallclock_h = 24
+    if max_wallclock_h_override is not None:
+        # Issue #842 — CLI-Override (--max-wallclock-h) schlägt die Config; <= 0 deaktiviert das
+        # Budget fuer diesen Lauf (dieselbe Konvention wie ein expliziter null-Wert in der Config).
+        _sweep_max_wallclock_h = max_wallclock_h_override if max_wallclock_h_override > 0 else None
+    else:
+        try:
+            _sweep_max_wallclock_h = (
+                json.loads((config_dir() / "optimizer.json").read_text("utf-8")) or {}
+            ).get("sweep_max_wallclock_h", 24)
+        except (OSError, ValueError):
+            _sweep_max_wallclock_h = 24
+
+    # Issue #839 — Fail-Fast-Preflight: statt 24 h Rechenzeit zu verbrennen, bevor eine gebrochene
+    # Simulation (z. B. #836/#837-Klasse) als ungültig erkannt wird, wird eine der gelisteten
+    # Invarianten bereits nach den ersten ``fail_fast_min_symbols`` abgeschlossenen Symbolen
+    # geprüft. Default ``["check_holding_time_cap"]`` (die #714/GR-01-Zeitbox-Invariante) — leer
+    # ⇒ deaktiviert (bit-identisch zum Pre-#839-Verhalten).
+    global sweep_fail_fast_invariant
+    sweep_fail_fast_invariant = None
+    _fail_fast_invariants = opt_data.get("fail_fast_invariants", ["check_holding_time_cap"]) or []
+    _fail_fast_min_symbols = int(opt_data.get("fail_fast_min_symbols", 2))
+
+    # Issue #842 Punkt 3 — Vorab-Prognose: nach den ersten wallclock_forecast_after_symbols
+    # abgeschlossenen Symbolen wird der gemessene Takt gegen das Laufzeit-Budget hochgerechnet und
+    # protokolliert (WARNING, falls die Prognose < symbols_planned liegt) — der Operator erfaehrt
+    # das nach ~wenigen Symbolen, nicht erst nach dem vollen Lauf.
+    _wallclock_forecast_after_symbols = int(opt_data.get("wallclock_forecast_after_symbols", 3))
+    _wallclock_forecast_done = False
 
     # Issue #833 Fix Punkt 3 — Checkpoint EINMAL vor dem ersten Symbol geschrieben, damit
     # symbols_planned auch dann verfuegbar ist, wenn der Lauf schon im allerersten Symbol
@@ -1559,6 +1709,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                     {"symbol": symbol, "n_fingerprints": n_fingerprints}, level=logging.ERROR)
                 completed_symbols.add(symbol)
                 _write_checkpoint()
+                _record_coverage(symbol)
                 continue
 
         # Issue #652 — familienweite Multiplizität NUR über die Studies DIESES Symbols (alle
@@ -1585,6 +1736,64 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
         completed_symbols.add(symbol)
         _write_checkpoint()
+        _record_coverage(symbol)
+
+        if (not _wallclock_forecast_done
+                and len(completed_symbols) >= _wallclock_forecast_after_symbols):
+            _wallclock_forecast_done = True
+            _elapsed_so_far = time.perf_counter() - sweep_t0
+            _rate_s_per_symbol = _elapsed_so_far / len(completed_symbols)
+            _forecast = _wallclock_forecast(
+                _rate_s_per_symbol, len(pairs_by_symbol), _sweep_max_wallclock_h)
+            _rate_min = _rate_s_per_symbol / 60.0
+            if _sweep_max_wallclock_h is None:
+                logging.getLogger("optimizer").info(
+                    "[#842] Takt %.1f min/Symbol · kein Laufzeit-Budget gesetzt.", _rate_min)
+            elif _forecast["shortfall"] > 0:
+                logging.getLogger("optimizer").warning(
+                    "[#842] Takt %.1f min/Symbol · Budget %.1f h ⇒ Prognose %d von %d Symbolen "
+                    "erreichbar. WARNUNG: %d Symbole werden nicht erreicht (ab Position %d der "
+                    "aktuellen Reihenfolge).", _rate_min, _sweep_max_wallclock_h,
+                    _forecast["reachable_symbols"], len(pairs_by_symbol), _forecast["shortfall"],
+                    _forecast["reachable_symbols"] + 1,
+                )
+            else:
+                logging.getLogger("optimizer").info(
+                    "[#842] Takt %.1f min/Symbol · Budget %.1f h ⇒ Prognose %d von %d Symbolen "
+                    "erreichbar. OK.", _rate_min, _sweep_max_wallclock_h,
+                    _forecast["reachable_symbols"], len(pairs_by_symbol),
+                )
+
+        # Issue #839 — Fail-Fast-Preflight-Probe: EINMAL, sobald genug Symbole für eine belastbare
+        # Aussage abgeschlossen sind. Reine Lesefunktion (``report._build_report`` schreibt nichts
+        # auf die Platte) über die bereits im Speicher gesammelten Proposal-Pfade dieses Laufs —
+        # kein zusätzlicher Backtest, keine Doppelarbeit.
+        if (using_real_optimize and _fail_fast_invariants
+                and len(completed_symbols) >= _fail_fast_min_symbols
+                and sweep_fail_fast_invariant is None):
+            try:
+                from automation.optimizer import report as _report_probe_mod
+                _probe_report = _report_probe_mod._build_report(
+                    proposals, run_id=run_id, started_at_utc=None, wallclock_s=None, cli_args=None)
+                sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
+                    _probe_report.get("invariant_checks"), _fail_fast_invariants)
+            except Exception:
+                logging.getLogger("optimizer").warning(
+                    "[#839] Fail-Fast-Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
+                    "fort).", exc_info=True,
+                )
+            if sweep_fail_fast_invariant is not None:
+                logging.getLogger("optimizer").error(
+                    "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) — Sweep bricht sofort "
+                    "ab (run_status=aborted_invariant), statt nach allen Symbolen spät zu "
+                    "scheitern.", sweep_fail_fast_invariant, len(completed_symbols),
+                )
+                emit_execution_event(
+                    logging.getLogger("optimizer"), "SWEEP_ABORTED_ON_FAIL_FAST_INVARIANT",
+                    {"check": sweep_fail_fast_invariant, "symbols_completed": len(completed_symbols)},
+                    level=logging.ERROR,
+                )
+                break
 
     # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
     # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne
@@ -1656,24 +1865,26 @@ def _resolve_strategies(arg: str) -> list[str]:
     return out
 
 
+def _strategies_fingerprint(strategies: list[str], opt_data: dict | None) -> str:
+    """Issue #840 Punkt 5 — SHA-256 über die aktive Strategien-Liste + reward_semantics_version +
+    simulation_semantics_version (#854). Weicht der Fingerprint eines --resume-Checkpoints vom
+    aktuell errechneten ab, mischt der Resume Studies zweier Semantiken in dieselbe #652-Familie —
+    der Aufrufer (``main()``) lehnt den Resume dann fail-loud ab, statt still fortzufahren."""
+    import hashlib
+    opt_data = opt_data or {}
+    payload = json.dumps({
+        "strategies": sorted(strategies),
+        "reward_semantics_version": opt_data.get("reward_semantics_version"),
+        "simulation_semantics_version": opt_data.get("simulation_semantics_version"),
+    }, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def main(argv: list[str] | None = None) -> list[Path]:
     # Issue #773/#833 — EINE global-Deklaration fuer die GESAMTE Funktion (Python verbietet
     # mehrere `global`-Statements fuer denselben Namen in verschiedenen Zweigen EINER Funktion,
     # wenn dazwischen bereits zugewiesen wurde — "name is assigned to before global declaration").
     global _LAST_REPORT_PATH
-    # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-
-    # Logger (unten) als auch den Dateinamen des #742-Sweep-Reports (am Ende dieser Funktion) —
-    # dieselbe Provenienz-Kennung verbindet Log-Datei, JSONL-Sidecar (#741) und Report.
-    run_id = default_run_id()
-    main_t0 = time.perf_counter()
-    started_at_utc = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
-    # Issue #414 — Logging EINMALIG initialisieren, BEVOR irgendetwas geloggt wird. Sonst hat
-    # getLogger("optimizer") im Standalone-Pfad keinen Handler und Pythons lastResort verwirft alle
-    # INFO-`[JSON_EVENT]` (#404-Telemetrie) — nur WARNING+ erreicht stderr. setup_bot_logging haengt
-    # einen File- (DEBUG, #740 pro-Lauf NICHT-rotierend) UND einen Stream-Handler (INFO) an und
-    # setzt propagate=False (kollidiert NICHT mit Optunas eigenem Logger; KEIN set_verbosity,
-    # Pitfall #74).
-    setup_bot_logging("optimizer", run_id=run_id)
 
     parser = argparse.ArgumentParser(description="Per-symbol micro-tuning sweep (Ansatz 4). Never enters Phase 5.")
     parser.add_argument("--strategies", default="all", help="'all' (aktive aus strategies.json) oder Komma-Liste")
@@ -1682,6 +1893,11 @@ def main(argv: list[str] | None = None) -> list[Path]:
     parser.add_argument("--n-jobs", type=int, default=None,
                         help="Parallele Studies (je eigene SQLite-Datei). Fehlt das Flag, greift "
                              "optimizer.json['sweep_max_workers'] (Default max(1, cpu_count()-2)).")
+    # Issue #842 — CLI-Override fuer optimizer.json['sweep_max_wallclock_h']; 0/negativ ⇒ kein
+    # Budget (analog dem bestehenden null-Wert in der Config).
+    parser.add_argument("--max-wallclock-h", type=float, default=None,
+                        help="Ueberschreibt optimizer.json['sweep_max_wallclock_h'] (Stunden). "
+                             "<= 0 deaktiviert das Laufzeit-Budget fuer diesen Lauf.")
     # Issue #833 Fix Punkt 4 — rekonstruiert den #742-Report aus den bereits auf der Platte
     # liegenden Proposals/Studies eines FRÜHEREN (ggf. abgebrochenen) Laufs, OHNE selbst zu
     # optimieren. Nutzt exakt denselben Kern (report.generate_report_for_run) wie der Abbruch-Pfad
@@ -1689,6 +1905,20 @@ def main(argv: list[str] | None = None) -> list[Path]:
     parser.add_argument("--report-only", metavar="RUN_ID", default=None,
                         help="Erzeugt/rekonstruiert nur den Report fuer RUN_ID aus den vorhandenen "
                              "proposal_*.json (keine neue Optimierung).")
+    # Issue #840 (Pitfall #264, 6. Wiederkehr von #237) — der #799-Fortschritts-Checkpoint war
+    # vollstaendig implementiert, aber ohne CLI-Einstieg unerreichbar: main() erzeugte bei JEDEM
+    # Aufruf ueber default_run_id() eine NEUE run_id ⇒ frischer Checkpoint, JEDER Abbruch bei einem
+    # Laufzeit-Budget kostete den GESAMTEN Fortschritt.
+    _resume_group = parser.add_mutually_exclusive_group()
+    _resume_group.add_argument("--run-id", metavar="RUN_ID", default=None,
+                               help="Setzt die run_id explizit (treibt Logdatei/#799-Checkpoint/"
+                                    "#742-Report gemeinsam).")
+    _resume_group.add_argument("--resume", metavar="RUN_ID", nargs="?", const="__LATEST__", default=None,
+                               help="Setzt run_id auf den zuletzt geschriebenen Sweep-Checkpoint "
+                                    "(ohne Argument) oder validiert die explizit genannte RUN_ID "
+                                    "dagegen. Fehlt der Checkpoint oder weicht sein "
+                                    "strategies_fingerprint ab ⇒ Exit-Code 2 (fail-loud statt "
+                                    "stiller Neustart).")
     args = parser.parse_args(argv)
 
     if args.report_only:
@@ -1700,6 +1930,64 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     strategies = _resolve_strategies(args.strategies)
     symbols = None if args.symbols == "all" else [s.strip() for s in args.symbols.split(",") if s.strip()]
+
+    # Issue #740 — EIN run_id für den gesamten Lauf: treibt sowohl den nicht-rotierenden Pro-Lauf-
+    # Logger (unten) als auch den Dateinamen des #742-Sweep-Reports (am Ende dieser Funktion) —
+    # dieselbe Provenienz-Kennung verbindet Log-Datei, JSONL-Sidecar (#741) und Report. Issue #840
+    # — --run-id/--resume ueberschreiben den frischen Default gezielt.
+    run_id = default_run_id()
+    if args.run_id:
+        run_id = args.run_id
+    elif args.resume is not None:
+        import sys as _sys
+        _checkpoint_path = WORK / "sweep_progress.json"
+        if not _checkpoint_path.exists():
+            print(f"❌ [#840] --resume: kein Checkpoint unter {_checkpoint_path} gefunden.", file=_sys.stderr)
+            _sys.exit(2)
+        try:
+            _checkpoint_for_resume = json.loads(_checkpoint_path.read_text("utf-8")) or {}
+        except (OSError, ValueError) as _e:
+            print(f"❌ [#840] --resume: Checkpoint {_checkpoint_path} nicht lesbar: {_e}", file=_sys.stderr)
+            _sys.exit(2)
+        _checkpoint_run_id = _checkpoint_for_resume.get("run_id")
+        if args.resume != "__LATEST__" and args.resume != _checkpoint_run_id:
+            print(f"❌ [#840] --resume {args.resume!r}: Checkpoint {_checkpoint_path} gehört zu "
+                  f"run_id={_checkpoint_run_id!r}, nicht der angeforderten run_id.", file=_sys.stderr)
+            _sys.exit(2)
+        run_id = _checkpoint_run_id
+        # Issue #840 Punkt 5 — strategies_fingerprint gegen den aktuellen (Strategien +
+        # reward_semantics_version + simulation_semantics_version) validieren; ein fehlender
+        # Fingerprint (Pre-#840-Checkpoint) ist NICHT prüfbar und wird fail-open zugelassen (mit
+        # WARNUNG) statt jeden Alt-Checkpoint hart abzulehnen.
+        _checkpoint_fingerprint = _checkpoint_for_resume.get("strategies_fingerprint")
+        if _checkpoint_fingerprint is not None:
+            _current_fingerprint = _strategies_fingerprint(strategies, _load_optimizer_config())
+            if _checkpoint_fingerprint != _current_fingerprint:
+                print(f"❌ [#840] --resume: strategies_fingerprint weicht ab (Checkpoint="
+                      f"{_checkpoint_fingerprint!r}, aktuell={_current_fingerprint!r}) — ein Resume "
+                      "würde Studies zweier Semantiken in dieselbe #652-Familie mischen.",
+                      file=_sys.stderr)
+                _sys.exit(2)
+        completed_from_checkpoint = len(_checkpoint_for_resume.get("completed_symbols") or [])
+        symbols_planned_from_checkpoint = _checkpoint_for_resume.get("symbols_planned")
+        remaining_from_checkpoint = (
+            symbols_planned_from_checkpoint - completed_from_checkpoint
+            if symbols_planned_from_checkpoint is not None else None
+        )
+        # print statt logging: setup_bot_logging() (unten) hat den "optimizer"-Logger an dieser
+        # Stelle noch nicht konfiguriert (kein Handler ⇒ Pythons lastResort verwirft INFO, #414).
+        print(f"[#840] RESUME run_id={run_id} completed={completed_from_checkpoint}/"
+              f"{symbols_planned_from_checkpoint} remaining={remaining_from_checkpoint}")
+
+    main_t0 = time.perf_counter()
+    started_at_utc = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
+    # Issue #414 — Logging EINMALIG initialisieren, BEVOR irgendetwas geloggt wird. Sonst hat
+    # getLogger("optimizer") im Standalone-Pfad keinen Handler und Pythons lastResort verwirft alle
+    # INFO-`[JSON_EVENT]` (#404-Telemetrie) — nur WARNING+ erreicht stderr. setup_bot_logging haengt
+    # einen File- (DEBUG, #740 pro-Lauf NICHT-rotierend) UND einen Stream-Handler (INFO) an und
+    # setzt propagate=False (kollidiert NICHT mit Optunas eigenem Logger; KEIN set_verbosity,
+    # Pitfall #74).
+    setup_bot_logging("optimizer", run_id=run_id)
 
     # Issue #511/#755: Concurrency Management. VORHER erzwang ein gesetzter Seed sweep-weit
     # n_jobs=1 (Determinismus auf der falschen Ebene — siehe run_optimization.seed_effective-
@@ -1767,11 +2055,18 @@ def main(argv: list[str] | None = None) -> list[Path]:
     _prior_sigterm_handler = _signal.signal(_signal.SIGTERM, _sigterm_to_keyboard_interrupt)
     try:
         proposals = run_per_symbol_sweep(strategies, symbols, tier=args.tier, n_jobs=eff_n_jobs,
-                                         n_jobs_source=n_jobs_source, run_id=run_id)
-        if wallclock_guard.sweep_wallclock_exceeded.is_set():
+                                         n_jobs_source=n_jobs_source, run_id=run_id,
+                                         max_wallclock_h_override=args.max_wallclock_h)
+        if sweep_fail_fast_invariant is not None:
+            run_status = "aborted_invariant"
+        elif wallclock_guard.sweep_wallclock_exceeded.is_set():
             run_status = "aborted_wallclock"
         elif disk_guard.sweep_abort_requested.is_set():
             run_status = "aborted_disk"
+        elif args.resume is not None:
+            # Issue #840 Punkt 6 — unterscheidet einen fortgesetzten Lauf von einem Ein-Schuss-Lauf
+            # im #742-Report, OHNE den kompletten-Fall selbst zu aendern.
+            run_status = "resumed_complete"
     except KeyboardInterrupt as e:
         run_status = "aborted_signal"
         caught_exc = e
@@ -1857,6 +2152,30 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
 # Issue #773 — siehe Kommentar in main() oben.
 _LAST_REPORT_PATH: "Path | None" = None
+
+
+def _wallclock_forecast(rate_s_per_symbol: float, n_planned: int, max_wallclock_h: float | None) -> dict:
+    """Issue #842 Punkt 3 — reine Vorhersagefunktion: der gemessene Median-Takt (Sekunden/Symbol,
+    aus den ersten ``wallclock_forecast_after_symbols`` abgeschlossenen Symbolen) wird gegen das
+    (ggf. fehlende) Laufzeit-Budget hochgerechnet. ``max_wallclock_h=None`` (kein Budget) ⇒ alle
+    ``n_planned`` Symbole gelten als erreichbar (nichts zu warnen)."""
+    if max_wallclock_h is None or rate_s_per_symbol <= 0:
+        return {"reachable_symbols": n_planned, "shortfall": 0, "budget_h": max_wallclock_h}
+    budget_s = float(max_wallclock_h) * 3600.0
+    reachable = min(int(budget_s // rate_s_per_symbol), n_planned)
+    shortfall = max(0, n_planned - reachable)
+    return {"reachable_symbols": reachable, "shortfall": shortfall, "budget_h": max_wallclock_h}
+
+
+def _first_failing_fail_fast_invariant(invariant_checks: list[dict], fail_fast_invariants: list[str]) -> str | None:
+    """Issue #839 — reine Entscheidungsfunktion: welcher (falls einer) der in
+    ``optimizer.json['fail_fast_invariants']`` gelisteten Check-Namen in ``invariant_checks``
+    (z. B. aus ``report._build_report(...)['invariant_checks']``) FAILt. ``None`` ⇒ keiner der
+    gelisteten Checks ist verletzt (der Sweep läuft weiter)."""
+    for chk in invariant_checks or []:
+        if chk.get("name") in fail_fast_invariants and not chk.get("passed", True):
+            return chk.get("name")
+    return None
 
 
 def _report_has_failing_invariant(report_path) -> bool:

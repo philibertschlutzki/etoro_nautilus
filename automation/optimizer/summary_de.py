@@ -40,6 +40,11 @@ _RUN_STATUS_LABELS_DE = {
     "aborted_error": "abgebrochen (unerwartete Exception)",
 }
 
+# Issue #850 — Floor für den excess_per_exposure-Nenner (Abschnitt 2.3): eine exposure_fraction
+# nahe 0 (kaum Marktzeit) darf den normierten Excess nicht gegen unendlich treiben — 1 % ist eine
+# reine Anzeige-Sicherung, kein kalibrierter Schwellenwert.
+_EXPOSURE_EPSILON = 0.01
+
 
 def _fmt_pct(x: float | None, *, digits: int = 1) -> str:
     return f"{x * 100:.{digits}f} %" if x is not None else "k. A."
@@ -62,6 +67,18 @@ def _fmt_hms_from_s(seconds: float | None) -> str:
 
 def _studies(report: dict) -> list[dict[str, Any]]:
     return list(report.get("studies") or [])
+
+
+# Issue #849 — Sortierreihenfolge fuer Sektion 5.1 (am dringendsten zuerst). Ein unbekannter/
+# fehlender severity-Wert faellt auf denselben Rang wie "medium" (rueckwaertskompatibel zu
+# Pre-#849-invariant_checks-Eintraegen ohne das Feld).
+_SEVERITY_ORDER = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _check_name(c: dict) -> str:
+    """Issue #849 — 'name' ist der EIGENTLICHE Vertrag (InvariantResult.to_dict()); 'check' bleibt
+    ein Uebergangs-Alias fuer Report-Fixtures, die ihn (wie vor #849) direkt selbst setzen."""
+    return c.get("name") or c.get("check") or "unbekannt"
 
 
 def _section_1_result_in_one_sentence(report: dict) -> str:
@@ -87,7 +104,20 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
             f"{n_studies} Studies, {n_deployable} Promotion(en) (READY_FOR_PR/PROMOTE_GLOBAL_DEFAULT) — "
             "siehe Abschnitt 2 für die Details je Kandidat."
         )
-    return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note
+    # Issue #849 Punkt 4 — blockierende Invarianten-FAILs (severity='blocking', z. B.
+    # check_holding_time_cap/check_required_config_keys) muessen bereits HIER namentlich auftauchen,
+    # nicht erst in Sektion 5 (vorher: hinter 304 Meldungen ueber inerte Reward-Terme verborgen).
+    blocking_fails = sorted({
+        _check_name(c) for c in (report.get("invariant_checks") or [])
+        if not c.get("passed", True) and c.get("severity") == "blocking"
+    })
+    blocking_note = ""
+    if blocking_fails:
+        blocking_note = (
+            f" **BLOCKIERENDE Invarianten-FAIL(s):** {', '.join(blocking_fails)} — siehe Abschnitt "
+            "5.1 für Details."
+        )
+    return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note + blocking_note
 
 
 def _section_2_monetary_result(report: dict) -> str:
@@ -150,20 +180,54 @@ def _section_2_monetary_result(report: dict) -> str:
             )
     lines.append("")
 
-    # 2.3 Vergleich gegen Buy & Hold
+    # Issue #850 — Abschnitt 2.3 mass vorher das SYMBOL, nicht die Strategie: holdout_excess_return
+    # ist im Bärenmarkt näherungsweise −Buy&Hold, also eine Symbol-Konstante (Varianzanteil Symbol
+    # 99,1 % auf den Katalog-Daten). Vier Änderungen: (1) Strategie-/B&H-Return + Zeit im Markt
+    # zusätzlich zur Excess-Spalte, (2) Sortierung nach Strategie-Return statt Excess, (3) ein
+    # negativer B&H-Return unterdrückt die "schlägt Buy & Hold"-Wertung (trivial positiver Excess
+    # gegen einen fallenden Markt ist kein Alpha-Nachweis), (4) excess_per_exposure normiert den
+    # Excess auf die tatsächlich eingegangene Marktzeit.
     lines.append("### 2.3 Vergleich gegen Buy & Hold je Symbol")
     lines.append("")
     with_benchmark = [r for r in studies if r.get("holdout_excess_return") is not None]
     if not with_benchmark:
         lines.append("Keine Benchmark-Vergleichsdaten in diesem Lauf verfügbar.")
     else:
-        lines.append("| Strategie | Symbol | Excess-Return ggü. Buy & Hold | Vorzeichen |")
-        lines.append("|---|---|---:|---|")
-        for r in sorted(with_benchmark, key=lambda r: r.get("holdout_excess_return") or 0.0, reverse=True):
+        lines.append(
+            "| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | "
+            "Excess/Exposure | Vorzeichen |"
+        )
+        lines.append("|---|---|---:|---:|---:|---:|---:|---|")
+        for r in sorted(with_benchmark, key=lambda r: r.get("holdout_total_return") or 0.0, reverse=True):
             excess = r["holdout_excess_return"]
-            sign = "positiv (schlägt Buy & Hold)" if excess > 0 else (
-                "negativ (unter Buy & Hold)" if excess < 0 else "neutral")
-            lines.append(f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(excess)} | {sign} |")
+            buyhold = r.get("holdout_buyhold_return")
+            exposure = r.get("holdout_exposure_fraction")
+            excess_per_exposure = (
+                excess / max(exposure if exposure is not None else 0.0, _EXPOSURE_EPSILON)
+            )
+            if buyhold is not None and buyhold < 0:
+                sign = "B&H negativ — Excess trivial positiv"
+            elif excess > 0:
+                sign = "positiv (schlägt Buy & Hold)"
+            elif excess < 0:
+                sign = "negativ (unter Buy & Hold)"
+            else:
+                sign = "neutral"
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
+                f"{_fmt_pct(buyhold)} | {_fmt_pct(excess)} | {_fmt_pct(exposure)} | "
+                f"{_fmt_pct(excess_per_exposure)} | {sign} |"
+            )
+        lines.append("")
+        decomposition = (report.get("cross_study") or {}).get("excess_variance_decomposition")
+        if decomposition and decomposition.get("symbol_share") is not None:
+            lines.append(
+                "Anteil der Streuung, der auf das Symbol statt auf die Strategie entfällt: "
+                f"{_fmt_pct(decomposition['symbol_share'])} (Strategie + Rest: "
+                f"{_fmt_pct(decomposition.get('strategy_share'))}, n={decomposition.get('n_rows', 0)}) "
+                "— ein hoher Symbol-Anteil bedeutet: der Excess-Return ist in diesem Lauf kein "
+                "Strategie-Unterscheidungsmerkmal (#850, Pitfall #268)."
+            )
     lines.append("")
 
     # 2.4 Kostenbasis
@@ -195,15 +259,25 @@ def _section_3_duration(report: dict) -> str:
         )
     lines.append("")
 
-    # 3.2 Laufzeit je Symbol/Strategie — aus n_trials_completed/backtest_ms nicht rekonstruierbar
-    # ohne trial-Level-Daten (Report enthält keine Backtest-Zeit je Study); dokumentiert als
-    # bekannte Lücke statt einer erfundenen Zahl.
+    # Issue #851 — Root-Cause behoben: run_optimization._optimize_symbol_impl persistiert jetzt
+    # study_wallclock_s/study_started_at_utc/study_ended_at_utc/worker_id als Study-User-Attrs
+    # (auch bei vorzeitigem Abbruch, #833-Stil); report.py leitet daraus wallclock_by_strategy ab.
     lines.append("### 3.2 Laufzeit je Symbol/Strategie")
     lines.append("")
-    lines.append(
-        "Der #742-Report führt keine Wallclock-Zeit je einzelner Study (nur die Sweep-Gesamtzeit "
-        "aus 3.1); eine Aufschlüsselung je Symbol/Strategie ist aus diesem Artefakt nicht ableitbar."
-    )
+    wallclock_by_strategy = (report.get("cross_study") or {}).get("wallclock_by_strategy") or {}
+    if not wallclock_by_strategy:
+        lines.append(
+            "Keine Study-Wallclock-Telemetrie in diesem Report (Pre-#851-Lauf oder leere Kohorte)."
+        )
+    else:
+        lines.append("| Strategie | Median-Wallclock | p90-Wallclock | n Studies |")
+        lines.append("|---|---:|---:|---:|")
+        for strategy, stats in sorted(
+                wallclock_by_strategy.items(), key=lambda kv: kv[1].get("median") or 0.0, reverse=True):
+            lines.append(
+                f"| {strategy} | {_fmt_hms_from_s(stats.get('median'))} | "
+                f"{_fmt_hms_from_s(stats.get('p90'))} | {stats.get('n', 0)} |"
+            )
     lines.append("")
 
     # 3.3 Budgetausführung
@@ -232,11 +306,28 @@ def _section_3_duration(report: dict) -> str:
     else:
         for reason, n in sorted(stop_reasons.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(f"- {reason}: {n} Studies")
-    lines.append(
-        "\nBarriere-Wartezeit (die Zeit, die ein Symbol auf seine langsamste Strategie wartet, "
-        "#828) ist aus dem #742-Report nicht rekonstruierbar — dafür wäre eine je-Study-"
-        "Zeitstempel-Telemetrie nötig, die dieser Report-Typ nicht führt."
-    )
+    lines.append("")
+
+    # Issue #851 — Barriere-Wartezeit (die Zeit, die ein Symbol auf seine langsamste Strategie
+    # wartet, #828) UND Worker-Auslastung, jetzt aus der Study-Zeitstempel-Telemetrie ableitbar.
+    barrier_wait = (report.get("cross_study") or {}).get("symbol_barrier_wait_s") or {}
+    if not barrier_wait:
+        lines.append(
+            "Keine Barriere-Wartezeit-Telemetrie in diesem Report (Pre-#851-Lauf, leere Kohorte, "
+            "oder jedes Symbol hatte nur eine Strategie-Study)."
+        )
+    else:
+        worst = sorted(barrier_wait.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        lines.append(
+            f"Barriere-Wartezeit (Symbol-Wallclock minus schnellste Study) — die {len(worst)} "
+            f"Symbole mit der längsten Wartezeit:"
+        )
+        for symbol, wait_s in worst:
+            lines.append(f"- {symbol}: {_fmt_hms_from_s(wait_s)}")
+    worker_utilisation = (report.get("cross_study") or {}).get("worker_utilisation")
+    if worker_utilisation is not None:
+        lines.append(f"\nWorker-Auslastung (Σ Study-Wallclock / (n_jobs × Sweep-Wallclock)): "
+                     f"{_fmt_pct(worker_utilisation)}")
     return "\n".join(lines)
 
 
@@ -269,14 +360,57 @@ def _section_5_anomalies(report: dict) -> str:
     lines = ["## 5. Auffälligkeiten", ""]
 
     failing_checks = [c for c in (report.get("invariant_checks") or []) if not c.get("passed", True)]
-    lines.append(f"### Invarianten-FAILs ({len(failing_checks)})")
+
+    # Issue #849 — Root-Cause der 519-Zeilen-Sektion: JEDER einzelne FAIL war eine gleichrangige
+    # Zeile (304× check_reward_term_variance neben 1× check_holding_time_cap, dem eigentlich
+    # wichtigsten Befund). Ab hier: EINE Zeile je Check (5.1), Details nur noch als begrenzte
+    # Stichprobe je Check (5.2) — Reihenfolge in BEIDEN Abschnitten identisch (nach Schweregrad,
+    # dann nach FAIL-Anzahl absteigend).
+    by_check: dict[str, list[dict]] = {}
+    for c in failing_checks:
+        by_check.setdefault(_check_name(c), []).append(c)
+    ordered_names = sorted(
+        by_check.keys(),
+        key=lambda name: (
+            _SEVERITY_ORDER.get(by_check[name][0].get("severity", "medium"), 2),
+            -len(by_check[name]),
+            name,
+        ),
+    )
+
+    max_details = report.get("summary_max_details_per_check")
+    if not isinstance(max_details, int) or max_details < 1:
+        max_details = 5
+
+    lines.append(f"### 5.1 Übersicht — Invarianten-FAILs ({len(failing_checks)})")
     lines.append("")
-    if not failing_checks:
+    if not ordered_names:
         lines.append("Keine.")
     else:
-        for c in failing_checks:
-            lines.append(f"- **{c.get('check')}** (scope={c.get('scope')}): {c.get('detail')}")
+        lines.append("| Check | FAILs | betroffene Studies | Schweregrad |")
+        lines.append("|---|---:|---:|---|")
+        for name in ordered_names:
+            entries = by_check[name]
+            n_studies_affected = len({c.get("scope") for c in entries})
+            severity = entries[0].get("severity", "medium")
+            lines.append(f"| {name} | {len(entries)} | {n_studies_affected} | {severity} |")
     lines.append("")
+
+    lines.append("### 5.2 Details")
+    lines.append("")
+    if not ordered_names:
+        lines.append("Keine.")
+    else:
+        for name in ordered_names:
+            entries = by_check[name]
+            lines.append(f"**{name}**")
+            lines.append("")
+            for c in entries[:max_details]:
+                lines.append(f"- (scope={c.get('scope')}): {c.get('detail')}")
+            remaining = len(entries) - max_details
+            if remaining > 0:
+                lines.append(f"- … und {remaining} weitere")
+            lines.append("")
 
     n_guard_dominated = sum(1 for r in studies if r.get("study_guard_dominated"))
     total_liquidated = sum(r.get("liquidated_trials") or 0 for r in studies)
@@ -285,7 +419,7 @@ def _section_5_anomalies(report: dict) -> str:
     n_denylisted = sum(1 for d in diagnosed if d.get("action") == "denylist")
     n_deprioritized = sum(1 for d in diagnosed if d.get("action") == "deprioritized")
 
-    lines.append("### Zusammenfassung")
+    lines.append("### 5.3 Zusammenfassung")
     lines.append("")
     lines.append(f"- Guard-dominierte Studies (SORTINO_GUARD_TRIPPED-Mehrheit, #823): {n_guard_dominated}")
     lines.append(f"- Wirtschaftlich ruinierte Trials (EQUITY_NONPOSITIVE, #801/#825): {total_liquidated}")

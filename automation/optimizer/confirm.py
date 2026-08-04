@@ -9,6 +9,7 @@ from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
 from automation.optimizer.manifest import WORK
 from automation.log_manager import emit_execution_event
+from automation.optimizer import invariants as _inv
 
 # Issue #659 — gültige Werte für tournament.json['promotion_correction_mode']. "conjunction"
 # (Default, fehlt der Key) ist bit-identisch zum Pre-#659-Verhalten (DSR UND Bootstrap-CI UND PBO
@@ -416,6 +417,10 @@ def _metrics_dict(m) -> dict:
         "oos_profit_factor": getattr(m, "oos_profit_factor", None),
         "oos_buyhold_return": getattr(m, "oos_buyhold_return", None),
         "oos_excess_return": getattr(m, "oos_excess_return", None),
+        # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
+        # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
+        # unterscheiden kann.
+        "oos_exposure_fraction": getattr(m, "oos_exposure_fraction", None),
         # Issue #786 — dieselbe Struktur wie ``oos_gate_deltas`` der OOS-Trials (der Holdout-
         # Backtest durchlaeuft denselben Aggregationspfad, ``parsing.TournamentMetrics`` parst sie
         # bereits), hier auf dem HOLDOUT-Fenster statt der OOS-Folds.
@@ -616,9 +621,43 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     cfg_dir = config_dir()
     risk_dd_cap = 0.30
     tournament_path = cfg_dir / "tournament.json"
+    _early_tournament_cfg: dict = {}
     if tournament_path.exists():
         with open(tournament_path, "r", encoding="utf-8") as f:
-            risk_dd_cap = (json.load(f) or {}).get("max_drawdown", 0.30)
+            _early_tournament_cfg = json.load(f) or {}
+            risk_dd_cap = _early_tournament_cfg.get("max_drawdown", 0.30)
+
+    # Issue #839 — eine Study, deren Simulation den #714/GR-01-Zeitbox-Vertrag verletzt (Bug im
+    # Exit-Pfad, #836/#837), wird VOR jedem statistischen Gate verworfen (und VOR dem teuren
+    # Holdout-Backtest des globalen Baseline-Vektors weiter unten) — ihre Metriken sind unter einem
+    # anderen Handelsvertrag entstanden als dem konfigurierten, jede nachgelagerte Eligibility-/
+    # Reward-/Deflations-Entscheidung wäre ein kontaminiertes Urteil (analog #773s Behandlung von
+    # coherence_violation_rate_exceeded oben).
+    import logging as _logging_early
+    _timebox_tolerance = float(_early_tournament_cfg.get("timebox_violation_tolerance", 0.0))
+    _timebox_trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in (getattr(study, "trials", None) or [])]
+    _timebox = _inv.compute_trial_timebox_violations(_timebox_trial_attrs)
+    if _timebox["timebox_violation_fraction"] > _timebox_tolerance:
+        emit_execution_event(_logging_early.getLogger("optimizer"), "STUDY_REJECTED_ON_TIMEBOX_VIOLATION", {
+            "symbol": symbol, "strategy": strategy,
+            "timebox_violation_fraction": _timebox["timebox_violation_fraction"],
+            "timebox_violation_trades": _timebox["timebox_violation_trades"],
+            "timebox_evaluated_trades": _timebox["timebox_evaluated_trades"],
+        }, level=_logging_early.ERROR)
+        return {
+            "promote": False,
+            "status": "REJECTED_ON_HOLDOUT",
+            "is_rejection_detail_override": "REJECT_INVALID_TIMEBOX",
+            "promotion_route": None,
+            "symbol_params": {},
+            "R_symbol": 0.0,
+            "R_global": None,
+            "promotion_margin": 0.0,
+            "holdout_passed": False,
+            "trial_dir": None,
+            "metrics_symbol": {},
+            "metrics_global": {},
+        }
 
     promotion_margin = 0.10
     optimizer_path = cfg_dir / "optimizer.json"
@@ -861,6 +900,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Issue #636 — Mindest-Kohorte für eine belastbare V[ŜR_trials]-Schätzung; darunter greift der
     # dokumentierte konservative Varianz-Floor (siehe deflation.sr0_multiple_testing_robust).
     deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
+    # Issue #845 — max(oos_n_periods)/min(oos_n_periods) innerhalb der DSR-Kohorte (Faktor 45 in
+    # der Praxis beobachtet): ``deflation_var = pvariance(cohort_sr)`` poolt die per-Trial-Sortinos
+    # so, als seien sie über eine konstante Stichprobengrösse T beobachtet (dieselbe Annahme, die
+    # den Lo-2002-T-bewussten Varianz-Floor motiviert) — eine stark streuende Kohorte verletzt diese
+    # Kommensurabilitäts-Voraussetzung und macht DSR/PSR über die Kohorte hinweg nicht vergleichbar.
+    deflation_max_n_periods_ratio = float(tournament_cfg.get("deflation_max_n_periods_ratio", 4.0))
+    deflation_n_periods_ratio = None
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     # Issue #757/#758 — welche Inferenzmethode die DSR tatsächlich lieferte ("stationary_bootstrap"
     # im Regelfall; "sharpe_formula_fallback" nur bei < 5 persistierten Perioden-Returns, siehe
@@ -949,6 +995,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 and t.user_attrs.get("oos_n_periods")
             ]
             deflation_t_periods = int(_st.median(cohort_n_periods)) if cohort_n_periods else None
+            # Issue #845 — Heterogenitäts-Ratio der Kohorte, unabhängig davon, ob die DSR unten
+            # ueberhaupt berechnet wird (die Ratio selbst ist bereits am Median-Ersatz #701 nicht
+            # ablesbar, der einen einzelnen Ausreisser nivelliert).
+            if len(cohort_n_periods) >= 2:
+                _n_periods_min, _n_periods_max = min(cohort_n_periods), max(cohort_n_periods)
+                if _n_periods_min > 0:
+                    deflation_n_periods_ratio = _n_periods_max / _n_periods_min
             # Issue #701 — ``n_periods`` ist seit #701 ein PFLICHT-Parameter von
             # ``sr0_multiple_testing_robust`` (der var_floor-Fallback ohne T wurde als tot verifiziert
             # und entfernt, siehe deflation.py-Docstring). ``deflation_t_periods`` ist NIE ``None``,
@@ -1333,10 +1386,46 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # bleibt, wie stark die Near-Duplicate-Reduktion N tatsächlich reduziert hat.
     best_result["metrics_symbol"]["pbo_n_configs_raw"] = pbo_telemetry.get("pbo_n_configs_raw")
     best_result["metrics_symbol"]["pbo_metric"] = pbo_telemetry.get("pbo_metric")
+    # Issue #847 — explizit benannter Alias auf die bereits declusterte Config-Zahl
+    # (``pbo_n_configs`` ist laut ``_study_pbo``-Docstring bereits die effektive Zahl; der
+    # ausdrückliche Name macht das ohne Docstring-Lektüre nachvollziehbar) + die Schwelle, GEGEN
+    # DIE ``pbo_overfit`` oben entschieden wurde — ohne sie ist ein exportiertes ``pbo``-Urteil
+    # nicht nachprüfbar (Root-Cause #847: PBO=0.89 war nicht von einem Cluster-Artefakt
+    # unterscheidbar ohne die effektive Konfigurationszahl UND die Schwelle nebeneinander).
+    best_result["metrics_symbol"]["pbo_n_configs_effective"] = pbo_telemetry.get("pbo_n_configs")
+    if study_pbo is not None:
+        best_result["metrics_symbol"]["pbo_threshold"] = 0.5
     # Issue #697 — sichtbar machen, falls die Konjunktion trotz #697-Konsolidierung noch ein von der
     # LIVE-Kohorte als redundant markiertes Gate enthält (Regelfall: leere Liste).
     if unconsolidated_gates:
         best_result["metrics_symbol"]["gate_collinearity_unconsolidated"] = unconsolidated_gates
+    # Issue #846 (Regressionswaechter #651, 4. Katalog) — Root-Cause der 115x check_sr0_coherence-
+    # FAILs: deflation_sr0 wird aus der COHORT-Varianz berechnet (oben, deflation_n >= 2), waehrend
+    # deflated_dsr/deflation_dsr_z aus dem SPEZIFISCHEN promoteten Trial (promoted_sr_period)
+    # abgeleitet werden — zwei GETRENNTE Gates auf zwei GETRENNTEN Datenmengen. Faellt der promotete
+    # Trial selbst durch sein Gate (kein oos_sortino_period), bleibt deflation_sr0 gesetzt, obwohl
+    # dsr/dsr_z nie berechnet wurden. Statt eines atomaren DeflationResult-Objekts (grössere
+    # Restrukturierung, siehe Katalog) erzwingt dieser Waechter dieselbe Kohaerenz-Garantie an der
+    # EXPORT-Grenze: kein Teilzustand verlaesst confirm.py.
+    deflation_skipped_reason = None
+    if deflated_selection:
+        # Issue #845 — VOR der #846-Kohärenzprüfung: eine Kohorte, deren oos_n_periods stärker als
+        # ``deflation_max_n_periods_ratio`` streut, macht die gepoolte Kohorten-Varianz
+        # (deflation_var) selbst inkommensurabel — unabhängig davon, ob der promotete Trial sein
+        # eigenes Gate besteht (der #846-Fall unten). DSR/SR₀ werden dann NICHT exportiert, mit
+        # einem eigenen, von SMALL_COHORT/NO_STATISTIC unterscheidbaren Grund.
+        if (deflation_n_periods_ratio is not None
+                and deflation_n_periods_ratio > deflation_max_n_periods_ratio):
+            deflation_skipped_reason = "N_PERIODS_HETEROGENEOUS"
+            deflation_sr0 = None
+            deflation_dsr = None
+            deflation_dsr_z = None
+        elif deflation_sr0 is None and deflation_dsr is None and deflation_dsr_z is None:
+            deflation_skipped_reason = "SMALL_COHORT" if deflation_n < 2 else "NO_STATISTIC"
+        elif deflation_sr0 is not None and deflation_dsr is None and deflation_dsr_z is None:
+            deflation_skipped_reason = "NO_STATISTIC"
+            deflation_sr0 = None  # Koharenz erzwingen: keine Telemetrie ohne Entscheidungsgroesse
+
     # Issue #611/#618/#636 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle. Seit
     # #636 IMMER gefüllt, sobald SR₀ berechenbar war (unabhängig von holdout_passed) — deflated_dsr
     # ist damit nie mehr uninformativ-null, nur weil ein früheres Gate schon ablehnte.
@@ -1389,6 +1478,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # (oos_period_returns wurde nur fuer eligible Trials gestempelt, deflation_n_family zaehlt
         # seit #784 aber ALLE oos_evaluated Trials).
         best_result["metrics_symbol"]["deflation_cluster_coverage"] = deflation_cluster_coverage
+    if deflation_skipped_reason is not None:
+        best_result["metrics_symbol"]["deflation_skipped_reason"] = deflation_skipped_reason
+    # Issue #845 — Ratio-Telemetrie unabhängig vom Ausgang exportiert (auch wenn sie NICHT die
+    # Ausloeserin des Skips war), damit ein Operator die Kohärenz-Kohorten-Heterogenität jeder
+    # Study auditieren kann, ohne die Rohdaten (Trial-User-Attrs) erneut laden zu müssen.
+    if deflation_n_periods_ratio is not None:
+        best_result["metrics_symbol"]["deflation_n_periods_ratio"] = deflation_n_periods_ratio
 
     return best_result
 

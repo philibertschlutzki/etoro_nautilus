@@ -94,6 +94,14 @@ class TournamentMetrics:
     oos_sortino_period: float | None = None
     oos_sortino_annualized: float | None = None
     oos_n_periods: int = 0
+    # Issue #845 — der Downside-Beobachtungs-Nenner (backtest_runner._calculate_stats
+    # "downside_obs", #823 SORTINO_INSUFFICIENT_DOWNSIDE-Schwelle), durchgereicht als eigenes Feld
+    # statt einer stillen Re-Interpretation von oos_n_periods: n_periods misst die volle
+    # informative Serie, downside_obs nur die tatsaechlich downside-tragende Teilmenge — beide
+    # koennen um Groessenordnungen auseinanderfallen (die #845-Motivation: Faktor 45 innerhalb
+    # einer Familie). None ⇒ vor Erreichen der Berechnung ausgestiegen (rückwärtskompatibel zu
+    # Pre-#845-JSONs).
+    oos_downside_obs: int | None = None
     oos_ret_skew: float = 0.0
     oos_ret_kurtosis: float = 3.0
     # Issue #620 — die #589-Kohärenz-Invariante (sign(oos_sortino)==sign(oos_total_return)) feuert im
@@ -109,6 +117,12 @@ class TournamentMetrics:
     # strukturell inert geblieben). None, wenn keine Benchmark-Serie vorlag (rückwärtskompatibel).
     oos_buyhold_return: float | None = None
     oos_excess_return: float | None = None
+    # Issue #850 — Anteil der Fenster-Zeit mit offener Position (backtest_runner._calculate_stats
+    # "exposure_fraction"), damit ein Excess-Return gegen einen fallenden Benchmark von echtem
+    # Alpha unterscheidbar wird (ein hoher Excess bei exposure_fraction nahe 0 ist ueberwiegend
+    # vermiedener Kursverlust, keine Handelsleistung — siehe summary_de.py Abschnitt 2.3). None,
+    # wenn keine Fenster-Spanne auswertbar war (rückwärtskompatibel zu Pre-#850-JSONs).
+    oos_exposure_fraction: float | None = None
     # Issue #710 — Haltedauer-Metrik (Bars, NICHT Sekunden — alle Strategien laufen auf 1h-Bars).
     # Median (robuste Zentraltendenz gegen schiefe per-Fold-Verteilungen) + p95 (Deadline-Nähe).
     # Optional[float]=None ⇒ migrationssicher (Legacy-JSONs/Fixtures ohne das Feld laufen unveraendert
@@ -210,6 +224,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_sortino_period = oos_metrics.get("sortino_period")
     oos_sortino_annualized = oos_metrics.get("sortino_annualized")
     oos_n_periods = oos_metrics.get("n_periods")
+    # Issue #845 — Downside-Beobachtungs-Nenner (None-safe ⇒ rückwärtskompatibel zu Pre-#845-JSONs).
+    oos_downside_obs = oos_metrics.get("downside_obs")
     oos_ret_skew = oos_metrics.get("ret_skew")
     oos_ret_kurtosis = oos_metrics.get("ret_kurtosis")
     # Issue #620 — Kohärenz-Verletzungs-Flag aus dem Subprozess (None-safe ⇒ False).
@@ -219,6 +235,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe; fehlt ohne Benchmark-Serie).
     oos_buyhold_return = oos_metrics.get("oos_buyhold_return")
     oos_excess_return = oos_metrics.get("oos_excess_return")
+    # Issue #850 — Exposure-Telemetrie (None-safe ⇒ rückwärtskompatibel zu Pre-#850-JSONs).
+    oos_exposure_fraction = oos_metrics.get("exposure_fraction")
     # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
     oos_median_bars_held = oos_metrics.get("median_bars_held")
     oos_p95_bars_held = oos_metrics.get("p95_bars_held")
@@ -340,6 +358,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_sortino_period=float(oos_sortino_period) if oos_sortino_period is not None else None,
         oos_sortino_annualized=float(oos_sortino_annualized) if oos_sortino_annualized is not None else None,
         oos_n_periods=int(oos_n_periods) if oos_n_periods is not None else 0,
+        oos_downside_obs=int(oos_downside_obs) if oos_downside_obs is not None else None,
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
         oos_coherence_violation=oos_coherence_violation,
@@ -347,6 +366,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe).
         oos_buyhold_return=float(oos_buyhold_return) if oos_buyhold_return is not None else None,
         oos_excess_return=float(oos_excess_return) if oos_excess_return is not None else None,
+        oos_exposure_fraction=float(oos_exposure_fraction) if oos_exposure_fraction is not None else None,
         # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
         oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,
         oos_p95_bars_held=float(oos_p95_bars_held) if oos_p95_bars_held is not None else None,

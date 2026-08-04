@@ -29,7 +29,11 @@ def test_recalibrate_policy_produces_nonempty_thresholds_when_explicitly_selecte
     """Akzeptanzkriterium: any_arm_unreachable_policy='recalibrate' loest weiterhin eine
     dokumentierte Aktion aus, wenn ein Operator es explizit fuer einen Kalibrierlauf waehlt (#812
     haelt den Mechanismus als Option, aendert nur den DEFAULT)."""
-    tcfg = {**TCFG, "any_arm_unreachable_policy": "recalibrate"}
+    # Issue #848 — min_win_rate ist aus der ECHTEN eligible_requires_any entfernt (strukturell
+    # unerreichbarer Arm); hier explizit restauriert, um den recalibrate-MECHANISMUS selbst zu
+    # testen (siehe Moduldocstring).
+    tcfg = {**TCFG, "any_arm_unreachable_policy": "recalibrate",
+            "eligible_requires_any": ["min_profit_factor", "min_win_rate"]}
     # Realistische, strukturell unter der globalen 0.15-Schwelle liegende Win-Rate-Verteilung
     # (TSLA.ETORO Hourly-Tier-Groessenordnung, siehe oos_min_win_rate-Schema, max ~0.11 beobachtet).
     # Issue #759 — mindestens any_arm_min_observations (Default 10) echte Beobachtungen noetig.

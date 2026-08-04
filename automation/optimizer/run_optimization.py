@@ -988,6 +988,56 @@ def _check_reward_semantics_version(study, opt_data: dict,
     logger.warning("♻️ %s", msg)
 
 
+def _check_simulation_semantics_version(study, opt_data: dict,
+                                        logger: logging.Logger | None = None) -> None:
+    """Issue #854 (P0) — Simulations-Semantik-Versionierung & Study-Hygiene, dieselbe MECHANIK wie
+    ``_check_reward_semantics_version`` (#410), aber eine ORTHOGONALE Achse (siehe
+    ``optimizer.json['simulation_semantics_version']``-Schema für die vollständige reward/
+    simulation/params_schema-Abgrenzung): ``reward_semantics_version`` versioniert, WIE ein Trial
+    bewertet wird; ``simulation_semantics_version`` versioniert, WAS überhaupt gemessen wurde
+    (Exit-Pfad #836-#838, Zeitbox-Konsequenz #839, T-abhängige Guard-Schwelle #844). Eine Study mit
+    einer ALTEN simulation_semantics_version enthält Trials, deren Metriken unter einem ANDEREN
+    Handelsvertrag simuliert wurden — kein Reward-Fix kann das reparieren, dieselbe fail-loud +
+    Purge-Konsequenz wie bei einem reward_semantics_version-Mismatch, nur unter einem eigenen,
+    unterscheidbaren Fehlercode (``REJECT_STALE_SIMULATION_SEMANTICS``), damit ein Operator die
+    beiden Ursachen im Log auseinanderhalten kann.
+
+    Frische Studies werden mit ``optimizer.json['simulation_semantics_version']`` gestempelt. Fehlt
+    der Config-Key, ist die Prüfung ein No-Op (rückwärtskompatibel zu Pre-#854-Configs)."""
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+    current = opt_data.get("simulation_semantics_version")
+    if current is None:
+        return  # Versionierung nicht konfiguriert -> No-Op
+
+    existing = study.user_attrs.get("simulation_semantics_version")
+    has_trials = len(study.trials) > 0
+
+    if existing == current:
+        return
+    if existing is None and not has_trials:
+        study.set_user_attr("simulation_semantics_version", current)
+        return
+
+    msg = (f"Simulations-Semantik-Versionskonflikt: die geladene Study wurde unter Version "
+           f"{existing if existing is not None else 'unversioniert'} simuliert, aktuell ist "
+           f"Version {current}. Die gemessenen Metriken verschiedener Simulations-Versionen sind "
+           f"NICHT vergleichbar (ein anderer Handelsvertrag wurde ausgeführt). Initiere Purge der "
+           f"obsoleten Study-Datenbank (.db)...")
+
+    if has_trials:
+        if existing is None or existing < current:
+            logger.warning("♻️ %s", msg)
+            try:
+                optuna.delete_study(study_name=study.study_name, storage=study._storage)
+                logger.warning(f"Obsolete Study '{study.study_name}' erfolgreich gelöscht. Sie wird beim nächsten Versuch neu erstellt.")
+            except Exception as e:
+                logger.error(f"Fehler beim Löschen der Study: {e}")
+            raise ValueError(f"REJECT_STALE_SIMULATION_SEMANTICS: Study-Simulations-Semantik Mismatch. {msg}")
+
+    logger.warning("♻️ %s", msg)
+
+
 def make_objective(
     strategy: str,
     *,
@@ -1187,6 +1237,9 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
+    # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
+    # Docstring), unabhaengig geprueft/gestempelt.
+    _check_simulation_semantics_version(study, opt_data)
 
     # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
@@ -1343,12 +1396,14 @@ def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
     Epics #702) ZWISCHEN ``global_best`` und ``strategy_defaults``.
 
     Reihenfolge: ``load_global_best`` (Proposal READY_FOR_PR / strategies.json) →
-    ``champions.load_champion_seed`` (bester ERREICHTER, aber noch nicht promoteter Holdout-
+    ``champions.load_champion_entry`` (bester ERREICHTER, aber noch nicht promoteter Holdout-
     Kandidat, #703/#704) → ``strategy_defaults`` → ``{}``. Gibt ``(seed_params, source)`` zurück,
-    ``source ∈ {'global_best', 'champion', 'strategy_defaults', 'none'}``. Fehlt das echte globale
-    Optimum, ist ``strategy_defaults`` (bzw. der Champion, falls vorhanden) der Prior, gegen den die
-    A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen`` NIE still 0 (der Kollaps, bei dem
-    der symbol-getunte Vektor völlig ungezügelt Richtung IS/OOS-CV-Rausch tunt, #565).
+    ``source ∈ {'global_best', 'champion', 'champion_quality_stale', 'strategy_defaults', 'none'}``
+    (Issue #853 — 'champion_quality_stale' seit diesem Fix von 'champion' unterschieden, siehe
+    unten). Fehlt das echte globale Optimum, ist ``strategy_defaults`` (bzw. der Champion, falls
+    vorhanden) der Prior, gegen den die A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen``
+    NIE still 0 (der Kollaps, bei dem der symbol-getunte Vektor völlig ungezügelt Richtung
+    IS/OOS-CV-Rausch tunt, #565).
 
     ``symbol``/``opt_data`` sind ADDITIV optional (HI-2): fehlen sie (Legacy-Aufrufer, z. B. das
     globale ``optimize()`` ohne Symbol-Kontext, oder bestehende Tests), ist das Verhalten
@@ -1359,11 +1414,24 @@ def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
     if global_best:
         return global_best, "global_best"
     if symbol is not None and opt_data is not None:
+        # Issue #853 Fix Punkt 3 — ``seed_source`` unterscheidet jetzt 'champion' von
+        # 'champion_quality_stale', statt beide unter 'champion' zu verstecken: der volle Eintrag
+        # (nicht nur ``load_champion_seed``s Parameter-Extrakt) traegt die Information, ob die
+        # QUALITY-Bewertung unter einem aelteren reward_semantics_version gemessen wurde
+        # (champions.champion_quality_stale, #819) — der Parametervektor bleibt in BEIDEN Faellen
+        # gleichwertig seed-faehig (er durchlaeuft beim Enqueue ohnehin erneut alle Gates), aber
+        # die Unterscheidung macht sichtbar, ob ein Champion FEHLTE oder ob er vorhanden war und
+        # nur seine Quality-Telemetrie veraltet ist (Root-Cause #853: ohne sie war "kein
+        # global_best/Champion" die EINZIGE Negativ-Warnung, es gab keine positive Telemetrie).
         from automation.optimizer import champions
-        champion = champions.load_champion_seed(strategy, symbol, base_cfg, opt_data=opt_data,
-                                                 catalog_newest_ns=catalog_newest_ns)
-        if champion:
-            return champion, "champion"
+        champion_entry = champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        if champion_entry:
+            champion_params = dict(champion_entry.get("params") or {})
+            if champion_params:
+                source = ("champion_quality_stale"
+                          if champions.champion_quality_stale(champion_entry, opt_data)
+                          else "champion")
+                return champion_params, source
     defaults = load_strategy_defaults_params(strategy, base_cfg)
     if defaults:
         return defaults, "strategy_defaults"
@@ -2386,6 +2454,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
         trial.set_user_attr("oos_n_periods", metrics.oos_n_periods)
+        # Issue #845 — Downside-Beobachtungs-Nenner je Trial persistiert (None-safe, siehe
+        # parsing.TournamentMetrics.oos_downside_obs-Feldkommentar), damit confirm.py/invariants.py
+        # n_periods-Heterogenität einer Familie gegen die tatsaechlich downside-tragende
+        # Teilmenge prüfen können, nicht nur gegen die volle informative Periodenzahl.
+        if metrics.oos_downside_obs is not None:
+            trial.set_user_attr("oos_downside_obs", metrics.oos_downside_obs)
         # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
         trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
         # Issue #804 — die strukturierten Inferenzpfad-Diagnosen je Trial persistieren, damit der
@@ -2632,8 +2706,23 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # erneut und reconnected die Engine damit lazy) ein zweites Mal zu disposen.
     study._etoro_rdb_storage = rdb_storage
 
+    # Issue #851 — Study-Zeitstempel-Telemetrie (Root-Cause: der #742-Report fuehrte bislang KEINE
+    # Wallclock-Zeit je einzelner Study, nur die Sweep-Gesamtzeit aus #742's Top-Level — eine
+    # Aufschluesselung je Symbol/Strategie (Barriere-Wartezeit #828, worker_utilisation) war aus dem
+    # Artefakt NICHT ableitbar und musste aus Log-Zeitstempeln rekonstruiert werden, was bei einem
+    # stilleren Lauf (kein #740/#780-Log-Praefix je Zeile) nicht funktioniert). ``study_started_at_
+    # utc``/``worker_id`` JETZT gesetzt (vor ``study.optimize``), ``study_ended_at_utc``/
+    # ``study_wallclock_s`` im ``finally:``-Block unten (#833-Stil: auch bei einem vorzeitigen
+    # Abbruch persistiert, nicht nur im Erfolgsfall).
+    import datetime as _dt851
+    study.set_user_attr("study_started_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
+    study.set_user_attr("worker_id", threading.get_ident())
+
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
+    # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
+    # Docstring), unabhaengig geprueft/gestempelt.
+    _check_simulation_semantics_version(study, opt_data)
 
     # Gate 2 — Warm-Start + Shrinkage-Referenz. Issue #565: definierter Fallback statt Silent-Zero.
     # Issue #704 — die Tier-Reihenfolge ist jetzt global_best → champion → strategy_defaults → none
@@ -2645,13 +2734,14 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # unabhängig vom Defaults-Fallback, damit der fehlende Anker im Standalone-Sweep nie still bleibt.
     global_best, seed_source = resolve_symbol_shrinkage_seed(
         strategy, cfg_dir, symbol=symbol, opt_data=opt_data, catalog_newest_ns=catalog_newest_ns)
-    # Issue #704 — ein Champion ist wie global_best ein ECHTER Anker (der param_pen zieht Richtung
-    # eines real erreichten Holdout-Kandidaten statt ins Leere), auch wenn er noch nicht promotet
-    # ist — shrinkage_inactive bleibt daher False für BEIDE Quellen.
-    shrinkage_inactive = seed_source not in ("global_best", "champion")
+    # Issue #704/#853 — ein Champion (ODER ein Champion mit veralteter Quality-Telemetrie,
+    # 'champion_quality_stale', #819) ist wie global_best ein ECHTER Anker (der param_pen zieht
+    # Richtung eines real erreichten Holdout-Kandidaten statt ins Leere) — shrinkage_inactive
+    # bleibt daher False für ALLE DREI Quellen.
+    shrinkage_inactive = seed_source not in ("global_best", "champion", "champion_quality_stale")
     study.set_user_attr("shrinkage_seed_source", seed_source)
     study.set_user_attr("shrinkage_inactive", shrinkage_inactive)
-    if seed_source == "champion":
+    if seed_source in ("champion", "champion_quality_stale"):
         # Issue #709 — Study-User-Attrs & Log-Parität mit #565: jeder Warm-Start-Effekt eines
         # Champions ist forensisch nachvollziehbar (analog shrinkage_*-Telemetrie).
         from automation.optimizer import champions as _champions
@@ -2662,7 +2752,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             corroboration_count = lifecycle.get("corroboration_count")
             r_symbol_at_store = (champion_entry.get("quality") or {}).get("R_symbol")
             first_seen_run = lifecycle.get("first_seen_run")
-            study.set_user_attr("champion_seed_source", "champion")
+            # Issue #853 — traegt jetzt den PRAEZISEN seed_source-Wert (statt hartcodiert
+            # 'champion'), damit die Quality-Stale-Unterscheidung auch in diesem Study-Attr sichtbar
+            # ist, nicht nur im uebergeordneten shrinkage_seed_source.
+            study.set_user_attr("champion_seed_source", seed_source)
             study.set_user_attr("champion_R_symbol_at_store", r_symbol_at_store)
             study.set_user_attr("champion_corroboration_count", corroboration_count)
             study.set_user_attr("champion_writeback_applied", bool(lifecycle.get("writeback_applied")))
@@ -2759,6 +2852,19 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         if not (getattr(study, "user_attrs", None) or {}).get("coherence_violation_rate_exceeded"):
             check_study_coherence_violation_rate(study, opt_data)
     finally:
+        # Issue #851 — im finally-Block (analog #833s Abbruchresilienz): auch eine vorzeitig
+        # abgebrochene Study (Disk-/Wallclock-Guard, Kohaerenz-Abbruch, Exception) traegt eine
+        # ended_at_utc/wallclock_s-Telemetrie, statt nur eine erfolgreich durchgelaufene. Fail-open:
+        # ein Fehler hier darf einen sonst erfolgreichen Optimize-Lauf nicht crashen lassen.
+        try:
+            study.set_user_attr(
+                "study_ended_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
+            study.set_user_attr("study_wallclock_s", round(time.perf_counter() - study_t0, 3))
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#851] Study-Zeitstempel-Telemetrie für '%s' fehlgeschlagen (non-fatal).",
+                study_name, exc_info=True,
+            )
         # Issue #794 — Study-Ebene als Sicherheitsnetz (die #794-Trial-Ebene oben laeuft je Trial;
         # dieser Aufruf raeumt zusaetzlich auf, falls study.optimize() vorzeitig abgebrochen wurde,
         # BEVOR der Retention-Callback den letzten Trial noch sehen konnte). Fail-open: ein

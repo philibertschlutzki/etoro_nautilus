@@ -40,7 +40,8 @@ from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution,
 )
-from automation.optimizer.sweep import _family_n_from_proposals
+from automation.optimizer.sweep import _family_n_from_proposals, load_symbol_universe
+from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
 
 # Issue #785 — die bindend/erwartete Struktur einer Entscheidungs-Stufe. Siehe ``_decision_chain``.
@@ -219,8 +220,24 @@ def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, prop
 
     promote = proposal.get("status") in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
     method = holdout_metrics.get("deflation_inference_method")
+    # Issue #847 — 17 REJECT_SELECTION_PBO-Ablehnungen trugen `inference_method.promotion:
+    # {applied: False}`, obwohl eine CSCV/PBO-Inferenz TATSÄCHLICH gelaufen war (deflation_
+    # inference_method ist DSR-spezifisch und bleibt bei einer reinen PBO-Ablehnung None — dieser
+    # Block sah also keine gelaufene Methode). `holdout_metrics['pbo']` ist nicht-None GENAU dann,
+    # wenn `_study_pbo` ein Urteil gefällt hat (siehe confirm.py) — das IST die dokumentierte
+    # Promotions-Inferenz für diesen Ausgang, unabhängig davon, ob sie zur Ablehnung führte.
+    pbo_value = holdout_metrics.get("pbo")
     if method is not None:
         promotion = {"method": method, "applied": True, "skipped_reason": None}
+    elif pbo_value is not None:
+        promotion = {
+            "method": "cscv", "applied": True, "skipped_reason": None,
+            "pbo": pbo_value,
+            "pbo_n_groups": holdout_metrics.get("pbo_n_groups"),
+            "pbo_n_configs_raw": holdout_metrics.get("pbo_n_configs_raw"),
+            "pbo_n_configs_effective": holdout_metrics.get("pbo_n_configs"),
+            "pbo_threshold": holdout_metrics.get("pbo_threshold"),
+        }
     elif promote:
         promotion = {"method": "not_applicable", "applied": True, "skipped_reason": None}
     else:
@@ -267,6 +284,11 @@ def _study_record(proposal: dict, study,
         if candidate is not None and (max_holding_time_s is None or candidate > max_holding_time_s):
             max_holding_time_s = candidate
             p95_holding_time_s = a.get("oos_p95_holding_time_s")
+
+    # Issue #839 — je-Trial-Zeitbox-Verletzung (nicht nur das Study-Maximum aus #832 oben): eine
+    # gemessene GR-01-Verletzung erhält hier eine Konsequenz (REJECT_INVALID_TIMEBOX in confirm.py
+    # konsumiert dieselbe Berechnung; siehe invariants.compute_trial_timebox_violations).
+    timebox = _inv.compute_trial_timebox_violations(trial_attrs)
 
     best_reward = None
     if study is not None:
@@ -329,6 +351,11 @@ def _study_record(proposal: dict, study,
     decision_chain = _decision_chain(proposal, n_eligible=n_eligible)
     checks = [
         _inv.check_sr0_coherence(holdout_metrics),
+        # Issue #845 — n_periods-Heterogenität innerhalb der DSR-Kohorte muss dieselbe Suppression
+        # ausgelöst haben, die confirm.py bei ueberschrittener deflation_max_n_periods_ratio anwendet.
+        _inv.check_family_n_periods_homogeneity(
+            holdout_metrics,
+            max_ratio=float((tournament_cfg or {}).get("deflation_max_n_periods_ratio", 4.0))),
         _inv.check_n_family_consistency(holdout_metrics),
         # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
         # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.
@@ -366,6 +393,21 @@ def _study_record(proposal: dict, study,
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),
         "n_trials_budget": study_user_attrs.get("n_trials_budget"),
+        # Issue #853 Fix Punkt 3 — seed_source als POSITIVE Telemetrie (vorher existierte nur die
+        # [#565]-Negativ-WARNUNG im Log): welcher Anker den Warm-Start/param_pen dieser Study
+        # tatsächlich speiste (run_optimization.resolve_symbol_shrinkage_seed, Study-User-Attr
+        # 'shrinkage_seed_source'). 'champion_quality_stale' (#819) ist seed-fähig wie 'champion',
+        # nur die Quality-Telemetrie ist veraltet — unterscheidbar von 'strategy_defaults'/'none'
+        # (kein Champion vorhanden).
+        "seed_source": study_user_attrs.get("shrinkage_seed_source"),
+        # Issue #851 — Study-Zeitstempel-Telemetrie (run_optimization._optimize_symbol_impl setzt
+        # diese User-Attrs vor/nach study.optimize, auch bei vorzeitigem Abbruch — #833-Stil).
+        # Rohmaterial für summary_de.py Abschnitt 3.2/3.4 (Median-Wallclock je Strategie,
+        # Barriere-Wartezeit je Symbol) und report._worker_utilisation/_symbol_barrier_wait.
+        "study_started_at_utc": study_user_attrs.get("study_started_at_utc"),
+        "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
+        "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
+        "worker_id": study_user_attrs.get("worker_id"),
         # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl.
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
@@ -387,6 +429,12 @@ def _study_record(proposal: dict, study,
         # Issue #832 Fix Punkt 1 — je-Study Haltedauer-Extrema (Sekunden), siehe Aggregat oben.
         "max_holding_time_s": max_holding_time_s,
         "p95_holding_time_s": p95_holding_time_s,
+        # Issue #839 — je-Trial-Zeitbox-Verletzung, aggregiert je Study (siehe
+        # invariants.compute_trial_timebox_violations für die Berechnung je Trial).
+        "timebox_violation_trades": timebox["timebox_violation_trades"],
+        "timebox_evaluated_trades": timebox["timebox_evaluated_trades"],
+        "timebox_violation_fraction": timebox["timebox_violation_fraction"],
+        "timebox_violated": timebox["timebox_violated"],
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -416,6 +464,10 @@ def _study_record(proposal: dict, study,
         "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
         "holdout_buyhold_return": holdout_metrics.get("oos_buyhold_return"),
         "holdout_excess_return": holdout_metrics.get("oos_excess_return"),
+        # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position (siehe
+        # backtest_runner._calculate_stats "exposure_fraction"), Rohmaterial für summary_de.py
+        # Abschnitt 2.3 (Excess-Return vs. echtes Alpha) und cross_study.excess_variance_decomposition.
+        "holdout_exposure_fraction": holdout_metrics.get("oos_exposure_fraction"),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
         # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
         # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
@@ -423,6 +475,12 @@ def _study_record(proposal: dict, study,
         # family). NICHT mit dem (jetzt nicht mehr für die Deflation verwendeten) symbolweiten
         # cross_study['n_family'] verwechseln (#625, post-hoc Sweep-Telemetrie).
         "n_family_stage1": holdout_metrics.get("deflation_n_family"),
+        # Issue #846 — gesetzt, wenn confirm.py die DSR-Berechnung fuer diese Study uebersprungen
+        # (oder eine Kohaerenzverletzung zwischen deflated_sr0 und deflated_dsr/deflation_dsr_z an
+        # der Export-Grenze unterdrueckt) hat: SMALL_COHORT (deflation_n < 2) oder NO_STATISTIC
+        # (der promotete Trial selbst trug kein oos_sortino_period). None ⇒ DSR normal berechnet
+        # ODER deflated_selection war gar nicht aktiv.
+        "deflation_skipped_reason": holdout_metrics.get("deflation_skipped_reason"),
         # Issue #758/#791 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER, jetzt als
         # {method, applied, skipped_reason} statt eines nackten Strings/None (#791): ``applied``
         # unterscheidet "Inferenz lief nicht, weil strukturell unanwendbar/dokumentiert
@@ -521,6 +579,23 @@ def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     ]
 
 
+def _symbol_coverage_summary(opt_data: dict) -> tuple[dict[str, Any], _inv.InvariantResult]:
+    """Issue #841 — ``cross_study.symbol_coverage`` + der zugehörige Invarianten-Check. Liest
+    ``data/optimizer/symbol_coverage.json`` (das Ledger, das ``sweep_symbol_order_policy=
+    'least_recently_covered'`` für die Dispatch-Reihenfolge nutzt) und das aktuelle Universum
+    (``sweep.load_symbol_universe``). Fail-open bei jedem Lese-/Enumerationsfehler — ein Report
+    darf wegen einer fehlenden/kaputten Coverage-Datei nie crashen."""
+    max_age_runs = int(opt_data.get("symbol_coverage_max_age_runs", 3))
+    try:
+        universe = load_symbol_universe()
+    except Exception:
+        universe = []
+    ledger = _symbol_coverage.load_coverage()
+    coverage = _symbol_coverage.coverage_report(ledger, universe, max_age_runs=max_age_runs)
+    check = _inv.check_symbol_coverage(ledger, universe, max_age_runs=max_age_runs)
+    return coverage, check
+
+
 def _champions_summary(opt_data: dict) -> dict[str, Any]:
     """Issue #818 (#742-Report-Zaehlerpaar) — ``cross_study.champions``:
     ``{stored, admissible, corroborated, written_back, skipped_by_reason}`` über den AKTUELLEN
@@ -533,7 +608,8 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     from automation.optimizer import champions as _champions_mod
 
     empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
-             "skipped_by_reason": {}, "semantics_migrated": 0}
+             "skipped_by_reason": {}, "semantics_migrated": 0,
+             "admissible_despite_simulation_stale": 0}
     try:
         champions_dir = _champions_mod._champions_dir()
         paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
@@ -545,6 +621,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     corroborated = 0
     written_back = 0
     semantics_migrated = 0
+    admissible_despite_simulation_stale = 0
     skipped_by_reason: collections.Counter = collections.Counter()
     promote_after = int(opt_data.get("champion_promote_after_runs", 2))
     for path in paths:
@@ -564,6 +641,16 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
             ok, reason = _champions_mod.champion_is_admissible(entry, opt_data)
         except Exception:
             ok, reason = False, "ADMISSIBILITY_CHECK_ERROR"
+        # Issue #854 — Regressionswaechter-Rohmaterial: ein simulation_semantics_version-stale
+        # Eintrag MUSS champion_is_admissible bereits verworfen haben (harter Ausschluss, siehe
+        # champions.champion_simulation_stale-Docstring) — dieser Zaehler macht sichtbar, ob diese
+        # Garantie tatsaechlich haelt, statt sie nur zu behaupten.
+        try:
+            simulation_stale = _champions_mod.champion_simulation_stale(entry, opt_data)
+        except Exception:
+            simulation_stale = False
+        if simulation_stale and ok:
+            admissible_despite_simulation_stale += 1
         if not ok:
             skipped_by_reason[reason or "UNKNOWN"] += 1
             continue
@@ -582,6 +669,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
         "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
         "semantics_migrated": semantics_migrated,
+        "admissible_despite_simulation_stale": admissible_despite_simulation_stale,
     }
 
 
@@ -630,6 +718,116 @@ def _selection_rule_families(studies_out: list[dict[str, Any]]) -> dict[str, dic
         fingerprint = r.get("selection_rule_fingerprint") or "unknown"
         bucket = out.setdefault(symbol, {})
         bucket[fingerprint] = bucket.get(fingerprint, 0) + int(r.get("n_evaluable") or 0)
+    return out
+
+
+def _excess_variance_decomposition(studies_out: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Issue #850 — einfache Ein-Weg-Varianzzerlegung von ``holdout_excess_return`` NACH SYMBOL
+    (Quadratsummen-Zerlegung, analog einer einfaktoriellen ANOVA): ``symbol_share`` ist der Anteil
+    der GESAMT-Streuung, der bereits durch die reine Symbol-Gruppierung erklärt wird
+    (Zwischen-Gruppen-Quadratsumme / Gesamt-Quadratsumme); ``strategy_share`` ist der Rest
+    (Streuung INNERHALB eines Symbols — Strategie-Unterschied UND Restrauschen, hier bewusst NICHT
+    weiter getrennt, siehe Issue-Text "Strategie + Rest").
+
+    Root-Cause #850/Pitfall #268: 14 strukturell verschiedene Strategien lieferten auf demselben
+    Symbol Holdout-Excess-Returns innerhalb weniger Prozentpunkte, bei einem absoluten Niveau von
+    über 20 — der Excess-Return maß im Bärenmarkt näherungsweise NUR ``−Buy&Hold`` (eine
+    Symbol-Konstante), nicht die Handelsleistung der Strategie. ``None`` bei < 2 Symbolen ODER
+    < 2 Datenpunkten insgesamt (Varianz nicht definiert) — reine additive Diagnose-Telemetrie."""
+    rows = [
+        (r.get("symbol"), r.get("holdout_excess_return"))
+        for r in studies_out
+        if r.get("holdout_excess_return") is not None and r.get("symbol") is not None
+    ]
+    if len(rows) < 2:
+        return None
+    by_symbol: dict[str, list[float]] = {}
+    for symbol, excess in rows:
+        by_symbol.setdefault(symbol, []).append(float(excess))
+    if len(by_symbol) < 2:
+        return None
+    all_values = [v for values in by_symbol.values() for v in values]
+    grand_mean = sum(all_values) / len(all_values)
+    ss_total = sum((v - grand_mean) ** 2 for v in all_values)
+    if ss_total <= 0:
+        return {"symbol_share": None, "strategy_share": None, "n_rows": len(all_values)}
+    ss_between = sum(
+        len(values) * (sum(values) / len(values) - grand_mean) ** 2
+        for values in by_symbol.values()
+    )
+    symbol_share = ss_between / ss_total
+    return {
+        "symbol_share": symbol_share,
+        "strategy_share": max(0.0, 1.0 - symbol_share),
+        "n_rows": len(all_values),
+    }
+
+
+def _wallclock_by_strategy(studies_out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Issue #851 — Median/p90 von ``study_wallclock_s`` je Strategie, für summary_de.py Abschnitt
+    3.2 ("Laufzeit je Symbol/Strategie") — vorher aus dem #742-Report nicht ableitbar (keine
+    Wallclock-Telemetrie je Study), musste aus Log-Zeitstempeln rekonstruiert werden."""
+    import statistics as _stats
+    by_strategy: dict[str, list[float]] = {}
+    for r in studies_out:
+        strategy, wc = r.get("strategy"), r.get("study_wallclock_s")
+        if strategy is None or wc is None:
+            continue
+        by_strategy.setdefault(strategy, []).append(float(wc))
+    out: dict[str, dict[str, Any]] = {}
+    for strategy, times in by_strategy.items():
+        times_sorted = sorted(times)
+        p90_idx = max(0, min(len(times_sorted) - 1, round(0.9 * (len(times_sorted) - 1))))
+        out[strategy] = {
+            "median": _stats.median(times_sorted),
+            "p90": times_sorted[p90_idx],
+            "n": len(times_sorted),
+        }
+    return out
+
+
+def _symbol_barrier_wait(studies_out: list[dict[str, Any]]) -> dict[str, float]:
+    """Issue #851 — je Symbol: ``max(study_wallclock_s) − min(study_wallclock_s)`` über die
+    Strategien-Studies dieses Symbols — die Zeit, die das Symbol auf seine LANGSAMSTE Strategie
+    wartet, relativ zu seiner schnellsten (#828-Barriere-Konzept). Symbole mit nur EINER Study
+    (kein Warten möglich) sind nicht enthalten."""
+    by_symbol: dict[str, list[float]] = {}
+    for r in studies_out:
+        symbol, wc = r.get("symbol"), r.get("study_wallclock_s")
+        if symbol is None or wc is None:
+            continue
+        by_symbol.setdefault(symbol, []).append(float(wc))
+    return {
+        symbol: max(times) - min(times)
+        for symbol, times in by_symbol.items()
+        if len(times) >= 2
+    }
+
+
+def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
+                        sweep_wallclock_s: float | None) -> float | None:
+    """Issue #851 — Σ Study-Wallclock / (n_jobs × Sweep-Wallclock): der Anteil der theoretisch
+    verfügbaren Worker-Zeit, der tatsächlich mit Study-Arbeit gefüllt war (1.0 = perfekte
+    Auslastung; auf einem seriellen Referenzlauf, n_jobs=1, ≈ 1.0 abzüglich Preflight-/Dispatch-
+    Overhead). None ohne n_jobs/sweep_wallclock_s ODER ohne eine einzige Study mit Wallclock-Daten."""
+    if not n_jobs or n_jobs <= 0 or not sweep_wallclock_s or sweep_wallclock_s <= 0:
+        return None
+    total_study_wallclock = sum(
+        r["study_wallclock_s"] for r in studies_out if r.get("study_wallclock_s") is not None)
+    if total_study_wallclock <= 0:
+        return None
+    return total_study_wallclock / (n_jobs * sweep_wallclock_s)
+
+
+def _seed_source_distribution(studies_out: list[dict[str, Any]]) -> dict[str, int]:
+    """Issue #853 Fix Punkt 3/4 — Verteilung von ``seed_source`` über alle Studies dieses Laufs
+    (``report._study_record``), Rohmaterial für ``invariants.check_champion_seed_coverage`` und
+    die #742-Report-Transparenz ("welcher Anker speiste den Warm-Start tatsächlich"). Studies ohne
+    Telemetrie (Pre-#853-Lauf) landen unter ``'unknown'``."""
+    out: dict[str, int] = {}
+    for r in studies_out:
+        source = r.get("seed_source") or "unknown"
+        out[source] = out.get(source, 0) + 1
     return out
 
 
@@ -724,6 +922,20 @@ def _build_report(
     champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
     all_checks.append(("global", champion_writeback_check))
 
+    # Issue #853 Fix Punkt 4 — vierzehnter Invarianten-Check: WARNUNG (severity='low'), wenn der
+    # Champion-Seed-Anker fuer > 90% der Studies dieses Laufs auf strategy_defaults zurueckfaellt
+    # (der Closed Loop, #702, ist dann nachweislich unwirksam — siehe check_champion_seed_coverage-
+    # Docstring fuer den Scope-Hinweis zur Ein-Lauf- statt Zwei-Lauf-Schwelle).
+    seed_source_distribution = _seed_source_distribution(studies_out)
+    champion_seed_coverage_check = _inv.check_champion_seed_coverage(seed_source_distribution)
+    all_checks.append(("global", champion_seed_coverage_check))
+
+    # Issue #854 Fix Punkt 6 — fuenfzehnter Invarianten-Check: kein Champion-Store-Eintrag mit
+    # veralteter simulation_semantics_version darf trotzdem als admissible gelten.
+    semantics_version_coherence_check = _inv.check_semantics_version_coherence(
+        champions_summary.get("admissible_despite_simulation_stale", 0))
+    all_checks.append(("global", semantics_version_coherence_check))
+
     # Issue #829 — neunter Invarianten-Check: ein Evidenzschwellen-Deadlock (Pitfall #258) macht
     # sich als viele diagnosed_pairs_cache-Einträge derselben (strategy, binding_cause)-Kombination
     # mit action=='none' bemerkbar.
@@ -734,6 +946,27 @@ def _build_report(
     # #714/GR-01-Zeitbox-Obergrenze (24 Bars) — ein Treffer ist ein Bug im Exit-Pfad.
     holding_time_cap_check = _inv.check_holding_time_cap(studies_out)
     all_checks.append(("global", holding_time_cap_check))
+
+    # Issue #841 — elfter Invarianten-Check: kein Symbol des aktuellen Universums darf seit mehr
+    # als symbol_coverage_max_age_runs abgeschlossenen Läufen unabgedeckt bleiben (least_recently_
+    # covered-Rotation, siehe symbol_coverage.py).
+    symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
+    all_checks.append(("global", symbol_coverage_check))
+
+    # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
+    # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,
+    # unbekannte Ursache (vorher WARNUNG in sweep.py [#812], jetzt FAIL).
+    selection_rule_families = _selection_rule_families(studies_out)
+    selection_rule_homogeneity_check = _inv.check_selection_rule_homogeneity(selection_rule_families)
+    all_checks.append(("global", selection_rule_homogeneity_check))
+
+    # Issue #852 — dreizehnter Invarianten-Check: eine installierte Bibliotheksversion ausserhalb
+    # ihres gepinnten Bereichs (optimizer.json['pinned_library_versions']) macht den numerischen
+    # Ausgang der Selektion von der Installationsumgebung statt der Konfiguration abhaengig
+    # (dieselbe Fehlerklasse wie #801/#802 bei pandas).
+    library_version_drift_check = _inv.check_library_version_drift(
+        library_versions(), optimizer_cfg.get("pinned_library_versions") or {})
+    all_checks.append(("global", library_version_drift_check))
 
     invariant_checks = []
     for label, result in all_checks:
@@ -767,6 +1000,11 @@ def _build_report(
         "run_status": run_status,
         "symbols_completed": symbols_completed,
         "symbols_planned": symbols_planned,
+        # Issue #849 — im Report EINGEBETTET (statt eines zweiten config_dir()-Lesezugriffs in
+        # summary_de.py, das bewusst reines Rueckgabedict-only bleibt, siehe Moduldocstring dort):
+        # Sektion 5.2 zeigt hoechstens so viele Beispiel-Details je Check, bevor sie auf "... und N
+        # weitere" kollabiert (Akzeptanzkriterium #849-5, Bericht bleibt bei >= 500 FAILs kompakt).
+        "summary_max_details_per_check": int(optimizer_cfg.get("summary_max_details_per_check", 5)),
         "studies": studies_out,
         "cross_study": {
             "n_family": _family_n_from_proposals(proposals),
@@ -795,10 +1033,13 @@ def _build_report(
             # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.
-            "selection_rule_families": _selection_rule_families(studies_out),
+            "selection_rule_families": selection_rule_families,
             # Issue #818 — stored/admissible/corroborated/written_back/skipped_by_reason über den
             # aktuellen Champion-Store-Stand (Epic #702 Ebene 1+2 Reachability-Telemetrie).
             "champions": champions_summary,
+            # Issue #841 — {never_covered, stale_symbols, oldest_coverage_age_runs,
+            # total_runs_started} über das aktuelle Universum (symbol_coverage.json-Ledger).
+            "symbol_coverage": symbol_coverage_summary,
             # Issue #826 Fix Punkt 2 (Akzeptanzkriterium 2) — n_family_stage1 (je Symbol/Strategie,
             # die tatsächlich verwendete Per-Strategie-Multiplizität N1) UND n_family_stage2 (je
             # Symbol, Zahl der Strategien mit N1 > 0) GETRENNT ausgewiesen — NICHT zu verwechseln mit
@@ -809,6 +1050,18 @@ def _build_report(
             # summary_de.py Abschnitt 4 "Trades mit der laengsten Haltedauer".
             "longest_holding_studies": _longest_holding_studies(
                 studies_out, top_k=int(optimizer_cfg.get("report_longest_trades_k", 10))),
+            # Issue #850 — {symbol_share, strategy_share, n_rows} über holdout_excess_return;
+            # None bei < 2 Symbolen mit Benchmark-Daten (siehe Docstring).
+            "excess_variance_decomposition": _excess_variance_decomposition(studies_out),
+            # Issue #851 — Study-Zeitstempel-abgeleitete Kennzahlen (summary_de.py Abschnitt
+            # 3.2/3.4); dieselben Felder speisen das #843-LPT-Scheduling (Katalog B).
+            "wallclock_by_strategy": _wallclock_by_strategy(studies_out),
+            "symbol_barrier_wait_s": _symbol_barrier_wait(studies_out),
+            "worker_utilisation": _worker_utilisation(
+                studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s),
+            # Issue #853 — {seed_source_value: n_studies}, dieselbe Verteilung, die
+            # check_champion_seed_coverage prüft.
+            "seed_source_distribution": seed_source_distribution,
         },
         "invariant_checks": invariant_checks,
     }

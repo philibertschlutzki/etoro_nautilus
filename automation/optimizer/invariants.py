@@ -28,15 +28,71 @@ class InvariantResult:
     expected: Any
     actual: Any
     detail: str
+    # Issue #849 — Schweregrad, damit Sektion 5 des #832-Berichts nach Dringlichkeit statt nach
+    # Auftrittsreihenfolge sortieren kann. "blocking" macht eine Study ungültig (siehe #839
+    # check_holding_time_cap); Default "medium" für alle bisherigen Checks (rückwärtskompatibel —
+    # kein bestehender Aufrufer muss das Feld setzen).
+    severity: str = "medium"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            # Issue #849 — Uebergangs-Alias: report.py's INVARIANT_CHECK_FAILED-Event mappte
+            # bereits korrekt auf "check" (result.name), waehrend summary_de.py "check" LAS, ohne
+            # dass to_dict() diesen Schluessel je geschrieben hat (519x "**None**" im Bericht).
+            # Beide Schluessel tragen denselben Wert, bis alle Konsumenten auf "name" migriert sind.
+            "check": self.name,
             "passed": self.passed,
             "expected": self.expected,
             "actual": self.actual,
             "detail": self.detail,
+            "severity": self.severity,
         }
+
+
+# Issue #714/GR-01 — dieselbe konservative obere Schranke wie
+# ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``spaces._MAX_BARS_IN_TRADE_CAP``. Absichtlich
+# hier als eigene Konstante (statt eines Imports) gehalten: ``invariants.py`` ist bewusst frei von
+# einer nautilus_trader-Abhängigkeit (siehe Moduldocstring — reine Funktionen über plain Dicts).
+_MAX_BARS_IN_TRADE_CAP = 24.0
+_BAR_SECONDS = 3600.0
+
+
+def compute_trial_timebox_violations(trial_attrs: list[dict], *,
+                                     max_bars_in_trade_cap: float = _MAX_BARS_IN_TRADE_CAP,
+                                     bar_seconds: float = _BAR_SECONDS,
+                                     tolerance_bars: float = 0.01) -> dict[str, Any]:
+    """Issue #839 — je-Trial-Zeitbox-Verletzung: vergleicht die tatsächlich beobachtete Haltedauer
+    (``oos_max_holding_time_s``, seit #832 je Trial persistiert) gegen den für DIESEN Trial
+    GESAMPELTEN ``max_bars_in_trade`` (``sampled_params``, seit #669 je Trial mitgeführt) — fehlt
+    dieser Wert (Strategie sampelt ihn nicht), gegen den globalen #714/GR-01-Deckel (dieselbe
+    konservative obere Schranke wie ``check_holding_time_cap``).
+
+    Ein Treffer bedeutet: dieser Trial wurde auf einer Simulation bewertet, die den eigenen
+    Zeit-Exit-Vertrag verletzt hat (Bug im Exit-Pfad, siehe #836/#837) — seine Metriken sind dann
+    keine gültige Grundlage für Eligibility/Reward/Promotion. Reine Funktion über bereits geladene
+    ``trial.user_attrs``-Dicts, unabhängig von Optuna-Objekten (siehe Moduldocstring)."""
+    violation_trades = 0
+    evaluated_trades = 0
+    for attrs in trial_attrs or []:
+        holding_s = attrs.get("oos_max_holding_time_s")
+        if holding_s is None:
+            continue
+        evaluated_trades += 1
+        sampled = attrs.get("sampled_params") or {}
+        cap_bars = sampled.get("max_bars_in_trade")
+        if cap_bars is None:
+            cap_bars = max_bars_in_trade_cap
+        cap_s = (float(cap_bars) + tolerance_bars) * bar_seconds
+        if holding_s > cap_s:
+            violation_trades += 1
+    fraction = round(violation_trades / evaluated_trades, 4) if evaluated_trades else 0.0
+    return {
+        "timebox_violation_trades": violation_trades,
+        "timebox_evaluated_trades": evaluated_trades,
+        "timebox_violation_fraction": fraction,
+        "timebox_violated": violation_trades > 0,
+    }
 
 
 def check_sr0_coherence(holdout_metrics: dict) -> InvariantResult:
@@ -68,6 +124,51 @@ def check_sr0_coherence(holdout_metrics: dict) -> InvariantResult:
                 "deflated_dsr/deflation_dsr_z ohne begleitendes deflated_sr0 (oder umgekehrt) — "
                 "moegliche Wiederkehr der #651-Root-Cause (divergente SR0-Quellen fuer Entscheidung "
                 "vs. Telemetrie)."),
+    )
+
+
+def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: float = 4.0) -> InvariantResult:
+    """Issue #845-Regressionswächter.
+
+    ``confirm.confirm_per_symbol_promotion`` berechnet ``deflation_var`` (die Kohorten-Varianz, die
+    ``deflation_sr0`` treibt) über ALLE eligiblen Trials der DSR-Kohorte, als traegen sie eine
+    annaehernd konstante Stichprobengroesse T (``oos_n_periods``) — dieselbe Voraussetzung, die den
+    Lo-2002-T-bewussten Varianz-Floor motiviert. In der Praxis wurde ein Faktor 45 zwischen dem
+    kleinsten und groessten ``oos_n_periods`` derselben Kohorte beobachtet: die gepoolten
+    per-Trial-Sortinos sind dann nicht kommensurabel, DSR/PSR über die Kohorte hinweg nicht
+    vergleichbar. Der Fix (confirm.py, ``deflation_n_periods_ratio``) unterdrückt DSR/SR₀ mit
+    ``deflation_skipped_reason='N_PERIODS_HETEROGENEOUS'``, sobald
+    ``max(oos_n_periods)/min(oos_n_periods)`` (der Kohorte) ``deflation_max_n_periods_ratio``
+    (tournament.json, Default 4.0) überschreitet — dieser Wächter prüft, dass diese Unterdrückung
+    tatsächlich griff (kein ``deflated_dsr``/``deflation_dsr_z`` trotz überschrittener Ratio).
+
+    ``holdout_metrics`` ist derselbe Export-Dict wie bei ``check_sr0_coherence``
+    (``proposal['holdout']['symbol']``). ``deflation_n_periods_ratio is None`` ⇒ keine Kohorte mit
+    >= 2 Mitgliedern mit bekanntem ``oos_n_periods`` (nicht anwendbar, PASS)."""
+    ratio = holdout_metrics.get("deflation_n_periods_ratio")
+    if ratio is None:
+        return InvariantResult(
+            name="check_family_n_periods_homogeneity",
+            passed=True,
+            expected=f"<= {max_ratio}",
+            actual=None,
+            detail="deflation_n_periods_ratio unbekannt (keine >=2-Kohorte mit bekanntem "
+                    "oos_n_periods) — nicht anwendbar.",
+        )
+    exceeded = ratio > max_ratio
+    has_dsr_signal = (holdout_metrics.get("deflated_dsr") is not None
+                       or holdout_metrics.get("deflation_dsr_z") is not None)
+    passed = not (exceeded and has_dsr_signal)
+    return InvariantResult(
+        name="check_family_n_periods_homogeneity",
+        passed=passed,
+        expected=f"<= {max_ratio} ODER kein deflated_dsr/deflation_dsr_z",
+        actual=ratio,
+        severity="high",
+        detail=("OK" if passed else
+                f"deflation_n_periods_ratio={ratio:.3g} > max_ratio={max_ratio}, aber "
+                "deflated_dsr/deflation_dsr_z sind trotzdem gesetzt — die #845-Heterogenitäts-"
+                "Suppression hat nicht gegriffen."),
     )
 
 
@@ -749,6 +850,7 @@ def check_holding_time_cap(study_records: list[dict], *,
             actual=None,
             detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
                    "nicht anwendbar.",
+            severity="blocking",
         )
     cap_s = (max_bars_in_trade_cap + tolerance_bars) * bar_seconds
     offenders = {
@@ -761,8 +863,274 @@ def check_holding_time_cap(study_records: list[dict], *,
         passed=passed,
         expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
         actual=offenders if offenders else None,
+        severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies überschreiten die #714/GR-01-Zeitbox-Obergrenze "
                 f"({max_bars_in_trade_cap} Bars): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase "
                 "erzwingt den Zeit-Exit nicht), keine Dateneigenart."),
+    )
+
+
+def check_required_config_keys(configs: dict[str, dict], required_keys_spec: dict) -> InvariantResult:
+    """Issue #844 (Pitfall #267, 5. Wiederkehr nach #488/#753/#769/#805) — FAIL, wenn ein in
+    ``required_keys_spec`` (``automation/config/_required_keys.json``) als ``required`` markierter
+    Key in seiner Config-Datei fehlt, ``null`` ist, oder einen ``reject_values``-Eintrag trägt.
+
+    ``configs``: ``{"tournament.json": {...bereits geladen...}, "optimizer.json": {...}}``.
+    ``required_keys_spec``: ``{"tournament.json": {key: {"required": bool, "reject_values": [...]}},
+    ...}`` — Metadaten-Keys wie ``schema_version``/``_comment`` werden ignoriert.
+
+    Reine Funktion über bereits geladene Dicts — kein Datei-I/O hier (der Aufrufer, z. B.
+    ``sweep.assert_required_config_keys_valid``, lädt beide Dateien)."""
+    offenders: dict[str, str] = {}
+    for filename, fields in (required_keys_spec or {}).items():
+        if not isinstance(fields, dict):
+            continue  # schema_version/_comment — keine Feld-Spezifikation
+        cfg = configs.get(filename) or {}
+        for key, spec in fields.items():
+            if not isinstance(spec, dict) or not spec.get("required", False):
+                continue
+            offender_key = f"{filename}::{key}"
+            if key not in cfg:
+                offenders[offender_key] = "fehlt"
+                continue
+            value = cfg.get(key)
+            if value is None:
+                offenders[offender_key] = "ist null"
+                continue
+            reject_values = spec.get("reject_values") or []
+            if value in reject_values:
+                offenders[offender_key] = f"verbotener Wert {value!r}"
+    passed = not offenders
+    return InvariantResult(
+        name="check_required_config_keys",
+        passed=passed,
+        expected="alle in _required_keys.json als required markierten Keys gesetzt, nicht null, "
+                 "kein reject_values-Treffer",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Config-Key(s) verletzen die #844-Registry: {offenders}"),
+    )
+
+
+def check_selection_rule_homogeneity(selection_rule_families: dict[str, dict[str, int]]) -> InvariantResult:
+    """Issue #848 (5. Katalog: #660 → #668 → #678 → #812 → #848) — FAIL (statt der bisherigen
+    ``[#812]``-WARNUNG in ``sweep.py``), wenn mehr als EIN ``selection_rule_fingerprint`` je
+    Symbol/Familie auftritt. Vor #848 war die Ursache bekannt (der unerreichbare
+    ``min_win_rate``-OR-Arm liess ``any_arm_unreachable_policy='drop_arm'`` je Study
+    unterschiedlich greifen); nach der Entfernung dieses Arms ist ein zweiter Fingerprint eine
+    ANDERE, bislang unbekannte Ursache — und verletzt die Voraussetzung der DSR-Multiplizitäts-
+    korrektur (Pitfall #248), die eine über die Familie konstante Selektionsregel voraussetzt.
+
+    ``selection_rule_families``: ``{symbol: {fingerprint: n_family}}``
+    (``report._selection_rule_families``)."""
+    offenders = {
+        symbol: len(fingerprints)
+        for symbol, fingerprints in (selection_rule_families or {}).items()
+        if len(fingerprints) > 1
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_selection_rule_homogeneity",
+        passed=passed,
+        expected="genau 1 selection_rule_fingerprint je Symbol/Familie",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) mit >1 selection_rule_fingerprint: {offenders} — "
+                "verletzt die DSR-Multiplizitätskorrektur-Voraussetzung (Pitfall #248)."),
+    )
+
+
+def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: int = 3) -> InvariantResult:
+    """Issue #841 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als ``max_age_runs``
+    abgeschlossenen Sweep-Läufen nicht abgedeckt wurde (niemals abgedeckt zählt als maximal alt).
+    Konsumiert ``symbol_coverage.coverage_report`` (dasselbe Ledger, das
+    ``sweep_symbol_order_policy='least_recently_covered'`` für die Dispatch-Reihenfolge nutzt) —
+    macht eine Abdeckungslücke messbar, statt sie nur implizit über ``symbols_completed``/
+    ``symbols_planned``-Telemetrie erahnen zu lassen."""
+    from automation.optimizer import symbol_coverage as _sc
+    report = _sc.coverage_report(coverage, universe, max_age_runs=max_age_runs)
+    stale = report.get("stale_symbols") or {}
+    never = report.get("never_covered") or []
+    offenders = dict(stale)
+    for sym in never:
+        offenders.setdefault(sym, report.get("total_runs_started", 0))
+    passed = not offenders
+    return InvariantResult(
+        name="check_symbol_coverage",
+        passed=passed,
+        expected=f"<= {max_age_runs} Läufe seit letzter Abdeckung, für jedes Symbol im Universum",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) seit mehr als {max_age_runs} Läufen nicht abgedeckt: "
+                f"{offenders} (Issue #841 — least_recently_covered-Rotation sollte das verhindern)."),
+    )
+
+
+def _parse_version_tuple(version_str: str) -> tuple[int, ...]:
+    """Wie ``sweep._parse_version_tuple`` — absichtlich DUPLIZIERT statt importiert, damit
+    ``invariants.py`` frei von jeder Abhängigkeit auf ein anderes ``automation.optimizer``-Modul
+    bleibt (Moduldocstring: reine Funktionen über plain Dicts/Listen). Parst die führenden
+    numerischen Komponenten einer Versions-Zeichenkette (``'2.3.3'`` -> ``(2, 3, 3)``); ein
+    nicht-numerischer Suffix (rc/dev/post) bricht das Parsing an dieser Stelle ab."""
+    parts: list[int] = []
+    for chunk in (version_str or "").split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+_VERSION_COMPARATORS = {
+    ">=": lambda a, b: a >= b,
+    "<=": lambda a, b: a <= b,
+    "==": lambda a, b: a == b,
+    ">": lambda a, b: a > b,
+    "<": lambda a, b: a < b,
+}
+
+
+def _version_satisfies(installed: str, spec: str) -> bool:
+    """Minimaler, abhängigkeitsfreier Spezifizierer-Vergleich (nur ``>=``/``<=``/``==``/``>``/``<``,
+    kommagetrennt UND-verknüpft) — ausreichend für die in
+    ``optimizer.json['pinned_library_versions']`` verwendeten Bereichs-Pins (z. B. ``'>=4.9,<5.0'``,
+    dasselbe Format wie ``requirements.txt``). KEIN vollständiger PEP-440-Parser (kein Umgang mit
+    Pre-Release-/Post-Release-Suffixen) — für die hier gepinnten, regulär veröffentlichten
+    Major.Minor.Patch-Versionen ausreichend."""
+    installed_t = _parse_version_tuple(installed)
+    for clause in (spec or "").split(","):
+        clause = clause.strip()
+        if not clause:
+            continue
+        op = next((o for o in (">=", "<=", "==", ">", "<") if clause.startswith(o)), None)
+        if op is None:
+            continue
+        bound_t = _parse_version_tuple(clause[len(op):].strip())
+        if not _VERSION_COMPARATORS[op](installed_t, bound_t):
+            return False
+    return True
+
+
+def check_library_version_drift(installed_versions: dict[str, str | None],
+                                 pinned_ranges: dict[str, str]) -> InvariantResult:
+    """Issue #852 (P2) — FAIL, wenn eine installierte Bibliotheksversion
+    (``manifest.library_versions()``) ausserhalb ihres gepinnten Bereichs
+    (``optimizer.json['pinned_library_versions']``, z. B. ``'>=4.9,<5.0'``) liegt.
+
+    Root-Cause: ``optuna`` stand in ``requirements.txt`` OHNE jede Versionsangabe, obwohl derselbe
+    Kommentar dort erklärt, warum das für ``pandas`` (#802) inakzeptabel war — ``TPESampler``s
+    Defaults für ``multivariate``/``group``/``constant_liar``, die Interaktion von
+    ``constraints_func`` (#612) mit ``n_startup_trials``, und die Behandlung von
+    ``TrialState.PRUNED`` sind alle NICHT über Optuna-Majors garantiert. Damit hängt der
+    NUMERISCHE AUSGANG der Selektion an der Installationsumgebung statt der Konfiguration —
+    dieselbe Fehlerklasse wie #801/#802 bei pandas.
+
+    Nur Bibliotheken, die SOWOHL installiert (``installed_versions[name] is not None``) ALS AUCH
+    gepinnt (``pinned_ranges`` enthält einen Eintrag) sind, werden geprüft — eine fehlende
+    Installation oder ein (noch) ungepinnter Eintrag ist kein Drift-FAIL (fail-open, analog jedem
+    anderen Preflight-Check dieses Moduls)."""
+    offenders: dict[str, str] = {}
+    for name, spec in (pinned_ranges or {}).items():
+        installed = (installed_versions or {}).get(name)
+        if installed is None:
+            continue
+        if not _version_satisfies(installed, spec):
+            offenders[name] = f"installiert={installed}, gepinnt={spec}"
+    passed = not offenders
+    return InvariantResult(
+        name="check_library_version_drift",
+        passed=passed,
+        expected=dict(pinned_ranges or {}),
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Bibliothek(en) ausserhalb des gepinnten Bereichs: {offenders} — "
+                "der numerische Ausgang der Selektion haengt damit an der Installationsumgebung "
+                "statt der Konfiguration (#802-Fehlerklasse)."),
+    )
+
+
+def check_champion_seed_coverage(seed_source_counts: dict[str, int], *,
+                                 threshold: float = 0.9) -> InvariantResult:
+    """Issue #853 Fix Punkt 4 — WARNUNG (severity='low'), wenn ``seed_source == 'strategy_defaults'``
+    für mehr als ``threshold`` (Default 90 %) der Studies EINES Laufs gilt: der Champion-Store-
+    Closed-Loop (Epic #702, Ebene 1+2) ist dann nachweislich unwirksam — unabhängig davon, WELCHES
+    Glied bricht (#834-Store-Entwertung durch einen Semantik-Bump, fehlendes #840/#841-Resume/
+    Ledger-Vollabdeckung, oder die #821-``corroboration_count >= 2``-Hürde können je einzeln oder
+    gemeinsam ursächlich sein — dieser Check macht nur das SYMPTOM sichtbar, nicht die Ursache;
+    ``seed_source_counts`` selbst unterscheidet die möglichen Werte für die Detailanalyse).
+
+    SCOPE-HINWEIS: der Issue-Text verlangt die Schwelle über ZWEI AUFEINANDERFOLGENDE Läufe
+    (persistente Historie nötig, analog ``symbol_coverage.py``). Diese Prüfung ist bewusst auf
+    EINEN Lauf reduziert (siehe ``champions.py``-Moduldocstring für die vollständige
+    Scope-Begründung) — ein Lauf mit ≥ 90 % ``strategy_defaults`` ist bereits für sich genommen ein
+    aussagekräftiges Signal; die Zwei-Lauf-Persistenz bleibt als dokumentierte Erweiterung offen.
+
+    ``seed_source_counts``: ``{seed_source_value: n_studies}``
+    (``report._seed_source_distribution``)."""
+    total = sum(seed_source_counts.values())
+    if total == 0:
+        return InvariantResult(
+            name="check_champion_seed_coverage",
+            passed=True,
+            expected=f"strategy_defaults-Anteil <= {threshold:.0%}",
+            actual=None,
+            severity="low",
+            detail="Keine Studies mit seed_source-Telemetrie — nicht anwendbar.",
+        )
+    defaults_fraction = seed_source_counts.get("strategy_defaults", 0) / total
+    passed = defaults_fraction <= threshold
+    return InvariantResult(
+        name="check_champion_seed_coverage",
+        passed=passed,
+        expected=f"<= {threshold:.0%}",
+        actual=defaults_fraction,
+        severity="low",
+        detail=("OK" if passed else
+                f"strategy_defaults-Anteil={defaults_fraction:.1%} > {threshold:.0%} — der "
+                f"Champion-Store-Closed-Loop (#702) ist fuer diesen Lauf nachweislich unwirksam "
+                f"({seed_source_counts})."),
+    )
+
+
+def check_semantics_version_coherence(admissible_despite_simulation_stale: int) -> InvariantResult:
+    """Issue #854 Fix Punkt 6 — FAIL, wenn ein Champion-Store-Eintrag mit einer VERALTETEN
+    ``simulation_semantics_version`` (siehe ``optimizer.json``-Schema für die vollständige
+    reward/simulation/params_schema-Abgrenzung) trotzdem als ``champion_is_admissible`` gilt und
+    damit als Seed/in einer Multiplizitäts-Zählung verwendet werden könnte.
+
+    ``champions.champion_is_admissible`` schliesst einen ``simulation_semantics_version``-Mismatch
+    seit #854 HART aus (anders als ein reiner ``reward_semantics_version``-Mismatch, der nur die
+    Quality-Bewertung entwertet, #819) — dieser Wächter verifiziert, dass diese Garantie
+    TATSÄCHLICH hält, statt sie nur zu behaupten (dieselbe Klasse wie
+    ``check_champion_writeback_reachability``: ein struktureller Soll-Zustand wird gegen den
+    IST-Zustand des Stores geprüft, nicht nur im Code-Pfad angenommen).
+
+    ``admissible_despite_simulation_stale``: ``report._champions_summary``-Zähler (0 im
+    Regelfall). Die parallele SQLite-Study-Ebene (ein simulation-stales Trial, das noch in
+    ``n_family`` einfliesst) ist strukturell bereits durch
+    ``run_optimization._check_simulation_semantics_version`` verhindert — jede geladene Study mit
+    veralteter Version wird beim Laden fail-loud gepurgt (dieselbe Mechanik wie
+    ``REJECT_STALE_STUDY_SEMANTICS``), BEVOR ihre Trials in irgendeine Multiplizitäts-Zählung
+    einfliessen könnten."""
+    passed = admissible_despite_simulation_stale <= 0
+    return InvariantResult(
+        name="check_semantics_version_coherence",
+        passed=passed,
+        expected=0,
+        actual=admissible_despite_simulation_stale,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{admissible_despite_simulation_stale} Champion-Store-Eintrag/Eintraege mit "
+                "veralteter simulation_semantics_version gelten trotzdem als admissible — der "
+                "#854-Hartausschluss (champions.champion_is_admissible) hat nicht gegriffen."),
     )

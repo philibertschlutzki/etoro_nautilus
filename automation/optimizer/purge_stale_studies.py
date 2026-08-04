@@ -36,21 +36,46 @@ def _current_reward_semantics_version(base_cfg: Path | None = None) -> int | Non
         return None
 
 
+def _current_simulation_semantics_version(base_cfg: Path | None = None) -> int | None:
+    """Issue #854 — dieselbe dynamische Config-Lesung wie ``_current_reward_semantics_version``,
+    für die orthogonale Simulations-Semantik-Achse (siehe
+    ``optimizer.json['simulation_semantics_version']``-Schema)."""
+    cfg_dir = base_cfg or config_dir()
+    opt_path = cfg_dir / "optimizer.json"
+    if not opt_path.exists():
+        return None
+    try:
+        return (json.loads(opt_path.read_text("utf-8")) or {}).get("simulation_semantics_version")
+    except (OSError, ValueError):
+        return None
+
+
 def find_stale_study_dbs(*, sweep_dir: Path | None = None,
-                         current_version: int | None = None) -> list[dict]:
+                         current_version: int | None = None,
+                         current_simulation_version: int | None = None) -> list[dict]:
     """Scannt ALLE ``*.db``-Dateien im Standard-Sweep-Verzeichnis (SQLite-Default, Pitfall #53) und
-    meldet jede Study, deren gestempelte ``reward_semantics_version`` von ``current_version``
-    abweicht — dieselbe Bedingung wie der In-Process-Guard
-    (``run_optimization._check_reward_semantics_version``), nur BULK statt einzeln beim nächsten
-    Studien-Load. Rein lesend, KEINE Löschung (siehe ``purge_stale_studies``). Eine Study OHNE
-    Trials ist per Definition nicht "vergiftet" (nichts zum Purgen) und wird übersprungen. Rückgabe
-    je stale Study: ``{'db_path', 'study_name', 'stored_version', 'n_trials'}``."""
+    meldet jede Study, deren gestempelte ``reward_semantics_version`` VON ``current_version``
+    ODER (Issue #854) deren gestempelte ``simulation_semantics_version`` von
+    ``current_simulation_version`` abweicht — dieselbe Bedingung wie die beiden In-Process-Guards
+    (``run_optimization._check_reward_semantics_version``/``_check_simulation_semantics_version``),
+    nur BULK statt einzeln beim nächsten Studien-Load. Rein lesend, KEINE Löschung (siehe
+    ``purge_stale_studies``). Eine Study OHNE Trials ist per Definition nicht "vergiftet" (nichts
+    zum Purgen) und wird übersprungen. Rückgabe je stale Study: ``{'db_path', 'study_name',
+    'stored_version', 'stored_simulation_version', 'n_trials'}``.
+
+    ``current_simulation_version=None`` (Default) ⇒ die Simulations-Achse wird NICHT geprüft,
+    bit-identisch zum Pre-#854-Verhalten — BEWUSST OHNE automatischen Config-Fallback (anders als
+    ``current_version``): ein Aufrufer, der ``current_version`` explizit setzt (wie die bestehende
+    #686/#733-Testsuite), erwartet, dass NUR diese eine Achse geprüft wird, nicht dass eine zweite,
+    ungefragt aus der echten ``optimizer.json`` gelesene Bedingung zusätzlich zuschlägt. Nur
+    ``main()`` (der echte CLI-Einstieg) liest ``simulation_semantics_version`` aktiv aus der Config
+    und übergibt sie explizit."""
     if sweep_dir is None:
         sweep_dir = WORK / "sweep"
     if current_version is None:
         current_version = _current_reward_semantics_version()
     stale: list[dict] = []
-    if current_version is None or not sweep_dir.exists():
+    if (current_version is None and current_simulation_version is None) or not sweep_dir.exists():
         return stale
     for db_path in sorted(sweep_dir.glob("*.db")):
         storage = f"sqlite:///{db_path}"
@@ -67,21 +92,31 @@ def find_stale_study_dbs(*, sweep_dir: Path | None = None,
             if n_trials == 0:
                 continue
             stored_version = study.user_attrs.get("reward_semantics_version")
-            if stored_version != current_version:
+            stored_simulation_version = study.user_attrs.get("simulation_semantics_version")
+            reward_stale = current_version is not None and stored_version != current_version
+            simulation_stale = (
+                current_simulation_version is not None
+                and stored_simulation_version != current_simulation_version
+            )
+            if reward_stale or simulation_stale:
                 stale.append({
                     "db_path": str(db_path), "study_name": name,
-                    "stored_version": stored_version, "n_trials": n_trials,
+                    "stored_version": stored_version,
+                    "stored_simulation_version": stored_simulation_version,
+                    "n_trials": n_trials,
                 })
     return stale
 
 
 def purge_stale_studies(*, sweep_dir: Path | None = None, current_version: int | None = None,
+                        current_simulation_version: int | None = None,
                         dry_run: bool = False,
                         logger: logging.Logger | None = None) -> list[dict]:
     """Löscht jede DB-Datei, die MINDESTENS eine stale Study enthält (die Default-Konvention ist
     eine Study je SQLite-Datei, #412/Pitfall #77 — ``Path.unlink`` statt eines selektiven
     Trial-Löschens innerhalb der Datei). ``dry_run=True`` meldet nur, löscht nichts. Rückgabe: die
-    Liste der (potenziell) betroffenen Studies (wie ``find_stale_study_dbs``).
+    Liste der (potenziell) betroffenen Studies (wie ``find_stale_study_dbs`` — Issue #854: jetzt
+    zusätzlich stale bei einem ``simulation_semantics_version``-Mismatch, siehe dort).
 
     Issue #733 (Pitfall #223) — symmetrisches Löschen: eine Study ist ein Löschpaar aus `.db`
     UND dem zugehörigen ``WORK/study_name/trial_*/``-Baum, nicht nur der SQLite-Datei. Vor diesem
@@ -89,7 +124,8 @@ def purge_stale_studies(*, sweep_dir: Path | None = None, current_version: int |
     Changelog v7→v14) eine komplette verwaiste Trial-Generation — die `.db` verschwand, der
     um Grössenordnungen grössere Trial-Baum blieb dauerhaft liegen."""
     logger = logger or logging.getLogger("optimizer")
-    stale = find_stale_study_dbs(sweep_dir=sweep_dir, current_version=current_version)
+    stale = find_stale_study_dbs(sweep_dir=sweep_dir, current_version=current_version,
+                                 current_simulation_version=current_simulation_version)
     # Trial-Bäume liegen als Geschwister von ``sweep/`` unter WORK (``WORK/study_name/trial_*``,
     # vgl. trial_config.build_trial); ``sweep_dir.parent`` statt der harten WORK-Konstante hält die
     # Funktion isoliert testbar (ein injizierter ``sweep_dir`` bezieht sich dann auf denselben
@@ -139,12 +175,19 @@ def purge_stale_studies(*, sweep_dir: Path | None = None, current_version: int |
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Issue #686 — Bulk-Purge aller SQLite-Studies mit stale reward_semantics_version.")
+        description="Issue #686/#854 — Bulk-Purge aller SQLite-Studies mit stale "
+                    "reward_semantics_version ODER stale simulation_semantics_version.")
     parser.add_argument("--dry-run", action="store_true", help="Nur melden, nichts löschen.")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    stale = purge_stale_studies(dry_run=args.dry_run)
+    # Issue #854 — der CLI-Einstieg ist der EINE Ort, der simulation_semantics_version aktiv aus
+    # der echten Config liest (siehe find_stale_study_dbs-Docstring: kein impliziter Fallback in
+    # der Bibliotheksfunktion selbst, um bestehende current_version-only-Aufrufer nicht zu
+    # überraschen).
+    stale = purge_stale_studies(
+        dry_run=args.dry_run,
+        current_simulation_version=_current_simulation_semantics_version())
     if not stale:
         print("Keine stale Studies gefunden — alles aktuell.")
     else:
