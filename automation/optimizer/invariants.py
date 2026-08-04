@@ -122,6 +122,51 @@ def check_sr0_coherence(holdout_metrics: dict) -> InvariantResult:
     )
 
 
+def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: float = 4.0) -> InvariantResult:
+    """Issue #845-Regressionswächter.
+
+    ``confirm.confirm_per_symbol_promotion`` berechnet ``deflation_var`` (die Kohorten-Varianz, die
+    ``deflation_sr0`` treibt) über ALLE eligiblen Trials der DSR-Kohorte, als traegen sie eine
+    annaehernd konstante Stichprobengroesse T (``oos_n_periods``) — dieselbe Voraussetzung, die den
+    Lo-2002-T-bewussten Varianz-Floor motiviert. In der Praxis wurde ein Faktor 45 zwischen dem
+    kleinsten und groessten ``oos_n_periods`` derselben Kohorte beobachtet: die gepoolten
+    per-Trial-Sortinos sind dann nicht kommensurabel, DSR/PSR über die Kohorte hinweg nicht
+    vergleichbar. Der Fix (confirm.py, ``deflation_n_periods_ratio``) unterdrückt DSR/SR₀ mit
+    ``deflation_skipped_reason='N_PERIODS_HETEROGENEOUS'``, sobald
+    ``max(oos_n_periods)/min(oos_n_periods)`` (der Kohorte) ``deflation_max_n_periods_ratio``
+    (tournament.json, Default 4.0) überschreitet — dieser Wächter prüft, dass diese Unterdrückung
+    tatsächlich griff (kein ``deflated_dsr``/``deflation_dsr_z`` trotz überschrittener Ratio).
+
+    ``holdout_metrics`` ist derselbe Export-Dict wie bei ``check_sr0_coherence``
+    (``proposal['holdout']['symbol']``). ``deflation_n_periods_ratio is None`` ⇒ keine Kohorte mit
+    >= 2 Mitgliedern mit bekanntem ``oos_n_periods`` (nicht anwendbar, PASS)."""
+    ratio = holdout_metrics.get("deflation_n_periods_ratio")
+    if ratio is None:
+        return InvariantResult(
+            name="check_family_n_periods_homogeneity",
+            passed=True,
+            expected=f"<= {max_ratio}",
+            actual=None,
+            detail="deflation_n_periods_ratio unbekannt (keine >=2-Kohorte mit bekanntem "
+                    "oos_n_periods) — nicht anwendbar.",
+        )
+    exceeded = ratio > max_ratio
+    has_dsr_signal = (holdout_metrics.get("deflated_dsr") is not None
+                       or holdout_metrics.get("deflation_dsr_z") is not None)
+    passed = not (exceeded and has_dsr_signal)
+    return InvariantResult(
+        name="check_family_n_periods_homogeneity",
+        passed=passed,
+        expected=f"<= {max_ratio} ODER kein deflated_dsr/deflation_dsr_z",
+        actual=ratio,
+        severity="high",
+        detail=("OK" if passed else
+                f"deflation_n_periods_ratio={ratio:.3g} > max_ratio={max_ratio}, aber "
+                "deflated_dsr/deflation_dsr_z sind trotzdem gesetzt — die #845-Heterogenitäts-"
+                "Suppression hat nicht gegriffen."),
+    )
+
+
 def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     """Issue #652/#670-Regressionswächter.
 

@@ -2491,14 +2491,14 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             werden kann. Liest/schreibt ausschliesslich die umschliessenden Closures (period_rets,
             mar, mtm_series, sortino_numeric_guard, _inference_diagnostics)."""
             if n < min_trades_sortino or informative_rets.empty:
-                return None, None, None, None, None, 0.0, 3.0, None
+                return None, None, None, None, None, 0.0, 3.0, None, None
             # Issue #545: Target-Downside-Deviation (RMS without mean-centering)
             # Issue #801 (Pitfall #240) — skipna=False erzwungen: eine NaN-uebersprungene Aggregation
             # waere eine Aussage ueber eine Teilmenge der Bars, keine ueber die volle Serie.
             downside_diff = (informative_rets - mar).clip(upper=0.0)
             dd_dev = float(np.sqrt((downside_diff ** 2).mean(skipna=False)))
             if pd.isna(dd_dev):
-                return None, None, None, None, None, 0.0, 3.0, None
+                return None, None, None, None, None, 0.0, 3.0, None, None
 
             # Issue #823 Fix Punkt 2 — Mindestzahl an DOWNSIDE-Beobachtungen VOR jeder weiteren
             # Berechnung: ein Nenner aus zu wenigen negativen Perioden ist ein degenerierter
@@ -2520,7 +2520,22 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                              f"(n_periods={n_periods}).",
                     "value": downside_obs,
                 })
-                return None, None, None, None, None, 0.0, 3.0, None
+                # Issue #845 Punkt 2 (bewusst NICHT umgesetzt, dokumentierter Scope-Cut) — der
+                # Issue-Text verlangt zusaetzlich ``oos_evaluated=False`` fuer genau diesen Trial,
+                # mit dem Ziel, dass der TPE-Sampler ihn NEUTRAL (weder gut noch schlecht) behandelt.
+                # Das erreicht diese Aenderung tatsaechlich NICHT: reward.calculate_reward_v2 nimmt
+                # ``not m.oos_evaluated`` in DENSELBEN Unevaluable-Pfad (Penalty + Shaping,
+                # penalty_unevaluable_oos) wie ein Trial, der NIE gehandelt hat — das ist eine ANDERE,
+                # eher schlechtere Bewertung, keine neutrale. Eine echte Neutralitaet (float('nan')
+                # ⇒ optuna.TrialPruned() im Objective) wuerde eine Aenderung an der Kernschleife von
+                # run_optimization.py voraussetzen (Fehlerklasse, die bereits #823 als riskant
+                # eingestuft hat) und ist ohne einen dedizierten Kalibrierlauf (verzerrt eine solche
+                # Behandlung den TPE-Sampler weg von legitim duennen Downside-Regionen? vgl. Pitfall
+                # #108-Klasse) nicht risikofrei umsetzbar. Dieser Fix belaesst ``oos_evaluated`` daher
+                # unveraendert True und beschraenkt sich auf die SICHERE, additive Telemetrie
+                # (``downside_obs`` oben, ``check_family_n_periods_homogeneity`` unten) — dieselbe
+                # Scope-Reduktion wie bei #843 (Pipelining, siehe sweep.run_per_symbol_sweep-Docstring).
+                return None, None, None, None, None, 0.0, 3.0, None, downside_obs
 
             downside_floor = _read_sortino_downside_floor()
             dd_dev = max(dd_dev, downside_floor)
@@ -2535,7 +2550,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             # kein Ergebnis. Fail-loud (SORTINO_GUARD_TRIPPED) und als undefiniert (None) behandeln —
             # sortino UND psr fallen aus (kein extremer Fold-Artefakt passiert das Gate stumm).
             if pd.isna(sortino_annualized_v) or not np.isfinite(sortino_annualized_v):
-                return None, None, None, None, None, 0.0, 3.0, None
+                return None, None, None, None, None, 0.0, 3.0, None, downside_obs
             if abs(sortino_annualized_v) > _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods):
                 import logging
                 _eff_guard = _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods)
@@ -2551,7 +2566,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                              f"guard={_eff_guard:.6g} (n_periods={n_periods}, dd_dev={dd_dev:.6g}).",
                     "value": float(sortino_annualized_v),
                 })
-                return None, None, None, None, None, 0.0, 3.0, None
+                return None, None, None, None, None, 0.0, 3.0, None, downside_obs
 
             # sortino_ratio bleibt (rückwärtskompatibel + Kohärenz-Sign-Check #589) der
             # ANNUALISIERTE Wert; die PSR ist die neue Reward-/Gate-Grösse (#614).
@@ -2579,10 +2594,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 informative_arr, sr_star=0.0, mar=mar,
                 n_boot=_read_psr_bootstrap_resamples())
             psr_v = _psr_from_z(psr_z_v)
-            return sortino_v, sortino_period_v, sortino_annualized_v, psr_v, psr_z_v, skew_v, kurtosis_v, psr_se_boot_v
+            return (sortino_v, sortino_period_v, sortino_annualized_v, psr_v, psr_z_v, skew_v,
+                    kurtosis_v, psr_se_boot_v, downside_obs)
 
         (sortino, sortino_period, sortino_annualized, oos_psr, oos_psr_z,
-         ret_skew, ret_kurtosis, oos_psr_se_boot) = _compute_sortino()
+         ret_skew, ret_kurtosis, oos_psr_se_boot, oos_downside_obs) = _compute_sortino()
     else:
         # Legacy-Fallback ohne Equity-Kurve
         max_dd = 0.0
@@ -2593,6 +2609,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         oos_psr = None
         oos_psr_z = None
         oos_psr_se_boot = None
+        oos_downside_obs = None
         n_periods = 0
         ret_skew, ret_kurtosis = 0.0, 3.0
         _period_returns_list = []
@@ -2713,6 +2730,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         # Feld statt einer stillen Neuinterpretation von ``n_periods`` — beide sind seit #823/#824
         # identisch, ``n_effective_observations`` macht das für Report-Konsumenten explizit benannt.
         "n_effective_observations": int(n_periods),
+        # Issue #845 — expliziter Trial-Attribut-Kandidat statt eines nur transienten
+        # Closure-Werts: der Downside-Beobachtungs-Nenner (#823 SORTINO_INSUFFICIENT_DOWNSIDE-
+        # Schwellenwert), damit n_periods-Heterogenität über eine Familie (Faktor 45 beobachtet)
+        # gegen die TATSÄCHLICH downside-tragende Teilmenge geprüft werden kann, nicht nur gegen
+        # die volle informative Periodenzahl. None, wenn vor Erreichen dieser Berechnung
+        # ausgestiegen wurde (zu wenige Trades/leere Serie/degenerierte dd_dev).
+        "downside_obs":       int(oos_downside_obs) if oos_downside_obs is not None else None,
         "ret_skew":           float(ret_skew),
         "ret_kurtosis":       float(ret_kurtosis),
         "period_returns":     _period_returns_list,   # Issue #619 — für den Bootstrap-CI im Holdout.

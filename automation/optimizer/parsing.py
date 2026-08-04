@@ -94,6 +94,14 @@ class TournamentMetrics:
     oos_sortino_period: float | None = None
     oos_sortino_annualized: float | None = None
     oos_n_periods: int = 0
+    # Issue #845 — der Downside-Beobachtungs-Nenner (backtest_runner._calculate_stats
+    # "downside_obs", #823 SORTINO_INSUFFICIENT_DOWNSIDE-Schwelle), durchgereicht als eigenes Feld
+    # statt einer stillen Re-Interpretation von oos_n_periods: n_periods misst die volle
+    # informative Serie, downside_obs nur die tatsaechlich downside-tragende Teilmenge — beide
+    # koennen um Groessenordnungen auseinanderfallen (die #845-Motivation: Faktor 45 innerhalb
+    # einer Familie). None ⇒ vor Erreichen der Berechnung ausgestiegen (rückwärtskompatibel zu
+    # Pre-#845-JSONs).
+    oos_downside_obs: int | None = None
     oos_ret_skew: float = 0.0
     oos_ret_kurtosis: float = 3.0
     # Issue #620 — die #589-Kohärenz-Invariante (sign(oos_sortino)==sign(oos_total_return)) feuert im
@@ -210,6 +218,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_sortino_period = oos_metrics.get("sortino_period")
     oos_sortino_annualized = oos_metrics.get("sortino_annualized")
     oos_n_periods = oos_metrics.get("n_periods")
+    # Issue #845 — Downside-Beobachtungs-Nenner (None-safe ⇒ rückwärtskompatibel zu Pre-#845-JSONs).
+    oos_downside_obs = oos_metrics.get("downside_obs")
     oos_ret_skew = oos_metrics.get("ret_skew")
     oos_ret_kurtosis = oos_metrics.get("ret_kurtosis")
     # Issue #620 — Kohärenz-Verletzungs-Flag aus dem Subprozess (None-safe ⇒ False).
@@ -340,6 +350,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_sortino_period=float(oos_sortino_period) if oos_sortino_period is not None else None,
         oos_sortino_annualized=float(oos_sortino_annualized) if oos_sortino_annualized is not None else None,
         oos_n_periods=int(oos_n_periods) if oos_n_periods is not None else 0,
+        oos_downside_obs=int(oos_downside_obs) if oos_downside_obs is not None else None,
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
         oos_coherence_violation=oos_coherence_violation,

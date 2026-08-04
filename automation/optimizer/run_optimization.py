@@ -2386,6 +2386,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
         trial.set_user_attr("oos_n_periods", metrics.oos_n_periods)
+        # Issue #845 — Downside-Beobachtungs-Nenner je Trial persistiert (None-safe, siehe
+        # parsing.TournamentMetrics.oos_downside_obs-Feldkommentar), damit confirm.py/invariants.py
+        # n_periods-Heterogenität einer Familie gegen die tatsaechlich downside-tragende
+        # Teilmenge prüfen können, nicht nur gegen die volle informative Periodenzahl.
+        if metrics.oos_downside_obs is not None:
+            trial.set_user_attr("oos_downside_obs", metrics.oos_downside_obs)
         # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
         trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
         # Issue #804 — die strukturierten Inferenzpfad-Diagnosen je Trial persistieren, damit der

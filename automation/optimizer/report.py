@@ -351,6 +351,11 @@ def _study_record(proposal: dict, study,
     decision_chain = _decision_chain(proposal, n_eligible=n_eligible)
     checks = [
         _inv.check_sr0_coherence(holdout_metrics),
+        # Issue #845 — n_periods-Heterogenität innerhalb der DSR-Kohorte muss dieselbe Suppression
+        # ausgelöst haben, die confirm.py bei ueberschrittener deflation_max_n_periods_ratio anwendet.
+        _inv.check_family_n_periods_homogeneity(
+            holdout_metrics,
+            max_ratio=float((tournament_cfg or {}).get("deflation_max_n_periods_ratio", 4.0))),
         _inv.check_n_family_consistency(holdout_metrics),
         # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
         # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.

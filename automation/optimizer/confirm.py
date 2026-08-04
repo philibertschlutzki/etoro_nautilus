@@ -896,6 +896,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Issue #636 — Mindest-Kohorte für eine belastbare V[ŜR_trials]-Schätzung; darunter greift der
     # dokumentierte konservative Varianz-Floor (siehe deflation.sr0_multiple_testing_robust).
     deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
+    # Issue #845 — max(oos_n_periods)/min(oos_n_periods) innerhalb der DSR-Kohorte (Faktor 45 in
+    # der Praxis beobachtet): ``deflation_var = pvariance(cohort_sr)`` poolt die per-Trial-Sortinos
+    # so, als seien sie über eine konstante Stichprobengrösse T beobachtet (dieselbe Annahme, die
+    # den Lo-2002-T-bewussten Varianz-Floor motiviert) — eine stark streuende Kohorte verletzt diese
+    # Kommensurabilitäts-Voraussetzung und macht DSR/PSR über die Kohorte hinweg nicht vergleichbar.
+    deflation_max_n_periods_ratio = float(tournament_cfg.get("deflation_max_n_periods_ratio", 4.0))
+    deflation_n_periods_ratio = None
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     # Issue #757/#758 — welche Inferenzmethode die DSR tatsächlich lieferte ("stationary_bootstrap"
     # im Regelfall; "sharpe_formula_fallback" nur bei < 5 persistierten Perioden-Returns, siehe
@@ -984,6 +991,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 and t.user_attrs.get("oos_n_periods")
             ]
             deflation_t_periods = int(_st.median(cohort_n_periods)) if cohort_n_periods else None
+            # Issue #845 — Heterogenitäts-Ratio der Kohorte, unabhängig davon, ob die DSR unten
+            # ueberhaupt berechnet wird (die Ratio selbst ist bereits am Median-Ersatz #701 nicht
+            # ablesbar, der einen einzelnen Ausreisser nivelliert).
+            if len(cohort_n_periods) >= 2:
+                _n_periods_min, _n_periods_max = min(cohort_n_periods), max(cohort_n_periods)
+                if _n_periods_min > 0:
+                    deflation_n_periods_ratio = _n_periods_max / _n_periods_min
             # Issue #701 — ``n_periods`` ist seit #701 ein PFLICHT-Parameter von
             # ``sr0_multiple_testing_robust`` (der var_floor-Fallback ohne T wurde als tot verifiziert
             # und entfernt, siehe deflation.py-Docstring). ``deflation_t_periods`` ist NIE ``None``,
@@ -1391,7 +1405,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # EXPORT-Grenze: kein Teilzustand verlaesst confirm.py.
     deflation_skipped_reason = None
     if deflated_selection:
-        if deflation_sr0 is None and deflation_dsr is None and deflation_dsr_z is None:
+        # Issue #845 — VOR der #846-Kohärenzprüfung: eine Kohorte, deren oos_n_periods stärker als
+        # ``deflation_max_n_periods_ratio`` streut, macht die gepoolte Kohorten-Varianz
+        # (deflation_var) selbst inkommensurabel — unabhängig davon, ob der promotete Trial sein
+        # eigenes Gate besteht (der #846-Fall unten). DSR/SR₀ werden dann NICHT exportiert, mit
+        # einem eigenen, von SMALL_COHORT/NO_STATISTIC unterscheidbaren Grund.
+        if (deflation_n_periods_ratio is not None
+                and deflation_n_periods_ratio > deflation_max_n_periods_ratio):
+            deflation_skipped_reason = "N_PERIODS_HETEROGENEOUS"
+            deflation_sr0 = None
+            deflation_dsr = None
+            deflation_dsr_z = None
+        elif deflation_sr0 is None and deflation_dsr is None and deflation_dsr_z is None:
             deflation_skipped_reason = "SMALL_COHORT" if deflation_n < 2 else "NO_STATISTIC"
         elif deflation_sr0 is not None and deflation_dsr is None and deflation_dsr_z is None:
             deflation_skipped_reason = "NO_STATISTIC"
@@ -1451,6 +1476,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_cluster_coverage"] = deflation_cluster_coverage
     if deflation_skipped_reason is not None:
         best_result["metrics_symbol"]["deflation_skipped_reason"] = deflation_skipped_reason
+    # Issue #845 — Ratio-Telemetrie unabhängig vom Ausgang exportiert (auch wenn sie NICHT die
+    # Ausloeserin des Skips war), damit ein Operator die Kohärenz-Kohorten-Heterogenität jeder
+    # Study auditieren kann, ohne die Rohdaten (Trial-User-Attrs) erneut laden zu müssen.
+    if deflation_n_periods_ratio is not None:
+        best_result["metrics_symbol"]["deflation_n_periods_ratio"] = deflation_n_periods_ratio
 
     return best_result
 
