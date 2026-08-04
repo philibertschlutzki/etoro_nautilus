@@ -35,13 +35,18 @@ def test_production_config_passes_reachability_check():
 
 def test_old_threshold_would_have_been_flagged_unreachable():
     """Regressionstest: die ALTE Schwelle (0.25) hätte die Prüfung korrekt als unerreichbar
-    markiert — der Mechanismus hat also tatsächlich Biss."""
-    stale_cfg = dict(TCFG, oos_min_win_rate=0.25)
+    markiert — der Mechanismus hat also tatsächlich Biss. Issue #848 — min_win_rate ist seither
+    aus der ECHTEN eligible_requires_any entfernt (der Arm war strukturell unerreichbar); dieser
+    Test restauriert ihn explizit in einer synthetischen Kopie, um den Prüfmechanismus selbst
+    (nicht die aktuelle Produktions-Config) zu testen."""
+    stale_cfg = dict(TCFG, oos_min_win_rate=0.25,
+                     eligible_requires_any=["min_profit_factor", "min_win_rate"])
     assert check_any_arm_reachability(stale_cfg) == ["min_win_rate"]
 
 
 def test_reachability_warning_is_logged(caplog):
-    stale_cfg = dict(TCFG, oos_min_win_rate=0.25)
+    stale_cfg = dict(TCFG, oos_min_win_rate=0.25,
+                     eligible_requires_any=["min_profit_factor", "min_win_rate"])
     with caplog.at_level(logging.WARNING, logger="optimizer"):
         check_any_arm_reachability(stale_cfg)
     assert any("#633" in r.getMessage() and "min_win_rate" in r.getMessage() for r in caplog.records)

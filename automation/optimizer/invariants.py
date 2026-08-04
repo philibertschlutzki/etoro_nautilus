@@ -864,6 +864,35 @@ def check_required_config_keys(configs: dict[str, dict], required_keys_spec: dic
     )
 
 
+def check_selection_rule_homogeneity(selection_rule_families: dict[str, dict[str, int]]) -> InvariantResult:
+    """Issue #848 (5. Katalog: #660 → #668 → #678 → #812 → #848) — FAIL (statt der bisherigen
+    ``[#812]``-WARNUNG in ``sweep.py``), wenn mehr als EIN ``selection_rule_fingerprint`` je
+    Symbol/Familie auftritt. Vor #848 war die Ursache bekannt (der unerreichbare
+    ``min_win_rate``-OR-Arm liess ``any_arm_unreachable_policy='drop_arm'`` je Study
+    unterschiedlich greifen); nach der Entfernung dieses Arms ist ein zweiter Fingerprint eine
+    ANDERE, bislang unbekannte Ursache — und verletzt die Voraussetzung der DSR-Multiplizitäts-
+    korrektur (Pitfall #248), die eine über die Familie konstante Selektionsregel voraussetzt.
+
+    ``selection_rule_families``: ``{symbol: {fingerprint: n_family}}``
+    (``report._selection_rule_families``)."""
+    offenders = {
+        symbol: len(fingerprints)
+        for symbol, fingerprints in (selection_rule_families or {}).items()
+        if len(fingerprints) > 1
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_selection_rule_homogeneity",
+        passed=passed,
+        expected="genau 1 selection_rule_fingerprint je Symbol/Familie",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) mit >1 selection_rule_fingerprint: {offenders} — "
+                "verletzt die DSR-Multiplizitätskorrektur-Voraussetzung (Pitfall #248)."),
+    )
+
+
 def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: int = 3) -> InvariantResult:
     """Issue #841 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als ``max_age_runs``
     abgeschlossenen Sweep-Läufen nicht abgedeckt wurde (niemals abgedeckt zählt als maximal alt).

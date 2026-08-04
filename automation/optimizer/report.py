@@ -770,6 +770,13 @@ def _build_report(
     symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
     all_checks.append(("global", symbol_coverage_check))
 
+    # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
+    # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,
+    # unbekannte Ursache (vorher WARNUNG in sweep.py [#812], jetzt FAIL).
+    selection_rule_families = _selection_rule_families(studies_out)
+    selection_rule_homogeneity_check = _inv.check_selection_rule_homogeneity(selection_rule_families)
+    all_checks.append(("global", selection_rule_homogeneity_check))
+
     invariant_checks = []
     for label, result in all_checks:
         d = result.to_dict()
@@ -830,7 +837,7 @@ def _build_report(
             # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.
-            "selection_rule_families": _selection_rule_families(studies_out),
+            "selection_rule_families": selection_rule_families,
             # Issue #818 — stored/admissible/corroborated/written_back/skipped_by_reason über den
             # aktuellen Champion-Store-Stand (Epic #702 Ebene 1+2 Reachability-Telemetrie).
             "champions": champions_summary,

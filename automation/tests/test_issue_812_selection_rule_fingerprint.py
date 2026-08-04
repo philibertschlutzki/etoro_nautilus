@@ -58,10 +58,17 @@ def test_any_arm_recalibrated_thresholds_is_empty_under_default_drop_arm_policy(
     assert decision["recalibrated_thresholds"] == {}
 
 
+# Issue #848 — min_win_rate ist aus der ECHTEN eligible_requires_any entfernt (5. Katalog, der Arm
+# war strukturell unerreichbar). Die folgenden Tests pruefen den drop_arm/recalibrate-MECHANISMUS
+# selbst (die #812-Akzeptanzkriterien), nicht die aktuelle Produktions-Config -- min_win_rate wird
+# hier explizit restauriert, damit dieselben Szenarien weiterhin exercised werden.
+_CFG_WITH_MIN_WIN_RATE_ARM = {**CFG, "eligible_requires_any": ["min_profit_factor", "min_win_rate"]}
+
+
 # ── Akzeptanzkriterium #812: any_arm_reduced enthaelt min_win_rate fuer betroffene Studies ─────────
 def test_any_arm_reduced_contains_min_win_rate_when_structurally_unreachable():
     observed = {"min_win_rate": [0.0] * 20}
-    decision = resolve_any_arm_policy(CFG, observed, n_evaluated=20)
+    decision = resolve_any_arm_policy(_CFG_WITH_MIN_WIN_RATE_ARM, observed, n_evaluated=20)
     assert decision["dropped_clauses"] == ["min_win_rate"]
     assert decision["any_arm_decision"] == "dropped"
 
@@ -69,7 +76,7 @@ def test_any_arm_reduced_contains_min_win_rate_when_structurally_unreachable():
 def test_reachable_clause_is_neither_dropped_nor_recalibrated():
     # p99 der Beobachtungen liegt UEBER der konfigurierten Schwelle -> nichts zu tun.
     observed = {"min_win_rate": [0.30] * 20}
-    decision = resolve_any_arm_policy(CFG, observed, n_evaluated=20)
+    decision = resolve_any_arm_policy(_CFG_WITH_MIN_WIN_RATE_ARM, observed, n_evaluated=20)
     assert decision["dropped_clauses"] == []
     assert decision["recalibrated_thresholds"] == {}
     assert decision["any_arm_decision"] is None
@@ -79,14 +86,14 @@ def test_reachable_clause_is_neither_dropped_nor_recalibrated():
 def test_recalibrate_no_longer_applies_a_floor():
     """Vor #812 waere die rekalibrierte Schwelle max(p99, 0.05) = 0.05 gewesen -- jetzt das rohe
     p99, auch wenn es (weit) unter dem ehemaligen Floor liegt."""
-    tcfg = {**CFG, "any_arm_unreachable_policy": "recalibrate"}
+    tcfg = {**_CFG_WITH_MIN_WIN_RATE_ARM, "any_arm_unreachable_policy": "recalibrate"}
     observed = {"min_win_rate": [0.01] * 20}  # p99 == 0.01, deutlich unter dem alten 0.05-Floor
     decision = resolve_any_arm_policy(tcfg, observed, n_evaluated=20)
     assert decision["recalibrated_thresholds"]["oos_min_win_rate"] == pytest.approx(0.01)
 
 
 def test_recalibrate_warns_that_no_cross_study_dsr_comparison_is_valid(caplog):
-    tcfg = {**CFG, "any_arm_unreachable_policy": "recalibrate"}
+    tcfg = {**_CFG_WITH_MIN_WIN_RATE_ARM, "any_arm_unreachable_policy": "recalibrate"}
     observed = {"min_win_rate": [0.01] * 20}
     with caplog.at_level(logging.WARNING, logger="optimizer"):
         resolve_any_arm_policy(tcfg, observed, n_evaluated=20)

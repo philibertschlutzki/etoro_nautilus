@@ -31,7 +31,9 @@ def test_shipped_config_moves_risk_adjusted_gate_to_requires_all():
     assert "min_psr" in canonical_all
     assert "min_sortino" not in canonical_all
     assert "min_psr" not in TCFG["eligible_requires_any"]
-    assert set(TCFG["eligible_requires_any"]) == {"min_profit_factor", "min_win_rate"}
+    # Issue #848 — min_win_rate wurde aus eligible_requires_any entfernt (5. Katalog derselben
+    # Fehlerklasse: der Arm war ueber fuenf Laeufe strukturell unerreichbar).
+    assert set(TCFG["eligible_requires_any"]) == {"min_profit_factor"}
 
 
 def test_any_condition_parity_passes_for_shipped_config():
