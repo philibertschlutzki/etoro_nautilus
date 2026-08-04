@@ -435,6 +435,12 @@ def _study_record(proposal: dict, study,
         # family). NICHT mit dem (jetzt nicht mehr für die Deflation verwendeten) symbolweiten
         # cross_study['n_family'] verwechseln (#625, post-hoc Sweep-Telemetrie).
         "n_family_stage1": holdout_metrics.get("deflation_n_family"),
+        # Issue #846 — gesetzt, wenn confirm.py die DSR-Berechnung fuer diese Study uebersprungen
+        # (oder eine Kohaerenzverletzung zwischen deflated_sr0 und deflated_dsr/deflation_dsr_z an
+        # der Export-Grenze unterdrueckt) hat: SMALL_COHORT (deflation_n < 2) oder NO_STATISTIC
+        # (der promotete Trial selbst trug kein oos_sortino_period). None ⇒ DSR normal berechnet
+        # ODER deflated_selection war gar nicht aktiv.
+        "deflation_skipped_reason": holdout_metrics.get("deflation_skipped_reason"),
         # Issue #758/#791 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER, jetzt als
         # {method, applied, skipped_reason} statt eines nackten Strings/None (#791): ``applied``
         # unterscheidet "Inferenz lief nicht, weil strukturell unanwendbar/dokumentiert

@@ -1372,6 +1372,22 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # LIVE-Kohorte als redundant markiertes Gate enthält (Regelfall: leere Liste).
     if unconsolidated_gates:
         best_result["metrics_symbol"]["gate_collinearity_unconsolidated"] = unconsolidated_gates
+    # Issue #846 (Regressionswaechter #651, 4. Katalog) — Root-Cause der 115x check_sr0_coherence-
+    # FAILs: deflation_sr0 wird aus der COHORT-Varianz berechnet (oben, deflation_n >= 2), waehrend
+    # deflated_dsr/deflation_dsr_z aus dem SPEZIFISCHEN promoteten Trial (promoted_sr_period)
+    # abgeleitet werden — zwei GETRENNTE Gates auf zwei GETRENNTEN Datenmengen. Faellt der promotete
+    # Trial selbst durch sein Gate (kein oos_sortino_period), bleibt deflation_sr0 gesetzt, obwohl
+    # dsr/dsr_z nie berechnet wurden. Statt eines atomaren DeflationResult-Objekts (grössere
+    # Restrukturierung, siehe Katalog) erzwingt dieser Waechter dieselbe Kohaerenz-Garantie an der
+    # EXPORT-Grenze: kein Teilzustand verlaesst confirm.py.
+    deflation_skipped_reason = None
+    if deflated_selection:
+        if deflation_sr0 is None and deflation_dsr is None and deflation_dsr_z is None:
+            deflation_skipped_reason = "SMALL_COHORT" if deflation_n < 2 else "NO_STATISTIC"
+        elif deflation_sr0 is not None and deflation_dsr is None and deflation_dsr_z is None:
+            deflation_skipped_reason = "NO_STATISTIC"
+            deflation_sr0 = None  # Koharenz erzwingen: keine Telemetrie ohne Entscheidungsgroesse
+
     # Issue #611/#618/#636 — DSR-Telemetrie (Sortino-Skala) statt der alten Reward-Schwelle. Seit
     # #636 IMMER gefüllt, sobald SR₀ berechenbar war (unabhängig von holdout_passed) — deflated_dsr
     # ist damit nie mehr uninformativ-null, nur weil ein früheres Gate schon ablehnte.
@@ -1424,6 +1440,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # (oos_period_returns wurde nur fuer eligible Trials gestempelt, deflation_n_family zaehlt
         # seit #784 aber ALLE oos_evaluated Trials).
         best_result["metrics_symbol"]["deflation_cluster_coverage"] = deflation_cluster_coverage
+    if deflation_skipped_reason is not None:
+        best_result["metrics_symbol"]["deflation_skipped_reason"] = deflation_skipped_reason
 
     return best_result
 
