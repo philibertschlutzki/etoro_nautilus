@@ -259,15 +259,25 @@ def _section_3_duration(report: dict) -> str:
         )
     lines.append("")
 
-    # 3.2 Laufzeit je Symbol/Strategie — aus n_trials_completed/backtest_ms nicht rekonstruierbar
-    # ohne trial-Level-Daten (Report enthält keine Backtest-Zeit je Study); dokumentiert als
-    # bekannte Lücke statt einer erfundenen Zahl.
+    # Issue #851 — Root-Cause behoben: run_optimization._optimize_symbol_impl persistiert jetzt
+    # study_wallclock_s/study_started_at_utc/study_ended_at_utc/worker_id als Study-User-Attrs
+    # (auch bei vorzeitigem Abbruch, #833-Stil); report.py leitet daraus wallclock_by_strategy ab.
     lines.append("### 3.2 Laufzeit je Symbol/Strategie")
     lines.append("")
-    lines.append(
-        "Der #742-Report führt keine Wallclock-Zeit je einzelner Study (nur die Sweep-Gesamtzeit "
-        "aus 3.1); eine Aufschlüsselung je Symbol/Strategie ist aus diesem Artefakt nicht ableitbar."
-    )
+    wallclock_by_strategy = (report.get("cross_study") or {}).get("wallclock_by_strategy") or {}
+    if not wallclock_by_strategy:
+        lines.append(
+            "Keine Study-Wallclock-Telemetrie in diesem Report (Pre-#851-Lauf oder leere Kohorte)."
+        )
+    else:
+        lines.append("| Strategie | Median-Wallclock | p90-Wallclock | n Studies |")
+        lines.append("|---|---:|---:|---:|")
+        for strategy, stats in sorted(
+                wallclock_by_strategy.items(), key=lambda kv: kv[1].get("median") or 0.0, reverse=True):
+            lines.append(
+                f"| {strategy} | {_fmt_hms_from_s(stats.get('median'))} | "
+                f"{_fmt_hms_from_s(stats.get('p90'))} | {stats.get('n', 0)} |"
+            )
     lines.append("")
 
     # 3.3 Budgetausführung
@@ -296,11 +306,28 @@ def _section_3_duration(report: dict) -> str:
     else:
         for reason, n in sorted(stop_reasons.items(), key=lambda kv: kv[1], reverse=True):
             lines.append(f"- {reason}: {n} Studies")
-    lines.append(
-        "\nBarriere-Wartezeit (die Zeit, die ein Symbol auf seine langsamste Strategie wartet, "
-        "#828) ist aus dem #742-Report nicht rekonstruierbar — dafür wäre eine je-Study-"
-        "Zeitstempel-Telemetrie nötig, die dieser Report-Typ nicht führt."
-    )
+    lines.append("")
+
+    # Issue #851 — Barriere-Wartezeit (die Zeit, die ein Symbol auf seine langsamste Strategie
+    # wartet, #828) UND Worker-Auslastung, jetzt aus der Study-Zeitstempel-Telemetrie ableitbar.
+    barrier_wait = (report.get("cross_study") or {}).get("symbol_barrier_wait_s") or {}
+    if not barrier_wait:
+        lines.append(
+            "Keine Barriere-Wartezeit-Telemetrie in diesem Report (Pre-#851-Lauf, leere Kohorte, "
+            "oder jedes Symbol hatte nur eine Strategie-Study)."
+        )
+    else:
+        worst = sorted(barrier_wait.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        lines.append(
+            f"Barriere-Wartezeit (Symbol-Wallclock minus schnellste Study) — die {len(worst)} "
+            f"Symbole mit der längsten Wartezeit:"
+        )
+        for symbol, wait_s in worst:
+            lines.append(f"- {symbol}: {_fmt_hms_from_s(wait_s)}")
+    worker_utilisation = (report.get("cross_study") or {}).get("worker_utilisation")
+    if worker_utilisation is not None:
+        lines.append(f"\nWorker-Auslastung (Σ Study-Wallclock / (n_jobs × Sweep-Wallclock)): "
+                     f"{_fmt_pct(worker_utilisation)}")
     return "\n".join(lines)
 
 

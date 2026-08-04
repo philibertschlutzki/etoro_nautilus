@@ -2638,6 +2638,18 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # erneut und reconnected die Engine damit lazy) ein zweites Mal zu disposen.
     study._etoro_rdb_storage = rdb_storage
 
+    # Issue #851 — Study-Zeitstempel-Telemetrie (Root-Cause: der #742-Report fuehrte bislang KEINE
+    # Wallclock-Zeit je einzelner Study, nur die Sweep-Gesamtzeit aus #742's Top-Level — eine
+    # Aufschluesselung je Symbol/Strategie (Barriere-Wartezeit #828, worker_utilisation) war aus dem
+    # Artefakt NICHT ableitbar und musste aus Log-Zeitstempeln rekonstruiert werden, was bei einem
+    # stilleren Lauf (kein #740/#780-Log-Praefix je Zeile) nicht funktioniert). ``study_started_at_
+    # utc``/``worker_id`` JETZT gesetzt (vor ``study.optimize``), ``study_ended_at_utc``/
+    # ``study_wallclock_s`` im ``finally:``-Block unten (#833-Stil: auch bei einem vorzeitigen
+    # Abbruch persistiert, nicht nur im Erfolgsfall).
+    import datetime as _dt851
+    study.set_user_attr("study_started_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
+    study.set_user_attr("worker_id", threading.get_ident())
+
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
 
@@ -2765,6 +2777,19 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         if not (getattr(study, "user_attrs", None) or {}).get("coherence_violation_rate_exceeded"):
             check_study_coherence_violation_rate(study, opt_data)
     finally:
+        # Issue #851 — im finally-Block (analog #833s Abbruchresilienz): auch eine vorzeitig
+        # abgebrochene Study (Disk-/Wallclock-Guard, Kohaerenz-Abbruch, Exception) traegt eine
+        # ended_at_utc/wallclock_s-Telemetrie, statt nur eine erfolgreich durchgelaufene. Fail-open:
+        # ein Fehler hier darf einen sonst erfolgreichen Optimize-Lauf nicht crashen lassen.
+        try:
+            study.set_user_attr(
+                "study_ended_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
+            study.set_user_attr("study_wallclock_s", round(time.perf_counter() - study_t0, 3))
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#851] Study-Zeitstempel-Telemetrie für '%s' fehlgeschlagen (non-fatal).",
+                study_name, exc_info=True,
+            )
         # Issue #794 — Study-Ebene als Sicherheitsnetz (die #794-Trial-Ebene oben laeuft je Trial;
         # dieser Aufruf raeumt zusaetzlich auf, falls study.optimize() vorzeitig abgebrochen wurde,
         # BEVOR der Retention-Callback den letzten Trial noch sehen konnte). Fail-open: ein

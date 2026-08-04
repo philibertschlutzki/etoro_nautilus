@@ -393,6 +393,14 @@ def _study_record(proposal: dict, study,
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),
         "n_trials_budget": study_user_attrs.get("n_trials_budget"),
+        # Issue #851 — Study-Zeitstempel-Telemetrie (run_optimization._optimize_symbol_impl setzt
+        # diese User-Attrs vor/nach study.optimize, auch bei vorzeitigem Abbruch — #833-Stil).
+        # Rohmaterial für summary_de.py Abschnitt 3.2/3.4 (Median-Wallclock je Strategie,
+        # Barriere-Wartezeit je Symbol) und report._worker_utilisation/_symbol_barrier_wait.
+        "study_started_at_utc": study_user_attrs.get("study_started_at_utc"),
+        "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
+        "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
+        "worker_id": study_user_attrs.get("worker_id"),
         # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl.
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
@@ -735,6 +743,62 @@ def _excess_variance_decomposition(studies_out: list[dict[str, Any]]) -> dict[st
     }
 
 
+def _wallclock_by_strategy(studies_out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Issue #851 — Median/p90 von ``study_wallclock_s`` je Strategie, für summary_de.py Abschnitt
+    3.2 ("Laufzeit je Symbol/Strategie") — vorher aus dem #742-Report nicht ableitbar (keine
+    Wallclock-Telemetrie je Study), musste aus Log-Zeitstempeln rekonstruiert werden."""
+    import statistics as _stats
+    by_strategy: dict[str, list[float]] = {}
+    for r in studies_out:
+        strategy, wc = r.get("strategy"), r.get("study_wallclock_s")
+        if strategy is None or wc is None:
+            continue
+        by_strategy.setdefault(strategy, []).append(float(wc))
+    out: dict[str, dict[str, Any]] = {}
+    for strategy, times in by_strategy.items():
+        times_sorted = sorted(times)
+        p90_idx = max(0, min(len(times_sorted) - 1, round(0.9 * (len(times_sorted) - 1))))
+        out[strategy] = {
+            "median": _stats.median(times_sorted),
+            "p90": times_sorted[p90_idx],
+            "n": len(times_sorted),
+        }
+    return out
+
+
+def _symbol_barrier_wait(studies_out: list[dict[str, Any]]) -> dict[str, float]:
+    """Issue #851 — je Symbol: ``max(study_wallclock_s) − min(study_wallclock_s)`` über die
+    Strategien-Studies dieses Symbols — die Zeit, die das Symbol auf seine LANGSAMSTE Strategie
+    wartet, relativ zu seiner schnellsten (#828-Barriere-Konzept). Symbole mit nur EINER Study
+    (kein Warten möglich) sind nicht enthalten."""
+    by_symbol: dict[str, list[float]] = {}
+    for r in studies_out:
+        symbol, wc = r.get("symbol"), r.get("study_wallclock_s")
+        if symbol is None or wc is None:
+            continue
+        by_symbol.setdefault(symbol, []).append(float(wc))
+    return {
+        symbol: max(times) - min(times)
+        for symbol, times in by_symbol.items()
+        if len(times) >= 2
+    }
+
+
+def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
+                        sweep_wallclock_s: float | None) -> float | None:
+    """Issue #851 — Σ Study-Wallclock / (n_jobs × Sweep-Wallclock): der Anteil der theoretisch
+    verfügbaren Worker-Zeit, der tatsächlich mit Study-Arbeit gefüllt war (1.0 = perfekte
+    Auslastung; auf einem seriellen Referenzlauf, n_jobs=1, ≈ 1.0 abzüglich Preflight-/Dispatch-
+    Overhead). None ohne n_jobs/sweep_wallclock_s ODER ohne eine einzige Study mit Wallclock-Daten."""
+    if not n_jobs or n_jobs <= 0 or not sweep_wallclock_s or sweep_wallclock_s <= 0:
+        return None
+    total_study_wallclock = sum(
+        r["study_wallclock_s"] for r in studies_out if r.get("study_wallclock_s") is not None)
+    if total_study_wallclock <= 0:
+        return None
+    return total_study_wallclock / (n_jobs * sweep_wallclock_s)
+
+
 def _longest_holding_studies(studies_out: list[dict[str, Any]], *, top_k: int = 10) -> list[dict[str, Any]]:
     """Issue #832 Fix Punkt 1/3 — Top-``top_k`` Studies nach ``max_holding_time_s`` absteigend, für
     summary_de.py Abschnitt 4 ("Trades mit der längsten Haltedauer"). Rein additiv aus dem bereits
@@ -943,6 +1007,12 @@ def _build_report(
             # Issue #850 — {symbol_share, strategy_share, n_rows} über holdout_excess_return;
             # None bei < 2 Symbolen mit Benchmark-Daten (siehe Docstring).
             "excess_variance_decomposition": _excess_variance_decomposition(studies_out),
+            # Issue #851 — Study-Zeitstempel-abgeleitete Kennzahlen (summary_de.py Abschnitt
+            # 3.2/3.4); dieselben Felder speisen das #843-LPT-Scheduling (Katalog B).
+            "wallclock_by_strategy": _wallclock_by_strategy(studies_out),
+            "symbol_barrier_wait_s": _symbol_barrier_wait(studies_out),
+            "worker_utilisation": _worker_utilisation(
+                studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s),
         },
         "invariant_checks": invariant_checks,
     }
