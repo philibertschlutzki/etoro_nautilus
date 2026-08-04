@@ -804,6 +804,14 @@ def _build_report(
     selection_rule_homogeneity_check = _inv.check_selection_rule_homogeneity(selection_rule_families)
     all_checks.append(("global", selection_rule_homogeneity_check))
 
+    # Issue #852 — dreizehnter Invarianten-Check: eine installierte Bibliotheksversion ausserhalb
+    # ihres gepinnten Bereichs (optimizer.json['pinned_library_versions']) macht den numerischen
+    # Ausgang der Selektion von der Installationsumgebung statt der Konfiguration abhaengig
+    # (dieselbe Fehlerklasse wie #801/#802 bei pandas).
+    library_version_drift_check = _inv.check_library_version_drift(
+        library_versions(), optimizer_cfg.get("pinned_library_versions") or {})
+    all_checks.append(("global", library_version_drift_check))
+
     invariant_checks = []
     for label, result in all_checks:
         d = result.to_dict()

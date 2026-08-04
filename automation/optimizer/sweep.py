@@ -23,7 +23,7 @@ from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
 from automation.optimizer.trial_config import config_dir, compute_walk_forward_window
-from automation.optimizer.manifest import WORK, write_json_atomic, catalog_fingerprint
+from automation.optimizer.manifest import WORK, write_json_atomic, catalog_fingerprint, library_versions
 from automation.optimizer.run_optimization import (
     optimize_symbol as _optimize_symbol,
     load_global_best,
@@ -226,6 +226,29 @@ def assert_required_config_keys_valid() -> None:
     if not result.passed:
         import sys as _sys
         print(f"❌ [#844] REQUIRED_CONFIG_KEYS_VIOLATION: {result.detail}", file=_sys.stderr)
+        _sys.exit(2)
+
+
+def assert_pinned_library_versions_valid() -> None:
+    """Issue #852 (P2) — FAIL-LOUD beim Sweep-Start, gemeinsam mit ``assert_required_config_keys_
+    valid`` (#844): jede installierte Bibliotheksversion, die in ``optimizer.json[
+    'pinned_library_versions']`` gepinnt ist, muss innerhalb ihres Bereichs (``requirements.txt``-
+    Format, z. B. ``'>=4.9,<5.0'``) liegen. Root-Cause: ``optuna`` stand ohne jede Versionsangabe
+    in ``requirements.txt``, obwohl derselbe Kommentar dort (#802) erklärt, warum das für ``pandas``
+    inakzeptabel war — der numerische Ausgang der Selektion (TPESampler-Defaults,
+    ``constraints_func``-Interaktion, ``TrialState.PRUNED``-Semantik) hängt sonst an der
+    Installationsumgebung statt der Konfiguration. Exit-Code 2 (fail-loud), analog
+    ``assert_pandas_version_supported``. Fehlt der Config-Key ⇒ No-Op (leeres Pin-Dict, kein
+    Drift-Check aktiv — rückwärtskompatibel)."""
+    from automation.optimizer import invariants as _inv
+    opt_data = _load_optimizer_config()
+    pinned = opt_data.get("pinned_library_versions") or {}
+    if not pinned:
+        return
+    result = _inv.check_library_version_drift(library_versions(), pinned)
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#852] LIBRARY_VERSION_DRIFT: {result.detail}", file=_sys.stderr)
         _sys.exit(2)
 
 
@@ -1171,6 +1194,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # fehlen und einen Mechanismus lautlos deaktivieren kann (Pitfall #267), bricht den Lauf jetzt
         # VOR dem ersten Symbol ab, statt erst nach vollem Durchlauf im Report aufzufallen.
         assert_required_config_keys_valid()
+        # Issue #852 — Bibliotheksversions-Drift-Preflight (teilt den Preflight-Einstieg mit #844):
+        # eine installierte Version ausserhalb des gepinnten Bereichs bricht VOR dem ersten Symbol ab.
+        assert_pinned_library_versions_valid()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()

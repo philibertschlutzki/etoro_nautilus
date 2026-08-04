@@ -968,3 +968,92 @@ def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: 
                 f"{len(offenders)} Symbol(e) seit mehr als {max_age_runs} Läufen nicht abgedeckt: "
                 f"{offenders} (Issue #841 — least_recently_covered-Rotation sollte das verhindern)."),
     )
+
+
+def _parse_version_tuple(version_str: str) -> tuple[int, ...]:
+    """Wie ``sweep._parse_version_tuple`` — absichtlich DUPLIZIERT statt importiert, damit
+    ``invariants.py`` frei von jeder Abhängigkeit auf ein anderes ``automation.optimizer``-Modul
+    bleibt (Moduldocstring: reine Funktionen über plain Dicts/Listen). Parst die führenden
+    numerischen Komponenten einer Versions-Zeichenkette (``'2.3.3'`` -> ``(2, 3, 3)``); ein
+    nicht-numerischer Suffix (rc/dev/post) bricht das Parsing an dieser Stelle ab."""
+    parts: list[int] = []
+    for chunk in (version_str or "").split("."):
+        digits = ""
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+_VERSION_COMPARATORS = {
+    ">=": lambda a, b: a >= b,
+    "<=": lambda a, b: a <= b,
+    "==": lambda a, b: a == b,
+    ">": lambda a, b: a > b,
+    "<": lambda a, b: a < b,
+}
+
+
+def _version_satisfies(installed: str, spec: str) -> bool:
+    """Minimaler, abhängigkeitsfreier Spezifizierer-Vergleich (nur ``>=``/``<=``/``==``/``>``/``<``,
+    kommagetrennt UND-verknüpft) — ausreichend für die in
+    ``optimizer.json['pinned_library_versions']`` verwendeten Bereichs-Pins (z. B. ``'>=4.9,<5.0'``,
+    dasselbe Format wie ``requirements.txt``). KEIN vollständiger PEP-440-Parser (kein Umgang mit
+    Pre-Release-/Post-Release-Suffixen) — für die hier gepinnten, regulär veröffentlichten
+    Major.Minor.Patch-Versionen ausreichend."""
+    installed_t = _parse_version_tuple(installed)
+    for clause in (spec or "").split(","):
+        clause = clause.strip()
+        if not clause:
+            continue
+        op = next((o for o in (">=", "<=", "==", ">", "<") if clause.startswith(o)), None)
+        if op is None:
+            continue
+        bound_t = _parse_version_tuple(clause[len(op):].strip())
+        if not _VERSION_COMPARATORS[op](installed_t, bound_t):
+            return False
+    return True
+
+
+def check_library_version_drift(installed_versions: dict[str, str | None],
+                                 pinned_ranges: dict[str, str]) -> InvariantResult:
+    """Issue #852 (P2) — FAIL, wenn eine installierte Bibliotheksversion
+    (``manifest.library_versions()``) ausserhalb ihres gepinnten Bereichs
+    (``optimizer.json['pinned_library_versions']``, z. B. ``'>=4.9,<5.0'``) liegt.
+
+    Root-Cause: ``optuna`` stand in ``requirements.txt`` OHNE jede Versionsangabe, obwohl derselbe
+    Kommentar dort erklärt, warum das für ``pandas`` (#802) inakzeptabel war — ``TPESampler``s
+    Defaults für ``multivariate``/``group``/``constant_liar``, die Interaktion von
+    ``constraints_func`` (#612) mit ``n_startup_trials``, und die Behandlung von
+    ``TrialState.PRUNED`` sind alle NICHT über Optuna-Majors garantiert. Damit hängt der
+    NUMERISCHE AUSGANG der Selektion an der Installationsumgebung statt der Konfiguration —
+    dieselbe Fehlerklasse wie #801/#802 bei pandas.
+
+    Nur Bibliotheken, die SOWOHL installiert (``installed_versions[name] is not None``) ALS AUCH
+    gepinnt (``pinned_ranges`` enthält einen Eintrag) sind, werden geprüft — eine fehlende
+    Installation oder ein (noch) ungepinnter Eintrag ist kein Drift-FAIL (fail-open, analog jedem
+    anderen Preflight-Check dieses Moduls)."""
+    offenders: dict[str, str] = {}
+    for name, spec in (pinned_ranges or {}).items():
+        installed = (installed_versions or {}).get(name)
+        if installed is None:
+            continue
+        if not _version_satisfies(installed, spec):
+            offenders[name] = f"installiert={installed}, gepinnt={spec}"
+    passed = not offenders
+    return InvariantResult(
+        name="check_library_version_drift",
+        passed=passed,
+        expected=dict(pinned_ranges or {}),
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Bibliothek(en) ausserhalb des gepinnten Bereichs: {offenders} — "
+                "der numerische Ausgang der Selektion haengt damit an der Installationsumgebung "
+                "statt der Konfiguration (#802-Fehlerklasse)."),
+    )
