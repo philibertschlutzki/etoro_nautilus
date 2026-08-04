@@ -1057,3 +1057,46 @@ def check_library_version_drift(installed_versions: dict[str, str | None],
                 "der numerische Ausgang der Selektion haengt damit an der Installationsumgebung "
                 "statt der Konfiguration (#802-Fehlerklasse)."),
     )
+
+
+def check_champion_seed_coverage(seed_source_counts: dict[str, int], *,
+                                 threshold: float = 0.9) -> InvariantResult:
+    """Issue #853 Fix Punkt 4 — WARNUNG (severity='low'), wenn ``seed_source == 'strategy_defaults'``
+    für mehr als ``threshold`` (Default 90 %) der Studies EINES Laufs gilt: der Champion-Store-
+    Closed-Loop (Epic #702, Ebene 1+2) ist dann nachweislich unwirksam — unabhängig davon, WELCHES
+    Glied bricht (#834-Store-Entwertung durch einen Semantik-Bump, fehlendes #840/#841-Resume/
+    Ledger-Vollabdeckung, oder die #821-``corroboration_count >= 2``-Hürde können je einzeln oder
+    gemeinsam ursächlich sein — dieser Check macht nur das SYMPTOM sichtbar, nicht die Ursache;
+    ``seed_source_counts`` selbst unterscheidet die möglichen Werte für die Detailanalyse).
+
+    SCOPE-HINWEIS: der Issue-Text verlangt die Schwelle über ZWEI AUFEINANDERFOLGENDE Läufe
+    (persistente Historie nötig, analog ``symbol_coverage.py``). Diese Prüfung ist bewusst auf
+    EINEN Lauf reduziert (siehe ``champions.py``-Moduldocstring für die vollständige
+    Scope-Begründung) — ein Lauf mit ≥ 90 % ``strategy_defaults`` ist bereits für sich genommen ein
+    aussagekräftiges Signal; die Zwei-Lauf-Persistenz bleibt als dokumentierte Erweiterung offen.
+
+    ``seed_source_counts``: ``{seed_source_value: n_studies}``
+    (``report._seed_source_distribution``)."""
+    total = sum(seed_source_counts.values())
+    if total == 0:
+        return InvariantResult(
+            name="check_champion_seed_coverage",
+            passed=True,
+            expected=f"strategy_defaults-Anteil <= {threshold:.0%}",
+            actual=None,
+            severity="low",
+            detail="Keine Studies mit seed_source-Telemetrie — nicht anwendbar.",
+        )
+    defaults_fraction = seed_source_counts.get("strategy_defaults", 0) / total
+    passed = defaults_fraction <= threshold
+    return InvariantResult(
+        name="check_champion_seed_coverage",
+        passed=passed,
+        expected=f"<= {threshold:.0%}",
+        actual=defaults_fraction,
+        severity="low",
+        detail=("OK" if passed else
+                f"strategy_defaults-Anteil={defaults_fraction:.1%} > {threshold:.0%} — der "
+                f"Champion-Store-Closed-Loop (#702) ist fuer diesen Lauf nachweislich unwirksam "
+                f"({seed_source_counts})."),
+    )

@@ -48,6 +48,39 @@ parametrisiert — siehe GitHub-Issue #749) härtet vier Achsen nach:
         Schreiben geändert hat (``lifecycle.last_seen_run``). Ein versionsfremder Alt-Eintrag,
         dessen Nachfolge-Kandidat selbst unzulässig ist, wird nach ``_stale/`` quarantäniert statt
         still auf der Platte liegen zu bleiben.
+
+Issue #853 (P2, Befund: 826/826 Studies ``[#565] shrinkage_inactive`` — der Store bleibt
+strukturell leer) — Root-Cause-Analyse ergab KEINEN neuen Code-Defekt, sondern eine Kopplung
+DREIER korrekter Mechanismen zu einem Deadlock (dieselbe Klasse wie #829/#828, Pitfall #258):
+#834 (v17→v18) entwertete den Vorlauf-Store bei Laufbeginn; ohne #840/#841 (Resume/Ledger)
+bricht jeder Lauf bei ~59 Symbolen ab und deckt nie die volle Universe-Rotation ab;
+``maybe_write_back`` verlangt kumulativ Versionsgleichheit + ``corroboration_count >= 2`` +
+``champion_min_advance_days`` — bei einem Semantik-Bump je Sitzung und einer Trunkierung bei 59
+Symbolen ist ``corroboration_count >= 2`` strukturell unerreichbar.
+
+Umgesetzt in DIESEM Katalog (additiv, siehe ``run_optimization.resolve_symbol_shrinkage_seed``/
+``report._seed_source_distribution``/``invariants.check_champion_seed_coverage``):
+``seed_source`` unterscheidet jetzt ``'champion'`` von ``'champion_quality_stale'`` (#819) als
+POSITIVE Telemetrie (vorher existierte nur die ``[#565]``-Negativ-WARNUNG), im #742-Report
+aggregiert und gegen eine 90-%-``strategy_defaults``-Schwelle geprüft (bewusst auf EINEN Lauf
+skopiert statt der im Issue-Text verlangten Zwei-Lauf-Persistenz — siehe
+``check_champion_seed_coverage``-Docstring).
+
+BEWUSST NICHT umgesetzt (dokumentierter Scope-Cut, dieselbe Entscheidungsklasse wie #843/#845
+Punkt 2 in diesem Katalog): die vom Issue-Text verlangte Umstellung von
+``corroboration_count`` (zählt SCHREIBVORGÄNGE, #821) auf ``corroborating_snapshots: list[{sha256,
+first_seen_at, advance_days}]`` (zählt tatsächlich VERSCHIEDENE Daten-Snapshots mit zeitlichem
+Abstand — die statistisch korrekte Korroborations-Definition). Diese Umstellung betrifft das
+gespeicherte JSON-Schema JEDES Champion-Eintrags, ``maybe_write_back``s gesamte Entscheidungskette
+(:737 ff.) UND ``champion_quality_stale``s Interaktion mit einer neuen, bislang ungetesteten
+Datenstruktur — ohne einen realen Mehrfach-Snapshot-Sweep-Lauf zur Regressionsverifikation in
+diesem Environment ist das Risiko einer stillen Korruption des einzigen persistenten
+Cross-Sitzungs-Zustands (dem Champion-Store selbst) höher als der Nutzen in diesem Durchgang. Der
+naheliegende, WENIGER riskante erste Schritt — #840/#841 (Resume/Ledger, bereits umgesetzt,
+Katalog B) — behebt bereits die Trunkierungs-Ursache; ob die verbleibende
+``corroboration_count>=2``-Hürde nach einem vollen Abdeckungszyklus noch strukturell unerreichbar
+ist, sollte an ECHTEN Zwei-Zyklen-Daten neu beurteilt werden, bevor die Datenmodell-Umstellung
+riskiert wird.
 """
 import json
 import logging

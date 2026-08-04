@@ -393,6 +393,13 @@ def _study_record(proposal: dict, study,
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),
         "n_trials_budget": study_user_attrs.get("n_trials_budget"),
+        # Issue #853 Fix Punkt 3 — seed_source als POSITIVE Telemetrie (vorher existierte nur die
+        # [#565]-Negativ-WARNUNG im Log): welcher Anker den Warm-Start/param_pen dieser Study
+        # tatsächlich speiste (run_optimization.resolve_symbol_shrinkage_seed, Study-User-Attr
+        # 'shrinkage_seed_source'). 'champion_quality_stale' (#819) ist seed-fähig wie 'champion',
+        # nur die Quality-Telemetrie ist veraltet — unterscheidbar von 'strategy_defaults'/'none'
+        # (kein Champion vorhanden).
+        "seed_source": study_user_attrs.get("shrinkage_seed_source"),
         # Issue #851 — Study-Zeitstempel-Telemetrie (run_optimization._optimize_symbol_impl setzt
         # diese User-Attrs vor/nach study.optimize, auch bei vorzeitigem Abbruch — #833-Stil).
         # Rohmaterial für summary_de.py Abschnitt 3.2/3.4 (Median-Wallclock je Strategie,
@@ -799,6 +806,18 @@ def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None
     return total_study_wallclock / (n_jobs * sweep_wallclock_s)
 
 
+def _seed_source_distribution(studies_out: list[dict[str, Any]]) -> dict[str, int]:
+    """Issue #853 Fix Punkt 3/4 — Verteilung von ``seed_source`` über alle Studies dieses Laufs
+    (``report._study_record``), Rohmaterial für ``invariants.check_champion_seed_coverage`` und
+    die #742-Report-Transparenz ("welcher Anker speiste den Warm-Start tatsächlich"). Studies ohne
+    Telemetrie (Pre-#853-Lauf) landen unter ``'unknown'``."""
+    out: dict[str, int] = {}
+    for r in studies_out:
+        source = r.get("seed_source") or "unknown"
+        out[source] = out.get(source, 0) + 1
+    return out
+
+
 def _longest_holding_studies(studies_out: list[dict[str, Any]], *, top_k: int = 10) -> list[dict[str, Any]]:
     """Issue #832 Fix Punkt 1/3 — Top-``top_k`` Studies nach ``max_holding_time_s`` absteigend, für
     summary_de.py Abschnitt 4 ("Trades mit der längsten Haltedauer"). Rein additiv aus dem bereits
@@ -889,6 +908,14 @@ def _build_report(
     champions_summary = _champions_summary(optimizer_cfg)
     champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
     all_checks.append(("global", champion_writeback_check))
+
+    # Issue #853 Fix Punkt 4 — vierzehnter Invarianten-Check: WARNUNG (severity='low'), wenn der
+    # Champion-Seed-Anker fuer > 90% der Studies dieses Laufs auf strategy_defaults zurueckfaellt
+    # (der Closed Loop, #702, ist dann nachweislich unwirksam — siehe check_champion_seed_coverage-
+    # Docstring fuer den Scope-Hinweis zur Ein-Lauf- statt Zwei-Lauf-Schwelle).
+    seed_source_distribution = _seed_source_distribution(studies_out)
+    champion_seed_coverage_check = _inv.check_champion_seed_coverage(seed_source_distribution)
+    all_checks.append(("global", champion_seed_coverage_check))
 
     # Issue #829 — neunter Invarianten-Check: ein Evidenzschwellen-Deadlock (Pitfall #258) macht
     # sich als viele diagnosed_pairs_cache-Einträge derselben (strategy, binding_cause)-Kombination
@@ -1013,6 +1040,9 @@ def _build_report(
             "symbol_barrier_wait_s": _symbol_barrier_wait(studies_out),
             "worker_utilisation": _worker_utilisation(
                 studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s),
+            # Issue #853 — {seed_source_value: n_studies}, dieselbe Verteilung, die
+            # check_champion_seed_coverage prüft.
+            "seed_source_distribution": seed_source_distribution,
         },
         "invariant_checks": invariant_checks,
     }

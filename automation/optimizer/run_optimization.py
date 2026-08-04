@@ -1343,12 +1343,14 @@ def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
     Epics #702) ZWISCHEN ``global_best`` und ``strategy_defaults``.
 
     Reihenfolge: ``load_global_best`` (Proposal READY_FOR_PR / strategies.json) →
-    ``champions.load_champion_seed`` (bester ERREICHTER, aber noch nicht promoteter Holdout-
+    ``champions.load_champion_entry`` (bester ERREICHTER, aber noch nicht promoteter Holdout-
     Kandidat, #703/#704) → ``strategy_defaults`` → ``{}``. Gibt ``(seed_params, source)`` zurück,
-    ``source ∈ {'global_best', 'champion', 'strategy_defaults', 'none'}``. Fehlt das echte globale
-    Optimum, ist ``strategy_defaults`` (bzw. der Champion, falls vorhanden) der Prior, gegen den die
-    A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen`` NIE still 0 (der Kollaps, bei dem
-    der symbol-getunte Vektor völlig ungezügelt Richtung IS/OOS-CV-Rausch tunt, #565).
+    ``source ∈ {'global_best', 'champion', 'champion_quality_stale', 'strategy_defaults', 'none'}``
+    (Issue #853 — 'champion_quality_stale' seit diesem Fix von 'champion' unterschieden, siehe
+    unten). Fehlt das echte globale Optimum, ist ``strategy_defaults`` (bzw. der Champion, falls
+    vorhanden) der Prior, gegen den die A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen``
+    NIE still 0 (der Kollaps, bei dem der symbol-getunte Vektor völlig ungezügelt Richtung
+    IS/OOS-CV-Rausch tunt, #565).
 
     ``symbol``/``opt_data`` sind ADDITIV optional (HI-2): fehlen sie (Legacy-Aufrufer, z. B. das
     globale ``optimize()`` ohne Symbol-Kontext, oder bestehende Tests), ist das Verhalten
@@ -1359,11 +1361,24 @@ def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
     if global_best:
         return global_best, "global_best"
     if symbol is not None and opt_data is not None:
+        # Issue #853 Fix Punkt 3 — ``seed_source`` unterscheidet jetzt 'champion' von
+        # 'champion_quality_stale', statt beide unter 'champion' zu verstecken: der volle Eintrag
+        # (nicht nur ``load_champion_seed``s Parameter-Extrakt) traegt die Information, ob die
+        # QUALITY-Bewertung unter einem aelteren reward_semantics_version gemessen wurde
+        # (champions.champion_quality_stale, #819) — der Parametervektor bleibt in BEIDEN Faellen
+        # gleichwertig seed-faehig (er durchlaeuft beim Enqueue ohnehin erneut alle Gates), aber
+        # die Unterscheidung macht sichtbar, ob ein Champion FEHLTE oder ob er vorhanden war und
+        # nur seine Quality-Telemetrie veraltet ist (Root-Cause #853: ohne sie war "kein
+        # global_best/Champion" die EINZIGE Negativ-Warnung, es gab keine positive Telemetrie).
         from automation.optimizer import champions
-        champion = champions.load_champion_seed(strategy, symbol, base_cfg, opt_data=opt_data,
-                                                 catalog_newest_ns=catalog_newest_ns)
-        if champion:
-            return champion, "champion"
+        champion_entry = champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        if champion_entry:
+            champion_params = dict(champion_entry.get("params") or {})
+            if champion_params:
+                source = ("champion_quality_stale"
+                          if champions.champion_quality_stale(champion_entry, opt_data)
+                          else "champion")
+                return champion_params, source
     defaults = load_strategy_defaults_params(strategy, base_cfg)
     if defaults:
         return defaults, "strategy_defaults"
@@ -2663,13 +2678,14 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # unabhängig vom Defaults-Fallback, damit der fehlende Anker im Standalone-Sweep nie still bleibt.
     global_best, seed_source = resolve_symbol_shrinkage_seed(
         strategy, cfg_dir, symbol=symbol, opt_data=opt_data, catalog_newest_ns=catalog_newest_ns)
-    # Issue #704 — ein Champion ist wie global_best ein ECHTER Anker (der param_pen zieht Richtung
-    # eines real erreichten Holdout-Kandidaten statt ins Leere), auch wenn er noch nicht promotet
-    # ist — shrinkage_inactive bleibt daher False für BEIDE Quellen.
-    shrinkage_inactive = seed_source not in ("global_best", "champion")
+    # Issue #704/#853 — ein Champion (ODER ein Champion mit veralteter Quality-Telemetrie,
+    # 'champion_quality_stale', #819) ist wie global_best ein ECHTER Anker (der param_pen zieht
+    # Richtung eines real erreichten Holdout-Kandidaten statt ins Leere) — shrinkage_inactive
+    # bleibt daher False für ALLE DREI Quellen.
+    shrinkage_inactive = seed_source not in ("global_best", "champion", "champion_quality_stale")
     study.set_user_attr("shrinkage_seed_source", seed_source)
     study.set_user_attr("shrinkage_inactive", shrinkage_inactive)
-    if seed_source == "champion":
+    if seed_source in ("champion", "champion_quality_stale"):
         # Issue #709 — Study-User-Attrs & Log-Parität mit #565: jeder Warm-Start-Effekt eines
         # Champions ist forensisch nachvollziehbar (analog shrinkage_*-Telemetrie).
         from automation.optimizer import champions as _champions
@@ -2680,7 +2696,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             corroboration_count = lifecycle.get("corroboration_count")
             r_symbol_at_store = (champion_entry.get("quality") or {}).get("R_symbol")
             first_seen_run = lifecycle.get("first_seen_run")
-            study.set_user_attr("champion_seed_source", "champion")
+            # Issue #853 — traegt jetzt den PRAEZISEN seed_source-Wert (statt hartcodiert
+            # 'champion'), damit die Quality-Stale-Unterscheidung auch in diesem Study-Attr sichtbar
+            # ist, nicht nur im uebergeordneten shrinkage_seed_source.
+            study.set_user_attr("champion_seed_source", seed_source)
             study.set_user_attr("champion_R_symbol_at_store", r_symbol_at_store)
             study.set_user_attr("champion_corroboration_count", corroboration_count)
             study.set_user_attr("champion_writeback_applied", bool(lifecycle.get("writeback_applied")))
