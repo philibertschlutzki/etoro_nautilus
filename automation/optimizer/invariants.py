@@ -37,6 +37,11 @@ class InvariantResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
+            # Issue #849 — Uebergangs-Alias: report.py's INVARIANT_CHECK_FAILED-Event mappte
+            # bereits korrekt auf "check" (result.name), waehrend summary_de.py "check" LAS, ohne
+            # dass to_dict() diesen Schluessel je geschrieben hat (519x "**None**" im Bericht).
+            # Beide Schluessel tragen denselben Wert, bis alle Konsumenten auf "name" migriert sind.
+            "check": self.name,
             "passed": self.passed,
             "expected": self.expected,
             "actual": self.actual,

@@ -836,6 +836,11 @@ def _build_report(
         "run_status": run_status,
         "symbols_completed": symbols_completed,
         "symbols_planned": symbols_planned,
+        # Issue #849 — im Report EINGEBETTET (statt eines zweiten config_dir()-Lesezugriffs in
+        # summary_de.py, das bewusst reines Rueckgabedict-only bleibt, siehe Moduldocstring dort):
+        # Sektion 5.2 zeigt hoechstens so viele Beispiel-Details je Check, bevor sie auf "... und N
+        # weitere" kollabiert (Akzeptanzkriterium #849-5, Bericht bleibt bei >= 500 FAILs kompakt).
+        "summary_max_details_per_check": int(optimizer_cfg.get("summary_max_details_per_check", 5)),
         "studies": studies_out,
         "cross_study": {
             "n_family": _family_n_from_proposals(proposals),

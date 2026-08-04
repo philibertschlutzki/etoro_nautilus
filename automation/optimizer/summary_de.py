@@ -64,6 +64,18 @@ def _studies(report: dict) -> list[dict[str, Any]]:
     return list(report.get("studies") or [])
 
 
+# Issue #849 — Sortierreihenfolge fuer Sektion 5.1 (am dringendsten zuerst). Ein unbekannter/
+# fehlender severity-Wert faellt auf denselben Rang wie "medium" (rueckwaertskompatibel zu
+# Pre-#849-invariant_checks-Eintraegen ohne das Feld).
+_SEVERITY_ORDER = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _check_name(c: dict) -> str:
+    """Issue #849 — 'name' ist der EIGENTLICHE Vertrag (InvariantResult.to_dict()); 'check' bleibt
+    ein Uebergangs-Alias fuer Report-Fixtures, die ihn (wie vor #849) direkt selbst setzen."""
+    return c.get("name") or c.get("check") or "unbekannt"
+
+
 def _section_1_result_in_one_sentence(report: dict) -> str:
     studies = _studies(report)
     n_studies = len(studies)
@@ -87,7 +99,20 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
             f"{n_studies} Studies, {n_deployable} Promotion(en) (READY_FOR_PR/PROMOTE_GLOBAL_DEFAULT) — "
             "siehe Abschnitt 2 für die Details je Kandidat."
         )
-    return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note
+    # Issue #849 Punkt 4 — blockierende Invarianten-FAILs (severity='blocking', z. B.
+    # check_holding_time_cap/check_required_config_keys) muessen bereits HIER namentlich auftauchen,
+    # nicht erst in Sektion 5 (vorher: hinter 304 Meldungen ueber inerte Reward-Terme verborgen).
+    blocking_fails = sorted({
+        _check_name(c) for c in (report.get("invariant_checks") or [])
+        if not c.get("passed", True) and c.get("severity") == "blocking"
+    })
+    blocking_note = ""
+    if blocking_fails:
+        blocking_note = (
+            f" **BLOCKIERENDE Invarianten-FAIL(s):** {', '.join(blocking_fails)} — siehe Abschnitt "
+            "5.1 für Details."
+        )
+    return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note + blocking_note
 
 
 def _section_2_monetary_result(report: dict) -> str:
@@ -269,14 +294,57 @@ def _section_5_anomalies(report: dict) -> str:
     lines = ["## 5. Auffälligkeiten", ""]
 
     failing_checks = [c for c in (report.get("invariant_checks") or []) if not c.get("passed", True)]
-    lines.append(f"### Invarianten-FAILs ({len(failing_checks)})")
+
+    # Issue #849 — Root-Cause der 519-Zeilen-Sektion: JEDER einzelne FAIL war eine gleichrangige
+    # Zeile (304× check_reward_term_variance neben 1× check_holding_time_cap, dem eigentlich
+    # wichtigsten Befund). Ab hier: EINE Zeile je Check (5.1), Details nur noch als begrenzte
+    # Stichprobe je Check (5.2) — Reihenfolge in BEIDEN Abschnitten identisch (nach Schweregrad,
+    # dann nach FAIL-Anzahl absteigend).
+    by_check: dict[str, list[dict]] = {}
+    for c in failing_checks:
+        by_check.setdefault(_check_name(c), []).append(c)
+    ordered_names = sorted(
+        by_check.keys(),
+        key=lambda name: (
+            _SEVERITY_ORDER.get(by_check[name][0].get("severity", "medium"), 2),
+            -len(by_check[name]),
+            name,
+        ),
+    )
+
+    max_details = report.get("summary_max_details_per_check")
+    if not isinstance(max_details, int) or max_details < 1:
+        max_details = 5
+
+    lines.append(f"### 5.1 Übersicht — Invarianten-FAILs ({len(failing_checks)})")
     lines.append("")
-    if not failing_checks:
+    if not ordered_names:
         lines.append("Keine.")
     else:
-        for c in failing_checks:
-            lines.append(f"- **{c.get('check')}** (scope={c.get('scope')}): {c.get('detail')}")
+        lines.append("| Check | FAILs | betroffene Studies | Schweregrad |")
+        lines.append("|---|---:|---:|---|")
+        for name in ordered_names:
+            entries = by_check[name]
+            n_studies_affected = len({c.get("scope") for c in entries})
+            severity = entries[0].get("severity", "medium")
+            lines.append(f"| {name} | {len(entries)} | {n_studies_affected} | {severity} |")
     lines.append("")
+
+    lines.append("### 5.2 Details")
+    lines.append("")
+    if not ordered_names:
+        lines.append("Keine.")
+    else:
+        for name in ordered_names:
+            entries = by_check[name]
+            lines.append(f"**{name}**")
+            lines.append("")
+            for c in entries[:max_details]:
+                lines.append(f"- (scope={c.get('scope')}): {c.get('detail')}")
+            remaining = len(entries) - max_details
+            if remaining > 0:
+                lines.append(f"- … und {remaining} weitere")
+            lines.append("")
 
     n_guard_dominated = sum(1 for r in studies if r.get("study_guard_dominated"))
     total_liquidated = sum(r.get("liquidated_trials") or 0 for r in studies)
@@ -285,7 +353,7 @@ def _section_5_anomalies(report: dict) -> str:
     n_denylisted = sum(1 for d in diagnosed if d.get("action") == "denylist")
     n_deprioritized = sum(1 for d in diagnosed if d.get("action") == "deprioritized")
 
-    lines.append("### Zusammenfassung")
+    lines.append("### 5.3 Zusammenfassung")
     lines.append("")
     lines.append(f"- Guard-dominierte Studies (SORTINO_GUARD_TRIPPED-Mehrheit, #823): {n_guard_dominated}")
     lines.append(f"- Wirtschaftlich ruinierte Trials (EQUITY_NONPOSITIVE, #801/#825): {total_liquidated}")
