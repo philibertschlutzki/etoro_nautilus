@@ -199,7 +199,11 @@ def test_sweep_defaults_to_the_24h_active_budget_when_key_missing(monkeypatch, t
     assert not wallclock_guard.sweep_wallclock_exceeded.is_set()
 
 
-# ── Config-Default: die reale optimizer.json setzt 24 ────────────────────────────────────────────
-def test_real_config_default_is_24_hours():
+# ── Config-Default: die reale optimizer.json setzt 72 (Issue #842, Uebergangswert) ───────────────
+def test_real_config_default_is_72_hours():
+    """Issue #842 — 24 -> 72: der gemessene Takt eines 59/143-Symbol-Laufs (24,7 min/Symbol)
+    hochgerechnet auf 143 Symbole ergibt 58,8h; 72h = Hochrechnung + 22% Puffer. Bewusst als
+    Uebergangswert dokumentiert (siehe optimizer.json._schema), bis #843 (Pipelining) den
+    Durchsatz erhoeht."""
     data = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
-    assert data["sweep_max_wallclock_h"] == 24
+    assert data["sweep_max_wallclock_h"] == 72

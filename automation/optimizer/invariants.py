@@ -819,3 +819,30 @@ def check_holding_time_cap(study_records: list[dict], *,
                 f"({max_bars_in_trade_cap} Bars): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase "
                 "erzwingt den Zeit-Exit nicht), keine Dateneigenart."),
     )
+
+
+def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: int = 3) -> InvariantResult:
+    """Issue #841 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als ``max_age_runs``
+    abgeschlossenen Sweep-Läufen nicht abgedeckt wurde (niemals abgedeckt zählt als maximal alt).
+    Konsumiert ``symbol_coverage.coverage_report`` (dasselbe Ledger, das
+    ``sweep_symbol_order_policy='least_recently_covered'`` für die Dispatch-Reihenfolge nutzt) —
+    macht eine Abdeckungslücke messbar, statt sie nur implizit über ``symbols_completed``/
+    ``symbols_planned``-Telemetrie erahnen zu lassen."""
+    from automation.optimizer import symbol_coverage as _sc
+    report = _sc.coverage_report(coverage, universe, max_age_runs=max_age_runs)
+    stale = report.get("stale_symbols") or {}
+    never = report.get("never_covered") or []
+    offenders = dict(stale)
+    for sym in never:
+        offenders.setdefault(sym, report.get("total_runs_started", 0))
+    passed = not offenders
+    return InvariantResult(
+        name="check_symbol_coverage",
+        passed=passed,
+        expected=f"<= {max_age_runs} Läufe seit letzter Abdeckung, für jedes Symbol im Universum",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) seit mehr als {max_age_runs} Läufen nicht abgedeckt: "
+                f"{offenders} (Issue #841 — least_recently_covered-Rotation sollte das verhindern)."),
+    )

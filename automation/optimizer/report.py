@@ -40,7 +40,8 @@ from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution,
 )
-from automation.optimizer.sweep import _family_n_from_proposals
+from automation.optimizer.sweep import _family_n_from_proposals, load_symbol_universe
+from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
 
 # Issue #785 — die bindend/erwartete Struktur einer Entscheidungs-Stufe. Siehe ``_decision_chain``.
@@ -532,6 +533,23 @@ def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     ]
 
 
+def _symbol_coverage_summary(opt_data: dict) -> tuple[dict[str, Any], _inv.InvariantResult]:
+    """Issue #841 — ``cross_study.symbol_coverage`` + der zugehörige Invarianten-Check. Liest
+    ``data/optimizer/symbol_coverage.json`` (das Ledger, das ``sweep_symbol_order_policy=
+    'least_recently_covered'`` für die Dispatch-Reihenfolge nutzt) und das aktuelle Universum
+    (``sweep.load_symbol_universe``). Fail-open bei jedem Lese-/Enumerationsfehler — ein Report
+    darf wegen einer fehlenden/kaputten Coverage-Datei nie crashen."""
+    max_age_runs = int(opt_data.get("symbol_coverage_max_age_runs", 3))
+    try:
+        universe = load_symbol_universe()
+    except Exception:
+        universe = []
+    ledger = _symbol_coverage.load_coverage()
+    coverage = _symbol_coverage.coverage_report(ledger, universe, max_age_runs=max_age_runs)
+    check = _inv.check_symbol_coverage(ledger, universe, max_age_runs=max_age_runs)
+    return coverage, check
+
+
 def _champions_summary(opt_data: dict) -> dict[str, Any]:
     """Issue #818 (#742-Report-Zaehlerpaar) — ``cross_study.champions``:
     ``{stored, admissible, corroborated, written_back, skipped_by_reason}`` über den AKTUELLEN
@@ -746,6 +764,12 @@ def _build_report(
     holding_time_cap_check = _inv.check_holding_time_cap(studies_out)
     all_checks.append(("global", holding_time_cap_check))
 
+    # Issue #841 — elfter Invarianten-Check: kein Symbol des aktuellen Universums darf seit mehr
+    # als symbol_coverage_max_age_runs abgeschlossenen Läufen unabgedeckt bleiben (least_recently_
+    # covered-Rotation, siehe symbol_coverage.py).
+    symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
+    all_checks.append(("global", symbol_coverage_check))
+
     invariant_checks = []
     for label, result in all_checks:
         d = result.to_dict()
@@ -810,6 +834,9 @@ def _build_report(
             # Issue #818 — stored/admissible/corroborated/written_back/skipped_by_reason über den
             # aktuellen Champion-Store-Stand (Epic #702 Ebene 1+2 Reachability-Telemetrie).
             "champions": champions_summary,
+            # Issue #841 — {never_covered, stale_symbols, oldest_coverage_age_runs,
+            # total_runs_started} über das aktuelle Universum (symbol_coverage.json-Ledger).
+            "symbol_coverage": symbol_coverage_summary,
             # Issue #826 Fix Punkt 2 (Akzeptanzkriterium 2) — n_family_stage1 (je Symbol/Strategie,
             # die tatsächlich verwendete Per-Strategie-Multiplizität N1) UND n_family_stage2 (je
             # Symbol, Zahl der Strategien mit N1 > 0) GETRENNT ausgewiesen — NICHT zu verwechseln mit
