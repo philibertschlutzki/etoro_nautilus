@@ -299,6 +299,30 @@ def champion_quality_stale(entry: dict, opt_data: dict) -> bool:
     return integrity.get("reward_semantics_version") != reward_version
 
 
+def champion_simulation_stale(entry: dict, opt_data: dict) -> bool:
+    """Issue #854 — ``True``, wenn die SIMULATION selbst (Exit-Pfad #836-#838, Zeitbox-Semantik
+    #839, T-abhängige Guard-Schwelle #844 — siehe ``optimizer.json['simulation_semantics_version']``
+    -Schema für die vollständige Abgrenzung reward/simulation/params_schema) unter einer ANDEREN
+    Version gemessen wurde als der aktuellen Config.
+
+    ANDERS als ``champion_quality_stale`` (ein reiner ``reward_semantics_version``-Mismatch
+    entwertet NUR die Quality-Bewertung, der Parametervektor bleibt seed-fähig, #819): ein
+    ``simulation_semantics_version``-Mismatch entwertet den EINTRAG VOLLSTÄNDIG (params UND
+    quality) — die gemessenen Metriken (Haltedauern, Equity-Kurve, Trade-Zahlen), aus denen
+    ``params`` als "bewährt" hervorging, wurden unter einem ANDEREN Handelsvertrag erhoben; der
+    Parametervektor selbst ist unter der neuen Simulation nicht mehr belegbar (dieselbe Argumentation
+    wie bei einem ``params_schema_version``-Mismatch — der SUCHRAUM hat sich geändert —, hier auf der
+    MESS-Ebene statt der Suchraum-Ebene). ``None``/fehlende Version auf einer der beiden Seiten
+    (Legacy-Eintrag vor #854, oder Config ohne den Key) ⇒ konservativ NICHT als Mismatch gewertet
+    (kein falscher Datenverlust durch ein Feld, das der Alt-Eintrag/die Alt-Config noch nicht kannte)."""
+    integrity = entry.get("integrity") or {}
+    current = opt_data.get("simulation_semantics_version")
+    stored = integrity.get("simulation_semantics_version")
+    if current is None or stored is None:
+        return False
+    return stored != current
+
+
 def champion_is_admissible(entry: dict, opt_data: dict,
                            tournament_cfg: dict | None = None) -> tuple[bool, str | None]:
     """Issue #705 (P0), gehärtet #817/#819/#820 — die EINE zentrale Guard-Einheit für
@@ -377,6 +401,12 @@ def champion_is_admissible(entry: dict, opt_data: dict,
     if reward_version is None:
         return False, "REWARD_SEMANTICS_MISMATCH"
 
+    # Issue #854 — ANDERS als ein reiner reward_semantics_version-Mismatch (nur die Quality-
+    # Bewertung wird stale, params bleiben seed-fähig, #819): ein simulation_semantics_version-
+    # Mismatch schliesst den EINTRAG VOLLSTÄNDIG aus (siehe champion_simulation_stale-Docstring).
+    if champion_simulation_stale(entry, opt_data):
+        return False, "SIMULATION_SEMANTICS_MISMATCH"
+
     lifecycle = entry.get("lifecycle") or {}
     degrade_streak = int(lifecycle.get("degrade_streak", 0) or 0)
     demote_after = int(opt_data.get("champion_demote_after_runs", 2))
@@ -443,6 +473,12 @@ def _build_entry_from_promotion(study, strategy: str, symbol: str, promotion: di
             "reward_semantics_version": opt_data.get("reward_semantics_version"),
             # Issue #819 — der SUCHRAUM-Fingerprint, unabhängig von der Reward-Semantik.
             "params_schema_version": _params_schema_version(strategy),
+            # Issue #854 — die SIMULATIONS-Semantik (Exit-Pfad/Zeitbox/Guard-Schwelle, siehe
+            # optimizer.json['simulation_semantics_version']-Schema), unabhängig von der
+            # Reward-FORMEL: ändert sich die Simulation, ist der gemessene Parametervektor selbst
+            # nicht mehr belegbar (anders als bei einem reinen reward_semantics_version-Mismatch,
+            # der nur die Bewertungs-FORMEL betrifft, siehe champion_simulation_stale-Docstring).
+            "simulation_semantics_version": opt_data.get("simulation_semantics_version"),
             "data_snapshot_sha256": catalog_fingerprint(),
             "catalog_newest_ns": catalog_newest_ns,
         },
@@ -520,6 +556,7 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
     quality_stale = False
     semantics_migrated_from = None
     discarded_for_quarantine: dict | None = None
+    quarantine_mismatch_kind = "params_schema_version_mismatch"
     if existing is not None:
         existing_integrity = existing.get("integrity") or {}
         existing_reward_version = existing_integrity.get("reward_semantics_version")
@@ -535,8 +572,16 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
             and existing_schema_version is not None
             and existing_schema_version != params_schema_version
         )
-        if schema_mismatch:
+        # Issue #854 — dieselbe VOLLSTÄNDIGE Verwerfung wie beim Suchraum-Mismatch, jetzt auch für
+        # die SIMULATIONS-Semantik (siehe champion_simulation_stale-Docstring): die gemessenen
+        # Metriken, aus denen params als "bewährt" hervorging, wurden unter einem anderen
+        # Handelsvertrag erhoben.
+        simulation_mismatch = champion_simulation_stale(existing, opt_data)
+        if schema_mismatch or simulation_mismatch:
             discarded_for_quarantine = existing
+            quarantine_mismatch_kind = (
+                "params_schema_version_mismatch" if schema_mismatch
+                else "simulation_semantics_version_mismatch")
             existing = None
         elif version_mismatch:
             semantics_migrated_from = existing_reward_version
@@ -577,7 +622,7 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
         # auf der Platte liegen — stattdessen Quarantäne statt stiller Persistenz.
         if discarded_for_quarantine is not None:
             _quarantine_champion(strategy, symbol, path, discarded_for_quarantine,
-                                 reason=f"params_schema_version_mismatch_then_{reason}")
+                                 reason=f"{quarantine_mismatch_kind}_then_{reason}")
         return None  # ein Degrade-Update oben (falls quality_stale=False) bleibt bestehen.
 
     if existing is None:

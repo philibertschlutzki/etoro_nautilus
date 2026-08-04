@@ -1100,3 +1100,37 @@ def check_champion_seed_coverage(seed_source_counts: dict[str, int], *,
                 f"Champion-Store-Closed-Loop (#702) ist fuer diesen Lauf nachweislich unwirksam "
                 f"({seed_source_counts})."),
     )
+
+
+def check_semantics_version_coherence(admissible_despite_simulation_stale: int) -> InvariantResult:
+    """Issue #854 Fix Punkt 6 — FAIL, wenn ein Champion-Store-Eintrag mit einer VERALTETEN
+    ``simulation_semantics_version`` (siehe ``optimizer.json``-Schema für die vollständige
+    reward/simulation/params_schema-Abgrenzung) trotzdem als ``champion_is_admissible`` gilt und
+    damit als Seed/in einer Multiplizitäts-Zählung verwendet werden könnte.
+
+    ``champions.champion_is_admissible`` schliesst einen ``simulation_semantics_version``-Mismatch
+    seit #854 HART aus (anders als ein reiner ``reward_semantics_version``-Mismatch, der nur die
+    Quality-Bewertung entwertet, #819) — dieser Wächter verifiziert, dass diese Garantie
+    TATSÄCHLICH hält, statt sie nur zu behaupten (dieselbe Klasse wie
+    ``check_champion_writeback_reachability``: ein struktureller Soll-Zustand wird gegen den
+    IST-Zustand des Stores geprüft, nicht nur im Code-Pfad angenommen).
+
+    ``admissible_despite_simulation_stale``: ``report._champions_summary``-Zähler (0 im
+    Regelfall). Die parallele SQLite-Study-Ebene (ein simulation-stales Trial, das noch in
+    ``n_family`` einfliesst) ist strukturell bereits durch
+    ``run_optimization._check_simulation_semantics_version`` verhindert — jede geladene Study mit
+    veralteter Version wird beim Laden fail-loud gepurgt (dieselbe Mechanik wie
+    ``REJECT_STALE_STUDY_SEMANTICS``), BEVOR ihre Trials in irgendeine Multiplizitäts-Zählung
+    einfliessen könnten."""
+    passed = admissible_despite_simulation_stale <= 0
+    return InvariantResult(
+        name="check_semantics_version_coherence",
+        passed=passed,
+        expected=0,
+        actual=admissible_despite_simulation_stale,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{admissible_despite_simulation_stale} Champion-Store-Eintrag/Eintraege mit "
+                "veralteter simulation_semantics_version gelten trotzdem als admissible — der "
+                "#854-Hartausschluss (champions.champion_is_admissible) hat nicht gegriffen."),
+    )

@@ -988,6 +988,56 @@ def _check_reward_semantics_version(study, opt_data: dict,
     logger.warning("♻️ %s", msg)
 
 
+def _check_simulation_semantics_version(study, opt_data: dict,
+                                        logger: logging.Logger | None = None) -> None:
+    """Issue #854 (P0) — Simulations-Semantik-Versionierung & Study-Hygiene, dieselbe MECHANIK wie
+    ``_check_reward_semantics_version`` (#410), aber eine ORTHOGONALE Achse (siehe
+    ``optimizer.json['simulation_semantics_version']``-Schema für die vollständige reward/
+    simulation/params_schema-Abgrenzung): ``reward_semantics_version`` versioniert, WIE ein Trial
+    bewertet wird; ``simulation_semantics_version`` versioniert, WAS überhaupt gemessen wurde
+    (Exit-Pfad #836-#838, Zeitbox-Konsequenz #839, T-abhängige Guard-Schwelle #844). Eine Study mit
+    einer ALTEN simulation_semantics_version enthält Trials, deren Metriken unter einem ANDEREN
+    Handelsvertrag simuliert wurden — kein Reward-Fix kann das reparieren, dieselbe fail-loud +
+    Purge-Konsequenz wie bei einem reward_semantics_version-Mismatch, nur unter einem eigenen,
+    unterscheidbaren Fehlercode (``REJECT_STALE_SIMULATION_SEMANTICS``), damit ein Operator die
+    beiden Ursachen im Log auseinanderhalten kann.
+
+    Frische Studies werden mit ``optimizer.json['simulation_semantics_version']`` gestempelt. Fehlt
+    der Config-Key, ist die Prüfung ein No-Op (rückwärtskompatibel zu Pre-#854-Configs)."""
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+    current = opt_data.get("simulation_semantics_version")
+    if current is None:
+        return  # Versionierung nicht konfiguriert -> No-Op
+
+    existing = study.user_attrs.get("simulation_semantics_version")
+    has_trials = len(study.trials) > 0
+
+    if existing == current:
+        return
+    if existing is None and not has_trials:
+        study.set_user_attr("simulation_semantics_version", current)
+        return
+
+    msg = (f"Simulations-Semantik-Versionskonflikt: die geladene Study wurde unter Version "
+           f"{existing if existing is not None else 'unversioniert'} simuliert, aktuell ist "
+           f"Version {current}. Die gemessenen Metriken verschiedener Simulations-Versionen sind "
+           f"NICHT vergleichbar (ein anderer Handelsvertrag wurde ausgeführt). Initiere Purge der "
+           f"obsoleten Study-Datenbank (.db)...")
+
+    if has_trials:
+        if existing is None or existing < current:
+            logger.warning("♻️ %s", msg)
+            try:
+                optuna.delete_study(study_name=study.study_name, storage=study._storage)
+                logger.warning(f"Obsolete Study '{study.study_name}' erfolgreich gelöscht. Sie wird beim nächsten Versuch neu erstellt.")
+            except Exception as e:
+                logger.error(f"Fehler beim Löschen der Study: {e}")
+            raise ValueError(f"REJECT_STALE_SIMULATION_SEMANTICS: Study-Simulations-Semantik Mismatch. {msg}")
+
+    logger.warning("♻️ %s", msg)
+
+
 def make_objective(
     strategy: str,
     *,
@@ -1187,6 +1237,9 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
+    # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
+    # Docstring), unabhaengig geprueft/gestempelt.
+    _check_simulation_semantics_version(study, opt_data)
 
     # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
@@ -2667,6 +2720,9 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
+    # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
+    # Docstring), unabhaengig geprueft/gestempelt.
+    _check_simulation_semantics_version(study, opt_data)
 
     # Gate 2 — Warm-Start + Shrinkage-Referenz. Issue #565: definierter Fallback statt Silent-Zero.
     # Issue #704 — die Tier-Reihenfolge ist jetzt global_best → champion → strategy_defaults → none

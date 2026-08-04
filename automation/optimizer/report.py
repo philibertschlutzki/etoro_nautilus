@@ -608,7 +608,8 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     from automation.optimizer import champions as _champions_mod
 
     empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
-             "skipped_by_reason": {}, "semantics_migrated": 0}
+             "skipped_by_reason": {}, "semantics_migrated": 0,
+             "admissible_despite_simulation_stale": 0}
     try:
         champions_dir = _champions_mod._champions_dir()
         paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
@@ -620,6 +621,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     corroborated = 0
     written_back = 0
     semantics_migrated = 0
+    admissible_despite_simulation_stale = 0
     skipped_by_reason: collections.Counter = collections.Counter()
     promote_after = int(opt_data.get("champion_promote_after_runs", 2))
     for path in paths:
@@ -639,6 +641,16 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
             ok, reason = _champions_mod.champion_is_admissible(entry, opt_data)
         except Exception:
             ok, reason = False, "ADMISSIBILITY_CHECK_ERROR"
+        # Issue #854 — Regressionswaechter-Rohmaterial: ein simulation_semantics_version-stale
+        # Eintrag MUSS champion_is_admissible bereits verworfen haben (harter Ausschluss, siehe
+        # champions.champion_simulation_stale-Docstring) — dieser Zaehler macht sichtbar, ob diese
+        # Garantie tatsaechlich haelt, statt sie nur zu behaupten.
+        try:
+            simulation_stale = _champions_mod.champion_simulation_stale(entry, opt_data)
+        except Exception:
+            simulation_stale = False
+        if simulation_stale and ok:
+            admissible_despite_simulation_stale += 1
         if not ok:
             skipped_by_reason[reason or "UNKNOWN"] += 1
             continue
@@ -657,6 +669,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
         "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
         "semantics_migrated": semantics_migrated,
+        "admissible_despite_simulation_stale": admissible_despite_simulation_stale,
     }
 
 
@@ -916,6 +929,12 @@ def _build_report(
     seed_source_distribution = _seed_source_distribution(studies_out)
     champion_seed_coverage_check = _inv.check_champion_seed_coverage(seed_source_distribution)
     all_checks.append(("global", champion_seed_coverage_check))
+
+    # Issue #854 Fix Punkt 6 — fuenfzehnter Invarianten-Check: kein Champion-Store-Eintrag mit
+    # veralteter simulation_semantics_version darf trotzdem als admissible gelten.
+    semantics_version_coherence_check = _inv.check_semantics_version_coherence(
+        champions_summary.get("admissible_despite_simulation_stale", 0))
+    all_checks.append(("global", semantics_version_coherence_check))
 
     # Issue #829 — neunter Invarianten-Check: ein Evidenzschwellen-Deadlock (Pitfall #258) macht
     # sich als viele diagnosed_pairs_cache-Einträge derselben (strategy, binding_cause)-Kombination
