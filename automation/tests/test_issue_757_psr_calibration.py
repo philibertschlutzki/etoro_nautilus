@@ -162,7 +162,8 @@ def test_backtest_runner_uses_bootstrap_psr_not_sharpe_formula(monkeypatch):
     # min_periods ist jetzt real gesetzt (1600); bei 60 Perioden deaktiviert, damit der T-bewusste
     # Guard den Sortino hier nicht auf None kippt (bootstrap_psr_z liefe sonst nie).
     with monkeypatch.context() as m:
-        m.setattr(br, "_read_sortino_min_downside_observations", lambda: 1)
+        m.setattr(br, "_read_sortino_min_downside_observations", lambda: 0)
+        m.setattr(br, "_read_sortino_min_periods_absolute", lambda: 0)
         m.setattr(br, "_read_sortino_numeric_guard_min_periods", lambda: None)
         br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=3)
     assert calls["bootstrap"] >= 1, "backtest_runner._calculate_stats muss bootstrap_psr_z aufrufen"

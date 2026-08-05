@@ -1624,6 +1624,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     sweep_fail_fast_invariant = None
     _fail_fast_invariants = opt_data.get("fail_fast_invariants", ["check_holding_time_cap"]) or []
     _fail_fast_min_symbols = int(opt_data.get("fail_fast_min_symbols", 2))
+    # Issue #856 Fix Punkt 3 — ein Wächter, der zweimal in Folge nicht ausführbar ist, ist ein
+    # Betriebsvorfall (Pitfall #270), keine wiederholte Randnotiz. Zähler zählt AUFEINANDER-
+    # FOLGENDE Fehlschläge der Probe selbst (nicht: der Invariante FAILt — das ist der Erfolgsfall
+    # des Wächters); ab dem zweiten Fehlschlag wird ERROR emittiert und die Probe für den Rest des
+    # Laufs deaktiviert, statt denselben Traceback bis zu ``symbols_planned``-mal zu erzeugen.
+    _fail_fast_probe_errors = 0
 
     # Issue #842 Punkt 3 — Vorab-Prognose: nach den ersten wallclock_forecast_after_symbols
     # abgeschlossenen Symbolen wird der gemessene Takt gegen das Laufzeit-Budget hochgerechnet und
@@ -1773,15 +1779,42 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 and sweep_fail_fast_invariant is None):
             try:
                 from automation.optimizer import report as _report_probe_mod
-                _probe_report = _report_probe_mod._build_report(
-                    proposals, run_id=run_id, started_at_utc=None, wallclock_s=None, cli_args=None)
+                # Issue #856 — Root-Cause: dieser Call-Site rief zuvor ``_build_report`` DIREKT mit
+                # ``proposals`` (``list[Path]``) auf und umging damit die Path→dict-Normalisierung,
+                # die ``generate_sweep_report`` über dieselben vier Zeilen durchführt. Die Probe
+                # warf dadurch bei JEDEM Aufruf ``AttributeError: 'PosixPath' object has no
+                # attribute 'get'`` — 0 von 32 erfolgreichen Aufrufen im Referenzlauf ``c00dc3c0``.
+                # ``build_probe_report`` ist der einzige externe Konsument von ``_build_report``
+                # neben ``generate_sweep_report`` selbst (Pitfall #269).
+                _probe_report = _report_probe_mod.build_probe_report(proposals, run_id=run_id)
                 sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
                     _probe_report.get("invariant_checks"), _fail_fast_invariants)
+                _fail_fast_probe_errors = 0
             except Exception:
-                logging.getLogger("optimizer").warning(
-                    "[#839] Fail-Fast-Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
-                    "fort).", exc_info=True,
-                )
+                _fail_fast_probe_errors += 1
+                if _fail_fast_probe_errors >= 2:
+                    # Issue #856 Fix Punkt 3 / Pitfall #270 — ein zweiter aufeinanderfolgender
+                    # Fehlschlag ist kein transientes Rauschen mehr, sondern ein dauerhaft defekter
+                    # Wächter. Eskalation auf ERROR + strukturiertes Event, danach Deaktivierung
+                    # der Probe für den Rest des Laufs, statt denselben Traceback bis zu
+                    # ``symbols_planned``-mal stumm zu wiederholen.
+                    logging.getLogger("optimizer").error(
+                        "[#856] FAIL_FAST_PROBE_BROKEN: Fail-Fast-Invarianten-Probe ist zum "
+                        "%d. Mal in Folge fehlgeschlagen — Probe wird für den Rest des Laufs "
+                        "deaktiviert.", _fail_fast_probe_errors, exc_info=True,
+                    )
+                    emit_execution_event(
+                        logging.getLogger("optimizer"), "FAIL_FAST_PROBE_BROKEN",
+                        {"consecutive_errors": _fail_fast_probe_errors,
+                         "symbols_completed": len(completed_symbols)},
+                        level=logging.ERROR,
+                    )
+                    _fail_fast_invariants = []
+                else:
+                    logging.getLogger("optimizer").warning(
+                        "[#839] Fail-Fast-Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
+                        "fort).", exc_info=True,
+                    )
             if sweep_fail_fast_invariant is not None:
                 logging.getLogger("optimizer").error(
                     "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) — Sweep bricht sofort "

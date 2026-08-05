@@ -63,7 +63,8 @@ def test_downside_obs_matches_manual_count_in_success_path():
 
     series = _mtm_from_rets(rets)
     with patch("automation.backtest_runner._read_sortino_mar", return_value=0.0), \
-         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0), \
          patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         stats = _calculate_stats(
             pnl_list=[1.0] * 50 + [-1.0] * 50, hold_list=[(3600 * 10**9, 1.0)] * 100,

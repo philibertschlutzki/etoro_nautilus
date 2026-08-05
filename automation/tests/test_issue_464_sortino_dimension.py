@@ -29,7 +29,8 @@ def test_issue_464_sortino_dimension():
     # winzigen synthetischen Fixtures (9/18 Perioden) liegen weit darunter und wuerden den
     # T-bewussten Guard treffen — hier deaktiviert, da dieser Test Frequenz-/Dimensionsskalierung
     # prueft, nicht den Guard.
-    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0), \
          patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         metrics1 = _calculate_stats(pnl_list1, hold_list1, starting_capital, mtm_series=mtm_series1, min_trades_for_sortino=2)
     sortino1 = metrics1["sortino_ratio"]
@@ -42,7 +43,8 @@ def test_issue_464_sortino_dimension():
 
     pnl_list2 = pnl_list1 * 2
     hold_list2 = hold_list1 * 2
-    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0), \
          patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         metrics2 = _calculate_stats(pnl_list2, hold_list2, starting_capital, mtm_series=mtm_series2, min_trades_for_sortino=2)
     sortino2 = metrics2["sortino_ratio"]

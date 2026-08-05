@@ -139,7 +139,8 @@ def test_monotonic_edge_scaling():
         # observations; dieser Test prueft Monotonie, nicht die Mindest-Stichprobe. Issue #844 —
         # sortino_numeric_guard_min_periods ist jetzt real gesetzt (1600); bei nur 9 Perioden
         # deaktiviert, um den T-bewussten Guard nicht zu treffen (nicht Testgegenstand hier).
-        with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+        with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+             patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0), \
              patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
             stats = br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
         sortinos.append(stats.get("sortino_ratio"))

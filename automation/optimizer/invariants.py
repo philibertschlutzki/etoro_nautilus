@@ -16,9 +16,14 @@ Forensik-Erkenntnisse, die bislang nur EINMALIG von Hand verifiziert wurden (#65
 """
 from __future__ import annotations
 
+import logging
 import statistics
 from dataclasses import dataclass
 from typing import Any
+
+from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
+
+_log = logging.getLogger("optimizer")
 
 
 @dataclass(frozen=True)
@@ -50,40 +55,94 @@ class InvariantResult:
         }
 
 
-# Issue #714/GR-01 — dieselbe konservative obere Schranke wie
-# ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``spaces._MAX_BARS_IN_TRADE_CAP``. Absichtlich
-# hier als eigene Konstante (statt eines Imports) gehalten: ``invariants.py`` ist bewusst frei von
-# einer nautilus_trader-Abhängigkeit (siehe Moduldocstring — reine Funktionen über plain Dicts).
-_MAX_BARS_IN_TRADE_CAP = 24.0
+# Issue #858 — Single Source of Truth über einen Import aus dem abhängigkeitsfreien
+# ``_contracts``-Modul statt einer eigenen dritten Kopie des Literals (vorher unabhängig gepflegt
+# neben ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``spaces._MAX_BARS_IN_TRADE_CAP``,
+# Pitfall #271). ``invariants.py`` bleibt dabei frei von jeder nautilus_trader-Abhängigkeit (siehe
+# Moduldocstring — reine Funktionen über plain Dicts), da ``_contracts.py`` selbst keine hat.
 _BAR_SECONDS = 3600.0
+
+# Issue #858 Fix Punkt 2 — Sentinel, um zu unterscheiden, ob ein Aufrufer ``bar_seconds`` EXPLIZIT
+# gesetzt hat oder auf den (dokumentierten) 24/7-Stundenraster-Rückfall zurückfällt. Ein Instrument
+# auf RTH- oder 4h-Raster macht diese Annahme still falsch — die WARNUNG macht das sichtbar, ohne
+# einen bestehenden Aufrufer zu brechen (bit-identisches Verhalten bei Nicht-Angabe).
+_BAR_SECONDS_UNSET = object()
+
+
+def resolve_effective_bar_cap(sampled_params: dict | None, *, strategy: str | None = None,
+                              strategy_defaults: dict | None = None,
+                              global_cap: float = _MAX_BARS_IN_TRADE_CAP) -> tuple[float, str]:
+    """Issue #861 — gemeinsame Referenz-Auflösung für den Zeitbox-Deckel, konsumiert von
+    ``compute_trial_timebox_violations`` UND ``check_holding_time_cap`` (vorher zwei unabhängig
+    implementierte Antworten auf dieselbe Fachfrage "hat dieser Trial seinen Zeitbox-Vertrag
+    eingehalten?" — Pitfall #271: ein Trial mit gesampeltem Cap 12 und 20 Bars Haltedauer war für
+    die alte ``check_holding_time_cap`` sauber (20 < 24, globaler Deckel), für
+    ``compute_trial_timebox_violations`` eine Verletzung).
+
+    Reihenfolge: gesampelter Wert (Trial-Suchraum, ``sampled_params['max_bars_in_trade']``) →
+    ``strategy_defaults.json``-Eintrag der Strategie → globaler #714/GR-01-Deckel. Rückgabe
+    ``(cap_bars, source)`` mit ``source in {'sampled', 'default', 'global'}`` — das
+    ``timebox_cap_source``-Telemetriefeld macht sichtbar, welche Strategien (heute typischerweise
+    ~die Hälfte, siehe ``SmaCrossoverStrategy``, das ``max_bars_in_trade`` gar nicht sampelt) auf
+    den ungenaueren Fallback zurückfallen."""
+    sampled = sampled_params or {}
+    cap = sampled.get("max_bars_in_trade")
+    if cap is not None:
+        return float(cap), "sampled"
+    if strategy and strategy_defaults:
+        default_cap = (strategy_defaults.get(strategy) or {}).get("max_bars_in_trade")
+        if default_cap is not None:
+            return float(default_cap), "default"
+    return float(global_cap), "global"
 
 
 def compute_trial_timebox_violations(trial_attrs: list[dict], *,
+                                     strategy: str | None = None,
+                                     strategy_defaults: dict | None = None,
                                      max_bars_in_trade_cap: float = _MAX_BARS_IN_TRADE_CAP,
-                                     bar_seconds: float = _BAR_SECONDS,
-                                     tolerance_bars: float = 0.01) -> dict[str, Any]:
+                                     bar_seconds: float = _BAR_SECONDS_UNSET,
+                                     tolerance_bars: float = 3.0) -> dict[str, Any]:
     """Issue #839 — je-Trial-Zeitbox-Verletzung: vergleicht die tatsächlich beobachtete Haltedauer
     (``oos_max_holding_time_s``, seit #832 je Trial persistiert) gegen den für DIESEN Trial
     GESAMPELTEN ``max_bars_in_trade`` (``sampled_params``, seit #669 je Trial mitgeführt) — fehlt
     dieser Wert (Strategie sampelt ihn nicht), gegen den globalen #714/GR-01-Deckel (dieselbe
     konservative obere Schranke wie ``check_holding_time_cap``).
 
+    Issue #858 — ``tolerance_bars`` (Default 3.0 = ``exit_close_max_bars + 1``, siehe
+    ``tournament.json['timebox_execution_slack_bars']``) ist die zulässige Ausführungs-Latenz
+    zwischen Entscheidungs-Bar und Fill: der #836-Watchdog toleriert KONSTRUKTIONSGEMÄSS bis zu
+    ``exit_close_max_bars`` Bars Verzögerung auf eine Cancel-Bestätigung, bevor er den Markt-Close
+    erzwingt, zzgl. eines Bars unvermeidlicher Fill-Latenz (der Exit wird auf dem GESCHLOSSENEN Bar
+    entschieden, die Order füllt frühestens beim nächsten Bar-Ereignis). Der vorherige Default
+    0.01 Bars (≈ 36 Sekunden) bestrafte exakt die vom Exit-Mechanismus selbst vorgesehene
+    Verzögerung als Vertragsbruch (Pitfall #271) — 206 von 462 Studies eines Referenzlaufs wurden
+    dadurch auf Study-Ebene verworfen, obwohl der Exit-Pfad nach #836/#837 intakt war.
+
     Ein Treffer bedeutet: dieser Trial wurde auf einer Simulation bewertet, die den eigenen
     Zeit-Exit-Vertrag verletzt hat (Bug im Exit-Pfad, siehe #836/#837) — seine Metriken sind dann
     keine gültige Grundlage für Eligibility/Reward/Promotion. Reine Funktion über bereits geladene
     ``trial.user_attrs``-Dicts, unabhängig von Optuna-Objekten (siehe Moduldocstring)."""
+    if bar_seconds is _BAR_SECONDS_UNSET:
+        _log.warning(
+            "[#858] compute_trial_timebox_violations ohne explizites bar_seconds aufgerufen — "
+            "Rückfall auf den dokumentierten 24/7-Stundenraster-Default (%.1f s). Ein Instrument "
+            "auf einem anderen Bar-Raster (RTH, 4h) macht jede Haltedauer-Prüfung still falsch.",
+            _BAR_SECONDS,
+        )
+        bar_seconds = _BAR_SECONDS
     violation_trades = 0
     evaluated_trades = 0
+    cap_source_counts: dict[str, int] = {}
     for attrs in trial_attrs or []:
         holding_s = attrs.get("oos_max_holding_time_s")
         if holding_s is None:
             continue
         evaluated_trades += 1
-        sampled = attrs.get("sampled_params") or {}
-        cap_bars = sampled.get("max_bars_in_trade")
-        if cap_bars is None:
-            cap_bars = max_bars_in_trade_cap
-        cap_s = (float(cap_bars) + tolerance_bars) * bar_seconds
+        cap_bars, cap_source = resolve_effective_bar_cap(
+            attrs.get("sampled_params"), strategy=strategy, strategy_defaults=strategy_defaults,
+            global_cap=max_bars_in_trade_cap)
+        cap_source_counts[cap_source] = cap_source_counts.get(cap_source, 0) + 1
+        cap_s = (cap_bars + tolerance_bars) * bar_seconds
         if holding_s > cap_s:
             violation_trades += 1
     fraction = round(violation_trades / evaluated_trades, 4) if evaluated_trades else 0.0
@@ -92,6 +151,10 @@ def compute_trial_timebox_violations(trial_attrs: list[dict], *,
         "timebox_evaluated_trades": evaluated_trades,
         "timebox_violation_fraction": fraction,
         "timebox_violated": violation_trades > 0,
+        # Issue #861 — Verteilung der Deckel-Referenzquelle über die ausgewerteten Trials (Report-
+        # Telemetrie, macht sichtbar, wie oft der ungenauere strategy_defaults/global-Fallback statt
+        # des gesampelten Werts greift).
+        "timebox_cap_source_counts": cap_source_counts,
     }
 
 
@@ -169,6 +232,57 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
                 f"deflation_n_periods_ratio={ratio:.3g} > max_ratio={max_ratio}, aber "
                 "deflated_dsr/deflation_dsr_z sind trotzdem gesetzt — die #845-Heterogenitäts-"
                 "Suppression hat nicht gegriffen."),
+    )
+
+
+def check_guard_reference_coherence(configured_min_periods: float | None,
+                                    observed_n_periods_medians: list[float], *,
+                                    max_factor: float = 2.0) -> InvariantResult:
+    """Issue #862 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_guard_min_
+    periods']``-Referenzwert um mehr als ``max_factor`` vom über den Lauf beobachteten Median der
+    tatsächlichen ``oos_n_periods``-Verteilung abweicht (in beide Richtungen).
+
+    Root-Cause: ein Referenzwert, der gegen eine ABGELEITETE Grösse kalibriert wurde (hier:
+    ``n_periods``, die informative Periodenzahl), wird ungültig, sobald die Definition dieser
+    Grösse sich ändert (#823 hat sie von der vollen 24/7-Bar-Achse auf die informative Teilmenge
+    umgestellt — Faktor ~13,5 kleiner). #844 hat den Wert (1600) NIE gegen die neue Definition
+    nachgezogen; dieser Wächter hätte den Fehler nach dem ersten Symbol gemeldet, statt ihn erst
+    durch Rückrechnung aus 689 Log-Zeilen sichtbar werden zu lassen (Pitfall #274).
+
+    ``observed_n_periods_medians``: je Study der Median von ``oos_n_periods`` über ihre
+    ``oos_evaluated``-Trials (``report._study_record``). Leer/``configured_min_periods is None``
+    ⇒ nicht anwendbar (PASS)."""
+    if configured_min_periods is None or not observed_n_periods_medians:
+        return InvariantResult(
+            name="check_guard_reference_coherence",
+            passed=True,
+            expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
+                     "beobachtetem Median(n_periods)",
+            actual=None,
+            detail="sortino_numeric_guard_min_periods nicht konfiguriert oder keine Studies mit "
+                   "n_periods-Telemetrie — nicht anwendbar.",
+        )
+    observed_median = statistics.median(observed_n_periods_medians)
+    if observed_median <= 0:
+        return InvariantResult(
+            name="check_guard_reference_coherence", passed=True,
+            expected=f"Faktor <= {max_factor}", actual=None,
+            detail="beobachteter Median(n_periods) <= 0 — nicht anwendbar.",
+        )
+    ratio = configured_min_periods / observed_median
+    passed = (1.0 / max_factor) <= ratio <= max_factor
+    return InvariantResult(
+        name="check_guard_reference_coherence",
+        passed=passed,
+        expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
+                 "beobachtetem Median(n_periods)",
+        actual=round(ratio, 4),
+        severity="high",
+        detail=("OK" if passed else
+                f"sortino_numeric_guard_min_periods={configured_min_periods:g} vs. beobachteter "
+                f"Median(n_periods)={observed_median:g} (Faktor {ratio:.2g}) — der Referenzwert "
+                "ist gegen eine andere Grössenordnung kalibriert als der aktuelle Lauf zeigt "
+                "(Pitfall #274)."),
     )
 
 
@@ -827,47 +941,49 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
 
 
 def check_holding_time_cap(study_records: list[dict], *,
-                           bar_seconds: float = 3600.0, max_bars_in_trade_cap: float = 24.0,
-                           tolerance_bars: float = 0.01) -> InvariantResult:
-    """Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Plausibilitätswächter: KEIN
-    Trade darf länger halten als die #714/GR-01-Zeitbox-Obergrenze für ``max_bars_in_trade``
-    (``spaces._MAX_BARS_IN_TRADE_CAP`` = 24 Bars, Single Source of Truth über ALLE Strategien —
-    ``HourlyStrategyBase`` erzwingt den Zeit-Exit unabhängig vom je Trial gesampelten Wert). Ein
-    Treffer ist ein Bug im Exit-Pfad, keine Dateneigenart — zugleich ein Test des
-    Zeitbox-Vertrags, nicht nur eine Diagnose der Haltedauer selbst.
+                           study_tolerance: float = 0.25) -> InvariantResult:
+    """Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Plausibilitätswächter gegen
+    die #714/GR-01-Zeitbox: eine Study, deren Anteil zeitbox-verletzender Trials
+    ``study_tolerance`` überschreitet, hat einen Bug im Exit-Pfad (defekter Watchdog/Cancel-Pfad),
+    keine tolerierbare Ausführungslatenz mehr.
 
-    Prüft ``report._study_record``s ``max_holding_time_s`` (Sekunden, das MAXIMUM über alle
-    ``oos_evaluated`` Trials einer Study) gegen ``max_bars_in_trade_cap`` Bars — die je-Trial-
-    ``max_bars_in_trade``-Grenze KANN kleiner sein (Suchraum), NIE grösser als dieser globale
-    Deckel; die Prüfung auf dem globalen Deckel ist damit die korrekte (konservativste) obere
-    Schranke, ohne je Trial dessen konkreten gesampelten Wert nachladen zu müssen."""
-    with_data = [r for r in study_records if r.get("max_holding_time_s") is not None]
+    Issue #861 (Unifikation, Pitfall #271) — konsumiert JETZT dieselbe per-Trial-aware Berechnung
+    wie ``compute_trial_timebox_violations`` (``report._study_record`` stempelt
+    ``timebox_evaluated_trades``/``timebox_violation_fraction`` bereits aus genau dieser Funktion
+    in jeden Study-Record) statt vorher unabhängig die Study-MAXIMALDAUER gegen einen
+    Pauschaldeckel (``max_bars_in_trade_cap``, global) zu vergleichen. VORHER konnten beide Checks
+    divergieren: ein Trial mit gesampeltem Cap 12 Bars und 20 Bars Haltedauer war für die alte
+    ``check_holding_time_cap`` sauber (20 < 24, globaler Deckel), für
+    ``compute_trial_timebox_violations`` bereits eine Verletzung. ``study_tolerance`` ist dieselbe
+    Schwelle wie ``tournament.json['timebox_violation_study_tolerance']`` (#857) — beide Wächter
+    beantworten jetzt exakt dieselbe Frage ("ist dieser Exit-Pfad strukturell defekt?") gegen
+    dieselbe Referenz."""
+    with_data = [r for r in study_records if r.get("timebox_evaluated_trades")]
     if not with_data:
         return InvariantResult(
             name="check_holding_time_cap",
             passed=True,
-            expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
+            expected=f"Anteil zeitbox-verletzender Trials <= {study_tolerance} je Study",
             actual=None,
             detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
                    "nicht anwendbar.",
             severity="blocking",
         )
-    cap_s = (max_bars_in_trade_cap + tolerance_bars) * bar_seconds
     offenders = {
-        f"{r.get('strategy')}/{r.get('symbol')}": round(r["max_holding_time_s"] / bar_seconds, 4)
-        for r in with_data if r["max_holding_time_s"] > cap_s
+        f"{r.get('strategy')}/{r.get('symbol')}": r.get("timebox_violation_fraction")
+        for r in with_data if (r.get("timebox_violation_fraction") or 0.0) > study_tolerance
     }
     passed = not offenders
     return InvariantResult(
         name="check_holding_time_cap",
         passed=passed,
-        expected=f"<= {max_bars_in_trade_cap} Bars Haltedauer je Study",
+        expected=f"Anteil zeitbox-verletzender Trials <= {study_tolerance} je Study",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies überschreiten die #714/GR-01-Zeitbox-Obergrenze "
-                f"({max_bars_in_trade_cap} Bars): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase "
-                "erzwingt den Zeit-Exit nicht), keine Dateneigenart."),
+                f"{len(offenders)} Study/Studies überschreiten den Zeitbox-Study-Toleranzwert "
+                f"({study_tolerance}): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase erzwingt "
+                "den Zeit-Exit nicht durchgängig), keine tolerierbare Ausführungslatenz mehr."),
     )
 
 

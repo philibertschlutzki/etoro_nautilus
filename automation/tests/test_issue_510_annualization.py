@@ -14,7 +14,8 @@ def _lift_sortino_guard():
     # Issue #823 — die synthetischen Fixtures dieses Moduls haben nur wenige Perioden (< Default 30
     # sortino_min_downside_observations); Mindest-Stichprobe ist nicht Gegenstand dieses Moduls.
     with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9), \
-         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0):
         yield
 
 

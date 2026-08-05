@@ -32,6 +32,7 @@ from automation.optimizer.reward import (
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
 from automation.optimizer import disk_guard
+from automation.optimizer import invariants as _inv
 from automation.log_manager import emit_execution_event, bind_study_context
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
@@ -160,12 +161,18 @@ def _reemit_inference_diagnostics(logger: logging.Logger, metrics, trial_number:
     hier nur ``trial_number`` zusaetzlich, das kein ambienter Kontext ist. No-Op, wenn
     ``metrics.inference_diagnostics`` leer ist (Normalfall, Pre-#804-JSONs eingeschlossen)."""
     for diag in metrics.inference_diagnostics or ():
-        emit_execution_event(logger, "INFERENCE_DIAGNOSTIC", {
+        payload = {
             "trial_number": trial_number,
             "code": diag.get("code"),
             "detail": diag.get("detail"),
             "value": diag.get("value"),
-        }, level=logging.ERROR)
+        }
+        # Issue #862 — zusätzliche Referenzwert-Telemetrie auf SORTINO_GUARD_TRIPPED-Diagnosen
+        # (siehe backtest_runner._effective_sortino_numeric_guard) unverändert durchreichen.
+        if "guard_reference_value" in diag:
+            payload["guard_reference_value"] = diag.get("guard_reference_value")
+            payload["guard_reference_source"] = diag.get("guard_reference_source")
+        emit_execution_event(logger, "INFERENCE_DIAGNOSTIC", payload, level=logging.ERROR)
 
 
 def _stop_study_safely(study, logger: logging.Logger) -> None:
@@ -2395,6 +2402,42 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                 t_data = json.load(f) or {}
                 risk_dd_cap = t_data.get("max_drawdown", 0.30)
 
+        # Issue #857 (Pitfall #272) — Konsequenz auf der Aggregationsebene der Messung: die
+        # Zeitbox-Messung (``oos_max_holding_time_s``) liegt JE TRIAL vor, die Verwerfung darf
+        # daher NICHT je Study erfolgen (vorher AUSSCHLIESSLICH in confirm.py: EIN verletzender
+        # Trial verwarf 159 saubere Geschwister). Ein zeitbox-verletzender Trial wird hier VOR
+        # ``compute_reward`` auf den Unevaluable-Pfad umgestempelt (``metrics.oos_evaluated=False``)
+        # — er zählt damit weder in Eligibility noch in Reward noch (via #822) in ``n_family``.
+        # Referenz-Deckel über #861 ``resolve_effective_bar_cap`` (gesampelt → strategy_defaults →
+        # globaler Deckel), Toleranz über #858 ``timebox_execution_slack_bars`` (Watchdog-Fenster
+        # ``exit_close_max_bars`` + 1 Bar unvermeidliche Fill-Latenz, statt der vorherigen 0.01-Bar-
+        # Toleranz, die genau diese vom Exit-Mechanismus selbst vorgesehene Verzögerung als
+        # Vertragsbruch wertete).
+        # Issue #832 Fix Punkt 1 — Haltedauer in Sekunden je Trial persistiert (Rohmaterial fuer
+        # report._study_record's je-Study-Aggregat UND fuer die #857-Zeitbox-Neuberechnung weiter
+        # unten im Stack, siehe invariants.compute_trial_timebox_violations). UNBEDINGT gestempelt
+        # (nicht hinter der ``oos_evaluated``-Ueberschreibung unten) — sonst wuerde ein gerade
+        # zeitbox-invalidierter Trial genau die Evidenz verlieren, die confirm.py/report.py
+        # brauchen, um dieselbe Verletzung studienweit nachzuvollziehen (Selbstverschleierung).
+        _timebox_violated_this_trial = False
+        if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:
+            if metrics.oos_max_holding_time_s is not None:
+                trial.set_user_attr("oos_max_holding_time_s", metrics.oos_max_holding_time_s)
+            if metrics.oos_p95_holding_time_s is not None:
+                trial.set_user_attr("oos_p95_holding_time_s", metrics.oos_p95_holding_time_s)
+            _cap_bars, _cap_source = _inv.resolve_effective_bar_cap(sampled, strategy=strategy)
+            _slack_bars = float(t_data.get("timebox_execution_slack_bars", 3.0))
+            _cap_s = (_cap_bars + _slack_bars) * 3600.0
+            _timebox_violated_this_trial = metrics.oos_max_holding_time_s > _cap_s
+            trial.set_user_attr("oos_timebox_violated", _timebox_violated_this_trial)
+            trial.set_user_attr(
+                "oos_holding_bars_max", round(metrics.oos_max_holding_time_s / 3600.0, 4))
+            trial.set_user_attr("timebox_cap_source", _cap_source)
+            if _timebox_violated_this_trial:
+                trial.set_user_attr("oos_invalid_reason", "TIMEBOX_VIOLATION")
+                metrics.oos_evaluated = False
+                metrics.oos_eligible = False
+
         reward, reward_terms = compute_reward(metrics, universe_size=1, risk_dd_cap=risk_dd_cap,
                                 sampled=sampled, global_params=global_params, strategy=strategy, return_terms=True)
         trial.set_user_attr("reward_terms", reward_terms)
@@ -2511,13 +2554,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # tragbar; die Serie liegt in user_attrs, nicht auf der Platte.
         if metrics.oos_evaluated:
             trial.set_user_attr("oos_period_returns", list(metrics.oos_period_returns))
-        # Issue #832 Fix Punkt 1 — Haltedauer in Sekunden je Trial persistiert (Rohmaterial fuer
-        # report._study_record's je-Study-Aggregat, das summary_de.py Abschnitt 4 speist).
-        if metrics.oos_evaluated:
-            if metrics.oos_max_holding_time_s is not None:
-                trial.set_user_attr("oos_max_holding_time_s", metrics.oos_max_holding_time_s)
-            if metrics.oos_p95_holding_time_s is not None:
-                trial.set_user_attr("oos_p95_holding_time_s", metrics.oos_p95_holding_time_s)
+        # Issue #832/#857 — oos_max_holding_time_s/oos_p95_holding_time_s werden bereits weiter
+        # oben (VOR der moeglichen #857-oos_evaluated-Ueberschreibung) unbedingt gestempelt.
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
@@ -2582,6 +2620,31 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trades_constraint = min_trades - metrics.oos_total_trades
             dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
             trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
+
+        # Issue #864 (Pitfall #276) — "nicht messbar" ist nicht "schlecht". Ein Trial mit
+        # SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE/EQUITY_NONPOSITIVE erhält bislang
+        # denselben Reward-Floor wie ein Trial, der NIE gehandelt hat — der TPE-Surrogat lernt
+        # daraus "Region X ist maximal schlecht", obwohl die korrekte Aussage "Region X ist mit den
+        # aktuellen Schätzern nicht messbar" lautet (FlashCrashReversal/SqueezeBreakout: 1172 von
+        # ~33000 Trials eines Referenzlaufs betroffen, davon 627 auf eine einzige Strategie
+        # konzentriert). ``inference_failure_policy='prune'`` (Default) nutzt stattdessen Optunas
+        # nativen dritten Ausgang (``TrialPruned`` ⇒ ``TrialState.PRUNED``) — TPE ignoriert geprunte
+        # Trials bei der Posterior-Bildung korrekt, statt sie als negative Beobachtung zu werten.
+        # ``'floor'`` bleibt für Reproduktionsläufe bit-identisch zum Pre-#864-Verhalten.
+        _inference_failure_policy = opt_data.get("inference_failure_policy", "prune")
+        if _inference_failure_policy not in ("floor", "prune"):
+            raise ValueError(
+                f"optimizer.json['inference_failure_policy']={_inference_failure_policy!r} "
+                "unbekannt — erwartet 'floor' oder 'prune'.")
+        _inference_failure_codes = {
+            "SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE", "EQUITY_NONPOSITIVE"}
+        _triggered_codes = sorted({
+            d.get("code") for d in (metrics.inference_diagnostics or ())
+        } & _inference_failure_codes)
+        if _inference_failure_policy == "prune" and _triggered_codes:
+            trial.set_user_attr("trial_pruned_inference_codes", _triggered_codes)
+            raise optuna.TrialPruned(
+                f"[#864] inference_failure_policy='prune': {_triggered_codes}")
         return reward
     return objective
 

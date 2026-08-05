@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import optuna
 
@@ -258,6 +259,13 @@ def _study_record(proposal: dict, study,
     n_evaluable = sum(1 for a in trial_attrs if a.get("oos_evaluated") is True)
     n_eligible = sum(1 for a in trial_attrs if a.get("oos_eligible") is True)
     p_eligible = round(n_eligible / n_trials, 4) if n_trials else 0.0
+    # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
+    # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
+    _n_periods_values = [
+        a["oos_n_periods"] for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_n_periods")
+    ]
+    oos_n_periods_median = statistics.median(_n_periods_values) if _n_periods_values else None
     coherence_violations = sum(1 for a in trial_attrs if a.get("oos_coherence_violation") is True)
     # Issue #804 — Aggregat je Study: wie oft jeder strukturierte Inferenzpfad-Diagnose-Code
     # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
@@ -285,10 +293,11 @@ def _study_record(proposal: dict, study,
             max_holding_time_s = candidate
             p95_holding_time_s = a.get("oos_p95_holding_time_s")
 
-    # Issue #839 — je-Trial-Zeitbox-Verletzung (nicht nur das Study-Maximum aus #832 oben): eine
-    # gemessene GR-01-Verletzung erhält hier eine Konsequenz (REJECT_INVALID_TIMEBOX in confirm.py
-    # konsumiert dieselbe Berechnung; siehe invariants.compute_trial_timebox_violations).
-    timebox = _inv.compute_trial_timebox_violations(trial_attrs)
+    # Issue #839/#857 — je-Trial-Zeitbox-Verletzung (nicht nur das Study-Maximum aus #832 oben):
+    # eine gemessene GR-01-Verletzung erhält hier eine Konsequenz auf TRIAL-Ebene (siehe
+    # invariants.compute_trial_timebox_violations; #861 vereinheitlicht diese Berechnung mit
+    # ``check_holding_time_cap`` unten über dieselbe Referenz-Auflösung).
+    timebox = _inv.compute_trial_timebox_violations(trial_attrs, strategy=proposal.get("strategy"))
 
     best_reward = None
     if study is not None:
@@ -435,6 +444,11 @@ def _study_record(proposal: dict, study,
         "timebox_evaluated_trades": timebox["timebox_evaluated_trades"],
         "timebox_violation_fraction": timebox["timebox_violation_fraction"],
         "timebox_violated": timebox["timebox_violated"],
+        # Issue #861 — Verteilung der Deckel-Referenzquelle (sampled/default/global) über die
+        # ausgewerteten Trials dieser Study.
+        "timebox_cap_source_counts": timebox["timebox_cap_source_counts"],
+        # Issue #862 — Rohmaterial für den globalen check_guard_reference_coherence-Wächter.
+        "oos_n_periods_median": oos_n_periods_median,
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -872,6 +886,36 @@ def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[
     return stage1, stage2
 
 
+def parse_proposal_payloads(proposals: Iterable[Path | dict]) -> list[dict]:
+    """Issue #856 — EINZIGE Path→dict-Normalisierung für Proposal-Listen, konsumiert von
+    ``generate_sweep_report`` UND der #839-Fail-Fast-Probe (``sweep.py``). Vorher lag diese Logik
+    ausschliesslich inline in ``generate_sweep_report`` (#1093-1097 vor diesem Fix) — die Probe rief
+    ``_build_report`` direkt mit ``list[Path]`` auf und erzeugte bei JEDEM Aufruf eine
+    ``AttributeError`` (Pitfall #269, siebte Wiederkehr von #237).
+
+    Elemente, die bereits ``dict`` sind, werden unverändert übernommen (Test-Pfad); ``Path``-
+    Elemente werden von der Platte geladen. Nur Payloads mit einem ``symbol``-Feld gelten als
+    valide Proposals (dieselbe Filterregel wie vorher in ``generate_sweep_report``)."""
+    parsed: list[dict] = []
+    for p in proposals:
+        payload = p if isinstance(p, dict) else _load_json(Path(p))
+        if isinstance(payload, dict) and payload.get("symbol"):
+            parsed.append(payload)
+    return parsed
+
+
+def build_probe_report(proposals: Iterable[Path | dict], *, run_id: str) -> dict:
+    """Issue #856 — dünner, öffentlicher Wrapper für die #839-Fail-Fast-Probe in ``sweep.py``:
+    parst + baut den Report in einem Aufruf, schreibt NICHTS auf die Platte (reine Lesefunktion).
+    Hält ``_build_report`` als modulinternen Kern, dessen einziger externer Konsument dieser
+    Wrapper (und ``generate_sweep_report``) ist — die Call-Site in ``sweep.py`` kann die Path→dict-
+    Normalisierung dadurch nicht mehr umgehen (Root-Cause #856, Pitfall #269)."""
+    return _build_report(
+        parse_proposal_payloads(proposals),
+        run_id=run_id, started_at_utc=None, wallclock_s=None, cli_args=None,
+    )
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -883,6 +927,18 @@ def _build_report(
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
 ) -> dict:
+    # Issue #856 Fix Punkt 4 — fail-loud statt einer nichtssagenden AttributeError in
+    # ``_load_study_for_proposal``: ``_build_report`` erwartet ausschliesslich geparste Proposal-
+    # Dicts. Ein ``Path``-Element (oder jedes andere Nicht-Dict) an erster Stelle ist ein
+    # struktureller Programmierfehler an der Call-Site, keine Laufzeitbedingung — er muss dort
+    # sichtbar werden, nicht drei Stack-Frames tiefer als ``'PosixPath' object has no attribute
+    # 'get'``.
+    if proposals and not isinstance(proposals[0], dict):
+        raise TypeError(
+            "_build_report erwartet geparste Proposal-Dicts; nutze parse_proposal_payloads() "
+            f"(erhalten: {type(proposals[0]).__name__})"
+        )
+
     tournament_path = config_dir() / "tournament.json"
     optimizer_path = config_dir() / "optimizer.json"
     tournament_cfg = _load_json(tournament_path) or {}
@@ -942,9 +998,13 @@ def _build_report(
     diagnosis_actionability_check = _inv.check_diagnosis_actionability(_diagnosed_pairs_all())
     all_checks.append(("global", diagnosis_actionability_check))
 
-    # Issue #832 Fix Punkt 1 — zehnter Invarianten-Check: kein Trade darf laenger halten als die
-    # #714/GR-01-Zeitbox-Obergrenze (24 Bars) — ein Treffer ist ein Bug im Exit-Pfad.
-    holding_time_cap_check = _inv.check_holding_time_cap(studies_out)
+    # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
+    # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen
+    # (dieselbe Schwelle, die #857 fuer die Study-Ebene-Konsequenz in confirm.py verwendet) — ein
+    # Treffer ist ein Bug im Exit-Pfad.
+    _timebox_study_tolerance = float(tournament_cfg.get("timebox_violation_study_tolerance", 0.25))
+    holding_time_cap_check = _inv.check_holding_time_cap(
+        studies_out, study_tolerance=_timebox_study_tolerance)
     all_checks.append(("global", holding_time_cap_check))
 
     # Issue #841 — elfter Invarianten-Check: kein Symbol des aktuellen Universums darf seit mehr
@@ -952,6 +1012,16 @@ def _build_report(
     # covered-Rotation, siehe symbol_coverage.py).
     symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
     all_checks.append(("global", symbol_coverage_check))
+
+    # Issue #862 — der konfigurierte sortino_numeric_guard_min_periods-Referenzwert muss zur
+    # tatsächlich beobachteten n_periods-Grössenordnung DIESES Laufs passen (Pitfall #274).
+    _guard_min_periods = tournament_cfg.get("sortino_numeric_guard_min_periods")
+    _observed_n_periods_medians = [
+        r["oos_n_periods_median"] for r in studies_out if r.get("oos_n_periods_median")
+    ]
+    guard_reference_coherence_check = _inv.check_guard_reference_coherence(
+        _guard_min_periods, _observed_n_periods_medians)
+    all_checks.append(("global", guard_reference_coherence_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
     # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,
@@ -1090,11 +1160,7 @@ def generate_sweep_report(
     Issue #833 Fix Punkt 3 — ``run_status``/``symbols_completed``/``symbols_planned`` werden NUR
     durchgereicht (siehe ``_build_report``); Default ``run_status='complete'`` ⇒ bit-identisch für
     jeden Aufrufer, der einen abgeschlossenen Lauf reportet (der bisherige Normalfall)."""
-    parsed = []
-    for p in proposals:
-        payload = p if isinstance(p, dict) else _load_json(Path(p))
-        if isinstance(payload, dict) and payload.get("symbol"):
-            parsed.append(payload)
+    parsed = parse_proposal_payloads(proposals)
 
     report = _build_report(
         parsed, run_id=run_id, started_at_utc=started_at_utc,

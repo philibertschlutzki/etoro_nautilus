@@ -93,9 +93,10 @@ def test_effective_guard_is_bit_identical_when_key_absent(monkeypatch):
     import automation.backtest_runner as br
     monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cache", None)
     monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cached", False)
+    monkeypatch.setattr(br, "_sortino_numeric_guard_reference_mode_cache", None)
     monkeypatch.setattr(br, "config_dir", lambda: __import__("pathlib").Path("/nonexistent-cfg-dir"))
-    assert _effective_sortino_numeric_guard(25.0, 10) == 25.0
-    assert _effective_sortino_numeric_guard(25.0, 5000) == 25.0
+    assert _effective_sortino_numeric_guard(25.0, 10)[0] == 25.0
+    assert _effective_sortino_numeric_guard(25.0, 5000)[0] == 25.0
 
 
 def test_effective_guard_scales_down_for_small_t_when_configured(monkeypatch, tmp_path):
@@ -111,11 +112,12 @@ def test_effective_guard_scales_down_for_small_t_when_configured(monkeypatch, tm
     )
     monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cache", None)
     monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cached", False)
+    monkeypatch.setattr(br, "_sortino_numeric_guard_reference_mode_cache", None)
     monkeypatch.setattr(br, "config_dir", lambda: cfg_dir)
 
-    guard_at_reference = _effective_sortino_numeric_guard(25.0, 500)
-    guard_above_reference = _effective_sortino_numeric_guard(25.0, 5000)
-    guard_small_t = _effective_sortino_numeric_guard(25.0, 137)
+    guard_at_reference = _effective_sortino_numeric_guard(25.0, 500)[0]
+    guard_above_reference = _effective_sortino_numeric_guard(25.0, 5000)[0]
+    guard_small_t = _effective_sortino_numeric_guard(25.0, 137)[0]
 
     assert guard_at_reference == 25.0
     assert guard_above_reference == 25.0  # gecappt bei 1.0 ⇒ nie strenger als der Legacy-Wert

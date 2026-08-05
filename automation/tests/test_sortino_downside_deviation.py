@@ -15,7 +15,8 @@ def mock_sortino_config():
     # nicht zu treffen (nicht Testgegenstand dieses Moduls).
     with patch("automation.backtest_runner._read_sortino_mar", return_value=0.0), \
          patch("automation.backtest_runner._read_sortino_min_trades", return_value=2), \
-         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0), \
          patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         yield
 

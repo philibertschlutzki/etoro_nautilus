@@ -18,6 +18,65 @@ from automation.optimizer import invariants as _inv
 # ab (kein stiller Fallback auf eine möglicherweise falsch geschriebene Modus-Zeichenkette).
 _VALID_PROMOTION_CORRECTION_MODES = frozenset({"conjunction", "dsr_or_robust_pair"})
 
+# Issue #865 (P2, Katalog #862-#865, GitHub-Issue #759, Pitfall #277) — gültige Werte für
+# tournament.json['deflation_heterogeneity_policy']. Root-Cause: die N_PERIODS_HETEROGENEOUS-Prüfung
+# (Issue #845) griff bislang ERST an der Export-Kohärenzgrenze — weit NACH der ``promote``-
+# Entscheidung (siehe unten) — und nullte ``deflation_sr0``/``deflation_dsr``/``deflation_dsr_z`` nur
+# noch für die TELEMETRIE. Die Promotion selbst hatte die DSR bereits aus der (inkommensurablen)
+# gepoolten Kohorte verwendet: eine nicht mehr aussagekräftige Korrektur bestand STILLSCHWEIGEND als
+# Test. "suppress_dsr" nullt die DSR VOR der Promotion-Entscheidung (das bereits bestehende
+# ``deflation_dsr is None ⇒ REJECT_HOLDOUT_DSR_DROP``-Gate greift dann korrekt fail-closed).
+# "reject" behandelt die Heterogenität selbst als eigenständigen, unbedingten Ablehnungsgrund
+# (``REJECT_DEFLATION_HETEROGENEOUS``), unabhängig vom sonstigen Gate-Ausgang. "per_stratum"
+# (Default, siehe Issue-Text) berechnet SR₀/DSR NICHT aus der vollen Kohorte, sondern aus dem
+# Quartils-Stratum von ``oos_n_periods``, dem der promotete Trial selbst angehört — die
+# kommensurable TEIL-Kohorte bleibt nutzbar, statt die Korrektur komplett zu verwerfen.
+_VALID_DEFLATION_HETEROGENEITY_POLICIES = frozenset({"suppress_dsr", "reject", "per_stratum"})
+
+
+def _stratify_cohort_by_n_periods(cohort_sr_np_pairs, anchor_n_periods, *, n_strata=4):
+    """Issue #865 — quartilsbasierte Stratifizierung der DSR-Kohorte nach ``oos_n_periods``: liefert
+    nur die Teil-Kohorte (Sortino-Werte), deren ``oos_n_periods`` im selben Quartils-Stratum liegt wie
+    ``anchor_n_periods`` (der promotete Trial). Motivation identisch zu #845 (gepoolte Varianz über
+    eine stark streuende ``oos_n_periods``-Achse ist nicht kommensurabel) — statt die Korrektur ganz
+    zu verwerfen (``suppress_dsr``), wird nur der kommensurable Teil verwendet.
+
+    Bei zu wenigen Kohorten-Mitgliedern für ``n_strata`` volle Quartile wird die Strata-Zahl auf
+    ``len(cohort_sr_np_pairs)`` REDUZIERT (nicht auf 1 — ein einziges Stratum wäre die volle
+    gepoolte, inkommensurable Kohorte und würde exakt den #845/#865-Bug reproduzieren, den diese
+    Funktion beheben soll). Bei einer stark streuenden Zwei-Trial-Kohorte (z. B. n_periods=[50,
+    2500]) liefert das je EIN Singleton-Stratum pro Trial — der Aufrufer erkennt ein Stratum mit
+    < 2 Mitgliedern und fällt dokumentiert auf das ``suppress_dsr``-Verhalten zurück.
+
+    Returns ``(stratum_sr, stratum_id, stratum_n_periods)`` — ``stratum_n_periods`` ist die Liste der
+    ``oos_n_periods``-Werte im gewählten Stratum (für den #653-T-Median der Teil-Kohorte).
+    """
+    import statistics as _st
+
+    n_values = sorted(np_ for _, np_ in cohort_sr_np_pairs)
+    n_strata_effective = max(1, min(n_strata, len(n_values)))
+    if n_strata_effective < 2:
+        return (
+            [sr for sr, _ in cohort_sr_np_pairs],
+            0,
+            [np_ for _, np_ in cohort_sr_np_pairs],
+        )
+    cut_points = _st.quantiles(n_values, n=n_strata_effective)
+
+    def _stratum_of(x):
+        s = 0
+        for cp in cut_points:
+            if x > cp:
+                s += 1
+            else:
+                break
+        return s
+
+    anchor_stratum = _stratum_of(anchor_n_periods)
+    stratum_sr = [sr for sr, np_ in cohort_sr_np_pairs if _stratum_of(np_) == anchor_stratum]
+    stratum_n_periods = [np_ for _, np_ in cohort_sr_np_pairs if _stratum_of(np_) == anchor_stratum]
+    return stratum_sr, anchor_stratum, stratum_n_periods
+
 
 def _holdout_bootstrap_ci_passes(metrics, *, confidence: float = 0.95) -> tuple[bool, float | None]:
     """Issue #619 — Stationary-Bootstrap-CI auf dem per-Perioden-Sortino des Holdout (Politis/Romano).
@@ -627,22 +686,34 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             _early_tournament_cfg = json.load(f) or {}
             risk_dd_cap = _early_tournament_cfg.get("max_drawdown", 0.30)
 
-    # Issue #839 — eine Study, deren Simulation den #714/GR-01-Zeitbox-Vertrag verletzt (Bug im
-    # Exit-Pfad, #836/#837), wird VOR jedem statistischen Gate verworfen (und VOR dem teuren
-    # Holdout-Backtest des globalen Baseline-Vektors weiter unten) — ihre Metriken sind unter einem
-    # anderen Handelsvertrag entstanden als dem konfigurierten, jede nachgelagerte Eligibility-/
-    # Reward-/Deflations-Entscheidung wäre ein kontaminiertes Urteil (analog #773s Behandlung von
-    # coherence_violation_rate_exceeded oben).
+    # Issue #839/#857 — eine Study, deren Anteil zeitbox-verletzender Trials den Study-
+    # Toleranzwert überschreitet, wird VOR jedem statistischen Gate verworfen (und VOR dem teuren
+    # Holdout-Backtest des globalen Baseline-Vektors weiter unten) — bei DIESEM Anteil ist der
+    # Exit-Pfad selbst defekt (Bug, #836/#837), nicht mehr nur eine tolerierbare Ausführungslatenz
+    # einzelner Trials (die werden seit #857 bereits JE TRIAL ausgeschlossen — siehe
+    # run_optimization.make_symbol_objective —, bevor sie hier überhaupt ankommen; die einzelnen
+    # verletzenden Trials tragen ``oos_evaluated=False``/``oos_invalid_reason='TIMEBOX_VIOLATION'``
+    # und kontaminieren ihre sauberen Geschwister nicht mehr, Pitfall #272). Issue #858 —
+    # ``timebox_violation_study_tolerance`` (Default 0.25) ist DEUTLICH lockerer als die frühere
+    # ``timebox_violation_tolerance=0.0``: dieser Anteil ist kein Ausführungsrauschen mehr, sondern
+    # der Nachweis eines strukturell defekten Exit-Pfads (dieselbe Schwelle wie
+    # ``invariants.check_holding_time_cap``, #861-Unifikation).
     import logging as _logging_early
-    _timebox_tolerance = float(_early_tournament_cfg.get("timebox_violation_tolerance", 0.0))
+    _timebox_study_tolerance = float(
+        _early_tournament_cfg.get("timebox_violation_study_tolerance", 0.25))
     _timebox_trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in (getattr(study, "trials", None) or [])]
-    _timebox = _inv.compute_trial_timebox_violations(_timebox_trial_attrs)
-    if _timebox["timebox_violation_fraction"] > _timebox_tolerance:
+    _timebox = _inv.compute_trial_timebox_violations(_timebox_trial_attrs, strategy=strategy)
+    if _timebox["timebox_violation_fraction"] > _timebox_study_tolerance:
         emit_execution_event(_logging_early.getLogger("optimizer"), "STUDY_REJECTED_ON_TIMEBOX_VIOLATION", {
             "symbol": symbol, "strategy": strategy,
             "timebox_violation_fraction": _timebox["timebox_violation_fraction"],
             "timebox_violation_trades": _timebox["timebox_violation_trades"],
             "timebox_evaluated_trades": _timebox["timebox_evaluated_trades"],
+            # Issue #857 Fix Punkt 3 — Anzahl EINZELNER invalidierter Trials im Report/Event
+            # ausgewiesen, damit "einzelne Trials verworfen" von "Study verworfen" unterscheidbar
+            # bleibt (vorher trug nur die Study-Ablehnung selbst ein Signal).
+            "timebox_trials_invalidated": _timebox["timebox_violation_trades"],
+            "timebox_violation_study_tolerance": _timebox_study_tolerance,
         }, level=_logging_early.ERROR)
         return {
             "promote": False,
@@ -907,6 +978,19 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Kommensurabilitäts-Voraussetzung und macht DSR/PSR über die Kohorte hinweg nicht vergleichbar.
     deflation_max_n_periods_ratio = float(tournament_cfg.get("deflation_max_n_periods_ratio", 4.0))
     deflation_n_periods_ratio = None
+    # Issue #865 — Policy-Entscheidung wird UNABHAENGIG von ``deflated_selection``/``deflation_n``
+    # gelesen (Fail-Loud auf einen unbekannten Wert soll auch dann greifen, wenn die Kohorte am Ende
+    # zu klein für jede Heterogenitäts-Frage ist — ein Tippfehler im Config-Wert darf nicht dadurch
+    # verschleiert werden, dass er nie ausgewertet wird).
+    deflation_heterogeneity_policy = tournament_cfg.get("deflation_heterogeneity_policy", "per_stratum")
+    if deflation_heterogeneity_policy not in _VALID_DEFLATION_HETEROGENEITY_POLICIES:
+        raise ValueError(
+            f"tournament.json: deflation_heterogeneity_policy={deflation_heterogeneity_policy!r} "
+            f"unbekannt. Erlaubt: {sorted(_VALID_DEFLATION_HETEROGENEITY_POLICIES)}."
+        )
+    deflation_heterogeneous = False
+    deflation_stratum_id = None
+    deflation_stratum_n = None
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     # Issue #757/#758 — welche Inferenzmethode die DSR tatsächlich lieferte ("stationary_bootstrap"
     # im Regelfall; "sharpe_formula_fallback" nur bei < 5 persistierten Perioden-Returns, siehe
@@ -987,13 +1071,20 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             # über die eligiblen Trials ist die robuste zentrale T-Schätzung (T ist bei fixer
             # Walk-Forward-Geometrie über die Kohorte annähernd konstant; Ausreisser durch
             # Degeneration einzelner Trials beeinflussen den Median nicht).
-            cohort_n_periods = [
-                t.user_attrs.get("oos_n_periods") for t in study.trials
+            # Issue #865 — dieselbe Filterbedingung wie ``cohort_n_periods`` unten, aber als
+            # (sortino, n_periods)-PAAR statt zweier separat aufgebauter Listen — die #865-
+            # Stratifizierung braucht die Zuordnung Sortino↔n_periods, die zwei unabhaengige
+            # Listen-Comprehensions (bei sonst identischem Filter, aber theoretisch abweichender
+            # Reihenfolge/Länge) nicht GARANTIERT liefern.
+            cohort_sr_np_pairs = [
+                (t.user_attrs.get("oos_sortino_period"), t.user_attrs.get("oos_n_periods"))
+                for t in study.trials
                 if t.state == optuna.trial.TrialState.COMPLETE
                 and t.user_attrs.get("oos_eligible")
                 and t.user_attrs.get("oos_sortino_period") is not None
                 and t.user_attrs.get("oos_n_periods")
             ]
+            cohort_n_periods = [np_ for _, np_ in cohort_sr_np_pairs]
             deflation_t_periods = int(_st.median(cohort_n_periods)) if cohort_n_periods else None
             # Issue #845 — Heterogenitäts-Ratio der Kohorte, unabhängig davon, ob die DSR unten
             # ueberhaupt berechnet wird (die Ratio selbst ist bereits am Median-Ersatz #701 nicht
@@ -1002,6 +1093,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 _n_periods_min, _n_periods_max = min(cohort_n_periods), max(cohort_n_periods)
                 if _n_periods_min > 0:
                     deflation_n_periods_ratio = _n_periods_max / _n_periods_min
+            # Issue #865 — die Heterogenitäts-Politik entscheidet weiter unten (sobald der promotete
+            # Trial bekannt ist, siehe ``_stratify_cohort_by_n_periods``), WIE mit dieser Kohorte
+            # verfahren wird; das Flag selbst hängt nur an der Ratio, nicht an der Politik.
+            deflation_heterogeneous = bool(
+                deflation_n_periods_ratio is not None
+                and deflation_n_periods_ratio > deflation_max_n_periods_ratio
+            )
             # Issue #701 — ``n_periods`` ist seit #701 ein PFLICHT-Parameter von
             # ``sr0_multiple_testing_robust`` (der var_floor-Fallback ohne T wurde als tot verifiziert
             # und entfernt, siehe deflation.py-Docstring). ``deflation_t_periods`` ist NIE ``None``,
@@ -1085,6 +1183,75 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # ``holdout_passed`` an dieser Stelle NOCH True ist, kann genau EIN Grund gewinnen — keine
     # Ambiguität. Default (Symbol-Holdout-Gate selbst gescheitert): REJECT_HOLDOUT_GATE.
     holdout_reject_detail = None if holdout_passed else "REJECT_HOLDOUT_GATE"
+
+    # Issue #865 (Pitfall #277) — die Heterogenitäts-Politik wird JETZT angewendet, VOR der DSR-
+    # Berechnung/-Entscheidung unten — nicht erst an der Export-Kohärenzgrenze (die dortige #845-
+    # Prüfung kam bislang zu spät: die Promotion hatte die DSR bereits aus der inkommensurablen
+    # gepoolten Kohorte verwendet, siehe Docstring von ``_VALID_DEFLATION_HETEROGENEITY_POLICIES``).
+    if deflation_heterogeneous and deflation_sr0 is not None:
+        if deflation_heterogeneity_policy == "per_stratum":
+            _promoted_n_periods_anchor = getattr(promoted_m_symbol, "oos_n_periods", None)
+            _stratum_sr, _stratum_id, _stratum_n_periods = (
+                _stratify_cohort_by_n_periods(cohort_sr_np_pairs, _promoted_n_periods_anchor)
+                if _promoted_n_periods_anchor else ([], None, [])
+            )
+            deflation_stratum_id = _stratum_id
+            deflation_stratum_n = len(_stratum_sr)
+            if deflation_stratum_n >= 2:
+                import statistics as _st_stratum
+                from automation.optimizer.deflation import sr0_multiple_testing_robust
+                _stratum_var = _st_stratum.pvariance([float(s) for s in _stratum_sr])
+                _stratum_t = (int(_st_stratum.median(_stratum_n_periods))
+                              if _stratum_n_periods else deflation_t_periods)
+                (deflation_sr0, deflation_used_var_floor, deflation_lambda,
+                 deflation_theoretical_var_source) = sr0_multiple_testing_robust(
+                    _stratum_var, deflation_n_effective,
+                    min_cohort=deflation_min_cohort,
+                    n_periods=_stratum_t, variance_n_trials=deflation_stratum_n,
+                    search_space_penalty=deflation_search_space_penalty,
+                )
+                deflation_var = _stratum_var
+                deflation_n = deflation_stratum_n
+                deflation_t_periods = _stratum_t
+                logging.getLogger("optimizer").info(
+                    f"[#865] {symbol}: n_periods-Kohorte heterogen (ratio="
+                    f"{deflation_n_periods_ratio:.2f} > {deflation_max_n_periods_ratio}) — SR₀ auf "
+                    f"Stratum {deflation_stratum_id} beschränkt (n={deflation_stratum_n}, "
+                    f"neues SR₀={deflation_sr0:.4f})."
+                )
+            else:
+                logging.getLogger("optimizer").warning(
+                    f"[#865] {symbol}: Stratum {deflation_stratum_id} des promoteten Trials "
+                    f"(n_periods={_promoted_n_periods_anchor}) hat < 2 Mitglieder "
+                    f"(n={deflation_stratum_n}) — SR₀ unterdrückt (Fallback wie 'suppress_dsr')."
+                )
+                deflation_sr0 = None
+                deflation_used_var_floor = False
+                deflation_lambda = None
+                deflation_theoretical_var_source = None
+        else:
+            logging.getLogger("optimizer").warning(
+                f"[#865] {symbol}: n_periods-Kohorte heterogen (ratio={deflation_n_periods_ratio:.2f} "
+                f"> {deflation_max_n_periods_ratio}, policy={deflation_heterogeneity_policy}) — "
+                f"SR₀/DSR NICHT aus der Kohorte übernommen (fail-closed statt stiller Spät-Suppress)."
+            )
+            deflation_sr0 = None
+            deflation_used_var_floor = False
+            deflation_lambda = None
+            deflation_theoretical_var_source = None
+        if deflation_heterogeneity_policy == "reject" and deflation_sr0 is None:
+            # Issue #865 — 'reject' ist ein UNBEDINGTER Veto-Modus: im Unterschied zu 'suppress_dsr'
+            # (die DSR wird None, das bestehende ``deflation_dsr is None ⇒ REJECT_HOLDOUT_DSR_DROP``-
+            # Gate greift NUR, wenn ``holdout_passed`` bislang True war) erzwingt 'reject' den Reject
+            # SOFORT und mit einem EIGENEN Grund, der die spätere 'dsr_or_robust_pair'-Ersatzroute
+            # NICHT unterlaufen darf — eine undefinierte Korrektur ist kein bestandener Test (siehe
+            # Katalog-Fix-Item 2, Pitfall #277), unabhängig davon, ob PBO/Bootstrap-CI sonst passen.
+            holdout_passed = False
+            holdout_reject_detail = "REJECT_DEFLATION_HETEROGENEOUS"
+            logging.getLogger("optimizer").warning(
+                f"[#865] {symbol}: policy='reject' ⇒ REJECT_DEFLATION_HETEROGENEOUS (unbedingt, "
+                f"kein Ersatzpfad über promotion_correction_mode='dsr_or_robust_pair')."
+            )
 
     # Issue #618/#636 — DSR-BERECHNUNG von der Pass-Kette ENTKOPPELT: vorher lief dieser Block nur
     # ``if holdout_passed and ...`` — aber JEDE Strategie scheiterte an einem FRÜHEREN Holdout-Gate
@@ -1409,15 +1576,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # EXPORT-Grenze: kein Teilzustand verlaesst confirm.py.
     deflation_skipped_reason = None
     if deflated_selection:
-        # Issue #845 — VOR der #846-Kohärenzprüfung: eine Kohorte, deren oos_n_periods stärker als
-        # ``deflation_max_n_periods_ratio`` streut, macht die gepoolte Kohorten-Varianz
+        # Issue #845/#865 — VOR der #846-Kohärenzprüfung: eine Kohorte, deren oos_n_periods stärker
+        # als ``deflation_max_n_periods_ratio`` streut, macht die gepoolte Kohorten-Varianz
         # (deflation_var) selbst inkommensurabel — unabhängig davon, ob der promotete Trial sein
-        # eigenes Gate besteht (der #846-Fall unten). DSR/SR₀ werden dann NICHT exportiert, mit
-        # einem eigenen, von SMALL_COHORT/NO_STATISTIC unterscheidbaren Grund.
-        if (deflation_n_periods_ratio is not None
-                and deflation_n_periods_ratio > deflation_max_n_periods_ratio):
+        # eigenes Gate besteht (der #846-Fall unten). Seit #865 wird die Heterogenität bereits VOR der
+        # Promotion-Entscheidung behandelt (``deflation_heterogeneity_policy``, siehe oben); dieser
+        # Block hier ist nur noch die EXPORT-Kohärenzprüfung: ``deflation_sr0 is None`` bei
+        # ``deflation_heterogeneous`` heisst "Policy hat die Kohorte verworfen/das Stratum war zu
+        # klein" (SR₀/DSR NICHT exportiert). War die Politik ``per_stratum`` UND das Stratum gross
+        # genug, ist ``deflation_sr0`` bereits die STRATIFIZIERTE (kommensurable) Grösse — dann ist
+        # dies KEIN Skip, sondern ein regulärer (kleinerer) Kohorten-Erfolg.
+        if deflation_heterogeneous and deflation_sr0 is None:
             deflation_skipped_reason = "N_PERIODS_HETEROGENEOUS"
-            deflation_sr0 = None
             deflation_dsr = None
             deflation_dsr_z = None
         elif deflation_sr0 is None and deflation_dsr is None and deflation_dsr_z is None:
@@ -1485,6 +1655,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Study auditieren kann, ohne die Rohdaten (Trial-User-Attrs) erneut laden zu müssen.
     if deflation_n_periods_ratio is not None:
         best_result["metrics_symbol"]["deflation_n_periods_ratio"] = deflation_n_periods_ratio
+    # Issue #865 — welche Politik GRIFF (unabhängig davon, ob die Kohorte tatsächlich heterogen war —
+    # macht den Konfigurationszustand selbst auditierbar) + das gewählte Stratum, sobald
+    # ``per_stratum`` tatsächlich stratifiziert hat (None/None im Regelfall einer homogenen Kohorte).
+    best_result["metrics_symbol"]["deflation_heterogeneity_policy"] = deflation_heterogeneity_policy
+    if deflation_stratum_id is not None:
+        best_result["metrics_symbol"]["deflation_stratum_id"] = deflation_stratum_id
+        best_result["metrics_symbol"]["deflation_stratum_n"] = deflation_stratum_n
 
     return best_result
 
@@ -1497,6 +1674,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
 # aber am Confirm-/Holdout-Pfad selbst.
 _CONFIRM_STAGE_REJECTIONS = frozenset({
     "REJECT_HOLDOUT_GATE", "REJECT_HOLDOUT_DSR_DROP", "REJECT_HOLDOUT_BOOTSTRAP_CI",
+    # Issue #865 — REJECT_DEFLATION_HETEROGENEOUS ist ebenfalls eine Confirm-/Holdout-Pfad-Ursache
+    # (der modale Per-Trial-IS-Grund erklärt nicht, warum die DSR-Korrektur selbst undefiniert war).
+    "REJECT_DEFLATION_HETEROGENEOUS",
     "REJECT_SELECTION_PBO", "REJECT_BOUNDARY_SOLUTION", "REJECT_NO_EDGE_OVER_GLOBAL",
     # Issue #763 — HOLD_BOUNDARY_UNRESOLVED ist ebenfalls eine Confirm-/Holdout-Pfad-Ursache (der
     # modale Per-Trial-IS-Grund erklärt nicht, warum die Promotion pausiert wurde).

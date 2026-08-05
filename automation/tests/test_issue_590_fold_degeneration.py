@@ -52,7 +52,8 @@ def test_small_downside_fold_yields_finite_positive_sortino():
     # Mindest-Stichprobe. Issue #844 — sortino_numeric_guard_min_periods ist jetzt real gesetzt
     # (1600); bei 40 Perioden deaktiviert, um den flachen #614-Guard (25, das Testziel hier) zu
     # pruefen statt der T-Skalierung.
-    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1), \
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0), \
          patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         stats = _calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
     sortino = stats["sortino_ratio"]

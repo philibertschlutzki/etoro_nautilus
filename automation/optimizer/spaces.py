@@ -77,9 +77,10 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
 
 
 # Issue #714 (GR-01) — 24-Bar-Zeitbox (1h-Bars). Harte Obergrenze für JEDE ``max_bars_in_trade``-
-# Suchraum-Bound über alle 15 Strategien (Untergrenzen bleiben unverändert). Single Source of Truth,
-# konsistent mit ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``.
-_MAX_BARS_IN_TRADE_CAP = 24
+# Suchraum-Bound über alle 15 Strategien (Untergrenzen bleiben unverändert). Issue #858 — Single
+# Source of Truth über einen Import statt einer eigenen Kopie des Literals, konsistent mit
+# ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP``.
+from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 
 
 def _dyn_tp_params(trial) -> dict:

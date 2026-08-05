@@ -7,10 +7,19 @@ Deflation und Champion-Store, als wären ihre Metriken gültig. Der Fix führt d
 1. `invariants.compute_trial_timebox_violations` — je-Trial-Verletzung (Haltedauer gegen den
    gesampelten oder globalen `max_bars_in_trade`-Deckel), aggregiert je Study.
 2. `confirm.confirm_per_symbol_promotion` verwirft eine Study mit `REJECT_INVALID_TIMEBOX`, wenn
-   `timebox_violation_fraction > tournament.json['timebox_violation_tolerance']` — VOR jedem
+   `timebox_violation_fraction > tournament.json['timebox_violation_study_tolerance']` — VOR jedem
    statistischen Gate.
 3. `champions._configured_admissible_reject_details` lässt `REJECT_INVALID_TIMEBOX` NIE zu (analog
    `REJECT_HOLDOUT_GATE`) — ein Kandidat mit gebrochenem Exit-Pfad landet nie im Champion-Store.
+
+Issue #857/#858/#861 (Katalog #856-#861, GitHub-Issue #758) — Nachtrag: die Konsequenz einer
+Zeitbox-Verletzung liegt seit #857 bereits AUF TRIAL-EBENE (ein einzelner verletzender Trial
+kontaminiert nicht mehr 159 saubere Geschwister, Pitfall #272); `timebox_violation_tolerance`
+(Default 0.0) wurde durch `timebox_violation_study_tolerance` (Default 0.25) ersetzt — ein reiner
+Bug-Detektor für einen strukturell defekten Exit-Pfad, keine Ausführungslatenz-Toleranz mehr. #858
+ersetzt die feste 0.01-Bar-Toleranz durch `timebox_execution_slack_bars` (Default 3.0 =
+`exit_close_max_bars + 1`). #861 vereinheitlicht `check_holding_time_cap` auf dieselbe
+per-Trial-aware Berechnung wie `compute_trial_timebox_violations` (`resolve_effective_bar_cap`).
 """
 import json
 
@@ -28,10 +37,12 @@ def test_no_trials_with_holding_data_is_zero_fraction():
         "timebox_evaluated_trades": 0,
         "timebox_violation_fraction": 0.0,
         "timebox_violated": False,
+        "timebox_cap_source_counts": {},
     }
 
 
 def test_trial_within_sampled_cap_is_not_a_violation():
+    # Issue #858 — Default-Toleranz ist jetzt 3.0 Bars (exit_close_max_bars + 1), nicht mehr 0.01.
     attrs = [{"oos_max_holding_time_s": 23 * 3600.0, "sampled_params": {"max_bars_in_trade": 24}}]
     result = inv.compute_trial_timebox_violations(attrs)
     assert result["timebox_violated"] is False
@@ -49,9 +60,10 @@ def test_trial_beyond_sampled_cap_is_a_violation():
 def test_missing_sampled_max_bars_falls_back_to_global_cap():
     """Strategie sampelt max_bars_in_trade nicht ⇒ Fallback auf den globalen #714/GR-01-Deckel
     (24 Bars) — dieselbe konservative Schranke wie check_holding_time_cap."""
-    attrs = [{"oos_max_holding_time_s": 25 * 3600.0}]  # kein sampled_params
+    attrs = [{"oos_max_holding_time_s": 30 * 3600.0}]  # kein sampled_params, > 24+3 Bars
     result = inv.compute_trial_timebox_violations(attrs)
     assert result["timebox_violated"] is True
+    assert result["timebox_cap_source_counts"] == {"global": 1}
 
     attrs_ok = [{"oos_max_holding_time_s": 20 * 3600.0}]
     result_ok = inv.compute_trial_timebox_violations(attrs_ok)
@@ -68,11 +80,68 @@ def test_fraction_over_mixed_cohort():
     assert result["timebox_evaluated_trades"] == 2
     assert result["timebox_violation_trades"] == 1
     assert result["timebox_violation_fraction"] == 0.5
+    assert result["timebox_cap_source_counts"] == {"sampled": 2}
 
 
+# ── invariants.resolve_effective_bar_cap (#861) ──────────────────────────────────────────────────
+def test_resolve_effective_bar_cap_prefers_sampled_value():
+    cap, source = inv.resolve_effective_bar_cap({"max_bars_in_trade": 12}, strategy="S")
+    assert (cap, source) == (12.0, "sampled")
+
+
+def test_resolve_effective_bar_cap_falls_back_to_strategy_defaults():
+    cap, source = inv.resolve_effective_bar_cap(
+        {}, strategy="S", strategy_defaults={"S": {"max_bars_in_trade": 18}})
+    assert (cap, source) == (18.0, "default")
+
+
+def test_resolve_effective_bar_cap_falls_back_to_global():
+    cap, source = inv.resolve_effective_bar_cap(None, strategy="S", strategy_defaults={})
+    assert (cap, source) == (24.0, "global")
+
+
+# ── invariants.check_holding_time_cap (#861 — unified contract) ─────────────────────────────────
 def test_check_holding_time_cap_is_blocking_severity():
-    result = inv.check_holding_time_cap([{"strategy": "S", "symbol": "X", "max_holding_time_s": 100 * 3600.0}])
+    """Issue #861 — konsumiert jetzt dieselben Felder wie compute_trial_timebox_violations
+    (timebox_evaluated_trades/timebox_violation_fraction), nicht mehr max_holding_time_s gegen
+    einen Pauschaldeckel."""
+    result = inv.check_holding_time_cap([{
+        "strategy": "S", "symbol": "X",
+        "timebox_evaluated_trades": 4, "timebox_violation_fraction": 1.0,
+    }])
     assert result.severity == "blocking"
+    assert result.passed is False
+
+
+def test_check_holding_time_cap_passes_within_study_tolerance():
+    result = inv.check_holding_time_cap([{
+        "strategy": "S", "symbol": "X",
+        "timebox_evaluated_trades": 160, "timebox_violation_fraction": 0.05,
+    }], study_tolerance=0.25)
+    assert result.passed is True
+
+
+def test_check_holding_time_cap_fails_beyond_study_tolerance():
+    result = inv.check_holding_time_cap([{
+        "strategy": "S", "symbol": "X",
+        "timebox_evaluated_trades": 160, "timebox_violation_fraction": 0.30,
+    }], study_tolerance=0.25)
+    assert result.passed is False
+    assert "S/X" in result.detail
+
+
+def test_check_holding_time_cap_and_compute_trial_timebox_violations_agree():
+    """Issue #861-Akzeptanzkriterium — eine Study mit gesampeltem Cap 12 und 20 Bars Haltedauer
+    laesst BEIDE Checks FAILen (vorher: check_holding_time_cap sauber bei 20 < 24, aber
+    compute_trial_timebox_violations bereits eine Verletzung)."""
+    trial_attrs = [{"oos_max_holding_time_s": 20 * 3600.0, "sampled_params": {"max_bars_in_trade": 12}}]
+    timebox = inv.compute_trial_timebox_violations(trial_attrs)
+    assert timebox["timebox_violated"] is True
+
+    study_record = {"strategy": "S", "symbol": "X", **{
+        k: timebox[k] for k in ("timebox_evaluated_trades", "timebox_violation_fraction")
+    }}
+    result = inv.check_holding_time_cap([study_record], study_tolerance=0.25)
     assert result.passed is False
 
 
@@ -98,7 +167,7 @@ def test_confirm_rejects_study_with_timebox_violation(tmp_path, monkeypatch):
     from automation.optimizer import confirm as cmod
 
     (tmp_path / "tournament.json").write_text(json.dumps(
-        {"max_drawdown": 0.30, "timebox_violation_tolerance": 0.0}))
+        {"max_drawdown": 0.30, "timebox_violation_study_tolerance": 0.0}))
     (tmp_path / "backtest.json").write_text(json.dumps(
         {"walk_forward": {"is_window_days": 100, "holdout_days": 10, "oos_window_days": 10,
                           "splits": 1, "embargo_period_days": 0}}))
@@ -114,6 +183,60 @@ def test_confirm_rejects_study_with_timebox_violation(tmp_path, monkeypatch):
     assert res["promote"] is False
     assert res["is_rejection_detail_override"] == "REJECT_INVALID_TIMEBOX"
     assert any(name == "STUDY_REJECTED_ON_TIMEBOX_VIOLATION" for name, _ in events)
+    event_payload = next(p for name, p in events if name == "STUDY_REJECTED_ON_TIMEBOX_VIOLATION")
+    assert event_payload["timebox_trials_invalidated"] == 1
+
+
+def test_confirm_tolerates_a_single_violating_trial_within_study_tolerance(tmp_path, monkeypatch):
+    """Issue #857-Akzeptanzkriterium — eine Study mit 1 verletzenden von 160 Trials wird NICHT
+    verworfen (Default-Toleranz 0.25); die 159 sauberen Trials durchlaufen Eligibility/Confirm
+    normal (Kohorten-Kontamination durch einen einzelnen Ausreisser ist genau das, was #857
+    behebt, Pitfall #272)."""
+    from automation.optimizer import confirm as cmod
+
+    (tmp_path / "tournament.json").write_text(json.dumps(
+        {"max_drawdown": 0.30, "holdout_top_k": 5, "deflated_selection": False}))
+    (tmp_path / "backtest.json").write_text(json.dumps(
+        {"walk_forward": {"is_window_days": 100, "holdout_days": 10, "oos_window_days": 10,
+                          "splits": 1, "embargo_period_days": 0}}))
+    (tmp_path / "optimizer.json").write_text(json.dumps(
+        {"promotion_margin": 0.10, "oos_sortino_fallback": "total_return"}))
+    monkeypatch.setattr(cmod, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(cmod, "emit_execution_event", lambda *a, **k: None)
+
+    from automation.optimizer.parsing import TournamentMetrics
+    monkeypatch.setattr(
+        cmod, "_holdout_metrics_for_params",
+        lambda strategy, symbol, params, **kw: TournamentMetrics(
+            oos_evaluated=True, oos_eligible=True, is_sortino_median=None,
+            oos_sortino=-0.5, oos_max_drawdown=0.05, oos_total_trades=30, win_count=1,
+            fully_eligible_pairs=1, is_total_trades=100, oos_total_return=-0.02))
+    monkeypatch.setattr(cmod, "compute_reward", lambda m, **kw: -0.3)
+
+    study = _study_with_timebox_trials(n_violations=1, n_ok=159)
+    res = cmod.confirm_per_symbol_promotion(study, "TestStrategy", "TSLA.ETORO", {})
+
+    assert res.get("is_rejection_detail_override") != "REJECT_INVALID_TIMEBOX"
+
+
+def test_confirm_still_rejects_study_with_majority_violation(tmp_path, monkeypatch):
+    """Issue #857-Akzeptanzkriterium — eine Study mit 60% verletzenden Trials wird weiterhin mit
+    REJECT_INVALID_TIMEBOX verworfen (jenseits der Default-Study-Toleranz 0.25)."""
+    from automation.optimizer import confirm as cmod
+
+    (tmp_path / "tournament.json").write_text(json.dumps({"max_drawdown": 0.30}))
+    (tmp_path / "backtest.json").write_text(json.dumps(
+        {"walk_forward": {"is_window_days": 100, "holdout_days": 10, "oos_window_days": 10,
+                          "splits": 1, "embargo_period_days": 0}}))
+    (tmp_path / "optimizer.json").write_text(json.dumps({"promotion_margin": 0.10}))
+    monkeypatch.setattr(cmod, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(cmod, "emit_execution_event", lambda *a, **k: None)
+
+    study = _study_with_timebox_trials(n_violations=6, n_ok=4)
+    res = cmod.confirm_per_symbol_promotion(study, "TestStrategy", "TSLA.ETORO", {})
+
+    assert res["promote"] is False
+    assert res["is_rejection_detail_override"] == "REJECT_INVALID_TIMEBOX"
 
 
 def test_confirm_does_not_reject_clean_study_on_timebox(tmp_path, monkeypatch):
@@ -123,7 +246,7 @@ def test_confirm_does_not_reject_clean_study_on_timebox(tmp_path, monkeypatch):
 
     (tmp_path / "tournament.json").write_text(json.dumps(
         {"max_drawdown": 0.30, "holdout_top_k": 5, "deflated_selection": False,
-         "timebox_violation_tolerance": 0.0}))
+         "timebox_violation_study_tolerance": 0.0}))
     (tmp_path / "backtest.json").write_text(json.dumps(
         {"walk_forward": {"is_window_days": 100, "holdout_days": 10, "oos_window_days": 10,
                           "splits": 1, "embargo_period_days": 0}}))
