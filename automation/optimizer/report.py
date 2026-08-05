@@ -349,6 +349,15 @@ def _study_record(proposal: dict, study,
     trial_gate_deltas = [a.get("oos_gate_deltas") for a in trial_attrs if a.get("oos_gate_deltas")]
     gate_collinearity_unconsolidated = _reward.assert_eligible_requires_all_not_redundant(
         trial_gate_deltas, (tournament_cfg or {}).get("eligible_requires_all") or [], tournament_cfg)
+    # Issue #868 (Pitfall #280) — begründet AKZEPTIERTE Redundanzen (tournament.json[
+    # 'gate_collinearity_accepted_pairs']) getrennt von unentschiedenen sichtbar machen: dieselbe
+    # trial_gate_deltas-Kohorte, dieselbe zugrundeliegende Jaccard-Messung wie
+    # gate_collinearity_unconsolidated oben — nur der ANDERE Ausschnitt (accepted statt candidate).
+    try:
+        gate_collinearity_accepted = _reward.assert_gate_collinearity_guard(
+            trial_gate_deltas, tournament_cfg).get("accepted_redundancies", [])
+    except Exception:
+        gate_collinearity_accepted = []
 
     # Issue #770 — dieselbe Berechnung wie ``run_optimization._emit_study_summary`` (Single Source
     # of Truth, siehe compute_budget_execution-Docstring).
@@ -465,6 +474,10 @@ def _study_record(proposal: dict, study,
         # Issue #776 — noch unkonsolidierte (LIVE als redundant ausgewiesene) Mitglieder von
         # ``eligible_requires_all`` dieser Study; leer ⇒ Config konsistent mit dem #679-Alarm.
         "gate_collinearity_unconsolidated": gate_collinearity_unconsolidated,
+        # Issue #868 — begründet akzeptierte Gate-Paare dieser Study (tournament.json[
+        # 'gate_collinearity_accepted_pairs']), mit ihrer Begründung — macht die Entscheidung im
+        # Report sichtbar, statt sie nur implizit im Ausbleiben einer Warnung zu verstecken.
+        "gate_collinearity_accepted_redundancies": gate_collinearity_accepted,
         # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
         # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).

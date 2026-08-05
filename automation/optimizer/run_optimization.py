@@ -2310,6 +2310,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # Jaccard-Übereinstimmung zusammen — leer, solange kein Paar beide Schwellen überschreitet.
         "gate_collinearity_alarm": gate_collinearity_alarm.get("alarms", []),
         "gate_collinearity_redundant_candidates": gate_collinearity_alarm.get("redundant_candidates", {}),
+        # Issue #868 (Pitfall #280) — jedes Paar über der Kollinearitäts-Schwelle ist jetzt ENTWEDER
+        # begründet akzeptiert (tournament.json['gate_collinearity_accepted_pairs'], erscheint hier
+        # mit seiner rationale) ODER unentschieden (unaccepted, weiterhin [#667]-WARNING geloggt).
+        "gate_collinearity_accepted_redundancies": gate_collinearity.get("accepted_redundancies", []),
+        "gate_collinearity_unaccepted_redundancies": gate_collinearity.get("unaccepted_redundancies", []),
         "reward_terms_aggregates": term_aggregates,
     })
 

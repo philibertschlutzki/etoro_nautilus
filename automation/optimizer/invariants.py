@@ -761,7 +761,14 @@ def check_gate_collinearity_consolidation(study_records: list[dict], *,
     Diese sweep-weite Prüfung konsumiert den #679-Alarm ENDLICH (Root-Cause #776: der Alarm war
     reine Telemetrie ohne Konsument) — FAIL, wenn >= 20 % der Studies eines Laufs ein
     unkonsolidiertes Gate melden. Bricht NICHT automatisch die Config (welches Gate konsolidiert
-    wird, bleibt eine bewusste PR-Entscheidung) — macht die Notwendigkeit aber unübersehbar."""
+    wird, bleibt eine bewusste PR-Entscheidung) — macht die Notwendigkeit aber unübersehbar.
+
+    Issue #868 (Pitfall #280) — ``gate_collinearity_unconsolidated`` respektiert seit diesem Fix
+    ``tournament.json['gate_collinearity_accepted_pairs']`` (ein begründet akzeptiertes Paar zählt
+    NICHT mehr als unkonsolidiert, siehe ``reward.gate_collinearity_redundancy_alarm``) — diese
+    Prüfung ist damit die BLOCKIERENDE Konsequenz für jedes Paar, das weder als strukturelle
+    Vorbedingung (``gate_consolidation_protected``) noch begründet akzeptiert ist: ``severity=
+    'blocking'`` markiert das FAIL entsprechend (vorher unmarkiert/``'medium'``)."""
     with_data = [r for r in study_records if "gate_collinearity_unconsolidated" in r]
     if not with_data:
         return InvariantResult(
@@ -770,6 +777,7 @@ def check_gate_collinearity_consolidation(study_records: list[dict], *,
             expected=f"< {max_affected_fraction:.0%} Studies mit unkonsolidiertem Gate",
             actual=None,
             detail="Keine Studies mit Gate-Kollinearitäts-Telemetrie — nicht anwendbar.",
+            severity="blocking",
         )
     affected = sum(1 for r in with_data if r.get("gate_collinearity_unconsolidated"))
     fraction = affected / len(with_data)
@@ -779,9 +787,11 @@ def check_gate_collinearity_consolidation(study_records: list[dict], *,
         passed=passed,
         expected=f"< {max_affected_fraction:.0%} Studies mit unkonsolidiertem Gate",
         actual=round(fraction, 4),
+        severity="blocking",
         detail=("OK" if passed else
                 f"{affected}/{len(with_data)} Studies ({fraction:.1%}) melden ein von der LIVE-"
-                "Kohorte als redundant ausgewiesenes eligible_requires_all-Gate (#776/#679-Alarm)."),
+                "Kohorte als redundant ausgewiesenes eligible_requires_all-Gate, das weder "
+                "strukturell geschützt noch begründet akzeptiert ist (#776/#679/#868)."),
     )
 
 

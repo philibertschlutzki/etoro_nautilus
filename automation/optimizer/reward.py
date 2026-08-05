@@ -687,6 +687,46 @@ def gate_marginal_pass_rate_delta(trial_gate_deltas: list, tournament_cfg: dict 
     return ((without_b - with_b) / considered) if considered else None
 
 
+def _gate_collinearity_accepted_pairs(tournament_cfg: dict | None) -> dict[frozenset, str]:
+    """Issue #868 (P2, Katalog #866-#869, GitHub-Issue #760, Pitfall #280) — liest
+    ``tournament.json['gate_collinearity_accepted_pairs']``: jeder Eintrag ``{'gates': [g1, g2],
+    'rationale': str}`` wird auf ein normiertes ``frozenset({g1, g2}) -> rationale`` abgebildet
+    (dieselbe ``oos_``-Präfix-Normalisierung wie ``_gate_consolidation_priority``).
+
+    Root-Cause #868: der ``[#667]``-Kollinearitäts-Alarm (``assert_gate_collinearity_guard``) feuerte
+    87 Warnungen in einem Referenzlauf, OHNE dass irgendein Konsument je entschied, ob die gemeldete
+    Redundanz akzeptiert oder konsolidiert werden soll — ein Diagnose-Alarm ohne Entscheidungspflicht
+    erzeugt Gewöhnung (Pitfall #280). Diese Liste macht die Entscheidung MASCHINENLESBAR: ein Paar
+    hier erzeugt keine Warnung mehr (``assert_gate_collinearity_guard``/``gate_collinearity_
+    redundancy_alarm`` behandeln es als entschieden), erscheint aber weiterhin in der Telemetrie
+    (``accepted_redundancies``) mit seiner Begründung.
+
+    Fail-loud auf einen strukturell falschen Eintrag (fehlendes ``gates``/``rationale``, ``gates``
+    nicht exakt 2 Elemente, leere ``rationale``) — eine kaputte Ausnahmeliste darf nicht still
+    ignoriert werden, sonst verdeckt sie unbemerkt akzeptierte UND unentschiedene Paare gleichermassen
+    (dieselbe Disziplin wie ``_gate_consolidation_priority``, #810)."""
+    tournament_cfg = tournament_cfg or {}
+    raw = tournament_cfg.get("gate_collinearity_accepted_pairs") or []
+    accepted: dict[frozenset, str] = {}
+    for i, entry in enumerate(raw):
+        gates = entry.get("gates") if isinstance(entry, dict) else None
+        rationale = entry.get("rationale") if isinstance(entry, dict) else None
+        if not (isinstance(gates, list) and len(gates) == 2
+                and all(isinstance(g, str) and g for g in gates)):
+            raise ValueError(
+                f"tournament.json['gate_collinearity_accepted_pairs'][{i}]: 'gates' muss eine "
+                f"Liste aus genau 2 Gate-Namen sein, ist {gates!r}."
+            )
+        if not (isinstance(rationale, str) and rationale.strip()):
+            raise ValueError(
+                f"tournament.json['gate_collinearity_accepted_pairs'][{i}]: 'rationale' fehlt oder "
+                f"ist leer — Issue #868 verlangt eine BEGRÜNDETE Ausnahme, keine stille."
+            )
+        key = frozenset(_normalize_gate_priority_key(g) for g in gates)
+        accepted[key] = rationale
+    return accepted
+
+
 def assert_gate_collinearity_guard(trial_gate_deltas: list, tournament_cfg: dict | None = None, *,
                                    threshold: float | None = None) -> dict:
     """Issue #667/#760/#792 — Redundanz-Wächter: warnt FAIL-LOUD-artig (WARNING-Log, KEIN Abbruch —
@@ -698,23 +738,44 @@ def assert_gate_collinearity_guard(trial_gate_deltas: list, tournament_cfg: dict
     übergebener Wert überschreibt sie (Tests/Kalibrierläufe). Rückgabe: die volle
     Korrelationsmatrix (Telemetrie/Tests).
 
-    Issue #811 — diese Funktion bleibt bewusst UNVERÄNDERT gegenüber der Jaccard-Umstellung in
-    ``gate_collinearity_redundancy_alarm``: die Spearman-Matrix ist forensisch nützliche #742-
-    Report-Telemetrie (zeigt, welche Gates derselben latenten Aktivitäts-Achse folgen), verliert
-    aber ihre Alarm-/Konsolidierungs-Funktion an die Pass-Set-Messung."""
+    Issue #811 — die Spearman-Matrix selbst (``correlations``, WELCHE Paare überhaupt gemessen
+    werden) bleibt UNVERÄNDERT gegenüber der Jaccard-Umstellung in
+    ``gate_collinearity_redundancy_alarm`` — INKLUSIVE ``gate_consolidation_protected``-Gates
+    (``min_trades``/``max_drawdown``): die Spearman-Matrix ist forensisch nützliche #742-Report-
+    Telemetrie (zeigt, welche Gates derselben latenten Aktivitäts-Achse folgen), unabhängig davon,
+    ob ein Gate strukturell vor einer Redundanz-KONSEQUENZ geschützt ist. Issue #868 (Pitfall #280)
+    — die WARNUNG selbst ist seit diesem Fix keine folgenlose Diagnose mehr: jedes Paar über der
+    Schwelle wird entweder (a) begründet akzeptiert (``gate_collinearity_accepted_pairs``,
+    erscheint in ``accepted_redundancies`` statt im WARNING-Log — dies ist AUCH der Weg, über den
+    ein Protected-Gate wie ``max_drawdown`` seine Ausnahme bekommt, siehe tournament.json-Schema)
+    oder (b) bleibt UNENTSCHIEDEN (``unaccepted_redundancies``, weiterhin ``[#667]``-WARNING —
+    genau DAS speist jetzt ``invariants.check_gate_collinearity_consolidation``, die blockierende
+    Konsequenz)."""
     import logging
     if threshold is None:
         threshold = _gate_collinearity_threshold(tournament_cfg)
+    accepted_pairs = _gate_collinearity_accepted_pairs(tournament_cfg)
     result = gate_rank_correlation_matrix(trial_gate_deltas, tournament_cfg)
+    accepted_redundancies = []
+    unaccepted_redundancies = []
     for (k1, k2), rho in result["correlations"].items():
-        if rho is not None and abs(rho) > threshold:
-            logging.getLogger("optimizer").warning(
-                "[#667] Gate-Kollinearität: |ρ(%s, %s)|=%.3f > %.2f über %d Trials — die beiden "
-                "eligible-Gates kodieren mutmasslich redundant dieselbe latente Achse; "
-                "Konsolidierung auf das statistisch schärfste (PSR, fenster-/annualisierungs-"
-                "invariant) erwägen.",
-                k1, k2, rho, threshold, result["n_samples"],
-            )
+        if rho is None or abs(rho) <= threshold:
+            continue
+        pair_key = frozenset({k1, k2})
+        rationale = accepted_pairs.get(pair_key)
+        if rationale is not None:
+            accepted_redundancies.append({"gates": [k1, k2], "rho": rho, "rationale": rationale})
+            continue
+        unaccepted_redundancies.append({"gates": [k1, k2], "rho": rho})
+        logging.getLogger("optimizer").warning(
+            "[#667] Gate-Kollinearität: |ρ(%s, %s)|=%.3f > %.2f über %d Trials — die beiden "
+            "eligible-Gates kodieren mutmasslich redundant dieselbe latente Achse UND sind "
+            "UNENTSCHIEDEN (tournament.json['gate_collinearity_accepted_pairs'] enthält dieses "
+            "Paar nicht) — begründet akzeptieren oder konsolidieren (Pitfall #280).",
+            k1, k2, rho, threshold, result["n_samples"],
+        )
+    result["accepted_redundancies"] = accepted_redundancies
+    result["unaccepted_redundancies"] = unaccepted_redundancies
     return result
 
 
@@ -832,12 +893,19 @@ def gate_collinearity_redundancy_alarm(trial_gate_deltas: list, tournament_cfg: 
     active_keys = _active_gate_collinearity_keys(tournament_cfg)
     protected = _gate_consolidation_protected(tournament_cfg)
     candidate_keys = [k for k in active_keys if k not in protected]
+    # Issue #868 — ein bereits begründet AKZEPTIERTES Paar (tournament.json['gate_collinearity_
+    # accepted_pairs']) ist eine getroffene Entscheidung, kein offener Alarm: es darf nicht als
+    # redundant_candidate erscheinen (dieselbe "Entscheidung getroffen" Semantik, die die #667-
+    # Warnung in assert_gate_collinearity_guard in accepted_redundancies statt eine WARNING leitet).
+    accepted_pairs = _gate_collinearity_accepted_pairs(tournament_cfg)
     flags = _gate_pass_flags(trial_gate_deltas, candidate_keys)
     priority = {k: i for i, k in enumerate(_gate_consolidation_priority(tournament_cfg))}
     alarms = []
     redundant_candidates: dict[str, dict] = {}
     for i, k1 in enumerate(candidate_keys):
         for k2 in candidate_keys[i + 1:]:
+            if frozenset({k1, k2}) in accepted_pairs:
+                continue
             jaccard = _jaccard_of_pass_sets(flags[k1], flags[k2])
             if jaccard is None or jaccard <= jaccard_threshold:
                 continue
