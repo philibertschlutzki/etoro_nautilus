@@ -695,6 +695,13 @@ _REWARD_TERM_NUMERIC_KEYS = (
     "base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker",
 )
 
+# Issue #869 (P2, Katalog #866-#869, GitHub-Issue #760) — Terme, die von der INERT-Diagnose
+# ausgenommen sind, weil Inertheit für sie der ERWARTETE Normalzustand ist (siehe optimizer.json[
+# 'reward_term_variance_exempt']-Schema für die volle Begründung): ``tie_breaker`` ist per
+# Konstruktion nur bei Gleichständen entscheidungsrelevant. Pure-Funktions-Default — Aufrufer, die
+# das reale ``optimizer.json`` lesen können, übergeben den dortigen (Default identischen) Wert.
+_REWARD_TERM_VARIANCE_DEFAULT_EXEMPT = frozenset({"tie_breaker"})
+
 # Issue #764 — Zielkorridor je Term (Anteil an der SUMME aller Term-Varianzen, siehe
 # ``reward_term_variance_table``). Ein Term dauerhaft UNTER 0.02 traegt praktisch keine
 # unterscheidbare Information zur Reward-Landschaft bei (Kandidat fuer Entfernung); ein Term UEBER
@@ -718,7 +725,9 @@ def _eligible_reward_terms(trials: list[dict]) -> list[dict]:
     ]
 
 
-def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
+def reward_term_variance_table(trials: list[dict], *,
+                               exempt: frozenset | set = _REWARD_TERM_VARIANCE_DEFAULT_EXEMPT,
+                               ) -> list[dict[str, Any]]:
     """Issue #764 — die VOLLSTAENDIGE Varianz-Tabelle je Reward-Term fuer den #742-Report, statt nur
     der binaeren inert/nicht-inert-Klassifikation von ``check_reward_term_variance``: je Term
     ``std`` (Streuung ueber die eligible Kohorte) und ``var_contrib`` (Anteil der Term-VARIANZ an der
@@ -727,6 +736,12 @@ def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
     ausserhalb ``[0.02, 0.30]`` (Kandidaten fuer Entfernung bzw. Herunterskalierung, siehe #764 —
     die tatsaechliche Entscheidung braucht eine reale Kohorte, diese Tabelle liefert nur die Evidenz
     dafuer).
+
+    Issue #869 — ``exempt`` (``optimizer.json['reward_term_variance_exempt']``, Default
+    ``{'tie_breaker'}``) markiert Terme, fuer die ein niedriger ``var_contrib`` KEIN Entfernungs-
+    Kandidat ist (Inertheit ist ihr Normalzustand, siehe dortiges Schema) — ``in_target_corridor``
+    bleibt fuer sie unveraendert die reine Zahlen-Aussage, ``exempt=True`` macht explizit, dass ein
+    Wert ausserhalb des Korridors HIER keine Handlung erfordert.
 
     Leere Liste bei < 2 eligiblen Trials mit ``reward_terms`` (keine Varianz-Aussage moeglich,
     konsistent zu ``check_reward_term_variance``)."""
@@ -747,6 +762,7 @@ def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
             "std": round(variances[k] ** 0.5, 6),
             "var_contrib": round(var_contrib, 6),
             "in_target_corridor": bool(lo <= var_contrib <= hi),
+            "exempt": k in exempt,
         })
     return table
 
@@ -832,12 +848,19 @@ def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5
     )
 
 
-def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01) -> InvariantResult:
+def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01,
+                               exempt: frozenset | set = _REWARD_TERM_VARIANCE_DEFAULT_EXEMPT,
+                               ) -> InvariantResult:
     """Verallgemeinerung von ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621): statt einer
     einzelnen WARNING-Zeile pro inertem Term liefert diese Pruefung die VOLLSTAENDIGE Liste ueber
     alle eligiblen Trials einer Study. Ein Term gilt als inert, wenn seine Streuung < ``inert_ratio``
     der Streuung des Gesamt-Rewards ist — derselbe Schwellenwert wie das Original
     (``std_k < 0.01 * rew_std``).
+
+    Issue #869 — ``exempt`` (``optimizer.json['reward_term_variance_exempt']``, Default
+    ``{'tie_breaker'}``) nimmt Terme aus, fuer die Inertheit der ERWARTETE Normalzustand ist (siehe
+    dortiges Schema) — ein Tie-Breaker, der nur bei Gleichstaenden entscheidungsrelevant wird, ist
+    kein Symptom eines toten Reward-Terms.
 
     ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (je Trial ``oos_evaluated`` +
     ``reward_terms``), NICHT Optuna-``Trial``-Objekte — pure Funktion, synthetisch testbar."""
@@ -859,6 +882,8 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
     rew_std = statistics.pstdev(rew_vals)
     inert_terms = []
     for k in _REWARD_TERM_NUMERIC_KEYS:
+        if k in exempt:
+            continue
         vals = [float(t.get(k, 0.0)) for t in eligible_terms]
         std_k = statistics.pstdev(vals)
         if std_k < inert_ratio * rew_std:

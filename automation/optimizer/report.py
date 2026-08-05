@@ -517,9 +517,52 @@ def _study_record(proposal: dict, study,
         # Issue #764 — die vollstaendige Reward-Term-Varianz-Tabelle (var_contrib je Term gegen den
         # [0.02, 0.30]-Zielkorridor), statt nur der binaeren inert-Liste aus check_reward_term_
         # variance (Akzeptanzkriterium #764: "Report enthaelt die Term-Varianz-Tabelle je Study").
+        # Issue #869 — zusaetzlich Rohmaterial fuer die laufweite Aggregation (Median/p90 je Term
+        # UEBER ALLE Studies, siehe report._reward_term_variance_aggregate/cross_study).
         "reward_term_variance": _inv.reward_term_variance_table(trial_attrs),
     }
     return record, checks
+
+
+def _reward_term_variance_aggregate(studies_out: list[dict[str, Any]],
+                                    optimizer_cfg: dict | None = None) -> dict[str, Any]:
+    """Issue #869 (P2, Katalog #866-#869, GitHub-Issue #760) — Fix Punkt 1: die AGGREGIERTE
+    Reward-Term-Varianz-Tabelle über den VOLLSTÄNDIGEN Lauf (Median + p90 von ``var_contrib`` je
+    Term über alle Studies mit einer per-Study-Tabelle, #764/``report._study_record``), statt nur
+    der PER-STUDY-Aussage (die bei 462 Studies 462 einzelne Tabellen wäre, keine Lauf-Evidenz).
+
+    ``deactivation_candidate`` markiert einen NICHT ausgenommenen Term (``optimizer.json[
+    'reward_term_variance_exempt']``, Default ``{'tie_breaker'}``) mit ``p90(var_contrib) <
+    optimizer.json['reward_term_inert_p90_threshold']`` (Default 0.01) — der Issue-Text-Schwellenwert
+    für Fix Punkt 2 (explizite Gewicht-0.0-Deaktivierung). Diese Funktion liefert AUSSCHLIESSLICH die
+    Evidenz; sie ändert selbst KEIN Gewicht (siehe optimizer.json-Schema für die dokumentierte
+    Scope-Entscheidung — eine reale >= 50-Studies-Kohorte existiert in dieser Sandbox nicht)."""
+    import statistics as _stats
+    optimizer_cfg = optimizer_cfg or {}
+    exempt = set(optimizer_cfg.get("reward_term_variance_exempt") or ["tie_breaker"])
+    p90_threshold = float(optimizer_cfg.get("reward_term_inert_p90_threshold", 0.01))
+
+    per_term: dict[str, list[float]] = {}
+    for r in studies_out:
+        for row in r.get("reward_term_variance") or []:
+            per_term.setdefault(row["term"], []).append(row["var_contrib"])
+
+    terms: dict[str, Any] = {}
+    for term, values in per_term.items():
+        values_sorted = sorted(values)
+        n = len(values_sorted)
+        median = _stats.median(values_sorted)
+        p90_idx = max(0, min(n - 1, int(round(0.90 * (n - 1)))))
+        p90 = values_sorted[p90_idx]
+        is_exempt = term in exempt
+        terms[term] = {
+            "n_studies": n,
+            "median_var_contrib": round(median, 6),
+            "p90_var_contrib": round(p90, 6),
+            "exempt": is_exempt,
+            "deactivation_candidate": bool(not is_exempt and p90 < p90_threshold),
+        }
+    return {"p90_threshold": p90_threshold, "exempt": sorted(exempt), "terms": terms}
 
 
 def _budget_execution_summary(studies_out: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1095,6 +1138,10 @@ def _build_report(
             # im Katalog gefordert: die 44,2%/52,6%-Luecken dieses Katalogs waren nur ueber externe
             # Log-Rekonstruktion sichtbar).
             "budget_executed_fraction": _budget_execution_summary(studies_out),
+            # Issue #869 Fix Punkt 1 — Median/p90 von var_contrib je Reward-Term ueber den
+            # VOLLSTAENDIGEN Lauf (nicht nur je Study), als Evidenz-Grundlage fuer eine kuenftige
+            # Gewicht-0.0-Deaktivierung (siehe optimizer.json['reward_term_inert_p90_threshold']).
+            "reward_term_variance": _reward_term_variance_aggregate(studies_out, optimizer_cfg),
             # Issue #783 (Akzeptanzkriterium #5) — READY_FOR_PR und PROMOTE_GLOBAL_DEFAULT GETRENNT
             # gezaehlt: beide teilten vorher denselben String, ununterscheidbar in jeder
             # nachgelagerten Automatisierung, die auf "READY_FOR_PR" filtert.

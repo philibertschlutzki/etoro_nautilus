@@ -2180,6 +2180,18 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         term_aggregates["floor_clamped"] = sum(1 for t in eligible_terms if t.get("floor_clamped")) / n_el
 
         numeric_keys = ["base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker"]
+        # Issue #869 — Terme, fuer die Inertheit der Normalzustand ist (Default {'tie_breaker'}, das
+        # w_ret*oos_total_return-Tie-Breaking ist per Konstruktion nur bei Gleichstaenden
+        # entscheidungsrelevant) loesen KEINE REWARD_TERM_INERT-Warnung mehr aus (siehe
+        # optimizer.json-Schema fuer die volle Begruendung).
+        try:
+            _opt_path_reward = config_dir() / "optimizer.json"
+            _opt_cfg_reward = (json.loads(_opt_path_reward.read_text("utf-8"))
+                               if _opt_path_reward.exists() else {})
+        except Exception:
+            _opt_cfg_reward = {}
+        _reward_term_inert_exempt = set(
+            _opt_cfg_reward.get("reward_term_variance_exempt") or ["tie_breaker"])
 
         rew_vals = []
         for t in eligible_terms:
@@ -2209,7 +2221,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                 "var_contrib": var_contrib
             }
 
-            if std_k < 0.01 * rew_std:
+            if std_k < 0.01 * rew_std and k not in _reward_term_inert_exempt:
                 logging.getLogger("optimizer").warning("REWARD_TERM_INERT: %s", k)
 
     # Issue #770 — Budget-Ausfuehrungsgrad, dieselbe Berechnung wie ``report._study_record``.
