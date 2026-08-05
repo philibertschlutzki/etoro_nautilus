@@ -250,7 +250,9 @@ def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, prop
 
 
 def _study_record(proposal: dict, study,
-                  tournament_cfg: dict | None = None) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
+                  tournament_cfg: dict | None = None, *,
+                  guard_dominance_threshold: float | None = None,
+                  ) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
     """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743)."""
     trials = list(getattr(study, "trials", None) or []) if study is not None else []
     trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in trials]
@@ -379,9 +381,20 @@ def _study_record(proposal: dict, study,
         _inv.check_log_return_coherence(trial_attrs),
         # Issue #759 — Missing-Data-Sentinel-Kollaps-Regressionswächter (oos_win_rate).
         _inv.check_metric_sentinel_absence(trial_attrs),
-        # Issue #804 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus dem
-        # Backtest-Subprozess sind jetzt maschinell im #742-Report überprüfbar, nicht nur live geloggt.
+        # Issue #804/#886 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus
+        # dem Backtest-Subprozess sind jetzt maschinell im #742-Report überprüfbar, nicht nur live
+        # geloggt (seit #886 ohne die #863/#864-regulären dritten Ausgänge, siehe unten).
         _inv.check_inference_diagnostics_absent(trial_attrs),
+        # Issue #886 — ersetzt die reine Anwesenheit der #863/#864-regulären Ausgänge durch eine
+        # Konzentrationsprüfung (analog STUDY_GUARD_DOMINATED, #823), gegen den #885-Nenner
+        # n_trials_informative.
+        _inv.check_inference_diagnostics_concentration(
+            trial_attrs, n_trials_informative=study_user_attrs.get("n_trials_informative"),
+            **({"guard_dominance_threshold": guard_dominance_threshold}
+               if guard_dominance_threshold is not None else {})),
+        # Issue #885 Fix Punkt 3 — die fünf Trial-Kategorien (informativ/geprunt/unauswertbar/
+        # fehlgeschlagen/total) müssen die Trial-Menge disjunkt und vollständig zerlegen.
+        _inv.check_denominator_coherence(study_user_attrs),
     ]
 
     record = {
@@ -391,6 +404,13 @@ def _study_record(proposal: dict, study,
         "n_evaluable": n_evaluable,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,
+        # Issue #885 Fix Punkt 2 — n_trials_pruned/n_trials_unevaluable als GETRENNTE Telemetrie
+        # (vorher kollabierten beide in "nicht evaluiert"); n_trials_informative ist der EINE Nenner
+        # für Raten-Meldungen, die die tatsächlich verwertete Suche messen (#885/#886).
+        "n_trials_informative": study_user_attrs.get("n_trials_informative"),
+        "n_trials_pruned": study_user_attrs.get("n_trials_pruned"),
+        "n_trials_unevaluable": study_user_attrs.get("n_trials_unevaluable"),
+        "n_trials_failed": study_user_attrs.get("n_trials_failed"),
         # Issue #812 — SHA-256 ueber die effektiv wirksame Gate-Konfiguration dieser Study
         # (reward.selection_rule_fingerprint, gestempelt in run_optimization._emit_study_summary).
         # ``None`` fuer Studies aus einem Lauf vor #812 (rueckwaertskompatibel, analog seed_effective).
@@ -967,7 +987,10 @@ def _build_report(
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
     for proposal in proposals:
         study = _load_study_for_proposal(proposal)
-        record, checks = _study_record(proposal, study, tournament_cfg)
+        record, checks = _study_record(
+            proposal, study, tournament_cfg,
+            guard_dominance_threshold=float(
+                optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)))
         studies_out.append(record)
         study_label = f"{record['strategy']}/{record['symbol']}"
         all_checks.extend((study_label, c) for c in checks)

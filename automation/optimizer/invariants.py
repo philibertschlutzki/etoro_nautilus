@@ -669,12 +669,27 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     )
 
 
+# Issue #886 (Pitfall #276) — SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE sind SEIT
+# #863/#864 REGULÄRE dritte Ausgänge ("nicht messbar" ≠ "schlecht", der Trial wird korrekt geprunt
+# statt als negative Beobachtung gewertet) — ihre blosse ANWESENHEIT ist seither kein Defekt mehr,
+# nur noch ihre KONZENTRATION (siehe check_inference_diagnostics_concentration). Alle übrigen Codes
+# (allen voran EQUITY_NONPOSITIVE) bleiben echte Defekt-Indikatoren — ihre Abwesenheit ist weiterhin
+# die Norm.
+_REGULAR_THIRD_OUTCOME_CODES = frozenset({"SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE"})
+
+
 def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
-    """Issue #804 — sechster Regressionswächter: über die GESAMTE Study hinweg dürfen KEINE
-    strukturierten Inferenzpfad-Diagnosen (``EQUITY_NONPOSITIVE``, ``PERIOD_RETURNS_NOT_FINITE``,
+    """Issue #804/#886 — sechster Regressionswächter: über die GESAMTE Study hinweg dürfen KEINE
+    strukturierten Inferenzpfad-Diagnosen ausserhalb der #886-Ausnahmeliste
+    (``EQUITY_NONPOSITIVE``, ``PERIOD_RETURNS_NOT_FINITE``,
     ``RETURN_SERIES_IDENTITY_VIOLATION``/``_UNDEFINED``, ``NON_CONTIGUOUS_FOLD_SEGMENTS``,
-    ``SORTINO_GUARD_TRIPPED``, ``COHERENCE_INVARIANT_VIOLATION`` — aus ``backtest_runner.
-    _calculate_stats``, je Trial unter ``inference_diagnostics`` gestempelt, #804) aufgetreten sein.
+    ``COHERENCE_INVARIANT_VIOLATION`` — aus ``backtest_runner._calculate_stats``, je Trial unter
+    ``inference_diagnostics`` gestempelt, #804) aufgetreten sein.
+
+    Issue #886 — ``SORTINO_GUARD_TRIPPED``/``SORTINO_INSUFFICIENT_DOWNSIDE`` sind SEIT #863/#864
+    reguläre dritte Ausgänge (Pitfall #276) und daher NICHT mehr Teil dieser Abwesenheits-Prüfung
+    (ihre KONZENTRATION prüft ``check_inference_diagnostics_concentration`` stattdessen) — vorher
+    meldete dieser Wächter korrektes Verhalten als Fehler und trug zur Alarm-Gewöhnung (#884) bei.
 
     Root-Cause #804: diese Diagnosen liefen bislang NUR im Backtest-SUBPROZESS über ``logging`` —
     0 Treffer über ein vollstaendiges Lauf-Log trotz 35 ``STUDY_ABORTED_ON_INVARIANT`` im
@@ -689,7 +704,7 @@ def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
     for t in trials:
         for diag in t.get("inference_diagnostics") or ():
             code = diag.get("code") if isinstance(diag, dict) else None
-            if code:
+            if code and code not in _REGULAR_THIRD_OUTCOME_CODES:
                 total += 1
                 by_code[code] = by_code.get(code, 0) + 1
     passed = total == 0
@@ -704,9 +719,94 @@ def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
     )
 
 
+def check_inference_diagnostics_concentration(
+    trials: list[dict], *, n_trials_informative: int | None,
+    guard_dominance_threshold: float = 0.10,
+) -> InvariantResult:
+    """Issue #886 (Pitfall #276) — ersetzt die reine Anwesenheits-Prüfung für die #863/#864
+    "regulären dritten Ausgänge" (``SORTINO_GUARD_TRIPPED``/``SORTINO_INSUFFICIENT_DOWNSIDE``)
+    durch eine KONZENTRATIONS-Prüfung: FAIL, wenn eine Study mehr als
+    ``guard_dominance_threshold`` ihrer INFORMATIVEN Trials (Issue #885 — ``n_trials_informative``,
+    NICHT die rohe Trial-Zahl) an den Inferenzpfad verliert. Das ist dieselbe Bedingung wie
+    ``run_optimization._emit_study_summary``s ``STUDY_GUARD_DOMINATED`` — dieser Check macht sie
+    zusätzlich zu einer MASCHINELL überprüfbaren #742-Report-Aussage (analog
+    ``check_inference_diagnostics_absent``), nicht nur einer Live-Log-Zeile.
+
+    ``n_trials_informative is None`` (Legacy-Report ohne #885-Telemetrie) ⇒ nicht anwendbar
+    (PASS) — kein stiller Fallback auf eine potenziell falsche rohe Trial-Zahl."""
+    if n_trials_informative is None:
+        return InvariantResult(
+            name="check_inference_diagnostics_concentration",
+            passed=True,
+            expected=f"<= {guard_dominance_threshold:.0%} der informativen Trials mit "
+                     "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE",
+            actual=None,
+            detail="n_trials_informative unbekannt (Pre-#885-Report) — nicht anwendbar.",
+        )
+    affected = 0
+    for t in trials:
+        for diag in t.get("inference_diagnostics") or ():
+            code = diag.get("code") if isinstance(diag, dict) else None
+            if code in _REGULAR_THIRD_OUTCOME_CODES:
+                affected += 1
+                break
+    fraction = (affected / n_trials_informative) if n_trials_informative > 0 else 0.0
+    passed = fraction <= guard_dominance_threshold
+    return InvariantResult(
+        name="check_inference_diagnostics_concentration",
+        passed=passed,
+        expected=f"<= {guard_dominance_threshold:.0%} der informativen Trials mit "
+                 "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE",
+        actual=round(fraction, 4),
+        detail=("OK" if passed else
+                f"{affected}/{n_trials_informative} informative Trials ({fraction:.1%}) mit einem "
+                "regulären Inferenzpfad-Ausgang — die Suche ist faktisch zensiert (analog "
+                "STUDY_GUARD_DOMINATED, #823)."),
+    )
+
+
 # Issue #788 — dieselbe Sentinel-Frage wie #759 (dort nur oos_win_rate) gilt fuer JEDE OOS-Metrik,
 # die make_symbol_objective als Trial-User-Attr persistiert: ein nicht evaluierter Trial darf fuer
 # KEINE davon eine Beobachtung tragen. Deklarative Liste statt sechs Einzel-Wächtern.
+def check_denominator_coherence(study_counts: dict) -> InvariantResult:
+    """Issue #885 Fix Punkt 3 — FAIL, wenn ``n_trials_informative + n_trials_pruned +
+    n_trials_unevaluable + n_trials_failed != n_trials_total`` für eine Study
+    (``run_optimization._emit_study_summary`` stempelt alle fünf Zähler als Study-User-Attrs).
+
+    Ein disjunktes, vollständiges Zerlegen der Trial-Menge ist die Voraussetzung dafür, dass
+    ``n_trials_informative`` (statt der rohen Trial-Zahl) als EIN Nenner für alle Raten-Meldungen
+    (Budget-Ausführung, Plateau-Anteile, Guard-Dominanz) tragfähig ist — eine Lücke oder
+    Doppelzählung hier würde jede dieser Raten still verfälschen.
+
+    ``study_counts`` fehlen die #885-Zähler (Pre-#885-Report) ⇒ nicht anwendbar (PASS)."""
+    keys = ("n_trials_total", "n_trials_informative", "n_trials_pruned",
+            "n_trials_unevaluable", "n_trials_failed")
+    values = {k: study_counts.get(k) for k in keys}
+    if any(v is None for v in values.values()):
+        return InvariantResult(
+            name="check_denominator_coherence",
+            passed=True,
+            expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
+                     "n_trials_failed == n_trials_total",
+            actual=None,
+            detail="Zähler unbekannt (Pre-#885-Report) — nicht anwendbar.",
+        )
+    total = values["n_trials_total"]
+    parts_sum = (values["n_trials_informative"] + values["n_trials_pruned"]
+                 + values["n_trials_unevaluable"] + values["n_trials_failed"])
+    passed = parts_sum == total
+    return InvariantResult(
+        name="check_denominator_coherence",
+        passed=passed,
+        expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
+                 "n_trials_failed == n_trials_total",
+        actual=values,
+        detail=("OK" if passed else
+                f"Zerlegung ({parts_sum}) != n_trials_total ({total}): {values} — die #885-"
+                "Trial-Kategorien sind nicht disjunkt/vollständig."),
+    )
+
+
 _SENTINEL_GUARDED_METRIC_KEYS = (
     "oos_win_rate", "oos_profit_factor", "oos_expectancy", "oos_total_return",
     "oos_sortino", "oos_psr", "oos_sortino_period",
