@@ -101,6 +101,7 @@
     "oos_min_psr",
     "oos_min_expectancy",
     "oos_min_profitable_folds_frac",
+    "oos_min_profit_factor",
     "any_condition"
   ],
   "gate_consolidation_protected": ["min_trades", "max_drawdown"],
@@ -116,11 +117,10 @@
   "eligible_requires_all": [
     "min_trades",
     "max_drawdown",
-    "oos_min_psr"
-  ],
-  "eligible_requires_any": [
+    "oos_min_psr",
     "min_profit_factor"
   ],
+  "eligible_requires_any": [],
   "scoring": {
     "sortino_weight": 0.4,
     "profit_factor_weight": 0.3,
@@ -147,5 +147,12 @@
   "sortino_downside_floor": 1e-06,
   "fold_winsorize_lower": 0.05,
   "fold_winsorize_upper": 0.95,
-  "fold_profit_epsilon": 0.0005
+  "fold_profit_epsilon": 0.0005,
+  "sortino_numeric_guard_reference": "family_median",
+  "promotion_correction_mode": "conjunction",
+  "pbo_n_groups": 12,
+  "pbo_min_configs": 10,
+  "pbo_cluster_threshold": 0.99,
+  "profitable_folds_weighting": "equal",
+  "recency_halflife_folds": null
 }

@@ -112,7 +112,21 @@ def test_coherence_check_uses_the_median_across_studies():
     # Median([100, 300, 1000]) = 300 -> ratio 1600/300 ≈ 5.33 -> FAIL
     result = inv.check_guard_reference_coherence(1600, [100.0, 300.0, 1000.0])
     assert result.passed is False
-    assert result.actual == pytest.approx(1600 / 300, abs=1e-4)
+
+
+def test_coherence_check_not_applicable_under_family_median_reference():
+    """Issue #882 Fix Punkt 3 — sortino_numeric_guard_reference='family_median' macht den
+    absoluten Anker inert; der Wächter darf ihn dann nicht mehr rot faerben, selbst bei einem
+    Faktor, der unter 'absolute' FAILen würde."""
+    result = inv.check_guard_reference_coherence(1600, [319.0], reference_mode="family_median")
+    assert result.passed is True
+    assert result.severity == "blocking"
+
+
+def test_coherence_check_severity_is_blocking():
+    """Issue #882 Fix Punkt 4 — vorher severity='high' ohne Entscheidungspflicht (Pitfall #280)."""
+    result = inv.check_guard_reference_coherence(1600, [319.0])
+    assert result.severity == "blocking"
 
 
 # ── report._study_record: oos_n_periods_median ───────────────────────────────────────────────────

@@ -33,7 +33,12 @@ def test_shipped_config_moves_risk_adjusted_gate_to_requires_all():
     assert "min_psr" not in TCFG["eligible_requires_any"]
     # Issue #848 — min_win_rate wurde aus eligible_requires_any entfernt (5. Katalog derselben
     # Fehlerklasse: der Arm war ueber fuenf Laeufe strukturell unerreichbar).
-    assert set(TCFG["eligible_requires_any"]) == {"min_profit_factor"}
+    # Issue #888 — 'min_profit_factor' war danach das LETZTE Element von eligible_requires_any,
+    # eine Disjunktion ueber genau ein Element ist logisch identisch mit einer Konjunktions-Klausel
+    # (Pitfall #279) — es wurde nach eligible_requires_all verschoben, eligible_requires_any ist
+    # seither leer.
+    assert TCFG["eligible_requires_any"] == []
+    assert "min_profit_factor" in TCFG["eligible_requires_all"]
 
 
 def test_any_condition_parity_passes_for_shipped_config():

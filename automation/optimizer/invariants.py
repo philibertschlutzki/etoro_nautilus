@@ -237,10 +237,16 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
 
 def check_guard_reference_coherence(configured_min_periods: float | None,
                                     observed_n_periods_medians: list[float], *,
-                                    max_factor: float = 2.0) -> InvariantResult:
-    """Issue #862 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_guard_min_
+                                    max_factor: float = 2.0,
+                                    reference_mode: str | None = None) -> InvariantResult:
+    """Issue #862/#882 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_guard_min_
     periods']``-Referenzwert um mehr als ``max_factor`` vom über den Lauf beobachteten Median der
     tatsächlichen ``oos_n_periods``-Verteilung abweicht (in beide Richtungen).
+
+    Issue #882 Fix Punkt 3 — ``reference_mode == 'family_median'`` macht ``sortino_numeric_guard_
+    min_periods`` INERT (der Guard skaliert dann pro Study gegen den beobachteten Median, nicht
+    gegen diesen absoluten Anker, siehe ``backtest_runner._effective_sortino_numeric_guard``) — der
+    Wächter darf einen inerten Anker dann nicht mehr rot färben (PASS, nicht anwendbar).
 
     Root-Cause: ein Referenzwert, der gegen eine ABGELEITETE Grösse kalibriert wurde (hier:
     ``n_periods``, die informative Periodenzahl), wird ungültig, sobald die Definition dieser
@@ -252,6 +258,17 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     ``observed_n_periods_medians``: je Study der Median von ``oos_n_periods`` über ihre
     ``oos_evaluated``-Trials (``report._study_record``). Leer/``configured_min_periods is None``
     ⇒ nicht anwendbar (PASS)."""
+    if reference_mode == "family_median":
+        return InvariantResult(
+            name="check_guard_reference_coherence",
+            passed=True,
+            expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
+                     "beobachtetem Median(n_periods)",
+            actual=None,
+            severity="blocking",
+            detail="sortino_numeric_guard_reference='family_median' — sortino_numeric_guard_"
+                   "min_periods ist inert (Issue #882 Fix Punkt 3), nicht anwendbar.",
+        )
     if configured_min_periods is None or not observed_n_periods_medians:
         return InvariantResult(
             name="check_guard_reference_coherence",
@@ -259,6 +276,7 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
             expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
                      "beobachtetem Median(n_periods)",
             actual=None,
+            severity="blocking",
             detail="sortino_numeric_guard_min_periods nicht konfiguriert oder keine Studies mit "
                    "n_periods-Telemetrie — nicht anwendbar.",
         )
@@ -267,6 +285,7 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
         return InvariantResult(
             name="check_guard_reference_coherence", passed=True,
             expected=f"Faktor <= {max_factor}", actual=None,
+            severity="blocking",
             detail="beobachteter Median(n_periods) <= 0 — nicht anwendbar.",
         )
     ratio = configured_min_periods / observed_median
@@ -277,7 +296,10 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
         expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
                  "beobachtetem Median(n_periods)",
         actual=round(ratio, 4),
-        severity="high",
+        # Issue #882 Fix Punkt 4 — vorher severity='high' ohne Entscheidungspflicht (Pitfall #280);
+        # ein Guard, der gegen die falsche Groessenordnung ankert, zensiert die Suche systematisch
+        # (kein Hinweis, ein Abbruchgrund) — jetzt blocking und in fail_fast_invariants gelistet.
+        severity="blocking",
         detail=("OK" if passed else
                 f"sortino_numeric_guard_min_periods={configured_min_periods:g} vs. beobachteter "
                 f"Median(n_periods)={observed_median:g} (Faktor {ratio:.2g}) — der Referenzwert "
@@ -1060,29 +1082,75 @@ def check_selection_rule_homogeneity(selection_rule_families: dict[str, dict[str
 
 
 def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: int = 3) -> InvariantResult:
-    """Issue #841 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als ``max_age_runs``
-    abgeschlossenen Sweep-Läufen nicht abgedeckt wurde (niemals abgedeckt zählt als maximal alt).
+    """Issue #841/#892 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als
+    ``max_age_runs`` abgeschlossenen Sweep-Läufen nicht ERNEUT abgedeckt wurde (``stale``), ODER
+    ein Symbol AUSSERHALB der Bootstrap-Phase noch NIE abgedeckt wurde (``never_covered``).
     Konsumiert ``symbol_coverage.coverage_report`` (dasselbe Ledger, das
     ``sweep_symbol_order_policy='least_recently_covered'`` für die Dispatch-Reihenfolge nutzt) —
     macht eine Abdeckungslücke messbar, statt sie nur implizit über ``symbols_completed``/
-    ``symbols_planned``-Telemetrie erahnen zu lassen."""
+    ``symbols_planned``-Telemetrie erahnen zu lassen.
+
+    Issue #892 Fix Punkt 3/4 (Pitfall #287) — ``never_covered`` und ``stale_symbols`` sind ZWEI
+    verschiedene Zustände (ein nie abgedecktes Symbol hat kein "Alter" im Sinne von ``max_age_runs``
+    — der bisherige Code stempelte es fälschlich mit ``total_runs_started``, dem STALE-Text). Bei
+    ``len(universe)`` Symbolen braucht die ERSTE Vollabdeckung mehrere Läufe (Bootstrap-Phase,
+    ``coverage_report``s ``coverage_bootstrap_phase``) — währenddessen ist ``never_covered`` der
+    ERWARTETE Zustand (Telemetrie, kein FAIL); ``stale_symbols`` bleibt IMMER ein FAIL (ein bereits
+    abgedecktes Symbol, das die Rotation seither übersprungen hat, ist unabhängig von der
+    Bootstrap-Phase ein echter Befund)."""
     from automation.optimizer import symbol_coverage as _sc
     report = _sc.coverage_report(coverage, universe, max_age_runs=max_age_runs)
     stale = report.get("stale_symbols") or {}
     never = report.get("never_covered") or []
-    offenders = dict(stale)
-    for sym in never:
-        offenders.setdefault(sym, report.get("total_runs_started", 0))
+    bootstrap = bool(report.get("coverage_bootstrap_phase"))
+    never_offenders = [] if bootstrap else list(never)
+    offenders: dict[str, Any] = dict(stale)
+    for sym in never_offenders:
+        offenders[sym] = "never_covered"
     passed = not offenders
+    detail_parts: list[str] = []
+    if stale:
+        detail_parts.append(
+            f"{len(stale)} Symbol(e) seit mehr als {max_age_runs} Läufen nicht ERNEUT abgedeckt "
+            f"(stale, least_recently_covered-Rotation sollte das verhindern): {stale}")
+    if never_offenders:
+        detail_parts.append(
+            f"{len(never_offenders)} Symbol(e) noch NIE abgedeckt, ausserhalb der Bootstrap-Phase "
+            f"({report.get('total_runs_started', 0)} Läufe): {sorted(never_offenders)}")
+    if bootstrap and never:
+        detail_parts.append(
+            f"{len(never)} Symbol(e) noch nie abgedeckt, aber INNERHALB der Bootstrap-Phase "
+            "(Erstabdeckung des Universums läuft noch) — Telemetrie, kein FAIL.")
     return InvariantResult(
         name="check_symbol_coverage",
         passed=passed,
-        expected=f"<= {max_age_runs} Läufe seit letzter Abdeckung, für jedes Symbol im Universum",
+        expected=(f"<= {max_age_runs} Läufe seit letzter Abdeckung (stale) und kein Symbol "
+                  "ausserhalb der Bootstrap-Phase ohne jede Abdeckung (never_covered)"),
         actual=offenders if offenders else None,
         severity="high",
-        detail=("OK" if passed else
-                f"{len(offenders)} Symbol(e) seit mehr als {max_age_runs} Läufen nicht abgedeckt: "
-                f"{offenders} (Issue #841 — least_recently_covered-Rotation sollte das verhindern)."),
+        detail=" | ".join(detail_parts) if detail_parts else "OK",
+    )
+
+
+def check_coverage_ledger_continuity(total_runs_started: int, has_prior_reports: bool) -> InvariantResult:
+    """Issue #892 Fix Punkt 2 — FAIL (blocking), wenn ``total_runs_started == 1`` UND bereits
+    MINDESTENS ein früherer Lauf-Report existiert (``data/optimizer/reports/run_*.json``): das
+    Coverage-Ledger (``symbol_coverage.json``) wurde zwischen dem Vorlauf und diesem Lauf
+    zurückgesetzt/verloren — ein Datenverlust (achte Wiederkehr von Pitfall #237: #794, #796,
+    #797, #818, #831, #840, #856, hier), kein Normalzustand für einen Sweep, der nachweislich
+    nicht der allererste ist. Reine Funktion — der Aufrufer (``report._build_report``) ermittelt
+    ``has_prior_reports`` aus dem Report-Verzeichnis."""
+    offending = bool(has_prior_reports) and int(total_runs_started) == 1
+    return InvariantResult(
+        name="check_coverage_ledger_continuity",
+        passed=not offending,
+        expected="total_runs_started > 1, sobald mindestens ein früherer Lauf-Report existiert",
+        actual=total_runs_started,
+        severity="blocking",
+        detail=("OK" if not offending else
+                f"total_runs_started={total_runs_started}, obwohl bereits frühere Lauf-Reports "
+                "existieren — das Coverage-Ledger wurde zurückgesetzt/verloren (Pitfall #237, "
+                "achte Wiederkehr)."),
     )
 
 

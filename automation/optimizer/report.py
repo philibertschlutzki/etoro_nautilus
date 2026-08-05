@@ -610,6 +610,22 @@ def _symbol_coverage_summary(opt_data: dict) -> tuple[dict[str, Any], _inv.Invar
     return coverage, check
 
 
+def _coverage_ledger_continuity_check() -> _inv.InvariantResult:
+    """Issue #892 Fix Punkt 2 — ermittelt ``has_prior_reports`` aus ``REPORTS_DIR`` (mindestens ein
+    ``run_*.json`` existiert bereits — dieser Aufruf läuft VOR dem Schreiben des Reports DIESES
+    Laufs, siehe ``generate_sweep_report``, also spiegelt die Liste ausschliesslich frühere Läufe)
+    und ruft ``invariants.check_coverage_ledger_continuity`` gegen das aktuelle Ledger. Fail-open
+    (kein FAIL) bei jedem Lese-/Enumerationsfehler — ein Report darf wegen dieser Zusatzprüfung nie
+    crashen."""
+    try:
+        has_prior_reports = REPORTS_DIR.exists() and any(REPORTS_DIR.glob("run_*.json"))
+    except OSError:
+        has_prior_reports = False
+    ledger = _symbol_coverage.load_coverage()
+    return _inv.check_coverage_ledger_continuity(
+        ledger.get("total_runs_started", 0), has_prior_reports)
+
+
 def _champions_summary(opt_data: dict) -> dict[str, Any]:
     """Issue #818 (#742-Report-Zaehlerpaar) — ``cross_study.champions``:
     ``{stored, admissible, corroborated, written_back, skipped_by_reason}`` über den AKTUELLEN
@@ -1013,6 +1029,10 @@ def _build_report(
     symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
     all_checks.append(("global", symbol_coverage_check))
 
+    # Issue #892 Fix Punkt 2 — ein bei Laufbeginn auf 1 zurückgesetztes Coverage-Ledger, obwohl
+    # bereits frühere Lauf-Reports existieren, ist ein Datenverlust (achte Wiederkehr Pitfall #237).
+    all_checks.append(("global", _coverage_ledger_continuity_check()))
+
     # Issue #862 — der konfigurierte sortino_numeric_guard_min_periods-Referenzwert muss zur
     # tatsächlich beobachteten n_periods-Grössenordnung DIESES Laufs passen (Pitfall #274).
     _guard_min_periods = tournament_cfg.get("sortino_numeric_guard_min_periods")
@@ -1020,7 +1040,8 @@ def _build_report(
         r["oos_n_periods_median"] for r in studies_out if r.get("oos_n_periods_median")
     ]
     guard_reference_coherence_check = _inv.check_guard_reference_coherence(
-        _guard_min_periods, _observed_n_periods_medians)
+        _guard_min_periods, _observed_n_periods_medians,
+        reference_mode=tournament_cfg.get("sortino_numeric_guard_reference"))
     all_checks.append(("global", guard_reference_coherence_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren

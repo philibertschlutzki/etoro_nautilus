@@ -55,6 +55,11 @@ from automation.log_manager import (
 # run_status='aborted_invariant' zu waehlen.
 sweep_fail_fast_invariant: str | None = None
 
+# Issue #877 — (Strategie, Symbol)-Paare, die WAEHREND dieses Laufs wegen eines Fail-Fast-Offenders
+# mit ZU GERINGER Symbol-Streuung quarantänisiert (statt den Sweep abzubrechen) wurden. main() liest
+# dies, um run_status='completed_with_quarantine' von 'complete' zu unterscheiden.
+sweep_fail_fast_quarantined_pairs: list[tuple[str, str]] = []
+
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
     """Symbol-Universum aus data/universe/momentum_ls.json (robust gegen Dicts)."""
@@ -474,7 +479,9 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                             config: dict, latest_ts: dict[str, int | None] | None = None,
                             start_ns: int | None = None,
                             holdout_window_reach_target_ns: int | None = None,
-                            logger: logging.Logger | None = None) -> list[tuple[str, str, str]]:
+                            logger: logging.Logger | None = None,
+                            gate1_rejected_symbols: set[str] | None = None,
+                            ) -> list[tuple[str, str, str]]:
     """Enumeriert (strategy, symbol, 'OK')-Tripel.
 
     1. Symbol-Liste = ``symbols`` or ``load_symbol_universe()``.
@@ -488,6 +495,15 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
        ``latest_ts`` oder ``oos_window_start_ns`` (Default ``None``), bleibt das Preflight aus und
        das Verhalten ist bit-identisch zum Ist-Zustand (beide Symbole behalten).
     Ausgeschlossene Paare sind NICHT enthalten.
+
+    Issue #892 Fix Punkt 5 — ``gate1_rejected_symbols`` (optionales Output-Set, IN-PLACE befüllt,
+    Default ``None`` ⇒ bit-identisch) sammelt jedes Symbol, für das MINDESTENS ein
+    (Strategie, Symbol)-Paar an Gate 1 (``INSUFFICIENT_HISTORY``) scheiterte. Der Aufrufer
+    (``run_per_symbol_sweep``) markiert damit ein Symbol, dessen Paare AUSSCHLIESSLICH an Gate 1
+    scheitern (kein einziges ``'OK'``-Paar in der Rückgabe), im Coverage-Ledger als
+    ``covered_gate1`` (``symbol_coverage.mark_gate1_covered``) — es wurde nachweislich JEDEN Lauf
+    geprüft, nur strukturell nie optimiert, und darf ``check_symbol_coverage`` nicht dauerhaft rot
+    färben.
     """
     syms = symbols if symbols else load_symbol_universe()
     winners = load_tier_a_winners() if tier == "deployable" else {}
@@ -621,6 +637,8 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                         required_days=required_span_days(config.get("walk_forward") or {}),
                         symbol=symbol,
                     )
+                    if gate1_rejected_symbols is not None:
+                        gate1_rejected_symbols.add(symbol)
                 else:
                     # Issue #595 — ALLE drei is_symbol_tunable-Ablehnungsgründe loggen (vorher nur
                     # INSUFFICIENT_HISTORY; PARAM_DATA_RATIO_TOO_LOW und OOS_FOLD_TOO_SHORT waren still).
@@ -1336,10 +1354,16 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                         _agg["min_strategies"],
                     )
 
+    # Issue #892 Fix Punkt 5 — sammelt jedes Symbol mit MINDESTENS einer Gate-1-Ablehnung, damit
+    # ein Symbol, dessen Paare AUSSCHLIESSLICH an Gate 1 scheitern (unten: kein 'OK'-Paar), im
+    # Coverage-Ledger als 'covered_gate1' markiert werden kann, statt für check_symbol_coverage
+    # unsichtbar zu bleiben (es wird nachweislich JEDEN Lauf geprüft, nur nie optimiert).
+    _gate1_rejected_symbols: set[str] = set()
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
                                     latest_ts=latest_ts, start_ns=start_ns,
-                                    holdout_window_reach_target_ns=holdout_window_reach_target_ns)
+                                    holdout_window_reach_target_ns=holdout_window_reach_target_ns,
+                                    gate1_rejected_symbols=_gate1_rejected_symbols)
 
     # Issue #795 — Speicher-Preflight VOR dem ersten Trial: bricht mit einer konkreten
     # Handlungsempfehlung ab, wenn der GEPLANTE Lauf das Budget/den freien Platz übersteigen würde,
@@ -1418,6 +1442,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     _symbol_order_policy = opt_data.get("sweep_symbol_order_policy", "least_recently_covered")
     _coverage_ledger = symbol_coverage.load_coverage(path=_coverage_path)
     _coverage_ledger = symbol_coverage.start_new_run(_coverage_ledger)
+    # Issue #892 Fix Punkt 1 — SOFORT persistieren, nicht erst beim ersten abgeschlossenen Symbol
+    # (``_record_coverage`` unten): ``total_runs_started`` wurde bereits im Speicher erhöht, aber
+    # ein Lauf, der VOR dem ersten Symbolabschluss abbricht (Crash, Fail-Fast-Abbruch nach 0
+    # Symbolen, SIGTERM), verlor diesen Zähler bisher — der Folgelauf sah denselben Stand und
+    # begann wieder bei Symbol 1 der Universums-Reihenfolge (Pitfall #237, achte Wiederkehr).
+    try:
+        symbol_coverage.write_coverage(_coverage_ledger, path=_coverage_path)
+    except OSError:
+        logging.getLogger("optimizer").warning(
+            "[#892] Symbol-Coverage-Ledger (Laufbeginn) konnte nicht geschrieben werden "
+            "(non-fatal).", exc_info=True)
     # Issue #841 — EINMAL berechnet (nicht je Symbol — ``catalog_fingerprint`` durchläuft den
     # gesamten Daten-Katalog) und für alle Symbole dieses Laufs wiederverwendet.
     _coverage_data_snapshot_sha256 = catalog_fingerprint() if using_real_optimize else None
@@ -1432,6 +1467,27 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # test_issue_799_per_symbol_transaction.py) UND nuetzlich fuer einen HI-7-Dry-Run.
     if run_id is None:
         run_id = default_run_id()
+
+    # Issue #892 Fix Punkt 5 — ein Symbol, dessen Paare AUSSCHLIESSLICH an Gate 1 scheiterten (kein
+    # einziges 'OK'-Paar in pairs_by_symbol), wird im Coverage-Ledger als 'covered_gate1' markiert
+    # (mark_gate1_covered, zuvor Issue #841 Punkt 5 — implementiert, aber NULL Call-Sites) — es
+    # wurde nachweislich DIESEN Lauf geprüft, nur strukturell nie optimiert, und darf
+    # check_symbol_coverage nicht dauerhaft rot faerben.
+    _gate1_only_symbols = sorted(_gate1_rejected_symbols - set(pairs_by_symbol.keys()))
+    for _sym in _gate1_only_symbols:
+        _coverage_ledger = symbol_coverage.mark_gate1_covered(
+            _coverage_ledger, _sym, run_id=run_id,
+            run_index=_coverage_ledger.get("total_runs_started", 0),
+            completed_at_utc=dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+        )
+    if _gate1_only_symbols:
+        try:
+            symbol_coverage.write_coverage(_coverage_ledger, path=_coverage_path)
+        except OSError:
+            logging.getLogger("optimizer").warning(
+                "[#892] Gate-1-Coverage-Markierung konnte nicht geschrieben werden (non-fatal).",
+                exc_info=True)
+
     checkpoint_path = WORK / "sweep_progress.json"
     completed_symbols: set[str] = set()
     failed_pairs: list[dict] = []
@@ -1624,6 +1680,14 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     sweep_fail_fast_invariant = None
     _fail_fast_invariants = opt_data.get("fail_fast_invariants", ["check_holding_time_cap"]) or []
     _fail_fast_min_symbols = int(opt_data.get("fail_fast_min_symbols", 2))
+    # Issue #877 — die Evidenz-Streuung bestimmt die Reichweite der Konsequenz (Pitfall #282): ein
+    # Fail-Fast-Offender, der auf WENIGER als so viele verschiedene Symbole streut, quarantänisiert
+    # nur diese (Strategie, Symbol)-Paare (record_diagnosed_pair, "denylist") statt den gesamten
+    # Sweep abzubrechen. Erst Streuung über >= diese Anzahl Symbole ist eine Aussage über die
+    # BASISKLASSE (HourlyStrategyBase etc.), nicht mehr über ein einzelnes Symbol/dessen Datenlage.
+    _fail_fast_min_offending_symbols = int(opt_data.get("fail_fast_min_offending_symbols", 2))
+    global sweep_fail_fast_quarantined_pairs
+    sweep_fail_fast_quarantined_pairs = []
     # Issue #856 Fix Punkt 3 — ein Wächter, der zweimal in Folge nicht ausführbar ist, ist ein
     # Betriebsvorfall (Pitfall #270), keine wiederholte Randnotiz. Zähler zählt AUFEINANDER-
     # FOLGENDE Fehlschläge der Probe selbst (nicht: der Invariante FAILt — das ist der Erfolgsfall
@@ -1777,6 +1841,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         if (using_real_optimize and _fail_fast_invariants
                 and len(completed_symbols) >= _fail_fast_min_symbols
                 and sweep_fail_fast_invariant is None):
+            _probe_invariant_checks = None
             try:
                 from automation.optimizer import report as _report_probe_mod
                 # Issue #856 — Root-Cause: dieser Call-Site rief zuvor ``_build_report`` DIREKT mit
@@ -1787,8 +1852,9 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # ``build_probe_report`` ist der einzige externe Konsument von ``_build_report``
                 # neben ``generate_sweep_report`` selbst (Pitfall #269).
                 _probe_report = _report_probe_mod.build_probe_report(proposals, run_id=run_id)
+                _probe_invariant_checks = _probe_report.get("invariant_checks")
                 sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
-                    _probe_report.get("invariant_checks"), _fail_fast_invariants)
+                    _probe_invariant_checks, _fail_fast_invariants)
                 _fail_fast_probe_errors = 0
             except Exception:
                 _fail_fast_probe_errors += 1
@@ -1816,17 +1882,69 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                         "fort).", exc_info=True,
                     )
             if sweep_fail_fast_invariant is not None:
-                logging.getLogger("optimizer").error(
-                    "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) — Sweep bricht sofort "
-                    "ab (run_status=aborted_invariant), statt nach allen Symbolen spät zu "
-                    "scheitern.", sweep_fail_fast_invariant, len(completed_symbols),
-                )
-                emit_execution_event(
-                    logging.getLogger("optimizer"), "SWEEP_ABORTED_ON_FAIL_FAST_INVARIANT",
-                    {"check": sweep_fail_fast_invariant, "symbols_completed": len(completed_symbols)},
-                    level=logging.ERROR,
-                )
-                break
+                # Issue #877 — die Konsequenz gehört auf die Streuungsebene der Evidenz (Pitfall
+                # #282): erst ein Offender, der über >= _fail_fast_min_offending_symbols VERSCHIEDENE
+                # Symbole streut, ist eine Aussage über die Basisklasse (HourlyStrategyBase etc.) und
+                # rechtfertigt einen globalen Abbruch. Ein Offender auf WENIGER Symbolen ist eine
+                # Symbol-Aussage — das betroffene (Strategie, Symbol)-Paar wird quarantänisiert
+                # (record_diagnosed_pair, action='denylist'), der Sweep läuft weiter.
+                _offending_pairs, _offending_symbols = _offending_pairs_for_fail_fast_check(
+                    _probe_invariant_checks, sweep_fail_fast_invariant)
+                # Kein parsbarer (Strategie, Symbol)-Offender (Check ohne die "<strategy>/<symbol>"-
+                # actual-Konvention, z. B. ein global-scope-Check) ⇒ die Streuung ist nicht
+                # ermittelbar ⇒ konservativ global abbrechen (Pre-#877-Verhalten), statt eine
+                # unbekannte Struktur stillschweigend als "quarantänisierbar" zu werten.
+                if not _offending_pairs or len(_offending_symbols) >= _fail_fast_min_offending_symbols:
+                    logging.getLogger("optimizer").error(
+                        "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) auf %d "
+                        "verschiedenen Symbolen — Sweep bricht sofort ab "
+                        "(run_status=aborted_invariant), statt nach allen Symbolen spät zu "
+                        "scheitern.", sweep_fail_fast_invariant, len(completed_symbols),
+                        len(_offending_symbols),
+                    )
+                    emit_execution_event(
+                        logging.getLogger("optimizer"), "SWEEP_ABORTED_ON_FAIL_FAST_INVARIANT",
+                        {"check": sweep_fail_fast_invariant,
+                         "symbols_completed": len(completed_symbols),
+                         "offending_symbols": sorted(_offending_symbols),
+                         "offending_studies": _offending_pairs,
+                         "symbols_probed": len(completed_symbols)},
+                        level=logging.ERROR,
+                    )
+                    break
+                else:
+                    for _strat, _sym in sorted(_offending_pairs):
+                        record_diagnosed_pair({
+                            "strategy": _strat, "symbol": _sym, "action": "denylist",
+                            "binding_cause": "fail_fast_quarantine",
+                            "stop_reason": sweep_fail_fast_invariant,
+                            "symbol_quarantined_reason": (
+                                f"[#877] {sweep_fail_fast_invariant} FAILt symbol-lokal "
+                                f"({_offending_pairs.get((_strat, _sym))}) — keine ausreichende "
+                                f"Streuung ({len(_offending_symbols)} < "
+                                f"{_fail_fast_min_offending_symbols} Symbole) fuer einen globalen "
+                                "Abbruch."),
+                            "expires_after_runs": _DEFAULT_QUARANTINE_EXPIRES_AFTER_RUNS,
+                        }, work_dir=None, run_id=run_id)
+                        sweep_fail_fast_quarantined_pairs.append((_strat, _sym))
+                    logging.getLogger("optimizer").warning(
+                        "[#877] SYMBOL_QUARANTINED_ON_FAIL_FAST_INVARIANT: %s FAILt auf nur %d "
+                        "Symbol(en) (%s) — quarantänisiert statt Sweep abzubrechen, Lauf setzt "
+                        "fort.", sweep_fail_fast_invariant, len(_offending_symbols),
+                        sorted(_offending_symbols),
+                    )
+                    emit_execution_event(
+                        logging.getLogger("optimizer"), "SYMBOL_QUARANTINED_ON_FAIL_FAST_INVARIANT",
+                        {"check": sweep_fail_fast_invariant,
+                         "symbols_completed": len(completed_symbols),
+                         "offending_symbols": sorted(_offending_symbols),
+                         "offending_studies": _offending_pairs,
+                         "symbols_probed": len(completed_symbols)},
+                        level=logging.WARNING,
+                    )
+                    # Die Probe darf nach Quarantäne erneut urteilen, sobald weitere Symbole
+                    # abgeschlossen sind (Sweep läuft fort statt abzubrechen).
+                    sweep_fail_fast_invariant = None
 
     # Issue #415 — Per-Sweep-Summary (Wall-Clock + Umfang) als strukturiertes Event in die Datei
     # UND eine menschenlesbare Schlusszeile auf die Konsole (Operator sieht die Gesamtlaufzeit ohne
@@ -2096,6 +2214,12 @@ def main(argv: list[str] | None = None) -> list[Path]:
             run_status = "aborted_wallclock"
         elif disk_guard.sweep_abort_requested.is_set():
             run_status = "aborted_disk"
+        elif sweep_fail_fast_quarantined_pairs:
+            # Issue #877 — mindestens ein (Strategie, Symbol)-Paar wurde waehrend dieses Laufs
+            # quarantänisiert, statt den Sweep abzubrechen; das ist von einem regulaeren
+            # 'complete' unterscheidbar, ohne ein Abbruch-Symptom zu sein (die Symbol-Streuung
+            # der Evidenz war zu gering fuer einen globalen Abbruch, siehe check oben).
+            run_status = "completed_with_quarantine"
         elif args.resume is not None:
             # Issue #840 Punkt 6 — unterscheidet einen fortgesetzten Lauf von einem Ein-Schuss-Lauf
             # im #742-Report, OHNE den kompletten-Fall selbst zu aendern.
@@ -2209,6 +2333,42 @@ def _first_failing_fail_fast_invariant(invariant_checks: list[dict], fail_fast_i
         if chk.get("name") in fail_fast_invariants and not chk.get("passed", True):
             return chk.get("name")
     return None
+
+
+# Issue #877 — Ablauf-Frist eines quarantänisierten (Strategie, Symbol)-Paars (siehe
+# record_diagnosed_pair/_EXPIRES_AFTER_RUNS_BY_CAUSE) — nicht permanent, weil die Ursache eine
+# behebbare Datenlücke sein kann (siehe #881).
+_DEFAULT_QUARANTINE_EXPIRES_AFTER_RUNS = 10
+
+
+def _offending_pairs_for_fail_fast_check(
+    invariant_checks: list[dict] | None, check_name: str,
+) -> tuple[dict[tuple[str, str], object], set[str]]:
+    """Issue #877 — reine Entscheidungsfunktion: extrahiert die (Strategie, Symbol)-Offender EINES
+    benannten, FAILenden Fail-Fast-Checks aus dessen ``actual``-Feld. Die bisherigen Fail-Fast-Checks
+    (z. B. ``check_holding_time_cap``) stempeln ihre Offender als
+    ``{"<strategy>/<symbol>": <wert>}`` — dieselbe Konvention wird hier geparst. Ein Check ohne diese
+    Konvention (kein ``/`` im Key) liefert eine LEERE Symbolmenge — die Streuung ist dann per
+    Konstruktion nicht ermittelbar, und der Aufrufer muss (konservativ) global abbrechen, statt eine
+    unbekannte Struktur stillschweigend als "1 Symbol" zu werten.
+
+    Rückgabe: ``({(strategy, symbol): wert, ...}, {symbol, ...})``."""
+    pairs: dict[tuple[str, str], object] = {}
+    symbols: set[str] = set()
+    for chk in invariant_checks or []:
+        if chk.get("name") != check_name:
+            continue
+        actual = chk.get("actual")
+        if not isinstance(actual, dict):
+            return {}, set()
+        for key, value in actual.items():
+            if not isinstance(key, str) or "/" not in key:
+                return {}, set()
+            strategy, _, symbol = key.partition("/")
+            pairs[(strategy, symbol)] = value
+            symbols.add(symbol)
+        break
+    return pairs, symbols
 
 
 def _report_has_failing_invariant(report_path) -> bool:
