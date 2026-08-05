@@ -1276,7 +1276,36 @@ def generate_sweep_report(
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
     write_json_atomic(out_path, report)
+    # Issue #872 Fix Punkt 4 (P2, Katalog #870-#875, GitHub-Issue #761) — abgeleitetes,
+    # laufuebergreifend PERSISTENTES Artefakt (WORK-Top-Level, ueberlebt den #874-Purge wie
+    # symbol_coverage.json/diagnosed_pairs_cache.json — nur WORK/sweep/*.db UND WORK/<study_name>/
+    # trial_*/ werden gepurged, siehe purge_stale_studies.py): median/p90-Wallclock je Strategie
+    # (bereits als report['cross_study']['wallclock_by_strategy'] berechnet, #851) als eigene
+    # Datei, Eingabe fuer die #871-LPT-Terminplanung (dort noch nicht konsumiert, siehe dortiger
+    # Scope-Hinweis — dieses Artefakt ist unabhaengig davon bereits nuetzliche Telemetrie).
+    _write_pair_runtime_stats(report)
     return out_path
+
+
+def _write_pair_runtime_stats(report: dict, *, work_dir: Path | None = None) -> Path:
+    """Issue #872 Fix Punkt 4 — schreibt ``{WORK}/pair_runtime_stats.json`` (Median/p90-Wallclock je
+    Strategie, aus ``report['cross_study']['wallclock_by_strategy']``, #851) als eigenständiges,
+    laufuebergreifend lesbares Artefakt. Fail-open (kein Write) bei fehlender/unerwarteter
+    Report-Struktur — dieses Artefakt ist reine Zusatz-Telemetrie und darf einen erfolgreichen
+    Report-Lauf nie zum Scheitern bringen."""
+    try:
+        by_strategy = report["cross_study"]["wallclock_by_strategy"]
+    except (KeyError, TypeError):
+        return Path(work_dir or WORK) / "pair_runtime_stats.json"
+    path = Path(work_dir or WORK) / "pair_runtime_stats.json"
+    payload = {
+        "schema_version": 1,
+        "run_id": report.get("run_id"),
+        "generated_at_utc": now_utc_iso(),
+        "by_strategy": by_strategy,
+    }
+    write_json_atomic(path, payload)
+    return path
 
 
 def generate_report_for_run(
