@@ -235,6 +235,57 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
     )
 
 
+def check_guard_reference_coherence(configured_min_periods: float | None,
+                                    observed_n_periods_medians: list[float], *,
+                                    max_factor: float = 2.0) -> InvariantResult:
+    """Issue #862 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_guard_min_
+    periods']``-Referenzwert um mehr als ``max_factor`` vom über den Lauf beobachteten Median der
+    tatsächlichen ``oos_n_periods``-Verteilung abweicht (in beide Richtungen).
+
+    Root-Cause: ein Referenzwert, der gegen eine ABGELEITETE Grösse kalibriert wurde (hier:
+    ``n_periods``, die informative Periodenzahl), wird ungültig, sobald die Definition dieser
+    Grösse sich ändert (#823 hat sie von der vollen 24/7-Bar-Achse auf die informative Teilmenge
+    umgestellt — Faktor ~13,5 kleiner). #844 hat den Wert (1600) NIE gegen die neue Definition
+    nachgezogen; dieser Wächter hätte den Fehler nach dem ersten Symbol gemeldet, statt ihn erst
+    durch Rückrechnung aus 689 Log-Zeilen sichtbar werden zu lassen (Pitfall #274).
+
+    ``observed_n_periods_medians``: je Study der Median von ``oos_n_periods`` über ihre
+    ``oos_evaluated``-Trials (``report._study_record``). Leer/``configured_min_periods is None``
+    ⇒ nicht anwendbar (PASS)."""
+    if configured_min_periods is None or not observed_n_periods_medians:
+        return InvariantResult(
+            name="check_guard_reference_coherence",
+            passed=True,
+            expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
+                     "beobachtetem Median(n_periods)",
+            actual=None,
+            detail="sortino_numeric_guard_min_periods nicht konfiguriert oder keine Studies mit "
+                   "n_periods-Telemetrie — nicht anwendbar.",
+        )
+    observed_median = statistics.median(observed_n_periods_medians)
+    if observed_median <= 0:
+        return InvariantResult(
+            name="check_guard_reference_coherence", passed=True,
+            expected=f"Faktor <= {max_factor}", actual=None,
+            detail="beobachteter Median(n_periods) <= 0 — nicht anwendbar.",
+        )
+    ratio = configured_min_periods / observed_median
+    passed = (1.0 / max_factor) <= ratio <= max_factor
+    return InvariantResult(
+        name="check_guard_reference_coherence",
+        passed=passed,
+        expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
+                 "beobachtetem Median(n_periods)",
+        actual=round(ratio, 4),
+        severity="high",
+        detail=("OK" if passed else
+                f"sortino_numeric_guard_min_periods={configured_min_periods:g} vs. beobachteter "
+                f"Median(n_periods)={observed_median:g} (Faktor {ratio:.2g}) — der Referenzwert "
+                "ist gegen eine andere Grössenordnung kalibriert als der aktuelle Lauf zeigt "
+                "(Pitfall #274)."),
+    )
+
+
 def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     """Issue #652/#670-Regressionswächter.
 

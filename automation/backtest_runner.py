@@ -1818,33 +1818,67 @@ _sortino_mar_cache: float | None = None
 _max_drawdown_cap_cache: float | None = None
 _sortino_downside_floor_cache: float | None = None
 _psr_bootstrap_resamples_cache: int | None = None
-_sortino_min_downside_observations_cache: int | None = None
+_sortino_min_downside_observations_cache: float | None = None
+_sortino_min_periods_absolute_cache: int | None = None
 
 
-def _read_sortino_min_downside_observations() -> int:
-    """Issue #823 (Zero-Hardcoding) — Mindestzahl an DOWNSIDE-Beobachtungen (Perioden mit
+def _read_sortino_min_downside_observations() -> float:
+    """Issue #823/#863 (Zero-Hardcoding) — Mindestzahl an DOWNSIDE-Beobachtungen (Perioden mit
     ``return < mar`` auf der INFORMATIVEN Teilmenge, siehe ``_informative_period_returns``), bevor
     ``_calculate_stats`` einen Sortino/PSR berechnet. Root-Cause #823: eine Downside-Deviation aus
     zu wenigen negativen Beobachtungen ist ein degenerierter Nenner (numerisches Rauschen, kein
     Datenfehler) — die alte Fehlerklasse behandelte das ununterscheidbar vom Numerik-Guard
     (``SORTINO_GUARD_TRIPPED``). Unterschreitung ⇒ ``sortino=None`` mit dem EIGENEN Code
     ``SORTINO_INSUFFICIENT_DOWNSIDE`` (keine Verwechslung mit einem numerischen Ausreisser).
-    tournament.json['sortino_min_downside_observations']. Gecached (Hot-Path). Fehlt der Schlüssel
-    ⇒ 30 (Issue-#823-Vorschlag)."""
+
+    Issue #863 — dieselbe Fehlerklasse wie #862 (Referenzwert gegen eine ABGELEITETE Grösse, hier
+    ``n_periods``, kalibriert, deren Definition sich unter ihm geändert hat): der absolute Default
+    30 wurde VOR #823 gewählt, als ``n_periods`` noch die volle Bar-Achse war. Für hochselektive
+    Strategien (SqueezeBreakout, Median ~27 informative Perioden je OOS-Fenster) ist die Schwelle
+    seither STRUKTURELL unerreichbar — sie kann nicht durch bessere Parameter erfüllt werden, nur
+    durch häufigeres Handeln, was die Strategie definitionsgemäss nicht tut. Ein Wert in ``(0, 1]``
+    wird jetzt als Mindest-ANTEIL von ``n_periods`` interpretiert (analog #677s relativem
+    ``oos_min_evaluable_folds``) statt eines absoluten Zählers; ein Wert ``>= 1`` bleibt der
+    ABSOLUTE Zähler (Legacy). ``tournament.json['sortino_min_downside_observations']``. Gecached
+    (Hot-Path). Fehlt der Schlüssel ⇒ 0.5 (relativer #863-Default; der frühere absolute Default 30
+    bleibt über einen expliziten Wert >= 1 erreichbar)."""
     global _sortino_min_downside_observations_cache
     if _sortino_min_downside_observations_cache is not None:
         return _sortino_min_downside_observations_cache
-    val = 30
+    val = 0.5
     try:
         cfg_path = config_dir() / "tournament.json"
         if cfg_path.exists():
             with open(cfg_path, "r", encoding="utf-8") as f:
                 raw = json.load(f).get("sortino_min_downside_observations")
             if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 0.5
+    _sortino_min_downside_observations_cache = val
+    return val
+
+
+def _read_sortino_min_periods_absolute() -> int:
+    """Issue #863 — harte ABSOLUTE Untergrenze für JEDE Sortino-Schätzung
+    (``tournament.json['sortino_min_periods_absolute']``), unabhängig vom relativen
+    Downside-Anteil: selbst wenn ``downside_obs/n_periods`` die relative #863-Schwelle erfüllt,
+    ist eine Schätzung aus extrem wenigen informativen Perioden (z. B. ``n_periods=12``) keine
+    belastbare Grundlage. Gecached. Fehlt der Schlüssel ⇒ 20."""
+    global _sortino_min_periods_absolute_cache
+    if _sortino_min_periods_absolute_cache is not None:
+        return _sortino_min_periods_absolute_cache
+    val = 20
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_min_periods_absolute")
+            if raw is not None:
                 val = int(raw)
     except (OSError, ValueError, TypeError):
-        val = 30
-    _sortino_min_downside_observations_cache = val
+        val = 20
+    _sortino_min_periods_absolute_cache = val
     return val
 
 
@@ -2025,6 +2059,7 @@ _sortino_numeric_guard_cache: float | None = None
 _profit_factor_cap_cache: float | None = None
 _sortino_numeric_guard_min_periods_cache: float | None = None
 _sortino_numeric_guard_min_periods_cached: bool = False
+_sortino_numeric_guard_reference_mode_cache: str | None = None
 
 
 def _read_sortino_numeric_guard() -> float:
@@ -2073,23 +2108,83 @@ def _read_sortino_numeric_guard_min_periods() -> float | None:
     return val
 
 
-def _effective_sortino_numeric_guard(sortino_numeric_guard: float, n_periods: int) -> float:
-    """Issue #665 — T-bewusste Skalierung des Sortino-Numerik-Guards (opt-in, siehe
+def _read_sortino_numeric_guard_reference_mode() -> str:
+    """Issue #862 — ``tournament.json['sortino_numeric_guard_reference']`` ∈ {'absolute',
+    'family_median'}. Gecached. Unbekannter Wert ⇒ fail-loud (ValueError), analog anderen
+    Policy-Schaltern dieses Moduls (z. B. ``inference_failure_policy``)."""
+    global _sortino_numeric_guard_reference_mode_cache
+    if _sortino_numeric_guard_reference_mode_cache is not None:
+        return _sortino_numeric_guard_reference_mode_cache
+    mode = "absolute"
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_numeric_guard_reference")
+            if raw is not None:
+                mode = str(raw)
+    except (OSError, ValueError, TypeError):
+        mode = "absolute"
+    if mode not in ("absolute", "family_median"):
+        raise ValueError(
+            f"tournament.json['sortino_numeric_guard_reference']={mode!r} unbekannt — "
+            "erwartet 'absolute' oder 'family_median'.")
+    _sortino_numeric_guard_reference_mode_cache = mode
+    return mode
+
+
+def _effective_sortino_numeric_guard(
+    sortino_numeric_guard: float, n_periods: int, *, family_median_n_periods: float | None = None,
+) -> tuple[float, float | None, str]:
+    """Issue #665/#862 — T-bewusste Skalierung des Sortino-Numerik-Guards (opt-in, siehe
     ``_read_sortino_numeric_guard_min_periods``).
 
     Root-Cause: ein annualisierter Fold-Sortino bei kleinem Stichprobenumfang T (z. B. T≈137
     Bars/Fold) trägt eine enorme Schätz-Unsicherheit — |sortino_annualized| bis knapp unter dem
     fixen Guard (25.0) ist bei diesem T bereits Rauschen, nicht nur bei Verletzung des Guards. Die
     T-Skalierung senkt den effektiven Schwellenwert PROPORTIONAL zu ``sqrt(n_periods / min_periods)``
-    unterhalb der Referenzgrösse ``min_periods`` (typischerweise die pooled-OOS-Stichprobe, bei der
-    der Guard analytisch kalibriert wurde) — bei/über der Referenz bleibt der Schwellenwert exakt
-    ``sortino_numeric_guard`` (bit-identisch). Inaktiv (Rückgabe unverändert), solange
-    ``sortino_numeric_guard_min_periods`` nicht konfiguriert ist."""
+    unterhalb der Referenzgrösse ``min_periods`` — bei/über der Referenz bleibt der Schwellenwert
+    exakt ``sortino_numeric_guard`` (bit-identisch). Inaktiv (Rückgabe unverändert), solange
+    ``sortino_numeric_guard_min_periods`` nicht konfiguriert ist.
+
+    Issue #862 — Root-Cause des Referenzwert-Fehlers: ``sortino_numeric_guard_min_periods``
+    (1600) wurde gegen die PRE-#823-Definition von ``n_periods`` kalibriert (volle 24/7-Bar-Achse,
+    ≈4315), #823 hat ``n_periods`` aber auf die INFORMATIVE Teilmenge umdefiniert (beobachteter
+    Median ≈319 in einem Referenzlauf) — der konfigurierte Anker ist seither strukturell zu gross,
+    der Guard systematisch zu streng (Faktor ≈2,24 in besagtem Lauf).
+
+    ``sortino_numeric_guard_reference`` (tournament.json) steuert die Referenzquelle:
+    - ``'absolute'`` (Default) — bit-identisch zum Pre-#862-Verhalten, ``min_periods`` bleibt der
+      statische Konfigurationswert. Reproduktionsläufe bleiben damit deterministisch vergleichbar.
+    - ``'family_median'`` — die Referenz WÜRDE der Median von ``n_periods`` über die Familie
+      desselben Symbols sein. Scope-Entscheidung (dokumentiert, analog #843/#845-Zurückstellungen):
+      diese Funktion läuft in ``_calculate_stats`` INNERHALB eines isolierten Pro-Trial-
+      Subprozesses (siehe ``run_backtest``) — die Geschwister-Trials derselben Familie sind zum
+      Zeitpunkt DIESES Aufrufs nicht bekannt (Henne-Ei-Problem: der Guard entscheidet über den
+      Reward, den TPE für die Sampler-Wahl braucht, BEVOR irgendein Sibling-Trial fertig ist). Ein
+      echter ``family_median``-Modus erfordert, dass der Elternprozess (``run_optimization.py``)
+      den Median der bereits abgeschlossenen Sibling-Trials VOR dem Start eines neuen Trials
+      berechnet und über das Manifest in den Subprozess reicht — eine grössere, hier bewusst NICHT
+      umgesetzte Restrukturierung. ``family_median_n_periods`` ist der Injektionspunkt für diese
+      künftige Erweiterung (aktuell von keinem Aufrufer befüllt ⇒ Rückfall auf 'absolute').
+      ``invariants.check_guard_reference_coherence`` deckt die eigentliche #862-Regression
+      (Anker-Drift gegen die reale Verteilung) bereits als Report-Invariante ab, OHNE eine
+      Restrukturierung der Trial-Ausführung vorauszusetzen.
+
+    Rückgabe ``(effective_guard, guard_reference_value, guard_reference_source)`` — die beiden
+    letzten Werte sind #862-Telemetrie für ``SORTINO_GUARD_TRIPPED``-Events."""
+    mode = _read_sortino_numeric_guard_reference_mode()
     min_periods = _read_sortino_numeric_guard_min_periods()
+    if mode == "family_median" and family_median_n_periods is not None:
+        min_periods = float(family_median_n_periods)
+        source = "family_median"
+    else:
+        source = "absolute"
     if min_periods is None or n_periods is None or n_periods <= 0:
-        return sortino_numeric_guard
+        return sortino_numeric_guard, min_periods, source
     import math as _math
-    return sortino_numeric_guard * _math.sqrt(min(1.0, float(n_periods) / min_periods))
+    effective = sortino_numeric_guard * _math.sqrt(min(1.0, float(n_periods) / min_periods))
+    return effective, min_periods, source
 
 
 def _read_profit_factor_cap() -> float:
@@ -2514,23 +2609,54 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             if pd.isna(dd_dev):
                 return None, None, None, None, None, 0.0, 3.0, None, None
 
-            # Issue #823 Fix Punkt 2 — Mindestzahl an DOWNSIDE-Beobachtungen VOR jeder weiteren
-            # Berechnung: ein Nenner aus zu wenigen negativen Perioden ist ein degenerierter
-            # Schätzer (numerisches Rauschen), kein numerischer Ausreisser — eigener Code
-            # (SORTINO_INSUFFICIENT_DOWNSIDE), damit die Telemetrie beides unterscheidet.
+            # Issue #823 Fix Punkt 2 / #863 — Mindestzahl an DOWNSIDE-Beobachtungen VOR jeder
+            # weiteren Berechnung: ein Nenner aus zu wenigen negativen Perioden ist ein
+            # degenerierter Schätzer (numerisches Rauschen), kein numerischer Ausreisser — eigener
+            # Code (SORTINO_INSUFFICIENT_DOWNSIDE), damit die Telemetrie beides unterscheidet.
+            #
+            # Issue #863 — derselbe absolute Konstante 30 wurde VOR #823 gewählt (als n_periods
+            # noch die volle Bar-Achse war) und ist seither für hochselektive Strategien
+            # STRUKTURELL unerreichbar (SqueezeBreakout: Median downside_obs=24 bei Median
+            # n_periods=27 — fast alle informativen Perioden SIND Downside-Beobachtungen, der
+            # Nenner ist nicht degeneriert, die Stichprobe ist schlicht klein). Ein konfigurierter
+            # Wert in (0, 1] wird jetzt als Mindest-ANTEIL an n_periods interpretiert (Default 0.5
+            # — mindestens die Hälfte der informativen Perioden muss Downside sein); ein Wert >= 1
+            # bleibt der absolute Zähler (Legacy). sortino_min_periods_absolute (Default 20) ist
+            # eine davon UNABHÄNGIGE harte Untergrenze für jede Sortino-Schätzung.
             downside_obs = int((downside_diff < 0.0).sum())
-            min_downside_obs = _read_sortino_min_downside_observations()
-            if downside_obs < min_downside_obs:
+            min_periods_absolute = _read_sortino_min_periods_absolute()
+            if n_periods < min_periods_absolute:
                 import logging
                 logging.getLogger("optimizer").info(
-                    "SORTINO_INSUFFICIENT_DOWNSIDE: downside_obs=%d < %d (n_periods=%d) — "
-                    "Downside-Deviation-Nenner zu duenn besetzt, kein numerischer Ausreisser "
-                    "(#823; sortino/psr=None).",
-                    downside_obs, min_downside_obs, n_periods,
+                    "SORTINO_INSUFFICIENT_DOWNSIDE: n_periods=%d < sortino_min_periods_absolute=%d "
+                    "— Stichprobe zu klein fuer JEDE Sortino-Schaetzung (#863; sortino/psr=None).",
+                    n_periods, min_periods_absolute,
                 )
                 _inference_diagnostics.append({
                     "code": "SORTINO_INSUFFICIENT_DOWNSIDE",
-                    "detail": f"downside_obs={downside_obs} < {min_downside_obs} "
+                    "detail": f"n_periods={n_periods} < sortino_min_periods_absolute="
+                             f"{min_periods_absolute}.",
+                    "value": downside_obs,
+                })
+                return None, None, None, None, None, 0.0, 3.0, None, downside_obs
+            min_downside_obs_cfg = _read_sortino_min_downside_observations()
+            if 0.0 < min_downside_obs_cfg <= 1.0:
+                min_downside_obs = min_downside_obs_cfg * n_periods
+                threshold_desc = f"{min_downside_obs_cfg:.2f} * n_periods={n_periods:d}"
+            else:
+                min_downside_obs = min_downside_obs_cfg
+                threshold_desc = f"{min_downside_obs_cfg:g}"
+            if downside_obs < min_downside_obs:
+                import logging
+                logging.getLogger("optimizer").info(
+                    "SORTINO_INSUFFICIENT_DOWNSIDE: downside_obs=%d < %s (n_periods=%d) — "
+                    "Downside-Deviation-Nenner zu duenn besetzt, kein numerischer Ausreisser "
+                    "(#823/#863; sortino/psr=None).",
+                    downside_obs, threshold_desc, n_periods,
+                )
+                _inference_diagnostics.append({
+                    "code": "SORTINO_INSUFFICIENT_DOWNSIDE",
+                    "detail": f"downside_obs={downside_obs} < {threshold_desc} "
                              f"(n_periods={n_periods}).",
                     "value": downside_obs,
                 })
@@ -2565,9 +2691,10 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             # sortino UND psr fallen aus (kein extremer Fold-Artefakt passiert das Gate stumm).
             if pd.isna(sortino_annualized_v) or not np.isfinite(sortino_annualized_v):
                 return None, None, None, None, None, 0.0, 3.0, None, downside_obs
-            if abs(sortino_annualized_v) > _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods):
+            _eff_guard, _guard_ref_value, _guard_ref_source = _effective_sortino_numeric_guard(
+                sortino_numeric_guard, n_periods)
+            if abs(sortino_annualized_v) > _eff_guard:
                 import logging
-                _eff_guard = _effective_sortino_numeric_guard(sortino_numeric_guard, n_periods)
                 logging.getLogger("optimizer").warning(
                     "SORTINO_GUARD_TRIPPED: |sortino_annualized|=%.6g > guard=%.6g "
                     "(effective_guard=%.6g, n_periods=%d, dd_dev=%.6g) — als Datenfehler "
@@ -2579,6 +2706,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     "detail": f"|sortino_annualized|={sortino_annualized_v:.6g} > "
                              f"guard={_eff_guard:.6g} (n_periods={n_periods}, dd_dev={dd_dev:.6g}).",
                     "value": float(sortino_annualized_v),
+                    # Issue #862 — welcher Referenzwert/welche Quelle den effektiven Guard trieb.
+                    # Ohne diese Felder war die #862-Fehlkalibrierung nur durch Rückrechnung aus
+                    # Log-Zeilen erkennbar (689 Zeilen im Referenzlauf).
+                    "guard_reference_value": _guard_ref_value,
+                    "guard_reference_source": _guard_ref_source,
                 })
                 return None, None, None, None, None, 0.0, 3.0, None, downside_obs
 

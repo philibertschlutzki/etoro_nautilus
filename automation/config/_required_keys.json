@@ -3,8 +3,8 @@
   "_comment": "Issue #844 (Pitfall #267, 5. Wiederkehr nach #488/#753/#769/#805) — Config-Key-Registry-Preflight: ein Modul, das einen Key mit einem None/0-Fallback liest, dessen Abwesenheit den Mechanismus aber STILL DEAKTIVIERT (statt eines harmlosen Defaults), gehoert hier rein. sweep.main() prueft diese Registry VOR dem ersten Symbol (assert_required_config_keys_valid) — ein fehlender/verbotener Wert bricht den Lauf fail-loud ab, statt den Defekt erst nach einem vollen Lauf zu bemerken.",
   "tournament.json": {
     "sortino_numeric_guard": {"type": "number", "required": true},
-    "sortino_numeric_guard_min_periods": {"type": "number", "required": true},
-    "sortino_min_downside_observations": {"type": "integer", "required": true},
+    "sortino_numeric_guard_min_periods": {"type": "number", "required": true, "depends_on": ["n_periods_definition"]},
+    "sortino_min_downside_observations": {"type": "number", "required": true, "depends_on": ["n_periods_definition"]},
     "eligible_requires_all": {"type": "array", "required": true}
   },
   "optimizer.json": {

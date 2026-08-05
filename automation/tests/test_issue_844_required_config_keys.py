@@ -87,12 +87,14 @@ def test_ak3_real_config_activates_t_aware_guard():
 
     br._sortino_numeric_guard_min_periods_cache = None
     br._sortino_numeric_guard_min_periods_cached = False
+    br._sortino_numeric_guard_reference_mode_cache = None
     try:
-        assert br._effective_sortino_numeric_guard(25.0, 36) == pytest.approx(3.75, abs=1e-9)
-        assert br._effective_sortino_numeric_guard(25.0, 1600) == pytest.approx(25.0, abs=1e-9)
+        assert br._effective_sortino_numeric_guard(25.0, 36)[0] == pytest.approx(3.75, abs=1e-9)
+        assert br._effective_sortino_numeric_guard(25.0, 1600)[0] == pytest.approx(25.0, abs=1e-9)
     finally:
         br._sortino_numeric_guard_min_periods_cache = None
         br._sortino_numeric_guard_min_periods_cached = False
+        br._sortino_numeric_guard_reference_mode_cache = None
 
 
 def test_real_tournament_json_sets_the_key():

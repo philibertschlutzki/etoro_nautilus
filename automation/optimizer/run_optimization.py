@@ -161,12 +161,18 @@ def _reemit_inference_diagnostics(logger: logging.Logger, metrics, trial_number:
     hier nur ``trial_number`` zusaetzlich, das kein ambienter Kontext ist. No-Op, wenn
     ``metrics.inference_diagnostics`` leer ist (Normalfall, Pre-#804-JSONs eingeschlossen)."""
     for diag in metrics.inference_diagnostics or ():
-        emit_execution_event(logger, "INFERENCE_DIAGNOSTIC", {
+        payload = {
             "trial_number": trial_number,
             "code": diag.get("code"),
             "detail": diag.get("detail"),
             "value": diag.get("value"),
-        }, level=logging.ERROR)
+        }
+        # Issue #862 — zusätzliche Referenzwert-Telemetrie auf SORTINO_GUARD_TRIPPED-Diagnosen
+        # (siehe backtest_runner._effective_sortino_numeric_guard) unverändert durchreichen.
+        if "guard_reference_value" in diag:
+            payload["guard_reference_value"] = diag.get("guard_reference_value")
+            payload["guard_reference_source"] = diag.get("guard_reference_source")
+        emit_execution_event(logger, "INFERENCE_DIAGNOSTIC", payload, level=logging.ERROR)
 
 
 def _stop_study_safely(study, logger: logging.Logger) -> None:
@@ -2614,6 +2620,31 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trades_constraint = min_trades - metrics.oos_total_trades
             dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
             trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
+
+        # Issue #864 (Pitfall #276) — "nicht messbar" ist nicht "schlecht". Ein Trial mit
+        # SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE/EQUITY_NONPOSITIVE erhält bislang
+        # denselben Reward-Floor wie ein Trial, der NIE gehandelt hat — der TPE-Surrogat lernt
+        # daraus "Region X ist maximal schlecht", obwohl die korrekte Aussage "Region X ist mit den
+        # aktuellen Schätzern nicht messbar" lautet (FlashCrashReversal/SqueezeBreakout: 1172 von
+        # ~33000 Trials eines Referenzlaufs betroffen, davon 627 auf eine einzige Strategie
+        # konzentriert). ``inference_failure_policy='prune'`` (Default) nutzt stattdessen Optunas
+        # nativen dritten Ausgang (``TrialPruned`` ⇒ ``TrialState.PRUNED``) — TPE ignoriert geprunte
+        # Trials bei der Posterior-Bildung korrekt, statt sie als negative Beobachtung zu werten.
+        # ``'floor'`` bleibt für Reproduktionsläufe bit-identisch zum Pre-#864-Verhalten.
+        _inference_failure_policy = opt_data.get("inference_failure_policy", "prune")
+        if _inference_failure_policy not in ("floor", "prune"):
+            raise ValueError(
+                f"optimizer.json['inference_failure_policy']={_inference_failure_policy!r} "
+                "unbekannt — erwartet 'floor' oder 'prune'.")
+        _inference_failure_codes = {
+            "SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE", "EQUITY_NONPOSITIVE"}
+        _triggered_codes = sorted({
+            d.get("code") for d in (metrics.inference_diagnostics or ())
+        } & _inference_failure_codes)
+        if _inference_failure_policy == "prune" and _triggered_codes:
+            trial.set_user_attr("trial_pruned_inference_codes", _triggered_codes)
+            raise optuna.TrialPruned(
+                f"[#864] inference_failure_policy='prune': {_triggered_codes}")
         return reward
     return objective
 

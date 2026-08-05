@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -258,6 +259,13 @@ def _study_record(proposal: dict, study,
     n_evaluable = sum(1 for a in trial_attrs if a.get("oos_evaluated") is True)
     n_eligible = sum(1 for a in trial_attrs if a.get("oos_eligible") is True)
     p_eligible = round(n_eligible / n_trials, 4) if n_trials else 0.0
+    # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
+    # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
+    _n_periods_values = [
+        a["oos_n_periods"] for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_n_periods")
+    ]
+    oos_n_periods_median = statistics.median(_n_periods_values) if _n_periods_values else None
     coherence_violations = sum(1 for a in trial_attrs if a.get("oos_coherence_violation") is True)
     # Issue #804 — Aggregat je Study: wie oft jeder strukturierte Inferenzpfad-Diagnose-Code
     # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
@@ -439,6 +447,8 @@ def _study_record(proposal: dict, study,
         # Issue #861 — Verteilung der Deckel-Referenzquelle (sampled/default/global) über die
         # ausgewerteten Trials dieser Study.
         "timebox_cap_source_counts": timebox["timebox_cap_source_counts"],
+        # Issue #862 — Rohmaterial für den globalen check_guard_reference_coherence-Wächter.
+        "oos_n_periods_median": oos_n_periods_median,
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -1002,6 +1012,16 @@ def _build_report(
     # covered-Rotation, siehe symbol_coverage.py).
     symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
     all_checks.append(("global", symbol_coverage_check))
+
+    # Issue #862 — der konfigurierte sortino_numeric_guard_min_periods-Referenzwert muss zur
+    # tatsächlich beobachteten n_periods-Grössenordnung DIESES Laufs passen (Pitfall #274).
+    _guard_min_periods = tournament_cfg.get("sortino_numeric_guard_min_periods")
+    _observed_n_periods_medians = [
+        r["oos_n_periods_median"] for r in studies_out if r.get("oos_n_periods_median")
+    ]
+    guard_reference_coherence_check = _inv.check_guard_reference_coherence(
+        _guard_min_periods, _observed_n_periods_medians)
+    all_checks.append(("global", guard_reference_coherence_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
     # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,

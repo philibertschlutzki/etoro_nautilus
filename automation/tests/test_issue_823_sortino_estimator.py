@@ -88,11 +88,20 @@ def test_sufficient_downside_observations_computes_sortino():
     assert stats["sortino_ratio"] is not None
 
 
-def test_default_min_downside_observations_is_30(tmp_path, monkeypatch):
+def test_default_min_downside_observations_is_now_relative(tmp_path, monkeypatch):
+    """Issue #863 — der absolute Default 30 war fuer hochselektive Strategien strukturell
+    unerreichbar; der neue Default ist ein relativer Anteil (0.5) von n_periods."""
     import automation.backtest_runner as br
     monkeypatch.setattr(br, "_sortino_min_downside_observations_cache", None)
     monkeypatch.setattr(br, "config_dir", lambda: tmp_path)
-    assert br._read_sortino_min_downside_observations() == 30
+    assert br._read_sortino_min_downside_observations() == 0.5
+
+
+def test_default_min_periods_absolute_is_20(tmp_path, monkeypatch):
+    import automation.backtest_runner as br
+    monkeypatch.setattr(br, "_sortino_min_periods_absolute_cache", None)
+    monkeypatch.setattr(br, "config_dir", lambda: tmp_path)
+    assert br._read_sortino_min_periods_absolute() == 20
 
 
 # ── Informative-Teilmenge ändert n_periods (Telemetrie) ─────────────────────────────────────────

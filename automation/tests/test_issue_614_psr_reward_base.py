@@ -99,7 +99,8 @@ def test_extreme_annualized_sortino_trips_guard(caplog):
     # Numerik-Guard (SORTINO_GUARD_TRIPPED), nicht die #823-Mindest-Downside-Stichprobe (die bei
     # exakt 0 Beobachtungen zuerst griffe, mit einem eigenen, hier nicht erwarteten Code).
     with caplog.at_level(logging.WARNING, logger="optimizer"), \
-         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0):
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0):
         stats = br._calculate_stats(pnls, holds, 1000.0, mtm_series=series, min_trades_for_sortino=10)
     assert stats["sortino_ratio"] is None
     assert stats["psr"] is None
