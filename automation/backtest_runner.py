@@ -517,12 +517,26 @@ def _evaluate_oos_eligibility(oos_metrics: dict | None, tournament_cfg: dict, st
         effective_expectancy_gate = req_exp
 
     n_trades = oos_metrics.get("total_trades", 0) if oos_metrics else 0
-    if n_trades <= 0:
+    # Issue #859 Fix Punkt 4 — ein terminal unrecoverabler Markt-Close (HourlyStrategyBase.
+    # _handle_exit_close_order_failure, >= exit_close_max_retries vergebliche Versuche) macht den
+    # Trial ungültig, UNABHÄNGIG davon, wie viele Trades vor dem Stillstand ausgeführt wurden — die
+    # Simulation hielt danach eine Position, die der Handelsvertrag nie vorsah. Dieser Check läuft
+    # HIER (statt nur additiv in ``oos_metrics``), damit BEIDE Konsumenten (Per-Symbol-Kandidat UND
+    # die Portfolio-Aggregation, deren ``avg_oos`` die Diagnose separat mitführt) denselben
+    # Ausgang sehen, statt dass die Aggregation die Invalidierung eines einzelnen Symbols verliert.
+    _exit_close_unrecoverable = any(
+        d.get("code") == "EXIT_CLOSE_UNRECOVERABLE" for d in (oos_metrics.get("inference_diagnostics") or [])
+    ) if oos_metrics else False
+    if n_trades <= 0 or _exit_close_unrecoverable:
+        reason = ("oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."
+                  if n_trades <= 0 else
+                  "oos_not_evaluable: EXIT_CLOSE_UNRECOVERABLE -- terminal unrecoverabler "
+                  "Markt-Close (#859).")
         return {
             "oos_evaluated": False,
             "oos_eligible": False,
             "oos_metrics": None,
-            "oos_rejection_reasons": ["oos_not_evaluable: Kein oder zu wenig OOS-Datenmaterial (total_trades <= 0)."],
+            "oos_rejection_reasons": [reason],
             # Issue #554 — schemastabil: leeres numerisches Delta-Dict auch im Not-Evaluated-Fall.
             "oos_gate_deltas": {},
             "effective_expectancy_gate": effective_expectancy_gate,
@@ -3807,6 +3821,24 @@ def select_winners(
                     winner_strat_params = r.get("strat_params", {})
                     break
 
+            # Issue #859 Fix Punkt 4 — die Portfolio-Aggregation baut ``avg_oos`` frisch aus den
+            # gepoolten Trades (``_calculate_stats``); ein je-Symbol ``inference_diagnostics``-
+            # Eintrag (z. B. ``EXIT_CLOSE_UNRECOVERABLE``, HourlyStrategyBase.
+            # _handle_exit_close_order_failure via run_single_backtest_worker) würde hier sonst
+            # spurlos verschwinden. Vor dem Eligibility-Aufruf angehängt, damit
+            # ``_evaluate_oos_eligibility`` (EINE Prüfstelle für beide Konsumenten, siehe dort)
+            # dieselbe Invalidierung sieht wie der Per-Symbol-Kandidatenpfad.
+            avg_oos["inference_diagnostics"] = [
+                diag for oos in best_results for diag in (oos.get("inference_diagnostics") or [])
+            ]
+
+            # Use strat_params from the first result matching the winning strategy
+            winner_strat_params = {}
+            for r in is_eligible_population:
+                if r["strategy"] == best:
+                    winner_strat_params = r.get("strat_params", {})
+                    break
+
             # Normalize metrics before gating to avoid the "Trade-Sum Trap"
             avg_oos_for_gate = avg_oos.copy()
             if n_res > 0:
@@ -4468,6 +4500,22 @@ def run_single_backtest_worker(
             metrics = {}
         if oos_metrics is None or not isinstance(oos_metrics, dict):
             oos_metrics = {}
+
+        # Issue #859 Fix Punkt 4 — ein terminal unrecoverabler Markt-Close (>= exit_close_max_retries
+        # abgelehnte/verweigerte Versuche, siehe HourlyStrategyBase._handle_exit_close_order_failure)
+        # markiert den Trial als ungueltig statt eine offene Position still durch das gesamte
+        # Fenster zu tragen — derselbe strukturierte Rueckkanal (oos_metrics['inference_diagnostics'])
+        # wie COHERENCE_INVARIANT_VIOLATION oben. ``strategy`` ist die soeben mit engine.run()
+        # ausgefuehrte Instanz (noch in Scope, kein zusaetzlicher Cache-Zugriff noetig).
+        if getattr(strategy, "_exit_close_unrecoverable", False):
+            oos_metrics["oos_evaluated"] = False
+            oos_metrics.setdefault("inference_diagnostics", []).append({
+                "code": "EXIT_CLOSE_UNRECOVERABLE",
+                "detail": f"{getattr(strategy, '_exit_close_retries', 0)} vergebliche "
+                         "Markt-Close-Versuche (rejected/denied) -- Trial als ungueltig markiert "
+                         "statt einer still durchgehaltenen offenen Position.",
+                "value": getattr(strategy, "_exit_close_retries", None),
+            })
 
         if round_trip_cost_bps is not None:
             metrics["round_trip_cost_bps"] = round_trip_cost_bps

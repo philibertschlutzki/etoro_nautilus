@@ -130,7 +130,10 @@ def test_ak2_trailing_stop_monotonically_nondecreasing_through_stalled_exit(stra
     from automation.strategies.hourly_strategy_base import ExitReason
     strategy._exit_pending_kind = ExitReason.TRAILING_STOP
     strategy._exit_pending_bars = 0
-    strategy._exit_market_close_submitted = True  # Close bereits abgesetzt, wartet auf Fill
+    # Issue #859 — ersetzt das vorherige Boolean-Flag: die Order-ID ist gesetzt UND
+    # mock_cache.order(...) liefert eine (per Default truthy) MagicMock mit .is_open -> der
+    # Watchdog behandelt das wie "Close bereits abgesetzt, wartet auf Fill".
+    strategy._exit_market_close_order_id = "O-MARKET"
 
     # Ein harter Preis-Einbruch waehrend der Wartezeit darf den (hoeheren) Trailing-Stop NICHT
     # auf einen neu verankerten, niedrigeren Wert zuruecksetzen (das war der #837-Bug: der

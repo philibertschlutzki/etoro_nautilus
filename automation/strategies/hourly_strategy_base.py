@@ -78,6 +78,9 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # Issue #836 — Bars, die der Watchdog wartet, bevor er einen ausgelösten, aber nie bestätigten
     # Exit (Cancel/Fill/Reject-Event blieb aus) mit einem erzwungenen Markt-Close abschliesst.
     exit_close_max_bars: int = 2
+    # Issue #859 — Obergrenze vergeblicher Markt-Close-Versuche (rejected/denied), bevor der Trial
+    # terminal unrecoverable gilt (statt eine offene Position endlos erneut zu versuchen).
+    exit_close_max_retries: int = 3
     # Issue #712 (Req-02+Req-03, opt-in) — vereinheitlichtes dynamisches Take-Profit-Modell,
     # in der Basisklasse für alle 15 Strategien verfügbar. Default False ⇒ bit-identische
     # Regression (der statische profit_target_pct-Pfad bleibt unverändert erhalten).
@@ -243,7 +246,17 @@ class HourlyStrategyBase(Strategy):
         self._exit_pending: str | None = None
         self._exit_pending_kind: "ExitReason | None" = None
         self._exit_pending_bars: int = 0
-        self._exit_market_close_submitted: bool = False
+        # Issue #859 — ersetzt das vorherige Boolean-Flag ``_exit_market_close_submitted`` (gesetzt
+        # beim ABSENDEN, nur bei Erfolg geräumt — ein abgelehnter/verweigerter Close entwaffnete den
+        # Watchdog dann DAUERHAFT, Pitfall #273). Der Watchdog gilt jetzt als entwaffnet, solange
+        # DIESE Order (per ID) im Cache offen ist, nicht ab dem blossen Absenden.
+        self._exit_market_close_order_id = None
+        # Issue #859 Fix Punkt 4 — Obergrenze vergeblicher Markt-Close-Versuche (rejected/denied),
+        # bevor der Trial als terminal unrecoverable gilt (statt eine offene Position endlos erneut
+        # zu versuchen).
+        self._exit_close_retries: int = 0
+        self._exit_close_unrecoverable: bool = False
+        self._exit_close_max_retries = max(1, int(getattr(config, "exit_close_max_retries", None) or 3))
         self._max_bars_in_trade = getattr(config, "max_bars_in_trade", None)
         if self._max_bars_in_trade is None:
             self._max_bars_in_trade = DEFAULT_MAX_BARS_IN_TRADE
@@ -550,7 +563,8 @@ class HourlyStrategyBase(Strategy):
             self._exit_pending = None
             self._exit_pending_kind = None
             self._exit_pending_bars = 0
-            self._exit_market_close_submitted = False
+            self._exit_market_close_order_id = None
+            self._exit_close_retries = 0
             self._pending_cancels.clear()
             return False
 
@@ -638,7 +652,8 @@ class HourlyStrategyBase(Strategy):
             self._exit_pending = exit_reason
             self._exit_pending_kind = exit_kind
             self._exit_pending_bars = 0
-            self._exit_market_close_submitted = False
+            self._exit_market_close_order_id = None
+            self._exit_close_retries = 0
             self._close_position_base(pos)
             return True
 
@@ -652,9 +667,25 @@ class HourlyStrategyBase(Strategy):
     def _exit_close_watchdog(self, bar: Bar) -> None:
         """Issue #836 — erzwingt den Markt-Close, falls seit dem Auslösen des Exits
         `exit_close_max_bars` Bars vergangen sind, ohne dass eine Cancel/Fill/Reject-Bestätigung
-        `_execute_market_close()` bereits ausgelöst hat. Fail-loud statt still hängen."""
-        if self._exit_market_close_submitted:
+        `_execute_market_close()` bereits ausgelöst hat. Fail-loud statt still hängen.
+
+        Issue #859 — der Watchdog gilt als entwaffnet, SOLANGE die zuletzt abgesendete Markt-Close-
+        Order (per ID) im Cache noch offen ist (``order.is_open``) — nicht ab dem blossen Absenden
+        (vorher: ``_exit_market_close_submitted`` wurde beim Absenden gesetzt und nur bei
+        erfolgreicher Bestätigung geräumt; ein abgelehnter/verweigerter Close entwaffnete den
+        Watchdog dann DAUERHAFT, Pitfall #273 — die Position blieb bis zum Datenende offen). Ein
+        abgelehnter/verweigerter Versuch räumt ``_exit_market_close_order_id`` in
+        ``on_order_rejected``/``on_order_denied``, sodass der Watchdog hier erneut auslöst."""
+        if self._exit_close_unrecoverable:
             return
+        if self._exit_market_close_order_id is not None:
+            order = self.cache.order(self._exit_market_close_order_id)
+            if order is not None and order.is_open:
+                return
+            # Order nicht mehr offen, aber kein Callback hat die ID geräumt (sollte durch die
+            # on_order_rejected/on_order_denied-Zweige unten nicht vorkommen) — fail-safe räumen,
+            # damit der Watchdog nicht dauerhaft blockiert bleibt.
+            self._exit_market_close_order_id = None
         self._exit_pending_bars += 1
         if self._exit_pending_bars < self._exit_close_max_bars:
             return
@@ -701,12 +732,6 @@ class HourlyStrategyBase(Strategy):
                 return
             pos = positions[0]
 
-        # Issue #836 — sobald der Markt-Close tatsächlich abgesetzt wird, ist das Fortsetzungs-Token
-        # dieses Exit-Versuchs konsumiert: der Watchdog darf nicht erneut auslösen, während auf die
-        # Fill-Bestätigung (on_position_closed) gewartet wird.
-        if self._exit_pending is not None:
-            self._exit_market_close_submitted = True
-
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -714,6 +739,13 @@ class HourlyStrategyBase(Strategy):
             quantity=pos.quantity,
             time_in_force=TimeInForce.GTC,
         )
+        # Issue #859 — sobald der Markt-Close tatsächlich abgesetzt wird, ist das Fortsetzungs-Token
+        # dieses Exit-Versuchs konsumiert: der Watchdog darf nicht erneut auslösen, WÄHREND diese
+        # konkrete Order (per ID) noch offen ist. Anders als das vorherige Boolean-Flag räumt ein
+        # abgelehnter/verweigerter Callback (on_order_rejected/on_order_denied) diese ID wieder —
+        # der Watchdog kann dann einen neuen Versuch auslösen, statt dauerhaft entwaffnet zu bleiben.
+        if self._exit_pending is not None:
+            self._exit_market_close_order_id = order.client_order_id
         self.submit_order(order)
 
     # ── Issue #712 — dynamischer Take-Profit (opt-in) ───────────────────────────────────────────
@@ -821,10 +853,63 @@ class HourlyStrategyBase(Strategy):
                 # If there are no more pending cancels but the position is still partially open, close it!
                 self._execute_market_close()
 
+    def _handle_exit_close_order_failure(self, event, event_name: str) -> None:
+        """Issue #859 — gemeinsame Behandlung eines abgelehnten (``on_order_rejected``) oder vom
+        RiskEngine verweigerten (``on_order_denied``) Markt-Close-Versuchs. Root-Cause: die
+        Markt-Close-Order steht weder in ``_pending_cancels`` (Cancel-Bestätigungen) noch ist sie
+        die Dyn-TP-Order — sie fiel vor diesem Fix durch ALLE bestehenden Zweige, und
+        ``on_order_denied`` war in der gesamten Klasse gar nicht implementiert. Ohne diesen Zweig
+        blieb der #836-Watchdog dauerhaft entwaffnet (das Absenden allein setzte das alte
+        Boolean-Flag, Pitfall #273) — die Position hielt bis zum Datenende, der Trial produzierte
+        für den Rest des Fensters keinerlei Signal mehr.
+
+        Räumt die Order-ID (der Watchdog löst im nächsten Bar erneut aus) und zählt den Versuch;
+        nach ``exit_close_max_retries`` vergeblichen Versuchen gilt der Trial als terminal
+        unrecoverable (``EXIT_CLOSE_UNRECOVERABLE``) — ``backtest_runner`` markiert ihn dann über
+        ``inference_diagnostics`` als ``oos_evaluated=False``, statt eine offene Position still
+        durch das gesamte Fenster zu tragen."""
+        self._exit_market_close_order_id = None
+        self._exit_pending_bars = 0
+        self._exit_close_retries += 1
+        payload = {
+            "instrument": str(self.instrument_id),
+            "exit_reason": self._exit_pending,
+            "attempt": self._exit_close_retries,
+            "max_retries": self._exit_close_max_retries,
+        }
+        emit_execution_event(log, event_name, payload, level=logging.ERROR)
+        self._log.error(
+            f"[{self.instrument_id}] {event_name} (Versuch {self._exit_close_retries}/"
+            f"{self._exit_close_max_retries}) — Watchdog versucht den Markt-Close im nächsten Bar "
+            f"erneut."
+        )
+        if self._exit_close_retries >= self._exit_close_max_retries:
+            self._exit_close_unrecoverable = True
+            emit_execution_event(log, "EXIT_CLOSE_UNRECOVERABLE", payload, level=logging.ERROR)
+            self._log.error(
+                f"[{self.instrument_id}] EXIT_CLOSE_UNRECOVERABLE nach "
+                f"{self._exit_close_retries} vergeblichen Markt-Close-Versuchen — Trial wird als "
+                f"ungültig markiert."
+            )
+
+    def on_order_denied(self, event) -> None:
+        """Issue #859 — vorher in der gesamten Klasse nicht implementiert: ein vom RiskEngine
+        verweigerter Close (bei AccountType.MARGIN und stark negativen Equity-Verläufen real,
+        siehe #825) erzeugte gar keinen Callback und wurde von keinem bestehenden Zweig
+        aufgefangen."""
+        self._log.warning(f"[{self.instrument_id}] OrderDenied: {event}")
+        if event.client_order_id == self._exit_market_close_order_id:
+            self._handle_exit_close_order_failure(event, "EXIT_CLOSE_DENIED")
+
     def on_order_rejected(self, event) -> None:
         self._log.warning(f"[{self.instrument_id}] OrderRejected: {event}")
         if getattr(self, "current_signal", None) is not None and not self.cache.positions_open(instrument_id=self.instrument_id):
              self.current_signal = None
+        # Issue #859 — die Markt-Close-Order steht in KEINER der beiden unten geprüften Mengen
+        # (_pending_cancels, _dyn_tp_order_id) und fiel vorher durch alle Zweige durch.
+        if event.client_order_id == self._exit_market_close_order_id:
+            self._handle_exit_close_order_failure(event, "EXIT_CLOSE_REJECTED")
+            return
         if event.client_order_id in self._pending_cancels:
             self._pending_cancels.remove(event.client_order_id)
             if event.client_order_id == self._dyn_tp_order_id:
@@ -986,7 +1071,8 @@ class HourlyStrategyBase(Strategy):
         self._exit_pending = None
         self._exit_pending_kind = None
         self._exit_pending_bars = 0
-        self._exit_market_close_submitted = False
+        self._exit_market_close_order_id = None
+        self._exit_close_retries = 0
         self._daily_trades += 1
         self._executed_trades += 1
         self._log.info(f"[{self.instrument_id}] PositionOpened: {event} (Trade {self._daily_trades} today, {self._executed_trades} total)")
@@ -1043,6 +1129,12 @@ class HourlyStrategyBase(Strategy):
         self._exit_pending = None
         self._exit_pending_kind = None
         self._exit_pending_bars = 0
-        self._exit_market_close_submitted = False
+        self._exit_market_close_order_id = None
+        self._exit_close_retries = 0
         self._reset_dyn_tp_state()
+        # Issue #859 Fix Punkt 5 — verbliebene ruhende Orders dieses Instruments räumen: der
+        # statische ``profit_target_pct``-Limit-Pfad (``on_position_opened``) und ein per
+        # ``on_order_canceled`` nach Exit-Auslösung neu eingestellter Dyn-TP-Auftrag überlebten die
+        # Positionsschliessung vorher als verwaiste Order (kein Zweig räumte sie explizit auf).
+        self.cancel_all_orders(self.instrument_id)
         self._log.info(f"[{self.instrument_id}] PositionClosed: {event}")
