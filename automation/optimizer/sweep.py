@@ -873,7 +873,7 @@ def _family_fingerprints_from_studies(pairs, studies, *, tournament_cfg: dict | 
     return fingerprints
 
 
-_PROMOTION_FAMILY_SCOPES = ("per_strategy", "per_symbol_best")
+_PROMOTION_FAMILY_SCOPES = ("per_strategy", "per_symbol_best", "route_dependent")
 
 
 def _resolve_promotion_family_scope(tournament_cfg: dict | None) -> str:
@@ -882,6 +882,14 @@ def _resolve_promotion_family_scope(tournament_cfg: dict | None) -> str:
     Default ``'per_strategy'``): DAS ist der Status quo der tatsächlich getroffenen Entscheidung
     (``export_symbol_proposal`` promotet je (Strategie, Symbol) unabhängig, #826-Root-Cause) und
     verwendet N1 (``_family_n_stage1_from_studies``) statt der bisherigen Symbol-weiten Summe.
+
+    ``'route_dependent'`` (Issue #866, Pitfall #278) — funktional IDENTISCH zu ``'per_strategy'``
+    für die GETUNTE Route (beide verwenden N1); der Name macht explizit sichtbar, dass die
+    ``PROMOTE_GLOBAL_DEFAULT``-Route seit #866 eine EIGENE, von der Study-Trial-Zahl entkoppelte
+    Multiplizität trägt (``deflation.resolve_promotion_multiplicity``, route='global_default') —
+    diese Trennung ist SEIT #866 unbedingt aktiv (unabhängig vom hier aufgelösten Wert); der Name
+    dokumentiert nur, dass ein Betreiber sich dessen bewusst ist, statt weiterhin den älteren, seit
+    #866 unvollständigen Namen ``'per_strategy'`` zu tragen (empfohlener Default seit #866).
 
     ``'per_symbol_best'`` (zweistufige Korrektur über zusätzlich N2, siehe
     ``_family_n_stage2_from_studies``) ist DEKLARIERT, aber ABSICHTLICH NICHT implementiert: die
@@ -1516,8 +1524,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                                 n_family_excluded_map: dict[str, dict] | None = None,
                                 *,
                                 n_family_stage1_map: dict[tuple[str, str], int] | None = None,
-                                family_scope: str = "per_strategy") -> Path | None:
-        """Issue #652/#799/#822/#826 — Confirm + Export + Champion-Store + Retention EINES Paares.
+                                family_scope: str = "per_strategy",
+                                n_global_default_candidates_map: dict[str, int] | None = None,
+                                ) -> Path | None:
+        """Issue #652/#799/#822/#826/#866 — Confirm + Export + Champion-Store + Retention EINES Paares.
 
         Issue #826 — die an ``confirm(...)`` durchgereichte Multiplizität ist seit diesem Fix N1
         (``n_family_stage1_map[(strategy, symbol)]``, die eigene Study-Zahl DIESES Paares), NICHT
@@ -1527,25 +1537,38 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         (``_resolve_promotion_family_scope`` — 'per_symbol_best' bricht dort VOR jedem Confirm-Aufruf
         fail-loud ab, siehe deren Docstring); ``n_family_map``/``family_returns_map`` bleiben für die
         Decluster-Matrix (``deflation_family_period_returns``, unverändert symbolweit, #695) und den
-        #822-Ausschluss-Breakdown (``n_family_excluded_map``) erhalten."""
+        #822-Ausschluss-Breakdown (``n_family_excluded_map``) erhalten.
+
+        Issue #866 — ``n_global_default_candidates_map[symbol]`` (Roster-Umfang: Anzahl der für
+        DIESES Symbol dispatchten Strategien-Paare) ist die an ``confirm(...)`` durchgereichte
+        Multiplizität der GLOBALEN Default-Route (``deflation.resolve_promotion_multiplicity``,
+        route='global_default') — bewusst GETRENNT von ``n_family_stage1_map`` (der Multiplizität
+        der getunten Route): der ungetunte globale Vektor nahm nie an EINER Study-Selektion teil,
+        seine korrekte Multiplizität ist die Anzahl der für dieses Symbol geprüften Notfall-
+        Kandidaten, nicht die Trial-Zahl irgendeiner einzelnen Study (Pitfall #278)."""
         strategy, symbol, _reason = pair
         if study is None:
             # Issue #799 — kein Study-Objekt (Paar in _run_optimize fehlgeschlagen, STUDY_FAILED
             # bereits protokolliert): kein Confirm/Export möglich, kein Proposal.
             return None
-        if family_scope != "per_strategy":
+        if family_scope not in ("per_strategy", "route_dependent"):
             # Unerreichbar in Produktion (siehe _resolve_promotion_family_scope), aber explizit statt
-            # eines stillen Fallbacks für direkte Unit-Test-Aufrufer dieser Funktion.
+            # eines stillen Fallbacks für direkte Unit-Test-Aufrufer dieser Funktion. Issue #866 —
+            # 'route_dependent' verwendet für die GETUNTE Route dieselbe N1-Multiplizität wie
+            # 'per_strategy' (siehe _resolve_promotion_family_scope-Docstring); die GLOBALE Route hat
+            # ohnehin IMMER ihre eigene, hier unabhängige Multiplizität (n_global_default_candidates_map).
             raise ValueError(f"_run_confirm_and_export: unbekannter family_scope {family_scope!r}")
         try:
             newest_ns = latest_ts.get(symbol) if latest_ts else None
             global_params = load_global_best(strategy, config_dir())
             deflation_n_family_value = (n_family_stage1_map or {}).get((strategy, symbol), 0)
+            n_global_default_candidates_value = (n_global_default_candidates_map or {}).get(symbol, 0)
             promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
                                 deflation_n_family=deflation_n_family_value,
                                 deflation_family_period_returns=family_returns_map.get(symbol),
                                 deflation_n_family_excluded_no_statistic=(
-                                    (n_family_excluded_map or {}).get(symbol)))
+                                    (n_family_excluded_map or {}).get(symbol)),
+                                n_global_default_candidates=n_global_default_candidates_value)
             proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
             # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
             # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die
@@ -1731,12 +1754,20 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
         symbol_n_family_stage1 = _family_n_stage1_from_studies(
             symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+        # Issue #866 — Roster-Umfang DIESES Symbols (Anzahl dispatchter Strategien-Paare) = die
+        # Multiplizität der PROMOTE_GLOBAL_DEFAULT-Route für dieses Symbol: JEDE dieser Studies
+        # könnte auf die globale Notfallroute zurückfallen (0 eligible Trials), unabhängig davon, wie
+        # viele Trials sie tatsächlich sampelte — bewusst GETRENNT von ``symbol_n_family_stage1``
+        # (der Trial-Zahl EINER Study, siehe ``resolve_promotion_multiplicity``-Docstring).
+        symbol_n_global_default_candidates = {symbol: len(symbol_pairs)}
 
         for pair, study in zip(symbol_pairs, symbol_studies):
             proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns,
                                                symbol_n_family_excluded,
                                                n_family_stage1_map=symbol_n_family_stage1,
-                                               family_scope=_family_scope)
+                                               family_scope=_family_scope,
+                                               n_global_default_candidates_map=(
+                                                   symbol_n_global_default_candidates))
             if proposal is not None:
                 proposals.append(proposal)
 

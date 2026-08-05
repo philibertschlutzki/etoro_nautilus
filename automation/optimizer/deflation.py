@@ -353,6 +353,44 @@ def deflated_threshold(n_trials: int, dispersion: float, *, confidence: float = 
     return baseline + dispersion * _ND.inv_cdf(q)
 
 
+# Issue #866 (P0, Katalog #866-#869, GitHub-Issue #760, Pitfall #278) — gültige
+# ``promotion_route``-Werte für ``resolve_promotion_multiplicity``.
+_VALID_PROMOTION_MULTIPLICITY_ROUTES = frozenset({"per_symbol_tuned", "global_default"})
+
+
+def resolve_promotion_multiplicity(route: str, *, deflation_n_family: int | None = None,
+                                    n_global_default_candidates: int | None = None) -> int:
+    """Issue #866 — eine Multiple-Testing-Korrektur gehört zur SELEKTION, nicht zur Study
+    (AGENTS.md Pitfall #278). Root-Cause: die globale Default-Route (``PROMOTE_GLOBAL_DEFAULT``,
+    #682/#783) wurde bislang mit ``deflation_n_family`` — der Trial-Zahl DER STUDY — deflationiert,
+    obwohl der globale Default-Vektor an DIESER Selektion (dem Trial-Sampling der Study) nicht
+    teilgenommen hat: er ist ein EINMALIG geprüfter, ungetunter Notfallkandidat (die Route existiert
+    seit #682 explizit für den Fall, dass KEIN symbol-eligibler Trial gefunden wurde). Ein DSR-Test
+    mit ``N=159`` gegen einen Kandidaten, der nie 159 Mal gesamplet wurde, ist strukturell
+    unerreichbar (``E[max₁]=0`` gegen ``E[max₁₅₉]≈2.8σ``), unabhängig von seiner tatsächlichen
+    Qualität.
+
+    Diese Funktion bindet die Multiplizität explizit an ``promotion_route`` statt an die Study:
+
+    - ``route='per_symbol_tuned'`` ⇒ ``N = deflation_n_family`` (unverändert, #826-Stufe-1: die
+      familienweite Multiplizität DIESER Study).
+    - ``route='global_default'`` ⇒ ``N = n_global_default_candidates`` — die Anzahl der Strategien,
+      deren globaler Default für dieses Symbol als Notfallkandidat in Frage kam (der Roster-Umfang
+      des Symbols), NICHT die Trial-Zahl irgendeiner Study.
+
+    Ein unbekannter ``route``-Wert bricht fail-loud ab (kein stiller Fallback auf eine falsch
+    geschriebene Route-Zeichenkette — dieselbe Disziplin wie ``promotion_correction_mode``/
+    ``deflation_heterogeneity_policy``)."""
+    if route not in _VALID_PROMOTION_MULTIPLICITY_ROUTES:
+        raise ValueError(
+            f"resolve_promotion_multiplicity: unbekannte promotion_route {route!r}, erwartet eines "
+            f"von {sorted(_VALID_PROMOTION_MULTIPLICITY_ROUTES)}."
+        )
+    if route == "per_symbol_tuned":
+        return int(deflation_n_family or 0)
+    return int(n_global_default_candidates or 0)
+
+
 def deflated_reward_threshold(rewards, *, confidence: float = 0.95):
     """Issue #592 — Deflations-Schwelle auf der REWARD-Skala (dem tatsächlichen Selektionskriterium
     ``argmax(reward)`` über N Trials), NICHT auf einer geklemmten Teil-Kennzahl (Sortino).

@@ -561,7 +561,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                  catalog_newest_ns: int | None = None,
                                  deflation_n_family: int | None = None,
                                  deflation_family_period_returns: list | None = None,
-                                 deflation_n_family_excluded_no_statistic: dict | None = None) -> dict:
+                                 deflation_n_family_excluded_no_statistic: dict | None = None,
+                                 n_global_default_candidates: int | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
@@ -608,6 +609,15 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     unten).
 
     status ∈ {'READY_FOR_PR', 'REJECTED_NO_EDGE_OVER_GLOBAL', 'REJECTED_ON_HOLDOUT'}.
+
+    ``n_global_default_candidates`` (Issue #866) — die Multiple-Testing-Multiplizität der
+    ``PROMOTE_GLOBAL_DEFAULT``-Route (deflation.resolve_promotion_multiplicity, route=
+    'global_default'): die Anzahl der Strategien, deren globaler Default für DIESES Symbol als
+    Notfallkandidat evaluiert wurde (der Roster-Umfang des Symbols) — NICHT ``deflation_n_family``
+    (die Trial-Zahl der Study), an deren Selektion der ungetunte globale Vektor nicht teilgenommen
+    hat. ``None``/fehlend ⇒ die Deflation der globalen Route bleibt inaktiv (Legacy-Aufrufer/Unit-
+    Tests ohne diesen Parameter, bit-identisch zum Pre-#866-Verhalten für ``deflated_selection=False``
+    oder eine ansonsten leere Kohorte).
     """
     # Issue #773 — eine Study, deren #756-Renditeserien-Identitaet (run_optimization.check_
     # study_coherence_violation_rate) fail-loud verletzt wurde, wird NICHT promotet — der
@@ -843,25 +853,42 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             budget_execution and budget_execution.get("budget_executed_fraction") is not None
             and budget_execution["budget_executed_fraction"] >= min_budget_for_global_default)
 
+        # Issue #866 Fix Punkt 3 — der globale Default hat KEINEN Micro-Tuning-Anspruch (er ist ein
+        # EINMALIG geprüfter, ungetunter Notfallkandidat, #682/#783); die Lockerung der Multiplizität
+        # (siehe unten) darf deshalb keine Hintertür werden — ein strengeres ABSOLUTES Sortino-Gate
+        # gilt zusätzlich zum regulären ``_holdout_gate_passed`` (das nur ``oos_sortino > 0`` verlangt).
+        global_default_min_sortino = float(
+            (global_weights or {}).get("global_default_min_holdout_sortino", 0.5))
+        global_default_sortino_ok = bool(
+            getattr(m_global, "oos_sortino", None) is not None
+            and m_global.oos_sortino >= global_default_min_sortino)
+
         global_default_promotable = bool(
             budget_sufficient
             and _holdout_gate_passed(
                 m_global, risk_dd_cap,
                 sortino_fallback_enabled=(oos_sortino_fallback == "total_return"),
             )
+            and global_default_sortino_ok
             and R_global is not None and R_global > 0.0
         )
         g_sr0 = g_dsr = g_dsr_z = None
         if global_default_promotable:
-            # Issue #783 (3) — Deflation auf R_global mit familienweiter Multiplizitaet, voll
-            # theoretischer Varianz-Referenz (keine lokale Kohorte fuer diese Study).
+            # Issue #783 (3)/#866 — Deflation auf R_global mit der ROUTE-ABHÄNGIGEN Multiplizität
+            # (deflation.resolve_promotion_multiplicity, route='global_default'): die Anzahl der für
+            # dieses Symbol als Notfallkandidat geprüften Strategien-Defaults, NICHT die Trial-Zahl
+            # der Study — der ungetunte globale Vektor hat an DIESER Selektion nicht teilgenommen
+            # (Pitfall #278). Voll theoretische Varianz-Referenz (keine lokale Kohorte fuer diese
+            # Study, ``variance_n_trials=0``).
             from automation.optimizer.deflation import (
-                sr0_multiple_testing_robust, bootstrap_psr_z, psr_from_z, psr_z, deflated_sharpe_ratio)
+                sr0_multiple_testing_robust, bootstrap_psr_z, psr_from_z, psr_z, deflated_sharpe_ratio,
+                resolve_promotion_multiplicity)
             g_deflated_selection = bool(tournament_cfg.get("deflated_selection", False))
             g_deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
             g_deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
             g_inference_method = None
-            g_n_family = int(deflation_n_family or 0)
+            g_n_family = resolve_promotion_multiplicity(
+                "global_default", n_global_default_candidates=n_global_default_candidates)
             g_sr_period = getattr(m_global, "oos_sortino_period", None)
             g_n_periods = getattr(m_global, "oos_n_periods", None)
             if g_deflated_selection and g_n_family > 0 and g_sr_period is not None and g_n_periods:
@@ -916,6 +943,16 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 metrics_global_out["deflation_dsr_z"] = g_dsr_z
                 metrics_global_out["deflation_inference_method"] = g_inference_method
                 metrics_global_out["deflation_n_family"] = g_n_family
+            # Issue #866 Fix Punkt 4 — IMMER telemetriert (auch wenn g_sr0 None blieb, z. B. weil
+            # ``n_global_default_candidates`` fehlte): ohne dieses Feld ist der Unterschied zwischen
+            # der getunten und der globalen Route im Report nicht erkennbar (Katalog-Root-Cause).
+            metrics_global_out["deflation_n_family_raw"] = g_n_family
+            metrics_global_out["deflation_n_effective"] = g_n_family
+            metrics_global_out["deflation_multiplicity_rationale"] = (
+                f"route=global_default: N={g_n_family} geprüfte globale Default-Vektoren für dieses "
+                f"Symbol (Roster-Umfang), NICHT die Trial-Zahl einer Study (#866, Pitfall #278)."
+            )
+            metrics_global_out["global_default_min_holdout_sortino"] = global_default_min_sortino
             return {
                 "promote": True,
                 "status": "PROMOTE_GLOBAL_DEFAULT",
@@ -1032,7 +1069,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Tor" wie tatsächlich unabhängige Parametrisierungen und überschätzt damit systematisch die
         # Multiple-Testing-Hürde (Root-Cause #695: derselbe Confirm-Lauf declustert für PBO, aber
         # nicht für DSR — inkonsistente Config-Zählung zweier Korrekturen im selben Pfad).
-        deflation_n_family_counted = int(deflation_n_family or 0)
+        # Issue #866 — route='per_symbol_tuned': N = deflation_n_family (unveraendert, #826-Stufe-1
+        # — dieser Trial NAHM an der Selektion DIESER Study teil, siehe Docstring von
+        # resolve_promotion_multiplicity).
+        from automation.optimizer.deflation import resolve_promotion_multiplicity as _resolve_mult
+        deflation_n_family_counted = _resolve_mult(
+            "per_symbol_tuned", deflation_n_family=deflation_n_family)
         deflation_n_family_raw = deflation_n_family_counted
         deflation_n_family_effective = deflation_n_family_raw
         if deflation_family_period_returns:
@@ -1642,6 +1684,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_n_family_raw"] = deflation_n_family_raw
         best_result["metrics_symbol"]["deflation_n_family_effective"] = deflation_n_family_effective
         best_result["metrics_symbol"]["deflation_n_effective"] = deflation_n_effective
+        # Issue #866 Fix Punkt 4 — welche Selektion diese Deflation korrigiert (Gegenstueck zum
+        # global_default-Rationale-Text oben); macht die beiden Routen im Report unterscheidbar.
+        best_result["metrics_symbol"]["deflation_multiplicity_rationale"] = (
+            f"route=per_symbol_tuned: N={deflation_n_family_counted} (deflation_n_family, #826-"
+            f"Stufe-1 — die familienweite Selektions-Multiplizität DIESER Study, #866)."
+        )
         # Issue #813 — Anteil der gezaehlten (oos_evaluated) Kandidaten, fuer die ueberhaupt eine
         # Renditeserie zur Declusterung vorlag; < min_deflation_cluster_coverage ist ein Invarianten-
         # FAIL (invariants.check_deflation_cluster_coverage) — vor #813 lag dieser Wert bei ~13 %

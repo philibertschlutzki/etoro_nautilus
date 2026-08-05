@@ -5,7 +5,8 @@
     "sortino_numeric_guard": {"type": "number", "required": true},
     "sortino_numeric_guard_min_periods": {"type": "number", "required": true, "depends_on": ["n_periods_definition"]},
     "sortino_min_downside_observations": {"type": "number", "required": true, "depends_on": ["n_periods_definition"]},
-    "eligible_requires_all": {"type": "array", "required": true}
+    "eligible_requires_all": {"type": "array", "required": true},
+    "promotion_family_scope": {"type": "string", "required": true}
   },
   "optimizer.json": {
     "plateau_min_modelled_trials_per_dim": {"type": "integer", "required": true},
