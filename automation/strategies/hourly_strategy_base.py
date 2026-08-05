@@ -41,6 +41,7 @@ from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.indicators import SimpleMovingAverage
 from automation.momentum_ls_allocator import MomentumLSAllocator
 from automation.log_manager import emit_execution_event
+from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP
 
 log = logging.getLogger(__name__)
 
@@ -101,9 +102,10 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
 
 DEFAULT_ATR_TRAILING_MULTIPLIER = 1.5
 # Issue #714 (GR-01) — 24-Bar-Zeitbox (1h-Bars). Auch die HARTE Obergrenze für aus dem Cache
-# geladene Alt-Configs/Studies mit Werten > 24 (Konstruktor-Klemmung unten).
+# geladene Alt-Configs/Studies mit Werten > 24 (Konstruktor-Klemmung unten). Issue #858 — Single
+# Source of Truth über einen Import statt einer eigenen dritten Kopie des Literals, konsistent mit
+# ``spaces._MAX_BARS_IN_TRADE_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP`` (Pitfall #271).
 DEFAULT_MAX_BARS_IN_TRADE = 24
-MAX_BARS_IN_TRADE_HARD_CAP = 24
 
 # Issue #712 (Req-02+Req-03) — Cancel/Replace nur bei |ΔTarget| > 1 Tick (Order-Sturm-Schutz,
 # konsistent mit etoro_rate_limiter.py).

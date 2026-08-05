@@ -49,15 +49,17 @@ def test_holding_time_seconds_fields_are_zero_for_empty_hold_list():
     assert stats["p95_holding_time_s"] == 0.0
 
 
-# ── invariants.check_holding_time_cap ────────────────────────────────────────────────────────────
+# ── invariants.check_holding_time_cap (Issue #861 — unified per-trial-aware contract) ───────────
 def test_holding_time_cap_passes_within_the_714_boundary():
-    studies_out = [{"strategy": "S", "symbol": "A.ETORO", "max_holding_time_s": 23 * 3600.0}]
+    studies_out = [{"strategy": "S", "symbol": "A.ETORO",
+                     "timebox_evaluated_trades": 10, "timebox_violation_fraction": 0.0}]
     result = inv.check_holding_time_cap(studies_out)
     assert result.passed is True
 
 
 def test_holding_time_cap_fails_beyond_the_714_boundary():
-    studies_out = [{"strategy": "S", "symbol": "A.ETORO", "max_holding_time_s": 30 * 3600.0}]
+    studies_out = [{"strategy": "S", "symbol": "A.ETORO",
+                     "timebox_evaluated_trades": 10, "timebox_violation_fraction": 0.30}]
     result = inv.check_holding_time_cap(studies_out)
     assert result.passed is False
     assert "S/A.ETORO" in result.detail
@@ -68,9 +70,10 @@ def test_holding_time_cap_is_a_noop_without_telemetry():
     assert result.passed is True
 
 
-def test_holding_time_cap_respects_tolerance_at_exact_boundary():
-    studies_out = [{"strategy": "S", "symbol": "A.ETORO", "max_holding_time_s": 24 * 3600.0}]
-    result = inv.check_holding_time_cap(studies_out)
+def test_holding_time_cap_respects_the_study_tolerance():
+    studies_out = [{"strategy": "S", "symbol": "A.ETORO",
+                     "timebox_evaluated_trades": 10, "timebox_violation_fraction": 0.25}]
+    result = inv.check_holding_time_cap(studies_out, study_tolerance=0.25)
     assert result.passed is True
 
 

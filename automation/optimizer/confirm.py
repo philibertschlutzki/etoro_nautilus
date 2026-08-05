@@ -627,22 +627,34 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             _early_tournament_cfg = json.load(f) or {}
             risk_dd_cap = _early_tournament_cfg.get("max_drawdown", 0.30)
 
-    # Issue #839 — eine Study, deren Simulation den #714/GR-01-Zeitbox-Vertrag verletzt (Bug im
-    # Exit-Pfad, #836/#837), wird VOR jedem statistischen Gate verworfen (und VOR dem teuren
-    # Holdout-Backtest des globalen Baseline-Vektors weiter unten) — ihre Metriken sind unter einem
-    # anderen Handelsvertrag entstanden als dem konfigurierten, jede nachgelagerte Eligibility-/
-    # Reward-/Deflations-Entscheidung wäre ein kontaminiertes Urteil (analog #773s Behandlung von
-    # coherence_violation_rate_exceeded oben).
+    # Issue #839/#857 — eine Study, deren Anteil zeitbox-verletzender Trials den Study-
+    # Toleranzwert überschreitet, wird VOR jedem statistischen Gate verworfen (und VOR dem teuren
+    # Holdout-Backtest des globalen Baseline-Vektors weiter unten) — bei DIESEM Anteil ist der
+    # Exit-Pfad selbst defekt (Bug, #836/#837), nicht mehr nur eine tolerierbare Ausführungslatenz
+    # einzelner Trials (die werden seit #857 bereits JE TRIAL ausgeschlossen — siehe
+    # run_optimization.make_symbol_objective —, bevor sie hier überhaupt ankommen; die einzelnen
+    # verletzenden Trials tragen ``oos_evaluated=False``/``oos_invalid_reason='TIMEBOX_VIOLATION'``
+    # und kontaminieren ihre sauberen Geschwister nicht mehr, Pitfall #272). Issue #858 —
+    # ``timebox_violation_study_tolerance`` (Default 0.25) ist DEUTLICH lockerer als die frühere
+    # ``timebox_violation_tolerance=0.0``: dieser Anteil ist kein Ausführungsrauschen mehr, sondern
+    # der Nachweis eines strukturell defekten Exit-Pfads (dieselbe Schwelle wie
+    # ``invariants.check_holding_time_cap``, #861-Unifikation).
     import logging as _logging_early
-    _timebox_tolerance = float(_early_tournament_cfg.get("timebox_violation_tolerance", 0.0))
+    _timebox_study_tolerance = float(
+        _early_tournament_cfg.get("timebox_violation_study_tolerance", 0.25))
     _timebox_trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in (getattr(study, "trials", None) or [])]
-    _timebox = _inv.compute_trial_timebox_violations(_timebox_trial_attrs)
-    if _timebox["timebox_violation_fraction"] > _timebox_tolerance:
+    _timebox = _inv.compute_trial_timebox_violations(_timebox_trial_attrs, strategy=strategy)
+    if _timebox["timebox_violation_fraction"] > _timebox_study_tolerance:
         emit_execution_event(_logging_early.getLogger("optimizer"), "STUDY_REJECTED_ON_TIMEBOX_VIOLATION", {
             "symbol": symbol, "strategy": strategy,
             "timebox_violation_fraction": _timebox["timebox_violation_fraction"],
             "timebox_violation_trades": _timebox["timebox_violation_trades"],
             "timebox_evaluated_trades": _timebox["timebox_evaluated_trades"],
+            # Issue #857 Fix Punkt 3 — Anzahl EINZELNER invalidierter Trials im Report/Event
+            # ausgewiesen, damit "einzelne Trials verworfen" von "Study verworfen" unterscheidbar
+            # bleibt (vorher trug nur die Study-Ablehnung selbst ein Signal).
+            "timebox_trials_invalidated": _timebox["timebox_violation_trades"],
+            "timebox_violation_study_tolerance": _timebox_study_tolerance,
         }, level=_logging_early.ERROR)
         return {
             "promote": False,

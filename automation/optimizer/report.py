@@ -28,7 +28,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import optuna
 
@@ -285,10 +285,11 @@ def _study_record(proposal: dict, study,
             max_holding_time_s = candidate
             p95_holding_time_s = a.get("oos_p95_holding_time_s")
 
-    # Issue #839 — je-Trial-Zeitbox-Verletzung (nicht nur das Study-Maximum aus #832 oben): eine
-    # gemessene GR-01-Verletzung erhält hier eine Konsequenz (REJECT_INVALID_TIMEBOX in confirm.py
-    # konsumiert dieselbe Berechnung; siehe invariants.compute_trial_timebox_violations).
-    timebox = _inv.compute_trial_timebox_violations(trial_attrs)
+    # Issue #839/#857 — je-Trial-Zeitbox-Verletzung (nicht nur das Study-Maximum aus #832 oben):
+    # eine gemessene GR-01-Verletzung erhält hier eine Konsequenz auf TRIAL-Ebene (siehe
+    # invariants.compute_trial_timebox_violations; #861 vereinheitlicht diese Berechnung mit
+    # ``check_holding_time_cap`` unten über dieselbe Referenz-Auflösung).
+    timebox = _inv.compute_trial_timebox_violations(trial_attrs, strategy=proposal.get("strategy"))
 
     best_reward = None
     if study is not None:
@@ -435,6 +436,9 @@ def _study_record(proposal: dict, study,
         "timebox_evaluated_trades": timebox["timebox_evaluated_trades"],
         "timebox_violation_fraction": timebox["timebox_violation_fraction"],
         "timebox_violated": timebox["timebox_violated"],
+        # Issue #861 — Verteilung der Deckel-Referenzquelle (sampled/default/global) über die
+        # ausgewerteten Trials dieser Study.
+        "timebox_cap_source_counts": timebox["timebox_cap_source_counts"],
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -872,6 +876,36 @@ def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[
     return stage1, stage2
 
 
+def parse_proposal_payloads(proposals: Iterable[Path | dict]) -> list[dict]:
+    """Issue #856 — EINZIGE Path→dict-Normalisierung für Proposal-Listen, konsumiert von
+    ``generate_sweep_report`` UND der #839-Fail-Fast-Probe (``sweep.py``). Vorher lag diese Logik
+    ausschliesslich inline in ``generate_sweep_report`` (#1093-1097 vor diesem Fix) — die Probe rief
+    ``_build_report`` direkt mit ``list[Path]`` auf und erzeugte bei JEDEM Aufruf eine
+    ``AttributeError`` (Pitfall #269, siebte Wiederkehr von #237).
+
+    Elemente, die bereits ``dict`` sind, werden unverändert übernommen (Test-Pfad); ``Path``-
+    Elemente werden von der Platte geladen. Nur Payloads mit einem ``symbol``-Feld gelten als
+    valide Proposals (dieselbe Filterregel wie vorher in ``generate_sweep_report``)."""
+    parsed: list[dict] = []
+    for p in proposals:
+        payload = p if isinstance(p, dict) else _load_json(Path(p))
+        if isinstance(payload, dict) and payload.get("symbol"):
+            parsed.append(payload)
+    return parsed
+
+
+def build_probe_report(proposals: Iterable[Path | dict], *, run_id: str) -> dict:
+    """Issue #856 — dünner, öffentlicher Wrapper für die #839-Fail-Fast-Probe in ``sweep.py``:
+    parst + baut den Report in einem Aufruf, schreibt NICHTS auf die Platte (reine Lesefunktion).
+    Hält ``_build_report`` als modulinternen Kern, dessen einziger externer Konsument dieser
+    Wrapper (und ``generate_sweep_report``) ist — die Call-Site in ``sweep.py`` kann die Path→dict-
+    Normalisierung dadurch nicht mehr umgehen (Root-Cause #856, Pitfall #269)."""
+    return _build_report(
+        parse_proposal_payloads(proposals),
+        run_id=run_id, started_at_utc=None, wallclock_s=None, cli_args=None,
+    )
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -883,6 +917,18 @@ def _build_report(
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
 ) -> dict:
+    # Issue #856 Fix Punkt 4 — fail-loud statt einer nichtssagenden AttributeError in
+    # ``_load_study_for_proposal``: ``_build_report`` erwartet ausschliesslich geparste Proposal-
+    # Dicts. Ein ``Path``-Element (oder jedes andere Nicht-Dict) an erster Stelle ist ein
+    # struktureller Programmierfehler an der Call-Site, keine Laufzeitbedingung — er muss dort
+    # sichtbar werden, nicht drei Stack-Frames tiefer als ``'PosixPath' object has no attribute
+    # 'get'``.
+    if proposals and not isinstance(proposals[0], dict):
+        raise TypeError(
+            "_build_report erwartet geparste Proposal-Dicts; nutze parse_proposal_payloads() "
+            f"(erhalten: {type(proposals[0]).__name__})"
+        )
+
     tournament_path = config_dir() / "tournament.json"
     optimizer_path = config_dir() / "optimizer.json"
     tournament_cfg = _load_json(tournament_path) or {}
@@ -942,9 +988,13 @@ def _build_report(
     diagnosis_actionability_check = _inv.check_diagnosis_actionability(_diagnosed_pairs_all())
     all_checks.append(("global", diagnosis_actionability_check))
 
-    # Issue #832 Fix Punkt 1 — zehnter Invarianten-Check: kein Trade darf laenger halten als die
-    # #714/GR-01-Zeitbox-Obergrenze (24 Bars) — ein Treffer ist ein Bug im Exit-Pfad.
-    holding_time_cap_check = _inv.check_holding_time_cap(studies_out)
+    # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
+    # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen
+    # (dieselbe Schwelle, die #857 fuer die Study-Ebene-Konsequenz in confirm.py verwendet) — ein
+    # Treffer ist ein Bug im Exit-Pfad.
+    _timebox_study_tolerance = float(tournament_cfg.get("timebox_violation_study_tolerance", 0.25))
+    holding_time_cap_check = _inv.check_holding_time_cap(
+        studies_out, study_tolerance=_timebox_study_tolerance)
     all_checks.append(("global", holding_time_cap_check))
 
     # Issue #841 — elfter Invarianten-Check: kein Symbol des aktuellen Universums darf seit mehr
@@ -1090,11 +1140,7 @@ def generate_sweep_report(
     Issue #833 Fix Punkt 3 — ``run_status``/``symbols_completed``/``symbols_planned`` werden NUR
     durchgereicht (siehe ``_build_report``); Default ``run_status='complete'`` ⇒ bit-identisch für
     jeden Aufrufer, der einen abgeschlossenen Lauf reportet (der bisherige Normalfall)."""
-    parsed = []
-    for p in proposals:
-        payload = p if isinstance(p, dict) else _load_json(Path(p))
-        if isinstance(payload, dict) and payload.get("symbol"):
-            parsed.append(payload)
+    parsed = parse_proposal_payloads(proposals)
 
     report = _build_report(
         parsed, run_id=run_id, started_at_utc=started_at_utc,
