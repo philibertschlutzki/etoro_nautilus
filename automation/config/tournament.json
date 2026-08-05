@@ -150,6 +150,7 @@
   "fold_profit_epsilon": 0.0005,
   "sortino_numeric_guard_reference": "family_median",
   "promotion_correction_mode": "conjunction",
+  "global_default_min_holdout_sortino": 0.5,
   "pbo_n_groups": 12,
   "pbo_min_configs": 10,
   "pbo_cluster_threshold": 0.99,

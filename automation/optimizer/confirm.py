@@ -34,6 +34,45 @@ _VALID_PROMOTION_CORRECTION_MODES = frozenset({"conjunction", "dsr_or_robust_pai
 _VALID_DEFLATION_HETEROGENEITY_POLICIES = frozenset({"suppress_dsr", "reject", "per_stratum"})
 
 
+def resolve_promotion_multiplicity(route: str, *, deflation_n_family: int | None) -> tuple[int, dict]:
+    """Issue #887 (Pitfall #278) — die EINE Quelle für die Multiple-Testing-Multiplizität ``N``
+    einer Deflation, ABHÄNGIG von der Promotion-Route:
+
+    - ``'symbol_eligible'`` (die reguläre Selektion, #625/#652): ``N = deflation_n_family`` — die
+      Zahl der in Stufe 1 (studienweite Eligibility) tatsächlich durchsuchten/eligiblen Kandidaten.
+      Bit-identisch zum Vorzustand.
+    - ``'global_default'`` (#682/#783 — kein einziger symbol-eligibler Trial, der GLOBALE Default
+      wird stattdessen gegen das Symbol-Holdout getestet): ``N = 1``. Der geprüfte Parametervektor
+      ist der globale Default aus ``strategy_defaults.json`` — er wurde NICHT aus
+      ``deflation_n_family`` Kandidaten ausgewählt (er hat an dieser Selektion nicht
+      teilgenommen); die Multiple-Testing-Korrektur darf nur die tatsächlich stattgefundene Auswahl
+      bestrafen (Root-Cause #887: vorher wurde die volle Stufe-1-Familiengrösse — 99, 117 — auf
+      einen Kandidaten angewendet, der diese Suche nie durchlaufen hat, was die Deflationsschwelle
+      strukturell unerreichbar machte).
+
+    Rückgabe: ``(n, rationale)`` — ``rationale`` ist das Telemetriefeld
+    ``deflation_multiplicity_rationale`` (#887 Fix Punkt 4), ohne das die Entscheidung im
+    Nachhinein nicht überprüfbar wäre (#847-Klasse). Ein unbekannter ``route``-Wert bricht
+    fail-loud ab (kein stiller Fallback auf eine falsch geschriebene Route-Zeichenkette)."""
+    if route == "global_default":
+        return 1, {
+            "route": "global_default", "n_used": 1,
+            "n_family_available": int(deflation_n_family or 0),
+            "reason": "candidate did not participate in stage-1 selection",
+        }
+    if route == "symbol_eligible":
+        n = int(deflation_n_family or 0)
+        return n, {
+            "route": "symbol_eligible", "n_used": n,
+            "n_family_available": n,
+            "reason": "candidate was selected from the full stage-1 family",
+        }
+    raise ValueError(
+        f"resolve_promotion_multiplicity: unbekannte promotion route {route!r} — erwartet "
+        "'symbol_eligible' oder 'global_default'."
+    )
+
+
 def _stratify_cohort_by_n_periods(cohort_sr_np_pairs, anchor_n_periods, *, n_strata=4):
     """Issue #865 — quartilsbasierte Stratifizierung der DSR-Kohorte nach ``oos_n_periods``: liefert
     nur die Teil-Kohorte (Sortino-Werte), deren ``oos_n_periods`` im selben Quartils-Stratum liegt wie
@@ -861,7 +900,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             g_deflation_min_cohort = int(tournament_cfg.get("deflation_min_cohort", 10))
             g_deflation_confidence = float(tournament_cfg.get("deflation_confidence", 0.95))
             g_inference_method = None
-            g_n_family = int(deflation_n_family or 0)
+            # Issue #887 — die EINE Quelle fuer N: der globale Default hat an der Stufe-1-Selektion
+            # NICHT teilgenommen (route='global_default'), N=1, nicht die volle Familiengroesse.
+            g_n_family, g_multiplicity_rationale = resolve_promotion_multiplicity(
+                "global_default", deflation_n_family=deflation_n_family)
             g_sr_period = getattr(m_global, "oos_sortino_period", None)
             g_n_periods = getattr(m_global, "oos_n_periods", None)
             if g_deflated_selection and g_n_family > 0 and g_sr_period is not None and g_n_periods:
@@ -891,6 +933,22 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                         f"N_family={g_n_family}) ⇒ HOLDOUT_NO_ELIGIBLE_TRIALS bleibt bestehen."
                     )
                     global_default_promotable = False
+            # Issue #887 Fix Punkt 3 — die Lockerung auf N=1 darf keine Hintertuer werden: ein
+            # globaler Default, der die Deflation nur deshalb passiert, weil seine Multiplizitaet 1
+            # ist, muss ZUSAETZLICH einen materiellen Holdout-Sortino nachweisen (annualisiert,
+            # dieselbe Groesse wie das Holdout-Gate selbst, _holdout_gate_passed).
+            if global_default_promotable:
+                g_min_holdout_sortino = float(
+                    tournament_cfg.get("global_default_min_holdout_sortino", 0.5))
+                g_holdout_sortino = getattr(m_global, "oos_sortino", None)
+                if g_holdout_sortino is None or g_holdout_sortino < g_min_holdout_sortino:
+                    logging.getLogger("optimizer").warning(
+                        f"[#887] {symbol}/{strategy}: PROMOTE_GLOBAL_DEFAULT-Kandidat scheitert an "
+                        f"global_default_min_holdout_sortino (Holdout-Sortino="
+                        f"{g_holdout_sortino!r} < {g_min_holdout_sortino}) — die gelockerte "
+                        f"Multiplizitaet (N=1) ersetzt keine materielle Qualitaetsschwelle."
+                    )
+                    global_default_promotable = False
 
         if global_default_promotable:
             emit_execution_event(logging.getLogger("optimizer"), "PROMOTE_GLOBAL_DEFAULT_ON_SYMBOL", {
@@ -916,6 +974,9 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 metrics_global_out["deflation_dsr_z"] = g_dsr_z
                 metrics_global_out["deflation_inference_method"] = g_inference_method
                 metrics_global_out["deflation_n_family"] = g_n_family
+                # Issue #887 Fix Punkt 4 — ohne dieses Feld ist die Multiplizitaets-Entscheidung im
+                # Nachhinein nicht ueberpruefbar (#847-Klasse).
+                metrics_global_out["deflation_multiplicity_rationale"] = g_multiplicity_rationale
             return {
                 "promote": True,
                 "status": "PROMOTE_GLOBAL_DEFAULT",

@@ -308,6 +308,46 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     )
 
 
+def check_promotion_multiplicity_route(proposal: dict) -> InvariantResult:
+    """Issue #887 (Pitfall #278) — FAIL, wenn ein Proposal mit
+    ``promotion_route == 'global_default_on_symbol'`` (#682/#783 — der globale Default wurde
+    promotet, weil kein einziger Trial symbol-eligibel war) ein ``deflation_n_family > 1`` in die
+    DSR-Berechnung getragen hat.
+
+    Root-Cause: der globale Default nahm an der Stufe-1-Selektion NICHT teil — er wurde nicht aus
+    ``deflation_n_family`` Kandidaten ausgewählt. ``confirm.resolve_promotion_multiplicity``
+    (die EINE Quelle für ``N``) liefert für diese Route immer ``N=1``; ein exportiertes Proposal
+    mit einem grösseren Wert zeigt, dass eine ANDERE (veraltete) Codepfad die volle
+    Stufe-1-Familiengrösse auf einen Kandidaten angewendet hat, der diese Suche nie durchlaufen
+    hat — die Deflationsschwelle wäre dann strukturell unerreichbar (E[max_N] wächst mit
+    ``sqrt(2 ln N)``).
+
+    ``proposal``: der vollständige exportierte Proposal-Dict (``promotion_route`` liegt auf der
+    OBERSTEN Ebene, ``deflation_n_family`` in ``proposal['holdout']['symbol']``)."""
+    route = proposal.get("promotion_route")
+    if route != "global_default_on_symbol":
+        return InvariantResult(
+            name="check_promotion_multiplicity_route",
+            passed=True,
+            expected="deflation_n_family <= 1 für promotion_route == 'global_default_on_symbol'",
+            actual=None,
+            detail=f"promotion_route={route!r} — nicht die global_default-Route, nicht anwendbar.",
+        )
+    n_family = ((proposal.get("holdout") or {}).get("symbol") or {}).get("deflation_n_family")
+    passed = n_family is None or n_family <= 1
+    return InvariantResult(
+        name="check_promotion_multiplicity_route",
+        passed=passed,
+        expected="deflation_n_family <= 1 für promotion_route == 'global_default_on_symbol'",
+        actual=n_family,
+        severity="high",
+        detail=("OK" if passed else
+                f"promotion_route='global_default_on_symbol' trägt deflation_n_family={n_family} "
+                "> 1 in die DSR-Berechnung — resolve_promotion_multiplicity wurde umgangen "
+                "(Pitfall #278)."),
+    )
+
+
 def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     """Issue #652/#670-Regressionswächter.
 

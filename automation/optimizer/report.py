@@ -366,6 +366,9 @@ def _study_record(proposal: dict, study,
             holdout_metrics,
             max_ratio=float((tournament_cfg or {}).get("deflation_max_n_periods_ratio", 4.0))),
         _inv.check_n_family_consistency(holdout_metrics),
+        # Issue #887 — der globale Default (route='global_default_on_symbol') nahm an der
+        # Stufe-1-Selektion nicht teil; seine Deflation muss N=1 tragen, nicht deflation_n_family.
+        _inv.check_promotion_multiplicity_route(proposal),
         # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
         # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.
         _inv.check_deflation_cluster_coverage(holdout_metrics),
