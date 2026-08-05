@@ -399,6 +399,21 @@ def resolve_any_arm_policy(tournament_cfg: dict | None,
                 continue
             p99_idx = max(0, min(len(samples) - 1, round(0.99 * (len(samples) - 1))))
             result["recalibrated_thresholds"][threshold_key] = samples[p99_idx]
+    # Issue #867 (Pitfall #279) — eine Ein-Element eligible_requires_any-Liste, aus der 'drop_arm'
+    # ihr einziges Element entfernt, ist KEIN "OR-Arm auf die übrigen Arme reduziert" mehr (das
+    # setzt MEHRERE Alternativen voraus) — es ist das ERSATZLOSE Verschwinden eines harten Gates,
+    # ohne dass irgendein Wächter das meldet (der Root-Cause-Fall dieses Katalogs: min_profit_factor
+    # war der einzige verbliebene Arm nach #848s min_win_rate-Entfernung). Fail-loud statt eines
+    # stillen, folgenlosen Gate-Verlusts — der richtige Fix ist, die Klausel nach
+    # eligible_requires_all zu verschieben (dort ist sie ohnehin bereits FUNKTIONAL äquivalent).
+    if policy == "drop_arm" and len(any_clauses) == 1 and set(result["dropped_clauses"]) == set(any_clauses):
+        raise ValueError(
+            f"tournament.json['eligible_requires_any']={any_clauses!r} ist eine Ein-Element-Liste — "
+            f"'drop_arm' würde sie VOLLSTÄNDIG leeren und damit ein hartes Gate ({any_clauses[0]!r}) "
+            f"ersatzlos entfernen (Pitfall #279). Den Eintrag nach 'eligible_requires_all' "
+            f"verschieben und 'eligible_requires_any' auf [] setzen, statt sich auf drop_arm zu "
+            f"verlassen (siehe Issue #867)."
+        )
     if result["recalibrated_thresholds"]:
         import logging
         logging.getLogger("optimizer").warning(

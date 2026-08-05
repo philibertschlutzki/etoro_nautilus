@@ -29,8 +29,12 @@ CFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 # ── Akzeptanzkriterium #776/1: genau ein risikoadjustiertes Rendite-Gate nach dem Merge ───────────
 def test_conjunction_contains_exactly_one_risk_adjusted_return_gate():
+    """Issue #867 fügte 'min_profit_factor' hinzu (zuvor der einzige Arm von
+    eligible_requires_any — funktional bit-identisch, siehe dortiges Schema); die Aussage dieses
+    Tests (genau EIN risikoadjustiertes Rendite-Gate, kein oos_min_excess_return) bleibt davon
+    unberührt — profit_factor ist kein risikoadjustiertes Gate."""
     requires_all = CFG["eligible_requires_all"]
-    assert requires_all == ["min_trades", "max_drawdown", "oos_min_psr"]
+    assert requires_all == ["min_trades", "max_drawdown", "oos_min_psr", "min_profit_factor"]
     assert "oos_min_excess_return" not in requires_all
 
 

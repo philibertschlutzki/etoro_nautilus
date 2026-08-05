@@ -26,8 +26,11 @@ _TCFG = json.loads(open("automation/config/tournament.json", encoding="utf-8").r
 
 # ── AK-1: min_win_rate ist kein eligible_requires_any-Arm mehr ───────────────────────────────────
 def test_ak1_min_win_rate_removed_from_eligible_requires_any():
+    """Issue #867 — 'min_profit_factor' (der nach der #848-min_win_rate-Entfernung einzige
+    verbliebene Arm) zog seinerseits nach eligible_requires_all um (verkleidete Konjunktion,
+    Pitfall #279) — eligible_requires_any ist seither bewusst leer."""
     assert "min_win_rate" not in _TCFG["eligible_requires_any"]
-    assert _TCFG["eligible_requires_any"] == ["min_profit_factor"]
+    assert _TCFG["eligible_requires_any"] == []
 
 
 def test_min_win_rate_value_stays_documented_but_inert():
