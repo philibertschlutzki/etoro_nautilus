@@ -338,6 +338,44 @@ def plateau_stop_missed_probability(m_modelled: int, remaining_budget: int) -> t
     return p_hi, 1.0 - (1.0 - p_hi) ** remaining_budget
 
 
+# Issue #870 (P1, Katalog #870-#875, GitHub-Issue #761, Pitfall #270) — der Closed-Loop-Deadlock
+# ("siebter Vollauf in Folge ohne ein einziges SEARCH_SPACE_AUTO_OVERRIDE/denylist-Event") ist
+# konsistent mit derselben Fehlerklasse, die #856 an der Fail-Fast-Probe bereits behoben hat: die
+# ``recommend_diagnosis_action``/``record_diagnosed_pair``-Schreibrücke unten ist über einen
+# ``except Exception: logger.debug(...)`` gegen jeden Fehler abgesichert ("non-fatal") — ein
+# WIEDERHOLT fehlschlagender Closed Loop bleibt dadurch UNSICHTBAR (der Operator sieht 0 Denylist-/
+# Override-Einträge, ohne zu wissen, ob der Mechanismus korrekt "nichts zu tun fand" oder schlicht
+# nie erfolgreich lief). Modul-Ebene, weil ``floor_plateau_callback`` pro Study neu aufgerufen wird
+# und die Zählung über die gesamte Worker-Prozess-Lebensdauer (viele Studies je Symbol) laufen muss.
+_diagnosis_writeback_errors = 0
+
+
+def _record_diagnosis_writeback_outcome(success: bool) -> None:
+    """Issue #870 — Erfolg/Fehlschlag der Diagnose-Schreibrücke (beide Aufrufstellen in
+    ``floor_plateau_callback``, STRUCTURAL_ALL_UNEVALUABLE UND ZERO_ELIGIBLE_PLATEAU) auf EINER
+    gemeinsamen Zählung: ein Erfolg setzt sie zurück (transiente Einzelfehler bleiben debug-only,
+    wie vor diesem Fix); zwei aufeinanderfolgende Fehlschläge eskalieren auf ERROR + ein
+    strukturiertes ``DIAGNOSIS_WRITEBACK_BROKEN``-Event — derselbe Schwellenwert/dieselbe
+    Eskalations-Form wie #856s ``FAIL_FAST_PROBE_BROKEN``."""
+    global _diagnosis_writeback_errors
+    if success:
+        _diagnosis_writeback_errors = 0
+        return
+    _diagnosis_writeback_errors += 1
+    if _diagnosis_writeback_errors >= 2:
+        logging.getLogger("optimizer").error(
+            "[#870] DIAGNOSIS_WRITEBACK_BROKEN: die Closed-Loop-Diagnose-Schreibrücke "
+            "(recommend_diagnosis_action/record_diagnosed_pair) ist zum %d. Mal in Folge "
+            "fehlgeschlagen — strukturell nicht-viable Paare können nicht mehr automatisch "
+            "stillgelegt werden (Pitfall #270).", _diagnosis_writeback_errors, exc_info=True,
+        )
+        emit_execution_event(
+            logging.getLogger("optimizer"), "DIAGNOSIS_WRITEBACK_BROKEN",
+            {"consecutive_errors": _diagnosis_writeback_errors},
+            level=logging.ERROR,
+        )
+
+
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
@@ -570,8 +608,10 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         stop_reason=_budget_execution_for_diagnosis["stop_reason"],
                     )
                     record_diagnosed_pair(rec)
+                    _record_diagnosis_writeback_outcome(True)
                 except Exception:
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
+                    _record_diagnosis_writeback_outcome(False)
 
             # Issue #456 / #488 — aussichtslose Suche frueh beenden (nur Opt-in; crash-sicher).
             should_stop = stop_on_plateau or (
@@ -733,8 +773,10 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         stop_reason=_budget_execution_for_quality["stop_reason"],
                     )
                     record_diagnosed_pair(rec)
+                    _record_diagnosis_writeback_outcome(True)
                 except Exception:
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
+                    _record_diagnosis_writeback_outcome(False)
 
             should_stop = stop_on_plateau or (
                 weights and weights.get("structural_min_modelled_trials_per_dim") is not None)

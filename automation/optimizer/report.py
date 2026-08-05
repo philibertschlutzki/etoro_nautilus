@@ -649,6 +649,47 @@ def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     ]
 
 
+def _structural_suspension_summary(optimizer_cfg: dict) -> dict[str, Any]:
+    """Issue #870 Fix Punkt 4 (P1, Katalog #870-#875, GitHub-Issue #761) — ``cross_study.
+    structural_suspension``: welche (Strategie, Symbol)-Paare der harte, closed-loop-unabhängige
+    Deckel (``sweep_diagnostics.is_pair_structurally_suspended``,
+    ``tournament.json['max_consecutive_structural_runs']``) aktuell aussetzt, PLUS die geschätzte
+    Trial-Ersparnis (``derive_n_trials`` je Strategie, dieselbe Budget-Berechnung wie
+    ``sweep.run_per_symbol_sweep``s Speicher-Preflight) — Akzeptanzkriterium #870: "die Ersparnis
+    ist im Report ausgewiesen (``pairs_suspended``, ``trials_saved``)". Fail-open (leere
+    Zusammenfassung) bei jedem Lesefehler — der Report darf wegen dieser Sektion nie crashen."""
+    try:
+        from automation.optimizer.sweep_diagnostics import (
+            load_diagnosed_pairs_cache, is_pair_structurally_suspended,
+            read_max_consecutive_structural_runs,
+        )
+        from automation.optimizer.run_optimization import derive_n_trials
+        cache = load_diagnosed_pairs_cache()
+        max_consecutive = read_max_consecutive_structural_runs()
+    except Exception:
+        return {"pairs_suspended": [], "trials_saved": 0, "max_consecutive_structural_runs": None}
+    suspended = [
+        {
+            "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
+            "consecutive_structural_runs": entry.get("consecutive_structural_runs"),
+        }
+        for entry in cache.values()
+        if is_pair_structurally_suspended(entry, max_consecutive_structural_runs=max_consecutive)
+    ]
+    trials_saved = 0
+    for row in suspended:
+        try:
+            trials_saved += derive_n_trials(
+                row["strategy"], optimizer_cfg.get("n_trials", 100), optimizer_cfg)
+        except Exception:
+            continue
+    return {
+        "pairs_suspended": suspended,
+        "trials_saved": trials_saved,
+        "max_consecutive_structural_runs": max_consecutive,
+    }
+
+
 def _symbol_coverage_summary(opt_data: dict) -> tuple[dict[str, Any], _inv.InvariantResult]:
     """Issue #841 — ``cross_study.symbol_coverage`` + der zugehörige Invarianten-Check. Liest
     ``data/optimizer/symbol_coverage.json`` (das Ledger, das ``sweep_symbol_order_policy=
@@ -1157,6 +1198,10 @@ def _build_report(
             # Issue #830 Fix Punkt 4 — ALLE Diagnose-Cache-Eintraege (denylist UND deprioritized
             # UND none-mit-Ursache), nicht nur die uebersprungene Teilmenge oben.
             "diagnosed_pairs": _diagnosed_pairs_section(),
+            # Issue #870 Fix Punkt 4 — der closed-loop-unabhaengige Aussetzungs-Deckel: welche Paare
+            # aktuell wegen zu vieler aufeinanderfolgender STRUCTURAL_ALL_UNEVALUABLE-Laeufe nicht
+            # mehr enumeriert werden, plus die geschaetzte Trial-Ersparnis.
+            "structural_suspension": _structural_suspension_summary(optimizer_cfg),
             # Issue #831 Fix Punkt 4 — Randlösungen (boundary_hit_fraction > 0.3) mit ihrem
             # konkreten Bounds-Vorschlag, unabhängig davon, ob die Study eligible Trials hatte.
             "boundary_solutions": _boundary_solutions_section(),

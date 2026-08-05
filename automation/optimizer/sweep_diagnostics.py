@@ -536,8 +536,57 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     else:
         entry["n_runs_confirmed"] = 1
         entry["first_seen_run_id"] = run_id
+    # Issue #870 Fix Punkt 4 (P1, Katalog #870-#875, GitHub-Issue #761) — ``consecutive_structural_
+    # runs`` ist eine von ``n_runs_confirmed`` UNABHAENGIGE, HAERTERE Zaehlung: ``n_runs_confirmed``
+    # setzt sich NUR fort, solange ``action`` UND ``binding_cause`` IDENTISCH bleiben (ein Wechsel
+    # zwischen 'none' und 'denylist' bei gleichbleibendem 'signal_absent' setzt sie NICHT zurueck,
+    # aber ein Wechsel des binding_cause selbst schon) — das macht sie ungeeignet als unabhaengiger
+    # Hard-Cap. Diese Zaehlung reagiert AUSSCHLIESSLICH auf den rohen ``stop_reason`` dieses Laufs
+    # (STRUCTURAL_ALL_UNEVALUABLE ja/nein), unabhaengig von der (langsameren, evidenzbasierten)
+    # Eskalationslogik in ``recommend_diagnosis_action`` — der in #870 geforderte, vom Closed Loop
+    # UNABHAENGIGE Deckel (``enumerate_tunable_pairs``/``is_pair_structurally_suspended`` konsumieren
+    # sie unabhaengig vom ``action``-Feld).
+    if recommendation.get("stop_reason") == "STRUCTURAL_ALL_UNEVALUABLE":
+        entry["consecutive_structural_runs"] = int(
+            (prior or {}).get("consecutive_structural_runs", 0)) + 1
+    else:
+        entry["consecutive_structural_runs"] = 0
     cache[key] = entry
     return _save_diagnosed_pairs_cache(cache, work_dir=work_dir)
+
+
+# Issue #870 Fix Punkt 4 — Default fuer ``tournament.json['max_consecutive_structural_runs']``: ein
+# Paar, das ZWEI Laeufe IN FOLGE mit ``stop_reason == 'STRUCTURAL_ALL_UNEVALUABLE'`` endet, wird im
+# DRITTEN Lauf nicht mehr enumeriert — unabhaengig davon, ob ``recommend_diagnosis_action``s
+# evidenzbasierte Eskalation (``n_runs_confirmed >= 2``, siehe dortiger Docstring) im selben Lauf
+# bereits selbst auf 'denylist' geschaltet hat (die ist strukturell EIN Lauf langsamer, siehe
+# Docstring von ``record_diagnosed_pair`` oben — dieser Deckel schliesst genau diese Luecke).
+_DEFAULT_MAX_CONSECUTIVE_STRUCTURAL_RUNS = 2
+
+
+def is_pair_structurally_suspended(
+        entry: dict, *,
+        max_consecutive_structural_runs: int = _DEFAULT_MAX_CONSECUTIVE_STRUCTURAL_RUNS) -> bool:
+    """Issue #870 Fix Punkt 4 — ``True``, wenn ein Cache-Eintrag den harten, closed-loop-
+    unabhaengigen Deckel erreicht hat (``consecutive_structural_runs >=
+    max_consecutive_structural_runs``). Pure Funktion, synthetisch testbar."""
+    return int(entry.get("consecutive_structural_runs", 0)) >= max_consecutive_structural_runs
+
+
+def read_max_consecutive_structural_runs(base_cfg: Path | None = None) -> int:
+    """Issue #870 Fix Punkt 4 — liest ``tournament.json['max_consecutive_structural_runs']``
+    (Default 2, Zero-Hardcoding). Fail-open auf den Default bei fehlender/kaputter Datei."""
+    if base_cfg is None:
+        from automation.optimizer.trial_config import config_dir
+        base_cfg = config_dir()
+    path = base_cfg / "tournament.json"
+    if not path.exists():
+        return _DEFAULT_MAX_CONSECUTIVE_STRUCTURAL_RUNS
+    try:
+        data = json.loads(path.read_text("utf-8")) or {}
+    except (OSError, ValueError):
+        return _DEFAULT_MAX_CONSECUTIVE_STRUCTURAL_RUNS
+    return int(data.get("max_consecutive_structural_runs", _DEFAULT_MAX_CONSECUTIVE_STRUCTURAL_RUNS))
 
 
 def age_diagnosed_pairs_cache(*, work_dir: Path | None = None) -> dict[tuple[str, str], dict]:

@@ -44,6 +44,7 @@ from automation.optimizer.sweep_diagnostics import (
     load_symbol_strategy_denylist, load_diagnosed_pairs_cache,
     load_continuous_bar_invalid_strategies, age_diagnosed_pairs_cache, is_diagnosed_pair_expired,
     check_bar_quality, diagnose_symbol_degeneracy, record_diagnosed_pair,
+    is_pair_structurally_suspended, read_max_consecutive_structural_runs,
 )
 from automation.log_manager import (
     setup_bot_logging, emit_execution_event, emit_gate1_rejection, default_run_id,
@@ -505,6 +506,12 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     # ein Paar, das seine expires_after_runs-Frist erreicht hat, wird DIESEN Lauf wieder regulär
     # enumeriert (Re-Test) statt auf ewig auto-denylisted zu bleiben.
     auto_diagnosed = age_diagnosed_pairs_cache()
+    # Issue #870 Fix Punkt 4 — der harte, VOM Closed-Loop-Evidenzregime UNABHAENGIGE Deckel: ein
+    # Paar, das ``max_consecutive_structural_runs`` (Default 2) Laeufe IN FOLGE mit stop_reason
+    # STRUCTURAL_ALL_UNEVALUABLE endete, wird ab dem naechsten Lauf ausgesetzt — selbst wenn
+    # ``recommend_diagnosis_action``s eigene (langsamere) Eskalation dieses Laufs noch nicht auf
+    # 'denylist' geschaltet hat (siehe sweep_diagnostics.record_diagnosed_pair-Docstring).
+    _max_consecutive_structural_runs = read_max_consecutive_structural_runs()
     # Issue #698 — Strategien, deren Signal auf der (system-weit einzigen) kontinuierlichen
     # 24/7-Bar-Semantik strukturell ungültig ist (z. B. GapContinuation Variante A — kein echter
     # Overnight-Gap ohne Handelspausen). Deklarativ aus strategies.json, leer ⇒ bit-identisch.
@@ -603,6 +610,41 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                         "Diagnose-Lauf als strukturell nicht-viabel erkannt, binding_cause=%s). Zur "
                         "PERMANENTEN Deaktivierung symbol_strategy_denylist.json per PR pflegen.",
                         strategy, symbol, auto_rec.get("binding_cause"),
+                    )
+                    continue
+            # Issue #870 Fix Punkt 4 — der harte, closed-loop-unabhaengige Deckel: greift AUCH, wenn
+            # obiger 'denylist'-Zweig (noch) nicht ausgeloest hat (die evidenzbasierte Eskalation aus
+            # recommend_diagnosis_action ist strukturell EIN Lauf langsamer, siehe dortiger
+            # Docstring). Dieselbe expires_after_runs-Alterung wie beim 'denylist'-Zweig gilt auch
+            # hier (age_diagnosed_pairs_cache aeltert JEDEN Cache-Eintrag, nicht nur 'denylist'-Faelle).
+            elif auto_rec is not None and is_pair_structurally_suspended(
+                    auto_rec, max_consecutive_structural_runs=_max_consecutive_structural_runs):
+                if is_diagnosed_pair_expired(auto_rec):
+                    emit_execution_event(log, "SYMBOL_STRATEGY_STRUCTURAL_SUSPENSION_EXPIRED_RETEST", {
+                        "strategy": strategy, "symbol": symbol,
+                        "consecutive_structural_runs": auto_rec.get("consecutive_structural_runs"),
+                        "runs_since_recorded": auto_rec.get("runs_since_recorded"),
+                        "expires_after_runs": auto_rec.get("expires_after_runs"),
+                    })
+                    log.warning(
+                        "🔁 %s/%s: strukturelle Aussetzung ist abgelaufen (Issue #870: "
+                        "runs_since_recorded=%s >= expires_after_runs=%s) — wird DIESEN Lauf wieder "
+                        "regulär enumeriert (Re-Test).",
+                        strategy, symbol, auto_rec.get("runs_since_recorded"),
+                        auto_rec.get("expires_after_runs"),
+                    )
+                else:
+                    emit_execution_event(log, "SYMBOL_STRATEGY_STRUCTURALLY_SUSPENDED", {
+                        "strategy": strategy, "symbol": symbol,
+                        "consecutive_structural_runs": auto_rec.get("consecutive_structural_runs"),
+                        "max_consecutive_structural_runs": _max_consecutive_structural_runs,
+                    })
+                    log.warning(
+                        "⏭️  %s/%s übersprungen (Issue #870: %d aufeinanderfolgende Läufe mit "
+                        "stop_reason=STRUCTURAL_ALL_UNEVALUABLE, Deckel=%d — unabhängig vom Closed-"
+                        "Loop-Evidenzregime ausgesetzt).",
+                        strategy, symbol, auto_rec.get("consecutive_structural_runs"),
+                        _max_consecutive_structural_runs,
                     )
                     continue
             ok, _reason = is_symbol_tunable(
