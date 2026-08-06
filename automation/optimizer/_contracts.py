@@ -108,3 +108,40 @@ _register_inference_code(
                 "dieser Referenz-Semantik nicht bewertbar (#901/#913).",
     nullifies_metrics=("oos_sortino_period", "oos_sortino_annualized", "oos_psr"),
 )
+# Issue #918 (Verallgemeinerung von #914) — die übrigen ``inference_diagnostics``-Codes aus
+# ``backtest_runner.py``, bislang NUR im jeweiligen Docstring/Log dokumentiert, nirgends
+# registriert. Alle sechs sind 'telemetry_only': sie fliessen NICHT in
+# ``run_optimization._inference_failure_codes`` (kein Prune allein aufgrund dieses Codes) — der
+# jeweilige Trial wird bereits über einen ANDEREN, direkteren Mechanismus als nicht auswertbar
+# markiert (z. B. ``oos_evaluated=False`` direkt im Metrics-Dict), dieser Code ist die zusätzliche,
+# forensische Erklärung WARUM.
+_register_inference_code(
+    "COHERENCE_INVARIANT_VIOLATION", failure_policy="telemetry_only", severity="high",
+    description="sign(oos_sortino) != sign(oos_total_return) bei |return| > Toleranz — gepoolter "
+                "OOS-Sortino und Return sind inkohärent (#589/#804).",
+)
+_register_inference_code(
+    "RETURN_SERIES_IDENTITY_UNDEFINED", failure_policy="telemetry_only", severity="blocking",
+    description="total_return <= -1 — log1p(1+total_return) nicht definierbar (Equity-Kurve durch/"
+                "unter Null, die stärkste mögliche #756-Identitätsverletzung) (#801/#804).",
+)
+_register_inference_code(
+    "PERIOD_RETURNS_NOT_FINITE", failure_policy="telemetry_only", severity="blocking",
+    description="Σlog(1+rᵢ) ist nicht endlich (NaN/±inf) — die Renditeserie der Inferenz enthält "
+                "einen nicht-finiten Wert (#801/#804).",
+)
+_register_inference_code(
+    "RETURN_SERIES_IDENTITY_VIOLATION", failure_policy="telemetry_only", severity="high",
+    description="Σlog(1+rᵢ) != log(1+total_return) — total_return und die Renditeserie der "
+                "Inferenz stammen nicht aus derselben Bar-Menge (#756/#771/#804).",
+)
+_register_inference_code(
+    "NON_CONTIGUOUS_FOLD_SEGMENTS", failure_policy="telemetry_only", severity="medium",
+    description="die mtm_frames-Fold-Segmente sind nicht lückenlos aneinandergereiht — Restlücke "
+                "im mtm_frames-Fallback-Pfad (#771).",
+)
+_register_inference_code(
+    "EXIT_CLOSE_UNRECOVERABLE", failure_policy="telemetry_only", severity="blocking",
+    description=">= exit_close_max_retries verweigerte/abgelehnte Markt-Close-Versuche — Trial "
+                "als ungültig markiert statt einer still durchgehaltenen offenen Position (#859).",
+)

@@ -814,7 +814,18 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
 # nur noch ihre KONZENTRATION (siehe check_inference_diagnostics_concentration). Alle übrigen Codes
 # (allen voran EQUITY_NONPOSITIVE) bleiben echte Defekt-Indikatoren — ihre Abwesenheit ist weiterhin
 # die Norm.
-_REGULAR_THIRD_OUTCOME_CODES = frozenset({"SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE"})
+#
+# Issue #918 — SORTINO_GUARD_REFERENCE_UNAVAILABLE (#901/#913) gehört in dieselbe Klasse wie die
+# beiden bestehenden Codes: 'kein belastbarer Familien-Median (noch)' ist eine Kaltstart-Aussage
+# über die Study-Historie, keine über die Strategie — derselbe "nicht messbar ≠ schlecht"-Fall.
+# BEWUSST NICHT aus _contracts.INFERENCE_DIAGNOSTIC_CODES.failure_policy abgeleitet (dort tragen
+# SORTINO_GUARD_TRIPPED UND EQUITY_NONPOSITIVE identisch failure_policy='prune', gehören aber
+# HIER in unterschiedliche Klassen — EQUITY_NONPOSITIVE bleibt ein echter Defekt-Indikator trotz
+# ebenfalls geprunter Trial-Behandlung). failure_policy beschreibt die REWARD-Konsequenz, dieses
+# Set beschreibt die DEFEKT-Konsequenz — zwei unabhängige Dimensionen desselben Codes.
+_REGULAR_THIRD_OUTCOME_CODES = frozenset({
+    "SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE", "SORTINO_GUARD_REFERENCE_UNAVAILABLE",
+})
 
 
 def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
