@@ -227,6 +227,46 @@ def _modelled_trials(completed: list, n_startup_trials: int) -> list:
     return [t for idx, t in enumerate(completed) if _trial_number(idx, t) >= int(n_startup_trials)]
 
 
+def _best_completed_value(trials: list, *, direction: str = "maximize") -> float | None:
+    """Issue #929 — ``study.best_value`` (Optuna-nativ) ist unter aktiver Constraint-Führung
+    (``constraints_func``, Issue #612) auf FEASIBLE Trials beschränkt — bei ``oos_eligible=False``
+    für JEDEN Trial (der #913-Zustand: ``oos_constraint_violations=(1.0,)`` überall) hat Optuna
+    keinen feasiblen Kandidaten und ``study.best_value`` liefert ``None``/wirft, OBWOHL Optuna für
+    jede Study intern einen besten ROHEN Reward-Wert kennt. ``best_value=null`` ist damit NICHT
+    dasselbe wie 'kein eligibler Trial' — es verschluckt die einzige Grösse, an der ohne
+    Eligibility ablesbar wäre, ob die Suche überhaupt einen Gradienten gefunden hat.
+
+    Berechnet den besten ``trial.value`` direkt über ALLE ``TrialState.COMPLETE``-Trials
+    (Optuna-Semantik für 'abgeschlossen'), UNABHÄNGIG von Constraint-Feasibility/Eligibility.
+    ``None`` bei 0 abgeschlossenen Trials mit definiertem Wert (echte Leermenge, kein
+    Constraint-Artefakt)."""
+    values = [
+        float(t.value) for t in trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and isinstance(getattr(t, "value", None), (int, float))
+    ]
+    if not values:
+        return None
+    return max(values) if direction == "maximize" else min(values)
+
+
+def _best_completed_trial_number(trials: list, *, direction: str = "maximize") -> int | None:
+    """Issue #929 Fix 2 — dieselbe constraint-unabhängige Auswahl wie ``_best_completed_value``,
+    aber die TRIAL-NUMMER statt des Werts: macht ein Study-Ergebnis OHNE Promotion trotzdem
+    inspizierbar (``explain_trial.py`` braucht eine konkrete Trial-Referenz, ``study.best_trial``
+    ist unter aktiver Constraint-Führung derselben Feasibility-Blindheit unterworfen wie
+    ``study.best_value``)."""
+    candidates = [
+        (float(t.value), getattr(t, "number", None)) for t in trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and isinstance(getattr(t, "value", None), (int, float))
+    ]
+    if not candidates:
+        return None
+    best = max(candidates) if direction == "maximize" else min(candidates)
+    return best[1]
+
+
 _STOP_REASONS = frozenset({
     "BUDGET_EXHAUSTED", "STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE",
     "NO_GRADIENT_SIGNAL", "EXCEPTION",
@@ -417,6 +457,13 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     # Zero-Eligible-Urteil ausgefuehrte Budgetanteil monoton mit dim (64% bei dim=2, 32% bei dim=14).
     plateau_min_modelled_trials = derive_plateau_min_modelled_trials(
         strategy, plateau_min_modelled_trials, weights or {})
+    # Issue #929 Fix 3 — als Study-User-Attr gestempelt, damit report._study_record die exakte,
+    # zur Laufzeit dieser Study verwendete Schwelle liest (statt sie erneut herzuleiten) —
+    # Eingangsgrösse für invariants.check_search_made_progress.
+    try:
+        study.set_user_attr("plateau_min_modelled_trials", int(plateau_min_modelled_trials))
+    except Exception:
+        pass
     min_for_structural = max(1, int(n_startup_trials)) + structural_extra
     min_for_zero_eligible = max(1, int(n_startup_trials)) + plateau_min_modelled_trials
     # Issue #768/#805 — Obergrenze gegen Budget-Ueberschreitung: der Guard darf nie NACH dem
@@ -681,21 +728,35 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             # Issue #700 — per-16-Trial-Fenster p_eligible-Kurve (Diagnose-Akzeptanzkriterium):
             # unterscheidet TRANSIENTE (irgendwo zwischenzeitlich eligible Trials) von PERMANENTER
             # (jedes Fenster 0.0) Null-Eligibilitaet.
-            from automation.optimizer.sweep_diagnostics import eligibility_curve
+            from automation.optimizer.sweep_diagnostics import (
+                eligibility_curve, resolve_ineligible_binding_cause)
             p_eligible_windows = eligibility_curve(
                 [{"oos_eligible": getattr(t, "user_attrs", {}).get("oos_eligible")} for t in completed],
                 window=16,
             )
 
+            # Issue #926/#921 — 'signal_quality' war hier UNBEDINGT vergeben, sobald alle Trials
+            # evaluiert wurden — eine nicht durchgefuehrte Messung (#917, undefinierter oos_psr)
+            # wurde damit als negatives Messergebnis interpretiert. resolve_ineligible_binding_cause
+            # trennt jetzt 'inference_unavailable' (#913-Klasse) und 'signal_sparse' (#921,
+            # median_oos_total_trades <= 2) vom echten Qualitaetsurteil.
+            _evaluated_trial_dicts = [
+                {"is_rejection_detail": getattr(t, "user_attrs", {}).get("is_rejection_detail")}
+                for t in completed if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+            ]
+            binding_cause, _binding_detail = resolve_ineligible_binding_cause(
+                _evaluated_trial_dicts, median_oos_trades=median_oos_trades)
+
             logger.warning(
                 "🚨 Zero-Eligible-Plateau erkannt: %d/%d Trials wurden evaluiert (echte OOS-"
                 "Backtests), aber KEINER war oos_eligible — der Suchraum erzeugt strukturell "
                 "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d Trials trafen die "
-                "Haltedauer-/Trade-Cap-Grenze). p_eligible je 16-Trial-Fenster: %s. Suchraum-Bounds "
-                "pruefen (spaces.py) ODER die Strategie fuer dieses Symbol/Tier deaktivieren, statt "
-                "die restlichen Trials nutzlos durchlaufen zu lassen.",
+                "Haltedauer-/Trade-Cap-Grenze). binding_cause=%s (#926). p_eligible je "
+                "16-Trial-Fenster: %s. Suchraum-Bounds pruefen (spaces.py) ODER die Strategie fuer "
+                "dieses Symbol/Tier deaktivieren, statt die restlichen Trials nutzlos "
+                "durchlaufen zu lassen.",
                 n_evaluated, len(completed), median_oos_trades, n_hit_cap, n_evaluated,
-                p_eligible_windows,
+                binding_cause, p_eligible_windows,
             )
             import json as _json
             emit_execution_event(logger, "ZERO_ELIGIBLE_PLATEAU", {
@@ -704,10 +765,12 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "median_oos_total_trades": median_oos_trades,
                 "hit_trade_cap_count": n_hit_cap,
                 "p_eligible_windows": p_eligible_windows,
-                # Issue #669 — innerhalb der EVALUIERTEN Trials: Signal-QUALITÄT, keine Frequenz-/
-                # Bounds-Ursache (Bounds-Kalibrierung würde hier NICHTS beheben — trennt diesen Fall
-                # explizit von STRUCTURAL_ALL_UNEVALUABLE).
-                "binding_cause": "signal_quality",
+                # Issue #669/#921/#926 — innerhalb der EVALUIERTEN Trials: 'signal_quality' (echte
+                # Qualitätsmessung), 'signal_sparse' (#921, das Signal tritt kaum auf) oder
+                # 'inference_unavailable' (#926, die Messung selbst war nicht durchführbar) —
+                # niemals mehr unbedingt 'signal_quality'.
+                "binding_cause": binding_cause,
+                **_binding_detail,
             })
 
             # Issue #681/#830 — dieselbe Closed-Loop-Anbindung wie im STRUCTURAL_ALL_UNEVALUABLE-
@@ -728,13 +791,13 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         completed, n_trials_budget=_n_trials_budget,
                         n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs)
                     rec = recommend_diagnosis_action(
-                        strategy, symbol, {"binding_cause": "signal_quality",
+                        strategy, symbol, {"binding_cause": binding_cause,
                                            "median_oos_trades": median_oos_trades,
                                            "median_is_trades": None},
                         budget_executed_fraction=_budget_execution_for_quality["budget_executed_fraction"],
                         n_runs_confirmed=(
                             int(_prior_quality.get("n_runs_confirmed", 0))
-                            if _prior_quality and _prior_quality.get("binding_cause") == "signal_quality"
+                            if _prior_quality and _prior_quality.get("binding_cause") == binding_cause
                             else 0
                         ),
                         stop_reason=_budget_execution_for_quality["stop_reason"],
@@ -1524,9 +1587,23 @@ _OOS_REASON_PREFIX_MAP: tuple[tuple[str, str], ...] = (
     ("oos_min_win_rate", "REJECT_OOS_MIN_WIN_RATE"),
     ("oos_min_sortino", "REJECT_OOS_MIN_SORTINO"),
     ("oos_min_profit_factor", "REJECT_OOS_MIN_PROFIT_FACTOR"),
+    # Issue #917 — fehlte bislang vollständig: JEDE oos_min_psr-Ablehnung (definierter Miss UND
+    # undefinierter PSR) fiel dadurch auf den Catch-All REJECT_OOS_OTHER (1692/2187 Trials eines
+    # Referenzlaufs). Ein echter numerischer Miss (nicht 'None (insufficient/guard)', siehe
+    # _OOS_UNDEFINED_STATISTIC_MARKER unten) landet jetzt hier; der undefinierte Fall wird VOR
+    # dieser Zuordnung in _classify_is_rejection_detail abgefangen.
+    ("oos_min_psr", "REJECT_OOS_MIN_PSR"),
+    ("oos_min_excess_return", "REJECT_OOS_MIN_EXCESS_RETURN"),
     ("Micro-Sizing", "REJECT_OOS_MICRO_SIZING"),
     ("oos_not_evaluable", "REJECT_OOS_NOT_EVALUABLE"),
 )
+
+# Issue #917 — Marker-Substring, den backtest_runner._evaluate_oos_eligibility in JEDE Rejection-
+# Reason schreibt, deren zugrunde liegende Kennzahl UNDEFINIERT ist (None), statt eines regulär
+# berechneten Werts, der die Schwelle verfehlt (z. B. "oos_min_psr: None (insufficient/guard) <
+# 0.75"). "None < threshold" ist kein Vergleichsergebnis, sondern eine nicht durchgeführte Messung
+# — dieselbe Missing-Data-Klasse wie #759/#788, hier auf Gate- statt Metrik-Ebene.
+_OOS_UNDEFINED_STATISTIC_MARKER = "None (insufficient"
 
 
 def _map_oos_reason(reason: str) -> str:
@@ -1535,6 +1612,19 @@ def _map_oos_reason(reason: str) -> str:
         if reason.startswith(prefix):
             return code
     return "REJECT_OOS_OTHER"
+
+
+def _extract_undefined_gate_terms(reasons) -> list[str]:
+    """Issue #917 Fix 2 — welche ``eligible_requires_all``-Gates in DIESEM Trial auf einer
+    undefinierten Grösse liefen (``oos_gate_undefined_terms``). Reine Textextraktion aus den
+    bereits vorhandenen ``oos_rejection_reasons``-Zeilen — kein zweiter Auswertungspfad."""
+    terms: list[str] = []
+    for r in reasons or ():
+        if _OOS_UNDEFINED_STATISTIC_MARKER in r:
+            label = r.split(":", 1)[0].split(" (", 1)[0].strip()
+            if label and label not in terms:
+                terms.append(label)
+    return terms
 
 
 def _classify_is_rejection_detail(metrics) -> str:
@@ -1552,6 +1642,10 @@ def _classify_is_rejection_detail(metrics) -> str:
                                             im OOS-Fenster nicht — strategieseitig, separat zu lösen).
       * ``REJECT_OOS_NOT_EVALUATED``      — OOS=0, Abdeckung unbekannt (Legacy/keine #455-Telemetrie).
       * ``REJECT_OOS_<GATE>``             — evaluiert, aber durchs konkrete Eligibility-Gate gefallen.
+      * ``REJECT_OOS_STATISTIC_UNAVAILABLE`` — Issue #917: mindestens EIN requires_all-Gate
+                                            operierte auf einer UNDEFINIERTEN Grösse (None) statt
+                                            einem berechneten Wert unter der Schwelle — der Trial
+                                            wurde nicht GEMESSEN, nicht am Gate abgelehnt.
     """
     if metrics.oos_evaluated and metrics.oos_eligible:
         return IS_REJECTION_NONE
@@ -1566,6 +1660,13 @@ def _classify_is_rejection_detail(metrics) -> str:
         return "REJECT_OOS_NOT_EVALUATED"
     reasons = getattr(metrics, "oos_rejection_reasons", ()) or ()
     if reasons:
+        # Issue #917 — Vorrang vor JEDER anderen Klassifikation, unabhängig davon, ob die
+        # undefinierte Grösse an erster Stelle der Liste steht: 'nicht messbar' ist eine andere
+        # Aussage als 'am Gate gescheitert', selbst wenn ein anderes Gate ZUSÄTZLICH numerisch
+        # verfehlt wurde (die numerische Verletzung ist auf einer nicht bewerteten Kohorte ohnehin
+        # nicht aussagekräftig).
+        if any(_OOS_UNDEFINED_STATISTIC_MARKER in r for r in reasons):
+            return "REJECT_OOS_STATISTIC_UNAVAILABLE"
         return _map_oos_reason(reasons[0])
     return "REJECT_OOS_GATE"
 
@@ -1929,10 +2030,17 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             getattr(study, "study_name", "?"), guard_tripped, n_trials_informative,
             100.0 * guard_tripped / n_trials_informative, 100.0 * guard_trip_fraction_warn,
         )
+    # Issue #929 — best_value aus ALLEN abgeschlossenen Trials (Optuna-Semantik), nicht aus
+    # Optunas eigenem constraint-gefilterten study.best_value (das unter oos_eligible=False für
+    # JEDEN Trial null/undefiniert zurückgibt, siehe _best_completed_value-Docstring).
     try:
-        best_value = study.best_value
+        _direction = study.direction.name.lower()
     except Exception:
-        best_value = None
+        _direction = "maximize"
+    best_value = _best_completed_value(trials, direction=_direction)
+    best_eligible_value = _best_completed_value(
+        [t for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True],
+        direction=_direction)
 
     # Issue #611 — p_eligible (Gate-Passrate) EINMALIG bestimmen (wiederverwendet vom #640-
     # Gradienten-Gate UND von der #618-DSR-Kohorte weiter unten).
@@ -2274,6 +2382,12 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "stop_reason": budget_execution["stop_reason"],
         "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "best_value": best_value,
+        # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte (None, wenn
+        # p_eligible == 0 — hier ist die Leermenge inhaltlich korrekt, kein Constraint-Artefakt).
+        "best_eligible_value": best_eligible_value,
+        # Issue #929 Fix 2 — Trial-Nummer des besten abgeschlossenen Trials, unabhängig von der
+        # Constraint-Feasibility (siehe _best_completed_trial_number-Docstring).
+        "best_trial_number": _best_completed_trial_number(trials, direction=_direction),
         "backtest_ms_total": sum(durs) if durs else 0,
         "backtest_ms_median": int(statistics.median(durs)) if durs else None,
         "wallclock_s": round(time.perf_counter() - study_t0),
@@ -2593,6 +2707,13 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # tatsächliche Ursache auf) zusätzlich persistieren — für die modale Proposal-Aggregation.
         is_rejection_detail = _classify_is_rejection_detail(metrics)
         trial.set_user_attr("is_rejection_detail", is_rejection_detail)
+        # Issue #917 Fix 2 — welche Gates konkret auf einer undefinierten Grösse liefen (leer im
+        # Regelfall). Additiv, unabhängig von is_rejection_detail selbst gestempelt, damit auch ein
+        # Trial mit einem ANDEREN dominanten Ablehnungsgrund die Information nicht verliert.
+        _undefined_terms = _extract_undefined_gate_terms(
+            getattr(metrics, "oos_rejection_reasons", ()))
+        if _undefined_terms:
+            trial.set_user_attr("oos_gate_undefined_terms", _undefined_terms)
         # Issue #415 — backtest_ms als User-Attr fuer die Per-Study-Aggregation (optimize_symbol).
         trial.set_user_attr("backtest_ms", backtest_ms)
         # Issue #413 — oos_evaluated als User-Attr: Grundlage des evaluable-basierten Floor-Guards

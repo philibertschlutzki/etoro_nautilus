@@ -364,6 +364,43 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     )
 
 
+def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
+    """Issue #929 Fix 3 — eigenständiges Frühwarnsignal: ``constraint_improvement_rate`` (die
+    Änderung der mittleren Constraint-Verletzung zwischen erster und zweiter Hälfte der
+    modellierten Trials, ``run_optimization._constraint_violation_progress``) ist UNABHÄNGIG von
+    der Eligibility auswertbar — ein negativer Wert über eine ganze Study ist ein Befund, egal ob
+    p_eligible bereits 0 ist. FAILt (severity 'high'), wenn ``constraint_improvement_rate <= 0``
+    UND ``p_eligible == 0`` UND ``n_modelled_trials >= plateau_min_modelled_trials`` — der TPE hat
+    dann nachweislich NICHTS gelernt (die Constraint-Verletzung wuchs oder stagnierte trotz
+    ausreichend modellierter Trials), nicht nur 'noch keinen eligiblen Trial gefunden'."""
+    offenders: dict[str, float] = {}
+    with_data = [
+        r for r in study_records
+        if r.get("constraint_improvement_rate") is not None
+        and r.get("n_modelled_trials") is not None
+        and r.get("plateau_min_modelled_trials") is not None
+    ]
+    for r in with_data:
+        if (float(r["constraint_improvement_rate"]) <= 0.0
+                and (r.get("p_eligible") or 0.0) == 0.0
+                and int(r["n_modelled_trials"]) >= int(r["plateau_min_modelled_trials"])):
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = round(
+                float(r["constraint_improvement_rate"]), 6)
+    passed = not offenders
+    return InvariantResult(
+        name="check_search_made_progress",
+        passed=passed,
+        expected="constraint_improvement_rate > 0 ODER p_eligible > 0 ODER "
+                 "n_modelled_trials < plateau_min_modelled_trials, je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit stagnierender/wachsender Constraint-"
+                f"Verletzung bei 0 eligiblen Trials nach ausreichend modellierten Trials: "
+                f"{offenders} — der TPE-Sampler hat nachweislich keinen Gradienten gefunden."),
+    )
+
+
 def check_selection_statistic_availability(study_records: list[dict], *,
                                            min_available_fraction: float = 0.80) -> InvariantResult:
     """Issue #915 (Pitfall #295) — die WIRKUNGS-Invariante, die ``check_guard_reference_coherence``
@@ -957,7 +994,21 @@ def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
 
 _REWARD_TERM_NUMERIC_KEYS = (
     "base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker",
+    # Issue #927 — vorher NICHT in der Varianz-Tabelle, obwohl beide Terme in jedem Trial
+    # gestempelt werden (reward.py): gate_distance_penalty ist unter dem #913-Defekt der GRÖSSTE
+    # Einzelterm (0,14–0,31), time_box_penalty ist strukturell inert (Gewicht 0.0 seit v14, siehe
+    # _CONFIGURED_INACTIVE_REWARD_TERMS unten) — beide waren dadurch bislang unbeobachtbar.
+    "gate_distance_penalty", "time_box_penalty",
 )
+
+# Issue #927 Fix 2 — Terme, deren niedrige/keine Varianz ein DOKUMENTIERTER Normalzustand ist,
+# keine REWARD_TERM_INERT-Auffälligkeit: tie_breaker ist konstruktionsbedingt nahezu konstant
+# (reines Tie-Break-Signal); time_box_penalty ist inert, weil sein konfiguriertes Gewicht
+# (optimizer.json['penalty_time_box_weight']) seit v14 auf 0.0 steht. Eine dynamische, aus der
+# Config abgeleitete Fassung (jeder Term mit Gewicht 0.0) wäre die vollständigere Lösung, würde
+# aber das Config-Objekt bis in report._study_record durchreichen müssen — hier bewusst auf die
+# beiden aktuell bekannten Fälle beschränkt (dokumentiert, kein stiller Fallback).
+_CONFIGURED_INACTIVE_REWARD_TERMS = frozenset({"tie_breaker", "time_box_penalty"})
 
 # Issue #764 — Zielkorridor je Term (Anteil an der SUMME aller Term-Varianzen, siehe
 # ``reward_term_variance_table``). Ein Term dauerhaft UNTER 0.02 traegt praktisch keine
@@ -971,10 +1022,13 @@ _REWARD_TERM_VARIANCE_CORRIDOR = (0.02, 0.30)
 
 
 def _eligible_reward_terms(trials: list[dict]) -> list[dict]:
-    """Gemeinsame Extraktion fuer ``check_reward_term_variance``/``reward_term_variance_table``:
-    die ``reward_terms``-Dicts aller Trials, die tatsaechlich OOS-evaluiert wurden UND einer
-    eligiblen/pareto-Kohorte angehoeren (der einzige Ast, auf dem ein Terme-Vergleich sinnvoll ist —
-    ein unevaluierbarer Trial traegt keine Reward-Term-Zerlegung)."""
+    """Die ``reward_terms``-Dicts aller Trials, die tatsaechlich OOS-evaluiert wurden UND einer
+    eligiblen/pareto-Kohorte angehoeren. Issue #927 — NICHT mehr die primaere Kohorte fuer
+    ``check_reward_term_variance``/``reward_term_variance_table`` (siehe ``_evaluated_reward_
+    terms``): bei ``p_eligible == 0`` (z. B. unter dem #913-Defekt) ist diese Liste IMMER leer,
+    obwohl jeder evaluierte Trial eine vollstaendige reward_terms-Zerlegung traegt (branch=
+    'failure'). Bleibt als ZUSAETZLICHE, engere Teilmengen-Sicht erhalten, wenn sie nicht leer
+    ist (#927 Fix 1: 'mit einer zusaetzlichen Spalte fuer die eligible Teilmenge')."""
     return [
         t.get("reward_terms") for t in trials
         if t.get("oos_evaluated") is True and t.get("reward_terms")
@@ -982,36 +1036,71 @@ def _eligible_reward_terms(trials: list[dict]) -> list[dict]:
     ]
 
 
+def _evaluated_reward_terms(trials: list[dict]) -> list[dict]:
+    """Issue #927 (Pitfall #302) — die PRIMAERE Kohorte fuer die Reward-Term-Varianzanalyse: JEDER
+    ``oos_evaluated=True``-Trial traegt eine vollstaendige ``reward_terms``-Zerlegung, unabhaengig
+    vom ``branch`` (auch ``'failure'`` — der Reward ist seit #629 ausdruecklich auf der
+    EVALUIERTEN, nicht der eligiblen Kohorte definiert: 'evaluated-aber-ineligible Trials teilen
+    den Qualitaets-Kern der eligiblen'). Eine Varianz-Analyse, die auf der eligiblen (=
+    AUSGEWAEHLTEN) Kohorte rechnet, ist Selection-on-the-dependent-variable (Pitfall #302) — auf
+    der Menge der Ueberlebenden sind praktisch alle Gates erfuellt, die Varianz, die man messen
+    will, ist dort weggeschnitten."""
+    return [
+        t.get("reward_terms") for t in trials
+        if t.get("oos_evaluated") is True and t.get("reward_terms")
+    ]
+
+
 def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
-    """Issue #764 — die VOLLSTAENDIGE Varianz-Tabelle je Reward-Term fuer den #742-Report, statt nur
-    der binaeren inert/nicht-inert-Klassifikation von ``check_reward_term_variance``: je Term
-    ``std`` (Streuung ueber die eligible Kohorte) und ``var_contrib`` (Anteil der Term-VARIANZ an der
-    SUMME aller sieben Term-Varianzen, ``var_k / Σ var_j`` — die Groesse, gegen die der
+    """Issue #764/#927 — die VOLLSTAENDIGE Varianz-Tabelle je Reward-Term fuer den #742-Report,
+    statt nur der binaeren inert/nicht-inert-Klassifikation von ``check_reward_term_variance``: je
+    Term ``std`` (Streuung ueber die EVALUIERTE Kohorte, #927 — vorher die eligible Kohorte, die
+    bei ``p_eligible == 0`` immer leer war) und ``var_contrib`` (Anteil der Term-VARIANZ an der
+    SUMME aller Term-Varianzen, ``var_k / Σ var_j`` — die Groesse, gegen die der
     ``_REWARD_TERM_VARIANCE_CORRIDOR`` gemessen wird). ``in_target_corridor`` markiert Terme
     ausserhalb ``[0.02, 0.30]`` (Kandidaten fuer Entfernung bzw. Herunterskalierung, siehe #764 —
     die tatsaechliche Entscheidung braucht eine reale Kohorte, diese Tabelle liefert nur die Evidenz
-    dafuer).
+    dafuer). ``configured_inactive`` markiert Terme mit konfiguriertem Gewicht 0.0 (aktuell
+    ``tie_breaker``/``time_box_penalty``, siehe ``_CONFIGURED_INACTIVE_REWARD_TERMS``) — inert ist
+    ihr dokumentierter Normalzustand, kein REWARD_TERM_INERT-Befund. ``eligible_std``/
+    ``eligible_var_contrib`` ergaenzen die engere eligible Teilmenge, wenn sie nicht leer ist
+    (``None`` sonst).
 
-    Leere Liste bei < 2 eligiblen Trials mit ``reward_terms`` (keine Varianz-Aussage moeglich,
-    konsistent zu ``check_reward_term_variance``)."""
-    eligible_terms = _eligible_reward_terms(trials)
-    if len(eligible_terms) < 2:
+    Leere Liste bei < 2 evaluierten Trials mit ``reward_terms``."""
+    evaluated_terms = _evaluated_reward_terms(trials)
+    if len(evaluated_terms) < 2:
         return []
+    eligible_terms = _eligible_reward_terms(trials)
     lo, hi = _REWARD_TERM_VARIANCE_CORRIDOR
     variances = {
-        k: statistics.pvariance([float(t.get(k, 0.0)) for t in eligible_terms])
+        k: statistics.pvariance([float(t.get(k, 0.0)) for t in evaluated_terms])
         for k in _REWARD_TERM_NUMERIC_KEYS
     }
     total_var = sum(variances.values()) or 1.0
+    eligible_variances: dict[str, float] | None = None
+    eligible_total_var = 1.0
+    if len(eligible_terms) >= 2:
+        eligible_variances = {
+            k: statistics.pvariance([float(t.get(k, 0.0)) for t in eligible_terms])
+            for k in _REWARD_TERM_NUMERIC_KEYS
+        }
+        eligible_total_var = sum(eligible_variances.values()) or 1.0
     table = []
     for k in _REWARD_TERM_NUMERIC_KEYS:
         var_contrib = variances[k] / total_var
-        table.append({
+        entry = {
             "term": k,
             "std": round(variances[k] ** 0.5, 6),
             "var_contrib": round(var_contrib, 6),
             "in_target_corridor": bool(lo <= var_contrib <= hi),
-        })
+            "configured_inactive": k in _CONFIGURED_INACTIVE_REWARD_TERMS,
+            "eligible_std": None,
+            "eligible_var_contrib": None,
+        }
+        if eligible_variances is not None:
+            entry["eligible_std"] = round(eligible_variances[k] ** 0.5, 6)
+            entry["eligible_var_contrib"] = round(eligible_variances[k] / eligible_total_var, 6)
+        table.append(entry)
     return table
 
 
@@ -1089,31 +1178,36 @@ def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5
 def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01) -> InvariantResult:
     """Verallgemeinerung von ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621): statt einer
     einzelnen WARNING-Zeile pro inertem Term liefert diese Pruefung die VOLLSTAENDIGE Liste ueber
-    alle eligiblen Trials einer Study. Ein Term gilt als inert, wenn seine Streuung < ``inert_ratio``
-    der Streuung des Gesamt-Rewards ist — derselbe Schwellenwert wie das Original
-    (``std_k < 0.01 * rew_std``).
+    alle EVALUIERTEN Trials einer Study (Issue #927 — vorher die eligible Kohorte, siehe
+    ``_evaluated_reward_terms``-Docstring/Pitfall #302). Ein Term gilt als inert, wenn seine
+    Streuung < ``inert_ratio`` der Streuung des Gesamt-Rewards ist — derselbe Schwellenwert wie das
+    Original (``std_k < 0.01 * rew_std``). Terme in ``_CONFIGURED_INACTIVE_REWARD_TERMS`` (Issue
+    #927 Fix 2 — Gewicht 0.0 ist ihr dokumentierter Normalzustand) werden von der Alarm-Liste
+    ausgenommen, auch wenn ihre Streuung technisch unter der Schwelle liegt.
 
     ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (je Trial ``oos_evaluated`` +
     ``reward_terms``), NICHT Optuna-``Trial``-Objekte — pure Funktion, synthetisch testbar."""
-    eligible_terms = _eligible_reward_terms(trials)
-    if len(eligible_terms) < 2:
+    evaluated_terms = _evaluated_reward_terms(trials)
+    if len(evaluated_terms) < 2:
         return InvariantResult(
             name="check_reward_term_variance",
             passed=True,
             expected=[],
             actual=[],
-            detail="< 2 eligible Trials mit reward_terms — keine Varianz-Aussage moeglich.",
+            detail="< 2 evaluierte Trials mit reward_terms — keine Varianz-Aussage moeglich.",
         )
     rew_vals = [
         (t.get("base", 0.0) - t.get("divergence", 0.0) - t.get("dd_penalty", 0.0)
          - t.get("param_pen", 0.0) - t.get("turnover", 0.0) - t.get("fold_dispersion", 0.0)
          + t.get("tie_breaker", 0.0))
-        for t in eligible_terms
+        for t in evaluated_terms
     ]
     rew_std = statistics.pstdev(rew_vals)
     inert_terms = []
     for k in _REWARD_TERM_NUMERIC_KEYS:
-        vals = [float(t.get(k, 0.0)) for t in eligible_terms]
+        if k in _CONFIGURED_INACTIVE_REWARD_TERMS:
+            continue
+        vals = [float(t.get(k, 0.0)) for t in evaluated_terms]
         std_k = statistics.pstdev(vals)
         if std_k < inert_ratio * rew_std:
             inert_terms.append(k)

@@ -21,8 +21,50 @@ from pathlib import Path
 # 'signal_frequency'), obwohl sie entgegengesetzte Handlungsempfehlungen verlangen (AGENTS.md
 # Pitfall #229).
 _BINDING_CAUSES = frozenset(
-    {"signal_absent", "signal_sparse", "hold_duration", "signal_quality", "none", "no_data"}
+    {"signal_absent", "signal_sparse", "hold_duration", "signal_quality", "inference_unavailable",
+     "none", "no_data"}
 )
+
+
+def resolve_ineligible_binding_cause(trials: list[dict], *, median_oos_trades: float | None,
+                                     low_trade_threshold: float = 2.0,
+                                     unmeasurable_fraction_threshold: float = 0.5) -> tuple[str, dict]:
+    """Issue #926/#921 — die BINDENDE Ursache eines 0-eligible-Kollapses bei VOLLER Evaluierbarkeit
+    (``n_evaluable == n_trials``), in der korrekten Priorität ermittelt. Root-Cause #926: die
+    frühere Ableitung nahm stillschweigend an, dass die Eligibility-Prüfung STATTGEFUNDEN hat —
+    es gab keinen dritten Zweig für "die Prüfung war nicht durchführbar" (dieselbe Missing-Data-
+    Klasse wie #917, eine Ebene höher: eine nicht durchgeführte Messung wird als negatives
+    Messergebnis interpretiert).
+
+    Priorität:
+      1. ``'inference_unavailable'`` — mehr als ``unmeasurable_fraction_threshold`` (Default 0.5)
+         der evaluierten Trials trugen KEINE messbare Selektions-Teststatistik
+         (``is_rejection_detail == 'REJECT_OOS_STATISTIC_UNAVAILABLE'``, #917). Weder Denylist
+         noch Bounds-Override sind hier eine sinnvolle Konsequenz — die Diagnose selbst ist nicht
+         durchführbar (siehe ``recommend_diagnosis_action``: ``action='none'``, keine Frist).
+      2. ``'signal_sparse'`` (Issue #921) — ein Signal, das nicht/kaum auftritt
+         (``median_oos_trades <= low_trade_threshold``, Default 2), ist KEINE Qualitäts-Messung,
+         sondern ein Frequenz-Befund. Die Qualität eines Signals, das nicht auftritt, ist keine
+         Messung (SqueezeBreakout-Referenzfall: 178 Trials, Median 1 OOS-Trade, fälschlich
+         ``'signal_quality'``).
+      3. ``'signal_quality'`` — der Rest: eine reale, gemessene Kohorte ohne eligiblen Trial.
+
+    ``trials``: Liste von Dicts je EVALUIERTEM (``oos_evaluated=True``) Trial, mit mindestens
+    ``is_rejection_detail``. Rückgabe ``(binding_cause, detail)`` — ``detail`` trägt die
+    Rohzahlen für die Telemetrie (``ZERO_ELIGIBLE_PLATEAU``-Event)."""
+    n_evaluated = len(trials)
+    n_unmeasurable = sum(
+        1 for t in trials if t.get("is_rejection_detail") == "REJECT_OOS_STATISTIC_UNAVAILABLE")
+    frac_unmeasurable = (n_unmeasurable / n_evaluated) if n_evaluated else 0.0
+    detail = {
+        "n_ineligible_unmeasurable": n_unmeasurable,
+        "frac_ineligible_unmeasurable": round(frac_unmeasurable, 4),
+    }
+    if n_evaluated > 0 and frac_unmeasurable > unmeasurable_fraction_threshold:
+        return "inference_unavailable", detail
+    if median_oos_trades is not None and median_oos_trades <= low_trade_threshold:
+        return "signal_sparse", detail
+    return "signal_quality", detail
 
 
 def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict:
@@ -91,10 +133,17 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
         }
 
     if n_eligible == 0:
+        # Issue #926/#921 — 'signal_quality' war hier bislang UNBEDINGT vergeben, sobald alle
+        # Trials evaluiert wurden. resolve_ineligible_binding_cause trennt jetzt den Fall "nicht
+        # messbar" (#917) und den Fall "Signal tritt kaum auf" (#921) vom echten Qualitätsurteil.
+        evaluated_trials = [t for t in trials if t.get("oos_evaluated")]
+        binding_cause, _detail = resolve_ineligible_binding_cause(
+            evaluated_trials, median_oos_trades=median_oos_trades)
         return {
             "n_trials": n, "n_evaluable": n_evaluable, "n_eligible": 0,
             "median_oos_trades": median_oos_trades, "median_is_trades": None,
-            "frac_hit_trade_cap": frac_hit_cap, "binding_cause": "signal_quality",
+            "frac_hit_trade_cap": frac_hit_cap, "binding_cause": binding_cause,
+            **_detail,
         }
 
     return {
@@ -400,6 +449,13 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     )
     if cause in ("none", "no_data", None):
         action = "none"
+    elif cause == "inference_unavailable":
+        # Issue #926 — KEINE Konsequenz: weder Denylist noch Bounds-Override sind sinnvoll, wenn
+        # die Eligibility-Prüfung selbst nicht durchführbar war (#913/#917). Der Zustand ist eine
+        # Aussage über die Simulations-/Inferenz-Schicht, keine über die Strategie — er darf den
+        # 'signal_quality'-Strike-Zähler NICHT erhöhen (dieser Cause ist von 'signal_quality'
+        # disjunkt, die n_runs_confirmed-Kontinuität des Aufrufers bricht daher automatisch ab).
+        action = "none"
     elif cause == "signal_quality":
         # Issue #830 — unterliegt seit diesem Fix demselben Evidenzregime wie 'signal_absent'
         # (#829/#778): volle Deaktivierung ('denylist') NUR nach n_runs_confirmed >= 2 UND
@@ -473,6 +529,23 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
 _DEFAULT_EXPIRES_AFTER_RUNS = 10
 
 
+def _read_diagnostic_writeback_enabled() -> bool:
+    """Issue #926 Fix 1 — ``optimizer.json['diagnostic_writeback_enabled']`` (Default ``True``).
+    Sofortmassnahme-Schalter für die Reparaturphase: auf ``False`` gestellt, unterdrückt
+    ``record_diagnosed_pair`` jeden Rückschrieb — verhindert, dass eine unter dem #913-Defekt
+    (0 % definierter oos_psr) gelaufene Diagnose funktionierende Strategien in die automatisch
+    gepflegte Denylist-Vorstufe schreibt."""
+    try:
+        from automation.optimizer.trial_config import config_dir
+        cfg_path = config_dir() / "optimizer.json"
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text("utf-8")) or {}
+            return bool(data.get("diagnostic_writeback_enabled", True))
+    except Exception:
+        pass
+    return True
+
+
 def _diagnosed_pairs_cache_path(work_dir: Path | None = None) -> Path:
     if work_dir is None:
         from automation.optimizer.manifest import WORK
@@ -543,7 +616,16 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     ``'none'``-Empfehlung mit einer ECHTEN diagnostizierten Ursache (z. B. ``'signal_absent'`` ohne
     (noch) ausreichende Evidenz) WIRD gespeichert — sonst könnte ``n_runs_confirmed`` nie über
     mehrere Läufe akkumulieren (die Eskalationsbedingung selbst wäre unerreichbar). Nur ein echter
-    Nicht-Befund (``binding_cause in (None, 'none', 'no_data')``) bleibt ungespeichert."""
+    Nicht-Befund (``binding_cause in (None, 'none', 'no_data')``) bleibt ungespeichert.
+
+    Issue #926 Fix 1 — Sofortmassnahme-Schalter: solange
+    ``optimizer.json['diagnostic_writeback_enabled']`` (Default ``True``) auf ``False`` steht, ist
+    JEDER Rückschrieb unterdrückt (No-Op, gibt nur den Cache-Pfad zurück). Schutz gegen eine
+    Diagnose, die auf einer durch #913 (0 % definierter oos_psr) verzerrten Kohorte lief — genau
+    der Zustand, der diesen Lauf zu Strike 1 von 2 gemacht hätte, wäre der Schalter nicht gesetzt
+    gewesen."""
+    if not _read_diagnostic_writeback_enabled():
+        return _diagnosed_pairs_cache_path(work_dir)
     if recommendation.get("binding_cause") in (None, "none", "no_data"):
         return _diagnosed_pairs_cache_path(work_dir)
     cache = load_diagnosed_pairs_cache(work_dir)

@@ -40,7 +40,7 @@ from automation.optimizer import reward as _reward
 from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions
 from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
-    _constraint_violation_progress, compute_budget_execution,
+    _constraint_violation_progress, compute_budget_execution, _best_completed_value,
 )
 from automation.optimizer.sweep import _family_n_from_proposals, load_symbol_universe
 from automation.optimizer import symbol_coverage as _symbol_coverage
@@ -287,6 +287,16 @@ def _study_record(proposal: dict, study,
     # verwendet wurde (siehe check_guard_reference_coherence, eine reine Quellen-Invariante).
     n_selection_statistic_available = sum(
         1 for a in trial_attrs if a.get("oos_evaluated") is True and a.get("oos_psr") is not None)
+    # Issue #917 Fix 4 — 'ineligible' in zwei disjunkte Klassen zerlegen: nur EINE davon ist eine
+    # Aussage über die Strategie. ineligible_unmeasurable zählt REJECT_OOS_STATISTIC_UNAVAILABLE
+    # (#917) — ein Gate lief auf einer undefinierten Grösse, keine Messung fand statt.
+    n_ineligible_unmeasurable = sum(
+        1 for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_eligible") is not True
+        and a.get("is_rejection_detail") == "REJECT_OOS_STATISTIC_UNAVAILABLE")
+    # ineligible_measured — evaluiert, nicht eligible, aber NICHT wegen einer undefinierten Grösse
+    # (ein echtes, wenn auch negatives, Messergebnis).
+    n_ineligible_measured = max(0, n_evaluable - n_eligible - n_ineligible_unmeasurable)
     # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
     # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
     _n_periods_values = [
@@ -339,18 +349,26 @@ def _study_record(proposal: dict, study,
         trial_attrs, strategy=proposal.get("strategy"),
         bar_seconds=_contracts.BAR_SECONDS_DEFAULT)
 
-    best_reward = None
-    if study is not None:
-        try:
-            best_reward = study.best_value
-        except Exception:
-            best_reward = None
+    # Issue #929 — best_reward aus ALLEN abgeschlossenen Trials (Optuna-Semantik), nicht aus
+    # Optunas eigenem constraint-gefilterten study.best_value (siehe
+    # run_optimization._best_completed_value-Docstring: unter oos_eligible=False für JEDEN Trial
+    # liefert study.best_value null/wirft, obwohl Optuna intern einen besten rohen Reward kennt).
+    try:
+        _study_direction = study.direction.name.lower() if study is not None else "maximize"
+    except Exception:
+        _study_direction = "maximize"
+    best_reward = _best_completed_value(trials, direction=_study_direction) if study is not None else None
 
     feasible_rewards = [
         float(t.value) for t in trials
         if getattr(t, "user_attrs", {}).get("oos_eligible") is True
         and isinstance(getattr(t, "value", None), (int, float))
     ]
+    # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte.
+    best_eligible_reward = (
+        (max(feasible_rewards) if _study_direction == "maximize" else min(feasible_rewards))
+        if feasible_rewards else None
+    )
     # Issue #753/#754/#755 — dieselbe TRI-STATE-Logik wie ``_emit_study_summary``: eine vorzeitig
     # gestoppte Study (floor_plateau_warned/zero_eligible_plateau_warned) liefert gradient_signal=
     # None (Eskalationsfrage unbeantwortet), sonst reward- ODER constraint-fortschritts-basiert.
@@ -441,6 +459,9 @@ def _study_record(proposal: dict, study,
         "n_trials": n_trials,
         "n_evaluable": n_evaluable,
         "n_selection_statistic_available": n_selection_statistic_available,
+        # Issue #917 Fix 4 — disjunkte Zerlegung der evaluierten, nicht-eligiblen Trials.
+        "n_ineligible_measured": n_ineligible_measured,
+        "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,
         # Issue #885 Fix Punkt 2 — n_trials_pruned/n_trials_unevaluable als GETRENNTE Telemetrie
@@ -455,12 +476,18 @@ def _study_record(proposal: dict, study,
         # ``None`` fuer Studies aus einem Lauf vor #812 (rueckwaertskompatibel, analog seed_effective).
         "selection_rule_fingerprint": study_user_attrs.get("selection_rule_fingerprint"),
         "best_reward": best_reward,
+        # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte (None, wenn
+        # p_eligible == 0 — die Leermenge ist hier inhaltlich korrekt, kein Constraint-Artefakt).
+        "best_eligible_reward": best_eligible_reward,
         "gradient_signal": gradient_signal,
         # Issue #808 — welcher der drei Arme (discovery/reward_variance/constraint_progress/none)
         # das obige gradient_signal traegt. None ⇒ wie gradient_signal selbst unbeantwortet
         # (Early-Stop).
         "gradient_signal_arm": gradient_signal_arm_value,
         "constraint_improvement_rate": constraint_improvement_rate,
+        # Issue #929 Fix 3 — Eingangsgrössen für invariants.check_search_made_progress.
+        "n_modelled_trials": len(modelled),
+        "plateau_min_modelled_trials": study_user_attrs.get("plateau_min_modelled_trials"),
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),
         "n_trials_budget": study_user_attrs.get("n_trials_budget"),
@@ -1150,6 +1177,12 @@ def _build_report(
     selection_statistic_availability_check = _inv.check_selection_statistic_availability(
         studies_out, min_available_fraction=_selection_stat_min_fraction)
     all_checks.append(("global", selection_statistic_availability_check))
+
+    # Issue #929 Fix 3 — eigenständiges Frühwarnsignal, unabhängig von p_eligible auswertbar: eine
+    # stagnierende/wachsende Constraint-Verletzung trotz ausreichend modellierter Trials belegt,
+    # dass der TPE-Sampler keinen Gradienten gefunden hat.
+    search_made_progress_check = _inv.check_search_made_progress(studies_out)
+    all_checks.append(("global", search_made_progress_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
     # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,
