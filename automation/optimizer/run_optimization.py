@@ -379,6 +379,34 @@ def plateau_stop_missed_probability(m_modelled: int, remaining_budget: int) -> t
     return p_hi, 1.0 - (1.0 - p_hi) ** remaining_budget
 
 
+def plateau_stop_expected_yield(m_modelled: int, remaining_budget: int) -> tuple[float, float]:
+    """Issue #925 (Pitfall #300) — geschlossene Alternative zu ``plateau_stop_missed_probability``:
+    dieselbe Rule-of-Three-Obergrenze ``p_hi = 3/m_modelled``, aber als ERWARTUNGSWERT statt als
+    Risiko formuliert. ``expected_yield = p_hi · remaining_budget`` ist die erwartete Zahl noch zu
+    findender eligibler Trials im Restbudget.
+
+    Root-Cause #925 (bewiesen in geschlossener Form): ``missed_probability`` steht in ``r`` UND
+    ``m`` monoton, aber ``r`` (das Restbudget) erscheint zugleich im NENNER des Risikos UND ist der
+    Ertrag des Abbruchs — ein Kriterium, dessen Risikoterm das gesparte Restbudget selbst enthält,
+    kann per Konstruktion erst feuern, wenn kaum noch etwas zu sparen ist (bewiesen: der Stopp kann
+    unter ``missed_probability`` hoechstens ~1,43 % des Budgets einsparen, unabhaengig von den
+    konkreten Parametern). ``expected_yield`` trennt Ertrag und Risiko: der Abbruch feuert, sobald
+    der ERWARTETE Gewinn (nicht die Eintrittswahrscheinlichkeit EINES Treffers) unter die
+    Opportunitaetskosten faellt (``plateau_stop_min_expected_eligible``, Default 0.5) — bei
+    ``m = plateau_min_modelled_trials`` (typischerweise 48) feuert der Abbruch dann bei
+    ``r < m/6 ≈ 8``, also nach ~57 statt ~99 Trials (43 % Ersparnis statt ~1 %).
+
+    Rueckgabe ``(p_hi, expected_yield)``, rein, deterministisch. ``m_modelled <= 0`` ⇒
+    ``(1.0, inf)`` (keine Information ⇒ niemals abbrechen, konsistent zu
+    ``plateau_stop_missed_probability``). ``remaining_budget <= 0`` ⇒ ``expected_yield = 0.0``."""
+    if m_modelled <= 0:
+        return 1.0, float("inf")
+    p_hi = min(1.0, 3.0 / m_modelled)
+    if remaining_budget <= 0:
+        return p_hi, 0.0
+    return p_hi, p_hi * remaining_budget
+
+
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
@@ -697,19 +725,40 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     remaining_budget = max(0, int(_n_trials_budget) - len(completed))
                 except (TypeError, ValueError):
                     remaining_budget = None
-            p_hi = missed_probability = None
+            p_hi = missed_probability = expected_yield = None
+            # Issue #925 — plateau_stop_mode entscheidet, welches der beiden Kriterien den Abbruch
+            # triggert. 'expected_yield' (Default) ersetzt das strukturell auf ~1,43 % Ersparnis
+            # begrenzte 'missed_probability' (siehe plateau_stop_expected_yield-Docstring,
+            # geschlossener Beweis). 'missed_probability' bleibt fuer Reproduktionslaeufe
+            # verfuegbar. Validiert UNABHAENGIG von remaining_budget, damit eine Fehlkonfiguration
+            # nicht erst sichtbar wird, sobald ein Budget bekannt ist.
+            _plateau_stop_mode = (weights or {}).get("plateau_stop_mode", "expected_yield")
+            if _plateau_stop_mode not in ("missed_probability", "expected_yield"):
+                raise ValueError(
+                    f"optimizer.json['plateau_stop_mode']={_plateau_stop_mode!r} unbekannt — "
+                    "erwartet 'missed_probability' oder 'expected_yield'.")
             if remaining_budget is not None:
                 p_hi, missed_probability = plateau_stop_missed_probability(
                     m_modelled, remaining_budget)
-                max_missed_probability = float((weights or {}).get(
-                    "plateau_stop_max_missed_probability", 0.05))
+                _, expected_yield = plateau_stop_expected_yield(m_modelled, remaining_budget)
                 # Issue #806 — Constraint-Arm: naehert sich der Sampler der feasiblen Region an
                 # (dieselbe Groesse wie in ``study_shows_gradient_signal``), wird der sequentielle
                 # Abbruch unterdrueckt — genau der Fall, den Rule-of-Three allein nicht sieht.
                 tau_c = float((weights or {}).get("tier_escalation_min_constraint_progress", 0.05))
                 constraint_signal = (constraint_improvement_rate is not None
                                      and constraint_improvement_rate > tau_c)
-                if missed_probability >= max_missed_probability or constraint_signal:
+                if _plateau_stop_mode == "expected_yield":
+                    min_expected_eligible = float((weights or {}).get(
+                        "plateau_stop_min_expected_eligible", 0.5))
+                    stop_condition = expected_yield < min_expected_eligible
+                else:
+                    max_missed_probability = float((weights or {}).get(
+                        "plateau_stop_max_missed_probability", 0.05))
+                    # Trotz des Namens: der Abbruch feuert, sobald missed_probability UNTER die
+                    # Schranke faellt (siehe plateau_stop_missed_probability-Docstring) —
+                    # bit-identisch zum Pre-#925-Verhalten in diesem Modus.
+                    stop_condition = missed_probability < max_missed_probability
+                if not stop_condition or constraint_signal:
                     return
             study.set_user_attr("zero_eligible_plateau_warned", True)
             n_evaluated = len(eligible_flags_of_evaluated)
@@ -832,6 +881,10 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "p_hi": p_hi,
                     "remaining_budget": remaining_budget,
                     "missed_probability": missed_probability,
+                    # Issue #925 — welcher Modus tatsaechlich entschieden hat + der Erwartungswert-
+                    # Kandidat, unabhaengig vom aktiven Modus (Vergleichbarkeit ueber Laeufe).
+                    "plateau_stop_mode": _plateau_stop_mode,
+                    "expected_yield": expected_yield,
                 }))
                 _stop_study_safely(study, logger)
         return
@@ -2112,14 +2165,40 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             min_eligible_for_variance=min_eligible_for_variance)
         gradient_signal = gradient_signal_arm_value != "none"
 
-    if gradient_signal is None:
+    # Issue #930 — Budget-Ausfuehrungsgrad VORGEZOGEN (statt erst weiter unten berechnet, siehe
+    # #770-Block): die [#640]-Meldung braucht ihn jetzt direkt als Ausloesebedingung.
+    budget_execution = compute_budget_execution(
+        trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
+        n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs)
+
+    # Issue #930 (Pitfall #303) — die Ausloesebedingung war `gradient_signal is None`, ein PROXY
+    # fuer "Basisbudget nicht ausgeschoepft" aus der Zeit, als der Fruehstopp bei
+    # `n_startup + 3*dim` griff (#805/#806). Seit #925 kann `budget_executed_fraction` bei einem
+    # STRUCTURAL_ZERO_ELIGIBLE-Stopp bei 0,99 liegen (praktisch voll ausgefuehrt), waehrend der
+    # Proxy trotzdem `None` liefert (early_stopped=True) — die Meldung feuerte dann auf einem
+    # Basisbudget, das TATSAECHLICH erschoepft war. Die direkte Groesse (budget_executed_fraction)
+    # liegt seit #770 vor und ersetzt den Proxy jetzt.
+    _min_median_budget_execution = 0.5
+    try:
+        _opt_path_640 = config_dir() / "optimizer.json"
+        if _opt_path_640.exists():
+            _min_median_budget_execution = float(
+                (json.loads(_opt_path_640.read_text("utf-8")) or {}).get(
+                    "min_median_budget_execution", 0.5))
+    except Exception:
+        _min_median_budget_execution = 0.5
+    _budget_left = (budget_execution["budget_executed_fraction"] is None
+                    or budget_execution["budget_executed_fraction"] < _min_median_budget_execution)
+
+    if gradient_signal is None and _budget_left:
         logging.getLogger("optimizer").info(
-            "[#640] %s: Study vorzeitig beendet — Eskalationsfrage unbeantwortet (kein Basisbudget "
-            "ausgeschoepft, gradient_signal=None). feasible_p_eligible=%.2f, "
+            "[#640] %s: Study vorzeitig beendet — Eskalationsfrage unbeantwortet "
+            "(budget_executed_fraction=%s < %.2f, gradient_signal=None). feasible_p_eligible=%.2f, "
             "feasible_reward_pstdev=%.4f, constraint_improvement_rate=%s.",
-            symbol, p_eligible, feasible_reward_pstdev, constraint_improvement_rate,
+            symbol, budget_execution["budget_executed_fraction"], _min_median_budget_execution,
+            p_eligible, feasible_reward_pstdev, constraint_improvement_rate,
         )
-    elif not gradient_signal:
+    elif not gradient_signal and gradient_signal is not None:
         logging.getLogger("optimizer").warning(
             "[#640] %s: kein Gradienten-Signal (weder feasibler Reward-Streuung noch Constraint-"
             "Annaeherung) — feasible_p_eligible=%.2f, feasible_reward_pstdev=%.4f ≤ τ=%.4f, "
@@ -2356,10 +2435,9 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             if std_k < 0.01 * rew_std:
                 logging.getLogger("optimizer").warning("REWARD_TERM_INERT: %s", k)
 
-    # Issue #770 — Budget-Ausfuehrungsgrad, dieselbe Berechnung wie ``report._study_record``.
-    budget_execution = compute_budget_execution(
-        trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
-        n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs)
+    # Issue #770/#930 — budget_execution wurde bereits weiter oben (vor der [#640]-Meldung)
+    # berechnet; hier nur noch die #770-Konsequenz (dieselbe Berechnung wie
+    # ``report._study_record``, kein zweiter Aufruf mehr).
     if (budget_execution["budget_executed_fraction"] is not None
             and budget_execution["budget_executed_fraction"] < 0.5):
         logging.getLogger("optimizer").warning(

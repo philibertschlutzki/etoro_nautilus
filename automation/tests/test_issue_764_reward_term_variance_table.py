@@ -27,16 +27,18 @@ def test_empty_table_when_insufficient_data():
     assert inv.reward_term_variance_table([]) == []
 
 
-def test_table_covers_all_seven_terms():
+def test_table_covers_all_reward_terms():
+    # Issue #927 — gate_distance_penalty/time_box_penalty ergaenzen die urspruenglichen sieben
+    # Terme (neun insgesamt); die Tabelle deckt weiterhin JEDEN registrierten Term ab.
     trials = [
         _trial({"branch": "eligible", "base": b, "divergence": 0.3 * i, "dd_penalty": 0.25 * i,
                 "param_pen": 0.2 * i, "turnover": 0.3 * i, "fold_dispersion": 0.25 * i,
-                "tie_breaker": 0.2 * i})
+                "tie_breaker": 0.2 * i, "gate_distance_penalty": 0.15 * i, "time_box_penalty": 0.0})
         for i, b in enumerate([1.0, 1.5, 2.0, 0.5, 3.0])
     ]
     table = inv.reward_term_variance_table(trials)
     assert {row["term"] for row in table} == set(inv._REWARD_TERM_NUMERIC_KEYS)
-    assert len(table) == 7
+    assert len(table) == len(inv._REWARD_TERM_NUMERIC_KEYS)
 
 
 def test_var_contrib_sums_to_one_across_all_terms():
@@ -96,17 +98,20 @@ def test_check_reward_term_variance_and_table_agree_on_which_terms_have_no_sprea
 
 
 def test_only_non_dominant_varying_terms_land_inside_the_corridor():
-    """Sieben etwa GLEICH stark streuende Terme liegen alle im [0.02, 0.30]-Korridor (1/7 ≈ 0.143)."""
+    """Alle registrierten Terme etwa GLEICH stark streuend liegen im [0.02, 0.30]-Korridor
+    (1/9 ≈ 0.111, Issue #927 — neun statt sieben Terme seit gate_distance_penalty/
+    time_box_penalty)."""
+    n_terms = len(inv._REWARD_TERM_NUMERIC_KEYS)
     trials = [
         _trial({"branch": "eligible", "base": 0.2 * i, "divergence": 0.2 * i, "dd_penalty": 0.2 * i,
                 "param_pen": 0.2 * i, "turnover": 0.2 * i, "fold_dispersion": 0.2 * i,
-                "tie_breaker": 0.2 * i})
+                "tie_breaker": 0.2 * i, "gate_distance_penalty": 0.2 * i, "time_box_penalty": 0.2 * i})
         for i in range(6)
     ]
     table = inv.reward_term_variance_table(trials)
     for row in table:
         assert row["in_target_corridor"] is True
-        assert abs(row["var_contrib"] - 1.0 / 7.0) < 1e-6
+        assert abs(row["var_contrib"] - 1.0 / n_terms) < 1e-6
 
 
 # ── report.py wiring: reward_term_variance landet im Study-Record ──────────────────────────────────
@@ -131,12 +136,13 @@ def test_study_record_includes_reward_term_variance_table():
         _Trial({"oos_evaluated": True, "oos_eligible": True,
                 "reward_terms": {"branch": "eligible", "base": b, "divergence": 0.3 * i,
                                  "dd_penalty": 0.25 * i, "param_pen": 0.2 * i, "turnover": 0.3 * i,
-                                 "fold_dispersion": 0.25 * i, "tie_breaker": 0.2 * i}})
+                                 "fold_dispersion": 0.25 * i, "tie_breaker": 0.2 * i,
+                                 "gate_distance_penalty": 0.15 * i, "time_box_penalty": 0.0}})
         for i, b in enumerate([1.0, 1.5, 2.0, 0.5, 3.0])
     ]
     study = _Study(trials)
     proposal = {"symbol": "TSLA.ETORO", "strategy": "TrendPullbackStrategy", "status": "READY_FOR_PR"}
     record, _checks = rpt._study_record(proposal, study)
     assert "reward_term_variance" in record
-    assert len(record["reward_term_variance"]) == 7
+    assert len(record["reward_term_variance"]) == len(inv._REWARD_TERM_NUMERIC_KEYS)
     assert {row["term"] for row in record["reward_term_variance"]} == set(inv._REWARD_TERM_NUMERIC_KEYS)
