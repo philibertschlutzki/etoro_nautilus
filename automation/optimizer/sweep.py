@@ -2048,6 +2048,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     _study_wallclock_by_strategy = _read_last_study_wallclock_by_strategy()
 
     proposals: list[Path] = []
+    # Issue #933 (Pitfall #306) — kumulative Zähler für SWEEP_PROGRESS, je Symbol fortgeschrieben
+    # (kein zweiter Scan über bereits verarbeitete Symbole nötig).
+    _cumulative_trials_done = 0
+    _cumulative_eligible_total = 0
     for symbol, symbol_pairs in pairs_by_symbol.items():
         # Issue #908 Fix 2 — die #842-Prognose hat eine Kürzung angeordnet: ab hier keine weiteren
         # Symbole starten (die bereits laufenden/abgeschlossenen bleiben unangetastet). Der Lauf
@@ -2180,6 +2184,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         symbol_n_family_stage1 = _family_n_stage1_from_studies(
             symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
 
+        _proposals_before_this_symbol = len(proposals)
         for pair, study in zip(symbol_pairs, symbol_studies):
             proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns,
                                                symbol_n_family_excluded,
@@ -2187,10 +2192,79 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                                                family_scope=_family_scope)
             if proposal is not None:
                 proposals.append(proposal)
+        _this_symbol_proposals = proposals[_proposals_before_this_symbol:]
 
         completed_symbols.add(symbol)
         _write_checkpoint()
         _record_coverage(symbol)
+
+        # Issue #933 (Pitfall #306) — Invarianten, die erst am Ende eines mehrtägigen Laufs
+        # auswerten, sind Obduktionen statt Wächter. Jede symbol-lokal auswertbare Invariante wird
+        # SOFORT nach diesem Symbol als INVARIANT_RESULT-Event emittiert — der bestehende
+        # #839-Fail-Fast-Pfad (oben) bleibt der SPEZIALFALL 'blocking' auf demselben zugrunde
+        # liegenden invariant_checks, nicht ein getrennter Mechanismus. Symbol-lokal scoped (nur
+        # DIESES Symbols Proposals, nicht die kumulierte Liste) — O(1) je Symbol statt O(n) über
+        # den gesamten bisherigen Lauf.
+        if _this_symbol_proposals:
+            try:
+                from automation.optimizer import report as _report_progress_mod
+                _symbol_probe = _report_progress_mod.build_probe_report(
+                    _this_symbol_proposals, run_id=run_id)
+                for _chk in _symbol_probe.get("invariant_checks") or []:
+                    emit_execution_event(
+                        logging.getLogger("optimizer"), "INVARIANT_RESULT",
+                        {"symbol": symbol, "name": _chk.get("name"),
+                         "status": "PASS" if _chk.get("passed") else "FAIL",
+                         "severity": _chk.get("severity"),
+                         "observed": _chk.get("actual"), "expected": _chk.get("expected"),
+                         "detail": _chk.get("detail")},
+                        level=logging.INFO if _chk.get("passed") else logging.WARNING,
+                    )
+            except Exception:
+                logging.getLogger("optimizer").warning(
+                    "[#933] Symbol-lokale Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
+                    "fort).", exc_info=True,
+                )
+
+        # Issue #933 Fix 2 — SWEEP_PROGRESS je Symbol: die Grösse, an der #931 (Zeitbudget-
+        # Überschreitung) zur LAUFZEIT statt erst nach dem gesamten Sweep erkennbar wird.
+        _cumulative_trials_done += sum(len(getattr(s, "trials", None) or []) for s in symbol_studies)
+        _cumulative_eligible_total += sum(
+            1 for s in symbol_studies for t in (getattr(s, "trials", None) or [])
+            if (getattr(t, "user_attrs", {}) or {}).get("oos_eligible") is True
+        )
+        _elapsed_h_progress = (time.perf_counter() - sweep_t0) / 3600.0
+        _symbols_done_progress = len(completed_symbols)
+        _symbols_total_progress = len(pairs_by_symbol)
+        _projected_total_h = (
+            _elapsed_h_progress / _symbols_done_progress * _symbols_total_progress
+            if _symbols_done_progress else None
+        )
+        emit_execution_event(logging.getLogger("optimizer"), "SWEEP_PROGRESS", {
+            "symbols_done": _symbols_done_progress,
+            "symbols_total": _symbols_total_progress,
+            "elapsed_h": round(_elapsed_h_progress, 3),
+            "projected_total_h": (
+                round(_projected_total_h, 3) if _projected_total_h is not None else None),
+            "trials_done": _cumulative_trials_done,
+            "eligible_total": _cumulative_eligible_total,
+        })
+
+        # Issue #933 Fix 4 — Report-Datei nach JEDEM Symbol atomar aktualisiert (statt erst am
+        # Sweep-Ende), damit ein laufender Sweep vor seinem Abschluss beobachtbar ist. Dieselbe
+        # write_json_atomic-Garantie wie der finale Report (#720/#742); non-fatal, analog der
+        # Fail-Fast-Probe oben — ein Zwischenreport-Fehler darf den Sweep nie stoppen.
+        try:
+            from automation.optimizer import report as _report_incremental_mod
+            _report_incremental_mod.generate_sweep_report(
+                proposals, run_id=run_id, run_status="in_progress",
+                symbols_completed=_symbols_done_progress, symbols_planned=_symbols_total_progress,
+            )
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#933] Zwischen-Report-Schreiben fehlgeschlagen (non-fatal, Lauf setzt fort).",
+                exc_info=True,
+            )
 
         if (not _wallclock_forecast_done
                 and len(completed_symbols) >= _wallclock_forecast_after_symbols):
@@ -2685,6 +2759,19 @@ def main(argv: list[str] | None = None) -> list[Path]:
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
+
+    # Issue #933 (Pitfall #306) — die LETZTE Zeile jedes Laufs, egal ob er sauber durchlief oder
+    # per SIGINT/SIGTERM/Exception abbrach: vorher war ein Snapshot eines laufenden Sweeps von
+    # einem abgestürzten nur über die Trial-Kadenz im Log unterscheidbar (#933-Symptom). status
+    # 'completed' NUR bei run_status=='complete' — jeder andere run_status (aborted_*, partial,
+    # ...) ist SWEEP_ABORTED, unabhängig vom genauen Grund (der steht in run_status selbst).
+    emit_execution_event(
+        logging.getLogger("optimizer"),
+        "SWEEP_COMPLETED" if run_status == "complete" else "SWEEP_ABORTED",
+        {"run_id": run_id, "run_status": run_status,
+         "symbols_completed": symbols_completed, "symbols_planned": symbols_planned},
+        level=logging.INFO if run_status == "complete" else logging.WARNING,
+    )
 
     # Issue #833 — der urspruengliche Abbruch (SIGINT/SIGTERM/unerwartete Exception) wird nach dem
     # Report-Versuch WEITERGEREICHT: das Artefakt ist ein Nebeneffekt auf dem Weg nach draussen,
