@@ -43,9 +43,14 @@ def test_worker_lazy_import_no_exception():
                 assert "error" in result
                 assert result["error"] == "insufficient_data"
 
-                # verify that emit_execution_event was called correctly
-                mock_emit.assert_called_once()
-                args, kwargs = mock_emit.call_args
+                # verify that emit_execution_event was called correctly. Issue #898 Fix 4 added an
+                # unconditional COST_MODEL_RESOLVED event right after the spread/asset-class
+                # resolution (before the walk-forward check runs), so this path now emits twice.
+                assert mock_emit.call_count == 2
+                event_names = [call.args[1] for call in mock_emit.call_args_list]
+                assert "COST_MODEL_RESOLVED" in event_names
+                assert "WALK_FORWARD_INSUFFICIENT_DATA" in event_names
+                args, kwargs = mock_emit.call_args_list[-1]
                 assert args[1] == "WALK_FORWARD_INSUFFICIENT_DATA"
                 assert "symbol" in args[2]
                 assert args[2]["symbol"] == "BTC.ETORO"

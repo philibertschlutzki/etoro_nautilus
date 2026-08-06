@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import statistics
 import traceback
 import pandas as pd
 import pyarrow.parquet as pq
@@ -64,6 +65,15 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     max_open_positions: int = 1
     atr_period: int = 14
     atr_trailing_multiplier: float = 1.5
+    # Issue #897 — Anker des ATR-Trailing-Stops. "price_extreme" (Chandelier-Formulierung, Default)
+    # rastet ausschliesslich auf dem seit Einstieg erreichten Kurs-Extremum; "close_ratchet"
+    # reproduziert das Alt-Verhalten (rastet zusaetzlich auf der ATR-Schaetzung, siehe Pitfall #285
+    # in AGENTS.md) bit-identisch und bleibt fuer den A/B-Kalibrierlauf erhalten.
+    trailing_stop_anchor: str = "price_extreme"
+    # Issue #897 Fix 4 — Untergrenze fuer den ATR-Wert in bps des aktuellen Preises. Eine ATR von
+    # exakt 0 (Bar mit high==low==prev_close) wuerde sonst den Stop auf den Schlusskurs setzen und
+    # die Position beim naechsten Tick beenden.
+    atr_floor_bps: float = 2.0
     # Issue #714 (GR-01) — 24h-Zeitbox = 24 Bar-Intervalle (1h-Bars), nicht Kalenderzeit. Der
     # bestehende Bar-Zähler-Exit (siehe _check_exits_and_update) ist der Mechanismus; dieser Default
     # UND alle Optimizer-Suchraum-Obergrenzen (spaces.py) sind auf <= 24 geklemmt.
@@ -269,6 +279,19 @@ class HourlyStrategyBase(Strategy):
         self._atr_trailing_multiplier = getattr(config, "atr_trailing_multiplier", None)
         if self._atr_trailing_multiplier is None:
             self._atr_trailing_multiplier = DEFAULT_ATR_TRAILING_MULTIPLIER
+
+        # Issue #897 — Trailing-Stop-Anker + ATR-Floor.
+        self._trailing_stop_anchor = getattr(config, "trailing_stop_anchor", None) or "price_extreme"
+        if self._trailing_stop_anchor not in ("price_extreme", "close_ratchet"):
+            self._trailing_stop_anchor = "price_extreme"
+        self._atr_floor_bps = float(getattr(config, "atr_floor_bps", None) or 2.0)
+        # Issue #897 Fix 1 — seit Einstieg erreichtes Kurs-Extremum (Chandelier-Anker). Wird
+        # AUSSCHLIESSLICH in on_position_opened() initialisiert (analog _trailing_initialised, #837).
+        self._position_extreme: float | None = None
+        # Issue #899 — je-Bar ATR-Ablesungen (effektiv, bps des Preises) waehrend der laufenden
+        # Position; Rohmaterial fuer die ATR_median/ATR_min-Exit-Telemetrie, die dem schliessenden
+        # Markt-Close-Order als Tag mitgegeben wird (siehe _execute_market_close).
+        self._position_atr_bps_readings: list[float] = []
 
         self._profit_target_pct = getattr(config, "profit_target_pct", None)
         self._daily_trades: int = 0
@@ -523,6 +546,13 @@ class HourlyStrategyBase(Strategy):
         )
         return 0.0
 
+    def _effective_atr_value(self, atr_val: float, price: float) -> float:
+        """Issue #897 Fix 4 — Untergrenze `max(ATR, atr_floor_bps · price)`. Eine ATR von exakt 0
+        (Bar mit high == low == prev_close) würde den Trailing-Stop sonst auf den Schlusskurs
+        setzen und die Position beim nächsten Tick beenden."""
+        floor = (self._atr_floor_bps / 10000.0) * price
+        return max(float(atr_val), floor)
+
     def _check_exits_and_update(self, bar: Bar) -> bool:
         """
         Called at the START of every on_bar() in subclasses.
@@ -592,12 +622,20 @@ class HourlyStrategyBase(Strategy):
         if not self._trailing_initialised:
             self._trailing_initialised = True
             self._trailing_stop_side = "LONG" if pos.side == PositionSide.LONG else "SHORT"
-            if self._exit_atr.initialized:
-                atr_val = self._exit_atr.value
+            if self._trailing_stop_anchor == "price_extreme":
+                if self._position_extreme is None:
+                    self._position_extreme = close
                 if self._trailing_stop_side == "LONG":
-                    self._trailing_stop_price = close - self._atr_trailing_multiplier * atr_val
+                    self._position_extreme = max(self._position_extreme, float(bar.high))
                 else:
-                    self._trailing_stop_price = close + self._atr_trailing_multiplier * atr_val
+                    self._position_extreme = min(self._position_extreme, float(bar.low))
+            if self._exit_atr.initialized:
+                atr_val = self._effective_atr_value(self._exit_atr.value, close)
+                anchor = self._position_extreme if self._trailing_stop_anchor == "price_extreme" else close
+                if self._trailing_stop_side == "LONG":
+                    self._trailing_stop_price = anchor - self._atr_trailing_multiplier * atr_val
+                else:
+                    self._trailing_stop_price = anchor + self._atr_trailing_multiplier * atr_val
             else:
                 self._trailing_stop_price = None
 
@@ -605,15 +643,39 @@ class HourlyStrategyBase(Strategy):
         # während ein Exit-Versuch noch unbestätigt ist (_exit_pending).
         self._bars_in_position += 1
 
-        # Update trailing stop (only moves in favourable direction)
+        # Issue #899 — ATR-Telemetrie je Bar (bps des Schlusskurses), Rohmaterial fuer die
+        # ATR_median/ATR_min-Tags des schliessenden Orders (#897 Fix 3 Eingangsgroesse).
+        if self._exit_atr.initialized and close > 0:
+            self._position_atr_bps_readings.append(
+                self._effective_atr_value(self._exit_atr.value, close) / close * 10_000.0
+            )
+
+        # Update trailing stop.
+        # Issue #897 — "price_extreme" (default) rastet ausschliesslich auf dem Kurs-Extremum seit
+        # Einstieg; der Stop wird jeden Bar aus dem AKTUELLEN ATR-Wert neu berechnet (keine Ratsche
+        # gegen den vorherigen Stop-Wert), damit eine einzelne ruhige Bar den Stop nicht dauerhaft an
+        # den Kurs klemmt (Pitfall #285). "close_ratchet" reproduziert das Alt-Verhalten bit-identisch:
+        # der Stop rastet zusaetzlich auf der ATR-Schaetzung und gibt nie nach.
         if self._exit_atr.initialized and self._trailing_stop_price is not None:
-            atr_val = self._exit_atr.value
-            if self._trailing_stop_side == "LONG":
-                new_stop = close - self._atr_trailing_multiplier * atr_val
-                self._trailing_stop_price = max(self._trailing_stop_price, new_stop)
+            atr_val = self._effective_atr_value(self._exit_atr.value, close)
+            if self._trailing_stop_anchor == "price_extreme":
+                # Defensiv: _position_extreme kann in Tests, die internen Zustand ohne
+                # on_position_opened() manipulieren, noch None sein — dann mit dieser Bar seeden.
+                if self._position_extreme is None:
+                    self._position_extreme = close
+                if self._trailing_stop_side == "LONG":
+                    self._position_extreme = max(self._position_extreme, float(bar.high))
+                    self._trailing_stop_price = self._position_extreme - self._atr_trailing_multiplier * atr_val
+                else:
+                    self._position_extreme = min(self._position_extreme, float(bar.low))
+                    self._trailing_stop_price = self._position_extreme + self._atr_trailing_multiplier * atr_val
             else:
-                new_stop = close + self._atr_trailing_multiplier * atr_val
-                self._trailing_stop_price = min(self._trailing_stop_price, new_stop)
+                if self._trailing_stop_side == "LONG":
+                    new_stop = close - self._atr_trailing_multiplier * atr_val
+                    self._trailing_stop_price = max(self._trailing_stop_price, new_stop)
+                else:
+                    new_stop = close + self._atr_trailing_multiplier * atr_val
+                    self._trailing_stop_price = min(self._trailing_stop_price, new_stop)
 
         # Issue #836 — ein Exit ist bereits unterwegs: keinen zweiten Exit auslösen (kein
         # Doppel-Close, keine Order-Flut). Der Watchdog erzwingt den Close, falls die
@@ -733,11 +795,22 @@ class HourlyStrategyBase(Strategy):
             pos = positions[0]
 
         exit_side = OrderSide.SELL if pos.side == PositionSide.LONG else OrderSide.BUY
+        # Issue #899 — der schliessende Markt-Close-Order traegt die Exit-Klassifikation (und die
+        # ATR-Telemetrie der Position) als Tags, damit backtest_runner.extract_metrics sie OHNE
+        # Umweg ueber den (abgeschnittenen, #899-Root-Cause) Subprozess-Logger auslesen kann.
+        tags = None
+        if self._exit_pending_kind is not None:
+            tag_list = [f"EXIT_REASON:{self._exit_pending_kind.value}"]
+            if self._position_atr_bps_readings:
+                tag_list.append(f"ATR_MEDIAN_BPS:{statistics.median(self._position_atr_bps_readings):.4f}")
+                tag_list.append(f"ATR_MIN_BPS:{min(self._position_atr_bps_readings):.4f}")
+            tags = tag_list
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
             order_side=exit_side,
             quantity=pos.quantity,
             time_in_force=TimeInForce.GTC,
+            tags=tags,
         )
         # Issue #859 — sobald der Markt-Close tatsächlich abgesetzt wird, ist das Fortsetzungs-Token
         # dieses Exit-Versuchs konsumiert: der Watchdog darf nicht erneut auslösen, WÄHREND diese
@@ -1067,6 +1140,11 @@ class HourlyStrategyBase(Strategy):
         self._trailing_stop_price = None
         self._trailing_stop_side = None
         self._take_profit_price = None
+        # Issue #897 Fix 1 — Kurs-Extremum-Anker wird AUSSCHLIESSLICH hier auf den Entry-Preis
+        # initialisiert (analog _trailing_initialised, #837).
+        self._position_extreme = float(event.avg_px_open)
+        # Issue #899 — ATR-Telemetrie-Puffer beginnt leer fuer jede neue Position.
+        self._position_atr_bps_readings = []
         # Issue #836 — eine neue Position beginnt garantiert ohne einen laufenden Exit-Versuch.
         self._exit_pending = None
         self._exit_pending_kind = None

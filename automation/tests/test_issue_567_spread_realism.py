@@ -25,7 +25,17 @@ def test_symbol_override_wins_over_asset_class():
     sym = {"TSLA.ETORO": 2.0}
     assert resolve_spread_bps("TSLA.ETORO", ac, sym, "EQUITY") == 2.0  # Override
     assert resolve_spread_bps("AAPL.ETORO", ac, sym, "EQUITY") == 3.0  # Asset-Class
-    assert resolve_spread_bps("XYZ.ETORO", ac, sym, "UNKNOWN") == 4.0  # DEFAULT-Fallback
+    assert resolve_spread_bps("XYZ.ETORO", ac, sym, "DEFAULT") == 4.0  # expliziter DEFAULT-Key
+
+
+def test_unknown_asset_class_key_never_silently_maps_to_default():
+    """Issue #898 Fix 3 — 'UNKNOWN' (oder jeder andere im Map fehlende Key) darf NIE still auf
+    'DEFAULT' abbilden; das war exakt die Root-Cause (47% des Universums über DEFAULT=4.0bps statt
+    EQUITY=3.0bps aufgelöst). Ein Konfigurationsfehler wirft."""
+    ac = {"EQUITY": 3.0, "DEFAULT": 4.0}
+    sym = {"TSLA.ETORO": 2.0}
+    with pytest.raises(ValueError):
+        resolve_spread_bps("XYZ.ETORO", ac, sym, "UNKNOWN")
 
 
 def test_resolution_backward_compatible_without_symbol_map():

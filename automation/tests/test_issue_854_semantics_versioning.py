@@ -47,12 +47,15 @@ CFG = json.loads(CFG_PATH.read_text("utf-8"))
 
 
 # ── AK-1: beide Versionsfelder existieren, dokumentiert ─────────────────────────────────────────
-def test_reward_semantics_version_is_19():
-    assert CFG["reward_semantics_version"] == 19
+# Beide Assertions verwenden >= statt == (Konvention seit test_issue_637), damit dieser
+# Akzeptanztest kuenftige Bumps (z. B. v20/#901, v2/#897+#898) NICHT bricht — er verifiziert nur
+# die #854-Invariante (beide Achsen existieren, Startwert 1 fuer simulation ist bereits ueberschritten).
+def test_reward_semantics_version_is_at_least_19():
+    assert CFG["reward_semantics_version"] >= 19
 
 
-def test_simulation_semantics_version_starts_at_1():
-    assert CFG["simulation_semantics_version"] == 1
+def test_simulation_semantics_version_is_at_least_1():
+    assert CFG["simulation_semantics_version"] >= 1
 
 
 def test_version_is_documented_with_v19_changelog_entry():

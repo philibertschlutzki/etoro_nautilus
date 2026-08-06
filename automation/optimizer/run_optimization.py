@@ -33,6 +33,7 @@ from automation.optimizer.confirm import confirm_on_holdout, export_proposal, ex
 from automation.optimizer import retention
 from automation.optimizer import disk_guard
 from automation.optimizer import invariants as _inv
+from automation.optimizer import _contracts
 from automation.log_manager import emit_execution_event, bind_study_context
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
@@ -568,6 +569,12 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         # dass die Study ihre eigene len(completed) >= required_for_structural-
                         # Vorbedingung (Zeile 490 oben) bereits erfuellt hat.
                         stop_reason=_budget_execution_for_diagnosis["stop_reason"],
+                        # Issue #911 — konfigurierbare Konsekutiv-Laeufe-Schwelle statt eines
+                        # eingefrorenen Literals; simulation_semantics_version fuer den #911 Fix 2
+                        # Gueltigkeitsstempel einer 'signal_quality'-Quarantaene.
+                        max_consecutive_structural_runs=int(
+                            (weights or {}).get("max_consecutive_structural_runs", 2)),
+                        simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -731,6 +738,9 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             else 0
                         ),
                         stop_reason=_budget_execution_for_quality["stop_reason"],
+                        max_consecutive_structural_runs=int(
+                            (weights or {}).get("max_consecutive_structural_runs", 2)),
+                        simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -2445,19 +2455,45 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # (nicht hinter der ``oos_evaluated``-Ueberschreibung unten) — sonst wuerde ein gerade
         # zeitbox-invalidierter Trial genau die Evidenz verlieren, die confirm.py/report.py
         # brauchen, um dieselbe Verletzung studienweit nachzuvollziehen (Selbstverschleierung).
+        # Issue #899 — Exit-Telemetrie (aus Order-Tags, siehe backtest_runner._build_order_exit_meta)
+        # als Trial-User-Attrs, unabhängig vom oos_evaluated-Zweig unten (rein additive Telemetrie,
+        # analog oos_max_holding_time_s/oos_p95_holding_time_s).
+        if metrics.oos_exit_reason_histogram:
+            trial.set_user_attr("oos_exit_reason_histogram", metrics.oos_exit_reason_histogram)
+        if metrics.oos_max_holding_bars is not None:
+            trial.set_user_attr("oos_max_holding_bars", metrics.oos_max_holding_bars)
+        if metrics.oos_gross_loss_mean_bps is not None:
+            trial.set_user_attr("oos_gross_loss_mean_bps", metrics.oos_gross_loss_mean_bps)
+        if metrics.oos_gross_win_mean_bps is not None:
+            trial.set_user_attr("oos_gross_win_mean_bps", metrics.oos_gross_win_mean_bps)
+        if metrics.oos_atr_median_bps is not None:
+            trial.set_user_attr("oos_atr_median_bps", metrics.oos_atr_median_bps)
+        if metrics.oos_atr_min_bps is not None:
+            trial.set_user_attr("oos_atr_min_bps", metrics.oos_atr_min_bps)
+
         _timebox_violated_this_trial = False
         if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:
             if metrics.oos_max_holding_time_s is not None:
                 trial.set_user_attr("oos_max_holding_time_s", metrics.oos_max_holding_time_s)
             if metrics.oos_p95_holding_time_s is not None:
                 trial.set_user_attr("oos_p95_holding_time_s", metrics.oos_p95_holding_time_s)
+            # Issue #903 — rohe Round-Trip-Haltedauern (siehe compute_trial_timebox_violations
+            # Round-Trip-Ebene) statt nur des Trial-Maximums oben.
+            if metrics.oos_holding_times_s:
+                trial.set_user_attr("oos_holding_times_s", list(metrics.oos_holding_times_s))
             _cap_bars, _cap_source = _inv.resolve_effective_bar_cap(sampled, strategy=strategy)
             _slack_bars = float(t_data.get("timebox_execution_slack_bars", 3.0))
-            _cap_s = (_cap_bars + _slack_bars) * 3600.0
+            # Issue #902 — Single Source of Truth statt eines eigenen 3600.0-Literals (Pitfall #271,
+            # dritte Instanz): dieselbe Konstante wie invariants.compute_trial_timebox_violations.
+            # Ein echter per-Symbol bar_seconds-Wert (#900 median_delta_t_s) ist an dieser Stelle
+            # nicht verdrahtet (Sweep-Preflight-Ergebnis erreicht den Trial-Objective-Prozess derzeit
+            # nicht) — dokumentierter Fallback, jetzt aus der EINEN Quelle statt einer Kopie.
+            _bar_seconds = _contracts.BAR_SECONDS_DEFAULT
+            _cap_s = (_cap_bars + _slack_bars) * _bar_seconds
             _timebox_violated_this_trial = metrics.oos_max_holding_time_s > _cap_s
             trial.set_user_attr("oos_timebox_violated", _timebox_violated_this_trial)
             trial.set_user_attr(
-                "oos_holding_bars_max", round(metrics.oos_max_holding_time_s / 3600.0, 4))
+                "oos_holding_bars_max", round(metrics.oos_max_holding_time_s / _bar_seconds, 4))
             trial.set_user_attr("timebox_cap_source", _cap_source)
             if _timebox_violated_this_trial:
                 trial.set_user_attr("oos_invalid_reason", "TIMEBOX_VIOLATION")

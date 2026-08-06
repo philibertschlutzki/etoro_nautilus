@@ -134,14 +134,15 @@ def test_attempt_champion_writeback_reports_quality_stale_skip_reason(tmp_path, 
 
 
 def test_attempt_champion_writeback_no_entry_is_non_fatal(tmp_path, monkeypatch):
-    """Kein Champion-Store-Eintrag vorhanden -- die Funktion crasht nicht und meldet
-    NO_ADMISSIBLE_ENTRY."""
+    """Kein Champion-Store-Eintrag vorhanden -- die Funktion crasht nicht und meldet STORE_EMPTY
+    (Issue #910 Fix 2 — vorher NO_ADMISSIBLE_ENTRY, ununterscheidbar von einem existierenden, aber
+    inadmissiblen Eintrag)."""
     _isolate(monkeypatch, tmp_path)
     events = _capture_champion_writeback_events(
         lambda: sweep._attempt_champion_writeback("SmaCrossoverStrategy", "TSLA.ETORO", OPT_DATA))
     assert len(events) == 1
     assert events[0]["applied"] is False
-    assert events[0]["skipped_reason"] == "NO_ADMISSIBLE_ENTRY"
+    assert events[0]["skipped_reason"] == "STORE_EMPTY"
 
 
 def test_attempt_champion_writeback_swallows_exceptions(tmp_path, monkeypatch):

@@ -305,7 +305,9 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                proposed_bounds: dict | None = None,
                                budget_executed_fraction: float | None = None,
                                n_runs_confirmed: int = 0,
-                               stop_reason: str | None = None) -> dict:
+                               stop_reason: str | None = None,
+                               max_consecutive_structural_runs: int = 2,
+                               simulation_semantics_version: int | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -384,11 +386,15 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
-    # Issue #829 — zwei UNABHAENGIGE Nachweispfade fuer "das Ergebnis ist verlaesslich vollstaendig
-    # ausgewertet": entweder der eigene strukturelle Stop-Grund der Study (STRUCTURAL_ALL_
-    # UNEVALUABLE, siehe Docstring) ODER ein hoher Budgetanteil. n_runs_confirmed bleibt in JEDEM
-    # Fall Pflicht (die Mehrlauf-Bestaetigung ist der eigentliche Schutz, #778).
-    sufficient_evidence = n_runs_confirmed >= 2 and (
+    # Issue #829/#911 — zwei UNABHAENGIGE Nachweispfade fuer "das Ergebnis ist verlaesslich
+    # vollstaendig ausgewertet": entweder der eigene strukturelle Stop-Grund der Study (STRUCTURAL_
+    # ALL_UNEVALUABLE, siehe Docstring) ODER ein hoher Budgetanteil. n_runs_confirmed bleibt in
+    # JEDEM Fall Pflicht (die Mehrlauf-Bestaetigung ist der eigentliche Schutz, #778) — die
+    # Schwelle ist seit #911 KONFIGURIERBAR (``max_consecutive_structural_runs``, Default 2, siehe
+    # ``optimizer.json``) statt eines eingefrorenen Literals. Gilt AUSSCHLIESSLICH fuer
+    # ``signal_absent``/``signal_sparse`` — dort, wo die Diagnose von der Simulationsqualitaet
+    # unabhaengig ist (reine Suchraum-/Datengeometrie-Frage).
+    sufficient_evidence = n_runs_confirmed >= max_consecutive_structural_runs and (
         stop_reason == "STRUCTURAL_ALL_UNEVALUABLE"
         or (budget_executed_fraction is not None and budget_executed_fraction >= 0.9)
     )
@@ -409,11 +415,22 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         # oder nach einer einzigen Beobachtung komplett zu verschwinden. n_runs_confirmed == 0 (kein
         # Vorlauf-Eintrag) bleibt 'none' — bit-identisch zu "noch nichts entschieden".
         quality_sufficient_evidence = (
-            n_runs_confirmed >= 2
+            n_runs_confirmed >= max_consecutive_structural_runs
             and budget_executed_fraction is not None and budget_executed_fraction >= 0.9
         )
         if quality_sufficient_evidence:
-            action = "denylist"
+            # Issue #911 (wichtigste Aussage des Katalogs) — der Closed-Loop-Rueckschrieb fuer
+            # 'signal_quality' wird bis nach dem #897-Kalibrierlauf AUSGESETZT: eine Strategie,
+            # deren Trades zu 94% durch die #897-Sperrklinke nahe Breakeven beendet werden, kann
+            # KEINEN eligiblen Trial erzeugen, egal wie der Suchraum aussieht — ein Denylist-
+            # Rueckschrieb auf dieser Basis wuerde funktionierende Strategien dauerhaft
+            # ausschliessen, weil die Simulationsschicht defekt war. 'quarantined_pending_
+            # simulation_review' PROTOKOLLIERT das Paar (Reihenfolge/Evidenz bleiben sichtbar),
+            # schreibt es aber NICHT auf die Denylist — enumerate_tunable_pairs skippt
+            # ausschliesslich action=='denylist', ein quarantaenierter Eintrag bleibt regulaer
+            # enumeriert, solange simulation_semantics_version seit der Diagnose NICHT gebumpt
+            # wurde (siehe diagnosed_simulation_semantics_version unten).
+            action = "quarantined_pending_simulation_review"
         elif n_runs_confirmed >= 1:
             action = "deprioritized"
         else:
@@ -444,6 +461,12 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     }
     if action == "search_space_override" and proposed_bounds:
         result["proposed_bounds"] = proposed_bounds
+    if action == "quarantined_pending_simulation_review":
+        # Issue #911 Fix 2 — Gueltigkeitsstempel: ein Closed-Loop-Rueckschrieb ist nur solange
+        # gueltig, wie die Simulationsschicht, die ihn erzeugt hat, gueltig ist (Pitfall #292 in
+        # AGENTS.md). Ein kuenftiger Aufrufer vergleicht diesen Wert gegen die AKTUELLE
+        # simulation_semantics_version und verwirft die Quarantaene bei einem Bump dazwischen.
+        result["diagnosed_simulation_semantics_version"] = simulation_semantics_version
     return result
 
 
@@ -642,34 +665,46 @@ def diagnose_symbol_degeneracy(symbol: str, per_strategy_diagnoses: list[dict], 
 
 
 def check_bar_quality(highs: list[float], lows: list[float], closes: list[float], *,
-                      max_frac_high_eq_low: float = 0.5,
+                      max_frac_high_eq_low: float = 0.20,
                       max_frac_identical_consecutive_closes: float = 0.5,
-                      min_distinct_closes: int = 10) -> dict:
-    """Issue #807 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
+                      min_distinct_closes: int = 10,
+                      max_frac_zero_true_range: float = 0.25,
+                      min_atr_median_bps: float = 5.0,
+                      bar_coverage_ratio: float | None = None,
+                      median_delta_t_s: float | None = None) -> dict:
+    """Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
     degenerierte/konstante Bars VOR Phase 1 eines Symbols, statt erst nach 14 × 16 verbrannten
     Trials ueber 14 unabhaengige ``STRUCTURAL_ALL_UNEVALUABLE``-Diagnosen (siehe
     ``diagnose_symbol_degeneracy``-Docstring fuer den vollen Root-Cause-Befund, ``HYPE.ETORO``
     Pitfall #446 zu ``volume=1.0``-artigen degenerierten Bars).
 
-    Drei Kennzahlen ueber die uebergebene Bar-Kohorte (bereits aggregiert — diese Funktion selbst
+    Fuenf Kennzahlen ueber die uebergebene Bar-Kohorte (bereits aggregiert — diese Funktion selbst
     macht KEIN I/O, keine Bar-Aggregation):
       * ``frac_high_eq_low`` — Anteil Bars mit ``high == low`` (keinerlei Intra-Bar-Bewegung).
       * ``frac_identical_consecutive_closes`` — Anteil Bars, deren Close IDENTISCH zum
         Vorgaenger-Close ist (der Preis "steht still").
-      * ``n_distinct_closes`` — Anzahl DISTINKTER Close-Werte ueber die gesamte Kohorte (ein
-        Symbol mit nur einer Handvoll je wiederholter Preis-Level ist strukturell degeneriert,
-        unabhaengig von der Bar-Zahl).
+      * ``n_distinct_closes`` — Anzahl DISTINKTER Close-Werte ueber die gesamte Kohorte.
+      * ``frac_zero_true_range`` (Issue #900) — Anteil Bars mit True Range == 0 (ATR-Nullranges
+        ueber die GESAMTE Kohorte, nicht nur ``high==low`` — eine Bar mit ``high==low``, aber
+        einer Kurslücke zum Vorgaenger-Close hat trotzdem TR > 0; der #897-Sperrklinken-Defekt
+        greift umso haerter, je mehr Nullranges in der ATR-Historie liegen).
+      * ``atr_median_bps`` (Issue #900) — Median der True Range in bps des Preises (Skalen-Check:
+        eine ATR, die systematisch bei 2 bps statt 30 bps liegt, passiert die relativen
+        Degenerations-Kennzahlen oben vollstaendig).
 
-    ``passed=False``, sobald EINE der drei Schwellen verletzt ist (``max_frac_high_eq_low``,
-    ``max_frac_identical_consecutive_closes``, ``min_distinct_closes`` — alle aus
-    ``optimizer.json['bar_quality']``, Zero-Hardcoding). Leere Eingabe ⇒ ``passed=False``
-    (keine Bars ⇒ nichts zu handeln, dieselbe Konsequenz wie degenerierte Bars — kein stiller
-    Pass). Rein, deterministisch, kein I/O."""
+    ``passed=False``, sobald EINE der Schwellen verletzt ist (alle aus
+    ``optimizer.json['bar_quality']``, Zero-Hardcoding — Issue #900 verschaerft
+    ``max_frac_high_eq_low`` 0.5 → 0.20 und ergaenzt ``max_frac_zero_true_range``/
+    ``min_atr_median_bps``). Leere Eingabe ⇒ ``passed=False`` (keine Bars ⇒ nichts zu handeln,
+    dieselbe Konsequenz wie degenerierte Bars — kein stiller Pass). Rein, deterministisch, kein
+    I/O."""
     n = len(closes)
     if n == 0:
         return {
             "n_bars": 0, "frac_high_eq_low": None, "frac_identical_consecutive_closes": None,
-            "n_distinct_closes": 0, "passed": False, "reason": "no_bars",
+            "n_distinct_closes": 0, "frac_zero_true_range": None, "atr_median_bps": None,
+            "bar_coverage_ratio": bar_coverage_ratio, "median_delta_t_s": median_delta_t_s,
+            "passed": False, "reason": "no_bars",
         }
     frac_high_eq_low = sum(1 for h, l in zip(highs, lows) if h == l) / n
     if n > 1:
@@ -680,6 +715,22 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         frac_identical = 0.0
     n_distinct = len(set(closes))
 
+    # Issue #900 Fix 1 — True Range je Bar: max(high-low, |high-prev_close|, |low-prev_close|).
+    # Die erste Bar hat keinen Vorgaenger-Close ⇒ TR = high-low (Standard-ATR-Konvention).
+    true_ranges: list[float] = []
+    prev_close: float | None = None
+    for h, l, c in zip(highs, lows, closes):
+        tr = (h - l) if prev_close is None else max(h - l, abs(h - prev_close), abs(l - prev_close))
+        true_ranges.append(tr)
+        prev_close = c
+    frac_zero_true_range = sum(1 for tr in true_ranges if tr <= 0.0) / n
+    tr_bps = sorted(
+        (tr / c * 10_000.0) for tr, c in zip(true_ranges, closes) if c > 0
+    )
+    atr_median_bps = tr_bps[len(tr_bps) // 2] if tr_bps and len(tr_bps) % 2 == 1 else (
+        (tr_bps[len(tr_bps) // 2 - 1] + tr_bps[len(tr_bps) // 2]) / 2.0 if tr_bps else None
+    )
+
     reasons = []
     if frac_high_eq_low > max_frac_high_eq_low:
         reasons.append(f"frac_high_eq_low={frac_high_eq_low:.3f} > {max_frac_high_eq_low}")
@@ -689,12 +740,21 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
             f"{max_frac_identical_consecutive_closes}")
     if n_distinct < min_distinct_closes:
         reasons.append(f"n_distinct_closes={n_distinct} < {min_distinct_closes}")
+    if frac_zero_true_range > max_frac_zero_true_range:
+        reasons.append(
+            f"frac_zero_true_range={frac_zero_true_range:.3f} > {max_frac_zero_true_range}")
+    if atr_median_bps is not None and atr_median_bps < min_atr_median_bps:
+        reasons.append(f"atr_median_bps={atr_median_bps:.3f} < {min_atr_median_bps}")
 
     return {
         "n_bars": n,
         "frac_high_eq_low": frac_high_eq_low,
         "frac_identical_consecutive_closes": frac_identical,
         "n_distinct_closes": n_distinct,
+        "frac_zero_true_range": frac_zero_true_range,
+        "atr_median_bps": atr_median_bps,
+        "bar_coverage_ratio": bar_coverage_ratio,
+        "median_delta_t_s": median_delta_t_s,
         "passed": not reasons,
         "reason": "; ".join(reasons) if reasons else "OK",
     }

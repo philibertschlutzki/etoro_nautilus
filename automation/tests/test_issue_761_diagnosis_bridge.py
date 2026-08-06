@@ -87,17 +87,20 @@ def test_proposed_bounds_only_attached_for_search_space_override_action():
     assert rec["proposed_bounds"] == {"cooldown_bars": [1.0, 36.0]}
 
 
-def test_proposed_bounds_absent_for_denylist_action():
-    """Issue #830 — 'signal_quality' braucht seither Evidenz (n_runs_confirmed>=2 UND
-    budget_executed_fraction>=0.9) fuer 'denylist'; ohne diese Kwargs waere die Empfehlung 'none',
-    nicht 'denylist' (siehe test_issue_830_signal_quality_deprioritized.py). Hier explizit mit
-    ausreichender Evidenz aufgerufen, um weiterhin GENAU den 'denylist'-Zweig zu testen."""
+def test_proposed_bounds_absent_for_quarantine_action():
+    """Issue #830 — 'signal_quality' braucht Evidenz (n_runs_confirmed>=2 UND
+    budget_executed_fraction>=0.9) fuer die volle Eskalation; ohne diese Kwargs waere die
+    Empfehlung 'none'. Issue #911 — die volle Eskalation ist seither 'quarantined_pending_
+    simulation_review', NICHT 'denylist' (der Closed-Loop-Rueckschrieb fuer 'signal_quality' ist
+    bis nach dem #897-Kalibrierlauf ausgesetzt, siehe test_issue_830_signal_quality_
+    deprioritized.py). Hier explizit mit ausreichender Evidenz aufgerufen, um weiterhin GENAU
+    diesen Zweig zu testen."""
     diagnosis = {"binding_cause": "signal_quality"}
     rec = recommend_diagnosis_action(
         "TrendPullbackStrategy", "TSLA.ETORO", diagnosis,
         proposed_bounds={"cooldown_bars": [1.0, 36.0]},
         n_runs_confirmed=2, budget_executed_fraction=1.0)
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "quarantined_pending_simulation_review"
     assert "proposed_bounds" not in rec
 
 
