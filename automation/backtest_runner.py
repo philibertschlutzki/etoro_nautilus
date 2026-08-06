@@ -1084,6 +1084,35 @@ def resolve_spread_bps(inst_id_str: str,
     return float(spread_bps_by_asset_class[asset_class_key])
 
 
+def resolve_atr_floor_bps(inst_id_str: str,
+                          atr_floor_bps_by_asset_class: dict | None,
+                          asset_class_key: str = "DEFAULT") -> float:
+    """Issue #924 — asset-class-aufgelöste Untergrenze für den ATR-Wert des Trailing-Stops
+    (bps des Preises), Single Source of Truth analog zu ``resolve_spread_bps`` (#566).
+
+    Der Floor verhindert, dass ``hourly_strategy_base._effective_atr_value`` (#897 Fix 4)
+    bei einem degenerierten Nautilus-``AverageTrueRange`` (exakt 0, z. B. High==Low==PrevClose)
+    den Trailing-Stop auf das Preis-Extremum kollabieren lässt. Vor #924 war der Wert ein
+    flacher, in ``HourlyStrategyConfig.atr_floor_bps`` hart kodierter Default (2.0 bps) für
+    jedes Symbol — für Krypto (siehe #920, deutlich höhere typische Preis-/ATR-Skalen)
+    strukturell zu eng.
+
+    Fehlt ``atr_floor_bps_by_asset_class`` (Key nicht in ``backtest.json``) ⇒ 2.0 (der alte
+    flache Default, rückwärtskompatibel). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch
+    in der Map vorhanden ist, ist — wie bei ``resolve_spread_bps`` (#898 Fix 3) — ein
+    KONFIGURATIONSFEHLER und wirft, statt still auf DEFAULT zurückzufallen."""
+    if not atr_floor_bps_by_asset_class:
+        return 2.0
+    if asset_class_key not in atr_floor_bps_by_asset_class:
+        raise ValueError(
+            f"resolve_atr_floor_bps: asset_class_key='{asset_class_key}' ({inst_id_str}) ist "
+            f"nicht in atr_floor_bps_by_asset_class ({sorted(atr_floor_bps_by_asset_class)}) — "
+            f"stiller Rückfall würde einen Krypto-Floor unbemerkt auf den Equity-Wert reduzieren "
+            f"(Issue #924, analog #898)."
+        )
+    return float(atr_floor_bps_by_asset_class[asset_class_key])
+
+
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,
@@ -4745,6 +4774,7 @@ def run_single_backtest_worker(
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
+    atr_floor_bps_by_asset_class: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -4787,12 +4817,17 @@ def run_single_backtest_worker(
             # fälschlich unrentabel macht.
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
-            if spread_bps_by_asset_class and not has_symbol_override:
+            # Issue #924 — die Asset-Class wird auch dann aufgelöst, wenn NUR
+            # atr_floor_bps_by_asset_class konfiguriert ist (ein Spread-Symbol-Override allein
+            # entbindet die ATR-Floor-Auflösung nicht — dafür gibt es keinen Symbol-Override).
+            if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class) and not has_symbol_override:
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
 
             spread_bps = resolve_spread_bps(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)
+            atr_floor_bps_resolved = resolve_atr_floor_bps(
+                inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
 
             if spread_bps > 0.0:
                 src = "Symbol-Override" if has_symbol_override else f"Asset-Class {asset_class_key}"
@@ -4807,6 +4842,7 @@ def run_single_backtest_worker(
                 "asset_class_key": asset_class_key,
                 "spread_bps": spread_bps,
                 "source": "symbol_override" if has_symbol_override else "asset_class",
+                "atr_floor_bps": atr_floor_bps_resolved,
             })
 
             ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns, spread_bps)
@@ -4907,6 +4943,10 @@ def run_single_backtest_worker(
             params = strat.get("params", {}).copy()
             params["instrument_id"] = inst_id_str
             params["bar_type"]      = bar_type
+            # Issue #924 — asset-class-aufgelöster ATR-Floor (oben resolve_atr_floor_bps), NIE
+            # ein vom Suchraum gesampelter Wert (atr_floor_bps ist kein Optuna-Parameter) —
+            # überschreibt daher bewusst jeden gleichnamigen Eintrag aus strat["params"].
+            params["atr_floor_bps"] = atr_floor_bps_resolved
 
             # Härtung: Defensives Parsing der Parameter
             if hasattr(ConfigCls, "__struct_fields__"):
@@ -5180,6 +5220,8 @@ def run_backtest() -> None:
     spread_bps_by_asset_class = backtest_global_cfg.get("spread_bps_by_asset_class", {})
     # Issue #566 — optionale symbol-spezifische Spread-Overrides (übersteuert die Asset-Class-Konstante).
     spread_bps_by_symbol = backtest_global_cfg.get("spread_bps_by_symbol", {})
+    # Issue #924 — asset-class-aufgelöste ATR-Trailing-Stop-Untergrenze (resolve_atr_floor_bps).
+    atr_floor_bps_by_asset_class = backtest_global_cfg.get("atr_floor_bps_by_asset_class", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -5517,7 +5559,8 @@ def run_backtest() -> None:
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-                        spread_bps_by_symbol
+                        spread_bps_by_symbol,
+                        atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -5526,7 +5569,8 @@ def run_backtest() -> None:
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-                        spread_bps_by_symbol
+                        spread_bps_by_symbol,
+                        atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -5560,7 +5604,8 @@ def run_backtest() -> None:
                         start_ns, end_ns, start_capital, args.htmlreport,
                         reports_dir, all_results, done_count, total_jobs,
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-                        spread_bps_by_symbol
+                        spread_bps_by_symbol,
+                        atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                     )
                     break
                 except Exception as e:
@@ -5646,6 +5691,7 @@ def _run_remaining_sequentially(
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
+    atr_floor_bps_by_asset_class: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -5662,7 +5708,8 @@ def _run_remaining_sequentially(
             rem_inst, bar_type, rem_strat, catalog_path,
             start_ns, end_ns, start_capital, generate_html, reports_dir, rem_log,
             span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-            spread_bps_by_symbol
+            spread_bps_by_symbol,
+            atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
         )
         _flush_worker_log(rem_log)
         done_count += 1

@@ -14,6 +14,7 @@
       "commission_bps": "Kommission pro ROUND-TRIP in Basispunkten (bps). Issue #561: Die Implementierung verrechnet die HALBE Rate je Leg (Entry + Exit), sodass die Summe genau commission_bps · notional_avg EINMAL kostet (nicht 2×). Ein Round-Trip mit notional 10 000 USD und commission_bps=10 kostet exakt 10 USD. Single Source of Truth für die kostenrelative Expectancy-Schwelle (tournament.json.oos_min_expectancy_k_alpha, Issue #562) — nie doppelt pflegen.",
       "spread_bps_by_asset_class": "Dynamische Tick-Weitung pro Asset Class in Basispunkten (bps), um Zero-Spread Artefakte zu vermeiden. Issue #566: EQUITY von 8.0 auf 3.0 rekalibriert — 8 bps waren für liquide Large-Caps (TSLA real ~1–3 bps) unrealistisch weit und maskierten echten Edge (Kosten-Overstatement Faktor ~3–8). Ein zu weiter Spread ist NICHT konservativ-sicher, er macht robuste Strategien fälschlich unrentabel. Für symbol-spezifische Feinkalibrierung siehe spread_bps_by_symbol.",
       "spread_bps_by_symbol": "Issue #566 — optionale symbol-spezifische Spread-Override-Map (bps), die spread_bps_by_asset_class für einzelne Instrumente übersteuert (Auflösungsreihenfolge: Symbol-Override → Asset-Class → DEFAULT). Für Blue-Chips mit engem realem Bid/Ask (z. B. TSLA.ETORO ~2 bps) den realistischen Wert setzen. Fehlt der Key oder das Symbol ⇒ Asset-Class-Fallback (rückwärtskompatibel). Mittelfristig aus der realen QuoteTick-Bid/Ask-Historie schätzbar (Median effektiver Spread je Symbol).",
+      "atr_floor_bps_by_asset_class": "Issue #924 — Untergrenze für den ATR-Wert des Trailing-Stops (hourly_strategy_base._effective_atr_value, #897 Fix 4: max(ATR, atr_floor_bps · Preis)), asset-class-aufgelöst über dieselbe Auflösungskette wie spread_bps_by_asset_class (resolve_atr_floor_bps, backtest_runner.py). Verhindert einen Stop, der bei einem degenerierten Nautilus-AverageTrueRange (High==Low==PrevClose) exakt auf das Preis-Extremum kollabiert und die Position beim nächsten Tick beendet. Vor #924 war der Wert ein flacher, in HourlyStrategyConfig hart kodierter Default (2.0 bps) für JEDES Symbol — für die volatileren Krypto-Instrumente (siehe #920) strukturell zu eng. Fehlt der Key ⇒ Fallback auf den alten flachen Default 2.0 (rückwärtskompatibel, resolve_atr_floor_bps). Ein asset_class_key, der weder 'UNKNOWN' noch in dieser Map vorhanden ist, ist ein Konfigurationsfehler (wirft, analog resolve_spread_bps/#898).",
       "holdout_days": "Anzahl der Holdout-Tage f\u00fcr Out-of-Sample Validierung nach der Optimierung.",
       "data_history_days": "Issue #445 \u2014 dokumentierte/erwartete Mindest-Datenhistorie pro Symbol in Tagen (Single Source of Truth, deckungsgleich mit strategy_defaults.json._schema). Fallback auf diesen Config-Value statt echter Time-Series-Spanne in Gate-1 Evaluierung (Issue #525).",
       "embargo_period_days": "Issue #466 (Leakage Prevention) \u2014 Embargo-Periode in Tagen zwischen IS-Ende und OOS-Start, um Lookback-Leakage von Indikatoren in die In-Sample Trainingsdaten zu verhindern. Sollte >= max_lookback der Strategie sein.",
@@ -33,6 +34,13 @@
   },
   "spread_bps_by_symbol": {
     "TSLA.ETORO": 2.0
+  },
+  "atr_floor_bps_by_asset_class": {
+    "CRYPTO": 10.0,
+    "EQUITY": 2.0,
+    "FOREX": 1.0,
+    "COMMODITY": 3.0,
+    "DEFAULT": 2.0
   },
   "unknown_asset_class_policy": "reject",
   "spread_modeling": true,
