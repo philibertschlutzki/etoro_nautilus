@@ -1113,6 +1113,29 @@ def resolve_atr_floor_bps(inst_id_str: str,
     return float(atr_floor_bps_by_asset_class[asset_class_key])
 
 
+def resolve_opening_range_session_open_hour(inst_id_str: str,
+                                            session_open_hour_by_asset_class: dict | None,
+                                            asset_class_key: str = "DEFAULT") -> int:
+    """Issue #922 — asset-class-aufgelöste UTC-Stunde des Handelstag-Beginns für
+    ``OpeningRangeBreakoutStrategy.opening_range_session_open_hour`` (nur wirksam unter
+    ``opening_range_session_anchor='session_open_hour'``), Single Source of Truth analog
+    ``resolve_spread_bps``/``resolve_atr_floor_bps``.
+
+    Fehlt ``session_open_hour_by_asset_class`` ⇒ 13 (der Dataclass-Default, ≈ NYSE-Open,
+    rückwärtskompatibel). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch in der Map
+    vorhanden ist, ist — wie bei ``resolve_spread_bps``/``resolve_atr_floor_bps`` — ein
+    KONFIGURATIONSFEHLER und wirft, statt still zurückzufallen."""
+    if not session_open_hour_by_asset_class:
+        return 13
+    if asset_class_key not in session_open_hour_by_asset_class:
+        raise ValueError(
+            f"resolve_opening_range_session_open_hour: asset_class_key='{asset_class_key}' "
+            f"({inst_id_str}) ist nicht in opening_range_session_open_hour_by_asset_class "
+            f"({sorted(session_open_hour_by_asset_class)}) — Issue #922, analog #898."
+        )
+    return int(session_open_hour_by_asset_class[asset_class_key])
+
+
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,
@@ -4775,6 +4798,7 @@ def run_single_backtest_worker(
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
+    opening_range_session_open_hour_by_asset_class: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -4817,10 +4841,12 @@ def run_single_backtest_worker(
             # fälschlich unrentabel macht.
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
-            # Issue #924 — die Asset-Class wird auch dann aufgelöst, wenn NUR
-            # atr_floor_bps_by_asset_class konfiguriert ist (ein Spread-Symbol-Override allein
-            # entbindet die ATR-Floor-Auflösung nicht — dafür gibt es keinen Symbol-Override).
-            if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class) and not has_symbol_override:
+            # Issue #924/#922 — die Asset-Class wird auch dann aufgelöst, wenn NUR
+            # atr_floor_bps_by_asset_class/opening_range_session_open_hour_by_asset_class
+            # konfiguriert ist (ein Spread-Symbol-Override allein entbindet diese Auflösungen
+            # nicht — dafür gibt es keinen Symbol-Override).
+            if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class
+                    or opening_range_session_open_hour_by_asset_class) and not has_symbol_override:
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
 
@@ -4828,6 +4854,8 @@ def run_single_backtest_worker(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)
             atr_floor_bps_resolved = resolve_atr_floor_bps(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
+            opening_range_session_open_hour_resolved = resolve_opening_range_session_open_hour(
+                inst_id_str, opening_range_session_open_hour_by_asset_class, asset_class_key)
 
             if spread_bps > 0.0:
                 src = "Symbol-Override" if has_symbol_override else f"Asset-Class {asset_class_key}"
@@ -4947,6 +4975,11 @@ def run_single_backtest_worker(
             # ein vom Suchraum gesampelter Wert (atr_floor_bps ist kein Optuna-Parameter) —
             # überschreibt daher bewusst jeden gleichnamigen Eintrag aus strat["params"].
             params["atr_floor_bps"] = atr_floor_bps_resolved
+            # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde (oben
+            # resolve_opening_range_session_open_hour). Nur OpeningRangeBreakoutConfig kennt
+            # dieses Feld — der valid_keys-Filter unten verwirft es folgenlos für jede andere
+            # Strategie.
+            params["opening_range_session_open_hour"] = opening_range_session_open_hour_resolved
 
             # Härtung: Defensives Parsing der Parameter
             if hasattr(ConfigCls, "__struct_fields__"):
@@ -5222,6 +5255,10 @@ def run_backtest() -> None:
     spread_bps_by_symbol = backtest_global_cfg.get("spread_bps_by_symbol", {})
     # Issue #924 — asset-class-aufgelöste ATR-Trailing-Stop-Untergrenze (resolve_atr_floor_bps).
     atr_floor_bps_by_asset_class = backtest_global_cfg.get("atr_floor_bps_by_asset_class", {})
+    # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde für OpeningRangeBreakoutStrategy
+    # (resolve_opening_range_session_open_hour).
+    opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
+        "opening_range_session_open_hour_by_asset_class", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -5561,6 +5598,8 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+                        opening_range_session_open_hour_by_asset_class=(
+                            opening_range_session_open_hour_by_asset_class),
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -5571,6 +5610,8 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+                        opening_range_session_open_hour_by_asset_class=(
+                            opening_range_session_open_hour_by_asset_class),
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -5606,6 +5647,8 @@ def run_backtest() -> None:
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
                         spread_bps_by_symbol,
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+                        opening_range_session_open_hour_by_asset_class=(
+                            opening_range_session_open_hour_by_asset_class),
                     )
                     break
                 except Exception as e:
@@ -5692,6 +5735,7 @@ def _run_remaining_sequentially(
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
+    opening_range_session_open_hour_by_asset_class: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -5710,6 +5754,8 @@ def _run_remaining_sequentially(
             span_tolerance_days, commission_bps, spread_bps_by_asset_class,
             spread_bps_by_symbol,
             atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+            opening_range_session_open_hour_by_asset_class=(
+                opening_range_session_open_hour_by_asset_class),
         )
         _flush_worker_log(rem_log)
         done_count += 1

@@ -8,10 +8,13 @@ Bars eines neuen Kalendertags (erkannt über `pd.Timestamp(bar.ts_init).day`, id
 Basisklasse) definieren eine Range (Hoch/Tief). Bricht der Kurs danach über das Range-Hoch
 (+ATR-Puffer), ist das ein Long-Signal; unter das Range-Tief analog Short.
 
-24/7-Bars-Hinweis: ein "Tag" ist hier ein Kalendertag (24 Bars), nicht die US-RTH-Session —
-die ersten `or_bars` Bars können in ruhige Nacht-Ticks fallen. Für eine RTH-basierte Variante
-müsste der Tageswechsel auf die Session-Öffnung (`session_open_hour`) statt auf `.day`
-referenziert werden.
+24/7-Bars-Hinweis (Issue #922): per Default (`opening_range_session_anchor='calendar_day'`,
+bit-identisches Alt-Verhalten) ist ein "Tag" ein Kalendertag (24 Bars, Wechsel um Mitternacht
+UTC), nicht die US-RTH-Session — die ersten `or_bars` Bars können in ruhige Nacht-Ticks fallen.
+`opening_range_session_anchor='session_open_hour'` verankert den Tageswechsel stattdessen auf
+`opening_range_session_open_hour` (UTC-Stunde, von `backtest_runner.
+resolve_opening_range_session_open_hour` asset-class-aufgelöst gesetzt — RTH-Instrumente
+bekommen die NYSE-Open-Näherung, 24/7-Asset-Classes bleiben effektiv unverändert).
 
 Exit-Logik (via HourlyStrategyBase): ATR-Trailing-Stop + Zeit-Exit (~1 Handelstag).
 """
@@ -26,6 +29,25 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyBase, Hourl
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
+def session_day_key(ts_init: int, *, anchor: str, session_open_hour: int):
+    """Issue #922 — reine Funktion, damit die Session-Boundary-Logik ohne NautilusTrader-Objekte
+    (Bar/Strategy) testbar ist. Zwei Bars gehören zur selben "Opening Range", wenn diese Funktion
+    für beide denselben Wert liefert.
+
+    ``anchor == 'calendar_day'`` (Default) — bit-identisch zum Alt-Verhalten:
+    ``pd.Timestamp(ts_init).day`` (Wechsel um Mitternacht UTC, EIN Kalendermonat wiederholt sich
+    alle ~28-31 Tage — für die Bar-lokale Vergleichslogik unschädlich, siehe Basisklasse).
+
+    ``anchor == 'session_open_hour'`` — der Zeitstempel wird um ``session_open_hour`` Stunden
+    zurückgeschoben und auf Mitternacht normiert: eine 24h-Session, die um ``session_open_hour``
+    UTC beginnt, fällt dadurch auf EINEN Kalendertag des verschobenen Zeitstempels (Standard-Trick
+    für Session-Boundaries abseits Mitternacht)."""
+    ts = pd.Timestamp(ts_init)
+    if anchor == "session_open_hour":
+        return (ts - pd.Timedelta(hours=session_open_hour)).normalize()
+    return ts.day
+
+
 class OpeningRangeBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True):
     or_bars: int = 3
     or_atr_buffer: float = 0.25
@@ -36,6 +58,17 @@ class OpeningRangeBreakoutConfig(HourlyStrategyConfig, kw_only=True, frozen=True
     max_bars_in_trade: int = 24
     max_daily_trades: int | None = 2
     trade_amount_pct: float = 15.0
+    # Issue #922 — 'calendar_day' (Default, bit-identisches Alt-Verhalten) verankert den
+    # Tageswechsel auf pd.Timestamp(bar.ts_init).day (Wechsel um Mitternacht UTC), unabhängig von
+    # der tatsächlichen Handelszeit des Instruments. Auf dem 24/7-Stundenraster fallen die ersten
+    # or_bars damit für ein RTH-Instrument (Equity) oft in ruhige Nacht-Ticks — die "Opening
+    # Range" ist dann keine. 'session_open_hour' verankert stattdessen auf
+    # opening_range_session_open_hour (UTC-Stunde, backtest_runner asset-class-aufgelöst gesetzt).
+    opening_range_session_anchor: str = "calendar_day"
+    # Issue #922 — UTC-Stunde des Session-Starts unter 'session_open_hour'; nur wirksam, wenn
+    # opening_range_session_anchor das auch ist. Default 13 ≈ NYSE-Open (9:30 ET, DST-Näherung,
+    # siehe backtest_runner.resolve_opening_range_session_open_hour für die asset-class-Auflösung).
+    opening_range_session_open_hour: int = 13
 
 
 class OpeningRangeBreakoutStrategy(HourlyStrategyBase):
@@ -67,7 +100,9 @@ class OpeningRangeBreakoutStrategy(HourlyStrategyBase):
         if self._check_exits_and_update(bar):
             return
 
-        day = pd.Timestamp(bar.ts_init).day
+        day = session_day_key(
+            bar.ts_init, anchor=self.config.opening_range_session_anchor,
+            session_open_hour=self.config.opening_range_session_open_hour)
         if day != self._or_day:
             self._or_day = day
             self._or_bar_count = 0

@@ -295,13 +295,24 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         }
     elif strategy == "OpeningRangeBreakoutStrategy":
         # Issue #690 — Opening-Range-Breakout (Momentum-Ignition am Tagesbeginn).
+        # Issue #922 Fix 3 — untere or_bars/cooldown_bars-Bounds geöffnet (2→1 bzw. 2→1): das
+        # XOM-Referenzsymptom (median oos_total_trades=15 gegen oos_min_trades=20, median
+        # n_periods=72) ist ZWEI unabhängige Frequenz-Defizite, der Session-Anker (Fix 2) allein
+        # behebt nur eines. Zielgrösse ≥ 40 OOS-Round-Trips (das Doppelte von oos_min_trades,
+        # damit das Gate nicht selbst bindend wird) — ein engerer or_bars/cooldown_bars-Suchraum
+        # lässt mehr Signale zu, ohne die obere Bound (weniger Trades, längere Range) zu verlieren.
+        # Jetzt auch über search_space_overrides.json symbol-spezifisch überschreibbar (Fix 3,
+        # vorher nur TrendPullback/AdxAtr/HourlyMeanReversion/SqueezeBreakout verdrahtet).
+        ob_lo, ob_hi = _bounds_for(strategy, symbol, "or_bars", 1, 8)
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 1, 24)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
         params = {
-            "or_bars": trial.suggest_int("or_bars", 2, 8),
+            "or_bars": trial.suggest_int("or_bars", ob_lo, ob_hi),
             "or_atr_buffer": trial.suggest_float("or_atr_buffer", 0.0, 1.0),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 24),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 3.5),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "DonchianRegimeBreakoutStrategy":
         # Issue #691 — Donchian-Ausbruch, EMA-Steigungs-gegatet (Regime-Filter Option B). Der
