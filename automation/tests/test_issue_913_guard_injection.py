@@ -64,8 +64,9 @@ def test_assert_guard_reference_injectable_fails_loud_if_the_injection_disappear
     )
     import types
     fake_module = types.ModuleType("fake_backtest_runner")
+    _real_getsource = inspect.getsource
     monkeypatch.setattr(
-        inspect, "getsource", lambda mod: unwired_source if mod is fake_module else inspect.getsource(mod))
+        inspect, "getsource", lambda mod: unwired_source if mod is fake_module else _real_getsource(mod))
     monkeypatch.setitem(__import__("sys").modules, br.__name__, fake_module)
     try:
         with pytest.raises(ValueError, match="REJECT_GUARD_REFERENCE_NOT_WIRED"):

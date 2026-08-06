@@ -854,6 +854,33 @@ def _read_last_backtest_ms_median() -> float | None:
         return None
 
 
+def _read_last_study_wallclock_by_strategy() -> dict[str, float]:
+    """Issue #932 (Pitfall #305) — Median-Wallclock je Strategie aus dem JÜNGSTEN #742-Report
+    (``report._study_record`` stempelt ``wallclock_s`` je Study seit #932), Rohmaterial für den
+    LPT-Dispatch (Longest-Processing-Time): die Barriere am Symbolende kostet die Differenz
+    zwischen längster und medianer Study — absteigend nach erwarteter Laufzeit dispatchen senkt
+    diese Wartezeit, ohne die grössere Pipelining-Restrukturierung (#843/#908/#932, weiterhin
+    bewusst zurückgestellt) zu benötigen. Leeres Dict bei keinem vorhandenen Report (erster Lauf)
+    — der Aufrufer behandelt eine fehlende Strategie dann als Median-Priorität (0.0)."""
+    try:
+        from automation.optimizer.report import REPORTS_DIR
+        if not REPORTS_DIR.exists():
+            return {}
+        report_files = sorted(REPORTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not report_files:
+            return {}
+        data = json.loads(report_files[-1].read_text("utf-8")) or {}
+        by_strategy: dict[str, list[float]] = {}
+        for s in data.get("studies") or []:
+            strat = s.get("strategy")
+            wc = s.get("wallclock_s")
+            if strat and wc is not None:
+                by_strategy.setdefault(strat, []).append(float(wc))
+        return {strat: statistics.median(vals) for strat, vals in by_strategy.items()}
+    except Exception:
+        return {}
+
+
 def _family_n_from_proposals(proposals) -> dict[str, int]:
     """Issue #625 — FAMILIENWEISE Multiple-Testing-Zahl je Symbol.
 
@@ -1322,6 +1349,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     #841 (Ledger) + #842 (Budget) lösen die vom Nutzer geforderte Vollabdeckung bereits OHNE
     Pipelining (in einem 72-h-Lauf oder mehreren fortgesetzten Etappen); #843 bleibt ein reiner
     Durchsatz-Hebel für eine spätere Sitzung mit Zugriff auf einen realen Katalog.
+
+    Issue #932 (Pitfall #305) — ``pipeline_depth`` (der Look-Ahead-Schlüssel aus Fix Punkt 1 oben)
+    war über drei Kataloge (#843/#871/#893/#908) dokumentiert, in der Registry gefuehrt UND
+    komplett unverdrahtet — derselbe Zustand wie #913 (Katalog A), nur eine Konfigurationsdatei
+    weiter: ein Key, der existiert, jede Existenzpruefung besteht, dessen Semantik aber fehlt.
+    ENTFERNT (Fix-Weg (b) aus #932 — die vollstaendige Restrukturierung (Weg (a)) bleibt aus
+    demselben, oben ausgefuehrten Grund zurueckgestellt). STATTDESSEN implementiert: Fix Punkt 2
+    (Longest-Processing-Time-Dispatch) — die 14 Studies EINES Symbols werden absteigend nach dem
+    aus dem letzten #742-Report gelesenen Erfahrungswert (``_read_last_study_wallclock_by_
+    strategy``) dispatcht, statt in Enumerationsreihenfolge. Das ist eine Sortierzeile INNERHALB
+    der weiterhin symbolweise synchronen Barriere, keine Restrukturierung, und senkt die
+    Barriere-Wartezeit messbar (``SYMBOL_DISPATCH_COMPLETED``-Event, ``barrier_wait_s``) — ohne
+    das #843-Korrektheits-Risiko einer echten Pipeline ueber Symbolgrenzen hinweg einzugehen.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
@@ -1953,6 +1993,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # abbricht (VOR dem ersten regulaeren _write_checkpoint()-Aufruf weiter unten).
     _write_checkpoint()
 
+    # Issue #932 — EINMAL vor der Symbolschleife gelesen (nicht je Symbol): der LPT-Dispatch-Schlüssel
+    # ist strategie-, nicht symbolspezifisch (Rohmaterial ist der Median über den letzten Report).
+    _study_wallclock_by_strategy = _read_last_study_wallclock_by_strategy()
+
     proposals: list[Path] = []
     for symbol, symbol_pairs in pairs_by_symbol.items():
         # Issue #908 Fix 2 — die #842-Prognose hat eine Kürzung angeordnet: ab hier keine weiteren
@@ -1999,6 +2043,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             )
             break
 
+        # Issue #932 (Pitfall #305) — Longest-Processing-Time-Dispatch: die Symbol-Barriere
+        # (Join VOR dem nächsten Symbol) kostet die Differenz zwischen längster und medianer
+        # Study — absteigend nach dem aus dem letzten Report gelesenen Erfahrungswert dispatchen
+        # senkt diese Wartezeit messbar, ohne die grössere, bewusst zurückgestellte
+        # Pipelining-Restrukturierung zu benötigen. Unbekannte Strategien (kein Vorlauf-Report)
+        # sortieren als Median-Priorität (0.0) ans Ende, nicht ans (zufällige) Ende der
+        # Enumerationsreihenfolge.
+        symbol_pairs = sorted(
+            symbol_pairs,
+            key=lambda p: _study_wallclock_by_strategy.get(p[0], 0.0),
+            reverse=True,
+        )
+        _dispatch_t0 = time.perf_counter()
         if n_jobs and n_jobs > 1 and len(symbol_pairs) > 1:
             from concurrent.futures import ThreadPoolExecutor
             # Issue #828 Fix Punkt 3 — max_workers ist NICHT mehr auf len(symbol_pairs) gedeckelt
@@ -2014,6 +2071,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 symbol_studies = list(executor.map(_run_optimize, symbol_pairs))
         else:
             symbol_studies = [_run_optimize(p) for p in symbol_pairs]
+        # Issue #932 Fix — Barriere-Wartezeit je Symbol telemetriert: die Differenz zwischen der
+        # tatsächlichen Batch-Wallclock (alle Studies dieses Symbols) und der Wallclock der
+        # MEDIAN-Study — die Zeit, die der Dispatch auf die längste Study wartete, während kürzere
+        # Studies bereits fertig waren.
+        _symbol_dispatch_wallclock_s = time.perf_counter() - _dispatch_t0
+        _study_wallclocks_this_symbol = [
+            w for s in symbol_studies
+            for w in [(getattr(s, "user_attrs", {}) or {}).get("wallclock_s")] if w is not None
+        ]
+        _barrier_wait_s = (
+            round(_symbol_dispatch_wallclock_s - statistics.median(_study_wallclocks_this_symbol), 1)
+            if _study_wallclocks_this_symbol else None
+        )
+        emit_execution_event(logging.getLogger("optimizer"), "SYMBOL_DISPATCH_COMPLETED", {
+            "symbol": symbol,
+            "n_studies": len(symbol_pairs),
+            "dispatch_wallclock_s": round(_symbol_dispatch_wallclock_s, 1),
+            "barrier_wait_s": _barrier_wait_s,
+        })
 
         # Issue #827 Fix Punkt 3 — 'fail': dieses Symbol bricht VOR jedem Confirm-Aufruf ab, wenn
         # seine Studies nachweislich unterschiedliche selection_rule_fingerprint tragen (verletzte

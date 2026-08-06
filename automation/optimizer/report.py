@@ -467,6 +467,9 @@ def _study_record(proposal: dict, study,
         # Issue #917 Fix 4 — disjunkte Zerlegung der evaluierten, nicht-eligiblen Trials.
         "n_ineligible_measured": n_ineligible_measured,
         "backtest_ms_median": backtest_ms_median,
+        # Issue #932 — Per-Study-Wallclock (aus dem Study-User-Attr, #929/#568-Muster), Rohmaterial
+        # für den LPT-Dispatch (sweep._read_last_study_wallclock_by_strategy) des NÄCHSTEN Laufs.
+        "wallclock_s": study_user_attrs.get("wallclock_s"),
         "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,

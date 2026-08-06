@@ -2462,6 +2462,16 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             budget_execution["n_trials_completed"], budget_execution["n_trials_budgeted"],
         )
 
+    _study_wallclock_s = round(time.perf_counter() - study_t0)
+    # Issue #932 (Pitfall #305) — als Study-User-Attr gestempelt (nicht nur im Log-Event), damit
+    # report._study_record sie in einen künftigen #742-Report übernimmt: die EINE Quelle, aus der
+    # sweep._read_last_study_wallclock_by_strategy den LPT-Dispatch (Longest-Processing-Time) des
+    # NÄCHSTEN Laufs speist.
+    try:
+        study.set_user_attr("wallclock_s", _study_wallclock_s)
+    except Exception:
+        pass
+
     emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
         "study_name": getattr(study, "study_name", None),
         "symbol": symbol,
@@ -2483,7 +2493,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "best_trial_number": _best_completed_trial_number(trials, direction=_direction),
         "backtest_ms_total": sum(durs) if durs else 0,
         "backtest_ms_median": int(statistics.median(durs)) if durs else None,
-        "wallclock_s": round(time.perf_counter() - study_t0),
+        "wallclock_s": _study_wallclock_s,
         # Issue #568 — globale Roh-Diagnose (Populations-Streuung über ALLE Trials, NICHT die
         # Eskalations-Grundlage seit #640 — siehe feasible_reward_pstdev/gradient_signal unten).
         "reward_pstdev": reward_pstdev,
