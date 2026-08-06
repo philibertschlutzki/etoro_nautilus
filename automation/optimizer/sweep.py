@@ -438,6 +438,37 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         return None
 
 
+def _symbol_bar_quality_cache_path(work_dir: Path) -> Path:
+    return Path(work_dir) / "symbol_bar_quality.json"
+
+
+def write_symbol_bar_quality_cache(work_dir: Path, quality_by_symbol: dict[str, dict]) -> Path:
+    """Issue #923 Fix 1/3 — persistiert die #900-Bar-Qualitäts-Kennzahlen (``frac_zero_true_range``,
+    ``atr_median_bps``, ``bar_coverage_ratio``, ``median_delta_t_s``) je Symbol, GETRENNT von
+    ``optimizer.json`` (analog ``wallclock_guard.write_degrade_factor``, #931). Der Gate-1-Preflight
+    in ``run_per_symbol_sweep`` berechnet diese Werte ohnehin einmal pro Symbol VOR Phase 1
+    (``_load_symbol_bar_quality_sample``) — die Datei macht sie für ``report._study_record``
+    verfügbar, das NACH dem Sweep aus gespeicherten Study-Artefakten läuft und keinen eigenen
+    Katalog-Zugriff hat (#902-Fallback-Kommentar in report.py)."""
+    path = _symbol_bar_quality_cache_path(work_dir)
+    write_json_atomic(path, quality_by_symbol)
+    return path
+
+
+def read_symbol_bar_quality_cache(work_dir: Path) -> dict[str, dict]:
+    """Gegenstück zu ``write_symbol_bar_quality_cache``. Fehlt die Datei (kein Gate-1-Preflight in
+    diesem Lauf, z. B. injizierte Tests ohne echten Katalog) ⇒ {} (fail-open, rückwärtskompatibel —
+    Aufrufer fallen auf ``_contracts.BAR_SECONDS_DEFAULT`` zurück)."""
+    path = _symbol_bar_quality_cache_path(work_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
     """Issue #455 — jüngster ``ts_event`` (Epoch-ns) je Symbol aus den Parquet-Row-Group-Statistiken.
 
@@ -1498,6 +1529,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _load_sample = bar_quality_fn or _load_symbol_bar_quality_sample
         _bar_quality_cfg = opt_data.get("bar_quality") or {}
         _degenerate_syms = []
+        # Issue #923 Fix 1/3 — je Symbol persistiert (write_symbol_bar_quality_cache), damit
+        # report._study_record den echten median_delta_t_s als bar_seconds auflösen kann, statt
+        # unbedingt auf _contracts.BAR_SECONDS_DEFAULT zurückzufallen (report.py läuft nach dem
+        # Sweep, ohne eigenen Katalog-Zugriff).
+        _quality_by_symbol: dict[str, dict] = {}
         _log = logging.getLogger("optimizer")
         for _sym in syms:
             try:
@@ -1514,9 +1550,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 min_distinct_closes=_bar_quality_cfg.get("min_distinct_closes", 10),
                 max_frac_zero_true_range=_bar_quality_cfg.get("max_frac_zero_true_range", 0.25),
                 min_atr_median_bps=_bar_quality_cfg.get("min_atr_median_bps", 5.0),
+                min_bar_coverage_ratio=_bar_quality_cfg.get("min_bar_coverage_ratio", 0.6),
                 bar_coverage_ratio=_sample.get("bar_coverage_ratio"),
                 median_delta_t_s=_sample.get("median_delta_t_s"),
             )
+            _quality_by_symbol[_sym] = {
+                "frac_zero_true_range": _quality.get("frac_zero_true_range"),
+                "atr_median_bps": _quality.get("atr_median_bps"),
+                "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
+                "median_delta_t_s": _quality.get("median_delta_t_s"),
+                "passed": _quality["passed"],
+            }
             # Issue #900 Fix 3 — BAR_QUALITY_PROFILE-Event je Symbol, UNABHAENGIG vom Pruefergebnis
             # (ein bestandener Preflight ohne Zahlen ist keine Evidenz). Fix 4 — Stichprobenumfang
             # und Fenster im Event, sonst ist die Aussage nicht reproduzierbar.
@@ -1552,6 +1596,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 }, work_dir=WORK, run_id=run_id)
             except Exception:
                 _log.debug("[#807] Diagnose-Rueckschrieb fehlgeschlagen (non-fatal).",
+                          exc_info=True)
+        if _quality_by_symbol:
+            try:
+                write_symbol_bar_quality_cache(WORK, _quality_by_symbol)
+            except Exception:
+                _log.debug("[#923] symbol_bar_quality-Cache-Schreiben fehlgeschlagen (non-fatal).",
                           exc_info=True)
         if _degenerate_syms:
             syms = [s for s in syms if s not in _degenerate_syms]

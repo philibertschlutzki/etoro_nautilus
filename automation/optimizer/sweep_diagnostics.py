@@ -752,6 +752,7 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
                       min_distinct_closes: int = 10,
                       max_frac_zero_true_range: float = 0.25,
                       min_atr_median_bps: float = 5.0,
+                      min_bar_coverage_ratio: float = 0.6,
                       bar_coverage_ratio: float | None = None,
                       median_delta_t_s: float | None = None) -> dict:
     """Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
@@ -773,6 +774,12 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
       * ``atr_median_bps`` (Issue #900) — Median der True Range in bps des Preises (Skalen-Check:
         eine ATR, die systematisch bei 2 bps statt 30 bps liegt, passiert die relativen
         Degenerations-Kennzahlen oben vollstaendig).
+      * ``bar_coverage_ratio`` (Issue #923) — tatsaechliche Bars / erwartete Kalender-Bars der
+        Stichprobe (aus ``sweep._load_symbol_bar_quality_sample``, hier nur geprueft, nicht neu
+        berechnet — diese Funktion macht kein I/O). Ein Symbol mit grosser Datenspanne (besteht
+        Gate 1) kann trotzdem ueberwiegend LUECKEN im Bar-Raster haben (30% Abdeckung ueber 1099
+        Tage bestand Gate 1 vor #923 unveraendert); ``None`` (kein Preflight-Aufrufer liefert den
+        Wert) ⇒ nicht pruefbar, kein Fail.
 
     ``passed=False``, sobald EINE der Schwellen verletzt ist (alle aus
     ``optimizer.json['bar_quality']``, Zero-Hardcoding — Issue #900 verschaerft
@@ -827,6 +834,8 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
             f"frac_zero_true_range={frac_zero_true_range:.3f} > {max_frac_zero_true_range}")
     if atr_median_bps is not None and atr_median_bps < min_atr_median_bps:
         reasons.append(f"atr_median_bps={atr_median_bps:.3f} < {min_atr_median_bps}")
+    if bar_coverage_ratio is not None and bar_coverage_ratio < min_bar_coverage_ratio:
+        reasons.append(f"bar_coverage_ratio={bar_coverage_ratio:.3f} < {min_bar_coverage_ratio}")
 
     return {
         "n_bars": n,

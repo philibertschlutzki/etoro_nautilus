@@ -42,7 +42,9 @@ from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
     _constraint_violation_progress, compute_budget_execution, _best_completed_value,
 )
-from automation.optimizer.sweep import _family_n_from_proposals, load_symbol_universe
+from automation.optimizer.sweep import (
+    _family_n_from_proposals, load_symbol_universe, read_symbol_bar_quality_cache,
+)
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
 
@@ -293,8 +295,14 @@ def _median_of_sampled_param(trial_attrs: list[dict], param: str) -> float | Non
 def _study_record(proposal: dict, study,
                   tournament_cfg: dict | None = None, *,
                   guard_dominance_threshold: float | None = None,
+                  symbol_bar_quality_cache: dict | None = None,
                   ) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
-    """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743)."""
+    """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743).
+
+    ``symbol_bar_quality_cache`` (Issue #923) — vom Aufrufer EINMAL gelesenes
+    ``sweep.read_symbol_bar_quality_cache(WORK)``-Ergebnis, hier nur je Symbol nachgeschlagen
+    (kein I/O in dieser Funktion selbst). ``None``/kein Eintrag für ``proposal['symbol']`` ⇒
+    derselbe ``_contracts.BAR_SECONDS_DEFAULT``-Fallback wie vor #923."""
     trials = list(getattr(study, "trials", None) or []) if study is not None else []
     trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in trials]
 
@@ -368,13 +376,22 @@ def _study_record(proposal: dict, study,
     # eine gemessene GR-01-Verletzung erhält hier eine Konsequenz auf TRIAL-Ebene (siehe
     # invariants.compute_trial_timebox_violations; #861 vereinheitlicht diese Berechnung mit
     # ``check_holding_time_cap`` unten über dieselbe Referenz-Auflösung).
-    # Issue #902 — bar_seconds ist jetzt Pflichtparameter; #900s Bar-Qualitäts-Telemetrie
-    # (median_delta_t_s je Symbol) ist an dieser Stelle nicht verfügbar (Report läuft nach dem
-    # Sweep, nicht symbol-gescoped) — der dokumentierte 1h-Bar-Default ist der einzige verfügbare
-    # Wert, jetzt aus der EINEN Quelle (_contracts.BAR_SECONDS_DEFAULT) statt eines eigenen Literals.
+    # Issue #902 — bar_seconds ist Pflichtparameter. Issue #923 — der #900-Gate-1-Preflight
+    # persistiert median_delta_t_s je Symbol NUN in symbol_bar_quality.json
+    # (sweep.write_symbol_bar_quality_cache); dieser Read ersetzt den vorher unbedingten
+    # _contracts.BAR_SECONDS_DEFAULT-Fallback, sobald ein Cache-Eintrag für DIESES Symbol
+    # existiert. Kein Cache-Eintrag (Pre-#923-Lauf, injizierter Test ohne echten Katalog) ⇒
+    # derselbe fail-loud protokollierte Fallback wie zuvor.
+    _symbol_bar_quality = symbol_bar_quality_cache.get(proposal.get("symbol")) if isinstance(
+        symbol_bar_quality_cache, dict) else None
+    _bar_seconds = (
+        _symbol_bar_quality.get("median_delta_t_s")
+        if isinstance(_symbol_bar_quality, dict) and _symbol_bar_quality.get("median_delta_t_s")
+        else _contracts.BAR_SECONDS_DEFAULT
+    )
     timebox = _inv.compute_trial_timebox_violations(
         trial_attrs, strategy=proposal.get("strategy"),
-        bar_seconds=_contracts.BAR_SECONDS_DEFAULT)
+        bar_seconds=_bar_seconds)
 
     # Issue #929 — best_reward aus ALLEN abgeschlossenen Trials (Optuna-Semantik), nicht aus
     # Optunas eigenem constraint-gefilterten study.best_value (siehe
@@ -583,6 +600,11 @@ def _study_record(proposal: dict, study,
         # Study (#899). None, wenn keine Exit-Telemetrie vorliegt (Pre-#899-JSON/kein Trade).
         "oos_gross_loss_mean_bps": _median_of_trial_field(trial_attrs, "oos_gross_loss_mean_bps"),
         "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
+        # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
+        # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
+        # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. None ⇒ kein Preflight in
+        # diesem Lauf (z. B. injizierte Tests).
+        "symbol_bar_quality": _symbol_bar_quality,
         # Issue #919 — je Study aufsummiertes Exit-Reason-Histogramm (aus Order-Tags, #899) +
         # Median der je-Trial-Median-Haltedauer (Bars). Rohmaterial für
         # invariants.check_exit_reason_coverage.
@@ -1116,6 +1138,10 @@ def _build_report(
     tournament_cfg = _load_json(tournament_path) or {}
     optimizer_cfg = _load_json(optimizer_path) or {}
 
+    # Issue #923 — einmal je Report-Lauf gelesen (nicht je Study — dieselbe Datei, kein
+    # Symbol-Scope beim Lesen selbst nötig).
+    _symbol_bar_quality_cache = read_symbol_bar_quality_cache(WORK)
+
     studies_out: list[dict[str, Any]] = []
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
     for proposal in proposals:
@@ -1123,7 +1149,8 @@ def _build_report(
         record, checks = _study_record(
             proposal, study, tournament_cfg,
             guard_dominance_threshold=float(
-                optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)))
+                optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)),
+            symbol_bar_quality_cache=_symbol_bar_quality_cache)
         studies_out.append(record)
         study_label = f"{record['strategy']}/{record['symbol']}"
         all_checks.extend((study_label, c) for c in checks)
@@ -1235,6 +1262,12 @@ def _build_report(
     # und der tatsächlichen Round-Trip-Zahl bedeutet einen Exit-Pfad ohne Order-Tag-Attribution.
     exit_reason_coverage_check = _inv.check_exit_reason_coverage(studies_out)
     all_checks.append(("global", exit_reason_coverage_check))
+
+    # Issue #923 Fix 4 — n_periods streut innerhalb desselben Symbols stark je Strategie; ab
+    # einem Faktor > deflation_max_n_periods_ratio-Kalibrierpunkt (Default 6.0 hier, 4.0 dort)
+    # greift die #865-Heterogenitäts-Suppression vermutlich für praktisch jede Familie.
+    n_periods_homogeneity_check = _inv.check_n_periods_homogeneity(studies_out)
+    all_checks.append(("global", n_periods_homogeneity_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
     # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,

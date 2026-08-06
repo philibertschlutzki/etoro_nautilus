@@ -1495,6 +1495,54 @@ def check_effective_stop_distance(study_records: list[dict], *,
     )
 
 
+def check_n_periods_homogeneity(study_records: list[dict], *,
+                                max_ratio: float = 6.0) -> InvariantResult:
+    """Issue #923 — ``oos_n_periods_median`` (#862) streut je nach Strategie stark selbst
+    INNERHALB desselben Symbols (unterschiedliche Handelsfrequenz ⇒ unterschiedlich viele Bars
+    mit Rendite ≠ 0) — eine Spannweite von Faktor 11,3 auf demselben Symbol XOM wurde beobachtet.
+    ``n_periods`` ist gleichzeitig (a) der Nenner jeder Sortino-/PSR-Schätzung, (b) die
+    Referenzgrösse des numerischen Guards (#916), (c) die Eingangsgrösse für
+    ``deflation_max_n_periods_ratio`` (#865) — bei starker Heterogenität greift die
+    #865-Heterogenitäts-Suppression für praktisch jede Familie, ``deflated_dsr`` bleibt ``None``,
+    und ``None`` muss nach Pitfall #277 ablehnen. Die Heterogenität ist damit ein stiller
+    Promotions-Blocker, unabhängig von #913.
+
+    Gruppiert ``study_records`` nach ``symbol`` und vergleicht je Symbol
+    ``max(oos_n_periods_median) / min(oos_n_periods_median)`` gegen ``max_ratio`` (Default 6.0,
+    der Kalibrierpunkt für ``deflation_max_n_periods_ratio``, dort heute 4.0). ``severity='high'``
+    (nicht ``'blocking'``) — die Heterogenität selbst blockiert keine einzelne Study, sie ist ein
+    Diagnosesignal für die #865-Kalibrierung."""
+    by_symbol: dict[str, list[float]] = {}
+    for r in study_records:
+        symbol = r.get("symbol")
+        median = r.get("oos_n_periods_median")
+        if symbol is None or median is None:
+            continue
+        by_symbol.setdefault(symbol, []).append(float(median))
+    offenders: dict[str, float] = {}
+    for symbol, medians in by_symbol.items():
+        if len(medians) < 2:
+            continue
+        lo, hi = min(medians), max(medians)
+        if lo <= 0:
+            continue
+        ratio = hi / lo
+        if ratio > max_ratio:
+            offenders[symbol] = round(ratio, 2)
+    passed = not offenders
+    return InvariantResult(
+        name="check_n_periods_homogeneity",
+        passed=passed,
+        expected=f"max(oos_n_periods_median) / min(oos_n_periods_median) <= {max_ratio} je Symbol",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) mit n_periods-Spannweite > {max_ratio}: {offenders} — "
+                "die #865-Heterogenitäts-Suppression (deflation_max_n_periods_ratio) greift "
+                "vermutlich für praktisch jede Familie dieses Symbols (Issue #923)."),
+    )
+
+
 def check_cost_model_resolution(cost_model_events: list[dict], *,
                                 max_default_fallback_fraction: float = 0.0) -> InvariantResult:
     """Issue #898 Fix 4 — je Symbol wird ``(asset_class_key, spread_bps, source)`` als
