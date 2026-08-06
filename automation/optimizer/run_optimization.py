@@ -32,6 +32,7 @@ from automation.optimizer.reward import (
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
 from automation.optimizer import disk_guard
+from automation.optimizer import wallclock_guard
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
 from automation.log_manager import emit_execution_event, bind_study_context
@@ -1760,16 +1761,30 @@ def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
     ``n_trials = 100`` bei 14 Dimensionen ist faktisch Zufallssuche (72 TPE-Trials für 14 dim ⇒
     Spearman(trial_nr, reward) ≈ 0.04–0.23, best(51–100) oft SCHLECHTER als best(1–50)). Deklarativ
     über ``n_trials_per_dim`` (k ≥ 20): ``n_trials = max(base, ceil(k·dim))`` ⇒ ComboTrendVwap (14 dim)
-    ≥ 280. Fehlt der Key (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding)."""
+    ≥ 280. Fehlt der Key (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding).
+
+    Issue #931 Fix 2 — ``wallclock_budget_policy='degrade'`` multipliziert das Ergebnis GLOBAL mit
+    dem in ``{WORK}/wallclock_degrade_state.json`` persistierten Faktor (siehe
+    ``wallclock_guard.write_degrade_factor``/``read_degrade_factor``): der Sweep-Preflight
+    (``sweep.run_per_symbol_sweep``) berechnet den Faktor VOR dem ersten Trial und schreibt ihn in
+    diese von ``optimizer.json`` GETRENNTE Zustandsdatei, weil jede Study ihre Config unabhängig
+    frisch von der Platte lädt (kein geteiltes In-Memory-Objekt über Study-Grenzen). Faktor 1.0
+    (Datei fehlt, z. B. kein Degrade-Preflight gelaufen) ⇒ bit-identisch zum Pre-#931-Verhalten."""
     k = opt_data.get("n_trials_per_dim")
     if not k or float(k) <= 0.0:
-        return int(base_n_trials)
-    try:
-        from automation.optimizer import bounds
-        dim = len(bounds.extract_numeric_bounds(strategy))
-    except Exception:
-        return int(base_n_trials)
-    return max(int(base_n_trials), math.ceil(float(k) * dim))
+        base = int(base_n_trials)
+    else:
+        try:
+            from automation.optimizer import bounds
+            dim = len(bounds.extract_numeric_bounds(strategy))
+        except Exception:
+            base = int(base_n_trials)
+        else:
+            base = max(int(base_n_trials), math.ceil(float(k) * dim))
+    degrade_factor = wallclock_guard.read_degrade_factor(WORK)
+    if degrade_factor >= 1.0:
+        return base
+    return max(1, math.ceil(base * degrade_factor))
 
 
 def _apply_deprioritized_budget(strategy: str, symbol: str, n_trials: int, opt_data: dict) -> int:
@@ -3222,6 +3237,13 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     study.set_user_attr("seed_effective", seed_eff)
     study.set_user_attr("n_trials_budget", n_trials)
     study.set_user_attr("n_startup_trials", n_startup_trials)
+    # Issue #931 Fix 2 — der wallclock_budget_policy='degrade'-Faktor, der bereits in n_trials
+    # eingerechnet ist (derive_n_trials), zusätzlich ROH telemetriert: damit bleibt
+    # budget_executed_fraction (n_trials_completed / n_trials_budget) auch bei einer degradierten
+    # Study korrekt interpretierbar (das Budget selbst war kleiner, nicht die Ausführung schwächer).
+    _degrade_factor = wallclock_guard.read_degrade_factor(WORK)
+    if _degrade_factor < 1.0:
+        study.set_user_attr("n_trials_budget_degrade_factor", round(_degrade_factor, 4))
 
     # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
     # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an

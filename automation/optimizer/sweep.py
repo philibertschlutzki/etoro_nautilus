@@ -832,6 +832,28 @@ def _load_optimizer_config() -> dict:
         return {}
 
 
+def _read_last_backtest_ms_median() -> float | None:
+    """Issue #931 — Erfahrungswert für ``backtest_ms_median`` aus dem JÜNGSTEN vorhandenen
+    #742-Report (``report._study_record`` stempelt ihn je Study, siehe dortige #931-Ergänzung),
+    als Median über die Studien-Mediane. ``None`` bei keinem vorhandenen Report (erster Lauf) —
+    der Aufrufer fällt dann auf ``wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN`` zurück."""
+    try:
+        from automation.optimizer.report import REPORTS_DIR
+        if not REPORTS_DIR.exists():
+            return None
+        report_files = sorted(REPORTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not report_files:
+            return None
+        data = json.loads(report_files[-1].read_text("utf-8")) or {}
+        values = [
+            s["backtest_ms_median"] for s in (data.get("studies") or [])
+            if s.get("backtest_ms_median") is not None
+        ]
+        return statistics.median(values) if values else None
+    except Exception:
+        return None
+
+
 def _family_n_from_proposals(proposals) -> dict[str, int]:
     """Issue #625 — FAMILIENWEISE Multiple-Testing-Zahl je Symbol.
 
@@ -1557,6 +1579,56 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         })
         disk_guard.assert_preflight_budget(
             WORK, expected_bytes=_expected_bytes, budget_gb=_budget_gb, reserve_gb=_reserve_gb)
+
+        # Issue #931 (Pitfall #304) — derselbe Preflight-Zeitpunkt kennt bereits expected_trials;
+        # der Disk-Preflight oben prüfte bislang nur die komfortable Ressource (Plattenplatz),
+        # nicht die knappe (Zeit). WALLCLOCK_BUDGET_PREFLIGHT schliesst diese Lücke.
+        wallclock_guard.clear_degrade_state(WORK)
+        _backtest_ms_median = _read_last_backtest_ms_median() or wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN
+        _parallelism_degree = float(n_jobs) if n_jobs and n_jobs > 0 else 1.0
+        _expected_wallclock_h = wallclock_guard.estimate_expected_wallclock_h(
+            expected_trials=_expected_trials, backtest_ms_median=_backtest_ms_median,
+            parallelism_degree=_parallelism_degree)
+        _sweep_max_wallclock_h = opt_data.get("sweep_max_wallclock_h")
+        emit_execution_event(logging.getLogger("optimizer"), "WALLCLOCK_BUDGET_PREFLIGHT", {
+            "expected_trials": _expected_trials,
+            "backtest_ms_median": _backtest_ms_median,
+            "parallelism_degree": _parallelism_degree,
+            "expected_wallclock_h": round(_expected_wallclock_h, 2),
+            "sweep_max_wallclock_h": _sweep_max_wallclock_h,
+        })
+        _over_budget = (_sweep_max_wallclock_h is not None
+                        and _expected_wallclock_h > float(_sweep_max_wallclock_h))
+        if _over_budget:
+            _policy = opt_data.get("wallclock_budget_policy", "degrade")
+            if _policy not in ("abort", "degrade", "warn"):
+                raise ValueError(
+                    f"optimizer.json['wallclock_budget_policy']={_policy!r} unbekannt — erwartet "
+                    "'abort', 'degrade' oder 'warn'.")
+            _log = logging.getLogger("optimizer")
+            if _policy == "abort":
+                raise RuntimeError(
+                    f"REJECT_WALLCLOCK_BUDGET_EXCEEDED (#931): expected_wallclock_h="
+                    f"{_expected_wallclock_h:.1f} > sweep_max_wallclock_h={_sweep_max_wallclock_h} "
+                    f"(expected_trials={_expected_trials}, backtest_ms_median={_backtest_ms_median:.0f}, "
+                    f"parallelism_degree={_parallelism_degree:.2f}). wallclock_budget_policy='abort' "
+                    "— Budget/Geometrie anpassen ODER Policy auf 'degrade'/'warn' stellen."
+                )
+            if _policy == "degrade":
+                _degrade_factor = max(0.05, float(_sweep_max_wallclock_h) / _expected_wallclock_h)
+                wallclock_guard.write_degrade_factor(WORK, _degrade_factor)
+                _log.warning(
+                    "[#931] WALLCLOCK_BUDGET_DEGRADED: expected_wallclock_h=%.1f > "
+                    "sweep_max_wallclock_h=%s — n_trials_budget wird global um Faktor %.3f gekürzt "
+                    "(wallclock_budget_policy='degrade').",
+                    _expected_wallclock_h, _sweep_max_wallclock_h, _degrade_factor,
+                )
+            else:
+                _log.warning(
+                    "[#931] WALLCLOCK_BUDGET_EXCEEDED: expected_wallclock_h=%.1f > "
+                    "sweep_max_wallclock_h=%s (wallclock_budget_policy='warn' — keine Konsequenz, "
+                    "nur Diagnose).", _expected_wallclock_h, _sweep_max_wallclock_h,
+                )
 
     # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).
     # enumerate_tunable_pairs dedupliziert bereits; diese Assertion ist der Guertel-und-Hosentraeger-

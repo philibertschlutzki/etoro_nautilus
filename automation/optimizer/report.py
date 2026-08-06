@@ -280,6 +280,11 @@ def _study_record(proposal: dict, study,
     n_evaluable = sum(1 for a in trial_attrs if a.get("oos_evaluated") is True)
     n_eligible = sum(1 for a in trial_attrs if a.get("oos_eligible") is True)
     p_eligible = round(n_eligible / n_trials, 4) if n_trials else 0.0
+    # Issue #931 — Median der Per-Trial-Wallclock (#415-Telemetrie), damit ein SPÄTERER Lauf den
+    # Wallclock-Preflight (sweep.assert_wallclock_budget_valid) mit einem echten Erfahrungswert
+    # statt dem eingefrorenen Fallback (wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN) füttern kann.
+    _backtest_ms_values = [a["backtest_ms"] for a in trial_attrs if a.get("backtest_ms") is not None]
+    backtest_ms_median = statistics.median(_backtest_ms_values) if _backtest_ms_values else None
     # Issue #915 — wie viele der oos_evaluated Trials TATSÄCHLICH eine definierte
     # Selektions-Teststatistik (oos_psr) tragen. Rohmaterial für
     # invariants.check_selection_statistic_availability: die WIRKUNGS-Invariante, die prüft, ob
@@ -461,6 +466,7 @@ def _study_record(proposal: dict, study,
         "n_selection_statistic_available": n_selection_statistic_available,
         # Issue #917 Fix 4 — disjunkte Zerlegung der evaluierten, nicht-eligiblen Trials.
         "n_ineligible_measured": n_ineligible_measured,
+        "backtest_ms_median": backtest_ms_median,
         "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,
