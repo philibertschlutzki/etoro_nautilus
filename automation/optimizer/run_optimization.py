@@ -2754,6 +2754,11 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_exit_reason_histogram", metrics.oos_exit_reason_histogram)
         if metrics.oos_max_holding_bars is not None:
             trial.set_user_attr("oos_max_holding_bars", metrics.oos_max_holding_bars)
+        # Issue #919 — bislang nur in TournamentMetrics geparst, nie als Trial-User-Attr
+        # gestempelt: report._study_record's Study-Aggregat (median_bars_held) hatte dadurch keine
+        # Eingangsgrösse.
+        if metrics.oos_median_bars_held is not None:
+            trial.set_user_attr("oos_median_bars_held", metrics.oos_median_bars_held)
         if metrics.oos_gross_loss_mean_bps is not None:
             trial.set_user_attr("oos_gross_loss_mean_bps", metrics.oos_gross_loss_mean_bps)
         if metrics.oos_gross_win_mean_bps is not None:

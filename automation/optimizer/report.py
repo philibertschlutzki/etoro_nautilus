@@ -257,6 +257,28 @@ def _median_of_trial_field(trial_attrs: list[dict], field: str) -> float | None:
     return statistics.median(values) if values else None
 
 
+def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
+    """Issue #919 — Anteil der Round-Trips mit ``exit_reason == 'TIME_BOX'`` (hourly_strategy_
+    base.ExitReason) am je-Study aufsummierten Exit-Reason-Histogramm. ``None`` ohne jede
+    Exit-Telemetrie (leeres Histogramm)."""
+    histogram = _sum_exit_reason_histograms(trial_attrs)
+    total = sum(histogram.values())
+    if not total:
+        return None
+    return round(histogram.get("TIME_BOX", 0) / total, 4)
+
+
+def _sum_exit_reason_histograms(trial_attrs: list[dict]) -> dict[str, int]:
+    """Issue #919 — summiert ``oos_exit_reason_histogram`` (je Trial, aus Order-Tags via #899)
+    über eine Study zu EINEM Histogramm. Leeres Dict, wenn keine Trial-Telemetrie vorliegt
+    (Pre-#899-JSON/kein Trade) — Rohmaterial für ``invariants.check_exit_reason_coverage``."""
+    total: dict[str, int] = {}
+    for a in trial_attrs or []:
+        for reason, count in (a.get("oos_exit_reason_histogram") or {}).items():
+            total[reason] = total.get(reason, 0) + int(count)
+    return total
+
+
 def _median_of_sampled_param(trial_attrs: list[dict], param: str) -> float | None:
     """Issue #897 Fix 3 — Median eines GESAMPELTEN Suchraum-Parameters (``sampled_params[param]``)
     über eine Study. Symmetrisch zu ``_median_of_trial_field``, aber für den Config-Wert statt der
@@ -561,6 +583,22 @@ def _study_record(proposal: dict, study,
         # Study (#899). None, wenn keine Exit-Telemetrie vorliegt (Pre-#899-JSON/kein Trade).
         "oos_gross_loss_mean_bps": _median_of_trial_field(trial_attrs, "oos_gross_loss_mean_bps"),
         "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
+        # Issue #919 — je Study aufsummiertes Exit-Reason-Histogramm (aus Order-Tags, #899) +
+        # Median der je-Trial-Median-Haltedauer (Bars). Rohmaterial für
+        # invariants.check_exit_reason_coverage.
+        "exit_reason_histogram": _sum_exit_reason_histograms(trial_attrs),
+        "median_bars_held": _median_of_trial_field(trial_attrs, "oos_median_bars_held"),
+        # Issue #919 — Summe der Round-Trips über GENAU die Trials, die auch ein
+        # exit_reason_histogram beitrugen (Apples-to-apples für check_exit_reason_coverage; ein
+        # Trial ohne Order-Tag-Telemetrie darf die Summe nicht verzerren).
+        "oos_total_trades_with_exit_telemetry": sum(
+            int(a.get("oos_total_trades") or 0) for a in trial_attrs
+            if a.get("oos_exit_reason_histogram")
+        ),
+        # Issue #919 — Anteil der Round-Trips, die über die 24-Bar-Zeitbox statt über den
+        # Trailing-Stop/Profit-Target/Signal-Reversal schliessen (Eingangsgrösse für die
+        # #925-Budgetdiskussion und GR-01, siehe hourly_strategy_base.ExitReason).
+        "time_box_exit_fraction": _time_box_exit_fraction(trial_attrs),
         # Issue #897 Fix 3 — Median des je-Trial GESAMPELTEN atr_trailing_multiplier (das
         # Konfigurations-Gegenstueck zur realisierten ATR-Telemetrie oben).
         "atr_trailing_multiplier_median": _median_of_sampled_param(
@@ -1192,6 +1230,11 @@ def _build_report(
     # dass der TPE-Sampler keinen Gradienten gefunden hat.
     search_made_progress_check = _inv.check_search_made_progress(studies_out)
     all_checks.append(("global", search_made_progress_check))
+
+    # Issue #919 Fix 4 — jede Lücke zwischen dem je-Study aufsummierten Exit-Reason-Histogramm
+    # und der tatsächlichen Round-Trip-Zahl bedeutet einen Exit-Pfad ohne Order-Tag-Attribution.
+    exit_reason_coverage_check = _inv.check_exit_reason_coverage(studies_out)
+    all_checks.append(("global", exit_reason_coverage_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
     # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,

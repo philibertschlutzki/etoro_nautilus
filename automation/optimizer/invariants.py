@@ -364,6 +364,39 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     )
 
 
+def check_exit_reason_coverage(study_records: list[dict]) -> InvariantResult:
+    """Issue #919 Fix 4 — die Summe des je-Study aufsummierten ``exit_reason_histogram`` (aus
+    Order-Tags, #899) muss GENAU der Anzahl der Round-Trips entsprechen, die eine
+    Exit-Telemetrie beigetragen haben (``oos_total_trades_with_exit_telemetry``,
+    ``report._study_record``). Eine Lücke bedeutet einen Exit-Pfad, der keinen Order-Tag setzt —
+    ein Round-Trip ohne Attribution.
+
+    Studies ohne jede Exit-Telemetrie (leeres Histogramm, z. B. Pre-#899-Daten oder 0 Trades)
+    sind nicht anwendbar (PASS)."""
+    offenders: dict[str, str] = {}
+    for r in study_records:
+        histogram = r.get("exit_reason_histogram") or {}
+        expected = r.get("oos_total_trades_with_exit_telemetry")
+        if not histogram or expected is None:
+            continue
+        observed = sum(histogram.values())
+        if observed != expected:
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = f"histogram_sum={observed} != oos_total_trades={expected}"
+    passed = not offenders
+    return InvariantResult(
+        name="check_exit_reason_coverage",
+        passed=passed,
+        expected="sum(exit_reason_histogram.values()) == oos_total_trades_with_exit_telemetry je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit einer Lücke zwischen Exit-Reason-Histogramm "
+                f"und Round-Trip-Zahl: {offenders} — mindestens ein Exit-Pfad setzt keinen "
+                "Order-Tag (Issue #919)."),
+    )
+
+
 def check_instrument_metadata_coherence(instruments: dict[str, dict], *,
                                         spread_bps_by_asset_class: dict | None = None) -> InvariantResult:
     """Issue #920 (Pitfall #298) — Metadaten sind gegen sich selbst prüfbar, ohne externe Quelle.
