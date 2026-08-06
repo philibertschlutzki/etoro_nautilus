@@ -2364,6 +2364,78 @@ def _read_deflation_config() -> tuple[bool, float]:
     return deflated_selection, confidence
 
 
+def _read_sortino_guard_family_median_min_siblings() -> int:
+    """Issue #913 Fix 2 — Mindestzahl abgeschlossener Sibling-Trials MIT definiertem
+    ``oos_n_periods``, bevor ``_resolve_family_median_n_periods`` einen Familien-Median liefert
+    (Kaltstart-Untergrenze, unter der eine Median-Schätzung nicht belastbar wäre).
+    ``tournament.json['sortino_guard_family_median_min_siblings']``, Default 32."""
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text("utf-8")) or {}
+            return int(data.get("sortino_guard_family_median_min_siblings", 32))
+    except Exception:
+        pass
+    return 32
+
+
+def _read_sortino_guard_family_scope() -> str:
+    """Issue #916 — ``tournament.json['sortino_guard_family_scope']`` ∈ {'symbol_strategy'}
+    (Default 'symbol_strategy'). Bei einer study-internen Streuung von ``n_periods`` bis Faktor
+    11,3 zwischen Strategien DESSELBEN Symbols (#916-Befund) ist der study-lokale (=
+    symbol_strategy) Median die sachlich richtige Referenz — ein symbolweiter Median wäre eine
+    Aggregation über heterogene Entitäten (Pitfall #291). 'symbol' (Familie über ALLE Strategien
+    eines Symbols hinweg) verlangt Koordination über nebenläufig laufende Studies hinweg und ist
+    hier bewusst NICHT implementiert (dokumentierter Scope-Cut, analog #843/#845) — ein
+    konfigurierter Wert 'symbol' bricht daher fail-loud ab, statt still auf 'symbol_strategy'
+    zurückzufallen."""
+    scope = "symbol_strategy"
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text("utf-8")) or {}
+            scope = str(data.get("sortino_guard_family_scope", "symbol_strategy"))
+    except Exception:
+        scope = "symbol_strategy"
+    if scope != "symbol_strategy":
+        raise ValueError(
+            f"tournament.json['sortino_guard_family_scope']={scope!r} nicht unterstützt — "
+            "nur 'symbol_strategy' ist implementiert (Issue #916, dokumentierter Scope-Cut).")
+    return scope
+
+
+def _resolve_family_median_n_periods(trial: "optuna.trial.Trial") -> float | None:
+    """Issue #913 — der Injektionspunkt für ``backtest_runner._effective_sortino_numeric_guard``s
+    ``family_median_n_periods``: Median von ``oos_n_periods`` über die bereits ABGESCHLOSSENEN
+    Sibling-Trials DERSELBEN Study (``sortino_guard_family_scope='symbol_strategy'`` — #916).
+
+    ``run_optimization`` (dieser Prozess) kennt die Historie der Study VOR dem Start eines neuen
+    Trials — anders als der isolierte Backtest-Subprozess (siehe Docstring von
+    ``_effective_sortino_numeric_guard``). Liefert ``None``, solange weniger als
+    ``sortino_guard_family_median_min_siblings`` Sibling-Trials ein definiertes ``oos_n_periods``
+    tragen (Kaltstart) — der Aufrufer (``build_trial``) schreibt dann keinen Manifest-Schlüssel,
+    und der Subprozess behandelt den Trial nach der konfigurierten Bootstrap-Policy (Issue #913
+    Fix 2)."""
+    min_siblings = _read_sortino_guard_family_median_min_siblings()
+    _read_sortino_guard_family_scope()  # fail-loud bei nicht unterstütztem Scope
+    try:
+        sibling_trials = trial.study.get_trials(
+            deepcopy=False,
+            states=(optuna.trial.TrialState.COMPLETE, optuna.trial.TrialState.PRUNED),
+        )
+    except Exception:
+        return None
+    values = [
+        v for t in sibling_trials
+        if t.number != trial.number
+        for v in [t.user_attrs.get("oos_n_periods")]
+        if v
+    ]
+    if len(values) < min_siblings:
+        return None
+    return float(statistics.median(values))
+
+
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial,
                           catalog_newest_ns: int | None = None,
@@ -2409,6 +2481,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             catalog_span_days=catalog_span_days,
             copy_config=study_config_dir is None,
             study_config_dir=study_config_dir,
+            # Issue #913 — Injektionspfad: Familien-Median von oos_n_periods über die bereits
+            # abgeschlossenen Sibling-Trials dieser Study, VOR dem Start dieses Trials berechnet.
+            family_median_n_periods=_resolve_family_median_n_periods(trial),
         )
 
         # Issue #415 — Per-Trial-Wall-Clock. perf_counter UM den run_backtest-Aufruf herum (statt via
@@ -2698,8 +2773,18 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             raise ValueError(
                 f"optimizer.json['inference_failure_policy']={_inference_failure_policy!r} "
                 "unbekannt — erwartet 'floor' oder 'prune'.")
+        # Issue #918 (Verallgemeinerung von #914) — die Menge wird nicht mehr als Literal gepflegt,
+        # sondern aus der zentralen Registry (_contracts.INFERENCE_DIAGNOSTIC_CODES) abgeleitet:
+        # jeder Code mit failure_policy in {'prune', 'floor'} ist ein Kandidat für die GLOBALE
+        # inference_failure_policy-Behandlung unten; 'telemetry_only'-Codes werden nie gepruned.
+        # Issue #914 — SORTINO_GUARD_REFERENCE_UNAVAILABLE (#901 eingeführt) fehlte hier bislang;
+        # ohne Registrierung konnte inference_failure_policy='prune' diesen Code nie erreichen und
+        # ~1600 nicht-messbare Trials liefen als reguläre REJECT_OOS_OTHER-Failures durch den
+        # Reward-Pfad, was den TPE-Sampler auf eine uniform degenerierte Region trainierte.
         _inference_failure_codes = {
-            "SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE", "EQUITY_NONPOSITIVE"}
+            code for code, entry in _contracts.INFERENCE_DIAGNOSTIC_CODES.items()
+            if entry.failure_policy in ("prune", "floor")
+        }
         _triggered_codes = sorted({
             d.get("code") for d in (metrics.inference_diagnostics or ())
         } & _inference_failure_codes)

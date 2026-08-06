@@ -300,22 +300,30 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     ``oos_evaluated``-Trials (``report._study_record``). Leer/``configured_min_periods is None``
     ⇒ nicht anwendbar (PASS)."""
     if reference_mode == "family_median":
+        # Issue #915 — 'absolute' bleibt der verbotene Fail-Open-Pfad (Pitfall #267/#901).
+        # 'family_median_unavailable' ist SEIT #915 EBENFALLS ein FAIL: der Zustand ist ehrlich
+        # (er behauptet keine falsche Referenz), aber im Produktivbetrieb unzulässig — er bedeutet
+        # 'kein Guard, sortino/psr=None' für den betroffenen Trial. 'absolute_bootstrap' (#913
+        # Fix 2 — Kaltstart-Phase MIT explizit gestempelter, unterscheidbarer Quelle) bleibt
+        # zulässig und PASSt weiterhin, ebenso wie 'family_median' selbst.
         offending_sources = sorted({
-            s for s in (observed_guard_reference_sources or []) if s == "absolute"
+            s for s in (observed_guard_reference_sources or [])
+            if s in ("absolute", "family_median_unavailable")
         })
         passed = not offending_sources
         return InvariantResult(
             name="check_guard_reference_coherence",
             passed=passed,
-            expected="kein guard_reference_source == 'absolute' unter "
-                     "sortino_numeric_guard_reference='family_median'",
+            expected="kein guard_reference_source in {'absolute', 'family_median_unavailable'} "
+                     "unter sortino_numeric_guard_reference='family_median'",
             actual=offending_sources if offending_sources else None,
             severity="blocking",
             detail=("sortino_numeric_guard_reference='family_median' — kein Event nahm den "
-                    "fail-open absolute-Pfad." if passed else
+                    "fail-open absolute-Pfad oder blieb unbewertet." if passed else
                     "sortino_numeric_guard_reference='family_median', aber mindestens ein Event "
-                    "meldet guard_reference_source=='absolute' — Widerspruch zwischen Config und "
-                    "tatsächlich verwendeter Referenz (Issue #901, siebte Wiederkehr Pitfall #267)."),
+                    "meldet guard_reference_source in {'absolute', 'family_median_unavailable'} — "
+                    "entweder der verbotene Fail-Open-Pfad (Issue #901) oder ein ehrlicher, aber "
+                    "im Produktivbetrieb unzulässiger Kaltstart ohne Bootstrap-Guard (Issue #915)."),
         )
     if configured_min_periods is None or not observed_n_periods_medians:
         return InvariantResult(
@@ -353,6 +361,52 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
                 f"Median(n_periods)={observed_median:g} (Faktor {ratio:.2g}) — der Referenzwert "
                 "ist gegen eine andere Grössenordnung kalibriert als der aktuelle Lauf zeigt "
                 "(Pitfall #274)."),
+    )
+
+
+def check_selection_statistic_availability(study_records: list[dict], *,
+                                           min_available_fraction: float = 0.80) -> InvariantResult:
+    """Issue #915 (Pitfall #295) — die WIRKUNGS-Invariante, die ``check_guard_reference_coherence``
+    NICHT ist: jene fragt "wird die konfigurierte Referenz auch verwendet?" (eine Quellen-Prüfung,
+    die unter dem #913-Defekt trotz 0 bewertbarer Trials PASSte, weil der ehrliche dritte Zustand
+    ``'family_median_unavailable'`` keine falsche Referenz behauptete). Diese Invariante fragt
+    stattdessen "liefert der Guard eine BENUTZBARE Schwelle?": der Anteil der ``oos_evaluated=True``
+    Trials mit definiertem ``oos_psr`` muss ``min_available_fraction`` (Default 0.80) erreichen.
+
+    Severity ``blocking`` — ein Sweep, dessen erste Symbole 0 % definierte ``oos_psr`` liefern,
+    soll nach diesem Symbol abbrechen statt 170 Stunden informationsfrei weiterzulaufen (siehe
+    Issue #913 Katalog-Vorbemerkung: 2187 Trials, 0 mit definiertem Sortino/PSR)."""
+    with_evaluated = [r for r in study_records if (r.get("n_evaluable") or 0) > 0]
+    if not with_evaluated:
+        return InvariantResult(
+            name="check_selection_statistic_availability",
+            passed=True,
+            expected=f"Anteil oos_evaluated-Trials mit definiertem oos_psr >= "
+                     f"{min_available_fraction} je Study",
+            actual=None,
+            severity="blocking",
+            detail="Keine Study mit oos_evaluated-Trials — nicht anwendbar.",
+        )
+    offenders: dict[str, float] = {}
+    for r in with_evaluated:
+        n_evaluable = int(r["n_evaluable"])
+        n_available = int(r.get("n_selection_statistic_available") or 0)
+        fraction = n_available / n_evaluable if n_evaluable else 0.0
+        if fraction < min_available_fraction:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = round(fraction, 4)
+    passed = not offenders
+    return InvariantResult(
+        name="check_selection_statistic_availability",
+        passed=passed,
+        expected=f"Anteil oos_evaluated-Trials mit definiertem oos_psr >= "
+                 f"{min_available_fraction} je Study",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies unter der Mindestverfügbarkeit "
+                f"({min_available_fraction}) einer definierten Selektions-Teststatistik: "
+                f"{offenders} — die Eligibility-Auswertung dieser Studies ist strukturell "
+                "informationsfrei (Issue #913/#915), keine Aussage über die Strategien."),
     )
 
 

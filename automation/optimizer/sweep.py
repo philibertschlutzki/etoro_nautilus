@@ -1323,6 +1323,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #852 — Bibliotheksversions-Drift-Preflight (teilt den Preflight-Einstieg mit #844):
         # eine installierte Version ausserhalb des gepinnten Bereichs bricht VOR dem ersten Symbol ab.
         assert_pinned_library_versions_valid()
+        # Issue #913 Fix 3 — ``sortino_numeric_guard_reference='family_median'`` verlangt einen
+        # verdrahteten Injektionspfad (kein Aufrufer, der family_median_n_periods nie übergibt);
+        # sonst liefe ein 143-Symbol-Lauf 170 h informationsfrei (AGENTS.md Pitfall #296). Lazy
+        # Import, um den Import von backtest_runner (nautilus_trader-Engine) nicht in den
+        # Elternprozess-Modul-Ladepfad zu ziehen, ausser der Preflight läuft tatsächlich.
+        from automation.backtest_runner import assert_guard_reference_injectable
+        assert_guard_reference_injectable()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()

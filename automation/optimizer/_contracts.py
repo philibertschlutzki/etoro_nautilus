@@ -29,3 +29,82 @@ MAX_BARS_IN_TRADE_HARD_CAP = 24
 # (``median_delta_t_s``) verwenden; dieser Wert ist NUR der fail-loud zu protokollierende Fallback,
 # falls diese Telemetrie fehlt (Issue #902 Fix 3).
 BAR_SECONDS_DEFAULT = 3600.0
+
+
+# Issue #918 (Verallgemeinerung von #914) — EINE Registry für jeden Inferenzpfad-Diagnose-Code, den
+# ``backtest_runner._calculate_stats`` in ``inference_diagnostics`` stempelt. Root-Cause: jede der
+# fünf unabhängig gepflegten Konsumenten-Stellen (``run_optimization.py::_inference_failure_codes``,
+# ``parsing.py``, ``report.py``, ``invariants.py::check_inference_diagnostics_absent``,
+# Test-Fixtures) musste bislang manuell nachgezogen werden, sobald ein neuer Code eingeführt wurde —
+# genau das unterblieb bei ``SORTINO_GUARD_REFERENCE_UNAVAILABLE`` (#901) und liess #914s
+# ``inference_failure_policy='prune'`` folgenlos. Ab jetzt deklariert GENAU DIESE Datei jeden Code;
+# alle Konsumenten importieren von hier (AST-Vertragstest in
+# ``automation/tests/test_inference_diagnostic_registry.py`` verlangt das).
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class InferenceDiagnosticCode:
+    """Ein einzelner ``inference_diagnostics``-Code und seine vollständige Handhabungs-Policy.
+
+    ``failure_policy`` ∈ {'prune', 'floor', 'telemetry_only'}:
+      * 'prune'/'floor' — der Code markiert einen Trial als NICHT MESSBAR (kein Ergebnis, kein
+        Datenfehler); ``run_optimization.py`` behandelt ihn gemäss der GLOBALEN
+        ``optimizer.json['inference_failure_policy']`` (pruned ODER gefloored, siehe #864).
+      * 'telemetry_only' — reine Diagnose ohne Konsequenz auf Trial-Ebene (z. B. eine Warnung, die
+        keinen Metrik-Ausfall bedeutet); wird NIE gepruned/geflort, unabhängig vom globalen Modus.
+    """
+    code: str
+    failure_policy: str
+    severity: str
+    description: str
+    nullifies_metrics: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if self.failure_policy not in ("prune", "floor", "telemetry_only"):
+            raise ValueError(
+                f"InferenceDiagnosticCode({self.code!r}).failure_policy={self.failure_policy!r} "
+                "unbekannt — erwartet 'prune', 'floor' oder 'telemetry_only'.")
+
+
+INFERENCE_DIAGNOSTIC_CODES: dict[str, InferenceDiagnosticCode] = {}
+
+
+def _register_inference_code(code: str, *, failure_policy: str, severity: str, description: str,
+                             nullifies_metrics: tuple[str, ...] = ()) -> InferenceDiagnosticCode:
+    entry = InferenceDiagnosticCode(
+        code=code, failure_policy=failure_policy, severity=severity, description=description,
+        nullifies_metrics=nullifies_metrics,
+    )
+    if code in INFERENCE_DIAGNOSTIC_CODES:
+        raise ValueError(f"InferenceDiagnosticCode {code!r} doppelt registriert.")
+    INFERENCE_DIAGNOSTIC_CODES[code] = entry
+    return entry
+
+
+_register_inference_code(
+    "SORTINO_GUARD_TRIPPED", failure_policy="prune", severity="high",
+    description="|sortino_annualized| > effektivem Numerik-Guard — als Datenfehler verworfen "
+                "(#614/#665).",
+    nullifies_metrics=("oos_sortino_period", "oos_sortino_annualized", "oos_psr"),
+)
+_register_inference_code(
+    "SORTINO_INSUFFICIENT_DOWNSIDE", failure_policy="prune", severity="high",
+    description="n_periods/downside_obs unter der konfigurierten Mindest-Stichprobe — Sortino "
+                "nicht schätzbar (#823/#863).",
+    nullifies_metrics=("oos_sortino_period", "oos_sortino_annualized", "oos_psr"),
+)
+_register_inference_code(
+    "EQUITY_NONPOSITIVE", failure_policy="prune", severity="blocking",
+    description="Portfolio-Equity <= 0 während des OOS-Fensters — wirtschaftlich ruiniert (#825).",
+    nullifies_metrics=("oos_sortino_period", "oos_psr", "oos_total_return"),
+)
+_register_inference_code(
+    # Issue #914 — dieser Code (#901 neu eingeführt) fehlte bislang in JEDEM Konsumenten ausser
+    # der Diagnose-Erzeugung selbst; ``inference_failure_policy='prune'`` konnte ihn nie greifen.
+    "SORTINO_GUARD_REFERENCE_UNAVAILABLE", failure_policy="prune", severity="blocking",
+    description="sortino_numeric_guard_reference='family_median' ohne verfügbaren Familien-Median "
+                "(Kaltstart mit sortino_numeric_guard_reference_bootstrap='defer') — Trial unter "
+                "dieser Referenz-Semantik nicht bewertbar (#901/#913).",
+    nullifies_metrics=("oos_sortino_period", "oos_sortino_annualized", "oos_psr"),
+)

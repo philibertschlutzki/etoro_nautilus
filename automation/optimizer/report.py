@@ -280,6 +280,13 @@ def _study_record(proposal: dict, study,
     n_evaluable = sum(1 for a in trial_attrs if a.get("oos_evaluated") is True)
     n_eligible = sum(1 for a in trial_attrs if a.get("oos_eligible") is True)
     p_eligible = round(n_eligible / n_trials, 4) if n_trials else 0.0
+    # Issue #915 — wie viele der oos_evaluated Trials TATSÄCHLICH eine definierte
+    # Selektions-Teststatistik (oos_psr) tragen. Rohmaterial für
+    # invariants.check_selection_statistic_availability: die WIRKUNGS-Invariante, die prüft, ob
+    # der Guard eine benutzbare Schwelle liefert — nicht nur, ob die konfigurierte Referenz
+    # verwendet wurde (siehe check_guard_reference_coherence, eine reine Quellen-Invariante).
+    n_selection_statistic_available = sum(
+        1 for a in trial_attrs if a.get("oos_evaluated") is True and a.get("oos_psr") is not None)
     # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
     # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
     _n_periods_values = [
@@ -433,6 +440,7 @@ def _study_record(proposal: dict, study,
         "strategy": proposal.get("strategy"),
         "n_trials": n_trials,
         "n_evaluable": n_evaluable,
+        "n_selection_statistic_available": n_selection_statistic_available,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,
         # Issue #885 Fix Punkt 2 — n_trials_pruned/n_trials_unevaluable als GETRENNTE Telemetrie
@@ -1133,6 +1141,15 @@ def _build_report(
         reference_mode=tournament_cfg.get("sortino_numeric_guard_reference"),
         observed_guard_reference_sources=_observed_guard_reference_sources)
     all_checks.append(("global", guard_reference_coherence_check))
+
+    # Issue #915 — die WIRKUNGS-Invariante neben der Quellen-Invariante oben: liefert der Guard
+    # tatsächlich eine benutzbare Schwelle (definierter oos_psr), unabhängig davon, ob die
+    # konfigurierte Referenz formal verwendet wurde.
+    _selection_stat_min_fraction = float(
+        tournament_cfg.get("selection_statistic_min_available_fraction", 0.80))
+    selection_statistic_availability_check = _inv.check_selection_statistic_availability(
+        studies_out, min_available_fraction=_selection_stat_min_fraction)
+    all_checks.append(("global", selection_statistic_availability_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
     # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,
