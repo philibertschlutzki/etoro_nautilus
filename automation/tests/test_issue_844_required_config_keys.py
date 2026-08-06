@@ -12,7 +12,8 @@ Akzeptanzkriterien:
   gesetzt ist.
 - AK-2: sweep.main() (bzw. run_per_symbol_sweep im echten Pfad) bricht mit Exit-Code 2 ab, wenn
   ein required-Key fehlt — vor dem ersten Symbol.
-- AK-3: _effective_sortino_numeric_guard(25.0, 36) == 3.75 (±1e-9);
+- AK-3: _effective_sortino_numeric_guard(25.0, 36) == 8.3852549... (±1e-9, Issue #916-Neukalibrierung
+  auf sortino_numeric_guard_min_periods=320, vorher 1600/3.75);
   _effective_sortino_numeric_guard(25.0, 1600) == 25.0.
 - AK-4: Im Re-Run trägt jede SORTINO_GUARD_TRIPPED-Meldung einen n_periods-abhängigen Guard-Wert.
 """
@@ -89,7 +90,10 @@ def test_ak3_real_config_activates_t_aware_guard():
     br._sortino_numeric_guard_min_periods_cached = False
     br._sortino_numeric_guard_reference_mode_cache = None
     try:
-        assert br._effective_sortino_numeric_guard(25.0, 36)[0] == pytest.approx(3.75, abs=1e-9)
+        # Issue #916 — Neukalibrierung des Referenzankers 1600 -> 320 (Faktor 5,2 zu gross gegen
+        # den beobachteten Familien-Median). Der Guard skaliert seither strenger bei kleinem T.
+        assert br._effective_sortino_numeric_guard(25.0, 36)[0] == pytest.approx(
+            8.38525491562421, abs=1e-9)
         assert br._effective_sortino_numeric_guard(25.0, 1600)[0] == pytest.approx(25.0, abs=1e-9)
     finally:
         br._sortino_numeric_guard_min_periods_cache = None
@@ -99,7 +103,9 @@ def test_ak3_real_config_activates_t_aware_guard():
 
 def test_real_tournament_json_sets_the_key():
     data = json.loads(open("automation/config/tournament.json", encoding="utf-8").read())
-    assert data.get("sortino_numeric_guard_min_periods") == 1600
+    # Issue #916 — neukalibriert von 1600 auf 320 (Faktor 5,2 zu gross gegen den beobachteten
+    # Familien-Median XOM/NKE eines Referenzlaufs).
+    assert data.get("sortino_numeric_guard_min_periods") == 320
 
 
 def test_real_required_keys_json_is_valid_and_matches_real_configs():

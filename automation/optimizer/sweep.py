@@ -258,6 +258,38 @@ def assert_pinned_library_versions_valid() -> None:
         _sys.exit(2)
 
 
+def assert_instrument_metadata_coherence() -> None:
+    """Issue #920 — FAIL-LOUD beim Sweep-Start: ``instrument_map.json`` gegen sich selbst geprüft
+    (``invariants.check_instrument_metadata_coherence``, Pitfall #298) — ein Instrument mit
+    ``size_precision=8`` und ``asset_class='equity'`` (der #920-Defekt: 12 Krypto-Symbole lösten
+    seit dem #898-Backfill auf den falschen, um Faktor 4 zu niedrigen Spread auf) bricht den
+    Sweep-Start ab, statt 143 Symbole lang unbemerkt zu falschen simulierten Fill-Preisen zu
+    führen. Exit-Code 2, analog ``assert_pinned_library_versions_valid``."""
+    from automation.optimizer import invariants as _inv
+    instrument_map_path = config_dir() / "instrument_map.json"
+    backtest_path = config_dir() / "backtest.json"
+    try:
+        instruments = (json.loads(instrument_map_path.read_text("utf-8")) or {}).get(
+            "instruments", {}) if instrument_map_path.exists() else {}
+    except (OSError, ValueError):
+        instruments = {}
+    if not instruments:
+        return
+    spread_by_asset_class = None
+    try:
+        if backtest_path.exists():
+            spread_by_asset_class = (json.loads(backtest_path.read_text("utf-8")) or {}).get(
+                "spread_bps_by_asset_class")
+    except (OSError, ValueError):
+        spread_by_asset_class = None
+    result = _inv.check_instrument_metadata_coherence(
+        instruments, spread_bps_by_asset_class=spread_by_asset_class)
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#920] INSTRUMENT_METADATA_INCOHERENT: {result.detail}", file=_sys.stderr)
+        _sys.exit(2)
+
+
 def _assert_gate_reward_parity() -> None:
     """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
     ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität).
@@ -404,6 +436,37 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         }
     except Exception:
         return None
+
+
+def _symbol_bar_quality_cache_path(work_dir: Path) -> Path:
+    return Path(work_dir) / "symbol_bar_quality.json"
+
+
+def write_symbol_bar_quality_cache(work_dir: Path, quality_by_symbol: dict[str, dict]) -> Path:
+    """Issue #923 Fix 1/3 — persistiert die #900-Bar-Qualitäts-Kennzahlen (``frac_zero_true_range``,
+    ``atr_median_bps``, ``bar_coverage_ratio``, ``median_delta_t_s``) je Symbol, GETRENNT von
+    ``optimizer.json`` (analog ``wallclock_guard.write_degrade_factor``, #931). Der Gate-1-Preflight
+    in ``run_per_symbol_sweep`` berechnet diese Werte ohnehin einmal pro Symbol VOR Phase 1
+    (``_load_symbol_bar_quality_sample``) — die Datei macht sie für ``report._study_record``
+    verfügbar, das NACH dem Sweep aus gespeicherten Study-Artefakten läuft und keinen eigenen
+    Katalog-Zugriff hat (#902-Fallback-Kommentar in report.py)."""
+    path = _symbol_bar_quality_cache_path(work_dir)
+    write_json_atomic(path, quality_by_symbol)
+    return path
+
+
+def read_symbol_bar_quality_cache(work_dir: Path) -> dict[str, dict]:
+    """Gegenstück zu ``write_symbol_bar_quality_cache``. Fehlt die Datei (kein Gate-1-Preflight in
+    diesem Lauf, z. B. injizierte Tests ohne echten Katalog) ⇒ {} (fail-open, rückwärtskompatibel —
+    Aufrufer fallen auf ``_contracts.BAR_SECONDS_DEFAULT`` zurück)."""
+    path = _symbol_bar_quality_cache_path(work_dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
 
 
 def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
@@ -797,6 +860,55 @@ def _load_optimizer_config() -> dict:
     try:
         return json.loads(path.read_text("utf-8")) or {}
     except (OSError, ValueError):
+        return {}
+
+
+def _read_last_backtest_ms_median() -> float | None:
+    """Issue #931 — Erfahrungswert für ``backtest_ms_median`` aus dem JÜNGSTEN vorhandenen
+    #742-Report (``report._study_record`` stempelt ihn je Study, siehe dortige #931-Ergänzung),
+    als Median über die Studien-Mediane. ``None`` bei keinem vorhandenen Report (erster Lauf) —
+    der Aufrufer fällt dann auf ``wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN`` zurück."""
+    try:
+        from automation.optimizer.report import REPORTS_DIR
+        if not REPORTS_DIR.exists():
+            return None
+        report_files = sorted(REPORTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not report_files:
+            return None
+        data = json.loads(report_files[-1].read_text("utf-8")) or {}
+        values = [
+            s["backtest_ms_median"] for s in (data.get("studies") or [])
+            if s.get("backtest_ms_median") is not None
+        ]
+        return statistics.median(values) if values else None
+    except Exception:
+        return None
+
+
+def _read_last_study_wallclock_by_strategy() -> dict[str, float]:
+    """Issue #932 (Pitfall #305) — Median-Wallclock je Strategie aus dem JÜNGSTEN #742-Report
+    (``report._study_record`` stempelt ``wallclock_s`` je Study seit #932), Rohmaterial für den
+    LPT-Dispatch (Longest-Processing-Time): die Barriere am Symbolende kostet die Differenz
+    zwischen längster und medianer Study — absteigend nach erwarteter Laufzeit dispatchen senkt
+    diese Wartezeit, ohne die grössere Pipelining-Restrukturierung (#843/#908/#932, weiterhin
+    bewusst zurückgestellt) zu benötigen. Leeres Dict bei keinem vorhandenen Report (erster Lauf)
+    — der Aufrufer behandelt eine fehlende Strategie dann als Median-Priorität (0.0)."""
+    try:
+        from automation.optimizer.report import REPORTS_DIR
+        if not REPORTS_DIR.exists():
+            return {}
+        report_files = sorted(REPORTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not report_files:
+            return {}
+        data = json.loads(report_files[-1].read_text("utf-8")) or {}
+        by_strategy: dict[str, list[float]] = {}
+        for s in data.get("studies") or []:
+            strat = s.get("strategy")
+            wc = s.get("wallclock_s")
+            if strat and wc is not None:
+                by_strategy.setdefault(strat, []).append(float(wc))
+        return {strat: statistics.median(vals) for strat, vals in by_strategy.items()}
+    except Exception:
         return {}
 
 
@@ -1268,6 +1380,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     #841 (Ledger) + #842 (Budget) lösen die vom Nutzer geforderte Vollabdeckung bereits OHNE
     Pipelining (in einem 72-h-Lauf oder mehreren fortgesetzten Etappen); #843 bleibt ein reiner
     Durchsatz-Hebel für eine spätere Sitzung mit Zugriff auf einen realen Katalog.
+
+    Issue #932 (Pitfall #305) — ``pipeline_depth`` (der Look-Ahead-Schlüssel aus Fix Punkt 1 oben)
+    war über drei Kataloge (#843/#871/#893/#908) dokumentiert, in der Registry gefuehrt UND
+    komplett unverdrahtet — derselbe Zustand wie #913 (Katalog A), nur eine Konfigurationsdatei
+    weiter: ein Key, der existiert, jede Existenzpruefung besteht, dessen Semantik aber fehlt.
+    ENTFERNT (Fix-Weg (b) aus #932 — die vollstaendige Restrukturierung (Weg (a)) bleibt aus
+    demselben, oben ausgefuehrten Grund zurueckgestellt). STATTDESSEN implementiert: Fix Punkt 2
+    (Longest-Processing-Time-Dispatch) — die 14 Studies EINES Symbols werden absteigend nach dem
+    aus dem letzten #742-Report gelesenen Erfahrungswert (``_read_last_study_wallclock_by_
+    strategy``) dispatcht, statt in Enumerationsreihenfolge. Das ist eine Sortierzeile INNERHALB
+    der weiterhin symbolweise synchronen Barriere, keine Restrukturierung, und senkt die
+    Barriere-Wartezeit messbar (``SYMBOL_DISPATCH_COMPLETED``-Event, ``barrier_wait_s``) — ohne
+    das #843-Korrektheits-Risiko einer echten Pipeline ueber Symbolgrenzen hinweg einzugehen.
     """
     sweep_t0 = time.perf_counter()  # Issue #415 — Per-Sweep-Wall-Clock
     # Ob der ECHTE optimize_symbol (und damit echtes SQLite-Storage) genutzt wird. Bei injiziertem
@@ -1323,6 +1448,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #852 — Bibliotheksversions-Drift-Preflight (teilt den Preflight-Einstieg mit #844):
         # eine installierte Version ausserhalb des gepinnten Bereichs bricht VOR dem ersten Symbol ab.
         assert_pinned_library_versions_valid()
+        # Issue #913 Fix 3 — ``sortino_numeric_guard_reference='family_median'`` verlangt einen
+        # verdrahteten Injektionspfad (kein Aufrufer, der family_median_n_periods nie übergibt);
+        # sonst liefe ein 143-Symbol-Lauf 170 h informationsfrei (AGENTS.md Pitfall #296). Lazy
+        # Import, um den Import von backtest_runner (nautilus_trader-Engine) nicht in den
+        # Elternprozess-Modul-Ladepfad zu ziehen, ausser der Preflight läuft tatsächlich.
+        from automation.backtest_runner import assert_guard_reference_injectable
+        assert_guard_reference_injectable()
+        # Issue #920 — Instrument-Metadaten-Kohärenz (Pitfall #298): ein Symbol mit
+        # size_precision>=6 und asset_class != 'crypto' bricht den Lauf ab, statt 143 Symbole
+        # lang mit falschen simulierten Fill-Preisen zu laufen.
+        assert_instrument_metadata_coherence()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
@@ -1393,6 +1529,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         _load_sample = bar_quality_fn or _load_symbol_bar_quality_sample
         _bar_quality_cfg = opt_data.get("bar_quality") or {}
         _degenerate_syms = []
+        # Issue #923 Fix 1/3 — je Symbol persistiert (write_symbol_bar_quality_cache), damit
+        # report._study_record den echten median_delta_t_s als bar_seconds auflösen kann, statt
+        # unbedingt auf _contracts.BAR_SECONDS_DEFAULT zurückzufallen (report.py läuft nach dem
+        # Sweep, ohne eigenen Katalog-Zugriff).
+        _quality_by_symbol: dict[str, dict] = {}
         _log = logging.getLogger("optimizer")
         for _sym in syms:
             try:
@@ -1409,9 +1550,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 min_distinct_closes=_bar_quality_cfg.get("min_distinct_closes", 10),
                 max_frac_zero_true_range=_bar_quality_cfg.get("max_frac_zero_true_range", 0.25),
                 min_atr_median_bps=_bar_quality_cfg.get("min_atr_median_bps", 5.0),
+                min_bar_coverage_ratio=_bar_quality_cfg.get("min_bar_coverage_ratio", 0.6),
                 bar_coverage_ratio=_sample.get("bar_coverage_ratio"),
                 median_delta_t_s=_sample.get("median_delta_t_s"),
             )
+            _quality_by_symbol[_sym] = {
+                "frac_zero_true_range": _quality.get("frac_zero_true_range"),
+                "atr_median_bps": _quality.get("atr_median_bps"),
+                "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
+                "median_delta_t_s": _quality.get("median_delta_t_s"),
+                "passed": _quality["passed"],
+            }
             # Issue #900 Fix 3 — BAR_QUALITY_PROFILE-Event je Symbol, UNABHAENGIG vom Pruefergebnis
             # (ein bestandener Preflight ohne Zahlen ist keine Evidenz). Fix 4 — Stichprobenumfang
             # und Fenster im Event, sonst ist die Aussage nicht reproduzierbar.
@@ -1447,6 +1596,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 }, work_dir=WORK, run_id=run_id)
             except Exception:
                 _log.debug("[#807] Diagnose-Rueckschrieb fehlgeschlagen (non-fatal).",
+                          exc_info=True)
+        if _quality_by_symbol:
+            try:
+                write_symbol_bar_quality_cache(WORK, _quality_by_symbol)
+            except Exception:
+                _log.debug("[#923] symbol_bar_quality-Cache-Schreiben fehlgeschlagen (non-fatal).",
                           exc_info=True)
         if _degenerate_syms:
             syms = [s for s in syms if s not in _degenerate_syms]
@@ -1514,6 +1669,56 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         })
         disk_guard.assert_preflight_budget(
             WORK, expected_bytes=_expected_bytes, budget_gb=_budget_gb, reserve_gb=_reserve_gb)
+
+        # Issue #931 (Pitfall #304) — derselbe Preflight-Zeitpunkt kennt bereits expected_trials;
+        # der Disk-Preflight oben prüfte bislang nur die komfortable Ressource (Plattenplatz),
+        # nicht die knappe (Zeit). WALLCLOCK_BUDGET_PREFLIGHT schliesst diese Lücke.
+        wallclock_guard.clear_degrade_state(WORK)
+        _backtest_ms_median = _read_last_backtest_ms_median() or wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN
+        _parallelism_degree = float(n_jobs) if n_jobs and n_jobs > 0 else 1.0
+        _expected_wallclock_h = wallclock_guard.estimate_expected_wallclock_h(
+            expected_trials=_expected_trials, backtest_ms_median=_backtest_ms_median,
+            parallelism_degree=_parallelism_degree)
+        _sweep_max_wallclock_h = opt_data.get("sweep_max_wallclock_h")
+        emit_execution_event(logging.getLogger("optimizer"), "WALLCLOCK_BUDGET_PREFLIGHT", {
+            "expected_trials": _expected_trials,
+            "backtest_ms_median": _backtest_ms_median,
+            "parallelism_degree": _parallelism_degree,
+            "expected_wallclock_h": round(_expected_wallclock_h, 2),
+            "sweep_max_wallclock_h": _sweep_max_wallclock_h,
+        })
+        _over_budget = (_sweep_max_wallclock_h is not None
+                        and _expected_wallclock_h > float(_sweep_max_wallclock_h))
+        if _over_budget:
+            _policy = opt_data.get("wallclock_budget_policy", "degrade")
+            if _policy not in ("abort", "degrade", "warn"):
+                raise ValueError(
+                    f"optimizer.json['wallclock_budget_policy']={_policy!r} unbekannt — erwartet "
+                    "'abort', 'degrade' oder 'warn'.")
+            _log = logging.getLogger("optimizer")
+            if _policy == "abort":
+                raise RuntimeError(
+                    f"REJECT_WALLCLOCK_BUDGET_EXCEEDED (#931): expected_wallclock_h="
+                    f"{_expected_wallclock_h:.1f} > sweep_max_wallclock_h={_sweep_max_wallclock_h} "
+                    f"(expected_trials={_expected_trials}, backtest_ms_median={_backtest_ms_median:.0f}, "
+                    f"parallelism_degree={_parallelism_degree:.2f}). wallclock_budget_policy='abort' "
+                    "— Budget/Geometrie anpassen ODER Policy auf 'degrade'/'warn' stellen."
+                )
+            if _policy == "degrade":
+                _degrade_factor = max(0.05, float(_sweep_max_wallclock_h) / _expected_wallclock_h)
+                wallclock_guard.write_degrade_factor(WORK, _degrade_factor)
+                _log.warning(
+                    "[#931] WALLCLOCK_BUDGET_DEGRADED: expected_wallclock_h=%.1f > "
+                    "sweep_max_wallclock_h=%s — n_trials_budget wird global um Faktor %.3f gekürzt "
+                    "(wallclock_budget_policy='degrade').",
+                    _expected_wallclock_h, _sweep_max_wallclock_h, _degrade_factor,
+                )
+            else:
+                _log.warning(
+                    "[#931] WALLCLOCK_BUDGET_EXCEEDED: expected_wallclock_h=%.1f > "
+                    "sweep_max_wallclock_h=%s (wallclock_budget_policy='warn' — keine Konsequenz, "
+                    "nur Diagnose).", _expected_wallclock_h, _sweep_max_wallclock_h,
+                )
 
     # Issue #412 — harte Eindeutigkeits-Assertion (Fail-Fast statt stiller Kollision, Pitfall #66).
     # enumerate_tunable_pairs dedupliziert bereits; diese Assertion ist der Guertel-und-Hosentraeger-
@@ -1838,7 +2043,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # abbricht (VOR dem ersten regulaeren _write_checkpoint()-Aufruf weiter unten).
     _write_checkpoint()
 
+    # Issue #932 — EINMAL vor der Symbolschleife gelesen (nicht je Symbol): der LPT-Dispatch-Schlüssel
+    # ist strategie-, nicht symbolspezifisch (Rohmaterial ist der Median über den letzten Report).
+    _study_wallclock_by_strategy = _read_last_study_wallclock_by_strategy()
+
     proposals: list[Path] = []
+    # Issue #933 (Pitfall #306) — kumulative Zähler für SWEEP_PROGRESS, je Symbol fortgeschrieben
+    # (kein zweiter Scan über bereits verarbeitete Symbole nötig).
+    _cumulative_trials_done = 0
+    _cumulative_eligible_total = 0
     for symbol, symbol_pairs in pairs_by_symbol.items():
         # Issue #908 Fix 2 — die #842-Prognose hat eine Kürzung angeordnet: ab hier keine weiteren
         # Symbole starten (die bereits laufenden/abgeschlossenen bleiben unangetastet). Der Lauf
@@ -1884,6 +2097,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             )
             break
 
+        # Issue #932 (Pitfall #305) — Longest-Processing-Time-Dispatch: die Symbol-Barriere
+        # (Join VOR dem nächsten Symbol) kostet die Differenz zwischen längster und medianer
+        # Study — absteigend nach dem aus dem letzten Report gelesenen Erfahrungswert dispatchen
+        # senkt diese Wartezeit messbar, ohne die grössere, bewusst zurückgestellte
+        # Pipelining-Restrukturierung zu benötigen. Unbekannte Strategien (kein Vorlauf-Report)
+        # sortieren als Median-Priorität (0.0) ans Ende, nicht ans (zufällige) Ende der
+        # Enumerationsreihenfolge.
+        symbol_pairs = sorted(
+            symbol_pairs,
+            key=lambda p: _study_wallclock_by_strategy.get(p[0], 0.0),
+            reverse=True,
+        )
+        _dispatch_t0 = time.perf_counter()
         if n_jobs and n_jobs > 1 and len(symbol_pairs) > 1:
             from concurrent.futures import ThreadPoolExecutor
             # Issue #828 Fix Punkt 3 — max_workers ist NICHT mehr auf len(symbol_pairs) gedeckelt
@@ -1899,6 +2125,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 symbol_studies = list(executor.map(_run_optimize, symbol_pairs))
         else:
             symbol_studies = [_run_optimize(p) for p in symbol_pairs]
+        # Issue #932 Fix — Barriere-Wartezeit je Symbol telemetriert: die Differenz zwischen der
+        # tatsächlichen Batch-Wallclock (alle Studies dieses Symbols) und der Wallclock der
+        # MEDIAN-Study — die Zeit, die der Dispatch auf die längste Study wartete, während kürzere
+        # Studies bereits fertig waren.
+        _symbol_dispatch_wallclock_s = time.perf_counter() - _dispatch_t0
+        _study_wallclocks_this_symbol = [
+            w for s in symbol_studies
+            for w in [(getattr(s, "user_attrs", {}) or {}).get("wallclock_s")] if w is not None
+        ]
+        _barrier_wait_s = (
+            round(_symbol_dispatch_wallclock_s - statistics.median(_study_wallclocks_this_symbol), 1)
+            if _study_wallclocks_this_symbol else None
+        )
+        emit_execution_event(logging.getLogger("optimizer"), "SYMBOL_DISPATCH_COMPLETED", {
+            "symbol": symbol,
+            "n_studies": len(symbol_pairs),
+            "dispatch_wallclock_s": round(_symbol_dispatch_wallclock_s, 1),
+            "barrier_wait_s": _barrier_wait_s,
+        })
 
         # Issue #827 Fix Punkt 3 — 'fail': dieses Symbol bricht VOR jedem Confirm-Aufruf ab, wenn
         # seine Studies nachweislich unterschiedliche selection_rule_fingerprint tragen (verletzte
@@ -1939,6 +2184,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         symbol_n_family_stage1 = _family_n_stage1_from_studies(
             symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
 
+        _proposals_before_this_symbol = len(proposals)
         for pair, study in zip(symbol_pairs, symbol_studies):
             proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns,
                                                symbol_n_family_excluded,
@@ -1946,10 +2192,79 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                                                family_scope=_family_scope)
             if proposal is not None:
                 proposals.append(proposal)
+        _this_symbol_proposals = proposals[_proposals_before_this_symbol:]
 
         completed_symbols.add(symbol)
         _write_checkpoint()
         _record_coverage(symbol)
+
+        # Issue #933 (Pitfall #306) — Invarianten, die erst am Ende eines mehrtägigen Laufs
+        # auswerten, sind Obduktionen statt Wächter. Jede symbol-lokal auswertbare Invariante wird
+        # SOFORT nach diesem Symbol als INVARIANT_RESULT-Event emittiert — der bestehende
+        # #839-Fail-Fast-Pfad (oben) bleibt der SPEZIALFALL 'blocking' auf demselben zugrunde
+        # liegenden invariant_checks, nicht ein getrennter Mechanismus. Symbol-lokal scoped (nur
+        # DIESES Symbols Proposals, nicht die kumulierte Liste) — O(1) je Symbol statt O(n) über
+        # den gesamten bisherigen Lauf.
+        if _this_symbol_proposals:
+            try:
+                from automation.optimizer import report as _report_progress_mod
+                _symbol_probe = _report_progress_mod.build_probe_report(
+                    _this_symbol_proposals, run_id=run_id)
+                for _chk in _symbol_probe.get("invariant_checks") or []:
+                    emit_execution_event(
+                        logging.getLogger("optimizer"), "INVARIANT_RESULT",
+                        {"symbol": symbol, "name": _chk.get("name"),
+                         "status": "PASS" if _chk.get("passed") else "FAIL",
+                         "severity": _chk.get("severity"),
+                         "observed": _chk.get("actual"), "expected": _chk.get("expected"),
+                         "detail": _chk.get("detail")},
+                        level=logging.INFO if _chk.get("passed") else logging.WARNING,
+                    )
+            except Exception:
+                logging.getLogger("optimizer").warning(
+                    "[#933] Symbol-lokale Invarianten-Probe fehlgeschlagen (non-fatal, Lauf setzt "
+                    "fort).", exc_info=True,
+                )
+
+        # Issue #933 Fix 2 — SWEEP_PROGRESS je Symbol: die Grösse, an der #931 (Zeitbudget-
+        # Überschreitung) zur LAUFZEIT statt erst nach dem gesamten Sweep erkennbar wird.
+        _cumulative_trials_done += sum(len(getattr(s, "trials", None) or []) for s in symbol_studies)
+        _cumulative_eligible_total += sum(
+            1 for s in symbol_studies for t in (getattr(s, "trials", None) or [])
+            if (getattr(t, "user_attrs", {}) or {}).get("oos_eligible") is True
+        )
+        _elapsed_h_progress = (time.perf_counter() - sweep_t0) / 3600.0
+        _symbols_done_progress = len(completed_symbols)
+        _symbols_total_progress = len(pairs_by_symbol)
+        _projected_total_h = (
+            _elapsed_h_progress / _symbols_done_progress * _symbols_total_progress
+            if _symbols_done_progress else None
+        )
+        emit_execution_event(logging.getLogger("optimizer"), "SWEEP_PROGRESS", {
+            "symbols_done": _symbols_done_progress,
+            "symbols_total": _symbols_total_progress,
+            "elapsed_h": round(_elapsed_h_progress, 3),
+            "projected_total_h": (
+                round(_projected_total_h, 3) if _projected_total_h is not None else None),
+            "trials_done": _cumulative_trials_done,
+            "eligible_total": _cumulative_eligible_total,
+        })
+
+        # Issue #933 Fix 4 — Report-Datei nach JEDEM Symbol atomar aktualisiert (statt erst am
+        # Sweep-Ende), damit ein laufender Sweep vor seinem Abschluss beobachtbar ist. Dieselbe
+        # write_json_atomic-Garantie wie der finale Report (#720/#742); non-fatal, analog der
+        # Fail-Fast-Probe oben — ein Zwischenreport-Fehler darf den Sweep nie stoppen.
+        try:
+            from automation.optimizer import report as _report_incremental_mod
+            _report_incremental_mod.generate_sweep_report(
+                proposals, run_id=run_id, run_status="in_progress",
+                symbols_completed=_symbols_done_progress, symbols_planned=_symbols_total_progress,
+            )
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#933] Zwischen-Report-Schreiben fehlgeschlagen (non-fatal, Lauf setzt fort).",
+                exc_info=True,
+            )
 
         if (not _wallclock_forecast_done
                 and len(completed_symbols) >= _wallclock_forecast_after_symbols):
@@ -2444,6 +2759,19 @@ def main(argv: list[str] | None = None) -> list[Path]:
     except Exception:
         logging.getLogger("optimizer").warning(
             "[#742] Sweep-Report-Generierung fehlgeschlagen (non-fatal).", exc_info=True)
+
+    # Issue #933 (Pitfall #306) — die LETZTE Zeile jedes Laufs, egal ob er sauber durchlief oder
+    # per SIGINT/SIGTERM/Exception abbrach: vorher war ein Snapshot eines laufenden Sweeps von
+    # einem abgestürzten nur über die Trial-Kadenz im Log unterscheidbar (#933-Symptom). status
+    # 'completed' NUR bei run_status=='complete' — jeder andere run_status (aborted_*, partial,
+    # ...) ist SWEEP_ABORTED, unabhängig vom genauen Grund (der steht in run_status selbst).
+    emit_execution_event(
+        logging.getLogger("optimizer"),
+        "SWEEP_COMPLETED" if run_status == "complete" else "SWEEP_ABORTED",
+        {"run_id": run_id, "run_status": run_status,
+         "symbols_completed": symbols_completed, "symbols_planned": symbols_planned},
+        level=logging.INFO if run_status == "complete" else logging.WARNING,
+    )
 
     # Issue #833 — der urspruengliche Abbruch (SIGINT/SIGTERM/unerwartete Exception) wird nach dem
     # Report-Versuch WEITERGEREICHT: das Artefakt ist ein Nebeneffekt auf dem Weg nach draussen,

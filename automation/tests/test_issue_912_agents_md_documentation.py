@@ -109,12 +109,15 @@ def test_changelog_table_has_a_row_for_the_new_catalog():
 
 
 # ── Semantik-Versionen (Akzeptanzkriterium #912) ─────────────────────────────────────────────────
-def test_reward_semantics_version_is_20():
-    assert CFG["reward_semantics_version"] == 20
+# Issue #936 hat beide Versionen seither weiter gebumpt (21/3, siehe
+# test_issue_936_version_bumps.py); diese beiden Tests pruefen nur noch, dass die Versionen NICHT
+# unter den #912-Stand zurueckgefallen sind (monoton steigend ist die eigentliche Garantie).
+def test_reward_semantics_version_is_at_least_20():
+    assert CFG["reward_semantics_version"] >= 20
 
 
-def test_simulation_semantics_version_is_2():
-    assert CFG["simulation_semantics_version"] == 2
+def test_simulation_semantics_version_is_at_least_2():
+    assert CFG["simulation_semantics_version"] >= 2
 
 
 def test_simulation_schema_documents_v2_trigger_issues():

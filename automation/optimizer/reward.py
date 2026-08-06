@@ -539,38 +539,54 @@ def gate_rank_correlation_matrix(trial_gate_deltas: list, tournament_cfg: dict |
     """Issue #667/#760 — Rang-Korrelationsmatrix (Spearman) der AKTIVEN eligible-Gates (siehe
     ``_active_gate_collinearity_keys`` — zur Laufzeit aus ``tournament_cfg`` abgeleitet, KEINE
     eingefrorene Code-Konstante mehr) über eine Kohorte von Trials, aus deren gestempelten
-    ``oos_gate_deltas`` (#554/#668 — pro Trial als User-Attr verfügbar). Nur Trials mit ALLEN
-    aktiven Deltas fliessen ein (Zero-Hardcoding: fehlende Gates werden nicht künstlich mit 0
-    aufgefüllt, das würde eine falsche Korrelation vortäuschen).
+    ``oos_gate_deltas`` (#554/#668 — pro Trial als User-Attr verfügbar).
+
+    Issue #928 — PAARWEISE VOLLSTÄNDIGE Stichprobe statt eines einzigen globalen "alle aktiven
+    Gates gleichzeitig definiert"-Filters: VOR diesem Fix musste JEDES aktive Gate für einen Trial
+    definiert sein, damit der Trial IRGENDEINE Korrelation speiste — ein einziges strukturell
+    undefiniertes Gate (z. B. ``oos_min_psr`` unter dem #913-Defekt) liess dadurch ``n_samples``
+    für ALLE Paare auf 0 kollabieren, auch für Paare, die dieses Gate gar nicht enthielten. Jetzt
+    zählt jedes Paar (k1, k2) nur die Trials, für die BEIDE Werte definiert sind
+    (``pair_n_samples``); das aggregierte ``n_samples`` ist das MAXIMUM der Paar-Stichproben (die
+    grösste tatsächlich nutzbare Stichprobe), nicht mehr die strengere "alle Gates gleichzeitig
+    definiert"-Zahl. Die separate Jaccard-Pass-Set-Messung (#811, dieselbe Paarweise-Vollständig-
+    Konvention) bleibt in ``gate_collinearity_redundancy_alarm`` — diese Funktion bleibt bewusst
+    auf die rohe Spearman-Diagnose beschränkt (siehe ``assert_gate_collinearity_guard``-Docstring).
 
     ``tournament_cfg=None`` (kein ``eligible_requires_all``/``_any`` bekannt) liefert eine leere
     Key-Menge — bewusst KEIN Fallback auf eine geratene Gate-Liste.
 
     Rückgabe ``{'n_samples': int, 'keys': [...], 'correlations': {(gate_a, gate_b): rho_or_None,
-    ...}, 'non_correlable_keys': [...]}``. ``non_correlable_keys`` — Issue #760 — sind aktive Keys,
-    die über die GESAMTE Kohorte NIE ein Delta beigetragen haben (keine ``oos_gate_deltas``-Spalte
-    in den vorliegenden Trial-Daten) und daher explizit als nicht-korrelierbar telemetriert werden,
-    statt still als durchgehend ``None`` in der Matrix zu verschwinden. Rein, deterministisch."""
+    ...}, 'pair_n_samples': {(gate_a, gate_b): int, ...}, 'non_correlable_keys': [...]}``.
+    ``non_correlable_keys`` — Issue #760 — sind aktive Keys, die über die GESAMTE Kohorte NIE ein
+    Delta beigetragen haben (keine ``oos_gate_deltas``-Spalte in den vorliegenden Trial-Daten) und
+    daher explizit als nicht-korrelierbar telemetriert werden, statt still als durchgehend
+    ``None`` in der Matrix zu verschwinden. Rein, deterministisch."""
     keys = _active_gate_collinearity_keys(tournament_cfg)
-    series: dict[str, list] = {k: [] for k in keys}
+    raw_values: dict[str, list] = {k: [] for k in keys}
     for deltas in trial_gate_deltas:
         deltas = deltas or {}
-        row = {}
         for k in keys:
-            row[k] = _any_condition_delta_from_gate_deltas(deltas) if k == "any_condition" else deltas.get(k)
-        if any(v is None for v in row.values()):
-            continue
-        for k, v in row.items():
-            series[k].append(float(v))
+            v = _any_condition_delta_from_gate_deltas(deltas) if k == "any_condition" else deltas.get(k)
+            raw_values[k].append(None if v is None else float(v))
 
-    correlations = {}
+    correlations: dict[tuple[str, str], float | None] = {}
+    pair_n_samples: dict[tuple[str, str], int] = {}
     for i, k1 in enumerate(keys):
         for k2 in keys[i + 1:]:
-            correlations[(k1, k2)] = _spearman_rank_correlation(series[k1], series[k2])
-    n_samples = len(series[keys[0]]) if keys else 0
-    non_correlable_keys = [k for k in keys if not series[k]]
+            pair_x, pair_y = [], []
+            for vx, vy in zip(raw_values[k1], raw_values[k2]):
+                if vx is None or vy is None:
+                    continue
+                pair_x.append(vx)
+                pair_y.append(vy)
+            pair_n_samples[(k1, k2)] = len(pair_x)
+            correlations[(k1, k2)] = _spearman_rank_correlation(pair_x, pair_y)
+
+    n_samples = max(pair_n_samples.values()) if pair_n_samples else 0
+    non_correlable_keys = [k for k in keys if not any(v is not None for v in raw_values[k])]
     return {"n_samples": n_samples, "keys": keys, "correlations": correlations,
-            "non_correlable_keys": non_correlable_keys}
+            "pair_n_samples": pair_n_samples, "non_correlable_keys": non_correlable_keys}
 
 
 def _gate_collinearity_threshold(tournament_cfg: dict | None) -> float:

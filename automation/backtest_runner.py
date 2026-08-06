@@ -1084,6 +1084,58 @@ def resolve_spread_bps(inst_id_str: str,
     return float(spread_bps_by_asset_class[asset_class_key])
 
 
+def resolve_atr_floor_bps(inst_id_str: str,
+                          atr_floor_bps_by_asset_class: dict | None,
+                          asset_class_key: str = "DEFAULT") -> float:
+    """Issue #924 — asset-class-aufgelöste Untergrenze für den ATR-Wert des Trailing-Stops
+    (bps des Preises), Single Source of Truth analog zu ``resolve_spread_bps`` (#566).
+
+    Der Floor verhindert, dass ``hourly_strategy_base._effective_atr_value`` (#897 Fix 4)
+    bei einem degenerierten Nautilus-``AverageTrueRange`` (exakt 0, z. B. High==Low==PrevClose)
+    den Trailing-Stop auf das Preis-Extremum kollabieren lässt. Vor #924 war der Wert ein
+    flacher, in ``HourlyStrategyConfig.atr_floor_bps`` hart kodierter Default (2.0 bps) für
+    jedes Symbol — für Krypto (siehe #920, deutlich höhere typische Preis-/ATR-Skalen)
+    strukturell zu eng.
+
+    Fehlt ``atr_floor_bps_by_asset_class`` (Key nicht in ``backtest.json``) ⇒ 2.0 (der alte
+    flache Default, rückwärtskompatibel). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch
+    in der Map vorhanden ist, ist — wie bei ``resolve_spread_bps`` (#898 Fix 3) — ein
+    KONFIGURATIONSFEHLER und wirft, statt still auf DEFAULT zurückzufallen."""
+    if not atr_floor_bps_by_asset_class:
+        return 2.0
+    if asset_class_key not in atr_floor_bps_by_asset_class:
+        raise ValueError(
+            f"resolve_atr_floor_bps: asset_class_key='{asset_class_key}' ({inst_id_str}) ist "
+            f"nicht in atr_floor_bps_by_asset_class ({sorted(atr_floor_bps_by_asset_class)}) — "
+            f"stiller Rückfall würde einen Krypto-Floor unbemerkt auf den Equity-Wert reduzieren "
+            f"(Issue #924, analog #898)."
+        )
+    return float(atr_floor_bps_by_asset_class[asset_class_key])
+
+
+def resolve_opening_range_session_open_hour(inst_id_str: str,
+                                            session_open_hour_by_asset_class: dict | None,
+                                            asset_class_key: str = "DEFAULT") -> int:
+    """Issue #922 — asset-class-aufgelöste UTC-Stunde des Handelstag-Beginns für
+    ``OpeningRangeBreakoutStrategy.opening_range_session_open_hour`` (nur wirksam unter
+    ``opening_range_session_anchor='session_open_hour'``), Single Source of Truth analog
+    ``resolve_spread_bps``/``resolve_atr_floor_bps``.
+
+    Fehlt ``session_open_hour_by_asset_class`` ⇒ 13 (der Dataclass-Default, ≈ NYSE-Open,
+    rückwärtskompatibel). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch in der Map
+    vorhanden ist, ist — wie bei ``resolve_spread_bps``/``resolve_atr_floor_bps`` — ein
+    KONFIGURATIONSFEHLER und wirft, statt still zurückzufallen."""
+    if not session_open_hour_by_asset_class:
+        return 13
+    if asset_class_key not in session_open_hour_by_asset_class:
+        raise ValueError(
+            f"resolve_opening_range_session_open_hour: asset_class_key='{asset_class_key}' "
+            f"({inst_id_str}) ist nicht in opening_range_session_open_hour_by_asset_class "
+            f"({sorted(session_open_hour_by_asset_class)}) — Issue #922, analog #898."
+        )
+    return int(session_open_hour_by_asset_class[asset_class_key])
+
+
 def load_ticks_from_catalog(
     catalog: ParquetDataCatalog,
     instrument_id_str: str,
@@ -2118,6 +2170,8 @@ _profit_factor_cap_cache: float | None = None
 _sortino_numeric_guard_min_periods_cache: float | None = None
 _sortino_numeric_guard_min_periods_cached: bool = False
 _sortino_numeric_guard_reference_mode_cache: str | None = None
+_sortino_numeric_guard_reference_bootstrap_cache: str | None = None
+_sortino_guard_family_median_min_siblings_cache: int | None = None
 
 
 def _read_sortino_numeric_guard() -> float:
@@ -2191,6 +2245,37 @@ def _read_sortino_numeric_guard_reference_mode() -> str:
     return mode
 
 
+def _read_sortino_numeric_guard_reference_bootstrap() -> str:
+    """Issue #913 Fix 2 — ``tournament.json['sortino_numeric_guard_reference_bootstrap']`` ∈
+    {'absolute', 'defer'} (Default 'absolute'). Steuert das Verhalten der ersten
+    ``sortino_guard_family_median_min_siblings`` Trials einer Familie, BEVOR ein belastbarer
+    Familien-Median von ``n_periods`` existiert (Kaltstart): 'absolute' prüft in dieser Phase
+    gegen den absoluten Anker (``sortino_numeric_guard_min_periods``) und stempelt die Quelle
+    als ``'absolute_bootstrap'`` (unterscheidbar vom regulären ``'absolute'``-Modus, damit
+    ``check_guard_reference_coherence`` den Zustand nicht mit einer Fehlkonfiguration verwechselt).
+    'defer' prunt den Trial (kein Guard, ``sortino/psr=None``), bis der Median verfügbar ist.
+    Gecached. Unbekannter Wert ⇒ fail-loud, analog dem Referenz-Modus selbst."""
+    global _sortino_numeric_guard_reference_bootstrap_cache
+    if _sortino_numeric_guard_reference_bootstrap_cache is not None:
+        return _sortino_numeric_guard_reference_bootstrap_cache
+    val = "absolute"
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_numeric_guard_reference_bootstrap")
+            if raw is not None:
+                val = str(raw)
+    except (OSError, ValueError, TypeError):
+        val = "absolute"
+    if val not in ("absolute", "defer"):
+        raise ValueError(
+            f"tournament.json['sortino_numeric_guard_reference_bootstrap']={val!r} unbekannt — "
+            "erwartet 'absolute' oder 'defer'.")
+    _sortino_numeric_guard_reference_bootstrap_cache = val
+    return val
+
+
 def _effective_sortino_numeric_guard(
     sortino_numeric_guard: float, n_periods: int, *, family_median_n_periods: float | None = None,
 ) -> tuple[float, float | None, str]:
@@ -2246,14 +2331,34 @@ def _effective_sortino_numeric_guard(
     Aufrufer behandelt ``effective_guard is None`` als nicht-bewertbar (Trial wird geprunt, nicht
     fehlerhaft als bestanden/durchgefallen bewertet, Issue #901 Fix 1). Ein ECHTER
     ``family_median``-Modus (``family_median_n_periods`` bereitgestellt — Injektionspunkt für die
-    künftige Restrukturierung, siehe Docstring oben) bleibt unverändert korrekt."""
+    künftige Restrukturierung, siehe Docstring oben) bleibt unverändert korrekt.
+
+    Issue #913 — der Injektionspfad ist jetzt gebaut: ``run_optimization.make_symbol_objective``
+    berechnet den Median von ``oos_n_periods`` über die bereits abgeschlossenen Sibling-Trials
+    DERSELBEN Study (``sortino_guard_family_scope='symbol_strategy'``, Default — #916) und reicht
+    ihn über das Manifest (``global_settings.family_median_n_periods``) bis hierher durch. Vor
+    Erreichen von ``sortino_guard_family_median_min_siblings`` Trials ist ``family_median_n_periods``
+    weiterhin ``None`` — dieser Zustand ist jetzt die KALTSTART-Phase (siehe
+    ``_read_sortino_numeric_guard_reference_bootstrap``), kein Verdrahtungsfehler mehr."""
     mode = _read_sortino_numeric_guard_reference_mode()
     if mode == "family_median":
         if family_median_n_periods is not None:
             min_periods = float(family_median_n_periods)
             source = "family_median"
         else:
-            return None, None, "family_median_unavailable"
+            # Issue #913 Fix 2 — Kaltstart-Semantik: kein Sibling-Median verfügbar (die Familie
+            # hat die konfigurierte Mindestzahl noch nicht erreicht, siehe
+            # run_optimization._resolve_family_median_n_periods). 'absolute' prüft gegen den
+            # statischen Anker unter einer EIGENEN, unterscheidbaren Quelle
+            # ('absolute_bootstrap', NIE 'absolute') — sonst würde
+            # check_guard_reference_coherence (#915) diesen Zustand fälschlich als korrekt
+            # verdrahteten Absolut-Modus lesen. 'defer' prunt den Trial unbewertet (Alt-Verhalten).
+            bootstrap_mode = _read_sortino_numeric_guard_reference_bootstrap()
+            if bootstrap_mode == "absolute":
+                min_periods = _read_sortino_numeric_guard_min_periods()
+                source = "absolute_bootstrap"
+            else:
+                return None, None, "family_median_unavailable"
     else:
         min_periods = _read_sortino_numeric_guard_min_periods()
         source = "absolute"
@@ -2262,6 +2367,43 @@ def _effective_sortino_numeric_guard(
     import math as _math
     effective = sortino_numeric_guard * _math.sqrt(min(1.0, float(n_periods) / min_periods))
     return effective, min_periods, source
+
+
+def assert_guard_reference_injectable() -> None:
+    """Issue #913 Fix 3 — Fail-Loud-Startup-Prüfung: ist
+    ``tournament.json['sortino_numeric_guard_reference']='family_median'`` konfiguriert, MUSS
+    mindestens EIN Aufrufer von ``_effective_sortino_numeric_guard`` in diesem Modul
+    ``family_median_n_periods`` als Keyword übergeben — sonst ist die Konfiguration per
+    Konstruktion folgenlos (die #913-Root-Cause: der Key existierte, die Registry war grün, der
+    Injektionspfad fehlte). Statische AST-Prüfung über den Quelltext DIESES Moduls, kein
+    Trial-Lauf nötig. Bricht mit ``REJECT_GUARD_REFERENCE_NOT_WIRED`` ab, BEVOR der erste
+    Backtest eines Sweeps startet — ein 143-Symbol-Lauf darf nicht 170 Stunden lang
+    informationsfrei laufen, weil ein Keyword-Argument fehlt (AGENTS.md Pitfall #296)."""
+    mode = _read_sortino_numeric_guard_reference_mode()
+    if mode != "family_median":
+        return
+    import ast
+    source = inspect.getsource(sys.modules[__name__])
+    tree = ast.parse(source)
+    wired = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name == "_effective_sortino_numeric_guard" and any(
+                kw.arg == "family_median_n_periods" for kw in node.keywords
+            ):
+                wired = True
+                break
+    if not wired:
+        raise ValueError(
+            "REJECT_GUARD_REFERENCE_NOT_WIRED: tournament.json['sortino_numeric_guard_reference']="
+            "'family_median' ist konfiguriert, aber KEIN Aufrufer von "
+            "_effective_sortino_numeric_guard in backtest_runner.py übergibt "
+            "family_median_n_periods als Keyword — die Konfiguration wäre folgenlos (Issue #913). "
+            "Injektionspfad reparieren ODER sortino_numeric_guard_reference in tournament.json "
+            "auf 'absolute' zurückstellen."
+        )
 
 
 def _read_profit_factor_cap() -> float:
@@ -2392,7 +2534,7 @@ def _get_annualization_factor(mtm_series=None) -> float:
     # 3) Kein verwertbarer Zeit-Index: neutral (1.0).
     return 1.0
 
-def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None) -> dict:
+def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], starting_capital: float, med_notional: float = 0.0, *, min_trades_for_sortino: int | None = None, mtm_series: pd.Series | None = None, mtm_frames: list[pd.Series] | None = None, notional_list: list[float] | None = None, family_median_n_periods: float | None = None) -> dict:
     """
     Berechnet die statistischen Performance-Metriken aus einer Liste von Trade-PnLs.
 
@@ -2773,7 +2915,7 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             if pd.isna(sortino_annualized_v) or not np.isfinite(sortino_annualized_v):
                 return None, None, None, None, None, 0.0, 3.0, None, downside_obs
             _eff_guard, _guard_ref_value, _guard_ref_source = _effective_sortino_numeric_guard(
-                sortino_numeric_guard, n_periods)
+                sortino_numeric_guard, n_periods, family_median_n_periods=family_median_n_periods)
             if _eff_guard is None:
                 # Issue #901 Fix 1 — 'family_median' verlangt, aber (noch) kein family_median_
                 # n_periods bereitgestellt: der Trial ist unter dieser Referenz-Semantik nicht
@@ -3297,7 +3439,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -3734,9 +3876,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
             # Issue #546 — die parallelen Per-Trade-Notionals durchreichen ⇒ sizing-invariante
             # (notional-relative) Expectancy statt Normierung auf das fixe starting_capital.
-            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals)
+            level_is = _calculate_stats(split_is_pnls, split_is_holds, starting_capital, med_notional=is_mn, mtm_series=is_mtm, notional_list=split_is_notionals, family_median_n_periods=family_median_n_periods)
             if split_oos_pnls:
-                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals)
+                level_oos = _calculate_stats(split_oos_pnls, split_oos_holds, starting_capital, med_notional=oos_mn, mtm_series=oos_mtm, mtm_frames=oos_frames, notional_list=split_oos_notionals, family_median_n_periods=family_median_n_periods)
             else:
                 level_oos = _empty_level_metrics()
             # Issue #613 — Aggregationsebene des Sortino EXPLIZIT stempeln. IS UND OOS werden aus ihrer
@@ -3799,7 +3941,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     fold_mtm = mtm_series.loc[split_oos_start_dt:split_oos_end_excl]
                 if fold_pnls:
                     # Issue #546 — Per-Fold-Expectancy ebenfalls notional-relativ (Fold-Aggregation #550).
-                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, mtm_series=fold_mtm, notional_list=fold_notionals)
+                    fold_metrics = _calculate_stats(fold_pnls, fold_holds, starting_capital, med_notional=fold_med_notional, mtm_series=fold_mtm, notional_list=fold_notionals, family_median_n_periods=family_median_n_periods)
                 else:
                     fold_metrics = None
                 per_fold_oos_list.append(fold_metrics)
@@ -4655,6 +4797,8 @@ def run_single_backtest_worker(
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
+    atr_floor_bps_by_asset_class: dict | None = None,
+    opening_range_session_open_hour_by_asset_class: dict | None = None,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -4697,12 +4841,21 @@ def run_single_backtest_worker(
             # fälschlich unrentabel macht.
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
-            if spread_bps_by_asset_class and not has_symbol_override:
+            # Issue #924/#922 — die Asset-Class wird auch dann aufgelöst, wenn NUR
+            # atr_floor_bps_by_asset_class/opening_range_session_open_hour_by_asset_class
+            # konfiguriert ist (ein Spread-Symbol-Override allein entbindet diese Auflösungen
+            # nicht — dafür gibt es keinen Symbol-Override).
+            if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class
+                    or opening_range_session_open_hour_by_asset_class) and not has_symbol_override:
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
 
             spread_bps = resolve_spread_bps(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)
+            atr_floor_bps_resolved = resolve_atr_floor_bps(
+                inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
+            opening_range_session_open_hour_resolved = resolve_opening_range_session_open_hour(
+                inst_id_str, opening_range_session_open_hour_by_asset_class, asset_class_key)
 
             if spread_bps > 0.0:
                 src = "Symbol-Override" if has_symbol_override else f"Asset-Class {asset_class_key}"
@@ -4717,6 +4870,7 @@ def run_single_backtest_worker(
                 "asset_class_key": asset_class_key,
                 "spread_bps": spread_bps,
                 "source": "symbol_override" if has_symbol_override else "asset_class",
+                "atr_floor_bps": atr_floor_bps_resolved,
             })
 
             ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns, spread_bps)
@@ -4817,6 +4971,15 @@ def run_single_backtest_worker(
             params = strat.get("params", {}).copy()
             params["instrument_id"] = inst_id_str
             params["bar_type"]      = bar_type
+            # Issue #924 — asset-class-aufgelöster ATR-Floor (oben resolve_atr_floor_bps), NIE
+            # ein vom Suchraum gesampelter Wert (atr_floor_bps ist kein Optuna-Parameter) —
+            # überschreibt daher bewusst jeden gleichnamigen Eintrag aus strat["params"].
+            params["atr_floor_bps"] = atr_floor_bps_resolved
+            # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde (oben
+            # resolve_opening_range_session_open_hour). Nur OpeningRangeBreakoutConfig kennt
+            # dieses Feld — der valid_keys-Filter unten verwirft es folgenlos für jede andere
+            # Strategie.
+            params["opening_range_session_open_hour"] = opening_range_session_open_hour_resolved
 
             # Härtung: Defensives Parsing der Parameter
             if hasattr(ConfigCls, "__struct_fields__"):
@@ -4867,7 +5030,7 @@ def run_single_backtest_worker(
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
         try:
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series())
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"))
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -5090,6 +5253,12 @@ def run_backtest() -> None:
     spread_bps_by_asset_class = backtest_global_cfg.get("spread_bps_by_asset_class", {})
     # Issue #566 — optionale symbol-spezifische Spread-Overrides (übersteuert die Asset-Class-Konstante).
     spread_bps_by_symbol = backtest_global_cfg.get("spread_bps_by_symbol", {})
+    # Issue #924 — asset-class-aufgelöste ATR-Trailing-Stop-Untergrenze (resolve_atr_floor_bps).
+    atr_floor_bps_by_asset_class = backtest_global_cfg.get("atr_floor_bps_by_asset_class", {})
+    # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde für OpeningRangeBreakoutStrategy
+    # (resolve_opening_range_session_open_hour).
+    opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
+        "opening_range_session_open_hour_by_asset_class", {})
     print(f"📊 Spread-Modeling: {spread_modeling} (fill_model={fill_model_str}), Span-Tolerance: {span_tolerance_days}d")
     if spread_modeling:
         print("   ℹ️  Buy-Orders → Ask-Preis | Sell-Orders → Bid-Preis (NautilusTrader Default)")
@@ -5405,6 +5574,13 @@ def run_backtest() -> None:
                     span_days = splits * oos_days
                     strat["_walk_forward_dict"] = walk_forward_cfg
                     strat["_oos_span_days"]     = span_days
+                # Issue #913 — Injektionspfad: der Elternprozess (run_optimization.py) berechnet
+                # den Familien-Median von oos_n_periods über bereits abgeschlossene Sibling-Trials
+                # und reicht ihn über das self-describing Manifest durch (global_settings). None,
+                # solange die Familie die konfigurierte Mindestzahl an Siblings noch nicht erreicht
+                # hat (Kaltstart, siehe _read_sortino_numeric_guard_reference_bootstrap) ODER der
+                # Referenz-Modus 'absolute' ist (kein Injektionsbedarf).
+                strat["_family_median_n_periods"] = global_settings.get("family_median_n_periods")
 
                 wlf = os.path.join(
                     logs_dir_str,
@@ -5420,7 +5596,10 @@ def run_backtest() -> None:
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-                        spread_bps_by_symbol
+                        spread_bps_by_symbol,
+                        atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+                        opening_range_session_open_hour_by_asset_class=(
+                            opening_range_session_open_hour_by_asset_class),
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -5429,7 +5608,10 @@ def run_backtest() -> None:
                         catalog_path, start_ns, end_ns,
                         start_capital, args.htmlreport, reports_dir, wlf,
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-                        spread_bps_by_symbol
+                        spread_bps_by_symbol,
+                        atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+                        opening_range_session_open_hour_by_asset_class=(
+                            opening_range_session_open_hour_by_asset_class),
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -5463,7 +5645,10 @@ def run_backtest() -> None:
                         start_ns, end_ns, start_capital, args.htmlreport,
                         reports_dir, all_results, done_count, total_jobs,
                         span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-                        spread_bps_by_symbol
+                        spread_bps_by_symbol,
+                        atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+                        opening_range_session_open_hour_by_asset_class=(
+                            opening_range_session_open_hour_by_asset_class),
                     )
                     break
                 except Exception as e:
@@ -5549,6 +5734,8 @@ def _run_remaining_sequentially(
     commission_bps: float = 0.0,
     spread_bps_by_asset_class: dict | None = None,
     spread_bps_by_symbol: dict | None = None,
+    atr_floor_bps_by_asset_class: dict | None = None,
+    opening_range_session_open_hour_by_asset_class: dict | None = None,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -5565,7 +5752,10 @@ def _run_remaining_sequentially(
             rem_inst, bar_type, rem_strat, catalog_path,
             start_ns, end_ns, start_capital, generate_html, reports_dir, rem_log,
             span_tolerance_days, commission_bps, spread_bps_by_asset_class,
-            spread_bps_by_symbol
+            spread_bps_by_symbol,
+            atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
+            opening_range_session_open_hour_by_asset_class=(
+                opening_range_session_open_hour_by_asset_class),
         )
         _flush_worker_log(rem_log)
         done_count += 1

@@ -402,73 +402,73 @@
     },
     "100000": {
       "symbol": "BTC.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100001": {
       "symbol": "ETH.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100003": {
       "symbol": "XRP.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100017": {
       "symbol": "ADA.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100043": {
       "symbol": "DOGE.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100063": {
       "symbol": "SOL.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100080": {
       "symbol": "SHIBxM.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 8,
       "size_precision": 8
     },
     "100085": {
       "symbol": "AVAX.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100303": {
       "symbol": "PEPExM.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 8,
       "size_precision": 8
     },
     "100323": {
       "symbol": "ONDO.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100421": {
       "symbol": "AERO.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },
     "100446": {
       "symbol": "HYPE.ETORO",
-      "asset_class": "equity",
+      "asset_class": "crypto",
       "price_precision": 2,
       "size_precision": 8
     },

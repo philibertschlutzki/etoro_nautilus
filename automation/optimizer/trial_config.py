@@ -158,6 +158,7 @@ def build_trial(
     study_config_dir: Path | None = None,
     catalog_newest_ns: int | None = None,
     catalog_span_days: float | None = None,
+    family_median_n_periods: float | None = None,
 ) -> tuple[Path, Path]:
     """
     Erzeugt isoliertes trial_dir; kopiert config_dir()-Inhalt nach trial_dir/config;
@@ -338,6 +339,14 @@ def build_trial(
             }
         ]
     }
+
+    # Issue #913 — Injektionspfad für den Sortino-Numerik-Guard-Referenzwert im 'family_median'-
+    # Modus (backtest_runner._effective_sortino_numeric_guard): der Median von oos_n_periods über
+    # die bereits abgeschlossenen Sibling-Trials, vom Elternprozess berechnet (siehe
+    # run_optimization._resolve_family_median_n_periods). None ⇒ Schlüssel wird NICHT geschrieben
+    # (rückwärtskompatibel, absoluter Modus ODER Kaltstart-Phase einer Familie).
+    if family_median_n_periods is not None:
+        manifest_payload["global_settings"]["family_median_n_periods"] = float(family_median_n_periods)
 
     # A4.2: manifest-getriebene Single-/Multi-Symbol-Restriktion. instruments=None ⇒ Schlüssel
     # wird NICHT geschrieben (rückwärtskompatibel, volles Universum).

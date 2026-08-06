@@ -241,10 +241,13 @@ def _trial(reward_terms=None, oos_evaluated=True):
 
 
 def test_reward_term_variance_pass_all_terms_vary():
+    # Issue #927 — gate_distance_penalty muss mitvariieren (sonst als inert geflaggt, es ist NICHT
+    # in _CONFIGURED_INACTIVE_REWARD_TERMS); time_box_penalty bleibt bei 0.0 (sein konfiguriertes
+    # Gewicht ist 0.0) und wird trotzdem NICHT als inert gelistet, weil es konfiguriert-inaktiv ist.
     trials = [
         _trial({"branch": "eligible", "base": b, "divergence": 0.3 * i, "dd_penalty": 0.25 * i,
                 "param_pen": 0.2 * i, "turnover": 0.3 * i, "fold_dispersion": 0.25 * i,
-                "tie_breaker": 0.2 * i})
+                "tie_breaker": 0.2 * i, "gate_distance_penalty": 0.15 * i, "time_box_penalty": 0.0})
         for i, b in enumerate([1.0, 1.5, 2.0, 0.5, 3.0])
     ]
     result = inv.check_reward_term_variance(trials)

@@ -300,22 +300,30 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     ``oos_evaluated``-Trials (``report._study_record``). Leer/``configured_min_periods is None``
     ⇒ nicht anwendbar (PASS)."""
     if reference_mode == "family_median":
+        # Issue #915 — 'absolute' bleibt der verbotene Fail-Open-Pfad (Pitfall #267/#901).
+        # 'family_median_unavailable' ist SEIT #915 EBENFALLS ein FAIL: der Zustand ist ehrlich
+        # (er behauptet keine falsche Referenz), aber im Produktivbetrieb unzulässig — er bedeutet
+        # 'kein Guard, sortino/psr=None' für den betroffenen Trial. 'absolute_bootstrap' (#913
+        # Fix 2 — Kaltstart-Phase MIT explizit gestempelter, unterscheidbarer Quelle) bleibt
+        # zulässig und PASSt weiterhin, ebenso wie 'family_median' selbst.
         offending_sources = sorted({
-            s for s in (observed_guard_reference_sources or []) if s == "absolute"
+            s for s in (observed_guard_reference_sources or [])
+            if s in ("absolute", "family_median_unavailable")
         })
         passed = not offending_sources
         return InvariantResult(
             name="check_guard_reference_coherence",
             passed=passed,
-            expected="kein guard_reference_source == 'absolute' unter "
-                     "sortino_numeric_guard_reference='family_median'",
+            expected="kein guard_reference_source in {'absolute', 'family_median_unavailable'} "
+                     "unter sortino_numeric_guard_reference='family_median'",
             actual=offending_sources if offending_sources else None,
             severity="blocking",
             detail=("sortino_numeric_guard_reference='family_median' — kein Event nahm den "
-                    "fail-open absolute-Pfad." if passed else
+                    "fail-open absolute-Pfad oder blieb unbewertet." if passed else
                     "sortino_numeric_guard_reference='family_median', aber mindestens ein Event "
-                    "meldet guard_reference_source=='absolute' — Widerspruch zwischen Config und "
-                    "tatsächlich verwendeter Referenz (Issue #901, siebte Wiederkehr Pitfall #267)."),
+                    "meldet guard_reference_source in {'absolute', 'family_median_unavailable'} — "
+                    "entweder der verbotene Fail-Open-Pfad (Issue #901) oder ein ehrlicher, aber "
+                    "im Produktivbetrieb unzulässiger Kaltstart ohne Bootstrap-Guard (Issue #915)."),
         )
     if configured_min_periods is None or not observed_n_periods_medians:
         return InvariantResult(
@@ -353,6 +361,176 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
                 f"Median(n_periods)={observed_median:g} (Faktor {ratio:.2g}) — der Referenzwert "
                 "ist gegen eine andere Grössenordnung kalibriert als der aktuelle Lauf zeigt "
                 "(Pitfall #274)."),
+    )
+
+
+def check_exit_reason_coverage(study_records: list[dict]) -> InvariantResult:
+    """Issue #919 Fix 4 — die Summe des je-Study aufsummierten ``exit_reason_histogram`` (aus
+    Order-Tags, #899) muss GENAU der Anzahl der Round-Trips entsprechen, die eine
+    Exit-Telemetrie beigetragen haben (``oos_total_trades_with_exit_telemetry``,
+    ``report._study_record``). Eine Lücke bedeutet einen Exit-Pfad, der keinen Order-Tag setzt —
+    ein Round-Trip ohne Attribution.
+
+    Studies ohne jede Exit-Telemetrie (leeres Histogramm, z. B. Pre-#899-Daten oder 0 Trades)
+    sind nicht anwendbar (PASS)."""
+    offenders: dict[str, str] = {}
+    for r in study_records:
+        histogram = r.get("exit_reason_histogram") or {}
+        expected = r.get("oos_total_trades_with_exit_telemetry")
+        if not histogram or expected is None:
+            continue
+        observed = sum(histogram.values())
+        if observed != expected:
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = f"histogram_sum={observed} != oos_total_trades={expected}"
+    passed = not offenders
+    return InvariantResult(
+        name="check_exit_reason_coverage",
+        passed=passed,
+        expected="sum(exit_reason_histogram.values()) == oos_total_trades_with_exit_telemetry je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit einer Lücke zwischen Exit-Reason-Histogramm "
+                f"und Round-Trip-Zahl: {offenders} — mindestens ein Exit-Pfad setzt keinen "
+                "Order-Tag (Issue #919)."),
+    )
+
+
+def check_instrument_metadata_coherence(instruments: dict[str, dict], *,
+                                        spread_bps_by_asset_class: dict | None = None) -> InvariantResult:
+    """Issue #920 (Pitfall #298) — Metadaten sind gegen sich selbst prüfbar, ohne externe Quelle.
+    Root-Cause #920: der #898-Fix schloss die Lücke "asset_class fehlt" durch einen pauschalen
+    Backfill auf 'equity' — 12 Krypto-Symbole (``size_precision=8``, unmöglich für eine Aktie mit
+    eToro-Bruchteilshandel) lösten seither auf den falschen, um Faktor 4 zu niedrigen
+    Spread/Kommission auf. Ein fail-loud-Wächter plus ein flächendeckender Backfill ergibt einen
+    Wächter, der nie feuert (#297) — diese Invariante prüft die Metadaten stattdessen GEGEN SICH
+    SELBST.
+
+    Regeln (jede Verletzung ist ``severity='blocking'``):
+      * ``size_precision >= 6`` ⇒ ``asset_class`` MUSS ``'crypto'`` sein (eToro-Aktien-
+        Bruchteilshandel geht nicht auf sechs oder mehr Nachkommastellen).
+      * ``asset_class == 'forex'`` ⇒ ``price_precision >= 4``.
+      * jede vorkommende ``asset_class`` (normiert auf Grossschreibung) muss einen Eintrag in
+        ``spread_bps_by_asset_class`` haben, sofern diese Map übergeben wird.
+
+    ``instruments``: das ``instrument_map.json['instruments']``-Dict (ID → {'symbol',
+    'asset_class', 'price_precision', 'size_precision'})."""
+    offenders: dict[str, str] = {}
+    for iid, data in (instruments or {}).items():
+        symbol = data.get("symbol", iid)
+        asset_class = (data.get("asset_class") or "").strip().lower()
+        size_precision = data.get("size_precision")
+        price_precision = data.get("price_precision")
+        if size_precision is not None and int(size_precision) >= 6 and asset_class != "crypto":
+            offenders[symbol] = (
+                f"size_precision={size_precision} >= 6 impliziert 'crypto', asset_class="
+                f"'{asset_class}'")
+            continue
+        if asset_class == "forex" and price_precision is not None and int(price_precision) < 4:
+            offenders[symbol] = f"asset_class='forex' verlangt price_precision >= 4, hat {price_precision}"
+            continue
+        if spread_bps_by_asset_class is not None and asset_class:
+            normalized = {str(k).strip().upper() for k in spread_bps_by_asset_class}
+            if asset_class.upper() not in normalized:
+                offenders[symbol] = (
+                    f"asset_class='{asset_class}' hat keinen Eintrag in spread_bps_by_asset_class "
+                    f"({sorted(normalized)})")
+    passed = not offenders
+    return InvariantResult(
+        name="check_instrument_metadata_coherence",
+        passed=passed,
+        expected="size_precision>=6 impliziert asset_class='crypto'; asset_class='forex' impliziert "
+                 "price_precision>=4; jede asset_class hat einen Kosten-Eintrag",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Instrument(e) mit inkohärenten Metadaten: {offenders} — "
+                "Issue #920: ein pauschaler Backfill auf 'equity' entwertet fail-loud-Wächter, "
+                "die nur auf FEHLENDE (nicht auf FALSCHE) Metadaten prüfen."),
+    )
+
+
+def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
+    """Issue #929 Fix 3 — eigenständiges Frühwarnsignal: ``constraint_improvement_rate`` (die
+    Änderung der mittleren Constraint-Verletzung zwischen erster und zweiter Hälfte der
+    modellierten Trials, ``run_optimization._constraint_violation_progress``) ist UNABHÄNGIG von
+    der Eligibility auswertbar — ein negativer Wert über eine ganze Study ist ein Befund, egal ob
+    p_eligible bereits 0 ist. FAILt (severity 'high'), wenn ``constraint_improvement_rate <= 0``
+    UND ``p_eligible == 0`` UND ``n_modelled_trials >= plateau_min_modelled_trials`` — der TPE hat
+    dann nachweislich NICHTS gelernt (die Constraint-Verletzung wuchs oder stagnierte trotz
+    ausreichend modellierter Trials), nicht nur 'noch keinen eligiblen Trial gefunden'."""
+    offenders: dict[str, float] = {}
+    with_data = [
+        r for r in study_records
+        if r.get("constraint_improvement_rate") is not None
+        and r.get("n_modelled_trials") is not None
+        and r.get("plateau_min_modelled_trials") is not None
+    ]
+    for r in with_data:
+        if (float(r["constraint_improvement_rate"]) <= 0.0
+                and (r.get("p_eligible") or 0.0) == 0.0
+                and int(r["n_modelled_trials"]) >= int(r["plateau_min_modelled_trials"])):
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = round(
+                float(r["constraint_improvement_rate"]), 6)
+    passed = not offenders
+    return InvariantResult(
+        name="check_search_made_progress",
+        passed=passed,
+        expected="constraint_improvement_rate > 0 ODER p_eligible > 0 ODER "
+                 "n_modelled_trials < plateau_min_modelled_trials, je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit stagnierender/wachsender Constraint-"
+                f"Verletzung bei 0 eligiblen Trials nach ausreichend modellierten Trials: "
+                f"{offenders} — der TPE-Sampler hat nachweislich keinen Gradienten gefunden."),
+    )
+
+
+def check_selection_statistic_availability(study_records: list[dict], *,
+                                           min_available_fraction: float = 0.80) -> InvariantResult:
+    """Issue #915 (Pitfall #295) — die WIRKUNGS-Invariante, die ``check_guard_reference_coherence``
+    NICHT ist: jene fragt "wird die konfigurierte Referenz auch verwendet?" (eine Quellen-Prüfung,
+    die unter dem #913-Defekt trotz 0 bewertbarer Trials PASSte, weil der ehrliche dritte Zustand
+    ``'family_median_unavailable'`` keine falsche Referenz behauptete). Diese Invariante fragt
+    stattdessen "liefert der Guard eine BENUTZBARE Schwelle?": der Anteil der ``oos_evaluated=True``
+    Trials mit definiertem ``oos_psr`` muss ``min_available_fraction`` (Default 0.80) erreichen.
+
+    Severity ``blocking`` — ein Sweep, dessen erste Symbole 0 % definierte ``oos_psr`` liefern,
+    soll nach diesem Symbol abbrechen statt 170 Stunden informationsfrei weiterzulaufen (siehe
+    Issue #913 Katalog-Vorbemerkung: 2187 Trials, 0 mit definiertem Sortino/PSR)."""
+    with_evaluated = [r for r in study_records if (r.get("n_evaluable") or 0) > 0]
+    if not with_evaluated:
+        return InvariantResult(
+            name="check_selection_statistic_availability",
+            passed=True,
+            expected=f"Anteil oos_evaluated-Trials mit definiertem oos_psr >= "
+                     f"{min_available_fraction} je Study",
+            actual=None,
+            severity="blocking",
+            detail="Keine Study mit oos_evaluated-Trials — nicht anwendbar.",
+        )
+    offenders: dict[str, float] = {}
+    for r in with_evaluated:
+        n_evaluable = int(r["n_evaluable"])
+        n_available = int(r.get("n_selection_statistic_available") or 0)
+        fraction = n_available / n_evaluable if n_evaluable else 0.0
+        if fraction < min_available_fraction:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = round(fraction, 4)
+    passed = not offenders
+    return InvariantResult(
+        name="check_selection_statistic_availability",
+        passed=passed,
+        expected=f"Anteil oos_evaluated-Trials mit definiertem oos_psr >= "
+                 f"{min_available_fraction} je Study",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies unter der Mindestverfügbarkeit "
+                f"({min_available_fraction}) einer definierten Selektions-Teststatistik: "
+                f"{offenders} — die Eligibility-Auswertung dieser Studies ist strukturell "
+                "informationsfrei (Issue #913/#915), keine Aussage über die Strategien."),
     )
 
 
@@ -723,7 +901,18 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
 # nur noch ihre KONZENTRATION (siehe check_inference_diagnostics_concentration). Alle übrigen Codes
 # (allen voran EQUITY_NONPOSITIVE) bleiben echte Defekt-Indikatoren — ihre Abwesenheit ist weiterhin
 # die Norm.
-_REGULAR_THIRD_OUTCOME_CODES = frozenset({"SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE"})
+#
+# Issue #918 — SORTINO_GUARD_REFERENCE_UNAVAILABLE (#901/#913) gehört in dieselbe Klasse wie die
+# beiden bestehenden Codes: 'kein belastbarer Familien-Median (noch)' ist eine Kaltstart-Aussage
+# über die Study-Historie, keine über die Strategie — derselbe "nicht messbar ≠ schlecht"-Fall.
+# BEWUSST NICHT aus _contracts.INFERENCE_DIAGNOSTIC_CODES.failure_policy abgeleitet (dort tragen
+# SORTINO_GUARD_TRIPPED UND EQUITY_NONPOSITIVE identisch failure_policy='prune', gehören aber
+# HIER in unterschiedliche Klassen — EQUITY_NONPOSITIVE bleibt ein echter Defekt-Indikator trotz
+# ebenfalls geprunter Trial-Behandlung). failure_policy beschreibt die REWARD-Konsequenz, dieses
+# Set beschreibt die DEFEKT-Konsequenz — zwei unabhängige Dimensionen desselben Codes.
+_REGULAR_THIRD_OUTCOME_CODES = frozenset({
+    "SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE", "SORTINO_GUARD_REFERENCE_UNAVAILABLE",
+})
 
 
 def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
@@ -903,7 +1092,21 @@ def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
 
 _REWARD_TERM_NUMERIC_KEYS = (
     "base", "divergence", "dd_penalty", "param_pen", "turnover", "fold_dispersion", "tie_breaker",
+    # Issue #927 — vorher NICHT in der Varianz-Tabelle, obwohl beide Terme in jedem Trial
+    # gestempelt werden (reward.py): gate_distance_penalty ist unter dem #913-Defekt der GRÖSSTE
+    # Einzelterm (0,14–0,31), time_box_penalty ist strukturell inert (Gewicht 0.0 seit v14, siehe
+    # _CONFIGURED_INACTIVE_REWARD_TERMS unten) — beide waren dadurch bislang unbeobachtbar.
+    "gate_distance_penalty", "time_box_penalty",
 )
+
+# Issue #927 Fix 2 — Terme, deren niedrige/keine Varianz ein DOKUMENTIERTER Normalzustand ist,
+# keine REWARD_TERM_INERT-Auffälligkeit: tie_breaker ist konstruktionsbedingt nahezu konstant
+# (reines Tie-Break-Signal); time_box_penalty ist inert, weil sein konfiguriertes Gewicht
+# (optimizer.json['penalty_time_box_weight']) seit v14 auf 0.0 steht. Eine dynamische, aus der
+# Config abgeleitete Fassung (jeder Term mit Gewicht 0.0) wäre die vollständigere Lösung, würde
+# aber das Config-Objekt bis in report._study_record durchreichen müssen — hier bewusst auf die
+# beiden aktuell bekannten Fälle beschränkt (dokumentiert, kein stiller Fallback).
+_CONFIGURED_INACTIVE_REWARD_TERMS = frozenset({"tie_breaker", "time_box_penalty"})
 
 # Issue #764 — Zielkorridor je Term (Anteil an der SUMME aller Term-Varianzen, siehe
 # ``reward_term_variance_table``). Ein Term dauerhaft UNTER 0.02 traegt praktisch keine
@@ -917,10 +1120,13 @@ _REWARD_TERM_VARIANCE_CORRIDOR = (0.02, 0.30)
 
 
 def _eligible_reward_terms(trials: list[dict]) -> list[dict]:
-    """Gemeinsame Extraktion fuer ``check_reward_term_variance``/``reward_term_variance_table``:
-    die ``reward_terms``-Dicts aller Trials, die tatsaechlich OOS-evaluiert wurden UND einer
-    eligiblen/pareto-Kohorte angehoeren (der einzige Ast, auf dem ein Terme-Vergleich sinnvoll ist —
-    ein unevaluierbarer Trial traegt keine Reward-Term-Zerlegung)."""
+    """Die ``reward_terms``-Dicts aller Trials, die tatsaechlich OOS-evaluiert wurden UND einer
+    eligiblen/pareto-Kohorte angehoeren. Issue #927 — NICHT mehr die primaere Kohorte fuer
+    ``check_reward_term_variance``/``reward_term_variance_table`` (siehe ``_evaluated_reward_
+    terms``): bei ``p_eligible == 0`` (z. B. unter dem #913-Defekt) ist diese Liste IMMER leer,
+    obwohl jeder evaluierte Trial eine vollstaendige reward_terms-Zerlegung traegt (branch=
+    'failure'). Bleibt als ZUSAETZLICHE, engere Teilmengen-Sicht erhalten, wenn sie nicht leer
+    ist (#927 Fix 1: 'mit einer zusaetzlichen Spalte fuer die eligible Teilmenge')."""
     return [
         t.get("reward_terms") for t in trials
         if t.get("oos_evaluated") is True and t.get("reward_terms")
@@ -928,36 +1134,71 @@ def _eligible_reward_terms(trials: list[dict]) -> list[dict]:
     ]
 
 
+def _evaluated_reward_terms(trials: list[dict]) -> list[dict]:
+    """Issue #927 (Pitfall #302) — die PRIMAERE Kohorte fuer die Reward-Term-Varianzanalyse: JEDER
+    ``oos_evaluated=True``-Trial traegt eine vollstaendige ``reward_terms``-Zerlegung, unabhaengig
+    vom ``branch`` (auch ``'failure'`` — der Reward ist seit #629 ausdruecklich auf der
+    EVALUIERTEN, nicht der eligiblen Kohorte definiert: 'evaluated-aber-ineligible Trials teilen
+    den Qualitaets-Kern der eligiblen'). Eine Varianz-Analyse, die auf der eligiblen (=
+    AUSGEWAEHLTEN) Kohorte rechnet, ist Selection-on-the-dependent-variable (Pitfall #302) — auf
+    der Menge der Ueberlebenden sind praktisch alle Gates erfuellt, die Varianz, die man messen
+    will, ist dort weggeschnitten."""
+    return [
+        t.get("reward_terms") for t in trials
+        if t.get("oos_evaluated") is True and t.get("reward_terms")
+    ]
+
+
 def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
-    """Issue #764 — die VOLLSTAENDIGE Varianz-Tabelle je Reward-Term fuer den #742-Report, statt nur
-    der binaeren inert/nicht-inert-Klassifikation von ``check_reward_term_variance``: je Term
-    ``std`` (Streuung ueber die eligible Kohorte) und ``var_contrib`` (Anteil der Term-VARIANZ an der
-    SUMME aller sieben Term-Varianzen, ``var_k / Σ var_j`` — die Groesse, gegen die der
+    """Issue #764/#927 — die VOLLSTAENDIGE Varianz-Tabelle je Reward-Term fuer den #742-Report,
+    statt nur der binaeren inert/nicht-inert-Klassifikation von ``check_reward_term_variance``: je
+    Term ``std`` (Streuung ueber die EVALUIERTE Kohorte, #927 — vorher die eligible Kohorte, die
+    bei ``p_eligible == 0`` immer leer war) und ``var_contrib`` (Anteil der Term-VARIANZ an der
+    SUMME aller Term-Varianzen, ``var_k / Σ var_j`` — die Groesse, gegen die der
     ``_REWARD_TERM_VARIANCE_CORRIDOR`` gemessen wird). ``in_target_corridor`` markiert Terme
     ausserhalb ``[0.02, 0.30]`` (Kandidaten fuer Entfernung bzw. Herunterskalierung, siehe #764 —
     die tatsaechliche Entscheidung braucht eine reale Kohorte, diese Tabelle liefert nur die Evidenz
-    dafuer).
+    dafuer). ``configured_inactive`` markiert Terme mit konfiguriertem Gewicht 0.0 (aktuell
+    ``tie_breaker``/``time_box_penalty``, siehe ``_CONFIGURED_INACTIVE_REWARD_TERMS``) — inert ist
+    ihr dokumentierter Normalzustand, kein REWARD_TERM_INERT-Befund. ``eligible_std``/
+    ``eligible_var_contrib`` ergaenzen die engere eligible Teilmenge, wenn sie nicht leer ist
+    (``None`` sonst).
 
-    Leere Liste bei < 2 eligiblen Trials mit ``reward_terms`` (keine Varianz-Aussage moeglich,
-    konsistent zu ``check_reward_term_variance``)."""
-    eligible_terms = _eligible_reward_terms(trials)
-    if len(eligible_terms) < 2:
+    Leere Liste bei < 2 evaluierten Trials mit ``reward_terms``."""
+    evaluated_terms = _evaluated_reward_terms(trials)
+    if len(evaluated_terms) < 2:
         return []
+    eligible_terms = _eligible_reward_terms(trials)
     lo, hi = _REWARD_TERM_VARIANCE_CORRIDOR
     variances = {
-        k: statistics.pvariance([float(t.get(k, 0.0)) for t in eligible_terms])
+        k: statistics.pvariance([float(t.get(k, 0.0)) for t in evaluated_terms])
         for k in _REWARD_TERM_NUMERIC_KEYS
     }
     total_var = sum(variances.values()) or 1.0
+    eligible_variances: dict[str, float] | None = None
+    eligible_total_var = 1.0
+    if len(eligible_terms) >= 2:
+        eligible_variances = {
+            k: statistics.pvariance([float(t.get(k, 0.0)) for t in eligible_terms])
+            for k in _REWARD_TERM_NUMERIC_KEYS
+        }
+        eligible_total_var = sum(eligible_variances.values()) or 1.0
     table = []
     for k in _REWARD_TERM_NUMERIC_KEYS:
         var_contrib = variances[k] / total_var
-        table.append({
+        entry = {
             "term": k,
             "std": round(variances[k] ** 0.5, 6),
             "var_contrib": round(var_contrib, 6),
             "in_target_corridor": bool(lo <= var_contrib <= hi),
-        })
+            "configured_inactive": k in _CONFIGURED_INACTIVE_REWARD_TERMS,
+            "eligible_std": None,
+            "eligible_var_contrib": None,
+        }
+        if eligible_variances is not None:
+            entry["eligible_std"] = round(eligible_variances[k] ** 0.5, 6)
+            entry["eligible_var_contrib"] = round(eligible_variances[k] / eligible_total_var, 6)
+        table.append(entry)
     return table
 
 
@@ -1035,31 +1276,36 @@ def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5
 def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01) -> InvariantResult:
     """Verallgemeinerung von ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621): statt einer
     einzelnen WARNING-Zeile pro inertem Term liefert diese Pruefung die VOLLSTAENDIGE Liste ueber
-    alle eligiblen Trials einer Study. Ein Term gilt als inert, wenn seine Streuung < ``inert_ratio``
-    der Streuung des Gesamt-Rewards ist — derselbe Schwellenwert wie das Original
-    (``std_k < 0.01 * rew_std``).
+    alle EVALUIERTEN Trials einer Study (Issue #927 — vorher die eligible Kohorte, siehe
+    ``_evaluated_reward_terms``-Docstring/Pitfall #302). Ein Term gilt als inert, wenn seine
+    Streuung < ``inert_ratio`` der Streuung des Gesamt-Rewards ist — derselbe Schwellenwert wie das
+    Original (``std_k < 0.01 * rew_std``). Terme in ``_CONFIGURED_INACTIVE_REWARD_TERMS`` (Issue
+    #927 Fix 2 — Gewicht 0.0 ist ihr dokumentierter Normalzustand) werden von der Alarm-Liste
+    ausgenommen, auch wenn ihre Streuung technisch unter der Schwelle liegt.
 
     ``trials`` ist eine Liste von ``user_attrs``-artigen Dicts (je Trial ``oos_evaluated`` +
     ``reward_terms``), NICHT Optuna-``Trial``-Objekte — pure Funktion, synthetisch testbar."""
-    eligible_terms = _eligible_reward_terms(trials)
-    if len(eligible_terms) < 2:
+    evaluated_terms = _evaluated_reward_terms(trials)
+    if len(evaluated_terms) < 2:
         return InvariantResult(
             name="check_reward_term_variance",
             passed=True,
             expected=[],
             actual=[],
-            detail="< 2 eligible Trials mit reward_terms — keine Varianz-Aussage moeglich.",
+            detail="< 2 evaluierte Trials mit reward_terms — keine Varianz-Aussage moeglich.",
         )
     rew_vals = [
         (t.get("base", 0.0) - t.get("divergence", 0.0) - t.get("dd_penalty", 0.0)
          - t.get("param_pen", 0.0) - t.get("turnover", 0.0) - t.get("fold_dispersion", 0.0)
          + t.get("tie_breaker", 0.0))
-        for t in eligible_terms
+        for t in evaluated_terms
     ]
     rew_std = statistics.pstdev(rew_vals)
     inert_terms = []
     for k in _REWARD_TERM_NUMERIC_KEYS:
-        vals = [float(t.get(k, 0.0)) for t in eligible_terms]
+        if k in _CONFIGURED_INACTIVE_REWARD_TERMS:
+            continue
+        vals = [float(t.get(k, 0.0)) for t in evaluated_terms]
         std_k = statistics.pstdev(vals)
         if std_k < inert_ratio * rew_std:
             inert_terms.append(k)
@@ -1246,6 +1492,54 @@ def check_effective_stop_distance(study_records: list[dict], *,
                 f"konfigurierter Stop-Abstand ({min_ratio}): {offenders} — der Stop reagiert nicht "
                 "auf seinen eigenen Multiplikator (Pitfall #286) und rastet vermutlich auf der "
                 "ATR-Schätzung statt auf dem Preis-Extremum (Pitfall #285, Issue #897)."),
+    )
+
+
+def check_n_periods_homogeneity(study_records: list[dict], *,
+                                max_ratio: float = 6.0) -> InvariantResult:
+    """Issue #923 — ``oos_n_periods_median`` (#862) streut je nach Strategie stark selbst
+    INNERHALB desselben Symbols (unterschiedliche Handelsfrequenz ⇒ unterschiedlich viele Bars
+    mit Rendite ≠ 0) — eine Spannweite von Faktor 11,3 auf demselben Symbol XOM wurde beobachtet.
+    ``n_periods`` ist gleichzeitig (a) der Nenner jeder Sortino-/PSR-Schätzung, (b) die
+    Referenzgrösse des numerischen Guards (#916), (c) die Eingangsgrösse für
+    ``deflation_max_n_periods_ratio`` (#865) — bei starker Heterogenität greift die
+    #865-Heterogenitäts-Suppression für praktisch jede Familie, ``deflated_dsr`` bleibt ``None``,
+    und ``None`` muss nach Pitfall #277 ablehnen. Die Heterogenität ist damit ein stiller
+    Promotions-Blocker, unabhängig von #913.
+
+    Gruppiert ``study_records`` nach ``symbol`` und vergleicht je Symbol
+    ``max(oos_n_periods_median) / min(oos_n_periods_median)`` gegen ``max_ratio`` (Default 6.0,
+    der Kalibrierpunkt für ``deflation_max_n_periods_ratio``, dort heute 4.0). ``severity='high'``
+    (nicht ``'blocking'``) — die Heterogenität selbst blockiert keine einzelne Study, sie ist ein
+    Diagnosesignal für die #865-Kalibrierung."""
+    by_symbol: dict[str, list[float]] = {}
+    for r in study_records:
+        symbol = r.get("symbol")
+        median = r.get("oos_n_periods_median")
+        if symbol is None or median is None:
+            continue
+        by_symbol.setdefault(symbol, []).append(float(median))
+    offenders: dict[str, float] = {}
+    for symbol, medians in by_symbol.items():
+        if len(medians) < 2:
+            continue
+        lo, hi = min(medians), max(medians)
+        if lo <= 0:
+            continue
+        ratio = hi / lo
+        if ratio > max_ratio:
+            offenders[symbol] = round(ratio, 2)
+    passed = not offenders
+    return InvariantResult(
+        name="check_n_periods_homogeneity",
+        passed=passed,
+        expected=f"max(oos_n_periods_median) / min(oos_n_periods_median) <= {max_ratio} je Symbol",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) mit n_periods-Spannweite > {max_ratio}: {offenders} — "
+                "die #865-Heterogenitäts-Suppression (deflation_max_n_periods_ratio) greift "
+                "vermutlich für praktisch jede Familie dieses Symbols (Issue #923)."),
     )
 
 
