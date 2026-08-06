@@ -234,8 +234,15 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         # siehe adx_atr_momentum.py-Docstring, analog DonchianRegimeBreakout/#691). `adx_period`
         # ist seither funktional TOT (kein Effekt auf das Entry-Signal) und würde sonst
         # Phantom-Tuning betreiben (Pitfall #4) — bleibt in der Config als Re-Aktivierungspunkt.
-        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        # Issue #908 — die #870-Bounds-Öffnung hat das Frequenzproblem (0 eligible Trials, gesperrt
+        # durch einen zu engen Suchraum) gelöst und dabei ein Regime freigegeben, in dem die
+        # Strategie alle ~5,7 Bars handelt (754 OOS-Trades / 180 d bei einer 24-Bar-Zeitbox — kein
+        # Momentum-Handel mehr, sondern hochfrequentes Rauschen-Traden ohne Informationsgewinn, nur
+        # Durchsatzkosten). cooldown_bars-Untergrenze 2 → 6 UND min_holding_time NEU im Suchraum
+        # (vorher an KEINER Strategie gesampelt, immer Default 0) begrenzen das Handelsregime.
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 6, 36)
         mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mh_lo, mh_hi = _bounds_for(strategy, symbol, "min_holding_time", 0, 8)
         params = {
             "ema_period": trial.suggest_int("ema_period", 20, 100),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 4.0),
@@ -243,6 +250,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
+            "min_holding_time": trial.suggest_int("min_holding_time", mh_lo, mh_hi),
         }
     elif strategy == "MeanReversionStrategy":
         params = {

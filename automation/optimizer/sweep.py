@@ -13,6 +13,7 @@ import argparse
 import collections
 import json
 import logging
+import statistics
 import time
 from pathlib import Path
 
@@ -377,10 +378,29 @@ def _load_symbol_bar_quality_sample(symbol: str, catalog_path: Path | None = Non
         bars = df["mid"].resample("1h").agg(["max", "min", "last"]).dropna()
         if bars.empty:
             return None
+        # Issue #900 Fix 1 — median_delta_t_s (Sekunden zwischen aufeinanderfolgenden BESETZTEN
+        # Bars, nicht der Kalenderraster-Default) und bar_coverage_ratio (besetzte Stunden /
+        # Kalenderstunden der Stichprobe) — beide Rohmaterial fuer die #900-Preflight-Kennzahlen
+        # und fuer #902s bar_seconds-Aufloesung.
+        idx = bars.index
+        if len(idx) > 1:
+            deltas_s = idx.to_series().diff().dropna().dt.total_seconds()
+            median_delta_t_s = float(deltas_s.median()) if not deltas_s.empty else 3600.0
+        else:
+            median_delta_t_s = 3600.0
+        calendar_hours = max(1.0, (idx[-1] - idx[0]).total_seconds() / 3600.0)
+        bar_coverage_ratio = len(idx) / calendar_hours
         return {
             "highs": bars["max"].tolist(),
             "lows": bars["min"].tolist(),
             "closes": bars["last"].tolist(),
+            "median_delta_t_s": median_delta_t_s,
+            "bar_coverage_ratio": bar_coverage_ratio,
+            # Issue #900 Fix 4 — Stichprobenumfang und Fenster im Event, sonst ist die Aussage
+            # nicht reproduzierbar.
+            "n_sample_ticks": int(len(df)),
+            "window_start": idx[0].isoformat(),
+            "window_end": idx[-1].isoformat(),
         }
     except Exception:
         return None
@@ -423,6 +443,76 @@ def latest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[st
                 newest = None
         out[sym] = newest
     return out
+
+
+def earliest_ts_by_symbol(symbols, *, catalog_path: Path | None = None) -> dict[str, int | None]:
+    """Issue #909 (Pitfall #291) — ältester ``ts_event`` (Epoch-ns) je Symbol aus den Parquet-Row-
+    Group-Statistiken, symmetrisch zu ``latest_ts_by_symbol`` (dieselbe I/O-Struktur, ``.min`` statt
+    ``.max``-Statistik).
+
+    Root-Cause #909: der ``[#624]``-Preflight verwechselte die Achse — ``min(latest_ts_by_symbol(...)
+    .values())`` ist das Minimum über die JÜNGSTEN Zeitpunkte je Symbol (wie eng die Enddaten über
+    die Symbole streuen), nicht der älteste Datenpunkt irgendeines Symbols (dessen Historienlänge).
+    Auf einem gut gepflegten Katalog, dessen Symbole alle bis heute reichen, konvergiert dieser Wert
+    gegen 0 — der Alarm wird lauter, je gesünder der Katalog ist. Diese Funktion liefert die fehlende
+    Hälfte, damit die Spanne je Symbol (``latest - earliest``, DIESELBE Achse) berechenbar wird."""
+    if catalog_path is None:
+        base = config_dir()
+        raw = "data/nautilus"
+        bt = base / "backtest.json"
+        if bt.exists():
+            try:
+                with open(bt, "r", encoding="utf-8") as f:
+                    raw = (json.load(f) or {}).get("catalog_path", "data/nautilus")
+            except (OSError, ValueError):
+                pass
+        catalog_path = base.parent.parent / raw
+
+    out: dict[str, int | None] = {}
+    for sym in symbols:
+        oldest: int | None = None
+        pq_file = Path(catalog_path) / "data" / "quote_tick" / sym / "data.parquet"
+        if pq_file.exists():
+            try:
+                import pyarrow.parquet as pq
+                pf = pq.ParquetFile(str(pq_file))
+                if "ts_event" in pf.schema.names:
+                    idx = pf.schema.names.index("ts_event")
+                    for rg in range(pf.metadata.num_row_groups):
+                        st = pf.metadata.row_group(rg).column(idx).statistics
+                        lo = int(st.min)
+                        oldest = lo if oldest is None else min(oldest, lo)
+            except Exception:
+                oldest = None
+        out[sym] = oldest
+    return out
+
+
+def per_symbol_span_stats(latest_ts: dict[str, int | None], earliest_ts: dict[str, int | None],
+                          symbols, *, required_span_days: float | None = None) -> dict:
+    """Issue #909 (Pitfall #291) — reine Aggregationsfunktion: Katalog-Spanne (Tage) JE SYMBOL
+    (``latest - earliest``, dieselbe Achse), dann Minimum/Median/``n_symbols_below_required`` über
+    die Symbole. Ein aggregierter Diagnosewert über heterogene Entitäten (min/max über eine Menge
+    von ENDZEITPUNKTEN, wie die alte Berechnung es tat) misst die STREUUNG, nicht die Grösse —
+    Aggregate über Symbole brauchen die Achse im Namen (hier: die Spanne, nicht der Zeitpunkt).
+
+    Symbole ohne beide Zeitstempel (fehlende Datei/Lesefehler) tragen keine Spanne bei (fail-open,
+    dieselbe Semantik wie ``latest_ts_by_symbol``/``earliest_ts_by_symbol``)."""
+    spans = [
+        (latest_ts[s] - earliest_ts[s]) / 1e9 / 86400.0
+        for s in symbols
+        if latest_ts.get(s) is not None and earliest_ts.get(s) is not None
+    ]
+    if not spans:
+        return {"min_span_days": None, "median_span_days": None, "n_symbols_below_required": None}
+    n_below = (
+        sum(1 for d in spans if d < required_span_days) if required_span_days is not None else None
+    )
+    return {
+        "min_span_days": min(spans),
+        "median_span_days": statistics.median(spans),
+        "n_symbols_below_required": n_below,
+    }
 
 
 def compute_oos_window_start_ns(config: dict, *, now: dt.datetime | None = None, catalog_newest_ns: int | None = None) -> int | None:
@@ -1024,12 +1114,24 @@ def _family_period_returns_from_studies(pairs, studies) -> dict[str, list[list[f
     Über-Deflation. Seit #813 stempelt ``run_optimization`` ``oos_period_returns`` für JEDEN
     ``oos_evaluated`` Trial — Zähler und Decluster-Matrix operieren jetzt auf derselben Menge
     (``confirm.deflation_cluster_coverage`` telemetriert den verbleibenden Deckungsgrad,
-    ``invariants.check_deflation_cluster_coverage`` bricht bei < 0.9 als Regressionswächter)."""
+    ``invariants.check_deflation_cluster_coverage`` bricht bei < 0.9 als Regressionswächter).
+
+    Issue #905 (#822-Regression) — Root-Cause: dieser Filter blieb bei ``oos_evaluated is True``
+    stehen, während ``_family_n_per_study_from_studies`` (der GEZÄHLTE #822-Wert, der über
+    ``_family_n_stage1_from_studies`` an ``confirm(...)`` als ``deflation_n_family`` geht) bereits
+    seit #822 auf ``oos_selection_statistic_available is True`` umgestellt wurde — ein Trial mit
+    ``SORTINO_GUARD_TRIPPED``/``EQUITY_NONPOSITIVE`` ist ``oos_evaluated=True``, trägt aber KEINEN
+    Sortino/PSR und hat das Maximum unter H₀ nicht beeinflusst. Die #904-``max()``-Zeile hat diesen
+    Auseinanderlauf (``len(family_rows)`` > ``deflation_n_family``) bislang kaschiert, indem sie
+    ``deflation_n_family_raw`` einfach auf die grössere Matrixzahl hochkorrigierte. Jetzt, wo #904
+    diese Zeile entfernt hat, MUSS der Filter hier mit der Zählung übereinstimmen — sonst declustert
+    ``confirm.py`` Konfigurationen, die nie Kandidat für die Selektion waren (und
+    ``deflation_cluster_coverage`` bleibt strukturell < 1)."""
     family_returns: dict[str, list[list[float]]] = {}
     for (_strategy, symbol, _reason), study in zip(pairs, studies):
         trials = getattr(study, "trials", None) or []
         for t in trials:
-            if getattr(t, "user_attrs", {}).get("oos_evaluated") is not True:
+            if getattr(t, "user_attrs", {}).get("oos_selection_statistic_available") is not True:
                 continue
             rets = t.user_attrs.get("oos_period_returns") or []
             if rets:
@@ -1056,9 +1158,15 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
     Retention) — der Aufrufer (``_run_confirm_and_export``) muss NICHT selbst absichern."""
     log = logging.getLogger("optimizer")
     try:
-        entry = champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        # Issue #910 Fix 2 — unterscheidet 'Store leer' (die Kette hat noch nie geschrieben) von
+        # 'Store gefüllt, aber Eintrag inadmissibel' (der granulare champion_is_admissible-Reason-
+        # Code, z. B. 'EMPTY_PARAMS'/'REJECT_HOLDOUT_GATE') — vorher trugen beide Fälle denselben
+        # 'NO_ADMISSIBLE_ENTRY'-String, und der Report konnte nicht sagen, ob die Kette nie startet
+        # oder ständig scheitert.
+        entry, _no_entry_reason = champions.load_champion_entry_with_reason(
+            strategy, symbol, opt_data=opt_data)
         applied = False
-        skipped_reason = "NO_ADMISSIBLE_ENTRY"
+        skipped_reason = _no_entry_reason or "STORE_EMPTY"
         advance_days = None
         corroboration_count = None
         if entry is not None:
@@ -1243,32 +1351,32 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # OOS-Grenze (#457, compute_walk_forward_window). Beide fail-open (None) ⇒ kein Skip.
     latest_ts = latest_ts_by_symbol(syms)
     global_catalog_newest_ns = max((v for v in latest_ts.values() if v is not None), default=None) if latest_ts else None
-    global_catalog_oldest_ns = min((v for v in latest_ts.values() if v is not None), default=None) if latest_ts else None
     start_ns = compute_oos_window_start_ns(config, catalog_newest_ns=global_catalog_newest_ns)
     holdout_window_reach_target_ns = compute_holdout_window_reach_target_ns(config, catalog_newest_ns=global_catalog_newest_ns)
 
-    # Issue #624 — Holdout-Geometrie vs. TATSÄCHLICHE Katalog-Spanne beim Sweep-Start LOGGEN. Die
-    # unbequeme Kernaussage: auf 45 d Holdout (T≈202 MTM-Perioden) ist selbst der beste Grenzkandidat
-    # (per-Periode-Sortino ≈ 0.114) NICHT signifikant für eine 95 %-Entscheidung — PSR(0)=0.9464 < 0.95,
-    # T≥211 nötig. Die Promotionsschwelle DSR/PSR wird bewusst NICHT gesenkt; die Entscheidung ist in
-    # manuals/strategie_optimierung.md §Holdout-Signifikanz dokumentiert. Der Preflight prüft die
-    # Reachability bereits per Symbol; hier die aggregierte Diagnose (verfügbare vs. benötigte Spanne).
+    # Issue #624/#909 — Holdout-Geometrie vs. TATSÄCHLICHE Katalog-Spanne beim Sweep-Start LOGGEN.
+    # Root-Cause #909 (Pitfall #291): die VORHERIGE Berechnung (``min(latest_ts.values())`` als
+    # "ältester" Punkt) mass die STREUUNG der Enddaten über die Symbole, nicht die Historienlänge
+    # irgendeines Symbols — auf einem gesunden Katalog (alle Symbole enden nahe beieinander)
+    # konvergierte der Alarm gegen 0 und war umso lauter, je gesünder der Katalog war. Die Spanne
+    # wird jetzt PRO SYMBOL berechnet (``latest - earliest``, dieselbe Achse) und als Minimum/Median
+    # über die Symbole berichtet — eine aggregierte Spanne über heterogene Symbole ist ohnehin keine
+    # sinnvolle Einzelgrösse.
+    _earliest_ts = earliest_ts_by_symbol(syms)
     _wf = config.get("walk_forward") or {}
     _req_span = required_span_days(_wf)
-    _avail_span = (
-        (global_catalog_newest_ns - global_catalog_oldest_ns) / 1e9 / 86400.0
-        if global_catalog_newest_ns is not None and global_catalog_oldest_ns is not None
-        else None
-    )
-    _covers = "n/a" if _avail_span is None else ("JA" if _avail_span >= _req_span else "NEIN")
+    _span_stats = per_symbol_span_stats(latest_ts, _earliest_ts, syms, required_span_days=_req_span)
     logging.getLogger("optimizer").info(
         "[#624] Holdout-Geometrie: required_span_days=%s (is=%s + embargo=%s + %s×oos=%s + holdout=%s); "
-        "verfügbare Katalog-Spanne=%s d (deckt benötigte Spanne: %s). 45-d-Holdout ⇒ T≈202 Bars ⇒ "
-        "PSR(0)≈0.946 < 0.95 (T≥211 nötig). Promotionsschwelle DSR/PSR wird EXPLIZIT und dokumentiert "
-        "getragen (siehe manuals/strategie_optimierung.md §Holdout-Signifikanz).",
+        "min_span_days=%s, median_span_days=%s (je Symbol, latest-earliest), "
+        "n_symbols_below_required=%s von %d. 45-d-Holdout ⇒ T≈202 Bars ⇒ PSR(0)≈0.946 < 0.95 "
+        "(T≥211 nötig). Promotionsschwelle DSR/PSR wird EXPLIZIT und dokumentiert getragen (siehe "
+        "manuals/strategie_optimierung.md §Holdout-Signifikanz).",
         _req_span, _wf.get("is_window_days"), _wf.get("embargo_period_days"),
         _wf.get("splits"), _wf.get("oos_window_days"), _wf.get("holdout_days"),
-        None if _avail_span is None else round(_avail_span, 1), _covers,
+        None if _span_stats["min_span_days"] is None else round(_span_stats["min_span_days"], 1),
+        None if _span_stats["median_span_days"] is None else round(_span_stats["median_span_days"], 1),
+        _span_stats["n_symbols_below_required"], len(syms),
     )
 
     # Issue #807 — Bar-QUALITAETS-Preflight VOR Phase 1 je Symbol (Preflight statt Post-Mortem):
@@ -1295,11 +1403,29 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 continue
             _quality = check_bar_quality(
                 _sample["highs"], _sample["lows"], _sample["closes"],
-                max_frac_high_eq_low=_bar_quality_cfg.get("max_frac_high_eq_low", 0.5),
+                max_frac_high_eq_low=_bar_quality_cfg.get("max_frac_high_eq_low", 0.20),
                 max_frac_identical_consecutive_closes=_bar_quality_cfg.get(
                     "max_frac_identical_consecutive_closes", 0.5),
                 min_distinct_closes=_bar_quality_cfg.get("min_distinct_closes", 10),
+                max_frac_zero_true_range=_bar_quality_cfg.get("max_frac_zero_true_range", 0.25),
+                min_atr_median_bps=_bar_quality_cfg.get("min_atr_median_bps", 5.0),
+                bar_coverage_ratio=_sample.get("bar_coverage_ratio"),
+                median_delta_t_s=_sample.get("median_delta_t_s"),
             )
+            # Issue #900 Fix 3 — BAR_QUALITY_PROFILE-Event je Symbol, UNABHAENGIG vom Pruefergebnis
+            # (ein bestandener Preflight ohne Zahlen ist keine Evidenz). Fix 4 — Stichprobenumfang
+            # und Fenster im Event, sonst ist die Aussage nicht reproduzierbar.
+            emit_execution_event(_log, "BAR_QUALITY_PROFILE", {
+                "symbol": _sym,
+                "frac_zero_true_range": _quality.get("frac_zero_true_range"),
+                "atr_median_bps": _quality.get("atr_median_bps"),
+                "bar_coverage_ratio": _quality.get("bar_coverage_ratio"),
+                "median_delta_t_s": _quality.get("median_delta_t_s"),
+                "n_sample_ticks": _sample.get("n_sample_ticks"),
+                "window_start": _sample.get("window_start"),
+                "window_end": _sample.get("window_end"),
+                "passed": _quality["passed"],
+            })
             if _quality["passed"]:
                 continue
             _degenerate_syms.append(_sym)
@@ -1701,6 +1827,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # das nach ~wenigen Symbolen, nicht erst nach dem vollen Lauf.
     _wallclock_forecast_after_symbols = int(opt_data.get("wallclock_forecast_after_symbols", 3))
     _wallclock_forecast_done = False
+    # Issue #908 Fix 2 — die Vorab-Prognose bekommt jetzt eine KONSEQUENZ statt nur einer Warnung:
+    # überschreitet die Hochrechnung sweep_max_wallclock_h, wird die Symbolliste (bereits
+    # least_recently_covered-rotiert, #841) gekürzt, statt den Lauf ins Timeout laufen zu lassen.
+    # None ⇒ keine Kürzung (Default/kein Budget/Prognose innerhalb Budget).
+    _wallclock_truncation_limit: int | None = None
 
     # Issue #833 Fix Punkt 3 — Checkpoint EINMAL vor dem ersten Symbol geschrieben, damit
     # symbols_planned auch dann verfuegbar ist, wenn der Lauf schon im allerersten Symbol
@@ -1709,6 +1840,18 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
 
     proposals: list[Path] = []
     for symbol, symbol_pairs in pairs_by_symbol.items():
+        # Issue #908 Fix 2 — die #842-Prognose hat eine Kürzung angeordnet: ab hier keine weiteren
+        # Symbole starten (die bereits laufenden/abgeschlossenen bleiben unangetastet). Der Lauf
+        # endet geordnet (Report wird trotzdem geschrieben, #833-Pfad) statt ins Timeout zu laufen.
+        if (_wallclock_truncation_limit is not None
+                and len(completed_symbols) >= _wallclock_truncation_limit):
+            logging.getLogger("optimizer").warning(
+                "[#908] Symbolliste bei %d/%d Symbolen gekürzt (Vorab-Prognose #842 überschritt "
+                "sweep_max_wallclock_h) — verbleibende Symbole werden in einem Folgelauf via "
+                "least_recently_covered-Rotation (#841) nachgeholt.",
+                len(completed_symbols), len(pairs_by_symbol),
+            )
+            break
         if symbol in completed_symbols:
             logging.getLogger("optimizer").info(
                 "[#799] %s bereits abgeschlossen (Checkpoint, run_id=%s) — übersprungen.",
@@ -1820,10 +1963,14 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 logging.getLogger("optimizer").info(
                     "[#842] Takt %.1f min/Symbol · kein Laufzeit-Budget gesetzt.", _rate_min)
             elif _forecast["shortfall"] > 0:
+                # Issue #908 Fix 2 — Konsequenz statt nur Warnung: die Symbolliste wird auf die
+                # erreichbare Zahl gekürzt (siehe Truncation-Check am Schleifenkopf oben).
+                _wallclock_truncation_limit = _forecast["reachable_symbols"]
                 logging.getLogger("optimizer").warning(
-                    "[#842] Takt %.1f min/Symbol · Budget %.1f h ⇒ Prognose %d von %d Symbolen "
-                    "erreichbar. WARNUNG: %d Symbole werden nicht erreicht (ab Position %d der "
-                    "aktuellen Reihenfolge).", _rate_min, _sweep_max_wallclock_h,
+                    "[#842/#908] Takt %.1f min/Symbol · Budget %.1f h ⇒ Prognose %d von %d Symbolen "
+                    "erreichbar. %d Symbole werden NICHT gestartet (ab Position %d der aktuellen "
+                    "Reihenfolge) — Symbolliste wird gekürzt statt den Lauf ins Timeout laufen zu "
+                    "lassen.", _rate_min, _sweep_max_wallclock_h,
                     _forecast["reachable_symbols"], len(pairs_by_symbol), _forecast["shortfall"],
                     _forecast["reachable_symbols"] + 1,
                 )

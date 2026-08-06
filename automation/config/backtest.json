@@ -17,7 +17,8 @@
       "holdout_days": "Anzahl der Holdout-Tage f\u00fcr Out-of-Sample Validierung nach der Optimierung.",
       "data_history_days": "Issue #445 \u2014 dokumentierte/erwartete Mindest-Datenhistorie pro Symbol in Tagen (Single Source of Truth, deckungsgleich mit strategy_defaults.json._schema). Fallback auf diesen Config-Value statt echter Time-Series-Spanne in Gate-1 Evaluierung (Issue #525).",
       "embargo_period_days": "Issue #466 (Leakage Prevention) \u2014 Embargo-Periode in Tagen zwischen IS-Ende und OOS-Start, um Lookback-Leakage von Indikatoren in die In-Sample Trainingsdaten zu verhindern. Sollte >= max_lookback der Strategie sein.",
-      "retrain": "Issue #675 \u2014 OPT-IN Geometrie-Modus f\u00fcr backtest_runner.compute_fold_boundaries. false (Default, fehlt der Key) \u21d2 bit-identisch zum Pre-#675-Verhalten: EIN statisch am Datenanfang verankertes IS-Fenster fuer ALLE OOS-Folds (testet Regime-PERSISTENZ, nicht Config-ROBUSTHEIT \u2014 AGENTS.md Pitfall #142). true \u21d2 jeder Fold erhaelt sein EIGENES, unmittelbar vorangehendes (rollierendes) IS-Referenzfenster (is_start = oos_start \u2212 embargo \u2212 is_window_days), embargo-sicher (kein Leakage-Kollaps). WICHTIG: Dieses System optimiert EINEN Parametervektor pro Trial ueber die gesamte Zeitspanne (Optuna, kein Per-Fold-Refit) \u2014 retrain=true liefert daher KEIN echtes Parameter-Refit je Fold, sondern eine rollierende IS/OOS-Divergenz-Diagnose (oos_fold_is_oos_divergence, rein additiv/forensisch, KEINE Gate-/Reward-Wirkung). Fuer eine strukturelle Eligibility-Antwort auf Nichtstationaritaet siehe stattdessen die bereits vorhandene CPCV-Infrastruktur (cpcv.py, genutzt in confirm._study_pbo, #663)."
+      "retrain": "Issue #675 \u2014 OPT-IN Geometrie-Modus f\u00fcr backtest_runner.compute_fold_boundaries. false (Default, fehlt der Key) \u21d2 bit-identisch zum Pre-#675-Verhalten: EIN statisch am Datenanfang verankertes IS-Fenster fuer ALLE OOS-Folds (testet Regime-PERSISTENZ, nicht Config-ROBUSTHEIT \u2014 AGENTS.md Pitfall #142). true \u21d2 jeder Fold erhaelt sein EIGENES, unmittelbar vorangehendes (rollierendes) IS-Referenzfenster (is_start = oos_start \u2212 embargo \u2212 is_window_days), embargo-sicher (kein Leakage-Kollaps). WICHTIG: Dieses System optimiert EINEN Parametervektor pro Trial ueber die gesamte Zeitspanne (Optuna, kein Per-Fold-Refit) \u2014 retrain=true liefert daher KEIN echtes Parameter-Refit je Fold, sondern eine rollierende IS/OOS-Divergenz-Diagnose (oos_fold_is_oos_divergence, rein additiv/forensisch, KEINE Gate-/Reward-Wirkung). Fuer eine strukturelle Eligibility-Antwort auf Nichtstationaritaet siehe stattdessen die bereits vorhandene CPCV-Infrastruktur (cpcv.py, genutzt in confirm._study_pbo, #663).",
+      "unknown_asset_class_policy": "Issue #898 Fix 2 \u2014 'reject' (Default) | 'default'. Ein Symbol ohne aufl\u00f6sbare asset_class (weder spread_bps_by_symbol-Override noch ein Eintrag in instrument_map.json) wird unter 'reject' VOR dem Backtest abgewiesen (REJECT_INSTRUMENT_METADATA_INCOMPLETE) statt fail-open mit der DEFAULT-Kostenkonstante verrechnet zu werden (vorher: 4.0bps statt z. B. 3.0bps EQUITY \u2014 33% Kosten\u00fcbersch\u00e4tzung f\u00fcr 47% des Universums, Issue #898). 'default' reproduziert das alte fail-open-Verhalten explizit opt-in."
     }
   },
   "catalog_path": "data/nautilus",
@@ -33,6 +34,7 @@
   "spread_bps_by_symbol": {
     "TSLA.ETORO": 2.0
   },
+  "unknown_asset_class_policy": "reject",
   "spread_modeling": true,
   "fill_model": "bid_ask",
   "worker_log_cleanup": true,

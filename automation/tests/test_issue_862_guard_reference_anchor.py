@@ -68,6 +68,46 @@ def test_unknown_reference_mode_is_fail_loud(monkeypatch, tmp_path):
         br._read_sortino_numeric_guard_reference_mode()
 
 
+def test_family_median_mode_without_provided_value_is_honest_not_silent(monkeypatch, tmp_path):
+    """Issue #901 Fix 1 (Root-Cause) — VOR dem Fix fiel 'family_median' ohne bereitgestelltes
+    family_median_n_periods still auf den absoluten Anker zurück UND stempelte
+    guard_reference_source='absolute' (eine Config, die family_median verlangt, log das Gegenteil).
+    Jetzt: (None, None, 'family_median_unavailable') — der Aufrufer muss den Trial prunen."""
+    import automation.backtest_runner as br
+    (tmp_path / "tournament.json").write_text(
+        json.dumps({"sortino_numeric_guard_reference": "family_median",
+                    "sortino_numeric_guard_min_periods": 1600}), encoding="utf-8")
+    monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cache", None)
+    monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cached", False)
+    monkeypatch.setattr(br, "_sortino_numeric_guard_reference_mode_cache", None)
+    monkeypatch.setattr(br, "config_dir", lambda: tmp_path)
+
+    guard, ref_value, ref_source = _effective_sortino_numeric_guard(25.0, 137)
+    assert guard is None
+    assert ref_value is None
+    assert ref_source == "family_median_unavailable"
+    assert ref_source != "absolute"  # die #901-Root-Cause-Behauptung darf nie wieder auftauchen
+
+
+def test_family_median_mode_with_provided_value_computes_correctly(monkeypatch, tmp_path):
+    """Der (kuenftige) echte Injektionspunkt bleibt funktionsfaehig, sobald ein Aufrufer
+    family_median_n_periods tatsaechlich befuellt."""
+    import automation.backtest_runner as br
+    (tmp_path / "tournament.json").write_text(
+        json.dumps({"sortino_numeric_guard_reference": "family_median"}), encoding="utf-8")
+    monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cache", None)
+    monkeypatch.setattr(br, "_sortino_numeric_guard_min_periods_cached", False)
+    monkeypatch.setattr(br, "_sortino_numeric_guard_reference_mode_cache", None)
+    monkeypatch.setattr(br, "config_dir", lambda: tmp_path)
+
+    guard, ref_value, ref_source = _effective_sortino_numeric_guard(
+        25.0, 126, family_median_n_periods=130.0)
+    assert ref_value == 130.0
+    assert ref_source == "family_median"
+    import math
+    assert guard == pytest.approx(25.0 * math.sqrt(min(1.0, 126 / 130.0)), abs=1e-9)
+
+
 def test_absolute_mode_is_bit_identical_default(monkeypatch, tmp_path):
     import automation.backtest_runner as br
     (tmp_path / "tournament.json").write_text(
@@ -114,13 +154,38 @@ def test_coherence_check_uses_the_median_across_studies():
     assert result.passed is False
 
 
-def test_coherence_check_not_applicable_under_family_median_reference():
-    """Issue #882 Fix Punkt 3 — sortino_numeric_guard_reference='family_median' macht den
-    absoluten Anker inert; der Wächter darf ihn dann nicht mehr rot faerben, selbst bei einem
-    Faktor, der unter 'absolute' FAILen würde."""
+def test_coherence_check_passes_under_family_median_reference_without_absolute_evidence():
+    """Issue #901 — sortino_numeric_guard_reference='family_median' PASSt, solange KEIN Event
+    guard_reference_source=='absolute' meldet (der absolute Ratio-Vergleich unten ist unter diesem
+    Modus nicht die massgebliche Frage mehr — anders als #882 Fix Punkt 3 urspruenglich annahm)."""
     result = inv.check_guard_reference_coherence(1600, [319.0], reference_mode="family_median")
     assert result.passed is True
     assert result.severity == "blocking"
+
+
+def test_coherence_check_fails_when_family_median_mode_observes_absolute_source():
+    """Issue #901 (siebte Wiederkehr Pitfall #267) — Root-Cause-Regressionswächter: die #882-
+    Version dieses Checks liess reference_mode=='family_median' UNBEDINGT passieren (Pitfall #288,
+    ein Wächter, der die Konfiguration nur mit sich selbst vergleicht). Reproduziert den
+    archivierten `ea4c409d`-Lauf: Config verlangt 'family_median', aber alle 5
+    SORTINO_GUARD_TRIPPED-Events melden guard_reference_source=='absolute' (Anker 1600 gegen
+    Median n_periods ≈ 130, Faktor 12,3) — ein Widerspruch, den der Wächter jetzt fängt."""
+    result = inv.check_guard_reference_coherence(
+        1600, [130.0], reference_mode="family_median",
+        observed_guard_reference_sources=["absolute"] * 5)
+    assert result.passed is False
+    assert result.severity == "blocking"
+    assert "absolute" in result.actual
+
+
+def test_coherence_check_passes_under_family_median_with_honest_unavailable_source():
+    """Der ehrliche dritte Zustand ('family_median_unavailable', Issue #901 Fix 1) ist KEIN
+    Widerspruch (er behauptet nicht faelschlich, den absoluten Anker verwendet zu haben) und darf
+    den Wächter nicht FAILen lassen."""
+    result = inv.check_guard_reference_coherence(
+        1600, [130.0], reference_mode="family_median",
+        observed_guard_reference_sources=["family_median_unavailable"] * 5)
+    assert result.passed is True
 
 
 def test_coherence_check_severity_is_blocking():

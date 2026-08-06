@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from automation.optimizer import confirm, run_optimization as ro, sweep
+from automation.optimizer import confirm, invariants as inv, run_optimization as ro, sweep
 from automation.optimizer import trial_config
 from automation.optimizer.cpcv import cluster_effective_configs
 from automation.optimizer.deflation import (
@@ -200,11 +200,17 @@ def test_confirm_without_family_matrix_stays_bit_identical(tmp_path, monkeypatch
 
 def test_family_period_returns_from_studies_groups_by_symbol():
     """``sweep._family_period_returns_from_studies`` sammelt die ``oos_period_returns`` ALLER
-    evaluierten Trials (#784 — dieselbe erweiterte Menge wie ``_family_n_from_studies``, seit #784
-    NICHT mehr nur eligible) ALLER Strategien-Studies DESSELBEN Symbols (Matrix statt Zähler)."""
+    Trials MIT verwertbarer Selektions-Teststatistik (``oos_selection_statistic_available``, Issue
+    #905 — dieselbe Menge wie ``_family_n_per_study_from_studies``/#822, NICHT mehr die breitere
+    ``oos_evaluated``-Kohorte aus #784) ALLER Strategien-Studies DESSELBEN Symbols (Matrix statt
+    Zähler)."""
     class _T:
-        def __init__(self, evaluated, rets):
-            self.user_attrs = {"oos_evaluated": evaluated, "oos_period_returns": rets}
+        def __init__(self, statistic_available, rets):
+            self.user_attrs = {
+                "oos_evaluated": True,
+                "oos_selection_statistic_available": statistic_available,
+                "oos_period_returns": rets,
+            }
 
     class _Study:
         def __init__(self, trials):
@@ -222,6 +228,142 @@ def test_family_period_returns_from_studies_groups_by_symbol():
     family_returns = sweep._family_period_returns_from_studies(pairs, studies)
     assert family_returns["TSLA.ETORO"] == [[0.01, 0.02], [0.03, 0.04], [0.07, 0.08]]
     assert family_returns["AAPL.ETORO"] == [[0.09, 0.10]]
+
+
+def test_family_period_returns_excludes_evaluated_trials_without_selection_statistic():
+    """Issue #905 (#822-Regression) Kern-Regressionsbeleg: ein Trial mit oos_evaluated=True aber
+    oos_selection_statistic_available=False (z. B. SORTINO_GUARD_TRIPPED/EQUITY_NONPOSITIVE) darf
+    NICHT mehr in die Decluster-Matrix einfliessen — er hat das Maximum unter H0 nicht beeinflusst
+    und ist kein Kandidat fuer die Selektion gewesen."""
+    class _T:
+        def __init__(self, statistic_available, rets):
+            self.user_attrs = {
+                "oos_evaluated": True,
+                "oos_selection_statistic_available": statistic_available,
+                "oos_period_returns": rets,
+            }
+
+    class _Study:
+        def __init__(self, trials):
+            self.trials = trials
+
+    pairs = [("StratA", "TSLA.ETORO", "OK")]
+    studies = [_Study([
+        _T(True, [0.01, 0.02]),
+        _T(False, [0.99, 0.99]),  # oos_evaluated, aber KEINE Teststatistik -> ausgeschlossen
+    ])]
+    family_returns = sweep._family_period_returns_from_studies(pairs, studies)
+    assert family_returns["TSLA.ETORO"] == [[0.01, 0.02]]
+
+
+# ── Issue #904: die max()-Zeile darf einen scope-aufgeloesten (per_strategy) N1-Wert nicht mehr ──
+# ── stillschweigend auf die symbolweite Renditeserien-Zahl hochkorrigieren ───────────────────────
+def test_family_raw_is_never_inflated_by_a_larger_period_returns_matrix(tmp_path, monkeypatch):
+    """Issue #904 Symptom-Reproduktion: der Aufrufer loest N1 unter promotion_family_scope=
+    'per_strategy' korrekt auf (z. B. FlashCrashReversal: N1=160), aber deflation_family_period_
+    returns traegt (vor #904 aus einem Aufrufer-Bug) weiterhin die symbolweite Matrix (hier len=881,
+    das reale N_family_effective aus dem ea4c409d-Referenzlauf). Die alte
+    ``max(deflation_n_family_raw, len(family_rows))``-Zeile hatte deflation_n_family_raw dann
+    stillschweigend von 160 auf 881 hochkorrigiert — den #826-Scope aktiv rueckgaengig gemacht statt
+    ihn nur zu ignorieren. Nach dem Fix bleibt N_family_raw exakt der scope-aufgeloeste Wert (160),
+    unabhaengig davon, wie viele Renditeserien uebergeben wurden."""
+    global_params = {"price_breakout_period": 20}
+    cohort_periods = [0.02 + 0.001 * i for i in range(20)]
+    study = _build_study(tmp_path, monkeypatch, n_trials=20, cohort_periods=cohort_periods)
+    fixed_result = _result_payload(sortino_ratio=2.0, dd=0.05, sortino_period=0.03, n_periods=200)
+
+    n1_per_strategy = 160  # die reale FlashCrashReversal-N1 aus dem #904-Referenzlauf
+    oversized_family_rows = _family_rows(k=20, m=44, n_periods=150)  # 880 Zeilen, > N1
+
+    res = confirm.confirm_per_symbol_promotion(
+        study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
+        run_backtest=_holdout_factory(global_params, symbol_result=fixed_result,
+                                      global_result=fixed_result),
+        deflation_n_family=n1_per_strategy,
+        deflation_family_period_returns=oversized_family_rows,
+    )
+
+    # Kern-Regressionsbeleg: NICHT mehr auf 880 hochkorrigiert (die alte max()-Zeile haette das
+    # getan). deflation_n_family_raw bleibt exakt der vom Aufrufer uebergebene Scope-Wert.
+    assert res["metrics_symbol"]["deflation_n_family_raw"] == n1_per_strategy
+    # Coverage > 1 (mehr Renditeserien als gezaehlte Kandidaten) ist jetzt ein SICHTBARES Symptom
+    # eines Aufrufer-Scope-Mismatches, statt lautlos zur neuen Wahrheit erklaert zu werden.
+    assert res["metrics_symbol"]["deflation_cluster_coverage"] > 1.0
+    # Eine Declusterung darf N_family_raw in keinem Fall uebersteigen (Fix 3, harte Untergrenze).
+    assert res["metrics_symbol"]["deflation_n_family_effective"] <= n1_per_strategy
+
+
+def test_incomplete_coverage_suspends_declustering_instead_of_increasing_multiplicity(tmp_path, monkeypatch):
+    """Issue #904 Fix 3 (Pitfall #290) — sind WENIGER Renditeserien vorhanden als N1 zaehlt
+    (cluster_coverage < 1, z. B. weil #905s Selection-Statistic-Filterung Kandidaten ohne
+    definierte Teststatistik aus der Matrix entfernt hat), wird NICHT auf der unvollstaendigen
+    Teilmenge deklustert (das wuerde eine aus Bruchstuecken berechnete Zahl als Wahrheit ueber die
+    volle Familie ausgeben) — die Declusterung wird stattdessen ausgesetzt: effective bleibt roh."""
+    global_params = {"price_breakout_period": 20}
+    cohort_periods = [0.02 + 0.001 * i for i in range(20)]
+    study = _build_study(tmp_path, monkeypatch, n_trials=20, cohort_periods=cohort_periods)
+    fixed_result = _result_payload(sortino_ratio=2.0, dd=0.05, sortino_period=0.03, n_periods=200)
+
+    n1 = 100
+    partial_family_rows = _family_rows(k=5, m=4, n_periods=150)  # nur 20 von 100 Kandidaten
+
+    res = confirm.confirm_per_symbol_promotion(
+        study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
+        run_backtest=_holdout_factory(global_params, symbol_result=fixed_result,
+                                      global_result=fixed_result),
+        deflation_n_family=n1,
+        deflation_family_period_returns=partial_family_rows,
+    )
+
+    assert res["metrics_symbol"]["deflation_n_family_raw"] == n1
+    assert res["metrics_symbol"]["deflation_cluster_coverage"] == pytest.approx(0.2)
+    # Ausgesetzt statt aus der 20-Zeilen-Teilmenge deklustert (die haette ~5 ergeben) — effective
+    # bleibt bei der vollen, konservativen roh-Zahl.
+    assert res["metrics_symbol"]["deflation_n_family_effective"] == n1
+
+
+# ── invariants.check_family_scope_coherence (Issue #904 Fix 4) ──────────────────────────────────
+def test_family_scope_coherence_fails_on_identical_n_family_raw_across_studies():
+    """Fingerabdruck des #904-Bugs: drei Studies desselben Symbols mit verschiedener Trialzahl
+    (100/160/280) melden allesamt N_family_raw=1499 (die symbolweite Summe)."""
+    records = [
+        {"symbol": "XOM.ETORO", "strategy": "SmaCrossover", "n_trials": 100, "deflation_n_family_raw": 1499},
+        {"symbol": "XOM.ETORO", "strategy": "FlashCrashReversal", "n_trials": 160, "deflation_n_family_raw": 1499},
+        {"symbol": "XOM.ETORO", "strategy": "ComboTrendVwap", "n_trials": 280, "deflation_n_family_raw": 1499},
+    ]
+    result = inv.check_family_scope_coherence(records)
+    assert result.passed is False
+    assert "XOM.ETORO" in result.actual
+
+
+def test_family_scope_coherence_passes_with_distinct_n_family_raw():
+    records = [
+        {"symbol": "XOM.ETORO", "strategy": "SmaCrossover", "n_trials": 100, "deflation_n_family_raw": 100},
+        {"symbol": "XOM.ETORO", "strategy": "FlashCrashReversal", "n_trials": 160, "deflation_n_family_raw": 160},
+        {"symbol": "XOM.ETORO", "strategy": "ComboTrendVwap", "n_trials": 280, "deflation_n_family_raw": 280},
+    ]
+    result = inv.check_family_scope_coherence(records)
+    assert result.passed is True
+
+
+def test_family_scope_coherence_not_applicable_under_per_symbol_best_scope():
+    records = [
+        {"symbol": "XOM.ETORO", "strategy": "A", "n_trials": 100, "deflation_n_family_raw": 999},
+        {"symbol": "XOM.ETORO", "strategy": "B", "n_trials": 160, "deflation_n_family_raw": 999},
+    ]
+    result = inv.check_family_scope_coherence(records, promotion_family_scope="per_symbol_best")
+    assert result.passed is True
+
+
+def test_family_scope_coherence_not_applicable_with_identical_trial_counts():
+    """Identisches N_family_raw ist kein Fehler, wenn die Studies zufaellig dieselbe Trialzahl
+    haben — nur unterschiedliche Trialzahl mit identischem N_family_raw ist verdaechtig."""
+    records = [
+        {"symbol": "XOM.ETORO", "strategy": "A", "n_trials": 100, "deflation_n_family_raw": 100},
+        {"symbol": "XOM.ETORO", "strategy": "B", "n_trials": 100, "deflation_n_family_raw": 100},
+    ]
+    result = inv.check_family_scope_coherence(records)
+    assert result.passed is True
 
 
 # ── Referenzfall #703: OpeningRangeBreakout bleibt HOLD unter BEIDEN N (roh und deklustert) ──────

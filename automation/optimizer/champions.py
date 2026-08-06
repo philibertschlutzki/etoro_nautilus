@@ -724,11 +724,23 @@ def load_champion_entry(strategy: str, symbol: str, *, opt_data: dict) -> dict |
     """Issue #704 (P0) — liest + validiert (``champion_is_admissible``) den gespeicherten
     Champion. Gibt den VOLLEN Eintrag zurück (für #709-Study-Attr-Telemetrie);
     ``load_champion_seed`` extrahiert daraus nur ``params`` (Issue-Signatur, s. u.)."""
+    entry, _reason = load_champion_entry_with_reason(strategy, symbol, opt_data=opt_data)
+    return entry
+
+
+def load_champion_entry_with_reason(strategy: str, symbol: str, *,
+                                    opt_data: dict) -> tuple[dict | None, str | None]:
+    """Issue #910 Fix 2 — wie ``load_champion_entry``, aber unterscheidet die beiden Ursachen, die
+    vorher beide als ``None`` (und stromabwärts als derselbe ``NO_ADMISSIBLE_ENTRY``-String)
+    kollabierten: ``'STORE_EMPTY'`` (kein Eintrag existiert — die Kette hat schlicht noch nie
+    geschrieben) vs. ``champion_is_admissible``s granularem Reason-Code (ein Eintrag EXISTIERT,
+    ist aber inadmissibel — z. B. ``'EMPTY_PARAMS'``/``'REJECT_HOLDOUT_GATE'``/...). Der Report
+    konnte vorher nicht sagen, ob die Kette nie startet oder ständig scheitert."""
     entry = _read_entry(_champion_path(strategy, symbol))
     if entry is None:
-        return None
-    ok, _reason = champion_is_admissible(entry, opt_data)
-    return entry if ok else None
+        return None, "STORE_EMPTY"
+    ok, reason = champion_is_admissible(entry, opt_data)
+    return (entry, None) if ok else (None, reason or "INADMISSIBLE")
 
 
 def load_champion_seed(strategy: str, symbol: str, base_cfg: Path | None = None, *,
@@ -857,19 +869,47 @@ def maybe_write_back(entry: dict, opt_data: dict, *, base_cfg: Path | None = Non
         return False
 
     if not is_ready_for_pr:
-        # Snooping-Schutz gilt NUR für die korroborations-basierte Route — READY_FOR_PR ist
-        # bereits ein vollständig auf dem Holdout validierter Promotion-Befund.
-        integrity = entry.get("integrity") or {}
-        current_ns = integrity.get("catalog_newest_ns")
-        first_ns = lifecycle.get("first_seen_catalog_newest_ns")
-        if current_ns is None or first_ns is None:
-            return False
-        min_advance_days = opt_data.get("champion_min_advance_days")
-        if min_advance_days is None:
-            min_advance_days = _default_min_advance_days(base_cfg)
-        advance_days = (current_ns - first_ns) / 1_000_000_000.0 / 86400.0
-        if advance_days < float(min_advance_days or 0):
-            return False
+        # Issue #910 Fix 1 — der Korroborationsbegriff wird von advance_days ENTKOPPELT.
+        # champion_corroboration_mode ∈ {'window_advance', 'independent_search', 'either'}
+        # (Default 'either'):
+        #   'window_advance'      — bit-identisch zum Pre-#910-Verhalten: corroborated UND das
+        #                            Datenfenster ist um min_advance_days vorgerückt (Snooping-
+        #                            Schutz gegen zwei Läufe auf identischen Daten).
+        #   'independent_search'  — corroboration_count (verschiedene run_id, #821) allein genügt:
+        #                            zwei unabhängige Läufe DERSELBEN Datenbasis korroborieren einen
+        #                            Parametervektor sehr wohl, wenn sie ihn unabhängig finden
+        #                            (verschiedene Sampler-Seeds) — advance_days=0.0 ist unter
+        #                            diesem Modus kein Blocker mehr.
+        #   'either'              — promotet, sobald EINE der beiden Routen erfüllt ist.
+        # Root-Cause #910: VOR diesem Fix war 'window_advance' die EINZIGE Route — zwei Läufe
+        # am selben Tag konnten die Kette per Konstruktion nie korroborieren, unabhängig davon,
+        # wie stabil der Kandidat war (14/14 Writebacks NO_ADMISSIBLE_ENTRY im ea4c409d-Lauf).
+        mode = opt_data.get("champion_corroboration_mode", "either")
+        if mode not in ("window_advance", "independent_search", "either"):
+            raise ValueError(
+                f"optimizer.json['champion_corroboration_mode']={mode!r} unbekannt — erwartet "
+                "'window_advance', 'independent_search' oder 'either'."
+            )
+        if mode == "independent_search":
+            pass  # corroborated (bereits oben geprüft) genügt — kein Fenster-Gate.
+        else:
+            # Snooping-Schutz: gilt für 'window_advance' unbedingt, für 'either' als EINE der
+            # beiden möglichen Routen.
+            integrity = entry.get("integrity") or {}
+            current_ns = integrity.get("catalog_newest_ns")
+            first_ns = lifecycle.get("first_seen_catalog_newest_ns")
+            min_advance_days = opt_data.get("champion_min_advance_days")
+            if min_advance_days is None:
+                min_advance_days = _default_min_advance_days(base_cfg)
+            advance_days = (
+                (current_ns - first_ns) / 1_000_000_000.0 / 86400.0
+                if current_ns is not None and first_ns is not None else None
+            )
+            window_advanced = advance_days is not None and advance_days >= float(min_advance_days or 0)
+            if mode == "window_advance" and not window_advanced:
+                return False
+            # mode == 'either': corroborated ist bereits erfüllt (oben geprüft) — die
+            # independent_search-Route deckt den window_advanced=False-Fall ab, kein return False.
 
     strategy = entry.get("strategy")
     symbol = entry.get("symbol")

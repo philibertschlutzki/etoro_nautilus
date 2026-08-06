@@ -25,6 +25,7 @@ if str(_AUTOMATION_DIR) not in sys.path:
 import inspect
 import json
 import math
+import statistics
 import argparse
 import importlib
 import contextlib
@@ -987,23 +988,68 @@ def _is_eligible(result: dict, tournament_cfg: dict, strat_params: dict | None =
     return True
 
 
-def _resolve_asset_class_for_symbol(inst_id_str: str) -> str:
+_unknown_asset_class_policy_cache: str | None = None
+
+
+def _read_unknown_asset_class_policy() -> str:
+    """Issue #898 Fix 2 — ``backtest.json['unknown_asset_class_policy']`` ∈ {'reject', 'default'},
+    Default 'reject' (fail-loud statt der Pre-#898 fail-open-DEFAULT-Kostenkonstante). Gecached
+    (Hot-Path, wie die übrigen ``_read_*``-Konfig-Reader in diesem Modul)."""
+    global _unknown_asset_class_policy_cache
+    if _unknown_asset_class_policy_cache is not None:
+        return _unknown_asset_class_policy_cache
+    val = "reject"
+    try:
+        cfg_path = config_dir() / "backtest.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("unknown_asset_class_policy")
+            if raw in ("reject", "default"):
+                val = raw
+    except (OSError, ValueError, TypeError):
+        pass
+    _unknown_asset_class_policy_cache = val
+    return val
+
+
+class InstrumentMetadataIncompleteError(ValueError):
+    """Issue #898 Fix 2 — ein Symbol ohne aufloesbare asset_class (weder im Instrument-Map noch
+    per spread_bps_by_symbol-Override) wird ABGEWIESEN statt still mit einer erfundenen
+    Kostenkonstante versorgt zu werden (REJECT_INSTRUMENT_METADATA_INCOMPLETE)."""
+
+
+def _resolve_asset_class_for_symbol(inst_id_str: str, *, policy: str = "reject") -> str:
     """Issue #566/#775 — Asset-Class-Lookup über ``instrument_map.json`` (Symbol → ``asset_class``),
     Single Source of Truth für JEDEN Aufrufer, der eine Asset-Class-Konstante für die
     Spread-/Kostenauflösung braucht (Worker-Kostenauflösung UND der #775-Kosten-Fallback-Reader —
-    vorher zwei potenziell divergierende Kopien derselben Lookup-Schleife). ``'DEFAULT'`` bei
-    fehlendem Eintrag/fehlender Datei (fail-open, kein Crash für ein unbekanntes Symbol)."""
-    asset_class_key = "DEFAULT"
+    vorher zwei potenziell divergierende Kopien derselben Lookup-Schleife).
+
+    Issue #898 — ``'UNKNOWN'`` (nicht mehr still ``'DEFAULT'``) bei fehlendem Eintrag ODER einer
+    fehlenden/leeren/wörtlich ``'unknown'`` asset_class im Map. ``policy`` (aus
+    ``backtest.json['unknown_asset_class_policy']``, Default ``'reject'``) entscheidet die
+    Konsequenz: ``'reject'`` wirft ``InstrumentMetadataIncompleteError`` (fail-loud — das
+    47%-des-Universums-Symptom aus #898 darf nie wieder auf DEFAULT=4.0bps statt EQUITY=3.0bps
+    verrechnet werden); ``'default'`` reproduziert das alte fail-open-Verhalten explizit opt-in."""
+    asset_class_key = "UNKNOWN"
     try:
         instrument_map_path = str(config_dir() / "instrument_map.json")
         with open(instrument_map_path, "r", encoding="utf-8") as f:
             inst_map = json.load(f).get("instruments", {})
         for _, inst_data in inst_map.items():
             if inst_data.get("symbol") == inst_id_str:
-                asset_class_key = inst_data.get("asset_class", "DEFAULT").upper()
+                raw = (inst_data.get("asset_class") or "").strip()
+                asset_class_key = raw.upper() if raw and raw.lower() != "unknown" else "UNKNOWN"
                 break
     except Exception:
         pass
+    if asset_class_key == "UNKNOWN" and policy != "default":
+        raise InstrumentMetadataIncompleteError(
+            f"REJECT_INSTRUMENT_METADATA_INCOMPLETE: {inst_id_str} hat weder einen "
+            f"spread_bps_by_symbol-Override noch eine aufgelöste asset_class in "
+            f"instrument_map.json (Issue #898). unknown_asset_class_policy='reject' (Default) "
+            f"lehnt das Symbol ab, statt es fail-open mit der DEFAULT-Kostenkonstante zu "
+            f"verrechnen (vorher: 4.0bps statt 3.0bps EQUITY-Spread, 33% Kostenüberschätzung)."
+        )
     return asset_class_key
 
 
@@ -1014,16 +1060,28 @@ def resolve_spread_bps(inst_id_str: str,
     """Issue #566 — Single Source of Truth für die Spread-Auflösung (bps).
 
     Auflösungsreihenfolge (strikt): Symbol-Override (``spread_bps_by_symbol[inst_id]``) →
-    Asset-Class (``spread_bps_by_asset_class[asset_class_key]``) → Asset-Class-DEFAULT → 0.0.
-    Ein symbol-spezifischer Override übersteuert die grobe Asset-Class-Konstante, damit ein zu
-    weiter EQUITY-Spread liquide Blue-Chips (z. B. TSLA.ETORO ~2 bps) nicht fälschlich
-    unrentabel macht. Fehlen beide Maps ⇒ 0.0 (kein Spread-Modeling, rückwärtskompatibel)."""
+    Asset-Class (``spread_bps_by_asset_class[asset_class_key]``) → 0.0. Ein symbol-spezifischer
+    Override übersteuert die grobe Asset-Class-Konstante, damit ein zu weiter EQUITY-Spread
+    liquide Blue-Chips (z. B. TSLA.ETORO ~2 bps) nicht fälschlich unrentabel macht. Fehlen beide
+    Maps ⇒ 0.0 (kein Spread-Modeling, rückwärtskompatibel).
+
+    Issue #898 Fix 3 — ``'UNKNOWN'`` darf NIE still auf ``'DEFAULT'`` abbilden (das war exakt die
+    Root-Cause: 47% des Universums lösten über den Fail-Open-Pfad auf DEFAULT=4.0bps statt
+    EQUITY=3.0bps auf). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch in
+    ``spread_bps_by_asset_class`` vorhanden ist, ist ein KONFIGURATIONSFEHLER (ein im
+    Instrument-Map registrierter Asset-Class-Wert ohne Kosten-Eintrag) und wirft — nicht die
+    Instrument-Metadaten sind hier unvollständig, sondern die Kosten-Konfiguration."""
     if spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol:
         return float(spread_bps_by_symbol[inst_id_str])
-    if spread_bps_by_asset_class:
-        return float(spread_bps_by_asset_class.get(
-            asset_class_key, spread_bps_by_asset_class.get("DEFAULT", 4.0)))
-    return 0.0
+    if not spread_bps_by_asset_class:
+        return 0.0
+    if asset_class_key not in spread_bps_by_asset_class:
+        raise ValueError(
+            f"resolve_spread_bps: asset_class_key='{asset_class_key}' ({inst_id_str}) ist nicht in "
+            f"spread_bps_by_asset_class ({sorted(spread_bps_by_asset_class)}) — stiller Rückfall auf "
+            f"DEFAULT ist seit Issue #898 verboten (Konfigurationsfehler, kein unbekanntes Symbol)."
+        )
+    return float(spread_bps_by_asset_class[asset_class_key])
 
 
 def load_ticks_from_catalog(
@@ -2172,13 +2230,32 @@ def _effective_sortino_numeric_guard(
       Restrukturierung der Trial-Ausführung vorauszusetzen.
 
     Rückgabe ``(effective_guard, guard_reference_value, guard_reference_source)`` — die beiden
-    letzten Werte sind #862-Telemetrie für ``SORTINO_GUARD_TRIPPED``-Events."""
+    letzten Werte sind #862-Telemetrie für ``SORTINO_GUARD_TRIPPED``-Events.
+
+    Issue #901 (siebte Wiederkehr Pitfall #267) — Root-Cause: VOR diesem Fix fiel ``mode ==
+    'family_median'`` ohne einen bereitgestellten ``family_median_n_periods`` STILL auf den
+    ABSOLUTEN Anker (``sortino_numeric_guard_min_periods``, 1600) zurück UND stempelte
+    ``source='absolute'`` — eine Config, die ``family_median`` verlangt, wurde im Ergebnis nie
+    sichtbar widerlegt (die Telemetrie behauptete exakt das Verhalten, das die Config abgestellt
+    hatte). ``check_guard_reference_coherence`` konnte das nicht fangen: ``reference_mode ==
+    'family_median'`` machte den Check dort UNBEDINGT PASS (Pitfall #288 — ein existierender,
+    korrekt konfigurierter Schalter kann trotzdem tot sein).
+
+    Fix: ``family_median`` ohne bereitgestellten Wert liefert jetzt ``(None, None,
+    'family_median_unavailable')`` — ein EHRLICHER dritter Zustand statt einer stillen Lüge. Der
+    Aufrufer behandelt ``effective_guard is None`` als nicht-bewertbar (Trial wird geprunt, nicht
+    fehlerhaft als bestanden/durchgefallen bewertet, Issue #901 Fix 1). Ein ECHTER
+    ``family_median``-Modus (``family_median_n_periods`` bereitgestellt — Injektionspunkt für die
+    künftige Restrukturierung, siehe Docstring oben) bleibt unverändert korrekt."""
     mode = _read_sortino_numeric_guard_reference_mode()
-    min_periods = _read_sortino_numeric_guard_min_periods()
-    if mode == "family_median" and family_median_n_periods is not None:
-        min_periods = float(family_median_n_periods)
-        source = "family_median"
+    if mode == "family_median":
+        if family_median_n_periods is not None:
+            min_periods = float(family_median_n_periods)
+            source = "family_median"
+        else:
+            return None, None, "family_median_unavailable"
     else:
+        min_periods = _read_sortino_numeric_guard_min_periods()
         source = "absolute"
     if min_periods is None or n_periods is None or n_periods <= 0:
         return sortino_numeric_guard, min_periods, source
@@ -2350,6 +2427,10 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "median_bars_held": 0.0, "p95_bars_held": 0.0,
         # Issue #832 — Max-/Min-/P95-Haltedauer in Sekunden, Schema-konsistent mit dem Nicht-Leer-Pfad.
         "max_holding_time_s": 0.0, "min_holding_time_s": 0.0, "p95_holding_time_s": 0.0,
+        # Issue #903 — rohe Round-Trip-Haltedauern (Sekunden), Rohmaterial für die
+        # ROUND-TRIP-Ebene von invariants.compute_trial_timebox_violations (statt nur des
+        # Trial-Maximums, das einen einzigen Ausreisser nicht von vielen unterscheiden konnte).
+        "holding_times_s": [],
         "losses_count": 0,
         "median_position_notional": 0.0,
     }
@@ -2693,6 +2774,27 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 return None, None, None, None, None, 0.0, 3.0, None, downside_obs
             _eff_guard, _guard_ref_value, _guard_ref_source = _effective_sortino_numeric_guard(
                 sortino_numeric_guard, n_periods)
+            if _eff_guard is None:
+                # Issue #901 Fix 1 — 'family_median' verlangt, aber (noch) kein family_median_
+                # n_periods bereitgestellt: der Trial ist unter dieser Referenz-Semantik nicht
+                # bewertbar. Geprunt (sortino/psr=None), NICHT stillschweigend gegen den absoluten
+                # Anker bewertet (das war die #901-Root-Cause).
+                import logging
+                logging.getLogger("optimizer").warning(
+                    "SORTINO_GUARD_REFERENCE_UNAVAILABLE: sortino_numeric_guard_reference="
+                    "'family_median', aber kein family_median_n_periods bereitgestellt "
+                    "(n_periods=%d) — Trial nicht bewertbar unter dieser Referenz-Semantik "
+                    "(#901; sortino/psr=None).", n_periods,
+                )
+                _inference_diagnostics.append({
+                    "code": "SORTINO_GUARD_REFERENCE_UNAVAILABLE",
+                    "detail": f"sortino_numeric_guard_reference='family_median' ohne "
+                             f"family_median_n_periods (n_periods={n_periods}).",
+                    "value": None,
+                    "guard_reference_value": _guard_ref_value,
+                    "guard_reference_source": _guard_ref_source,
+                })
+                return None, None, None, None, None, 0.0, 3.0, None, downside_obs
             if abs(sortino_annualized_v) > _eff_guard:
                 import logging
                 logging.getLogger("optimizer").warning(
@@ -2940,6 +3042,11 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "max_holding_time_s": float(max_holding_time_s),
         "min_holding_time_s": float(min_holding_time_s),
         "p95_holding_time_s": float(p95_holding_time_s),
+        # Issue #903 — rohe Round-Trip-Haltedauern (Sekunden, ungerundet, ggf. leer bei fehlendem
+        # hold_list). Kein separater period_returns_cap-artiger Deckel: die Round-Trip-Zahl je Trial
+        # liegt (siehe #771-Katalog) im niedrigen Hundert-Bereich, nicht in der Grössenordnung der
+        # Perioden-Renditeserie.
+        "holding_times_s": [round(h, 4) for h in holds_s] if hold_list else [],
         # Issue #850 — Anteil der Fenster-Zeit mit offener Position (siehe Berechnungskommentar
         # oben). None ⇒ nicht beurteilbar (keine mtm_series/hold_list, rückwärtskompatibel).
         "exposure_fraction": float(exposure_fraction) if exposure_fraction is not None else None,
@@ -2985,6 +3092,104 @@ def _fill_ts_ns(f) -> int:
         "(Pitfall #80). Der Fills-Report liefert keine Zeitstempel-Spalte; ein stiller 0-Default "
         "würde jeden Round-Trip als In-Sample klassifizieren (struktureller OOS-Kollaps)."
     )
+
+
+# Issue #710/#899 — dieselbe 1h-Bar-Konvention wie die lokale ``_BAR_SECONDS`` in
+# ``_calculate_stats`` (alle Strategien laufen auf 1h-Bars, siehe DEFAULT_MAX_BARS_IN_TRADE in
+# hourly_strategy_base.py). Modul-Ebene, weil ``extract_metrics``/``_split_and_stats`` sie
+# ausserhalb von ``_calculate_stats`` für ``oos_max_holding_bars`` (#899 Fix 2) braucht.
+_BAR_SECONDS_METRICS = 3600.0
+
+
+def _parse_exit_order_tags(tags) -> dict:
+    """Issue #899 — parst die strukturierten ``EXIT_REASON:``/``ATR_MEDIAN_BPS:``/
+    ``ATR_MIN_BPS:``-Tags, die ``hourly_strategy_base._execute_market_close`` dem schliessenden
+    Markt-Order mitgibt (siehe dortigen Docstring). Robust gegen fehlende/fremde Tags (z. B.
+    Entry-Orders, die keine Exit-Klassifikation tragen) — liefert dann ein leeres Dict."""
+    meta: dict = {}
+    if not tags:
+        return meta
+    for tag in tags:
+        if not isinstance(tag, str) or ":" not in tag:
+            continue
+        key, _, value = tag.partition(":")
+        try:
+            if key == "EXIT_REASON":
+                meta["exit_reason"] = value
+            elif key == "ATR_MEDIAN_BPS":
+                meta["atr_median_bps"] = float(value)
+            elif key == "ATR_MIN_BPS":
+                meta["atr_min_bps"] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return meta
+
+
+def _build_order_exit_meta(engine: "BacktestEngine") -> dict[str, dict]:
+    """Issue #899 — client_order_id -> Exit-Telemetrie-Dict, aus den Tags ALLER Orders des
+    Engine-Cache (nicht nur der gefüllten — die Auflösung in ``_finalize_round_trip`` schlägt für
+    ungetaggte Orders ohnehin defensiv auf ``{}`` fehl). Best-effort: ein Engine ohne ``.cache``
+    (Unit-Test-Doubles) liefert ein leeres Dict statt zu werfen — Exit-Telemetrie ist rein additiv
+    und darf die primäre Metrik-Extraktion nie zum Absturz bringen."""
+    try:
+        orders = engine.cache.orders()
+    except Exception:
+        return {}
+    meta: dict[str, dict] = {}
+    for order in orders or []:
+        try:
+            cid = str(order.client_order_id)
+            tags = getattr(order, "tags", None)
+        except Exception:
+            continue
+        parsed = _parse_exit_order_tags(tags)
+        if parsed:
+            meta[cid] = parsed
+    return meta
+
+
+def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
+    """Issue #899 — reine Aggregationsfunktion über eine Liste von Round-Trip-Exit-Telemetrie-
+    Dicts (``{"exit_reason", "atr_median_bps", "atr_min_bps", "pnl_bps"}``, siehe
+    ``_finalize_round_trip``) zu den vier Trial-Feldern aus dem Issue:
+
+      * ``exit_reason_histogram`` — Zaehler je exit_reason; Summe == len(meta_list) MINUS der
+        Round-Trips ohne Tag (z. B. Legacy-Positionen, die am Datenende offen blieben).
+      * ``gross_loss_mean_bps``/``gross_win_mean_bps`` — Ø-Bruttoverlust/-gewinn je Trade in bps
+        des Entry-Notionals (Betrag, nicht Vorzeichen behaftet).
+      * ``atr_median_bps``/``atr_min_bps`` — Median ueber die per-Position ATR_median/ATR_min-
+        Ablesungen (Rohmaterial fuer ``invariants.check_effective_stop_distance``, #897 Fix 3).
+
+    Reine Funktion über plain Dicts (kein Optuna-/Engine-Objekt) — unabhängig unit-testbar,
+    analog zum Rest dieses Moduls."""
+    histogram: dict[str, int] = {}
+    losses_bps: list[float] = []
+    wins_bps: list[float] = []
+    atr_medians: list[float] = []
+    atr_mins: list[float] = []
+    for m in meta_list or []:
+        # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
+        # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
+        # damit die Summe des Histogramms exakt der Round-Trip-Zahl der Ebene entspricht.
+        reason = m.get("exit_reason") or "UNKNOWN"
+        histogram[reason] = histogram.get(reason, 0) + 1
+        pnl_bps = m.get("pnl_bps")
+        if pnl_bps is not None:
+            if pnl_bps < 0:
+                losses_bps.append(abs(pnl_bps))
+            elif pnl_bps > 0:
+                wins_bps.append(pnl_bps)
+        if m.get("atr_median_bps") is not None:
+            atr_medians.append(float(m["atr_median_bps"]))
+        if m.get("atr_min_bps") is not None:
+            atr_mins.append(float(m["atr_min_bps"]))
+    return {
+        "exit_reason_histogram": histogram,
+        "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
+        "gross_win_mean_bps": statistics.mean(wins_bps) if wins_bps else None,
+        "atr_median_bps": statistics.median(atr_medians) if atr_medians else None,
+        "atr_min_bps": statistics.median(atr_mins) if atr_mins else None,
+    }
 
 
 
@@ -3153,20 +3358,32 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 continue
             instrument_fills.setdefault(iid, []).append(row)
 
+        # Issue #899 — Exit-Klassifikation + ATR-Telemetrie je Order, aus den Order-Tags
+        # (hourly_strategy_base._execute_market_close), NICHT aus dem abgeschnittenen
+        # Subprozess-Logger. client_order_id -> {"exit_reason", "atr_median_bps", "atr_min_bps"}.
+        order_exit_meta = _build_order_exit_meta(engine)
+
         # Fill-Match-Ebene (technische FIFO-Teilfüllungen — Execution-Diagnostik).
         pnls_with_ts: list[FillMatchRecord] = []
         notionals_with_ts: list[NotionalRecord] = []
         # Round-Trip-Ebene (ökonomische Positionen — primäre Gate-Metriken, Issue #508).
         rt_pnls_with_ts: list[RoundTripRecord] = []
         rt_notionals_with_ts: list[NotionalRecord] = []
+        # Issue #899 — Exit-Telemetrie je Round-Trip (exit_reason/ATR der SCHLIESSENDEN Order),
+        # parallel zu rt_pnls_with_ts/rt_notionals_with_ts (gleicher Index, gleiche Länge).
+        rt_exit_meta: list[dict] = []
 
-        def _finalize_round_trip(matches: list[FillMatchRecord]) -> None:
+        def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None) -> None:
             """Aggregiert die FIFO-Matches EINER zusammenhängenden Position (Position-Open
             → Flat) zu genau einem Round-Trip (Issue #508). Die Round-Trip-PnL ist die Summe
             der Teil-Fill-PnLs (inkl. bereits allokierter Kosten); der Exit-Timestamp ist der
             des schließenden (letzten) Fills und entscheidet die IS/OOS-Klassifikation. Die
             Haltedauer wird mengengewichtet über die Teil-Fills gemittelt, das Notional
-            über die Legs summiert (ökonomische Positionsgröße)."""
+            über die Legs summiert (ökonomische Positionsgröße).
+
+            Issue #899 — ``order_ids`` (parallel zu ``matches``) liefert die client_order_id der
+            SCHLIESSENDEN Order (letztes Element, chronologisch); ihre Tags (exit_reason/ATR)
+            werden über ``order_exit_meta`` aufgelöst und als Round-Trip-Telemetrie mitgeführt."""
             if not matches:
                 return
             rt_pnl = sum(m[0] for m in matches)
@@ -3180,6 +3397,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             rt_pnls_with_ts.append((rt_pnl, rt_exit_ts, rt_holding_ns, total_qty))
             rt_notionals_with_ts.append((rt_notional, rt_exit_ts))
 
+            closing_order_id = order_ids[-1] if order_ids else None
+            meta = order_exit_meta.get(closing_order_id, {}) if closing_order_id else {}
+            pnl_bps = (rt_pnl / rt_notional * 10_000.0) if rt_notional > 1e-12 else None
+            rt_exit_meta.append({
+                "exit_reason": meta.get("exit_reason"),
+                "atr_median_bps": meta.get("atr_median_bps"),
+                "atr_min_bps": meta.get("atr_min_bps"),
+                "pnl_bps": pnl_bps,
+            })
+
         # Chronologisches FIFO-Matching pro Instrument
         for iid, f_list in instrument_fills.items():
             sorted_fills = sorted(f_list, key=_fill_ts_ns)
@@ -3188,6 +3415,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Matches der aktuell offenen Position; wird bei Net-Exposure-Zero-Crossing (Flat)
             # zu einem Round-Trip finalisiert. Pro Instrument ist stets nur EINE Seite offen.
             current_rt: list[FillMatchRecord] = []
+            # Issue #899 — client_order_id je Match, parallel zu current_rt (fuer _finalize_round_trip).
+            current_rt_order_ids: list[str] = []
 
             for f in sorted_fills:
                 try:
@@ -3201,6 +3430,11 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     continue
 
                 is_buy = "BUY" in side_str
+                # Issue #899 — df_fills ist über client_order_id indiziert (ReportProvider.
+                # generate_fills_report/generate_order_fills_report); itertuples() liefert ihn als
+                # `.Index`. Fällt der Index aus irgendeinem Grund leer aus, bleibt die Exit-
+                # Klassifikation dieses Matches None (kein Crash, siehe order_exit_meta.get-Default).
+                fill_order_id = str(getattr(f, 'Index', '') or '')
 
                 if is_buy:
                     while qty > 0 and sell_queue:
@@ -3223,14 +3457,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         notionals_with_ts.append((entry_notional, ts))
                         current_rt.append((pnl, ts, holding_time_ns, match_qty, entry_notional))
+                        current_rt_order_ids.append(fill_order_id)
                         qty -= match_qty
                         sell_queue[0] = (s_qty - match_qty, s_price, s_ts)
                         if sell_queue[0][0] <= 1e-9:
                             sell_queue.popleft()
                     # Short vollständig gedeckt (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not sell_queue and current_rt:
-                        _finalize_round_trip(current_rt)
+                        _finalize_round_trip(current_rt, current_rt_order_ids)
                         current_rt = []
+                        current_rt_order_ids = []
                     if qty > 0:
                         ts_entry = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         buy_queue.append((qty, price, ts_entry))
@@ -3252,14 +3488,16 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                         pnls_with_ts.append((pnl, ts, holding_time_ns, match_qty))
                         notionals_with_ts.append((entry_notional, ts))
                         current_rt.append((pnl, ts, holding_time_ns, match_qty, entry_notional))
+                        current_rt_order_ids.append(fill_order_id)
                         qty -= match_qty
                         buy_queue[0] = (b_qty - match_qty, b_price, b_ts)
                         if buy_queue[0][0] <= 1e-9:
                             buy_queue.popleft()
                     # Long vollständig verkauft (Gegenseite leer) ⇒ Position flat ⇒ Round-Trip zu.
                     if not buy_queue and current_rt:
-                        _finalize_round_trip(current_rt)
+                        _finalize_round_trip(current_rt, current_rt_order_ids)
                         current_rt = []
+                        current_rt_order_ids = []
                     if qty > 0:
                         ts_entry = _fill_ts_ns(f)  # Issue #448 — fail-loud statt stillem 0-Default
                         sell_queue.append((qty, price, ts_entry))
@@ -3268,7 +3506,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # realisierte Teilmenge bildet einen (offenen) Round-Trip — bewahrt die Invariante
             # Σ Round-Trip-PnL == Σ Match-PnL.
             if current_rt:
-                _finalize_round_trip(current_rt)
+                _finalize_round_trip(current_rt, current_rt_order_ids)
 
 
 
@@ -3458,15 +3696,21 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "median_position_notional": 0.0,
             }
 
-        def _split_and_stats(records: list, notionals: list) -> tuple[dict, dict]:
+        def _split_and_stats(records: list, notionals: list, exit_meta: list[dict] | None = None) -> tuple[dict, dict]:
             """IS/OOS-Split einer Record-Liste (Round-Trip ODER Fill-Match) + ``_calculate_stats``
             je Ebene (Issue #508). Beide Ebenen teilen sich die IDENTISCHE Fold-Geometrie; der
             einzige Unterschied ist die Aggregations-Granularität der übergebenen Records. Jeder
             Record ist ``(pnl, exit_ts_ns, holding_ns, qty)``, ``notionals[i]`` das parallele
-            ``(entry_notional, exit_ts_ns)``. Rückgabe: ``(is_metrics, oos_metrics)``."""
+            ``(entry_notional, exit_ts_ns)``. Rückgabe: ``(is_metrics, oos_metrics)``.
+
+            Issue #899 — ``exit_meta`` (optional, parallel zu ``records``) liefert die Exit-
+            Telemetrie (exit_reason/ATR/pnl_bps) je Record; wird nur für die Round-Trip-Ebene
+            übergeben (die Fill-Match-Ebene bleibt reine Execution-Diagnostik, siehe #508-Docstring
+            oben im Modul)."""
             split_is_pnls, split_oos_pnls = [], []
             split_is_holds, split_oos_holds = [], []
             split_is_notionals, split_oos_notionals = [], []
+            split_is_meta, split_oos_meta = [], []
             for rec_idx, (pnl, ts, ht, rec_qty) in enumerate(records):
                 notional = notionals[rec_idx][0]
                 if _wf:
@@ -3478,10 +3722,14 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     split_oos_pnls.append(pnl)
                     split_oos_holds.append((ht, rec_qty))
                     split_oos_notionals.append(notional)
+                    if exit_meta is not None:
+                        split_oos_meta.append(exit_meta[rec_idx])
                 elif is_in_sample:
                     split_is_pnls.append(pnl)
                     split_is_holds.append((ht, rec_qty))
                     split_is_notionals.append(notional)
+                    if exit_meta is not None:
+                        split_is_meta.append(exit_meta[rec_idx])
             is_mn = statistics.median(split_is_notionals) if split_is_notionals else 0.0
             oos_mn = statistics.median(split_oos_notionals) if split_oos_notionals else 0.0
             # Issue #546 — die parallelen Per-Trade-Notionals durchreichen ⇒ sizing-invariante
@@ -3500,10 +3748,21 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "pooled_equity_curve" if (is_mtm is not None and not is_mtm.empty) else "trade_sequential")
             level_oos["sortino_aggregation_basis"] = (
                 "pooled_equity_curve" if (oos_mtm is not None and not oos_mtm.empty) else "trade_sequential")
+            # Issue #899 — Exit-Telemetrie je Ebene (nur, wenn exit_meta übergeben wurde).
+            if exit_meta is not None:
+                level_is.update(_aggregate_exit_telemetry(split_is_meta))
+                level_oos.update(_aggregate_exit_telemetry(split_oos_meta))
+                # Issue #899 Fix 2 — oos_max_holding_bars als PRIMÄRE Bar-Messgrösse (statt nur
+                # oos_max_holding_time_s / 3600 im Konsumenten). #902 entfernt die verstreuten
+                # 3600.0-Literale aus invariants.py/run_optimization.py zugunsten von bar_seconds
+                # als Pflichtparameter dort; diese Stelle bleibt bei der bereits bestehenden
+                # 1h-Bar-Konvention von median_bars_held/p95_bars_held (siehe _calculate_stats).
+                level_is["max_holding_bars"] = (level_is.get("max_holding_time_s") or 0.0) / _BAR_SECONDS_METRICS
+                level_oos["max_holding_bars"] = (level_oos.get("max_holding_time_s") or 0.0) / _BAR_SECONDS_METRICS
             return level_is, level_oos
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
-        is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts)
+        is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta)
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -4439,7 +4698,8 @@ def run_single_backtest_worker(
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
             if spread_bps_by_asset_class and not has_symbol_override:
-                asset_class_key = _resolve_asset_class_for_symbol(inst_id_str)
+                asset_class_key = _resolve_asset_class_for_symbol(
+                    inst_id_str, policy=_read_unknown_asset_class_policy())
 
             spread_bps = resolve_spread_bps(
                 inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)
@@ -4448,7 +4708,23 @@ def run_single_backtest_worker(
                 src = "Symbol-Override" if has_symbol_override else f"Asset-Class {asset_class_key}"
                 wlog(f"   📊 Spread-Modeling ({src}): {spread_bps} bps applied to {inst_id_str}")
 
+            # Issue #898 Fix 4 — COST_MODEL_RESOLVED-Telemetrie, unabhängig vom Prüfergebnis (ein
+            # bestandener Pfad ohne Zahlen ist keine Evidenz, siehe #900-Docstring-Analogie).
+            import logging as _logging_cost_model
+            from automation.log_manager import emit_execution_event as _emit_cost_model_event
+            _emit_cost_model_event(_logging_cost_model.getLogger("backtest_worker"), "COST_MODEL_RESOLVED", {
+                "symbol": inst_id_str,
+                "asset_class_key": asset_class_key,
+                "spread_bps": spread_bps,
+                "source": "symbol_override" if has_symbol_override else "asset_class",
+            })
+
             ticks = load_ticks_from_catalog(catalog, inst_id_str, start_ns, end_ns, spread_bps)
+        except InstrumentMetadataIncompleteError as e:
+            wlog_err(f"REJECT_INSTRUMENT_METADATA_INCOMPLETE: {e}", exc=False)
+            res = _empty_result(inst_id_str, strategy_class_name, strat)
+            res["error"] = "instrument_metadata_incomplete"
+            return res
         except RuntimeError as e:
             wlog_err(f"Tick-Ladefehler: {e}", exc=True)
             return _empty_result(inst_id_str, strategy_class_name, strat)

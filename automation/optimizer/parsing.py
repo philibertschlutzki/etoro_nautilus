@@ -154,6 +154,20 @@ class TournamentMetrics:
     # ``oos_metrics['inference_diagnostics']`` — Tupel von ``{'code','detail','value'}``-Dicts.
     # Leeres Tuple ⇒ keine Verletzung ODER Pre-#804-JSON (rückwärtskompatibel).
     inference_diagnostics: tuple = ()
+    # Issue #899 — Exit-Telemetrie (aus Order-Tags, nicht aus dem abgeschnittenen Subprozess-
+    # Logger). ``oos_exit_reason_histogram`` summiert exakt zu ``oos_total_trades``.
+    # ``oos_max_holding_bars`` ist die PRIMÄRE Bar-Messgrösse (#899 Fix 2, #902); leeres Dict/None
+    # ⇒ migrationssicher (Legacy-JSONs ohne die Felder).
+    oos_exit_reason_histogram: dict | None = None
+    oos_max_holding_bars: float | None = None
+    oos_gross_loss_mean_bps: float | None = None
+    oos_gross_win_mean_bps: float | None = None
+    oos_atr_median_bps: float | None = None
+    oos_atr_min_bps: float | None = None
+    # Issue #903 — rohe Round-Trip-Haltedauern (Sekunden), Eingangsgrösse für die ROUND-TRIP-Ebene
+    # von invariants.compute_trial_timebox_violations. Leeres Tuple ⇒ Pre-#899-JSON (rückwärts-
+    # kompatibel; der Konsument fällt dann auf den Trial-Maximum-Punkt zurück).
+    oos_holding_times_s: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -254,6 +268,14 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_equity_ruined = bool(oos_metrics.get("equity_ruined") or False)
     # Issue #804 — strukturierte Inferenzpfad-Diagnosen (None-safe ⇒ leeres Tuple).
     inference_diagnostics = tuple(oos_metrics.get("inference_diagnostics") or ())
+    # Issue #899 — Exit-Telemetrie (None-safe ⇒ rückwärtskompatibel zu Pre-#899-JSONs).
+    oos_exit_reason_histogram = oos_metrics.get("exit_reason_histogram")
+    oos_max_holding_bars = oos_metrics.get("max_holding_bars")
+    oos_gross_loss_mean_bps = oos_metrics.get("gross_loss_mean_bps")
+    oos_gross_win_mean_bps = oos_metrics.get("gross_win_mean_bps")
+    oos_atr_median_bps = oos_metrics.get("atr_median_bps")
+    oos_atr_min_bps = oos_metrics.get("atr_min_bps")
+    oos_holding_times_s = oos_metrics.get("holding_times_s")
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -377,6 +399,14 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         period_returns_truncated=period_returns_truncated,
         oos_equity_ruined=oos_equity_ruined,
         inference_diagnostics=inference_diagnostics,
+        # Issue #899 — Exit-Telemetrie (None-safe).
+        oos_exit_reason_histogram=dict(oos_exit_reason_histogram) if oos_exit_reason_histogram else None,
+        oos_max_holding_bars=float(oos_max_holding_bars) if oos_max_holding_bars is not None else None,
+        oos_gross_loss_mean_bps=float(oos_gross_loss_mean_bps) if oos_gross_loss_mean_bps is not None else None,
+        oos_gross_win_mean_bps=float(oos_gross_win_mean_bps) if oos_gross_win_mean_bps is not None else None,
+        oos_atr_median_bps=float(oos_atr_median_bps) if oos_atr_median_bps is not None else None,
+        oos_atr_min_bps=float(oos_atr_min_bps) if oos_atr_min_bps is not None else None,
+        oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,

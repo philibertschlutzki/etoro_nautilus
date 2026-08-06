@@ -35,6 +35,7 @@ import optuna
 
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
+from automation.optimizer import _contracts
 from automation.optimizer import reward as _reward
 from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions
 from automation.optimizer.run_optimization import (
@@ -249,6 +250,24 @@ def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, prop
     return {"eligibility": eligibility, "promotion": promotion}
 
 
+def _median_of_trial_field(trial_attrs: list[dict], field: str) -> float | None:
+    """Issue #897 Fix 3 — Median eines numerischen ``trial.user_attrs``-Felds über eine Study
+    (None-safe: fehlende/None-Werte werden übersprungen; leere Kohorte ⇒ None)."""
+    values = [a[field] for a in (trial_attrs or []) if a.get(field) is not None]
+    return statistics.median(values) if values else None
+
+
+def _median_of_sampled_param(trial_attrs: list[dict], param: str) -> float | None:
+    """Issue #897 Fix 3 — Median eines GESAMPELTEN Suchraum-Parameters (``sampled_params[param]``)
+    über eine Study. Symmetrisch zu ``_median_of_trial_field``, aber für den Config-Wert statt der
+    realisierten Telemetrie (Eingangsgrösse für ``check_effective_stop_distance``)."""
+    values = [
+        (a.get("sampled_params") or {}).get(param) for a in (trial_attrs or [])
+        if (a.get("sampled_params") or {}).get(param) is not None
+    ]
+    return statistics.median(values) if values else None
+
+
 def _study_record(proposal: dict, study,
                   tournament_cfg: dict | None = None, *,
                   guard_dominance_threshold: float | None = None,
@@ -276,11 +295,17 @@ def _study_record(proposal: dict, study,
     # der Subprozess eine Invariante verletzt hat (siehe run_optimization._reemit_inference_
     # diagnostics für die Live-Emission je Trial).
     inference_diagnostics_by_code: dict[str, int] = {}
+    # Issue #901 — je Study die beobachteten guard_reference_source-Werte aus SORTINO_GUARD_TRIPPED/
+    # SORTINO_GUARD_REFERENCE_UNAVAILABLE-Diagnosen, Eingangsgrösse für
+    # invariants.check_guard_reference_coherence unter reference_mode=='family_median'.
+    guard_reference_sources: list[str] = []
     for a in trial_attrs:
         for diag in a.get("inference_diagnostics") or ():
             code = diag.get("code") if isinstance(diag, dict) else None
             if code:
                 inference_diagnostics_by_code[code] = inference_diagnostics_by_code.get(code, 0) + 1
+            if isinstance(diag, dict) and diag.get("guard_reference_source") is not None:
+                guard_reference_sources.append(diag["guard_reference_source"])
 
     # Issue #832 Fix Punkt 1 — je-Study-Aggregat der Haltedauer (Sekunden): das MAXIMUM über alle
     # oos_evaluated Trials (Rohmaterial für summary_de.py Abschnitt 4 "Trades mit der längsten
@@ -299,7 +324,13 @@ def _study_record(proposal: dict, study,
     # eine gemessene GR-01-Verletzung erhält hier eine Konsequenz auf TRIAL-Ebene (siehe
     # invariants.compute_trial_timebox_violations; #861 vereinheitlicht diese Berechnung mit
     # ``check_holding_time_cap`` unten über dieselbe Referenz-Auflösung).
-    timebox = _inv.compute_trial_timebox_violations(trial_attrs, strategy=proposal.get("strategy"))
+    # Issue #902 — bar_seconds ist jetzt Pflichtparameter; #900s Bar-Qualitäts-Telemetrie
+    # (median_delta_t_s je Symbol) ist an dieser Stelle nicht verfügbar (Report läuft nach dem
+    # Sweep, nicht symbol-gescoped) — der dokumentierte 1h-Bar-Default ist der einzige verfügbare
+    # Wert, jetzt aus der EINEN Quelle (_contracts.BAR_SECONDS_DEFAULT) statt eines eigenen Literals.
+    timebox = _inv.compute_trial_timebox_violations(
+        trial_attrs, strategy=proposal.get("strategy"),
+        bar_seconds=_contracts.BAR_SECONDS_DEFAULT)
 
     best_reward = None
     if study is not None:
@@ -451,6 +482,8 @@ def _study_record(proposal: dict, study,
         # Normalfall). Macht eine Subprozess-Invariantenverletzung im #742-Report sichtbar, ohne ein
         # Trial-Verzeichnis zu öffnen oder trial_dir/logs/ zu lesen.
         "inference_diagnostics_by_code": inference_diagnostics_by_code,
+        # Issue #901 — Rohmaterial für invariants.check_guard_reference_coherence.
+        "guard_reference_sources": guard_reference_sources,
         # Issue #825 Fix Punkt 3 — expliziter Alias auf denselben #804-Zähler: wie viele Trials
         # dieser Study waehrend des OOS-Fensters wirtschaftlich ruiniert wurden (Equity <= 0,
         # backtest_runner.assert_positive_equity/EQUITY_NONPOSITIVE). Diese Trials sind bereits
@@ -463,13 +496,31 @@ def _study_record(proposal: dict, study,
         "p95_holding_time_s": p95_holding_time_s,
         # Issue #839 — je-Trial-Zeitbox-Verletzung, aggregiert je Study (siehe
         # invariants.compute_trial_timebox_violations für die Berechnung je Trial).
-        "timebox_violation_trades": timebox["timebox_violation_trades"],
-        "timebox_evaluated_trades": timebox["timebox_evaluated_trades"],
+        # Issue #903 — TRIAL-Ebene (mind. 1 verletzender Round-Trip im Trial; treibt die
+        # #878-Study-Toleranz weiter unten in confirm.py) UND ROUND-TRIP-Ebene (Diagnose: welcher
+        # ANTEIL der Trades tatsächlich verletzt) GETRENNT — vorher trug ``timebox_violation_trades``
+        # trotz des Namens die TRIAL-Zahl, und ``timebox_trials_invalidated`` war einfach derselbe
+        # Wert unter zweitem Namen (confirm.py; hier entfallen).
+        "timebox_violating_trials": timebox["timebox_violating_trials"],
+        "timebox_evaluated_trades": timebox["timebox_evaluated_trials"],
         "timebox_violation_fraction": timebox["timebox_violation_fraction"],
+        "timebox_violating_round_trips": timebox["timebox_violating_round_trips"],
+        "timebox_evaluated_round_trips": timebox["timebox_evaluated_round_trips"],
+        "timebox_round_trip_violation_fraction": timebox["timebox_round_trip_violation_fraction"],
+        "timebox_violation_intensity_p95": timebox["timebox_violation_intensity_p95"],
         "timebox_violated": timebox["timebox_violated"],
         # Issue #861 — Verteilung der Deckel-Referenzquelle (sampled/default/global) über die
         # ausgewerteten Trials dieser Study.
         "timebox_cap_source_counts": timebox["timebox_cap_source_counts"],
+        # Issue #897 Fix 3 — Rohmaterial für ``invariants.check_effective_stop_distance``: Median
+        # des realisierten Ø-Bruttoverlusts (bps) und der ATR-Telemetrie über die Trials dieser
+        # Study (#899). None, wenn keine Exit-Telemetrie vorliegt (Pre-#899-JSON/kein Trade).
+        "oos_gross_loss_mean_bps": _median_of_trial_field(trial_attrs, "oos_gross_loss_mean_bps"),
+        "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
+        # Issue #897 Fix 3 — Median des je-Trial GESAMPELTEN atr_trailing_multiplier (das
+        # Konfigurations-Gegenstueck zur realisierten ATR-Telemetrie oben).
+        "atr_trailing_multiplier_median": _median_of_sampled_param(
+            trial_attrs, "atr_trailing_multiplier"),
         # Issue #862 — Rohmaterial für den globalen check_guard_reference_coherence-Wächter.
         "oos_n_periods_median": oos_n_periods_median,
         "promotion_outcome": proposal.get("status"),
@@ -1014,6 +1065,15 @@ def _build_report(
         studies_out, max_affected_fraction=max_affected_fraction)
     all_checks.append(("global", gate_collinearity_check))
 
+    # Issue #897 Fix 3 — der Trailing-Stop-Anker muss auf seinen eigenen Multiplikator reagieren
+    # (Pitfall #286): der Median des realisierten Ø-Bruttoverlusts (#899-Telemetrie) darf
+    # ``stop_distance_min_ratio`` (Default 0.4) nicht relativ zum konfigurierten Stop-Abstand
+    # (k_median · ATR_median) unterschreiten.
+    stop_distance_min_ratio = float(optimizer_cfg.get("stop_distance_min_ratio", 0.4))
+    effective_stop_distance_check = _inv.check_effective_stop_distance(
+        studies_out, min_ratio=stop_distance_min_ratio)
+    all_checks.append(("global", effective_stop_distance_check))
+
     # Issue #818 — achter Invarianten-Check: der Champion-Store-Writeback-Pfad (Ebene 2, #706)
     # muss NACHWEISLICH erreichbar sein, nicht nur getestet/dokumentiert (Pitfall #237).
     champions_summary = _champions_summary(optimizer_cfg)
@@ -1065,9 +1125,13 @@ def _build_report(
     _observed_n_periods_medians = [
         r["oos_n_periods_median"] for r in studies_out if r.get("oos_n_periods_median")
     ]
+    _observed_guard_reference_sources = [
+        s for r in studies_out for s in (r.get("guard_reference_sources") or [])
+    ]
     guard_reference_coherence_check = _inv.check_guard_reference_coherence(
         _guard_min_periods, _observed_n_periods_medians,
-        reference_mode=tournament_cfg.get("sortino_numeric_guard_reference"))
+        reference_mode=tournament_cfg.get("sortino_numeric_guard_reference"),
+        observed_guard_reference_sources=_observed_guard_reference_sources)
     all_checks.append(("global", guard_reference_coherence_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
@@ -1084,6 +1148,15 @@ def _build_report(
     library_version_drift_check = _inv.check_library_version_drift(
         library_versions(), optimizer_cfg.get("pinned_library_versions") or {})
     all_checks.append(("global", library_version_drift_check))
+
+    # Issue #907 Fix 3 — symmetrischer Meta-Wächter: eine in fail_fast_invariants gelistete
+    # Invariante, die in diesem Lauf kein einziges Ergebnis (PASS oder FAIL) meldet, ist nicht
+    # verdrahtet. Muss NACH allen anderen Checks stehen (braucht ihre Namen), bevor invariant_checks
+    # gebaut wird.
+    _already_evaluated_names = [c.name for _label, c in all_checks]
+    fail_fast_wired_check = _inv.check_fail_fast_invariants_wired(
+        _already_evaluated_names, fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
+    all_checks.append(("global", fail_fast_wired_check))
 
     invariant_checks = []
     for label, result in all_checks:

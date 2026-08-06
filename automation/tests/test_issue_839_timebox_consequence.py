@@ -30,12 +30,27 @@ from automation.optimizer import invariants as inv
 
 
 # ── invariants.compute_trial_timebox_violations (reine Funktion) ────────────────────────────────
+_BAR_S = 3600.0
+
+
+def test_bar_seconds_is_a_mandatory_parameter():
+    """Issue #902 Fix 1 — kein Default mehr: ein Aufruf ohne bar_seconds wirft TypeError statt
+    (wie bis #858) still auf den 24/7-Stundenraster-Default zurückzufallen."""
+    import pytest
+    with pytest.raises(TypeError):
+        inv.compute_trial_timebox_violations([])
+
+
 def test_no_trials_with_holding_data_is_zero_fraction():
-    result = inv.compute_trial_timebox_violations([])
+    result = inv.compute_trial_timebox_violations([], bar_seconds=_BAR_S)
     assert result == {
-        "timebox_violation_trades": 0,
-        "timebox_evaluated_trades": 0,
+        "timebox_violating_trials": 0,
+        "timebox_evaluated_trials": 0,
         "timebox_violation_fraction": 0.0,
+        "timebox_violating_round_trips": 0,
+        "timebox_evaluated_round_trips": 0,
+        "timebox_round_trip_violation_fraction": 0.0,
+        "timebox_violation_intensity_p95": None,
         "timebox_violated": False,
         "timebox_cap_source_counts": {},
     }
@@ -44,29 +59,32 @@ def test_no_trials_with_holding_data_is_zero_fraction():
 def test_trial_within_sampled_cap_is_not_a_violation():
     # Issue #858 — Default-Toleranz ist jetzt 3.0 Bars (exit_close_max_bars + 1), nicht mehr 0.01.
     attrs = [{"oos_max_holding_time_s": 23 * 3600.0, "sampled_params": {"max_bars_in_trade": 24}}]
-    result = inv.compute_trial_timebox_violations(attrs)
+    result = inv.compute_trial_timebox_violations(attrs, bar_seconds=_BAR_S)
     assert result["timebox_violated"] is False
-    assert result["timebox_violation_trades"] == 0
+    assert result["timebox_violating_trials"] == 0
+    assert result["timebox_violating_round_trips"] == 0
 
 
 def test_trial_beyond_sampled_cap_is_a_violation():
     attrs = [{"oos_max_holding_time_s": 100 * 3600.0, "sampled_params": {"max_bars_in_trade": 24}}]
-    result = inv.compute_trial_timebox_violations(attrs)
+    result = inv.compute_trial_timebox_violations(attrs, bar_seconds=_BAR_S)
     assert result["timebox_violated"] is True
-    assert result["timebox_violation_trades"] == 1
+    assert result["timebox_violating_trials"] == 1
     assert result["timebox_violation_fraction"] == 1.0
+    assert result["timebox_violating_round_trips"] == 1
+    assert result["timebox_round_trip_violation_fraction"] == 1.0
 
 
 def test_missing_sampled_max_bars_falls_back_to_global_cap():
     """Strategie sampelt max_bars_in_trade nicht ⇒ Fallback auf den globalen #714/GR-01-Deckel
     (24 Bars) — dieselbe konservative Schranke wie check_holding_time_cap."""
     attrs = [{"oos_max_holding_time_s": 30 * 3600.0}]  # kein sampled_params, > 24+3 Bars
-    result = inv.compute_trial_timebox_violations(attrs)
+    result = inv.compute_trial_timebox_violations(attrs, bar_seconds=_BAR_S)
     assert result["timebox_violated"] is True
     assert result["timebox_cap_source_counts"] == {"global": 1}
 
     attrs_ok = [{"oos_max_holding_time_s": 20 * 3600.0}]
-    result_ok = inv.compute_trial_timebox_violations(attrs_ok)
+    result_ok = inv.compute_trial_timebox_violations(attrs_ok, bar_seconds=_BAR_S)
     assert result_ok["timebox_violated"] is False
 
 
@@ -76,11 +94,45 @@ def test_fraction_over_mixed_cohort():
         {"oos_max_holding_time_s": 10 * 3600.0, "sampled_params": {"max_bars_in_trade": 24}},
         {"oos_max_holding_time_s": None},  # nicht oos_evaluated -> zaehlt nicht mit
     ]
-    result = inv.compute_trial_timebox_violations(attrs)
-    assert result["timebox_evaluated_trades"] == 2
-    assert result["timebox_violation_trades"] == 1
+    result = inv.compute_trial_timebox_violations(attrs, bar_seconds=_BAR_S)
+    assert result["timebox_evaluated_trials"] == 2
+    assert result["timebox_violating_trials"] == 1
     assert result["timebox_violation_fraction"] == 0.5
+    assert result["timebox_evaluated_round_trips"] == 2
+    assert result["timebox_violating_round_trips"] == 1
     assert result["timebox_cap_source_counts"] == {"sampled": 2}
+
+
+def test_round_trip_level_uses_raw_holding_times_when_available():
+    """Issue #903 Akzeptanzkriterium — 100 Trials x 50 Round-Trips, davon 1 Round-Trip je Trial
+    ueber der Box: violating_trials=100, violating_round_trips=100, evaluated_round_trips=5000,
+    round_trip_violation_fraction=0.02. Die STUDY-Toleranz (angewandt in confirm.py) wirkt auf
+    dieser Fraction, nicht auf der (zehnmal groesseren) Trial-Fraction."""
+    cap_bars = 24
+    ok_holds = [1.0 * 3600.0] * 49  # weit innerhalb der Box
+    bad_hold = [(cap_bars + 3.0 + 1.0) * 3600.0]  # > (cap+tolerance)*bar_seconds
+    attrs = [
+        {
+            "oos_max_holding_time_s": max(ok_holds + bad_hold),
+            "oos_holding_times_s": ok_holds + bad_hold,
+            "sampled_params": {"max_bars_in_trade": cap_bars},
+        }
+        for _ in range(100)
+    ]
+    result = inv.compute_trial_timebox_violations(attrs, bar_seconds=_BAR_S)
+    assert result["timebox_violating_trials"] == 100
+    assert result["timebox_violating_round_trips"] == 100
+    assert result["timebox_evaluated_round_trips"] == 5000
+    assert result["timebox_round_trip_violation_fraction"] == 0.02
+
+
+def test_round_trip_level_falls_back_to_single_point_without_raw_list():
+    """Rueckwaertskompatibilitaet: Pre-#899-JSONs ohne oos_holding_times_s zaehlen hoechstens 1
+    Round-Trip je Trial (der Trial-Maximum-Punkt) — konservativ, aber nie falsch-negativ."""
+    attrs = [{"oos_max_holding_time_s": 100 * 3600.0, "sampled_params": {"max_bars_in_trade": 24}}]
+    result = inv.compute_trial_timebox_violations(attrs, bar_seconds=_BAR_S)
+    assert result["timebox_evaluated_round_trips"] == 1
+    assert result["timebox_violating_round_trips"] == 1
 
 
 # ── invariants.resolve_effective_bar_cap (#861) ──────────────────────────────────────────────────
@@ -135,12 +187,13 @@ def test_check_holding_time_cap_and_compute_trial_timebox_violations_agree():
     laesst BEIDE Checks FAILen (vorher: check_holding_time_cap sauber bei 20 < 24, aber
     compute_trial_timebox_violations bereits eine Verletzung)."""
     trial_attrs = [{"oos_max_holding_time_s": 20 * 3600.0, "sampled_params": {"max_bars_in_trade": 12}}]
-    timebox = inv.compute_trial_timebox_violations(trial_attrs)
+    timebox = inv.compute_trial_timebox_violations(trial_attrs, bar_seconds=_BAR_S)
     assert timebox["timebox_violated"] is True
 
-    study_record = {"strategy": "S", "symbol": "X", **{
-        k: timebox[k] for k in ("timebox_evaluated_trades", "timebox_violation_fraction")
-    }}
+    study_record = {"strategy": "S", "symbol": "X",
+        "timebox_evaluated_trades": timebox["timebox_evaluated_trials"],
+        "timebox_violation_fraction": timebox["timebox_violation_fraction"],
+    }
     result = inv.check_holding_time_cap([study_record], study_tolerance=0.25)
     assert result.passed is False
 
@@ -184,7 +237,12 @@ def test_confirm_rejects_study_with_timebox_violation(tmp_path, monkeypatch):
     assert res["is_rejection_detail_override"] == "REJECT_INVALID_TIMEBOX"
     assert any(name == "STUDY_REJECTED_ON_TIMEBOX_VIOLATION" for name, _ in events)
     event_payload = next(p for name, p in events if name == "STUDY_REJECTED_ON_TIMEBOX_VIOLATION")
-    assert event_payload["timebox_trials_invalidated"] == 1
+    # Issue #903 Fix 4 — timebox_trials_invalidated entfaellt (war wertgleich mit
+    # timebox_violation_trades unter zweitem Namen); die Round-Trip-Ebene ist jetzt die
+    # massgebliche Entscheidungsgrundlage (Fix 2).
+    assert "timebox_trials_invalidated" not in event_payload
+    assert event_payload["timebox_violating_trials"] == 1
+    assert event_payload["timebox_violating_round_trips"] == 1
 
 
 def test_confirm_tolerates_a_single_violating_trial_within_study_tolerance(tmp_path, monkeypatch):

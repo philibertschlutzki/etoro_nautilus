@@ -10,6 +10,7 @@ from automation.optimizer.reward import compute_reward
 from automation.optimizer.manifest import WORK
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
+from automation.optimizer import _contracts
 
 # Issue #659 — gültige Werte für tournament.json['promotion_correction_mode']. "conjunction"
 # (Default, fehlt der Key) ist bit-identisch zum Pre-#659-Verhalten (DSR UND Bootstrap-CI UND PBO
@@ -741,17 +742,28 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     _timebox_study_tolerance = float(
         _early_tournament_cfg.get("timebox_violation_study_tolerance", 0.25))
     _timebox_trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in (getattr(study, "trials", None) or [])]
-    _timebox = _inv.compute_trial_timebox_violations(_timebox_trial_attrs, strategy=strategy)
-    if _timebox["timebox_violation_fraction"] > _timebox_study_tolerance:
+    # Issue #902 — bar_seconds ist Pflichtparameter; #900s per-Symbol median_delta_t_s ist an dieser
+    # Stelle (Confirm läuft je Study, nicht mit dem Sweep-Preflight verdrahtet) nicht verfügbar —
+    # derselbe dokumentierte 1h-Bar-Default wie report.py, jetzt aus der EINEN Quelle.
+    _timebox = _inv.compute_trial_timebox_violations(
+        _timebox_trial_attrs, strategy=strategy, bar_seconds=_contracts.BAR_SECONDS_DEFAULT)
+    # Issue #903 Fix 2 — die #878-Study-Toleranz wirkt auf der ROUND-TRIP-(Trade-)Ebene, nicht auf
+    # der Trial-Ebene: eine Study, in der ein kleiner Anteil der TRADES die Box überschreitet, ist
+    # kein defekter Exit-Pfad, auch wenn ein grosser Anteil der TRIALS davon berührt ist (jeder
+    # Trial hat viele Trades — ein einziger Ausreisser-Trade genügt, um den ganzen Trial als
+    # "trial-violating" zu markieren).
+    if _timebox["timebox_round_trip_violation_fraction"] > _timebox_study_tolerance:
         emit_execution_event(_logging_early.getLogger("optimizer"), "STUDY_REJECTED_ON_TIMEBOX_VIOLATION", {
             "symbol": symbol, "strategy": strategy,
             "timebox_violation_fraction": _timebox["timebox_violation_fraction"],
-            "timebox_violation_trades": _timebox["timebox_violation_trades"],
-            "timebox_evaluated_trades": _timebox["timebox_evaluated_trades"],
-            # Issue #857 Fix Punkt 3 — Anzahl EINZELNER invalidierter Trials im Report/Event
-            # ausgewiesen, damit "einzelne Trials verworfen" von "Study verworfen" unterscheidbar
-            # bleibt (vorher trug nur die Study-Ablehnung selbst ein Signal).
-            "timebox_trials_invalidated": _timebox["timebox_violation_trades"],
+            "timebox_violating_trials": _timebox["timebox_violating_trials"],
+            "timebox_evaluated_trials": _timebox["timebox_evaluated_trials"],
+            # Issue #903 Fix 1/4 — Round-Trip-(Trade-)Ebene, die tatsächliche Entscheidungsgrundlage
+            # oben. ``timebox_trials_invalidated`` entfällt (war wertgleich mit
+            # ``timebox_violation_trades`` unter zweitem Namen, #903 Symptom).
+            "timebox_violating_round_trips": _timebox["timebox_violating_round_trips"],
+            "timebox_evaluated_round_trips": _timebox["timebox_evaluated_round_trips"],
+            "timebox_round_trip_violation_fraction": _timebox["timebox_round_trip_violation_fraction"],
             "timebox_violation_study_tolerance": _timebox_study_tolerance,
         }, level=_logging_early.ERROR)
         return {
@@ -1093,6 +1105,14 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Tor" wie tatsächlich unabhängige Parametrisierungen und überschätzt damit systematisch die
         # Multiple-Testing-Hürde (Root-Cause #695: derselbe Confirm-Lauf declustert für PBO, aber
         # nicht für DSR — inkonsistente Config-Zählung zweier Korrekturen im selben Pfad).
+        # Issue #904 Fix 1 (Pitfall #289) — deflation_n_family_raw IST die vom Aufrufer
+        # uebergebene, scope-aufgeloeste Zahl (N1 unter promotion_family_scope='per_strategy') —
+        # PUNKT. Die vorherige ``max(deflation_n_family_raw, len(family_rows))``-Zeile korrigierte
+        # sie stillschweigend auf die symbolweite Renditeserien-Zahl hoch (#695s Declusterungs-
+        # Matrix war NIE scope-gefiltert, siehe sweep.py-Docstring), wodurch der #826-Scope aktiv
+        # rueckgaengig gemacht statt nur ignoriert wurde. Ein Aufrufer, der eine zu kleine Zahl
+        # liefert, ist ein Aufrufer-Bug und wird dort behoben, nicht hier stillschweigend
+        # ueberschrieben.
         deflation_n_family_counted = int(deflation_n_family or 0)
         deflation_n_family_raw = deflation_n_family_counted
         deflation_n_family_effective = deflation_n_family_raw
@@ -1100,15 +1120,21 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             cluster_threshold = float(
                 tournament_cfg.get("pbo_cluster_threshold", _PBO_DEFAULT_CLUSTER_THRESHOLD))
             family_rows = [[float(x) for x in r] for r in deflation_family_period_returns if r]
-            deflation_n_family_raw = max(deflation_n_family_raw, len(family_rows))
-            # Issue #813 — Coverage bezieht sich auf die GEZAEHLTE (oos_evaluated) Kandidatenzahl,
-            # nicht auf das per max() nach oben korrigierte deflation_n_family_raw (das wuerde die
-            # Coverage tautologisch auf <= 1 zwingen, selbst wenn die Renditeserie-Abdeckung in
-            # Wahrheit luecken hat, weil family_rows > deflation_n_family_counted vorkommen kann,
-            # z. B. bei mehreren Strategien-Studies mit ueberlappenden Zaehlungen).
+            # Issue #813/#904 — Coverage bezieht sich auf die GEZAEHLTE (scope-aufgeloeste)
+            # Kandidatenzahl. deflation_n_family_raw wird NICHT MEHR ueberschrieben (Fix 1) — ein
+            # coverage > 1 (mehr Renditeserien als gezaehlte Kandidaten) ist jetzt ein SICHTBARES
+            # Symptom eines Aufrufer-Scope-Mismatches, statt lautlos zur neuen Wahrheit erklaert zu
+            # werden.
             if deflation_n_family_counted > 0:
                 deflation_cluster_coverage = len(family_rows) / deflation_n_family_counted
-            if len(family_rows) >= 2:
+            if deflation_cluster_coverage is not None and deflation_cluster_coverage < 1.0:
+                # Issue #904 Fix 3 (Pitfall #290) — eine unvollstaendige Declusterung (weniger
+                # Renditeserien als gezaehlte Kandidaten) darf die Multiplizitaet nie ERHOEHEN: die
+                # Declusterung wird ausgesetzt (effective bleibt roh) statt ein aus einer
+                # Teilmenge berechnetes len(keep_idx) als Wahrheit ueber die volle Familie
+                # auszugeben.
+                deflation_n_family_effective = deflation_n_family_raw
+            elif len(family_rows) >= 2:
                 from automation.optimizer.cpcv import cluster_effective_configs
                 n_obs_family = min(len(r) for r in family_rows)
                 truncated_family_rows = [r[:n_obs_family] for r in family_rows]
@@ -1116,6 +1142,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 deflation_n_family_effective = len(keep_idx)
             elif len(family_rows) == 1:
                 deflation_n_family_effective = 1
+            # Issue #904 Fix 3 — eine Declusterung darf ``deflation_n_family_raw`` in keinem Fall
+            # uebersteigen (dieselbe Invariante wie oben, jetzt als harte Untergrenze statt nur als
+            # Konsequenz des Kontrollflusses — schuetzt auch gegen zukuenftige cluster_effective_
+            # configs-Aenderungen).
+            deflation_n_family_effective = min(deflation_n_family_effective, deflation_n_family_raw)
         # Issue #652 — die PROMOTIONS-relevante Multiplizität ist familienweit (bester von mehreren
         # Strategien-Studies je Symbol), nicht per-Study. ``deflation_n`` bleibt die per-Study-
         # Telemetrie (Stichprobengrösse der V[ŜR_trials]-Schätzung); ``deflation_n_effective`` ist

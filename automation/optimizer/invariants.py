@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
+from automation.optimizer._contracts import BAR_SECONDS_DEFAULT as _BAR_SECONDS_DEFAULT
 
 _log = logging.getLogger("optimizer")
 
@@ -55,18 +56,11 @@ class InvariantResult:
         }
 
 
-# Issue #858 — Single Source of Truth über einen Import aus dem abhängigkeitsfreien
-# ``_contracts``-Modul statt einer eigenen dritten Kopie des Literals (vorher unabhängig gepflegt
-# neben ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``spaces._MAX_BARS_IN_TRADE_CAP``,
-# Pitfall #271). ``invariants.py`` bleibt dabei frei von jeder nautilus_trader-Abhängigkeit (siehe
-# Moduldocstring — reine Funktionen über plain Dicts), da ``_contracts.py`` selbst keine hat.
-_BAR_SECONDS = 3600.0
-
-# Issue #858 Fix Punkt 2 — Sentinel, um zu unterscheiden, ob ein Aufrufer ``bar_seconds`` EXPLIZIT
-# gesetzt hat oder auf den (dokumentierten) 24/7-Stundenraster-Rückfall zurückfällt. Ein Instrument
-# auf RTH- oder 4h-Raster macht diese Annahme still falsch — die WARNUNG macht das sichtbar, ohne
-# einen bestehenden Aufrufer zu brechen (bit-identisches Verhalten bei Nicht-Angabe).
-_BAR_SECONDS_UNSET = object()
+# Issue #902 — KEINE eigene ``_BAR_SECONDS``-Kopie mehr. Vor diesem Fix pflegte dieses Modul ein
+# eigenes ``_BAR_SECONDS = 3600.0``-Literal NEBEN ``run_optimization.py``s unabhängiger Kopie
+# desselben Werts (Pitfall #271, dritte Instanz) — beide konnten divergieren, ohne dass ein Test es
+# gemerkt hätte. Die einzige verbleibende Referenz ist ``_contracts.BAR_SECONDS_DEFAULT``
+# (importiert oben als ``_BAR_SECONDS_DEFAULT``).
 
 
 def resolve_effective_bar_cap(sampled_params: dict | None, *, strategy: str | None = None,
@@ -97,16 +91,15 @@ def resolve_effective_bar_cap(sampled_params: dict | None, *, strategy: str | No
 
 
 def compute_trial_timebox_violations(trial_attrs: list[dict], *,
+                                     bar_seconds: float,
                                      strategy: str | None = None,
                                      strategy_defaults: dict | None = None,
                                      max_bars_in_trade_cap: float = _MAX_BARS_IN_TRADE_CAP,
-                                     bar_seconds: float = _BAR_SECONDS_UNSET,
                                      tolerance_bars: float = 3.0) -> dict[str, Any]:
     """Issue #839 — je-Trial-Zeitbox-Verletzung: vergleicht die tatsächlich beobachtete Haltedauer
-    (``oos_max_holding_time_s``, seit #832 je Trial persistiert) gegen den für DIESEN Trial
-    GESAMPELTEN ``max_bars_in_trade`` (``sampled_params``, seit #669 je Trial mitgeführt) — fehlt
-    dieser Wert (Strategie sampelt ihn nicht), gegen den globalen #714/GR-01-Deckel (dieselbe
-    konservative obere Schranke wie ``check_holding_time_cap``).
+    gegen den für DIESEN Trial GESAMPELTEN ``max_bars_in_trade`` (``sampled_params``, seit #669 je
+    Trial mitgeführt) — fehlt dieser Wert (Strategie sampelt ihn nicht), gegen den globalen
+    #714/GR-01-Deckel (dieselbe konservative obere Schranke wie ``check_holding_time_cap``).
 
     Issue #858 — ``tolerance_bars`` (Default 3.0 = ``exit_close_max_bars + 1``, siehe
     ``tournament.json['timebox_execution_slack_bars']``) ist die zulässige Ausführungs-Latenz
@@ -118,39 +111,71 @@ def compute_trial_timebox_violations(trial_attrs: list[dict], *,
     Verzögerung als Vertragsbruch (Pitfall #271) — 206 von 462 Studies eines Referenzlaufs wurden
     dadurch auf Study-Ebene verworfen, obwohl der Exit-Pfad nach #836/#837 intakt war.
 
+    Issue #902 — ``bar_seconds`` ist ein PFLICHTPARAMETER (kein Default mehr): ein Aufruf ohne ihn
+    wirft ``TypeError`` statt (wie bis #858, drei Läufe lang folgenlos) auf den 24/7-Stundenraster-
+    Default zurückzufallen und nur zu WARNEN (Pitfall #271, #280). Aufrufer lösen ``bar_seconds``
+    bevorzugt aus der #900-Bar-Qualitäts-Telemetrie (``median_delta_t_s``) auf, mit
+    ``_contracts.BAR_SECONDS_DEFAULT`` als fail-loud protokolliertem Fallback.
+
+    Issue #903 — TRIAL- und ROUND-TRIP-Ebene werden GETRENNT gezählt: ``timebox_violating_trials``/
+    ``timebox_evaluated_trials`` (mind. 1 verletzender Round-Trip im Trial — treibt die
+    #878-Study-Toleranz) UND ``timebox_violating_round_trips``/``timebox_evaluated_round_trips``
+    (Diagnose-relevant — welcher ANTEIL der Trades tatsächlich verletzt, nicht nur ob der
+    Trial-Maximum-Trade es tut). Die Round-Trip-Ebene braucht die rohe ``oos_holding_times_s``-Liste
+    (#899); fehlt sie (Pre-#899-JSON), fällt sie auf den einzigen verfügbaren Punkt
+    (``oos_max_holding_time_s``) als konservative Ein-Element-Approximation zurück
+    (rückwärtskompatibel, zählt dann höchstens 1 Round-Trip je Trial).
+
     Ein Treffer bedeutet: dieser Trial wurde auf einer Simulation bewertet, die den eigenen
     Zeit-Exit-Vertrag verletzt hat (Bug im Exit-Pfad, siehe #836/#837) — seine Metriken sind dann
     keine gültige Grundlage für Eligibility/Reward/Promotion. Reine Funktion über bereits geladene
     ``trial.user_attrs``-Dicts, unabhängig von Optuna-Objekten (siehe Moduldocstring)."""
-    if bar_seconds is _BAR_SECONDS_UNSET:
-        _log.warning(
-            "[#858] compute_trial_timebox_violations ohne explizites bar_seconds aufgerufen — "
-            "Rückfall auf den dokumentierten 24/7-Stundenraster-Default (%.1f s). Ein Instrument "
-            "auf einem anderen Bar-Raster (RTH, 4h) macht jede Haltedauer-Prüfung still falsch.",
-            _BAR_SECONDS,
-        )
-        bar_seconds = _BAR_SECONDS
-    violation_trades = 0
-    evaluated_trades = 0
+    violating_trials = 0
+    evaluated_trials = 0
+    violating_round_trips = 0
+    evaluated_round_trips = 0
     cap_source_counts: dict[str, int] = {}
+    p95_holding_times: list[float] = []
     for attrs in trial_attrs or []:
         holding_s = attrs.get("oos_max_holding_time_s")
         if holding_s is None:
             continue
-        evaluated_trades += 1
+        evaluated_trials += 1
         cap_bars, cap_source = resolve_effective_bar_cap(
             attrs.get("sampled_params"), strategy=strategy, strategy_defaults=strategy_defaults,
             global_cap=max_bars_in_trade_cap)
         cap_source_counts[cap_source] = cap_source_counts.get(cap_source, 0) + 1
         cap_s = (cap_bars + tolerance_bars) * bar_seconds
-        if holding_s > cap_s:
-            violation_trades += 1
-    fraction = round(violation_trades / evaluated_trades, 4) if evaluated_trades else 0.0
+
+        round_trip_holds = attrs.get("oos_holding_times_s") or [holding_s]
+        trial_violated = False
+        for ht in round_trip_holds:
+            evaluated_round_trips += 1
+            if ht > cap_s:
+                violating_round_trips += 1
+                trial_violated = True
+        if trial_violated:
+            violating_trials += 1
+        p95_h = attrs.get("oos_p95_holding_time_s")
+        if p95_h is not None:
+            p95_holding_times.append(float(p95_h))
+
+    trial_fraction = round(violating_trials / evaluated_trials, 4) if evaluated_trials else 0.0
+    rt_fraction = round(violating_round_trips / evaluated_round_trips, 4) if evaluated_round_trips else 0.0
     return {
-        "timebox_violation_trades": violation_trades,
-        "timebox_evaluated_trades": evaluated_trades,
-        "timebox_violation_fraction": fraction,
-        "timebox_violated": violation_trades > 0,
+        "timebox_violating_trials": violating_trials,
+        "timebox_evaluated_trials": evaluated_trials,
+        "timebox_violation_fraction": trial_fraction,
+        # Issue #903 Fix 1/2 — Round-Trip-(Trade-)Ebene, GETRENNT von der Trial-Ebene oben. Die
+        # #878-Study-Toleranz wirkt auf DIESER Grösse (siehe confirm.py), nicht auf der Trial-Ebene.
+        "timebox_violating_round_trips": violating_round_trips,
+        "timebox_evaluated_round_trips": evaluated_round_trips,
+        "timebox_round_trip_violation_fraction": rt_fraction,
+        # Issue #903 Fix 3 — Median der je-Trial-P95-Haltedauer (bereits vorliegende Grösse,
+        # #832) als Verletzungs-INTENSITÄTS-Signal, unabhängig vom Fraction-Zähler oben.
+        "timebox_violation_intensity_p95": (
+            statistics.median(p95_holding_times) if p95_holding_times else None),
+        "timebox_violated": violating_trials > 0,
         # Issue #861 — Verteilung der Deckel-Referenzquelle über die ausgewerteten Trials (Report-
         # Telemetrie, macht sichtbar, wie oft der ungenauere strategy_defaults/global-Fallback statt
         # des gesampelten Werts greift).
@@ -238,15 +263,31 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
 def check_guard_reference_coherence(configured_min_periods: float | None,
                                     observed_n_periods_medians: list[float], *,
                                     max_factor: float = 2.0,
-                                    reference_mode: str | None = None) -> InvariantResult:
-    """Issue #862/#882 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_guard_min_
-    periods']``-Referenzwert um mehr als ``max_factor`` vom über den Lauf beobachteten Median der
-    tatsächlichen ``oos_n_periods``-Verteilung abweicht (in beide Richtungen).
+                                    reference_mode: str | None = None,
+                                    observed_guard_reference_sources: list[str] | None = None) -> InvariantResult:
+    """Issue #862/#882/#901 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_
+    guard_min_periods']``-Referenzwert um mehr als ``max_factor`` vom über den Lauf beobachteten
+    Median der tatsächlichen ``oos_n_periods``-Verteilung abweicht (in beide Richtungen).
 
-    Issue #882 Fix Punkt 3 — ``reference_mode == 'family_median'`` macht ``sortino_numeric_guard_
-    min_periods`` INERT (der Guard skaliert dann pro Study gegen den beobachteten Median, nicht
-    gegen diesen absoluten Anker, siehe ``backtest_runner._effective_sortino_numeric_guard``) — der
-    Wächter darf einen inerten Anker dann nicht mehr rot färben (PASS, nicht anwendbar).
+    Issue #901 (siebte Wiederkehr Pitfall #267) — Root-Cause des #882-Fix-3-Fehlers: dieser Zweig
+    liess ``reference_mode == 'family_median'`` UNBEDINGT passieren, mit der Begründung, der
+    absolute Anker sei dann "inert". Das war eine Annahme über den CODE, nicht eine Messung an
+    ihm — ``backtest_runner._effective_sortino_numeric_guard`` fiel VOR dem #901-Fix ohne
+    bereitgestelltes ``family_median_n_periods`` still auf den absoluten Anker zurück UND
+    stempelte ``guard_reference_source='absolute'``. Ein Wächter, der die Konfiguration nur mit
+    sich selbst vergleicht (statt mit der tatsächlich gestempelten Telemetrie), ist tautologisch
+    und kann diese Fehlerklasse per Konstruktion nicht fangen (Pitfall #288).
+
+    Fix — unter ``reference_mode == 'family_median'`` prüft dieser Wächter jetzt
+    ``observed_guard_reference_sources`` (die gesammelten ``guard_reference_source``-Werte aus
+    ``SORTINO_GUARD_TRIPPED``/``SORTINO_GUARD_REFERENCE_UNAVAILABLE``-Diagnosen des Laufs, siehe
+    ``parsing.py['inference_diagnostics']``): TRIFFT ``'absolute'`` unter ihnen auf — ein Event, das
+    den (verbotenen) alten Fail-Open-Pfad genommen hätte — FAILt der Wächter blocking. Der ehrliche
+    dritte Zustand ``'family_median_unavailable'`` (Issue #901 Fix 1) ist KEIN Widerspruch (er lügt
+    nicht über die verwendete Referenz) und lässt den Check PASSen, solange kein ``'absolute'``
+    auftaucht.
+
+    Ohne ``observed_mode == 'family_median'`` bleibt die ABSOLUTE Referenzprüfung unverändert:
 
     Root-Cause: ein Referenzwert, der gegen eine ABGELEITETE Grösse kalibriert wurde (hier:
     ``n_periods``, die informative Periodenzahl), wird ungültig, sobald die Definition dieser
@@ -259,15 +300,22 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     ``oos_evaluated``-Trials (``report._study_record``). Leer/``configured_min_periods is None``
     ⇒ nicht anwendbar (PASS)."""
     if reference_mode == "family_median":
+        offending_sources = sorted({
+            s for s in (observed_guard_reference_sources or []) if s == "absolute"
+        })
+        passed = not offending_sources
         return InvariantResult(
             name="check_guard_reference_coherence",
-            passed=True,
-            expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
-                     "beobachtetem Median(n_periods)",
-            actual=None,
+            passed=passed,
+            expected="kein guard_reference_source == 'absolute' unter "
+                     "sortino_numeric_guard_reference='family_median'",
+            actual=offending_sources if offending_sources else None,
             severity="blocking",
-            detail="sortino_numeric_guard_reference='family_median' — sortino_numeric_guard_"
-                   "min_periods ist inert (Issue #882 Fix Punkt 3), nicht anwendbar.",
+            detail=("sortino_numeric_guard_reference='family_median' — kein Event nahm den "
+                    "fail-open absolute-Pfad." if passed else
+                    "sortino_numeric_guard_reference='family_median', aber mindestens ein Event "
+                    "meldet guard_reference_source=='absolute' — Widerspruch zwischen Config und "
+                    "tatsächlich verwendeter Referenz (Issue #901, siebte Wiederkehr Pitfall #267)."),
         )
     if configured_min_periods is None or not observed_n_periods_medians:
         return InvariantResult(
@@ -1146,6 +1194,248 @@ def check_holding_time_cap(study_records: list[dict], *,
                 f"{len(offenders)} Study/Studies überschreiten den Zeitbox-Study-Toleranzwert "
                 f"({study_tolerance}): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase erzwingt "
                 "den Zeit-Exit nicht durchgängig), keine tolerierbare Ausführungslatenz mehr."),
+    )
+
+
+def check_effective_stop_distance(study_records: list[dict], *,
+                                  min_ratio: float = 0.4) -> InvariantResult:
+    """Issue #897 Fix 3 — je Study wird der Median des realisierten Ø-Bruttoverlusts
+    (``oos_gross_loss_mean_bps``, #899-Telemetrie) gegen den konfigurierten Stop-Abstand
+    ``k_median · ATR_median`` (``atr_trailing_multiplier_median`` × ``atr_median_bps``) geprüft.
+
+    Fällt der Quotient unter ``min_ratio`` (Default 0.4, entspricht
+    ``optimizer.json['stop_distance_min_ratio']``), reagiert der realisierte Stop-Verlust nicht
+    (mehr) auf seinen eigenen Multiplikator — der Mechanismus ist keine kalibrierte Risikogrösse,
+    sondern eine Breakeven-Klemme, die auf der Volatilitätsschätzung statt auf dem Preis-Extremum
+    rastet (Pitfall #285/#286 in AGENTS.md). Diese Invariante steht in
+    ``optimizer.json['fail_fast_invariants']`` und muss auf einem archivierten ``close_ratchet``-Lauf
+    FAILen und auf dem entsprechenden ``price_extreme``-Lauf PASSen (#897-Akzeptanzkriterium)."""
+    with_data = [
+        r for r in study_records
+        if r.get("oos_gross_loss_mean_bps") is not None
+        and r.get("atr_median_bps")
+        and r.get("atr_trailing_multiplier_median") is not None
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_effective_stop_distance",
+            passed=True,
+            expected=f"Ø-Bruttoverlust / (k_median · ATR_median) >= {min_ratio} je Study",
+            actual=None,
+            detail="Keine Studies mit Exit-Telemetrie (Issue #899) — nicht auswertbar.",
+            severity="high",
+        )
+    offenders: dict[str, float] = {}
+    for r in with_data:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        configured_distance_bps = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
+        if configured_distance_bps <= 0:
+            continue
+        ratio = float(r["oos_gross_loss_mean_bps"]) / configured_distance_bps
+        if ratio < min_ratio:
+            offenders[key] = round(ratio, 4)
+    passed = not offenders
+    return InvariantResult(
+        name="check_effective_stop_distance",
+        passed=passed,
+        expected=f"Ø-Bruttoverlust / (k_median · ATR_median) >= {min_ratio} je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies unterschreiten das Verhältnis Ø-Bruttoverlust / "
+                f"konfigurierter Stop-Abstand ({min_ratio}): {offenders} — der Stop reagiert nicht "
+                "auf seinen eigenen Multiplikator (Pitfall #286) und rastet vermutlich auf der "
+                "ATR-Schätzung statt auf dem Preis-Extremum (Pitfall #285, Issue #897)."),
+    )
+
+
+def check_cost_model_resolution(cost_model_events: list[dict], *,
+                                max_default_fallback_fraction: float = 0.0) -> InvariantResult:
+    """Issue #898 Fix 4 — je Symbol wird ``(asset_class_key, spread_bps, source)`` als
+    ``COST_MODEL_RESOLVED``-Event gestempelt (``run_single_backtest_worker``). Diese Invariante
+    prüft die gesammelten Events eines Laufs: kein Symbol darf über ``asset_class_key == 'UNKNOWN'``
+    ODER ``source == 'default'`` (der explizit opt-in fail-open Zweig, siehe
+    ``backtest.json['unknown_asset_class_policy']``) aufgelöst haben, solange der Anteil
+    ``max_default_fallback_fraction`` (Default 0.0 — KEIN Symbol darf über DEFAULT auflösen)
+    überschritten wird. Ein Lauf, in dem >0% der Symbole über DEFAULT liefen, hat die #898-Root-
+    Cause (47% des Universums über den Fail-Open-Pfad) NICHT behoben."""
+    if not cost_model_events:
+        return InvariantResult(
+            name="check_cost_model_resolution",
+            passed=True,
+            expected=f"Anteil DEFAULT-aufgelöster Symbole <= {max_default_fallback_fraction}",
+            actual=None,
+            detail="Keine COST_MODEL_RESOLVED-Events — nicht auswertbar.",
+            severity="high",
+        )
+    n = len(cost_model_events)
+    offenders = [
+        e.get("symbol") for e in cost_model_events
+        if e.get("asset_class_key") == "UNKNOWN" or e.get("source") == "default"
+    ]
+    fraction = round(len(offenders) / n, 4) if n else 0.0
+    passed = fraction <= max_default_fallback_fraction
+    return InvariantResult(
+        name="check_cost_model_resolution",
+        passed=passed,
+        expected=f"Anteil DEFAULT-aufgelöster Symbole <= {max_default_fallback_fraction}",
+        actual=fraction,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)}/{n} Symbole ({fraction:.1%}) lösten über den fail-open DEFAULT-"
+                f"Pfad auf statt über eine EQUITY/CRYPTO/FOREX/COMMODITY-Asset-Class: {offenders} "
+                "— dieselbe Kostenüberschätzung wie im #898-Symptom (Issue #287 in AGENTS.md: ein "
+                "Enum-Wert, der in der Datenquelle steht, aber nicht in der Nachschlagetabelle, darf "
+                "nie still auf DEFAULT fallen)."),
+    )
+
+
+def check_family_scope_coherence(study_family_records: list[dict], *,
+                                 promotion_family_scope: str | None = None) -> InvariantResult:
+    """Issue #904 Fix 4 — bei ``promotion_family_scope == 'per_strategy'`` müssen zwei Studies
+    DESSELBEN Symbols mit VERSCHIEDENER Trialzahl auch VERSCHIEDENE ``deflation_n_family_raw``
+    melden (N1 ist per Definition die Study-eigene Trialzahl unter diesem Scope, siehe
+    ``sweep._family_n_stage1_from_studies``). Identische ``deflation_n_family_raw``-Werte über ALLE
+    Studies eines Symbols — unabhängig von ihrer tatsächlichen Trialzahl — sind der Fingerabdruck
+    des #904-Bugs (die entfernte ``max()``-Zeile in ``confirm.py`` hatte jede Study auf dieselbe,
+    symbolweite Renditeserien-Zahl hochkorrigiert).
+
+    ``study_family_records``: ``[{"symbol", "strategy", "n_trials", "deflation_n_family_raw"}, ...]``
+    (typischerweise aus den Confirm-Proposals eines Laufs). Nur Symbole mit >= 2 Studies UND
+    >= 2 DISTINKTEN Trialzahlen sind aussagekräftig (bei identischer Trialzahl wäre identisches N1
+    kein Fehler, sondern Zufall) — alles andere ist nicht anwendbar."""
+    if promotion_family_scope not in (None, "per_strategy"):
+        return InvariantResult(
+            name="check_family_scope_coherence",
+            passed=True,
+            expected="verschiedene deflation_n_family_raw je Study bei verschiedener Trialzahl",
+            actual=None,
+            detail=f"promotion_family_scope={promotion_family_scope!r} — nicht 'per_strategy', "
+                   "nicht anwendbar.",
+        )
+    by_symbol: dict[str, list[dict]] = {}
+    for r in study_family_records or []:
+        sym = r.get("symbol")
+        if sym is None or r.get("deflation_n_family_raw") is None or r.get("n_trials") is None:
+            continue
+        by_symbol.setdefault(sym, []).append(r)
+
+    offenders: dict[str, dict] = {}
+    for sym, records in by_symbol.items():
+        if len(records) < 2:
+            continue
+        distinct_trial_counts = {r["n_trials"] for r in records}
+        distinct_family_raw = {r["deflation_n_family_raw"] for r in records}
+        if len(distinct_trial_counts) >= 2 and len(distinct_family_raw) == 1:
+            offenders[sym] = {
+                "n_trials": sorted(distinct_trial_counts),
+                "deflation_n_family_raw": next(iter(distinct_family_raw)),
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_family_scope_coherence",
+        passed=passed,
+        expected="verschiedene deflation_n_family_raw je Study bei verschiedener Trialzahl",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) melden IDENTISCHES deflation_n_family_raw über "
+                f"Studies mit unterschiedlicher Trialzahl: {offenders} — Fingerabdruck des "
+                "#904-Bugs (Pitfall #289: eine spätere max()-artige Korrektur stellt die "
+                "symbolweite Multiplizität wieder her)."),
+    )
+
+
+def check_gate_collinearity_decision_required(gate_correlations: dict[tuple[str, str], float | None], *,
+                                              threshold: float = 0.90,
+                                              accepted_pairs: list[dict] | None = None,
+                                              policy: str = "require_decision") -> InvariantResult:
+    """Issue #907 (Pitfall #280) — der ``[#667]``-Kollinearitäts-Alarm (``reward.
+    assert_gate_collinearity_guard``) feuerte bislang bei jedem Lauf, den ein Gate-Paar über
+    ``threshold`` traf, OHNE jede Konsequenz: sechs Alarme derselben Klasse im ``ea4c409d``-Lauf,
+    alle korrekt, alle folgenlos. Ein Diagnose-Alarm ohne Entscheidungspflicht erzeugt Gewöhnung.
+
+    ``gate_collinearity_policy`` (``tournament.json``, Default ``'require_decision'``):
+    - ``'warn'`` — Alt-Verhalten, PASSt immer (reine Telemetrie, bit-identisch zu Pre-#907).
+    - ``'require_decision'``/``'block'`` — jedes Paar mit ``|ρ| > threshold`` MUSS in
+      ``gate_collinearity_accepted_pairs`` stehen (mit den Pflichtfeldern ``rationale`` und
+      ``decided_in_issue`` — eine dokumentierte, bewusste Entscheidung, keine stille Duldung).
+      Ein geflaggtes Paar OHNE Eintrag dort FAILt blocking — der Sweep bricht (via
+      ``fail_fast_invariants``) VOR Phase 1 ab, statt nach 24h Rechenzeit erneut sechsmal
+      denselben unbeantworteten Alarm zu protokollieren.
+
+    ``accepted_pairs``: ``[{"pair": [k1, k2], "rationale": str, "decided_in_issue": int}, ...]``."""
+    if policy == "warn":
+        return InvariantResult(
+            name="check_gate_collinearity_decision_required",
+            passed=True,
+            expected="jedes Paar mit |ρ| > threshold ist in gate_collinearity_accepted_pairs "
+                     "dokumentiert",
+            actual=None,
+            detail="gate_collinearity_policy='warn' — reine Telemetrie, keine Entscheidungspflicht.",
+        )
+    accepted_key_pairs = {
+        frozenset(a["pair"]) for a in (accepted_pairs or [])
+        if isinstance(a, dict) and a.get("pair") and a.get("rationale") and a.get("decided_in_issue")
+    }
+    offenders = []
+    for (k1, k2), rho in (gate_correlations or {}).items():
+        if rho is None or abs(rho) <= threshold:
+            continue
+        if frozenset((k1, k2)) not in accepted_key_pairs:
+            offenders.append({"pair": [k1, k2], "rho": round(rho, 4)})
+    passed = not offenders
+    return InvariantResult(
+        name="check_gate_collinearity_decision_required",
+        passed=passed,
+        expected="jedes Paar mit |ρ| > threshold ist in gate_collinearity_accepted_pairs "
+                 "dokumentiert",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} kollineare(s) Gate-Paar(e) ohne dokumentierte Entscheidung "
+                f"({policy!r}): {offenders} — jedes Paar braucht einen Eintrag in "
+                "gate_collinearity_accepted_pairs mit rationale + decided_in_issue, sonst bricht "
+                "der Lauf (Issue #907)."),
+    )
+
+
+def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
+                                     fail_fast_invariants: list[str] | None = None) -> InvariantResult:
+    """Issue #907 Fix 3 — symmetrisch zum Gate-Kollinearitäts-Fix: eine in
+    ``optimizer.json['fail_fast_invariants']`` gelistete Invariante, die in einem vollständigen
+    Lauf KEIN EINZIGES Ergebnis (PASS oder FAIL) meldet, ist nicht verdrahtet — ein Name in der
+    Config-Liste ohne einen tatsächlich ausgewerteten Check dahinter ist dieselbe Gewöhnungsfalle
+    wie ein Alarm ohne Entscheidungspflicht (Pitfall #280), nur eine Ebene tiefer: der Wächter
+    existiert nicht einmal als Beobachtung.
+
+    ``invariant_check_names``: die ``name``-Werte ALLER tatsächlich ausgewerteten
+    ``InvariantResult``s eines Laufs (``report.py``s ``invariant_checks``, unabhängig vom
+    Pass/Fail-Ergebnis)."""
+    configured = set(fail_fast_invariants or [])
+    if not configured:
+        return InvariantResult(
+            name="check_fail_fast_invariants_wired",
+            passed=True,
+            expected="jede in fail_fast_invariants gelistete Invariante wurde mindestens einmal "
+                     "ausgewertet",
+            actual=None,
+            detail="fail_fast_invariants leer/fehlt — nicht anwendbar.",
+        )
+    evaluated = set(invariant_check_names or [])
+    missing = sorted(configured - evaluated)
+    passed = not missing
+    return InvariantResult(
+        name="check_fail_fast_invariants_wired",
+        passed=passed,
+        expected="jede in fail_fast_invariants gelistete Invariante wurde mindestens einmal "
+                 "ausgewertet",
+        actual=missing if missing else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(missing)} in fail_fast_invariants gelistete Invariante(n) ohne jedes "
+                f"Ergebnis in diesem Lauf: {missing} — der Name existiert in der Config, aber kein "
+                "Code-Pfad wertet ihn tatsächlich aus (Issue #907)."),
     )
 
 

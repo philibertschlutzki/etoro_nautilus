@@ -29,8 +29,14 @@ _PITFALL_ISSUE_MAP = {
 }
 
 
-def test_pitfall_index_hint_updated_to_268():
-    assert "Pitfall #268**" in AGENTS_MD
+def test_pitfall_index_hint_was_at_least_268_at_this_catalogs_time():
+    """Der Hinweis wandert mit jedem Katalog weiter (zuletzt auf #292, Issue #912) — dieser Test
+    pinnt nur noch die historische UNTERGRENZE zum #855-Zeitpunkt, analog dem reward_semantics_
+    version->=9-Praezedenzfall in test_issue_637_reward_semantics_bump.py."""
+    import re
+    m = re.search(r"Pitfall #(\d+)\*\*", AGENTS_MD)
+    assert m is not None, "Kein Pitfall-Index-Hinweis (**Pitfall #NNN**) in AGENTS.md gefunden"
+    assert int(m.group(1)) >= 268
 
 
 def test_all_ten_pitfalls_are_documented_with_headers():
