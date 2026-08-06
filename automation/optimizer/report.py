@@ -250,7 +250,9 @@ def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, prop
 
 
 def _study_record(proposal: dict, study,
-                  tournament_cfg: dict | None = None) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
+                  tournament_cfg: dict | None = None, *,
+                  guard_dominance_threshold: float | None = None,
+                  ) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
     """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743)."""
     trials = list(getattr(study, "trials", None) or []) if study is not None else []
     trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in trials]
@@ -366,6 +368,9 @@ def _study_record(proposal: dict, study,
             holdout_metrics,
             max_ratio=float((tournament_cfg or {}).get("deflation_max_n_periods_ratio", 4.0))),
         _inv.check_n_family_consistency(holdout_metrics),
+        # Issue #887 — der globale Default (route='global_default_on_symbol') nahm an der
+        # Stufe-1-Selektion nicht teil; seine Deflation muss N=1 tragen, nicht deflation_n_family.
+        _inv.check_promotion_multiplicity_route(proposal),
         # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
         # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.
         _inv.check_deflation_cluster_coverage(holdout_metrics),
@@ -376,9 +381,20 @@ def _study_record(proposal: dict, study,
         _inv.check_log_return_coherence(trial_attrs),
         # Issue #759 — Missing-Data-Sentinel-Kollaps-Regressionswächter (oos_win_rate).
         _inv.check_metric_sentinel_absence(trial_attrs),
-        # Issue #804 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus dem
-        # Backtest-Subprozess sind jetzt maschinell im #742-Report überprüfbar, nicht nur live geloggt.
+        # Issue #804/#886 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus
+        # dem Backtest-Subprozess sind jetzt maschinell im #742-Report überprüfbar, nicht nur live
+        # geloggt (seit #886 ohne die #863/#864-regulären dritten Ausgänge, siehe unten).
         _inv.check_inference_diagnostics_absent(trial_attrs),
+        # Issue #886 — ersetzt die reine Anwesenheit der #863/#864-regulären Ausgänge durch eine
+        # Konzentrationsprüfung (analog STUDY_GUARD_DOMINATED, #823), gegen den #885-Nenner
+        # n_trials_informative.
+        _inv.check_inference_diagnostics_concentration(
+            trial_attrs, n_trials_informative=study_user_attrs.get("n_trials_informative"),
+            **({"guard_dominance_threshold": guard_dominance_threshold}
+               if guard_dominance_threshold is not None else {})),
+        # Issue #885 Fix Punkt 3 — die fünf Trial-Kategorien (informativ/geprunt/unauswertbar/
+        # fehlgeschlagen/total) müssen die Trial-Menge disjunkt und vollständig zerlegen.
+        _inv.check_denominator_coherence(study_user_attrs),
     ]
 
     record = {
@@ -388,6 +404,13 @@ def _study_record(proposal: dict, study,
         "n_evaluable": n_evaluable,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,
+        # Issue #885 Fix Punkt 2 — n_trials_pruned/n_trials_unevaluable als GETRENNTE Telemetrie
+        # (vorher kollabierten beide in "nicht evaluiert"); n_trials_informative ist der EINE Nenner
+        # für Raten-Meldungen, die die tatsächlich verwertete Suche messen (#885/#886).
+        "n_trials_informative": study_user_attrs.get("n_trials_informative"),
+        "n_trials_pruned": study_user_attrs.get("n_trials_pruned"),
+        "n_trials_unevaluable": study_user_attrs.get("n_trials_unevaluable"),
+        "n_trials_failed": study_user_attrs.get("n_trials_failed"),
         # Issue #812 — SHA-256 ueber die effektiv wirksame Gate-Konfiguration dieser Study
         # (reward.selection_rule_fingerprint, gestempelt in run_optimization._emit_study_summary).
         # ``None`` fuer Studies aus einem Lauf vor #812 (rueckwaertskompatibel, analog seed_effective).
@@ -608,6 +631,22 @@ def _symbol_coverage_summary(opt_data: dict) -> tuple[dict[str, Any], _inv.Invar
     coverage = _symbol_coverage.coverage_report(ledger, universe, max_age_runs=max_age_runs)
     check = _inv.check_symbol_coverage(ledger, universe, max_age_runs=max_age_runs)
     return coverage, check
+
+
+def _coverage_ledger_continuity_check() -> _inv.InvariantResult:
+    """Issue #892 Fix Punkt 2 — ermittelt ``has_prior_reports`` aus ``REPORTS_DIR`` (mindestens ein
+    ``run_*.json`` existiert bereits — dieser Aufruf läuft VOR dem Schreiben des Reports DIESES
+    Laufs, siehe ``generate_sweep_report``, also spiegelt die Liste ausschliesslich frühere Läufe)
+    und ruft ``invariants.check_coverage_ledger_continuity`` gegen das aktuelle Ledger. Fail-open
+    (kein FAIL) bei jedem Lese-/Enumerationsfehler — ein Report darf wegen dieser Zusatzprüfung nie
+    crashen."""
+    try:
+        has_prior_reports = REPORTS_DIR.exists() and any(REPORTS_DIR.glob("run_*.json"))
+    except OSError:
+        has_prior_reports = False
+    ledger = _symbol_coverage.load_coverage()
+    return _inv.check_coverage_ledger_continuity(
+        ledger.get("total_runs_started", 0), has_prior_reports)
 
 
 def _champions_summary(opt_data: dict) -> dict[str, Any]:
@@ -948,7 +987,10 @@ def _build_report(
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
     for proposal in proposals:
         study = _load_study_for_proposal(proposal)
-        record, checks = _study_record(proposal, study, tournament_cfg)
+        record, checks = _study_record(
+            proposal, study, tournament_cfg,
+            guard_dominance_threshold=float(
+                optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)))
         studies_out.append(record)
         study_label = f"{record['strategy']}/{record['symbol']}"
         all_checks.extend((study_label, c) for c in checks)
@@ -1013,6 +1055,10 @@ def _build_report(
     symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
     all_checks.append(("global", symbol_coverage_check))
 
+    # Issue #892 Fix Punkt 2 — ein bei Laufbeginn auf 1 zurückgesetztes Coverage-Ledger, obwohl
+    # bereits frühere Lauf-Reports existieren, ist ein Datenverlust (achte Wiederkehr Pitfall #237).
+    all_checks.append(("global", _coverage_ledger_continuity_check()))
+
     # Issue #862 — der konfigurierte sortino_numeric_guard_min_periods-Referenzwert muss zur
     # tatsächlich beobachteten n_periods-Grössenordnung DIESES Laufs passen (Pitfall #274).
     _guard_min_periods = tournament_cfg.get("sortino_numeric_guard_min_periods")
@@ -1020,7 +1066,8 @@ def _build_report(
         r["oos_n_periods_median"] for r in studies_out if r.get("oos_n_periods_median")
     ]
     guard_reference_coherence_check = _inv.check_guard_reference_coherence(
-        _guard_min_periods, _observed_n_periods_medians)
+        _guard_min_periods, _observed_n_periods_medians,
+        reference_mode=tournament_cfg.get("sortino_numeric_guard_reference"))
     all_checks.append(("global", guard_reference_coherence_check))
 
     # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren

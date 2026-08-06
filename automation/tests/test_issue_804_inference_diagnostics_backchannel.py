@@ -265,6 +265,10 @@ def test_check_passes_when_no_trial_has_diagnostics():
 
 
 def test_check_fails_and_counts_across_trials():
+    """Issue #886 — SORTINO_GUARD_TRIPPED ist seit #863/#864 ein regulärer dritter Ausgang und
+    wird NICHT mehr von der Anwesenheits-Prüfung gezählt (siehe
+    check_inference_diagnostics_concentration für dessen KONZENTRATIONS-Prüfung stattdessen);
+    EQUITY_NONPOSITIVE bleibt ein echter Defekt-Indikator."""
     trials = [
         {"inference_diagnostics": [{"code": "EQUITY_NONPOSITIVE"}]},
         {"inference_diagnostics": [{"code": "EQUITY_NONPOSITIVE"}, {"code": "SORTINO_GUARD_TRIPPED"}]},
@@ -272,7 +276,7 @@ def test_check_fails_and_counts_across_trials():
     ]
     result = inv.check_inference_diagnostics_absent(trials)
     assert result.passed is False
-    assert result.actual == 3
+    assert result.actual == 2
     assert result.name == "check_inference_diagnostics_absent"
 
 
@@ -304,7 +308,9 @@ def test_report_study_record_aggregates_inference_diagnostics_by_code():
     assert "check_inference_diagnostics_absent" in names
     c = next(c for c in checks if c.name == "check_inference_diagnostics_absent")
     assert c.passed is False
-    assert c.actual == 3
+    # Issue #886 — nur die 2 EQUITY_NONPOSITIVE zaehlen; SORTINO_GUARD_TRIPPED ist ein regulaerer
+    # dritter Ausgang (siehe check_inference_diagnostics_concentration).
+    assert c.actual == 2
 
 
 def test_report_study_record_empty_dict_when_no_diagnostics():

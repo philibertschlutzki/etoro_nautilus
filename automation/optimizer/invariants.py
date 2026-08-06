@@ -237,10 +237,16 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
 
 def check_guard_reference_coherence(configured_min_periods: float | None,
                                     observed_n_periods_medians: list[float], *,
-                                    max_factor: float = 2.0) -> InvariantResult:
-    """Issue #862 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_guard_min_
+                                    max_factor: float = 2.0,
+                                    reference_mode: str | None = None) -> InvariantResult:
+    """Issue #862/#882 — FAIL, wenn der konfigurierte ``tournament.json['sortino_numeric_guard_min_
     periods']``-Referenzwert um mehr als ``max_factor`` vom über den Lauf beobachteten Median der
     tatsächlichen ``oos_n_periods``-Verteilung abweicht (in beide Richtungen).
+
+    Issue #882 Fix Punkt 3 — ``reference_mode == 'family_median'`` macht ``sortino_numeric_guard_
+    min_periods`` INERT (der Guard skaliert dann pro Study gegen den beobachteten Median, nicht
+    gegen diesen absoluten Anker, siehe ``backtest_runner._effective_sortino_numeric_guard``) — der
+    Wächter darf einen inerten Anker dann nicht mehr rot färben (PASS, nicht anwendbar).
 
     Root-Cause: ein Referenzwert, der gegen eine ABGELEITETE Grösse kalibriert wurde (hier:
     ``n_periods``, die informative Periodenzahl), wird ungültig, sobald die Definition dieser
@@ -252,6 +258,17 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     ``observed_n_periods_medians``: je Study der Median von ``oos_n_periods`` über ihre
     ``oos_evaluated``-Trials (``report._study_record``). Leer/``configured_min_periods is None``
     ⇒ nicht anwendbar (PASS)."""
+    if reference_mode == "family_median":
+        return InvariantResult(
+            name="check_guard_reference_coherence",
+            passed=True,
+            expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
+                     "beobachtetem Median(n_periods)",
+            actual=None,
+            severity="blocking",
+            detail="sortino_numeric_guard_reference='family_median' — sortino_numeric_guard_"
+                   "min_periods ist inert (Issue #882 Fix Punkt 3), nicht anwendbar.",
+        )
     if configured_min_periods is None or not observed_n_periods_medians:
         return InvariantResult(
             name="check_guard_reference_coherence",
@@ -259,6 +276,7 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
             expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
                      "beobachtetem Median(n_periods)",
             actual=None,
+            severity="blocking",
             detail="sortino_numeric_guard_min_periods nicht konfiguriert oder keine Studies mit "
                    "n_periods-Telemetrie — nicht anwendbar.",
         )
@@ -267,6 +285,7 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
         return InvariantResult(
             name="check_guard_reference_coherence", passed=True,
             expected=f"Faktor <= {max_factor}", actual=None,
+            severity="blocking",
             detail="beobachteter Median(n_periods) <= 0 — nicht anwendbar.",
         )
     ratio = configured_min_periods / observed_median
@@ -277,12 +296,55 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
         expected=f"Faktor <= {max_factor} zwischen konfiguriertem Referenzwert und "
                  "beobachtetem Median(n_periods)",
         actual=round(ratio, 4),
-        severity="high",
+        # Issue #882 Fix Punkt 4 — vorher severity='high' ohne Entscheidungspflicht (Pitfall #280);
+        # ein Guard, der gegen die falsche Groessenordnung ankert, zensiert die Suche systematisch
+        # (kein Hinweis, ein Abbruchgrund) — jetzt blocking und in fail_fast_invariants gelistet.
+        severity="blocking",
         detail=("OK" if passed else
                 f"sortino_numeric_guard_min_periods={configured_min_periods:g} vs. beobachteter "
                 f"Median(n_periods)={observed_median:g} (Faktor {ratio:.2g}) — der Referenzwert "
                 "ist gegen eine andere Grössenordnung kalibriert als der aktuelle Lauf zeigt "
                 "(Pitfall #274)."),
+    )
+
+
+def check_promotion_multiplicity_route(proposal: dict) -> InvariantResult:
+    """Issue #887 (Pitfall #278) — FAIL, wenn ein Proposal mit
+    ``promotion_route == 'global_default_on_symbol'`` (#682/#783 — der globale Default wurde
+    promotet, weil kein einziger Trial symbol-eligibel war) ein ``deflation_n_family > 1`` in die
+    DSR-Berechnung getragen hat.
+
+    Root-Cause: der globale Default nahm an der Stufe-1-Selektion NICHT teil — er wurde nicht aus
+    ``deflation_n_family`` Kandidaten ausgewählt. ``confirm.resolve_promotion_multiplicity``
+    (die EINE Quelle für ``N``) liefert für diese Route immer ``N=1``; ein exportiertes Proposal
+    mit einem grösseren Wert zeigt, dass eine ANDERE (veraltete) Codepfad die volle
+    Stufe-1-Familiengrösse auf einen Kandidaten angewendet hat, der diese Suche nie durchlaufen
+    hat — die Deflationsschwelle wäre dann strukturell unerreichbar (E[max_N] wächst mit
+    ``sqrt(2 ln N)``).
+
+    ``proposal``: der vollständige exportierte Proposal-Dict (``promotion_route`` liegt auf der
+    OBERSTEN Ebene, ``deflation_n_family`` in ``proposal['holdout']['symbol']``)."""
+    route = proposal.get("promotion_route")
+    if route != "global_default_on_symbol":
+        return InvariantResult(
+            name="check_promotion_multiplicity_route",
+            passed=True,
+            expected="deflation_n_family <= 1 für promotion_route == 'global_default_on_symbol'",
+            actual=None,
+            detail=f"promotion_route={route!r} — nicht die global_default-Route, nicht anwendbar.",
+        )
+    n_family = ((proposal.get("holdout") or {}).get("symbol") or {}).get("deflation_n_family")
+    passed = n_family is None or n_family <= 1
+    return InvariantResult(
+        name="check_promotion_multiplicity_route",
+        passed=passed,
+        expected="deflation_n_family <= 1 für promotion_route == 'global_default_on_symbol'",
+        actual=n_family,
+        severity="high",
+        detail=("OK" if passed else
+                f"promotion_route='global_default_on_symbol' trägt deflation_n_family={n_family} "
+                "> 1 in die DSR-Berechnung — resolve_promotion_multiplicity wurde umgangen "
+                "(Pitfall #278)."),
     )
 
 
@@ -607,12 +669,27 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     )
 
 
+# Issue #886 (Pitfall #276) — SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE sind SEIT
+# #863/#864 REGULÄRE dritte Ausgänge ("nicht messbar" ≠ "schlecht", der Trial wird korrekt geprunt
+# statt als negative Beobachtung gewertet) — ihre blosse ANWESENHEIT ist seither kein Defekt mehr,
+# nur noch ihre KONZENTRATION (siehe check_inference_diagnostics_concentration). Alle übrigen Codes
+# (allen voran EQUITY_NONPOSITIVE) bleiben echte Defekt-Indikatoren — ihre Abwesenheit ist weiterhin
+# die Norm.
+_REGULAR_THIRD_OUTCOME_CODES = frozenset({"SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE"})
+
+
 def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
-    """Issue #804 — sechster Regressionswächter: über die GESAMTE Study hinweg dürfen KEINE
-    strukturierten Inferenzpfad-Diagnosen (``EQUITY_NONPOSITIVE``, ``PERIOD_RETURNS_NOT_FINITE``,
+    """Issue #804/#886 — sechster Regressionswächter: über die GESAMTE Study hinweg dürfen KEINE
+    strukturierten Inferenzpfad-Diagnosen ausserhalb der #886-Ausnahmeliste
+    (``EQUITY_NONPOSITIVE``, ``PERIOD_RETURNS_NOT_FINITE``,
     ``RETURN_SERIES_IDENTITY_VIOLATION``/``_UNDEFINED``, ``NON_CONTIGUOUS_FOLD_SEGMENTS``,
-    ``SORTINO_GUARD_TRIPPED``, ``COHERENCE_INVARIANT_VIOLATION`` — aus ``backtest_runner.
-    _calculate_stats``, je Trial unter ``inference_diagnostics`` gestempelt, #804) aufgetreten sein.
+    ``COHERENCE_INVARIANT_VIOLATION`` — aus ``backtest_runner._calculate_stats``, je Trial unter
+    ``inference_diagnostics`` gestempelt, #804) aufgetreten sein.
+
+    Issue #886 — ``SORTINO_GUARD_TRIPPED``/``SORTINO_INSUFFICIENT_DOWNSIDE`` sind SEIT #863/#864
+    reguläre dritte Ausgänge (Pitfall #276) und daher NICHT mehr Teil dieser Abwesenheits-Prüfung
+    (ihre KONZENTRATION prüft ``check_inference_diagnostics_concentration`` stattdessen) — vorher
+    meldete dieser Wächter korrektes Verhalten als Fehler und trug zur Alarm-Gewöhnung (#884) bei.
 
     Root-Cause #804: diese Diagnosen liefen bislang NUR im Backtest-SUBPROZESS über ``logging`` —
     0 Treffer über ein vollstaendiges Lauf-Log trotz 35 ``STUDY_ABORTED_ON_INVARIANT`` im
@@ -627,7 +704,7 @@ def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
     for t in trials:
         for diag in t.get("inference_diagnostics") or ():
             code = diag.get("code") if isinstance(diag, dict) else None
-            if code:
+            if code and code not in _REGULAR_THIRD_OUTCOME_CODES:
                 total += 1
                 by_code[code] = by_code.get(code, 0) + 1
     passed = total == 0
@@ -642,9 +719,94 @@ def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
     )
 
 
+def check_inference_diagnostics_concentration(
+    trials: list[dict], *, n_trials_informative: int | None,
+    guard_dominance_threshold: float = 0.10,
+) -> InvariantResult:
+    """Issue #886 (Pitfall #276) — ersetzt die reine Anwesenheits-Prüfung für die #863/#864
+    "regulären dritten Ausgänge" (``SORTINO_GUARD_TRIPPED``/``SORTINO_INSUFFICIENT_DOWNSIDE``)
+    durch eine KONZENTRATIONS-Prüfung: FAIL, wenn eine Study mehr als
+    ``guard_dominance_threshold`` ihrer INFORMATIVEN Trials (Issue #885 — ``n_trials_informative``,
+    NICHT die rohe Trial-Zahl) an den Inferenzpfad verliert. Das ist dieselbe Bedingung wie
+    ``run_optimization._emit_study_summary``s ``STUDY_GUARD_DOMINATED`` — dieser Check macht sie
+    zusätzlich zu einer MASCHINELL überprüfbaren #742-Report-Aussage (analog
+    ``check_inference_diagnostics_absent``), nicht nur einer Live-Log-Zeile.
+
+    ``n_trials_informative is None`` (Legacy-Report ohne #885-Telemetrie) ⇒ nicht anwendbar
+    (PASS) — kein stiller Fallback auf eine potenziell falsche rohe Trial-Zahl."""
+    if n_trials_informative is None:
+        return InvariantResult(
+            name="check_inference_diagnostics_concentration",
+            passed=True,
+            expected=f"<= {guard_dominance_threshold:.0%} der informativen Trials mit "
+                     "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE",
+            actual=None,
+            detail="n_trials_informative unbekannt (Pre-#885-Report) — nicht anwendbar.",
+        )
+    affected = 0
+    for t in trials:
+        for diag in t.get("inference_diagnostics") or ():
+            code = diag.get("code") if isinstance(diag, dict) else None
+            if code in _REGULAR_THIRD_OUTCOME_CODES:
+                affected += 1
+                break
+    fraction = (affected / n_trials_informative) if n_trials_informative > 0 else 0.0
+    passed = fraction <= guard_dominance_threshold
+    return InvariantResult(
+        name="check_inference_diagnostics_concentration",
+        passed=passed,
+        expected=f"<= {guard_dominance_threshold:.0%} der informativen Trials mit "
+                 "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE",
+        actual=round(fraction, 4),
+        detail=("OK" if passed else
+                f"{affected}/{n_trials_informative} informative Trials ({fraction:.1%}) mit einem "
+                "regulären Inferenzpfad-Ausgang — die Suche ist faktisch zensiert (analog "
+                "STUDY_GUARD_DOMINATED, #823)."),
+    )
+
+
 # Issue #788 — dieselbe Sentinel-Frage wie #759 (dort nur oos_win_rate) gilt fuer JEDE OOS-Metrik,
 # die make_symbol_objective als Trial-User-Attr persistiert: ein nicht evaluierter Trial darf fuer
 # KEINE davon eine Beobachtung tragen. Deklarative Liste statt sechs Einzel-Wächtern.
+def check_denominator_coherence(study_counts: dict) -> InvariantResult:
+    """Issue #885 Fix Punkt 3 — FAIL, wenn ``n_trials_informative + n_trials_pruned +
+    n_trials_unevaluable + n_trials_failed != n_trials_total`` für eine Study
+    (``run_optimization._emit_study_summary`` stempelt alle fünf Zähler als Study-User-Attrs).
+
+    Ein disjunktes, vollständiges Zerlegen der Trial-Menge ist die Voraussetzung dafür, dass
+    ``n_trials_informative`` (statt der rohen Trial-Zahl) als EIN Nenner für alle Raten-Meldungen
+    (Budget-Ausführung, Plateau-Anteile, Guard-Dominanz) tragfähig ist — eine Lücke oder
+    Doppelzählung hier würde jede dieser Raten still verfälschen.
+
+    ``study_counts`` fehlen die #885-Zähler (Pre-#885-Report) ⇒ nicht anwendbar (PASS)."""
+    keys = ("n_trials_total", "n_trials_informative", "n_trials_pruned",
+            "n_trials_unevaluable", "n_trials_failed")
+    values = {k: study_counts.get(k) for k in keys}
+    if any(v is None for v in values.values()):
+        return InvariantResult(
+            name="check_denominator_coherence",
+            passed=True,
+            expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
+                     "n_trials_failed == n_trials_total",
+            actual=None,
+            detail="Zähler unbekannt (Pre-#885-Report) — nicht anwendbar.",
+        )
+    total = values["n_trials_total"]
+    parts_sum = (values["n_trials_informative"] + values["n_trials_pruned"]
+                 + values["n_trials_unevaluable"] + values["n_trials_failed"])
+    passed = parts_sum == total
+    return InvariantResult(
+        name="check_denominator_coherence",
+        passed=passed,
+        expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
+                 "n_trials_failed == n_trials_total",
+        actual=values,
+        detail=("OK" if passed else
+                f"Zerlegung ({parts_sum}) != n_trials_total ({total}): {values} — die #885-"
+                "Trial-Kategorien sind nicht disjunkt/vollständig."),
+    )
+
+
 _SENTINEL_GUARDED_METRIC_KEYS = (
     "oos_win_rate", "oos_profit_factor", "oos_expectancy", "oos_total_return",
     "oos_sortino", "oos_psr", "oos_sortino_period",
@@ -1060,29 +1222,75 @@ def check_selection_rule_homogeneity(selection_rule_families: dict[str, dict[str
 
 
 def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: int = 3) -> InvariantResult:
-    """Issue #841 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als ``max_age_runs``
-    abgeschlossenen Sweep-Läufen nicht abgedeckt wurde (niemals abgedeckt zählt als maximal alt).
+    """Issue #841/#892 — FAIL, wenn ein Symbol des aktuellen Universums seit mehr als
+    ``max_age_runs`` abgeschlossenen Sweep-Läufen nicht ERNEUT abgedeckt wurde (``stale``), ODER
+    ein Symbol AUSSERHALB der Bootstrap-Phase noch NIE abgedeckt wurde (``never_covered``).
     Konsumiert ``symbol_coverage.coverage_report`` (dasselbe Ledger, das
     ``sweep_symbol_order_policy='least_recently_covered'`` für die Dispatch-Reihenfolge nutzt) —
     macht eine Abdeckungslücke messbar, statt sie nur implizit über ``symbols_completed``/
-    ``symbols_planned``-Telemetrie erahnen zu lassen."""
+    ``symbols_planned``-Telemetrie erahnen zu lassen.
+
+    Issue #892 Fix Punkt 3/4 (Pitfall #287) — ``never_covered`` und ``stale_symbols`` sind ZWEI
+    verschiedene Zustände (ein nie abgedecktes Symbol hat kein "Alter" im Sinne von ``max_age_runs``
+    — der bisherige Code stempelte es fälschlich mit ``total_runs_started``, dem STALE-Text). Bei
+    ``len(universe)`` Symbolen braucht die ERSTE Vollabdeckung mehrere Läufe (Bootstrap-Phase,
+    ``coverage_report``s ``coverage_bootstrap_phase``) — währenddessen ist ``never_covered`` der
+    ERWARTETE Zustand (Telemetrie, kein FAIL); ``stale_symbols`` bleibt IMMER ein FAIL (ein bereits
+    abgedecktes Symbol, das die Rotation seither übersprungen hat, ist unabhängig von der
+    Bootstrap-Phase ein echter Befund)."""
     from automation.optimizer import symbol_coverage as _sc
     report = _sc.coverage_report(coverage, universe, max_age_runs=max_age_runs)
     stale = report.get("stale_symbols") or {}
     never = report.get("never_covered") or []
-    offenders = dict(stale)
-    for sym in never:
-        offenders.setdefault(sym, report.get("total_runs_started", 0))
+    bootstrap = bool(report.get("coverage_bootstrap_phase"))
+    never_offenders = [] if bootstrap else list(never)
+    offenders: dict[str, Any] = dict(stale)
+    for sym in never_offenders:
+        offenders[sym] = "never_covered"
     passed = not offenders
+    detail_parts: list[str] = []
+    if stale:
+        detail_parts.append(
+            f"{len(stale)} Symbol(e) seit mehr als {max_age_runs} Läufen nicht ERNEUT abgedeckt "
+            f"(stale, least_recently_covered-Rotation sollte das verhindern): {stale}")
+    if never_offenders:
+        detail_parts.append(
+            f"{len(never_offenders)} Symbol(e) noch NIE abgedeckt, ausserhalb der Bootstrap-Phase "
+            f"({report.get('total_runs_started', 0)} Läufe): {sorted(never_offenders)}")
+    if bootstrap and never:
+        detail_parts.append(
+            f"{len(never)} Symbol(e) noch nie abgedeckt, aber INNERHALB der Bootstrap-Phase "
+            "(Erstabdeckung des Universums läuft noch) — Telemetrie, kein FAIL.")
     return InvariantResult(
         name="check_symbol_coverage",
         passed=passed,
-        expected=f"<= {max_age_runs} Läufe seit letzter Abdeckung, für jedes Symbol im Universum",
+        expected=(f"<= {max_age_runs} Läufe seit letzter Abdeckung (stale) und kein Symbol "
+                  "ausserhalb der Bootstrap-Phase ohne jede Abdeckung (never_covered)"),
         actual=offenders if offenders else None,
         severity="high",
-        detail=("OK" if passed else
-                f"{len(offenders)} Symbol(e) seit mehr als {max_age_runs} Läufen nicht abgedeckt: "
-                f"{offenders} (Issue #841 — least_recently_covered-Rotation sollte das verhindern)."),
+        detail=" | ".join(detail_parts) if detail_parts else "OK",
+    )
+
+
+def check_coverage_ledger_continuity(total_runs_started: int, has_prior_reports: bool) -> InvariantResult:
+    """Issue #892 Fix Punkt 2 — FAIL (blocking), wenn ``total_runs_started == 1`` UND bereits
+    MINDESTENS ein früherer Lauf-Report existiert (``data/optimizer/reports/run_*.json``): das
+    Coverage-Ledger (``symbol_coverage.json``) wurde zwischen dem Vorlauf und diesem Lauf
+    zurückgesetzt/verloren — ein Datenverlust (achte Wiederkehr von Pitfall #237: #794, #796,
+    #797, #818, #831, #840, #856, hier), kein Normalzustand für einen Sweep, der nachweislich
+    nicht der allererste ist. Reine Funktion — der Aufrufer (``report._build_report``) ermittelt
+    ``has_prior_reports`` aus dem Report-Verzeichnis."""
+    offending = bool(has_prior_reports) and int(total_runs_started) == 1
+    return InvariantResult(
+        name="check_coverage_ledger_continuity",
+        passed=not offending,
+        expected="total_runs_started > 1, sobald mindestens ein früherer Lauf-Report existiert",
+        actual=total_runs_started,
+        severity="blocking",
+        detail=("OK" if not offending else
+                f"total_runs_started={total_runs_started}, obwohl bereits frühere Lauf-Reports "
+                "existieren — das Coverage-Ledger wurde zurückgesetzt/verloren (Pitfall #237, "
+                "achte Wiederkehr)."),
     )
 
 

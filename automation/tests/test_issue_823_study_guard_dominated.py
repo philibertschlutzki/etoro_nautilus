@@ -7,6 +7,7 @@ reguläres 0-/N-eligible-Resultat interpretierbar (reine Diagnose, keine Gate-/R
 import time
 from pathlib import Path
 
+import optuna
 import pytest
 
 from automation.optimizer.run_optimization import _emit_study_summary
@@ -22,6 +23,11 @@ class _DummyTrial:
             "inference_diagnostics": diagnostics,
             "backtest_ms": 10,
         }
+        # Issue #885 — der Guard-Dominanz-Nenner zaehlt jetzt n_trials_informative (TrialState.
+        # COMPLETE UND oos_evaluated=True), nicht mehr die rohe oos_evaluated-Zahl: ein
+        # SORTINO_GUARD_TRIPPED-Trial, das (unter inference_failure_policy='floor', dem hier
+        # getesteten Fall) NICHT geprunt wurde, bleibt COMPLETE.
+        self.state = optuna.trial.TrialState.COMPLETE
 
 
 class _DummyStudy:

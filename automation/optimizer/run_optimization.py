@@ -1878,20 +1878,46 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                     "sortino_guard_trip_fraction_warn", guard_trip_fraction_warn))
     except Exception:
         pass
+    # Issue #885 (Pitfall #283) — der Nenner fuer STUDY_GUARD_DOMINATED misst absichtlich die
+    # tatsaechlich VERWERTBARE ("informative") Trial-Menge, NICHT ``evaluable`` (dieses zaehlt
+    # unter ``inference_failure_policy='prune'`` weiterhin geprunte Trials mit: ein geprunter
+    # Trial (#864) behaelt sein ``oos_evaluated=True``-User-Attr — es WURDE evaluiert, BEVOR die
+    # Pruning-Entscheidung fiel — sein ``TrialState`` ist aber ``PRUNED``, er hat keine informative
+    # Beobachtung mehr geliefert. ``evaluable``/``evaluable_fraction`` (unten) bleiben UNVERAENDERT
+    # — sie speisen das #568/#640/#754-Gradienten-Gate, dessen Semantik dieser Fix nicht aendert.
+    n_trials_pruned = sum(
+        1 for t in trials if getattr(t, "state", None) == optuna.trial.TrialState.PRUNED)
+    n_trials_failed = sum(
+        1 for t in trials if getattr(t, "state", None) == optuna.trial.TrialState.FAIL)
+    n_trials_informative = sum(
+        1 for t in trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+    )
+    n_trials_unevaluable = max(0, len(trials) - n_trials_pruned - n_trials_failed - n_trials_informative)
+    try:
+        study.set_user_attr("n_trials_total", len(trials))
+        study.set_user_attr("n_trials_informative", n_trials_informative)
+        study.set_user_attr("n_trials_pruned", n_trials_pruned)
+        study.set_user_attr("n_trials_failed", n_trials_failed)
+        study.set_user_attr("n_trials_unevaluable", n_trials_unevaluable)
+    except Exception:
+        pass
     study_guard_dominated = bool(
-        evaluable > 0 and (guard_tripped / evaluable) > guard_trip_fraction_warn)
+        n_trials_informative > 0
+        and (guard_tripped / n_trials_informative) > guard_trip_fraction_warn)
     if study_guard_dominated:
         try:
             study.set_user_attr("study_guard_dominated", True)
         except Exception:
             pass
         logging.getLogger("optimizer").warning(
-            "[#823] %s: STUDY_GUARD_DOMINATED — %d/%d evaluierte Trials (%.1f%%) mit "
+            "[#823/#885] %s: STUDY_GUARD_DOMINATED — %d/%d informative Trials (%.1f%%) mit "
             "SORTINO_GUARD_TRIPPED (> %.0f%%) — die Suche ist faktisch zensiert (der Guard löscht "
             "systematisch das obere Ende der Zielverteilung); dieses Ergebnis ist NICHT als "
             "reguläres Eligibility-Resultat interpretierbar.",
-            getattr(study, "study_name", "?"), guard_tripped, evaluable,
-            100.0 * guard_tripped / evaluable, 100.0 * guard_trip_fraction_warn,
+            getattr(study, "study_name", "?"), guard_tripped, n_trials_informative,
+            100.0 * guard_tripped / n_trials_informative, 100.0 * guard_trip_fraction_warn,
         )
     try:
         best_value = study.best_value

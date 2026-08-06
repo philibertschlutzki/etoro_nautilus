@@ -21,6 +21,7 @@ abgedeckt", nicht nur "seit wann"). ``sweep.py`` schreibt es atomar am selben Pu
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -48,14 +49,23 @@ def load_coverage(path: Path | None = None) -> dict[str, Any]:
     return {"schema_version": _SCHEMA_VERSION, "total_runs_started": 0, "symbols": {}}
 
 
-def start_new_run(coverage: dict[str, Any]) -> dict[str, Any]:
+def start_new_run(coverage: dict[str, Any], *, run_id: str | None = None) -> dict[str, Any]:
     """Issue #841 — EINMAL beim Start eines echten Sweep-Laufs aufgerufen: erhöht
-    ``total_runs_started`` um 1. Reine Funktion (neues Dict), analog ``record_symbol_completion``."""
+    ``total_runs_started`` um 1. Reine Funktion (neues Dict), analog ``record_symbol_completion``.
+
+    Issue #892 Fix Punkt 1 — der Aufrufer MUSS das Ergebnis sofort persistieren (``write_coverage``),
+    nicht erst beim ersten abgeschlossenen Symbol: sonst geht der erhöhte Zähler bei einem Lauf, der
+    vor dem ersten Symbolabschluss abbricht, verloren (Pitfall #237, achte Wiederkehr).
+    ``last_write_run_id`` (optional, ``run_id`` des schreibenden Laufs) macht einen Verlust im
+    Folgelauf SICHTBAR (ein Ledger ohne diesen Wert bei ``total_runs_started > 1`` ist inkonsistent),
+    statt still zu bleiben."""
     out = {
         "schema_version": coverage.get("schema_version", _SCHEMA_VERSION),
         "total_runs_started": int(coverage.get("total_runs_started", 0)) + 1,
         "symbols": dict(coverage.get("symbols") or {}),
     }
+    if run_id is not None:
+        out["last_write_run_id"] = run_id
     return out
 
 
@@ -69,6 +79,10 @@ def record_symbol_completion(coverage: dict[str, Any], symbol: str, *, run_id: s
         "total_runs_started": coverage.get("total_runs_started", 0),
         "symbols": dict(coverage.get("symbols") or {}),
     }
+    if coverage.get("last_write_run_id") is not None:
+        out["last_write_run_id"] = coverage["last_write_run_id"]
+    if run_id is not None:
+        out["last_write_run_id"] = run_id
     prior = out["symbols"].get(symbol) or {}
     out["symbols"][symbol] = {
         "last_completed_run_id": run_id,
@@ -143,9 +157,36 @@ def coverage_report(coverage: dict[str, Any], universe: list[str], *, max_age_ru
         oldest_age = max(oldest_age, age)
         if age > max_age_runs:
             stale_symbols[sym] = age
+    # Issue #892 Fix Punkt 4 (Pitfall #287) — eine Invariante, die ihre eigene Erfolgsbedingung
+    # erst nach mehreren Läufen erfüllen kann, braucht eine explizite Bootstrap-Phase: bei
+    # ``len(universe)`` Symbolen und einer aus dem Ledger selbst geschätzten Rate
+    # (jemals abgedeckte Symbole / total_runs_started) braucht die ERSTE Vollabdeckung
+    # ``ceil(len(universe) / rate)`` Läufe — bis dahin ist ``never_covered`` der ERWARTETE
+    # Zustand, kein Befund. Reine Ableitung aus dem Ledger selbst (kein neuer Config-Key nötig).
+    n_covered_ever = sum(
+        1 for sym in universe
+        if entries.get(sym) and entries[sym].get("last_completed_run_index") is not None
+    )
+    estimated_symbols_per_run = (n_covered_ever / total_runs) if total_runs > 0 else 0.0
+    if estimated_symbols_per_run > 0:
+        # Gedeckelt auf len(universe): eine chronisch niedrige beobachtete Rate (< 1 Symbol/Lauf)
+        # darf das Bootstrap-Fenster NICHT unbegrenzt verlaengern (sonst wird "never_covered"
+        # niemals mehr ein Befund, sobald die Abdeckung dauerhaft unvollstaendig bleibt) — bei
+        # einer Rate >= 1 Symbol/Lauf greift der Deckel ohnehin nie (ceil(N/rate) <= N).
+        bootstrap_runs_needed = min(
+            math.ceil(len(universe) / estimated_symbols_per_run), len(universe))
+        coverage_bootstrap_phase = total_runs <= bootstrap_runs_needed
+    else:
+        # Keine Rate ermittelbar (Lauf 0, oder bislang 0 Symbole je abgedeckt) — per Konstruktion
+        # Bootstrap-Phase, sofern das Universum ueberhaupt nicht-leere never_covered hat.
+        coverage_bootstrap_phase = bool(never_covered)
     return {
         "never_covered": sorted(never_covered),
         "stale_symbols": stale_symbols,
         "oldest_coverage_age_runs": oldest_age,
         "total_runs_started": total_runs,
+        "coverage_bootstrap_phase": coverage_bootstrap_phase,
+        "estimated_symbols_per_run": (
+            round(estimated_symbols_per_run, 2) if estimated_symbols_per_run > 0 else None
+        ),
     }
