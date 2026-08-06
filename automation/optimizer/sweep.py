@@ -258,6 +258,38 @@ def assert_pinned_library_versions_valid() -> None:
         _sys.exit(2)
 
 
+def assert_instrument_metadata_coherence() -> None:
+    """Issue #920 — FAIL-LOUD beim Sweep-Start: ``instrument_map.json`` gegen sich selbst geprüft
+    (``invariants.check_instrument_metadata_coherence``, Pitfall #298) — ein Instrument mit
+    ``size_precision=8`` und ``asset_class='equity'`` (der #920-Defekt: 12 Krypto-Symbole lösten
+    seit dem #898-Backfill auf den falschen, um Faktor 4 zu niedrigen Spread auf) bricht den
+    Sweep-Start ab, statt 143 Symbole lang unbemerkt zu falschen simulierten Fill-Preisen zu
+    führen. Exit-Code 2, analog ``assert_pinned_library_versions_valid``."""
+    from automation.optimizer import invariants as _inv
+    instrument_map_path = config_dir() / "instrument_map.json"
+    backtest_path = config_dir() / "backtest.json"
+    try:
+        instruments = (json.loads(instrument_map_path.read_text("utf-8")) or {}).get(
+            "instruments", {}) if instrument_map_path.exists() else {}
+    except (OSError, ValueError):
+        instruments = {}
+    if not instruments:
+        return
+    spread_by_asset_class = None
+    try:
+        if backtest_path.exists():
+            spread_by_asset_class = (json.loads(backtest_path.read_text("utf-8")) or {}).get(
+                "spread_bps_by_asset_class")
+    except (OSError, ValueError):
+        spread_by_asset_class = None
+    result = _inv.check_instrument_metadata_coherence(
+        instruments, spread_bps_by_asset_class=spread_by_asset_class)
+    if not result.passed:
+        import sys as _sys
+        print(f"❌ [#920] INSTRUMENT_METADATA_INCOHERENT: {result.detail}", file=_sys.stderr)
+        _sys.exit(2)
+
+
 def _assert_gate_reward_parity() -> None:
     """Issue #593 — FAIL-LOUD beim Sweep-Start: ``eligible_requires_any`` und die
     ``_any_condition_distance``-Klauseln müssen dieselbe Menge sein (Gate/Reward-Parität).
@@ -1330,6 +1362,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Elternprozess-Modul-Ladepfad zu ziehen, ausser der Preflight läuft tatsächlich.
         from automation.backtest_runner import assert_guard_reference_injectable
         assert_guard_reference_injectable()
+        # Issue #920 — Instrument-Metadaten-Kohärenz (Pitfall #298): ein Symbol mit
+        # size_precision>=6 und asset_class != 'crypto' bricht den Lauf ab, statt 143 Symbole
+        # lang mit falschen simulierten Fill-Preisen zu laufen.
+        assert_instrument_metadata_coherence()
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()

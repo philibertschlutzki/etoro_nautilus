@@ -364,6 +364,60 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     )
 
 
+def check_instrument_metadata_coherence(instruments: dict[str, dict], *,
+                                        spread_bps_by_asset_class: dict | None = None) -> InvariantResult:
+    """Issue #920 (Pitfall #298) — Metadaten sind gegen sich selbst prüfbar, ohne externe Quelle.
+    Root-Cause #920: der #898-Fix schloss die Lücke "asset_class fehlt" durch einen pauschalen
+    Backfill auf 'equity' — 12 Krypto-Symbole (``size_precision=8``, unmöglich für eine Aktie mit
+    eToro-Bruchteilshandel) lösten seither auf den falschen, um Faktor 4 zu niedrigen
+    Spread/Kommission auf. Ein fail-loud-Wächter plus ein flächendeckender Backfill ergibt einen
+    Wächter, der nie feuert (#297) — diese Invariante prüft die Metadaten stattdessen GEGEN SICH
+    SELBST.
+
+    Regeln (jede Verletzung ist ``severity='blocking'``):
+      * ``size_precision >= 6`` ⇒ ``asset_class`` MUSS ``'crypto'`` sein (eToro-Aktien-
+        Bruchteilshandel geht nicht auf sechs oder mehr Nachkommastellen).
+      * ``asset_class == 'forex'`` ⇒ ``price_precision >= 4``.
+      * jede vorkommende ``asset_class`` (normiert auf Grossschreibung) muss einen Eintrag in
+        ``spread_bps_by_asset_class`` haben, sofern diese Map übergeben wird.
+
+    ``instruments``: das ``instrument_map.json['instruments']``-Dict (ID → {'symbol',
+    'asset_class', 'price_precision', 'size_precision'})."""
+    offenders: dict[str, str] = {}
+    for iid, data in (instruments or {}).items():
+        symbol = data.get("symbol", iid)
+        asset_class = (data.get("asset_class") or "").strip().lower()
+        size_precision = data.get("size_precision")
+        price_precision = data.get("price_precision")
+        if size_precision is not None and int(size_precision) >= 6 and asset_class != "crypto":
+            offenders[symbol] = (
+                f"size_precision={size_precision} >= 6 impliziert 'crypto', asset_class="
+                f"'{asset_class}'")
+            continue
+        if asset_class == "forex" and price_precision is not None and int(price_precision) < 4:
+            offenders[symbol] = f"asset_class='forex' verlangt price_precision >= 4, hat {price_precision}"
+            continue
+        if spread_bps_by_asset_class is not None and asset_class:
+            normalized = {str(k).strip().upper() for k in spread_bps_by_asset_class}
+            if asset_class.upper() not in normalized:
+                offenders[symbol] = (
+                    f"asset_class='{asset_class}' hat keinen Eintrag in spread_bps_by_asset_class "
+                    f"({sorted(normalized)})")
+    passed = not offenders
+    return InvariantResult(
+        name="check_instrument_metadata_coherence",
+        passed=passed,
+        expected="size_precision>=6 impliziert asset_class='crypto'; asset_class='forex' impliziert "
+                 "price_precision>=4; jede asset_class hat einen Kosten-Eintrag",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Instrument(e) mit inkohärenten Metadaten: {offenders} — "
+                "Issue #920: ein pauschaler Backfill auf 'equity' entwertet fail-loud-Wächter, "
+                "die nur auf FEHLENDE (nicht auf FALSCHE) Metadaten prüfen."),
+    )
+
+
 def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
     """Issue #929 Fix 3 — eigenständiges Frühwarnsignal: ``constraint_improvement_rate`` (die
     Änderung der mittleren Constraint-Verletzung zwischen erster und zweiter Hälfte der
