@@ -1120,6 +1120,8 @@ def _build_report(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> dict:
     # Issue #856 Fix Punkt 4 — fail-loud statt einer nichtssagenden AttributeError in
     # ``_load_study_for_proposal``: ``_build_report`` erwartet ausschliesslich geparste Proposal-
@@ -1325,6 +1327,13 @@ def _build_report(
         "run_status": run_status,
         "symbols_completed": symbols_completed,
         "symbols_planned": symbols_planned,
+        # Issue #942 (Katalog A) — Funnel-Transparenz: symbols_discovered (rohes Symbol-Universum
+        # dieses Laufs) vs. symbols_gate1_rejected (Gate 1 INSUFFICIENT_HISTORY/PARAM_DATA_RATIO_
+        # TOO_LOW/OOS_FOLD_TOO_SHORT) vs. symbols_planned (nach Gate-1-Filterung, bereits vorhanden).
+        # Vorher war nur symbols_planned sichtbar — ein Operator konnte die erreichbare Coverage
+        # (symbols_planned/symbols_discovered) nicht vom Report ablesen.
+        "symbols_discovered": symbols_discovered,
+        "symbols_gate1_rejected": symbols_gate1_rejected,
         # Issue #849 — im Report EINGEBETTET (statt eines zweiten config_dir()-Lesezugriffs in
         # summary_de.py, das bewusst reines Rueckgabedict-only bleibt, siehe Moduldocstring dort):
         # Sektion 5.2 zeigt hoechstens so viele Beispiel-Details je Check, bevor sie auf "... und N
@@ -1404,6 +1413,8 @@ def generate_sweep_report(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
 
@@ -1422,6 +1433,8 @@ def generate_sweep_report(
         wallclock_s=wallclock_s, cli_args=cli_args,
         run_status=run_status, symbols_completed=symbols_completed,
         symbols_planned=symbols_planned,
+        symbols_discovered=symbols_discovered,
+        symbols_gate1_rejected=symbols_gate1_rejected,
     )
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
@@ -1440,6 +1453,8 @@ def generate_report_for_run(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
 
@@ -1465,6 +1480,8 @@ def generate_report_for_run(
         wallclock_s=wallclock_s, cli_args=cli_args, reports_dir=reports_dir,
         run_status=run_status, symbols_completed=symbols_completed,
         symbols_planned=symbols_planned,
+        symbols_discovered=symbols_discovered,
+        symbols_gate1_rejected=symbols_gate1_rejected,
     )
 
 

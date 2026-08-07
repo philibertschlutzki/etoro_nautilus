@@ -12,8 +12,13 @@ der Aufrufer in `run_per_symbol_sweep` bricht nur noch global ab, wenn die Offen
 `>= fail_fast_min_offending_symbols` verschiedene Symbole streuen; sonst werden nur die
 betroffenen Paare quarantänisiert (`record_diagnosed_pair`, `action='denylist'`) und der Sweep
 läuft weiter.
+
+Issue #938 (Katalog A) — die Rückgabe verwendet seit diesem Fix ``_contracts.pair_key``-String-Keys
+(``"strategy/symbol"``), NICHT mehr rohe ``tuple[str, str]``-Keys: ein Tuple-Key floss vorher direkt
+in einen ``emit_execution_event``-Payload und löste #937s ``json.dumps``-``TypeError`` aus.
 """
 from automation.optimizer import sweep
+from automation.optimizer._contracts import pair_key
 
 
 def _check(name, actual, passed=False):
@@ -28,8 +33,8 @@ def test_single_symbol_offender_is_not_global_evidence():
     pairs, symbols = sweep._offending_pairs_for_fail_fast_check(checks, "check_holding_time_cap")
     assert symbols == {"VLO.ETORO"}
     assert pairs == {
-        ("Rsi2ReversionStrategy", "VLO.ETORO"): 0.52,
-        ("ComboTrendVwapStrategy", "VLO.ETORO"): 0.38,
+        pair_key("Rsi2ReversionStrategy", "VLO.ETORO"): 0.52,
+        pair_key("ComboTrendVwapStrategy", "VLO.ETORO"): 0.38,
     }
 
 
