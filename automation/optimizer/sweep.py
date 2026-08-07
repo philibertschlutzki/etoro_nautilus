@@ -904,6 +904,40 @@ def _read_last_backtest_ms_median() -> float | None:
         return None
 
 
+def _read_last_backtest_ms_mean() -> float | None:
+    """Issue #983 (Katalog D, P0 HEADLINE) — Erfahrungswert für den MITTELWERT von ``backtest_ms``
+    aus dem JÜNGSTEN vorhandenen #742-Report (``report._study_record`` stempelt ``backtest_ms_mean``
+    je Study seit #983), als gewichteter Mittelwert über die Studien-Mittelwerte (gewichtet mit
+    ``n_trials``, damit eine grosse Study nicht dasselbe Gewicht wie eine kleine trägt). ``None`` bei
+    keinem vorhandenen Report — der Aufrufer fällt dann auf ``wallclock_guard.
+    DEFAULT_BACKTEST_MS_MEDIAN`` zurück (derselbe Fallback wie #931, konservativ auch für den
+    Mittelwert-Fall, da beide Grössen dieselbe Grössenordnung tragen).
+
+    Root-Cause #983: der reine Median (``_read_last_backtest_ms_median``) unterschätzt eine
+    rechtsschiefe Backtest-Laufzeitverteilung systematisch (Referenzlauf 46cf5070: Median 7.575s vs.
+    Mittelwert 9.690s, Faktor 1.279) — der Preflight muss den Mittelwert konsumieren, weil die
+    HOCHRECHNUNG (Summe über viele Trials) vom Mittelwert, nicht vom Median getragen wird."""
+    try:
+        from automation.optimizer.report import REPORTS_DIR
+        if not REPORTS_DIR.exists():
+            return None
+        report_files = sorted(REPORTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not report_files:
+            return None
+        data = json.loads(report_files[-1].read_text("utf-8")) or {}
+        weighted_sum = 0.0
+        weight_total = 0
+        for s in (data.get("studies") or []):
+            mean_val, n_trials = s.get("backtest_ms_mean"), s.get("n_trials")
+            if mean_val is None or not n_trials:
+                continue
+            weighted_sum += float(mean_val) * int(n_trials)
+            weight_total += int(n_trials)
+        return (weighted_sum / weight_total) if weight_total else None
+    except Exception:
+        return None
+
+
 def _read_last_study_wallclock_by_strategy() -> dict[str, float]:
     """Issue #932 (Pitfall #305) — Median-Wallclock je Strategie aus dem JÜNGSTEN #742-Report
     (``report._study_record`` stempelt ``wallclock_s`` je Study seit #932), Rohmaterial für den
@@ -1693,15 +1727,28 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # der Disk-Preflight oben prüfte bislang nur die komfortable Ressource (Plattenplatz),
         # nicht die knappe (Zeit). WALLCLOCK_BUDGET_PREFLIGHT schliesst diese Lücke.
         wallclock_guard.clear_degrade_state(WORK)
-        _backtest_ms_median = _read_last_backtest_ms_median() or wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN
+        # Issue #983 (Katalog D, P0 HEADLINE) — MITTELWERT statt Median (rechtsschiefe Verteilung,
+        # Faktor 1.279 im Referenzlauf), plus die beiden zusätzlichen Korrekturfaktoren
+        # (Nicht-Backtest-Anteil der Study-Wallclock, Scheduling-Verlust). Alle drei sind
+        # config-gesteuert (Ledger-Ersatz: konservative Defaults, bis genug Läufe für eine echte
+        # Kalibrierung vorliegen — #983 verweist selbst auf einen künftigen Ledger, siehe #988).
+        _backtest_ms_mean = _read_last_backtest_ms_mean() or wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN
+        _backtest_share = float(opt_data.get(
+            "wallclock_preflight_backtest_share", wallclock_guard.DEFAULT_BACKTEST_SHARE))
+        _scheduling_efficiency = float(opt_data.get(
+            "wallclock_preflight_scheduling_efficiency",
+            wallclock_guard.DEFAULT_SCHEDULING_EFFICIENCY))
         _parallelism_degree = float(n_jobs) if n_jobs and n_jobs > 0 else 1.0
         _expected_wallclock_h = wallclock_guard.estimate_expected_wallclock_h(
-            expected_trials=_expected_trials, backtest_ms_median=_backtest_ms_median,
-            parallelism_degree=_parallelism_degree)
+            expected_trials=_expected_trials, backtest_ms_median=_backtest_ms_mean,
+            parallelism_degree=_parallelism_degree, backtest_share=_backtest_share,
+            scheduling_efficiency=_scheduling_efficiency)
         _sweep_max_wallclock_h = opt_data.get("sweep_max_wallclock_h")
         emit_execution_event(logging.getLogger("optimizer"), "WALLCLOCK_BUDGET_PREFLIGHT", {
             "expected_trials": _expected_trials,
-            "backtest_ms_median": _backtest_ms_median,
+            "backtest_ms_mean": _backtest_ms_mean,
+            "backtest_share": _backtest_share,
+            "scheduling_efficiency": _scheduling_efficiency,
             "parallelism_degree": _parallelism_degree,
             "expected_wallclock_h": round(_expected_wallclock_h, 2),
             "sweep_max_wallclock_h": _sweep_max_wallclock_h,
@@ -2055,6 +2102,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Sweep abzubrechen. Erst Streuung über >= diese Anzahl Symbole ist eine Aussage über die
     # BASISKLASSE (HourlyStrategyBase etc.), nicht mehr über ein einzelnes Symbol/dessen Datenlage.
     _fail_fast_min_offending_symbols = int(opt_data.get("fail_fast_min_offending_symbols", 2))
+    # Issue #975 (Katalog B, Pitfall — Fail-Fast als Abbruch statt Quarantäne) — VORHER war die
+    # Konsequenz einer Streuung >= ``_fail_fast_min_offending_symbols`` IMMER ein globaler Abbruch
+    # (``break`` unten, ``run_status=aborted_invariant``), selbst wenn nur 2 von 143 geplanten
+    # Symbolen ueberhaupt schon gelaufen waren (Referenzlauf ``46cf5070``: 2/143, Erfolgswahr-
+    # scheinlichkeit eines Vollaufs ist dann ``p^143``, nicht ``p^2``). ``fail_fast_policy`` steuert
+    # jetzt, ob die BASISKLASSEN-Aussage (>= min_offending_symbols Streuung) denselben Weg wie die
+    # bereits bestehende #877-Symbol-Quarantäne nimmt (alle betroffenen (Strategie, Symbol)-Paare
+    # werden denylisted, der Sweep laeuft mit den verbleibenden Paaren weiter) oder — wie zuvor
+    # bit-identisch — den Sweep hart abbricht. Default 'quarantine': ein Lauf soll bei jedem
+    # Fail-Fast-Befund ein Ergebnis liefern, kein Abbruch nach 2 Symbolen (#975-Fix 1). Ein Check
+    # ohne parsbare (Strategie, Symbol)-Offender (``not _offending_pairs``, z. B. ein
+    # global-scope-Check) bleibt UNABHAENGIG von der Policy ein Abbruch — die Streuung ist dann
+    # nicht ermittelbar, eine Quarantäne kann kein konkretes Paar benennen (siehe
+    # ``_offending_pairs_for_fail_fast_check``-Docstring).
+    _fail_fast_policy = str(opt_data.get("fail_fast_policy", "quarantine"))
+    if _fail_fast_policy not in ("abort", "quarantine"):
+        raise ValueError(
+            f"optimizer.json['fail_fast_policy']={_fail_fast_policy!r} unbekannt — erwartet "
+            "'abort' oder 'quarantine'.")
     global sweep_fail_fast_quarantined_pairs
     sweep_fail_fast_quarantined_pairs = []
     # Issue #856 Fix Punkt 3 — ein Wächter, der zweimal in Folge nicht ausführbar ist, ist ein
@@ -2427,17 +2493,21 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             if sweep_fail_fast_invariant is not None:
                 # Issue #877 — die Konsequenz gehört auf die Streuungsebene der Evidenz (Pitfall
                 # #282): erst ein Offender, der über >= _fail_fast_min_offending_symbols VERSCHIEDENE
-                # Symbole streut, ist eine Aussage über die Basisklasse (HourlyStrategyBase etc.) und
-                # rechtfertigt einen globalen Abbruch. Ein Offender auf WENIGER Symbolen ist eine
-                # Symbol-Aussage — das betroffene (Strategie, Symbol)-Paar wird quarantänisiert
-                # (record_diagnosed_pair, action='denylist'), der Sweep läuft weiter.
+                # Symbole streut, ist eine Aussage über die Basisklasse (HourlyStrategyBase etc.).
+                # Issue #975 (Katalog B) — VORHER war "Aussage über die Basisklasse" gleichbedeutend
+                # mit "globaler Abbruch". Bei ``fail_fast_policy=='quarantine'`` (Default) ist sie das
+                # NICHT mehr: eine Systemklassen-Aussage rechtfertigt, ALLE betroffenen (Strategie,
+                # Symbol)-Paare zu denylisten, nicht den gesamten Sweep zu töten — der Rest der
+                # geplanten Symbole liefert weiterhin auswertbare Studies. Nur
+                # ``fail_fast_policy=='abort'`` reproduziert das alte, bit-identische Abbruchverhalten.
                 _offending_pairs, _offending_symbols = _offending_pairs_for_fail_fast_check(
                     _probe_invariant_checks, sweep_fail_fast_invariant)
+                _systemic = len(_offending_symbols) >= _fail_fast_min_offending_symbols
                 # Kein parsbarer (Strategie, Symbol)-Offender (Check ohne die "<strategy>/<symbol>"-
                 # actual-Konvention, z. B. ein global-scope-Check) ⇒ die Streuung ist nicht
-                # ermittelbar ⇒ konservativ global abbrechen (Pre-#877-Verhalten), statt eine
-                # unbekannte Struktur stillschweigend als "quarantänisierbar" zu werten.
-                if not _offending_pairs or len(_offending_symbols) >= _fail_fast_min_offending_symbols:
+                # ermittelbar ⇒ konservativ global abbrechen (Pre-#877-Verhalten), UNABHAENGIG von
+                # ``fail_fast_policy`` — eine Quarantäne kann kein konkretes Paar benennen.
+                if not _offending_pairs or (_systemic and _fail_fast_policy == "abort"):
                     logging.getLogger("optimizer").error(
                         "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) auf %d "
                         "verschiedenen Symbolen — Sweep bricht sofort ab "
@@ -2466,18 +2536,23 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                             "stop_reason": sweep_fail_fast_invariant,
                             "symbol_quarantined_reason": (
                                 f"[#877] {sweep_fail_fast_invariant} FAILt symbol-lokal "
-                                f"({_offending_pairs.get(_pk)}) — keine ausreichende "
-                                f"Streuung ({len(_offending_symbols)} < "
-                                f"{_fail_fast_min_offending_symbols} Symbole) fuer einen globalen "
-                                "Abbruch."),
+                                f"({_offending_pairs.get(_pk)}) — "
+                                + (f"keine ausreichende Streuung ({len(_offending_symbols)} < "
+                                   f"{_fail_fast_min_offending_symbols} Symbole) fuer einen "
+                                   "globalen Abbruch." if not _systemic else
+                                   f"Streuung ueber {len(_offending_symbols)} Symbole erreicht "
+                                   "die Systemklassen-Schwelle, aber fail_fast_policy='quarantine' "
+                                   "(#975) denylisted statt den gesamten Sweep abzubrechen.")
+                            ),
                             "expires_after_runs": _DEFAULT_QUARANTINE_EXPIRES_AFTER_RUNS,
                         }, work_dir=None, run_id=run_id)
                         sweep_fail_fast_quarantined_pairs.append((_strat, _sym))
                     logging.getLogger("optimizer").warning(
-                        "[#877] SYMBOL_QUARANTINED_ON_FAIL_FAST_INVARIANT: %s FAILt auf nur %d "
-                        "Symbol(en) (%s) — quarantänisiert statt Sweep abzubrechen, Lauf setzt "
-                        "fort.", sweep_fail_fast_invariant, len(_offending_symbols),
-                        sorted(_offending_symbols),
+                        "[#877/#975] SYMBOL_QUARANTINED_ON_FAIL_FAST_INVARIANT: %s FAILt auf %d "
+                        "Symbol(en) (%s, systemic=%s, policy=%s) — quarantänisiert statt Sweep "
+                        "abzubrechen, Lauf setzt fort.", sweep_fail_fast_invariant,
+                        len(_offending_symbols), sorted(_offending_symbols), _systemic,
+                        _fail_fast_policy,
                     )
                     emit_execution_event(
                         logging.getLogger("optimizer"), "SYMBOL_QUARANTINED_ON_FAIL_FAST_INVARIANT",
@@ -2485,7 +2560,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                          "symbols_completed": len(completed_symbols),
                          "offending_symbols": sorted(_offending_symbols),
                          "offending_studies": _offending_pairs,
-                         "symbols_probed": len(completed_symbols)},
+                         "symbols_probed": len(completed_symbols),
+                         # Issue #975 — sichtbar machen, OB dieser Fall die Systemklassen-Schwelle
+                         # erreicht hat (und damit ohne #975 abgebrochen hätte) oder eine reine
+                         # Symbol-lokale #877-Quarantäne war.
+                         "systemic": _systemic, "fail_fast_policy": _fail_fast_policy},
                         level=logging.WARNING,
                     )
                     # Die Probe darf nach Quarantäne erneut urteilen, sobald weitere Symbole

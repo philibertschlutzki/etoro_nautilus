@@ -18,6 +18,7 @@ sechste Regressionswaechter im #742-Report.
 """
 import json
 import logging
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -46,11 +47,29 @@ def test_equity_ruin_produces_an_equity_nonpositive_diagnostic():
 
 
 def test_healthy_trial_has_no_diagnostics():
-    vals = [1000.0, 1050.0, 980.0, 1100.0]
+    """Issue #967 — VORHER liess dieser Fixture (3 Trades, 4 Bars) den STUMMEN Rückgabepfad
+    ``n < min_trades_sortino`` (Default 10) unbemerkt durchlaufen — der Fixture war nie wirklich
+    "gesund", er verliess sich auf genau die stumme Lücke, die #967 behebt. Jetzt explizit genug
+    Trades (``min_trades_for_sortino=3``) UND genug Bars (>= ``sortino_min_periods_absolute``,
+    Default 20, #863), damit dieser Test tatsächlich den gesunden Fall prüft statt zufällig einen
+    der (jetzt korrekt diagnostizierten) Datenmängel-Pfade zu verfehlen. Der Numerik-Guard wird
+    (wie in test_issue_863_downside_threshold_relative.py) auf einen sehr grossen Wert gepatcht,
+    damit ein per Konstruktion moderat volatiler synthetischer Kurs ihn nicht triggert — dieser Test
+    prüft die STUMMEN Rückgabepfade, nicht die Guard-Kalibrierung selbst."""
+    # Deterministisch alternierend (12 negative / 12 positive Perioden von 24) — haelt
+    # downside_obs >= sortino_min_downside_observations (Default 0.5 * n_periods, #863) ein, damit
+    # dieser gesunde Fixture NICHT die (korrekte, aber hier irrelevante) SORTINO_DOWNSIDE_SHRUNK-
+    # Telemetrie auslöst.
+    rets = [-0.006, 0.005] * 12
+    vals = [1000.0]
+    for r in rets:
+        vals.append(vals[-1] * (1.0 + r))
     idx = pd.date_range("2025-01-01", periods=len(vals), freq="h")
     series = pd.Series(vals, index=idx)
-    stats = _calculate_stats(pnl_list=[1.0] * 3, hold_list=[(3600 * 10**9, 1.0)] * 3,
-                             starting_capital=1000.0, mtm_series=series)
+    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+        stats = _calculate_stats(pnl_list=[1.0] * 3, hold_list=[(3600 * 10**9, 1.0)] * 3,
+                                 starting_capital=1000.0, mtm_series=series,
+                                 min_trades_for_sortino=3)
     assert stats["inference_diagnostics"] == []
 
 

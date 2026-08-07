@@ -351,6 +351,12 @@ def _study_record(proposal: dict, study,
     # SORTINO_GUARD_REFERENCE_UNAVAILABLE-Diagnosen, Eingangsgrösse für
     # invariants.check_guard_reference_coherence unter reference_mode=='family_median'.
     guard_reference_sources: list[str] = []
+    # Issue #968 (Katalog A, P0 HEADLINE) — dieselben Diagnosen tragen zusätzlich den NUMERISCHEN
+    # Referenzwert (``guard_reference_value``); Eingangsgrösse für
+    # invariants.check_guard_reference_stability — eine Study, deren Guard-Referenz WANDERT
+    # (mehrere verschiedene Werte/Quellen innerhalb eines Laufs), ist trotz festem Seed nicht mehr
+    # bitweise reproduzierbar (Pitfall #307 in AGENTS.md).
+    guard_reference_values: list[float] = []
     for a in trial_attrs:
         for diag in a.get("inference_diagnostics") or ():
             code = diag.get("code") if isinstance(diag, dict) else None
@@ -358,6 +364,8 @@ def _study_record(proposal: dict, study,
                 inference_diagnostics_by_code[code] = inference_diagnostics_by_code.get(code, 0) + 1
             if isinstance(diag, dict) and diag.get("guard_reference_source") is not None:
                 guard_reference_sources.append(diag["guard_reference_source"])
+            if isinstance(diag, dict) and diag.get("guard_reference_value") is not None:
+                guard_reference_values.append(diag["guard_reference_value"])
 
     # Issue #832 Fix Punkt 1 — je-Study-Aggregat der Haltedauer (Sekunden): das MAXIMUM über alle
     # oos_evaluated Trials (Rohmaterial für summary_de.py Abschnitt 4 "Trades mit der längsten
@@ -476,6 +484,9 @@ def _study_record(proposal: dict, study,
         _inv.check_deflation_cluster_coverage(holdout_metrics),
         _inv.check_rejection_chain_completeness(proposal, decision_chain=decision_chain),
         _inv.check_reward_term_variance(trial_attrs),
+        # Issue #965 Fix Punkt 4 (Katalog A, P0 HEADLINE) — Verteilungs-Test: eine fehlende
+        # Selektionsstatistik darf nicht bevorzugt die profitable Kohorte treffen (Pitfall #306).
+        _inv.check_selection_statistic_economic_bias(trial_attrs),
         # Issue #949 (Katalog C, P0 HEADLINE) — der Wächter gegen den Zweig-Indikator-Defekt: die
         # Reward-Varianz einer Study darf nicht vom Failure-/Prune-Zweig getragen werden, sondern
         # muss die Qualitätsordnung innerhalb der zulässigen Region widerspiegeln.
@@ -496,6 +507,10 @@ def _study_record(proposal: dict, study,
             trial_attrs, n_trials_informative=study_user_attrs.get("n_trials_informative"),
             **({"guard_dominance_threshold": guard_dominance_threshold}
                if guard_dominance_threshold is not None else {})),
+        # Issue #967 Fix Punkt 2 — eigene Rate-Invariante für ADAPTIVE-Diagnosen (SORTINO_DOWNSIDE_
+        # SHRUNK), getrennt von der CENSORING-Konzentrationsprüfung oben.
+        _inv.check_adaptive_diagnostic_rate(
+            trial_attrs, n_trials_informative=study_user_attrs.get("n_trials_informative")),
         # Issue #885 Fix Punkt 3 — die fünf Trial-Kategorien (informativ/geprunt/unauswertbar/
         # fehlgeschlagen/total) müssen die Trial-Menge disjunkt und vollständig zerlegen.
         _inv.check_denominator_coherence(study_user_attrs),
@@ -516,6 +531,9 @@ def _study_record(proposal: dict, study,
         # Issue #917 Fix 4 — disjunkte Zerlegung der evaluierten, nicht-eligiblen Trials.
         "n_ineligible_measured": n_ineligible_measured,
         "backtest_ms_median": backtest_ms_median,
+        # Issue #983 — Rohmaterial für sweep._read_last_backtest_ms_mean des NÄCHSTEN Laufs: der
+        # Wallclock-Preflight braucht den Mittelwert (rechtsschiefe Verteilung), nicht den Median.
+        "backtest_ms_mean": study_user_attrs.get("backtest_ms_mean"),
         # Issue #932 — Per-Study-Wallclock (aus dem Study-User-Attr, #929/#568-Muster), Rohmaterial
         # für den LPT-Dispatch (sweep._read_last_study_wallclock_by_strategy) des NÄCHSTEN Laufs.
         "wallclock_s": study_user_attrs.get("wallclock_s"),
@@ -573,6 +591,8 @@ def _study_record(proposal: dict, study,
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
         "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+        # Issue #983 Fix Punkt 3 Akzeptanzkriterium — siehe run_optimization._emit_study_summary.
+        "budget_degradation_factor": study_user_attrs.get("budget_degradation_factor", 1.0),
         "stop_reason": budget_execution["stop_reason"],
         "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "coherence_violations": coherence_violations,
@@ -582,6 +602,8 @@ def _study_record(proposal: dict, study,
         "inference_diagnostics_by_code": inference_diagnostics_by_code,
         # Issue #901 — Rohmaterial für invariants.check_guard_reference_coherence.
         "guard_reference_sources": guard_reference_sources,
+        # Issue #968 — Rohmaterial für invariants.check_guard_reference_stability.
+        "guard_reference_values": guard_reference_values,
         # Issue #825 Fix Punkt 3 — expliziter Alias auf denselben #804-Zähler: wie viele Trials
         # dieser Study waehrend des OOS-Fensters wirtschaftlich ruiniert wurden (Equity <= 0,
         # backtest_runner.assert_positive_equity/EQUITY_NONPOSITIVE). Diese Trials sind bereits
@@ -605,8 +627,25 @@ def _study_record(proposal: dict, study,
         "timebox_violating_round_trips": timebox["timebox_violating_round_trips"],
         "timebox_evaluated_round_trips": timebox["timebox_evaluated_round_trips"],
         "timebox_round_trip_violation_fraction": timebox["timebox_round_trip_violation_fraction"],
+        # Issue #971 (Katalog B, P0 HEADLINE) — EXPLIZITER, NEUER Feldname für die TRADE-(Round-
+        # Trip-)Ebene, den ``check_holding_time_cap`` ab sofort konsumiert (siehe dortige
+        # Docstring). Der bisher von ``check_holding_time_cap`` gelesene Name
+        # (``timebox_violation_fraction``) bleibt unverändert die TRIAL-Ebene — er wird NICHT
+        # umgedeutet, sondern hier durch einen neuen, korrekt benannten Alias ERSETZT: ein Trial mit
+        # 200 Trades und einem einzigen Ausreisser-Trade ist studienweit kein "kaputter Exit-Pfad",
+        # auch wenn er als TRIAL zu 100% "verletzend" zählt (Pitfall #303/#304 in AGENTS.md). Werte
+        # sind bit-identisch zu den bestehenden Round-Trip-Feldern oben — reiner Namens-Alias, keine
+        # zweite Berechnung (Pitfall #269, Single-Source-of-Truth).
+        "timebox_violating_trades_frac": timebox["timebox_round_trip_violation_fraction"],
+        "timebox_violating_trades_numerator": timebox["timebox_violating_round_trips"],
+        "timebox_violating_trades_denominator": timebox["timebox_evaluated_round_trips"],
         "timebox_violation_intensity_p95": timebox["timebox_violation_intensity_p95"],
         "timebox_violated": timebox["timebox_violated"],
+        # Issue #972 — Rohmaterial für invariants.check_counter_partition_consistency (nur gesetzt,
+        # wenn diese Study ein Zero-Eligible-Plateau meldete, siehe run_optimization
+        # ._optimize_symbol_impl).
+        "plateau_n_evaluated": study_user_attrs.get("plateau_n_evaluated"),
+        "plateau_counter_breakdown": study_user_attrs.get("plateau_counter_breakdown"),
         # Issue #861 — Verteilung der Deckel-Referenzquelle (sampled/default/global) über die
         # ausgewerteten Trials dieser Study.
         "timebox_cap_source_counts": timebox["timebox_cap_source_counts"],
@@ -1235,6 +1274,10 @@ def _build_report(
         studies_out, study_tolerance=_timebox_study_tolerance)
     all_checks.append(("global", holding_time_cap_check))
 
+    # Issue #972 — Zero-Eligible-Plateau-Zähler-Widerspruch: n_evaluated + Zerlegung der entfernten
+    # Trials muss n_trials ergeben, sonst zielen die beiden Zähler nicht auf dieselbe Grundgesamtheit.
+    all_checks.append(("global", _inv.check_counter_partition_consistency(studies_out)))
+
     # Issue #841 — elfter Invarianten-Check: kein Symbol des aktuellen Universums darf seit mehr
     # als symbol_coverage_max_age_runs abgeschlossenen Läufen unabgedeckt bleiben (least_recently_
     # covered-Rotation, siehe symbol_coverage.py).
@@ -1259,6 +1302,10 @@ def _build_report(
         reference_mode=tournament_cfg.get("sortino_numeric_guard_reference"),
         observed_guard_reference_sources=_observed_guard_reference_sources)
     all_checks.append(("global", guard_reference_coherence_check))
+
+    # Issue #968 (Katalog A, P0 HEADLINE) — Reproduzierbarkeits-Wächter: die Guard-Referenz darf
+    # innerhalb EINER Study weder den Wert noch die Quelle wechseln (Pitfall #307).
+    all_checks.append(("global", _inv.check_guard_reference_stability(studies_out)))
 
     # Issue #915 — die WIRKUNGS-Invariante neben der Quellen-Invariante oben: liefert der Guard
     # tatsächlich eine benutzbare Schwelle (definierter oos_psr), unabhängig davon, ob die

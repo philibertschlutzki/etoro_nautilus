@@ -17,6 +17,7 @@ Forensik-Erkenntnisse, die bislang nur EINMALIG von Hand verifiziert wurden (#65
 from __future__ import annotations
 
 import logging
+import math
 import statistics
 from dataclasses import dataclass
 from typing import Any
@@ -39,9 +40,16 @@ class InvariantResult:
     # check_holding_time_cap); Default "medium" für alle bisherigen Checks (rückwärtskompatibel —
     # kein bestehender Aufrufer muss das Feld setzen).
     severity: str = "medium"
+    # Issue #971 Fix Punkt 2 (Pitfall #303 in AGENTS.md) — Herkunftspflicht für ``severity=
+    # 'blocking'``-Invarianten: ein Wächter, der einen Lauf abbricht, muss seine Rechengrundlage
+    # im selben Event mitliefern, sonst ist sie aus der Telemetrie nicht nachrechenbar (genau das
+    # Symptom, das #971 aufdeckte). ``provenance`` ist optional (``None`` für alle bestehenden,
+    # nicht-blockierenden Checks — rückwärtskompatibel) und trägt je offending Study/Symbol
+    # ``{numerator, denominator, numerator_definition, source_field}``.
+    provenance: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "name": self.name,
             # Issue #849 — Uebergangs-Alias: report.py's INVARIANT_CHECK_FAILED-Event mappte
             # bereits korrekt auf "check" (result.name), waehrend summary_de.py "check" LAS, ohne
@@ -54,6 +62,9 @@ class InvariantResult:
             "detail": self.detail,
             "severity": self.severity,
         }
+        if self.provenance is not None:
+            d["provenance"] = self.provenance
+        return d
 
 
 # Issue #902 — KEINE eigene ``_BAR_SECONDS``-Kopie mehr. Vor diesem Fix pflegte dieses Modul ein
@@ -364,6 +375,58 @@ def check_guard_reference_coherence(configured_min_periods: float | None,
     )
 
 
+def check_guard_reference_stability(study_records: list[dict]) -> InvariantResult:
+    """Issue #968 (Katalog A, P0 HEADLINE, Pitfall #307 in AGENTS.md) — Reproduzierbarkeits-
+    Regressionswächter: der Sortino-Numerik-Guard wandert innerhalb EINES Laufs, wenn
+    ``sortino_numeric_guard_reference='family_median'`` konfiguriert ist — die Referenz ist dann
+    ein LAUFZEITABHÄNGIGER, aus der eigenen Suchpopulation gebildeter Anker (der Median von
+    ``oos_n_periods`` über bereits abgeschlossene Sibling-Trials), der mit jedem neu abgeschlossenen
+    Trial wächst und dabei je nach Scheduler-Reihenfolge (``n_jobs > 1``) unterschiedliche Werte
+    annehmen kann — derselbe Parametervektor kann so, abhängig allein von seiner Ankunftsreihenfolge,
+    ein umgekehrtes Guard-Urteil erhalten (Referenzlauf 46cf5070: Trial 20 kippte von getrippt zu
+    bestanden, je nachdem ob die Referenz 14,99 oder 19,47 war — identischer Parametervektor).
+
+    Für JEDE Study MUSS gelten: ``len(set(guard_reference_value)) <= 1`` UND
+    ``len(set(guard_reference_source)) <= 1`` — die Referenz darf sich innerhalb einer Study NIE
+    ändern. Ein Verstoss beweist, dass die Guard-Referenz NICHT vor dem ersten Trial eingefroren
+    wurde, sondern während des Laufs weiterhin von der eigenen Suchpopulation abhängt (##968s Fix
+    verlangt eine VOR dem ersten Trial berechnete, eingefrorene H0-Tabelle — dieser Wächter macht
+    jede verbleibende Abweichung von diesem Ziel sichtbar, unabhängig davon, welcher konkrete
+    Referenz-Modus konfiguriert ist)."""
+    with_data = [r for r in study_records if r.get("guard_reference_values") or r.get("guard_reference_sources")]
+    if not with_data:
+        return InvariantResult(
+            name="check_guard_reference_stability",
+            passed=True,
+            expected="genau EIN guard_reference_value und EINE guard_reference_source je Study",
+            actual=None,
+            severity="blocking",
+            detail="Keine Studies mit Guard-Referenz-Telemetrie (kein getrippter/unbewertbarer "
+                   "Trial in diesem Lauf) — nicht anwendbar.",
+        )
+    offenders: dict[str, dict[str, object]] = {}
+    for r in with_data:
+        values = sorted({round(float(v), 6) for v in (r.get("guard_reference_values") or [])})
+        sources = sorted(set(r.get("guard_reference_sources") or []))
+        if len(values) > 1 or len(sources) > 1:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "guard_reference_values": values, "guard_reference_sources": sources,
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_guard_reference_stability",
+        passed=passed,
+        expected="genau EIN guard_reference_value und EINE guard_reference_source je Study",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit einer wandernden Guard-Referenz: {offenders} — "
+                "der Guard zensiert nach Ankunftsreihenfolge/Scheduler-Timing statt nach "
+                "statistischer Implausibilität; der Lauf ist trotz festem Seed nicht bitweise "
+                "reproduzierbar (Pitfall #307)."),
+    )
+
+
 def check_exit_reason_coverage(study_records: list[dict]) -> InvariantResult:
     """Issue #919 Fix 4 — die Summe des je-Study aufsummierten ``exit_reason_histogram`` (aus
     Order-Tags, #899) muss GENAU der Anzahl der Round-Trips entsprechen, die eine
@@ -485,6 +548,116 @@ def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
                 f"{len(offenders)} Study/Studies mit stagnierender/wachsender Constraint-"
                 f"Verletzung bei 0 eligiblen Trials nach ausreichend modellierten Trials: "
                 f"{offenders} — der TPE-Sampler hat nachweislich keinen Gradienten gefunden."),
+    )
+
+
+def _mann_whitney_u_one_sided(missing: list[float], available: list[float]) -> tuple[float, float] | tuple[None, None]:
+    """Issue #965 Fix Punkt 4 (Katalog A, P0 HEADLINE, Pitfall #306 in AGENTS.md) — einseitiger
+    Mann-Whitney-U-Test (Normalapproximation mit Tie-Korrektur, KEINE scipy-Abhängigkeit): H1 =
+    "``missing`` (die Kohorte OHNE Selektionsstatistik) ist stochastisch GRÖSSER als ``available``
+    (die Kohorte MIT Selektionsstatistik)". Genau diese Richtung ist der Referenzlauf-Befund
+    (46cf5070: Median-OOS-Return +9,50 % [PSR fehlt] vs. −25,73 % [PSR verfügbar]) — eine fehlende
+    Selektionsstatistik ist NIE "neutral": prüfen, ob die Ausfallmenge ökonomisch verschieden von
+    der Erfolgsmenge ist (Pitfall #306).
+
+    Rückgabe ``(z, p_one_sided)`` — ``z > 0``/``p`` klein bedeutet: ``missing`` tendiert zu grösseren
+    Werten. ``(None, None)`` bei < 2 Beobachtungen in einer der beiden Gruppen (kein belastbarer
+    Test möglich)."""
+    n1, n2 = len(missing), len(available)
+    if n1 < 2 or n2 < 2:
+        return None, None
+    combined = sorted((v, 0) for v in missing) + sorted((v, 1) for v in available)
+    combined.sort(key=lambda t: t[0])
+    ranks: list[float] = [0.0] * len(combined)
+    i = 0
+    tie_correction = 0.0
+    while i < len(combined):
+        j = i
+        while j < len(combined) and combined[j][0] == combined[i][0]:
+            j += 1
+        avg_rank = (i + 1 + j) / 2.0
+        for k in range(i, j):
+            ranks[k] = avg_rank
+        t = j - i
+        if t > 1:
+            tie_correction += t ** 3 - t
+        i = j
+    rank_sum_missing = sum(r for r, (_, grp) in zip(ranks, combined) if grp == 0)
+    u_missing = rank_sum_missing - n1 * (n1 + 1) / 2.0
+    mean_u = n1 * n2 / 2.0
+    n_total = n1 + n2
+    if n_total <= 1:
+        return None, None
+    var_u = (n1 * n2 / 12.0) * ((n_total + 1) - tie_correction / (n_total * (n_total - 1)))
+    if var_u <= 0.0:
+        return None, None
+    z = (u_missing - mean_u) / math.sqrt(var_u)
+    # Obere Schwanzwahrscheinlichkeit P(Z >= z) via Normal-CDF-Approximation (Abramowitz/Stegun
+    # 26.2.17, Standardfehler < 7.5e-8) — vermeidet eine scipy-Abhaengigkeit fuer einen einzigen Test.
+    p_one_sided = 1.0 - _standard_normal_cdf(z)
+    return z, p_one_sided
+
+
+def _standard_normal_cdf(z: float) -> float:
+    """Reine Normal-CDF ohne scipy (``math.erf`` ist Teil der Standardbibliothek)."""
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def check_selection_statistic_economic_bias(
+    trial_attrs: list[dict], *, alpha: float = 0.01,
+) -> InvariantResult:
+    """Issue #965 Fix Punkt 4 (Katalog A, P0 HEADLINE) — schärft
+    ``check_selection_statistic_availability`` um einen VERTEILUNGS-Test: eine reine
+    Anteilsschwelle (80 % verfügbar) fängt NICHT die Klasse „Statistik fehlt gerade dort, wo sie
+    zählen würde" (Pitfall #306) — im Referenzlauf 46cf5070 waren 77 % der Kohorte MIT PSR
+    verfügbar, aber die FEHLENDE Kohorte (23 %) war die profitablere (92,2 % positive Rendite vs.
+    7,4 % in der verfügbaren Kohorte).
+
+    Testet je Study (falls ``oos_evaluated`` Trials mit UND ohne ``oos_selection_statistic_
+    available`` vorliegen): ist der Median-``oos_total_return`` der Kohorte OHNE Statistik
+    einseitig signifikant GRÖSSER als der der Kohorte MIT Statistik (Mann-Whitney, ``alpha``)? Wenn
+    ja: FAIL — die fehlende Statistik ist nicht MCAR (missing completely at random), sondern
+    korreliert mit der ökonomischen Qualität, und die Selektion ist dadurch systematisch verzerrt.
+
+    ``trial_attrs``: Liste von ``user_attrs``-artigen Dicts EINER Study (nicht des ganzen Laufs —
+    der Aufrufer iteriert je Study, analog ``check_reward_term_variance``)."""
+    missing = [
+        float(t["oos_total_return"]) for t in trial_attrs
+        if t.get("oos_evaluated") is True and t.get("oos_selection_statistic_available") is False
+        and t.get("oos_total_return") is not None
+    ]
+    available = [
+        float(t["oos_total_return"]) for t in trial_attrs
+        if t.get("oos_evaluated") is True and t.get("oos_selection_statistic_available") is True
+        and t.get("oos_total_return") is not None
+    ]
+    z, p = _mann_whitney_u_one_sided(missing, available)
+    if z is None:
+        return InvariantResult(
+            name="check_selection_statistic_economic_bias",
+            passed=True,
+            expected=f"p >= {alpha} (Mann-Whitney, H1: Kohorte-ohne-Statistik > Kohorte-mit-Statistik)",
+            actual=None,
+            severity="high",
+            detail="< 2 Trials in einer der beiden Kohorten — kein belastbarer Test möglich.",
+        )
+    passed = p >= alpha
+    return InvariantResult(
+        name="check_selection_statistic_economic_bias",
+        passed=passed,
+        expected=f"p >= {alpha} (Mann-Whitney, H1: Kohorte-ohne-Statistik > Kohorte-mit-Statistik)",
+        actual={"z": round(z, 4), "p_one_sided": p, "n_missing": len(missing),
+                "n_available": len(available),
+                "median_missing": round(statistics.median(missing), 6),
+                "median_available": round(statistics.median(available), 6)},
+        severity="high",
+        detail=("OK" if passed else
+                f"Median-OOS-Return der Kohorte OHNE Selektionsstatistik "
+                f"({statistics.median(missing):.4f}, n={len(missing)}) ist signifikant GRÖSSER als "
+                f"der der Kohorte MIT Statistik ({statistics.median(available):.4f}, "
+                f"n={len(available)}) — z={z:.4f}, p={p:.3g} < {alpha}. Die fehlende Statistik ist "
+                "nicht MCAR: die Selektion verwirft bevorzugt die profitable Kohorte aus einem "
+                "numerischen, nicht ökonomischen Grund (Pitfall #306)."),
     )
 
 
@@ -910,9 +1083,30 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
 # HIER in unterschiedliche Klassen — EQUITY_NONPOSITIVE bleibt ein echter Defekt-Indikator trotz
 # ebenfalls geprunter Trial-Behandlung). failure_policy beschreibt die REWARD-Konsequenz, dieses
 # Set beschreibt die DEFEKT-Konsequenz — zwei unabhängige Dimensionen desselben Codes.
-_REGULAR_THIRD_OUTCOME_CODES = frozenset({
+#
+# Issue #967 (Katalog A, P0, Pitfall — Severity-Klassifikation) — die "regulären dritten Ausgänge"
+# zerfallen in ZWEI kausal verschiedene Klassen, die #886 noch als eine Menge behandelte:
+#   CENSORING — der Guard trippt, der Trial verschwindet aus der Zielverteilung (sortino/psr=None,
+#     kein verwertbares Ergebnis).
+#   ADAPTIVE  — ein Korrekturmechanismus greift (z. B. James-Stein-Shrinkage, #944), der Trial
+#     BLEIBT mit einer korrigierten, gültigen Statistik im Suchraum.
+# Root-Cause #967: ``check_inference_diagnostics_absent`` FAILte bei GENAU EINEM
+# ``SORTINO_DOWNSIDE_SHRUNK``-Ereignis (ADAPTIVE — der Mechanismus, den #944 einführte und der
+# NACHWEISLICH korrekt arbeitet), weil dieser Code nicht in der Ausnahmeliste war — die Invariante
+# bestrafte damit den einzigen funktionierenden Fix. ``SORTINO_DOWNSIDE_SHRUNK`` ist bereits in
+# ``_contracts.INFERENCE_DIAGNOSTIC_CODES`` als ``failure_policy='telemetry_only'`` markiert (der
+# Trial wird NICHT geprunt) — die genaue Signatur eines ADAPTIVE-Codes.
+_CENSORING_DIAGNOSTIC_CODES = frozenset({
     "SORTINO_GUARD_TRIPPED", "SORTINO_INSUFFICIENT_DOWNSIDE", "SORTINO_GUARD_REFERENCE_UNAVAILABLE",
+    # Issue #967 — die drei vorher STUMMEN Rückgabepfade (#967-Fix in backtest_runner.py) sind
+    # ebenfalls "nicht messbar", keine Defekt-Indikatoren.
+    "SORTINO_INSUFFICIENT_TRADES", "SORTINO_DOWNSIDE_DEVIATION_UNDEFINED",
+    "SORTINO_ANNUALIZED_NONFINITE", "PSR_BOOTSTRAP_UNDEFINED",
 })
+_ADAPTIVE_DIAGNOSTIC_CODES = frozenset({"SORTINO_DOWNSIDE_SHRUNK"})
+# Rückwärtskompat-Alias: der volle Ausschluss-Satz für check_inference_diagnostics_absent (#886s
+# ursprüngliche Bedeutung — "kein Defekt", CENSORING UND ADAPTIVE gemeinsam).
+_REGULAR_THIRD_OUTCOME_CODES = _CENSORING_DIAGNOSTIC_CODES | _ADAPTIVE_DIAGNOSTIC_CODES
 
 
 def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
@@ -953,6 +1147,52 @@ def check_inference_diagnostics_absent(trials: list[dict]) -> InvariantResult:
         detail=("OK" if passed else
                 f"{total} Inferenzpfad-Diagnose(n) über die Study ({by_code}) — siehe "
                 f"INFERENCE_DIAGNOSTIC-Ereignisse im Optimizer-Log für Details je Trial."),
+    )
+
+
+def check_adaptive_diagnostic_rate(
+    trials: list[dict], *, n_trials_informative: int | None, max_rate: float = 0.3,
+) -> InvariantResult:
+    """Issue #967 Fix Punkt 2 (Katalog A, P0) — eigene Rate-Invariante für ADAPTIVE-Diagnosen
+    (``_ADAPTIVE_DIAGNOSTIC_CODES``, aktuell ``SORTINO_DOWNSIDE_SHRUNK``): ihre blosse Anwesenheit
+    ist (anders als CENSORING-Codes) KEIN Defekt — ``check_inference_diagnostics_absent`` schliesst
+    sie seit diesem Fix aus —, aber eine Study, in der die Shrinkage bei > ``max_rate`` der
+    informativen Trials greift, verlässt sich strukturell auf einen Korrekturmechanismus statt auf
+    genügend Downside-Beobachtungen — eine eigene, von CENSORING getrennte Beobachtung wert (analog
+    ``check_inference_diagnostics_concentration`` für CENSORING-Codes).
+
+    ``trials``: ``user_attrs``-artige Dicts EINER Study. ``n_trials_informative``: derselbe #885-
+    Nenner wie ``check_inference_diagnostics_concentration`` (``None`` ⇒ nicht anwendbar, Pre-#885-
+    Report)."""
+    if not n_trials_informative or n_trials_informative <= 0:
+        return InvariantResult(
+            name="check_adaptive_diagnostic_rate",
+            passed=True,
+            expected=f"Anteil ADAPTIVE-Diagnosen <= {max_rate}",
+            actual=None,
+            detail="n_trials_informative fehlt/ist 0 — nicht anwendbar (Pre-#885-Report oder leere "
+                   "Kohorte).",
+        )
+    n_adaptive = 0
+    for t in trials:
+        codes = {
+            diag.get("code") for diag in (t.get("inference_diagnostics") or ())
+            if isinstance(diag, dict)
+        }
+        if codes & _ADAPTIVE_DIAGNOSTIC_CODES:
+            n_adaptive += 1
+    rate = n_adaptive / n_trials_informative
+    passed = rate <= max_rate
+    return InvariantResult(
+        name="check_adaptive_diagnostic_rate",
+        passed=passed,
+        expected=f"Anteil ADAPTIVE-Diagnosen <= {max_rate}",
+        actual=round(rate, 4),
+        detail=("OK" if passed else
+                f"{n_adaptive}/{n_trials_informative} informative Trials ({rate:.2%}) verlassen "
+                f"sich auf einen ADAPTIVE-Korrekturmechanismus (SORTINO_DOWNSIDE_SHRUNK) — über "
+                f"der Schwelle ({max_rate:.0%}), strukturell zu wenige Downside-Beobachtungen in "
+                "dieser Study."),
     )
 
 
@@ -1522,47 +1762,127 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
 def check_holding_time_cap(study_records: list[dict], *,
                            study_tolerance: float = 0.25) -> InvariantResult:
     """Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Plausibilitätswächter gegen
-    die #714/GR-01-Zeitbox: eine Study, deren Anteil zeitbox-verletzender Trials
+    die #714/GR-01-Zeitbox: eine Study, deren Anteil zeitbox-verletzender TRADES
     ``study_tolerance`` überschreitet, hat einen Bug im Exit-Pfad (defekter Watchdog/Cancel-Pfad),
     keine tolerierbare Ausführungslatenz mehr.
 
-    Issue #861 (Unifikation, Pitfall #271) — konsumiert JETZT dieselbe per-Trial-aware Berechnung
-    wie ``compute_trial_timebox_violations`` (``report._study_record`` stempelt
-    ``timebox_evaluated_trades``/``timebox_violation_fraction`` bereits aus genau dieser Funktion
-    in jeden Study-Record) statt vorher unabhängig die Study-MAXIMALDAUER gegen einen
-    Pauschaldeckel (``max_bars_in_trade_cap``, global) zu vergleichen. VORHER konnten beide Checks
-    divergieren: ein Trial mit gesampeltem Cap 12 Bars und 20 Bars Haltedauer war für die alte
-    ``check_holding_time_cap`` sauber (20 < 24, globaler Deckel), für
-    ``compute_trial_timebox_violations`` bereits eine Verletzung. ``study_tolerance`` ist dieselbe
-    Schwelle wie ``tournament.json['timebox_violation_study_tolerance']`` (#857) — beide Wächter
-    beantworten jetzt exakt dieselbe Frage ("ist dieser Exit-Pfad strukturell defekt?") gegen
-    dieselbe Referenz."""
-    with_data = [r for r in study_records if r.get("timebox_evaluated_trades")]
+    Issue #971 (Katalog B, P0 HEADLINE, Pitfall #303/#304 in AGENTS.md) — konsumiert jetzt
+    ``timebox_violating_trades_frac`` (TRADE-/Round-Trip-Ebene, ``report._study_record``) statt der
+    vorherigen ``timebox_violation_fraction`` (TRIAL-Ebene). Root-Cause der Divergenz: der #857-Fix
+    stempelt ``oos_evaluated=False`` auf JEDEN Trial mit MINDESTENS EINEM zeitbox-verletzenden
+    Round-Trip — ein Trial mit z. B. 150 sauberen Trades und einem einzigen Ausreisser zählte damit
+    TRIAL-weise zu 100% "verletzend", obwohl nur ein Bruchteil seiner Trades betroffen war. Auf einem
+    Referenzlauf (``46cf5070``) reproduzierte die TRIAL-Quote für ``DynamicBreakoutStrategy/
+    GSAT.ETORO`` bit-genau ``(n_trials - evaluable_trials) / n_trials`` (0.2985 = 20/67) — eine
+    Grösse, die nichts mit der Haltedauer zu tun hat (``hit_trade_cap`` war in 2651/2651 Trials
+    ``False``, ``time_box_penalty`` in 2651/2651 Trials ``0.0``, siehe #973). Die TRADE-Ebene
+    (``timebox_violating_trades_frac``, dieselbe Berechnung wie ``confirm.py``s
+    ``timebox_round_trip_violation_fraction``-Prüfung, #903 Fix 2) misst die tatsächlich betroffene
+    Trade-Fraktion und ist die einzige Grösse, die der Docstring/Name des Checks verspricht.
+
+    Issue #861 (Unifikation, Pitfall #271) — konsumiert dieselbe per-Trial-aware Berechnung wie
+    ``compute_trial_timebox_violations``. ``study_tolerance`` ist dieselbe Schwelle wie
+    ``tournament.json['timebox_violation_study_tolerance']`` (#857) — beide Wächter beantworten
+    jetzt exakt dieselbe Frage ("ist dieser Exit-Pfad strukturell defekt?") gegen dieselbe Referenz
+    UND dieselbe Aggregationsebene (Trades, #903 Fix 2)."""
+    with_data = [r for r in study_records if r.get("timebox_violating_trades_denominator")]
     if not with_data:
         return InvariantResult(
             name="check_holding_time_cap",
             passed=True,
-            expected=f"Anteil zeitbox-verletzender Trials <= {study_tolerance} je Study",
+            expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} je Study",
             actual=None,
             detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
                    "nicht anwendbar.",
             severity="blocking",
         )
     offenders = {
-        f"{r.get('strategy')}/{r.get('symbol')}": r.get("timebox_violation_fraction")
-        for r in with_data if (r.get("timebox_violation_fraction") or 0.0) > study_tolerance
+        f"{r.get('strategy')}/{r.get('symbol')}": r.get("timebox_violating_trades_frac")
+        for r in with_data
+        if (r.get("timebox_violating_trades_frac") or 0.0) > study_tolerance
     }
     passed = not offenders
+    # Issue #971 Fix Punkt 2 — Herkunftspflicht für blockierende Invarianten: numerator/denominator/
+    # numerator_definition/source_field je offending Study, damit die gemeldete Zahl aus der
+    # Telemetrie nachrechenbar bleibt (statt wie zuvor eine unbelegte Rundungszahl zu sein).
+    provenance = {
+        "source_field": "timebox_violating_trades_frac",
+        "numerator_definition": (
+            "timebox_violating_trades_numerator = Anzahl OOS-Round-Trips (Trades) mit "
+            "holding_bars > max_bars_in_trade + timebox_execution_slack_bars, über alle Trials mit "
+            "OOS-Handelsaktivität dieser Study (unabhängig davon, ob der Trial nachträglich wegen "
+            "eben dieser Verletzung auf oos_evaluated=False umgestempelt wurde, #857)."),
+        "per_study": {
+            key: {
+                "numerator": r.get("timebox_violating_trades_numerator"),
+                "denominator": r.get("timebox_violating_trades_denominator"),
+            }
+            for r in with_data
+            if (key := f"{r.get('strategy')}/{r.get('symbol')}") in offenders
+        },
+    }
     return InvariantResult(
         name="check_holding_time_cap",
         passed=passed,
-        expected=f"Anteil zeitbox-verletzender Trials <= {study_tolerance} je Study",
+        expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} je Study",
         actual=offenders if offenders else None,
         severity="blocking",
+        provenance=provenance if offenders else None,
         detail=("OK" if passed else
                 f"{len(offenders)} Study/Studies überschreiten den Zeitbox-Study-Toleranzwert "
-                f"({study_tolerance}): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase erzwingt "
-                "den Zeit-Exit nicht durchgängig), keine tolerierbare Ausführungslatenz mehr."),
+                f"({study_tolerance}) auf TRADE-Ebene: {offenders} — Bug im Exit-Pfad "
+                "(HourlyStrategyBase erzwingt den Zeit-Exit nicht durchgängig), keine tolerierbare "
+                "Ausführungslatenz mehr. Numerator/Denominator je Study: siehe 'provenance'."),
+    )
+
+
+def check_counter_partition_consistency(study_records: list[dict]) -> InvariantResult:
+    """Issue #972 (Katalog B, Pitfall #304 in AGENTS.md) — Regressionswächter gegen den Zero-
+    Eligible-Plateau-Zähler-Widerspruch: der Plateau-Zähler (``plateau_counter_breakdown``,
+    ``run_optimization._optimize_symbol_impl``) meldet, wie sich ``n_trials`` in
+    ``n_evaluated`` (Überlebende) und eine Zerlegung der ENTFERNTEN Trials
+    (``invalidated_timebox``/``invalidated_trade_cap``/``discarded_is_gate``/
+    ``window_unreachable``/``not_evaluated``) aufteilt. Für JEDES Study-Paar, dessen Zähler
+    dieselbe Grundgesamtheit (``n_trials``) beschreiben, MUSS gelten:
+    ``n_evaluated + sum(breakdown.values()) == n_trials`` — sonst zielt mindestens einer der
+    beiden Zähler NICHT auf dieselbe Grundgesamtheit (Root-Cause #972: der alte Plateau-Zähler
+    lief über die bereits vorgefilterten Überlebenden statt über ``n_trials``, wodurch
+    "0/N trafen die Grenze" strukturell nicht widerlegbar war)."""
+    with_data = [r for r in study_records if r.get("plateau_counter_breakdown") is not None]
+    if not with_data:
+        return InvariantResult(
+            name="check_counter_partition_consistency",
+            passed=True,
+            expected="n_evaluated + sum(plateau_counter_breakdown.values()) == n_trials je Study",
+            actual=None,
+            detail="Keine Studies mit Plateau-Zerlegung (kein Zero-Eligible-Plateau in diesem Lauf "
+                   "oder Pre-#972-Report) — nicht anwendbar.",
+            severity="high",
+        )
+    offenders: dict[str, dict[str, int]] = {}
+    for r in with_data:
+        n_trials = r.get("n_trials")
+        n_eval = r.get("plateau_n_evaluated")
+        breakdown = r.get("plateau_counter_breakdown") or {}
+        if n_trials is None or n_eval is None:
+            continue
+        total = int(n_eval) + sum(int(v) for v in breakdown.values())
+        if total != int(n_trials):
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "n_trials": int(n_trials), "n_evaluated": int(n_eval),
+                "breakdown_sum": total - int(n_eval), "reconstructed_total": total,
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_counter_partition_consistency",
+        passed=passed,
+        expected="n_evaluated + sum(plateau_counter_breakdown.values()) == n_trials je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies: der Plateau-Zähler und n_trials zerlegen die "
+                f"Trial-Menge NICHT disjunkt/vollständig: {offenders} — mindestens einer der "
+                "beteiligten Zähler zielt nicht auf dieselbe Grundgesamtheit (Pitfall #304)."),
     )
 
 

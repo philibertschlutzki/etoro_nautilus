@@ -801,6 +801,7 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     return
             study.set_user_attr("zero_eligible_plateau_warned", True)
             n_evaluated = len(eligible_flags_of_evaluated)
+            study.set_user_attr("plateau_n_evaluated", n_evaluated)
             oos_trade_counts = [
                 getattr(t, "user_attrs", {}).get("oos_total_trades") for t in completed
                 if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
@@ -812,6 +813,34 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             ]
             n_hit_cap = sum(1 for f in hit_cap_flags if f is True)
             median_oos_trades = statistics.median(oos_trade_counts) if oos_trade_counts else None
+
+            # Issue #972 (Katalog B, Pitfall #304 in AGENTS.md) — Root-Cause der widersprüchlichen
+            # "0/N Trials trafen die Haltedauer-/Trade-Cap-Grenze"-Meldung: ``n_hit_cap`` lief NUR
+            # über die bereits als ``oos_evaluated=True`` ÜBERLEBENDEN Trials — genau die Trials, die
+            # eine Zeitbox-Verletzung (#857) per Konstruktion NICHT mehr sein können (sie wurden
+            # deswegen ja gerade auf ``oos_evaluated=False`` umgestempelt und verlassen damit VOR
+            # diesem Zähler die Grundgesamtheit). Ein Zähler, dessen Grundgesamtheit durch exakt das
+            # Kriterium vorgefiltert ist, das er messen soll, liefert IMMER null (Pitfall #304) — das
+            # ist keine Aussage über die Zeitbox, sondern eine Tautologie. Die Zerlegung unten läuft
+            # über ALLE ``completed`` Trials (die tatsächliche Grundgesamtheit) und nutzt die seit
+            # #971 unverwechselbare ``is_rejection_detail``-Kategorie ``REJECT_OOS_TIMEBOX_VIOLATION``.
+            _all_rejection_details = [
+                getattr(t, "user_attrs", {}).get("is_rejection_detail") for t in completed
+            ]
+            _timebox_invalidated_count = sum(
+                1 for r in _all_rejection_details if r == "REJECT_OOS_TIMEBOX_VIOLATION")
+            plateau_counter_breakdown = {
+                "invalidated_timebox": _timebox_invalidated_count,
+                "invalidated_trade_cap": n_hit_cap,
+                "discarded_is_gate": sum(
+                    1 for r in _all_rejection_details if r == "REJECT_OOS_DISCARDED_BY_IS_GATE"),
+                "window_unreachable": sum(
+                    1 for r in _all_rejection_details if r == "REJECT_OOS_WINDOW_UNREACHABLE"),
+                "not_evaluated": sum(
+                    1 for r in _all_rejection_details
+                    if r in ("REJECT_OOS_NOT_EVALUATED", "REJECT_OOS_INACTIVE")),
+            }
+            study.set_user_attr("plateau_counter_breakdown", plateau_counter_breakdown)
 
             # Issue #700 — per-16-Trial-Fenster p_eligible-Kurve (Diagnose-Akzeptanzkriterium):
             # unterscheidet TRANSIENTE (irgendwo zwischenzeitlich eligible Trials) von PERMANENTER
@@ -838,12 +867,13 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             logger.warning(
                 "🚨 Zero-Eligible-Plateau erkannt: %d/%d Trials wurden evaluiert (echte OOS-"
                 "Backtests), aber KEINER war oos_eligible — der Suchraum erzeugt strukturell "
-                "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d Trials trafen die "
-                "Haltedauer-/Trade-Cap-Grenze). binding_cause=%s (#926). p_eligible je "
+                "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d ALLER Trials trafen die "
+                "Haltedauer-/Trade-Cap-Grenze: %s). binding_cause=%s (#926). p_eligible je "
                 "16-Trial-Fenster: %s. Suchraum-Bounds pruefen (spaces.py) ODER die Strategie fuer "
                 "dieses Symbol/Tier deaktivieren, statt die restlichen Trials nutzlos "
                 "durchlaufen zu lassen.",
-                n_evaluated, len(completed), median_oos_trades, n_hit_cap, n_evaluated,
+                n_evaluated, len(completed), median_oos_trades,
+                _timebox_invalidated_count + n_hit_cap, len(completed), plateau_counter_breakdown,
                 binding_cause, p_eligible_windows,
             )
             import json as _json
@@ -852,6 +882,9 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "n_evaluated": n_evaluated,
                 "median_oos_total_trades": median_oos_trades,
                 "hit_trade_cap_count": n_hit_cap,
+                # Issue #972 — Zerlegung über ALLE Trials (n_trials), nicht nur die Überlebenden
+                # (n_evaluated); Summe der Werte + n_evaluated + verbleibender Rest == n_trials.
+                "plateau_counter_breakdown": plateau_counter_breakdown,
                 "p_eligible_windows": p_eligible_windows,
                 # Issue #669/#921/#926 — innerhalb der EVALUIERTEN Trials: 'signal_quality' (echte
                 # Qualitätsmessung), 'signal_sparse' (#921, das Signal tritt kaum auf) oder
@@ -1614,12 +1647,24 @@ def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
     return {}, "none"
 
 
-def _classify_trial_rejection(metrics) -> str:
+def _classify_trial_rejection(metrics, *, timebox_violated: bool = False) -> str:
     """Issue #408 — kategorisiert, WARUM ein Per-Symbol-Trial nicht promotebar ist, fuer die modale
     Aggregation im Proposal (confirm._dominant_rejection). Trennt den IS-Drop ('oos_not_evaluated':
     das Symbol erzeugte nie evaluierbare OOS-Trades — die Pitfall-#75-Signatur) vom OOS-Drop
     ('oos_gate_rejected': OOS evaluiert, aber durchs Eligibility-Gate gefallen) und vom Pass
-    ('none'). Bewusst grob & stabil, damit die Reasons ueber Trials hinweg aggregierbar bleiben."""
+    ('none'). Bewusst grob & stabil, damit die Reasons ueber Trials hinweg aggregierbar bleiben.
+
+    Issue #971 (Pitfall #303/#304 in AGENTS.md, Katalog B) — ``timebox_violated`` (dieselbe Grösse
+    wie ``run_optimization``s ``_timebox_violated_this_trial``) MUSS vor dem generischen
+    ``oos_not_evaluated``-Zweig geprüft werden: der #857-Fix stempelt ``metrics.oos_evaluated =
+    False`` NACHTRÄGLICH auf einen Trial, der tatsächlich OOS gehandelt hat (Gegenbeweis zum
+    IS-Gate-Drop, siehe ``_classify_is_rejection_detail``). Ohne diese Unterscheidung sammelte
+    ``oos_not_evaluated`` zwei kausal verschiedene Populationen (echter IS-Gate-Drop UND
+    Zeitbox-Invalidierung) unter einem Namen ein — die Selbstverschleierung, die
+    ``check_holding_time_cap`` (#971) und den Zero-Eligible-Plateau-Zähler (#972) unbrauchbar
+    machte."""
+    if timebox_violated:
+        return "oos_timebox_violation"
     if metrics.oos_evaluated and metrics.oos_eligible:
         return "none"
     if not metrics.oos_evaluated:
@@ -1723,7 +1768,7 @@ def _extract_undefined_gate_terms(reasons) -> list[str]:
     return terms
 
 
-def _classify_is_rejection_detail(metrics) -> str:
+def _classify_is_rejection_detail(metrics, *, timebox_violated: bool = False) -> str:
     """Issue #453 — granulare, aggregierbare Ablehnungs-Kategorie (feiner als _classify_trial_rejection).
 
     Löst den Catch-All ``oos_not_evaluated`` in die TATSÄCHLICHE Ursache auf, sodass systematisches
@@ -1733,6 +1778,14 @@ def _classify_is_rejection_detail(metrics) -> str:
 
     Kategorien:
       * ``NONE``                          — evaluiert & eligible (kein Drop).
+      * ``REJECT_OOS_TIMEBOX_VIOLATION``  — Issue #971: der Trial hat tatsächlich OOS gehandelt
+                                            (``oos_covered``/``oos_total_trades`` bezeugen es), wurde
+                                            aber NACHTRÄGLICH (#857) auf ``oos_evaluated=False``
+                                            umgestempelt, weil mindestens ein Round-Trip die Zeitbox
+                                            verletzt hat. MUSS vor der IS-Gate-Heuristik unten
+                                            geprüft werden — sonst ist dieser Trial vom echten
+                                            ``REJECT_OOS_DISCARDED_BY_IS_GATE`` (das Symbol wurde nie
+                                            OOS gehandelt) nicht mehr unterscheidbar (Pitfall #303).
       * ``REJECT_OOS_WINDOW_UNREACHABLE`` — OOS=0 + ``oos_covered is False`` (H2-Katalog, #455).
       * ``REJECT_OOS_INACTIVE``           — OOS=0, aber ``oos_covered is True`` (Strategie handelt
                                             im OOS-Fenster nicht — strategieseitig, separat zu lösen).
@@ -1743,6 +1796,8 @@ def _classify_is_rejection_detail(metrics) -> str:
                                             einem berechneten Wert unter der Schwelle — der Trial
                                             wurde nicht GEMESSEN, nicht am Gate abgelehnt.
     """
+    if timebox_violated:
+        return "REJECT_OOS_TIMEBOX_VIOLATION"
     if metrics.oos_evaluated and metrics.oos_eligible:
         return IS_REJECTION_NONE
     if not metrics.oos_evaluated:
@@ -2513,6 +2568,15 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         study.set_user_attr("wallclock_s", _study_wallclock_s)
     except Exception:
         pass
+    # Issue #983 (Katalog D, P0 HEADLINE) — der Wallclock-Preflight rechnete bislang mit dem MEDIAN
+    # von backtest_ms, obwohl die Verteilung rechtsschief ist (Referenzlauf 46cf5070: Median 7.575s
+    # vs. Mittelwert 9.690s, Faktor 1.279 — einer von drei multiplikativen Fehlerquellen, die den
+    # Preflight um Faktor ~1.90 unterschätzen liessen). ``backtest_ms_mean`` ist das Rohmaterial für
+    # ``sweep._read_last_backtest_ms_mean`` des NÄCHSTEN Laufs (analog #931s Median-Ledger).
+    try:
+        study.set_user_attr("backtest_ms_mean", (sum(durs) / len(durs)) if durs else None)
+    except Exception:
+        pass
 
     emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
         "study_name": getattr(study, "study_name", None),
@@ -2524,6 +2588,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
         "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+        # Issue #983 Fix Punkt 3 Akzeptanzkriterium — die wallclock_budget_policy='degrade'-Kürzung
+        # (#931) darf niemals stillschweigend geschehen: IMMER vorhanden (1.0 = kein Degrade), damit
+        # jede Study nachvollziehbar bleibt, ohne den Ereignis-Log durchsuchen zu müssen.
+        "budget_degradation_factor": getattr(study, "user_attrs", {}).get(
+            "budget_degradation_factor", 1.0),
         "stop_reason": budget_execution["stop_reason"],
         "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "best_value": best_value,
@@ -2851,12 +2920,16 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
         # Issue #408 — modale Gate-Drop-Reason: pro Trial die kategorisierte Rejection-Reason
         # persistieren, damit confirm._dominant_rejection sie ueber die Study aggregieren kann.
-        rejection_reason = _classify_trial_rejection(metrics)
+        # Issue #971 — ``timebox_violated`` durchgereicht, damit ein nachträglich (#857) auf
+        # ``oos_evaluated=False`` umgestempelter Trial NICHT als IS-Gate-Drop fehlklassifiziert wird.
+        rejection_reason = _classify_trial_rejection(metrics, timebox_violated=_timebox_violated_this_trial)
         trial.set_user_attr("rejection_reason", rejection_reason)
         # Issue #453 — granulare, dezidierte Rejection-Kategorie (löst 'oos_not_evaluated' in die
         # tatsächliche Ursache auf) zusätzlich persistieren — für die modale Proposal-Aggregation.
-        is_rejection_detail = _classify_is_rejection_detail(metrics)
+        is_rejection_detail = _classify_is_rejection_detail(
+            metrics, timebox_violated=_timebox_violated_this_trial)
         trial.set_user_attr("is_rejection_detail", is_rejection_detail)
+        trial.set_user_attr("oos_timebox_invalidated", bool(_timebox_violated_this_trial))
         # Issue #917 Fix 2 — welche Gates konkret auf einer undefinierten Grösse liefen (leer im
         # Regelfall). Additiv, unabhängig von is_rejection_detail selbst gestempelt, damit auch ein
         # Trial mit einem ANDEREN dominanten Ablehnungsgrund die Information nicht verliert.
@@ -2928,17 +3001,23 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Win-Rate-Verteilung gegen die konfigurierte oos_min_win_rate-Schwelle prüfen kann (LIVE,
         # nicht nur das statische Cross-Strategy-Kalibrier-Fixture aus #633).
         # Issue #788 — dieselbe oos_evaluated-Torwaechter-Bedingung gilt ab hier fuer JEDE OOS-
-        # Metrik (profit_factor, expectancy, total_return, sortino): oos_expectancy/oos_total_return
-        # fallen in der Parsing-Schicht (TournamentMetrics) auf 0.0 statt None zurueck, wenn die
-        # zugrundeliegende oos_metrics.json keinen Wert traegt — OHNE das ``oos_evaluated``-Gate hier
-        # waere ein 0.0-Fallback fuer einen NIE evaluierten Trial ununterscheidbar von einer echten
-        # Null-Beobachtung (dieselbe #759-Fehlerklasse, nur an vier weiteren Metriken).
+        # Metrik (profit_factor, expectancy, total_return, sortino) — ein 0.0-Fallback fuer einen
+        # NIE evaluierten Trial waere ununterscheidbar von einer echten Null-Beobachtung (dieselbe
+        # #759-Fehlerklasse, hier an vier weiteren Metriken).
+        # Issue #966 (Katalog A, P0, Pitfall #305 in AGENTS.md) — ``oos_expectancy`` fiel bislang in
+        # der Parsing-Schicht (parsing.TournamentMetrics) auf 0.0 statt None zurueck, wenn die
+        # zugrundeliegende oos_metrics.json keinen Wert trug — ein Sentinel, der die Signatur eines
+        # Messwerts trug und von JEDEM nachgelagerten Konsumenten (Gate, Constraint-Distanz,
+        # TPE-Sampler-Grundlage) als echte Messung behandelt wurde. ``parsing.py`` liefert None jetzt
+        # korrekt durch (analog #759 fuer oos_win_rate/oos_profit_factor); dieselbe
+        # "nur gesetzt, wenn vorhanden"-Konvention gilt jetzt auch hier.
         if metrics.oos_evaluated:
             if metrics.oos_win_rate is not None:
                 trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
             if metrics.oos_profit_factor is not None:
                 trial.set_user_attr("oos_profit_factor", metrics.oos_profit_factor)
-            trial.set_user_attr("oos_expectancy", metrics.oos_expectancy)
+            if metrics.oos_expectancy is not None:
+                trial.set_user_attr("oos_expectancy", metrics.oos_expectancy)
             trial.set_user_attr("oos_total_return", metrics.oos_total_return)
             if metrics.oos_sortino is not None:
                 trial.set_user_attr("oos_sortino", metrics.oos_sortino)
@@ -3302,6 +3381,12 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     _degrade_factor = wallclock_guard.read_degrade_factor(WORK)
     if _degrade_factor < 1.0:
         study.set_user_attr("n_trials_budget_degrade_factor", round(_degrade_factor, 4))
+    # Issue #983 (Katalog D) Fix Punkt 3 Akzeptanzkriterium — IMMER gestempelt (auch 1.0 = kein
+    # Degrade), damit "budget_degradation_factor erscheint in ... optimizer_study_completed"
+    # verlaesslich erfuellt ist statt nur bei aktivem Degrade sichtbar zu sein. Die Kuerzung durfte
+    # laut #983 "niemals stillschweigend geschehen" — ein Feld, das nur bei Aktivierung existiert,
+    # ist fuer denselben Zweck nicht besser als ein WARNING-Logeintrag in einem 6-MB-Log.
+    study.set_user_attr("budget_degradation_factor", round(_degrade_factor, 4))
 
     # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
     # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
