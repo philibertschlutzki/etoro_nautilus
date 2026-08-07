@@ -1018,8 +1018,15 @@ def _normalized_gate_distances(
     distances = {
         "oos_min_trades": _shortfall_distance(float(m.oos_total_trades), req_trades),
         "oos_min_total_return": _shortfall_distance(m.oos_total_return, req_return, scale=return_penalty_scale),
+        # Issue #966 (Katalog A, P0) — dasselbe #759-Muster wie ``oos_min_win_rate`` unten: None
+        # (fehlende Beobachtung, seit diesem Fix aus der Parsing-Schicht korrekt durchgereicht statt
+        # dort auf 0.0 zu kollabieren) wird HIER, an der Konsumstelle, konservativ als 0.0 behandelt
+        # (worst-case fuer die Distanzstrafe) — NICHT mehr in ``parsing.TournamentMetrics`` als
+        # stiller Sentinel, der von JEDEM nachgelagerten Konsumenten (Gate, Constraint-Distanz,
+        # TPE-Sampler) als echte Messung missgedeutet wurde (Pitfall #305 in AGENTS.md).
         "oos_min_expectancy": _shortfall_distance(
-            m.oos_expectancy, req_expectancy, scale=expectancy_penalty_scale
+            m.oos_expectancy if m.oos_expectancy is not None else 0.0, req_expectancy,
+            scale=expectancy_penalty_scale
         ),
         # Issue #759 — None (fehlende Beobachtung) wird HIER, an der Konsumstelle, konservativ als
         # 0.0 behandelt (worst-case fuer die Distanzstrafe) — die Parsing-Schicht liefert None jetzt
@@ -1225,7 +1232,8 @@ def compute_reward(
     if reward_mode_config == "pareto":
         res = (
             float(m.oos_total_return),
-            float(m.oos_expectancy),
+            # Issue #966 — None-fest an der Konsumstelle (analog oos_win_rate/oos_sortino darunter).
+            float(m.oos_expectancy if m.oos_expectancy is not None else 0.0),
             # Issue #759 — None-fest an der Konsumstelle (analog oos_sortino direkt darunter).
             float(m.oos_win_rate if m.oos_win_rate is not None else 0.0),
             float(m.oos_sortino if m.oos_sortino is not None else 0.0),

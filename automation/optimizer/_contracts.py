@@ -192,3 +192,34 @@ _register_inference_code(
                 "artig Richtung der Gesamtstreuung aller informativen Perioden geschrumpft, statt "
                 "den Trial zu verwerfen (#944, ersetzt die frühere Anti-Selektions-Verwerfung).",
 )
+# Issue #967 (Katalog A, P0 HEADLINE) — VORHER stumme Rückgabepfade in
+# ``backtest_runner._calculate_stats``/``_compute_sortino``: 91,4 % der 490 Trials ohne
+# Selektionsstatistik im Referenzlauf 46cf5070 emittierten KEINE Diagnose. Jeder Pfad, der
+# ``sortino``/``psr`` auf ``None`` setzt, ist jetzt hier registriert (#965 Fix Punkt 1 — geschlossenes
+# Enum statt eines Docstring-dokumentierten, aber nicht durchsetzbaren Vertrags).
+_register_inference_code(
+    "SORTINO_INSUFFICIENT_TRADES", failure_policy="prune", severity="high",
+    description="n_trades < min_trades_sortino oder informative_rets leer — Sortino nicht "
+                "schätzbar, bevor irgendeine Momenten-/Downside-Berechnung stattfindet (#967).",
+    nullifies_metrics=("oos_sortino_period", "oos_sortino_annualized", "oos_psr"),
+)
+_register_inference_code(
+    "SORTINO_DOWNSIDE_DEVIATION_UNDEFINED", failure_policy="prune", severity="high",
+    description="dd_dev (Downside-Deviation) ist NaN — degenerierte Renditeserie (#967).",
+    nullifies_metrics=("oos_sortino_period", "oos_sortino_annualized", "oos_psr"),
+)
+_register_inference_code(
+    "SORTINO_ANNUALIZED_NONFINITE", failure_policy="prune", severity="high",
+    description="Der annualisierte Sortino ist NaN/inf (z. B. entartete "
+                "effective_annualization_factor) — als undefiniert behandelt, bevor der Numerik-"
+                "Guard (SORTINO_GUARD_TRIPPED) überhaupt geprüft wird (#967).",
+    nullifies_metrics=("oos_sortino_period", "oos_sortino_annualized", "oos_psr"),
+)
+_register_inference_code(
+    "PSR_BOOTSTRAP_UNDEFINED", failure_policy="prune", severity="high",
+    description="deflation.bootstrap_psr_z lieferte (None, None) trotz gültigem sortino_period — "
+                "degenerierte Bootstrap-Streuung über die Resamples oder < 2 informative Perioden. "
+                "NULLIFIZIERT NUR oos_psr, sortino_period/sortino_annualized bleiben gültig (#965/"
+                "#967) — der einzige Code dieser Registry mit dieser asymmetrischen Konsequenz.",
+    nullifies_metrics=("oos_psr",),
+)

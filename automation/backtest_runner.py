@@ -2927,6 +2927,17 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             werden kann. Liest/schreibt ausschliesslich die umschliessenden Closures (period_rets,
             mar, mtm_series, sortino_numeric_guard, _inference_diagnostics)."""
             if n < min_trades_sortino or informative_rets.empty:
+                # Issue #967 (Katalog A, P0, Pitfall — stumme Rueckgabepfade) — VORHER emittierte
+                # dieser Rueckgabepfad KEINE Diagnose: 91.4% der 490 Trials ohne Selektionsstatistik
+                # im Referenzlauf 46cf5070 waren dadurch "stumm" (kein INFERENCE_DIAGNOSTIC-Event),
+                # obwohl ``oos_psr``/``oos_sortino`` fuer sie ``None`` wurden. Jeder Rueckgabepfad
+                # dieser Funktion MUSS jetzt einen Code emittieren (#967-Akzeptanzkriterium 1).
+                _inference_diagnostics.append({
+                    "code": "SORTINO_INSUFFICIENT_TRADES",
+                    "detail": f"n={n} < min_trades_sortino={min_trades_sortino} oder "
+                             f"informative_rets leer (n_periods={n_periods}).",
+                    "value": n,
+                })
                 return None, None, None, None, None, 0.0, 3.0, None, None
             # Issue #545: Target-Downside-Deviation (RMS without mean-centering)
             # Issue #801 (Pitfall #240) — skipna=False erzwungen: eine NaN-uebersprungene Aggregation
@@ -2934,6 +2945,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             downside_diff = (informative_rets - mar).clip(upper=0.0)
             dd_dev = float(np.sqrt((downside_diff ** 2).mean(skipna=False)))
             if pd.isna(dd_dev):
+                # Issue #967 — zweiter stummer Rueckgabepfad (degenerierte Downside-Deviation).
+                _inference_diagnostics.append({
+                    "code": "SORTINO_DOWNSIDE_DEVIATION_UNDEFINED",
+                    "detail": f"dd_dev ist NaN (n_periods={n_periods}, n_trades={n}).",
+                    "value": None,
+                })
                 return None, None, None, None, None, 0.0, 3.0, None, None
 
             # Issue #823 Fix Punkt 2 / #863 — Mindestzahl an DOWNSIDE-Beobachtungen VOR jeder
@@ -3023,6 +3040,21 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             # kein Ergebnis. Fail-loud (SORTINO_GUARD_TRIPPED) und als undefiniert (None) behandeln —
             # sortino UND psr fallen aus (kein extremer Fold-Artefakt passiert das Gate stumm).
             if pd.isna(sortino_annualized_v) or not np.isfinite(sortino_annualized_v):
+                # Issue #967 — dritter stummer Rueckgabepfad (nicht-endlicher annualisierter
+                # Sortino, z. B. entartete effective_annualization_factor).
+                import logging
+                logging.getLogger("optimizer").warning(
+                    "SORTINO_ANNUALIZED_NONFINITE: sortino_annualized ist NaN/inf "
+                    "(effective_annualization_factor=%.6g, n_periods=%d, dd_dev=%.6g) — als "
+                    "undefiniert behandelt (#967; sortino/psr=None).",
+                    effective_annualization_factor, n_periods, dd_dev,
+                )
+                _inference_diagnostics.append({
+                    "code": "SORTINO_ANNUALIZED_NONFINITE",
+                    "detail": f"effective_annualization_factor={effective_annualization_factor:.6g}, "
+                             f"n_periods={n_periods}, dd_dev={dd_dev:.6g}.",
+                    "value": None,
+                })
                 return None, None, None, None, None, 0.0, 3.0, None, downside_obs
             _eff_guard, _guard_ref_value, _guard_ref_source = _effective_sortino_numeric_guard(
                 sortino_numeric_guard, n_periods, family_median_n_periods=family_median_n_periods)
@@ -3094,6 +3126,22 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                 informative_arr, sr_star=0.0, mar=mar,
                 n_boot=_read_psr_bootstrap_resamples())
             psr_v = _psr_from_z(psr_z_v)
+            if psr_z_v is None:
+                # Issue #965/#967 — vierter, bislang komplett UNDIAGNOSTIZIERTER Weg zu
+                # ``oos_psr=None``: ``sortino``/``sortino_period`` sind hier bereits gueltig (der
+                # Trial hat alle vorherigen Ausschluss-Bedingungen bestanden), aber der Bootstrap-
+                # Standardfehler (deflation.bootstrap_psr_z) scheitert unabhaengig (n < 2 informative
+                # Perioden, nicht-endlicher Punktschaetzer, oder eine entartete [<= 0] Bootstrap-
+                # Streuung ueber die Resamples). Ohne diesen Code war ein Trial mit definiertem
+                # Sortino aber undefinierter PSR nicht von einem stummen Programmierfehler
+                # unterscheidbar.
+                _inference_diagnostics.append({
+                    "code": "PSR_BOOTSTRAP_UNDEFINED",
+                    "detail": f"bootstrap_psr_z lieferte (None, None) trotz gueltigem "
+                             f"sortino_period={sortino_period_v:.6g} (n_periods={n_periods}) — "
+                             "degenerierte Bootstrap-Streuung oder < 2 informative Perioden.",
+                    "value": None,
+                })
             return (sortino_v, sortino_period_v, sortino_annualized_v, psr_v, psr_z_v, skew_v,
                     kurtosis_v, psr_se_boot_v, downside_obs)
 

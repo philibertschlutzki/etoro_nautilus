@@ -5572,3 +5572,110 @@ bleibt die LETZTE Aktion vor jedem Re-Run, der #944/#947/#956/#958/#960 produkti
   #936, jetzt mit v22-/v4-Einträgen; die vollständige Auslöser-/Nicht-Auslöser-Begründung steht im
   `_schema.fields`-Eintrag, gegen den Code getestet (`test_issue_961_version_bumps.py`), nicht nur
   in diesem Dokument (Pitfall #299/#320).
+
+## Issue-Katalog #965–#990 (GitHub-Issues #785–#788, Sitzung 2026-08-07, Referenzlauf `46cf5070`)
+
+**Nummerierungs-Hinweis:** die ursprünglichen Issue-Texte (#992) schlugen die Pitfall-Nummern
+`#303`–`#312` für diese Runde vor — zum Zeitpunkt ihrer Formulierung war das der nächste freie
+Block. Der Katalog #937–#964 (siehe oben) hat diesen Block inzwischen selbst belegt (`#303`–`#320`).
+Code-Kommentare, die in DIESER Session geschrieben wurden, zitieren daher stellenweise `#303`–`#312`
+im Sinne der Issue-Texte, NICHT im Sinne der hier tatsächlich registrierten Pitfalls — die
+verbindliche Registrierung für diese Runde beginnt bei `#321` (nächster freier Wert). Bei einem
+künftigen Cross-Referenzieren gilt: ein Code-Kommentar mit `Pitfall #30x`/`#31x` OHNE Bezug auf
+Issue #965–#990 im selben Kommentar meint den `#937–#964`-Katalog oben, NICHT diesen Abschnitt.
+
+- **#321 (war Pitfall-Vorschlag "#303")** — Ein blockierender Wächter, dessen Zahl sich aus der
+  eigenen Telemetrie nicht nachrechnen lässt, darf keinen Lauf abbrechen. `check_holding_time_cap`
+  (#971) maß TRIAL- statt TRADE-Anteile und reproduzierte dabei bit-genau `(n_trials -
+  evaluable_trials) / n_trials` — eine Größe ohne jeden Bezug zur Haltedauer. Fix:
+  `InvariantResult.provenance` (numerator/denominator/numerator_definition/source_field) ist jetzt
+  für `severity='blocking'`-Checks Pflicht.
+- **#322 (war "#304")** — Ein Zähler, dessen Grundgesamtheit durch genau das Kriterium vorgefiltert
+  ist, das er messen soll, liefert immer dasselbe (tautologische) Ergebnis. Der Zero-Eligible-
+  Plateau-Zähler (#972) lief über die bereits überlebenden `oos_evaluated`-Trials, konnte also nie
+  einen der bereits herausgefilterten Fälle "sehen" — "0/N trafen die Grenze" war strukturell nicht
+  widerlegbar. Fix: über `n_trials` (die tatsächliche Grundgesamtheit) zählen, mit Zerlegung;
+  `check_counter_partition_consistency` als Regressionswächter.
+- **#323 (war "#305")** — Ein Sentinel, der die Signatur eines Messwerts trägt (`0.0` statt `None`
+  bei fehlender Messung), wird von JEDEM nachgelagerten Konsumenten als Messwert behandelt — nicht
+  nur vom offensichtlichen. `oos_expectancy` (#966) kollabierte in der Parsing-Schicht auf `0.0` und
+  fütterte darüber sowohl die Gate-Distanz als auch den TPE-Sampler-Constraint mit einem
+  fabrizierten Wert. Dieselbe Klasse wie #759 (`oos_win_rate`), hier an einer vierten Metrik
+  nachgezogen — Konsumenten sollten `None` explizit AN DER KONSUMSTELLE behandeln, nicht die
+  Parsing-Schicht raten lassen.
+- **#324 (war "#306")** — Eine fehlende Statistik ist nie "neutral": prüfen, ob die Ausfallmenge
+  ökonomisch verschieden von der Erfolgsmenge ist. Im Referenzlauf war die Kohorte OHNE definierten
+  `oos_psr` (#965) profitabler (92,2 % positive Rendite) als die Kohorte MIT PSR (7,4 % positiv) —
+  eine reine Anteilsschwelle (`check_selection_statistic_availability`) fängt diese Klasse nicht.
+  Fix: `check_selection_statistic_economic_bias`, ein einseitiger Mann-Whitney-Test ohne
+  scipy-Abhängigkeit (`invariants._mann_whitney_u_one_sided`).
+- **#325 (war "#307")** — Ein laufzeitabhängiger, aus der eigenen Suchpopulation gebildeter Anker
+  macht Urteile reihenfolgeabhängig und den Lauf trotz festem Seed nicht reproduzierbar. Der
+  Sortino-Guard (#968) mit `sortino_numeric_guard_reference='family_median'` wanderte über acht
+  verschiedene Werte innerhalb EINES Laufs und wechselte mitten in einer Study die Quelle
+  (`absolute_bootstrap` → `family_median`) — derselbe Parametervektor konnte je nach
+  Ankunftsreihenfolge im Scheduler ein umgekehrtes Guard-Urteil erhalten. Fix (dieser Katalog):
+  `check_guard_reference_stability` als Regressionswächter; die vollständige Entfernung des
+  `family_median`-Modus zugunsten einer vor dem ersten Trial eingefrorenen H0-Bootstrap-Tabelle
+  bleibt für einen Folge-Katalog zurückgestellt (Restrukturierungsrisiko ohne Live-Validierung).
+- **#326 (war "#308")** — Ein Strafterm, der nur im verworfenen Zweig streut, ordnet dort, wo
+  Ordnung folgenlos ist — `std(term|eligible) / std(term|failure)` messen, nicht nur `std(term)`
+  absolut. `dd_penalty` (#977) dominierte die Zielfunktion um Faktor 2,7–8,5, aber ausschliesslich
+  im `failure`-Zweig (im `eligible`-Zweig 1426× kleiner). Fix: `penalty_dd_weight` auf `0.0`
+  (Risikokontrolle bleibt über das `oos_max_drawdown`-Gate bestehen — Doppelzählung entfernt,
+  siehe Pitfall #327/#309).
+- **#327 (war "#309")** — Dieselbe Grösse zweimal zu kodieren (hart als Gate, weich als Strafe) ist
+  Doppelzählung und verzerrt die Suche — siehe #326/#977 (`dd_penalty` vs. `oos_max_drawdown`-Gate)
+  und #979 (Reward-Zweig-Klippe vs. #612-Sampler-Constraint als zwei Feasibility-Kodierungen).
+- **#328 (war "#310")** — Eine metrische Skala, die je Fold empirisch bestimmt wird, ist über Folds
+  NICHT kommensurabel; Mitteln/Median darüber ist eine Kategorienverwechslung. Der annualisierte
+  Sortino (#978) nutzt einen ereignisgetriebenen Annualisierungsfaktor F, der innerhalb EINES
+  Trials um Faktor bis 3,59 variierte (vier Folds derselben Kalenderlänge, vier verschiedene √F).
+  Fix: `check_annualization_commensurability` (`max(√F)/min(√F) <= 1.05` je Trial).
+- **#329 (war "#311")** — Ein uniformer Budgetschnitt trifft die modellgeführte Suche
+  überproportional, solange Fixkosten (Startup, Mindestzahlen) nicht mitskalieren — 26 % Wallclock-
+  Kürzung (#983/#984) vernichtete rechnerisch ~31 % der TPE-modellierten Trials, weil `startup_
+  limit` konstant blieb. Der Preflight-Schätzfehler (Faktor ~1,90, Median statt Mittelwert +
+  fehlende Scheduling-/Overhead-Korrektur) wurde in diesem Katalog behoben
+  (`wallclock_guard.estimate_expected_wallclock_h`, `backtest_share`/`scheduling_efficiency`); die
+  NICHT-uniforme Studies-übergreifende Neuallokation selbst bleibt zurückgestellt.
+- **#330 (war "#312")** — Ein Wächter braucht einen dritten Zustand `INCONCLUSIVE`. Ohne ihn wird
+  "nicht messbar" als "defekt" berichtet — und daraus werden ggf. Denylist-Entscheidungen
+  abgeleitet. `check_search_made_progress` (#981) interpretierte eine dreiwertige
+  Treppenfunktion (`min_constraint_violation_first/last ∈ {0.0, 0.5, 1.0}`, Folge von #966s
+  Sentinel-Bug) als "der TPE-Sampler hat nachweislich keinen Gradienten gefunden" — eine Aussage,
+  die aus dieser Auflösung nicht folgt. Fix: `InvariantResult.inconclusive`, gesetzt wenn
+  `len(set(constraint_violations_observed)) < 10`.
+
+### 📋 Neue/geänderte Config-Keys (Issue-Katalog #965–#990)
+- `optimizer.json.penalty_dd_weight` 1.0 → 0.0 — #977, Pitfall #326/#327.
+- `optimizer.json.reward_semantics_version` 22 → 23 (zwei Auslöser: #977, #966) — Pitfall #326/#323.
+- `optimizer.json.inference_semantics_version` — NEU, Startwert 1 — #968, Pitfall #325. Geprüft/
+  gestempelt über `_check_inference_semantics_version` (`run_optimization.py`, Mechanik identisch
+  zu `_check_reward_semantics_version`/`_check_simulation_semantics_version`,
+  `REJECT_STALE_INFERENCE_SEMANTICS` als eigener Fehlercode).
+- `optimizer.json.wallclock_preflight_backtest_share` (Default 0.85) / `.wallclock_preflight_
+  scheduling_efficiency` (Default 0.80) — #983, Pitfall #329.
+- `optimizer.json.fail_fast_policy` (Default `'quarantine'`) — #975.
+- `_CONFIGURED_INACTIVE_REWARD_TERMS` (`invariants.py`) — `"dd_penalty"` ergänzt — #977, Pitfall
+  #326.
+
+### 🔒 Watertight Invariants (Issue-Katalog #965–#990) — für künftige Agenten
+- **`invariants.check_holding_time_cap`** (`invariants.py`, #971) — konsumiert seit diesem Fix
+  `timebox_violating_trades_frac` (TRADE-Ebene), NIE mehr `timebox_violation_fraction`
+  (TRIAL-Ebene) für eine `severity='blocking'`-Entscheidung (Pitfall #321).
+- **`run_optimization._classify_is_rejection_detail`** (`run_optimization.py`, #971) — der
+  `timebox_violated`-Parameter MUSS vor der IS-Gate-Heuristik geprüft werden, sonst ist ein
+  nachträglich (#857) invalidierter Trial vom echten IS-Gate-Drop nicht mehr unterscheidbar
+  (Pitfall #321).
+- **`invariants._CENSORING_DIAGNOSTIC_CODES`/`_ADAPTIVE_DIAGNOSTIC_CODES`** (`invariants.py`,
+  #967) — jeder neue `inference_diagnostics`-Code MUSS hier klassifiziert werden (CENSORING: Trial
+  verschwindet aus der Zielverteilung; ADAPTIVE: Trial bleibt mit korrigierter Statistik), sonst
+  bestraft `check_inference_diagnostics_absent` einen funktionierenden Korrekturmechanismus.
+- **`_contracts.INFERENCE_DIAGNOSTIC_CODES`** (`_contracts.py`, #965/#967) — jeder Rückgabepfad in
+  `backtest_runner._compute_sortino`, der `sortino`/`psr` auf `None` setzt, MUSS hier registriert
+  sein (`test_issue_918_inference_diagnostic_registry.py`s AST-Vollständigkeitstest erzwingt das) —
+  vier vorher stumme Pfade wurden in diesem Katalog nachgezogen (Pitfall #323).
+- **`invariants.gate_inventory_table`/`check_gate_marginal_contribution`** (`invariants.py`, #970)
+  — vor dem Hinzufügen eines neuen `eligible_requires_all`-Gates: gegen eine reale Kohorte prüfen,
+  ob es je solo oder marginal beiträgt, statt es auf Verdacht zu ergänzen.

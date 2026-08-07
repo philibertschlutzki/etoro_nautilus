@@ -20,7 +20,12 @@ class TournamentMetrics:
     # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
     # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
     oos_total_return: float = 0.0
-    oos_expectancy: float = 0.0
+    # Issue #966 (Katalog A, P0, Pitfall #305 in AGENTS.md) — VORHER float=0.0: eine FEHLENDE
+    # expectancy (kein Key in oos_metrics.json) kollabierte auf denselben Wert wie eine ECHT
+    # BEOBACHTETE Expectancy von 0.0 — ein Sentinel, der die Signatur eines Messwerts trägt, wird
+    # von jedem nachgelagerten Konsumenten (Gate, Constraint-Distanz, TPE-Sampler) als Messwert
+    # behandelt (dieselbe #759-Fehlerklasse wie oos_win_rate/oos_profit_factor, hier nachgezogen).
+    oos_expectancy: float | None = None
     # Issue #452: OOS-Distanzmetriken fuer kontinuierliche Constraint-Penalties bei
     # evaluierten, aber nicht eligiblen Trials.
     # Issue #759 — VORHER float=0.0: eine FEHLENDE win_rate (kein Trial je evaluiert/kein
@@ -345,7 +350,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         is_total_trades=int(is_total_trades),
         hit_trade_cap=bool(hit_trade_cap),
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
-        oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else 0.0,
+        # Issue #966 (Katalog A, P0) — None durchreichen statt auf 0.0 zu kollabieren, analog #759
+        # fuer oos_win_rate/oos_profit_factor (siehe Dataclass-Feld-Kommentar). Root-Cause: ein
+        # fehlender ``expectancy``-Key in oos_metrics.json wurde bislang zu einer Zahl, die die
+        # Signatur eines Messwerts trug ("0.0 Erwartungswert bei 122 Trades und PF 2.44" — bit-
+        # genau, arithmetisch unmoeglich) und von JEDEM nachgelagerten Konsumenten als echte
+        # Beobachtung behandelt wurde (Pitfall #305 in AGENTS.md).
+        oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else None,
         # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else None,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,

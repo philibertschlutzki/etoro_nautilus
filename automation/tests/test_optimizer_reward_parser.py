@@ -140,10 +140,18 @@ def _pairs(*trade_counts):
 
 def test_worst_case_eligible_trial_is_unclamped_and_reflects_catastrophic_quality(tmp_path):
     """Issue #629 — kein Reward-Floor mehr. Ein eligibler, aber katastrophal schlechter Trial
-    (Sortino am Legacy-Clip, Drawdown weit über dem Cap) erhält einen entsprechend katastrophalen,
-    UNGEKLEMMTEN Reward und darf jetzt legitim UNTER einem gut geshapeten unevaluierten Trial liegen
-    — genau das Gegenteil der frueheren, per Floor erzwungenen 'evaluable > unevaluable'-Invariante.
-    Die Feasibility-Rangordnung selbst kommt ausschliesslich vom #612-Sampler-Constraint."""
+    (Sortino am Legacy-Clip) erhält einen entsprechend katastrophalen, UNGEKLEMMTEN Reward und
+    darf jetzt legitim UNTER einem gut geshapeten unevaluierten Trial liegen — genau das Gegenteil
+    der frueheren, per Floor erzwungenen 'evaluable > unevaluable'-Invariante. Die Feasibility-
+    Rangordnung selbst kommt ausschliesslich vom #612-Sampler-Constraint.
+
+    Issue #977 (Katalog C, P0 HEADLINE) — der Drawdown liegt jetzt INNERHALB des Caps (statt weit
+    darüber): dd_penalty ist seit #977 dokumentiert inert (penalty_dd_weight=0.0, das Risiko wird
+    ausschliesslich über das oos_max_drawdown-GATE kontrolliert) UND ein eligibler Trial umgeht per
+    Definition den gate_distance_penalty-Term — ein Drawdown ÜBER dem Cap bei gleichzeitigem
+    oos_eligible=True war ohnehin ein unrealistisches Fixture (ein solcher Trial wäre nie eligible).
+    Die "katastrophal, ungeklemmt"-Aussage dieses Tests kommt jetzt ausschliesslich vom geclipten
+    Sortino (der Base-Term selbst), nicht mehr vom Drawdown-Kanal."""
     cfg = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
     cap = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))[
         "max_drawdown"
@@ -173,7 +181,7 @@ def test_worst_case_eligible_trial_is_unclamped_and_reflects_catastrophic_qualit
                 oos_fold_sortinos=[-cfg["sortino_clip_abs"]],
                 oos_metrics={
                     "sortino_ratio": -cfg["sortino_clip_abs"],
-                    "max_drawdown": cap + 0.99,
+                    "max_drawdown": cap * 0.5,
                     "total_trades": 20,
                 },
             ),
@@ -183,4 +191,30 @@ def test_worst_case_eligible_trial_is_unclamped_and_reflects_catastrophic_qualit
     r_eval = reward.compute_reward(m_eval, universe_size=100)
 
     assert math.isfinite(r_eval)
-    assert r_eval < r_uneval  # #629 — kein Floor mehr: katastrophale Qualität schlägt jetzt durch
+    # Issue #977 — seit dd_penalty dokumentiert inert ist (Risiko ausschliesslich über das Gate),
+    # unterschreitet ein eligibler "worst case" den konstanten unevaluable-Floor nicht mehr
+    # zwangsläufig (der Drawdown-Katastrophenkanal ist weg) — das ist die BEABSICHTIGTE Konsequenz
+    # von #977, nicht ein Regressionsfund. Die eigentliche #629-Aussage ("kein Reward-Floor")
+    # bleibt: ein NOCH schlechterer eligibler Trial (staerker divergierender IS/OOS-Sortino) muss
+    # einen NOCH niedrigeren, UNGEKLEMMTEN Reward erhalten, statt an einer Untergrenze zu klemmen.
+    m_worse = parsing.parse_tournament(
+        _write_full(
+            tmp_path / "worse",
+            dict(
+                oos_evaluated=True,
+                oos_eligible=True,
+                win_count=0,
+                median_is_sortino=cfg["sortino_clip_abs"] * 3,
+                oos_fold_sortinos=[-cfg["sortino_clip_abs"]] * 3,
+                oos_metrics={
+                    "sortino_ratio": -cfg["sortino_clip_abs"],
+                    "max_drawdown": cap * 0.5,
+                    "total_trades": 20,
+                },
+            ),
+            _pairs(20),
+        )
+    )
+    r_worse = reward.compute_reward(m_worse, universe_size=100)
+    assert math.isfinite(r_worse)
+    assert r_worse < r_eval  # #629 — kein Floor: ein staerkerer IS/OOS-Divergenz-Malus sinkt weiter

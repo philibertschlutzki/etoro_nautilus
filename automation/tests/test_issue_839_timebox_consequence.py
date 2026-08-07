@@ -152,38 +152,63 @@ def test_resolve_effective_bar_cap_falls_back_to_global():
     assert (cap, source) == (24.0, "global")
 
 
-# ── invariants.check_holding_time_cap (#861 — unified contract) ─────────────────────────────────
+# ── invariants.check_holding_time_cap (#861 — unified contract; #971 — trade-, not trial-level) ──
 def test_check_holding_time_cap_is_blocking_severity():
-    """Issue #861 — konsumiert jetzt dieselben Felder wie compute_trial_timebox_violations
-    (timebox_evaluated_trades/timebox_violation_fraction), nicht mehr max_holding_time_s gegen
-    einen Pauschaldeckel."""
+    """Issue #971 — konsumiert jetzt die TRADE-(Round-Trip-)Ebene
+    (timebox_violating_trades_frac/_numerator/_denominator, report._study_record), nicht mehr die
+    TRIAL-Ebene (timebox_violation_fraction) und nicht mehr max_holding_time_s gegen einen
+    Pauschaldeckel."""
     result = inv.check_holding_time_cap([{
         "strategy": "S", "symbol": "X",
-        "timebox_evaluated_trades": 4, "timebox_violation_fraction": 1.0,
+        "timebox_violating_trades_denominator": 4, "timebox_violating_trades_frac": 1.0,
+        "timebox_violating_trades_numerator": 4,
     }])
     assert result.severity == "blocking"
     assert result.passed is False
+    assert result.provenance is not None
+    assert result.provenance["per_study"]["S/X"] == {"numerator": 4, "denominator": 4}
 
 
 def test_check_holding_time_cap_passes_within_study_tolerance():
     result = inv.check_holding_time_cap([{
         "strategy": "S", "symbol": "X",
-        "timebox_evaluated_trades": 160, "timebox_violation_fraction": 0.05,
+        "timebox_violating_trades_denominator": 160, "timebox_violating_trades_frac": 0.05,
+        "timebox_violating_trades_numerator": 8,
     }], study_tolerance=0.25)
     assert result.passed is True
+    assert result.provenance is None
 
 
 def test_check_holding_time_cap_fails_beyond_study_tolerance():
     result = inv.check_holding_time_cap([{
         "strategy": "S", "symbol": "X",
-        "timebox_evaluated_trades": 160, "timebox_violation_fraction": 0.30,
+        "timebox_violating_trades_denominator": 160, "timebox_violating_trades_frac": 0.30,
+        "timebox_violating_trades_numerator": 48,
     }], study_tolerance=0.25)
     assert result.passed is False
     assert "S/X" in result.detail
 
 
+def test_check_holding_time_cap_ignores_trial_count_disguised_as_unevaluable_fraction():
+    """Issue #971 (P0 HEADLINE) — Regressionswächter gegen den Referenzlauf-Befund: ein Trial mit
+    EINEM zeitbox-verletzenden Round-Trip unter vielen sauberen darf die Study NICHT als "kaputter
+    Exit-Pfad" markieren, nur weil er TRIAL-weise zu 100% als "verletzend" zählt (20/67 = 0.2985,
+    identisch zu (n_trials - evaluable_trials) / n_trials im Referenzlauf 46cf5070 — eine Grösse,
+    die nichts mit der Haltedauer zu tun hat, siehe #973: hit_trade_cap/time_box_penalty waren im
+    gesamten Lauf konstant False/0.0)."""
+    # 67 Trials, davon 20 TRIAL-weise "verletzend" (je 1 von 10 Trades pro Trial verletzt die Box).
+    # TRIAL-Quote waere 20/67 = 0.2985 (> 0.25 Toleranz) — TRADE-Quote ist 20/(20*10) = 0.02.
+    result = inv.check_holding_time_cap([{
+        "strategy": "DynamicBreakoutStrategy", "symbol": "GSAT.ETORO",
+        "timebox_violating_trades_denominator": 200,
+        "timebox_violating_trades_numerator": 20,
+        "timebox_violating_trades_frac": round(20 / 200, 4),
+    }], study_tolerance=0.25)
+    assert result.passed is True
+
+
 def test_check_holding_time_cap_and_compute_trial_timebox_violations_agree():
-    """Issue #861-Akzeptanzkriterium — eine Study mit gesampeltem Cap 12 und 20 Bars Haltedauer
+    """Issue #861/#971-Akzeptanzkriterium — eine Study mit gesampeltem Cap 12 und 20 Bars Haltedauer
     laesst BEIDE Checks FAILen (vorher: check_holding_time_cap sauber bei 20 < 24, aber
     compute_trial_timebox_violations bereits eine Verletzung)."""
     trial_attrs = [{"oos_max_holding_time_s": 20 * 3600.0, "sampled_params": {"max_bars_in_trade": 12}}]
@@ -191,8 +216,9 @@ def test_check_holding_time_cap_and_compute_trial_timebox_violations_agree():
     assert timebox["timebox_violated"] is True
 
     study_record = {"strategy": "S", "symbol": "X",
-        "timebox_evaluated_trades": timebox["timebox_evaluated_trials"],
-        "timebox_violation_fraction": timebox["timebox_violation_fraction"],
+        "timebox_violating_trades_denominator": timebox["timebox_evaluated_round_trips"],
+        "timebox_violating_trades_numerator": timebox["timebox_violating_round_trips"],
+        "timebox_violating_trades_frac": timebox["timebox_round_trip_violation_fraction"],
     }
     result = inv.check_holding_time_cap([study_record], study_tolerance=0.25)
     assert result.passed is False

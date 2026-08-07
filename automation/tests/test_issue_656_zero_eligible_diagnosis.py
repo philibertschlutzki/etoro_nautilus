@@ -134,7 +134,9 @@ def test_diagnosis_reports_median_trade_count_and_boundary_hits():
     msgs = _warned(recs, "Zero-Eligible-Plateau")
     assert msgs
     assert "median oos_total_trades=5" in msgs[0].getMessage()
-    assert "20/20 Trials trafen die Haltedauer-/Trade-Cap-Grenze" in msgs[0].getMessage()
+    # Issue #972 — Nenner ist jetzt len(completed) (ALLE Trials), nicht n_evaluated (die
+    # Ueberlebenden); hier sind beide Zahlen zufaellig gleich (homogene Kohorte).
+    assert "20/20 ALLER Trials trafen die Haltedauer-/Trade-Cap-Grenze" in msgs[0].getMessage()
 
 
 def test_silent_before_startup_threshold():
