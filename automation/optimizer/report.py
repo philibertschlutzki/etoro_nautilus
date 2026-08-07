@@ -579,6 +579,14 @@ def _study_record(proposal: dict, study,
         # (Early-Stop).
         "gradient_signal_arm": gradient_signal_arm_value,
         "constraint_improvement_rate": constraint_improvement_rate,
+        # Issue #981 — die rohen je-Trial-Konstraint-Distanzen der modellierten Kohorte, damit
+        # invariants.check_search_made_progress die AUFLÖSUNG seiner eigenen Eingabe prüfen kann
+        # (eine dreiwertige Treppenfunktion kann keinen Gradienten anzeigen, siehe #966).
+        "constraint_violations_observed": [
+            cv[0] for t in modelled
+            for cv in [(getattr(t, "user_attrs", {}) or {}).get("oos_constraint_violations")]
+            if cv
+        ],
         # Issue #929 Fix 3 — Eingangsgrössen für invariants.check_search_made_progress.
         "n_modelled_trials": len(modelled),
         "plateau_min_modelled_trials": study_user_attrs.get("plateau_min_modelled_trials"),

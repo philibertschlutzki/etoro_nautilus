@@ -2496,11 +2496,19 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         gate_collinearity_alarm = {"n_samples": 0, "alarms": [], "redundant_candidates": {}}
 
     # Issue #621 — Reward-Term-Dekomposition
+    # Issue #980 (Katalog C, P1, Pitfall #302 in AGENTS.md) — VORHER auf den branch in ('eligible',
+    # 'per_symbol', 'pareto') gefiltert: dieselbe Selection-on-the-dependent-variable-Falle wie
+    # invariants._evaluated_reward_terms bereits dokumentiert (das ist die 2.15%-Kohorte aus #979,
+    # in 27 von 28 Studies des Referenzlaufs 46cf5070 LEER, weil p_eligible == 0). Root-Cause von
+    # #980: reward_terms_aggregates.terms war dadurch in 27/28 Studies {} — trotz identischer
+    # verfügbarer Trial-Population wie invariants.check_reward_term_variance/reward_term_variance_
+    # table (die BEIDE bereits auf oos_evaluated=True ohne Branch-Filter rechnen und daher NICHT
+    # leer waren). Konsistent auf dieselbe Population (oos_evaluated=True, jeder Branch) umgestellt.
     eligible_terms = []
     for t in trials:
         if getattr(t, "user_attrs", {}).get("oos_evaluated") is True:
             terms = getattr(t, "user_attrs", {}).get("reward_terms")
-            if terms and terms.get("branch") in ("eligible", "per_symbol", "pareto"):
+            if terms:
                 eligible_terms.append(terms)
 
     term_aggregates = {

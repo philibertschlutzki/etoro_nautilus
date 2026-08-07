@@ -2898,7 +2898,11 @@ def main(argv: list[str] | None = None) -> list[Path]:
         _cli_args = {"strategies": args.strategies, "tier": args.tier, "symbols": args.symbols,
                     # Issue #755 — n_workers je Lauf im Report nachvollziehbar (Determinismus-Nachweis
                     # bei n_jobs>1, jetzt auch bei gesetztem Seed zulaessig).
-                    "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source}
+                    "n_jobs": eff_n_jobs, "n_jobs_source": n_jobs_source,
+                    # Issue #985 (Katalog D, P1) — die aufgeloeste Host-Kernzahl neben n_jobs, damit
+                    # ein DEFAULT_CPU_MINUS_2-Lauf im Report nachvollziehbar bleibt, auch wenn der
+                    # Host zwischen zwei Laeufen wechselt (Reproduzierbarkeits-Telemetrie, #985 Fix 2).
+                    "host_cpu_count": __import__("os").cpu_count()}
         _wallclock_s = round(time.perf_counter() - main_t0)
         if run_status == "complete":
             report_path = _report.generate_sweep_report(

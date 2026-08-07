@@ -47,6 +47,14 @@ class InvariantResult:
     # nicht-blockierenden Checks — rückwärtskompatibel) und trägt je offending Study/Symbol
     # ``{numerator, denominator, numerator_definition, source_field}``.
     provenance: dict[str, Any] | None = None
+    # Issue #981 (Katalog C, P1, Pitfall #312 in AGENTS.md) — ein dritter Zustand neben PASS/FAIL:
+    # ein Wächter, dessen EIGENE Eingabe zu grob quantisiert ist, um zwischen "defekt" und "nicht
+    # messbar" zu unterscheiden, soll das explizit sagen, statt FAIL zu melden ("nicht messbar" wird
+    # sonst als "defekt" fehlinterpretiert — genau die Ursachenzuschreibung, die zu einer
+    # Denylistung führen kann, obwohl das Paar funktioniert). ``inconclusive=True`` impliziert
+    # ``passed=True`` (kein Abbruch/Alarm), macht den Zustand aber im Report von einem echten,
+    # sauberen PASS unterscheidbar.
+    inconclusive: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -64,6 +72,8 @@ class InvariantResult:
         }
         if self.provenance is not None:
             d["provenance"] = self.provenance
+        if self.inconclusive:
+            d["inconclusive"] = True
         return d
 
 
@@ -522,8 +532,20 @@ def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
     p_eligible bereits 0 ist. FAILt (severity 'high'), wenn ``constraint_improvement_rate <= 0``
     UND ``p_eligible == 0`` UND ``n_modelled_trials >= plateau_min_modelled_trials`` — der TPE hat
     dann nachweislich NICHTS gelernt (die Constraint-Verletzung wuchs oder stagnierte trotz
-    ausreichend modellierter Trials), nicht nur 'noch keinen eligiblen Trial gefunden'."""
+    ausreichend modellierter Trials), nicht nur 'noch keinen eligiblen Trial gefunden'.
+
+    Issue #981 (Katalog C, P1, Pitfall #312) — Root-Cause einer Fehl-Zuschreibung im Referenzlauf
+    46cf5070: ``constraint_improvement_rate`` wird aus ``min_constraint_violation_first/last``
+    berechnet, die bei fehlender Selektionsstatistik (#966) auf einer DREIWERTIGEN
+    Treppenfunktion ({0.0, 0.5, 1.0}) STATT einer kontinuierlichen Distanz beruhten — eine Grösse,
+    die per Konstruktion keinen Gradienten anzeigen KANN, wurde als "der Sampler hat nachweislich
+    keinen Gradienten gefunden" fehlinterpretiert. Diese Prüfung testet jetzt zusätzlich die
+    AUFLÖSUNG ihrer eigenen Eingabe (``constraint_violations_observed``, die rohen
+    je-Trial-Konstraint-Distanzen dieser Study): ``len(set(...)) < 10`` ⇒ Ergebnis ``INCONCLUSIVE``
+    statt ``FAIL`` (mit #966 gefixt sollte dieser Fall nicht mehr auftreten, diese Prüfung bleibt
+    aber die Regressionssicherung dagegen)."""
     offenders: dict[str, float] = {}
+    inconclusive_studies: list[str] = []
     with_data = [
         r for r in study_records
         if r.get("constraint_improvement_rate") is not None
@@ -531,12 +553,23 @@ def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
         and r.get("plateau_min_modelled_trials") is not None
     ]
     for r in with_data:
-        if (float(r["constraint_improvement_rate"]) <= 0.0
+        if not (float(r["constraint_improvement_rate"]) <= 0.0
                 and (r.get("p_eligible") or 0.0) == 0.0
                 and int(r["n_modelled_trials"]) >= int(r["plateau_min_modelled_trials"])):
-            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = round(
-                float(r["constraint_improvement_rate"]), 6)
+            continue
+        observed = r.get("constraint_violations_observed")
+        if observed is not None and len(set(round(float(v), 6) for v in observed)) < 10:
+            inconclusive_studies.append(f"{r.get('strategy')}/{r.get('symbol')}")
+            continue
+        offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = round(
+            float(r["constraint_improvement_rate"]), 6)
     passed = not offenders
+    detail_suffix = ""
+    if inconclusive_studies:
+        detail_suffix = (f" {len(inconclusive_studies)} weitere Study/Studies waren nach der "
+                         f"FAIL-Bedingung auffällig, aber ihre Eingabe ist zu grob quantisiert "
+                         f"(< 10 verschiedene Werte) für eine belastbare Aussage — als "
+                         f"INCONCLUSIVE statt FAIL gezählt: {inconclusive_studies}.")
     return InvariantResult(
         name="check_search_made_progress",
         passed=passed,
@@ -544,10 +577,13 @@ def check_search_made_progress(study_records: list[dict]) -> InvariantResult:
                  "n_modelled_trials < plateau_min_modelled_trials, je Study",
         actual=offenders if offenders else None,
         severity="high",
-        detail=("OK" if passed else
+        inconclusive=bool(inconclusive_studies) and not offenders,
+        detail=(("OK" if not inconclusive_studies else "OK (kein FAIL) —" + detail_suffix)
+                if passed else
                 f"{len(offenders)} Study/Studies mit stagnierender/wachsender Constraint-"
                 f"Verletzung bei 0 eligiblen Trials nach ausreichend modellierten Trials: "
-                f"{offenders} — der TPE-Sampler hat nachweislich keinen Gradienten gefunden."),
+                f"{offenders} — der TPE-Sampler hat nachweislich keinen Gradienten gefunden."
+                + detail_suffix),
     )
 
 
