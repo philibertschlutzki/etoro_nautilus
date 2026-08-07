@@ -340,6 +340,13 @@ def _study_record(proposal: dict, study,
     ]
     oos_n_periods_median = statistics.median(_n_periods_values) if _n_periods_values else None
     coherence_violations = sum(1 for a in trial_attrs if a.get("oos_coherence_violation") is True)
+    # Issue #976 — je Study, wie oft jeder is_rejection_detail-Code über ALLE Trials auftrat.
+    # Rohmaterial für invariants.check_window_unreachable_rate.
+    is_rejection_detail_counts: dict[str, int] = {}
+    for a in trial_attrs:
+        detail = a.get("is_rejection_detail")
+        if detail:
+            is_rejection_detail_counts[detail] = is_rejection_detail_counts.get(detail, 0) + 1
     # Issue #804 — Aggregat je Study: wie oft jeder strukturierte Inferenzpfad-Diagnose-Code
     # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
     # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED/COHERENCE_INVARIANT_VIOLATION) über ALLE
@@ -494,6 +501,12 @@ def _study_record(proposal: dict, study,
         # Issue #756 — nach der Log-Return-Umstellung ist eine verbleibende Kohärenzverletzung ein
         # echter Bug, kein erwartetes Restrauschen mehr; harter Regressionswächter statt WARNING.
         _inv.check_log_return_coherence(trial_attrs),
+        # Issue #978 (Katalog C, P0) — der Annualisierungsfaktor muss innerhalb eines Trials über
+        # alle Folds kommensurabel bleiben (Pitfall #310).
+        _inv.check_annualization_commensurability(trial_attrs),
+        # Issue #979 (Katalog C, P0) — der ordnende Reward-Zweig darf nicht auf einen winzigen
+        # Bruchteil der Auswertungen kollabieren (Pitfall #124, doppelt kodierte Feasibility).
+        _inv.check_objective_branch_coverage(trial_attrs),
         # Issue #759 — Missing-Data-Sentinel-Kollaps-Regressionswächter (oos_win_rate).
         _inv.check_metric_sentinel_absence(trial_attrs),
         # Issue #804/#886 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus
@@ -600,6 +613,8 @@ def _study_record(proposal: dict, study,
         # Normalfall). Macht eine Subprozess-Invariantenverletzung im #742-Report sichtbar, ohne ein
         # Trial-Verzeichnis zu öffnen oder trial_dir/logs/ zu lesen.
         "inference_diagnostics_by_code": inference_diagnostics_by_code,
+        # Issue #976 — Rohmaterial für invariants.check_window_unreachable_rate.
+        "is_rejection_detail_counts": is_rejection_detail_counts,
         # Issue #901 — Rohmaterial für invariants.check_guard_reference_coherence.
         "guard_reference_sources": guard_reference_sources,
         # Issue #968 — Rohmaterial für invariants.check_guard_reference_stability.
@@ -697,6 +712,10 @@ def _study_record(proposal: dict, study,
         # Issue #776 — noch unkonsolidierte (LIVE als redundant ausgewiesene) Mitglieder von
         # ``eligible_requires_all`` dieser Study; leer ⇒ Config konsistent mit dem #679-Alarm.
         "gate_collinearity_unconsolidated": gate_collinearity_unconsolidated,
+        # Issue #970 (Katalog A, P1) — je Gate n_rejections/n_solo_rejections/marginal_delta über
+        # die evaluierte Kohorte dieser Study (siehe invariants.gate_inventory_table-Docstring).
+        "gate_inventory": _inv.gate_inventory_table(
+            trial_attrs, (tournament_cfg or {}).get("eligible_requires_all") or []),
         # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
         # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
@@ -1306,6 +1325,14 @@ def _build_report(
     # Issue #968 (Katalog A, P0 HEADLINE) — Reproduzierbarkeits-Wächter: die Guard-Referenz darf
     # innerhalb EINER Study weder den Wert noch die Quelle wechseln (Pitfall #307).
     all_checks.append(("global", _inv.check_guard_reference_stability(studies_out)))
+
+    # Issue #970 (Katalog A, P1) — kein Gate ohne jeden marginalen Beitrag über eine ausreichend
+    # grosse Kohorte darf in eligible_requires_all verbleiben.
+    all_checks.append(("global", _inv.check_gate_marginal_contribution(studies_out)))
+
+    # Issue #976 (Katalog B, P2) — Detektion überproportional vieler unerreichbarer OOS-Fenster
+    # (zu weite Lookback-Bounds für die Datenlage).
+    all_checks.append(("global", _inv.check_window_unreachable_rate(studies_out)))
 
     # Issue #915 — die WIRKUNGS-Invariante neben der Quellen-Invariante oben: liefert der Guard
     # tatsächlich eine benutzbare Schwelle (definierter oos_psr), unabhängig davon, ob die

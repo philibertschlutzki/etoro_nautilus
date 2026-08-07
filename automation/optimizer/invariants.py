@@ -1068,6 +1068,170 @@ def check_log_return_coherence(trials: list[dict]) -> InvariantResult:
     )
 
 
+def check_window_unreachable_rate(
+    study_records: list[dict], *, max_fraction: float = 0.05,
+) -> InvariantResult:
+    """Issue #976 (Katalog B, P2) — ``REJECT_OOS_WINDOW_UNREACHABLE`` (Warmup-Bedarf des
+    Indikators überschreitet die verfügbare IS-Historie bei bestimmten Parametervektoren) ist ein
+    SUCHRAUM-/BOUNDS-Defekt, kein Laufzeitzustand — der Referenzlauf 46cf5070 zeigte 96 von 516
+    nicht auswertbaren Trials mit diesem Code. Diese Prüfung ist die DIAGNOSE-Hälfte des #976-Fixes
+    (Detektion): eine Study, deren Trials überproportional an unerreichbaren OOS-Fenstern statt an
+    einer echten Eligibility-Frage scheitern, hat zu weite Lookback-Bounds für ihre Datenlage.
+
+    Die PRÄVENTIONS-Hälfte (den betroffenen Parametervektor bereits VOR dem Backtest über
+    ``constraints_func`` als infeasible zu markieren, siehe #976-Fix Punkt 1/2) erfordert eine
+    strategie-spezifische Ableitung des maximalen Lookback-Bedarfs aus den gesampelten Parametern
+    (``spaces.py``) — bewusst NICHT Teil dieser Änderung (siehe #992-Merge-Order-Anmerkung: eine
+    falsch abgeleitete Lookback-Grenze würde gültige Parametervektoren stillschweigend aus dem
+    Suchraum entfernen, ein Risiko, das eine Detektions-Invariante nicht trägt).
+
+    ``study_records``: Liste mit ``n_trials`` und ``is_rejection_detail_counts`` (dict Code→Anzahl,
+    aus den aggregierten ``is_rejection_detail``-Werten dieser Study, sofern vorhanden)."""
+    with_data = [
+        r for r in study_records
+        if r.get("n_trials") and r.get("is_rejection_detail_counts") is not None
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_window_unreachable_rate",
+            passed=True,
+            expected=f"Anteil REJECT_OOS_WINDOW_UNREACHABLE <= {max_fraction} je Study",
+            actual=None,
+            detail="Keine Studies mit is_rejection_detail_counts-Telemetrie — nicht anwendbar.",
+        )
+    offenders = {}
+    for r in with_data:
+        n_unreachable = int((r.get("is_rejection_detail_counts") or {}).get(
+            "REJECT_OOS_WINDOW_UNREACHABLE", 0))
+        fraction = n_unreachable / int(r["n_trials"])
+        if fraction > max_fraction:
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = round(fraction, 4)
+    passed = not offenders
+    return InvariantResult(
+        name="check_window_unreachable_rate",
+        passed=passed,
+        expected=f"Anteil REJECT_OOS_WINDOW_UNREACHABLE <= {max_fraction} je Study",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit überproportional vielen unerreichbaren "
+                f"OOS-Fenstern: {offenders} — zu weite Lookback-Bounds für die Datenlage dieses "
+                "Symbols (spaces.py gegen data_window_days deckeln, #976)."),
+    )
+
+
+def check_objective_branch_coverage(
+    trials: list[dict], *, min_ordering_fraction: float = 0.10,
+) -> InvariantResult:
+    """Issue #979 (Katalog C, P0) — der TPE optimiert eine Zielfunktion, deren ORDNENDER Zweig
+    (``reward_terms.branch == 'per_symbol'`` — die einzigen Trials, deren Reward auf der
+    kontinuierlichen ``psr_z``-Qualitätsordnung beruht, nicht auf einer Konstante oder der
+    Rangfolge einer Nebenbedingung) im Referenzlauf 46cf5070 nur 2.15% aller Auswertungen ausmachte
+    (57 von 2651): 78.4% (`branch == 'failure'`) tragen die Rangfolge einer Nebenbedingung
+    (überwiegend #977s dd_penalty, siehe dortiger Fix), 19.5% (`branch == 'unevaluable'`) eine
+    KONSTANTE (``std(reward) = 0.116`` über den gesamten Zweig).
+
+    Root-Cause: Feasibility ist doppelt kodiert (Pitfall #124) — einmal als #612-Sampler-Constraint
+    (korrekt) und einmal als Reward-Zweig-Klippe zwischen ``branch``-Werten. Diese Invariante ist
+    additiv/observational (kein Eingriff in die Zweig-Architektur selbst — siehe #992-Merge-Order:
+    die vollständige Entfernung der Zweig-Klippe zugunsten einer durchgängig stetigen Reward-Skala
+    ist eine grössere, hier bewusst NICHT umgesetzte Restrukturierung, analog #916s
+    ``sortino_guard_family_scope='symbol'``-Zurückstellung).
+
+    ``trials``: ``user_attrs``-artige Dicts mit ``reward_terms`` (dict mit ``branch``-Schlüssel)."""
+    branches = [
+        t["reward_terms"]["branch"] for t in trials
+        if isinstance(t.get("reward_terms"), dict) and t["reward_terms"].get("branch")
+    ]
+    if not branches:
+        return InvariantResult(
+            name="check_objective_branch_coverage",
+            passed=True,
+            expected=f"Anteil reward_terms.branch=='per_symbol' >= {min_ordering_fraction}",
+            actual=None,
+            detail="Keine Trials mit reward_terms.branch-Telemetrie — nicht anwendbar (Pre-#621-"
+                   "Report oder globaler Multi-Symbol-Reward-Modus ohne 'per_symbol'-Branch).",
+        )
+    n_ordering = sum(1 for b in branches if b == "per_symbol")
+    fraction = n_ordering / len(branches)
+    passed = fraction >= min_ordering_fraction
+    return InvariantResult(
+        name="check_objective_branch_coverage",
+        passed=passed,
+        expected=f"Anteil reward_terms.branch=='per_symbol' >= {min_ordering_fraction}",
+        actual=round(fraction, 4),
+        detail=("OK" if passed else
+                f"Nur {n_ordering}/{len(branches)} Trials ({fraction:.2%}) tragen die ordnende "
+                f"Qualitätsinformation (branch=='per_symbol') — unter der Schwelle "
+                f"({min_ordering_fraction:.0%}). Die Suche hat über den Grossteil der Auswertungen "
+                "kein Ziel (Pitfall #124 — doppelt kodierte Feasibility)."),
+    )
+
+
+def check_annualization_commensurability(
+    trials: list[dict], *, max_ratio: float = 1.05,
+) -> InvariantResult:
+    """Issue #978 (Katalog C, P0) — der Annualisierungsfaktor F (``√F = oos_fold_sortino /
+    oos_fold_sortino_period`` je Fold) wird empirisch aus der Beobachtungszahl je Fold abgeleitet
+    (``_get_annualization_factor``) und variiert dadurch INNERHALB eines Trials: vier Folds
+    DESSELBEN Trials (dieselbe Kalenderlänge) annualisierten im Referenzlauf 46cf5070 mit
+    √F = 36.83/35.94/34.08/33.97 — vier verschiedene Faktoren für vier gleich lange Fenster.
+
+    Root-Cause: ``F`` ist eine FUNKTION der tatsächlich gehandelten Perioden (ereignisgetrieben,
+    nicht kalenderbasiert) — und damit eine Funktion der Entscheidungsvariablen der Optimierung
+    selbst. Der Fold-Median/-Mittelwert des annualisierten Sortino MITTELT dadurch inkommensurable
+    Grössen (Pitfall #310 in AGENTS.md); jede nachgelagerte Statistik (Sortino-Guard, CSCV/PBO,
+    Deflation), die auf annualisierten Werten operiert, ist betroffen.
+
+    Prüft je Trial mit >= 2 Folds: ``max(√F) / min(√F) <= max_ratio``. ``trials``: ``user_attrs``-
+    artige Dicts mit ``per_fold_oos_sortino``/``per_fold_oos_sortino_period`` (bzw. den Trial-
+    User-Attr-Namen ``oos_fold_sortinos``/``oos_fold_sortino_periods`` — beide Namenspaare werden
+    akzeptiert, je nachdem ob der Aufrufer das Log-Event oder den User-Attr-Snapshot übergibt)."""
+    worst_ratio = 0.0
+    worst_trial_idx: int | None = None
+    n_trials_checked = 0
+    for i, t in enumerate(trials):
+        annualized = t.get("per_fold_oos_sortino") or t.get("oos_fold_sortinos") or []
+        period = t.get("per_fold_oos_sortino_period") or t.get("oos_fold_sortino_periods") or []
+        if len(annualized) < 2 or len(annualized) != len(period):
+            continue
+        sqrt_f_values = []
+        for a, p in zip(annualized, period):
+            if a is None or p is None or p == 0:
+                continue
+            ratio = a / p
+            if ratio > 0:
+                sqrt_f_values.append(ratio)
+        if len(sqrt_f_values) < 2:
+            continue
+        n_trials_checked += 1
+        trial_ratio = max(sqrt_f_values) / min(sqrt_f_values)
+        if trial_ratio > worst_ratio:
+            worst_ratio = trial_ratio
+            worst_trial_idx = i
+    if n_trials_checked == 0:
+        return InvariantResult(
+            name="check_annualization_commensurability",
+            passed=True,
+            expected=f"max(sqrt(F))/min(sqrt(F)) <= {max_ratio} je Trial",
+            actual=None,
+            severity="high",
+            detail="Keine Trials mit >= 2 Folds und beiden Sortino-Skalen — nicht anwendbar.",
+        )
+    passed = worst_ratio <= max_ratio
+    return InvariantResult(
+        name="check_annualization_commensurability",
+        passed=passed,
+        expected=f"max(sqrt(F))/min(sqrt(F)) <= {max_ratio} je Trial",
+        actual=round(worst_ratio, 4),
+        severity="high",
+        detail=("OK" if passed else
+                f"Trial-Index {worst_trial_idx}: sqrt(F)-Spannweite innerhalb des Trials "
+                f"beträgt Faktor {worst_ratio:.4g} (> {max_ratio}) — die Fold-Annualisierung "
+                "ist über die Folds DESSELBEN Trials nicht kommensurabel; Fold-Mittel/-Median "
+                "des annualisierten Sortino mitteln inkommensurable Grössen (Pitfall #310)."),
+    )
+
+
 # Issue #886 (Pitfall #276) — SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE sind SEIT
 # #863/#864 REGULÄRE dritte Ausgänge ("nicht messbar" ≠ "schlecht", der Trial wird korrekt geprunt
 # statt als negative Beobachtung gewertet) — ihre blosse ANWESENHEIT ist seither kein Defekt mehr,
@@ -1352,7 +1516,12 @@ _REWARD_TERM_NUMERIC_KEYS = (
 # Config abgeleitete Fassung (jeder Term mit Gewicht 0.0) wäre die vollständigere Lösung, würde
 # aber das Config-Objekt bis in report._study_record durchreichen müssen — hier bewusst auf die
 # beiden aktuell bekannten Fälle beschränkt (dokumentiert, kein stiller Fallback).
-_CONFIGURED_INACTIVE_REWARD_TERMS = frozenset({"tie_breaker", "time_box_penalty"})
+# Issue #977 (Katalog C, P0 HEADLINE) — dd_penalty (optimizer.json['penalty_dd_weight'], jetzt 0.0)
+# reiht sich hier ein: der Term dominierte die Zielfunktion um Faktor 2.7-8.5 gegenüber der Base,
+# aber ausschliesslich im bereits verworfenen failure-Zweig (im eligiblen Zweig 1426x kleiner) —
+# das Risiko ist bereits über das oos_max_drawdown-Gate abgedeckt, eine zusätzliche weiche Strafe
+# war Doppelzählung (Pitfall #124).
+_CONFIGURED_INACTIVE_REWARD_TERMS = frozenset({"tie_breaker", "time_box_penalty", "dd_penalty"})
 
 # Issue #764 — Zielkorridor je Term (Anteil an der SUMME aller Term-Varianzen, siehe
 # ``reward_term_variance_table``). Ein Term dauerhaft UNTER 0.02 traegt praktisch keine
@@ -1466,6 +1635,100 @@ def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
             entry["eligible_var_contrib"] = round(eligible_variances[k] / eligible_total_var, 6)
         table.append(entry)
     return table
+
+
+def gate_inventory_table(trials: list[dict], eligible_requires_all: list[str]) -> list[dict[str, Any]]:
+    """Issue #970 (Katalog A, P1) — Gate-Inventur mit Entscheidungspflicht: die Selektion war im
+    Referenzlauf 46cf5070 faktisch eine Ein-Statistik-Entscheidung (``oos_min_psr`` = 97.3% aller
+    Ablehnungen, 62.7% aller evaluierten Trials solo), während 7 von 10 konfigurierten
+    ``eligible_requires_all``-Gates in 2135 Evaluierungen KEIN einziges Mal ablehnten.
+
+    Je konfiguriertem Gate: ``n_rejections`` (Trials, deren ``oos_gate_deltas[gate] > 0`` — das
+    Gate verfehlt die Schwelle), ``n_solo_rejections`` (Trials, bei denen dieses Gate das EINZIGE
+    verletzte unter ``eligible_requires_all`` ist — ein Trial, der ausschliesslich an diesem Gate
+    scheitert), ``marginal_delta`` (``|eligible ohne dieses Gate| − |eligible mit allen Gates|`` —
+    wie viele zusätzliche Trials eligible wären, würde man dieses Gate aus der Konjunktion
+    entfernen; ``0`` heisst, das Gate trägt über die beobachtete Kohorte NICHTS zur Selektion bei,
+    ein Kandidat für Entfernung oder Neukalibrierung).
+
+    ``trials``: ``user_attrs``-artige Dicts mit ``oos_gate_deltas`` (dict Gate→Delta, ``> 0`` =
+    verletzt, aus ``reward._normalized_gate_distances``/``_compute_oos_constraints``) UND
+    ``oos_evaluated``. Nur über TATSÄCHLICH OOS-evaluierte Trials (ein nicht evaluierter Trial hat
+    keine Gate-Deltas und trägt zu keinem Gate bei)."""
+    evaluated = [t for t in trials if t.get("oos_evaluated") is True and t.get("oos_gate_deltas")]
+    if not evaluated or not eligible_requires_all:
+        return []
+    table = []
+    for gate in eligible_requires_all:
+        n_rejections = 0
+        n_solo = 0
+        n_eligible_without_gate = 0
+        n_eligible_with_all = 0
+        for t in evaluated:
+            deltas = t.get("oos_gate_deltas") or {}
+            violated = {g for g in eligible_requires_all if float(deltas.get(g, 0.0) or 0.0) > 0.0}
+            if gate in violated:
+                n_rejections += 1
+                if violated == {gate}:
+                    n_solo += 1
+            if not violated:
+                n_eligible_with_all += 1
+            if violated <= {gate}:
+                n_eligible_without_gate += 1
+        table.append({
+            "gate": gate,
+            "n_rejections": n_rejections,
+            "n_solo_rejections": n_solo,
+            "marginal_delta": n_eligible_without_gate - n_eligible_with_all,
+            "n_evaluated": len(evaluated),
+        })
+    return table
+
+
+def check_gate_marginal_contribution(
+    study_records: list[dict], *, min_evaluated: int = 500,
+) -> InvariantResult:
+    """Issue #970 (Katalog A, P1) — kein Gate ohne jeden marginalen Beitrag darf über eine
+    ausreichend grosse Kohorte (``min_evaluated`` OOS-evaluierte Trials, aufsummiert über alle
+    Studies, in denen dieses Gate konfiguriert war) in ``eligible_requires_all`` verbleiben: ein
+    Gate mit ``Σ marginal_delta == 0`` über >= ``min_evaluated`` Beobachtungen erhöht nur
+    Rechenaufwand und Typ-II-Fehler durch Kollinearität (siehe ``gate_inventory_table``), ohne
+    jemals die Eligibility-Entscheidung zu ändern.
+
+    ``study_records``: Liste mit ``gate_inventory`` (aus ``report._study_record``, Liste von
+    ``{gate, n_rejections, n_solo_rejections, marginal_delta, n_evaluated}``-Dicts)."""
+    totals: dict[str, dict[str, int]] = {}
+    for r in study_records:
+        for entry in r.get("gate_inventory") or []:
+            gate = entry.get("gate")
+            if not gate:
+                continue
+            agg = totals.setdefault(gate, {"marginal_delta": 0, "n_evaluated": 0})
+            agg["marginal_delta"] += int(entry.get("marginal_delta") or 0)
+            agg["n_evaluated"] += int(entry.get("n_evaluated") or 0)
+    if not totals:
+        return InvariantResult(
+            name="check_gate_marginal_contribution",
+            passed=True,
+            expected=f"kein Gate mit Σ marginal_delta == 0 über >= {min_evaluated} Beobachtungen",
+            actual=None,
+            detail="Keine Studies mit gate_inventory-Telemetrie — nicht anwendbar.",
+        )
+    offenders = {
+        gate: agg for gate, agg in totals.items()
+        if agg["n_evaluated"] >= min_evaluated and agg["marginal_delta"] == 0
+    }
+    passed = not offenders
+    return InvariantResult(
+        name="check_gate_marginal_contribution",
+        passed=passed,
+        expected=f"kein Gate mit Σ marginal_delta == 0 über >= {min_evaluated} Beobachtungen",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Gate(s) ohne jeden marginalen Beitrag über eine ausreichend "
+                f"grosse Kohorte: {offenders} — Kandidat(en) für Entfernung aus "
+                "eligible_requires_all oder Neukalibrierung gegen die realisierte Verteilung."),
+    )
 
 
 def check_gate_collinearity_consolidation(study_records: list[dict], *,

@@ -256,16 +256,22 @@ def test_reward_term_variance_pass_all_terms_vary():
 
 
 def test_reward_term_variance_fail_inert_term():
-    """Ein Term, der über die gesamte Study konstant bleibt, muss als inert gelistet werden."""
+    """Ein Term, der über die gesamte Study konstant bleibt, muss als inert gelistet werden.
+
+    Issue #977 — ``dd_penalty`` ist seit diesem Fix DOKUMENTIERT inert (penalty_dd_weight=0.0,
+    invariants._CONFIGURED_INACTIVE_REWARD_TERMS) und daher von dieser Prüfung ausgenommen (analog
+    ``tie_breaker``/``time_box_penalty``, #927) — ``param_pen`` ist hier der Test-Kandidat für einen
+    UNDOKUMENTIERT inerten Term."""
     trials = [
-        _trial({"branch": "eligible", "base": b, "divergence": 0.1 * i, "dd_penalty": 0.0,
-                "param_pen": 0.02 * i, "turnover": 0.03 * i, "fold_dispersion": 0.01 * i,
+        _trial({"branch": "eligible", "base": b, "divergence": 0.1 * i, "dd_penalty": 0.02 * i,
+                "param_pen": 0.0, "turnover": 0.03 * i, "fold_dispersion": 0.01 * i,
                 "tie_breaker": 0.001 * i})
         for i, b in enumerate([1.0, 1.5, 2.0, 0.5, 3.0])
     ]
     result = inv.check_reward_term_variance(trials)
     assert result.passed is False
-    assert "dd_penalty" in result.actual
+    assert "param_pen" in result.actual
+    assert "dd_penalty" not in result.actual
 
 
 def test_reward_term_variance_pass_when_insufficient_data():
