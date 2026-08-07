@@ -14,13 +14,17 @@ def _load_optimizer_cfg() -> dict:
 
 
 def test_reward_semantics_version_is_21():
+    """Issue #961 (Katalog E) bumpte weiter auf 22 (siehe test_issue_961_version_bumps.py) —
+    dieser Test prueft weiterhin, dass v21 NICHT UNTERSCHRITTEN wird (die #936-Bump-Historie
+    bleibt gueltig), nicht mehr die exakte Gleichheit."""
     cfg = _load_optimizer_cfg()
-    assert cfg["reward_semantics_version"] == 21
+    assert cfg["reward_semantics_version"] >= 21
 
 
 def test_simulation_semantics_version_is_3():
+    """Issue #961 (Katalog E) bumpte weiter auf 4 (siehe test_issue_961_version_bumps.py)."""
     cfg = _load_optimizer_cfg()
-    assert cfg["simulation_semantics_version"] == 3
+    assert cfg["simulation_semantics_version"] >= 3
 
 
 def test_reward_schema_v21_names_its_actual_triggers():
