@@ -59,6 +59,7 @@ _EXPECTED_FINGERPRINT_BY_VERSION = {
     19: _scale_fingerprint(CFG),  # Issue #854 — GENAU EIN Ausloeser: #848 (min_win_rate formal aus tournament.json['eligible_requires_any'] entfernt, ein reiner Eligibility-Bump). Keine optimizer.json-Skalen-Konstante betroffen, Skalen-Konstanten unveraendert.
     20: _scale_fingerprint(CFG),  # Issue #901 (GitHub-Issue #769) — GENAU EIN Ausloeser: der sortino_numeric_guard_reference='family_median'-Fallback liefert bei fehlendem family_median_n_periods jetzt ehrlich (None, None, 'family_median_unavailable') statt still auf 'absolute' zu degradieren — ein Inferenz-Korrektheit-/Eligibility-Bump, keine neue/geaenderte Reward-Skalen-Konstante, Skalen-Konstanten unveraendert.
     21: _scale_fingerprint(CFG),  # Issue #936 — DREI Ausloeser (#913 Familien-Median-Injektion, #914 Prune-Registrierung, #917 Rejection-Attribution), alle Inferenz-Korrektheit-/Eligibility-Bumps auf bereits gespeicherten Werten. Keine _SCALE_KEYS-Konstante geaendert/hinzugefuegt, Skalen-Konstanten unveraendert.
+    22: _scale_fingerprint(CFG),  # Issue #961 — ZWEI Ausloeser (#958 Promotion-Admissibility-Guard, #960 min_profit_factor aus eligible_requires_all entfernt), beides Eligibility-/Selektions-Bumps ohne Beruehrung einer _SCALE_KEYS-Konstante. Skalen-Konstanten unveraendert.
 }
 
 
