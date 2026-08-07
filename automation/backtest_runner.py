@@ -1053,10 +1053,80 @@ def _resolve_asset_class_for_symbol(inst_id_str: str, *, policy: str = "reject")
     return asset_class_key
 
 
+def tick_floor_spread_bps(median_price: float | None, tick_size: float | None) -> float:
+    """Issue #956 (Katalog D, Pitfall #301) — physikalische UNTERGRENZE für den Round-Trip-Spread
+    eines Instruments: ``1e4 * tick_size / median_price`` [bps]. Bei einem Mindestpreisschritt
+    ``tau`` und Preis ``P`` kann der reale Quote-Spread nie enger sein als ein Tick — eine
+    Kostenkonstante je Asset-Klasse (z. B. EQUITY=3.0bps) unterschätzt den Round-Trip bei einem
+    $2-Micro-Cap ($0.01-Tick) um Faktor ~17 (50bps physikalische Untergrenze vs. 3.0bps konfiguriert).
+
+    Die Schranke ist bewusst KONSERVATIV (unterstellt genau 1 Tick Quote-Spread, ignoriert
+    Broker-Aufschlag/Markttiefe/Slippage) — geeignet als Untergrenze (``max(...)`` mit der
+    konfigurierten Kostenkonstante), nie als Punktschätzung des tatsächlichen Spreads.
+
+    ``median_price``/``tick_size`` fehlend oder <= 0 ⇒ 0.0 (kein Floor anwendbar, fail-open)."""
+    if not median_price or median_price <= 0 or not tick_size or tick_size <= 0:
+        return 0.0
+    return 1e4 * float(tick_size) / float(median_price)
+
+
+def _resolve_price_precision_for_symbol(inst_id_str: str) -> int | None:
+    """Issue #956 — Analog zu ``_resolve_asset_class_for_symbol``: liest ``price_precision`` aus
+    ``instrument_map.json`` (Single Source of Truth) für die Tick-Grössen-Ableitung
+    (``tick_size = 10 ** -price_precision``). ``None`` bei fehlendem Eintrag/Lesefehler
+    (fail-open — der Aufrufer behandelt das wie "kein Tick-Floor anwendbar")."""
+    try:
+        instrument_map_path = str(config_dir() / "instrument_map.json")
+        with open(instrument_map_path, "r", encoding="utf-8") as f:
+            inst_map = json.load(f).get("instruments", {})
+        for _, inst_data in inst_map.items():
+            if inst_data.get("symbol") == inst_id_str:
+                pp = inst_data.get("price_precision")
+                return int(pp) if pp is not None else None
+    except Exception:
+        pass
+    return None
+
+
+def _quick_median_price_from_catalog(catalog_path, inst_id_str: str,
+                                     max_rows: int = 500) -> float | None:
+    """Issue #956 — schneller, beschränkter Preis-Sample für die Tick-Untergrenze
+    (``tick_floor_spread_bps``): liest NUR die letzte Parquet-Row-Group von bid_price/ask_price
+    direkt via pyarrow (analog ``sweep._load_symbol_bar_quality_sample``, ohne die volle
+    NautilusTrader-``ParquetDataCatalog``-Materialisierung). Muss VOR ``load_ticks_from_catalog``
+    laufen können (der volle Tick-Load braucht bereits den aufgelösten ``spread_bps`` als
+    Parameter — zirkuläre Abhängigkeit, siehe Docstring von ``resolve_spread_bps``).
+
+    Fail-open: JEDER Fehler liefert ``None`` (kein Tick-Floor, bit-identisches Verhalten zum
+    Pre-#956-Zustand)."""
+    try:
+        import pyarrow.parquet as pq
+        pq_file = Path(catalog_path) / "data" / "quote_tick" / inst_id_str / "data.parquet"
+        if not pq_file.exists():
+            return None
+        pf = pq.ParquetFile(str(pq_file))
+        cols = [c for c in ("bid_price", "ask_price") if c in pf.schema.names]
+        if len(cols) < 2:
+            return None
+        last_rg = pf.metadata.num_row_groups - 1
+        if last_rg < 0:
+            return None
+        df = pf.read_row_group(last_rg, columns=cols).to_pandas()
+        if df.empty:
+            return None
+        if len(df) > max_rows:
+            df = df.tail(max_rows)
+        median_mid = float(((df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0).median())
+        return median_mid if median_mid > 0 else None
+    except Exception:
+        return None
+
+
 def resolve_spread_bps(inst_id_str: str,
                        spread_bps_by_asset_class: dict | None,
                        spread_bps_by_symbol: dict | None,
-                       asset_class_key: str = "DEFAULT") -> float:
+                       asset_class_key: str = "DEFAULT",
+                       *, tick_floor_bps: float = 0.0) -> float:
     """Issue #566 — Single Source of Truth für die Spread-Auflösung (bps).
 
     Auflösungsreihenfolge (strikt): Symbol-Override (``spread_bps_by_symbol[inst_id]``) →
@@ -1070,18 +1140,24 @@ def resolve_spread_bps(inst_id_str: str,
     EQUITY=3.0bps auf). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch in
     ``spread_bps_by_asset_class`` vorhanden ist, ist ein KONFIGURATIONSFEHLER (ein im
     Instrument-Map registrierter Asset-Class-Wert ohne Kosten-Eintrag) und wirft — nicht die
-    Instrument-Metadaten sind hier unvollständig, sondern die Kosten-Konfiguration."""
+    Instrument-Metadaten sind hier unvollständig, sondern die Kosten-Konfiguration.
+
+    Issue #956 (Katalog D) — ``tick_floor_bps`` (Default 0.0, additiv opt-in, bit-identisch für
+    jeden Aufrufer, der ihn nicht setzt) ist eine physikalische UNTERGRENZE
+    (``tick_floor_spread_bps``): das Ergebnis ist NIE kleiner als dieser Wert, unabhängig davon,
+    ob die Config-Konstante (Symbol-Override oder Asset-Class) darunter liegt. ``max(...)`` ist
+    Absicht — bei Kostenschätzung ist die konservativere (höhere) Zahl die sicherere."""
     if spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol:
-        return float(spread_bps_by_symbol[inst_id_str])
+        return max(float(spread_bps_by_symbol[inst_id_str]), tick_floor_bps)
     if not spread_bps_by_asset_class:
-        return 0.0
+        return tick_floor_bps
     if asset_class_key not in spread_bps_by_asset_class:
         raise ValueError(
             f"resolve_spread_bps: asset_class_key='{asset_class_key}' ({inst_id_str}) ist nicht in "
             f"spread_bps_by_asset_class ({sorted(spread_bps_by_asset_class)}) — stiller Rückfall auf "
             f"DEFAULT ist seit Issue #898 verboten (Konfigurationsfehler, kein unbekanntes Symbol)."
         )
-    return float(spread_bps_by_asset_class[asset_class_key])
+    return max(float(spread_bps_by_asset_class[asset_class_key]), tick_floor_bps)
 
 
 def resolve_atr_floor_bps(inst_id_str: str,
@@ -1966,6 +2042,34 @@ def _read_sortino_min_downside_observations() -> float:
     except (OSError, ValueError, TypeError):
         val = 0.5
     _sortino_min_downside_observations_cache = val
+    return val
+
+
+_sortino_downside_shrinkage_m0_cache: float | None = None
+
+
+def _read_sortino_downside_shrinkage_m0() -> float:
+    """Issue #944 (Katalog B, Zero-Hardcoding) — James-Stein-Skala fuer die Downside-Deviation-
+    Schrumpfung (``lambda = downside_obs / (downside_obs + m0)``): je kleiner ``m0`` relativ zu
+    ``downside_obs``, desto naeher bleibt die Schaetzung am reinen Downside-Nenner; je groesser,
+    desto staerker Richtung der robusteren Gesamtstreuung ALLER informativen Perioden.
+    ``tournament.json['sortino_downside_shrinkage_m0']``. Gecached (Hot-Path). Fehlt der Schlüssel
+    ⇒ 30 (Issue-#944-Vorschlag, begründet über SE(sigma_d)/sigma_d <= 1/sqrt(2*30) ≈ 12,9% als
+    Referenzpräzision bei m=30)."""
+    global _sortino_downside_shrinkage_m0_cache
+    if _sortino_downside_shrinkage_m0_cache is not None:
+        return _sortino_downside_shrinkage_m0_cache
+    val = 30.0
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_downside_shrinkage_m0")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 30.0
+    _sortino_downside_shrinkage_m0_cache = val
     return val
 
 
@@ -2862,43 +2966,49 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     "value": downside_obs,
                 })
                 return None, None, None, None, None, 0.0, 3.0, None, downside_obs
+            # Issue #944 (Katalog B, P0, Pitfall #296) — die vorherige Fassung VERWARF den Trial
+            # (SORTINO_INSUFFICIENT_DOWNSIDE, sortino/psr=None), sobald downside_obs unter die
+            # (proportionale ODER absolute) Schwelle fiel. Root-Cause: bei einer PROPORTIONALEN
+            # Schwelle (Default 0.5 * n_periods) ist die Verwerfungswahrscheinlichkeit MONOTON
+            # WACHSEND in der Qualitaet der Return-Verteilung — eine Strategie mit wenigen
+            # Verlustperioden (= gut) wird mit steigender Sicherheit verworfen, ein Anti-Selektions-
+            # Filter mit umgekehrtem Vorzeichen (Pitfall #296). Die Schaetzpraezision haengt an der
+            # ANZAHL m der Beobachtungen, nicht am Anteil (SE(sigma_d)/sigma_d ~ 1/sqrt(2m)).
+            #
+            # Fix: STATT zu verwerfen, wird dd_dev James-Stein-artig Richtung der Gesamt-
+            # Standardabweichung ALLER informativen Perioden (nicht nur der Downside-Teilmenge)
+            # geschrumpft — ein Trial mit duennem Downside-Nenner bleibt im Suchraum, seine
+            # Schaetzung wird nur konservativer (naeher an der robusteren Gesamtstreuung), statt
+            # komplett zu verschwinden. Kein Trial wird mehr allein wegen eines duennen Downside-
+            # Nenners verworfen (die dieselbe Konstante `sortino_min_downside_observations`
+            # zuvor gesteuerte Verwerfung wuerde ausserdem fuer hochselektive Strategien wie
+            # SqueezeBreakout — Median ~27 informative Perioden — dieselbe strukturelle
+            # Unerreichbarkeit reproduzieren, die #863 bereits als Regression identifiziert hatte).
             min_downside_obs_cfg = _read_sortino_min_downside_observations()
             if 0.0 < min_downside_obs_cfg <= 1.0:
                 min_downside_obs = min_downside_obs_cfg * n_periods
-                threshold_desc = f"{min_downside_obs_cfg:.2f} * n_periods={n_periods:d}"
             else:
                 min_downside_obs = min_downside_obs_cfg
-                threshold_desc = f"{min_downside_obs_cfg:g}"
-            if downside_obs < min_downside_obs:
+            shrinkage_lambda = 1.0
+            if downside_obs < min_downside_obs and downside_obs > 0:
+                m0 = _read_sortino_downside_shrinkage_m0()
+                shrinkage_lambda = float(downside_obs) / float(downside_obs + m0)
+                dd_dev_full = float(np.sqrt((informative_rets ** 2).mean(skipna=False)))
+                if pd.isna(dd_dev_full):
+                    dd_dev_full = dd_dev
+                dd_dev = shrinkage_lambda * dd_dev + (1.0 - shrinkage_lambda) * dd_dev_full
                 import logging
                 logging.getLogger("optimizer").info(
-                    "SORTINO_INSUFFICIENT_DOWNSIDE: downside_obs=%d < %s (n_periods=%d) — "
-                    "Downside-Deviation-Nenner zu duenn besetzt, kein numerischer Ausreisser "
-                    "(#823/#863; sortino/psr=None).",
-                    downside_obs, threshold_desc, n_periods,
+                    "SORTINO_DOWNSIDE_SHRUNK: downside_obs=%d < %.3g (n_periods=%d) — "
+                    "Downside-Deviation Richtung Gesamtstreuung geschrumpft (lambda=%.3f) statt "
+                    "verworfen (#944).", downside_obs, min_downside_obs, n_periods, shrinkage_lambda,
                 )
                 _inference_diagnostics.append({
-                    "code": "SORTINO_INSUFFICIENT_DOWNSIDE",
-                    "detail": f"downside_obs={downside_obs} < {threshold_desc} "
-                             f"(n_periods={n_periods}).",
+                    "code": "SORTINO_DOWNSIDE_SHRUNK",
+                    "detail": f"downside_obs={downside_obs} < {min_downside_obs:.3g} "
+                             f"(n_periods={n_periods}), shrinkage_lambda={shrinkage_lambda:.3f}.",
                     "value": downside_obs,
                 })
-                # Issue #845 Punkt 2 (bewusst NICHT umgesetzt, dokumentierter Scope-Cut) — der
-                # Issue-Text verlangt zusaetzlich ``oos_evaluated=False`` fuer genau diesen Trial,
-                # mit dem Ziel, dass der TPE-Sampler ihn NEUTRAL (weder gut noch schlecht) behandelt.
-                # Das erreicht diese Aenderung tatsaechlich NICHT: reward.calculate_reward_v2 nimmt
-                # ``not m.oos_evaluated`` in DENSELBEN Unevaluable-Pfad (Penalty + Shaping,
-                # penalty_unevaluable_oos) wie ein Trial, der NIE gehandelt hat — das ist eine ANDERE,
-                # eher schlechtere Bewertung, keine neutrale. Eine echte Neutralitaet (float('nan')
-                # ⇒ optuna.TrialPruned() im Objective) wuerde eine Aenderung an der Kernschleife von
-                # run_optimization.py voraussetzen (Fehlerklasse, die bereits #823 als riskant
-                # eingestuft hat) und ist ohne einen dedizierten Kalibrierlauf (verzerrt eine solche
-                # Behandlung den TPE-Sampler weg von legitim duennen Downside-Regionen? vgl. Pitfall
-                # #108-Klasse) nicht risikofrei umsetzbar. Dieser Fix belaesst ``oos_evaluated`` daher
-                # unveraendert True und beschraenkt sich auf die SICHERE, additive Telemetrie
-                # (``downside_obs`` oben, ``check_family_n_periods_homogeneity`` unten) — dieselbe
-                # Scope-Reduktion wie bei #843 (Pipelining, siehe sweep.run_per_symbol_sweep-Docstring).
-                return None, None, None, None, None, 0.0, 3.0, None, downside_obs
 
             downside_floor = _read_sortino_downside_floor()
             dd_dev = max(dd_dev, downside_floor)
@@ -3894,6 +4004,23 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             if exit_meta is not None:
                 level_is.update(_aggregate_exit_telemetry(split_is_meta))
                 level_oos.update(_aggregate_exit_telemetry(split_oos_meta))
+                # Issue #947 (Katalog B) — ein via EQUITY_STOPOUT geschlossener Round-Trip macht
+                # den gesamten Trial infeasible (wirtschaftlich ruiniert), nicht nur "schlecht
+                # bewertet": derselbe TRIAL_RUINED_STOPOUT-Code wie EQUITY_NONPOSITIVE
+                # (_contracts.py, failure_policy='prune'), damit run_optimization.py ihn ueber
+                # denselben, bereits verdrahteten inference_failure_policy='prune'-Pfad behandelt
+                # (#945), OHNE eine zweite, parallele Infeasibility-Kodierung einzufuehren.
+                for _level_name, _level_dict in (("is", level_is), ("oos", level_oos)):
+                    _stopout_n = (_level_dict.get("exit_reason_histogram") or {}).get(
+                        "EQUITY_STOPOUT", 0)
+                    if _stopout_n > 0:
+                        _level_dict.setdefault("inference_diagnostics", []).append({
+                            "code": "TRIAL_RUINED_STOPOUT",
+                            "detail": f"{_stopout_n} Round-Trip(s) via EQUITY_STOPOUT geschlossen "
+                                     f"({_level_name.upper()}) — Trial wirtschaftlich ruiniert "
+                                     "(#947).",
+                            "value": _stopout_n,
+                        })
                 # Issue #899 Fix 2 — oos_max_holding_bars als PRIMÄRE Bar-Messgrösse (statt nur
                 # oos_max_holding_time_s / 3600 im Konsumenten). #902 entfernt die verstreuten
                 # 3600.0-Literale aus invariants.py/run_optimization.py zugunsten von bar_seconds
@@ -4850,8 +4977,23 @@ def run_single_backtest_worker(
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
 
+            # Issue #956 (Katalog D, P0) — physikalische Tick-Untergrenze VOR der Konfig-Auflösung
+            # berechnen: ein $2-Micro-Cap mit $0.01-Tick hat eine Round-Trip-Untergrenze von 50bps,
+            # weit über der konfigurierten EQUITY-Konstante (3.0bps) — der Backtest darf nie
+            # GÜNSTIGER simulieren, als physikalisch möglich ist. Fail-open: fehlt price_precision
+            # ODER die Preis-Stichprobe (kein Katalog/keine Ticks/jeder Lesefehler), bleibt
+            # tick_floor_bps=0.0 (bit-identisches Pre-#956-Verhalten).
+            _tick_floor_bps = 0.0
+            _price_precision = _resolve_price_precision_for_symbol(inst_id_str)
+            if _price_precision is not None:
+                _median_price_sample = _quick_median_price_from_catalog(
+                    effective_catalog_path, inst_id_str)
+                _tick_floor_bps = tick_floor_spread_bps(
+                    _median_price_sample, 10.0 ** -_price_precision)
+
             spread_bps = resolve_spread_bps(
-                inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)
+                inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key,
+                tick_floor_bps=_tick_floor_bps)
             atr_floor_bps_resolved = resolve_atr_floor_bps(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
             opening_range_session_open_hour_resolved = resolve_opening_range_session_open_hour(
@@ -4865,11 +5007,18 @@ def run_single_backtest_worker(
             # bestandener Pfad ohne Zahlen ist keine Evidenz, siehe #900-Docstring-Analogie).
             import logging as _logging_cost_model
             from automation.log_manager import emit_execution_event as _emit_cost_model_event
+            # Issue #956 — "source" wird 'tick_floor', wenn die physikalische Untergrenze die
+            # Config-Konstante tatsaechlich uebersteuert hat (Faktor sichtbar via tick_floor_bps),
+            # sonst bleibt die bisherige Quelle (symbol_override/asset_class) unveraendert.
+            _cost_source = "symbol_override" if has_symbol_override else "asset_class"
+            if _tick_floor_bps > 0.0 and spread_bps <= _tick_floor_bps + 1e-9:
+                _cost_source = "tick_floor"
             _emit_cost_model_event(_logging_cost_model.getLogger("backtest_worker"), "COST_MODEL_RESOLVED", {
                 "symbol": inst_id_str,
                 "asset_class_key": asset_class_key,
                 "spread_bps": spread_bps,
-                "source": "symbol_override" if has_symbol_override else "asset_class",
+                "source": _cost_source,
+                "tick_floor_bps": round(_tick_floor_bps, 4),
                 "atr_floor_bps": atr_floor_bps_resolved,
             })
 

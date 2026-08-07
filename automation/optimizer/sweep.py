@@ -20,6 +20,7 @@ from pathlib import Path
 import datetime as dt
 
 from automation.optimizer import bounds
+from automation.optimizer._contracts import pair_key, split_pair_key
 from automation.optimizer.gate import (
     is_symbol_tunable, data_reaches_oos_window, data_reaches_holdout_window, required_span_days,
 )
@@ -60,6 +61,12 @@ sweep_fail_fast_invariant: str | None = None
 # mit ZU GERINGER Symbol-Streuung quarantänisiert (statt den Sweep abzubrechen) wurden. main() liest
 # dies, um run_status='completed_with_quarantine' von 'complete' zu unterscheiden.
 sweep_fail_fast_quarantined_pairs: list[tuple[str, str]] = []
+
+# Issue #939 (Katalog A, Pitfall #299) — Symbole, deren Confirm/Export-Abschnitt WAEHREND dieses
+# Laufs mit einer isolierten Exception fehlschlug (SYMBOL_FAILED), statt den gesamten Sweep zu
+# beenden. main() liest dies, um run_status='completed_with_failures' von 'complete' zu
+# unterscheiden, analog sweep_fail_fast_quarantined_pairs.
+sweep_failed_symbols: list[str] = []
 
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
@@ -679,6 +686,14 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     # Overnight-Gap ohne Handelspausen). Deklarativ aus strategies.json, leer ⇒ bit-identisch.
     continuous_bar_invalid = load_continuous_bar_invalid_strategies()
 
+    # Issue #942 (Katalog A) — INSUFFICIENT_HISTORY hängt NUR von available_bars/config['walk_forward']
+    # ab (gate.is_symbol_tunable Zweig (a)), NICHT von n_params/strategy — für ein datenknappes
+    # Symbol ist das Ergebnis über ALLE Strategien identisch. Ohne dieses Cache-Set feuerte
+    # GATE_1_REJECTION bis zu len(strategies)-mal (z. B. 14x) für dasselbe Symbol/denselben Grund.
+    # PARAM_DATA_RATIO_TOO_LOW/OOS_FOLD_TOO_SHORT bleiben unberührt (n_params-abhängig, echte
+    # Pro-Strategie-Aussagen).
+    _gate1_history_rejection_emitted: set[str] = set()
+
     pairs: list[tuple[str, str, str]] = []
     for strategy in strategies:
         # Issue #698 — VOR jeder Symbol-Enumeration: eine auf dieser Bar-Semantik strukturell
@@ -784,12 +799,16 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                 # Geometrie is+embargo+splits*oos+holdout) emittieren — genau die im Ist-Zustand
                 # fehlende Diskrepanz-Visibilität (Config-450 vs. real-360).
                 if _reason == "INSUFFICIENT_HISTORY":
-                    emit_gate1_rejection(
-                        log,
-                        available_days=available_bars.get(symbol, 0) / 24.0,
-                        required_days=required_span_days(config.get("walk_forward") or {}),
-                        symbol=symbol,
-                    )
+                    # Issue #942 — ein Event je Symbol (nicht je (Strategie, Symbol)-Paar): der
+                    # Grund ist strategie-unabhängig, siehe Docstring des Cache-Sets oben.
+                    if symbol not in _gate1_history_rejection_emitted:
+                        emit_gate1_rejection(
+                            log,
+                            available_days=available_bars.get(symbol, 0) / 24.0,
+                            required_days=required_span_days(config.get("walk_forward") or {}),
+                            symbol=symbol,
+                        )
+                        _gate1_history_rejection_emitted.add(symbol)
                     if gate1_rejected_symbols is not None:
                         gate1_rejected_symbols.add(symbol)
                 else:
@@ -1843,6 +1862,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # ein Abbruch-Report (sweep.main()) "symbols_completed / symbols_planned" ausweisen
                 # kann, OHNE die Enumeration ein zweites Mal auszufuehren.
                 "symbols_planned": len(pairs_by_symbol),
+                # Issue #942 (Katalog A) — Funnel-Transparenz: rohes Symbol-Universum DIESES Laufs
+                # und die Zahl der an Gate 1 abgelehnten Symbole, damit symbols_planned/
+                # symbols_discovered als erreichbare Coverage lesbar wird, statt nur die bereits
+                # gefilterte Endzahl zu zeigen.
+                "symbols_discovered": len(syms),
+                "symbols_gate1_rejected": len(_gate1_rejected_symbols),
                 # Issue #840 Punkt 5 — SHA-256 über Strategien + reward_semantics_version +
                 # simulation_semantics_version (#854); main() validiert dies gegen den aktuellen
                 # Stand, BEVOR ein --resume startet (sonst mischt der Resume Studies zweier
@@ -2009,6 +2034,19 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ⇒ deaktiviert (bit-identisch zum Pre-#839-Verhalten).
     global sweep_fail_fast_invariant
     sweep_fail_fast_invariant = None
+    # Issue #939 (Katalog A, Pitfall #299) — Fehler-Isolation je Symbol. Vor diesem Fix hatte die
+    # Symbol-Schleife kein try/except: eine EINZELNE Exception in der Confirm/Export-Phase (z.B.
+    # #937s Serialisierungsfehler, bevor der Sink selbst nie-werfend gemacht wurde) propagierte
+    # nach main() und liess ALLE verbleibenden Symbole unberuehrt — bei p=0.99 Erfolgswahrschein-
+    # lichkeit je Symbol und N=143 ist p^N = 23.6% Lauf-Erfolgswahrscheinlichkeit (Pitfall #299).
+    # Beide Schwellen muessen VERLETZT sein, sonst wuerde ein Lauf mit 10 Symbolen schon bei einem
+    # einzigen Ausfall abbrechen.
+    _max_failed_symbols_abs = int(opt_data.get("max_failed_symbols_abs", 5))
+    _max_failed_symbols_frac = float(opt_data.get("max_failed_symbols_frac", 0.05))
+    _failed_symbols_count = 0
+    _symbol_status: dict[str, str] = {}
+    global sweep_failed_symbols
+    sweep_failed_symbols = []
     _fail_fast_invariants = opt_data.get("fail_fast_invariants", ["check_holding_time_cap"]) or []
     _fail_fast_min_symbols = int(opt_data.get("fail_fast_min_symbols", 2))
     # Issue #877 — die Evidenz-Streuung bestimmt die Reichweite der Konsequenz (Pitfall #282): ein
@@ -2170,29 +2208,72 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 _record_coverage(symbol)
                 continue
 
-        # Issue #652 — familienweite Multiplizität NUR über die Studies DIESES Symbols (alle
-        # Strategien dieses Symbols sind jetzt abgeschlossen); #695 liefert dieselbe Grundlage als
-        # Return-Matrix für die Korrelations-Declusterung in confirm.py.
-        symbol_n_family = _family_n_from_studies(
-            symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
-        symbol_family_returns = _family_period_returns_from_studies(symbol_pairs, symbol_studies)
-        # Issue #822 — Aufschlüsselung, wie viele oos_evaluated Trials je Symbol AUS der obigen
-        # Zählung ausgeschlossen wurden (keine Selektions-Teststatistik), nach Grund.
-        symbol_n_family_excluded = _family_n_excluded_breakdown_from_studies(symbol_pairs, symbol_studies)
-        # Issue #826 Fix Punkt 1 — N1 JE STUDY (nicht symbolweit summiert): die tatsächlich an
-        # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
-        symbol_n_family_stage1 = _family_n_stage1_from_studies(
-            symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+        # Issue #939 — der komplette Confirm/Export-Abschnitt EINES Symbols laeuft unter einer
+        # Fehler-Isolation: vor diesem Fix propagierte JEDE Exception hier (z.B. ein Serialisierungs-
+        # fehler in der Telemetrie, eine defekte Study) nach main() und beendete den GESAMTEN Sweep,
+        # ohne die verbleibenden Symbole je zu versuchen (#799 isoliert nur die vorgelagerte
+        # Optimize-Phase je PAAR, nicht diesen Abschnitt je SYMBOL).
+        try:
+            # Issue #652 — familienweite Multiplizität NUR über die Studies DIESES Symbols (alle
+            # Strategien dieses Symbols sind jetzt abgeschlossen); #695 liefert dieselbe Grundlage
+            # als Return-Matrix für die Korrelations-Declusterung in confirm.py.
+            symbol_n_family = _family_n_from_studies(
+                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+            symbol_family_returns = _family_period_returns_from_studies(symbol_pairs, symbol_studies)
+            # Issue #822 — Aufschlüsselung, wie viele oos_evaluated Trials je Symbol AUS der obigen
+            # Zählung ausgeschlossen wurden (keine Selektions-Teststatistik), nach Grund.
+            symbol_n_family_excluded = _family_n_excluded_breakdown_from_studies(
+                symbol_pairs, symbol_studies)
+            # Issue #826 Fix Punkt 1 — N1 JE STUDY (nicht symbolweit summiert): die tatsächlich an
+            # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
+            symbol_n_family_stage1 = _family_n_stage1_from_studies(
+                symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
 
-        _proposals_before_this_symbol = len(proposals)
-        for pair, study in zip(symbol_pairs, symbol_studies):
-            proposal = _run_confirm_and_export(pair, study, symbol_n_family, symbol_family_returns,
-                                               symbol_n_family_excluded,
-                                               n_family_stage1_map=symbol_n_family_stage1,
-                                               family_scope=_family_scope)
-            if proposal is not None:
-                proposals.append(proposal)
-        _this_symbol_proposals = proposals[_proposals_before_this_symbol:]
+            _proposals_before_this_symbol = len(proposals)
+            for pair, study in zip(symbol_pairs, symbol_studies):
+                proposal = _run_confirm_and_export(
+                    pair, study, symbol_n_family, symbol_family_returns,
+                    symbol_n_family_excluded,
+                    n_family_stage1_map=symbol_n_family_stage1,
+                    family_scope=_family_scope)
+                if proposal is not None:
+                    proposals.append(proposal)
+            _this_symbol_proposals = proposals[_proposals_before_this_symbol:]
+        except Exception as _symbol_exc:
+            _failed_symbols_count += 1
+            _symbol_status[symbol] = "failed"
+            sweep_failed_symbols.append(symbol)
+            _remaining = len(pairs_by_symbol) - len(completed_symbols) - 1
+            logging.getLogger("optimizer").error(
+                "[#939] SYMBOL_FAILED: %s (%s): %s — Sweep setzt mit den verbleibenden %d "
+                "Symbolen fort, statt sie zu verwerfen.", symbol, type(_symbol_exc).__name__,
+                _symbol_exc, max(0, _remaining), exc_info=True,
+            )
+            emit_execution_event(logging.getLogger("optimizer"), "SYMBOL_FAILED", {
+                "symbol": symbol, "exception_type": type(_symbol_exc).__name__,
+                "symbols_completed": len(completed_symbols),
+                "failed_symbols_count": _failed_symbols_count,
+            }, level=logging.ERROR)
+            _failed_frac_now = _failed_symbols_count / max(1, len(pairs_by_symbol))
+            if (_failed_symbols_count > _max_failed_symbols_abs
+                    and _failed_frac_now > _max_failed_symbols_frac):
+                # Issue #939 — Abbruch bleibt möglich, ist jetzt aber eine Politik-Entscheidung mit
+                # Schwellenwert (beide Bedingungen verletzt), kein Nebeneffekt einer beliebigen
+                # Exception.
+                raise RuntimeError(
+                    f"[#939] Symbol-Ausfallrate über Schwelle: {_failed_symbols_count} Ausfaelle "
+                    f"({_failed_frac_now:.1%}) > max_failed_symbols_abs="
+                    f"{_max_failed_symbols_abs} UND max_failed_symbols_frac="
+                    f"{_max_failed_symbols_frac:.1%}."
+                ) from _symbol_exc
+            # completed_symbols wird auch im Fehlerfall gesetzt, damit ein Resume nicht endlos
+            # denselben deterministischen Fehler wiederholt (analog #827s Heterogenitäts-Abbruch
+            # oben); der Symbolstatus bleibt über SYMBOL_FAILED/symbol_status auditierbar.
+            completed_symbols.add(symbol)
+            _write_checkpoint()
+            continue
+        else:
+            _symbol_status[symbol] = "completed"
 
         completed_symbols.add(symbol)
         _write_checkpoint()
@@ -2375,14 +2456,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                     )
                     break
                 else:
-                    for _strat, _sym in sorted(_offending_pairs):
+                    # Issue #938 — ``_offending_pairs`` ist ab jetzt String-Key-basiert
+                    # (``pair_key``); ``split_pair_key`` ist die Kehrfunktion.
+                    for _pk in sorted(_offending_pairs):
+                        _strat, _sym = split_pair_key(_pk)
                         record_diagnosed_pair({
                             "strategy": _strat, "symbol": _sym, "action": "denylist",
                             "binding_cause": "fail_fast_quarantine",
                             "stop_reason": sweep_fail_fast_invariant,
                             "symbol_quarantined_reason": (
                                 f"[#877] {sweep_fail_fast_invariant} FAILt symbol-lokal "
-                                f"({_offending_pairs.get((_strat, _sym))}) — keine ausreichende "
+                                f"({_offending_pairs.get(_pk)}) — keine ausreichende "
                                 f"Streuung ({len(_offending_symbols)} < "
                                 f"{_fail_fast_min_offending_symbols} Symbole) fuer einen globalen "
                                 "Abbruch."),
@@ -2682,6 +2766,12 @@ def main(argv: list[str] | None = None) -> list[Path]:
             # 'complete' unterscheidbar, ohne ein Abbruch-Symptom zu sein (die Symbol-Streuung
             # der Evidenz war zu gering fuer einen globalen Abbruch, siehe check oben).
             run_status = "completed_with_quarantine"
+        elif sweep_failed_symbols:
+            # Issue #939 — mindestens ein Symbol scheiterte isoliert (SYMBOL_FAILED), der Sweep
+            # lief aber mit den verbleibenden Symbolen zu Ende, statt komplett abzubrechen; von
+            # einem regulaeren 'complete' unterscheidbar, damit ein Operator die Teil-Abdeckung
+            # erkennt, ohne den kompletten Log durchsuchen zu muessen.
+            run_status = "completed_with_failures"
         elif args.resume is not None:
             # Issue #840 Punkt 6 — unterscheidet einen fortgesetzten Lauf von einem Ein-Schuss-Lauf
             # im #742-Report, OHNE den kompletten-Fall selbst zu aendern.
@@ -2709,11 +2799,16 @@ def main(argv: list[str] | None = None) -> list[Path]:
     # Checkpoint fehlt/kaputt ist oder der Sweep VOR dessen erstem Schreiben abbrach.
     symbols_completed: int | None = None
     symbols_planned: int | None = None
+    symbols_discovered: int | None = None
+    symbols_gate1_rejected: int | None = None
     try:
         _checkpoint = json.loads((WORK / "sweep_progress.json").read_text("utf-8"))
         if _checkpoint.get("run_id") == run_id:
             symbols_completed = len(_checkpoint.get("completed_symbols") or [])
             symbols_planned = _checkpoint.get("symbols_planned")
+            # Issue #942 — optional (aeltere Checkpoints ohne diese Felder bleiben lesbar).
+            symbols_discovered = _checkpoint.get("symbols_discovered")
+            symbols_gate1_rejected = _checkpoint.get("symbols_gate1_rejected")
     except (OSError, ValueError):
         pass
 
@@ -2731,6 +2826,8 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 proposals, run_id=run_id, started_at_utc=started_at_utc,
                 wallclock_s=_wallclock_s, cli_args=_cli_args, run_status=run_status,
                 symbols_completed=symbols_completed, symbols_planned=symbols_planned,
+                symbols_discovered=symbols_discovered,
+                symbols_gate1_rejected=symbols_gate1_rejected,
             )
         else:
             # Issue #833 — die IN-MEMORY proposals-Liste kann bei einer Exception mitten im
@@ -2742,6 +2839,8 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 run_id=run_id, started_at_utc=started_at_utc,
                 wallclock_s=_wallclock_s, cli_args=_cli_args, run_status=run_status,
                 symbols_completed=symbols_completed, symbols_planned=symbols_planned,
+                symbols_discovered=symbols_discovered,
+                symbols_gate1_rejected=symbols_gate1_rejected,
             )
         print(f"📄 Report: {report_path}")
         # Issue #773 — der Report war bislang rein informativ; der CLI-Entrypoint (__main__ unten)
@@ -2769,7 +2868,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         logging.getLogger("optimizer"),
         "SWEEP_COMPLETED" if run_status == "complete" else "SWEEP_ABORTED",
         {"run_id": run_id, "run_status": run_status,
-         "symbols_completed": symbols_completed, "symbols_planned": symbols_planned},
+         "symbols_completed": symbols_completed, "symbols_planned": symbols_planned,
+         # Issue #939 — auditierbar, WELCHE Symbole isoliert scheiterten (statt nur, dass
+         # run_status von 'complete' abweicht).
+         "failed_symbols": sorted(sweep_failed_symbols)},
         level=logging.INFO if run_status == "complete" else logging.WARNING,
     )
 
@@ -2818,7 +2920,7 @@ _DEFAULT_QUARANTINE_EXPIRES_AFTER_RUNS = 10
 
 def _offending_pairs_for_fail_fast_check(
     invariant_checks: list[dict] | None, check_name: str,
-) -> tuple[dict[tuple[str, str], object], set[str]]:
+) -> tuple[dict[str, object], set[str]]:
     """Issue #877 — reine Entscheidungsfunktion: extrahiert die (Strategie, Symbol)-Offender EINES
     benannten, FAILenden Fail-Fast-Checks aus dessen ``actual``-Feld. Die bisherigen Fail-Fast-Checks
     (z. B. ``check_holding_time_cap``) stempeln ihre Offender als
@@ -2827,8 +2929,13 @@ def _offending_pairs_for_fail_fast_check(
     Konstruktion nicht ermittelbar, und der Aufrufer muss (konservativ) global abbrechen, statt eine
     unbekannte Struktur stillschweigend als "1 Symbol" zu werten.
 
-    Rückgabe: ``({(strategy, symbol): wert, ...}, {symbol, ...})``."""
-    pairs: dict[tuple[str, str], object] = {}
+    Issue #938 (Katalog A) — die Rückgabe verwendet ``_contracts.pair_key`` (String-Keys), NICHT
+    rohe ``tuple[str, str]``-Keys: ein Tuple-Key hier floss vor diesem Fix direkt in einen
+    ``emit_execution_event``-Payload (``"offending_studies": _offending_pairs``) und löste #937s
+    ``json.dumps``-``TypeError`` aus, weil ``json`` nur skalare Dict-Keys automatisch koerziert.
+
+    Rückgabe: ``({"strategy/symbol": wert, ...}, {symbol, ...})``."""
+    pairs: dict[str, object] = {}
     symbols: set[str] = set()
     for chk in invariant_checks or []:
         if chk.get("name") != check_name:
@@ -2840,7 +2947,7 @@ def _offending_pairs_for_fail_fast_check(
             if not isinstance(key, str) or "/" not in key:
                 return {}, set()
             strategy, _, symbol = key.partition("/")
-            pairs[(strategy, symbol)] = value
+            pairs[pair_key(strategy, symbol)] = value
             symbols.add(symbol)
         break
     return pairs, symbols

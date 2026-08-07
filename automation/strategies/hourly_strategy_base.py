@@ -55,6 +55,9 @@ class ExitReason(enum.Enum):
     TIME_BOX = "TIME_BOX"
     SIGNAL_REVERSAL = "SIGNAL_REVERSAL"
     PROFIT_TARGET = "PROFIT_TARGET"
+    # Issue #947 (Katalog B, P1) — harter Margin-Stop-out: das Konto wird zwangsliquidiert, BEVOR
+    # das Eigenkapital rechnerisch vernichtet oder negativ wird (siehe _check_exits_and_update).
+    EQUITY_STOPOUT = "EQUITY_STOPOUT"
 
 
 class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
@@ -91,6 +94,14 @@ class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
     # Issue #859 — Obergrenze vergeblicher Markt-Close-Versuche (rejected/denied), bevor der Trial
     # terminal unrecoverable gilt (statt eine offene Position endlos erneut zu versuchen).
     exit_close_max_retries: int = 3
+    # Issue #947 (Katalog B, P1) — Anteil des Startkapitals, unterhalb dessen ein harter Margin-
+    # Stop-out ausgelöst wird (alle Positionen werden zum nächsten Bar-Open geschlossen, kein
+    # weiterer Handel danach). Vorher konnte die Simulation über negatives Eigenkapital
+    # hinausrechnen (EQUITY_NONPOSITIVE war eine reine Diagnose, keine Simulationsregel) — Return-
+    # Berechnungen über einer nicht-positiven Basis haben kein definiertes Vorzeichen. Default 0.20
+    # (eToro-CFD-Stop-out liegt real bei ~50 % Margin; 0.20 ist konservativer, damit die Simulation
+    # nie einen Zustand erreicht, den ein realer Broker längst geschlossen hätte).
+    stop_out_equity_frac: float = 0.20
     # Issue #712 (Req-02+Req-03, opt-in) — vereinheitlichtes dynamisches Take-Profit-Modell,
     # in der Basisklasse für alle 15 Strategien verfügbar. Default False ⇒ bit-identische
     # Regression (der statische profit_target_pct-Pfad bleibt unverändert erhalten).
@@ -334,6 +345,14 @@ class HourlyStrategyBase(Strategy):
         self._bars_in_position_rehydrated: int | None = None
         self._gr04_subscribed = False
 
+        # Issue #947 (Katalog B, P1) — harter Margin-Stop-out. _initial_equity wird auf dem ersten
+        # verarbeiteten Bar EINMALIG festgeschrieben (kein Reset danach); _ruined bleibt TRUE fuer
+        # den Rest des Backtests, sobald er einmal gesetzt wurde (kein "Erholen" nach Ruin — ein
+        # real liquidiertes Konto handelt nicht weiter).
+        self._initial_equity: float | None = None
+        self._ruined: bool = False
+        self._stop_out_equity_frac = float(getattr(config, "stop_out_equity_frac", None) or 0.20)
+
     def on_start(self):
         """Subclasses MUST call super().on_start() first."""
         if self.allocator is not None:
@@ -574,6 +593,39 @@ class HourlyStrategyBase(Strategy):
         `_bars_in_position`, the trailing stop) is therefore only ever reset in
         `on_position_closed`/`on_position_opened` — never here, and never in `_close_position_base`.
         """
+        # Issue #947 (Katalog B, P1) — harter Margin-Stop-out, VOR jeder anderen Exit-/Entry-Logik:
+        # ein bereits ruiniertes Konto darf weder weiterhandeln noch eine offene Position offen
+        # lassen. `_ruined` bleibt einmal gesetzt fuer den Rest des Backtests (kein "Erholen").
+        if self._ruined:
+            return True
+        current_equity = self._get_current_balance()
+        if self._initial_equity is None:
+            if current_equity > 0:
+                self._initial_equity = current_equity
+        elif current_equity <= self._stop_out_equity_frac * self._initial_equity:
+            self._ruined = True
+            payload = {
+                "instrument": str(self.instrument_id),
+                "initial_equity": self._initial_equity,
+                "current_equity": current_equity,
+                "stop_out_equity_frac": self._stop_out_equity_frac,
+            }
+            emit_execution_event(log, "TRIAL_RUINED_STOPOUT", payload, level=logging.ERROR)
+            self._log.error(
+                f"[{self.instrument_id}] TRIAL_RUINED_STOPOUT: equity={current_equity:.2f} <= "
+                f"{self._stop_out_equity_frac:.2%} * initial={self._initial_equity:.2f} — "
+                "erzwinge sofortigen Markt-Close, kein weiterer Handel in diesem Trial (#947)."
+            )
+            positions = self.cache.positions_open(instrument_id=self.instrument_id)
+            if positions:
+                self._exit_pending = "EQUITY_STOPOUT"
+                self._exit_pending_kind = ExitReason.EQUITY_STOPOUT
+                self._exit_pending_bars = 0
+                self._exit_market_close_order_id = None
+                self._exit_close_retries = 0
+                self._close_position_base(positions[0])
+            return True
+
         current_day = pd.Timestamp(bar.ts_init).day
         if self._current_day != current_day:
             self._current_day = current_day

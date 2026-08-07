@@ -68,14 +68,17 @@ def test_downside_obs_24_of_n_periods_27_is_no_longer_insufficient():
     assert stats["sortino_ratio"] is not None
 
 
-def test_downside_obs_3_of_n_periods_200_still_insufficient():
-    """Akzeptanzkriterium — downside_obs=3, n_periods=200 (Anteil 0.015) gilt weiterhin als
-    insufficient."""
+def test_downside_obs_3_of_n_periods_200_is_shrunk_not_rejected():
+    """Issue #944 (Pitfall #296) — downside_obs=3, n_periods=200 (Anteil 0.015) wird NICHT MEHR
+    verworfen (das war der Anti-Selektions-Filter: je weniger Verlustperioden, desto sicherer die
+    Verwerfung — bei nur 3 Verlustperioden von 200 ist das eine SEHR GUTE Strategie). Stattdessen
+    wird dd_dev Richtung der Gesamtstreuung geschrumpft, der Trial bleibt bewertbar."""
     rets = _rets_with_downside_fraction(200, 3 / 200, seed=2)
     stats = _stats_for(rets, min_downside_obs=0.5, min_periods_absolute=20)
     codes = [d["code"] for d in stats["inference_diagnostics"]]
-    assert "SORTINO_INSUFFICIENT_DOWNSIDE" in codes
-    assert stats["sortino_ratio"] is None
+    assert "SORTINO_INSUFFICIENT_DOWNSIDE" not in codes
+    assert "SORTINO_DOWNSIDE_SHRUNK" in codes
+    assert stats["sortino_ratio"] is not None
 
 
 def test_n_periods_12_rejected_via_absolute_floor():
@@ -92,16 +95,20 @@ def test_n_periods_12_rejected_via_absolute_floor():
 
 
 def test_absolute_mode_still_available_via_value_over_one():
-    """Ein konfigurierter Wert >= 1 bleibt der absolute Zähler (Legacy, bit-identisches
-    Verhalten zum Pre-#863-Code fuer explizit gesetzte Werte)."""
+    """Ein konfigurierter Wert >= 1 bleibt der absolute Zähler für die Schrumpfungs-Schwelle
+    (Legacy-Config-Semantik unverändert). Issue #944 — die Konsequenz beim Unterschreiten ist
+    seither Schrumpfung statt Verwerfung (SORTINO_DOWNSIDE_SHRUNK statt
+    SORTINO_INSUFFICIENT_DOWNSIDE)."""
     rets = _rets_with_downside_fraction(100, 0.25, seed=4)  # 25 downside von 100
     stats_pass = _stats_for(rets, min_downside_obs=20, min_periods_absolute=20)
     codes_pass = [d["code"] for d in stats_pass["inference_diagnostics"]]
     assert "SORTINO_INSUFFICIENT_DOWNSIDE" not in codes_pass
+    assert "SORTINO_DOWNSIDE_SHRUNK" not in codes_pass
 
-    stats_fail = _stats_for(rets, min_downside_obs=30, min_periods_absolute=20)
-    codes_fail = [d["code"] for d in stats_fail["inference_diagnostics"]]
-    assert "SORTINO_INSUFFICIENT_DOWNSIDE" in codes_fail
+    stats_shrunk = _stats_for(rets, min_downside_obs=30, min_periods_absolute=20)
+    codes_shrunk = [d["code"] for d in stats_shrunk["inference_diagnostics"]]
+    assert "SORTINO_INSUFFICIENT_DOWNSIDE" not in codes_shrunk
+    assert "SORTINO_DOWNSIDE_SHRUNK" in codes_shrunk
 
 
 def test_downside_obs_and_n_periods_are_stamped_as_trial_user_attrs():

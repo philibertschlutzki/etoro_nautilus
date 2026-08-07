@@ -476,6 +476,10 @@ def _study_record(proposal: dict, study,
         _inv.check_deflation_cluster_coverage(holdout_metrics),
         _inv.check_rejection_chain_completeness(proposal, decision_chain=decision_chain),
         _inv.check_reward_term_variance(trial_attrs),
+        # Issue #949 (Katalog C, P0 HEADLINE) — der Wächter gegen den Zweig-Indikator-Defekt: die
+        # Reward-Varianz einer Study darf nicht vom Failure-/Prune-Zweig getragen werden, sondern
+        # muss die Qualitätsordnung innerhalb der zulässigen Region widerspiegeln.
+        _inv.check_reward_dynamic_range(trial_attrs),
         # Issue #756 — nach der Log-Return-Umstellung ist eine verbleibende Kohärenzverletzung ein
         # echter Bug, kein erwartetes Restrauschen mehr; harter Regressionswächter statt WARNING.
         _inv.check_log_return_coherence(trial_attrs),
@@ -496,6 +500,12 @@ def _study_record(proposal: dict, study,
         # fehlgeschlagen/total) müssen die Trial-Menge disjunkt und vollständig zerlegen.
         _inv.check_denominator_coherence(study_user_attrs),
     ]
+
+    # Issue #949 (Katalog C) Fix 2 — reward_std_total (alle oos_evaluated Trials) vs.
+    # reward_std_feasible (ohne spaeter geprunte Trials) als eigene Report-Telemetrie, damit die
+    # Straf-Term-Kalibrierung (#951) explizit GEGEN reward_std_feasible kalibriert werden kann,
+    # statt gegen ein vom Failure-Zweig verzerrtes Gesamtmass.
+    _reward_std_total, _reward_std_feasible, _ = _inv._reward_std_total_and_feasible(trial_attrs)
 
     record = {
         "symbol": proposal.get("symbol"),
@@ -527,6 +537,11 @@ def _study_record(proposal: dict, study,
         # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte (None, wenn
         # p_eligible == 0 — die Leermenge ist hier inhaltlich korrekt, kein Constraint-Artefakt).
         "best_eligible_reward": best_eligible_reward,
+        # Issue #949 (Katalog C) Fix 2 — siehe check_reward_dynamic_range/_reward_std_total_and_
+        # feasible in invariants.py.
+        "reward_std_total": round(_reward_std_total, 6) if _reward_std_total is not None else None,
+        "reward_std_feasible": (
+            round(_reward_std_feasible, 6) if _reward_std_feasible is not None else None),
         "gradient_signal": gradient_signal,
         # Issue #808 — welcher der drei Arme (discovery/reward_variance/constraint_progress/none)
         # das obige gradient_signal traegt. None ⇒ wie gradient_signal selbst unbeantwortet
@@ -1120,6 +1135,8 @@ def _build_report(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> dict:
     # Issue #856 Fix Punkt 4 — fail-loud statt einer nichtssagenden AttributeError in
     # ``_load_study_for_proposal``: ``_build_report`` erwartet ausschliesslich geparste Proposal-
@@ -1325,6 +1342,13 @@ def _build_report(
         "run_status": run_status,
         "symbols_completed": symbols_completed,
         "symbols_planned": symbols_planned,
+        # Issue #942 (Katalog A) — Funnel-Transparenz: symbols_discovered (rohes Symbol-Universum
+        # dieses Laufs) vs. symbols_gate1_rejected (Gate 1 INSUFFICIENT_HISTORY/PARAM_DATA_RATIO_
+        # TOO_LOW/OOS_FOLD_TOO_SHORT) vs. symbols_planned (nach Gate-1-Filterung, bereits vorhanden).
+        # Vorher war nur symbols_planned sichtbar — ein Operator konnte die erreichbare Coverage
+        # (symbols_planned/symbols_discovered) nicht vom Report ablesen.
+        "symbols_discovered": symbols_discovered,
+        "symbols_gate1_rejected": symbols_gate1_rejected,
         # Issue #849 — im Report EINGEBETTET (statt eines zweiten config_dir()-Lesezugriffs in
         # summary_de.py, das bewusst reines Rueckgabedict-only bleibt, siehe Moduldocstring dort):
         # Sektion 5.2 zeigt hoechstens so viele Beispiel-Details je Check, bevor sie auf "... und N
@@ -1404,6 +1428,8 @@ def generate_sweep_report(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
 
@@ -1422,6 +1448,8 @@ def generate_sweep_report(
         wallclock_s=wallclock_s, cli_args=cli_args,
         run_status=run_status, symbols_completed=symbols_completed,
         symbols_planned=symbols_planned,
+        symbols_discovered=symbols_discovered,
+        symbols_gate1_rejected=symbols_gate1_rejected,
     )
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
@@ -1440,6 +1468,8 @@ def generate_report_for_run(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
 
@@ -1465,6 +1495,8 @@ def generate_report_for_run(
         wallclock_s=wallclock_s, cli_args=cli_args, reports_dir=reports_dir,
         run_status=run_status, symbols_completed=symbols_completed,
         symbols_planned=symbols_planned,
+        symbols_discovered=symbols_discovered,
+        symbols_gate1_rejected=symbols_gate1_rejected,
     )
 
 

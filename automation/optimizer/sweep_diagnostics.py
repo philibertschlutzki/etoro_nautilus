@@ -356,7 +356,8 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                n_runs_confirmed: int = 0,
                                stop_reason: str | None = None,
                                max_consecutive_structural_runs: int = 2,
-                               simulation_semantics_version: int | None = None) -> dict:
+                               simulation_semantics_version: int | None = None,
+                               blocking_invariants_failing: bool | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -432,6 +433,25 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     Suche riskiert. Bleibt ein Override-Versuch wirkungslos, bleibt das Paar in Rotation (``'none'``)
     statt endgültig ausgeschlossen zu werden — Bounds-Kalibrierung ist der einzige Hebel.
 
+    Issue #957 (Katalog D, Pitfall #292-Durchsetzung) — ``blocking_invariants_failing``
+    generalisiert die #911-Aussetzung: #911 setzte 'signal_quality' UNBEDINGT auf
+    ``'quarantined_pending_simulation_review'`` (nie 'denylist'), speziell wegen der #897-Episode.
+    Das schützt korrekt, verhindert aber AUCH nach einem verifiziert sauberen Lauf jemals wieder
+    einen echten 'denylist'-Rückschrieb ('signal_quality' bedeutet 'das Signal ist schlecht' — eine
+    Aussage, die nur zulässig ist, wenn die Simulationsschicht selbst gültig ist, Pitfall #292).
+    ``blocking_invariants_failing`` ist der fehlende Schalter dafür:
+      * ``None`` (Default, Legacy-/Test-Aufrufer) ⇒ bit-identisches #911-Verhalten (immer
+        quarantänisieren, NIE denylisten) — sicherer Default, solange kein Aufrufer den aktuellen
+        Invarianten-Status tatsächlich kennt.
+      * ``True`` (mindestens eine blockierende Invariante FAILt in DIESEM Lauf) ⇒ ``binding_cause``
+        wird auf ``'simulation_invalid'`` UMGESCHRIEBEN (statt 'signal_quality' zu behaupten) und
+        ``action`` bleibt ``'none'`` — kein Rückschrieb, solange die Simulation nachweislich defekt
+        ist.
+      * ``False`` (explizit verifiziert: KEINE blockierende Invariante FAILt) ⇒ die #911-Aussetzung
+        entfällt: bei ausreichender Evidenz wird tatsächlich ``'denylist'`` empfohlen (nicht mehr
+        nur quarantänisiert) — die Simulationsschicht ist nachweislich gültig, 'signal_quality' ist
+        dann eine zulässige Aussage.
+
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
@@ -474,19 +494,35 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
             n_runs_confirmed >= max_consecutive_structural_runs
             and budget_executed_fraction is not None and budget_executed_fraction >= 0.9
         )
-        if quality_sufficient_evidence:
-            # Issue #911 (wichtigste Aussage des Katalogs) — der Closed-Loop-Rueckschrieb fuer
-            # 'signal_quality' wird bis nach dem #897-Kalibrierlauf AUSGESETZT: eine Strategie,
-            # deren Trades zu 94% durch die #897-Sperrklinke nahe Breakeven beendet werden, kann
-            # KEINEN eligiblen Trial erzeugen, egal wie der Suchraum aussieht — ein Denylist-
-            # Rueckschrieb auf dieser Basis wuerde funktionierende Strategien dauerhaft
-            # ausschliessen, weil die Simulationsschicht defekt war. 'quarantined_pending_
-            # simulation_review' PROTOKOLLIERT das Paar (Reihenfolge/Evidenz bleiben sichtbar),
-            # schreibt es aber NICHT auf die Denylist — enumerate_tunable_pairs skippt
-            # ausschliesslich action=='denylist', ein quarantaenierter Eintrag bleibt regulaer
-            # enumeriert, solange simulation_semantics_version seit der Diagnose NICHT gebumpt
-            # wurde (siehe diagnosed_simulation_semantics_version unten).
-            action = "quarantined_pending_simulation_review"
+        if blocking_invariants_failing:
+            # Issue #957 — 'signal_quality' ist keine zulaessige Aussage, solange die
+            # Simulationsschicht selbst nachweislich defekt ist (Pitfall #292): die Klassifikation
+            # wird auf 'simulation_invalid' umgeschrieben, KEIN Rueckschrieb (weder denylist noch
+            # deprioritized) unabhaengig von der Evidenzlage.
+            cause = "simulation_invalid"
+            action = "none"
+        elif quality_sufficient_evidence:
+            if blocking_invariants_failing is False:
+                # Issue #957 — die #911-Aussetzung gilt NICHT mehr, wenn der Aufrufer den aktuellen
+                # Invarianten-Status tatsaechlich verifiziert hat (keine blockierende Invariante
+                # FAILt): 'signal_quality' ist dann eine zulaessige Aussage, der volle Rueckschrieb
+                # ('denylist') greift wie vor #911.
+                action = "denylist"
+            else:
+                # Issue #911 (wichtigste Aussage des Katalogs) — der Closed-Loop-Rueckschrieb fuer
+                # 'signal_quality' wird bis nach dem #897-Kalibrierlauf AUSGESETZT: eine Strategie,
+                # deren Trades zu 94% durch die #897-Sperrklinke nahe Breakeven beendet werden, kann
+                # KEINEN eligiblen Trial erzeugen, egal wie der Suchraum aussieht — ein Denylist-
+                # Rueckschrieb auf dieser Basis wuerde funktionierende Strategien dauerhaft
+                # ausschliessen, weil die Simulationsschicht defekt war. 'quarantined_pending_
+                # simulation_review' PROTOKOLLIERT das Paar (Reihenfolge/Evidenz bleiben sichtbar),
+                # schreibt es aber NICHT auf die Denylist — enumerate_tunable_pairs skippt
+                # ausschliesslich action=='denylist', ein quarantaenierter Eintrag bleibt regulaer
+                # enumeriert, solange simulation_semantics_version seit der Diagnose NICHT gebumpt
+                # wurde (siehe diagnosed_simulation_semantics_version unten). Default
+                # (``blocking_invariants_failing is None``) — kein Aufrufer hat den aktuellen
+                # Invarianten-Status verifiziert, also bleibt die sichere Annahme in Kraft.
+                action = "quarantined_pending_simulation_review"
         elif n_runs_confirmed >= 1:
             action = "deprioritized"
         else:
@@ -517,6 +553,10 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     }
     if action == "search_space_override" and proposed_bounds:
         result["proposed_bounds"] = proposed_bounds
+    if cause == "simulation_invalid":
+        # Issue #957 — auditierbar, DASS und WARUM ein Rueckschrieb unterdrueckt wurde (statt nur
+        # stillschweigend action='none' zu liefern, ununterscheidbar von "keine Evidenz").
+        result["writeback_suppressed_reason"] = "blocking_invariant"
     if action == "quarantined_pending_simulation_review":
         # Issue #911 Fix 2 — Gueltigkeitsstempel: ein Closed-Loop-Rueckschrieb ist nur solange
         # gueltig, wie die Simulationsschicht, die ihn erzeugt hat, gueltig ist (Pitfall #292 in

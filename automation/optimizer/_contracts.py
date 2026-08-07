@@ -20,6 +20,30 @@ from __future__ import annotations
 # suchen/prüfen als dieser Deckel.
 MAX_BARS_IN_TRADE_HARD_CAP = 24
 
+# Issue #938 (Katalog A, Pitfall #294) — EINZIGER Konstruktor für den (Strategie, Symbol)-Paar-
+# Schlüssel. Vor diesem Fix baute jede Stelle (``invariants.py``, ``report.py``, ``confirm.py``,
+# ``sweep.py``) das ``f"{strategy}/{symbol}"``-Format unabhängig selbst nach — an GENAU einer
+# Stelle (``sweep._offending_pairs_for_fail_fast_check``) wattierte stattdessen ein rohes
+# ``tuple[str, str]`` als Dict-Key in einen Telemetrie-Payload, was #937s ``TypeError`` auslöste.
+# ``pair_key``/``split_pair_key`` sind ab jetzt die einzige Quelle; interne Rechen-Container
+# dürfen weiterhin Tuples verwenden — die Konvertierung erfolgt genau an der Telemetrie-/Report-
+# Grenze, nicht verstreut.
+PAIR_KEY_SEP = "/"
+
+
+def pair_key(strategy: str, symbol: str) -> str:
+    """Kanonischer (Strategie, Symbol)-Paar-Schlüssel im Hausformat ``"strategy/symbol"``."""
+    if PAIR_KEY_SEP in strategy or PAIR_KEY_SEP in symbol:
+        raise ValueError(
+            f"pair_key: Separator {PAIR_KEY_SEP!r} in Bestandteil: {strategy!r}/{symbol!r}")
+    return f"{strategy}{PAIR_KEY_SEP}{symbol}"
+
+
+def split_pair_key(key: str) -> tuple[str, str]:
+    """Kehrfunktion zu :func:`pair_key`. Kein ``PAIR_KEY_SEP`` im Key ⇒ ``(key, "")``."""
+    strategy, _, symbol = key.partition(PAIR_KEY_SEP)
+    return strategy, symbol
+
 # Issue #902 (Pitfall #271, dritte Instanz nach #714/MAX_BARS_IN_TRADE_HARD_CAP) — die EINZIGE
 # Definition der 1h-Bar-Sekundenzahl im Repository. Vorher unabhängig als ``3600.0``-Literal in
 # ``invariants.py`` (``_BAR_SECONDS``), ``invariants.py`` (``compute_trial_timebox_violations``-
@@ -100,6 +124,18 @@ _register_inference_code(
     nullifies_metrics=("oos_sortino_period", "oos_psr", "oos_total_return"),
 )
 _register_inference_code(
+    # Issue #947 (Katalog B) — HourlyStrategyBase erzwingt seit diesem Fix einen Margin-Stop-out
+    # (equity <= stop_out_equity_frac * initial_equity ⇒ sofortiger Markt-Close, kein Handel mehr),
+    # BEVOR die Equity nicht-positiv werden kann (EQUITY_NONPOSITIVE bleibt als Defense-in-Depth
+    # bestehen, sollte aber nach diesem Fix praktisch nie mehr feuern). Ein Trial mit mindestens
+    # einem EQUITY_STOPOUT-Round-Trip ist wirtschaftlich ruiniert — dieselbe Konsequenz
+    # (failure_policy='prune') wie EQUITY_NONPOSITIVE, nur VOR statt NACH dem Kapitalverlust erkannt.
+    "TRIAL_RUINED_STOPOUT", failure_policy="prune", severity="blocking",
+    description="Mindestens ein Round-Trip wurde via EQUITY_STOPOUT (Margin-Stop-out, "
+                "stop_out_equity_frac) geschlossen — Trial wirtschaftlich ruiniert (#947).",
+    nullifies_metrics=("oos_sortino_period", "oos_psr", "oos_total_return"),
+)
+_register_inference_code(
     # Issue #914 — dieser Code (#901 neu eingeführt) fehlte bislang in JEDEM Konsumenten ausser
     # der Diagnose-Erzeugung selbst; ``inference_failure_policy='prune'`` konnte ihn nie greifen.
     "SORTINO_GUARD_REFERENCE_UNAVAILABLE", failure_policy="prune", severity="blocking",
@@ -144,4 +180,15 @@ _register_inference_code(
     "EXIT_CLOSE_UNRECOVERABLE", failure_policy="telemetry_only", severity="blocking",
     description=">= exit_close_max_retries verweigerte/abgelehnte Markt-Close-Versuche — Trial "
                 "als ungültig markiert statt einer still durchgehaltenen offenen Position (#859).",
+)
+_register_inference_code(
+    # Issue #944 (Katalog B) — ERSETZT die vorherige SORTINO_INSUFFICIENT_DOWNSIDE-Verwerfung für
+    # den Fall "downside_obs unter der (proportionalen/absoluten) Schwelle": der Trial wird NICHT
+    # mehr geprunt (das war der Anti-Selektions-Filter, Pitfall #296), sondern bleibt bewertbar,
+    # nur mit einer Richtung-Gesamtstreuung geschrumpften Downside-Deviation. 'telemetry_only', weil
+    # der Trial weiterhin einen gültigen Sortino/PSR trägt (kein Prune-Grund).
+    "SORTINO_DOWNSIDE_SHRUNK", failure_policy="telemetry_only", severity="medium",
+    description="downside_obs unter der konfigurierten Schwelle — Downside-Deviation James-Stein-"
+                "artig Richtung der Gesamtstreuung aller informativen Perioden geschrumpft, statt "
+                "den Trial zu verwerfen (#944, ersetzt die frühere Anti-Selektions-Verwerfung).",
 )

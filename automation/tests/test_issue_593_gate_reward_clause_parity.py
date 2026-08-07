@@ -37,8 +37,13 @@ def test_shipped_config_moves_risk_adjusted_gate_to_requires_all():
     # eine Disjunktion ueber genau ein Element ist logisch identisch mit einer Konjunktions-Klausel
     # (Pitfall #279) — es wurde nach eligible_requires_all verschoben, eligible_requires_any ist
     # seither leer.
+    # Issue #960 (Katalog D) — 'min_profit_factor' wurde AUS eligible_requires_all wieder entfernt
+    # (sechste Instanz derselben Redundanz-Fehlerklasse wie #677/#697/#776): der aktive
+    # Kollinearitaets-Check (check_gate_collinearity_consolidation) belegte Jaccard 0.964-0.979 mit
+    # oos_min_psr UND einen gemessenen marginalen Eigenbeitrag von exakt 0.000 ueber 100-160 Trials
+    # in >= 3 Studies — das Gate trug keinen Typ-I-Schutz mehr bei, kostete aber Typ-II-Macht.
     assert TCFG["eligible_requires_any"] == []
-    assert "min_profit_factor" in TCFG["eligible_requires_all"]
+    assert "min_profit_factor" not in TCFG["eligible_requires_all"]
 
 
 def test_any_condition_parity_passes_for_shipped_config():

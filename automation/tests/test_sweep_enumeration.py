@@ -35,6 +35,34 @@ def test_enumeration_all_tier_is_cross_product(monkeypatch):
                      ("SmaCrossoverStrategy", "B.ETORO", "OK")]
 
 
+def test_gate1_insufficient_history_emits_one_event_per_symbol_not_per_strategy(monkeypatch):
+    """Issue #942 (Katalog A) — INSUFFICIENT_HISTORY haengt nur von available_bars/config ab, nicht
+    von n_params/Strategie. Vor diesem Fix emittierte JEDE Strategie ein eigenes GATE_1_REJECTION
+    fuer dasselbe datenknappe Symbol (14x bei 14 Strategien); nach dem Fix genau EIN Event je
+    betroffenem Symbol, unabhaengig von der Zahl der Strategien."""
+    events = []
+
+    def fake_emit_gate1_rejection(logger, *, available_days, required_days, symbol=None, **k):
+        events.append({"symbol": symbol, "available_days": available_days,
+                       "required_days": required_days})
+
+    monkeypatch.setattr(sweep, "emit_gate1_rejection", fake_emit_gate1_rejection)
+    monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
+    # C.ETORO faellt strukturell an Gate 1 (INSUFFICIENT_HISTORY) — unabhaengig von n_params.
+    bars = {"A.ETORO": 10_000, "C.ETORO": 50}
+    gate1_rejected: set[str] = set()
+    pairs = sweep.enumerate_tunable_pairs(
+        ["Strat1", "Strat2", "Strat3"], ["A.ETORO", "C.ETORO"],
+        tier="all", available_bars=bars, config=_GATE_CFG,
+        gate1_rejected_symbols=gate1_rejected,
+    )
+    assert {p[1] for p in pairs} == {"A.ETORO"}  # C.ETORO ist bei jeder Strategie ausgeschlossen
+    assert gate1_rejected == {"C.ETORO"}
+    # GENAU EIN Event fuer C.ETORO, nicht 3 (eines je Strategie).
+    assert len(events) == 1
+    assert events[0]["symbol"] == "C.ETORO"
+
+
 def test_enumeration_refine_fails_loud(monkeypatch):
     # Issue #623 — der frühere `candidate_syms = []`-Platzhalter machte '--tier refine' zu einem
     # STILLEN No-Op (0 Paare, keine Warnung). Bis zur echten P3-Refinement-Heuristik bricht der Modus

@@ -996,8 +996,14 @@ def check_inference_diagnostics_concentration(
                  "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE",
         actual=round(fraction, 4),
         detail=("OK" if passed else
-                f"{affected}/{n_trials_informative} informative Trials ({fraction:.1%}) mit einem "
-                "regulären Inferenzpfad-Ausgang — die Suche ist faktisch zensiert (analog "
+                # Issue #948 (Katalog B, P2) — vorher stand hier "mit einem regulären Inferenzpfad-
+                # Ausgang", das genaue GEGENTEIL der Bedeutung: die betroffenen Trials sind die
+                # ZENSIERTEN/IRREGULÄREN Ausgänge (SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_
+                # DOWNSIDE), nicht die regulären. Ein Leser, der nur diese Detail-Zeile liest (ohne
+                # das korrekte `expected`-Feld daneben), zog den umgekehrten Schluss.
+                f"{affected}/{n_trials_informative} informative Trials ({fraction:.1%}) wurden vom "
+                "Inferenz-Wächter zensiert (SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE, "
+                "kein regulärer Ausgang) — die Suche ist faktisch zensiert (analog "
                 "STUDY_GUARD_DOMINATED, #823)."),
     )
 
@@ -1146,6 +1152,26 @@ def _evaluated_reward_terms(trials: list[dict]) -> list[dict]:
     return [
         t.get("reward_terms") for t in trials
         if t.get("oos_evaluated") is True and t.get("reward_terms")
+    ]
+
+
+def _feasible_reward_terms(trials: list[dict]) -> list[dict]:
+    """Issue #949 (Katalog C, P0 HEADLINE, Pitfall #298) — dieselbe Kohorte wie
+    ``_evaluated_reward_terms``, aber OHNE Trials, die ``run_optimization``s
+    ``inference_failure_policy='prune'``-Pfad (#864/#918) tatsaechlich gepruned hat
+    (``trial.user_attrs['trial_pruned_inference_codes']`` wird DORT gesetzt, unmittelbar bevor
+    ``optuna.TrialPruned()`` geworfen wird — VOR dem Prune bereits berechnete ``reward_terms``
+    bleiben als User-Attr-Artefakt im Trial stehen, obwohl der Wert fuer Optuna selbst nie
+    zaehlte). Ohne diesen Ausschluss traegt ein einzelner EQUITY_NONPOSITIVE/SORTINO_GUARD_
+    TRIPPED-Trial (Reward-Betrag bis zu Faktor 50+ ueber der Skala der Shaping-Terme) die
+    gemessene Reward-Varianz, obwohl der TPE-Sampler diesen Trial laengst korrekt ignoriert —
+    ``check_reward_term_variance``/``reward_term_variance_table`` wuerden sonst gegen ein
+    Artefakt der Failure-Branch-Varianz kalibrieren, nicht gegen die tatsaechliche
+    Shaping-Landschaft der ZULAESSIGEN Region."""
+    return [
+        t.get("reward_terms") for t in trials
+        if t.get("oos_evaluated") is True and t.get("reward_terms")
+        and not t.get("trial_pruned_inference_codes")
     ]
 
 
@@ -1318,6 +1344,103 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
         detail=("OK" if passed else
                 f"Reward-Term(e) praktisch inert (std < {inert_ratio:.2%} von "
                 f"reward_std={rew_std:.6f}): {inert_terms}."),
+    )
+
+
+def _reward_std_total_and_feasible(trials: list[dict]) -> tuple[float | None, float | None, list[dict]]:
+    """Issue #949 — gemeinsame Berechnung von ``reward_std_total`` (ueber ALLE oos_evaluated
+    Trials, inkl. spaeter gepruneter) und ``reward_std_feasible`` (ohne geprunte Trials, siehe
+    ``_feasible_reward_terms``). Rueckgabe: ``(reward_std_total, reward_std_feasible,
+    feasible_terms)`` — ``feasible_terms`` wird von ``check_reward_dynamic_range`` fuer die
+    Term-Varianzen wiederverwendet, damit beide gegen DIESELBE Kohorte rechnen."""
+    total_terms = _evaluated_reward_terms(trials)
+    feasible_terms = _feasible_reward_terms(trials)
+
+    def _rew_std(terms: list[dict]) -> float | None:
+        if len(terms) < 2:
+            return None
+        vals = [
+            (t.get("base", 0.0) - t.get("divergence", 0.0) - t.get("dd_penalty", 0.0)
+             - t.get("param_pen", 0.0) - t.get("turnover", 0.0) - t.get("fold_dispersion", 0.0)
+             + t.get("tie_breaker", 0.0))
+            for t in terms
+        ]
+        return statistics.pstdev(vals)
+
+    return _rew_std(total_terms), _rew_std(feasible_terms), feasible_terms
+
+
+def check_reward_dynamic_range(trials: list[dict], *,
+                               min_base_dominance_factor: float = 4.0,
+                               min_reward_std_feasible: float = 0.05,
+                               max_total_to_feasible_ratio: float = 3.0) -> InvariantResult:
+    """Issue #949 (Katalog C, P0 HEADLINE, Pitfall #298) — der eigentliche Wächter gegen den
+    Katalog-C-Kernbefund: die Reward-Varianz einer Study wurde von Zweig-Indikatoren
+    (EQUITY_NONPOSITIVE/SORTINO_GUARD_TRIPPED-Trials, Reward-Betrag bis Faktor ~50 ueber der
+    Shaping-Term-Skala) getragen statt von der Qualitaetsordnung innerhalb der zulaessigen
+    Region — ``reward_std`` bis zu 53.99 gegen Shaping-Terme, die nur auf einer Skala < 1 wirken
+    duerfen (< 1 % von 53.99 = 0.54). Drei Klauseln, ALLE muessen erfuellt sein:
+
+    1. ``reward_std_feasible >= min_base_dominance_factor * max_j std(term_j)`` — die Basis
+       (Qualitaetsordnung) dominiert die Straf-Terme auf der ZULAESSIGEN Region, nicht umgekehrt.
+    2. ``reward_std_feasible >= min_reward_std_feasible`` — das Objektiv ist auf der zulaessigen
+       Region nicht flach (TPE hat ueberhaupt einen Gradienten zum Lernen).
+    3. ``reward_std_total / reward_std_feasible <= max_total_to_feasible_ratio`` — der
+       Failure-Zweig (inkl. gepruneter Trials, deren `reward_terms` als User-Attr-Artefakt
+       stehen bleiben) dominiert die Gesamt-Varianz NICHT gegenueber der zulaessigen Basis. Diese
+       dritte Klausel ist der eigentliche Wächter gegen den Katalog-C-Defekt.
+
+    ``trials`` — dieselbe ``user_attrs``-artige Liste wie ``check_reward_term_variance``.
+    < 2 auswertbare (feasible) Trials ⇒ nicht anwendbar (PASS, keine Varianz-Aussage möglich)."""
+    reward_std_total, reward_std_feasible, feasible_terms = _reward_std_total_and_feasible(trials)
+    if reward_std_feasible is None:
+        return InvariantResult(
+            name="check_reward_dynamic_range",
+            passed=True,
+            expected=f">= {min_base_dominance_factor} * max(term_std) UND >= "
+                     f"{min_reward_std_feasible} UND total/feasible <= {max_total_to_feasible_ratio}",
+            actual=None,
+            detail="< 2 feasible (nicht-gepruntete) evaluierte Trials — keine Varianz-Aussage "
+                   "möglich.",
+        )
+    term_stds = {
+        # Issue #949 — "base" (die Qualitaetsordnung selbst) ist ABSICHTLICH ausgeschlossen: die
+        # Klausel misst, ob die STRAF-/SHAPING-Terme die Basis dominieren, nicht ob die Basis sich
+        # selbst dominiert (das waere tautologisch nie erfuellbar, sobald die Straf-Terme nahe
+        # null liegen — reward ~= base, std(reward) ~= std(base), Faktor 1x statt >= 4x).
+        k: statistics.pstdev([float(t.get(k, 0.0)) for t in feasible_terms])
+        for k in _REWARD_TERM_NUMERIC_KEYS
+        if k not in _CONFIGURED_INACTIVE_REWARD_TERMS and k != "base"
+    }
+    max_term_std = max(term_stds.values()) if term_stds else 0.0
+    dominance_ok = reward_std_feasible >= min_base_dominance_factor * max_term_std
+    not_flat_ok = reward_std_feasible >= min_reward_std_feasible
+    ratio = (reward_std_total / reward_std_feasible) if reward_std_feasible > 0 else float("inf")
+    ratio_ok = (reward_std_total is None) or ratio <= max_total_to_feasible_ratio
+    passed = dominance_ok and not_flat_ok and ratio_ok
+    failed_clauses = []
+    if not dominance_ok:
+        failed_clauses.append(
+            f"reward_std_feasible={reward_std_feasible:.4f} < {min_base_dominance_factor} * "
+            f"max_term_std={max_term_std:.4f}")
+    if not not_flat_ok:
+        failed_clauses.append(
+            f"reward_std_feasible={reward_std_feasible:.4f} < {min_reward_std_feasible} "
+            "(Objektiv praktisch flach)")
+    if not ratio_ok:
+        failed_clauses.append(
+            f"reward_std_total/reward_std_feasible={ratio:.2f} > {max_total_to_feasible_ratio} "
+            "(Failure-Zweig dominiert die Basis)")
+    return InvariantResult(
+        name="check_reward_dynamic_range",
+        passed=passed,
+        expected=f">= {min_base_dominance_factor} * max(term_std) UND >= "
+                 f"{min_reward_std_feasible} UND total/feasible <= {max_total_to_feasible_ratio}",
+        actual={"reward_std_total": round(reward_std_total, 6) if reward_std_total is not None else None,
+               "reward_std_feasible": round(reward_std_feasible, 6),
+               "max_term_std": round(max_term_std, 6)},
+        severity="high",
+        detail="OK" if passed else "; ".join(failed_clauses),
     )
 
 
@@ -1581,6 +1704,50 @@ def check_cost_model_resolution(cost_model_events: list[dict], *,
                 "— dieselbe Kostenüberschätzung wie im #898-Symptom (Issue #287 in AGENTS.md: ein "
                 "Enum-Wert, der in der Datenquelle steht, aber nicht in der Nachschlagetabelle, darf "
                 "nie still auf DEFAULT fallen)."),
+    )
+
+
+def check_cost_model_floor(cost_model_events: list[dict], *,
+                           tolerance_bps: float = 1e-6) -> InvariantResult:
+    """Issue #956 (Katalog D, Pitfall #301) — kein Symbol darf mit einem Spread simuliert werden,
+    der UNTER der physikalischen Tick-Untergrenze liegt (``backtest_runner.tick_floor_spread_bps``:
+    ``1e4 * tick_size / median_price``). Eine Kostenkonstante je Asset-Klasse (z. B. EQUITY=3.0bps)
+    unterschätzt den Round-Trip bei einem Micro-Cap um bis zu Faktor ~17 — genau dort, wo der
+    Backtest die höchsten Roh-Renditen meldet (Pitfall #301). Diese Invariante bestätigt, dass
+    ``resolve_spread_bps``s ``max(config_wert, tick_floor_bps)``-Absicherung tatsächlich griff, für
+    jedes ``COST_MODEL_RESOLVED``-Event (dasselbe Schema wie ``check_cost_model_resolution``, jetzt
+    mit dem seit #956 mitgeführten ``tick_floor_bps``-Feld).
+
+    Events ohne ``tick_floor_bps``-Feld (ältere Läufe VOR #956, oder ein Symbol, für das der Floor
+    fail-open nicht berechenbar war — kein instrument_map-Eintrag/keine Preis-Stichprobe) sind NICHT
+    auswertbar und zählen nicht als Verstoß (kein rückwirkender FAIL auf Alt-Telemetrie)."""
+    evaluable = [e for e in (cost_model_events or []) if e.get("tick_floor_bps") is not None]
+    if not evaluable:
+        return InvariantResult(
+            name="check_cost_model_floor",
+            passed=True,
+            expected="spread_bps >= tick_floor_bps für jedes Symbol",
+            actual=None,
+            detail="Keine COST_MODEL_RESOLVED-Events mit tick_floor_bps-Feld — nicht auswertbar.",
+            severity="high",
+        )
+    offenders = [
+        {"symbol": e.get("symbol"), "spread_bps": e.get("spread_bps"),
+         "tick_floor_bps": e.get("tick_floor_bps")}
+        for e in evaluable
+        if float(e.get("spread_bps") or 0.0) < float(e.get("tick_floor_bps") or 0.0) - tolerance_bps
+    ]
+    passed = not offenders
+    return InvariantResult(
+        name="check_cost_model_floor",
+        passed=passed,
+        expected="spread_bps >= tick_floor_bps für jedes Symbol",
+        actual=len(offenders),
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)}/{len(evaluable)} Symbole simulierten GÜNSTIGER als die "
+                f"physikalische Tick-Untergrenze: {offenders} — resolve_spread_bps's max(...)-"
+                "Absicherung hat nicht gegriffen (#956)."),
     )
 
 

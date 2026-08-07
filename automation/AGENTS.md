@@ -5282,3 +5282,293 @@ seinen ersten Befund nicht erst nach 170 h liefern — dasselbe gilt für den La
   vollständige, kumulative Auslöser-/Nicht-Auslöser-Begründung jedes Bumps steht im jeweiligen
   `_schema.fields`-Eintrag, gegen den Code getestet (`test_issue_936_version_bumps.py`), nicht nur
   in diesem Dokument (Pitfall #299).
+
+## Katalog #937–#964 (GitHub-Issues #779–#783, Sitzung 2026-08-07)
+
+**Lauf:** `07d5aef0_20260806T195848096997`. Fünf Meta-Issues (Katalog A–E) mit 28 Einzelbefunden
+(#937–#964) aus demselben Referenzlauf wie Katalog #913–#936. Kernlinie: ein Telemetrie-Sink, der
+selbst zur Abbruchursache wird (Katalog A); Inferenz-Wächter, deren harte Verwerfungsschwelle bei
+kleinen Stichproben eine Anti-Selektion gegen genau die Strategien erzeugt, die sie schützen sollen
+(Katalog B); eine Reward-Varianz, die vom Failure-Zweig statt von der Rangordnung innerhalb der
+zulässigen Region getragen wird (Katalog C); eine Simulation, die über den wirtschaftlichen Ruin
+hinaus weiterrechnet und einen Kostenmodell-Floor, der die physikalische Tick-Granularität ignoriert
+(Katalog D); und eine Promotion-Entscheidung, die einen nie OOS-evaluierten Trial zum
+Studienbesten machen konnte (Katalog E). Sechs Befunde (#940/#941/#945/#946/#955/#959) waren beim
+Start dieser Sitzung bereits durch vorangegangene Sitzungen behoben. Vier Befunde wurden bewusst
+zurückgestellt, in derselben Kategorie wie #843/#845/#954/#962 (grössere Restrukturierung ohne
+Möglichkeit einer empirischen Validierung durch einen echten Mehrstunden-Lauf in dieser Umgebung):
+#951 (skalenfreie Straf-Terme — reward.py-weite Neukalibrierung), #952 (Signalfrequenz-Preflight —
+tief in die Backtest-Ausführung verdrahtet, analog zur Komplexität von #956), #954 (Warm-Start-
+Kaskade — neue `champion_store.py`-Funktionalität, von #781 selbst bereits als P2 zurückgestellt
+angelegt), #963 (gestuftes Abnahmeprotokoll — ein komplett neues Modul `acceptance.py`, das vor
+dieser Sitzung nicht existierte). #962 (globale Arbeitswarteschlange) ist die dritte Zurückstellung
+desselben Befunds nach zwei vorangegangenen Sitzungen.
+
+### 🟢 Pitfall #307 — Ein Telemetrie-Sink, der selbst wirft, macht aus einem lokalen Diagnosewert einen globalen Abbruchgrund [BEHOBEN: GH-#937/#938]
+**Symptom:** `emit_execution_event`/`_append_jsonl_sidecar` riefen `json.dumps(event, ...)` direkt
+auf. Sobald ein Event-Payload einen Nicht-String-Dict-Key enthielt (u. a. `(strategy, symbol)`-
+Tupel als Schlüssel in Diagnose-Dicts von `sweep.py`), warf `json.dumps` eine `TypeError` — nicht
+im aufrufenden Code, sondern in der Logging-Funktion selbst, die von praktisch jedem Codepfad
+aufgerufen wird.
+**Root-Cause:** Ein Sink, dessen Aufgabe reine Beobachtung ist, hatte keinen eigenen Fehlerpfad und
+erbte damit die Abbruchsemantik des beobachteten Codes — ein Logging-Bug wurde zum Sweep-Abbruch.
+Dieselbe Tupel-Key-Annahme steckte zusätzlich in den produktiven Dict-Strukturen selbst
+(`_offending_pairs_for_fail_fast_check` u. a.), nicht nur im Telemetrie-Pfad.
+**Fix/Regel:** Ein Telemetrie-Sink darf NIE werfen — `_sanitize_for_json`/`_canonical_key`
+normalisieren jeden Key auf einen String, ein äusseres try/except mit `TELEMETRY_SERIALIZATION_
+FAILED`-Fallback-Event fängt jeden verbleibenden Fehler ab, `logger.log()` selbst ist ebenfalls
+try/except-umschlossen. Zusätzlich: `(strategy, symbol)`-Tupel als Dict-Key sind über den ganzen
+Optimizer hinweg verboten — `_contracts.pair_key`/`split_pair_key` sind der EINE Kanal für
+serialisierbare Paar-Schlüssel (analog zum String-Key-Zwang aus Pitfall #234).
+
+### 🟢 Pitfall #308 — Eine Symbolschleife ohne Fehlerisolation macht aus 1 von 143 Symbolausfällen einen Totalabbruch nach Tagen Laufzeit [BEHOBEN: GH-#939]
+**Symptom:** `run_per_symbol_sweep` hatte keine try/except-Grenze um die Family-Aggregation/
+Confirm/Export-Schritte eines einzelnen Symbols. Eine unbehandelte Exception in Symbol 87 von 143
+beendete den gesamten mehrtägigen Lauf, inklusive der bereits erfolgreich abgeschlossenen 86
+Symbole, deren Ergebnisse dadurch nie exportiert wurden.
+**Root-Cause:** Bei einer angenommenen Ausfallwahrscheinlichkeit von 1 % pro Symbol liegt die
+Erfolgswahrscheinlichkeit eines ungeschützten 143-Symbol-Laufs bei `0.99^143 ≈ 23.6 %` — eine
+einzelne Randbedingung (fehlende Daten, ein Parsing-Fehler) genügt, um Tage an bereits geleisteter
+Rechenarbeit zu verwerfen.
+**Fix/Regel:** Jede Einheit einer mehrtägigen Batch-Schleife (hier: Symbol) wird einzeln
+try/except-isoliert; ein Ausfall wird als `SYMBOL_FAILED` telemetriert und in `sweep_failed_
+symbols` gesammelt, der Lauf läuft mit den verbleibenden Symbolen weiter. Ein globaler Abbruch
+bleibt als bewusste Politik-Entscheidung möglich, aber nur wenn BEIDE Schwellen
+(`max_failed_symbols_abs` UND `max_failed_symbols_frac`) gleichzeitig überschritten sind — eine
+einzelne UND-verknüpfte Schwelle allein hätte bei kleinen Läufen (wenige Symbole) bereits beim
+ersten Ausfall abgebrochen.
+
+### 🟢 Pitfall #309 — Eine Gate-1-Ablehnung, die pro (Strategie, Symbol) statt pro Symbol emittiert wird, vervielfacht dieselbe Information bis zu 14-fach [BEHOBEN: GH-#942]
+**Symptom:** `enumerate_tunable_pairs` rief `emit_gate1_rejection()` für `INSUFFICIENT_HISTORY`
+einmal je (Strategie, Symbol)-Kombination auf — bei 14 Strategien je Symbol bis zu 14 identische
+Events für denselben, rein symbolabhängigen Befund (die verfügbare Historie hängt nicht von der
+Strategie ab).
+**Root-Cause:** Die Ablehnungsursache ist eine Eigenschaft des Symbols (Datenverfügbarkeit), wurde
+aber an einer Stelle emittiert, die über beide Achsen (Strategie × Symbol) iteriert — dieselbe
+Verwechslung von Iterationsebene und Informationsebene wie in Pitfall #302, nur auf der
+Emissions- statt der Berechnungsseite.
+**Fix/Regel:** Ein `_gate1_history_rejection_emitted`-Cache-Set (schlüssel: Symbol) sorgt dafür,
+dass `INSUFFICIENT_HISTORY` genau einmal je Symbol emittiert wird. Allgemeiner: bevor ein Event in
+einer verschachtelten Schleife emittiert wird, ist zu prüfen, auf welcher der beiden Achsen der
+Befund tatsächlich variiert — Emissionsrate und Informationsgehalt müssen übereinstimmen.
+
+### 🟢 Pitfall #310 — Eine Verwerfungsschwelle auf einer Stichprobengrösse ist ein Anti-Selektions-Filter, wenn die Stichprobengrösse mit der Strategiequalität korreliert [BEHOBEN: GH-#944]
+**Symptom:** `SORTINO_INSUFFICIENT_DOWNSIDE` verwarf Trials, deren Anzahl negativer (Downside-)
+Perioden unter `sortino_min_downside_observations` lag. Für hochselektive, profitable Strategien
+(z. B. SqueezeBreakout, Median ~27 informative Perioden) ist eine niedrige Downside-Beobachtungszahl
+aber KEIN Rauschsignal, sondern die direkte Konsequenz einer guten Trefferquote.
+**Root-Cause:** Die Verwerfungswahrscheinlichkeit stieg dadurch MONOTON mit der Strategiequalität
+(weniger Verlustperioden ⇒ höhere Ablehnungsrate) — eine Schwelle, die eigentlich vor einem
+degenerierten Schätzer schützen sollte (Pitfall #296 selbst), wurde zu einem Filter, der
+systematisch die besten Kandidaten aus dem Pool entfernt.
+**Fix/Regel:** Ein dünn besetzter Schätzer wird James-Stein-artig Richtung eines Referenzwerts
+GESCHRUMPFT (`lambda = downside_obs/(downside_obs+m0)`, geschrumpft Richtung der Gesamtstreuung
+aller informativen Perioden), nicht VERWORFEN — der Trial bleibt bewertbar
+(`SORTINO_DOWNSIDE_SHRUNK`-Diagnostik statt Prune). Eine Verwerfungsschwelle auf einer
+Stichprobengrösse ist grundsätzlich daraufhin zu prüfen, ob die Stichprobengrösse selbst mit der
+gesuchten Eigenschaft korreliert — wenn ja, ist Schrumpfung fast immer die richtigere Antwort als
+Verwerfung.
+
+### 🟢 Pitfall #311 — Eine Simulation, die über den wirtschaftlichen Ruin hinaus weiterrechnet, produziert Trades ohne Aussagekraft und lässt die Equity-Kurve unrealistisch weiterlaufen [BEHOBEN: GH-#947]
+**Symptom:** `HourlyStrategyBase` hatte keine Kill-Switch-Logik für den Fall, dass das simulierte
+Konto-Equity unter eine Margin-Stop-out-Schwelle fiel — die Strategie handelte in der Simulation
+unbegrenzt weiter, auch nachdem ein realer Broker die Position zwangsliquidiert und den Handel
+gesperrt hätte.
+**Root-Cause:** CFD-artige Backtests ohne expliziten Margin-Stop-out-Mechanismus modellieren
+implizit ein unbegrenztes Nachschusskonto — eine Annahme, die in keinem realen Ausführungskontext
+gilt und die abgeleiteten Kennzahlen (Sortino, PSR, Total Return) für ruinierte Trials verzerrt statt
+sie als das auszuweisen, was sie sind: ungültig.
+**Fix/Regel:** Sobald `current_equity <= stop_out_equity_frac * initial_equity`, schliesst die
+Strategie sofort alle offenen Positionen (`ExitReason.EQUITY_STOPOUT`) und stoppt jeden weiteren
+Handel für den Rest des Trials (`self._ruined`-Flag). `backtest_runner.py` erkennt
+`EQUITY_STOPOUT` im Exit-Reason-Histogramm (IS wie OOS) und stempelt `TRIAL_RUINED_STOPOUT`
+(`failure_policy="prune"`, `nullifies_metrics=("oos_sortino_period","oos_psr","oos_total_return")`)
+— ein ruinierter Trial darf keine der von ihm abgeleiteten Kennzahlen in die Selektion einspeisen.
+
+### 🟢 Pitfall #312 — Eine Diagnosemeldung, deren Text die entgegengesetzte Aussage ihrer eigenen Auslösebedingung trifft, führt jeden Leser in die falsche Richtung [BEHOBEN: GH-#948]
+**Symptom:** `check_inference_diagnostics_concentration` beschrieb die betroffenen Trials als
+Trials "mit einem regulären Inferenzpfad-Ausgang" — exakt das Gegenteil dessen, was die Funktion
+tatsächlich misst: eine Konzentration von Trials, die vom Inferenz-Wächter ZENSIERT wurden
+(`SORTINO_GUARD_TRIPPED`/`SORTINO_INSUFFICIENT_DOWNSIDE`), also gerade KEINEN regulären Ausgang
+hatten.
+**Root-Cause:** Der Meldungstext wurde vermutlich für eine frühere Version der Funktion formuliert
+und nicht mitgeändert, als sich die tatsächliche Bedingung weiterentwickelte — dieselbe
+Fehlerklasse wie Pitfall #303 (Proxy überlebt die Änderung seiner Grundlage), hier auf der
+Text- statt der Code-Ebene.
+**Fix/Regel:** Der Meldungstext wurde auf die tatsächliche Bedingung korrigiert ("wurden vom
+Inferenz-Wächter zensiert … kein regulärer Ausgang"). Jede Diagnosemeldung, die eine Bedingung in
+Prosa umschreibt, gehört bei jeder Änderung der Bedingung selbst auf Wortlaut-Konsistenz geprüft —
+ein invertierter Text ist schlimmer als gar keine Meldung, weil er aktiv in die falsche Richtung
+weist.
+
+### 🟢 Pitfall #313 — Report-Diagnostik, die Reward-Terme über ALLE Trials mittelt, misst die Varianz des Failure-Zweigs statt der Qualitätsordnung [BEHOBEN: GH-#949]
+**Symptom:** `reward_std` lag über 28 Studies zwischen 0,018 und 53,99 (Faktor 2951) für dieselbe
+Zielfunktionsformel. Die beiden grössten Werte gehörten exakt den beiden Studies mit
+`EQUITY_NONPOSITIVE`-Ereignissen — eine geschlossene Schranke (`|Δ| ≤ σ/√(p(1-p))`) zeigte, dass
+schon 1–3 Failure-Trials von ~120 die gesamte beobachtete Streuung erklären können, drei
+Grössenordnungen über der Skala, auf der die Shaping-Terme wirken.
+**Root-Cause:** Die Report-Ebene berechnete Varianz-Kennzahlen über ALLE Trials inklusive später
+geprunter — ein Trial mit `trial_pruned_inference_codes` liefert einen `reward_terms`-User-Attr-
+Snapshot, der zum Bewertungszeitpunkt real war, dessen Trial aber danach als ungültig markiert
+wurde; die Diagnostik konsumierte diesen Snapshot trotzdem als gültige Beobachtung.
+**Fix/Regel:** `_feasible_reward_terms`/`_reward_std_total_and_feasible` trennen `reward_std_
+total` (alle Trials) von `reward_std_feasible` (nur nicht-geprunte). `check_reward_dynamic_range`
+verlangt `reward_std_feasible >= 4·max_j std(term_j)` UND `reward_std_feasible >= 0.05` UND
+`reward_std_total/reward_std_feasible <= 3.0` — die Basis-Dominanz-Berechnung MUSS den Basis-Term
+selbst aus `max_j std(term_j)` ausschliessen, sonst ist die Klausel bei `reward≈base` tautologisch
+fast unerfüllbar (Selbstvergleich `1× statt 4×`).
+
+### 🟢 Pitfall #314 — Ein Fix, der nur auf dem produktiven Codepfad landet, lässt den Nicht-Default-Pfad mit dem alten Bug zurück [BEHOBEN: GH-#950]
+**Symptom:** `reward_mode='pareto'` (ein seit früheren Sitzungen existierender, nicht-produktiver
+Modus) definierte seine eigene `constraints_func`, die `trial.user_attrs.get("constraints", (0.0,
+0.0))` zurückgab — ein Platzhalter, der nie mit den echten, normierten OOS-Constraint-Distanzen
+gefüllt wurde, während der produktive `reward_mode`-Pfad längst die reale `_oos_constraints_func`
+verwendete.
+**Root-Cause:** Als `_oos_constraints_func` für den Default-Pfad eingeführt wurde, blieb der
+`pareto`-Zweig unverändert — zwei Implementierungen derselben Zuständigkeit (Constraint-
+Übergabe an den Sampler) drifteten auseinander, weil nur eine davon regelmässig getestet/genutzt
+wurde.
+**Fix/Regel:** Beide Stellen (`make_objective` und `_optimize_symbol_impl`) instanziieren den
+`NSGAIISampler` jetzt mit `constraints_func=_oos_constraints_func` — derselben Funktion wie der
+Default-Pfad. Bei mehreren Implementierungen derselben Zuständigkeit (hier: Constraint-Distanz für
+den Sampler) ist eine gemeinsame Funktion einer Duplikation immer vorzuziehen, auch wenn einer der
+beiden Pfade selten läuft — "selten genutzt" ist kein Grund, einen Bug dort unkorrigiert zu lassen.
+
+### 🟢 Pitfall #315 — Eine genäherte statistische Schranke sollte durch ihre exakte Form ersetzbar sein, ohne den validierten Default anzufassen [BEHOBEN: GH-#953]
+**Symptom:** Der Plateau-Frühstopp (`plateau_stop_mode='expected_yield'`, #925) verwendet für die
+Obergrenze der Trefferwahrscheinlichkeit bei `t` Trials ohne einen einzigen eligiblen Kandidaten
+implizit die Rule-of-Three-Näherung `p_hi ≈ 3/m` (α≈0,05), keine exakte Formel.
+**Root-Cause:** Rule-of-Three ist eine asymptotische Näherung der einseitigen Clopper-Pearson-
+Obergrenze — für die bereits validierte, produktive Standardkonfiguration ausreichend genau, aber
+kein geschlossen hergeleiteter Wert, und für kleine `t` (wie sie am Anfang jeder Study auftreten)
+messbar ungenau.
+**Fix/Regel:** `plateau_stop_clopper_pearson(m, remaining_budget, alpha)` implementiert die exakte
+Formel `p_hi(t) = 1 - α^(1/t)`, additiv erreichbar über `plateau_stop_mode='clopper_pearson'` +
+`plateau_stop_alpha` — der bereits empirisch validierte Default (`expected_yield`, 43 % Budget-
+Ersparnis laut #925) bleibt bit-identisch unverändert. Eine Näherungsformel im validierten Pfad zu
+ERSETZEN ist ein grösseres Risiko als eine exakte Alternative daneben additiv verfügbar zu machen.
+
+### 🟢 Pitfall #316 — Ein Kostenmodell-Floor in Basispunkten ignoriert, dass die tatsächlich erreichbare Spanne durch die Tick-Grösse selbst nach unten begrenzt ist [BEHOBEN: GH-#956]
+**Symptom:** `resolve_spread_bps` gab für Symbole mit grober Preis-Präzision (wenige Nachkomma-
+stellen relativ zum Kurs) einen Spread zurück, der unter einem einzigen Tick lag — ein Fill-Preis,
+den kein reale Orderbuch je hätte anbieten können, weil der minimale Preisschritt selbst schon
+grösser als der modellierte Spread war.
+**Root-Cause:** Der Asset-Klassen-/Symbol-Override-Spread ist eine STATISTISCHE Schätzung
+(historischer Median), aber ohne einen PHYSIKALISCHEN Floor kann diese Schätzung unterhalb dessen
+liegen, was die Tick-Grösse des Instruments überhaupt zulässt.
+**Fix/Regel:** `tick_floor_spread_bps(median_price, tick_size) = 1e4 · tick_size / median_price`
+liefert die physikalische Untergrenze; `resolve_spread_bps(..., tick_floor_bps=...)` wendet
+`max(resolved, tick_floor_bps)` sowohl am Symbol-Override- als auch am Asset-Klassen-Rückgabepunkt
+an. Default `tick_floor_bps=0.0` hält den Aufruf ohne den neuen Parameter bit-identisch zum
+Alt-Verhalten (Pitfall-Muster wie #566/#898: ein Kostenmodell-Floor gehört an die EINE
+`resolve_spread_bps`-Quelle, nicht an einzelne Aufrufer).
+
+### 🟢 Pitfall #317 — Eine Ursachen-Diagnose, die nur zwischen "kein Signal" und "schlechte Qualität" unterscheidet, verwechselt eine ungültige Simulation mit einem echten Qualitätsbefund [BEHOBEN: GH-#957]
+**Symptom:** `resolve_ineligible_binding_cause` konnte einer Study `binding_cause=signal_quality`
+zuweisen und daraus `action=quarantined_pending_simulation_review` ableiten, selbst wenn eine
+blockierende Invariante (z. B. #947s `TRIAL_RUINED_STOPOUT`) bereits belegte, dass die zugrunde
+liegende Simulation selbst ungültig war — die Diagnose bewertete dann die Qualität eines Ergebnisses,
+dessen Erhebung bereits als fehlerhaft feststand.
+**Root-Cause:** Die Ursachen-Priorität (`inference_unavailable > signal_sparse > signal_quality`)
+hatte keinen vierten Fall für "die Messung selbst ist ungültig" — eine Kategorie, die logisch VOR
+jeder Qualitätsaussage stehen muss, weil eine ungültige Messung keine Qualitätsaussage zulässt.
+**Fix/Regel:** `recommend_diagnosis_action(..., blocking_invariants_failing=...)` routet
+`cause="signal_quality"` bei `blocking_invariants_failing=True` auf `cause="simulation_invalid"`,
+`action="none"`, `writeback_suppressed_reason="blocking_invariant"` — eine Empfehlung wird
+unterdrückt, solange die Simulation selbst als ungültig belegt ist. Bei `blocking_invariants_
+failing=False` (explizit widerlegt) darf die #911-Suspendierung sogar aktiv gelöst werden
+(`action="denylist"`). Default `None` hält bestehende Aufrufer bit-identisch zum Alt-Verhalten.
+
+### 🟢 Pitfall #318 — Eine Promotion-Logik, die den Studienbesten nach Rang wählt, kann einen Trial promovieren, dessen Selektionsstatistik nie tatsächlich berechnet wurde [BEHOBEN: GH-#958]
+**Symptom:** `confirm_per_symbol_promotion` wählte `promoted_m_symbol` über eine Median-Rang-
+Berechnung aus dem Top-k-Holdout-Pool — ohne zu prüfen, ob für den gewählten Trial `oos_n_periods
+>= 1` überhaupt zutraf. Ein Trial ohne auswertbare OOS-Perioden konnte so unbemerkt zum
+promovierten Studienbesten werden.
+**Root-Cause:** Die Selektionslogik verwechselte "hat den besten RANG innerhalb der Kandidatenmenge"
+mit "wurde tatsächlich OOS bewertet" — ein degenerierter Kandidat mit einem zufällig günstigen
+Rang-Wert (z. B. durch fehlende Vergleichsdaten) besteht die Rang-Auswahl trotzdem.
+**Fix/Regel:** Ein enger Guard NACH der Median-Rang-Auswahl (nicht in der `eligible_trials`-
+Filterung selbst — letztere hätte 28 Tests gebrochen, weil die meisten Fixtures `oos_n_periods`
+nie setzen und der reale Default `0` ist) verwirft die finale Promotion mit `REJECT_PROMOTED_
+TRIAL_INADMISSIBLE`, wenn `oos_n_periods < 1`. Eine Eligibility-Prüfung, die auf einem Feld ohne
+realistischen Default basiert, gehört so spät wie möglich in der Entscheidungskette platziert —
+am Punkt der tatsächlichen Konsequenz, nicht in der breiten Kandidatenmenge davor.
+
+### 🟢 Pitfall #319 — Dieselbe Kollinearitäts-Redundanz taucht ein sechstes Mal auf, weil jede vorherige Behebung nur EIN betroffenes Gate korrigierte [BEHOBEN: GH-#960]
+**Symptom:** `tournament.json['eligible_requires_all']` enthielt weiterhin `'min_profit_factor'`
+neben `oos_min_psr` — Jaccard-Ähnlichkeit 0,964–0,979, marginaler Eigenbeitrag exakt 0,000 — dieselbe
+Kollinearitätsklasse wie bereits #677/#697/#776, jeweils an einer ANDEREN Gate-Liste behoben.
+**Root-Cause:** Jede vorherige Behebung entfernte die Redundanz aus genau der Liste, in der sie
+gerade beobachtet wurde, ohne zu prüfen, ob dieselbe redundante Kennzahlenpaarung auch in anderen
+Gate-Listen (`eligible_requires_all` vs. `gate_consolidation_protected`) wiederkehrt.
+**Fix/Regel:** `'min_profit_factor'` wurde aus `eligible_requires_all` entfernt (verbleibt:
+`['min_trades', 'max_drawdown', 'oos_min_psr']`). `gate_consolidation_protected` bleibt bewusst
+UNVERÄNDERT (`['min_trades', 'max_drawdown']`) — diese Liste kodiert strukturelle Vorbedingungen,
+keine Qualitätsgates, `oos_min_psr` gehört dort NICHT hinein (ein erster Versuch, es dort
+hinzuzufügen, wurde nach Lektüre der Feld-Dokumentation zurückgenommen). Eine gefundene
+Kollinearitätsredundanz ist grundsätzlich gegen ALLE Gate-Listen zu prüfen, nicht nur gegen die,
+in der sie gerade auffiel.
+
+### 🟢 Pitfall #320 — Eine Semantik-Versions-Bump-Begründung, die die Issue-Liste der ganzen Sitzung statt der tatsächlichen Auslöser nennt, ist bei der nächsten Purge-Prüfung nicht mehr nachvollziehbar [BEHOBEN: GH-#961]
+**Symptom:** Von 14 in dieser Sitzung behandelten Befunden (#937–#960) ändern nur vier tatsächlich
+eine gestempelte Simulations- oder Reward-/Eligibility-Entscheidung: #944/#947/#956 (simulation,
+v3→4) und #958/#960 (reward/eligibility, v21→22). Die übrigen sind additive Diagnostik,
+nicht-produktive Pfade oder opt-in mit sicherem Default.
+**Root-Cause:** Ohne eine explizite Trigger-/Nicht-Trigger-Unterscheidung pro Bump (Pitfall #299)
+würde ein künftiger Agent entweder ALLE 14 Befunde als Bump-Rechtfertigung lesen (und die Purge-
+Notwendigkeit überschätzen) oder — schlimmer — bei einer künftigen Änderung an einem der
+"NICHT Ausloeser"-Issues fälschlich annehmen, ein Bump sei schon erfolgt.
+**Fix/Regel:** Beide `_schema.fields`-Einträge benennen im `v22 =`/`v4 =`-Absatz explizit sowohl
+die hinreichenden Auslöser als auch die geprüften Nicht-Auslöser mit Issue-Nummer und
+Ein-Satz-Begründung, gegen den Code getestet statt nur behauptet
+(`test_issue_961_version_bumps.py`, Pitfall #299). Die Pflicht-Purge (`purge_stale_studies.py`)
+bleibt die LETZTE Aktion vor jedem Re-Run, der #944/#947/#956/#958/#960 produktiv aktivieren soll.
+
+### 📋 Neue/geänderte Config-Keys (Issue-Katalog #937–#964)
+- `optimizer.json.max_failed_symbols_abs` (Default 5) / `max_failed_symbols_frac` (Default 0.05)
+  — #939, Pitfall #308.
+- `optimizer.json.plateau_stop_alpha` (Default 0.05, nur wirksam bei `plateau_stop_mode=
+  'clopper_pearson'`) — #953, Pitfall #315.
+- `tournament.json.sortino_downside_shrinkage_m0` (Default 30) — #944, Pitfall #310.
+- `tournament.json.eligible_requires_all` — `'min_profit_factor'` entfernt (verbleibt
+  `['min_trades', 'max_drawdown', 'oos_min_psr']`) — #960, Pitfall #319.
+- `HourlyStrategyConfig.stop_out_equity_frac` (Default 0.20) — #947, Pitfall #311.
+- `optimizer.json.reward_semantics_version` 21 → 22 (zwei Auslöser: #958, #960) — #961, Pitfall
+  #320.
+- `optimizer.json.simulation_semantics_version` 3 → 4 (drei Auslöser: #944, #947, #956) — #961,
+  Pitfall #320.
+
+### 🔒 Watertight Invariants (Issue-Katalog #937–#964) — für künftige Agenten
+- **`log_manager._sanitize_for_json`/`_canonical_key`** (`log_manager.py`, #937) — der EINE
+  Sanitisierungs-Pfad, den JEDER Telemetrie-Emissionsaufruf durchläuft, bevor `json.dumps`
+  aufgerufen wird; niemals umgehen, auch nicht für "garantiert saubere" Payloads (Pitfall #307).
+- **`_contracts.pair_key`/`split_pair_key`** (`_contracts.py`, #938) — der EINE Kanal für
+  (Strategie, Symbol)-Paar-Schlüssel in Dicts; ein rohes Tupel als Dict-Key ist verboten
+  (Pitfall #307).
+- **`sweep.sweep_failed_symbols`/`max_failed_symbols_abs`+`max_failed_symbols_frac`** (`sweep.py`,
+  #939) — die EINE Stelle, an der ein Symbol-Ausfall isoliert UND (bei doppelter
+  Schwellenüberschreitung) zum globalen Abbruch eskaliert wird (Pitfall #308).
+- **`backtest_runner._read_sortino_downside_shrinkage_m0`** (`backtest_runner.py`, #944) — liest
+  `sortino_downside_shrinkage_m0` gecacht; jede Schrumpfungsberechnung der Downside-Deviation MUSS
+  über diese Funktion laufen, nicht über einen lokal hartkodierten `m0` (Pitfall #310).
+- **`HourlyStrategyBase._ruined`/`ExitReason.EQUITY_STOPOUT`** (`hourly_strategy_base.py`, #947) —
+  sobald gesetzt, liefert `_check_exits_and_update` sofort `True` OHNE weitere Exit-Prüfung; kein
+  Trade-Code darf nach einem Stop-out noch eine neue Position eröffnen (Pitfall #311).
+- **`backtest_runner.tick_floor_spread_bps`** (`backtest_runner.py`, #956) — die EINE Quelle der
+  physikalischen Spread-Untergrenze; jeder Aufrufer von `resolve_spread_bps` mit einem bekannten
+  `tick_size`/`median_price` reicht sie als `tick_floor_bps` durch (Pitfall #316, analog
+  `resolve_atr_floor_bps`/`resolve_opening_range_session_open_hour` aus #924).
+- **`invariants.check_reward_dynamic_range`/`_reward_std_total_and_feasible`** (`invariants.py`,
+  #949) — der EINE Kanal für Basis-Dominanz-/Streuungs-Kennzahlen; `max_j std(term_j)` MUSS den
+  Basis-Term selbst ausschliessen (Pitfall #313).
+- **`sweep_diagnostics.recommend_diagnosis_action`s `blocking_invariants_failing`-Parameter**
+  (`sweep_diagnostics.py`, #957) — `cause="simulation_invalid"` hat Vorrang vor
+  `cause="signal_quality"`, sobald eine blockierende Invariante eine ungültige Simulation belegt
+  (Pitfall #317).
+- **`confirm.confirm_per_symbol_promotion`s `REJECT_PROMOTED_TRIAL_INADMISSIBLE`-Guard**
+  (`confirm.py`, #958) — die letzte Prüfung vor jeder Promotion; `oos_n_periods < 1` verhindert
+  die Promotion unabhängig vom Rang-Ergebnis (Pitfall #318).
+- **`optimizer.json['reward_semantics_version']`/`['simulation_semantics_version']`** (#961) — wie
+  #936, jetzt mit v22-/v4-Einträgen; die vollständige Auslöser-/Nicht-Auslöser-Begründung steht im
+  `_schema.fields`-Eintrag, gegen den Code getestet (`test_issue_961_version_bumps.py`), nicht nur
+  in diesem Dokument (Pitfall #299/#320).

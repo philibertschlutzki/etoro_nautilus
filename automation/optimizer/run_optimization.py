@@ -408,6 +408,34 @@ def plateau_stop_expected_yield(m_modelled: int, remaining_budget: int) -> tuple
     return p_hi, p_hi * remaining_budget
 
 
+def plateau_stop_clopper_pearson(m_modelled: int, remaining_budget: int, *,
+                                 alpha: float = 0.05) -> tuple[float, float]:
+    """Issue #953 (Katalog C, P1) — die EXAKTE einseitige Clopper-Pearson-Obergrenze für die
+    Eligibility-Rate bei 0 Erfolgen aus ``m_modelled`` Versuchen: ``p_hi(t) = 1 - alpha^(1/t)``,
+    statt der Rule-of-Three-NÄHERUNG ``3/m`` (``plateau_stop_missed_probability``/
+    ``plateau_stop_expected_yield``, beide implizit ``alpha≈0.05``). Erwarteter Restertrag
+    ``expected_yield = p_hi(t) * (N - t)``; Abbruch, sobald dieser Wert unter 1 fällt UND
+    ``constraint_improvement_rate <= 0`` (siehe ``floor_plateau_callback``s ``clopper_pearson``-
+    Zweig) — die Regel hat keinen freien Parameter ausser ``alpha``, ist monoton in ``t``/``N``
+    und passt sich automatisch an kleine Budgets an.
+
+    Additiv/opt-in (``plateau_stop_mode='clopper_pearson'``, siehe ``optimizer.json
+    ['plateau_stop_alpha']``, Default 0.05) — der produktive Default bleibt ``'expected_yield'``
+    (#925, empirisch mit 43 % Budget-Ersparnis validiert); diese Funktion ist die literaturgetreue
+    Umsetzung des #953-Vorschlags für Operatoren, die den Standardschätzer bewusst gegen die exakte
+    Formel tauschen wollen, ohne den bereits validierten Default zu verändern.
+
+    Rückgabe ``(p_hi, expected_yield)``, rein, deterministisch. ``m_modelled <= 0`` ⇒
+    ``(1.0, inf)`` (keine Information ⇒ niemals abbrechen). ``remaining_budget <= 0`` ⇒
+    ``expected_yield = 0.0``."""
+    if m_modelled <= 0:
+        return 1.0, float("inf")
+    p_hi = 1.0 - float(alpha) ** (1.0 / m_modelled)
+    if remaining_budget <= 0:
+        return p_hi, 0.0
+    return p_hi, p_hi * remaining_budget
+
+
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
@@ -734,10 +762,10 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             # verfuegbar. Validiert UNABHAENGIG von remaining_budget, damit eine Fehlkonfiguration
             # nicht erst sichtbar wird, sobald ein Budget bekannt ist.
             _plateau_stop_mode = (weights or {}).get("plateau_stop_mode", "expected_yield")
-            if _plateau_stop_mode not in ("missed_probability", "expected_yield"):
+            if _plateau_stop_mode not in ("missed_probability", "expected_yield", "clopper_pearson"):
                 raise ValueError(
                     f"optimizer.json['plateau_stop_mode']={_plateau_stop_mode!r} unbekannt — "
-                    "erwartet 'missed_probability' oder 'expected_yield'.")
+                    "erwartet 'missed_probability', 'expected_yield' oder 'clopper_pearson'.")
             if remaining_budget is not None:
                 p_hi, missed_probability = plateau_stop_missed_probability(
                     m_modelled, remaining_budget)
@@ -752,6 +780,16 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     min_expected_eligible = float((weights or {}).get(
                         "plateau_stop_min_expected_eligible", 0.5))
                     stop_condition = expected_yield < min_expected_eligible
+                elif _plateau_stop_mode == "clopper_pearson":
+                    # Issue #953 — exakte Formel statt der Rule-of-Three-Naeherung; dieselbe
+                    # constraint_signal-Unterdrueckung wie die beiden anderen Modi (Fix-Punkt
+                    # "die zweite Klausel verhindert den Abbruch einer Study, die sich dem Gate
+                    # messbar naehert").
+                    _cp_alpha = float((weights or {}).get("plateau_stop_alpha", 0.05))
+                    _, cp_expected_yield = plateau_stop_clopper_pearson(
+                        m_modelled, remaining_budget, alpha=_cp_alpha)
+                    expected_yield = cp_expected_yield
+                    stop_condition = cp_expected_yield < 1.0
                 else:
                     max_missed_probability = float((weights or {}).get(
                         "plateau_stop_max_missed_probability", 0.05))
@@ -1341,9 +1379,13 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     directions = None
     if reward_mode == "pareto":
         directions = ["maximize", "maximize", "maximize", "maximize", "minimize", "minimize"]
-        def constraints_func(trial):
-            return trial.user_attrs.get("constraints", (0.0, 0.0))
-        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
+        # Issue #950 (Katalog C) — vorher ein rohes (trades_constraint, dd_constraint)-Tupel aus
+        # UN-normierten Deltas (bzw. der Default (0.0, 0.0), der bei fehlendem User-Attr eine
+        # KONSTANTE Distanz-0 vortaeuscht — genau das #950-Symptom exakter Nullen ohne Gradienten).
+        # Derselbe kontinuierliche, normierte Constraint-Pfad wie der Default-Modus (_oos_
+        # constraints_func, #635) — undefinierte Metriken zaehlen als MAXIMAL verletzt (1.0), nicht
+        # als 0.0.
+        sampler = optuna.samplers.NSGAIISampler(constraints_func=_oos_constraints_func, seed=seed)
     else:
         # Issue #612 — FEASIBILITY GEHÖRT IN DEN SAMPLER, nicht in eine 12-Einheiten-Reward-Klippe.
         # ``constraints_func`` liest die gestempelten, normierten OOS-Gate-Verletzungen
@@ -3116,9 +3158,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     directions = None
     if reward_mode == "pareto":
         directions = ["maximize", "maximize", "maximize", "maximize", "minimize", "minimize"]
-        def constraints_func(trial):
-            return trial.user_attrs.get("constraints", (0.0, 0.0))
-        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed_eff)
+        # Issue #950 (Katalog C) — siehe optimize_symbol/make_objective-Kommentar: derselbe
+        # kontinuierliche, normierte Constraint-Pfad wie der Default-Modus statt eines rohen
+        # (0.0, 0.0)-Defaults, der eine konstante Distanz-0 vortaeuschte.
+        sampler = optuna.samplers.NSGAIISampler(constraints_func=_oos_constraints_func, seed=seed_eff)
     else:
         # Issue #612 — Feasibility in den Sampler (siehe optimize_symbol): constraints_func liest die
         # gestempelten OOS-Gate-Verletzungen; Optuna 4.9 bevorzugt feasible nativ vor infeasible.
