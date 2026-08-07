@@ -1243,6 +1243,56 @@ def _check_simulation_semantics_version(study, opt_data: dict,
     logger.warning("♻️ %s", msg)
 
 
+def _check_inference_semantics_version(study, opt_data: dict,
+                                       logger: logging.Logger | None = None) -> None:
+    """Issue #968 (Katalog A, P0 HEADLINE, GitHub-Issue #785) — Inferenz-Semantik-Versionierung &
+    Study-Hygiene, dieselbe MECHANIK wie ``_check_reward_semantics_version``/``_check_simulation_
+    semantics_version``, aber eine DRITTE, orthogonale Achse (siehe ``optimizer.json[
+    'inference_semantics_version']``-Schema für die vollständige Abgrenzung): ``reward_semantics_
+    version`` versioniert WIE ein Trial bewertet wird, ``simulation_semantics_version`` WAS
+    gemessen wurde — ``inference_semantics_version`` versioniert, welches URTEIL (``oos_psr``/
+    ``oos_sortino`` definiert vs. ``None``, Guard getrippt ja/nein) eine bereits simulierte
+    Trade-Serie erhält (#965/#967-Diagnose-Vollständigkeit). Eine Study mit einer ALTEN Version
+    enthält Trials, deren Selektionsstatistik unter einem ANDEREN Inferenzregime bewertet wurde —
+    dieselbe fail-loud + Purge-Konsequenz, unter einem eigenen Fehlercode
+    (``REJECT_STALE_INFERENCE_SEMANTICS``).
+
+    Frische Studies werden mit ``optimizer.json['inference_semantics_version']`` gestempelt. Fehlt
+    der Config-Key, ist die Prüfung ein No-Op (rückwärtskompatibel zu Pre-#968-Configs)."""
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+    current = opt_data.get("inference_semantics_version")
+    if current is None:
+        return  # Versionierung nicht konfiguriert -> No-Op
+
+    existing = study.user_attrs.get("inference_semantics_version")
+    has_trials = len(study.trials) > 0
+
+    if existing == current:
+        return
+    if existing is None and not has_trials:
+        study.set_user_attr("inference_semantics_version", current)
+        return
+
+    msg = (f"Inferenz-Semantik-Versionskonflikt: die geladene Study wurde unter Version "
+           f"{existing if existing is not None else 'unversioniert'} bewertet, aktuell ist "
+           f"Version {current}. Die Selektionsstatistik-Urteile verschiedener Inferenz-Versionen "
+           f"sind NICHT vergleichbar (Guard-/PSR-Referenz hat sich geändert). Initiere Purge der "
+           f"obsoleten Study-Datenbank (.db)...")
+
+    if has_trials:
+        if existing is None or existing < current:
+            logger.warning("♻️ %s", msg)
+            try:
+                optuna.delete_study(study_name=study.study_name, storage=study._storage)
+                logger.warning(f"Obsolete Study '{study.study_name}' erfolgreich gelöscht. Sie wird beim nächsten Versuch neu erstellt.")
+            except Exception as e:
+                logger.error(f"Fehler beim Löschen der Study: {e}")
+            raise ValueError(f"REJECT_STALE_INFERENCE_SEMANTICS: Study-Inferenz-Semantik Mismatch. {msg}")
+
+    logger.warning("♻️ %s", msg)
+
+
 def make_objective(
     strategy: str,
     *,
@@ -1449,6 +1499,9 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
     # Docstring), unabhaengig geprueft/gestempelt.
     _check_simulation_semantics_version(study, opt_data)
+    # Issue #968 — dritte orthogonale Achse: welches URTEIL (Selektionsstatistik definiert/Guard
+    # getrippt) eine bereits simulierte Trade-Serie erhaelt, unabhaengig geprueft/gestempelt.
+    _check_inference_semantics_version(study, opt_data)
 
     # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
@@ -3292,6 +3345,9 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
     # Docstring), unabhaengig geprueft/gestempelt.
     _check_simulation_semantics_version(study, opt_data)
+    # Issue #968 — dritte orthogonale Achse: welches URTEIL (Selektionsstatistik definiert/Guard
+    # getrippt) eine bereits simulierte Trade-Serie erhaelt, unabhaengig geprueft/gestempelt.
+    _check_inference_semantics_version(study, opt_data)
 
     # Gate 2 — Warm-Start + Shrinkage-Referenz. Issue #565: definierter Fallback statt Silent-Zero.
     # Issue #704 — die Tier-Reihenfolge ist jetzt global_best → champion → strategy_defaults → none

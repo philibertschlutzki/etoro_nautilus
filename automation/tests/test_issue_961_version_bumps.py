@@ -13,9 +13,11 @@ def _load_optimizer_cfg() -> dict:
         return json.load(f)
 
 
-def test_reward_semantics_version_is_22():
+def test_reward_semantics_version_is_23():
+    """Issue #991 (Katalog E, GitHub-Issue #789) — bumped 22 -> 23 (Ausloeser #977/#966, siehe
+    test_issue_991_version_bumps.py fuer die vollstaendige v23-Verifikation)."""
     cfg = _load_optimizer_cfg()
-    assert cfg["reward_semantics_version"] == 22
+    assert cfg["reward_semantics_version"] == 23
 
 
 def test_simulation_semantics_version_is_4():
