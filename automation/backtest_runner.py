@@ -2045,6 +2045,34 @@ def _read_sortino_min_downside_observations() -> float:
     return val
 
 
+_sortino_downside_shrinkage_m0_cache: float | None = None
+
+
+def _read_sortino_downside_shrinkage_m0() -> float:
+    """Issue #944 (Katalog B, Zero-Hardcoding) — James-Stein-Skala fuer die Downside-Deviation-
+    Schrumpfung (``lambda = downside_obs / (downside_obs + m0)``): je kleiner ``m0`` relativ zu
+    ``downside_obs``, desto naeher bleibt die Schaetzung am reinen Downside-Nenner; je groesser,
+    desto staerker Richtung der robusteren Gesamtstreuung ALLER informativen Perioden.
+    ``tournament.json['sortino_downside_shrinkage_m0']``. Gecached (Hot-Path). Fehlt der Schlüssel
+    ⇒ 30 (Issue-#944-Vorschlag, begründet über SE(sigma_d)/sigma_d <= 1/sqrt(2*30) ≈ 12,9% als
+    Referenzpräzision bei m=30)."""
+    global _sortino_downside_shrinkage_m0_cache
+    if _sortino_downside_shrinkage_m0_cache is not None:
+        return _sortino_downside_shrinkage_m0_cache
+    val = 30.0
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = json.load(f).get("sortino_downside_shrinkage_m0")
+            if raw is not None:
+                val = float(raw)
+    except (OSError, ValueError, TypeError):
+        val = 30.0
+    _sortino_downside_shrinkage_m0_cache = val
+    return val
+
+
 def _read_sortino_min_periods_absolute() -> int:
     """Issue #863 — harte ABSOLUTE Untergrenze für JEDE Sortino-Schätzung
     (``tournament.json['sortino_min_periods_absolute']``), unabhängig vom relativen
@@ -2938,43 +2966,49 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                     "value": downside_obs,
                 })
                 return None, None, None, None, None, 0.0, 3.0, None, downside_obs
+            # Issue #944 (Katalog B, P0, Pitfall #296) — die vorherige Fassung VERWARF den Trial
+            # (SORTINO_INSUFFICIENT_DOWNSIDE, sortino/psr=None), sobald downside_obs unter die
+            # (proportionale ODER absolute) Schwelle fiel. Root-Cause: bei einer PROPORTIONALEN
+            # Schwelle (Default 0.5 * n_periods) ist die Verwerfungswahrscheinlichkeit MONOTON
+            # WACHSEND in der Qualitaet der Return-Verteilung — eine Strategie mit wenigen
+            # Verlustperioden (= gut) wird mit steigender Sicherheit verworfen, ein Anti-Selektions-
+            # Filter mit umgekehrtem Vorzeichen (Pitfall #296). Die Schaetzpraezision haengt an der
+            # ANZAHL m der Beobachtungen, nicht am Anteil (SE(sigma_d)/sigma_d ~ 1/sqrt(2m)).
+            #
+            # Fix: STATT zu verwerfen, wird dd_dev James-Stein-artig Richtung der Gesamt-
+            # Standardabweichung ALLER informativen Perioden (nicht nur der Downside-Teilmenge)
+            # geschrumpft — ein Trial mit duennem Downside-Nenner bleibt im Suchraum, seine
+            # Schaetzung wird nur konservativer (naeher an der robusteren Gesamtstreuung), statt
+            # komplett zu verschwinden. Kein Trial wird mehr allein wegen eines duennen Downside-
+            # Nenners verworfen (die dieselbe Konstante `sortino_min_downside_observations`
+            # zuvor gesteuerte Verwerfung wuerde ausserdem fuer hochselektive Strategien wie
+            # SqueezeBreakout — Median ~27 informative Perioden — dieselbe strukturelle
+            # Unerreichbarkeit reproduzieren, die #863 bereits als Regression identifiziert hatte).
             min_downside_obs_cfg = _read_sortino_min_downside_observations()
             if 0.0 < min_downside_obs_cfg <= 1.0:
                 min_downside_obs = min_downside_obs_cfg * n_periods
-                threshold_desc = f"{min_downside_obs_cfg:.2f} * n_periods={n_periods:d}"
             else:
                 min_downside_obs = min_downside_obs_cfg
-                threshold_desc = f"{min_downside_obs_cfg:g}"
-            if downside_obs < min_downside_obs:
+            shrinkage_lambda = 1.0
+            if downside_obs < min_downside_obs and downside_obs > 0:
+                m0 = _read_sortino_downside_shrinkage_m0()
+                shrinkage_lambda = float(downside_obs) / float(downside_obs + m0)
+                dd_dev_full = float(np.sqrt((informative_rets ** 2).mean(skipna=False)))
+                if pd.isna(dd_dev_full):
+                    dd_dev_full = dd_dev
+                dd_dev = shrinkage_lambda * dd_dev + (1.0 - shrinkage_lambda) * dd_dev_full
                 import logging
                 logging.getLogger("optimizer").info(
-                    "SORTINO_INSUFFICIENT_DOWNSIDE: downside_obs=%d < %s (n_periods=%d) — "
-                    "Downside-Deviation-Nenner zu duenn besetzt, kein numerischer Ausreisser "
-                    "(#823/#863; sortino/psr=None).",
-                    downside_obs, threshold_desc, n_periods,
+                    "SORTINO_DOWNSIDE_SHRUNK: downside_obs=%d < %.3g (n_periods=%d) — "
+                    "Downside-Deviation Richtung Gesamtstreuung geschrumpft (lambda=%.3f) statt "
+                    "verworfen (#944).", downside_obs, min_downside_obs, n_periods, shrinkage_lambda,
                 )
                 _inference_diagnostics.append({
-                    "code": "SORTINO_INSUFFICIENT_DOWNSIDE",
-                    "detail": f"downside_obs={downside_obs} < {threshold_desc} "
-                             f"(n_periods={n_periods}).",
+                    "code": "SORTINO_DOWNSIDE_SHRUNK",
+                    "detail": f"downside_obs={downside_obs} < {min_downside_obs:.3g} "
+                             f"(n_periods={n_periods}), shrinkage_lambda={shrinkage_lambda:.3f}.",
                     "value": downside_obs,
                 })
-                # Issue #845 Punkt 2 (bewusst NICHT umgesetzt, dokumentierter Scope-Cut) — der
-                # Issue-Text verlangt zusaetzlich ``oos_evaluated=False`` fuer genau diesen Trial,
-                # mit dem Ziel, dass der TPE-Sampler ihn NEUTRAL (weder gut noch schlecht) behandelt.
-                # Das erreicht diese Aenderung tatsaechlich NICHT: reward.calculate_reward_v2 nimmt
-                # ``not m.oos_evaluated`` in DENSELBEN Unevaluable-Pfad (Penalty + Shaping,
-                # penalty_unevaluable_oos) wie ein Trial, der NIE gehandelt hat — das ist eine ANDERE,
-                # eher schlechtere Bewertung, keine neutrale. Eine echte Neutralitaet (float('nan')
-                # ⇒ optuna.TrialPruned() im Objective) wuerde eine Aenderung an der Kernschleife von
-                # run_optimization.py voraussetzen (Fehlerklasse, die bereits #823 als riskant
-                # eingestuft hat) und ist ohne einen dedizierten Kalibrierlauf (verzerrt eine solche
-                # Behandlung den TPE-Sampler weg von legitim duennen Downside-Regionen? vgl. Pitfall
-                # #108-Klasse) nicht risikofrei umsetzbar. Dieser Fix belaesst ``oos_evaluated`` daher
-                # unveraendert True und beschraenkt sich auf die SICHERE, additive Telemetrie
-                # (``downside_obs`` oben, ``check_family_n_periods_homogeneity`` unten) — dieselbe
-                # Scope-Reduktion wie bei #843 (Pipelining, siehe sweep.run_per_symbol_sweep-Docstring).
-                return None, None, None, None, None, 0.0, 3.0, None, downside_obs
 
             downside_floor = _read_sortino_downside_floor()
             dd_dev = max(dd_dev, downside_floor)
@@ -3970,6 +4004,23 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             if exit_meta is not None:
                 level_is.update(_aggregate_exit_telemetry(split_is_meta))
                 level_oos.update(_aggregate_exit_telemetry(split_oos_meta))
+                # Issue #947 (Katalog B) — ein via EQUITY_STOPOUT geschlossener Round-Trip macht
+                # den gesamten Trial infeasible (wirtschaftlich ruiniert), nicht nur "schlecht
+                # bewertet": derselbe TRIAL_RUINED_STOPOUT-Code wie EQUITY_NONPOSITIVE
+                # (_contracts.py, failure_policy='prune'), damit run_optimization.py ihn ueber
+                # denselben, bereits verdrahteten inference_failure_policy='prune'-Pfad behandelt
+                # (#945), OHNE eine zweite, parallele Infeasibility-Kodierung einzufuehren.
+                for _level_name, _level_dict in (("is", level_is), ("oos", level_oos)):
+                    _stopout_n = (_level_dict.get("exit_reason_histogram") or {}).get(
+                        "EQUITY_STOPOUT", 0)
+                    if _stopout_n > 0:
+                        _level_dict.setdefault("inference_diagnostics", []).append({
+                            "code": "TRIAL_RUINED_STOPOUT",
+                            "detail": f"{_stopout_n} Round-Trip(s) via EQUITY_STOPOUT geschlossen "
+                                     f"({_level_name.upper()}) — Trial wirtschaftlich ruiniert "
+                                     "(#947).",
+                            "value": _stopout_n,
+                        })
                 # Issue #899 Fix 2 — oos_max_holding_bars als PRIMÄRE Bar-Messgrösse (statt nur
                 # oos_max_holding_time_s / 3600 im Konsumenten). #902 entfernt die verstreuten
                 # 3600.0-Literale aus invariants.py/run_optimization.py zugunsten von bar_seconds

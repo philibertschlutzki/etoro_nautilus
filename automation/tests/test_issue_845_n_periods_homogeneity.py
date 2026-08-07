@@ -85,9 +85,11 @@ def test_downside_obs_none_when_too_few_trades_for_sortino():
     assert stats.get("downside_obs") is None
 
 
-def test_downside_obs_survives_sortino_insufficient_downside_trip():
-    """SORTINO_INSUFFICIENT_DOWNSIDE (#823) setzt sortino/psr auf None -- downside_obs (bereits
-    berechnet, BEVOR die Schwelle geprueft wird) bleibt trotzdem als Zahl erhalten, nicht None."""
+def test_downside_obs_survives_sortino_downside_shrinkage():
+    """Issue #944 (Katalog B) — downside_obs unter der konfigurierten Schwelle fuehrt seit #944
+    NICHT MEHR zu SORTINO_INSUFFICIENT_DOWNSIDE/sortino=None (Anti-Selektions-Filter entfernt,
+    Pitfall #296): dd_dev wird stattdessen Richtung der Gesamtstreuung geschrumpft
+    (SORTINO_DOWNSIDE_SHRUNK). downside_obs bleibt in jedem Fall als Zahl erhalten, nicht None."""
     rng = np.random.default_rng(7)
     # Ueberwiegend positive Rendite -> wenige Downside-Beobachtungen.
     rets = rng.normal(0.02, 0.001, 40).tolist()
@@ -105,9 +107,9 @@ def test_downside_obs_survives_sortino_insufficient_downside_trip():
             pnl_list=[1.0] * 40, hold_list=[(3600 * 10**9, 1.0)] * 40,
             starting_capital=1000.0, mtm_series=series, min_trades_for_sortino=10)
 
-    assert stats["sortino_ratio"] is None
     diag_codes = {d["code"] for d in stats["inference_diagnostics"]}
-    assert "SORTINO_INSUFFICIENT_DOWNSIDE" in diag_codes
+    assert "SORTINO_INSUFFICIENT_DOWNSIDE" not in diag_codes
+    assert "SORTINO_DOWNSIDE_SHRUNK" in diag_codes
     assert stats["downside_obs"] == expected_downside
 
 

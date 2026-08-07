@@ -124,6 +124,18 @@ _register_inference_code(
     nullifies_metrics=("oos_sortino_period", "oos_psr", "oos_total_return"),
 )
 _register_inference_code(
+    # Issue #947 (Katalog B) — HourlyStrategyBase erzwingt seit diesem Fix einen Margin-Stop-out
+    # (equity <= stop_out_equity_frac * initial_equity ⇒ sofortiger Markt-Close, kein Handel mehr),
+    # BEVOR die Equity nicht-positiv werden kann (EQUITY_NONPOSITIVE bleibt als Defense-in-Depth
+    # bestehen, sollte aber nach diesem Fix praktisch nie mehr feuern). Ein Trial mit mindestens
+    # einem EQUITY_STOPOUT-Round-Trip ist wirtschaftlich ruiniert — dieselbe Konsequenz
+    # (failure_policy='prune') wie EQUITY_NONPOSITIVE, nur VOR statt NACH dem Kapitalverlust erkannt.
+    "TRIAL_RUINED_STOPOUT", failure_policy="prune", severity="blocking",
+    description="Mindestens ein Round-Trip wurde via EQUITY_STOPOUT (Margin-Stop-out, "
+                "stop_out_equity_frac) geschlossen — Trial wirtschaftlich ruiniert (#947).",
+    nullifies_metrics=("oos_sortino_period", "oos_psr", "oos_total_return"),
+)
+_register_inference_code(
     # Issue #914 — dieser Code (#901 neu eingeführt) fehlte bislang in JEDEM Konsumenten ausser
     # der Diagnose-Erzeugung selbst; ``inference_failure_policy='prune'`` konnte ihn nie greifen.
     "SORTINO_GUARD_REFERENCE_UNAVAILABLE", failure_policy="prune", severity="blocking",
@@ -168,4 +180,15 @@ _register_inference_code(
     "EXIT_CLOSE_UNRECOVERABLE", failure_policy="telemetry_only", severity="blocking",
     description=">= exit_close_max_retries verweigerte/abgelehnte Markt-Close-Versuche — Trial "
                 "als ungültig markiert statt einer still durchgehaltenen offenen Position (#859).",
+)
+_register_inference_code(
+    # Issue #944 (Katalog B) — ERSETZT die vorherige SORTINO_INSUFFICIENT_DOWNSIDE-Verwerfung für
+    # den Fall "downside_obs unter der (proportionalen/absoluten) Schwelle": der Trial wird NICHT
+    # mehr geprunt (das war der Anti-Selektions-Filter, Pitfall #296), sondern bleibt bewertbar,
+    # nur mit einer Richtung-Gesamtstreuung geschrumpften Downside-Deviation. 'telemetry_only', weil
+    # der Trial weiterhin einen gültigen Sortino/PSR trägt (kein Prune-Grund).
+    "SORTINO_DOWNSIDE_SHRUNK", failure_policy="telemetry_only", severity="medium",
+    description="downside_obs unter der konfigurierten Schwelle — Downside-Deviation James-Stein-"
+                "artig Richtung der Gesamtstreuung aller informativen Perioden geschrumpft, statt "
+                "den Trial zu verwerfen (#944, ersetzt die frühere Anti-Selektions-Verwerfung).",
 )
