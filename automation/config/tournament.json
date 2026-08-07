@@ -131,8 +131,7 @@
   "eligible_requires_all": [
     "min_trades",
     "max_drawdown",
-    "oos_min_psr",
-    "min_profit_factor"
+    "oos_min_psr"
   ],
   "eligible_requires_any": [],
   "scoring": {

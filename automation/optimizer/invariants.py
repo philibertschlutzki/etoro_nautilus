@@ -1584,6 +1584,50 @@ def check_cost_model_resolution(cost_model_events: list[dict], *,
     )
 
 
+def check_cost_model_floor(cost_model_events: list[dict], *,
+                           tolerance_bps: float = 1e-6) -> InvariantResult:
+    """Issue #956 (Katalog D, Pitfall #301) — kein Symbol darf mit einem Spread simuliert werden,
+    der UNTER der physikalischen Tick-Untergrenze liegt (``backtest_runner.tick_floor_spread_bps``:
+    ``1e4 * tick_size / median_price``). Eine Kostenkonstante je Asset-Klasse (z. B. EQUITY=3.0bps)
+    unterschätzt den Round-Trip bei einem Micro-Cap um bis zu Faktor ~17 — genau dort, wo der
+    Backtest die höchsten Roh-Renditen meldet (Pitfall #301). Diese Invariante bestätigt, dass
+    ``resolve_spread_bps``s ``max(config_wert, tick_floor_bps)``-Absicherung tatsächlich griff, für
+    jedes ``COST_MODEL_RESOLVED``-Event (dasselbe Schema wie ``check_cost_model_resolution``, jetzt
+    mit dem seit #956 mitgeführten ``tick_floor_bps``-Feld).
+
+    Events ohne ``tick_floor_bps``-Feld (ältere Läufe VOR #956, oder ein Symbol, für das der Floor
+    fail-open nicht berechenbar war — kein instrument_map-Eintrag/keine Preis-Stichprobe) sind NICHT
+    auswertbar und zählen nicht als Verstoß (kein rückwirkender FAIL auf Alt-Telemetrie)."""
+    evaluable = [e for e in (cost_model_events or []) if e.get("tick_floor_bps") is not None]
+    if not evaluable:
+        return InvariantResult(
+            name="check_cost_model_floor",
+            passed=True,
+            expected="spread_bps >= tick_floor_bps für jedes Symbol",
+            actual=None,
+            detail="Keine COST_MODEL_RESOLVED-Events mit tick_floor_bps-Feld — nicht auswertbar.",
+            severity="high",
+        )
+    offenders = [
+        {"symbol": e.get("symbol"), "spread_bps": e.get("spread_bps"),
+         "tick_floor_bps": e.get("tick_floor_bps")}
+        for e in evaluable
+        if float(e.get("spread_bps") or 0.0) < float(e.get("tick_floor_bps") or 0.0) - tolerance_bps
+    ]
+    passed = not offenders
+    return InvariantResult(
+        name="check_cost_model_floor",
+        passed=passed,
+        expected="spread_bps >= tick_floor_bps für jedes Symbol",
+        actual=len(offenders),
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)}/{len(evaluable)} Symbole simulierten GÜNSTIGER als die "
+                f"physikalische Tick-Untergrenze: {offenders} — resolve_spread_bps's max(...)-"
+                "Absicherung hat nicht gegriffen (#956)."),
+    )
+
+
 def check_family_scope_coherence(study_family_records: list[dict], *,
                                  promotion_family_scope: str | None = None) -> InvariantResult:
     """Issue #904 Fix 4 — bei ``promotion_family_scope == 'per_strategy'`` müssen zwei Studies

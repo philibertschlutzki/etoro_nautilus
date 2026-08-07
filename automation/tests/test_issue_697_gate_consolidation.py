@@ -52,9 +52,11 @@ def test_eligible_requires_all_matches_documented_default():
     oos_max_drawdown) — die Konjunktion enthält seither genau EIN risikoadjustiertes Rendite-Gate.
     Issue #888 verschob 'min_profit_factor' aus dem (einelementigen, faktisch konjunktiven)
     eligible_requires_any-OR-Arm hierher (Pitfall #279 — eine Disjunktion über genau ein Element
-    ist logisch identisch mit einer Konjunktions-Klausel)."""
+    ist logisch identisch mit einer Konjunktions-Klausel). Issue #960 entfernte es wieder (sechste
+    Redundanz-Instanz: Jaccard 0.964-0.979 mit oos_min_psr, gemessener marginaler Eigenbeitrag
+    exakt 0.000 über 100-160 Trials in >= 3 Studies)."""
     assert CFG["eligible_requires_all"] == [
-        "min_trades", "max_drawdown", "oos_min_psr", "min_profit_factor",
+        "min_trades", "max_drawdown", "oos_min_psr",
     ]
 
 

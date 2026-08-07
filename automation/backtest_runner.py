@@ -1053,10 +1053,80 @@ def _resolve_asset_class_for_symbol(inst_id_str: str, *, policy: str = "reject")
     return asset_class_key
 
 
+def tick_floor_spread_bps(median_price: float | None, tick_size: float | None) -> float:
+    """Issue #956 (Katalog D, Pitfall #301) — physikalische UNTERGRENZE für den Round-Trip-Spread
+    eines Instruments: ``1e4 * tick_size / median_price`` [bps]. Bei einem Mindestpreisschritt
+    ``tau`` und Preis ``P`` kann der reale Quote-Spread nie enger sein als ein Tick — eine
+    Kostenkonstante je Asset-Klasse (z. B. EQUITY=3.0bps) unterschätzt den Round-Trip bei einem
+    $2-Micro-Cap ($0.01-Tick) um Faktor ~17 (50bps physikalische Untergrenze vs. 3.0bps konfiguriert).
+
+    Die Schranke ist bewusst KONSERVATIV (unterstellt genau 1 Tick Quote-Spread, ignoriert
+    Broker-Aufschlag/Markttiefe/Slippage) — geeignet als Untergrenze (``max(...)`` mit der
+    konfigurierten Kostenkonstante), nie als Punktschätzung des tatsächlichen Spreads.
+
+    ``median_price``/``tick_size`` fehlend oder <= 0 ⇒ 0.0 (kein Floor anwendbar, fail-open)."""
+    if not median_price or median_price <= 0 or not tick_size or tick_size <= 0:
+        return 0.0
+    return 1e4 * float(tick_size) / float(median_price)
+
+
+def _resolve_price_precision_for_symbol(inst_id_str: str) -> int | None:
+    """Issue #956 — Analog zu ``_resolve_asset_class_for_symbol``: liest ``price_precision`` aus
+    ``instrument_map.json`` (Single Source of Truth) für die Tick-Grössen-Ableitung
+    (``tick_size = 10 ** -price_precision``). ``None`` bei fehlendem Eintrag/Lesefehler
+    (fail-open — der Aufrufer behandelt das wie "kein Tick-Floor anwendbar")."""
+    try:
+        instrument_map_path = str(config_dir() / "instrument_map.json")
+        with open(instrument_map_path, "r", encoding="utf-8") as f:
+            inst_map = json.load(f).get("instruments", {})
+        for _, inst_data in inst_map.items():
+            if inst_data.get("symbol") == inst_id_str:
+                pp = inst_data.get("price_precision")
+                return int(pp) if pp is not None else None
+    except Exception:
+        pass
+    return None
+
+
+def _quick_median_price_from_catalog(catalog_path, inst_id_str: str,
+                                     max_rows: int = 500) -> float | None:
+    """Issue #956 — schneller, beschränkter Preis-Sample für die Tick-Untergrenze
+    (``tick_floor_spread_bps``): liest NUR die letzte Parquet-Row-Group von bid_price/ask_price
+    direkt via pyarrow (analog ``sweep._load_symbol_bar_quality_sample``, ohne die volle
+    NautilusTrader-``ParquetDataCatalog``-Materialisierung). Muss VOR ``load_ticks_from_catalog``
+    laufen können (der volle Tick-Load braucht bereits den aufgelösten ``spread_bps`` als
+    Parameter — zirkuläre Abhängigkeit, siehe Docstring von ``resolve_spread_bps``).
+
+    Fail-open: JEDER Fehler liefert ``None`` (kein Tick-Floor, bit-identisches Verhalten zum
+    Pre-#956-Zustand)."""
+    try:
+        import pyarrow.parquet as pq
+        pq_file = Path(catalog_path) / "data" / "quote_tick" / inst_id_str / "data.parquet"
+        if not pq_file.exists():
+            return None
+        pf = pq.ParquetFile(str(pq_file))
+        cols = [c for c in ("bid_price", "ask_price") if c in pf.schema.names]
+        if len(cols) < 2:
+            return None
+        last_rg = pf.metadata.num_row_groups - 1
+        if last_rg < 0:
+            return None
+        df = pf.read_row_group(last_rg, columns=cols).to_pandas()
+        if df.empty:
+            return None
+        if len(df) > max_rows:
+            df = df.tail(max_rows)
+        median_mid = float(((df["bid_price"].astype(float) + df["ask_price"].astype(float)) / 2.0).median())
+        return median_mid if median_mid > 0 else None
+    except Exception:
+        return None
+
+
 def resolve_spread_bps(inst_id_str: str,
                        spread_bps_by_asset_class: dict | None,
                        spread_bps_by_symbol: dict | None,
-                       asset_class_key: str = "DEFAULT") -> float:
+                       asset_class_key: str = "DEFAULT",
+                       *, tick_floor_bps: float = 0.0) -> float:
     """Issue #566 — Single Source of Truth für die Spread-Auflösung (bps).
 
     Auflösungsreihenfolge (strikt): Symbol-Override (``spread_bps_by_symbol[inst_id]``) →
@@ -1070,18 +1140,24 @@ def resolve_spread_bps(inst_id_str: str,
     EQUITY=3.0bps auf). Ein ``asset_class_key``, der weder ``'UNKNOWN'`` noch in
     ``spread_bps_by_asset_class`` vorhanden ist, ist ein KONFIGURATIONSFEHLER (ein im
     Instrument-Map registrierter Asset-Class-Wert ohne Kosten-Eintrag) und wirft — nicht die
-    Instrument-Metadaten sind hier unvollständig, sondern die Kosten-Konfiguration."""
+    Instrument-Metadaten sind hier unvollständig, sondern die Kosten-Konfiguration.
+
+    Issue #956 (Katalog D) — ``tick_floor_bps`` (Default 0.0, additiv opt-in, bit-identisch für
+    jeden Aufrufer, der ihn nicht setzt) ist eine physikalische UNTERGRENZE
+    (``tick_floor_spread_bps``): das Ergebnis ist NIE kleiner als dieser Wert, unabhängig davon,
+    ob die Config-Konstante (Symbol-Override oder Asset-Class) darunter liegt. ``max(...)`` ist
+    Absicht — bei Kostenschätzung ist die konservativere (höhere) Zahl die sicherere."""
     if spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol:
-        return float(spread_bps_by_symbol[inst_id_str])
+        return max(float(spread_bps_by_symbol[inst_id_str]), tick_floor_bps)
     if not spread_bps_by_asset_class:
-        return 0.0
+        return tick_floor_bps
     if asset_class_key not in spread_bps_by_asset_class:
         raise ValueError(
             f"resolve_spread_bps: asset_class_key='{asset_class_key}' ({inst_id_str}) ist nicht in "
             f"spread_bps_by_asset_class ({sorted(spread_bps_by_asset_class)}) — stiller Rückfall auf "
             f"DEFAULT ist seit Issue #898 verboten (Konfigurationsfehler, kein unbekanntes Symbol)."
         )
-    return float(spread_bps_by_asset_class[asset_class_key])
+    return max(float(spread_bps_by_asset_class[asset_class_key]), tick_floor_bps)
 
 
 def resolve_atr_floor_bps(inst_id_str: str,
@@ -4850,8 +4926,23 @@ def run_single_backtest_worker(
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
 
+            # Issue #956 (Katalog D, P0) — physikalische Tick-Untergrenze VOR der Konfig-Auflösung
+            # berechnen: ein $2-Micro-Cap mit $0.01-Tick hat eine Round-Trip-Untergrenze von 50bps,
+            # weit über der konfigurierten EQUITY-Konstante (3.0bps) — der Backtest darf nie
+            # GÜNSTIGER simulieren, als physikalisch möglich ist. Fail-open: fehlt price_precision
+            # ODER die Preis-Stichprobe (kein Katalog/keine Ticks/jeder Lesefehler), bleibt
+            # tick_floor_bps=0.0 (bit-identisches Pre-#956-Verhalten).
+            _tick_floor_bps = 0.0
+            _price_precision = _resolve_price_precision_for_symbol(inst_id_str)
+            if _price_precision is not None:
+                _median_price_sample = _quick_median_price_from_catalog(
+                    effective_catalog_path, inst_id_str)
+                _tick_floor_bps = tick_floor_spread_bps(
+                    _median_price_sample, 10.0 ** -_price_precision)
+
             spread_bps = resolve_spread_bps(
-                inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key)
+                inst_id_str, spread_bps_by_asset_class, spread_bps_by_symbol, asset_class_key,
+                tick_floor_bps=_tick_floor_bps)
             atr_floor_bps_resolved = resolve_atr_floor_bps(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
             opening_range_session_open_hour_resolved = resolve_opening_range_session_open_hour(
@@ -4865,11 +4956,18 @@ def run_single_backtest_worker(
             # bestandener Pfad ohne Zahlen ist keine Evidenz, siehe #900-Docstring-Analogie).
             import logging as _logging_cost_model
             from automation.log_manager import emit_execution_event as _emit_cost_model_event
+            # Issue #956 — "source" wird 'tick_floor', wenn die physikalische Untergrenze die
+            # Config-Konstante tatsaechlich uebersteuert hat (Faktor sichtbar via tick_floor_bps),
+            # sonst bleibt die bisherige Quelle (symbol_override/asset_class) unveraendert.
+            _cost_source = "symbol_override" if has_symbol_override else "asset_class"
+            if _tick_floor_bps > 0.0 and spread_bps <= _tick_floor_bps + 1e-9:
+                _cost_source = "tick_floor"
             _emit_cost_model_event(_logging_cost_model.getLogger("backtest_worker"), "COST_MODEL_RESOLVED", {
                 "symbol": inst_id_str,
                 "asset_class_key": asset_class_key,
                 "spread_bps": spread_bps,
-                "source": "symbol_override" if has_symbol_override else "asset_class",
+                "source": _cost_source,
+                "tick_floor_bps": round(_tick_floor_bps, 4),
                 "atr_floor_bps": atr_floor_bps_resolved,
             })
 

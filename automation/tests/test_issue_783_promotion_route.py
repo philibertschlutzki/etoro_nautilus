@@ -18,10 +18,13 @@ from automation.optimizer.report import _study_record
 
 
 def _mk(*, sortino, ret, dd):
+    # Issue #958 — oos_n_periods > 0 macht diesen Fixture-Trial admissible (ein real evaluierter
+    # Trial mit 30 Trades haette in der Praxis stets > 0 OOS-Perioden).
     return TournamentMetrics(
         oos_evaluated=True, oos_eligible=True, is_sortino_median=None,
         oos_sortino=sortino, oos_max_drawdown=dd, oos_total_trades=30, win_count=1,
-        fully_eligible_pairs=1, is_total_trades=100, oos_total_return=ret)
+        fully_eligible_pairs=1, is_total_trades=100, oos_total_return=ret,
+        oos_n_periods=50)
 
 
 def _patch(tmp_path, monkeypatch):

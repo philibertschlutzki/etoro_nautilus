@@ -1276,6 +1276,25 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Ambiguität. Default (Symbol-Holdout-Gate selbst gescheitert): REJECT_HOLDOUT_GATE.
     holdout_reject_detail = None if holdout_passed else "REJECT_HOLDOUT_GATE"
 
+    # Issue #958 (Katalog D, P0) — ein Trial ohne eine einzige OOS-Periode (``oos_n_periods == 0``)
+    # hat keinen Sortino, keine PSR, keinen Profit-Faktor und keine Expectancy — er kann nicht "am
+    # besten" sein. VOR diesem Fix konnte ``_median_rank_index`` (der nach ``oos_total_return``
+    # rankt, nicht nach ``oos_n_periods``) einen solchen Trial trotzdem zum ``promoted_trial``
+    # machen; downstream bildete die Deflations-Stratifizierung das auf "Stratum None" ab (#865),
+    # statt die eigentliche Ursache — ein unzulaessiger Kandidat — sichtbar zu machen. Bewusst NICHT
+    # als Filter VOR der Median-Rang-Auswahl umgesetzt (das haette ``eligible_trials``/die Top-k-
+    # Kohorte fuer die vielen bestehenden Tests veraendert, die ``oos_selection_statistic_available``
+    # nicht setzen); stattdessen ein narrower Guard genau an der Stelle, an der die tatsaechliche
+    # Promotions-Entscheidung faellt — derselbe #654-Musterblock wie jedes andere Holdout-Gate.
+    if holdout_passed and not (getattr(promoted_m_symbol, "oos_n_periods", 0) or 0) >= 1:
+        holdout_passed = False
+        holdout_reject_detail = "REJECT_PROMOTED_TRIAL_INADMISSIBLE"
+        logging.getLogger("optimizer").error(
+            "[#958] %s/%s: promoted_trial hat oos_n_periods=%r (< 1) — Promotion verweigert statt "
+            "eines degenerierten Study-Besten (Stratum-None-Klasse).",
+            strategy, symbol, getattr(promoted_m_symbol, "oos_n_periods", None),
+        )
+
     # Issue #865 (Pitfall #277) — die Heterogenitäts-Politik wird JETZT angewendet, VOR der DSR-
     # Berechnung/-Entscheidung unten — nicht erst an der Export-Kohärenzgrenze (die dortige #845-
     # Prüfung kam bislang zu spät: die Promotion hatte die DSR bereits aus der inkommensurablen
