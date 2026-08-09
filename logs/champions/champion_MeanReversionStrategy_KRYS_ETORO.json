@@ -1,0 +1,54 @@
+{
+  "strategy": "MeanReversionStrategy",
+  "symbol": "KRYS.ETORO",
+  "tier": "all",
+  "params": {
+    "keltner_period": 13,
+    "keltner_atr_period": 9,
+    "keltner_multiplier": 3.465789509937164,
+    "cooldown_bars": 5,
+    "atr_trailing_multiplier": 0.40154356643812883,
+    "max_bars_in_trade": 19,
+    "dyn_tp_enabled": false
+  },
+  "quality": {
+    "R_symbol": 0.043724588290579555,
+    "R_global": -0.09197825025621945,
+    "reward": 4.577633109950466
+  },
+  "provenance": {
+    "run_id": "6dbc228c_20260807T205802986791",
+    "source_trial_dir": "/home/user/etoro_nautilus/data/optimizer/confirm_MeanReversionStrategy_KRYS_ETORO_8dcebd9a/trial_0000",
+    "holdout_reject_detail": "REJECT_HOLDOUT_GATE",
+    "status_at_store": "REJECTED_ON_HOLDOUT",
+    "holdout_binding_gate": "oos_min_expectancy",
+    "holdout_gate_deltas": {
+      "oos_min_trades": 66.0,
+      "oos_min_total_return": 0.048195556749899504,
+      "oos_min_expectancy": 0.004089157959366643,
+      "oos_max_drawdown": 0.29640345234034654,
+      "oos_min_win_rate": 0.08255813953488372,
+      "oos_min_profit_factor": 3.882362698883307,
+      "oos_min_excess_return": 0.09644362241434024,
+      "oos_min_profitable_folds_frac": 0.5
+    }
+  },
+  "integrity": {
+    "reward_semantics_version": 23,
+    "params_schema_version": "atr_trailing_multiplier,cooldown_bars,keltner_atr_period,keltner_multiplier,keltner_period,max_bars_in_trade",
+    "simulation_semantics_version": 4,
+    "data_snapshot_sha256": "88debffb07f49e8359d8d60d53423b926b8e3dc641b77c86438a9f05f3b54f9a",
+    "catalog_newest_ns": 1786129200000000000
+  },
+  "lifecycle": {
+    "first_seen_run": "6dbc228c_20260807T205802986791",
+    "first_seen_catalog_newest_ns": 1786129200000000000,
+    "corroboration_count": 1,
+    "last_seen_run": "6dbc228c_20260807T205802986791",
+    "last_R_symbol": 0.043724588290579555,
+    "degrade_streak": 0,
+    "writeback_applied": false,
+    "snapshot_rollover_count": 0,
+    "semantics_migrated_from": null
+  }
+}
