@@ -1,50 +1,51 @@
 # Issue #795: Refactor Time-Box Penalty to Continuous Time-Decay Function
 
 **Status:** Open  
-**Priority:** P0 (Kritisch für Trendfolge-Strategien & Reward-Gradieten)  
-**Labels:** Quant, Optimizer, Reward-Design  
+**Priority:** P0 (Kritisch für Trendfolge-Strategien & Reward-Gradienten)  
+**Labels:** Quant, Optimizer, Reward-Design, Profit-Optimization  
 **Target Component:** `automation/optimizer/reward.py`, `automation/optimizer/spaces.py`, `automation/tests/test_issue_711_time_box_penalty.py`  
 
 ---
 
-## 1. Symptomatik & Problemanalyse
+## 1. Symptomatik & Empirische Problemanalyse
 
-### Baseline-Befund aus `combined_proposals.json` & `logs/fails/*.log`
-In `combined_proposals.json` führten 61 Proposals zu einem direkten Abbruch mit `REJECT_OOS_TIMEBOX_VIOLATION`.
+### Baseline-Befund aus `combined_proposals.json`
+In `combined_proposals.json` führten **61 Proposals** zu einem direkten Abbruch mit `REJECT_OOS_TIMEBOX_VIOLATION`.
 
-### Ursachenanalyse
-Die aktuelle Time-Box Penalty Logik (`automation/tests/test_issue_711_time_box_penalty.py`) verwendet eine harte, stufenförmige Diskontinuität (Step Function): Sobald ein Trade länger als eine fixe Kante (z. B. $t > 24h$) offen bleibt, fällt eine scharfe Strafgebühr an.
+### Quant-Analyse des Ertragsverlusts:
+Die bisherige Time-Box Logik verwendet eine harte Stufenfunktion (Step Function): Sobald ein Trade länger als $t_{max} = 24h$ läuft, verfällt eine scharfe Pauschalstrafe.
 
-1. **Gradienten-Klippe für den Optimizer:** Eine Stufenfunktion zerstört den lokalen Gradienten im Parameterraum. Für den TPE/GP-Sampler erscheint der Übergang von 23h59m zu 24h01m wie ein abstürzender Abgrund ("Cliff Effect").
-2. **Abwürgen von Trendfolge-Gewinnen:** Trend-Strategien, die ihre Gewinne laufen lassen, werden künstlich abgeschnitten. Opportunity Costs in CHF und Overnight-Funding-Risiken skalieren stetig mit der Zeit, nicht in einer binären Stufe.
+1. **Zerstörung der Gradienten-Information:** Eine Stufenfunktion besitzt überall die Ableitung $0$ und an der Kante eine undefinierte Sprungstelle. Der Bayesian TPE/GP-Sampler kann im Parameterraum kein geglättetes Oberflächenmodell lernen ("Cliff Effect").
+2. **Abwürgen hochprofitabler Trends:** Reale Markt-Trends dauern oft länger als 24 Stunden. Eine harte Klippe zwingt das System, Positionen vorzeitig zu schliessen und entzieht der Strategie den grössten Teil ihres Reingewinns in CHF. Opportunity Costs und Overnight-Funding-Gebühren verlaufen stetig, nicht in Stufen.
 
 ---
 
-## 2. Mathematisches Zielmodell & Spezifikation
+## 2. Mathematisches Zielmodell (Continuous Exponential Decay)
 
-Ersetzung der diskreten Klippe durch eine stetig differenzierbare, exponentielle **Time-Decay Straffunktion** $Penalty\_Factor \in (0, 1.0]$.
+Ersetzung der diskreten Klippe durch eine stetig differenzierbare, exponentielle **Time-Decay Straffunktion** $Penalty(t) \in (0, 1.0]$.
 
 ### Mathematische Formulierung:
 
-1. **Kontinuierliche Time-Decay Funktion:**
-   $$Penalty\_Factor(t) = \exp\left( -\lambda \cdot \max(0, t - t_{soft}) \right)$$
+1. **Stetiges Exponentielles Decay-Modell:**
+   $$Penalty(t) = \exp\left( -\lambda_{decay} \cdot \max(0, t - t_{soft}) \right)$$
    wobei:
    * $t$: Haltedauer des Trades in Stunden.
-   * $t_{soft}$: Soft-Penalty Start-Grenzschwelle (z. B. $t_{soft} = 6.0$ Stunden).
-   * $\lambda$: Exponentielle Decay-Konstante.
+   * $t_{soft}$: Beginn der Opportunity-Cost Bepreisung (z. B. $t_{soft} = 6.0$ Stunden).
+   * $\lambda_{decay}$: Kalibrierte Decay-Konstante.
 
-2. **Decay-Rate Kalibrierung ($\lambda$):**
-   $\lambda$ wird so gewählt, dass bei $t = t_{max} = 24.0$ Stunden die Penalty einen Zielwert (z. B. 0.20) erreicht:
-   $$\lambda = \frac{-\ln(0.20)}{t_{max} - t_{soft}} = \frac{1.6094}{18.0} \approx 0.0894$$
+2. **Exakte Kalibrierung an Ziel-Strafe bei $t_{max}$:**
+   $$\lambda_{decay} = \frac{-\ln(Penalty_{target})}{t_{max} - t_{soft}}$$
+   Für $Penalty_{target} = 0.20$ bei $t_{max} = 24.0h$ und $t_{soft} = 6.0h$:
+   $$\lambda_{decay} = \frac{-\ln(0.20)}{18.0} \approx 0.0894$$
 
-3. **Modifizierter Trade-Score:**
-   $$Score_{adj} = Score_{raw} \cdot Penalty\_Factor(t)$$
+3. **Integrierte Ertrags-Bewertung in CHF:**
+   $$EV_{adj}(t) = EV_{raw} \cdot Penalty(t) - \text{Funding\_Costs}_{CHF}(t)$$
 
 ---
 
-## 3. Konkreter Umsetzungsplan (Code-Ebene)
+## 3. Umsetzungs-Spezifikation (Code-Ebene)
 
-### Anpassung in `automation/optimizer/reward.py`
+### Modifikation in `automation/optimizer/reward.py`
 
 ```python
 import math
@@ -56,7 +57,8 @@ def calculate_continuous_time_decay_penalty(
     penalty_at_max: float = 0.20
 ) -> float:
     """
-    Berechnet die stetige exponentielle Time-Decay Penalty.
+    Berechnet die stetige, differenzierbare Time-Decay Penalty zur Erhaltung glatter
+    Optimizer-Gradienten und Verhinderung des vorzeitigen Abwürgens von Trends.
     """
     if holding_time_hours <= t_soft_hours:
         return 1.0
@@ -69,16 +71,13 @@ def calculate_continuous_time_decay_penalty(
     return float(max(0.0, min(1.0, penalty_factor)))
 ```
 
-### Parameter-Deklaration in `automation/optimizer/spaces.py`
-Aufnahme des Parameters `decay_lambda` als kontinuierliche Suchraum-Variable in `spaces.py`.
-
 ---
 
 ## 4. Akzeptanzkriterien & Verifikation
 
-- [ ] **Stetigkeit verifiziert:** Die Penalty-Funktion ist in $[6h, 24h]$ strikt stetig und monoton fallend ohne Sprungstellen.
-- [ ] **Gradienten-Erhaltung:** Das TPE-Optimizer-Signal bleibt im gesamten Parameterraum glatt.
-- [ ] **Unit-Test Abdeckung:** `automation/tests/test_issue_795_continuous_time_decay_penalty.py` testet:
-  1. $Penalty\_Factor(t) = 1.0$ für $t \le 6h$.
-  2. Exact Matching des Zielwerts bei $t = 24h$.
-  3. Vollständiges Abfedern von `REJECT_OOS_TIMEBOX_VIOLATION` Klippen.
+- [ ] **Stetigkeit & Differenzierbarkeit:** Die Straffunktion ist auf $[0, \infty)$ stetig ohne Sprungstellen.
+- [ ] **Eliminierung der 61 Timebox-Abbrüche:** 0 Abbrüche durch harte `REJECT_OOS_TIMEBOX_VIOLATION` Klippen.
+- [ ] **Unit-Test Abdeckung:** `automation/tests/test_issue_795_continuous_time_decay_penalty.py` verifiziert:
+  1. Smooth Gradientenverlauf im TPE-Optimizer.
+  2. Exakte Übereinstimmung mit dem Kalibrierungspunkt bei $t = 24h$.
+  3. Höhere Ertragsausbeute bei langanhaltenden Trendfolge-Positionen.

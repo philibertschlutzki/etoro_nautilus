@@ -1,62 +1,68 @@
-# Issue #794: Dynamic Position Sizing via Fractional Kelly Criterion
+# Issue #794: Dynamic Position Sizing via Fractional Kelly Criterion zur Ertrags-Maximierung
 
 **Status:** Open  
-**Priority:** P1 (Ertrags-Maximierung im Live-Handel)  
-**Labels:** Quant, Money-Management, Live-Execution  
+**Priority:** P1 (Haupttreiber für maximale Erträge im Live-Handel)  
+**Labels:** Quant, Money-Management, Live-Execution, Profit-Optimization  
 **Target Component:** `automation/fractional_trading.py`, `automation/momentum_ls_allocator.py`, `automation/tests/test_allocator.py`  
 
 ---
 
-## 1. Symptomatik & Problemanalyse
+## 1. Symptomatik & Ertrags-Potenzial
 
 ### Baseline-Befund
-Die aktuelle Kapitalallokation verwendet eine statische Positionsgrössenbestimmung (z. B. fester Prozentwert des Gesamtkapitals oder einfache Gleichgewichtung). 
+Die aktuelle Allokation nutzt statische Positionsgrössen (z. B. 1% bis 2% festes Kapital pro Trade). 
 
-* **Problem 1:** Ausgezeichnete Strategien mit hohem Sharpe Ratio und verifizierten Holdout-Ergebnissen werden kapitalmässig genauso behandelt wie schwache Grenzstrategien.
-* **Problem 2:** Ohne Einbezug des Erwartungswerts und des Risiko-Profils verfehlt die Strategie das theoretische Optimum der Kapitalwachstumsrate (Capital Growth Rate) bei weitem, wodurch im realen Handel erhebliche Erträge liegen bleiben.
+### Quant-Analyse des Ertragsverlusts:
+In der Theorie des optimalen Kapitalwachstums (Kelly, 1956; Breiman, 1961) ist die logarithmische Vermögenswachstumsrate $g(f)$ bei fester Positionsgrösse stark sub-optimal. 
+
+1. **Unterallokation bei Top-Performance:** Strategien mit hoher Win Rate ($p > 0,60$) und verifiziertem OOS-Edge werden mit demselben geringen Kapital gewichtet wie schwache Grenzstrategien.
+2. **Ruined-Risk bei statischem Overbetting:** Ohne stetige Anpassung an das Payoff-Verhältnis $b/a$ verfehlt die Strategie die maximale Kapital-Zinseszins-Kurve in CHF.
 
 ---
 
-## 2. Mathematisches Zielmodell & Spezifikation
+## 2. Mathematisches Zielmodell (Ertrags-Maximiertes Kelly)
 
-Integration der dynamischen Kapitalallokation basierend auf dem **Fractional Kelly Criterion** unter Nutzung der verifizierten Out-of-Sample (Holdout) Metriken.
+Integration einer dynamischen Kapitalallokation basierend auf dem **Fractional Kelly Kriterium** unter Nutzung der verifizierten Out-of-Sample (Holdout) Metriken.
 
 ### Mathematische Formulierung:
 
-1. **Kelly-Formel für ungleiches Payoff-Verhältnis:**
-   $$f^* = \frac{p}{a} - \frac{q}{b}$$
+1. **Kelly-Formel für ungleiche Payoffs:**
+   $$f^* = \frac{p}{a} - \frac{1-p}{b}$$
    wobei:
-   * $p$: Win Rate (Holdout OOS Win Rate)
-   * $q = 1 - p$: Loss Rate
-   * $b = \frac{\text{Avg Win in CHF}}{\text{Total Capital CHF}}$: Relativer Gewinn pro Trade
-   * $a = \frac{\text{Avg Loss in CHF}}{\text{Total Capital CHF}}$: Relativer Verlust pro Trade
+   * $p$: OOS Win Rate ($p = \text{oos\_win\_rate}$)
+   * $b = \frac{\overline{W}_{CHF}}{\text{Capital}_{CHF}}$: Relativer Durchschnittsgewinn pro Trade
+   * $a = \frac{\overline{L}_{CHF}}{\text{Capital}_{CHF}}$: Relativer Durchschnittsverlust pro Trade
 
-2. **Fractional Multiplier $k_{kelly}$:**
-   Zur Vermeidung exzessiver Drawdowns (Overbetting Risk) wird die Allokation skaliert:
-   $$f_{alloc} = k_{kelly} \cdot f^*$$
-   mit $k_{kelly} \in [0.25, 0.50]$ (Quarter-Kelly oder Half-Kelly).
+2. **Fractional Multiplier $k_{kelly}$ & Volatilitäts-Skalierung:**
+   $$f_{alloc} = k_{kelly} \cdot f^* \cdot \left(\frac{\sigma_{target}}{\sigma_{asset}}\right)$$
+   wobei $k_{kelly} \in [0.25, 0.50]$ (Half-Kelly / Quarter-Kelly) das Overbetting-Risiko eliminiert.
 
-3. **Hard Exposure Cap & Safety Floor:**
-   $$f_{final} = \min\left(f_{max\_exposure}, \max\left(0, f_{alloc}\right)\right)$$
-   wobei $f_{max\_exposure}$ durch das Aggregate Exposure Cap (z. B. max 15% des Gesamtkapitals pro Position) begrenzt ist.
+3. **Hard CHF Exposure Cap & Drawdown Feedback Control:**
+   $$f_{final} = \min\left(f_{max\_exposure}, \max\left(0, f_{alloc} \cdot \psi(DD)\right)\right)$$
+   wobei $\psi(DD) = \max\left(0.2, 1.0 - \frac{DD_{current}}{DD_{max}}\right)$ ein automatischer Feedback-Dämpfer bei aktuellen Portfolio-Drawdowns ist.
 
 ---
 
-## 3. Konkreter Umsetzungsplan (Code-Ebene)
+## 3. Umsetzungs-Spezifikation (Code-Ebene)
 
-### Implementierung in `automation/fractional_trading.py`
+### Modifikation in `automation/fractional_trading.py`
 
 ```python
+import numpy as np
+
 def calculate_fractional_kelly_size(
     win_rate: float,
     avg_win_chf: float,
     avg_loss_chf: float,
     total_capital_chf: float,
     fractional_multiplier: float = 0.5,
-    max_exposure_fraction: float = 0.15
+    max_exposure_fraction: float = 0.15,
+    current_drawdown_frac: float = 0.0,
+    max_drawdown_limit: float = 0.20
 ) -> float:
     """
-    Berechnet die optimale Positionsgrösse f* nach dem Fractional Kelly Kriterium.
+    Berechnet die ertragsoptimierte Positionsgrösse f* nach dem Fractional Kelly Kriterium
+    mit Drawdown-Feedback-Schleife und Hard-Exposure Cap.
     """
     if total_capital_chf <= 0 or avg_loss_chf <= 0 or avg_win_chf <= 0:
         return 0.0
@@ -71,11 +77,14 @@ def calculate_fractional_kelly_size(
         return 0.0
         
     f_star = (p / a) - (q / b)
-    
     if f_star <= 0:
         return 0.0
         
-    f_alloc = f_star * fractional_multiplier
+    # Drawdown Feedback Control
+    dd_ratio = min(1.0, current_drawdown_frac / max(0.01, max_drawdown_limit))
+    psi_dd = max(0.2, 1.0 - dd_ratio)
+    
+    f_alloc = f_star * fractional_multiplier * psi_dd
     f_final = min(max_exposure_fraction, f_alloc)
     
     return float(f_final)
@@ -85,9 +94,9 @@ def calculate_fractional_kelly_size(
 
 ## 4. Akzeptanzkriterien & Verifikation
 
-- [ ] **Kelly Calculator Modul integriert:** `calculate_fractional_kelly_size` ist in `automation/fractional_trading.py` eingebaut und im Allocator (`automation/momentum_ls_allocator.py`) angebunden.
-- [ ] **Sicherheitskappung aktiv:** Hard Exposure Cap (max 15% CHF pro Trade) wird bei allen Berechnungen eingehalten.
+- [ ] **Kelly-Calculator produktiv:** `calculate_fractional_kelly_size` ist im Allocator (`automation/momentum_ls_allocator.py`) verdrahtet.
+- [ ] **Ertrags-Maximierung nachgewiesen:** Backtest-Vergleich zeigt mindestens 25% höhere Zinseszins-Rendite in CHF gegenüber statischem Sizing bei gleichem Max Drawdown.
 - [ ] **Unit-Test Abdeckung:** `automation/tests/test_issue_794_fractional_kelly_position_sizing.py` prüft:
-  1. $f^* = 0.0$ wenn $EV \le 0$ oder $p < 0.35$ bei $b/a = 1.0$.
-  2. Korrekte Skalierung bei Half-Kelly ($k=0.5$) und Quarter-Kelly ($k=0.25$).
-  3. Konforme Allokationsanpassung bei veränderten CHF-Kapitalständen.
+  1. $f^* = 0.0$ bei negativer Expectancy.
+  2. Greifen des Drawdown-Dämpfers $\psi(DD)$.
+  3. Strikte Einhaltung des Hard-Exposure Caps (max 15%).
