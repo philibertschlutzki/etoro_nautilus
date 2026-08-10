@@ -17,7 +17,8 @@
       "holdout_days": "Anzahl der Holdout-Tage f\u00fcr Out-of-Sample Validierung nach der Optimierung.",
       "data_history_days": "Issue #445 \u2014 dokumentierte/erwartete Mindest-Datenhistorie pro Symbol in Tagen (Single Source of Truth, deckungsgleich mit strategy_defaults.json._schema). Fallback auf diesen Config-Value statt echter Time-Series-Spanne in Gate-1 Evaluierung (Issue #525).",
       "embargo_period_days": "Issue #466 (Leakage Prevention) \u2014 Embargo-Periode in Tagen zwischen IS-Ende und OOS-Start, um Lookback-Leakage von Indikatoren in die In-Sample Trainingsdaten zu verhindern. Sollte >= max_lookback der Strategie sein.",
-      "retrain": "Issue #675 \u2014 OPT-IN Geometrie-Modus f\u00fcr backtest_runner.compute_fold_boundaries. false (Default, fehlt der Key) \u21d2 bit-identisch zum Pre-#675-Verhalten: EIN statisch am Datenanfang verankertes IS-Fenster fuer ALLE OOS-Folds (testet Regime-PERSISTENZ, nicht Config-ROBUSTHEIT \u2014 AGENTS.md Pitfall #142). true \u21d2 jeder Fold erhaelt sein EIGENES, unmittelbar vorangehendes (rollierendes) IS-Referenzfenster (is_start = oos_start \u2212 embargo \u2212 is_window_days), embargo-sicher (kein Leakage-Kollaps). WICHTIG: Dieses System optimiert EINEN Parametervektor pro Trial ueber die gesamte Zeitspanne (Optuna, kein Per-Fold-Refit) \u2014 retrain=true liefert daher KEIN echtes Parameter-Refit je Fold, sondern eine rollierende IS/OOS-Divergenz-Diagnose (oos_fold_is_oos_divergence, rein additiv/forensisch, KEINE Gate-/Reward-Wirkung). Fuer eine strukturelle Eligibility-Antwort auf Nichtstationaritaet siehe stattdessen die bereits vorhandene CPCV-Infrastruktur (cpcv.py, genutzt in confirm._study_pbo, #663)."
+      "retrain": "Issue #675 \u2014 OPT-IN Geometrie-Modus f\u00fcr backtest_runner.compute_fold_boundaries. false (Default, fehlt der Key) \u21d2 bit-identisch zum Pre-#675-Verhalten: EIN statisch am Datenanfang verankertes IS-Fenster fuer ALLE OOS-Folds (testet Regime-PERSISTENZ, nicht Config-ROBUSTHEIT \u2014 AGENTS.md Pitfall #142). true \u21d2 jeder Fold erhaelt sein EIGENES, unmittelbar vorangehendes (rollierendes) IS-Referenzfenster (is_start = oos_start \u2212 embargo \u2212 is_window_days), embargo-sicher (kein Leakage-Kollaps). WICHTIG: Dieses System optimiert EINEN Parametervektor pro Trial ueber die gesamte Zeitspanne (Optuna, kein Per-Fold-Refit) \u2014 retrain=true liefert daher KEIN echtes Parameter-Refit je Fold, sondern eine rollierende IS/OOS-Divergenz-Diagnose (oos_fold_is_oos_divergence, rein additiv/forensisch, KEINE Gate-/Reward-Wirkung). Fuer eine strukturelle Eligibility-Antwort auf Nichtstationaritaet siehe stattdessen die bereits vorhandene CPCV-Infrastruktur (cpcv.py, genutzt in confirm._study_pbo, #663).",
+      "live_risk": "Issue #999 (P0, HEADLINE) \u2014 Parameter der Live-Kapitalallokation (automation.momentum_ls_allocator.MomentumLSAllocator) und des Live-Circuit-Breakers (automation.live_risk). max_total_exposure_fraction/max_symbol_exposure_fraction begrenzen \u03a3 w_i bzw. w_i je Symbol als Anteil des Kontostands (ersetzen die Vor-#999-Formel account_balance/pending_signals, die der LETZTEN Position das gesamte Restkapital zuwies). dd_halt_fraction/psi_min steuern den Drawdown-D\u00e4mpfer psi(DD)=max(psi_min, 1-DD/dd_halt_fraction) UND (zusammen mit distribution_z_halt/circuit_breaker_n_min_periods/poll_interval_s) den LiveCircuitBreakerWatchdog, der bei Ausl\u00f6ser A (absoluter Drawdown) oder B (Live-Rendite signifikant unter Backtest-Erwartung, erst ab n_live>=circuit_breaker_n_min_periods auswertbar) alle Positionen flatten und den Bot beenden l\u00e4sst."
     }
   },
   "catalog_path": "data/nautilus",
@@ -47,5 +48,14 @@
     "data_history_days": 450,
     "embargo_period_days": 21,
     "retrain": false
+  },
+  "live_risk": {
+    "max_total_exposure_fraction": 0.60,
+    "max_symbol_exposure_fraction": 0.10,
+    "dd_halt_fraction": 0.10,
+    "psi_min": 0.2,
+    "distribution_z_halt": 2.5,
+    "circuit_breaker_n_min_periods": 30,
+    "poll_interval_s": 30.0
   }
 }

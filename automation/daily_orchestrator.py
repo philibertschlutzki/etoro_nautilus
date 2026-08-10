@@ -969,13 +969,43 @@ def phase5_live_deployment(
 
         log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} (Aggregate Out-of-Sample Sortino: {aggregate_oos_sortino}, Portfolio DD: {agg_oos_dd}).")
 
-        # --- WHITELIST GENERATION ---
-        whitelisted_winners = {}
+        # --- WHITELIST GENERATION (Issue #993 — Deployment-Grenze) ---
+        # Vor #993 entschied EINE Bedingung (oos_eligible ∧ oos_evaluated, Phase-4-Turnier, kein
+        # Multiplizitaets-/Deflations-/PBO-/Bootstrap-CI-/Boundary-/R-Edge-/Snapshot-Check) ueber die
+        # Aufnahme in die Whitelist — das schwaechere der zwei parallelen Selektionssysteme im Repo
+        # (siehe AGENTS.md §"Die Deployment-Grenze") entschied ueber echten Kapitaleinsatz.
+        # deployment_gate.evaluate_deployment_eligibility ersetzt diese Bedingung ERSATZLOS durch die
+        # vollstaendige, acht-klausige Pruefung gegen die tatsaechlich promoteten Kandidaten
+        # (data/optimizer/proposal_{strategy}_{symbol}.json) — nicht mehr gegen das Phase-4-Ergebnis.
+        from automation.optimizer.deployment_gate import (
+            evaluate_deployment_eligibility, load_promotion_records,
+        )
+        from automation.optimizer.invariants import check_deployment_gate_completeness
+
+        tournament_cfg: dict = {}
+        if TOURNAMENT_CFG.exists():
+            with open(TOURNAMENT_CFG, "r", encoding="utf-8") as cf:
+                tournament_cfg = json.load(cf) or {}
+
+        pairs = [(winner.get("strategy"), symbol) for symbol, winner in winners.items()]
+        promotion_records = load_promotion_records(pairs, work_dir=PROJECT_ROOT / "data" / "optimizer")
+
+        whitelisted_winners: dict = {}
+        rejected_by_clause: dict[str, int] = {}
         for symbol, winner in winners.items():
-            if winner.get("oos_eligible") is True and winner.get("oos_evaluated") is True:
-                whitelisted_winners[symbol] = winner
+            strategy = winner.get("strategy")
+            decision = evaluate_deployment_eligibility((strategy, symbol), promotion_records, tournament_cfg)
+            if decision.admitted:
+                entry = dict(winner)
+                entry["deployment_gate"] = decision.to_dict()
+                whitelisted_winners[symbol] = entry
             else:
-                log.info(f"[Phase 5] OOS-DEPLOY-REJECT: Symbol {symbol} (Strategy {winner.get('strategy')}) did not pass its individual OOS-Eligibility Gate.")
+                rejected_by_clause[decision.blocking_clause] = rejected_by_clause.get(decision.blocking_clause, 0) + 1
+                log.info(
+                    f"[Phase 5] OOS-DEPLOY-REJECT: Symbol {symbol} (Strategy {strategy}) — "
+                    f"Deployment-Grenze (#993) verletzt: blocking_clause={decision.blocking_clause} "
+                    f"(clause_results={decision.clause_results})."
+                )
 
         whitelist_payload = dict(t_data)
         whitelist_payload["per_symbol_winners"] = whitelisted_winners
@@ -984,14 +1014,27 @@ def phase5_live_deployment(
         with open(whitelist_path, "w", encoding="utf-8") as wf:
             json.dump(whitelist_payload, wf, indent=4)
 
+        # Issue #993 Fix Punkt 4 — blockierende Vollstaendigkeits-Invariante VOR dem Bot-Start: jeder
+        # Whitelist-Eintrag muss ein vollstaendiges, achtklausiges clause_results-Dict tragen.
+        completeness_check = check_deployment_gate_completeness(whitelisted_winners)
+        if not completeness_check.passed:
+            log.error(f"[Phase 5] check_deployment_gate_completeness FEHLGESCHLAGEN: {completeness_check.detail}")
+            emit_json_event(log, "INVARIANT_CHECK_FAILED", {
+                "scope": "phase5_deployment_gate", "check": completeness_check.name,
+                "expected": completeness_check.expected, "actual": completeness_check.actual,
+                "detail": completeness_check.detail,
+            })
+            return 1
+
         emit_json_event(log, "DEPLOYMENT_WHITELIST_GENERATED", {
             "whitelisted_pairs_count": len(whitelisted_winners),
             "rejected_pairs_count": len(winners) - len(whitelisted_winners),
+            "rejected_by_clause": rejected_by_clause,
             "whitelist_path": str(whitelist_path)
         })
 
         if len(whitelisted_winners) == 0:
-            log.warning("[Phase 5] Whitelist ist leer (kein Symbol hat sein individuelles OOS-Gate bestanden). Live-Deploy abgebrochen.")
+            log.warning("[Phase 5] Whitelist ist leer (kein Paar besteht die vollstaendige Deployment-Grenze aus acht Klauseln, Issue #993). Live-Deploy abgebrochen.")
             return 0
 
         tournament_path = str(whitelist_path)

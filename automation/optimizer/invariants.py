@@ -766,3 +766,79 @@ def check_holding_time_cap(study_records: list[dict], *,
                 f"({max_bars_in_trade_cap} Bars): {offenders} — Bug im Exit-Pfad (HourlyStrategyBase "
                 "erzwingt den Zeit-Exit nicht), keine Dateneigenart."),
     )
+
+
+def check_deployment_gate_completeness(whitelisted_winners: dict[str, dict]) -> InvariantResult:
+    """Issue #993 Fix Punkt 4 (P0-blocking) — BLOCKIERENDER Regressionswächter der Deployment-Grenze
+    selbst: jeder Eintrag in ``data/state/whitelist_tournament.json``'s ``per_symbol_winners`` muss
+    ein vollständiges ``deployment_gate.clause_results``-Dict tragen — alle acht Klauseln aus
+    ``deployment_gate.DEPLOYMENT_CLAUSES``, keine davon ``None`` (fail-closed bedeutet hier: ein
+    Eintrag, dessen Klausel NICHT auswertbar war, hätte gemäss ``evaluate_deployment_eligibility``
+    gar nicht erst als ``admitted`` in die Whitelist gelangen dürfen — ein ``None`` an dieser Stelle
+    ist ein Bug in der Verdrahtung, keine harmlose Lücke).
+
+    Bei 0 Promotionen (der Ausgangszustand vor #994) ist die Whitelist leer ⇒ 0 Einträge zu prüfen
+    ⇒ dieser Check ist dann trivial erfüllt — das ist der korrekte Startzustand, nicht ein
+    aussagekräftiges PASS über eine geprüfte Kohorte (Pitfall #330: ein Wächter, der (noch) nie
+    feuert, ist deshalb nicht falsch)."""
+    from automation.optimizer.deployment_gate import DEPLOYMENT_CLAUSES
+
+    offenders: dict[str, list[str]] = {}
+    for symbol, winner in whitelisted_winners.items():
+        gate = winner.get("deployment_gate")
+        if not isinstance(gate, dict):
+            offenders[symbol] = ["deployment_gate fehlt am Whitelist-Eintrag"]
+            continue
+        clause_results = gate.get("clause_results") or {}
+        missing = [c for c in DEPLOYMENT_CLAUSES if clause_results.get(c) is not True]
+        if missing:
+            offenders[symbol] = missing
+    passed = not offenders
+    return InvariantResult(
+        name="check_deployment_gate_completeness",
+        passed=passed,
+        expected=f"alle {len(DEPLOYMENT_CLAUSES)} Klauseln ({', '.join(DEPLOYMENT_CLAUSES)}) == True je Whitelist-Eintrag",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Whitelist-Eintrag/Einträge mit unvollständiger/fehlender "
+                f"Deployment-Grenzen-Prüfung (Issue #993): {offenders} — Exit-Code 1 vor dem "
+                "Bot-Start (P0-blocking, kein Kandidat ohne vollständige Prüfung geht live)."),
+    )
+
+
+def check_live_exposure_budget(exposure_snapshots: list[dict], *,
+                               max_total_exposure_fraction: float = 0.60,
+                               tolerance: float = 1e-9) -> InvariantResult:
+    """Issue #999 Fix Punkt 4 — die Budget-Erhaltungsbedingung der Live-Allokation
+    (``automation.momentum_ls_allocator.MomentumLSAllocator``) als Telemetrie-Nachweis: in JEDEM
+    aufgezeichneten Live-Snapshot (``{"open_exposure_fraction": Σ w_i, ...}``) darf die Summe der
+    offenen Positions-Gewichte ``max_total_exposure_fraction`` nie überschreiten (Toleranz ``1e-9``
+    gegen Float-Rundung — dieselbe Konvention wie ``live_risk.evaluate_circuit_breaker``'s
+    Drawdown-Schwellenvergleich). Eine Verletzung ist ein Bug in der Budget-Formel selbst
+    (``get_allocation``/``update_risk_state``), keine Dateneigenart — die Erhaltungsbedingung ist
+    eine mathematische Invariante der Formel, nicht ein empirischer Schwellenwert."""
+    with_data = [s for s in exposure_snapshots if s.get("open_exposure_fraction") is not None]
+    if not with_data:
+        return InvariantResult(
+            name="check_live_exposure_budget",
+            passed=True,
+            expected=f"Σ w_i <= {max_total_exposure_fraction} in jedem Live-Snapshot",
+            actual=None,
+            detail="Keine Live-Exposure-Snapshots vorhanden (Bot noch nicht gestartet oder keine "
+                   "Telemetrie) — nicht anwendbar.",
+        )
+    offenders = [
+        s for s in with_data
+        if s["open_exposure_fraction"] > max_total_exposure_fraction + tolerance
+    ]
+    passed = not offenders
+    return InvariantResult(
+        name="check_live_exposure_budget",
+        passed=passed,
+        expected=f"Σ w_i <= {max_total_exposure_fraction} in jedem Live-Snapshot",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Snapshot(s) überschreiten das Gesamt-Expositions-Budget "
+                f"({max_total_exposure_fraction}): {offenders} — Bug in der #999-Budget-Formel, "
+                "keine Dateneigenart."),
+    )

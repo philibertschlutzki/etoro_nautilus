@@ -7,7 +7,7 @@ from automation.optimizer.trial_config import build_trial, config_dir, freeze_st
 from automation.optimizer.runner import run_backtest, BacktestRunError
 from automation.optimizer.parsing import parse_tournament
 from automation.optimizer.reward import compute_reward
-from automation.optimizer.manifest import WORK
+from automation.optimizer.manifest import WORK, catalog_fingerprint
 from automation.log_manager import emit_execution_event
 
 # Issue #659 — gültige Werte für tournament.json['promotion_correction_mode']. "conjunction"
@@ -1033,6 +1033,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Ambiguität. Default (Symbol-Holdout-Gate selbst gescheitert): REJECT_HOLDOUT_GATE.
     holdout_reject_detail = None if holdout_passed else "REJECT_HOLDOUT_GATE"
 
+    # Issue #993 — ``ci_lo`` vorab initialisiert (statt nur im bedingten Bootstrap-CI-Block), damit
+    # der untere CI-Wert unabhaengig vom Gate-Ausgang persistierbar ist (deployment_gate.py braucht
+    # den Rohwert, nicht nur den daraus abgeleiteten Pass/Fail-Effekt auf ``holdout_passed``).
+    ci_lo = None
+
     # Issue #618/#636 — DSR-BERECHNUNG von der Pass-Kette ENTKOPPELT: vorher lief dieser Block nur
     # ``if holdout_passed and ...`` — aber JEDE Strategie scheiterte an einem FRÜHEREN Holdout-Gate
     # (Excess-Return via #629, negativer Holdout-Sortino), sodass ``holdout_passed`` bereits False
@@ -1304,8 +1309,23 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         "holdout_passed": bool(holdout_passed),
         "trial_dir": promoted_trial_dir,
         "metrics_symbol": _metrics_dict(promoted_m_symbol),
-        "metrics_global": _metrics_dict(m_global)
+        "metrics_global": _metrics_dict(m_global),
+        # Issue #993 — der Datenstand, auf dem DIESE Promotion beruht (dieselbe Quelle wie
+        # champions._build_entry_from_promotion's ``integrity.data_snapshot_sha256``). Deployment-
+        # Grenze (deployment_gate.py) vergleicht dies gegen den Datenstand ZUM Deployment-Zeitpunkt —
+        # eine Promotion auf einem aelteren Snapshot darf nicht auf einem neueren deployt werden,
+        # ohne neu bestaetigt zu werden.
+        "data_snapshot_sha256": catalog_fingerprint(),
     }
+    # Issue #993 — Rohgroessen, die bislang nur transient innerhalb dieser Funktion existierten
+    # (PSR des promoteten Holdout-Vektors, untere Bootstrap-CI-Grenze, Boundary-Hit-Anteil), werden
+    # additiv in ``metrics_symbol`` gestempelt. Keine dieser drei Groessen aendert eine bestehende
+    # Promotion-Entscheidung (rein additive Telemetrie) — sie macht die acht Deployment-Klauseln aus
+    # deployment_gate.py erstmals aus dem persistierten Promotion-Record rekonstruierbar, statt nur
+    # als Pass/Fail-Nebenwirkung auf ``holdout_passed``/``status`` sichtbar zu sein.
+    best_result["metrics_symbol"]["oos_psr"] = getattr(promoted_m_symbol, "oos_psr", None)
+    best_result["metrics_symbol"]["holdout_ci_lower_sortino"] = ci_lo
+    best_result["metrics_symbol"]["boundary_hit_fraction"] = boundary_frac
     # Issue #786 — das bindende Holdout-Gate (negativstes normiertes Delta) fuer JEDE Study mit
     # einem erreichten Holdout-Lauf, nicht nur bei REJECT_HOLDOUT_GATE — macht die haeufigste
     # Ablehnungsursache des gesamten Systems (74,5% der Studies mit eligiblen Trials) attribuierbar.
@@ -1515,6 +1535,9 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # Issue #615 — der EINE Holdout-trial_dir, aus dem der promotete Vektor (Params/R_symbol/Gate)
         # stammt: macht die Kohärenz-Invariante im Proposal nachvollziehbar.
         "holdout_trial_dir": promotion.get("trial_dir"),
+        # Issue #993 — durchgereicht fuer die Deployment-Grenze (deployment_gate.py); siehe
+        # confirm_per_symbol_promotion's ``data_snapshot_sha256``.
+        "data_snapshot_sha256": promotion.get("data_snapshot_sha256"),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],
