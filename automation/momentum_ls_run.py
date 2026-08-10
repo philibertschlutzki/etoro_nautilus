@@ -22,6 +22,7 @@ with open("automation/config/instrument_map.json", "r") as f:
     _imap = json.load(f)
     ETORO_INSTRUMENTS = _imap.get("instruments", {})
 from automation.momentum_ls_allocator import MomentumLSAllocator
+from automation.live_risk import LiveCircuitBreakerWatchdog
 
 ETORO_EXECUTION = {
     "environment": os.getenv("ETORO_ENV", "demo"),
@@ -243,7 +244,23 @@ def main():
         logger.error("No valid symbols to trade after cross-referencing universe and tournament.")
         sys.exit(1)
 
-    allocator = MomentumLSAllocator(active_symbols)
+    # Issue #999 (P0, HEADLINE) — Budget-/Circuit-Breaker-Parameter aus backtest.json["live_risk"]
+    # (Defaults der Allocator-/Watchdog-Konstruktoren gelten nur, falls der Key fehlt).
+    live_risk_cfg = {}
+    backtest_cfg_path = Path(__file__).resolve().parent / "config" / "backtest.json"
+    try:
+        with open(backtest_cfg_path, "r", encoding="utf-8") as f:
+            live_risk_cfg = (json.load(f) or {}).get("live_risk", {}) or {}
+    except Exception as e:
+        logger.warning(f"live_risk-Konfiguration konnte nicht geladen werden ({e}) — Allocator/Watchdog nutzen Defaults.")
+
+    allocator = MomentumLSAllocator(
+        active_symbols,
+        max_total_exposure_fraction=live_risk_cfg.get("max_total_exposure_fraction", 0.60),
+        max_symbol_exposure_fraction=live_risk_cfg.get("max_symbol_exposure_fraction", 0.10),
+        dd_halt_fraction=live_risk_cfg.get("dd_halt_fraction", 0.10),
+        psi_min=live_risk_cfg.get("psi_min", 0.2),
+    )
 
     environment = ETORO_EXECUTION["environment"]
     dry_run = True if args.dry_run else ETORO_EXECUTION["dry_run"]
@@ -312,6 +329,20 @@ def main():
         node.dispose()
         sys.exit(0)
 
+    # Issue #999 Fix Punkt 2 — Live-Circuit-Breaker-Wächter: unabhängig vom Backtest-seitigen
+    # max_drawdown-Gate (das im Livebetrieb keine Entsprechung hatte) überwacht dieser Thread den
+    # Equity-Verlauf des laufenden Nodes und flattet+stoppt bei Auslöser A/B (automation/live_risk.py).
+    watchdog = LiveCircuitBreakerWatchdog(
+        node,
+        poll_interval_s=live_risk_cfg.get("poll_interval_s", 30.0),
+        dd_halt_fraction=live_risk_cfg.get("dd_halt_fraction", 0.10),
+        z_halt=live_risk_cfg.get("distribution_z_halt", 2.5),
+        n_min_periods=live_risk_cfg.get("circuit_breaker_n_min_periods", 30),
+        on_update=lambda d: allocator.update_risk_state(current_drawdown=d.dd_live),
+        on_trip=lambda d: allocator.update_risk_state(tripped=True),
+    )
+    watchdog.start()
+
     try:
         node.run()
     except KeyboardInterrupt:
@@ -319,8 +350,13 @@ def main():
     except Exception as e:
         logger.error(f"Laufzeitfehler: {e}\n{traceback.format_exc()}")
     finally:
+        watchdog.stop()
         node.stop()
         logger.info("Bot erfolgreich beendet.")
+
+    if watchdog.tripped_event.is_set():
+        logger.critical("[Circuit-Breaker] Bot ueber LIVE_CIRCUIT_BREAKER_TRIPPED beendet (Exit-Code 3).")
+        sys.exit(3)
 
 
 if __name__ == "__main__":

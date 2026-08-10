@@ -1,10 +1,14 @@
 """
 tests/test_allocator.py
 ========================
-Tests für MomentumLSAllocator — abgedeckte Architektur-Regeln aus AGENTS.md §5.7:
+Tests für MomentumLSAllocator — abgedeckte Architektur-Regeln aus AGENTS.md §5.7, seit Issue #999
+(P0, HEADLINE) auf die Risikobudget-Formel umgestellt:
   - No-Interference-Regel: existiert eine offene Position, Allokation = 0.0
   - $11-Floor: Allokation unter $11.00 → 0.0
-  - Dynamisches Slicing: account_balance / pending_signals
+  - Budget-Formel (Issue #999): w_neu = min(max_symbol_exposure_fraction, max_total_exposure_fraction
+    − Σ_offen w_i) — ersetzt die VOR #999 monoton STEIGENDE ``account_balance / pending_signals``
+    (siehe automation/tests/test_issue_999_live_risk_boundary.py für die volle Budget-/Circuit-
+    Breaker-Abdeckung; diese Datei bleibt auf die vier ursprünglichen §5.7-Architekturregeln fokussiert).
   - Nicht-Universe-Instrument → 0.0
 """
 import pytest
@@ -50,14 +54,17 @@ def test_floor_11_dollars():
 
 
 def test_dynamic_slicing():
-    """Allocation = balance / pending_signals (AGENTS.md §5.7)."""
-    # TSLA has open position → pending = AAPL + GOOG = 2
+    """Issue #999 — Allocation = min(max_symbol_exposure_fraction, max_total_exposure_fraction −
+    Σ_offen w_i) * balance, NICHT mehr balance / pending_signals. TSLA hat eine offene Position mit
+    unbekanntem Notional (Test-Double ohne .quantity/.avg_px_open) → konservative Slot-Näherung:
+    1 Position beansprucht ihr volles Symbol-Cap (10 % der 60 %-Budgetgrenze), die verbleibenden
+    50 % lassen das volle 10 %-Symbol-Cap für AAPL zu."""
     cache = _make_cache({"TSLA.ETORO": [object()]})
     allocator = MomentumLSAllocator(UNIVERSE)
     from nautilus_trader.model.identifiers import InstrumentId
     instrument_id = InstrumentId.from_str("AAPL.ETORO")
-    result = allocator.get_allocation(instrument_id, cache, account_balance=100.0)
-    assert result == pytest.approx(50.0)
+    result = allocator.get_allocation(instrument_id, cache, account_balance=1000.0)
+    assert result == pytest.approx(100.0)  # 10% of 1000, capped by max_symbol_exposure_fraction
 
 
 def test_non_universe_instrument_returns_zero():
@@ -81,12 +88,14 @@ def test_all_positions_open_returns_zero():
     assert result == 0.0
 
 
-def test_equal_split_no_open_positions():
-    """With no open positions, allocation = balance / len(universe)."""
+def test_symbol_cap_with_no_open_positions():
+    """Issue #999 — mit KEINEN offenen Positionen ist die erste Allokation auf
+    max_symbol_exposure_fraction (Default 10 %) des Kontostands gedeckelt — NICHT mehr
+    balance / len(universe) (das war die Vor-#999-Formel; siehe test_dynamic_slicing für den
+    Ruin-Pfad, den sie bei vielen offenen Positionen erzeugte)."""
     cache = _make_cache({})
     allocator = MomentumLSAllocator(UNIVERSE)
     from nautilus_trader.model.identifiers import InstrumentId
     instrument_id = InstrumentId.from_str("GOOG.ETORO")
     result = allocator.get_allocation(instrument_id, cache, account_balance=330.0)
-    # 330 / 3 = 110.0
-    assert result == pytest.approx(110.0)
+    assert result == pytest.approx(33.0)  # 10% of 330

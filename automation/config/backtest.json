@@ -65,5 +65,14 @@
     "data_history_days": 450,
     "embargo_period_days": 21,
     "retrain": false
+  },
+  "live_risk": {
+    "max_total_exposure_fraction": 0.60,
+    "max_symbol_exposure_fraction": 0.10,
+    "dd_halt_fraction": 0.10,
+    "psi_min": 0.2,
+    "distribution_z_halt": 2.5,
+    "circuit_breaker_n_min_periods": 30,
+    "poll_interval_s": 30.0
   }
 }

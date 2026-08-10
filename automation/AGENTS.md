@@ -53,8 +53,9 @@
 - [Issue-Katalog #836–#855 — Zeitbox-Exit-Pfad, Symbol-Durchsatz, Inferenz-Integrität & Governance](#issue-katalog-836855--zeitbox-exit-pfad-symbol-durchsatz-inferenz-integrität--governance-github-issues-753754755756-sitzung-2026-08-04)
 - [Issue-Katalog #897–#912 — Exit-Sperrklinke, Kostenmodell-Fallback, Governance-Rückstand](#issue-katalog-897912--exit-sperrklinke-kostenmodell-fallback-governance-rückstand-github-issues-771769770772-sitzung-2026-08-06)
 - [Issue-Katalog #913–#936 — Inferenz-Blockade, Suchbudget, Simulations-Verifikation & Re-Run-Runbook](#issue-katalog-913936--inferenz-blockade-suchbudget-simulations-verifikation--re-run-runbook-github-issues-774775776777-sitzung-2026-08-06)
+- [Issue-Katalog #993–#1002 — Deployment-Grenze, Live-Kapitalallokation & Circuit-Breaker](#issue-katalog-9931002--deployment-grenze-live-kapitalallokation--circuit-breaker-github-issues-846847-sitzung-2026-08-10)
 
-> **Pitfall-Index-Hinweis:** Die höchste zum Zeitpunkt dieser Doku-Härtung vergebene Nummer ist **Pitfall #306** (siehe §16-Konvention). Vor dem Anlegen eines neuen Pitfalls IMMER `grep -n "Pitfall #" automation/AGENTS.md` laufen lassen — Nummern sind global eindeutig über die gesamte Datei, nicht nur innerhalb von §16. Bekannter Rückstand: Pitfalls #269–#284 (Kataloge #856–#896) sind noch NICHT eingetragen (siehe Hinweis im Abschnitt "Issue-Katalog #897–#912") — dieser Rückstand ist unverändert von der #913–#936-Sitzung, siehe dortiger Hinweis.
+> **Pitfall-Index-Hinweis:** Die höchste zum Zeitpunkt dieser Doku-Härtung vergebene Nummer ist **Pitfall #339** (siehe §16-Konvention). Vor dem Anlegen eines neuen Pitfalls IMMER `grep -n "Pitfall #" automation/AGENTS.md` laufen lassen — Nummern sind global eindeutig über die gesamte Datei, nicht nur innerhalb von §16. Bekannter Rückstand: Pitfalls #269–#284 (Kataloge #856–#896) sind noch NICHT eingetragen (siehe Hinweis im Abschnitt "Issue-Katalog #897–#912") — dieser Rückstand ist unverändert von der #913–#936-Sitzung, siehe dortiger Hinweis.
 
 ---
 
@@ -411,6 +412,61 @@ Safety-Interlock: Zweistufiges Fail-Closed-Verhalten:
 1. **Per-Pair Check:** Es wird zwingend geprüft, ob `fully_eligible_pairs > 0` und `winner_count > 0`. Falls nicht, bricht die Phase hart ab (`LIVE_DEPLOY_ABORTED`).
 2. **Aggregat-OOS Evaluierung:** Danach muss der Aggregat-Gewinner ein gültiges und bestandenes OOS-Ergebnis vorweisen (`oos_evaluated` und `oos_eligible` == `True`).
 Zusätzlicher Interlock: `environment=='real'` AND `dry_run==False` AND `ETORO_CONFIRM_LIVE=='1'` → sonst `sys.exit(1)`. Stale-Check: Prüft ob Universe-Daten älter als 24 Stunden sind.
+
+### 11.1 Die Deployment-Grenze (Issue #993, P0-blocking)
+
+Das Repository enthält **zwei** voneinander unabhängige Verfahren, die eine (Strategie, Symbol)-Kombination bewerten. Wer an einem von beiden arbeitet, muss wissen, dass das andere existiert:
+
+| | **System 1 — Optimizer-Sweep** | **System 2 — Phase-4-Turnier** |
+|---|---|---|
+| Einstieg | `python -m automation.optimizer.sweep` | `daily_orchestrator.py` Phase 3/4 |
+| Kernmodule | `run_optimization.py`, `confirm.py`, `deflation.py` | `backtest_runner.py` (Matrix-Modus) |
+| Ergebnis | `data/optimizer/proposal_{strategy}_{symbol}.json`, Champion-Store | `tournament_result` mit `aggregate_winner`, `per_symbol_winners` |
+| Multiplizitätskorrektur | **ja** — DSR gegen `deflation_confidence`, PBO/CSCV | **nein** |
+| Holdout | **ja** — separates Fenster, `confirm.py` | nein |
+| Statusbegriffe | `READY_FOR_PR`, `REJECTED_ON_HOLDOUT`, `REJECTED_SELECTION_OVERFIT`, … | `oos_eligible`, `oos_evaluated` |
+
+**Regel:** `oos_eligible` (Phase-4-Turnier) ist das Ergebnis eines **Einzelfenster-Gates ohne Multiplizitätskorrektur**. Es ist eine notwendige, niemals eine hinreichende Bedingung für Kapitaleinsatz.
+
+**Was `whitelist_tournament.json` garantiert — und was nicht.** Issue #310 (2026-06-09, siehe Changelog-Tabelle) hat die Whitelist eingeführt und sie als „einzige Source of Truth für das tatsächliche Deployment" bezeichnet. Diese Formulierung beschreibt die **Zuständigkeit**, nicht die **Prüftiefe**. Bis Issue #993 filterte die Whitelist per-Symbol-Verlierer ausschliesslich gegen `oos_eligible ∧ oos_evaluated` (System 2) — DSR, PBO, Holdout-Bootstrap-CI, Boundary-Veto, R_symbol > R_global und Datenstand-Kohärenz (System 1) wurden **nicht** konsultiert.
+
+**Seit Issue #993** ist `automation/optimizer/deployment_gate.py`s `evaluate_deployment_eligibility()` die einzige zulässige Quelle einer Deployment-Entscheidung. Ein (Strategie, Symbol)-Paar ist deploy-fähig genau dann, wenn **alle acht** Klauseln `True` sind (Konjunktion, kein Ersatzpfad):
+
+```
+promotion_record_exists  — ein Promotionsrecord (System 1) existiert für dieses Paar
+status_ready_for_pr      — dessen status == "READY_FOR_PR"
+dsr                      — deflated_dsr >= deflation_confidence (tournament.json, Default 0.95)
+psr                      — oos_psr >= oos_min_psr (tournament.json, Default 0.75)
+pbo                      — PBO <= 0.5 ODER (PBO nicht schätzbar UND Config-Kohorte < pbo_min_configs)
+bootstrap_ci             — ci_lower(holdout_sortino) > 0
+r_edge                   — R_symbol > R_global (oder R_global undefiniert ⇒ trivial erfüllt)
+snapshot_drift           — data_snapshot_sha256(Promotion) == data_snapshot_sha256(Deployment)
+```
+
+**Fail-closed:** Fehlt eine der Grössen (`None`), gilt die zugehörige Klausel als **nicht erfüllt** — `None` ist keine bestandene Prüfung (Pitfall #237 auf die Deployment-Ebene übertragen). `daily_orchestrator.phase5_live_deployment` liest die Promotionsrecords ausschliesslich aus `data/optimizer/proposal_{strategy}_{symbol}.json` (`deployment_gate.load_promotion_records`) — **nicht** mehr aus `tournament_result`. Existiert für ein Symbol kein Promotionsrecord, ist es nicht deploy-fähig, auch wenn es Phase-4-`per_symbol_winner` ist. Die blockierende Invariante `invariants.check_deployment_gate_completeness` läuft direkt nach der Whitelist-Generierung und bricht mit Exit-Code 1 ab, falls ein Whitelist-Eintrag kein vollständiges `clause_results`-Dict trägt.
+
+**Arbeitsregel für alle künftigen Änderungen:** Jede Änderung, welche die Promotionsrate erhöhen kann, muss vor dem Merge nachweisen, dass die Deployment-Grenze (`deployment_gate.evaluate_deployment_eligibility`) unverändert vollständig prüft. Ein Fix, der die Kandidatenzahl erhöht, ohne dass die Grenze vollständig bleibt, erhöht das Kapitalrisiko stärker als den erwarteten Ertrag.
+
+### 11.2 Live-Kapitalallokation, Circuit-Breaker (Issue #999, P0-blocking)
+
+`automation/momentum_ls_allocator.py`s `MomentumLSAllocator.get_allocation` verwendete vor Issue #999 `account_balance / pending_signals` (`pending_signals` = Zahl der Universumssymbole ohne offene Position). Bei `n` Symbolen und `k` bereits offenen Positionen erhielt das `(k+1)`-te Signal `a_{k+1} = B_k/(n−k)` — für `k → n−1` also das **gesamte** verfügbare Kapital (`a_n = B_{n−1}/1`). Die Allokationsfolge war damit monoton **steigend** in der Zahl bereits eingegangener Risiken — das exakte Gegenteil einer Risikobudgetierung, und bei einem `MARGIN`-Konto ohne Wartungsmargin ein realer Ruin-Pfad.
+
+**Seit Issue #999** gilt eine Budget-Formel mit Erhaltungsbedingung:
+
+```
+w_neu = min( max_symbol_exposure_fraction , max_total_exposure_fraction − Σ_offen w_i ) · ψ(DD)
+ψ(DD) = max(psi_min, 1 − DD_current/dd_halt_fraction)
+```
+
+`Σ_offen w_i` wird primär aus dem Entry-Notional (`|quantity| · avg_px_open`) der offenen Positionen geschätzt; ist das für irgendeine Position nicht bestimmbar, fällt die Schätzung auf eine konservative Slot-Näherung zurück (jede offene Position beansprucht ihr volles Symbol-Cap) — beide Pfade bleiben monoton **fallend** in der Zahl offener Positionen. Konfiguriert in `backtest.json["live_risk"]` (`max_total_exposure_fraction` Default 0.60, `max_symbol_exposure_fraction` Default 0.10, `dd_halt_fraction` Default 0.10, `psi_min` Default 0.2).
+
+**Live-Circuit-Breaker** (`automation/live_risk.py`, `LiveCircuitBreakerWatchdog`): ein Hintergrund-Thread pollt periodisch die Node-Equity (`node.portfolio.equity`) und trippt bei einem von zwei ODER-verknüpften Auslösern:
+- **Auslöser A (absolut, fail-closed):** `DD_live(t) = 1 − E(t)/max_τ E(τ) >= dd_halt_fraction`.
+- **Auslöser B (Verteilung, fail-open solange `n_live < circuit_breaker_n_min_periods`):** die live beobachtete mittlere Rendite liegt signifikant unter der Backtest-Erwartung (Standardfehler-skalierter Ein-Stichproben-z-Test, Schwelle `distribution_z_halt`).
+
+Ein Trip flattet alle Strategien (`node.trader.market_exit_strategy` je `strategy_id`, via `call_soon_threadsafe` auf den Event-Loop des Nodes geschoben — der Watchdog läuft in einem separaten Python-Thread) und stoppt den Node; `momentum_ls_run.py` beendet sich danach mit Exit-Code 3. Getrippt blockiert `MomentumLSAllocator.get_allocation` zusätzlich sofort jede neue Allokation (`update_risk_state(tripped=True)`), unabhängig vom Rest der Formel. Telemetrie: `LIVE_EXPOSURE_SNAPSHOT` (jede Allokationsentscheidung) und `LIVE_CIRCUIT_BREAKER_TRIPPED` (bei einem Trip); die Invariante `invariants.check_live_exposure_budget` prüft `Σ w_i <= max_total_exposure_fraction + 1e-9` gegen aufgezeichnete Snapshots.
+
+**Nicht Teil von Issue #999 in dieser Session:** die Reconciliation-Vereinheitlichung (GH #800, „gibt über denselben Kanal einmal eine Zielgrösse und einmal ein Delta zurück") wurde als Vorschlag verworfen; die bereits vorhandene Reconciliation-Infrastruktur (`etoro_execution._reconcile_positions_on_connect`/`_reconcile_via_pnl`, `HourlyStrategyBase._reconcile_after_reconnect`) blieb unverändert. Die kostenabgeleitete Spread-Untergrenze (`S_max = max(tick_floor_bps, α·ATR₁₄)`) ist **nicht** umgesetzt — ihre Prämisse (ein bereits existierender `tick_floor_bps`/`check_cost_model_floor`-Mechanismus) traf beim Verifizieren gegen `main` nicht zu (Pitfall #333/#see unten) und gehört zu Issue #998 (nicht in dieser Session bearbeitet).
 
 ---
 
@@ -5679,3 +5735,84 @@ Issue #965–#990 im selben Kommentar meint den `#937–#964`-Katalog oben, NICH
 - **`invariants.gate_inventory_table`/`check_gate_marginal_contribution`** (`invariants.py`, #970)
   — vor dem Hinzufügen eines neuen `eligible_requires_all`-Gates: gegen eine reale Kohorte prüfen,
   ob es je solo oder marginal beiträgt, statt es auf Verdacht zu ergänzen.
+
+### 🟢 Pitfall #330 — Ein Wächter, der zu oft feuert, ist zuerst als korrekt anzunehmen [Katalog #993–#1002]
+**Symptom:** Ein vorgeschlagener Fix wollte die Schwelle eines Invarianten-Checks aufweichen, weil er im Bestand ungewöhnlich oft anschlug.
+**Root-Cause:** Eine hohe FAIL-Zahl ist ein Mass für die Verbreitung des zugrunde liegenden Defekts, nicht für die Fehlerhaftigkeit des Wächters selbst.
+**Fix/Regel:** Bevor die Schwelle einer Invariante angepasst wird, ist zu belegen, dass sie das Falsche misst — nicht, dass sie unbequem oft anschlägt. Gegenprobe: Wäre die vorgeschlagene neue Schwelle auch dann gewählt worden, wenn sie im Bestand null Treffer hätte?
+
+### 🟢 Pitfall #331 — Ein numerischer Zielwert für den Ausgang eines Signifikanztests ist kein Akzeptanzkriterium [Katalog #993–#1002]
+**Symptom:** Ein Vorschlag formulierte als Erfolgskriterium „die Ablehnungsquote eines Gates sinkt um mindestens X %".
+**Root-Cause:** Das macht die Grösse, die vor Überanpassung schützen soll, zur abhängigen Variablen der gewünschten Promotionsrate — eine Zielquote für einen Signifikanztest ist per Konstruktion zirkulär.
+**Fix/Regel:** Zulässig ist ausschliesslich ein Kalibrierlauf mit OFFENEM Ausgang (z. B. ein H₀-Bootstrap, der die Schwelle empirisch herleitet). Ergebnis wird berichtet, nicht vorab als Zielzahl festgelegt.
+
+### 🟢 Pitfall #332 — Optimierung auf dem Holdout hebt den Holdout auf [Katalog #993–#1002]
+**Symptom:** Ein Vorschlag wollte eine Holdout-Kennzahl direkt als Zielfunktion oder Tie-Breaker in die Suche einspeisen.
+**Root-Cause:** Eine Zielfunktion, die eine Holdout-Kennzahl maximiert, macht jede nachgelagerte DSR-/PSR-/PBO-Zahl bedeutungslos, weil die Selektionsbreite dann nicht mehr messbar ist.
+**Fix/Regel:** Gilt auch dann, wenn der Holdout nur als Tie-Breaker oder Frühstopp-Kriterium gelesen wird — der Holdout bleibt strikt ausserhalb jeder Optimierungsschleife.
+
+### 🟢 Pitfall #333 — Jeder Issue-/Katalog-Vorschlag ist vor der Umsetzung gegen `main` zu verifizieren [Katalog #993–#1002]
+**Symptom:** Diese Session begann die Implementierung von Issue #846/#847 auf einem `claude/issue-846-agents-md-kbrdld`-Branch, dessen lokaler Checkout von `main` abwich (fremde, nicht-verwandte Git-Historie, kein Remote-Gegenstück) — die erste Verifikationsrunde gegen diesen falschen `main`-Stand ergab fälschlich, dass ein Dutzend im Katalog referenzierter Invarianten-Funktionen (`check_annualization_commensurability`, `check_objective_branch_coverage`, `check_selection_statistic_availability`, `check_cost_model_floor`/`tick_floor_bps` u. a.) sowie `automation/AGENTS.md`'s Zeilenzahl/höchste Pitfall-Nummer NICHT existierten. Nach dem Feststellen, dass der Ziel-`main` zwischenzeitlich (Force-Push) auf einen anderen, weit fortgeschritteneren Stand aktualisiert worden war, verifizierten sich SÄMTLICHE dieser Funktionen als real vorhanden — die Diskrepanz lag am falschen Vergleichspunkt, nicht am Katalog.
+**Root-Cause:** Ein lokal vorhandener Branch ohne Remote-Gegenstück und ohne gemeinsamen Vorfahren mit dem aktuellen `main` ist kein zuverlässiger Verifikations-Ausgangspunkt — er kann veralteter Container-/Session-Zustand sein oder (wie hier) ein Signal, dass `main` selbst seither überschrieben wurde.
+**Fix/Regel:** Prüfreihenfolge vor jeder Umsetzung: (1) `git fetch origin <default-branch>` unmittelbar vor der Verifikation, NICHT nur den vom Environment vorgegebenen lokalen Checkout vertrauen; (2) `git merge-base <branch> origin/<default-branch>` — kein gemeinsamer Vorfahre ist ein Alarmsignal, kein Freifahrtschein zum Verwerfen; (3) existiert die behauptete Konstante/Funktion überhaupt (`grep`) GEGEN DEN FRISCH GEHOLTEN Stand? Diese Session implementierte die beiden Stufe-0-Punkte (#993, #999) vollständig — der Rest des Katalogs (#994–#998, #1000–#1002) blieb unimplementiert, weil er einen Purge/Re-Run voraussetzt, der ausserhalb des Zeitbudgets dieser Session lag (nicht, weil seine Prämissen falsch wären — sie sind es nicht).
+
+### 🟢 Pitfall #334 — Kelly-Formeln sind dimensionsbehaftet [Katalog #993–#1002]
+**Symptom:** Eine vorgeschlagene Positionsgrössen-Formel lieferte für plausible Eingaben `f*` deutlich ausserhalb `[0, 1]`.
+**Root-Cause:** `f* = p/a − q/b` gilt für Gewinn/Verlust JE EINGESETZTER EINHEIT. Werden `a`/`b` stattdessen auf das Gesamtkapital bezogen, wächst `f*` um den Kehrwert der relativen Positionsgrösse — der Exposure-Cap bindet dann immer, und die Risikosteuerung ist dekorativ.
+**Fix/Regel:** Für jede Kelly-artige Formel prüfen: liefert sie für plausible Eingaben ein `f*` innerhalb `[0, 1]`? Falls nicht, ist die Formel dimensional falsch instrumentiert, kein Kalibrierungsproblem.
+
+### 🟢 Pitfall #335 — Ein Divisor, der mit dem eingegangenen Risiko schrumpft, ist ein Hebel [Katalog #993–#1002, siehe §11.2]
+**Symptom:** `MomentumLSAllocator.get_allocation` teilte `account_balance` durch die Zahl der Universumssymbole OHNE offene Position — der Nenner schrumpft mit jeder eröffneten Position, die LETZTE Position erhielt das gesamte Restkapital.
+**Root-Cause:** `kapital / freie_slots` weist der letzten Position das gesamte Kapital zu, statt es über ein Budget (`Σ w_i <= W_max`) zu verteilen — eine Division durch die Zahl offener Möglichkeiten ist kein Erhaltungsprinzip.
+**Fix/Regel:** Kapitalallokation braucht ein Budget mit Erhaltungsbedingung, keine Division durch freie Slots. Testfall: die Allokationsfolge muss in der Zahl bereits offener Positionen monoton FALLEND sein (siehe `test_issue_999_live_risk_boundary.py`).
+
+### 🟢 Pitfall #336 — Eine Ablehnungsursache auf Study-Ebene ist keine Ursache, sondern eine Zusammenfassung [Katalog #993–#1002]
+**Symptom:** Eine dominante Study-Level-Ablehnungsursache wurde im Vorschlag als der alleinige Treiber einer Nullpromotion benannt.
+**Root-Cause:** Eine aggregierte Ursache auf Study-Ebene beantwortet nicht, WARUM auf Trial-Ebene tatsächlich abgelehnt wurde — ohne Aufschlüsselung nach der feineren, tatsächlichen Ablehnungsdetail-Verteilung ist die genannte Ursache eine Vermutung, kein Beleg.
+**Fix/Regel:** Zwei Felder verschiedener Aggregationsebenen dürfen nie als gemeinsamer Beleg für dieselbe Kausalaussage geführt werden — jede Ursachenbehauptung muss auf der Ebene belegt werden, auf der sie gilt.
+
+### 🟢 Pitfall #337 — Ein Split, dessen Grenze von den Suchparametern abhängt, ist kein Out-of-Sample [Katalog #993–#1002]
+**Symptom:** Ein ereignisbasierter IS/OOS-Schnitt (Grenze abhängig von einer während der Suche variierenden Grösse) wurde als Alternative zu einer kalendarischen Grenze vorgeschlagen.
+**Root-Cause:** Legt die IS/OOS-Grenze für zwei Trials derselben Study auf zwei verschiedene Kalenderzeitpunkte, vergleicht die Trials nicht mehr auf demselben Zeitraum — der Optimizer kann die Testmenge dadurch faktisch verschieben.
+**Fix/Regel:** Die IS/OOS-Grenze muss kalendarisch und parameterunabhängig bleiben.
+
+### 🟢 Pitfall #338 — Ein Artefakt hat genau eine Identität [Katalog #993–#1002]
+**Symptom:** Ein Issue-Bestand enthielt Titel der Form „Issue #NNN: …" unter einer ANDEREN, tatsächlichen GitHub-Nummer — eine zweite Nummerierung mit konstantem Offset entstand.
+**Root-Cause:** Jede Referenz „siehe #NNN" wird dadurch mehrdeutig, sobald zwei verschiedene Nummerierungssysteme parallel existieren.
+**Fix/Regel:** Eine Nummer, ein Ort, eine Bedeutung — gilt für Issue-Nummern ebenso wie für `run_id` gegen Log-Dateinamen und für Feldnamen in Invarianten-Serialisierung.
+
+### 🟢 Pitfall #339 — Eine blockierende Invariante muss ihren Zähler offenlegen [Katalog #993–#1002]
+**Symptom:** Ein vorgeschlagener `severity=blocking`-Check ohne rekonstruierbare Definition von Zähler und Nenner wäre nicht prüfbar gewesen, warum er einen Lauf abbricht.
+**Root-Cause:** Ohne die Rohgrössen (`n_violating`, `n_total`, Verteilungsstatistik) ist eine blockierende Meldung nur ein Quotient — die Abbruchentscheidung selbst bleibt unprüfbar.
+**Fix/Regel:** Jede blockierende Invariante trägt die Rohgrössen, nicht nur den daraus abgeleiteten Quotienten — umgesetzt in `invariants.check_deployment_gate_completeness`/`check_live_exposure_budget` (Issue #993/#999): beide melden die vollständige `clause_results`/Snapshot-Liste der Verletzung, nicht nur ein Pass/Fail.
+
+---
+
+## Issue-Katalog #993–#1002 — Deployment-Grenze, Live-Kapitalallokation & Circuit-Breaker (GitHub-Issues #846/#847, Sitzung 2026-08-10)
+
+**Ausgangslage.** GitHub-Issue #846 legte einen zehnteiligen, in Stufen (0–5) gegliederten Konsolidierungskatalog #993–#1002 vor (Basis: der 54-Issue-Bestand #965–#992 dieser Datei). Diese Session implementierte die beiden **Stufe-0-Punkte** (#993, #999) — die der Katalog selbst als „ohne Purge, ohne Re-Run" und mit dem grössten sofortigen Kapitalrisiko-Abbau kennzeichnet — vollständig inklusive Tests und Dokumentation. Die übrigen acht Punkte (Stufen 1–4) erfordern einen Trial-Purge und/oder einen vollständigen Symbolmatrix-Re-Run und blieben ausserhalb des Zeitbudgets dieser Session unimplementiert (siehe Pitfall #333 für eine Verifikations-Lektion aus dieser Session, NICHT weil die Katalog-Prämissen sich als falsch erwiesen — sie verifizierten sich vollständig gegen den tatsächlichen `main`).
+
+### Umgesetzt in dieser Session
+
+**#993 (P0, HEADLINE) — Die Deployment-Grenze.** Siehe §11.1 oben. Neues Modul `automation/optimizer/deployment_gate.py` (`evaluate_deployment_eligibility`, `DeploymentDecision`, acht Klauseln, fail-closed bei fehlenden Werten). `daily_orchestrator.phase5_live_deployment` liest Promotionsrecords jetzt aus `data/optimizer/proposal_{strategy}_{symbol}.json` statt aus `tournament_result`; die alte `oos_eligible ∧ oos_evaluated`-Bedingung ist ersatzlos entfernt. Additive Persistenz in `confirm.confirm_per_symbol_promotion` (`oos_psr`, `holdout_ci_lower_sortino`, `boundary_hit_fraction`, `data_snapshot_sha256` — vorher transient, jetzt in `metrics_symbol`/dem Proposal-Export gestempelt, keine bestehende Entscheidung geändert). Neue blockierende Invariante `invariants.check_deployment_gate_completeness`. Tests: `automation/tests/test_issue_993_deployment_gate.py` (35 Fälle).
+
+**#999 (P0, HEADLINE) — Kapitalallokation und Circuit-Breaker.** Siehe §11.2 oben. `MomentumLSAllocator.get_allocation` auf eine Budget-Formel mit Erhaltungsbedingung umgestellt (ersetzt den monoton steigenden Ruin-Pfad `account_balance / pending_signals`). Neues Modul `automation/live_risk.py` (`evaluate_circuit_breaker`, `drawdown_damper`, `LiveCircuitBreakerWatchdog`) — Live-Equity-Überwachung mit zwei ODER-verknüpften Auslösern, Positions-Flatten via `Trader.market_exit_strategy` (verifiziert gegen die installierte `nautilus_trader`-API), Exit-Code 3. Neue Config-Sektion `backtest.json["live_risk"]`. Neue Invariante `invariants.check_live_exposure_budget`. Tests: `automation/tests/test_issue_999_live_risk_boundary.py` (22 Fälle). **Nicht umgesetzt** (siehe §11.2-Schlussabsatz): die Reconciliation-Vereinheitlichung (Symptom 3, GH #800 verworfen — bereits vorhandene Reconciliation-Infrastruktur in `etoro_execution.py`/`HourlyStrategyBase._reconcile_after_reconnect` unverändert) und die kostenabgeleitete Spread-Untergrenze `S_max = max(tick_floor_bps, α·ATR₁₄)` (der `tick_floor_bps`-Mechanismus aus #956 existiert real — die Live-Pfad-Verdrahtung selbst ist schlicht Zeitbudget-bedingt zurückgestellt, gehört inhaltlich zu #998).
+
+### Offen — nicht in dieser Session bearbeitet
+
+#994 (Selektionsstatistik/PSR-Verfügbarkeit), #995 (Reward-Zweig-Geometrie), #996 (Annualisierungs-/Periodenzahl-Kommensurabilität), #997 (Zeitbox-Exit-Vertrag), #998 (Kostenrealismus/Stresstest/CVaR), #1000 (Lookback-Bounds), #1001 (Matrix-Backtest-Durchsatz), #1002 (Bootstrap-Blocklänge) — alle acht sind laut Katalog Stufe 1–4 (Purge und/oder Re-Run erforderlich) und wurden nicht begonnen. Ihre referenzierten Mechanismen (`check_annualization_commensurability`, `check_objective_branch_coverage`, `check_selection_statistic_availability`, `check_guard_reference_stability`, `check_search_made_progress`, `check_gate_marginal_contribution`, `check_cost_model_floor`/`tick_floor_bps`) existieren SÄMTLICH bereits auf `main` — wer diese Punkte aufgreift, startet auf einer soliden, bereits verifizierten Grundlage (siehe Merge-Reihenfolge im ursprünglichen Issue #846).
+
+### 📋 Neue/geänderte Config-Keys (Issue-Katalog #993–#1002)
+- `backtest.json.live_risk.max_total_exposure_fraction` (Default 0.60) — Pitfall #335, #999.
+- `backtest.json.live_risk.max_symbol_exposure_fraction` (Default 0.10) — Pitfall #335, #999.
+- `backtest.json.live_risk.dd_halt_fraction` (Default 0.10) — Circuit-Breaker Auslöser A, #999.
+- `backtest.json.live_risk.psi_min` (Default 0.2) — Drawdown-Dämpfer-Untergrenze, #999.
+- `backtest.json.live_risk.distribution_z_halt` (Default 2.5) — Circuit-Breaker Auslöser B, #999.
+- `backtest.json.live_risk.circuit_breaker_n_min_periods` (Default 30) — Auslöser B fail-open-Schwelle, #999.
+- `backtest.json.live_risk.poll_interval_s` (Default 30.0) — `LiveCircuitBreakerWatchdog`-Pollintervall, #999.
+
+### 🔒 Watertight Invariants (Issue-Katalog #993–#1002) — für künftige Agenten
+- **`invariants.check_deployment_gate_completeness`** (`invariants.py`, #993) — blockierend (Exit-Code 1 vor Bot-Start): jeder `whitelist_tournament.json`-Eintrag muss ein vollständiges `deployment_gate.clause_results`-Dict tragen, alle acht Klauseln `True`. Bei 0 Promotionen (Ausgangszustand) trivial erfüllt (Pitfall #330: kein Wächter, der noch nie feuert, ist deshalb falsch).
+- **`invariants.check_live_exposure_budget`** (`invariants.py`, #999) — `Σ w_i <= max_total_exposure_fraction + 1e-9` über aufgezeichnete `LIVE_EXPOSURE_SNAPSHOT`-Telemetrie (`momentum_ls_allocator.get_allocation`). Eine Verletzung ist ein Bug in der Budget-Formel selbst, keine Dateneigenart (Pitfall #335).
+- **`deployment_gate.evaluate_deployment_eligibility`** — fail-closed bei jeder fehlenden Grösse (`None` zählt nicht als erfüllt, Pitfall #237-Wiederkehr); kein Frühausstieg — `clause_results` trägt immer alle acht Klauseln, auch wenn eine früh entscheidende bereits fehlschlägt.
+- **`live_risk.evaluate_circuit_breaker`** — Auslöser A (Drawdown) ist fail-closed und feuert unabhängig von der Stichprobengrösse; Auslöser B (Verteilung) ist fail-open, solange `n_live < circuit_breaker_n_min_periods` — beide Grenzwerte tragen eine `1e-9`-Toleranz gegen Float-Rundung an der exakten Schwelle.
