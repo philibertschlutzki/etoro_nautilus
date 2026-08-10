@@ -77,9 +77,10 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
 
 
 # Issue #714 (GR-01) — 24-Bar-Zeitbox (1h-Bars). Harte Obergrenze für JEDE ``max_bars_in_trade``-
-# Suchraum-Bound über alle 15 Strategien (Untergrenzen bleiben unverändert). Single Source of Truth,
-# konsistent mit ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``.
-_MAX_BARS_IN_TRADE_CAP = 24
+# Suchraum-Bound über alle 15 Strategien (Untergrenzen bleiben unverändert). Issue #858 — Single
+# Source of Truth über einen Import statt einer eigenen Kopie des Literals, konsistent mit
+# ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP``.
+from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
 
 
 def _dyn_tp_params(trial) -> dict:
@@ -233,8 +234,15 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
         # siehe adx_atr_momentum.py-Docstring, analog DonchianRegimeBreakout/#691). `adx_period`
         # ist seither funktional TOT (kein Effekt auf das Entry-Signal) und würde sonst
         # Phantom-Tuning betreiben (Pitfall #4) — bleibt in der Config als Re-Aktivierungspunkt.
-        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        # Issue #908 — die #870-Bounds-Öffnung hat das Frequenzproblem (0 eligible Trials, gesperrt
+        # durch einen zu engen Suchraum) gelöst und dabei ein Regime freigegeben, in dem die
+        # Strategie alle ~5,7 Bars handelt (754 OOS-Trades / 180 d bei einer 24-Bar-Zeitbox — kein
+        # Momentum-Handel mehr, sondern hochfrequentes Rauschen-Traden ohne Informationsgewinn, nur
+        # Durchsatzkosten). cooldown_bars-Untergrenze 2 → 6 UND min_holding_time NEU im Suchraum
+        # (vorher an KEINER Strategie gesampelt, immer Default 0) begrenzen das Handelsregime.
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 6, 36)
         mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        mh_lo, mh_hi = _bounds_for(strategy, symbol, "min_holding_time", 0, 8)
         params = {
             "ema_period": trial.suggest_int("ema_period", 20, 100),
             "atr_multiplier": trial.suggest_float("atr_multiplier", 1.0, 4.0),
@@ -242,6 +250,7 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
+            "min_holding_time": trial.suggest_int("min_holding_time", mh_lo, mh_hi),
         }
     elif strategy == "MeanReversionStrategy":
         params = {
@@ -254,29 +263,56 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
         }
     elif strategy == "SqueezeBreakoutStrategy":
-        # Issue #689 — Bollinger-innerhalb-Keltner-Squeeze-Release. `bb_std_dev`/`keltner_multiplier`
-        # bewusst NICHT hart auf ein festes Verhältnis fixiert (Pitfall #6-analog): der Optimizer
-        # kalibriert die Squeeze-Enge selbst innerhalb der Bounds.
+        # Issue #689 — Bollinger-innerhalb-Keltner-Squeeze-Release.
+        # Issue #921 — `bb_std_dev`/`keltner_multiplier` UNABHÄNGIG sampeln (Pre-#921-Verhalten,
+        # siehe Kommentar-Historie) erzeugte bei 178 Trials nur 19 auswertbare (Median 1
+        # OOS-Trade): `squeeze_on` (squeeze_breakout.py:70) verlangt, dass die Bollinger-Bänder
+        # VOLLSTÄNDIG innerhalb des Keltner-Kanals liegen — strukturell nur erreichbar, wenn
+        # `bb_std_dev / keltner_multiplier` unterhalb eines datengetriebenen Schwellwerts nahe 1
+        # bleibt. Zwei unabhängige Sampler treffen dieses enge Verhältnis selten. Fix: dasselbe
+        # fast+gap-Muster wie ComboTrendVwaps `macd_slow` (ISSUE-OPT-377) — das VERHÄLTNIS
+        # (`squeeze_ratio`, Band [0.70; 1.05]) wird gesampelt, `keltner_multiplier` bleibt der
+        # absolute Faktor, `bb_std_dev` wird daraus abgeleitet. Garantiert die enge Kopplung, die
+        # die Squeeze-Bedingung tatsächlich braucht, statt sie zwei unabhängigen Samplern zu
+        # überlassen. `squeeze_ratio` selbst ist KEIN Config-Feld der Strategie (existiert nur als
+        # Optuna-Suchraum-Achse) — nur das abgeleitete `bb_std_dev` erreicht die Strategie-Config.
+        sr_lo, sr_hi = _bounds_for(strategy, symbol, "squeeze_ratio", 0.70, 1.05)
+        msb_lo, msb_hi = _bounds_for(strategy, symbol, "min_squeeze_bars", 3, 18)
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 24)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
+        squeeze_ratio = trial.suggest_float("squeeze_ratio", sr_lo, sr_hi)
+        keltner_multiplier = trial.suggest_float("keltner_multiplier", 1.0, 2.5)
         params = {
             "bb_period": trial.suggest_int("bb_period", 10, 40),
-            "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 2.5),
+            "bb_std_dev": squeeze_ratio * keltner_multiplier,
             "keltner_period": trial.suggest_int("keltner_period", 10, 40),
-            "keltner_multiplier": trial.suggest_float("keltner_multiplier", 1.0, 2.5),
-            "min_squeeze_bars": trial.suggest_int("min_squeeze_bars", 3, 18),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 24),
+            "keltner_multiplier": keltner_multiplier,
+            "min_squeeze_bars": trial.suggest_int("min_squeeze_bars", msb_lo, msb_hi),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 3.5),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "OpeningRangeBreakoutStrategy":
         # Issue #690 — Opening-Range-Breakout (Momentum-Ignition am Tagesbeginn).
+        # Issue #922 Fix 3 — untere or_bars/cooldown_bars-Bounds geöffnet (2→1 bzw. 2→1): das
+        # XOM-Referenzsymptom (median oos_total_trades=15 gegen oos_min_trades=20, median
+        # n_periods=72) ist ZWEI unabhängige Frequenz-Defizite, der Session-Anker (Fix 2) allein
+        # behebt nur eines. Zielgrösse ≥ 40 OOS-Round-Trips (das Doppelte von oos_min_trades,
+        # damit das Gate nicht selbst bindend wird) — ein engerer or_bars/cooldown_bars-Suchraum
+        # lässt mehr Signale zu, ohne die obere Bound (weniger Trades, längere Range) zu verlieren.
+        # Jetzt auch über search_space_overrides.json symbol-spezifisch überschreibbar (Fix 3,
+        # vorher nur TrendPullback/AdxAtr/HourlyMeanReversion/SqueezeBreakout verdrahtet).
+        ob_lo, ob_hi = _bounds_for(strategy, symbol, "or_bars", 1, 8)
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 1, 24)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
         params = {
-            "or_bars": trial.suggest_int("or_bars", 2, 8),
+            "or_bars": trial.suggest_int("or_bars", ob_lo, ob_hi),
             "or_atr_buffer": trial.suggest_float("or_atr_buffer", 0.0, 1.0),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 24),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_period": trial.suggest_int("atr_period", 7, 21),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 3.5),
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "DonchianRegimeBreakoutStrategy":
         # Issue #691 — Donchian-Ausbruch, EMA-Steigungs-gegatet (Regime-Filter Option B). Der

@@ -46,10 +46,13 @@ def test_informative_annualization_factor_respects_explicit_config_override():
         assert _informative_annualization_factor(None, 5) == 999.0
 
 
-# ── SORTINO_INSUFFICIENT_DOWNSIDE gate ───────────────────────────────────────────────────────────
-def test_insufficient_downside_observations_yields_none_with_own_code():
-    """< sortino_min_downside_observations Downside-Beobachtungen -> sortino=None mit dem EIGENEN
-    Code (nicht SORTINO_GUARD_TRIPPED)."""
+# ── SORTINO_DOWNSIDE_SHRUNK gate (Issue #944 — ersetzt die frühere SORTINO_INSUFFICIENT_DOWNSIDE-
+# Verwerfung: eine proportionale Verwerfungsschwelle ist ein Anti-Selektions-Filter, siehe
+# test_issue_944_downside_shrinkage_not_rejection.py) ─────────────────────────────────────────────
+def test_insufficient_downside_observations_shrinks_not_rejects():
+    """< sortino_min_downside_observations Downside-Beobachtungen -> dd_dev wird Richtung der
+    Gesamtstreuung geschrumpft (SORTINO_DOWNSIDE_SHRUNK), der Trial bleibt bewertbar (Issue #944 —
+    vor #944 fuehrte dies zu sortino=None mit SORTINO_INSUFFICIENT_DOWNSIDE)."""
     idx = pd.date_range("2025-01-01", periods=41, freq="1h", tz="UTC")
     # 40 Perioden, GENAU 2 davon negativ (Downside).
     rets = [0.001] * 38 + [-0.0005, -0.0005]
@@ -60,11 +63,9 @@ def test_insufficient_downside_observations_yields_none_with_own_code():
     with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=30):
         stats = _calculate_stats([1.0] * 20 + [-1.0] * 20, [(3600 * 10**9, 1.0)] * 40, 1000.0,
                                  mtm_series=series, min_trades_for_sortino=10)
-    assert stats["sortino_ratio"] is None
-    assert stats["psr"] is None
     codes = [d["code"] for d in stats["inference_diagnostics"]]
-    assert "SORTINO_INSUFFICIENT_DOWNSIDE" in codes
-    assert "SORTINO_GUARD_TRIPPED" not in codes
+    assert "SORTINO_INSUFFICIENT_DOWNSIDE" not in codes
+    assert "SORTINO_DOWNSIDE_SHRUNK" in codes
 
 
 def test_sufficient_downside_observations_computes_sortino():
@@ -76,7 +77,11 @@ def test_sufficient_downside_observations_computes_sortino():
     for r in rets:
         vals.append(vals[-1] * (1 + r))
     series = pd.Series(vals, index=idx)
-    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=25):
+    # Issue #844 — sortino_numeric_guard_min_periods ist jetzt real gesetzt (1600); bei 60
+    # Perioden deaktiviert, da dieser Test die downside_observations-Schwelle prueft, nicht den
+    # T-bewussten Numerik-Guard.
+    with patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=25), \
+         patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         stats = _calculate_stats([1.0] * 30 + [-1.0] * 30, [(3600 * 10**9, 1.0)] * 60, 1000.0,
                                  mtm_series=series, min_trades_for_sortino=10)
     codes = [d["code"] for d in stats["inference_diagnostics"]]
@@ -84,11 +89,20 @@ def test_sufficient_downside_observations_computes_sortino():
     assert stats["sortino_ratio"] is not None
 
 
-def test_default_min_downside_observations_is_30(tmp_path, monkeypatch):
+def test_default_min_downside_observations_is_now_relative(tmp_path, monkeypatch):
+    """Issue #863 — der absolute Default 30 war fuer hochselektive Strategien strukturell
+    unerreichbar; der neue Default ist ein relativer Anteil (0.5) von n_periods."""
     import automation.backtest_runner as br
     monkeypatch.setattr(br, "_sortino_min_downside_observations_cache", None)
     monkeypatch.setattr(br, "config_dir", lambda: tmp_path)
-    assert br._read_sortino_min_downside_observations() == 30
+    assert br._read_sortino_min_downside_observations() == 0.5
+
+
+def test_default_min_periods_absolute_is_20(tmp_path, monkeypatch):
+    import automation.backtest_runner as br
+    monkeypatch.setattr(br, "_sortino_min_periods_absolute_cache", None)
+    monkeypatch.setattr(br, "config_dir", lambda: tmp_path)
+    assert br._read_sortino_min_periods_absolute() == 20
 
 
 # ── Informative-Teilmenge ändert n_periods (Telemetrie) ─────────────────────────────────────────

@@ -14,11 +14,13 @@
       "commission_bps": "Kommission pro ROUND-TRIP in Basispunkten (bps). Issue #561: Die Implementierung verrechnet die HALBE Rate je Leg (Entry + Exit), sodass die Summe genau commission_bps · notional_avg EINMAL kostet (nicht 2×). Ein Round-Trip mit notional 10 000 USD und commission_bps=10 kostet exakt 10 USD. Single Source of Truth für die kostenrelative Expectancy-Schwelle (tournament.json.oos_min_expectancy_k_alpha, Issue #562) — nie doppelt pflegen.",
       "spread_bps_by_asset_class": "Dynamische Tick-Weitung pro Asset Class in Basispunkten (bps), um Zero-Spread Artefakte zu vermeiden. Issue #566: EQUITY von 8.0 auf 3.0 rekalibriert — 8 bps waren für liquide Large-Caps (TSLA real ~1–3 bps) unrealistisch weit und maskierten echten Edge (Kosten-Overstatement Faktor ~3–8). Ein zu weiter Spread ist NICHT konservativ-sicher, er macht robuste Strategien fälschlich unrentabel. Für symbol-spezifische Feinkalibrierung siehe spread_bps_by_symbol.",
       "spread_bps_by_symbol": "Issue #566 — optionale symbol-spezifische Spread-Override-Map (bps), die spread_bps_by_asset_class für einzelne Instrumente übersteuert (Auflösungsreihenfolge: Symbol-Override → Asset-Class → DEFAULT). Für Blue-Chips mit engem realem Bid/Ask (z. B. TSLA.ETORO ~2 bps) den realistischen Wert setzen. Fehlt der Key oder das Symbol ⇒ Asset-Class-Fallback (rückwärtskompatibel). Mittelfristig aus der realen QuoteTick-Bid/Ask-Historie schätzbar (Median effektiver Spread je Symbol).",
+      "atr_floor_bps_by_asset_class": "Issue #924 — Untergrenze für den ATR-Wert des Trailing-Stops (hourly_strategy_base._effective_atr_value, #897 Fix 4: max(ATR, atr_floor_bps · Preis)), asset-class-aufgelöst über dieselbe Auflösungskette wie spread_bps_by_asset_class (resolve_atr_floor_bps, backtest_runner.py). Verhindert einen Stop, der bei einem degenerierten Nautilus-AverageTrueRange (High==Low==PrevClose) exakt auf das Preis-Extremum kollabiert und die Position beim nächsten Tick beendet. Vor #924 war der Wert ein flacher, in HourlyStrategyConfig hart kodierter Default (2.0 bps) für JEDES Symbol — für die volatileren Krypto-Instrumente (siehe #920) strukturell zu eng. Fehlt der Key ⇒ Fallback auf den alten flachen Default 2.0 (rückwärtskompatibel, resolve_atr_floor_bps). Ein asset_class_key, der weder 'UNKNOWN' noch in dieser Map vorhanden ist, ist ein Konfigurationsfehler (wirft, analog resolve_spread_bps/#898).",
       "holdout_days": "Anzahl der Holdout-Tage f\u00fcr Out-of-Sample Validierung nach der Optimierung.",
       "data_history_days": "Issue #445 \u2014 dokumentierte/erwartete Mindest-Datenhistorie pro Symbol in Tagen (Single Source of Truth, deckungsgleich mit strategy_defaults.json._schema). Fallback auf diesen Config-Value statt echter Time-Series-Spanne in Gate-1 Evaluierung (Issue #525).",
       "embargo_period_days": "Issue #466 (Leakage Prevention) \u2014 Embargo-Periode in Tagen zwischen IS-Ende und OOS-Start, um Lookback-Leakage von Indikatoren in die In-Sample Trainingsdaten zu verhindern. Sollte >= max_lookback der Strategie sein.",
       "retrain": "Issue #675 \u2014 OPT-IN Geometrie-Modus f\u00fcr backtest_runner.compute_fold_boundaries. false (Default, fehlt der Key) \u21d2 bit-identisch zum Pre-#675-Verhalten: EIN statisch am Datenanfang verankertes IS-Fenster fuer ALLE OOS-Folds (testet Regime-PERSISTENZ, nicht Config-ROBUSTHEIT \u2014 AGENTS.md Pitfall #142). true \u21d2 jeder Fold erhaelt sein EIGENES, unmittelbar vorangehendes (rollierendes) IS-Referenzfenster (is_start = oos_start \u2212 embargo \u2212 is_window_days), embargo-sicher (kein Leakage-Kollaps). WICHTIG: Dieses System optimiert EINEN Parametervektor pro Trial ueber die gesamte Zeitspanne (Optuna, kein Per-Fold-Refit) \u2014 retrain=true liefert daher KEIN echtes Parameter-Refit je Fold, sondern eine rollierende IS/OOS-Divergenz-Diagnose (oos_fold_is_oos_divergence, rein additiv/forensisch, KEINE Gate-/Reward-Wirkung). Fuer eine strukturelle Eligibility-Antwort auf Nichtstationaritaet siehe stattdessen die bereits vorhandene CPCV-Infrastruktur (cpcv.py, genutzt in confirm._study_pbo, #663).",
-      "live_risk": "Issue #999 (P0, HEADLINE) \u2014 Parameter der Live-Kapitalallokation (automation.momentum_ls_allocator.MomentumLSAllocator) und des Live-Circuit-Breakers (automation.live_risk). max_total_exposure_fraction/max_symbol_exposure_fraction begrenzen \u03a3 w_i bzw. w_i je Symbol als Anteil des Kontostands (ersetzen die Vor-#999-Formel account_balance/pending_signals, die der LETZTEN Position das gesamte Restkapital zuwies). dd_halt_fraction/psi_min steuern den Drawdown-D\u00e4mpfer psi(DD)=max(psi_min, 1-DD/dd_halt_fraction) UND (zusammen mit distribution_z_halt/circuit_breaker_n_min_periods/poll_interval_s) den LiveCircuitBreakerWatchdog, der bei Ausl\u00f6ser A (absoluter Drawdown) oder B (Live-Rendite signifikant unter Backtest-Erwartung, erst ab n_live>=circuit_breaker_n_min_periods auswertbar) alle Positionen flatten und den Bot beenden l\u00e4sst."
+      "unknown_asset_class_policy": "Issue #898 Fix 2 \u2014 'reject' (Default) | 'default'. Ein Symbol ohne aufl\u00f6sbare asset_class (weder spread_bps_by_symbol-Override noch ein Eintrag in instrument_map.json) wird unter 'reject' VOR dem Backtest abgewiesen (REJECT_INSTRUMENT_METADATA_INCOMPLETE) statt fail-open mit der DEFAULT-Kostenkonstante verrechnet zu werden (vorher: 4.0bps statt z. B. 3.0bps EQUITY \u2014 33% Kosten\u00fcbersch\u00e4tzung f\u00fcr 47% des Universums, Issue #898). 'default' reproduziert das alte fail-open-Verhalten explizit opt-in.",
+      "opening_range_session_open_hour_by_asset_class": "Issue #922 \u2014 UTC-Stunde des Handelstag-Beginns je Asset-Class, asset-class-aufgel\u00f6st analog spread_bps_by_asset_class (resolve_opening_range_session_open_hour, backtest_runner.py), injiziert als opening_range_session_open_hour NUR in OpeningRangeBreakoutStrategy-Configs (andere Strategien filtern das Feld ohnehin ueber valid_keys heraus). Nur wirksam, wenn die Study opening_range_session_anchor='session_open_hour' setzt (Default bleibt 'calendar_day', bit-identisches Alt-Verhalten). EQUITY/COMMODITY erhalten die NYSE-Open-N\u00e4herung (13 UTC \u2248 9:30 ET, DST-ungenau); FOREX/CRYPTO/DEFAULT bleiben bei 0 (24/7-Maerkte, 'session_open_hour' degeneriert dort zu 'calendar_day', kein Schaden). Fehlt der Key \u21d2 Fallback auf den Dataclass-Default 13 (rueckwaertskompatibel)."
     }
   },
   "catalog_path": "data/nautilus",
@@ -34,6 +36,21 @@
   "spread_bps_by_symbol": {
     "TSLA.ETORO": 2.0
   },
+  "atr_floor_bps_by_asset_class": {
+    "CRYPTO": 10.0,
+    "EQUITY": 2.0,
+    "FOREX": 1.0,
+    "COMMODITY": 3.0,
+    "DEFAULT": 2.0
+  },
+  "opening_range_session_open_hour_by_asset_class": {
+    "EQUITY": 13,
+    "COMMODITY": 13,
+    "FOREX": 0,
+    "CRYPTO": 0,
+    "DEFAULT": 13
+  },
+  "unknown_asset_class_policy": "reject",
   "spread_modeling": true,
   "fill_model": "bid_ask",
   "worker_log_cleanup": true,

@@ -41,7 +41,8 @@ def test_pooled_sortino_return_correlation_above_0_6():
     # Downside-Stichprobe (Default 30); ohne den Patch koennten Trials mit < 30 Downside-
     # Beobachtungen die Korrelationsstichprobe unter das Akzeptanzkriterium (>= 50) druecken.
     with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9), \
-         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0):
       for _ in range(100):
         # Drift dominiert (breite Spanne), Volatilität variiert nur mild ⇒ gepoolter Sortino und
         # Return werden beide primär vom Drift getrieben (die ökonomisch realistische Kohärenz).

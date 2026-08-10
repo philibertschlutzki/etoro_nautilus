@@ -136,7 +136,9 @@ def test_mixed_cohort_message_reports_evaluated_subset_counts():
     msg = msgs[0].getMessage()
     assert "12/20 Trials wurden evaluiert" in msg
     assert "median oos_total_trades=5" in msg
-    assert "12/12 Trials trafen die Haltedauer-/Trade-Cap-Grenze" in msg
+    # Issue #972 (Pitfall #304) — Nenner ist jetzt len(completed)=20 (ALLE Trials, nicht nur die
+    # 12 ueberlebenden evaluierten): der alte Nenner (12/12) war tautologisch (siehe #972-Fix).
+    assert "12/20 ALLER Trials trafen die Haltedauer-/Trade-Cap-Grenze" in msg
     assert "p_eligible je 16-Trial-Fenster" in msg
 
 
@@ -158,7 +160,8 @@ def test_still_silent_when_no_trial_ever_reached_eligibility_determination():
 
 def test_still_fires_for_homogeneous_all_evaluated_cohort_bit_identical():
     """Regression-Anker: der ALTE Kernfall (#656, ALLE Trials evaluiert, 0 eligible) bleibt
-    unveraendert erkannt (Telemetrie bit-identisch fuer den homogenen Fall)."""
+    unveraendert erkannt. Issue #972 — der Haltedauer-/Trade-Cap-Zaehler-Nenner ist seit diesem
+    Fix len(completed) statt n_evaluated (hier zufaellig identisch, da die Kohorte homogen ist)."""
     lg, recs = _capturing_logger("test700d")
     trials = [_FakeTrial(-0.5, oos_evaluated=True, oos_eligible=False,
                          oos_total_trades=8, hit_trade_cap=True)
@@ -170,7 +173,7 @@ def test_still_fires_for_homogeneous_all_evaluated_cohort_bit_identical():
     msg = msgs[0].getMessage()
     assert "20/20 Trials wurden evaluiert" in msg
     assert "median oos_total_trades=8" in msg
-    assert "20/20 Trials trafen die Haltedauer-/Trade-Cap-Grenze" in msg
+    assert "20/20 ALLER Trials trafen die Haltedauer-/Trade-Cap-Grenze" in msg
 
 
 def test_still_silent_when_at_least_one_evaluated_trial_is_eligible_mixed_cohort():

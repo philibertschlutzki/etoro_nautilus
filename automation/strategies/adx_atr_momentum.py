@@ -50,7 +50,8 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
         self.atr = AverageTrueRange(config.atr_period)
         self._ema_prev: float | None = None
 
-        # Internal state for trailing-stop logic (kept for indicator calculations)
+        # Issue #860 — Bookkeeping fuer den Flip-Reset in _on_buy_signal/_on_sell_signal (die
+        # tatsaechliche Positions-/Exit-Verwaltung liegt vollstaendig in HourlyStrategyBase).
         self.current_position: str | None = None
         self.entry_price = 0.0
         self.trailing_stop = 0.0
@@ -66,12 +67,21 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
         self.ema.handle_bar(bar)
         self.atr.handle_bar(bar)
 
+        # Issue #860 — der Basisklassen-Exit-Check (Zeitbox, ATR-Trailing-Stop, Watchdog) muss die
+        # ERSTE Anweisung nach dem Indikator-Update sein, VOR dem Indikator-Guard darunter. Vorher
+        # rief diese Strategie `_check_exits_and_update` NIRGENDS auf (0 von 15 Strategien-Guards
+        # verletzten diesen Vertrag ausser dieser) — während einer Indikator-Warmup-Phase (z. B.
+        # nach einem Fold-Wechsel oder Reconnect mit rehydrierter Position, #717/GR-04) lief weder
+        # der Bar-Zähler noch der Zeit-Exit. Folgenlos, solange die Strategie 0 Positionen eröffnet
+        # (#870); sobald das behoben ist, wird dieser Defekt aktiv.
+        if self._check_exits_and_update(bar):
+            return
+
         if not (self.adx.initialized and self.ema.initialized and self.atr.initialized):
             return
 
         close_price = float(bar.close)
         ema_value = self.ema.value
-        atr_value = self.atr.value
         if self._ema_prev is None:
             self._ema_prev = ema_value
             return
@@ -85,60 +95,30 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
         #   rising_ema = falling_ema = adx_value > 25
         self._ema_prev = ema_value
 
-        # Trailing Stop Logik (uses internal current_position as signal state)
-        if self.current_position == "BUY":
-            new_stop = close_price - (atr_value * self.config.atr_multiplier)
-            if new_stop > self.trailing_stop:
-                self.trailing_stop = new_stop
-            if close_price <= self.trailing_stop:
-                self._log.info(
-                    f"[{self.instrument_id}] Trailing Stop LONG Hit! "
-                    f"Close: {close_price:.2f} <= Stop: {self.trailing_stop:.2f}",
-                    LogColor.RED,
-                )
-                self.current_position = None
-                self.trailing_stop = 0.0
-                self._exit_open_position()
-
-        elif self.current_position == "SELL":
-            new_stop = close_price + (atr_value * self.config.atr_multiplier)
-            if self.trailing_stop == 0.0 or new_stop < self.trailing_stop:
-                self.trailing_stop = new_stop
-            if close_price >= self.trailing_stop:
-                self._log.info(
-                    f"[{self.instrument_id}] Trailing Stop SHORT Hit! "
-                    f"Close: {close_price:.2f} >= Stop: {self.trailing_stop:.2f}",
-                    LogColor.GREEN,
-                )
-                self.current_position = None
-                self.trailing_stop = 0.0
-                self._exit_open_position()
+        # Issue #860 Fix Punkt 3 — der historische, EIGENE Trailing-Stop-Pfad (vor #699/vor der
+        # HourlyStrategyBase-Migration) ist entfernt: er referenzierte `self._close_position`, eine
+        # auf HourlyStrategyBase nie existierende Methode (jeder Aufruf hätte mit AttributeError
+        # abgebrochen), und der ATR-Trailing-Stop/Zeit-Exit laufen bereits vollständig über
+        # `_check_exits_and_update` oben. Die Positions-/Flip-Behandlung bleibt wie bei allen
+        # übrigen Strategien (siehe rsi2_reversion.py) Aufgabe von `_on_buy_signal`/
+        # `_on_sell_signal` selbst (cache-basiert), kein zusätzliches Gate hier.
 
         # Entry logic
-        if self.current_position is None:
-            if close_price > ema_value and rising_ema:
-                self.current_position = "BUY"
-                self.entry_price = close_price
-                self.trailing_stop = close_price - (atr_value * self.config.atr_multiplier)
-                self._log.info(
-                    f"[{self.instrument_id}] BUY SIGNAL AdxAtrMomentum | "
-                    f"Close: {close_price:.2f} > EMA: {ema_value:.2f} (rising) | "
-                    f"ATR: {atr_value:.2f} | Stop: {self.trailing_stop:.2f}",
-                    LogColor.GREEN,
-                )
-                self._on_buy_signal(bar)
+        if close_price > ema_value and rising_ema:
+            self._log.info(
+                f"[{self.instrument_id}] BUY SIGNAL AdxAtrMomentum | "
+                f"Close: {close_price:.2f} > EMA: {ema_value:.2f} (rising)",
+                LogColor.GREEN,
+            )
+            self._on_buy_signal(bar)
 
-            elif close_price < ema_value and falling_ema:
-                self.current_position = "SELL"
-                self.entry_price = close_price
-                self.trailing_stop = close_price + (atr_value * self.config.atr_multiplier)
-                self._log.info(
-                    f"[{self.instrument_id}] SELL SIGNAL AdxAtrMomentum | "
-                    f"Close: {close_price:.2f} < EMA: {ema_value:.2f} (falling) | "
-                    f"ATR: {atr_value:.2f} | Stop: {self.trailing_stop:.2f}",
-                    LogColor.RED,
-                )
-                self._on_sell_signal(bar)
+        elif close_price < ema_value and falling_ema:
+            self._log.info(
+                f"[{self.instrument_id}] SELL SIGNAL AdxAtrMomentum | "
+                f"Close: {close_price:.2f} < EMA: {ema_value:.2f} (falling)",
+                LogColor.RED,
+            )
+            self._on_sell_signal(bar)
 
     # ── Order helpers ──────────────────────────────────────────────────────────
 
@@ -191,13 +171,6 @@ class AdxAtrMomentumStrategy(HourlyStrategyBase):
             time_in_force=TimeInForce.GTC,
         )
         self.submit_order(order)
-
-    def _exit_open_position(self) -> None:
-        """Close any open position on this instrument (trailing stop hit)."""
-        positions = self.cache.positions_open(instrument_id=self.instrument_id)
-        if not positions:
-            return
-        self._close_position(positions[0])
 
     # ── Lifecycle callbacks ────────────────────────────────────────────────────
 

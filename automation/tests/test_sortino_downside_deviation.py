@@ -10,10 +10,14 @@ from automation.backtest_runner import _calculate_stats, _read_sortino_numeric_g
 def mock_sortino_config():
     # Issue #823 — die Fixtures dieses Moduls haben nur wenige Perioden (< Default 30 sortino_
     # min_downside_observations); dieses Modul prueft die Downside-Deviation-Formel, nicht die
-    # #823-Mindest-Stichprobe.
+    # #823-Mindest-Stichprobe. Issue #844 — sortino_numeric_guard_min_periods ist jetzt real
+    # gesetzt (1600); bei diesen winzigen Fixtures deaktiviert, um den T-bewussten Numerik-Guard
+    # nicht zu treffen (nicht Testgegenstand dieses Moduls).
     with patch("automation.backtest_runner._read_sortino_mar", return_value=0.0), \
          patch("automation.backtest_runner._read_sortino_min_trades", return_value=2), \
-         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_numeric_guard_min_periods", return_value=None):
         yield
 
 def test_sortino_target_downside_deviation_calculation(mock_sortino_config):

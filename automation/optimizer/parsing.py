@@ -20,7 +20,12 @@ class TournamentMetrics:
     # mathematisch undefiniert ist (Zero-Loss / Sub-Threshold). Default 0.0 haelt alle
     # bestehenden TournamentMetrics(**kw)-Konstruktionen rueckwaertskompatibel.
     oos_total_return: float = 0.0
-    oos_expectancy: float = 0.0
+    # Issue #966 (Katalog A, P0, Pitfall #305 in AGENTS.md) — VORHER float=0.0: eine FEHLENDE
+    # expectancy (kein Key in oos_metrics.json) kollabierte auf denselben Wert wie eine ECHT
+    # BEOBACHTETE Expectancy von 0.0 — ein Sentinel, der die Signatur eines Messwerts trägt, wird
+    # von jedem nachgelagerten Konsumenten (Gate, Constraint-Distanz, TPE-Sampler) als Messwert
+    # behandelt (dieselbe #759-Fehlerklasse wie oos_win_rate/oos_profit_factor, hier nachgezogen).
+    oos_expectancy: float | None = None
     # Issue #452: OOS-Distanzmetriken fuer kontinuierliche Constraint-Penalties bei
     # evaluierten, aber nicht eligiblen Trials.
     # Issue #759 — VORHER float=0.0: eine FEHLENDE win_rate (kein Trial je evaluiert/kein
@@ -94,6 +99,14 @@ class TournamentMetrics:
     oos_sortino_period: float | None = None
     oos_sortino_annualized: float | None = None
     oos_n_periods: int = 0
+    # Issue #845 — der Downside-Beobachtungs-Nenner (backtest_runner._calculate_stats
+    # "downside_obs", #823 SORTINO_INSUFFICIENT_DOWNSIDE-Schwelle), durchgereicht als eigenes Feld
+    # statt einer stillen Re-Interpretation von oos_n_periods: n_periods misst die volle
+    # informative Serie, downside_obs nur die tatsaechlich downside-tragende Teilmenge — beide
+    # koennen um Groessenordnungen auseinanderfallen (die #845-Motivation: Faktor 45 innerhalb
+    # einer Familie). None ⇒ vor Erreichen der Berechnung ausgestiegen (rückwärtskompatibel zu
+    # Pre-#845-JSONs).
+    oos_downside_obs: int | None = None
     oos_ret_skew: float = 0.0
     oos_ret_kurtosis: float = 3.0
     # Issue #620 — die #589-Kohärenz-Invariante (sign(oos_sortino)==sign(oos_total_return)) feuert im
@@ -109,6 +122,12 @@ class TournamentMetrics:
     # strukturell inert geblieben). None, wenn keine Benchmark-Serie vorlag (rückwärtskompatibel).
     oos_buyhold_return: float | None = None
     oos_excess_return: float | None = None
+    # Issue #850 — Anteil der Fenster-Zeit mit offener Position (backtest_runner._calculate_stats
+    # "exposure_fraction"), damit ein Excess-Return gegen einen fallenden Benchmark von echtem
+    # Alpha unterscheidbar wird (ein hoher Excess bei exposure_fraction nahe 0 ist ueberwiegend
+    # vermiedener Kursverlust, keine Handelsleistung — siehe summary_de.py Abschnitt 2.3). None,
+    # wenn keine Fenster-Spanne auswertbar war (rückwärtskompatibel zu Pre-#850-JSONs).
+    oos_exposure_fraction: float | None = None
     # Issue #710 — Haltedauer-Metrik (Bars, NICHT Sekunden — alle Strategien laufen auf 1h-Bars).
     # Median (robuste Zentraltendenz gegen schiefe per-Fold-Verteilungen) + p95 (Deadline-Nähe).
     # Optional[float]=None ⇒ migrationssicher (Legacy-JSONs/Fixtures ohne das Feld laufen unveraendert
@@ -140,6 +159,20 @@ class TournamentMetrics:
     # ``oos_metrics['inference_diagnostics']`` — Tupel von ``{'code','detail','value'}``-Dicts.
     # Leeres Tuple ⇒ keine Verletzung ODER Pre-#804-JSON (rückwärtskompatibel).
     inference_diagnostics: tuple = ()
+    # Issue #899 — Exit-Telemetrie (aus Order-Tags, nicht aus dem abgeschnittenen Subprozess-
+    # Logger). ``oos_exit_reason_histogram`` summiert exakt zu ``oos_total_trades``.
+    # ``oos_max_holding_bars`` ist die PRIMÄRE Bar-Messgrösse (#899 Fix 2, #902); leeres Dict/None
+    # ⇒ migrationssicher (Legacy-JSONs ohne die Felder).
+    oos_exit_reason_histogram: dict | None = None
+    oos_max_holding_bars: float | None = None
+    oos_gross_loss_mean_bps: float | None = None
+    oos_gross_win_mean_bps: float | None = None
+    oos_atr_median_bps: float | None = None
+    oos_atr_min_bps: float | None = None
+    # Issue #903 — rohe Round-Trip-Haltedauern (Sekunden), Eingangsgrösse für die ROUND-TRIP-Ebene
+    # von invariants.compute_trial_timebox_violations. Leeres Tuple ⇒ Pre-#899-JSON (rückwärts-
+    # kompatibel; der Konsument fällt dann auf den Trial-Maximum-Punkt zurück).
+    oos_holding_times_s: tuple = ()
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
@@ -210,6 +243,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_sortino_period = oos_metrics.get("sortino_period")
     oos_sortino_annualized = oos_metrics.get("sortino_annualized")
     oos_n_periods = oos_metrics.get("n_periods")
+    # Issue #845 — Downside-Beobachtungs-Nenner (None-safe ⇒ rückwärtskompatibel zu Pre-#845-JSONs).
+    oos_downside_obs = oos_metrics.get("downside_obs")
     oos_ret_skew = oos_metrics.get("ret_skew")
     oos_ret_kurtosis = oos_metrics.get("ret_kurtosis")
     # Issue #620 — Kohärenz-Verletzungs-Flag aus dem Subprozess (None-safe ⇒ False).
@@ -219,6 +254,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe; fehlt ohne Benchmark-Serie).
     oos_buyhold_return = oos_metrics.get("oos_buyhold_return")
     oos_excess_return = oos_metrics.get("oos_excess_return")
+    # Issue #850 — Exposure-Telemetrie (None-safe ⇒ rückwärtskompatibel zu Pre-#850-JSONs).
+    oos_exposure_fraction = oos_metrics.get("exposure_fraction")
     # Issue #710 — Haltedauer-Metrik (Bars, None-safe ⇒ rückwärtskompatibel zu Pre-#710-JSONs).
     oos_median_bars_held = oos_metrics.get("median_bars_held")
     oos_p95_bars_held = oos_metrics.get("p95_bars_held")
@@ -236,6 +273,14 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_equity_ruined = bool(oos_metrics.get("equity_ruined") or False)
     # Issue #804 — strukturierte Inferenzpfad-Diagnosen (None-safe ⇒ leeres Tuple).
     inference_diagnostics = tuple(oos_metrics.get("inference_diagnostics") or ())
+    # Issue #899 — Exit-Telemetrie (None-safe ⇒ rückwärtskompatibel zu Pre-#899-JSONs).
+    oos_exit_reason_histogram = oos_metrics.get("exit_reason_histogram")
+    oos_max_holding_bars = oos_metrics.get("max_holding_bars")
+    oos_gross_loss_mean_bps = oos_metrics.get("gross_loss_mean_bps")
+    oos_gross_win_mean_bps = oos_metrics.get("gross_win_mean_bps")
+    oos_atr_median_bps = oos_metrics.get("atr_median_bps")
+    oos_atr_min_bps = oos_metrics.get("atr_min_bps")
+    oos_holding_times_s = oos_metrics.get("holding_times_s")
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
     oos_total_trades = oos_metrics.get("total_trades") or 0
@@ -305,7 +350,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         is_total_trades=int(is_total_trades),
         hit_trade_cap=bool(hit_trade_cap),
         oos_total_return=float(oos_total_return) if oos_total_return is not None else 0.0,
-        oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else 0.0,
+        # Issue #966 (Katalog A, P0) — None durchreichen statt auf 0.0 zu kollabieren, analog #759
+        # fuer oos_win_rate/oos_profit_factor (siehe Dataclass-Feld-Kommentar). Root-Cause: ein
+        # fehlender ``expectancy``-Key in oos_metrics.json wurde bislang zu einer Zahl, die die
+        # Signatur eines Messwerts trug ("0.0 Erwartungswert bei 122 Trades und PF 2.44" — bit-
+        # genau, arithmetisch unmoeglich) und von JEDEM nachgelagerten Konsumenten als echte
+        # Beobachtung behandelt wurde (Pitfall #305 in AGENTS.md).
+        oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else None,
         # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else None,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,
@@ -340,6 +391,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_sortino_period=float(oos_sortino_period) if oos_sortino_period is not None else None,
         oos_sortino_annualized=float(oos_sortino_annualized) if oos_sortino_annualized is not None else None,
         oos_n_periods=int(oos_n_periods) if oos_n_periods is not None else 0,
+        oos_downside_obs=int(oos_downside_obs) if oos_downside_obs is not None else None,
         oos_ret_skew=float(oos_ret_skew) if oos_ret_skew is not None else 0.0,
         oos_ret_kurtosis=float(oos_ret_kurtosis) if oos_ret_kurtosis is not None else 3.0,
         oos_coherence_violation=oos_coherence_violation,
@@ -347,6 +399,7 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #552/#635 — Benchmark-relative Alpha-Telemetrie (None-safe).
         oos_buyhold_return=float(oos_buyhold_return) if oos_buyhold_return is not None else None,
         oos_excess_return=float(oos_excess_return) if oos_excess_return is not None else None,
+        oos_exposure_fraction=float(oos_exposure_fraction) if oos_exposure_fraction is not None else None,
         # Issue #710 — Haltedauer-Metrik (Bars, None-safe).
         oos_median_bars_held=float(oos_median_bars_held) if oos_median_bars_held is not None else None,
         oos_p95_bars_held=float(oos_p95_bars_held) if oos_p95_bars_held is not None else None,
@@ -357,6 +410,14 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         period_returns_truncated=period_returns_truncated,
         oos_equity_ruined=oos_equity_ruined,
         inference_diagnostics=inference_diagnostics,
+        # Issue #899 — Exit-Telemetrie (None-safe).
+        oos_exit_reason_histogram=dict(oos_exit_reason_histogram) if oos_exit_reason_histogram else None,
+        oos_max_holding_bars=float(oos_max_holding_bars) if oos_max_holding_bars is not None else None,
+        oos_gross_loss_mean_bps=float(oos_gross_loss_mean_bps) if oos_gross_loss_mean_bps is not None else None,
+        oos_gross_win_mean_bps=float(oos_gross_win_mean_bps) if oos_gross_win_mean_bps is not None else None,
+        oos_atr_median_bps=float(oos_atr_median_bps) if oos_atr_median_bps is not None else None,
+        oos_atr_min_bps=float(oos_atr_min_bps) if oos_atr_min_bps is not None else None,
+        oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
     )
 
     # Issue #798 — die period_returns-Serie wird von KEINEM Konsumenten mehr von der Platte gelesen,

@@ -1,11 +1,15 @@
 # Core
 aiohttp>=3.9.0
 websockets>=12.0
-pyarrow>=16.0
+# Issue #852 — Parquet-Rundungsverhalten hat numerische Wirkung auf die Backtest-Eingabedaten;
+# obere Grenze ergaenzt (Untergrenze 16.0 unveraendert), analog pandas/optuna/numpy unten.
+pyarrow>=16.0,<26.0
 python-dotenv>=1.0.0
 
 # Nautilus (für backtest_runner.py und strategies/)
-nautilus_trader>=1.226.0
+# Issue #852 — obere Grenze ergaenzt: die Nautilus-Basisklasse (HourlyStrategyBase, #836/#837)
+# haengt an der Order-/Position-Callback-Semantik, die sich zwischen Majors aendern kann.
+nautilus_trader>=1.226.0,<2.0.0
 
 # Testing
 pytest>=8.0.0
@@ -20,5 +24,13 @@ pytest-mock>=3.12.0
 # Untergrenze 2.2 (fill_method=None ist dort bereits Default, kein deprecation warning); obere
 # Grenze offen bis zur naechsten major-Version-Pruefung.
 pandas>=2.2,<4.0
+# Issue #852 — numpy ist transitiv ueber pandas gepinnt, aber eigenstaendig relevant fuer
+# np.log/np.diff/RNG-Verhalten (deflation.py, backtest_runner._calculate_stats); Bereich deckt die
+# aktuell verifizierten 1.26.x/2.x-Serien ab.
+numpy>=1.26,<3.0
 requests>=2.25.0
-optuna
+# Issue #852 (P2) — Root-Cause: derselbe Kommentar oben (pandas/#802) gilt eins zu eins fuer Optuna:
+# TPESampler-Defaults (multivariate/group/constant_liar), die constraints_func-Interaktion (#612)
+# mit n_startup_trials, und die TrialState.PRUNED-Semantik (#845-relevant) sind nicht ueber Majors
+# garantiert. Ohne Pin haengt der numerische Ausgang der Selektion an der Installationsumgebung.
+optuna>=4.9,<5.0

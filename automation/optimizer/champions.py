@@ -48,6 +48,39 @@ parametrisiert — siehe GitHub-Issue #749) härtet vier Achsen nach:
         Schreiben geändert hat (``lifecycle.last_seen_run``). Ein versionsfremder Alt-Eintrag,
         dessen Nachfolge-Kandidat selbst unzulässig ist, wird nach ``_stale/`` quarantäniert statt
         still auf der Platte liegen zu bleiben.
+
+Issue #853 (P2, Befund: 826/826 Studies ``[#565] shrinkage_inactive`` — der Store bleibt
+strukturell leer) — Root-Cause-Analyse ergab KEINEN neuen Code-Defekt, sondern eine Kopplung
+DREIER korrekter Mechanismen zu einem Deadlock (dieselbe Klasse wie #829/#828, Pitfall #258):
+#834 (v17→v18) entwertete den Vorlauf-Store bei Laufbeginn; ohne #840/#841 (Resume/Ledger)
+bricht jeder Lauf bei ~59 Symbolen ab und deckt nie die volle Universe-Rotation ab;
+``maybe_write_back`` verlangt kumulativ Versionsgleichheit + ``corroboration_count >= 2`` +
+``champion_min_advance_days`` — bei einem Semantik-Bump je Sitzung und einer Trunkierung bei 59
+Symbolen ist ``corroboration_count >= 2`` strukturell unerreichbar.
+
+Umgesetzt in DIESEM Katalog (additiv, siehe ``run_optimization.resolve_symbol_shrinkage_seed``/
+``report._seed_source_distribution``/``invariants.check_champion_seed_coverage``):
+``seed_source`` unterscheidet jetzt ``'champion'`` von ``'champion_quality_stale'`` (#819) als
+POSITIVE Telemetrie (vorher existierte nur die ``[#565]``-Negativ-WARNUNG), im #742-Report
+aggregiert und gegen eine 90-%-``strategy_defaults``-Schwelle geprüft (bewusst auf EINEN Lauf
+skopiert statt der im Issue-Text verlangten Zwei-Lauf-Persistenz — siehe
+``check_champion_seed_coverage``-Docstring).
+
+BEWUSST NICHT umgesetzt (dokumentierter Scope-Cut, dieselbe Entscheidungsklasse wie #843/#845
+Punkt 2 in diesem Katalog): die vom Issue-Text verlangte Umstellung von
+``corroboration_count`` (zählt SCHREIBVORGÄNGE, #821) auf ``corroborating_snapshots: list[{sha256,
+first_seen_at, advance_days}]`` (zählt tatsächlich VERSCHIEDENE Daten-Snapshots mit zeitlichem
+Abstand — die statistisch korrekte Korroborations-Definition). Diese Umstellung betrifft das
+gespeicherte JSON-Schema JEDES Champion-Eintrags, ``maybe_write_back``s gesamte Entscheidungskette
+(:737 ff.) UND ``champion_quality_stale``s Interaktion mit einer neuen, bislang ungetesteten
+Datenstruktur — ohne einen realen Mehrfach-Snapshot-Sweep-Lauf zur Regressionsverifikation in
+diesem Environment ist das Risiko einer stillen Korruption des einzigen persistenten
+Cross-Sitzungs-Zustands (dem Champion-Store selbst) höher als der Nutzen in diesem Durchgang. Der
+naheliegende, WENIGER riskante erste Schritt — #840/#841 (Resume/Ledger, bereits umgesetzt,
+Katalog B) — behebt bereits die Trunkierungs-Ursache; ob die verbleibende
+``corroboration_count>=2``-Hürde nach einem vollen Abdeckungszyklus noch strukturell unerreichbar
+ist, sollte an ECHTEN Zwei-Zyklen-Daten neu beurteilt werden, bevor die Datenmodell-Umstellung
+riskiert wird.
 """
 import json
 import logging
@@ -224,7 +257,10 @@ def _configured_admissible_reject_details(opt_data: dict) -> frozenset[str]:
     raw = opt_data.get("champion_admissible_reject_details")
     if raw is None:
         return _DEFAULT_ADMISSIBLE_HOLDOUT_REJECT_DETAILS
-    return frozenset(raw) - {"REJECT_HOLDOUT_GATE"}
+    # Issue #839 — REJECT_INVALID_TIMEBOX (Simulation verletzt den #714/GR-01-Zeitbox-Vertrag)
+    # darf NIE zulässig sein, ebensowenig wie REJECT_HOLDOUT_GATE: der Parametervektor ist unter
+    # einer bekanntermassen fehlerhaften Simulation nicht als "bewährt" belegbar.
+    return frozenset(raw) - {"REJECT_HOLDOUT_GATE", "REJECT_INVALID_TIMEBOX"}
 
 
 def _holdout_gate_shortfall_relative(gate_deltas: dict, binding_gate: str,
@@ -261,6 +297,30 @@ def champion_quality_stale(entry: dict, opt_data: dict) -> bool:
     if reward_version is None:
         return True
     return integrity.get("reward_semantics_version") != reward_version
+
+
+def champion_simulation_stale(entry: dict, opt_data: dict) -> bool:
+    """Issue #854 — ``True``, wenn die SIMULATION selbst (Exit-Pfad #836-#838, Zeitbox-Semantik
+    #839, T-abhängige Guard-Schwelle #844 — siehe ``optimizer.json['simulation_semantics_version']``
+    -Schema für die vollständige Abgrenzung reward/simulation/params_schema) unter einer ANDEREN
+    Version gemessen wurde als der aktuellen Config.
+
+    ANDERS als ``champion_quality_stale`` (ein reiner ``reward_semantics_version``-Mismatch
+    entwertet NUR die Quality-Bewertung, der Parametervektor bleibt seed-fähig, #819): ein
+    ``simulation_semantics_version``-Mismatch entwertet den EINTRAG VOLLSTÄNDIG (params UND
+    quality) — die gemessenen Metriken (Haltedauern, Equity-Kurve, Trade-Zahlen), aus denen
+    ``params`` als "bewährt" hervorging, wurden unter einem ANDEREN Handelsvertrag erhoben; der
+    Parametervektor selbst ist unter der neuen Simulation nicht mehr belegbar (dieselbe Argumentation
+    wie bei einem ``params_schema_version``-Mismatch — der SUCHRAUM hat sich geändert —, hier auf der
+    MESS-Ebene statt der Suchraum-Ebene). ``None``/fehlende Version auf einer der beiden Seiten
+    (Legacy-Eintrag vor #854, oder Config ohne den Key) ⇒ konservativ NICHT als Mismatch gewertet
+    (kein falscher Datenverlust durch ein Feld, das der Alt-Eintrag/die Alt-Config noch nicht kannte)."""
+    integrity = entry.get("integrity") or {}
+    current = opt_data.get("simulation_semantics_version")
+    stored = integrity.get("simulation_semantics_version")
+    if current is None or stored is None:
+        return False
+    return stored != current
 
 
 def champion_is_admissible(entry: dict, opt_data: dict,
@@ -341,6 +401,12 @@ def champion_is_admissible(entry: dict, opt_data: dict,
     if reward_version is None:
         return False, "REWARD_SEMANTICS_MISMATCH"
 
+    # Issue #854 — ANDERS als ein reiner reward_semantics_version-Mismatch (nur die Quality-
+    # Bewertung wird stale, params bleiben seed-fähig, #819): ein simulation_semantics_version-
+    # Mismatch schliesst den EINTRAG VOLLSTÄNDIG aus (siehe champion_simulation_stale-Docstring).
+    if champion_simulation_stale(entry, opt_data):
+        return False, "SIMULATION_SEMANTICS_MISMATCH"
+
     lifecycle = entry.get("lifecycle") or {}
     degrade_streak = int(lifecycle.get("degrade_streak", 0) or 0)
     demote_after = int(opt_data.get("champion_demote_after_runs", 2))
@@ -407,6 +473,12 @@ def _build_entry_from_promotion(study, strategy: str, symbol: str, promotion: di
             "reward_semantics_version": opt_data.get("reward_semantics_version"),
             # Issue #819 — der SUCHRAUM-Fingerprint, unabhängig von der Reward-Semantik.
             "params_schema_version": _params_schema_version(strategy),
+            # Issue #854 — die SIMULATIONS-Semantik (Exit-Pfad/Zeitbox/Guard-Schwelle, siehe
+            # optimizer.json['simulation_semantics_version']-Schema), unabhängig von der
+            # Reward-FORMEL: ändert sich die Simulation, ist der gemessene Parametervektor selbst
+            # nicht mehr belegbar (anders als bei einem reinen reward_semantics_version-Mismatch,
+            # der nur die Bewertungs-FORMEL betrifft, siehe champion_simulation_stale-Docstring).
+            "simulation_semantics_version": opt_data.get("simulation_semantics_version"),
             "data_snapshot_sha256": catalog_fingerprint(),
             "catalog_newest_ns": catalog_newest_ns,
         },
@@ -484,6 +556,7 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
     quality_stale = False
     semantics_migrated_from = None
     discarded_for_quarantine: dict | None = None
+    quarantine_mismatch_kind = "params_schema_version_mismatch"
     if existing is not None:
         existing_integrity = existing.get("integrity") or {}
         existing_reward_version = existing_integrity.get("reward_semantics_version")
@@ -499,8 +572,16 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
             and existing_schema_version is not None
             and existing_schema_version != params_schema_version
         )
-        if schema_mismatch:
+        # Issue #854 — dieselbe VOLLSTÄNDIGE Verwerfung wie beim Suchraum-Mismatch, jetzt auch für
+        # die SIMULATIONS-Semantik (siehe champion_simulation_stale-Docstring): die gemessenen
+        # Metriken, aus denen params als "bewährt" hervorging, wurden unter einem anderen
+        # Handelsvertrag erhoben.
+        simulation_mismatch = champion_simulation_stale(existing, opt_data)
+        if schema_mismatch or simulation_mismatch:
             discarded_for_quarantine = existing
+            quarantine_mismatch_kind = (
+                "params_schema_version_mismatch" if schema_mismatch
+                else "simulation_semantics_version_mismatch")
             existing = None
         elif version_mismatch:
             semantics_migrated_from = existing_reward_version
@@ -541,7 +622,7 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
         # auf der Platte liegen — stattdessen Quarantäne statt stiller Persistenz.
         if discarded_for_quarantine is not None:
             _quarantine_champion(strategy, symbol, path, discarded_for_quarantine,
-                                 reason=f"params_schema_version_mismatch_then_{reason}")
+                                 reason=f"{quarantine_mismatch_kind}_then_{reason}")
         return None  # ein Degrade-Update oben (falls quality_stale=False) bleibt bestehen.
 
     if existing is None:
@@ -643,11 +724,23 @@ def load_champion_entry(strategy: str, symbol: str, *, opt_data: dict) -> dict |
     """Issue #704 (P0) — liest + validiert (``champion_is_admissible``) den gespeicherten
     Champion. Gibt den VOLLEN Eintrag zurück (für #709-Study-Attr-Telemetrie);
     ``load_champion_seed`` extrahiert daraus nur ``params`` (Issue-Signatur, s. u.)."""
+    entry, _reason = load_champion_entry_with_reason(strategy, symbol, opt_data=opt_data)
+    return entry
+
+
+def load_champion_entry_with_reason(strategy: str, symbol: str, *,
+                                    opt_data: dict) -> tuple[dict | None, str | None]:
+    """Issue #910 Fix 2 — wie ``load_champion_entry``, aber unterscheidet die beiden Ursachen, die
+    vorher beide als ``None`` (und stromabwärts als derselbe ``NO_ADMISSIBLE_ENTRY``-String)
+    kollabierten: ``'STORE_EMPTY'`` (kein Eintrag existiert — die Kette hat schlicht noch nie
+    geschrieben) vs. ``champion_is_admissible``s granularem Reason-Code (ein Eintrag EXISTIERT,
+    ist aber inadmissibel — z. B. ``'EMPTY_PARAMS'``/``'REJECT_HOLDOUT_GATE'``/...). Der Report
+    konnte vorher nicht sagen, ob die Kette nie startet oder ständig scheitert."""
     entry = _read_entry(_champion_path(strategy, symbol))
     if entry is None:
-        return None
-    ok, _reason = champion_is_admissible(entry, opt_data)
-    return entry if ok else None
+        return None, "STORE_EMPTY"
+    ok, reason = champion_is_admissible(entry, opt_data)
+    return (entry, None) if ok else (None, reason or "INADMISSIBLE")
 
 
 def load_champion_seed(strategy: str, symbol: str, base_cfg: Path | None = None, *,
@@ -776,19 +869,47 @@ def maybe_write_back(entry: dict, opt_data: dict, *, base_cfg: Path | None = Non
         return False
 
     if not is_ready_for_pr:
-        # Snooping-Schutz gilt NUR für die korroborations-basierte Route — READY_FOR_PR ist
-        # bereits ein vollständig auf dem Holdout validierter Promotion-Befund.
-        integrity = entry.get("integrity") or {}
-        current_ns = integrity.get("catalog_newest_ns")
-        first_ns = lifecycle.get("first_seen_catalog_newest_ns")
-        if current_ns is None or first_ns is None:
-            return False
-        min_advance_days = opt_data.get("champion_min_advance_days")
-        if min_advance_days is None:
-            min_advance_days = _default_min_advance_days(base_cfg)
-        advance_days = (current_ns - first_ns) / 1_000_000_000.0 / 86400.0
-        if advance_days < float(min_advance_days or 0):
-            return False
+        # Issue #910 Fix 1 — der Korroborationsbegriff wird von advance_days ENTKOPPELT.
+        # champion_corroboration_mode ∈ {'window_advance', 'independent_search', 'either'}
+        # (Default 'either'):
+        #   'window_advance'      — bit-identisch zum Pre-#910-Verhalten: corroborated UND das
+        #                            Datenfenster ist um min_advance_days vorgerückt (Snooping-
+        #                            Schutz gegen zwei Läufe auf identischen Daten).
+        #   'independent_search'  — corroboration_count (verschiedene run_id, #821) allein genügt:
+        #                            zwei unabhängige Läufe DERSELBEN Datenbasis korroborieren einen
+        #                            Parametervektor sehr wohl, wenn sie ihn unabhängig finden
+        #                            (verschiedene Sampler-Seeds) — advance_days=0.0 ist unter
+        #                            diesem Modus kein Blocker mehr.
+        #   'either'              — promotet, sobald EINE der beiden Routen erfüllt ist.
+        # Root-Cause #910: VOR diesem Fix war 'window_advance' die EINZIGE Route — zwei Läufe
+        # am selben Tag konnten die Kette per Konstruktion nie korroborieren, unabhängig davon,
+        # wie stabil der Kandidat war (14/14 Writebacks NO_ADMISSIBLE_ENTRY im ea4c409d-Lauf).
+        mode = opt_data.get("champion_corroboration_mode", "either")
+        if mode not in ("window_advance", "independent_search", "either"):
+            raise ValueError(
+                f"optimizer.json['champion_corroboration_mode']={mode!r} unbekannt — erwartet "
+                "'window_advance', 'independent_search' oder 'either'."
+            )
+        if mode == "independent_search":
+            pass  # corroborated (bereits oben geprüft) genügt — kein Fenster-Gate.
+        else:
+            # Snooping-Schutz: gilt für 'window_advance' unbedingt, für 'either' als EINE der
+            # beiden möglichen Routen.
+            integrity = entry.get("integrity") or {}
+            current_ns = integrity.get("catalog_newest_ns")
+            first_ns = lifecycle.get("first_seen_catalog_newest_ns")
+            min_advance_days = opt_data.get("champion_min_advance_days")
+            if min_advance_days is None:
+                min_advance_days = _default_min_advance_days(base_cfg)
+            advance_days = (
+                (current_ns - first_ns) / 1_000_000_000.0 / 86400.0
+                if current_ns is not None and first_ns is not None else None
+            )
+            window_advanced = advance_days is not None and advance_days >= float(min_advance_days or 0)
+            if mode == "window_advance" and not window_advanced:
+                return False
+            # mode == 'either': corroborated ist bereits erfüllt (oben geprüft) — die
+            # independent_search-Route deckt den window_advanced=False-Fall ab, kein return False.
 
     strategy = entry.get("strategy")
     symbol = entry.get("symbol")

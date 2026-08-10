@@ -121,7 +121,9 @@ def _factory_global_never_trades(tuned_keyvals, sortino_tuned, dd=0.05):
                 "oos_evaluated": True, "oos_eligible": True, "win_count": 1,
                 "median_is_sortino": 1.0, "oos_fold_sortinos": [sortino_tuned],
                 "oos_metrics": {"sortino_ratio": sortino_tuned, "max_drawdown": dd,
-                                "total_return": 0.02, "total_trades": 30}}}
+                                "total_return": 0.02, "total_trades": 30,
+                                # Issue #958 — oos_n_periods > 0 macht diesen Trial admissible.
+                                "n_periods": 50, "psr": 0.9}}}
         else:
             # Globaler Vektor: 0 OOS-Trades ⇒ nie evaluierbar.
             payload = {"fully_eligible_pairs": 0, "aggregate_winner": None,

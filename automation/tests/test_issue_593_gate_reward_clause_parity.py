@@ -31,7 +31,19 @@ def test_shipped_config_moves_risk_adjusted_gate_to_requires_all():
     assert "min_psr" in canonical_all
     assert "min_sortino" not in canonical_all
     assert "min_psr" not in TCFG["eligible_requires_any"]
-    assert set(TCFG["eligible_requires_any"]) == {"min_profit_factor", "min_win_rate"}
+    # Issue #848 — min_win_rate wurde aus eligible_requires_any entfernt (5. Katalog derselben
+    # Fehlerklasse: der Arm war ueber fuenf Laeufe strukturell unerreichbar).
+    # Issue #888 — 'min_profit_factor' war danach das LETZTE Element von eligible_requires_any,
+    # eine Disjunktion ueber genau ein Element ist logisch identisch mit einer Konjunktions-Klausel
+    # (Pitfall #279) — es wurde nach eligible_requires_all verschoben, eligible_requires_any ist
+    # seither leer.
+    # Issue #960 (Katalog D) — 'min_profit_factor' wurde AUS eligible_requires_all wieder entfernt
+    # (sechste Instanz derselben Redundanz-Fehlerklasse wie #677/#697/#776): der aktive
+    # Kollinearitaets-Check (check_gate_collinearity_consolidation) belegte Jaccard 0.964-0.979 mit
+    # oos_min_psr UND einen gemessenen marginalen Eigenbeitrag von exakt 0.000 ueber 100-160 Trials
+    # in >= 3 Studies — das Gate trug keinen Typ-I-Schutz mehr bei, kostete aber Typ-II-Macht.
+    assert TCFG["eligible_requires_any"] == []
+    assert "min_profit_factor" not in TCFG["eligible_requires_all"]
 
 
 def test_any_condition_parity_passes_for_shipped_config():

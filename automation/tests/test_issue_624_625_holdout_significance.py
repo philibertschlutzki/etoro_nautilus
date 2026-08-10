@@ -14,6 +14,8 @@ from statistics import NormalDist
 
 import json
 
+import pytest
+
 from automation.optimizer.sweep import _family_n_from_proposals
 
 
@@ -75,6 +77,77 @@ _MANUAL = Path("manuals/strategie_optimierung.md").read_text("utf-8")
 
 def test_sweep_logs_holdout_geometry_and_references_manual():
     assert "[#624] Holdout-Geometrie" in _SWEEP_SRC
+
+
+# ── Issue #909: per_symbol_span_stats — die Achsen-Verwechslung ─────────────────────────────────
+def test_per_symbol_span_stats_uses_min_span_not_endpoint_spread():
+    """Akzeptanzkriterium #909 — drei Symbole mit Spannen 500/450/200 Tagen und IDENTISCHEM
+    Enddatum ⇒ min_span_days=200, nicht 0 (die alte Berechnung hätte min(latest)-... == 0 ergeben,
+    weil alle drei Symbole am selben Tag enden)."""
+    from automation.optimizer.sweep import per_symbol_span_stats
+
+    day_ns = 86_400 * 1_000_000_000
+    end = 2_000 * day_ns  # identisches Enddatum für alle drei Symbole
+    latest_ts = {"A": end, "B": end, "C": end}
+    earliest_ts = {"A": end - 500 * day_ns, "B": end - 450 * day_ns, "C": end - 200 * day_ns}
+
+    result = per_symbol_span_stats(latest_ts, earliest_ts, ["A", "B", "C"])
+    assert result["min_span_days"] == pytest.approx(200.0, abs=0.01)
+    assert result["median_span_days"] == pytest.approx(450.0, abs=0.01)
+
+
+def test_per_symbol_span_stats_counts_symbols_below_required():
+    from automation.optimizer.sweep import per_symbol_span_stats
+
+    day_ns = 86_400 * 1_000_000_000
+    end = 1_000 * day_ns
+    latest_ts = {"A": end, "B": end, "C": end}
+    earliest_ts = {"A": end - 500 * day_ns, "B": end - 450 * day_ns, "C": end - 200 * day_ns}
+
+    result = per_symbol_span_stats(latest_ts, earliest_ts, ["A", "B", "C"], required_span_days=426)
+    assert result["n_symbols_below_required"] == 1  # nur C (200 d) liegt unter 426
+
+
+def test_per_symbol_span_stats_skips_symbols_with_missing_timestamps():
+    from automation.optimizer.sweep import per_symbol_span_stats
+
+    day_ns = 86_400 * 1_000_000_000
+    latest_ts = {"A": 1000 * day_ns, "B": None}
+    earliest_ts = {"A": 500 * day_ns, "B": 100 * day_ns}
+
+    result = per_symbol_span_stats(latest_ts, earliest_ts, ["A", "B"])
+    assert result["min_span_days"] == pytest.approx(500.0, abs=0.01)
+
+
+def test_per_symbol_span_stats_all_missing_returns_none():
+    from automation.optimizer.sweep import per_symbol_span_stats
+
+    result = per_symbol_span_stats({}, {}, ["A", "B"])
+    assert result["min_span_days"] is None
+    assert result["median_span_days"] is None
+    assert result["n_symbols_below_required"] is None
+
+
+def test_earliest_ts_by_symbol_reads_min_statistic(tmp_path, monkeypatch):
+    """Issue #909 — earliest_ts_by_symbol liest die .min-Statistik, symmetrisch zu
+    latest_ts_by_symbol (.max)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from automation.optimizer import sweep as sweep_mod
+
+    day_ns = 86_400 * 1_000_000_000
+    sym_dir = tmp_path / "data" / "quote_tick" / "XOM.ETORO"
+    sym_dir.mkdir(parents=True)
+    table = pa.table({
+        "ts_event": pa.array([100 * day_ns, 200 * day_ns, 300 * day_ns], type=pa.int64()),
+        "bid_price": pa.array([1.0, 2.0, 3.0]),
+    })
+    pq.write_table(table, sym_dir / "data.parquet")
+
+    earliest = sweep_mod.earliest_ts_by_symbol(["XOM.ETORO"], catalog_path=tmp_path)
+    latest = sweep_mod.latest_ts_by_symbol(["XOM.ETORO"], catalog_path=tmp_path)
+    assert earliest["XOM.ETORO"] == 100 * day_ns
+    assert latest["XOM.ETORO"] == 300 * day_ns
     assert "required_span_days" in _SWEEP_SRC
     assert "§Holdout-Signifikanz" in _SWEEP_SRC
 

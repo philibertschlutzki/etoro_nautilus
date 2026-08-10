@@ -32,6 +32,9 @@ from automation.optimizer.reward import (
 from automation.optimizer.confirm import confirm_on_holdout, export_proposal, export_no_viable_proposal
 from automation.optimizer import retention
 from automation.optimizer import disk_guard
+from automation.optimizer import wallclock_guard
+from automation.optimizer import invariants as _inv
+from automation.optimizer import _contracts
 from automation.log_manager import emit_execution_event, bind_study_context
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
@@ -160,12 +163,18 @@ def _reemit_inference_diagnostics(logger: logging.Logger, metrics, trial_number:
     hier nur ``trial_number`` zusaetzlich, das kein ambienter Kontext ist. No-Op, wenn
     ``metrics.inference_diagnostics`` leer ist (Normalfall, Pre-#804-JSONs eingeschlossen)."""
     for diag in metrics.inference_diagnostics or ():
-        emit_execution_event(logger, "INFERENCE_DIAGNOSTIC", {
+        payload = {
             "trial_number": trial_number,
             "code": diag.get("code"),
             "detail": diag.get("detail"),
             "value": diag.get("value"),
-        }, level=logging.ERROR)
+        }
+        # Issue #862 — zusätzliche Referenzwert-Telemetrie auf SORTINO_GUARD_TRIPPED-Diagnosen
+        # (siehe backtest_runner._effective_sortino_numeric_guard) unverändert durchreichen.
+        if "guard_reference_value" in diag:
+            payload["guard_reference_value"] = diag.get("guard_reference_value")
+            payload["guard_reference_source"] = diag.get("guard_reference_source")
+        emit_execution_event(logger, "INFERENCE_DIAGNOSTIC", payload, level=logging.ERROR)
 
 
 def _stop_study_safely(study, logger: logging.Logger) -> None:
@@ -217,6 +226,46 @@ def _modelled_trials(completed: list, n_startup_trials: int) -> list:
     """Issue #753/#754 — die Teilmenge der ``completed``-Kohorte, die vom TPESampler MODELLIERT
     (nicht als Zufalls-Startup gezogen) wurde: Trial-Nummer >= n_startup_trials."""
     return [t for idx, t in enumerate(completed) if _trial_number(idx, t) >= int(n_startup_trials)]
+
+
+def _best_completed_value(trials: list, *, direction: str = "maximize") -> float | None:
+    """Issue #929 — ``study.best_value`` (Optuna-nativ) ist unter aktiver Constraint-Führung
+    (``constraints_func``, Issue #612) auf FEASIBLE Trials beschränkt — bei ``oos_eligible=False``
+    für JEDEN Trial (der #913-Zustand: ``oos_constraint_violations=(1.0,)`` überall) hat Optuna
+    keinen feasiblen Kandidaten und ``study.best_value`` liefert ``None``/wirft, OBWOHL Optuna für
+    jede Study intern einen besten ROHEN Reward-Wert kennt. ``best_value=null`` ist damit NICHT
+    dasselbe wie 'kein eligibler Trial' — es verschluckt die einzige Grösse, an der ohne
+    Eligibility ablesbar wäre, ob die Suche überhaupt einen Gradienten gefunden hat.
+
+    Berechnet den besten ``trial.value`` direkt über ALLE ``TrialState.COMPLETE``-Trials
+    (Optuna-Semantik für 'abgeschlossen'), UNABHÄNGIG von Constraint-Feasibility/Eligibility.
+    ``None`` bei 0 abgeschlossenen Trials mit definiertem Wert (echte Leermenge, kein
+    Constraint-Artefakt)."""
+    values = [
+        float(t.value) for t in trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and isinstance(getattr(t, "value", None), (int, float))
+    ]
+    if not values:
+        return None
+    return max(values) if direction == "maximize" else min(values)
+
+
+def _best_completed_trial_number(trials: list, *, direction: str = "maximize") -> int | None:
+    """Issue #929 Fix 2 — dieselbe constraint-unabhängige Auswahl wie ``_best_completed_value``,
+    aber die TRIAL-NUMMER statt des Werts: macht ein Study-Ergebnis OHNE Promotion trotzdem
+    inspizierbar (``explain_trial.py`` braucht eine konkrete Trial-Referenz, ``study.best_trial``
+    ist unter aktiver Constraint-Führung derselben Feasibility-Blindheit unterworfen wie
+    ``study.best_value``)."""
+    candidates = [
+        (float(t.value), getattr(t, "number", None)) for t in trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and isinstance(getattr(t, "value", None), (int, float))
+    ]
+    if not candidates:
+        return None
+    best = max(candidates) if direction == "maximize" else min(candidates)
+    return best[1]
 
 
 _STOP_REASONS = frozenset({
@@ -331,6 +380,62 @@ def plateau_stop_missed_probability(m_modelled: int, remaining_budget: int) -> t
     return p_hi, 1.0 - (1.0 - p_hi) ** remaining_budget
 
 
+def plateau_stop_expected_yield(m_modelled: int, remaining_budget: int) -> tuple[float, float]:
+    """Issue #925 (Pitfall #300) — geschlossene Alternative zu ``plateau_stop_missed_probability``:
+    dieselbe Rule-of-Three-Obergrenze ``p_hi = 3/m_modelled``, aber als ERWARTUNGSWERT statt als
+    Risiko formuliert. ``expected_yield = p_hi · remaining_budget`` ist die erwartete Zahl noch zu
+    findender eligibler Trials im Restbudget.
+
+    Root-Cause #925 (bewiesen in geschlossener Form): ``missed_probability`` steht in ``r`` UND
+    ``m`` monoton, aber ``r`` (das Restbudget) erscheint zugleich im NENNER des Risikos UND ist der
+    Ertrag des Abbruchs — ein Kriterium, dessen Risikoterm das gesparte Restbudget selbst enthält,
+    kann per Konstruktion erst feuern, wenn kaum noch etwas zu sparen ist (bewiesen: der Stopp kann
+    unter ``missed_probability`` hoechstens ~1,43 % des Budgets einsparen, unabhaengig von den
+    konkreten Parametern). ``expected_yield`` trennt Ertrag und Risiko: der Abbruch feuert, sobald
+    der ERWARTETE Gewinn (nicht die Eintrittswahrscheinlichkeit EINES Treffers) unter die
+    Opportunitaetskosten faellt (``plateau_stop_min_expected_eligible``, Default 0.5) — bei
+    ``m = plateau_min_modelled_trials`` (typischerweise 48) feuert der Abbruch dann bei
+    ``r < m/6 ≈ 8``, also nach ~57 statt ~99 Trials (43 % Ersparnis statt ~1 %).
+
+    Rueckgabe ``(p_hi, expected_yield)``, rein, deterministisch. ``m_modelled <= 0`` ⇒
+    ``(1.0, inf)`` (keine Information ⇒ niemals abbrechen, konsistent zu
+    ``plateau_stop_missed_probability``). ``remaining_budget <= 0`` ⇒ ``expected_yield = 0.0``."""
+    if m_modelled <= 0:
+        return 1.0, float("inf")
+    p_hi = min(1.0, 3.0 / m_modelled)
+    if remaining_budget <= 0:
+        return p_hi, 0.0
+    return p_hi, p_hi * remaining_budget
+
+
+def plateau_stop_clopper_pearson(m_modelled: int, remaining_budget: int, *,
+                                 alpha: float = 0.05) -> tuple[float, float]:
+    """Issue #953 (Katalog C, P1) — die EXAKTE einseitige Clopper-Pearson-Obergrenze für die
+    Eligibility-Rate bei 0 Erfolgen aus ``m_modelled`` Versuchen: ``p_hi(t) = 1 - alpha^(1/t)``,
+    statt der Rule-of-Three-NÄHERUNG ``3/m`` (``plateau_stop_missed_probability``/
+    ``plateau_stop_expected_yield``, beide implizit ``alpha≈0.05``). Erwarteter Restertrag
+    ``expected_yield = p_hi(t) * (N - t)``; Abbruch, sobald dieser Wert unter 1 fällt UND
+    ``constraint_improvement_rate <= 0`` (siehe ``floor_plateau_callback``s ``clopper_pearson``-
+    Zweig) — die Regel hat keinen freien Parameter ausser ``alpha``, ist monoton in ``t``/``N``
+    und passt sich automatisch an kleine Budgets an.
+
+    Additiv/opt-in (``plateau_stop_mode='clopper_pearson'``, siehe ``optimizer.json
+    ['plateau_stop_alpha']``, Default 0.05) — der produktive Default bleibt ``'expected_yield'``
+    (#925, empirisch mit 43 % Budget-Ersparnis validiert); diese Funktion ist die literaturgetreue
+    Umsetzung des #953-Vorschlags für Operatoren, die den Standardschätzer bewusst gegen die exakte
+    Formel tauschen wollen, ohne den bereits validierten Default zu verändern.
+
+    Rückgabe ``(p_hi, expected_yield)``, rein, deterministisch. ``m_modelled <= 0`` ⇒
+    ``(1.0, inf)`` (keine Information ⇒ niemals abbrechen). ``remaining_budget <= 0`` ⇒
+    ``expected_yield = 0.0``."""
+    if m_modelled <= 0:
+        return 1.0, float("inf")
+    p_hi = 1.0 - float(alpha) ** (1.0 / m_modelled)
+    if remaining_budget <= 0:
+        return p_hi, 0.0
+    return p_hi, p_hi * remaining_budget
+
+
 def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
@@ -409,6 +514,13 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
     # Zero-Eligible-Urteil ausgefuehrte Budgetanteil monoton mit dim (64% bei dim=2, 32% bei dim=14).
     plateau_min_modelled_trials = derive_plateau_min_modelled_trials(
         strategy, plateau_min_modelled_trials, weights or {})
+    # Issue #929 Fix 3 — als Study-User-Attr gestempelt, damit report._study_record die exakte,
+    # zur Laufzeit dieser Study verwendete Schwelle liest (statt sie erneut herzuleiten) —
+    # Eingangsgrösse für invariants.check_search_made_progress.
+    try:
+        study.set_user_attr("plateau_min_modelled_trials", int(plateau_min_modelled_trials))
+    except Exception:
+        pass
     min_for_structural = max(1, int(n_startup_trials)) + structural_extra
     min_for_zero_eligible = max(1, int(n_startup_trials)) + plateau_min_modelled_trials
     # Issue #768/#805 — Obergrenze gegen Budget-Ueberschreitung: der Guard darf nie NACH dem
@@ -561,6 +673,12 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         # dass die Study ihre eigene len(completed) >= required_for_structural-
                         # Vorbedingung (Zeile 490 oben) bereits erfuellt hat.
                         stop_reason=_budget_execution_for_diagnosis["stop_reason"],
+                        # Issue #911 — konfigurierbare Konsekutiv-Laeufe-Schwelle statt eines
+                        # eingefrorenen Literals; simulation_semantics_version fuer den #911 Fix 2
+                        # Gueltigkeitsstempel einer 'signal_quality'-Quarantaene.
+                        max_consecutive_structural_runs=int(
+                            (weights or {}).get("max_consecutive_structural_runs", 2)),
+                        simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -636,22 +754,54 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     remaining_budget = max(0, int(_n_trials_budget) - len(completed))
                 except (TypeError, ValueError):
                     remaining_budget = None
-            p_hi = missed_probability = None
+            p_hi = missed_probability = expected_yield = None
+            # Issue #925 — plateau_stop_mode entscheidet, welches der beiden Kriterien den Abbruch
+            # triggert. 'expected_yield' (Default) ersetzt das strukturell auf ~1,43 % Ersparnis
+            # begrenzte 'missed_probability' (siehe plateau_stop_expected_yield-Docstring,
+            # geschlossener Beweis). 'missed_probability' bleibt fuer Reproduktionslaeufe
+            # verfuegbar. Validiert UNABHAENGIG von remaining_budget, damit eine Fehlkonfiguration
+            # nicht erst sichtbar wird, sobald ein Budget bekannt ist.
+            _plateau_stop_mode = (weights or {}).get("plateau_stop_mode", "expected_yield")
+            if _plateau_stop_mode not in ("missed_probability", "expected_yield", "clopper_pearson"):
+                raise ValueError(
+                    f"optimizer.json['plateau_stop_mode']={_plateau_stop_mode!r} unbekannt — "
+                    "erwartet 'missed_probability', 'expected_yield' oder 'clopper_pearson'.")
             if remaining_budget is not None:
                 p_hi, missed_probability = plateau_stop_missed_probability(
                     m_modelled, remaining_budget)
-                max_missed_probability = float((weights or {}).get(
-                    "plateau_stop_max_missed_probability", 0.05))
+                _, expected_yield = plateau_stop_expected_yield(m_modelled, remaining_budget)
                 # Issue #806 — Constraint-Arm: naehert sich der Sampler der feasiblen Region an
                 # (dieselbe Groesse wie in ``study_shows_gradient_signal``), wird der sequentielle
                 # Abbruch unterdrueckt — genau der Fall, den Rule-of-Three allein nicht sieht.
                 tau_c = float((weights or {}).get("tier_escalation_min_constraint_progress", 0.05))
                 constraint_signal = (constraint_improvement_rate is not None
                                      and constraint_improvement_rate > tau_c)
-                if missed_probability >= max_missed_probability or constraint_signal:
+                if _plateau_stop_mode == "expected_yield":
+                    min_expected_eligible = float((weights or {}).get(
+                        "plateau_stop_min_expected_eligible", 0.5))
+                    stop_condition = expected_yield < min_expected_eligible
+                elif _plateau_stop_mode == "clopper_pearson":
+                    # Issue #953 — exakte Formel statt der Rule-of-Three-Naeherung; dieselbe
+                    # constraint_signal-Unterdrueckung wie die beiden anderen Modi (Fix-Punkt
+                    # "die zweite Klausel verhindert den Abbruch einer Study, die sich dem Gate
+                    # messbar naehert").
+                    _cp_alpha = float((weights or {}).get("plateau_stop_alpha", 0.05))
+                    _, cp_expected_yield = plateau_stop_clopper_pearson(
+                        m_modelled, remaining_budget, alpha=_cp_alpha)
+                    expected_yield = cp_expected_yield
+                    stop_condition = cp_expected_yield < 1.0
+                else:
+                    max_missed_probability = float((weights or {}).get(
+                        "plateau_stop_max_missed_probability", 0.05))
+                    # Trotz des Namens: der Abbruch feuert, sobald missed_probability UNTER die
+                    # Schranke faellt (siehe plateau_stop_missed_probability-Docstring) —
+                    # bit-identisch zum Pre-#925-Verhalten in diesem Modus.
+                    stop_condition = missed_probability < max_missed_probability
+                if not stop_condition or constraint_signal:
                     return
             study.set_user_attr("zero_eligible_plateau_warned", True)
             n_evaluated = len(eligible_flags_of_evaluated)
+            study.set_user_attr("plateau_n_evaluated", n_evaluated)
             oos_trade_counts = [
                 getattr(t, "user_attrs", {}).get("oos_total_trades") for t in completed
                 if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
@@ -664,24 +814,67 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
             n_hit_cap = sum(1 for f in hit_cap_flags if f is True)
             median_oos_trades = statistics.median(oos_trade_counts) if oos_trade_counts else None
 
+            # Issue #972 (Katalog B, Pitfall #304 in AGENTS.md) — Root-Cause der widersprüchlichen
+            # "0/N Trials trafen die Haltedauer-/Trade-Cap-Grenze"-Meldung: ``n_hit_cap`` lief NUR
+            # über die bereits als ``oos_evaluated=True`` ÜBERLEBENDEN Trials — genau die Trials, die
+            # eine Zeitbox-Verletzung (#857) per Konstruktion NICHT mehr sein können (sie wurden
+            # deswegen ja gerade auf ``oos_evaluated=False`` umgestempelt und verlassen damit VOR
+            # diesem Zähler die Grundgesamtheit). Ein Zähler, dessen Grundgesamtheit durch exakt das
+            # Kriterium vorgefiltert ist, das er messen soll, liefert IMMER null (Pitfall #304) — das
+            # ist keine Aussage über die Zeitbox, sondern eine Tautologie. Die Zerlegung unten läuft
+            # über ALLE ``completed`` Trials (die tatsächliche Grundgesamtheit) und nutzt die seit
+            # #971 unverwechselbare ``is_rejection_detail``-Kategorie ``REJECT_OOS_TIMEBOX_VIOLATION``.
+            _all_rejection_details = [
+                getattr(t, "user_attrs", {}).get("is_rejection_detail") for t in completed
+            ]
+            _timebox_invalidated_count = sum(
+                1 for r in _all_rejection_details if r == "REJECT_OOS_TIMEBOX_VIOLATION")
+            plateau_counter_breakdown = {
+                "invalidated_timebox": _timebox_invalidated_count,
+                "invalidated_trade_cap": n_hit_cap,
+                "discarded_is_gate": sum(
+                    1 for r in _all_rejection_details if r == "REJECT_OOS_DISCARDED_BY_IS_GATE"),
+                "window_unreachable": sum(
+                    1 for r in _all_rejection_details if r == "REJECT_OOS_WINDOW_UNREACHABLE"),
+                "not_evaluated": sum(
+                    1 for r in _all_rejection_details
+                    if r in ("REJECT_OOS_NOT_EVALUATED", "REJECT_OOS_INACTIVE")),
+            }
+            study.set_user_attr("plateau_counter_breakdown", plateau_counter_breakdown)
+
             # Issue #700 — per-16-Trial-Fenster p_eligible-Kurve (Diagnose-Akzeptanzkriterium):
             # unterscheidet TRANSIENTE (irgendwo zwischenzeitlich eligible Trials) von PERMANENTER
             # (jedes Fenster 0.0) Null-Eligibilitaet.
-            from automation.optimizer.sweep_diagnostics import eligibility_curve
+            from automation.optimizer.sweep_diagnostics import (
+                eligibility_curve, resolve_ineligible_binding_cause)
             p_eligible_windows = eligibility_curve(
                 [{"oos_eligible": getattr(t, "user_attrs", {}).get("oos_eligible")} for t in completed],
                 window=16,
             )
 
+            # Issue #926/#921 — 'signal_quality' war hier UNBEDINGT vergeben, sobald alle Trials
+            # evaluiert wurden — eine nicht durchgefuehrte Messung (#917, undefinierter oos_psr)
+            # wurde damit als negatives Messergebnis interpretiert. resolve_ineligible_binding_cause
+            # trennt jetzt 'inference_unavailable' (#913-Klasse) und 'signal_sparse' (#921,
+            # median_oos_total_trades <= 2) vom echten Qualitaetsurteil.
+            _evaluated_trial_dicts = [
+                {"is_rejection_detail": getattr(t, "user_attrs", {}).get("is_rejection_detail")}
+                for t in completed if getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+            ]
+            binding_cause, _binding_detail = resolve_ineligible_binding_cause(
+                _evaluated_trial_dicts, median_oos_trades=median_oos_trades)
+
             logger.warning(
                 "🚨 Zero-Eligible-Plateau erkannt: %d/%d Trials wurden evaluiert (echte OOS-"
                 "Backtests), aber KEINER war oos_eligible — der Suchraum erzeugt strukturell "
-                "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d Trials trafen die "
-                "Haltedauer-/Trade-Cap-Grenze). p_eligible je 16-Trial-Fenster: %s. Suchraum-Bounds "
-                "pruefen (spaces.py) ODER die Strategie fuer dieses Symbol/Tier deaktivieren, statt "
-                "die restlichen Trials nutzlos durchlaufen zu lassen.",
-                n_evaluated, len(completed), median_oos_trades, n_hit_cap, n_evaluated,
-                p_eligible_windows,
+                "keinen eligiblen Lauf (median oos_total_trades=%s, %d/%d ALLER Trials trafen die "
+                "Haltedauer-/Trade-Cap-Grenze: %s). binding_cause=%s (#926). p_eligible je "
+                "16-Trial-Fenster: %s. Suchraum-Bounds pruefen (spaces.py) ODER die Strategie fuer "
+                "dieses Symbol/Tier deaktivieren, statt die restlichen Trials nutzlos "
+                "durchlaufen zu lassen.",
+                n_evaluated, len(completed), median_oos_trades,
+                _timebox_invalidated_count + n_hit_cap, len(completed), plateau_counter_breakdown,
+                binding_cause, p_eligible_windows,
             )
             import json as _json
             emit_execution_event(logger, "ZERO_ELIGIBLE_PLATEAU", {
@@ -689,11 +882,16 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                 "n_evaluated": n_evaluated,
                 "median_oos_total_trades": median_oos_trades,
                 "hit_trade_cap_count": n_hit_cap,
+                # Issue #972 — Zerlegung über ALLE Trials (n_trials), nicht nur die Überlebenden
+                # (n_evaluated); Summe der Werte + n_evaluated + verbleibender Rest == n_trials.
+                "plateau_counter_breakdown": plateau_counter_breakdown,
                 "p_eligible_windows": p_eligible_windows,
-                # Issue #669 — innerhalb der EVALUIERTEN Trials: Signal-QUALITÄT, keine Frequenz-/
-                # Bounds-Ursache (Bounds-Kalibrierung würde hier NICHTS beheben — trennt diesen Fall
-                # explizit von STRUCTURAL_ALL_UNEVALUABLE).
-                "binding_cause": "signal_quality",
+                # Issue #669/#921/#926 — innerhalb der EVALUIERTEN Trials: 'signal_quality' (echte
+                # Qualitätsmessung), 'signal_sparse' (#921, das Signal tritt kaum auf) oder
+                # 'inference_unavailable' (#926, die Messung selbst war nicht durchführbar) —
+                # niemals mehr unbedingt 'signal_quality'.
+                "binding_cause": binding_cause,
+                **_binding_detail,
             })
 
             # Issue #681/#830 — dieselbe Closed-Loop-Anbindung wie im STRUCTURAL_ALL_UNEVALUABLE-
@@ -714,16 +912,19 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                         completed, n_trials_budget=_n_trials_budget,
                         n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs)
                     rec = recommend_diagnosis_action(
-                        strategy, symbol, {"binding_cause": "signal_quality",
+                        strategy, symbol, {"binding_cause": binding_cause,
                                            "median_oos_trades": median_oos_trades,
                                            "median_is_trades": None},
                         budget_executed_fraction=_budget_execution_for_quality["budget_executed_fraction"],
                         n_runs_confirmed=(
                             int(_prior_quality.get("n_runs_confirmed", 0))
-                            if _prior_quality and _prior_quality.get("binding_cause") == "signal_quality"
+                            if _prior_quality and _prior_quality.get("binding_cause") == binding_cause
                             else 0
                         ),
                         stop_reason=_budget_execution_for_quality["stop_reason"],
+                        max_consecutive_structural_runs=int(
+                            (weights or {}).get("max_consecutive_structural_runs", 2)),
+                        simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
                     record_diagnosed_pair(rec)
                 except Exception:
@@ -752,6 +953,10 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     "p_hi": p_hi,
                     "remaining_budget": remaining_budget,
                     "missed_probability": missed_probability,
+                    # Issue #925 — welcher Modus tatsaechlich entschieden hat + der Erwartungswert-
+                    # Kandidat, unabhaengig vom aktiven Modus (Vergleichbarkeit ueber Laeufe).
+                    "plateau_stop_mode": _plateau_stop_mode,
+                    "expected_yield": expected_yield,
                 }))
                 _stop_study_safely(study, logger)
         return
@@ -988,6 +1193,106 @@ def _check_reward_semantics_version(study, opt_data: dict,
     logger.warning("♻️ %s", msg)
 
 
+def _check_simulation_semantics_version(study, opt_data: dict,
+                                        logger: logging.Logger | None = None) -> None:
+    """Issue #854 (P0) — Simulations-Semantik-Versionierung & Study-Hygiene, dieselbe MECHANIK wie
+    ``_check_reward_semantics_version`` (#410), aber eine ORTHOGONALE Achse (siehe
+    ``optimizer.json['simulation_semantics_version']``-Schema für die vollständige reward/
+    simulation/params_schema-Abgrenzung): ``reward_semantics_version`` versioniert, WIE ein Trial
+    bewertet wird; ``simulation_semantics_version`` versioniert, WAS überhaupt gemessen wurde
+    (Exit-Pfad #836-#838, Zeitbox-Konsequenz #839, T-abhängige Guard-Schwelle #844). Eine Study mit
+    einer ALTEN simulation_semantics_version enthält Trials, deren Metriken unter einem ANDEREN
+    Handelsvertrag simuliert wurden — kein Reward-Fix kann das reparieren, dieselbe fail-loud +
+    Purge-Konsequenz wie bei einem reward_semantics_version-Mismatch, nur unter einem eigenen,
+    unterscheidbaren Fehlercode (``REJECT_STALE_SIMULATION_SEMANTICS``), damit ein Operator die
+    beiden Ursachen im Log auseinanderhalten kann.
+
+    Frische Studies werden mit ``optimizer.json['simulation_semantics_version']`` gestempelt. Fehlt
+    der Config-Key, ist die Prüfung ein No-Op (rückwärtskompatibel zu Pre-#854-Configs)."""
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+    current = opt_data.get("simulation_semantics_version")
+    if current is None:
+        return  # Versionierung nicht konfiguriert -> No-Op
+
+    existing = study.user_attrs.get("simulation_semantics_version")
+    has_trials = len(study.trials) > 0
+
+    if existing == current:
+        return
+    if existing is None and not has_trials:
+        study.set_user_attr("simulation_semantics_version", current)
+        return
+
+    msg = (f"Simulations-Semantik-Versionskonflikt: die geladene Study wurde unter Version "
+           f"{existing if existing is not None else 'unversioniert'} simuliert, aktuell ist "
+           f"Version {current}. Die gemessenen Metriken verschiedener Simulations-Versionen sind "
+           f"NICHT vergleichbar (ein anderer Handelsvertrag wurde ausgeführt). Initiere Purge der "
+           f"obsoleten Study-Datenbank (.db)...")
+
+    if has_trials:
+        if existing is None or existing < current:
+            logger.warning("♻️ %s", msg)
+            try:
+                optuna.delete_study(study_name=study.study_name, storage=study._storage)
+                logger.warning(f"Obsolete Study '{study.study_name}' erfolgreich gelöscht. Sie wird beim nächsten Versuch neu erstellt.")
+            except Exception as e:
+                logger.error(f"Fehler beim Löschen der Study: {e}")
+            raise ValueError(f"REJECT_STALE_SIMULATION_SEMANTICS: Study-Simulations-Semantik Mismatch. {msg}")
+
+    logger.warning("♻️ %s", msg)
+
+
+def _check_inference_semantics_version(study, opt_data: dict,
+                                       logger: logging.Logger | None = None) -> None:
+    """Issue #968 (Katalog A, P0 HEADLINE, GitHub-Issue #785) — Inferenz-Semantik-Versionierung &
+    Study-Hygiene, dieselbe MECHANIK wie ``_check_reward_semantics_version``/``_check_simulation_
+    semantics_version``, aber eine DRITTE, orthogonale Achse (siehe ``optimizer.json[
+    'inference_semantics_version']``-Schema für die vollständige Abgrenzung): ``reward_semantics_
+    version`` versioniert WIE ein Trial bewertet wird, ``simulation_semantics_version`` WAS
+    gemessen wurde — ``inference_semantics_version`` versioniert, welches URTEIL (``oos_psr``/
+    ``oos_sortino`` definiert vs. ``None``, Guard getrippt ja/nein) eine bereits simulierte
+    Trade-Serie erhält (#965/#967-Diagnose-Vollständigkeit). Eine Study mit einer ALTEN Version
+    enthält Trials, deren Selektionsstatistik unter einem ANDEREN Inferenzregime bewertet wurde —
+    dieselbe fail-loud + Purge-Konsequenz, unter einem eigenen Fehlercode
+    (``REJECT_STALE_INFERENCE_SEMANTICS``).
+
+    Frische Studies werden mit ``optimizer.json['inference_semantics_version']`` gestempelt. Fehlt
+    der Config-Key, ist die Prüfung ein No-Op (rückwärtskompatibel zu Pre-#968-Configs)."""
+    if logger is None:
+        logger = logging.getLogger("optimizer")
+    current = opt_data.get("inference_semantics_version")
+    if current is None:
+        return  # Versionierung nicht konfiguriert -> No-Op
+
+    existing = study.user_attrs.get("inference_semantics_version")
+    has_trials = len(study.trials) > 0
+
+    if existing == current:
+        return
+    if existing is None and not has_trials:
+        study.set_user_attr("inference_semantics_version", current)
+        return
+
+    msg = (f"Inferenz-Semantik-Versionskonflikt: die geladene Study wurde unter Version "
+           f"{existing if existing is not None else 'unversioniert'} bewertet, aktuell ist "
+           f"Version {current}. Die Selektionsstatistik-Urteile verschiedener Inferenz-Versionen "
+           f"sind NICHT vergleichbar (Guard-/PSR-Referenz hat sich geändert). Initiere Purge der "
+           f"obsoleten Study-Datenbank (.db)...")
+
+    if has_trials:
+        if existing is None or existing < current:
+            logger.warning("♻️ %s", msg)
+            try:
+                optuna.delete_study(study_name=study.study_name, storage=study._storage)
+                logger.warning(f"Obsolete Study '{study.study_name}' erfolgreich gelöscht. Sie wird beim nächsten Versuch neu erstellt.")
+            except Exception as e:
+                logger.error(f"Fehler beim Löschen der Study: {e}")
+            raise ValueError(f"REJECT_STALE_INFERENCE_SEMANTICS: Study-Inferenz-Semantik Mismatch. {msg}")
+
+    logger.warning("♻️ %s", msg)
+
+
 def make_objective(
     strategy: str,
     *,
@@ -1157,9 +1462,13 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
     directions = None
     if reward_mode == "pareto":
         directions = ["maximize", "maximize", "maximize", "maximize", "minimize", "minimize"]
-        def constraints_func(trial):
-            return trial.user_attrs.get("constraints", (0.0, 0.0))
-        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed)
+        # Issue #950 (Katalog C) — vorher ein rohes (trades_constraint, dd_constraint)-Tupel aus
+        # UN-normierten Deltas (bzw. der Default (0.0, 0.0), der bei fehlendem User-Attr eine
+        # KONSTANTE Distanz-0 vortaeuscht — genau das #950-Symptom exakter Nullen ohne Gradienten).
+        # Derselbe kontinuierliche, normierte Constraint-Pfad wie der Default-Modus (_oos_
+        # constraints_func, #635) — undefinierte Metriken zaehlen als MAXIMAL verletzt (1.0), nicht
+        # als 0.0.
+        sampler = optuna.samplers.NSGAIISampler(constraints_func=_oos_constraints_func, seed=seed)
     else:
         # Issue #612 — FEASIBILITY GEHÖRT IN DEN SAMPLER, nicht in eine 12-Einheiten-Reward-Klippe.
         # ``constraints_func`` liest die gestempelten, normierten OOS-Gate-Verletzungen
@@ -1187,6 +1496,12 @@ def optimize(strategy: str, n_trials: int | None = None, n_jobs: int = 1):
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
+    # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
+    # Docstring), unabhaengig geprueft/gestempelt.
+    _check_simulation_semantics_version(study, opt_data)
+    # Issue #968 — dritte orthogonale Achse: welches URTEIL (Selektionsstatistik definiert/Guard
+    # getrippt) eine bereits simulierte Trade-Serie erhaelt, unabhaengig geprueft/gestempelt.
+    _check_inference_semantics_version(study, opt_data)
 
     # Issue #409 — Fail-Loud-Guard auch im globalen Pfad (gleicher Floor-Kollaps moeglich).
     # Issue #456 — Produktion bindet stop_on_plateau=True: aussichtslose Study früh beenden.
@@ -1343,12 +1658,14 @@ def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
     Epics #702) ZWISCHEN ``global_best`` und ``strategy_defaults``.
 
     Reihenfolge: ``load_global_best`` (Proposal READY_FOR_PR / strategies.json) →
-    ``champions.load_champion_seed`` (bester ERREICHTER, aber noch nicht promoteter Holdout-
+    ``champions.load_champion_entry`` (bester ERREICHTER, aber noch nicht promoteter Holdout-
     Kandidat, #703/#704) → ``strategy_defaults`` → ``{}``. Gibt ``(seed_params, source)`` zurück,
-    ``source ∈ {'global_best', 'champion', 'strategy_defaults', 'none'}``. Fehlt das echte globale
-    Optimum, ist ``strategy_defaults`` (bzw. der Champion, falls vorhanden) der Prior, gegen den die
-    A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen`` NIE still 0 (der Kollaps, bei dem
-    der symbol-getunte Vektor völlig ungezügelt Richtung IS/OOS-CV-Rausch tunt, #565).
+    ``source ∈ {'global_best', 'champion', 'champion_quality_stale', 'strategy_defaults', 'none'}``
+    (Issue #853 — 'champion_quality_stale' seit diesem Fix von 'champion' unterschieden, siehe
+    unten). Fehlt das echte globale Optimum, ist ``strategy_defaults`` (bzw. der Champion, falls
+    vorhanden) der Prior, gegen den die A4.3-Shrinkage (``param_pen``) zieht — so wird ``param_pen``
+    NIE still 0 (der Kollaps, bei dem der symbol-getunte Vektor völlig ungezügelt Richtung
+    IS/OOS-CV-Rausch tunt, #565).
 
     ``symbol``/``opt_data`` sind ADDITIV optional (HI-2): fehlen sie (Legacy-Aufrufer, z. B. das
     globale ``optimize()`` ohne Symbol-Kontext, oder bestehende Tests), ist das Verhalten
@@ -1359,23 +1676,48 @@ def resolve_symbol_shrinkage_seed(strategy: str, base_cfg: Path, *,
     if global_best:
         return global_best, "global_best"
     if symbol is not None and opt_data is not None:
+        # Issue #853 Fix Punkt 3 — ``seed_source`` unterscheidet jetzt 'champion' von
+        # 'champion_quality_stale', statt beide unter 'champion' zu verstecken: der volle Eintrag
+        # (nicht nur ``load_champion_seed``s Parameter-Extrakt) traegt die Information, ob die
+        # QUALITY-Bewertung unter einem aelteren reward_semantics_version gemessen wurde
+        # (champions.champion_quality_stale, #819) — der Parametervektor bleibt in BEIDEN Faellen
+        # gleichwertig seed-faehig (er durchlaeuft beim Enqueue ohnehin erneut alle Gates), aber
+        # die Unterscheidung macht sichtbar, ob ein Champion FEHLTE oder ob er vorhanden war und
+        # nur seine Quality-Telemetrie veraltet ist (Root-Cause #853: ohne sie war "kein
+        # global_best/Champion" die EINZIGE Negativ-Warnung, es gab keine positive Telemetrie).
         from automation.optimizer import champions
-        champion = champions.load_champion_seed(strategy, symbol, base_cfg, opt_data=opt_data,
-                                                 catalog_newest_ns=catalog_newest_ns)
-        if champion:
-            return champion, "champion"
+        champion_entry = champions.load_champion_entry(strategy, symbol, opt_data=opt_data)
+        if champion_entry:
+            champion_params = dict(champion_entry.get("params") or {})
+            if champion_params:
+                source = ("champion_quality_stale"
+                          if champions.champion_quality_stale(champion_entry, opt_data)
+                          else "champion")
+                return champion_params, source
     defaults = load_strategy_defaults_params(strategy, base_cfg)
     if defaults:
         return defaults, "strategy_defaults"
     return {}, "none"
 
 
-def _classify_trial_rejection(metrics) -> str:
+def _classify_trial_rejection(metrics, *, timebox_violated: bool = False) -> str:
     """Issue #408 — kategorisiert, WARUM ein Per-Symbol-Trial nicht promotebar ist, fuer die modale
     Aggregation im Proposal (confirm._dominant_rejection). Trennt den IS-Drop ('oos_not_evaluated':
     das Symbol erzeugte nie evaluierbare OOS-Trades — die Pitfall-#75-Signatur) vom OOS-Drop
     ('oos_gate_rejected': OOS evaluiert, aber durchs Eligibility-Gate gefallen) und vom Pass
-    ('none'). Bewusst grob & stabil, damit die Reasons ueber Trials hinweg aggregierbar bleiben."""
+    ('none'). Bewusst grob & stabil, damit die Reasons ueber Trials hinweg aggregierbar bleiben.
+
+    Issue #971 (Pitfall #303/#304 in AGENTS.md, Katalog B) — ``timebox_violated`` (dieselbe Grösse
+    wie ``run_optimization``s ``_timebox_violated_this_trial``) MUSS vor dem generischen
+    ``oos_not_evaluated``-Zweig geprüft werden: der #857-Fix stempelt ``metrics.oos_evaluated =
+    False`` NACHTRÄGLICH auf einen Trial, der tatsächlich OOS gehandelt hat (Gegenbeweis zum
+    IS-Gate-Drop, siehe ``_classify_is_rejection_detail``). Ohne diese Unterscheidung sammelte
+    ``oos_not_evaluated`` zwei kausal verschiedene Populationen (echter IS-Gate-Drop UND
+    Zeitbox-Invalidierung) unter einem Namen ein — die Selbstverschleierung, die
+    ``check_holding_time_cap`` (#971) und den Zero-Eligible-Plateau-Zähler (#972) unbrauchbar
+    machte."""
+    if timebox_violated:
+        return "oos_timebox_violation"
     if metrics.oos_evaluated and metrics.oos_eligible:
         return "none"
     if not metrics.oos_evaluated:
@@ -1439,9 +1781,23 @@ _OOS_REASON_PREFIX_MAP: tuple[tuple[str, str], ...] = (
     ("oos_min_win_rate", "REJECT_OOS_MIN_WIN_RATE"),
     ("oos_min_sortino", "REJECT_OOS_MIN_SORTINO"),
     ("oos_min_profit_factor", "REJECT_OOS_MIN_PROFIT_FACTOR"),
+    # Issue #917 — fehlte bislang vollständig: JEDE oos_min_psr-Ablehnung (definierter Miss UND
+    # undefinierter PSR) fiel dadurch auf den Catch-All REJECT_OOS_OTHER (1692/2187 Trials eines
+    # Referenzlaufs). Ein echter numerischer Miss (nicht 'None (insufficient/guard)', siehe
+    # _OOS_UNDEFINED_STATISTIC_MARKER unten) landet jetzt hier; der undefinierte Fall wird VOR
+    # dieser Zuordnung in _classify_is_rejection_detail abgefangen.
+    ("oos_min_psr", "REJECT_OOS_MIN_PSR"),
+    ("oos_min_excess_return", "REJECT_OOS_MIN_EXCESS_RETURN"),
     ("Micro-Sizing", "REJECT_OOS_MICRO_SIZING"),
     ("oos_not_evaluable", "REJECT_OOS_NOT_EVALUABLE"),
 )
+
+# Issue #917 — Marker-Substring, den backtest_runner._evaluate_oos_eligibility in JEDE Rejection-
+# Reason schreibt, deren zugrunde liegende Kennzahl UNDEFINIERT ist (None), statt eines regulär
+# berechneten Werts, der die Schwelle verfehlt (z. B. "oos_min_psr: None (insufficient/guard) <
+# 0.75"). "None < threshold" ist kein Vergleichsergebnis, sondern eine nicht durchgeführte Messung
+# — dieselbe Missing-Data-Klasse wie #759/#788, hier auf Gate- statt Metrik-Ebene.
+_OOS_UNDEFINED_STATISTIC_MARKER = "None (insufficient"
 
 
 def _map_oos_reason(reason: str) -> str:
@@ -1452,7 +1808,20 @@ def _map_oos_reason(reason: str) -> str:
     return "REJECT_OOS_OTHER"
 
 
-def _classify_is_rejection_detail(metrics) -> str:
+def _extract_undefined_gate_terms(reasons) -> list[str]:
+    """Issue #917 Fix 2 — welche ``eligible_requires_all``-Gates in DIESEM Trial auf einer
+    undefinierten Grösse liefen (``oos_gate_undefined_terms``). Reine Textextraktion aus den
+    bereits vorhandenen ``oos_rejection_reasons``-Zeilen — kein zweiter Auswertungspfad."""
+    terms: list[str] = []
+    for r in reasons or ():
+        if _OOS_UNDEFINED_STATISTIC_MARKER in r:
+            label = r.split(":", 1)[0].split(" (", 1)[0].strip()
+            if label and label not in terms:
+                terms.append(label)
+    return terms
+
+
+def _classify_is_rejection_detail(metrics, *, timebox_violated: bool = False) -> str:
     """Issue #453 — granulare, aggregierbare Ablehnungs-Kategorie (feiner als _classify_trial_rejection).
 
     Löst den Catch-All ``oos_not_evaluated`` in die TATSÄCHLICHE Ursache auf, sodass systematisches
@@ -1462,12 +1831,26 @@ def _classify_is_rejection_detail(metrics) -> str:
 
     Kategorien:
       * ``NONE``                          — evaluiert & eligible (kein Drop).
+      * ``REJECT_OOS_TIMEBOX_VIOLATION``  — Issue #971: der Trial hat tatsächlich OOS gehandelt
+                                            (``oos_covered``/``oos_total_trades`` bezeugen es), wurde
+                                            aber NACHTRÄGLICH (#857) auf ``oos_evaluated=False``
+                                            umgestempelt, weil mindestens ein Round-Trip die Zeitbox
+                                            verletzt hat. MUSS vor der IS-Gate-Heuristik unten
+                                            geprüft werden — sonst ist dieser Trial vom echten
+                                            ``REJECT_OOS_DISCARDED_BY_IS_GATE`` (das Symbol wurde nie
+                                            OOS gehandelt) nicht mehr unterscheidbar (Pitfall #303).
       * ``REJECT_OOS_WINDOW_UNREACHABLE`` — OOS=0 + ``oos_covered is False`` (H2-Katalog, #455).
       * ``REJECT_OOS_INACTIVE``           — OOS=0, aber ``oos_covered is True`` (Strategie handelt
                                             im OOS-Fenster nicht — strategieseitig, separat zu lösen).
       * ``REJECT_OOS_NOT_EVALUATED``      — OOS=0, Abdeckung unbekannt (Legacy/keine #455-Telemetrie).
       * ``REJECT_OOS_<GATE>``             — evaluiert, aber durchs konkrete Eligibility-Gate gefallen.
+      * ``REJECT_OOS_STATISTIC_UNAVAILABLE`` — Issue #917: mindestens EIN requires_all-Gate
+                                            operierte auf einer UNDEFINIERTEN Grösse (None) statt
+                                            einem berechneten Wert unter der Schwelle — der Trial
+                                            wurde nicht GEMESSEN, nicht am Gate abgelehnt.
     """
+    if timebox_violated:
+        return "REJECT_OOS_TIMEBOX_VIOLATION"
     if metrics.oos_evaluated and metrics.oos_eligible:
         return IS_REJECTION_NONE
     if not metrics.oos_evaluated:
@@ -1481,6 +1864,13 @@ def _classify_is_rejection_detail(metrics) -> str:
         return "REJECT_OOS_NOT_EVALUATED"
     reasons = getattr(metrics, "oos_rejection_reasons", ()) or ()
     if reasons:
+        # Issue #917 — Vorrang vor JEDER anderen Klassifikation, unabhängig davon, ob die
+        # undefinierte Grösse an erster Stelle der Liste steht: 'nicht messbar' ist eine andere
+        # Aussage als 'am Gate gescheitert', selbst wenn ein anderes Gate ZUSÄTZLICH numerisch
+        # verfehlt wurde (die numerische Verletzung ist auf einer nicht bewerteten Kohorte ohnehin
+        # nicht aussagekräftig).
+        if any(_OOS_UNDEFINED_STATISTIC_MARKER in r for r in reasons):
+            return "REJECT_OOS_STATISTIC_UNAVAILABLE"
         return _map_oos_reason(reasons[0])
     return "REJECT_OOS_GATE"
 
@@ -1521,16 +1911,30 @@ def derive_n_trials(strategy: str, base_n_trials: int, opt_data: dict) -> int:
     ``n_trials = 100`` bei 14 Dimensionen ist faktisch Zufallssuche (72 TPE-Trials für 14 dim ⇒
     Spearman(trial_nr, reward) ≈ 0.04–0.23, best(51–100) oft SCHLECHTER als best(1–50)). Deklarativ
     über ``n_trials_per_dim`` (k ≥ 20): ``n_trials = max(base, ceil(k·dim))`` ⇒ ComboTrendVwap (14 dim)
-    ≥ 280. Fehlt der Key (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding)."""
+    ≥ 280. Fehlt der Key (oder <= 0) ⇒ ``base`` (Legacy, bit-identisch, Zero-Hardcoding).
+
+    Issue #931 Fix 2 — ``wallclock_budget_policy='degrade'`` multipliziert das Ergebnis GLOBAL mit
+    dem in ``{WORK}/wallclock_degrade_state.json`` persistierten Faktor (siehe
+    ``wallclock_guard.write_degrade_factor``/``read_degrade_factor``): der Sweep-Preflight
+    (``sweep.run_per_symbol_sweep``) berechnet den Faktor VOR dem ersten Trial und schreibt ihn in
+    diese von ``optimizer.json`` GETRENNTE Zustandsdatei, weil jede Study ihre Config unabhängig
+    frisch von der Platte lädt (kein geteiltes In-Memory-Objekt über Study-Grenzen). Faktor 1.0
+    (Datei fehlt, z. B. kein Degrade-Preflight gelaufen) ⇒ bit-identisch zum Pre-#931-Verhalten."""
     k = opt_data.get("n_trials_per_dim")
     if not k or float(k) <= 0.0:
-        return int(base_n_trials)
-    try:
-        from automation.optimizer import bounds
-        dim = len(bounds.extract_numeric_bounds(strategy))
-    except Exception:
-        return int(base_n_trials)
-    return max(int(base_n_trials), math.ceil(float(k) * dim))
+        base = int(base_n_trials)
+    else:
+        try:
+            from automation.optimizer import bounds
+            dim = len(bounds.extract_numeric_bounds(strategy))
+        except Exception:
+            base = int(base_n_trials)
+        else:
+            base = max(int(base_n_trials), math.ceil(float(k) * dim))
+    degrade_factor = wallclock_guard.read_degrade_factor(WORK)
+    if degrade_factor >= 1.0:
+        return base
+    return max(1, math.ceil(base * degrade_factor))
 
 
 def _apply_deprioritized_budget(strategy: str, symbol: str, n_trials: int, opt_data: dict) -> int:
@@ -1803,25 +2207,58 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
                     "sortino_guard_trip_fraction_warn", guard_trip_fraction_warn))
     except Exception:
         pass
+    # Issue #885 (Pitfall #283) — der Nenner fuer STUDY_GUARD_DOMINATED misst absichtlich die
+    # tatsaechlich VERWERTBARE ("informative") Trial-Menge, NICHT ``evaluable`` (dieses zaehlt
+    # unter ``inference_failure_policy='prune'`` weiterhin geprunte Trials mit: ein geprunter
+    # Trial (#864) behaelt sein ``oos_evaluated=True``-User-Attr — es WURDE evaluiert, BEVOR die
+    # Pruning-Entscheidung fiel — sein ``TrialState`` ist aber ``PRUNED``, er hat keine informative
+    # Beobachtung mehr geliefert. ``evaluable``/``evaluable_fraction`` (unten) bleiben UNVERAENDERT
+    # — sie speisen das #568/#640/#754-Gradienten-Gate, dessen Semantik dieser Fix nicht aendert.
+    n_trials_pruned = sum(
+        1 for t in trials if getattr(t, "state", None) == optuna.trial.TrialState.PRUNED)
+    n_trials_failed = sum(
+        1 for t in trials if getattr(t, "state", None) == optuna.trial.TrialState.FAIL)
+    n_trials_informative = sum(
+        1 for t in trials
+        if getattr(t, "state", None) == optuna.trial.TrialState.COMPLETE
+        and getattr(t, "user_attrs", {}).get("oos_evaluated") is True
+    )
+    n_trials_unevaluable = max(0, len(trials) - n_trials_pruned - n_trials_failed - n_trials_informative)
+    try:
+        study.set_user_attr("n_trials_total", len(trials))
+        study.set_user_attr("n_trials_informative", n_trials_informative)
+        study.set_user_attr("n_trials_pruned", n_trials_pruned)
+        study.set_user_attr("n_trials_failed", n_trials_failed)
+        study.set_user_attr("n_trials_unevaluable", n_trials_unevaluable)
+    except Exception:
+        pass
     study_guard_dominated = bool(
-        evaluable > 0 and (guard_tripped / evaluable) > guard_trip_fraction_warn)
+        n_trials_informative > 0
+        and (guard_tripped / n_trials_informative) > guard_trip_fraction_warn)
     if study_guard_dominated:
         try:
             study.set_user_attr("study_guard_dominated", True)
         except Exception:
             pass
         logging.getLogger("optimizer").warning(
-            "[#823] %s: STUDY_GUARD_DOMINATED — %d/%d evaluierte Trials (%.1f%%) mit "
+            "[#823/#885] %s: STUDY_GUARD_DOMINATED — %d/%d informative Trials (%.1f%%) mit "
             "SORTINO_GUARD_TRIPPED (> %.0f%%) — die Suche ist faktisch zensiert (der Guard löscht "
             "systematisch das obere Ende der Zielverteilung); dieses Ergebnis ist NICHT als "
             "reguläres Eligibility-Resultat interpretierbar.",
-            getattr(study, "study_name", "?"), guard_tripped, evaluable,
-            100.0 * guard_tripped / evaluable, 100.0 * guard_trip_fraction_warn,
+            getattr(study, "study_name", "?"), guard_tripped, n_trials_informative,
+            100.0 * guard_tripped / n_trials_informative, 100.0 * guard_trip_fraction_warn,
         )
+    # Issue #929 — best_value aus ALLEN abgeschlossenen Trials (Optuna-Semantik), nicht aus
+    # Optunas eigenem constraint-gefilterten study.best_value (das unter oos_eligible=False für
+    # JEDEN Trial null/undefiniert zurückgibt, siehe _best_completed_value-Docstring).
     try:
-        best_value = study.best_value
+        _direction = study.direction.name.lower()
     except Exception:
-        best_value = None
+        _direction = "maximize"
+    best_value = _best_completed_value(trials, direction=_direction)
+    best_eligible_value = _best_completed_value(
+        [t for t in trials if getattr(t, "user_attrs", {}).get("oos_eligible") is True],
+        direction=_direction)
 
     # Issue #611 — p_eligible (Gate-Passrate) EINMALIG bestimmen (wiederverwendet vom #640-
     # Gradienten-Gate UND von der #618-DSR-Kohorte weiter unten).
@@ -1893,14 +2330,40 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             min_eligible_for_variance=min_eligible_for_variance)
         gradient_signal = gradient_signal_arm_value != "none"
 
-    if gradient_signal is None:
+    # Issue #930 — Budget-Ausfuehrungsgrad VORGEZOGEN (statt erst weiter unten berechnet, siehe
+    # #770-Block): die [#640]-Meldung braucht ihn jetzt direkt als Ausloesebedingung.
+    budget_execution = compute_budget_execution(
+        trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
+        n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs)
+
+    # Issue #930 (Pitfall #303) — die Ausloesebedingung war `gradient_signal is None`, ein PROXY
+    # fuer "Basisbudget nicht ausgeschoepft" aus der Zeit, als der Fruehstopp bei
+    # `n_startup + 3*dim` griff (#805/#806). Seit #925 kann `budget_executed_fraction` bei einem
+    # STRUCTURAL_ZERO_ELIGIBLE-Stopp bei 0,99 liegen (praktisch voll ausgefuehrt), waehrend der
+    # Proxy trotzdem `None` liefert (early_stopped=True) — die Meldung feuerte dann auf einem
+    # Basisbudget, das TATSAECHLICH erschoepft war. Die direkte Groesse (budget_executed_fraction)
+    # liegt seit #770 vor und ersetzt den Proxy jetzt.
+    _min_median_budget_execution = 0.5
+    try:
+        _opt_path_640 = config_dir() / "optimizer.json"
+        if _opt_path_640.exists():
+            _min_median_budget_execution = float(
+                (json.loads(_opt_path_640.read_text("utf-8")) or {}).get(
+                    "min_median_budget_execution", 0.5))
+    except Exception:
+        _min_median_budget_execution = 0.5
+    _budget_left = (budget_execution["budget_executed_fraction"] is None
+                    or budget_execution["budget_executed_fraction"] < _min_median_budget_execution)
+
+    if gradient_signal is None and _budget_left:
         logging.getLogger("optimizer").info(
-            "[#640] %s: Study vorzeitig beendet — Eskalationsfrage unbeantwortet (kein Basisbudget "
-            "ausgeschoepft, gradient_signal=None). feasible_p_eligible=%.2f, "
+            "[#640] %s: Study vorzeitig beendet — Eskalationsfrage unbeantwortet "
+            "(budget_executed_fraction=%s < %.2f, gradient_signal=None). feasible_p_eligible=%.2f, "
             "feasible_reward_pstdev=%.4f, constraint_improvement_rate=%s.",
-            symbol, p_eligible, feasible_reward_pstdev, constraint_improvement_rate,
+            symbol, budget_execution["budget_executed_fraction"], _min_median_budget_execution,
+            p_eligible, feasible_reward_pstdev, constraint_improvement_rate,
         )
-    elif not gradient_signal:
+    elif not gradient_signal and gradient_signal is not None:
         logging.getLogger("optimizer").warning(
             "[#640] %s: kein Gradienten-Signal (weder feasibler Reward-Streuung noch Constraint-"
             "Annaeherung) — feasible_p_eligible=%.2f, feasible_reward_pstdev=%.4f ≤ τ=%.4f, "
@@ -2086,11 +2549,19 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         gate_collinearity_alarm = {"n_samples": 0, "alarms": [], "redundant_candidates": {}}
 
     # Issue #621 — Reward-Term-Dekomposition
+    # Issue #980 (Katalog C, P1, Pitfall #302 in AGENTS.md) — VORHER auf den branch in ('eligible',
+    # 'per_symbol', 'pareto') gefiltert: dieselbe Selection-on-the-dependent-variable-Falle wie
+    # invariants._evaluated_reward_terms bereits dokumentiert (das ist die 2.15%-Kohorte aus #979,
+    # in 27 von 28 Studies des Referenzlaufs 46cf5070 LEER, weil p_eligible == 0). Root-Cause von
+    # #980: reward_terms_aggregates.terms war dadurch in 27/28 Studies {} — trotz identischer
+    # verfügbarer Trial-Population wie invariants.check_reward_term_variance/reward_term_variance_
+    # table (die BEIDE bereits auf oos_evaluated=True ohne Branch-Filter rechnen und daher NICHT
+    # leer waren). Konsistent auf dieselbe Population (oos_evaluated=True, jeder Branch) umgestellt.
     eligible_terms = []
     for t in trials:
         if getattr(t, "user_attrs", {}).get("oos_evaluated") is True:
             terms = getattr(t, "user_attrs", {}).get("reward_terms")
-            if terms and terms.get("branch") in ("eligible", "per_symbol", "pareto"):
+            if terms:
                 eligible_terms.append(terms)
 
     term_aggregates = {
@@ -2137,10 +2608,9 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             if std_k < 0.01 * rew_std:
                 logging.getLogger("optimizer").warning("REWARD_TERM_INERT: %s", k)
 
-    # Issue #770 — Budget-Ausfuehrungsgrad, dieselbe Berechnung wie ``report._study_record``.
-    budget_execution = compute_budget_execution(
-        trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
-        n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs)
+    # Issue #770/#930 — budget_execution wurde bereits weiter oben (vor der [#640]-Meldung)
+    # berechnet; hier nur noch die #770-Konsequenz (dieselbe Berechnung wie
+    # ``report._study_record``, kein zweiter Aufruf mehr).
     if (budget_execution["budget_executed_fraction"] is not None
             and budget_execution["budget_executed_fraction"] < 0.5):
         logging.getLogger("optimizer").warning(
@@ -2149,6 +2619,25 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
             symbol, budget_execution["budget_executed_fraction"], budget_execution["stop_reason"],
             budget_execution["n_trials_completed"], budget_execution["n_trials_budgeted"],
         )
+
+    _study_wallclock_s = round(time.perf_counter() - study_t0)
+    # Issue #932 (Pitfall #305) — als Study-User-Attr gestempelt (nicht nur im Log-Event), damit
+    # report._study_record sie in einen künftigen #742-Report übernimmt: die EINE Quelle, aus der
+    # sweep._read_last_study_wallclock_by_strategy den LPT-Dispatch (Longest-Processing-Time) des
+    # NÄCHSTEN Laufs speist.
+    try:
+        study.set_user_attr("wallclock_s", _study_wallclock_s)
+    except Exception:
+        pass
+    # Issue #983 (Katalog D, P0 HEADLINE) — der Wallclock-Preflight rechnete bislang mit dem MEDIAN
+    # von backtest_ms, obwohl die Verteilung rechtsschief ist (Referenzlauf 46cf5070: Median 7.575s
+    # vs. Mittelwert 9.690s, Faktor 1.279 — einer von drei multiplikativen Fehlerquellen, die den
+    # Preflight um Faktor ~1.90 unterschätzen liessen). ``backtest_ms_mean`` ist das Rohmaterial für
+    # ``sweep._read_last_backtest_ms_mean`` des NÄCHSTEN Laufs (analog #931s Median-Ledger).
+    try:
+        study.set_user_attr("backtest_ms_mean", (sum(durs) / len(durs)) if durs else None)
+    except Exception:
+        pass
 
     emit_execution_event(logging.getLogger("optimizer"), "optimizer_study_completed", {
         "study_name": getattr(study, "study_name", None),
@@ -2160,12 +2649,23 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
         "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+        # Issue #983 Fix Punkt 3 Akzeptanzkriterium — die wallclock_budget_policy='degrade'-Kürzung
+        # (#931) darf niemals stillschweigend geschehen: IMMER vorhanden (1.0 = kein Degrade), damit
+        # jede Study nachvollziehbar bleibt, ohne den Ereignis-Log durchsuchen zu müssen.
+        "budget_degradation_factor": getattr(study, "user_attrs", {}).get(
+            "budget_degradation_factor", 1.0),
         "stop_reason": budget_execution["stop_reason"],
         "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "best_value": best_value,
+        # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte (None, wenn
+        # p_eligible == 0 — hier ist die Leermenge inhaltlich korrekt, kein Constraint-Artefakt).
+        "best_eligible_value": best_eligible_value,
+        # Issue #929 Fix 2 — Trial-Nummer des besten abgeschlossenen Trials, unabhängig von der
+        # Constraint-Feasibility (siehe _best_completed_trial_number-Docstring).
+        "best_trial_number": _best_completed_trial_number(trials, direction=_direction),
         "backtest_ms_total": sum(durs) if durs else 0,
         "backtest_ms_median": int(statistics.median(durs)) if durs else None,
-        "wallclock_s": round(time.perf_counter() - study_t0),
+        "wallclock_s": _study_wallclock_s,
         # Issue #568 — globale Roh-Diagnose (Populations-Streuung über ALLE Trials, NICHT die
         # Eskalations-Grundlage seit #640 — siehe feasible_reward_pstdev/gradient_signal unten).
         "reward_pstdev": reward_pstdev,
@@ -2253,6 +2753,78 @@ def _read_deflation_config() -> tuple[bool, float]:
     return deflated_selection, confidence
 
 
+def _read_sortino_guard_family_median_min_siblings() -> int:
+    """Issue #913 Fix 2 — Mindestzahl abgeschlossener Sibling-Trials MIT definiertem
+    ``oos_n_periods``, bevor ``_resolve_family_median_n_periods`` einen Familien-Median liefert
+    (Kaltstart-Untergrenze, unter der eine Median-Schätzung nicht belastbar wäre).
+    ``tournament.json['sortino_guard_family_median_min_siblings']``, Default 32."""
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text("utf-8")) or {}
+            return int(data.get("sortino_guard_family_median_min_siblings", 32))
+    except Exception:
+        pass
+    return 32
+
+
+def _read_sortino_guard_family_scope() -> str:
+    """Issue #916 — ``tournament.json['sortino_guard_family_scope']`` ∈ {'symbol_strategy'}
+    (Default 'symbol_strategy'). Bei einer study-internen Streuung von ``n_periods`` bis Faktor
+    11,3 zwischen Strategien DESSELBEN Symbols (#916-Befund) ist der study-lokale (=
+    symbol_strategy) Median die sachlich richtige Referenz — ein symbolweiter Median wäre eine
+    Aggregation über heterogene Entitäten (Pitfall #291). 'symbol' (Familie über ALLE Strategien
+    eines Symbols hinweg) verlangt Koordination über nebenläufig laufende Studies hinweg und ist
+    hier bewusst NICHT implementiert (dokumentierter Scope-Cut, analog #843/#845) — ein
+    konfigurierter Wert 'symbol' bricht daher fail-loud ab, statt still auf 'symbol_strategy'
+    zurückzufallen."""
+    scope = "symbol_strategy"
+    try:
+        cfg_path = config_dir() / "tournament.json"
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text("utf-8")) or {}
+            scope = str(data.get("sortino_guard_family_scope", "symbol_strategy"))
+    except Exception:
+        scope = "symbol_strategy"
+    if scope != "symbol_strategy":
+        raise ValueError(
+            f"tournament.json['sortino_guard_family_scope']={scope!r} nicht unterstützt — "
+            "nur 'symbol_strategy' ist implementiert (Issue #916, dokumentierter Scope-Cut).")
+    return scope
+
+
+def _resolve_family_median_n_periods(trial: "optuna.trial.Trial") -> float | None:
+    """Issue #913 — der Injektionspunkt für ``backtest_runner._effective_sortino_numeric_guard``s
+    ``family_median_n_periods``: Median von ``oos_n_periods`` über die bereits ABGESCHLOSSENEN
+    Sibling-Trials DERSELBEN Study (``sortino_guard_family_scope='symbol_strategy'`` — #916).
+
+    ``run_optimization`` (dieser Prozess) kennt die Historie der Study VOR dem Start eines neuen
+    Trials — anders als der isolierte Backtest-Subprozess (siehe Docstring von
+    ``_effective_sortino_numeric_guard``). Liefert ``None``, solange weniger als
+    ``sortino_guard_family_median_min_siblings`` Sibling-Trials ein definiertes ``oos_n_periods``
+    tragen (Kaltstart) — der Aufrufer (``build_trial``) schreibt dann keinen Manifest-Schlüssel,
+    und der Subprozess behandelt den Trial nach der konfigurierten Bootstrap-Policy (Issue #913
+    Fix 2)."""
+    min_siblings = _read_sortino_guard_family_median_min_siblings()
+    _read_sortino_guard_family_scope()  # fail-loud bei nicht unterstütztem Scope
+    try:
+        sibling_trials = trial.study.get_trials(
+            deepcopy=False,
+            states=(optuna.trial.TrialState.COMPLETE, optuna.trial.TrialState.PRUNED),
+        )
+    except Exception:
+        return None
+    values = [
+        v for t in sibling_trials
+        if t.number != trial.number
+        for v in [t.user_attrs.get("oos_n_periods")]
+        if v
+    ]
+    if len(values) < min_siblings:
+        return None
+    return float(statistics.median(values))
+
+
 def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial,
                           catalog_newest_ns: int | None = None,
@@ -2298,6 +2870,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             catalog_span_days=catalog_span_days,
             copy_config=study_config_dir is None,
             study_config_dir=study_config_dir,
+            # Issue #913 — Injektionspfad: Familien-Median von oos_n_periods über die bereits
+            # abgeschlossenen Sibling-Trials dieser Study, VOR dem Start dieses Trials berechnet.
+            family_median_n_periods=_resolve_family_median_n_periods(trial),
         )
 
         # Issue #415 — Per-Trial-Wall-Clock. perf_counter UM den run_backtest-Aufruf herum (statt via
@@ -2327,6 +2902,73 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                 t_data = json.load(f) or {}
                 risk_dd_cap = t_data.get("max_drawdown", 0.30)
 
+        # Issue #857 (Pitfall #272) — Konsequenz auf der Aggregationsebene der Messung: die
+        # Zeitbox-Messung (``oos_max_holding_time_s``) liegt JE TRIAL vor, die Verwerfung darf
+        # daher NICHT je Study erfolgen (vorher AUSSCHLIESSLICH in confirm.py: EIN verletzender
+        # Trial verwarf 159 saubere Geschwister). Ein zeitbox-verletzender Trial wird hier VOR
+        # ``compute_reward`` auf den Unevaluable-Pfad umgestempelt (``metrics.oos_evaluated=False``)
+        # — er zählt damit weder in Eligibility noch in Reward noch (via #822) in ``n_family``.
+        # Referenz-Deckel über #861 ``resolve_effective_bar_cap`` (gesampelt → strategy_defaults →
+        # globaler Deckel), Toleranz über #858 ``timebox_execution_slack_bars`` (Watchdog-Fenster
+        # ``exit_close_max_bars`` + 1 Bar unvermeidliche Fill-Latenz, statt der vorherigen 0.01-Bar-
+        # Toleranz, die genau diese vom Exit-Mechanismus selbst vorgesehene Verzögerung als
+        # Vertragsbruch wertete).
+        # Issue #832 Fix Punkt 1 — Haltedauer in Sekunden je Trial persistiert (Rohmaterial fuer
+        # report._study_record's je-Study-Aggregat UND fuer die #857-Zeitbox-Neuberechnung weiter
+        # unten im Stack, siehe invariants.compute_trial_timebox_violations). UNBEDINGT gestempelt
+        # (nicht hinter der ``oos_evaluated``-Ueberschreibung unten) — sonst wuerde ein gerade
+        # zeitbox-invalidierter Trial genau die Evidenz verlieren, die confirm.py/report.py
+        # brauchen, um dieselbe Verletzung studienweit nachzuvollziehen (Selbstverschleierung).
+        # Issue #899 — Exit-Telemetrie (aus Order-Tags, siehe backtest_runner._build_order_exit_meta)
+        # als Trial-User-Attrs, unabhängig vom oos_evaluated-Zweig unten (rein additive Telemetrie,
+        # analog oos_max_holding_time_s/oos_p95_holding_time_s).
+        if metrics.oos_exit_reason_histogram:
+            trial.set_user_attr("oos_exit_reason_histogram", metrics.oos_exit_reason_histogram)
+        if metrics.oos_max_holding_bars is not None:
+            trial.set_user_attr("oos_max_holding_bars", metrics.oos_max_holding_bars)
+        # Issue #919 — bislang nur in TournamentMetrics geparst, nie als Trial-User-Attr
+        # gestempelt: report._study_record's Study-Aggregat (median_bars_held) hatte dadurch keine
+        # Eingangsgrösse.
+        if metrics.oos_median_bars_held is not None:
+            trial.set_user_attr("oos_median_bars_held", metrics.oos_median_bars_held)
+        if metrics.oos_gross_loss_mean_bps is not None:
+            trial.set_user_attr("oos_gross_loss_mean_bps", metrics.oos_gross_loss_mean_bps)
+        if metrics.oos_gross_win_mean_bps is not None:
+            trial.set_user_attr("oos_gross_win_mean_bps", metrics.oos_gross_win_mean_bps)
+        if metrics.oos_atr_median_bps is not None:
+            trial.set_user_attr("oos_atr_median_bps", metrics.oos_atr_median_bps)
+        if metrics.oos_atr_min_bps is not None:
+            trial.set_user_attr("oos_atr_min_bps", metrics.oos_atr_min_bps)
+
+        _timebox_violated_this_trial = False
+        if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:
+            if metrics.oos_max_holding_time_s is not None:
+                trial.set_user_attr("oos_max_holding_time_s", metrics.oos_max_holding_time_s)
+            if metrics.oos_p95_holding_time_s is not None:
+                trial.set_user_attr("oos_p95_holding_time_s", metrics.oos_p95_holding_time_s)
+            # Issue #903 — rohe Round-Trip-Haltedauern (siehe compute_trial_timebox_violations
+            # Round-Trip-Ebene) statt nur des Trial-Maximums oben.
+            if metrics.oos_holding_times_s:
+                trial.set_user_attr("oos_holding_times_s", list(metrics.oos_holding_times_s))
+            _cap_bars, _cap_source = _inv.resolve_effective_bar_cap(sampled, strategy=strategy)
+            _slack_bars = float(t_data.get("timebox_execution_slack_bars", 3.0))
+            # Issue #902 — Single Source of Truth statt eines eigenen 3600.0-Literals (Pitfall #271,
+            # dritte Instanz): dieselbe Konstante wie invariants.compute_trial_timebox_violations.
+            # Ein echter per-Symbol bar_seconds-Wert (#900 median_delta_t_s) ist an dieser Stelle
+            # nicht verdrahtet (Sweep-Preflight-Ergebnis erreicht den Trial-Objective-Prozess derzeit
+            # nicht) — dokumentierter Fallback, jetzt aus der EINEN Quelle statt einer Kopie.
+            _bar_seconds = _contracts.BAR_SECONDS_DEFAULT
+            _cap_s = (_cap_bars + _slack_bars) * _bar_seconds
+            _timebox_violated_this_trial = metrics.oos_max_holding_time_s > _cap_s
+            trial.set_user_attr("oos_timebox_violated", _timebox_violated_this_trial)
+            trial.set_user_attr(
+                "oos_holding_bars_max", round(metrics.oos_max_holding_time_s / _bar_seconds, 4))
+            trial.set_user_attr("timebox_cap_source", _cap_source)
+            if _timebox_violated_this_trial:
+                trial.set_user_attr("oos_invalid_reason", "TIMEBOX_VIOLATION")
+                metrics.oos_evaluated = False
+                metrics.oos_eligible = False
+
         reward, reward_terms = compute_reward(metrics, universe_size=1, risk_dd_cap=risk_dd_cap,
                                 sampled=sampled, global_params=global_params, strategy=strategy, return_terms=True)
         trial.set_user_attr("reward_terms", reward_terms)
@@ -2339,12 +2981,23 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         outcome = "evaluable" if metrics.oos_evaluated else "unevaluable"
         # Issue #408 — modale Gate-Drop-Reason: pro Trial die kategorisierte Rejection-Reason
         # persistieren, damit confirm._dominant_rejection sie ueber die Study aggregieren kann.
-        rejection_reason = _classify_trial_rejection(metrics)
+        # Issue #971 — ``timebox_violated`` durchgereicht, damit ein nachträglich (#857) auf
+        # ``oos_evaluated=False`` umgestempelter Trial NICHT als IS-Gate-Drop fehlklassifiziert wird.
+        rejection_reason = _classify_trial_rejection(metrics, timebox_violated=_timebox_violated_this_trial)
         trial.set_user_attr("rejection_reason", rejection_reason)
         # Issue #453 — granulare, dezidierte Rejection-Kategorie (löst 'oos_not_evaluated' in die
         # tatsächliche Ursache auf) zusätzlich persistieren — für die modale Proposal-Aggregation.
-        is_rejection_detail = _classify_is_rejection_detail(metrics)
+        is_rejection_detail = _classify_is_rejection_detail(
+            metrics, timebox_violated=_timebox_violated_this_trial)
         trial.set_user_attr("is_rejection_detail", is_rejection_detail)
+        trial.set_user_attr("oos_timebox_invalidated", bool(_timebox_violated_this_trial))
+        # Issue #917 Fix 2 — welche Gates konkret auf einer undefinierten Grösse liefen (leer im
+        # Regelfall). Additiv, unabhängig von is_rejection_detail selbst gestempelt, damit auch ein
+        # Trial mit einem ANDEREN dominanten Ablehnungsgrund die Information nicht verliert.
+        _undefined_terms = _extract_undefined_gate_terms(
+            getattr(metrics, "oos_rejection_reasons", ()))
+        if _undefined_terms:
+            trial.set_user_attr("oos_gate_undefined_terms", _undefined_terms)
         # Issue #415 — backtest_ms als User-Attr fuer die Per-Study-Aggregation (optimize_symbol).
         trial.set_user_attr("backtest_ms", backtest_ms)
         # Issue #413 — oos_evaluated als User-Attr: Grundlage des evaluable-basierten Floor-Guards
@@ -2386,6 +3039,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Lo-2002-Varianz-Floor (T-bewusst) für die Kohorte bilden kann, statt einer T-blinden
         # Konstante (siehe deflation.lo2002_sharpe_variance/sr0_multiple_testing_robust).
         trial.set_user_attr("oos_n_periods", metrics.oos_n_periods)
+        # Issue #845 — Downside-Beobachtungs-Nenner je Trial persistiert (None-safe, siehe
+        # parsing.TournamentMetrics.oos_downside_obs-Feldkommentar), damit confirm.py/invariants.py
+        # n_periods-Heterogenität einer Familie gegen die tatsaechlich downside-tragende
+        # Teilmenge prüfen können, nicht nur gegen die volle informative Periodenzahl.
+        if metrics.oos_downside_obs is not None:
+            trial.set_user_attr("oos_downside_obs", metrics.oos_downside_obs)
         # Issue #620 — Kohärenz-Verletzung je Trial persistieren (Study-Zähler coherence_violations).
         trial.set_user_attr("oos_coherence_violation", bool(metrics.oos_coherence_violation))
         # Issue #804 — die strukturierten Inferenzpfad-Diagnosen je Trial persistieren, damit der
@@ -2403,17 +3062,23 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # Win-Rate-Verteilung gegen die konfigurierte oos_min_win_rate-Schwelle prüfen kann (LIVE,
         # nicht nur das statische Cross-Strategy-Kalibrier-Fixture aus #633).
         # Issue #788 — dieselbe oos_evaluated-Torwaechter-Bedingung gilt ab hier fuer JEDE OOS-
-        # Metrik (profit_factor, expectancy, total_return, sortino): oos_expectancy/oos_total_return
-        # fallen in der Parsing-Schicht (TournamentMetrics) auf 0.0 statt None zurueck, wenn die
-        # zugrundeliegende oos_metrics.json keinen Wert traegt — OHNE das ``oos_evaluated``-Gate hier
-        # waere ein 0.0-Fallback fuer einen NIE evaluierten Trial ununterscheidbar von einer echten
-        # Null-Beobachtung (dieselbe #759-Fehlerklasse, nur an vier weiteren Metriken).
+        # Metrik (profit_factor, expectancy, total_return, sortino) — ein 0.0-Fallback fuer einen
+        # NIE evaluierten Trial waere ununterscheidbar von einer echten Null-Beobachtung (dieselbe
+        # #759-Fehlerklasse, hier an vier weiteren Metriken).
+        # Issue #966 (Katalog A, P0, Pitfall #305 in AGENTS.md) — ``oos_expectancy`` fiel bislang in
+        # der Parsing-Schicht (parsing.TournamentMetrics) auf 0.0 statt None zurueck, wenn die
+        # zugrundeliegende oos_metrics.json keinen Wert trug — ein Sentinel, der die Signatur eines
+        # Messwerts trug und von JEDEM nachgelagerten Konsumenten (Gate, Constraint-Distanz,
+        # TPE-Sampler-Grundlage) als echte Messung behandelt wurde. ``parsing.py`` liefert None jetzt
+        # korrekt durch (analog #759 fuer oos_win_rate/oos_profit_factor); dieselbe
+        # "nur gesetzt, wenn vorhanden"-Konvention gilt jetzt auch hier.
         if metrics.oos_evaluated:
             if metrics.oos_win_rate is not None:
                 trial.set_user_attr("oos_win_rate", metrics.oos_win_rate)
             if metrics.oos_profit_factor is not None:
                 trial.set_user_attr("oos_profit_factor", metrics.oos_profit_factor)
-            trial.set_user_attr("oos_expectancy", metrics.oos_expectancy)
+            if metrics.oos_expectancy is not None:
+                trial.set_user_attr("oos_expectancy", metrics.oos_expectancy)
             trial.set_user_attr("oos_total_return", metrics.oos_total_return)
             if metrics.oos_sortino is not None:
                 trial.set_user_attr("oos_sortino", metrics.oos_sortino)
@@ -2437,13 +3102,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         # tragbar; die Serie liegt in user_attrs, nicht auf der Platte.
         if metrics.oos_evaluated:
             trial.set_user_attr("oos_period_returns", list(metrics.oos_period_returns))
-        # Issue #832 Fix Punkt 1 — Haltedauer in Sekunden je Trial persistiert (Rohmaterial fuer
-        # report._study_record's je-Study-Aggregat, das summary_de.py Abschnitt 4 speist).
-        if metrics.oos_evaluated:
-            if metrics.oos_max_holding_time_s is not None:
-                trial.set_user_attr("oos_max_holding_time_s", metrics.oos_max_holding_time_s)
-            if metrics.oos_p95_holding_time_s is not None:
-                trial.set_user_attr("oos_p95_holding_time_s", metrics.oos_p95_holding_time_s)
+        # Issue #832/#857 — oos_max_holding_time_s/oos_p95_holding_time_s werden bereits weiter
+        # oben (VOR der moeglichen #857-oos_evaluated-Ueberschreibung) unbedingt gestempelt.
         emit_execution_event(logging.getLogger("optimizer"), "optimizer_trial_completed", {
             "symbol": symbol,
             "trial_number": trial.number,
@@ -2508,6 +3168,41 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trades_constraint = min_trades - metrics.oos_total_trades
             dd_constraint = metrics.oos_max_drawdown - risk_dd_cap
             trial.set_user_attr("constraints", (float(trades_constraint), float(dd_constraint)))
+
+        # Issue #864 (Pitfall #276) — "nicht messbar" ist nicht "schlecht". Ein Trial mit
+        # SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE/EQUITY_NONPOSITIVE erhält bislang
+        # denselben Reward-Floor wie ein Trial, der NIE gehandelt hat — der TPE-Surrogat lernt
+        # daraus "Region X ist maximal schlecht", obwohl die korrekte Aussage "Region X ist mit den
+        # aktuellen Schätzern nicht messbar" lautet (FlashCrashReversal/SqueezeBreakout: 1172 von
+        # ~33000 Trials eines Referenzlaufs betroffen, davon 627 auf eine einzige Strategie
+        # konzentriert). ``inference_failure_policy='prune'`` (Default) nutzt stattdessen Optunas
+        # nativen dritten Ausgang (``TrialPruned`` ⇒ ``TrialState.PRUNED``) — TPE ignoriert geprunte
+        # Trials bei der Posterior-Bildung korrekt, statt sie als negative Beobachtung zu werten.
+        # ``'floor'`` bleibt für Reproduktionsläufe bit-identisch zum Pre-#864-Verhalten.
+        _inference_failure_policy = opt_data.get("inference_failure_policy", "prune")
+        if _inference_failure_policy not in ("floor", "prune"):
+            raise ValueError(
+                f"optimizer.json['inference_failure_policy']={_inference_failure_policy!r} "
+                "unbekannt — erwartet 'floor' oder 'prune'.")
+        # Issue #918 (Verallgemeinerung von #914) — die Menge wird nicht mehr als Literal gepflegt,
+        # sondern aus der zentralen Registry (_contracts.INFERENCE_DIAGNOSTIC_CODES) abgeleitet:
+        # jeder Code mit failure_policy in {'prune', 'floor'} ist ein Kandidat für die GLOBALE
+        # inference_failure_policy-Behandlung unten; 'telemetry_only'-Codes werden nie gepruned.
+        # Issue #914 — SORTINO_GUARD_REFERENCE_UNAVAILABLE (#901 eingeführt) fehlte hier bislang;
+        # ohne Registrierung konnte inference_failure_policy='prune' diesen Code nie erreichen und
+        # ~1600 nicht-messbare Trials liefen als reguläre REJECT_OOS_OTHER-Failures durch den
+        # Reward-Pfad, was den TPE-Sampler auf eine uniform degenerierte Region trainierte.
+        _inference_failure_codes = {
+            code for code, entry in _contracts.INFERENCE_DIAGNOSTIC_CODES.items()
+            if entry.failure_policy in ("prune", "floor")
+        }
+        _triggered_codes = sorted({
+            d.get("code") for d in (metrics.inference_diagnostics or ())
+        } & _inference_failure_codes)
+        if _inference_failure_policy == "prune" and _triggered_codes:
+            trial.set_user_attr("trial_pruned_inference_codes", _triggered_codes)
+            raise optuna.TrialPruned(
+                f"[#864] inference_failure_policy='prune': {_triggered_codes}")
         return reward
     return objective
 
@@ -2603,9 +3298,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     directions = None
     if reward_mode == "pareto":
         directions = ["maximize", "maximize", "maximize", "maximize", "minimize", "minimize"]
-        def constraints_func(trial):
-            return trial.user_attrs.get("constraints", (0.0, 0.0))
-        sampler = optuna.samplers.NSGAIISampler(constraints_func=constraints_func, seed=seed_eff)
+        # Issue #950 (Katalog C) — siehe optimize_symbol/make_objective-Kommentar: derselbe
+        # kontinuierliche, normierte Constraint-Pfad wie der Default-Modus statt eines rohen
+        # (0.0, 0.0)-Defaults, der eine konstante Distanz-0 vortaeuschte.
+        sampler = optuna.samplers.NSGAIISampler(constraints_func=_oos_constraints_func, seed=seed_eff)
     else:
         # Issue #612 — Feasibility in den Sampler (siehe optimize_symbol): constraints_func liest die
         # gestempelten OOS-Gate-Verletzungen; Optuna 4.9 bevorzugt feasible nativ vor infeasible.
@@ -2632,8 +3328,26 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # erneut und reconnected die Engine damit lazy) ein zweites Mal zu disposen.
     study._etoro_rdb_storage = rdb_storage
 
+    # Issue #851 — Study-Zeitstempel-Telemetrie (Root-Cause: der #742-Report fuehrte bislang KEINE
+    # Wallclock-Zeit je einzelner Study, nur die Sweep-Gesamtzeit aus #742's Top-Level — eine
+    # Aufschluesselung je Symbol/Strategie (Barriere-Wartezeit #828, worker_utilisation) war aus dem
+    # Artefakt NICHT ableitbar und musste aus Log-Zeitstempeln rekonstruiert werden, was bei einem
+    # stilleren Lauf (kein #740/#780-Log-Praefix je Zeile) nicht funktioniert). ``study_started_at_
+    # utc``/``worker_id`` JETZT gesetzt (vor ``study.optimize``), ``study_ended_at_utc``/
+    # ``study_wallclock_s`` im ``finally:``-Block unten (#833-Stil: auch bei einem vorzeitigen
+    # Abbruch persistiert, nicht nur im Erfolgsfall).
+    import datetime as _dt851
+    study.set_user_attr("study_started_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
+    study.set_user_attr("worker_id", threading.get_ident())
+
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)
+    # Issue #854 — orthogonale Simulations-Semantik-Version (WAS gemessen wurde, siehe dortigen
+    # Docstring), unabhaengig geprueft/gestempelt.
+    _check_simulation_semantics_version(study, opt_data)
+    # Issue #968 — dritte orthogonale Achse: welches URTEIL (Selektionsstatistik definiert/Guard
+    # getrippt) eine bereits simulierte Trade-Serie erhaelt, unabhaengig geprueft/gestempelt.
+    _check_inference_semantics_version(study, opt_data)
 
     # Gate 2 — Warm-Start + Shrinkage-Referenz. Issue #565: definierter Fallback statt Silent-Zero.
     # Issue #704 — die Tier-Reihenfolge ist jetzt global_best → champion → strategy_defaults → none
@@ -2645,13 +3359,14 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # unabhängig vom Defaults-Fallback, damit der fehlende Anker im Standalone-Sweep nie still bleibt.
     global_best, seed_source = resolve_symbol_shrinkage_seed(
         strategy, cfg_dir, symbol=symbol, opt_data=opt_data, catalog_newest_ns=catalog_newest_ns)
-    # Issue #704 — ein Champion ist wie global_best ein ECHTER Anker (der param_pen zieht Richtung
-    # eines real erreichten Holdout-Kandidaten statt ins Leere), auch wenn er noch nicht promotet
-    # ist — shrinkage_inactive bleibt daher False für BEIDE Quellen.
-    shrinkage_inactive = seed_source not in ("global_best", "champion")
+    # Issue #704/#853 — ein Champion (ODER ein Champion mit veralteter Quality-Telemetrie,
+    # 'champion_quality_stale', #819) ist wie global_best ein ECHTER Anker (der param_pen zieht
+    # Richtung eines real erreichten Holdout-Kandidaten statt ins Leere) — shrinkage_inactive
+    # bleibt daher False für ALLE DREI Quellen.
+    shrinkage_inactive = seed_source not in ("global_best", "champion", "champion_quality_stale")
     study.set_user_attr("shrinkage_seed_source", seed_source)
     study.set_user_attr("shrinkage_inactive", shrinkage_inactive)
-    if seed_source == "champion":
+    if seed_source in ("champion", "champion_quality_stale"):
         # Issue #709 — Study-User-Attrs & Log-Parität mit #565: jeder Warm-Start-Effekt eines
         # Champions ist forensisch nachvollziehbar (analog shrinkage_*-Telemetrie).
         from automation.optimizer import champions as _champions
@@ -2662,7 +3377,10 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
             corroboration_count = lifecycle.get("corroboration_count")
             r_symbol_at_store = (champion_entry.get("quality") or {}).get("R_symbol")
             first_seen_run = lifecycle.get("first_seen_run")
-            study.set_user_attr("champion_seed_source", "champion")
+            # Issue #853 — traegt jetzt den PRAEZISEN seed_source-Wert (statt hartcodiert
+            # 'champion'), damit die Quality-Stale-Unterscheidung auch in diesem Study-Attr sichtbar
+            # ist, nicht nur im uebergeordneten shrinkage_seed_source.
+            study.set_user_attr("champion_seed_source", seed_source)
             study.set_user_attr("champion_R_symbol_at_store", r_symbol_at_store)
             study.set_user_attr("champion_corroboration_count", corroboration_count)
             study.set_user_attr("champion_writeback_applied", bool(lifecycle.get("writeback_applied")))
@@ -2720,6 +3438,19 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     study.set_user_attr("seed_effective", seed_eff)
     study.set_user_attr("n_trials_budget", n_trials)
     study.set_user_attr("n_startup_trials", n_startup_trials)
+    # Issue #931 Fix 2 — der wallclock_budget_policy='degrade'-Faktor, der bereits in n_trials
+    # eingerechnet ist (derive_n_trials), zusätzlich ROH telemetriert: damit bleibt
+    # budget_executed_fraction (n_trials_completed / n_trials_budget) auch bei einer degradierten
+    # Study korrekt interpretierbar (das Budget selbst war kleiner, nicht die Ausführung schwächer).
+    _degrade_factor = wallclock_guard.read_degrade_factor(WORK)
+    if _degrade_factor < 1.0:
+        study.set_user_attr("n_trials_budget_degrade_factor", round(_degrade_factor, 4))
+    # Issue #983 (Katalog D) Fix Punkt 3 Akzeptanzkriterium — IMMER gestempelt (auch 1.0 = kein
+    # Degrade), damit "budget_degradation_factor erscheint in ... optimizer_study_completed"
+    # verlaesslich erfuellt ist statt nur bei aktivem Degrade sichtbar zu sein. Die Kuerzung durfte
+    # laut #983 "niemals stillschweigend geschehen" — ein Feld, das nur bei Aktivierung existiert,
+    # ist fuer denselben Zweck nicht besser als ein WARNING-Logeintrag in einem 6-MB-Log.
+    study.set_user_attr("budget_degradation_factor", round(_degrade_factor, 4))
 
     # Issue #796 — EINE eingefrorene Config je Study statt einer Kopie je Trial. n_folds=4/
     # holdout_days=45 sind exakt die Werte, die die Objective-Closure unten pro Trial an
@@ -2759,6 +3490,19 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         if not (getattr(study, "user_attrs", None) or {}).get("coherence_violation_rate_exceeded"):
             check_study_coherence_violation_rate(study, opt_data)
     finally:
+        # Issue #851 — im finally-Block (analog #833s Abbruchresilienz): auch eine vorzeitig
+        # abgebrochene Study (Disk-/Wallclock-Guard, Kohaerenz-Abbruch, Exception) traegt eine
+        # ended_at_utc/wallclock_s-Telemetrie, statt nur eine erfolgreich durchgelaufene. Fail-open:
+        # ein Fehler hier darf einen sonst erfolgreichen Optimize-Lauf nicht crashen lassen.
+        try:
+            study.set_user_attr(
+                "study_ended_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
+            study.set_user_attr("study_wallclock_s", round(time.perf_counter() - study_t0, 3))
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#851] Study-Zeitstempel-Telemetrie für '%s' fehlgeschlagen (non-fatal).",
+                study_name, exc_info=True,
+            )
         # Issue #794 — Study-Ebene als Sicherheitsnetz (die #794-Trial-Ebene oben laeuft je Trial;
         # dieser Aufruf raeumt zusaetzlich auf, falls study.optimize() vorzeitig abgebrochen wurde,
         # BEVOR der Retention-Callback den letzten Trial noch sehen konnte). Fail-open: ein

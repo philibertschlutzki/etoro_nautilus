@@ -29,6 +29,11 @@ CFG = json.loads(Path("automation/config/tournament.json").read_text("utf-8"))
 
 # ── Akzeptanzkriterium #776/1: genau ein risikoadjustiertes Rendite-Gate nach dem Merge ───────────
 def test_conjunction_contains_exactly_one_risk_adjusted_return_gate():
+    # Issue #888 fügte 'min_profit_factor' hinzu (verschoben aus dem einelementigen
+    # eligible_requires_any-OR-Arm, Pitfall #279) — das ändert nichts an der hier geprüften
+    # Eigenschaft (genau EIN *risikoadjustiertes Rendite*-Gate, PSR). Issue #960 entfernte
+    # 'min_profit_factor' wieder (sechste Redundanz-Instanz: Jaccard 0.964-0.979 mit oos_min_psr,
+    # marginaler Eigenbeitrag exakt 0.000).
     requires_all = CFG["eligible_requires_all"]
     assert requires_all == ["min_trades", "max_drawdown", "oos_min_psr"]
     assert "oos_min_excess_return" not in requires_all

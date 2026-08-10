@@ -308,6 +308,45 @@ def cleanup_old_logs(
     return deleted
 
 
+_SCALAR_KEY_TYPES = (str, int, float, bool, type(None))
+
+
+def _canonical_key(k: Any) -> str:
+    """Issue #937/#938 (Pitfall #294) — kanonische String-Form eines beliebigen Dict-Keys.
+
+    ``json.dumps`` koerziert nur ``str``/``int``/``float``/``bool``/``None``-Keys automatisch nach
+    ``str``; jeder andere Key-Typ (insbesondere ``tuple``, die Hauskonvention für (Strategie,
+    Symbol)-Paare an anderer Stelle im Repo, siehe ``_contracts.pair_key``) wirft ``TypeError`` —
+    unabhängig vom ``default``-Hook, der NUR für Werte greift. Für Tuples/Listen/Frozensets wird
+    exakt das ``"a/b"``-Format erzeugt, das der Rest des Systems für Paar-Keys bereits verwendet
+    (``_contracts.PAIR_KEY_SEP``), damit ein sanitisierter Tuple-Key und ein handgebauter
+    String-Key bitgleich sind."""
+    if isinstance(k, str):
+        return k
+    if isinstance(k, _SCALAR_KEY_TYPES):
+        return str(k)
+    if isinstance(k, (tuple, list)):
+        return "/".join(_canonical_key(p) for p in k)
+    if isinstance(k, frozenset):
+        return "/".join(sorted(_canonical_key(p) for p in k))
+    return repr(k)
+
+
+def _sanitize_for_json(obj: Any, _depth: int = 0) -> Any:
+    """Issue #937 — rekursiv jeden Dict-Key auf einen JSON-zulässigen ``str`` abbilden. Werte
+    bleiben unangetastet (``json.dumps(..., default=str)`` bleibt dafür zuständig). ``_depth``-Cap
+    schützt vor pathologisch verschachtelten/zyklischen Strukturen in einem Telemetrie-Payload."""
+    if _depth > 32:
+        return "<max_depth_exceeded>"
+    if isinstance(obj, dict):
+        return {_canonical_key(k): _sanitize_for_json(v, _depth + 1) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v, _depth + 1) for v in obj]
+    if isinstance(obj, (set, frozenset)):
+        return sorted((_sanitize_for_json(v, _depth + 1) for v in obj), key=repr)
+    return obj
+
+
 def emit_execution_event(
     logger: logging.Logger,
     event_type: str,
@@ -340,7 +379,31 @@ def emit_execution_event(
         "run_id": _ACTIVE_RUN_IDS.get(logger.name),
         **payload,
     }
-    logger.log(level, f"[JSON_EVENT] {json.dumps(event, ensure_ascii=False, default=str)}")
+    # Issue #937 (Pitfall #295) — ein Telemetrie-Sink darf NIE eine Exception an den Aufrufer
+    # weitergeben: seine Ausfallwirkung wäre sonst grösser als die des beobachteten Systems (hier:
+    # ein 143-Symbol-Sweep, der an einem JSON-Serialisierungsfehler im Log-Pfad stirbt, siehe
+    # #937-Katalog). Nicht-skalare Dict-Keys (z.B. (strategy, symbol)-Tuples) werden zuerst über
+    # ``_sanitize_for_json`` in die Hauskonvention "strategy/symbol" überführt (Pitfall #294);
+    # verbleibende Fehler (inkl. NaN/Infinity — ``allow_nan=False`` ist Absicht, siehe unten)
+    # erzeugen einen Ersatz-Event statt eine Ausnahme zu werfen.
+    try:
+        payload_json = json.dumps(
+            _sanitize_for_json(event), ensure_ascii=False, default=str,
+            sort_keys=True, allow_nan=False,
+        )
+    except Exception as exc:
+        payload_json = json.dumps({
+            "event_type": "TELEMETRY_SERIALIZATION_FAILED",
+            "original_event_type": str(event.get("event_type", "?")),
+            "error": f"{type(exc).__name__}: {exc}",
+            "offending_key_types": sorted({type(k).__name__ for k in event}),
+            "timestamp_utc": event["timestamp_utc"],
+        }, ensure_ascii=False)
+        level = logging.ERROR
+    try:
+        logger.log(level, f"[JSON_EVENT] {payload_json}")
+    except Exception:
+        pass  # Telemetrie darf die Berechnung niemals abbrechen (Pitfall #295).
     _append_jsonl_sidecar(logger.name, event)
 
 
@@ -355,13 +418,24 @@ def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
     if jsonl_path is None:
         return
     try:
+        # Issue #937 — derselbe Key-Sanitizer wie im Prosa-JSON_EVENT-Pfad: ohne ihn würde ein
+        # Tuple-Key hier (statt in ``emit_execution_event``) den ``TypeError`` werfen, weil beide
+        # Pfade unabhängig voneinander ``json.dumps`` auf demselben ``event``-Dict aufrufen.
+        line = json.dumps(_sanitize_for_json(event), ensure_ascii=False, default=str,
+                          sort_keys=True, allow_nan=False)
         jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         with open(jsonl_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False, default=str))
+            f.write(line)
             f.write("\n")
     except OSError:
         logging.getLogger("log_manager").warning(
             "[#741] JSONL-Sidecar-Schreiben fehlgeschlagen für %s", jsonl_path, exc_info=True
+        )
+    except Exception:
+        # Issue #937 (Pitfall #295) — Serialisierungsfehler dürfen diesen Fail-open-Sink ebenso
+        # wenig zum Absturz bringen wie den Prosa-Log-Pfad.
+        logging.getLogger("log_manager").warning(
+            "[#937] JSONL-Sidecar-Serialisierung fehlgeschlagen für %s", jsonl_path, exc_info=True
         )
 
 

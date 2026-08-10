@@ -19,7 +19,10 @@ CFG = json.loads(Path("automation/config/optimizer.json").read_text("utf-8"))
 
 
 def test_reward_semantics_version_is_18():
-    assert CFG["reward_semantics_version"] == 18
+    """Issue #854 bumpte die Version weiter auf 19 (#848-Eligibility-Bump) — dieser Test pinnt nur
+    noch die historische UNTERGRENZE (die v18-Migration ist irreversibel abgeschlossen), analog
+    test_issue_781/815s eigener Softening beim jeweils naechsten Bump."""
+    assert CFG["reward_semantics_version"] >= 18
 
 
 def test_version_is_documented_with_v18_changelog_entry():
@@ -102,7 +105,7 @@ def test_fresh_study_stamps_v18_without_error():
 
     study = _FakeStudy()
     _check_reward_semantics_version(study, CFG)
-    assert study.user_attrs["reward_semantics_version"] == 18
+    assert study.user_attrs["reward_semantics_version"] == CFG["reward_semantics_version"]
 
 
 def test_matching_v18_version_is_a_no_op():
@@ -145,10 +148,11 @@ def test_purge_stale_studies_flags_v17_study_against_v18_current(tmp_path, monke
 
 def test_purge_stale_studies_reads_current_version_from_optimizer_json():
     """Akzeptanzkriterium #834: der Bulk-Purge liest reward_semantics_version dynamisch aus
-    optimizer.json (18), nicht aus einer eingefrorenen Konstante -- ein kuenftiger v19-Bump
-    erfordert keinen Code-Change in purge_stale_studies.py selbst."""
+    optimizer.json, nicht aus einer eingefrorenen Konstante -- der #854-Folge-Bump (v19) erforderte
+    tatsaechlich keinen Code-Change in purge_stale_studies.py selbst, wie hier vorhergesagt."""
     from automation.optimizer import purge_stale_studies as pss
-    assert pss._current_reward_semantics_version(base_cfg=Path("automation/config")) == 18
+    assert (pss._current_reward_semantics_version(base_cfg=Path("automation/config"))
+           == CFG["reward_semantics_version"])
 
 
 # ── Akzeptanzkriterium #834/3: Champion-Store übersteht den Purge, report zeigt die Migration ──────

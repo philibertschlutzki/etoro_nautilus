@@ -21,8 +21,50 @@ from pathlib import Path
 # 'signal_frequency'), obwohl sie entgegengesetzte Handlungsempfehlungen verlangen (AGENTS.md
 # Pitfall #229).
 _BINDING_CAUSES = frozenset(
-    {"signal_absent", "signal_sparse", "hold_duration", "signal_quality", "none", "no_data"}
+    {"signal_absent", "signal_sparse", "hold_duration", "signal_quality", "inference_unavailable",
+     "none", "no_data"}
 )
+
+
+def resolve_ineligible_binding_cause(trials: list[dict], *, median_oos_trades: float | None,
+                                     low_trade_threshold: float = 2.0,
+                                     unmeasurable_fraction_threshold: float = 0.5) -> tuple[str, dict]:
+    """Issue #926/#921 — die BINDENDE Ursache eines 0-eligible-Kollapses bei VOLLER Evaluierbarkeit
+    (``n_evaluable == n_trials``), in der korrekten Priorität ermittelt. Root-Cause #926: die
+    frühere Ableitung nahm stillschweigend an, dass die Eligibility-Prüfung STATTGEFUNDEN hat —
+    es gab keinen dritten Zweig für "die Prüfung war nicht durchführbar" (dieselbe Missing-Data-
+    Klasse wie #917, eine Ebene höher: eine nicht durchgeführte Messung wird als negatives
+    Messergebnis interpretiert).
+
+    Priorität:
+      1. ``'inference_unavailable'`` — mehr als ``unmeasurable_fraction_threshold`` (Default 0.5)
+         der evaluierten Trials trugen KEINE messbare Selektions-Teststatistik
+         (``is_rejection_detail == 'REJECT_OOS_STATISTIC_UNAVAILABLE'``, #917). Weder Denylist
+         noch Bounds-Override sind hier eine sinnvolle Konsequenz — die Diagnose selbst ist nicht
+         durchführbar (siehe ``recommend_diagnosis_action``: ``action='none'``, keine Frist).
+      2. ``'signal_sparse'`` (Issue #921) — ein Signal, das nicht/kaum auftritt
+         (``median_oos_trades <= low_trade_threshold``, Default 2), ist KEINE Qualitäts-Messung,
+         sondern ein Frequenz-Befund. Die Qualität eines Signals, das nicht auftritt, ist keine
+         Messung (SqueezeBreakout-Referenzfall: 178 Trials, Median 1 OOS-Trade, fälschlich
+         ``'signal_quality'``).
+      3. ``'signal_quality'`` — der Rest: eine reale, gemessene Kohorte ohne eligiblen Trial.
+
+    ``trials``: Liste von Dicts je EVALUIERTEM (``oos_evaluated=True``) Trial, mit mindestens
+    ``is_rejection_detail``. Rückgabe ``(binding_cause, detail)`` — ``detail`` trägt die
+    Rohzahlen für die Telemetrie (``ZERO_ELIGIBLE_PLATEAU``-Event)."""
+    n_evaluated = len(trials)
+    n_unmeasurable = sum(
+        1 for t in trials if t.get("is_rejection_detail") == "REJECT_OOS_STATISTIC_UNAVAILABLE")
+    frac_unmeasurable = (n_unmeasurable / n_evaluated) if n_evaluated else 0.0
+    detail = {
+        "n_ineligible_unmeasurable": n_unmeasurable,
+        "frac_ineligible_unmeasurable": round(frac_unmeasurable, 4),
+    }
+    if n_evaluated > 0 and frac_unmeasurable > unmeasurable_fraction_threshold:
+        return "inference_unavailable", detail
+    if median_oos_trades is not None and median_oos_trades <= low_trade_threshold:
+        return "signal_sparse", detail
+    return "signal_quality", detail
 
 
 def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict:
@@ -91,10 +133,17 @@ def diagnose_trade_frequency(trials: list[dict], *, oos_min_trades: int) -> dict
         }
 
     if n_eligible == 0:
+        # Issue #926/#921 — 'signal_quality' war hier bislang UNBEDINGT vergeben, sobald alle
+        # Trials evaluiert wurden. resolve_ineligible_binding_cause trennt jetzt den Fall "nicht
+        # messbar" (#917) und den Fall "Signal tritt kaum auf" (#921) vom echten Qualitätsurteil.
+        evaluated_trials = [t for t in trials if t.get("oos_evaluated")]
+        binding_cause, _detail = resolve_ineligible_binding_cause(
+            evaluated_trials, median_oos_trades=median_oos_trades)
         return {
             "n_trials": n, "n_evaluable": n_evaluable, "n_eligible": 0,
             "median_oos_trades": median_oos_trades, "median_is_trades": None,
-            "frac_hit_trade_cap": frac_hit_cap, "binding_cause": "signal_quality",
+            "frac_hit_trade_cap": frac_hit_cap, "binding_cause": binding_cause,
+            **_detail,
         }
 
     return {
@@ -305,7 +354,10 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
                                proposed_bounds: dict | None = None,
                                budget_executed_fraction: float | None = None,
                                n_runs_confirmed: int = 0,
-                               stop_reason: str | None = None) -> dict:
+                               stop_reason: str | None = None,
+                               max_consecutive_structural_runs: int = 2,
+                               simulation_semantics_version: int | None = None,
+                               blocking_invariants_failing: bool | None = None) -> dict:
     """Issue #681 — schliesst die #669-Diagnose zu einer KONKRETEN Aktions-Empfehlung: die
     Diagnose (``diagnose_trade_frequency``) feuert bereits (STRUCTURAL_ALL_UNEVALUABLE /
     ZERO_ELIGIBLE_PLATEAU), schreibt aber nicht zurück — dieselben strukturell toten Paare werden
@@ -381,18 +433,48 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     Suche riskiert. Bleibt ein Override-Versuch wirkungslos, bleibt das Paar in Rotation (``'none'``)
     statt endgültig ausgeschlossen zu werden — Bounds-Kalibrierung ist der einzige Hebel.
 
+    Issue #957 (Katalog D, Pitfall #292-Durchsetzung) — ``blocking_invariants_failing``
+    generalisiert die #911-Aussetzung: #911 setzte 'signal_quality' UNBEDINGT auf
+    ``'quarantined_pending_simulation_review'`` (nie 'denylist'), speziell wegen der #897-Episode.
+    Das schützt korrekt, verhindert aber AUCH nach einem verifiziert sauberen Lauf jemals wieder
+    einen echten 'denylist'-Rückschrieb ('signal_quality' bedeutet 'das Signal ist schlecht' — eine
+    Aussage, die nur zulässig ist, wenn die Simulationsschicht selbst gültig ist, Pitfall #292).
+    ``blocking_invariants_failing`` ist der fehlende Schalter dafür:
+      * ``None`` (Default, Legacy-/Test-Aufrufer) ⇒ bit-identisches #911-Verhalten (immer
+        quarantänisieren, NIE denylisten) — sicherer Default, solange kein Aufrufer den aktuellen
+        Invarianten-Status tatsächlich kennt.
+      * ``True`` (mindestens eine blockierende Invariante FAILt in DIESEM Lauf) ⇒ ``binding_cause``
+        wird auf ``'simulation_invalid'`` UMGESCHRIEBEN (statt 'signal_quality' zu behaupten) und
+        ``action`` bleibt ``'none'`` — kein Rückschrieb, solange die Simulation nachweislich defekt
+        ist.
+      * ``False`` (explizit verifiziert: KEINE blockierende Invariante FAILt) ⇒ die #911-Aussetzung
+        entfällt: bei ausreichender Evidenz wird tatsächlich ``'denylist'`` empfohlen (nicht mehr
+        nur quarantänisiert) — die Simulationsschicht ist nachweislich gültig, 'signal_quality' ist
+        dann eine zulässige Aussage.
+
     Rein, deterministisch, kein I/O. Rückgabe: ``{'strategy', 'symbol', 'action', 'binding_cause',
     'median_oos_trades', 'median_is_trades', 'proposed_bounds'}``."""
     cause = diagnosis.get("binding_cause")
-    # Issue #829 — zwei UNABHAENGIGE Nachweispfade fuer "das Ergebnis ist verlaesslich vollstaendig
-    # ausgewertet": entweder der eigene strukturelle Stop-Grund der Study (STRUCTURAL_ALL_
-    # UNEVALUABLE, siehe Docstring) ODER ein hoher Budgetanteil. n_runs_confirmed bleibt in JEDEM
-    # Fall Pflicht (die Mehrlauf-Bestaetigung ist der eigentliche Schutz, #778).
-    sufficient_evidence = n_runs_confirmed >= 2 and (
+    # Issue #829/#911 — zwei UNABHAENGIGE Nachweispfade fuer "das Ergebnis ist verlaesslich
+    # vollstaendig ausgewertet": entweder der eigene strukturelle Stop-Grund der Study (STRUCTURAL_
+    # ALL_UNEVALUABLE, siehe Docstring) ODER ein hoher Budgetanteil. n_runs_confirmed bleibt in
+    # JEDEM Fall Pflicht (die Mehrlauf-Bestaetigung ist der eigentliche Schutz, #778) — die
+    # Schwelle ist seit #911 KONFIGURIERBAR (``max_consecutive_structural_runs``, Default 2, siehe
+    # ``optimizer.json``) statt eines eingefrorenen Literals. Gilt AUSSCHLIESSLICH fuer
+    # ``signal_absent``/``signal_sparse`` — dort, wo die Diagnose von der Simulationsqualitaet
+    # unabhaengig ist (reine Suchraum-/Datengeometrie-Frage).
+    sufficient_evidence = n_runs_confirmed >= max_consecutive_structural_runs and (
         stop_reason == "STRUCTURAL_ALL_UNEVALUABLE"
         or (budget_executed_fraction is not None and budget_executed_fraction >= 0.9)
     )
     if cause in ("none", "no_data", None):
+        action = "none"
+    elif cause == "inference_unavailable":
+        # Issue #926 — KEINE Konsequenz: weder Denylist noch Bounds-Override sind sinnvoll, wenn
+        # die Eligibility-Prüfung selbst nicht durchführbar war (#913/#917). Der Zustand ist eine
+        # Aussage über die Simulations-/Inferenz-Schicht, keine über die Strategie — er darf den
+        # 'signal_quality'-Strike-Zähler NICHT erhöhen (dieser Cause ist von 'signal_quality'
+        # disjunkt, die n_runs_confirmed-Kontinuität des Aufrufers bricht daher automatisch ab).
         action = "none"
     elif cause == "signal_quality":
         # Issue #830 — unterliegt seit diesem Fix demselben Evidenzregime wie 'signal_absent'
@@ -409,11 +491,38 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
         # oder nach einer einzigen Beobachtung komplett zu verschwinden. n_runs_confirmed == 0 (kein
         # Vorlauf-Eintrag) bleibt 'none' — bit-identisch zu "noch nichts entschieden".
         quality_sufficient_evidence = (
-            n_runs_confirmed >= 2
+            n_runs_confirmed >= max_consecutive_structural_runs
             and budget_executed_fraction is not None and budget_executed_fraction >= 0.9
         )
-        if quality_sufficient_evidence:
-            action = "denylist"
+        if blocking_invariants_failing:
+            # Issue #957 — 'signal_quality' ist keine zulaessige Aussage, solange die
+            # Simulationsschicht selbst nachweislich defekt ist (Pitfall #292): die Klassifikation
+            # wird auf 'simulation_invalid' umgeschrieben, KEIN Rueckschrieb (weder denylist noch
+            # deprioritized) unabhaengig von der Evidenzlage.
+            cause = "simulation_invalid"
+            action = "none"
+        elif quality_sufficient_evidence:
+            if blocking_invariants_failing is False:
+                # Issue #957 — die #911-Aussetzung gilt NICHT mehr, wenn der Aufrufer den aktuellen
+                # Invarianten-Status tatsaechlich verifiziert hat (keine blockierende Invariante
+                # FAILt): 'signal_quality' ist dann eine zulaessige Aussage, der volle Rueckschrieb
+                # ('denylist') greift wie vor #911.
+                action = "denylist"
+            else:
+                # Issue #911 (wichtigste Aussage des Katalogs) — der Closed-Loop-Rueckschrieb fuer
+                # 'signal_quality' wird bis nach dem #897-Kalibrierlauf AUSGESETZT: eine Strategie,
+                # deren Trades zu 94% durch die #897-Sperrklinke nahe Breakeven beendet werden, kann
+                # KEINEN eligiblen Trial erzeugen, egal wie der Suchraum aussieht — ein Denylist-
+                # Rueckschrieb auf dieser Basis wuerde funktionierende Strategien dauerhaft
+                # ausschliessen, weil die Simulationsschicht defekt war. 'quarantined_pending_
+                # simulation_review' PROTOKOLLIERT das Paar (Reihenfolge/Evidenz bleiben sichtbar),
+                # schreibt es aber NICHT auf die Denylist — enumerate_tunable_pairs skippt
+                # ausschliesslich action=='denylist', ein quarantaenierter Eintrag bleibt regulaer
+                # enumeriert, solange simulation_semantics_version seit der Diagnose NICHT gebumpt
+                # wurde (siehe diagnosed_simulation_semantics_version unten). Default
+                # (``blocking_invariants_failing is None``) — kein Aufrufer hat den aktuellen
+                # Invarianten-Status verifiziert, also bleibt die sichere Annahme in Kraft.
+                action = "quarantined_pending_simulation_review"
         elif n_runs_confirmed >= 1:
             action = "deprioritized"
         else:
@@ -444,10 +553,37 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
     }
     if action == "search_space_override" and proposed_bounds:
         result["proposed_bounds"] = proposed_bounds
+    if cause == "simulation_invalid":
+        # Issue #957 — auditierbar, DASS und WARUM ein Rueckschrieb unterdrueckt wurde (statt nur
+        # stillschweigend action='none' zu liefern, ununterscheidbar von "keine Evidenz").
+        result["writeback_suppressed_reason"] = "blocking_invariant"
+    if action == "quarantined_pending_simulation_review":
+        # Issue #911 Fix 2 — Gueltigkeitsstempel: ein Closed-Loop-Rueckschrieb ist nur solange
+        # gueltig, wie die Simulationsschicht, die ihn erzeugt hat, gueltig ist (Pitfall #292 in
+        # AGENTS.md). Ein kuenftiger Aufrufer vergleicht diesen Wert gegen die AKTUELLE
+        # simulation_semantics_version und verwirft die Quarantaene bei einem Bump dazwischen.
+        result["diagnosed_simulation_semantics_version"] = simulation_semantics_version
     return result
 
 
 _DEFAULT_EXPIRES_AFTER_RUNS = 10
+
+
+def _read_diagnostic_writeback_enabled() -> bool:
+    """Issue #926 Fix 1 — ``optimizer.json['diagnostic_writeback_enabled']`` (Default ``True``).
+    Sofortmassnahme-Schalter für die Reparaturphase: auf ``False`` gestellt, unterdrückt
+    ``record_diagnosed_pair`` jeden Rückschrieb — verhindert, dass eine unter dem #913-Defekt
+    (0 % definierter oos_psr) gelaufene Diagnose funktionierende Strategien in die automatisch
+    gepflegte Denylist-Vorstufe schreibt."""
+    try:
+        from automation.optimizer.trial_config import config_dir
+        cfg_path = config_dir() / "optimizer.json"
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text("utf-8")) or {}
+            return bool(data.get("diagnostic_writeback_enabled", True))
+    except Exception:
+        pass
+    return True
 
 
 def _diagnosed_pairs_cache_path(work_dir: Path | None = None) -> Path:
@@ -520,7 +656,16 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     ``'none'``-Empfehlung mit einer ECHTEN diagnostizierten Ursache (z. B. ``'signal_absent'`` ohne
     (noch) ausreichende Evidenz) WIRD gespeichert — sonst könnte ``n_runs_confirmed`` nie über
     mehrere Läufe akkumulieren (die Eskalationsbedingung selbst wäre unerreichbar). Nur ein echter
-    Nicht-Befund (``binding_cause in (None, 'none', 'no_data')``) bleibt ungespeichert."""
+    Nicht-Befund (``binding_cause in (None, 'none', 'no_data')``) bleibt ungespeichert.
+
+    Issue #926 Fix 1 — Sofortmassnahme-Schalter: solange
+    ``optimizer.json['diagnostic_writeback_enabled']`` (Default ``True``) auf ``False`` steht, ist
+    JEDER Rückschrieb unterdrückt (No-Op, gibt nur den Cache-Pfad zurück). Schutz gegen eine
+    Diagnose, die auf einer durch #913 (0 % definierter oos_psr) verzerrten Kohorte lief — genau
+    der Zustand, der diesen Lauf zu Strike 1 von 2 gemacht hätte, wäre der Schalter nicht gesetzt
+    gewesen."""
+    if not _read_diagnostic_writeback_enabled():
+        return _diagnosed_pairs_cache_path(work_dir)
     if recommendation.get("binding_cause") in (None, "none", "no_data"):
         return _diagnosed_pairs_cache_path(work_dir)
     cache = load_diagnosed_pairs_cache(work_dir)
@@ -642,34 +787,53 @@ def diagnose_symbol_degeneracy(symbol: str, per_strategy_diagnoses: list[dict], 
 
 
 def check_bar_quality(highs: list[float], lows: list[float], closes: list[float], *,
-                      max_frac_high_eq_low: float = 0.5,
+                      max_frac_high_eq_low: float = 0.20,
                       max_frac_identical_consecutive_closes: float = 0.5,
-                      min_distinct_closes: int = 10) -> dict:
-    """Issue #807 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
+                      min_distinct_closes: int = 10,
+                      max_frac_zero_true_range: float = 0.25,
+                      min_atr_median_bps: float = 5.0,
+                      min_bar_coverage_ratio: float = 0.6,
+                      bar_coverage_ratio: float | None = None,
+                      median_delta_t_s: float | None = None) -> dict:
+    """Issue #807/#900 — billige Bar-QUALITAETSPRUEFUNG (Preflight statt Post-Mortem): erkennt
     degenerierte/konstante Bars VOR Phase 1 eines Symbols, statt erst nach 14 × 16 verbrannten
     Trials ueber 14 unabhaengige ``STRUCTURAL_ALL_UNEVALUABLE``-Diagnosen (siehe
     ``diagnose_symbol_degeneracy``-Docstring fuer den vollen Root-Cause-Befund, ``HYPE.ETORO``
     Pitfall #446 zu ``volume=1.0``-artigen degenerierten Bars).
 
-    Drei Kennzahlen ueber die uebergebene Bar-Kohorte (bereits aggregiert — diese Funktion selbst
+    Fuenf Kennzahlen ueber die uebergebene Bar-Kohorte (bereits aggregiert — diese Funktion selbst
     macht KEIN I/O, keine Bar-Aggregation):
       * ``frac_high_eq_low`` — Anteil Bars mit ``high == low`` (keinerlei Intra-Bar-Bewegung).
       * ``frac_identical_consecutive_closes`` — Anteil Bars, deren Close IDENTISCH zum
         Vorgaenger-Close ist (der Preis "steht still").
-      * ``n_distinct_closes`` — Anzahl DISTINKTER Close-Werte ueber die gesamte Kohorte (ein
-        Symbol mit nur einer Handvoll je wiederholter Preis-Level ist strukturell degeneriert,
-        unabhaengig von der Bar-Zahl).
+      * ``n_distinct_closes`` — Anzahl DISTINKTER Close-Werte ueber die gesamte Kohorte.
+      * ``frac_zero_true_range`` (Issue #900) — Anteil Bars mit True Range == 0 (ATR-Nullranges
+        ueber die GESAMTE Kohorte, nicht nur ``high==low`` — eine Bar mit ``high==low``, aber
+        einer Kurslücke zum Vorgaenger-Close hat trotzdem TR > 0; der #897-Sperrklinken-Defekt
+        greift umso haerter, je mehr Nullranges in der ATR-Historie liegen).
+      * ``atr_median_bps`` (Issue #900) — Median der True Range in bps des Preises (Skalen-Check:
+        eine ATR, die systematisch bei 2 bps statt 30 bps liegt, passiert die relativen
+        Degenerations-Kennzahlen oben vollstaendig).
+      * ``bar_coverage_ratio`` (Issue #923) — tatsaechliche Bars / erwartete Kalender-Bars der
+        Stichprobe (aus ``sweep._load_symbol_bar_quality_sample``, hier nur geprueft, nicht neu
+        berechnet — diese Funktion macht kein I/O). Ein Symbol mit grosser Datenspanne (besteht
+        Gate 1) kann trotzdem ueberwiegend LUECKEN im Bar-Raster haben (30% Abdeckung ueber 1099
+        Tage bestand Gate 1 vor #923 unveraendert); ``None`` (kein Preflight-Aufrufer liefert den
+        Wert) ⇒ nicht pruefbar, kein Fail.
 
-    ``passed=False``, sobald EINE der drei Schwellen verletzt ist (``max_frac_high_eq_low``,
-    ``max_frac_identical_consecutive_closes``, ``min_distinct_closes`` — alle aus
-    ``optimizer.json['bar_quality']``, Zero-Hardcoding). Leere Eingabe ⇒ ``passed=False``
-    (keine Bars ⇒ nichts zu handeln, dieselbe Konsequenz wie degenerierte Bars — kein stiller
-    Pass). Rein, deterministisch, kein I/O."""
+    ``passed=False``, sobald EINE der Schwellen verletzt ist (alle aus
+    ``optimizer.json['bar_quality']``, Zero-Hardcoding — Issue #900 verschaerft
+    ``max_frac_high_eq_low`` 0.5 → 0.20 und ergaenzt ``max_frac_zero_true_range``/
+    ``min_atr_median_bps``). Leere Eingabe ⇒ ``passed=False`` (keine Bars ⇒ nichts zu handeln,
+    dieselbe Konsequenz wie degenerierte Bars — kein stiller Pass). Rein, deterministisch, kein
+    I/O."""
     n = len(closes)
     if n == 0:
         return {
             "n_bars": 0, "frac_high_eq_low": None, "frac_identical_consecutive_closes": None,
-            "n_distinct_closes": 0, "passed": False, "reason": "no_bars",
+            "n_distinct_closes": 0, "frac_zero_true_range": None, "atr_median_bps": None,
+            "bar_coverage_ratio": bar_coverage_ratio, "median_delta_t_s": median_delta_t_s,
+            "passed": False, "reason": "no_bars",
         }
     frac_high_eq_low = sum(1 for h, l in zip(highs, lows) if h == l) / n
     if n > 1:
@@ -680,6 +844,22 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
         frac_identical = 0.0
     n_distinct = len(set(closes))
 
+    # Issue #900 Fix 1 — True Range je Bar: max(high-low, |high-prev_close|, |low-prev_close|).
+    # Die erste Bar hat keinen Vorgaenger-Close ⇒ TR = high-low (Standard-ATR-Konvention).
+    true_ranges: list[float] = []
+    prev_close: float | None = None
+    for h, l, c in zip(highs, lows, closes):
+        tr = (h - l) if prev_close is None else max(h - l, abs(h - prev_close), abs(l - prev_close))
+        true_ranges.append(tr)
+        prev_close = c
+    frac_zero_true_range = sum(1 for tr in true_ranges if tr <= 0.0) / n
+    tr_bps = sorted(
+        (tr / c * 10_000.0) for tr, c in zip(true_ranges, closes) if c > 0
+    )
+    atr_median_bps = tr_bps[len(tr_bps) // 2] if tr_bps and len(tr_bps) % 2 == 1 else (
+        (tr_bps[len(tr_bps) // 2 - 1] + tr_bps[len(tr_bps) // 2]) / 2.0 if tr_bps else None
+    )
+
     reasons = []
     if frac_high_eq_low > max_frac_high_eq_low:
         reasons.append(f"frac_high_eq_low={frac_high_eq_low:.3f} > {max_frac_high_eq_low}")
@@ -689,12 +869,23 @@ def check_bar_quality(highs: list[float], lows: list[float], closes: list[float]
             f"{max_frac_identical_consecutive_closes}")
     if n_distinct < min_distinct_closes:
         reasons.append(f"n_distinct_closes={n_distinct} < {min_distinct_closes}")
+    if frac_zero_true_range > max_frac_zero_true_range:
+        reasons.append(
+            f"frac_zero_true_range={frac_zero_true_range:.3f} > {max_frac_zero_true_range}")
+    if atr_median_bps is not None and atr_median_bps < min_atr_median_bps:
+        reasons.append(f"atr_median_bps={atr_median_bps:.3f} < {min_atr_median_bps}")
+    if bar_coverage_ratio is not None and bar_coverage_ratio < min_bar_coverage_ratio:
+        reasons.append(f"bar_coverage_ratio={bar_coverage_ratio:.3f} < {min_bar_coverage_ratio}")
 
     return {
         "n_bars": n,
         "frac_high_eq_low": frac_high_eq_low,
         "frac_identical_consecutive_closes": frac_identical,
         "n_distinct_closes": n_distinct,
+        "frac_zero_true_range": frac_zero_true_range,
+        "atr_median_bps": atr_median_bps,
+        "bar_coverage_ratio": bar_coverage_ratio,
+        "median_delta_t_s": median_delta_t_s,
         "passed": not reasons,
         "reason": "; ".join(reasons) if reasons else "OK",
     }

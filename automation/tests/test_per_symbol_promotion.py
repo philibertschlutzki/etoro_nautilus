@@ -49,7 +49,9 @@ def _factory_by_params(tuned_keyvals, sortino_tuned, sortino_global, dd=0.05):
         out.write_text(json.dumps({"fully_eligible_pairs": 1, "aggregate_winner": {
             "oos_evaluated": True, "oos_eligible": True, "win_count": 1,
             "median_is_sortino": 1.0, "oos_fold_sortinos": [s],
-            "oos_metrics": {"sortino_ratio": s, "max_drawdown": dd}}}), "utf-8")
+            # Issue #958 — oos_n_periods > 0 macht diesen Trial admissible (ein real evaluierter
+            # Trial haette in der Praxis stets > 0 OOS-Perioden).
+            "oos_metrics": {"sortino_ratio": s, "max_drawdown": dd, "n_periods": 50}}}), "utf-8")
         return out
     return _fake
 

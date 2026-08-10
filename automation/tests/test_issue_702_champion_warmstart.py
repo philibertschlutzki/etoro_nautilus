@@ -576,16 +576,70 @@ def test_writeback_requires_corroboration_below_threshold_fails(tmp_path, monkey
     assert not (tmp_path / "strategy_symbol_seeds.json").exists()
 
 
-def test_writeback_corroborated_but_identical_window_fails_snooping_guard(tmp_path, monkeypatch):
-    """Scenario #6 — auf IDENTISCHEM Datenfenster (kein Fensterfortschritt) darf trotz erreichter
-    Korroboration KEIN Writeback erfolgen (Snooping-Schutz)."""
+def test_writeback_corroborated_but_identical_window_fails_snooping_guard_under_window_advance_mode(
+        tmp_path, monkeypatch):
+    """Scenario #6 — unter dem STRIKTEN champion_corroboration_mode='window_advance' (bit-
+    identisch zum Pre-#910-Verhalten) darf auf IDENTISCHEM Datenfenster (kein Fensterfortschritt)
+    trotz erreichter Korroboration KEIN Writeback erfolgen (Snooping-Schutz)."""
     monkeypatch.setattr(champions, "WORK", tmp_path)
     entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
                    corroboration_count=2, catalog_newest_ns=1_000_000_000_000,
                    first_seen_catalog_newest_ns=1_000_000_000_000)  # advance_days == 0
-    ok = champions.maybe_write_back(entry, OPT_DATA, base_cfg=tmp_path)
+    ok = champions.maybe_write_back(
+        entry, {**OPT_DATA, "champion_corroboration_mode": "window_advance"}, base_cfg=tmp_path)
     assert ok is False
     assert not (tmp_path / "strategy_symbol_seeds.json").exists()
+
+
+def test_writeback_corroborated_on_identical_window_succeeds_under_default_either_mode(
+        tmp_path, monkeypatch):
+    """Issue #910 (Root-Cause) — derselbe Scenario-#6-Kandidat (advance_days == 0, aber
+    corroboration_count=2) MUSS unter dem NEUEN Default (champion_corroboration_mode='either')
+    erfolgreich zurückgeschrieben werden: zwei unabhängige Läufe derselben Datenbasis
+    korroborieren einen Parametervektor auch ohne Fensterfortschritt (independent_search-Route).
+    Das ist exakt der ea4c409d-Deadlock (14/14 Writebacks NO_ADMISSIBLE_ENTRY), den #910 behebt."""
+    monkeypatch.setattr(champions, "WORK", tmp_path)
+    entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
+                   corroboration_count=2, catalog_newest_ns=1_000_000_000_000,
+                   first_seen_catalog_newest_ns=1_000_000_000_000)  # advance_days == 0
+    assert "champion_corroboration_mode" not in OPT_DATA  # Default wird NICHT explizit gesetzt
+    ok = champions.maybe_write_back(entry, OPT_DATA, base_cfg=tmp_path)
+    assert ok is True
+    written = json.loads((tmp_path / "strategy_symbol_seeds.json").read_text("utf-8"))
+    assert written["seeds"]["SmaCrossoverStrategy"]["TSLA.ETORO"] == {"sma_period": 20}
+
+
+def test_writeback_independent_search_mode_ignores_window_advance_entirely(tmp_path, monkeypatch):
+    entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
+                   corroboration_count=2, catalog_newest_ns=1_000_000_000_000,
+                   first_seen_catalog_newest_ns=1_000_000_000_000)
+    ok = champions.maybe_write_back(
+        entry, {**OPT_DATA, "champion_corroboration_mode": "independent_search"}, base_cfg=tmp_path)
+    assert ok is True
+
+
+def test_writeback_window_advance_mode_still_succeeds_when_window_advanced(tmp_path, monkeypatch):
+    """Alle drei Modi promoten, wenn der Kandidat sowohl korroboriert ist ALS AUCH das Fenster
+    vorgerückt ist — der Modus unterscheidet nur, WELCHE Route ALLEIN genügt."""
+    monkeypatch.setattr(champions, "WORK", tmp_path)
+    forty_days_ns = 40 * 86400 * 1_000_000_000
+    entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
+                   corroboration_count=2, catalog_newest_ns=1_000_000_000_000 + forty_days_ns,
+                   first_seen_catalog_newest_ns=1_000_000_000_000)
+    for mode in ("window_advance", "independent_search", "either"):
+        entry_copy = dict(entry)
+        entry_copy["lifecycle"] = dict(entry["lifecycle"])
+        ok = champions.maybe_write_back(
+            entry_copy, {**OPT_DATA, "champion_corroboration_mode": mode}, base_cfg=tmp_path)
+        assert ok is True, f"mode={mode} sollte promoten"
+
+
+def test_writeback_unknown_corroboration_mode_is_fail_loud(tmp_path, monkeypatch):
+    entry = _entry(status_at_store="REJECTED_ON_HOLDOUT", holdout_reject_detail="REJECT_HOLDOUT_GATE",
+                   corroboration_count=2)
+    with pytest.raises(ValueError, match="champion_corroboration_mode"):
+        champions.maybe_write_back(
+            entry, {**OPT_DATA, "champion_corroboration_mode": "bogus"}, base_cfg=tmp_path)
 
 
 def test_writeback_corroborated_and_window_advanced_succeeds(tmp_path, monkeypatch):

@@ -241,10 +241,13 @@ def _trial(reward_terms=None, oos_evaluated=True):
 
 
 def test_reward_term_variance_pass_all_terms_vary():
+    # Issue #927 — gate_distance_penalty muss mitvariieren (sonst als inert geflaggt, es ist NICHT
+    # in _CONFIGURED_INACTIVE_REWARD_TERMS); time_box_penalty bleibt bei 0.0 (sein konfiguriertes
+    # Gewicht ist 0.0) und wird trotzdem NICHT als inert gelistet, weil es konfiguriert-inaktiv ist.
     trials = [
         _trial({"branch": "eligible", "base": b, "divergence": 0.3 * i, "dd_penalty": 0.25 * i,
                 "param_pen": 0.2 * i, "turnover": 0.3 * i, "fold_dispersion": 0.25 * i,
-                "tie_breaker": 0.2 * i})
+                "tie_breaker": 0.2 * i, "gate_distance_penalty": 0.15 * i, "time_box_penalty": 0.0})
         for i, b in enumerate([1.0, 1.5, 2.0, 0.5, 3.0])
     ]
     result = inv.check_reward_term_variance(trials)
@@ -253,16 +256,22 @@ def test_reward_term_variance_pass_all_terms_vary():
 
 
 def test_reward_term_variance_fail_inert_term():
-    """Ein Term, der über die gesamte Study konstant bleibt, muss als inert gelistet werden."""
+    """Ein Term, der über die gesamte Study konstant bleibt, muss als inert gelistet werden.
+
+    Issue #977 — ``dd_penalty`` ist seit diesem Fix DOKUMENTIERT inert (penalty_dd_weight=0.0,
+    invariants._CONFIGURED_INACTIVE_REWARD_TERMS) und daher von dieser Prüfung ausgenommen (analog
+    ``tie_breaker``/``time_box_penalty``, #927) — ``param_pen`` ist hier der Test-Kandidat für einen
+    UNDOKUMENTIERT inerten Term."""
     trials = [
-        _trial({"branch": "eligible", "base": b, "divergence": 0.1 * i, "dd_penalty": 0.0,
-                "param_pen": 0.02 * i, "turnover": 0.03 * i, "fold_dispersion": 0.01 * i,
+        _trial({"branch": "eligible", "base": b, "divergence": 0.1 * i, "dd_penalty": 0.02 * i,
+                "param_pen": 0.0, "turnover": 0.03 * i, "fold_dispersion": 0.01 * i,
                 "tie_breaker": 0.001 * i})
         for i, b in enumerate([1.0, 1.5, 2.0, 0.5, 3.0])
     ]
     result = inv.check_reward_term_variance(trials)
     assert result.passed is False
-    assert "dd_penalty" in result.actual
+    assert "param_pen" in result.actual
+    assert "dd_penalty" not in result.actual
 
 
 def test_reward_term_variance_pass_when_insufficient_data():
@@ -274,4 +283,10 @@ def test_reward_term_variance_pass_when_insufficient_data():
 def test_invariant_result_to_dict_has_expected_keys():
     result = inv.check_sr0_coherence({})
     d = result.to_dict()
-    assert set(d.keys()) == {"name", "passed", "expected", "actual", "detail"}
+    # Issue #849 — "severity" ist seit Kohorte D ein fuenftes Feld (Default "medium"), damit
+    # Berichtssektion 5 nach Dringlichkeit statt Auftrittsreihenfolge sortieren kann. "check" ist
+    # ein Uebergangs-Alias auf denselben Wert wie "name" (summary_de.py las bislang "check", das
+    # to_dict() nie schrieb -- 519x "**None**" im Bericht), bis alle Konsumenten auf "name"
+    # migriert sind.
+    assert set(d.keys()) == {"name", "check", "passed", "expected", "actual", "detail", "severity"}
+    assert d["name"] == d["check"]

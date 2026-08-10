@@ -37,7 +37,8 @@ def _sortino_for_target(target_ratio: float) -> float:
     # Mindest-Stichprobe.
     with patch("automation.backtest_runner._get_annualization_factor", return_value=1.0), \
          patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9), \
-         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+         patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+         patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0):
         stats = _calculate_stats([1.0] * 30 + [-1.0], [(3600 * 10**9, 1.0)] * 31, 1000.0,
                                  mtm_series=series, min_trades_for_sortino=5)
     return stats["sortino_ratio"]
@@ -91,7 +92,8 @@ def test_numeric_guard_trips_and_logs():
         # Issue #823 — nur 1 Downside-Beobachtung; der numerische Guard (nicht die #823-Mindest-
         # Stichprobe) ist Gegenstand dieses Tests.
         with patch("automation.backtest_runner._get_annualization_factor", return_value=1e10), \
-             patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=1):
+             patch("automation.backtest_runner._read_sortino_min_downside_observations", return_value=0), \
+             patch("automation.backtest_runner._read_sortino_min_periods_absolute", return_value=0):
             stats = _calculate_stats([1.0] * 10 + [-1e-9], [(3600 * 10**9, 1.0)] * 11, 1000.0,
                                      mtm_series=series, min_trades_for_sortino=5)
     finally:

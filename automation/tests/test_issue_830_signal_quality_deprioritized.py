@@ -32,6 +32,24 @@ def _diag(cause="signal_quality"):
 
 
 # ── Akzeptanzkriterium #830 (Unit-Test aus dem Issue-Text) ──────────────────────────────────────────
+def test_max_consecutive_structural_runs_threshold_is_configurable():
+    """Issue #911 Fix 1 — die Konsekutiv-Laeufe-Schwelle ist jetzt ein Parameter statt eines
+    eingefrorenen Literals. n_runs_confirmed=1 reicht nicht unter dem Default (2), aber genuegt
+    unter einer abgesenkten Schwelle von 1."""
+    rec_default = recommend_diagnosis_action(
+        "OpeningRangeBreakoutStrategy", "TSLA.ETORO", _diag(cause="signal_absent"),
+        n_runs_confirmed=1, stop_reason="STRUCTURAL_ALL_UNEVALUABLE",
+    )
+    assert rec_default["action"] == "none"
+
+    rec_lowered = recommend_diagnosis_action(
+        "OpeningRangeBreakoutStrategy", "TSLA.ETORO", _diag(cause="signal_absent"),
+        n_runs_confirmed=1, stop_reason="STRUCTURAL_ALL_UNEVALUABLE",
+        max_consecutive_structural_runs=1,
+    )
+    assert rec_lowered["action"] == "denylist"
+
+
 def test_signal_quality_with_zero_confirmations_yields_none():
     rec = recommend_diagnosis_action(
         "OpeningRangeBreakoutStrategy", "TSLA.ETORO", _diag(),
@@ -40,12 +58,20 @@ def test_signal_quality_with_zero_confirmations_yields_none():
     assert rec["action"] == "none"
 
 
-def test_signal_quality_with_two_confirmations_and_full_budget_escalates_to_denylist():
+def test_signal_quality_with_two_confirmations_and_full_budget_escalates_to_quarantine():
+    """Issue #911 (wichtigste Aussage des Katalogs) — 'signal_quality' eskaliert NICHT MEHR auf
+    'denylist': der Closed-Loop-Rueckschrieb ist bis nach dem #897-Kalibrierlauf ausgesetzt (eine
+    durch die #897-Sperrklinke zerstoerte Trade-Oekonomie kann keinen eligiblen Trial erzeugen,
+    unabhaengig vom Suchraum — ein Denylist-Rueckschrieb auf dieser Basis wuerde funktionierende
+    Strategien dauerhaft ausschliessen). Volle Evidenz eskaliert stattdessen auf
+    'quarantined_pending_simulation_review' (protokolliert, aber NICHT auf der Denylist)."""
     rec = recommend_diagnosis_action(
         "OpeningRangeBreakoutStrategy", "TSLA.ETORO", _diag(),
         n_runs_confirmed=2, budget_executed_fraction=1.0,
+        simulation_semantics_version=2,
     )
-    assert rec["action"] == "denylist"
+    assert rec["action"] == "quarantined_pending_simulation_review"
+    assert rec["diagnosed_simulation_semantics_version"] == 2
 
 
 # ── Fix Punkt 2: Zwischenklasse 'deprioritized' ──────────────────────────────────────────────────

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "_comment": "Issue #844 (Pitfall #267, 5. Wiederkehr nach #488/#753/#769/#805) — Config-Key-Registry-Preflight: ein Modul, das einen Key mit einem None/0-Fallback liest, dessen Abwesenheit den Mechanismus aber STILL DEAKTIVIERT (statt eines harmlosen Defaults), gehoert hier rein. sweep.main() prueft diese Registry VOR dem ersten Symbol (assert_required_config_keys_valid) — ein fehlender/verbotener Wert bricht den Lauf fail-loud ab, statt den Defekt erst nach einem vollen Lauf zu bemerken.",
+  "tournament.json": {
+    "sortino_numeric_guard": {"type": "number", "required": true},
+    "sortino_numeric_guard_min_periods": {"type": "number", "required": true, "depends_on": ["n_periods_definition"]},
+    "sortino_min_downside_observations": {"type": "number", "required": true, "depends_on": ["n_periods_definition"]},
+    "eligible_requires_all": {"type": "array", "required": true},
+    "sortino_numeric_guard_reference": {"type": "string", "required": true, "reject_values": ["absolute"], "depends_on": ["n_periods_definition"]},
+    "sortino_numeric_guard_reference_bootstrap": {"type": "string", "required": true, "depends_on": ["sortino_numeric_guard_reference"]},
+    "sortino_guard_family_median_min_siblings": {"type": "integer", "required": true, "depends_on": ["sortino_numeric_guard_reference"]},
+    "sortino_guard_family_scope": {"type": "string", "required": true, "depends_on": ["sortino_numeric_guard_reference"]},
+    "selection_statistic_min_available_fraction": {"type": "number", "required": true},
+    "promotion_correction_mode": {"type": "string", "required": true},
+    "pbo_n_groups": {"type": "integer", "required": true},
+    "pbo_min_configs": {"type": "integer", "required": true},
+    "pbo_cluster_threshold": {"type": "number", "required": true}
+  },
+  "optimizer.json": {
+    "plateau_min_modelled_trials_per_dim": {"type": "integer", "required": true},
+    "sweep_max_wallclock_h": {"type": ["number", "null"], "required": true},
+    "fail_fast_min_symbols": {"type": "integer", "required": true},
+    "fail_fast_min_offending_symbols": {"type": "integer", "required": true}
+  }
+}

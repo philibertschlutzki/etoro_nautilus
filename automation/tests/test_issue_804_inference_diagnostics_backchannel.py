@@ -18,6 +18,7 @@ sechste Regressionswaechter im #742-Report.
 """
 import json
 import logging
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -46,11 +47,29 @@ def test_equity_ruin_produces_an_equity_nonpositive_diagnostic():
 
 
 def test_healthy_trial_has_no_diagnostics():
-    vals = [1000.0, 1050.0, 980.0, 1100.0]
+    """Issue #967 — VORHER liess dieser Fixture (3 Trades, 4 Bars) den STUMMEN Rückgabepfad
+    ``n < min_trades_sortino`` (Default 10) unbemerkt durchlaufen — der Fixture war nie wirklich
+    "gesund", er verliess sich auf genau die stumme Lücke, die #967 behebt. Jetzt explizit genug
+    Trades (``min_trades_for_sortino=3``) UND genug Bars (>= ``sortino_min_periods_absolute``,
+    Default 20, #863), damit dieser Test tatsächlich den gesunden Fall prüft statt zufällig einen
+    der (jetzt korrekt diagnostizierten) Datenmängel-Pfade zu verfehlen. Der Numerik-Guard wird
+    (wie in test_issue_863_downside_threshold_relative.py) auf einen sehr grossen Wert gepatcht,
+    damit ein per Konstruktion moderat volatiler synthetischer Kurs ihn nicht triggert — dieser Test
+    prüft die STUMMEN Rückgabepfade, nicht die Guard-Kalibrierung selbst."""
+    # Deterministisch alternierend (12 negative / 12 positive Perioden von 24) — haelt
+    # downside_obs >= sortino_min_downside_observations (Default 0.5 * n_periods, #863) ein, damit
+    # dieser gesunde Fixture NICHT die (korrekte, aber hier irrelevante) SORTINO_DOWNSIDE_SHRUNK-
+    # Telemetrie auslöst.
+    rets = [-0.006, 0.005] * 12
+    vals = [1000.0]
+    for r in rets:
+        vals.append(vals[-1] * (1.0 + r))
     idx = pd.date_range("2025-01-01", periods=len(vals), freq="h")
     series = pd.Series(vals, index=idx)
-    stats = _calculate_stats(pnl_list=[1.0] * 3, hold_list=[(3600 * 10**9, 1.0)] * 3,
-                             starting_capital=1000.0, mtm_series=series)
+    with patch("automation.backtest_runner._read_sortino_numeric_guard", return_value=1e9):
+        stats = _calculate_stats(pnl_list=[1.0] * 3, hold_list=[(3600 * 10**9, 1.0)] * 3,
+                                 starting_capital=1000.0, mtm_series=series,
+                                 min_trades_for_sortino=3)
     assert stats["inference_diagnostics"] == []
 
 
@@ -265,6 +284,10 @@ def test_check_passes_when_no_trial_has_diagnostics():
 
 
 def test_check_fails_and_counts_across_trials():
+    """Issue #886 — SORTINO_GUARD_TRIPPED ist seit #863/#864 ein regulärer dritter Ausgang und
+    wird NICHT mehr von der Anwesenheits-Prüfung gezählt (siehe
+    check_inference_diagnostics_concentration für dessen KONZENTRATIONS-Prüfung stattdessen);
+    EQUITY_NONPOSITIVE bleibt ein echter Defekt-Indikator."""
     trials = [
         {"inference_diagnostics": [{"code": "EQUITY_NONPOSITIVE"}]},
         {"inference_diagnostics": [{"code": "EQUITY_NONPOSITIVE"}, {"code": "SORTINO_GUARD_TRIPPED"}]},
@@ -272,7 +295,7 @@ def test_check_fails_and_counts_across_trials():
     ]
     result = inv.check_inference_diagnostics_absent(trials)
     assert result.passed is False
-    assert result.actual == 3
+    assert result.actual == 2
     assert result.name == "check_inference_diagnostics_absent"
 
 
@@ -304,7 +327,9 @@ def test_report_study_record_aggregates_inference_diagnostics_by_code():
     assert "check_inference_diagnostics_absent" in names
     c = next(c for c in checks if c.name == "check_inference_diagnostics_absent")
     assert c.passed is False
-    assert c.actual == 3
+    # Issue #886 — nur die 2 EQUITY_NONPOSITIVE zaehlen; SORTINO_GUARD_TRIPPED ist ein regulaerer
+    # dritter Ausgang (siehe check_inference_diagnostics_concentration).
+    assert c.actual == 2
 
 
 def test_report_study_record_empty_dict_when_no_diagnostics():

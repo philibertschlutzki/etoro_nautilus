@@ -26,21 +26,26 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import optuna
 
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
+from automation.optimizer import _contracts
 from automation.optimizer import reward as _reward
 from automation.optimizer.manifest import WORK, git_commit, catalog_fingerprint, sha256_file, write_json_atomic, library_versions
 from automation.optimizer.run_optimization import (
     _sanitize, resolve_storage, gradient_signal_arm, _modelled_trials,
-    _constraint_violation_progress, compute_budget_execution,
+    _constraint_violation_progress, compute_budget_execution, _best_completed_value,
 )
-from automation.optimizer.sweep import _family_n_from_proposals
+from automation.optimizer.sweep import (
+    _family_n_from_proposals, load_symbol_universe, read_symbol_bar_quality_cache,
+)
+from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
 
 # Issue #785 — die bindend/erwartete Struktur einer Entscheidungs-Stufe. Siehe ``_decision_chain``.
@@ -219,8 +224,24 @@ def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, prop
 
     promote = proposal.get("status") in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
     method = holdout_metrics.get("deflation_inference_method")
+    # Issue #847 — 17 REJECT_SELECTION_PBO-Ablehnungen trugen `inference_method.promotion:
+    # {applied: False}`, obwohl eine CSCV/PBO-Inferenz TATSÄCHLICH gelaufen war (deflation_
+    # inference_method ist DSR-spezifisch und bleibt bei einer reinen PBO-Ablehnung None — dieser
+    # Block sah also keine gelaufene Methode). `holdout_metrics['pbo']` ist nicht-None GENAU dann,
+    # wenn `_study_pbo` ein Urteil gefällt hat (siehe confirm.py) — das IST die dokumentierte
+    # Promotions-Inferenz für diesen Ausgang, unabhängig davon, ob sie zur Ablehnung führte.
+    pbo_value = holdout_metrics.get("pbo")
     if method is not None:
         promotion = {"method": method, "applied": True, "skipped_reason": None}
+    elif pbo_value is not None:
+        promotion = {
+            "method": "cscv", "applied": True, "skipped_reason": None,
+            "pbo": pbo_value,
+            "pbo_n_groups": holdout_metrics.get("pbo_n_groups"),
+            "pbo_n_configs_raw": holdout_metrics.get("pbo_n_configs_raw"),
+            "pbo_n_configs_effective": holdout_metrics.get("pbo_n_configs"),
+            "pbo_threshold": holdout_metrics.get("pbo_threshold"),
+        }
     elif promote:
         promotion = {"method": "not_applicable", "applied": True, "skipped_reason": None}
     else:
@@ -231,9 +252,57 @@ def _inference_method_block(trial_attrs: list[dict], holdout_metrics: dict, prop
     return {"eligibility": eligibility, "promotion": promotion}
 
 
+def _median_of_trial_field(trial_attrs: list[dict], field: str) -> float | None:
+    """Issue #897 Fix 3 — Median eines numerischen ``trial.user_attrs``-Felds über eine Study
+    (None-safe: fehlende/None-Werte werden übersprungen; leere Kohorte ⇒ None)."""
+    values = [a[field] for a in (trial_attrs or []) if a.get(field) is not None]
+    return statistics.median(values) if values else None
+
+
+def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
+    """Issue #919 — Anteil der Round-Trips mit ``exit_reason == 'TIME_BOX'`` (hourly_strategy_
+    base.ExitReason) am je-Study aufsummierten Exit-Reason-Histogramm. ``None`` ohne jede
+    Exit-Telemetrie (leeres Histogramm)."""
+    histogram = _sum_exit_reason_histograms(trial_attrs)
+    total = sum(histogram.values())
+    if not total:
+        return None
+    return round(histogram.get("TIME_BOX", 0) / total, 4)
+
+
+def _sum_exit_reason_histograms(trial_attrs: list[dict]) -> dict[str, int]:
+    """Issue #919 — summiert ``oos_exit_reason_histogram`` (je Trial, aus Order-Tags via #899)
+    über eine Study zu EINEM Histogramm. Leeres Dict, wenn keine Trial-Telemetrie vorliegt
+    (Pre-#899-JSON/kein Trade) — Rohmaterial für ``invariants.check_exit_reason_coverage``."""
+    total: dict[str, int] = {}
+    for a in trial_attrs or []:
+        for reason, count in (a.get("oos_exit_reason_histogram") or {}).items():
+            total[reason] = total.get(reason, 0) + int(count)
+    return total
+
+
+def _median_of_sampled_param(trial_attrs: list[dict], param: str) -> float | None:
+    """Issue #897 Fix 3 — Median eines GESAMPELTEN Suchraum-Parameters (``sampled_params[param]``)
+    über eine Study. Symmetrisch zu ``_median_of_trial_field``, aber für den Config-Wert statt der
+    realisierten Telemetrie (Eingangsgrösse für ``check_effective_stop_distance``)."""
+    values = [
+        (a.get("sampled_params") or {}).get(param) for a in (trial_attrs or [])
+        if (a.get("sampled_params") or {}).get(param) is not None
+    ]
+    return statistics.median(values) if values else None
+
+
 def _study_record(proposal: dict, study,
-                  tournament_cfg: dict | None = None) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
-    """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743)."""
+                  tournament_cfg: dict | None = None, *,
+                  guard_dominance_threshold: float | None = None,
+                  symbol_bar_quality_cache: dict | None = None,
+                  ) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
+    """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743).
+
+    ``symbol_bar_quality_cache`` (Issue #923) — vom Aufrufer EINMAL gelesenes
+    ``sweep.read_symbol_bar_quality_cache(WORK)``-Ergebnis, hier nur je Symbol nachgeschlagen
+    (kein I/O in dieser Funktion selbst). ``None``/kein Eintrag für ``proposal['symbol']`` ⇒
+    derselbe ``_contracts.BAR_SECONDS_DEFAULT``-Fallback wie vor #923."""
     trials = list(getattr(study, "trials", None) or []) if study is not None else []
     trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in trials]
 
@@ -241,7 +310,43 @@ def _study_record(proposal: dict, study,
     n_evaluable = sum(1 for a in trial_attrs if a.get("oos_evaluated") is True)
     n_eligible = sum(1 for a in trial_attrs if a.get("oos_eligible") is True)
     p_eligible = round(n_eligible / n_trials, 4) if n_trials else 0.0
+    # Issue #931 — Median der Per-Trial-Wallclock (#415-Telemetrie), damit ein SPÄTERER Lauf den
+    # Wallclock-Preflight (sweep.assert_wallclock_budget_valid) mit einem echten Erfahrungswert
+    # statt dem eingefrorenen Fallback (wallclock_guard.DEFAULT_BACKTEST_MS_MEDIAN) füttern kann.
+    _backtest_ms_values = [a["backtest_ms"] for a in trial_attrs if a.get("backtest_ms") is not None]
+    backtest_ms_median = statistics.median(_backtest_ms_values) if _backtest_ms_values else None
+    # Issue #915 — wie viele der oos_evaluated Trials TATSÄCHLICH eine definierte
+    # Selektions-Teststatistik (oos_psr) tragen. Rohmaterial für
+    # invariants.check_selection_statistic_availability: die WIRKUNGS-Invariante, die prüft, ob
+    # der Guard eine benutzbare Schwelle liefert — nicht nur, ob die konfigurierte Referenz
+    # verwendet wurde (siehe check_guard_reference_coherence, eine reine Quellen-Invariante).
+    n_selection_statistic_available = sum(
+        1 for a in trial_attrs if a.get("oos_evaluated") is True and a.get("oos_psr") is not None)
+    # Issue #917 Fix 4 — 'ineligible' in zwei disjunkte Klassen zerlegen: nur EINE davon ist eine
+    # Aussage über die Strategie. ineligible_unmeasurable zählt REJECT_OOS_STATISTIC_UNAVAILABLE
+    # (#917) — ein Gate lief auf einer undefinierten Grösse, keine Messung fand statt.
+    n_ineligible_unmeasurable = sum(
+        1 for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_eligible") is not True
+        and a.get("is_rejection_detail") == "REJECT_OOS_STATISTIC_UNAVAILABLE")
+    # ineligible_measured — evaluiert, nicht eligible, aber NICHT wegen einer undefinierten Grösse
+    # (ein echtes, wenn auch negatives, Messergebnis).
+    n_ineligible_measured = max(0, n_evaluable - n_eligible - n_ineligible_unmeasurable)
+    # Issue #862 — Median der informativen Periodenzahl über die oos_evaluated Trials dieser
+    # Study (Rohmaterial für invariants.check_guard_reference_coherence auf Report-Ebene).
+    _n_periods_values = [
+        a["oos_n_periods"] for a in trial_attrs
+        if a.get("oos_evaluated") is True and a.get("oos_n_periods")
+    ]
+    oos_n_periods_median = statistics.median(_n_periods_values) if _n_periods_values else None
     coherence_violations = sum(1 for a in trial_attrs if a.get("oos_coherence_violation") is True)
+    # Issue #976 — je Study, wie oft jeder is_rejection_detail-Code über ALLE Trials auftrat.
+    # Rohmaterial für invariants.check_window_unreachable_rate.
+    is_rejection_detail_counts: dict[str, int] = {}
+    for a in trial_attrs:
+        detail = a.get("is_rejection_detail")
+        if detail:
+            is_rejection_detail_counts[detail] = is_rejection_detail_counts.get(detail, 0) + 1
     # Issue #804 — Aggregat je Study: wie oft jeder strukturierte Inferenzpfad-Diagnose-Code
     # (EQUITY_NONPOSITIVE/PERIOD_RETURNS_NOT_FINITE/RETURN_SERIES_IDENTITY_*/
     # NON_CONTIGUOUS_FOLD_SEGMENTS/SORTINO_GUARD_TRIPPED/COHERENCE_INVARIANT_VIOLATION) über ALLE
@@ -249,11 +354,25 @@ def _study_record(proposal: dict, study,
     # der Subprozess eine Invariante verletzt hat (siehe run_optimization._reemit_inference_
     # diagnostics für die Live-Emission je Trial).
     inference_diagnostics_by_code: dict[str, int] = {}
+    # Issue #901 — je Study die beobachteten guard_reference_source-Werte aus SORTINO_GUARD_TRIPPED/
+    # SORTINO_GUARD_REFERENCE_UNAVAILABLE-Diagnosen, Eingangsgrösse für
+    # invariants.check_guard_reference_coherence unter reference_mode=='family_median'.
+    guard_reference_sources: list[str] = []
+    # Issue #968 (Katalog A, P0 HEADLINE) — dieselben Diagnosen tragen zusätzlich den NUMERISCHEN
+    # Referenzwert (``guard_reference_value``); Eingangsgrösse für
+    # invariants.check_guard_reference_stability — eine Study, deren Guard-Referenz WANDERT
+    # (mehrere verschiedene Werte/Quellen innerhalb eines Laufs), ist trotz festem Seed nicht mehr
+    # bitweise reproduzierbar (Pitfall #307 in AGENTS.md).
+    guard_reference_values: list[float] = []
     for a in trial_attrs:
         for diag in a.get("inference_diagnostics") or ():
             code = diag.get("code") if isinstance(diag, dict) else None
             if code:
                 inference_diagnostics_by_code[code] = inference_diagnostics_by_code.get(code, 0) + 1
+            if isinstance(diag, dict) and diag.get("guard_reference_source") is not None:
+                guard_reference_sources.append(diag["guard_reference_source"])
+            if isinstance(diag, dict) and diag.get("guard_reference_value") is not None:
+                guard_reference_values.append(diag["guard_reference_value"])
 
     # Issue #832 Fix Punkt 1 — je-Study-Aggregat der Haltedauer (Sekunden): das MAXIMUM über alle
     # oos_evaluated Trials (Rohmaterial für summary_de.py Abschnitt 4 "Trades mit der längsten
@@ -268,18 +387,47 @@ def _study_record(proposal: dict, study,
             max_holding_time_s = candidate
             p95_holding_time_s = a.get("oos_p95_holding_time_s")
 
-    best_reward = None
-    if study is not None:
-        try:
-            best_reward = study.best_value
-        except Exception:
-            best_reward = None
+    # Issue #839/#857 — je-Trial-Zeitbox-Verletzung (nicht nur das Study-Maximum aus #832 oben):
+    # eine gemessene GR-01-Verletzung erhält hier eine Konsequenz auf TRIAL-Ebene (siehe
+    # invariants.compute_trial_timebox_violations; #861 vereinheitlicht diese Berechnung mit
+    # ``check_holding_time_cap`` unten über dieselbe Referenz-Auflösung).
+    # Issue #902 — bar_seconds ist Pflichtparameter. Issue #923 — der #900-Gate-1-Preflight
+    # persistiert median_delta_t_s je Symbol NUN in symbol_bar_quality.json
+    # (sweep.write_symbol_bar_quality_cache); dieser Read ersetzt den vorher unbedingten
+    # _contracts.BAR_SECONDS_DEFAULT-Fallback, sobald ein Cache-Eintrag für DIESES Symbol
+    # existiert. Kein Cache-Eintrag (Pre-#923-Lauf, injizierter Test ohne echten Katalog) ⇒
+    # derselbe fail-loud protokollierte Fallback wie zuvor.
+    _symbol_bar_quality = symbol_bar_quality_cache.get(proposal.get("symbol")) if isinstance(
+        symbol_bar_quality_cache, dict) else None
+    _bar_seconds = (
+        _symbol_bar_quality.get("median_delta_t_s")
+        if isinstance(_symbol_bar_quality, dict) and _symbol_bar_quality.get("median_delta_t_s")
+        else _contracts.BAR_SECONDS_DEFAULT
+    )
+    timebox = _inv.compute_trial_timebox_violations(
+        trial_attrs, strategy=proposal.get("strategy"),
+        bar_seconds=_bar_seconds)
+
+    # Issue #929 — best_reward aus ALLEN abgeschlossenen Trials (Optuna-Semantik), nicht aus
+    # Optunas eigenem constraint-gefilterten study.best_value (siehe
+    # run_optimization._best_completed_value-Docstring: unter oos_eligible=False für JEDEN Trial
+    # liefert study.best_value null/wirft, obwohl Optuna intern einen besten rohen Reward kennt).
+    try:
+        _study_direction = study.direction.name.lower() if study is not None else "maximize"
+    except Exception:
+        _study_direction = "maximize"
+    best_reward = _best_completed_value(trials, direction=_study_direction) if study is not None else None
 
     feasible_rewards = [
         float(t.value) for t in trials
         if getattr(t, "user_attrs", {}).get("oos_eligible") is True
         and isinstance(getattr(t, "value", None), (int, float))
     ]
+    # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte.
+    best_eligible_reward = (
+        (max(feasible_rewards) if _study_direction == "maximize" else min(feasible_rewards))
+        if feasible_rewards else None
+    )
     # Issue #753/#754/#755 — dieselbe TRI-STATE-Logik wie ``_emit_study_summary``: eine vorzeitig
     # gestoppte Study (floor_plateau_warned/zero_eligible_plateau_warned) liefert gradient_signal=
     # None (Eskalationsfrage unbeantwortet), sonst reward- ODER constraint-fortschritts-basiert.
@@ -329,47 +477,143 @@ def _study_record(proposal: dict, study,
     decision_chain = _decision_chain(proposal, n_eligible=n_eligible)
     checks = [
         _inv.check_sr0_coherence(holdout_metrics),
+        # Issue #845 — n_periods-Heterogenität innerhalb der DSR-Kohorte muss dieselbe Suppression
+        # ausgelöst haben, die confirm.py bei ueberschrittener deflation_max_n_periods_ratio anwendet.
+        _inv.check_family_n_periods_homogeneity(
+            holdout_metrics,
+            max_ratio=float((tournament_cfg or {}).get("deflation_max_n_periods_ratio", 4.0))),
         _inv.check_n_family_consistency(holdout_metrics),
+        # Issue #887 — der globale Default (route='global_default_on_symbol') nahm an der
+        # Stufe-1-Selektion nicht teil; seine Deflation muss N=1 tragen, nicht deflation_n_family.
+        _inv.check_promotion_multiplicity_route(proposal),
         # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
         # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.
         _inv.check_deflation_cluster_coverage(holdout_metrics),
         _inv.check_rejection_chain_completeness(proposal, decision_chain=decision_chain),
         _inv.check_reward_term_variance(trial_attrs),
+        # Issue #965 Fix Punkt 4 (Katalog A, P0 HEADLINE) — Verteilungs-Test: eine fehlende
+        # Selektionsstatistik darf nicht bevorzugt die profitable Kohorte treffen (Pitfall #306).
+        _inv.check_selection_statistic_economic_bias(trial_attrs),
+        # Issue #949 (Katalog C, P0 HEADLINE) — der Wächter gegen den Zweig-Indikator-Defekt: die
+        # Reward-Varianz einer Study darf nicht vom Failure-/Prune-Zweig getragen werden, sondern
+        # muss die Qualitätsordnung innerhalb der zulässigen Region widerspiegeln.
+        _inv.check_reward_dynamic_range(trial_attrs),
         # Issue #756 — nach der Log-Return-Umstellung ist eine verbleibende Kohärenzverletzung ein
         # echter Bug, kein erwartetes Restrauschen mehr; harter Regressionswächter statt WARNING.
         _inv.check_log_return_coherence(trial_attrs),
+        # Issue #978 (Katalog C, P0) — der Annualisierungsfaktor muss innerhalb eines Trials über
+        # alle Folds kommensurabel bleiben (Pitfall #310).
+        _inv.check_annualization_commensurability(trial_attrs),
+        # Issue #979 (Katalog C, P0) — der ordnende Reward-Zweig darf nicht auf einen winzigen
+        # Bruchteil der Auswertungen kollabieren (Pitfall #124, doppelt kodierte Feasibility).
+        _inv.check_objective_branch_coverage(trial_attrs),
         # Issue #759 — Missing-Data-Sentinel-Kollaps-Regressionswächter (oos_win_rate).
         _inv.check_metric_sentinel_absence(trial_attrs),
-        # Issue #804 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus dem
-        # Backtest-Subprozess sind jetzt maschinell im #742-Report überprüfbar, nicht nur live geloggt.
+        # Issue #804/#886 — sechster Regressionswächter: strukturierte Inferenzpfad-Diagnosen aus
+        # dem Backtest-Subprozess sind jetzt maschinell im #742-Report überprüfbar, nicht nur live
+        # geloggt (seit #886 ohne die #863/#864-regulären dritten Ausgänge, siehe unten).
         _inv.check_inference_diagnostics_absent(trial_attrs),
+        # Issue #886 — ersetzt die reine Anwesenheit der #863/#864-regulären Ausgänge durch eine
+        # Konzentrationsprüfung (analog STUDY_GUARD_DOMINATED, #823), gegen den #885-Nenner
+        # n_trials_informative.
+        _inv.check_inference_diagnostics_concentration(
+            trial_attrs, n_trials_informative=study_user_attrs.get("n_trials_informative"),
+            **({"guard_dominance_threshold": guard_dominance_threshold}
+               if guard_dominance_threshold is not None else {})),
+        # Issue #967 Fix Punkt 2 — eigene Rate-Invariante für ADAPTIVE-Diagnosen (SORTINO_DOWNSIDE_
+        # SHRUNK), getrennt von der CENSORING-Konzentrationsprüfung oben.
+        _inv.check_adaptive_diagnostic_rate(
+            trial_attrs, n_trials_informative=study_user_attrs.get("n_trials_informative")),
+        # Issue #885 Fix Punkt 3 — die fünf Trial-Kategorien (informativ/geprunt/unauswertbar/
+        # fehlgeschlagen/total) müssen die Trial-Menge disjunkt und vollständig zerlegen.
+        _inv.check_denominator_coherence(study_user_attrs),
     ]
+
+    # Issue #949 (Katalog C) Fix 2 — reward_std_total (alle oos_evaluated Trials) vs.
+    # reward_std_feasible (ohne spaeter geprunte Trials) als eigene Report-Telemetrie, damit die
+    # Straf-Term-Kalibrierung (#951) explizit GEGEN reward_std_feasible kalibriert werden kann,
+    # statt gegen ein vom Failure-Zweig verzerrtes Gesamtmass.
+    _reward_std_total, _reward_std_feasible, _ = _inv._reward_std_total_and_feasible(trial_attrs)
 
     record = {
         "symbol": proposal.get("symbol"),
         "strategy": proposal.get("strategy"),
         "n_trials": n_trials,
         "n_evaluable": n_evaluable,
+        "n_selection_statistic_available": n_selection_statistic_available,
+        # Issue #917 Fix 4 — disjunkte Zerlegung der evaluierten, nicht-eligiblen Trials.
+        "n_ineligible_measured": n_ineligible_measured,
+        "backtest_ms_median": backtest_ms_median,
+        # Issue #983 — Rohmaterial für sweep._read_last_backtest_ms_mean des NÄCHSTEN Laufs: der
+        # Wallclock-Preflight braucht den Mittelwert (rechtsschiefe Verteilung), nicht den Median.
+        "backtest_ms_mean": study_user_attrs.get("backtest_ms_mean"),
+        # Issue #932 — Per-Study-Wallclock (aus dem Study-User-Attr, #929/#568-Muster), Rohmaterial
+        # für den LPT-Dispatch (sweep._read_last_study_wallclock_by_strategy) des NÄCHSTEN Laufs.
+        "wallclock_s": study_user_attrs.get("wallclock_s"),
+        "n_ineligible_unmeasurable": n_ineligible_unmeasurable,
         "n_eligible": n_eligible,
         "p_eligible": p_eligible,
+        # Issue #885 Fix Punkt 2 — n_trials_pruned/n_trials_unevaluable als GETRENNTE Telemetrie
+        # (vorher kollabierten beide in "nicht evaluiert"); n_trials_informative ist der EINE Nenner
+        # für Raten-Meldungen, die die tatsächlich verwertete Suche messen (#885/#886).
+        "n_trials_informative": study_user_attrs.get("n_trials_informative"),
+        "n_trials_pruned": study_user_attrs.get("n_trials_pruned"),
+        "n_trials_unevaluable": study_user_attrs.get("n_trials_unevaluable"),
+        "n_trials_failed": study_user_attrs.get("n_trials_failed"),
         # Issue #812 — SHA-256 ueber die effektiv wirksame Gate-Konfiguration dieser Study
         # (reward.selection_rule_fingerprint, gestempelt in run_optimization._emit_study_summary).
         # ``None`` fuer Studies aus einem Lauf vor #812 (rueckwaertskompatibel, analog seed_effective).
         "selection_rule_fingerprint": study_user_attrs.get("selection_rule_fingerprint"),
         "best_reward": best_reward,
+        # Issue #929 — getrenntes Feld: der beste Reward NUR über die eligible Kohorte (None, wenn
+        # p_eligible == 0 — die Leermenge ist hier inhaltlich korrekt, kein Constraint-Artefakt).
+        "best_eligible_reward": best_eligible_reward,
+        # Issue #949 (Katalog C) Fix 2 — siehe check_reward_dynamic_range/_reward_std_total_and_
+        # feasible in invariants.py.
+        "reward_std_total": round(_reward_std_total, 6) if _reward_std_total is not None else None,
+        "reward_std_feasible": (
+            round(_reward_std_feasible, 6) if _reward_std_feasible is not None else None),
         "gradient_signal": gradient_signal,
         # Issue #808 — welcher der drei Arme (discovery/reward_variance/constraint_progress/none)
         # das obige gradient_signal traegt. None ⇒ wie gradient_signal selbst unbeantwortet
         # (Early-Stop).
         "gradient_signal_arm": gradient_signal_arm_value,
         "constraint_improvement_rate": constraint_improvement_rate,
+        # Issue #981 — die rohen je-Trial-Konstraint-Distanzen der modellierten Kohorte, damit
+        # invariants.check_search_made_progress die AUFLÖSUNG seiner eigenen Eingabe prüfen kann
+        # (eine dreiwertige Treppenfunktion kann keinen Gradienten anzeigen, siehe #966).
+        "constraint_violations_observed": [
+            cv[0] for t in modelled
+            for cv in [(getattr(t, "user_attrs", {}) or {}).get("oos_constraint_violations")]
+            if cv
+        ],
+        # Issue #929 Fix 3 — Eingangsgrössen für invariants.check_search_made_progress.
+        "n_modelled_trials": len(modelled),
+        "plateau_min_modelled_trials": study_user_attrs.get("plateau_min_modelled_trials"),
         # Issue #755 — Per-Study-Seed/Budget-Telemetrie (Determinismus-Nachweis bei n_jobs>1).
         "seed_effective": study_user_attrs.get("seed_effective"),
         "n_trials_budget": study_user_attrs.get("n_trials_budget"),
+        # Issue #853 Fix Punkt 3 — seed_source als POSITIVE Telemetrie (vorher existierte nur die
+        # [#565]-Negativ-WARNUNG im Log): welcher Anker den Warm-Start/param_pen dieser Study
+        # tatsächlich speiste (run_optimization.resolve_symbol_shrinkage_seed, Study-User-Attr
+        # 'shrinkage_seed_source'). 'champion_quality_stale' (#819) ist seed-fähig wie 'champion',
+        # nur die Quality-Telemetrie ist veraltet — unterscheidbar von 'strategy_defaults'/'none'
+        # (kein Champion vorhanden).
+        "seed_source": study_user_attrs.get("shrinkage_seed_source"),
+        # Issue #851 — Study-Zeitstempel-Telemetrie (run_optimization._optimize_symbol_impl setzt
+        # diese User-Attrs vor/nach study.optimize, auch bei vorzeitigem Abbruch — #833-Stil).
+        # Rohmaterial für summary_de.py Abschnitt 3.2/3.4 (Median-Wallclock je Strategie,
+        # Barriere-Wartezeit je Symbol) und report._worker_utilisation/_symbol_barrier_wait.
+        "study_started_at_utc": study_user_attrs.get("study_started_at_utc"),
+        "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
+        "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
+        "worker_id": study_user_attrs.get("worker_id"),
         # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl.
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
         "budget_executed_fraction": budget_execution["budget_executed_fraction"],
+        # Issue #983 Fix Punkt 3 Akzeptanzkriterium — siehe run_optimization._emit_study_summary.
+        "budget_degradation_factor": study_user_attrs.get("budget_degradation_factor", 1.0),
         "stop_reason": budget_execution["stop_reason"],
         "n_modelled_trials_completed": budget_execution["n_modelled_trials_completed"],
         "coherence_violations": coherence_violations,
@@ -377,6 +621,12 @@ def _study_record(proposal: dict, study,
         # Normalfall). Macht eine Subprozess-Invariantenverletzung im #742-Report sichtbar, ohne ein
         # Trial-Verzeichnis zu öffnen oder trial_dir/logs/ zu lesen.
         "inference_diagnostics_by_code": inference_diagnostics_by_code,
+        # Issue #976 — Rohmaterial für invariants.check_window_unreachable_rate.
+        "is_rejection_detail_counts": is_rejection_detail_counts,
+        # Issue #901 — Rohmaterial für invariants.check_guard_reference_coherence.
+        "guard_reference_sources": guard_reference_sources,
+        # Issue #968 — Rohmaterial für invariants.check_guard_reference_stability.
+        "guard_reference_values": guard_reference_values,
         # Issue #825 Fix Punkt 3 — expliziter Alias auf denselben #804-Zähler: wie viele Trials
         # dieser Study waehrend des OOS-Fensters wirtschaftlich ruiniert wurden (Equity <= 0,
         # backtest_runner.assert_positive_equity/EQUITY_NONPOSITIVE). Diese Trials sind bereits
@@ -387,6 +637,73 @@ def _study_record(proposal: dict, study,
         # Issue #832 Fix Punkt 1 — je-Study Haltedauer-Extrema (Sekunden), siehe Aggregat oben.
         "max_holding_time_s": max_holding_time_s,
         "p95_holding_time_s": p95_holding_time_s,
+        # Issue #839 — je-Trial-Zeitbox-Verletzung, aggregiert je Study (siehe
+        # invariants.compute_trial_timebox_violations für die Berechnung je Trial).
+        # Issue #903 — TRIAL-Ebene (mind. 1 verletzender Round-Trip im Trial; treibt die
+        # #878-Study-Toleranz weiter unten in confirm.py) UND ROUND-TRIP-Ebene (Diagnose: welcher
+        # ANTEIL der Trades tatsächlich verletzt) GETRENNT — vorher trug ``timebox_violation_trades``
+        # trotz des Namens die TRIAL-Zahl, und ``timebox_trials_invalidated`` war einfach derselbe
+        # Wert unter zweitem Namen (confirm.py; hier entfallen).
+        "timebox_violating_trials": timebox["timebox_violating_trials"],
+        "timebox_evaluated_trades": timebox["timebox_evaluated_trials"],
+        "timebox_violation_fraction": timebox["timebox_violation_fraction"],
+        "timebox_violating_round_trips": timebox["timebox_violating_round_trips"],
+        "timebox_evaluated_round_trips": timebox["timebox_evaluated_round_trips"],
+        "timebox_round_trip_violation_fraction": timebox["timebox_round_trip_violation_fraction"],
+        # Issue #971 (Katalog B, P0 HEADLINE) — EXPLIZITER, NEUER Feldname für die TRADE-(Round-
+        # Trip-)Ebene, den ``check_holding_time_cap`` ab sofort konsumiert (siehe dortige
+        # Docstring). Der bisher von ``check_holding_time_cap`` gelesene Name
+        # (``timebox_violation_fraction``) bleibt unverändert die TRIAL-Ebene — er wird NICHT
+        # umgedeutet, sondern hier durch einen neuen, korrekt benannten Alias ERSETZT: ein Trial mit
+        # 200 Trades und einem einzigen Ausreisser-Trade ist studienweit kein "kaputter Exit-Pfad",
+        # auch wenn er als TRIAL zu 100% "verletzend" zählt (Pitfall #303/#304 in AGENTS.md). Werte
+        # sind bit-identisch zu den bestehenden Round-Trip-Feldern oben — reiner Namens-Alias, keine
+        # zweite Berechnung (Pitfall #269, Single-Source-of-Truth).
+        "timebox_violating_trades_frac": timebox["timebox_round_trip_violation_fraction"],
+        "timebox_violating_trades_numerator": timebox["timebox_violating_round_trips"],
+        "timebox_violating_trades_denominator": timebox["timebox_evaluated_round_trips"],
+        "timebox_violation_intensity_p95": timebox["timebox_violation_intensity_p95"],
+        "timebox_violated": timebox["timebox_violated"],
+        # Issue #972 — Rohmaterial für invariants.check_counter_partition_consistency (nur gesetzt,
+        # wenn diese Study ein Zero-Eligible-Plateau meldete, siehe run_optimization
+        # ._optimize_symbol_impl).
+        "plateau_n_evaluated": study_user_attrs.get("plateau_n_evaluated"),
+        "plateau_counter_breakdown": study_user_attrs.get("plateau_counter_breakdown"),
+        # Issue #861 — Verteilung der Deckel-Referenzquelle (sampled/default/global) über die
+        # ausgewerteten Trials dieser Study.
+        "timebox_cap_source_counts": timebox["timebox_cap_source_counts"],
+        # Issue #897 Fix 3 — Rohmaterial für ``invariants.check_effective_stop_distance``: Median
+        # des realisierten Ø-Bruttoverlusts (bps) und der ATR-Telemetrie über die Trials dieser
+        # Study (#899). None, wenn keine Exit-Telemetrie vorliegt (Pre-#899-JSON/kein Trade).
+        "oos_gross_loss_mean_bps": _median_of_trial_field(trial_attrs, "oos_gross_loss_mean_bps"),
+        "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
+        # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
+        # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
+        # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. None ⇒ kein Preflight in
+        # diesem Lauf (z. B. injizierte Tests).
+        "symbol_bar_quality": _symbol_bar_quality,
+        # Issue #919 — je Study aufsummiertes Exit-Reason-Histogramm (aus Order-Tags, #899) +
+        # Median der je-Trial-Median-Haltedauer (Bars). Rohmaterial für
+        # invariants.check_exit_reason_coverage.
+        "exit_reason_histogram": _sum_exit_reason_histograms(trial_attrs),
+        "median_bars_held": _median_of_trial_field(trial_attrs, "oos_median_bars_held"),
+        # Issue #919 — Summe der Round-Trips über GENAU die Trials, die auch ein
+        # exit_reason_histogram beitrugen (Apples-to-apples für check_exit_reason_coverage; ein
+        # Trial ohne Order-Tag-Telemetrie darf die Summe nicht verzerren).
+        "oos_total_trades_with_exit_telemetry": sum(
+            int(a.get("oos_total_trades") or 0) for a in trial_attrs
+            if a.get("oos_exit_reason_histogram")
+        ),
+        # Issue #919 — Anteil der Round-Trips, die über die 24-Bar-Zeitbox statt über den
+        # Trailing-Stop/Profit-Target/Signal-Reversal schliessen (Eingangsgrösse für die
+        # #925-Budgetdiskussion und GR-01, siehe hourly_strategy_base.ExitReason).
+        "time_box_exit_fraction": _time_box_exit_fraction(trial_attrs),
+        # Issue #897 Fix 3 — Median des je-Trial GESAMPELTEN atr_trailing_multiplier (das
+        # Konfigurations-Gegenstueck zur realisierten ATR-Telemetrie oben).
+        "atr_trailing_multiplier_median": _median_of_sampled_param(
+            trial_attrs, "atr_trailing_multiplier"),
+        # Issue #862 — Rohmaterial für den globalen check_guard_reference_coherence-Wächter.
+        "oos_n_periods_median": oos_n_periods_median,
         "promotion_outcome": proposal.get("status"),
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
@@ -403,6 +720,10 @@ def _study_record(proposal: dict, study,
         # Issue #776 — noch unkonsolidierte (LIVE als redundant ausgewiesene) Mitglieder von
         # ``eligible_requires_all`` dieser Study; leer ⇒ Config konsistent mit dem #679-Alarm.
         "gate_collinearity_unconsolidated": gate_collinearity_unconsolidated,
+        # Issue #970 (Katalog A, P1) — je Gate n_rejections/n_solo_rejections/marginal_delta über
+        # die evaluierte Kohorte dieser Study (siehe invariants.gate_inventory_table-Docstring).
+        "gate_inventory": _inv.gate_inventory_table(
+            trial_attrs, (tournament_cfg or {}).get("eligible_requires_all") or []),
         # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
         # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
@@ -416,6 +737,10 @@ def _study_record(proposal: dict, study,
         "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
         "holdout_buyhold_return": holdout_metrics.get("oos_buyhold_return"),
         "holdout_excess_return": holdout_metrics.get("oos_excess_return"),
+        # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position (siehe
+        # backtest_runner._calculate_stats "exposure_fraction"), Rohmaterial für summary_de.py
+        # Abschnitt 2.3 (Excess-Return vs. echtes Alpha) und cross_study.excess_variance_decomposition.
+        "holdout_exposure_fraction": holdout_metrics.get("oos_exposure_fraction"),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
         # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
         # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
@@ -423,6 +748,12 @@ def _study_record(proposal: dict, study,
         # family). NICHT mit dem (jetzt nicht mehr für die Deflation verwendeten) symbolweiten
         # cross_study['n_family'] verwechseln (#625, post-hoc Sweep-Telemetrie).
         "n_family_stage1": holdout_metrics.get("deflation_n_family"),
+        # Issue #846 — gesetzt, wenn confirm.py die DSR-Berechnung fuer diese Study uebersprungen
+        # (oder eine Kohaerenzverletzung zwischen deflated_sr0 und deflated_dsr/deflation_dsr_z an
+        # der Export-Grenze unterdrueckt) hat: SMALL_COHORT (deflation_n < 2) oder NO_STATISTIC
+        # (der promotete Trial selbst trug kein oos_sortino_period). None ⇒ DSR normal berechnet
+        # ODER deflated_selection war gar nicht aktiv.
+        "deflation_skipped_reason": holdout_metrics.get("deflation_skipped_reason"),
         # Issue #758/#791 — Eligibility- und Promotion-Inferenzmethode NEBENEINANDER, jetzt als
         # {method, applied, skipped_reason} statt eines nackten Strings/None (#791): ``applied``
         # unterscheidet "Inferenz lief nicht, weil strukturell unanwendbar/dokumentiert
@@ -521,6 +852,39 @@ def _diagnosed_pairs_skipped_section() -> list[dict[str, Any]]:
     ]
 
 
+def _symbol_coverage_summary(opt_data: dict) -> tuple[dict[str, Any], _inv.InvariantResult]:
+    """Issue #841 — ``cross_study.symbol_coverage`` + der zugehörige Invarianten-Check. Liest
+    ``data/optimizer/symbol_coverage.json`` (das Ledger, das ``sweep_symbol_order_policy=
+    'least_recently_covered'`` für die Dispatch-Reihenfolge nutzt) und das aktuelle Universum
+    (``sweep.load_symbol_universe``). Fail-open bei jedem Lese-/Enumerationsfehler — ein Report
+    darf wegen einer fehlenden/kaputten Coverage-Datei nie crashen."""
+    max_age_runs = int(opt_data.get("symbol_coverage_max_age_runs", 3))
+    try:
+        universe = load_symbol_universe()
+    except Exception:
+        universe = []
+    ledger = _symbol_coverage.load_coverage()
+    coverage = _symbol_coverage.coverage_report(ledger, universe, max_age_runs=max_age_runs)
+    check = _inv.check_symbol_coverage(ledger, universe, max_age_runs=max_age_runs)
+    return coverage, check
+
+
+def _coverage_ledger_continuity_check() -> _inv.InvariantResult:
+    """Issue #892 Fix Punkt 2 — ermittelt ``has_prior_reports`` aus ``REPORTS_DIR`` (mindestens ein
+    ``run_*.json`` existiert bereits — dieser Aufruf läuft VOR dem Schreiben des Reports DIESES
+    Laufs, siehe ``generate_sweep_report``, also spiegelt die Liste ausschliesslich frühere Läufe)
+    und ruft ``invariants.check_coverage_ledger_continuity`` gegen das aktuelle Ledger. Fail-open
+    (kein FAIL) bei jedem Lese-/Enumerationsfehler — ein Report darf wegen dieser Zusatzprüfung nie
+    crashen."""
+    try:
+        has_prior_reports = REPORTS_DIR.exists() and any(REPORTS_DIR.glob("run_*.json"))
+    except OSError:
+        has_prior_reports = False
+    ledger = _symbol_coverage.load_coverage()
+    return _inv.check_coverage_ledger_continuity(
+        ledger.get("total_runs_started", 0), has_prior_reports)
+
+
 def _champions_summary(opt_data: dict) -> dict[str, Any]:
     """Issue #818 (#742-Report-Zaehlerpaar) — ``cross_study.champions``:
     ``{stored, admissible, corroborated, written_back, skipped_by_reason}`` über den AKTUELLEN
@@ -533,7 +897,8 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     from automation.optimizer import champions as _champions_mod
 
     empty = {"stored": 0, "admissible": 0, "corroborated": 0, "written_back": 0,
-             "skipped_by_reason": {}, "semantics_migrated": 0}
+             "skipped_by_reason": {}, "semantics_migrated": 0,
+             "admissible_despite_simulation_stale": 0}
     try:
         champions_dir = _champions_mod._champions_dir()
         paths = sorted(p for p in champions_dir.glob("champion_*.json") if p.is_file())
@@ -545,6 +910,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
     corroborated = 0
     written_back = 0
     semantics_migrated = 0
+    admissible_despite_simulation_stale = 0
     skipped_by_reason: collections.Counter = collections.Counter()
     promote_after = int(opt_data.get("champion_promote_after_runs", 2))
     for path in paths:
@@ -564,6 +930,16 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
             ok, reason = _champions_mod.champion_is_admissible(entry, opt_data)
         except Exception:
             ok, reason = False, "ADMISSIBILITY_CHECK_ERROR"
+        # Issue #854 — Regressionswaechter-Rohmaterial: ein simulation_semantics_version-stale
+        # Eintrag MUSS champion_is_admissible bereits verworfen haben (harter Ausschluss, siehe
+        # champions.champion_simulation_stale-Docstring) — dieser Zaehler macht sichtbar, ob diese
+        # Garantie tatsaechlich haelt, statt sie nur zu behaupten.
+        try:
+            simulation_stale = _champions_mod.champion_simulation_stale(entry, opt_data)
+        except Exception:
+            simulation_stale = False
+        if simulation_stale and ok:
+            admissible_despite_simulation_stale += 1
         if not ok:
             skipped_by_reason[reason or "UNKNOWN"] += 1
             continue
@@ -582,6 +958,7 @@ def _champions_summary(opt_data: dict) -> dict[str, Any]:
         "stored": stored, "admissible": admissible, "corroborated": corroborated,
         "written_back": written_back, "skipped_by_reason": dict(skipped_by_reason),
         "semantics_migrated": semantics_migrated,
+        "admissible_despite_simulation_stale": admissible_despite_simulation_stale,
     }
 
 
@@ -633,6 +1010,116 @@ def _selection_rule_families(studies_out: list[dict[str, Any]]) -> dict[str, dic
     return out
 
 
+def _excess_variance_decomposition(studies_out: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Issue #850 — einfache Ein-Weg-Varianzzerlegung von ``holdout_excess_return`` NACH SYMBOL
+    (Quadratsummen-Zerlegung, analog einer einfaktoriellen ANOVA): ``symbol_share`` ist der Anteil
+    der GESAMT-Streuung, der bereits durch die reine Symbol-Gruppierung erklärt wird
+    (Zwischen-Gruppen-Quadratsumme / Gesamt-Quadratsumme); ``strategy_share`` ist der Rest
+    (Streuung INNERHALB eines Symbols — Strategie-Unterschied UND Restrauschen, hier bewusst NICHT
+    weiter getrennt, siehe Issue-Text "Strategie + Rest").
+
+    Root-Cause #850/Pitfall #268: 14 strukturell verschiedene Strategien lieferten auf demselben
+    Symbol Holdout-Excess-Returns innerhalb weniger Prozentpunkte, bei einem absoluten Niveau von
+    über 20 — der Excess-Return maß im Bärenmarkt näherungsweise NUR ``−Buy&Hold`` (eine
+    Symbol-Konstante), nicht die Handelsleistung der Strategie. ``None`` bei < 2 Symbolen ODER
+    < 2 Datenpunkten insgesamt (Varianz nicht definiert) — reine additive Diagnose-Telemetrie."""
+    rows = [
+        (r.get("symbol"), r.get("holdout_excess_return"))
+        for r in studies_out
+        if r.get("holdout_excess_return") is not None and r.get("symbol") is not None
+    ]
+    if len(rows) < 2:
+        return None
+    by_symbol: dict[str, list[float]] = {}
+    for symbol, excess in rows:
+        by_symbol.setdefault(symbol, []).append(float(excess))
+    if len(by_symbol) < 2:
+        return None
+    all_values = [v for values in by_symbol.values() for v in values]
+    grand_mean = sum(all_values) / len(all_values)
+    ss_total = sum((v - grand_mean) ** 2 for v in all_values)
+    if ss_total <= 0:
+        return {"symbol_share": None, "strategy_share": None, "n_rows": len(all_values)}
+    ss_between = sum(
+        len(values) * (sum(values) / len(values) - grand_mean) ** 2
+        for values in by_symbol.values()
+    )
+    symbol_share = ss_between / ss_total
+    return {
+        "symbol_share": symbol_share,
+        "strategy_share": max(0.0, 1.0 - symbol_share),
+        "n_rows": len(all_values),
+    }
+
+
+def _wallclock_by_strategy(studies_out: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Issue #851 — Median/p90 von ``study_wallclock_s`` je Strategie, für summary_de.py Abschnitt
+    3.2 ("Laufzeit je Symbol/Strategie") — vorher aus dem #742-Report nicht ableitbar (keine
+    Wallclock-Telemetrie je Study), musste aus Log-Zeitstempeln rekonstruiert werden."""
+    import statistics as _stats
+    by_strategy: dict[str, list[float]] = {}
+    for r in studies_out:
+        strategy, wc = r.get("strategy"), r.get("study_wallclock_s")
+        if strategy is None or wc is None:
+            continue
+        by_strategy.setdefault(strategy, []).append(float(wc))
+    out: dict[str, dict[str, Any]] = {}
+    for strategy, times in by_strategy.items():
+        times_sorted = sorted(times)
+        p90_idx = max(0, min(len(times_sorted) - 1, round(0.9 * (len(times_sorted) - 1))))
+        out[strategy] = {
+            "median": _stats.median(times_sorted),
+            "p90": times_sorted[p90_idx],
+            "n": len(times_sorted),
+        }
+    return out
+
+
+def _symbol_barrier_wait(studies_out: list[dict[str, Any]]) -> dict[str, float]:
+    """Issue #851 — je Symbol: ``max(study_wallclock_s) − min(study_wallclock_s)`` über die
+    Strategien-Studies dieses Symbols — die Zeit, die das Symbol auf seine LANGSAMSTE Strategie
+    wartet, relativ zu seiner schnellsten (#828-Barriere-Konzept). Symbole mit nur EINER Study
+    (kein Warten möglich) sind nicht enthalten."""
+    by_symbol: dict[str, list[float]] = {}
+    for r in studies_out:
+        symbol, wc = r.get("symbol"), r.get("study_wallclock_s")
+        if symbol is None or wc is None:
+            continue
+        by_symbol.setdefault(symbol, []).append(float(wc))
+    return {
+        symbol: max(times) - min(times)
+        for symbol, times in by_symbol.items()
+        if len(times) >= 2
+    }
+
+
+def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
+                        sweep_wallclock_s: float | None) -> float | None:
+    """Issue #851 — Σ Study-Wallclock / (n_jobs × Sweep-Wallclock): der Anteil der theoretisch
+    verfügbaren Worker-Zeit, der tatsächlich mit Study-Arbeit gefüllt war (1.0 = perfekte
+    Auslastung; auf einem seriellen Referenzlauf, n_jobs=1, ≈ 1.0 abzüglich Preflight-/Dispatch-
+    Overhead). None ohne n_jobs/sweep_wallclock_s ODER ohne eine einzige Study mit Wallclock-Daten."""
+    if not n_jobs or n_jobs <= 0 or not sweep_wallclock_s or sweep_wallclock_s <= 0:
+        return None
+    total_study_wallclock = sum(
+        r["study_wallclock_s"] for r in studies_out if r.get("study_wallclock_s") is not None)
+    if total_study_wallclock <= 0:
+        return None
+    return total_study_wallclock / (n_jobs * sweep_wallclock_s)
+
+
+def _seed_source_distribution(studies_out: list[dict[str, Any]]) -> dict[str, int]:
+    """Issue #853 Fix Punkt 3/4 — Verteilung von ``seed_source`` über alle Studies dieses Laufs
+    (``report._study_record``), Rohmaterial für ``invariants.check_champion_seed_coverage`` und
+    die #742-Report-Transparenz ("welcher Anker speiste den Warm-Start tatsächlich"). Studies ohne
+    Telemetrie (Pre-#853-Lauf) landen unter ``'unknown'``."""
+    out: dict[str, int] = {}
+    for r in studies_out:
+        source = r.get("seed_source") or "unknown"
+        out[source] = out.get(source, 0) + 1
+    return out
+
+
 def _longest_holding_studies(studies_out: list[dict[str, Any]], *, top_k: int = 10) -> list[dict[str, Any]]:
     """Issue #832 Fix Punkt 1/3 — Top-``top_k`` Studies nach ``max_holding_time_s`` absteigend, für
     summary_de.py Abschnitt 4 ("Trades mit der längsten Haltedauer"). Rein additiv aus dem bereits
@@ -674,6 +1161,36 @@ def _family_n_stages(studies_out: list[dict[str, Any]]) -> tuple[dict[str, dict[
     return stage1, stage2
 
 
+def parse_proposal_payloads(proposals: Iterable[Path | dict]) -> list[dict]:
+    """Issue #856 — EINZIGE Path→dict-Normalisierung für Proposal-Listen, konsumiert von
+    ``generate_sweep_report`` UND der #839-Fail-Fast-Probe (``sweep.py``). Vorher lag diese Logik
+    ausschliesslich inline in ``generate_sweep_report`` (#1093-1097 vor diesem Fix) — die Probe rief
+    ``_build_report`` direkt mit ``list[Path]`` auf und erzeugte bei JEDEM Aufruf eine
+    ``AttributeError`` (Pitfall #269, siebte Wiederkehr von #237).
+
+    Elemente, die bereits ``dict`` sind, werden unverändert übernommen (Test-Pfad); ``Path``-
+    Elemente werden von der Platte geladen. Nur Payloads mit einem ``symbol``-Feld gelten als
+    valide Proposals (dieselbe Filterregel wie vorher in ``generate_sweep_report``)."""
+    parsed: list[dict] = []
+    for p in proposals:
+        payload = p if isinstance(p, dict) else _load_json(Path(p))
+        if isinstance(payload, dict) and payload.get("symbol"):
+            parsed.append(payload)
+    return parsed
+
+
+def build_probe_report(proposals: Iterable[Path | dict], *, run_id: str) -> dict:
+    """Issue #856 — dünner, öffentlicher Wrapper für die #839-Fail-Fast-Probe in ``sweep.py``:
+    parst + baut den Report in einem Aufruf, schreibt NICHTS auf die Platte (reine Lesefunktion).
+    Hält ``_build_report`` als modulinternen Kern, dessen einziger externer Konsument dieser
+    Wrapper (und ``generate_sweep_report``) ist — die Call-Site in ``sweep.py`` kann die Path→dict-
+    Normalisierung dadurch nicht mehr umgehen (Root-Cause #856, Pitfall #269)."""
+    return _build_report(
+        parse_proposal_payloads(proposals),
+        run_id=run_id, started_at_utc=None, wallclock_s=None, cli_args=None,
+    )
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -684,17 +1201,39 @@ def _build_report(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> dict:
+    # Issue #856 Fix Punkt 4 — fail-loud statt einer nichtssagenden AttributeError in
+    # ``_load_study_for_proposal``: ``_build_report`` erwartet ausschliesslich geparste Proposal-
+    # Dicts. Ein ``Path``-Element (oder jedes andere Nicht-Dict) an erster Stelle ist ein
+    # struktureller Programmierfehler an der Call-Site, keine Laufzeitbedingung — er muss dort
+    # sichtbar werden, nicht drei Stack-Frames tiefer als ``'PosixPath' object has no attribute
+    # 'get'``.
+    if proposals and not isinstance(proposals[0], dict):
+        raise TypeError(
+            "_build_report erwartet geparste Proposal-Dicts; nutze parse_proposal_payloads() "
+            f"(erhalten: {type(proposals[0]).__name__})"
+        )
+
     tournament_path = config_dir() / "tournament.json"
     optimizer_path = config_dir() / "optimizer.json"
     tournament_cfg = _load_json(tournament_path) or {}
     optimizer_cfg = _load_json(optimizer_path) or {}
 
+    # Issue #923 — einmal je Report-Lauf gelesen (nicht je Study — dieselbe Datei, kein
+    # Symbol-Scope beim Lesen selbst nötig).
+    _symbol_bar_quality_cache = read_symbol_bar_quality_cache(WORK)
+
     studies_out: list[dict[str, Any]] = []
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
     for proposal in proposals:
         study = _load_study_for_proposal(proposal)
-        record, checks = _study_record(proposal, study, tournament_cfg)
+        record, checks = _study_record(
+            proposal, study, tournament_cfg,
+            guard_dominance_threshold=float(
+                optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)),
+            symbol_bar_quality_cache=_symbol_bar_quality_cache)
         studies_out.append(record)
         study_label = f"{record['strategy']}/{record['symbol']}"
         all_checks.extend((study_label, c) for c in checks)
@@ -718,11 +1257,34 @@ def _build_report(
         studies_out, max_affected_fraction=max_affected_fraction)
     all_checks.append(("global", gate_collinearity_check))
 
+    # Issue #897 Fix 3 — der Trailing-Stop-Anker muss auf seinen eigenen Multiplikator reagieren
+    # (Pitfall #286): der Median des realisierten Ø-Bruttoverlusts (#899-Telemetrie) darf
+    # ``stop_distance_min_ratio`` (Default 0.4) nicht relativ zum konfigurierten Stop-Abstand
+    # (k_median · ATR_median) unterschreiten.
+    stop_distance_min_ratio = float(optimizer_cfg.get("stop_distance_min_ratio", 0.4))
+    effective_stop_distance_check = _inv.check_effective_stop_distance(
+        studies_out, min_ratio=stop_distance_min_ratio)
+    all_checks.append(("global", effective_stop_distance_check))
+
     # Issue #818 — achter Invarianten-Check: der Champion-Store-Writeback-Pfad (Ebene 2, #706)
     # muss NACHWEISLICH erreichbar sein, nicht nur getestet/dokumentiert (Pitfall #237).
     champions_summary = _champions_summary(optimizer_cfg)
     champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
     all_checks.append(("global", champion_writeback_check))
+
+    # Issue #853 Fix Punkt 4 — vierzehnter Invarianten-Check: WARNUNG (severity='low'), wenn der
+    # Champion-Seed-Anker fuer > 90% der Studies dieses Laufs auf strategy_defaults zurueckfaellt
+    # (der Closed Loop, #702, ist dann nachweislich unwirksam — siehe check_champion_seed_coverage-
+    # Docstring fuer den Scope-Hinweis zur Ein-Lauf- statt Zwei-Lauf-Schwelle).
+    seed_source_distribution = _seed_source_distribution(studies_out)
+    champion_seed_coverage_check = _inv.check_champion_seed_coverage(seed_source_distribution)
+    all_checks.append(("global", champion_seed_coverage_check))
+
+    # Issue #854 Fix Punkt 6 — fuenfzehnter Invarianten-Check: kein Champion-Store-Eintrag mit
+    # veralteter simulation_semantics_version darf trotzdem als admissible gelten.
+    semantics_version_coherence_check = _inv.check_semantics_version_coherence(
+        champions_summary.get("admissible_despite_simulation_stale", 0))
+    all_checks.append(("global", semantics_version_coherence_check))
 
     # Issue #829 — neunter Invarianten-Check: ein Evidenzschwellen-Deadlock (Pitfall #258) macht
     # sich als viele diagnosed_pairs_cache-Einträge derselben (strategy, binding_cause)-Kombination
@@ -730,10 +1292,105 @@ def _build_report(
     diagnosis_actionability_check = _inv.check_diagnosis_actionability(_diagnosed_pairs_all())
     all_checks.append(("global", diagnosis_actionability_check))
 
-    # Issue #832 Fix Punkt 1 — zehnter Invarianten-Check: kein Trade darf laenger halten als die
-    # #714/GR-01-Zeitbox-Obergrenze (24 Bars) — ein Treffer ist ein Bug im Exit-Pfad.
-    holding_time_cap_check = _inv.check_holding_time_cap(studies_out)
+    # Issue #832 Fix Punkt 1 / #861 (Unifikation) — zehnter Invarianten-Check: keine Study darf
+    # einen Anteil zeitbox-verletzender Trials ueber ``timebox_violation_study_tolerance`` tragen
+    # (dieselbe Schwelle, die #857 fuer die Study-Ebene-Konsequenz in confirm.py verwendet) — ein
+    # Treffer ist ein Bug im Exit-Pfad.
+    _timebox_study_tolerance = float(tournament_cfg.get("timebox_violation_study_tolerance", 0.25))
+    holding_time_cap_check = _inv.check_holding_time_cap(
+        studies_out, study_tolerance=_timebox_study_tolerance)
     all_checks.append(("global", holding_time_cap_check))
+
+    # Issue #972 — Zero-Eligible-Plateau-Zähler-Widerspruch: n_evaluated + Zerlegung der entfernten
+    # Trials muss n_trials ergeben, sonst zielen die beiden Zähler nicht auf dieselbe Grundgesamtheit.
+    all_checks.append(("global", _inv.check_counter_partition_consistency(studies_out)))
+
+    # Issue #841 — elfter Invarianten-Check: kein Symbol des aktuellen Universums darf seit mehr
+    # als symbol_coverage_max_age_runs abgeschlossenen Läufen unabgedeckt bleiben (least_recently_
+    # covered-Rotation, siehe symbol_coverage.py).
+    symbol_coverage_summary, symbol_coverage_check = _symbol_coverage_summary(optimizer_cfg)
+    all_checks.append(("global", symbol_coverage_check))
+
+    # Issue #892 Fix Punkt 2 — ein bei Laufbeginn auf 1 zurückgesetztes Coverage-Ledger, obwohl
+    # bereits frühere Lauf-Reports existieren, ist ein Datenverlust (achte Wiederkehr Pitfall #237).
+    all_checks.append(("global", _coverage_ledger_continuity_check()))
+
+    # Issue #862 — der konfigurierte sortino_numeric_guard_min_periods-Referenzwert muss zur
+    # tatsächlich beobachteten n_periods-Grössenordnung DIESES Laufs passen (Pitfall #274).
+    _guard_min_periods = tournament_cfg.get("sortino_numeric_guard_min_periods")
+    _observed_n_periods_medians = [
+        r["oos_n_periods_median"] for r in studies_out if r.get("oos_n_periods_median")
+    ]
+    _observed_guard_reference_sources = [
+        s for r in studies_out for s in (r.get("guard_reference_sources") or [])
+    ]
+    guard_reference_coherence_check = _inv.check_guard_reference_coherence(
+        _guard_min_periods, _observed_n_periods_medians,
+        reference_mode=tournament_cfg.get("sortino_numeric_guard_reference"),
+        observed_guard_reference_sources=_observed_guard_reference_sources)
+    all_checks.append(("global", guard_reference_coherence_check))
+
+    # Issue #968 (Katalog A, P0 HEADLINE) — Reproduzierbarkeits-Wächter: die Guard-Referenz darf
+    # innerhalb EINER Study weder den Wert noch die Quelle wechseln (Pitfall #307).
+    all_checks.append(("global", _inv.check_guard_reference_stability(studies_out)))
+
+    # Issue #970 (Katalog A, P1) — kein Gate ohne jeden marginalen Beitrag über eine ausreichend
+    # grosse Kohorte darf in eligible_requires_all verbleiben.
+    all_checks.append(("global", _inv.check_gate_marginal_contribution(studies_out)))
+
+    # Issue #976 (Katalog B, P2) — Detektion überproportional vieler unerreichbarer OOS-Fenster
+    # (zu weite Lookback-Bounds für die Datenlage).
+    all_checks.append(("global", _inv.check_window_unreachable_rate(studies_out)))
+
+    # Issue #915 — die WIRKUNGS-Invariante neben der Quellen-Invariante oben: liefert der Guard
+    # tatsächlich eine benutzbare Schwelle (definierter oos_psr), unabhängig davon, ob die
+    # konfigurierte Referenz formal verwendet wurde.
+    _selection_stat_min_fraction = float(
+        tournament_cfg.get("selection_statistic_min_available_fraction", 0.80))
+    selection_statistic_availability_check = _inv.check_selection_statistic_availability(
+        studies_out, min_available_fraction=_selection_stat_min_fraction)
+    all_checks.append(("global", selection_statistic_availability_check))
+
+    # Issue #929 Fix 3 — eigenständiges Frühwarnsignal, unabhängig von p_eligible auswertbar: eine
+    # stagnierende/wachsende Constraint-Verletzung trotz ausreichend modellierter Trials belegt,
+    # dass der TPE-Sampler keinen Gradienten gefunden hat.
+    search_made_progress_check = _inv.check_search_made_progress(studies_out)
+    all_checks.append(("global", search_made_progress_check))
+
+    # Issue #919 Fix 4 — jede Lücke zwischen dem je-Study aufsummierten Exit-Reason-Histogramm
+    # und der tatsächlichen Round-Trip-Zahl bedeutet einen Exit-Pfad ohne Order-Tag-Attribution.
+    exit_reason_coverage_check = _inv.check_exit_reason_coverage(studies_out)
+    all_checks.append(("global", exit_reason_coverage_check))
+
+    # Issue #923 Fix 4 — n_periods streut innerhalb desselben Symbols stark je Strategie; ab
+    # einem Faktor > deflation_max_n_periods_ratio-Kalibrierpunkt (Default 6.0 hier, 4.0 dort)
+    # greift die #865-Heterogenitäts-Suppression vermutlich für praktisch jede Familie.
+    n_periods_homogeneity_check = _inv.check_n_periods_homogeneity(studies_out)
+    all_checks.append(("global", n_periods_homogeneity_check))
+
+    # Issue #848 — zwoelfter Invarianten-Check: nach der Entfernung des unerreichbaren
+    # min_win_rate-OR-Arms ist mehr als EIN selection_rule_fingerprint je Symbol eine ANDERE,
+    # unbekannte Ursache (vorher WARNUNG in sweep.py [#812], jetzt FAIL).
+    selection_rule_families = _selection_rule_families(studies_out)
+    selection_rule_homogeneity_check = _inv.check_selection_rule_homogeneity(selection_rule_families)
+    all_checks.append(("global", selection_rule_homogeneity_check))
+
+    # Issue #852 — dreizehnter Invarianten-Check: eine installierte Bibliotheksversion ausserhalb
+    # ihres gepinnten Bereichs (optimizer.json['pinned_library_versions']) macht den numerischen
+    # Ausgang der Selektion von der Installationsumgebung statt der Konfiguration abhaengig
+    # (dieselbe Fehlerklasse wie #801/#802 bei pandas).
+    library_version_drift_check = _inv.check_library_version_drift(
+        library_versions(), optimizer_cfg.get("pinned_library_versions") or {})
+    all_checks.append(("global", library_version_drift_check))
+
+    # Issue #907 Fix 3 — symmetrischer Meta-Wächter: eine in fail_fast_invariants gelistete
+    # Invariante, die in diesem Lauf kein einziges Ergebnis (PASS oder FAIL) meldet, ist nicht
+    # verdrahtet. Muss NACH allen anderen Checks stehen (braucht ihre Namen), bevor invariant_checks
+    # gebaut wird.
+    _already_evaluated_names = [c.name for _label, c in all_checks]
+    fail_fast_wired_check = _inv.check_fail_fast_invariants_wired(
+        _already_evaluated_names, fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
+    all_checks.append(("global", fail_fast_wired_check))
 
     invariant_checks = []
     for label, result in all_checks:
@@ -767,6 +1424,18 @@ def _build_report(
         "run_status": run_status,
         "symbols_completed": symbols_completed,
         "symbols_planned": symbols_planned,
+        # Issue #942 (Katalog A) — Funnel-Transparenz: symbols_discovered (rohes Symbol-Universum
+        # dieses Laufs) vs. symbols_gate1_rejected (Gate 1 INSUFFICIENT_HISTORY/PARAM_DATA_RATIO_
+        # TOO_LOW/OOS_FOLD_TOO_SHORT) vs. symbols_planned (nach Gate-1-Filterung, bereits vorhanden).
+        # Vorher war nur symbols_planned sichtbar — ein Operator konnte die erreichbare Coverage
+        # (symbols_planned/symbols_discovered) nicht vom Report ablesen.
+        "symbols_discovered": symbols_discovered,
+        "symbols_gate1_rejected": symbols_gate1_rejected,
+        # Issue #849 — im Report EINGEBETTET (statt eines zweiten config_dir()-Lesezugriffs in
+        # summary_de.py, das bewusst reines Rueckgabedict-only bleibt, siehe Moduldocstring dort):
+        # Sektion 5.2 zeigt hoechstens so viele Beispiel-Details je Check, bevor sie auf "... und N
+        # weitere" kollabiert (Akzeptanzkriterium #849-5, Bericht bleibt bei >= 500 FAILs kompakt).
+        "summary_max_details_per_check": int(optimizer_cfg.get("summary_max_details_per_check", 5)),
         "studies": studies_out,
         "cross_study": {
             "n_family": _family_n_from_proposals(proposals),
@@ -795,10 +1464,13 @@ def _build_report(
             # Issue #812 — je Symbol nach selection_rule_fingerprint gruppierte n_family: macht eine
             # innerhalb eines Symbols heterogene Selektionsregel (verschiedene #668-Policy-Ausgaenge
             # ueber die Studies hinweg) sichtbar, statt sie in EINER Zahl zu verstecken.
-            "selection_rule_families": _selection_rule_families(studies_out),
+            "selection_rule_families": selection_rule_families,
             # Issue #818 — stored/admissible/corroborated/written_back/skipped_by_reason über den
             # aktuellen Champion-Store-Stand (Epic #702 Ebene 1+2 Reachability-Telemetrie).
             "champions": champions_summary,
+            # Issue #841 — {never_covered, stale_symbols, oldest_coverage_age_runs,
+            # total_runs_started} über das aktuelle Universum (symbol_coverage.json-Ledger).
+            "symbol_coverage": symbol_coverage_summary,
             # Issue #826 Fix Punkt 2 (Akzeptanzkriterium 2) — n_family_stage1 (je Symbol/Strategie,
             # die tatsächlich verwendete Per-Strategie-Multiplizität N1) UND n_family_stage2 (je
             # Symbol, Zahl der Strategien mit N1 > 0) GETRENNT ausgewiesen — NICHT zu verwechseln mit
@@ -809,6 +1481,18 @@ def _build_report(
             # summary_de.py Abschnitt 4 "Trades mit der laengsten Haltedauer".
             "longest_holding_studies": _longest_holding_studies(
                 studies_out, top_k=int(optimizer_cfg.get("report_longest_trades_k", 10))),
+            # Issue #850 — {symbol_share, strategy_share, n_rows} über holdout_excess_return;
+            # None bei < 2 Symbolen mit Benchmark-Daten (siehe Docstring).
+            "excess_variance_decomposition": _excess_variance_decomposition(studies_out),
+            # Issue #851 — Study-Zeitstempel-abgeleitete Kennzahlen (summary_de.py Abschnitt
+            # 3.2/3.4); dieselben Felder speisen das #843-LPT-Scheduling (Katalog B).
+            "wallclock_by_strategy": _wallclock_by_strategy(studies_out),
+            "symbol_barrier_wait_s": _symbol_barrier_wait(studies_out),
+            "worker_utilisation": _worker_utilisation(
+                studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s),
+            # Issue #853 — {seed_source_value: n_studies}, dieselbe Verteilung, die
+            # check_champion_seed_coverage prüft.
+            "seed_source_distribution": seed_source_distribution,
         },
         "invariant_checks": invariant_checks,
     }
@@ -826,6 +1510,8 @@ def generate_sweep_report(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
 
@@ -837,17 +1523,15 @@ def generate_sweep_report(
     Issue #833 Fix Punkt 3 — ``run_status``/``symbols_completed``/``symbols_planned`` werden NUR
     durchgereicht (siehe ``_build_report``); Default ``run_status='complete'`` ⇒ bit-identisch für
     jeden Aufrufer, der einen abgeschlossenen Lauf reportet (der bisherige Normalfall)."""
-    parsed = []
-    for p in proposals:
-        payload = p if isinstance(p, dict) else _load_json(Path(p))
-        if isinstance(payload, dict) and payload.get("symbol"):
-            parsed.append(payload)
+    parsed = parse_proposal_payloads(proposals)
 
     report = _build_report(
         parsed, run_id=run_id, started_at_utc=started_at_utc,
         wallclock_s=wallclock_s, cli_args=cli_args,
         run_status=run_status, symbols_completed=symbols_completed,
         symbols_planned=symbols_planned,
+        symbols_discovered=symbols_discovered,
+        symbols_gate1_rejected=symbols_gate1_rejected,
     )
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
@@ -866,6 +1550,8 @@ def generate_report_for_run(
     run_status: str = "complete",
     symbols_completed: int | None = None,
     symbols_planned: int | None = None,
+    symbols_discovered: int | None = None,
+    symbols_gate1_rejected: int | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
 
@@ -891,6 +1577,8 @@ def generate_report_for_run(
         wallclock_s=wallclock_s, cli_args=cli_args, reports_dir=reports_dir,
         run_status=run_status, symbols_completed=symbols_completed,
         symbols_planned=symbols_planned,
+        symbols_discovered=symbols_discovered,
+        symbols_gate1_rejected=symbols_gate1_rejected,
     )
 
 
