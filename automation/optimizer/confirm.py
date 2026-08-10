@@ -1364,6 +1364,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 f"kein Ersatzpfad über promotion_correction_mode='dsr_or_robust_pair')."
             )
 
+    # Issue #993 — ``ci_lo`` vorab initialisiert (statt nur im bedingten Bootstrap-CI-Block), damit
+    # der untere CI-Wert unabhaengig vom Gate-Ausgang persistierbar ist (deployment_gate.py braucht
+    # den Rohwert, nicht nur den daraus abgeleiteten Pass/Fail-Effekt auf ``holdout_passed``).
+    ci_lo = None
+
     # Issue #618/#636 — DSR-BERECHNUNG von der Pass-Kette ENTKOPPELT: vorher lief dieser Block nur
     # ``if holdout_passed and ...`` — aber JEDE Strategie scheiterte an einem FRÜHEREN Holdout-Gate
     # (Excess-Return via #629, negativer Holdout-Sortino), sodass ``holdout_passed`` bereits False
