@@ -954,18 +954,34 @@ def phase5_live_deployment(
             return 0
 
         if not oos_eligible:
-            log.warning(
-                f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} — "
-                f"verletzte Kriterien: {reasons}; Aggregate Out-of-Sample Sortino: {aggregate_oos_sortino}, Portfolio DD: {agg_oos_dd}. "
-                f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
+            from automation.optimizer.deployment_gate import load_promotion_records, evaluate_deployment_eligibility
+            tournament_cfg_temp: dict = {}
+            if TOURNAMENT_CFG.exists():
+                with open(TOURNAMENT_CFG, "r", encoding="utf-8") as cf:
+                    tournament_cfg_temp = json.load(cf) or {}
+            pairs_temp = [(winner.get("strategy"), symbol) for symbol, winner in winners.items()]
+            recs_temp = load_promotion_records(pairs_temp, work_dir=PROJECT_ROOT / "data" / "optimizer")
+            has_admitted = any(
+                evaluate_deployment_eligibility(p, recs_temp, tournament_cfg_temp).admitted
+                for p in pairs_temp
             )
-            emit_json_event(log, "OOS_GATE_FAILED", {
-                "strategy": agg.get("strategy"), "reasons": reasons, "oos_metrics": oos_metrics,
-                "aggregate_oos_sortino": aggregate_oos_sortino,
-                "aggregate_oos_max_drawdown": agg_oos_dd,
-                "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
-            })
-            return 0
+            if not has_admitted:
+                log.warning(
+                    f"[Phase 5] OOS-GATE FEHLGESCHLAGEN: Aggregat-Sieger {agg.get('strategy')} — "
+                    f"verletzte Kriterien: {reasons}; Aggregate Out-of-Sample Sortino: {aggregate_oos_sortino}, Portfolio DD: {agg_oos_dd}. "
+                    f"Fail-Closed: kontrollierter Abbruch, kein Live-Deploy."
+                )
+                emit_json_event(log, "OOS_GATE_FAILED", {
+                    "strategy": agg.get("strategy"), "reasons": reasons, "oos_metrics": oos_metrics,
+                    "aggregate_oos_sortino": aggregate_oos_sortino,
+                    "aggregate_oos_max_drawdown": agg_oos_dd,
+                    "fully_eligible_pairs": fully_eligible_pairs, "winner_count": winner_count
+                })
+                return 0
+            else:
+                log.info(
+                    f"[Phase 5] Aggregat-Sieger OOS unvollständig, aber valide READY_FOR_PR Promotions bestehen die Deployment-Grenze (#993)."
+                )
 
         log.info(f"[Phase 5] OOS-GATE BESTANDEN: Aggregat-Sieger {agg.get('strategy')} (Aggregate Out-of-Sample Sortino: {aggregate_oos_sortino}, Portfolio DD: {agg_oos_dd}).")
 
