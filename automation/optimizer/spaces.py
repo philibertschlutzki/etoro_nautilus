@@ -158,55 +158,46 @@ def sample_params(strategy: str, trial, *, symbol: str | None = None) -> dict:
             "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
         }
     elif strategy == "FlashCrashReversalStrategy":
-        # Issue #446 — `vol_surge_multiplier` ENTFERNT (Phantom-Tuning): kein Volumen-Pfad in der
-        # Strategie und 1h-Bars haben `volume=1.0`. Stattdessen die ECHTEN Entry-Felder
-        # `bb_period`/`bb_std_dev` (die BB-Crash-Schwelle) tunbar machen — dadurch beeinflusst das
-        # Sampling die Round-Trip-Zahl nachweislich. `rsi_overbought` bleibt bewusst fix (Exit-Gate).
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 6, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "bb_period": trial.suggest_int("bb_period", 10, 40),
             "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 3.0),
             "rsi_period": trial.suggest_int("rsi_period", 2, 14),
             "rsi_oversold": trial.suggest_int("rsi_oversold", 10, 30),
             "atr_period": trial.suggest_int("atr_period", 5, 20),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
-            # Issue #714 (GR-01) — Obergrenze 48 → 24.
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 6, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "VolatilityBreakoutPumpStrategy":
-        # Issue #446 — `bb_std` → `bb_std_dev` (echter Config-Feldname). `vol_window`/`vol_threshold`
-        # ENTFERNT (Phantom-Tuning): die Strategie hat keinen Volumen-Pfad, und synthetische 1h-Bars
-        # tragen konstant `volume=1.0` (hourly_strategy_base.py:174) — ein Volumen-Filter feuert nie
-        # (gleiche Architekturentscheidung wie dynamic_breakout/vwap_exhaustion). Getunt werden nur
-        # die echten BB-Entry-Felder + Trade-Management.
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "bb_period": trial.suggest_int("bb_period", 10, 40),
             "bb_std_dev": trial.suggest_float("bb_std_dev", 1.5, 3.0),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 1.0, 4.0),
-            # Issue #714 (GR-01) — Obergrenze 72 → 24.
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "VwapExhaustionStrategy":
-        # Issue #446 — `vwap_window` → `vwap_period` (echter Config-Feldname). `rsi_period`/
-        # `rsi_extreme` ENTFERNT (Phantom-Tuning): VwapExhaustion ist bewusst „Price-Deviation only"
-        # und besitzt KEINEN RSI-Indikator (siehe Modul-Docstring). Getunt werden nur die echten
-        # Felder.
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 6, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "vwap_period": trial.suggest_int("vwap_period", 10, 50),
             "deviation_threshold": trial.suggest_float("deviation_threshold", 0.005, 0.03),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
-            # Issue #714 (GR-01) — Obergrenze 48 → 24.
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 6, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "DynamicBreakoutStrategy":
+        cd_lo, cd_hi = _bounds_for(strategy, symbol, "cooldown_bars", 2, 36)
+        mb_lo, mb_hi = _bounds_for(strategy, symbol, "max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP)
         params = {
             "price_breakout_period": trial.suggest_int("price_breakout_period", 5, 60),
-            "cooldown_bars": trial.suggest_int("cooldown_bars", 2, 36),
+            "cooldown_bars": trial.suggest_int("cooldown_bars", cd_lo, cd_hi),
             "atr_trailing_multiplier": trial.suggest_float("atr_trailing_multiplier", 0.5, 3.0),
-            # Issue #714 (GR-01) — Obergrenze 96 → 24.
-            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", 12, _MAX_BARS_IN_TRADE_CAP),
+            "max_bars_in_trade": trial.suggest_int("max_bars_in_trade", mb_lo, mb_hi),
         }
     elif strategy == "TrendPullbackStrategy":
         # Issue #669 — TrendPullback erzeugte auf TSLA-1h STRUCTURAL_ALL_UNEVALUABLE (0/16 Trials

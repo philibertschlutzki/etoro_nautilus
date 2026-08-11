@@ -183,15 +183,13 @@ def parse_tournament(path: Path) -> TournamentMetrics:
 
     fully_eligible_pairs = data.get("fully_eligible_pairs") or 0
     agg = data.get("aggregate_winner") or {}
+    psw = data.get("per_symbol_winners") or {}
 
-    # Issue #405 — Per-Symbol-Evaluierbarkeit vom Gewinner-Status entkoppeln (Pitfall #75,
-    # Defekt 1). Im Single-Symbol-Sweep bleibt `aggregate_winner` null, solange das Symbol das
-    # volle Tournament-Gate (IS-eligible ∧ OOS-eligible) fuer KEINE Parametrisierung klaert —
-    # die Per-Symbol-OOS-Resultate existieren aber. Fehlt der Aggregat-Gewinner, der
-    # `single_symbol_oos`-Block (von write_tournament_json geschrieben) aber vorhanden, leite die
-    # OOS-Metriken daraus ab. Rein additiv: bei vorhandenem aggregate_winner (Praezedenz) oder in
-    # Multi-Symbol-Laeufen (kein Block) ist dieser Pfad inaktiv ⇒ bit-identisch.
-    if not agg and data.get("single_symbol_oos"):
+    if isinstance(psw, dict) and len(psw) == 1:
+        single_win = list(psw.values())[0]
+        if single_win.get("oos_eligible") or not agg.get("oos_eligible"):
+            agg = single_win
+    elif not agg and data.get("single_symbol_oos"):
         agg = data["single_symbol_oos"]
 
     oos_evaluated = agg.get("oos_evaluated") or False
@@ -237,8 +235,14 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # denselben kanonischen, gepoolten Sortino (kein divergierender Gradient an der Gate-Grenze; kein
     # Median, der einen katastrophalen Fold maskiert). Siehe AGENTS.md Pitfall #110/#113.
     oos_sortino = oos_metrics.get("sortino_ratio")
+    if oos_sortino is None:
+        oos_sortino = oos_metrics.get("sortino_ratio_pooled")
+    if oos_sortino is None and isinstance(agg.get("metrics"), dict):
+        oos_sortino = agg["metrics"].get("sortino_ratio")
     # Issue #614 / #630 — PSR + psr_z + per-Perioden-/annualisierter Sortino + T + Momente (None-safe).
     oos_psr = oos_metrics.get("psr")
+    if oos_psr is None and isinstance(agg.get("metrics"), dict):
+        oos_psr = agg["metrics"].get("psr")
     oos_psr_z = oos_metrics.get("psr_z")
     oos_sortino_period = oos_metrics.get("sortino_period")
     oos_sortino_annualized = oos_metrics.get("sortino_annualized")

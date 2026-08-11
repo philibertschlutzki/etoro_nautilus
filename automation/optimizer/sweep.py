@@ -3047,6 +3047,30 @@ def _report_has_failing_invariant(report_path) -> bool:
         return False
 
 
+def create_bayesian_tpe_study(study_name: str, storage: str | None = None, storage_url: str | None = None, seed: int = 42) -> "optuna.Study":
+    """Issue #796 — Create Bayesian TPE Study for EV CHF Optimization."""
+    import optuna
+    st = storage or storage_url
+    sampler = optuna.samplers.TPESampler(seed=seed, multivariate=True, group=True)
+    return optuna.create_study(study_name=study_name, storage=st, sampler=sampler, direction="maximize")
+
+
+def objective_ev_chf(trial: object) -> float:
+    """Issue #796/#980 — EV CHF continuous feasibility objective."""
+    if isinstance(trial, dict):
+        attrs = trial
+    else:
+        attrs = getattr(trial, "user_attrs", {}) or {}
+    if not attrs.get("oos_evaluated", False):
+        return -50.0
+    win_rate = float(attrs.get("oos_win_rate", 0.0))
+    avg_win = float(attrs.get("oos_avg_win_chf", 0.0))
+    avg_loss = float(attrs.get("oos_avg_loss_chf", 0.0))
+    turnover = float(attrs.get("oos_turnover_cost_chf", 0.0))
+    return (win_rate * avg_win) - ((1.0 - win_rate) * avg_loss) - turnover
+
+
+
 if __name__ == "__main__":
     main()
     if _LAST_REPORT_PATH is not None and _report_has_failing_invariant(_LAST_REPORT_PATH):
@@ -3056,3 +3080,4 @@ if __name__ == "__main__":
             _LAST_REPORT_PATH,
         )
         _sys.exit(1)
+

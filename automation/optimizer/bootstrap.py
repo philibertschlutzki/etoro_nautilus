@@ -37,6 +37,7 @@ def optimal_block_length(x: Sequence[float]) -> int:
     (klassische Bootstrap-Rate), damit auch bei schwacher Autokorrelation genug Blockstruktur bleibt.
     """
     a = np.asarray(x, dtype=float)
+    a = a[np.isfinite(a)]
     n = a.size
     if n < 3:
         return 1
@@ -44,6 +45,7 @@ def optimal_block_length(x: Sequence[float]) -> int:
     tau = (1.0 + rho) / (1.0 - rho)
     floor = max(1, round(n ** (1.0 / 3.0)))
     return int(max(floor, min(n // 2, round(tau))))
+
 
 
 def stationary_bootstrap_indices(n: int, block_length: float, rng: np.random.Generator) -> np.ndarray:

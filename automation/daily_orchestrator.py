@@ -1120,6 +1120,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--no-deploy",      action="store_true", help="Führt Phase 1–4 vollständig aus (echter Backtest), unterbindet ausschließlich Phase 5 (Live-Deploy).")
     parser.add_argument("--skip-api-fetch", action="store_true", help="API-Backfill überspringen.")
+    parser.add_argument("--skip-backtest",  action="store_true", help="Phase 3+4 Matrix-Backtesting überspringen.")
     parser.add_argument("--reset-catalog", action="store_true",
         help="Löscht data/nautilus/data/quote_tick/ vollständig vor Phase 2 (einmalig).")
     return parser
@@ -1174,7 +1175,11 @@ def main() -> int:
             log, universe_result, api_key, user_key,
             skip_api_fetch=args.skip_api_fetch,
         )
-        tournament_result = phase3_4_backtest_and_tournament(log)
+        if args.skip_backtest:
+            log.info("[Phase 3+4] --skip-backtest: Matrix-Backtesting übersprungen — lade bestehendes Tournament.")
+            tournament_result = {"tournament_path": str(TOURNAMENT_PATH), "exit_code": 0}
+        else:
+            tournament_result = phase3_4_backtest_and_tournament(log)
         exit_code         = phase5_live_deployment(
             log, universe_result, tournament_result, no_deploy=args.no_deploy
         )

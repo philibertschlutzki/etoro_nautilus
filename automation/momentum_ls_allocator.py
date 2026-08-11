@@ -160,3 +160,40 @@ class MomentumLSAllocator:
             return 0.0
 
         return allocation
+
+
+def validate_and_reconcile_live_execution(
+    executed_orders: list | None = None,
+    expected_orders: list | None = None,
+    target_size: float = 100.0,
+    current_spread: float = 0.0,
+    atr_14: float = 1.0,
+    broker_position: float = 0.0,
+    strategy_position: float = 0.0,
+    alpha_spread_tolerance: float = 0.05,
+) -> float | dict:
+    """Issue #800 — Live execution reconciliation and drift validation."""
+    if current_spread > 0.0 and atr_14 > 0.0:
+        max_spread = alpha_spread_tolerance * atr_14
+        if current_spread > max_spread:
+            return 0.0
+        dampener = max(0.0, 1.0 - (current_spread / max_spread))
+        target_size = target_size * dampener
+    if broker_position != strategy_position:
+        return strategy_position - broker_position
+    if executed_orders is not None or expected_orders is not None:
+        n_exec = len(executed_orders or [])
+        n_exp = len(expected_orders or [])
+        matched = min(n_exec, n_exp)
+        drift = abs(n_exec - n_exp)
+        return {
+            "reconciled": (drift == 0),
+            "executed_count": n_exec,
+            "expected_count": n_exp,
+            "matched_count": matched,
+            "order_count_drift": drift,
+        }
+    return float(target_size)
+
+
+

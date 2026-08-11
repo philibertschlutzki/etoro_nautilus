@@ -1,9 +1,73 @@
 {
   "_schema": {
-    "description": "Issue #706 (Epic #702, Ebene 2 — Champion-Warm-Start & Default-Nachführung) — symbol-skopierter, automatisch nachgeführter Default-Prior. AUSSCHLIESSLICH von automation.optimizer.champions.maybe_write_back geschrieben, wenn ein Champion-Store-Eintrag (data/optimizer/champions/) entweder eine echte READY_FOR_PR-Promotion ist ODER über mehrere Sweep-Läufe UND ein fortgeschrittenes Datenfenster (Snooping-Schutz) korroboriert wurde (siehe optimizer.json: champion_promote_after_runs, champion_min_advance_days). LEER per Default (Zero-Hardcoding): kein Eintrag ist ohne einen dokumentierten Korroborations-/Fensterfortschritts-Nachweis voreingestellt — eine leere 'seeds'-Map ist bit-identisch zum Pre-#706-Verhalten (Präzedenz-Kette bleibt strategy_defaults.json < strategies.json[params] < instrument_overrides < sampled).",
+    "description": "Issue #706 (Epic #702, Ebene 2 \u2014 Champion-Warm-Start & Default-Nachf\u00fchrung) \u2014 symbol-skopierter, automatisch nachgef\u00fchrter Default-Prior. AUSSCHLIESSLICH von automation.optimizer.champions.maybe_write_back geschrieben, wenn ein Champion-Store-Eintrag (data/optimizer/champions/) entweder eine echte READY_FOR_PR-Promotion ist ODER \u00fcber mehrere Sweep-L\u00e4ufe UND ein fortgeschrittenes Datenfenster (Snooping-Schutz) korroboriert wurde (siehe optimizer.json: champion_promote_after_runs, champion_min_advance_days). LEER per Default (Zero-Hardcoding): kein Eintrag ist ohne einen dokumentierten Korroborations-/Fensterfortschritts-Nachweis voreingestellt \u2014 eine leere 'seeds'-Map ist bit-identisch zum Pre-#706-Verhalten (Pr\u00e4zedenz-Kette bleibt strategy_defaults.json < strategies.json[params] < instrument_overrides < sampled).",
     "fields": {
-      "seeds": "{strategy: {symbol: {param: value}}}. Wird von optimizer/resolve.py::resolve_params(..., instrument=symbol) konsumiert — Präzedenz: strategy_defaults.json < seeds[strategy][instrument] < strategies.json[params] < instrument_overrides[instrument] < sampled. NIE der globale Cross-Symbol-Default (strategy_defaults.json): ein symbol-getunter Vektor kann global toxisch sein (R_symbol positiv ↔ R_global negativ ist ein empirisch belegter, kein hypothetischer Fall, siehe GitHub-Issue #705 §2), Symbol-Seeds bleiben daher strikt symbol-skopiert. HI-3 bleibt gewahrt: diese Datei ist ein Seed/Prior für den Suchraum-Resolver, KEIN Live-Deployment — strategies.json ändert weiterhin ausschliesslich ein menschlich freigegebener PR. Ein Demotion-Ereignis (Regime-Degradation, #708) entfernt den zugehörigen Eintrag wieder automatisch."
+      "seeds": "{strategy: {symbol: {param: value}}}. Wird von optimizer/resolve.py::resolve_params(..., instrument=symbol) konsumiert \u2014 Pr\u00e4zedenz: strategy_defaults.json < seeds[strategy][instrument] < strategies.json[params] < instrument_overrides[instrument] < sampled. NIE der globale Cross-Symbol-Default (strategy_defaults.json): ein symbol-getunter Vektor kann global toxisch sein (R_symbol positiv \u2194 R_global negativ ist ein empirisch belegter, kein hypothetischer Fall, siehe GitHub-Issue #705 \u00a72), Symbol-Seeds bleiben daher strikt symbol-skopiert. HI-3 bleibt gewahrt: diese Datei ist ein Seed/Prior f\u00fcr den Suchraum-Resolver, KEIN Live-Deployment \u2014 strategies.json \u00e4ndert weiterhin ausschliesslich ein menschlich freigegebener PR. Ein Demotion-Ereignis (Regime-Degradation, #708) entfernt den zugeh\u00f6rigen Eintrag wieder automatisch."
     }
   },
-  "seeds": {}
+  "seeds": {
+    "ComboTrendVwapStrategy": {
+      "TSLA.ETORO": {
+        "macd_signal_period": 12,
+        "macd_fast": 11,
+        "macd_slow": 32,
+        "sma_period": 50,
+        "bb_period": 36,
+        "bb_std_dev": 1.1444078311492731,
+        "atr_period": 16,
+        "atr_multiplier": 1.4960153092348865,
+        "vwap_period": 14,
+        "trend_tolerance_pct": 0.06853444467435431,
+        "bb_touch_window": 62,
+        "require_vwap_confirmation": false,
+        "require_bb_touch": true,
+        "cooldown_bars": 36,
+        "atr_trailing_multiplier": 1.356292110999369,
+        "max_bars_in_trade": 17,
+        "dyn_tp_enabled": true,
+        "dyn_tp_lambda": 0.6078198572135123,
+        "dyn_tp_gamma": 1.1427166637698436
+      }
+    },
+    "FlashCrashReversalStrategy": {
+      "TSLA.ETORO": {
+        "bb_period": 26,
+        "bb_std_dev": 2.93923791296597,
+        "rsi_period": 9,
+        "rsi_oversold": 29,
+        "atr_period": 15,
+        "cooldown_bars": 7,
+        "atr_trailing_multiplier": 2.903874570367733,
+        "max_bars_in_trade": 12,
+        "dyn_tp_enabled": true,
+        "dyn_tp_lambda": 2.825545642492335,
+        "dyn_tp_gamma": 2.7548340241546487
+      }
+    },
+    "VwapExhaustionStrategy": {
+      "TSLA.ETORO": {
+        "vwap_period": 10,
+        "deviation_threshold": 0.012386192023038171,
+        "cooldown_bars": 6,
+        "atr_trailing_multiplier": 1.4933216723431884,
+        "max_bars_in_trade": 14,
+        "dyn_tp_enabled": true,
+        "dyn_tp_lambda": 0.9148807921482988,
+        "dyn_tp_gamma": 1.5868324093320574
+      }
+    },
+    "MeanReversionStrategy": {
+      "TSLA.ETORO": {
+        "keltner_period": 24,
+        "keltner_atr_period": 35,
+        "keltner_multiplier": 2.350920775540494,
+        "cooldown_bars": 8,
+        "atr_trailing_multiplier": 0.8440045308307595,
+        "max_bars_in_trade": 18,
+        "dyn_tp_enabled": true,
+        "dyn_tp_lambda": 0.10076700232185404,
+        "dyn_tp_gamma": 2.0827110051038344
+      }
+    }
+  }
 }

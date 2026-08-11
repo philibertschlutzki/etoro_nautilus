@@ -16,6 +16,90 @@ _ND = NormalDist()
 _EULER_MASCHERONI = 0.5772156649015329
 
 
+def calculate_downside_shrunk_psr(
+    sr_hat: float,
+    sr_star: float = 0.0,
+    n_trades: int = 0,
+    raw_skew: float = 0.0,
+    raw_kurt: float = 3.0,
+    min_trades: int = 5,
+    k_shrinkage: float = 20.0,
+) -> float:
+    """Issue #977 (#801) — Downside-Shrunk PSR estimation with James-Stein shrinkage."""
+    if n_trades < min_trades:
+        return 0.0
+    if n_trades < 30:
+        weight = float(n_trades) / 30.0
+        eff_skew = float(raw_skew) * weight
+        eff_kurt = 3.0 + (float(raw_kurt) - 3.0) * weight
+    else:
+        eff_skew = float(raw_skew)
+        eff_kurt = float(raw_kurt)
+
+    shrinkage = float(n_trades) / (float(n_trades) + float(k_shrinkage))
+    sr_shrunk = float(sr_star) + shrinkage * (float(sr_hat) - float(sr_star))
+
+    denom_var = 1.0 - eff_skew * sr_shrunk + ((eff_kurt - 1.0) / 4.0) * (sr_shrunk * sr_shrunk)
+    if denom_var <= 0.0:
+        return 0.0
+
+    z = (sr_shrunk - float(sr_star)) * math.sqrt(float(max(1, n_trades - 1))) / math.sqrt(denom_var)
+    return float(_ND.cdf(z))
+
+
+def calculate_risk_adjusted_expectancy(
+    mean_return: float,
+    downside_std: float,
+    volatility_floor: float = 0.0002,
+    n_trades: int = 30,
+    target_trades: int = 30,
+) -> float:
+    """Issue #978 (#802) — Risk-Adjusted Expectancy (RAE)."""
+    effective_vol = max(float(volatility_floor), float(downside_std))
+    trade_scale = math.sqrt(min(1.0, float(n_trades) / float(max(1, target_trades))))
+    return (float(mean_return) * trade_scale) / effective_vol
+
+
+def calculate_effective_horizon_n_periods(total_oos_hours: float, median_holding_hours: float) -> float:
+    """Issue #981 (#805) — Effective Horizon-Normalized N_effective Standard."""
+    return float(total_oos_hours) / max(1.0, float(median_holding_hours))
+
+
+def normalize_annualization_factor(n_trades: int = 0, time_span_years: float = 1.0, periods_per_year: float = 1638.0) -> float:
+    """Issue #798 — Standardized fixed annualization factor with bounds."""
+    if n_trades <= 0:
+        return 1.0
+    if time_span_years > 0:
+        f = float(n_trades) / float(time_span_years)
+        f_bounded = max(1.0, min(252.0, f))
+        return math.sqrt(f_bounded)
+    return math.sqrt(float(periods_per_year))
+
+
+
+
+
+
+
+
+def psr_adjusted(z: float | None, lmbda: float = 0.05) -> float | None:
+    """Issue #793 — λ-regularized un-bounded PSR z-score transformation."""
+    if z is None:
+        return None
+    try:
+        val = float(z)
+        if math.isnan(val):
+            return None
+        if val == 0.0:
+            return 0.0
+        return val / math.sqrt(1.0 + float(lmbda) * (val * val))
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+
+
+
 def psr_z(sr, n_periods, *, skew: float = 0.0, kurtosis: float = 3.0,
           sr_star: float = 0.0) -> float | None:
     """Issue #630/#757 — z-Score der Probabilistic SHARPE Ratio (die unbeschränkte Effektstärke).
@@ -112,7 +196,13 @@ def bootstrap_psr_z(period_returns, *, sr_star: float = 0.0, n_boot: int = 200,
         return None, None
     point = sortino_statistic(a, mar=mar, annualization=1.0)
     if point != point or not math.isfinite(point):  # NaN/inf
-        return None, None
+        std_val = float(a.std(ddof=1)) if n > 1 else 0.0
+        if std_val <= 1e-12:
+            std_val = 1e-4
+        se = std_val / math.sqrt(n)
+        mean_val = float(a.mean())
+        z = (mean_val - float(sr_star)) / se
+        return float(z), float(se)
     bl = block_length if block_length is not None else optimal_block_length(a)
     rng = _np.random.default_rng(seed)
     stats = _np.empty(int(n_boot), dtype=float)

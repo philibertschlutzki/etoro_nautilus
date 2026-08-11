@@ -6,6 +6,7 @@ walk-forward window (IS + folds*OOS + holdout + buffer) AND a parameter-to-data
 heuristic holds. Pure, I/O-free, fully injectable — the bar count is supplied by
 the caller (the sweep adapter), never read from disk here.
 """
+import math
 
 
 class InsufficientGeometryError(Exception):
@@ -181,3 +182,36 @@ def data_reaches_holdout_window(newest_ns: int | None,
     if int(newest_ns) >= int(holdout_start_ns):
         return (True, "OK")
     return (False, "HOLDOUT_WINDOW_UNREACHABLE")
+
+
+def evaluate_continuous_feasibility_distance(gate_deltas: dict, max_penalty: float = 50.0) -> float:
+    """Issue #980 (#804) — Continuous Feasibility Distance Gradient (D_feas)."""
+    if not gate_deltas:
+        return 0.0
+    sq_sum = 0.0
+    for delta in gate_deltas.values():
+        if delta is not None and float(delta) < 0.0:
+            sq_sum += float(delta) ** 2
+    dist = math.sqrt(sq_sum)
+    return -min(float(max_penalty), dist)
+
+
+def evaluate_soft_guard_penalty(
+    shortfall: float = 0.0,
+    scale: float = 1.0,
+    n_trades: int | None = None,
+    min_trades: int = 30,
+    max_penalty: float = 50.0,
+) -> float:
+    """Issue #799 — Continuous soft penalty gradient for non-eligible trials."""
+    if n_trades is not None:
+        if n_trades >= min_trades:
+            return 0.0
+        diff = float(min_trades - n_trades)
+        penalty = -float(max_penalty) * ((diff / float(min_trades)) ** 2)
+        return float(max(-max_penalty, penalty))
+    return float(max(0.0, shortfall)) * float(scale)
+
+
+
+

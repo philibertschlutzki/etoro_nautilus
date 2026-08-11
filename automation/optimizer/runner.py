@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 import os
 import optuna
+import sys
 
 class BacktestRunError(RuntimeError):
     """Subprocess-Backtest fehlgeschlagen (returncode != 0 oder kein Output)."""
@@ -130,7 +131,7 @@ def run_backtest(trial_dir: Path, manifest_path: Path, *, mode: str = "subproces
     env["PYTHONUNBUFFERED"] = "1"
 
     argv = [
-        "python", "automation/backtest_runner.py",
+        sys.executable, "automation/backtest_runner.py",
         "--momentum",
         "--catalog-path", str(catalog_path),
         "--config", str(manifest_path),
