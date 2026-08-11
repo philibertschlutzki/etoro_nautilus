@@ -430,6 +430,35 @@ def test_clamping_limits():
     assert metrics["profit_factor"] == 15.0
     assert metrics["sortino_ratio"] is None  # removed fallback logic
     assert metrics["calmar_ratio"] is None  # calmar is also computed strictly from MtM now
+    # Issue #1004 (Katalog #858, Pitfall #342) — der Cap band (roher Quotient ~499.99998 >> 15.0);
+    # das Zensur-Flag MUSS das anzeigen, statt den gecappten Wert als Messwert auszugeben.
+    assert metrics["profit_factor_censored"] is True
+    assert metrics["profit_factor_raw"] is not None and metrics["profit_factor_raw"] > 15.0
+
+
+def test_profit_factor_not_censored_when_below_cap():
+    """Issue #1004 — der Regelfall (roher Quotient <= cap) bleibt unzensiert: keine Fehldarstellung
+    fuer die Mehrheit der Trials, die den Cap nie erreichen."""
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [-5.0, -5.0] + [1.0] * 30
+    hold_list = [(1000, 1.0)] * 32
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
+    assert metrics["profit_factor"] == pytest.approx(3.0)
+    assert metrics["profit_factor_censored"] is False
+    assert metrics["profit_factor_raw"] == pytest.approx(3.0)
+
+
+def test_profit_factor_denominator_degenerate_diagnostic():
+    """Issue #1004 Fix Punkt 3 — ein positiver, aber numerisch nicht von Null unterscheidbarer
+    gross_loss (< DENOMINATOR_FLOOR) erzeugt PROFIT_FACTOR_DENOMINATOR_DEGENERATE statt eines
+    still geglaetteten Quotienten, und ist zensiert (der wahre PF ist unbeschraenkt)."""
+    from automation.backtest_runner import _calculate_stats
+    pnl_list = [10.0] * 49 + [-1e-9]
+    hold_list = [(1000, 1.0)] * 50
+    metrics = _calculate_stats(pnl_list, hold_list, 1000.0)
+    assert metrics["profit_factor_censored"] is True
+    codes = {d.get("code") for d in (metrics.get("inference_diagnostics") or [])}
+    assert "PROFIT_FACTOR_DENOMINATOR_DEGENERATE" in codes
 
 def test_select_winners_sibling_key_access():
     """

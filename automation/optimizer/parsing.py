@@ -37,6 +37,11 @@ class TournamentMetrics:
     # Trials). float | None = None laesst „nicht messbar" von „gemessen null" unterscheidbar.
     oos_win_rate: float | None = None
     oos_profit_factor: float | None = None
+    # Issue #1004 (Katalog #858) — ``oos_profit_factor`` bleibt weiterhin gecappt (Zero-Regression
+    # auf Gate/Reward); diese beiden Felder machen die Zensur explizit sichtbar statt sie stumm zu
+    # verlieren (Pitfall #342). Defaults sind rueckwaertskompatibel (Legacy-JSONs ohne die Keys).
+    oos_profit_factor_censored: bool = False
+    oos_profit_factor_raw: float | None = None
     # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
     # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
     is_best_total_return: float = 0.0
@@ -294,6 +299,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.
     oos_win_rate = oos_metrics.get("win_rate")
     oos_profit_factor = oos_metrics.get("profit_factor")
+    # Issue #1004 — Zensur-Telemetrie neben dem (weiterhin gecappten) Punktschätzer.
+    oos_profit_factor_censored = bool(oos_metrics.get("profit_factor_censored") or False)
+    oos_profit_factor_raw = oos_metrics.get("profit_factor_raw")
 
     is_total_trades = 0
     hit_trade_cap = False
@@ -364,6 +372,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else None,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,
+        oos_profit_factor_censored=oos_profit_factor_censored,
+        oos_profit_factor_raw=(
+            float(oos_profit_factor_raw) if oos_profit_factor_raw is not None else None),
         is_best_total_return=float(is_best_total_return),
         is_best_win_rate=float(is_best_win_rate),
         data_window_start=str(dw_start) if dw_start is not None else None,

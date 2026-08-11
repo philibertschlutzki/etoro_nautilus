@@ -150,9 +150,12 @@ def test_conjunction_mode_dsr_drop_still_blocks_promotion(tmp_path, monkeypatch,
     assert res["is_rejection_detail_override"] == "REJECT_HOLDOUT_DSR_DROP"
 
 
-def test_dsr_or_robust_pair_mode_reinstates_when_pbo_and_ci_are_safe(tmp_path, monkeypatch, caplog):
-    """Im Opt-in-Modus 'dsr_or_robust_pair' reinstated ein DSR-Miss die Promotion, wenn PBO sicher
-    ist UND (Bootstrap-CI deaktiviert ODER besteht) — die unabhängige Bestätigung genügt."""
+def test_dsr_or_robust_pair_mode_does_not_reinstate_when_pbo_unavailable(tmp_path, monkeypatch, caplog):
+    """Issue #1005 (Katalog #858, Pitfall #343) — REGRESSIONSTEST für den fail-open-Bug: VORHER
+    liess ein NICHT SCHÄTZBARES PBO (``study_pbo is None``, hier: < pbo_min_configs Studies) den
+    Ersatzpfad reinstaten (``not pbo_overfit`` war fälschlich True für 'unbekannt' UND für 'PBO≤0.5').
+    JETZT ist eine nicht schätzbare PBO KEINE bestandene Prüfung — ohne echte Evidenz bleibt die
+    Promotion abgelehnt, exakt wie Konjunktion."""
     global_params = {"price_breakout_period": 20}
     study = _build_study(tmp_path, monkeypatch, n_trials=2, cohort_periods=[0.02, 0.025],
                          tournament_extra={"promotion_correction_mode": "dsr_or_robust_pair",
@@ -169,11 +172,65 @@ def test_dsr_or_robust_pair_mode_reinstates_when_pbo_and_ci_are_safe(tmp_path, m
 
     # DSR selbst scheitert weiterhin (dieselbe Kohorte wie im Konjunktions-Test) ...
     assert res["metrics_symbol"]["deflated_dsr"] < 0.95
-    # ... aber PBO ist hier nicht auswertbar (min_trials-Guard, < 4 Studies) ⇒ pbo_overfit=False,
-    # Bootstrap-CI ist deaktiviert ⇒ ci_ok=True per Default ⇒ robust_pair_ok ⇒ REINSTATED.
+    # ... und PBO ist hier nicht auswertbar (min_trials-Guard, < 10 Configs) ⇒ study_pbo is None ⇒
+    # pbo_ok=False (fail-closed) ⇒ robust_pair_ok=False ⇒ NICHT reinstated.
+    assert res["metrics_symbol"].get("pbo") is None
+    assert res["holdout_passed"] is False
+    assert res["is_rejection_detail_override"] == "REJECT_HOLDOUT_DSR_DROP"
+    assert "promotion_correction_route" not in res["metrics_symbol"]
+
+
+def test_dsr_or_robust_pair_mode_reinstates_with_real_pbo_and_ci_evidence(tmp_path, monkeypatch, caplog):
+    """Issue #1005 Fix — mit ECHTER Evidenz (ein tatsächlich berechnetes, sicheres PBO UND eine
+    bestehende Bootstrap-CI) reinstated der Ersatzpfad weiterhin korrekt; die #1005-Korrektur macht
+    den Pfad strenger (kein Fail-Open mehr für fehlende Evidenz), nicht wirkungslos für echte.
+    ``_holdout_bootstrap_ci_passes`` wird gemockt (statt aus einer echten Return-Serie abgeleitet):
+    ein Bootstrap-DSR, das stark genug ist, um bei ~99.6%-Konfidenz (nach der Fix-Item-3-Bonferroni-
+    Korrektur) noch sicher zu bestehen, besteht bei ~95%-DSR-Konfidenz gegen dieselbe (kleine)
+    SR0-Referenz nahezu immer auch die DSR selbst — was NUR den 'dsr'-Zweig testen würde, nicht den
+    'robust_pair'-Zweig. Der Mock isoliert die robust_pair-Logik deterministisch und beweist
+    zusätzlich (via der aufgezeichneten ``confidence``), dass Fix Item 3 tatsächlich die korrigierte
+    Konfidenz an die Funktion durchreicht."""
+    global_params = {"price_breakout_period": 20}
+    study = _build_study(tmp_path, monkeypatch, n_trials=2, cohort_periods=[0.02, 0.025],
+                         tournament_extra={"promotion_correction_mode": "dsr_or_robust_pair",
+                                          "holdout_bootstrap_ci": True})
+    symbol_result = _result_payload(sortino_ratio=2.0, dd=0.05, sortino_period=0.03, n_periods=200)
+    global_result = _result_payload(sortino_ratio=0.5, dd=0.05, sortino_period=0.01, n_periods=200)
+
+    monkeypatch.setattr(confirm, "_study_pbo",
+                        lambda *a, **k: (0.30, {"pbo_n_groups": 12, "pbo_n_configs": 12,
+                                                "pbo_n_configs_raw": 12, "pbo_metric": "group_sortino"}))
+    ci_calls = []
+
+    def _fake_ci_passes(metrics, *, confidence=0.95):
+        ci_calls.append(confidence)
+        return True, 0.07
+
+    monkeypatch.setattr(confirm, "_holdout_bootstrap_ci_passes", _fake_ci_passes)
+
+    with caplog.at_level(logging.INFO, logger="optimizer"):
+        res = confirm.confirm_per_symbol_promotion(
+            study, "DynamicBreakoutStrategy", "TSLA.ETORO", global_params=global_params,
+            run_backtest=_holdout_factory(global_params, symbol_result=symbol_result,
+                                          global_result=global_result),
+        )
+
+    # DSR selbst scheitert weiterhin (dieselbe Kohorte wie im Konjunktions-Test, keine echten
+    # Perioden-Returns ⇒ sharpe_formula_fallback bleibt unveraendert) ...
+    assert res["metrics_symbol"]["deflated_dsr"] < 0.95
+    # ... aber die gemockte Bootstrap-CI besteht ⇒ zusammen mit dem sicheren PBO ⇒ REINSTATED.
     assert res["holdout_passed"] is True
     assert res["is_rejection_detail_override"] is None
-    assert any("[#659]" in r.message for r in caplog.records)
+    assert res["metrics_symbol"]["promotion_correction_route"] == "robust_pair"
+    assert res["metrics_symbol"]["promotion_correction_pbo_ok"] is True
+    assert res["metrics_symbol"]["promotion_correction_ci_lower"] == 0.07
+    # Bonferroni (Fix Item 3): alpha_effective = (1 - 0.95) / 12 ≈ 0.004167 — strenger als die
+    # ungewichtete 5%-CI, und tatsaechlich an _holdout_bootstrap_ci_passes durchgereicht.
+    expected_alpha = 0.05 / 12
+    assert res["metrics_symbol"]["promotion_correction_alpha_effective"] == pytest.approx(expected_alpha)
+    assert ci_calls and ci_calls[-1] == pytest.approx(1.0 - expected_alpha)
+    assert any("[#659/#1005]" in r.message for r in caplog.records)
 
 
 def test_holdout_gate_itself_failing_is_never_bypassed_by_or_mode(tmp_path, monkeypatch):

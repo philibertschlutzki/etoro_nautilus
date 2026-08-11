@@ -223,6 +223,15 @@ def test_large_heterogeneous_cohort_recovers_dsr_via_per_stratum(tmp_path, monke
     assert res["metrics_symbol"].get("deflation_skipped_reason") is None
     assert res["metrics_symbol"].get("deflation_stratum_n") >= 2
     _assert_coherent(res)
+    # Issue #1013 (Katalog #858, Fix Punkt 2) — ohne dieses Feld ist die 'per_stratum'-Politik nicht
+    # prüfbar; das Stratum selbst (n_periods 190/200/210) ist kommensurabel (ratio nahe 1.0).
+    stratum_ratio = res["metrics_symbol"].get("deflation_stratum_n_periods_ratio")
+    assert stratum_ratio is not None and stratum_ratio < 4.0
+    # Issue #1013 — der frueher hart-invertierte Waechter muss diese korrekte per_stratum-Erholung
+    # jetzt als PASS erkennen (vorher: garantierter False Positive genau in diesem Fall).
+    from automation.optimizer import invariants as inv
+    coherence = inv.check_family_n_periods_homogeneity(res["metrics_symbol"])
+    assert coherence.passed is True, coherence.detail
 
 
 def test_suppress_dsr_policy_nulls_before_promotion_decision(tmp_path, monkeypatch):

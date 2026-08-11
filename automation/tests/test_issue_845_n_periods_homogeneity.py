@@ -137,14 +137,108 @@ def test_ratio_above_threshold_without_dsr_signal_passes():
 
 
 def test_ratio_above_threshold_with_dsr_signal_fails():
-    """Die #845-Regression: Ratio ueberschritten, aber ein dsr-Signal ist trotzdem gesetzt --
-    die Suppression hat nicht gegriffen."""
+    """Die #845-Regression: Ratio ueberschritten, ein dsr-Signal ist gesetzt, aber (Issue #1013)
+    KEINE stratum_id/stratum_n/stratum_n_periods_ratio belegen eine kommensurable
+    'per_stratum'-Stratifizierung -- unter suppress_dsr/reject waere das ohnehin ein Reject; unter
+    dem 'per_stratum'-Default (kein Policy-Key im Fixture) ist ein DSR-Signal OHNE eine belegte
+    Stratifizierung ununterscheidbar von einer nicht gegriffenen Suppression."""
     result = inv.check_family_n_periods_homogeneity(
         {"deflation_n_periods_ratio": 45.0, "deflated_dsr": 0.3, "deflation_dsr_z": 0.9},
         max_ratio=4.0)
     assert result.passed is False
-    assert result.actual == 45.0
+    assert result.actual["deflation_n_periods_ratio"] == 45.0
+    assert result.actual["has_dsr_signal"] is True
     assert result.severity == "high"
+
+
+# ── Issue #1013 (Katalog #858): policy-bewusste Prüfung ─────────────────────────────────────────
+
+def test_per_stratum_with_valid_stratification_passes():
+    """Der Kern-Fix aus #1013: 'per_stratum' hat DSR ABSICHTLICH auf einem kommensurablen Stratum
+    neu berechnet -- das ist der dokumentierte, korrekte Zweck der Politik, kein FAIL."""
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "per_stratum",
+        "deflated_dsr": 0.3, "deflation_dsr_z": 0.9,
+        "deflation_stratum_id": 2, "deflation_stratum_n": 5,
+        "deflation_stratum_n_periods_ratio": 1.3,
+    }, max_ratio=4.0)
+    assert result.passed is True
+
+
+def test_per_stratum_with_dsr_signal_but_no_stratum_evidence_fails():
+    """DSR gesetzt, aber KEINE stratum_id/stratum_n/stratum_n_periods_ratio -- die Politik behauptet
+    'per_stratum', ohne es zu belegen (z. B. ein Bug, der stratifiziert, aber nicht stempelt)."""
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "per_stratum",
+        "deflated_dsr": 0.3, "deflation_dsr_z": 0.9,
+    }, max_ratio=4.0)
+    assert result.passed is False
+
+
+def test_per_stratum_with_incommensurable_stratum_ratio_fails():
+    """Das Stratum selbst hat >= 2 Mitglieder, ist aber SELBST noch heterogen
+    (stratum_n_periods_ratio > max_ratio) -- die Stratifizierung hat die Inkommensurabilität nicht
+    tatsaechlich aufgeloest."""
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "per_stratum",
+        "deflated_dsr": 0.3, "deflation_dsr_z": 0.9,
+        "deflation_stratum_id": 2, "deflation_stratum_n": 5,
+        "deflation_stratum_n_periods_ratio": 9.0,
+    }, max_ratio=4.0)
+    assert result.passed is False
+
+
+def test_per_stratum_small_stratum_fallback_passes():
+    """Ein Stratum mit < 2 Mitgliedern faellt in confirm.py auf suppress_dsr-Verhalten zurueck
+    (deflated_sr0=None) -- kein DSR-Signal ist dann der KORREKTE Ausgang, kein FAIL."""
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "per_stratum",
+        "deflated_dsr": None, "deflation_dsr_z": None,
+    }, max_ratio=4.0)
+    assert result.passed is True
+
+
+def test_suppress_dsr_policy_with_dsr_signal_fails():
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "suppress_dsr",
+        "deflated_dsr": 0.3, "deflation_dsr_z": 0.9,
+    }, max_ratio=4.0)
+    assert result.passed is False
+
+
+def test_suppress_dsr_policy_without_dsr_signal_passes():
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "suppress_dsr",
+        "deflated_dsr": None, "deflation_dsr_z": None,
+    }, max_ratio=4.0)
+    assert result.passed is True
+
+
+def test_reject_policy_follows_same_semantics_as_suppress_dsr():
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "reject",
+        "deflated_dsr": 0.3, "deflation_dsr_z": 0.9,
+    }, max_ratio=4.0)
+    assert result.passed is False
+
+
+def test_unknown_policy_is_defensive_fail():
+    result = inv.check_family_n_periods_homogeneity({
+        "deflation_n_periods_ratio": 45.0, "deflation_heterogeneity_policy": "typo_mode",
+        "deflated_dsr": 0.3,
+    }, max_ratio=4.0)
+    assert result.passed is False
+
+
+def test_ratio_below_threshold_ignores_policy_entirely():
+    """Homogene Kohorte (ratio <= max_ratio) -- keine Suppression erwartet, unabhaengig davon,
+    welche Politik konfiguriert ist."""
+    for policy in ("suppress_dsr", "reject", "per_stratum", "typo_mode"):
+        result = inv.check_family_n_periods_homogeneity({
+            "deflation_n_periods_ratio": 2.0, "deflation_heterogeneity_policy": policy,
+            "deflated_dsr": 0.4, "deflation_dsr_z": 1.1,
+        }, max_ratio=4.0)
+        assert result.passed is True, policy
 
 
 # ── AK-4: End-to-End ueber confirm.confirm_per_symbol_promotion ─────────────────────────────────

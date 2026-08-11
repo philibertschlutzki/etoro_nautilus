@@ -290,3 +290,45 @@ def test_invariant_result_to_dict_has_expected_keys():
     # migriert sind.
     assert set(d.keys()) == {"name", "check", "passed", "expected", "actual", "detail", "severity"}
     assert d["name"] == d["check"]
+
+
+# ─── check_censored_statistic_in_decision (#1004, Katalog #858) ───────────────────────────────
+
+def test_censored_statistic_pass_when_not_promoted():
+    result = inv.check_censored_statistic_in_decision(
+        {"status": "REJECTED_ON_HOLDOUT"}, {"oos_profit_factor_censored": True})
+    assert result.passed is True
+
+
+def test_censored_statistic_pass_when_promoted_and_clean():
+    result = inv.check_censored_statistic_in_decision(
+        {"status": "READY_FOR_PR"}, {"oos_profit_factor_censored": False})
+    assert result.passed is True
+
+
+def test_censored_statistic_pass_when_promoted_and_no_flags_present():
+    result = inv.check_censored_statistic_in_decision({"status": "READY_FOR_PR"}, {})
+    assert result.passed is True
+
+
+def test_censored_statistic_fail_when_promoted_on_censored_profit_factor():
+    result = inv.check_censored_statistic_in_decision(
+        {"status": "READY_FOR_PR"}, {"oos_profit_factor_censored": True})
+    assert result.passed is False
+    assert result.severity == "blocking"
+    assert "oos_profit_factor_censored" in result.actual["censored_fields"]
+
+
+def test_censored_statistic_fail_covers_promote_global_default_route_too():
+    result = inv.check_censored_statistic_in_decision(
+        {"status": "PROMOTE_GLOBAL_DEFAULT"}, {"oos_profit_factor_censored": True})
+    assert result.passed is False
+
+
+def test_censored_statistic_generic_over_any_censored_suffix_field():
+    """Zukunftssicher: JEDES ``*_censored``-Flag (nicht nur profit_factor) blockiert eine
+    Promotion, ohne dass diese Funktion angepasst werden muss."""
+    result = inv.check_censored_statistic_in_decision(
+        {"status": "READY_FOR_PR"}, {"some_future_statistic_censored": True})
+    assert result.passed is False
+    assert result.actual["censored_fields"] == ["some_future_statistic_censored"]

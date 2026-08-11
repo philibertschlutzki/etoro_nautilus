@@ -296,12 +296,18 @@ def _study_record(proposal: dict, study,
                   tournament_cfg: dict | None = None, *,
                   guard_dominance_threshold: float | None = None,
                   symbol_bar_quality_cache: dict | None = None,
+                  run_id: str | None = None,
                   ) -> tuple[dict[str, Any], list[_inv.InvariantResult]]:
     """Ein ``studies[]``-Eintrag + die für DIESE Study anwendbaren Invarianz-Ergebnisse (#743).
 
     ``symbol_bar_quality_cache`` (Issue #923) — vom Aufrufer EINMAL gelesenes
     ``sweep.read_symbol_bar_quality_cache(WORK)``-Ergebnis, hier nur je Symbol nachgeschlagen
     (kein I/O in dieser Funktion selbst). ``None``/kein Eintrag für ``proposal['symbol']`` ⇒
+
+    ``run_id`` (Issue #1015, Katalog #858, Fix Punkt 1) — durchgereicht an
+    ``compute_budget_execution``, damit ``budget_executed_fraction`` ausschliesslich Trials DIESES
+    Laufs zählt, statt einer ungepurgten Study mehrerer Läufe (siehe dortiger Docstring). ``None``
+    (Default, z. B. Legacy-/Test-Aufrufer) ⇒ bit-identisches Alt-Verhalten (alle Study-Trials).
     derselbe ``_contracts.BAR_SECONDS_DEFAULT``-Fallback wie vor #923."""
     trials = list(getattr(study, "trials", None) or []) if study is not None else []
     trial_attrs = [dict(getattr(t, "user_attrs", {}) or {}) for t in trials]
@@ -471,11 +477,37 @@ def _study_record(proposal: dict, study,
     # of Truth, siehe compute_budget_execution-Docstring).
     budget_execution = compute_budget_execution(
         trials, n_trials_budget=study_user_attrs.get("n_trials_budget"),
-        n_startup_trials=n_startup_for_report, study_user_attrs=study_user_attrs)
+        n_startup_trials=n_startup_for_report, study_user_attrs=study_user_attrs, run_id=run_id)
 
     holdout_metrics = (proposal.get("holdout") or {}).get("symbol") or {}
     decision_chain = _decision_chain(proposal, n_eligible=n_eligible)
+    # Issue #1006 (Katalog #858, Fix Punkt 2) — "Deploybar" (summary_de.py Abschnitt 2.1) behauptete
+    # bislang eine Eigenschaft, die deployment_gate.evaluate_deployment_eligibility NIE geprüft
+    # hatte (#993 fügte acht weitere, teils STRENGERE Klauseln hinzu, u. a. dsr UNBEDINGT — genau
+    # die Klausel, die promotion_correction_mode='dsr_or_robust_pair' im Sweep ersetzbar macht).
+    # Jeder Promotionskandidat ruft dieselbe Funktion auf, die auch Phase 5 aufruft (kein Nachbau) —
+    # nur für tatsächliche Kandidaten (Perf/IO: catalog_fingerprint() ist ein echter Datei-Hash,
+    # nicht für jede Study nötig).
+    deployment_decision = None
+    if proposal.get("status") in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT"):
+        try:
+            from automation.optimizer import deployment_gate as _deploy_gate
+            _pair = (proposal.get("strategy"), proposal.get("symbol"))
+            _deploy_record = _deploy_gate.build_promotion_record_from_proposal(
+                proposal, run_id=proposal.get("run_id"))
+            deployment_decision = _deploy_gate.evaluate_deployment_eligibility(
+                _pair, {_pair: _deploy_record}, tournament_cfg or {}).to_dict()
+        except Exception:
+            logging.getLogger("optimizer").warning(
+                "[#1006] Deployment-Bewertung für %s/%s fehlgeschlagen (non-fatal, Bericht zeigt "
+                "deployment_decision=None).", proposal.get("strategy"), proposal.get("symbol"),
+                exc_info=True,
+            )
+            deployment_decision = None
     checks = [
+        # Issue #1006 — FAILt (severity 'high'), wenn ein Kandidat READY_FOR_PR/PROMOTE_GLOBAL_
+        # DEFAULT ist, aber deployment_gate ihn ablehnt — sichtbar statt implizit.
+        _inv.check_promotion_deployment_coherence(proposal, deployment_decision),
         _inv.check_sr0_coherence(holdout_metrics),
         # Issue #845 — n_periods-Heterogenität innerhalb der DSR-Kohorte muss dieselbe Suppression
         # ausgelöst haben, die confirm.py bei ueberschrittener deflation_max_n_periods_ratio anwendet.
@@ -486,6 +518,10 @@ def _study_record(proposal: dict, study,
         # Issue #887 — der globale Default (route='global_default_on_symbol') nahm an der
         # Stufe-1-Selektion nicht teil; seine Deflation muss N=1 tragen, nicht deflation_n_family.
         _inv.check_promotion_multiplicity_route(proposal),
+        # Issue #1004 (Katalog #858, Fix Punkt 4) — keine Promotion darf auf einer zensierten/
+        # gecappten Kennzahl beruhen (z. B. profit_factor_censored durch profit_factor_cap oder
+        # einen degenerierten Bruttoverlust-Nenner).
+        _inv.check_censored_statistic_in_decision(proposal, holdout_metrics),
         # Issue #813 — deflation_cluster_coverage < 0.9 ist ein Invarianten-FAIL: die familienweite
         # Decluster-Matrix sieht dann nur einen Bruchteil der gezaehlten (oos_evaluated) Kandidaten.
         _inv.check_deflation_cluster_coverage(holdout_metrics),
@@ -611,6 +647,10 @@ def _study_record(proposal: dict, study,
         # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl.
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
+        # Issue #1015 (Katalog #858, Fix Punkt 1) — die volle Study-SQLite-Historie (alle Läufe)
+        # separat von ``n_trials_completed`` (nur dieser Lauf, sofern run_id verfügbar war); eine
+        # grosse Lücke macht eine ungepurgte Study im Report sichtbar.
+        "n_trials_total_study": budget_execution["n_trials_total_study"],
         "budget_executed_fraction": budget_execution["budget_executed_fraction"],
         # Issue #983 Fix Punkt 3 Akzeptanzkriterium — siehe run_optimization._emit_study_summary.
         "budget_degradation_factor": study_user_attrs.get("budget_degradation_factor", 1.0),
@@ -705,6 +745,10 @@ def _study_record(proposal: dict, study,
         # Issue #862 — Rohmaterial für den globalen check_guard_reference_coherence-Wächter.
         "oos_n_periods_median": oos_n_periods_median,
         "promotion_outcome": proposal.get("status"),
+        # Issue #1006 (Katalog #858) — dieselbe Deployment-Bewertung, die Phase 5 aufruft (kein
+        # Nachbau); ``None`` für Nicht-Kandidaten. summary_de.py Abschnitt 2.1 liest dies statt
+        # implizit "Deploybar" zu behaupten.
+        "deployment_decision": deployment_decision,
         # Issue #783 — Pflichtfeld bei ``promote=True``: unterscheidet eine holdout-validierte
         # Symbol-Promotion (``None``) von der ungetunten `#682`-Default-Route
         # (``'global_default_on_symbol'``) in JEDEM Artefakt — nicht nur im Proposal.
@@ -735,6 +779,10 @@ def _study_record(proposal: dict, study,
         "holdout_expectancy": holdout_metrics.get("oos_expectancy"),
         "holdout_win_rate": holdout_metrics.get("oos_win_rate"),
         "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
+        # Issue #1004 (Katalog #858) — Zensur-Telemetrie fuer summary_de.py Abschnitt 2.1 (kein
+        # zweiter Datenzugriff, dieselbe holdout_metrics-Quelle wie holdout_profit_factor selbst).
+        "holdout_profit_factor_censored": holdout_metrics.get("oos_profit_factor_censored") or False,
+        "holdout_profit_factor_raw": holdout_metrics.get("oos_profit_factor_raw"),
         "holdout_buyhold_return": holdout_metrics.get("oos_buyhold_return"),
         "holdout_excess_return": holdout_metrics.get("oos_excess_return"),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position (siehe
@@ -1233,7 +1281,7 @@ def _build_report(
             proposal, study, tournament_cfg,
             guard_dominance_threshold=float(
                 optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)),
-            symbol_bar_quality_cache=_symbol_bar_quality_cache)
+            symbol_bar_quality_cache=_symbol_bar_quality_cache, run_id=run_id)
         studies_out.append(record)
         study_label = f"{record['strategy']}/{record['symbol']}"
         all_checks.extend((study_label, c) for c in checks)

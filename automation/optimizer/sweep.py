@@ -1955,8 +1955,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # Issue #531 — die REAL vorhandene Bar-Spanne (Tage) an build_trial durchreichen, damit
             # die Manifest-Konstruktion gegen die tatsächliche Datenlage prüft.
             span_days = available_bars.get(symbol, 0) / 24.0
+            # Issue #1015 (Katalog #858, Fix Punkt 1) — derselbe run_id, der bereits den #799-
+            # Checkpoint treibt, wird jetzt an jeden neu erzeugten Trial gestempelt
+            # (make_symbol_objective), damit compute_budget_execution eine ungepurgte Study (mit
+            # Trials VORANGEGANGENER Läufe) nicht mehr in die Budget-Ausführung dieses Laufs mischt.
             return optimize_symbol(strategy, symbol, catalog_newest_ns=newest_ns,
-                                   catalog_span_days=span_days)
+                                   catalog_span_days=span_days, run_id=run_id)
         except Exception as e:
             logging.getLogger("optimizer").error(
                 "[#799] STUDY_FAILED: %s/%s (%s): %s", strategy, symbol, type(e).__name__, e,
@@ -2102,6 +2106,24 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Sweep abzubrechen. Erst Streuung über >= diese Anzahl Symbole ist eine Aussage über die
     # BASISKLASSE (HourlyStrategyBase etc.), nicht mehr über ein einzelnes Symbol/dessen Datenlage.
     _fail_fast_min_offending_symbols = int(opt_data.get("fail_fast_min_offending_symbols", 2))
+    # Issue #1016 (Katalog #858, Pitfall #349) — beide obigen Schwellen wurden gegen Vollläufe über
+    # 143 Symbole kalibriert (#877): ein Ein-Symbol-Lauf kann ``len(completed_symbols) >= 2``
+    # (``_fail_fast_min_symbols``-Default) NIE erreichen — das deaktiviert die Fail-Fast-Probe
+    # GENAU in dem Modus, in dem ein einzelnes Paar für den Kapitaleinsatz feingetunt wird ("Schutz
+    # aus", nicht "Schutz mild"). ``_fail_fast_min_offending_symbols`` wäre danach ohnehin
+    # unerreichbar (nie mehr als 1 Symbol vorhanden). Fix: bei genau einem geplanten Symbol läuft
+    # die Probe bereits nach dessen erstem abgeschlossenen Symbol, und die Symbol-Streuungs-Schwelle
+    # wird durch eine STUDY-Quote ersetzt (unten, an der ``_systemic``-Berechnung) — eine Schwelle,
+    # die für den Vollauf kalibriert wurde, braucht für den Ein-Entitäten-Fall eine eigene
+    # Formulierung (Pitfall #349), nicht denselben Wert unter einem strukturell unerreichbaren Namen.
+    _n_symbols_planned = len(pairs_by_symbol)
+    _total_studies_single_symbol = 0
+    if _n_symbols_planned == 1:
+        _fail_fast_min_symbols = 1
+        _total_studies_single_symbol = len(next(iter(pairs_by_symbol.values()), []))
+    _fail_fast_min_offending_studies = int(opt_data.get("fail_fast_min_offending_studies", 3))
+    _fail_fast_min_offending_studies_frac = float(
+        opt_data.get("fail_fast_min_offending_studies_frac", 0.25))
     # Issue #975 (Katalog B, Pitfall — Fail-Fast als Abbruch statt Quarantäne) — VORHER war die
     # Konsequenz einer Streuung >= ``_fail_fast_min_offending_symbols`` IMMER ein globaler Abbruch
     # (``break`` unten, ``run_status=aborted_invariant``), selbst wenn nur 2 von 143 geplanten
@@ -2502,19 +2524,36 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # ``fail_fast_policy=='abort'`` reproduziert das alte, bit-identische Abbruchverhalten.
                 _offending_pairs, _offending_symbols = _offending_pairs_for_fail_fast_check(
                     _probe_invariant_checks, sweep_fail_fast_invariant)
-                _systemic = len(_offending_symbols) >= _fail_fast_min_offending_symbols
+                _systemic, _fail_fast_policy_effective = _fail_fast_systemic_verdict(
+                    n_symbols_planned=_n_symbols_planned,
+                    offending_pairs=_offending_pairs, offending_symbols=_offending_symbols,
+                    total_studies_single_symbol=_total_studies_single_symbol,
+                    min_offending_symbols=_fail_fast_min_offending_symbols,
+                    min_offending_studies=_fail_fast_min_offending_studies,
+                    min_offending_studies_frac=_fail_fast_min_offending_studies_frac,
+                    policy=_fail_fast_policy,
+                )
                 # Kein parsbarer (Strategie, Symbol)-Offender (Check ohne die "<strategy>/<symbol>"-
                 # actual-Konvention, z. B. ein global-scope-Check) ⇒ die Streuung ist nicht
                 # ermittelbar ⇒ konservativ global abbrechen (Pre-#877-Verhalten), UNABHAENGIG von
                 # ``fail_fast_policy`` — eine Quarantäne kann kein konkretes Paar benennen.
-                if not _offending_pairs or (_systemic and _fail_fast_policy == "abort"):
-                    logging.getLogger("optimizer").error(
-                        "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) auf %d "
-                        "verschiedenen Symbolen — Sweep bricht sofort ab "
-                        "(run_status=aborted_invariant), statt nach allen Symbolen spät zu "
-                        "scheitern.", sweep_fail_fast_invariant, len(completed_symbols),
-                        len(_offending_symbols),
-                    )
+                if not _offending_pairs or (_systemic and _fail_fast_policy_effective == "abort"):
+                    if _n_symbols_planned == 1:
+                        logging.getLogger("optimizer").error(
+                            "[#839/#1016] FAIL_FAST_INVARIANT: %s FAILt auf %d von %d Studies "
+                            "des einzigen geplanten Symbols — Sweep bricht sofort ab "
+                            "(run_status=aborted_invariant), statt als 'complete' zu erscheinen.",
+                            sweep_fail_fast_invariant, len(_offending_pairs),
+                            _total_studies_single_symbol,
+                        )
+                    else:
+                        logging.getLogger("optimizer").error(
+                            "[#839] FAIL_FAST_INVARIANT: %s FAILt nach %d Symbol(en) auf %d "
+                            "verschiedenen Symbolen — Sweep bricht sofort ab "
+                            "(run_status=aborted_invariant), statt nach allen Symbolen spät zu "
+                            "scheitern.", sweep_fail_fast_invariant, len(completed_symbols),
+                            len(_offending_symbols),
+                        )
                     emit_execution_event(
                         logging.getLogger("optimizer"), "SWEEP_ABORTED_ON_FAIL_FAST_INVARIANT",
                         {"check": sweep_fail_fast_invariant,
@@ -2925,6 +2964,14 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
             )
+        # Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — ein Lauf mit mindestens einer
+        # blockierenden Invarianten-FAIL darf nicht dasselbe Statuswort 'complete' tragen wie ein
+        # sauberer Lauf ("complete" bei zwei blockierenden FAILs UND "complete" bei null FAILs war
+        # ununterscheidbar). Die Invarianten sind erst INNERHALB des gerade geschriebenen Reports
+        # bekannt (generate_sweep_report berechnet sie selbst) — daher ein Read-Back-Patch statt
+        # einer Vorab-Berechnung; dieselbe write_json_atomic-Garantie wie der Erstschrieb.
+        if run_status == "complete":
+            run_status = _downgrade_run_status_for_blocking_invariants(report_path)
         print(f"📄 Report: {report_path}")
         # Issue #773 — der Report war bislang rein informativ; der CLI-Entrypoint (__main__ unten)
         # liest diesen Pfad, um bei mindestens einem FAIL-Invarianten-Check einen Non-Zero-Exit-Code
@@ -3034,6 +3081,75 @@ def _offending_pairs_for_fail_fast_check(
             symbols.add(symbol)
         break
     return pairs, symbols
+
+
+def _fail_fast_systemic_verdict(
+    *, n_symbols_planned: int, offending_pairs: dict, offending_symbols: set[str],
+    total_studies_single_symbol: int, min_offending_symbols: int,
+    min_offending_studies: int, min_offending_studies_frac: float, policy: str,
+) -> tuple[bool, str]:
+    """Issue #1016 (Katalog #858, Fix Punkt 1, Pitfall #349) — reine Entscheidungsfunktion: ist die
+    Evidenz-Streuung eines Fail-Fast-Offenders "systemisch" (eine Aussage über die Basisklasse,
+    nicht ein einzelnes Symbol), und welche ``fail_fast_policy`` gilt dafür effektiv?
+
+    Root-Cause: die #877-Symbol-Streuungs-Schwelle (``min_offending_symbols``, Default 2) wurde
+    gegen Vollläufe über 143 Symbole kalibriert. Bei GENAU EINEM geplanten Symbol ist sie
+    strukturell unerreichbar (``offending_symbols`` kann nie mehr als 1 Mitglied haben) — das
+    deaktiviert die Fail-Fast-Konsequenz genau in dem Modus, in dem ein einzelnes Paar für den
+    Kapitaleinsatz feingetunt wird ("Schutz aus", nicht "Schutz mild"). Bei ``n_symbols_planned
+    == 1`` ersetzt eine STUDY-Quote die Symbol-Streuung: >= ``min_offending_studies`` ODER >= der
+    konfigurierten ``min_offending_studies_frac`` der Studies DIESES Symbols. Ein Ein-Symbol-Lauf
+    hat — anders als ein Vollauf — keine "übrigen Symbole", auf die eine Quarantäne ausweichen
+    könnte; eine erreichte Study-Quote erzwingt daher UNBEDINGT ``policy='abort'``, unabhängig vom
+    konfigurierten ``policy``-Wert.
+
+    Rückgabe: ``(systemic, effective_policy)``."""
+    if n_symbols_planned == 1:
+        systemic = bool(offending_pairs) and (
+            len(offending_pairs) >= min_offending_studies
+            or (total_studies_single_symbol > 0
+                and len(offending_pairs) / total_studies_single_symbol >= min_offending_studies_frac)
+        )
+        return systemic, ("abort" if systemic else policy)
+    return len(offending_symbols) >= min_offending_symbols, policy
+
+
+def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
+    """Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — liest das gerade geschriebene
+    #742-Report-Artefakt zurück und korrigiert dessen ``run_status`` von ``'complete'`` auf
+    ``'complete_with_blocking_invariants'``, sobald mindestens ein ``severity='blocking'``-Check
+    fehlgeschlagen ist ("complete" bei blockierenden FAILs und "complete" bei null FAILs waren
+    zuvor ununterscheidbar — ein Cap ist eine Zensur, ein geteiltes Statuswort ist es analog).
+    Der Patch ist atomar (``write_json_atomic``, dieselbe Garantie wie der Erstschrieb) und
+    fail-open bei jedem Lese-/Parse-Fehler (gibt ``'complete'`` unverändert zurück, non-fatal —
+    ein defektes Report-Artefakt darf den Lauf nicht zusätzlich verschlechtern).
+
+    Rückgabe: der (ggf. korrigierte) ``run_status``-String, den der Aufrufer als neue Wahrheit
+    übernimmt."""
+    try:
+        written_report = json.loads(Path(report_path).read_text("utf-8"))
+        blocking_fails = [
+            c for c in (written_report.get("invariant_checks") or [])
+            if c.get("severity") == "blocking" and not c.get("passed", True)
+        ]
+        if not blocking_fails:
+            return "complete"
+        run_status = "complete_with_blocking_invariants"
+        written_report["run_status"] = run_status
+        write_json_atomic(report_path, written_report)
+        logging.getLogger("optimizer").warning(
+            "[#1016] %d blockierende Invarianten-FAIL(s) (%s) — run_status auf "
+            "'complete_with_blocking_invariants' korrigiert (kein Lauf mit blockierenden FAILs "
+            "darf als 'complete' erscheinen).", len(blocking_fails),
+            ", ".join(sorted({c.get("name") or c.get("check") for c in blocking_fails})),
+        )
+        return run_status
+    except Exception:
+        logging.getLogger("optimizer").warning(
+            "[#1016] Blockierende-Invarianten-Nachpruefung fehlgeschlagen (non-fatal, run_status "
+            "bleibt 'complete').", exc_info=True,
+        )
+        return "complete"
 
 
 def _report_has_failing_invariant(report_path) -> bool:

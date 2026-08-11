@@ -29,10 +29,13 @@ def test_bootstrap_ci_gate_passes_strong_edge():
     assert ok is True and lo > 0.0
 
 
-def test_bootstrap_ci_gate_too_few_returns_no_veto():
+def test_bootstrap_ci_gate_too_few_returns_not_estimable():
+    # Issue #1005 (Katalog #858, Pitfall #343) — VORHER: ok=True ("kein Zusatz-Veto"), was eine
+    # disjunktive Ersatzbestätigung (dsr_or_robust_pair) als BESTANDEN lesen konnte. JETZT: None ist
+    # explizit NICHT bestanden — jeder Aufrufer (konjunktiv wie disjunktiv) behandelt es fail-closed.
     m = types.SimpleNamespace(oos_period_returns=(0.01, 0.02))
     ok, lo = cmod._holdout_bootstrap_ci_passes(m)
-    assert ok is True and lo is None   # < 5 Returns ⇒ kein Zusatz-Veto
+    assert ok is None and lo is None   # < 5 Returns ⇒ nicht schätzbar
 
 
 # ── PBO über die Study (CSCV über der gepoolten OOS-Perioden-Serie, #663) ───────────────────────
