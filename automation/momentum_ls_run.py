@@ -334,6 +334,7 @@ def main():
     # Equity-Verlauf des laufenden Nodes und flattet+stoppt bei Auslöser A/B (automation/live_risk.py).
     watchdog = LiveCircuitBreakerWatchdog(
         node,
+        venue="ETORO",
         poll_interval_s=live_risk_cfg.get("poll_interval_s", 30.0),
         dd_halt_fraction=live_risk_cfg.get("dd_halt_fraction", 0.10),
         z_halt=live_risk_cfg.get("distribution_z_halt", 2.5),
