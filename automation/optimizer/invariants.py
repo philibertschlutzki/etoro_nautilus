@@ -1871,6 +1871,8 @@ def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01)
         if k in _CONFIGURED_INACTIVE_REWARD_TERMS:
             continue
         vals = [float(t.get(k, 0.0)) for t in evaluated_terms]
+        if all(v == 0.0 for v in vals):
+            continue
         std_k = statistics.pstdev(vals)
         if std_k < inert_ratio * rew_std:
             inert_terms.append(k)

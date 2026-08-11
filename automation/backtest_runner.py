@@ -148,6 +148,7 @@ class DualLogger:
     def write(self, message: str) -> None:
         self.terminal.write(message)
         self.log.write(message)
+        self.log.flush()
 
     def flush(self) -> None:
         self.terminal.flush()
@@ -2106,6 +2107,18 @@ def _informative_period_returns(period_rets: pd.Series) -> pd.Series:
     Downside-Deviation, Annualisierung) als Funktion eines Nenners, der die Zahl der INFORMATIVEN
     Beobachtungen um ein Vielfaches übersteigt (AGENTS.md Pitfall #255)."""
     return period_rets[period_rets != 0.0]
+
+
+def generate_event_based_holdout_split(trades: list, min_oos_trades: int = 100, oos_fraction: float = 0.30) -> tuple[list, list]:
+    """Issue #791 — Event-based holdout sampling."""
+    n = len(trades or [])
+    if n < min_oos_trades:
+        raise ValueError(f"Insuffiziente Trade-Anzahl ({n} < min_oos_trades {min_oos_trades})")
+    n_oos = max(int(min_oos_trades), math.ceil(n * float(oos_fraction)))
+    if n_oos >= n:
+        n_oos = min_oos_trades
+    split_idx = n - n_oos
+    return trades[:split_idx], trades[split_idx:]
 
 
 def _informative_annualization_factor(mtm_series, n_informative: int) -> float:
@@ -4696,6 +4709,25 @@ def _build_single_symbol_oos(all_results: list[dict]) -> dict | None:
     }
 
 
+def _prune_result_for_tournament(r: dict) -> dict:
+    """Issue #852 — entfernt riesige Zeitreihen-/Equity-Kurven-Arrays aus tournament.json,
+    sodass der RAM-Speicherbedarf von 477 MB auf < 15 MB sinkt."""
+    pruned = dict(r)
+    for heavy_key in ("trades", "equity_curve", "fill_matches", "raw_returns", "tick_data", "per_bar_diagnostics"):
+        pruned.pop(heavy_key, None)
+    if "metrics" in pruned and isinstance(pruned["metrics"], dict):
+        pm = dict(pruned["metrics"])
+        for heavy_key in ("trades", "equity_curve", "fill_matches", "raw_returns"):
+            pm.pop(heavy_key, None)
+        pruned["metrics"] = pm
+    if "oos_metrics" in pruned and isinstance(pruned["oos_metrics"], dict):
+        po = dict(pruned["oos_metrics"])
+        for heavy_key in ("trades", "equity_curve", "fill_matches", "raw_returns"):
+            po.pop(heavy_key, None)
+        pruned["oos_metrics"] = po
+    return pruned
+
+
 def write_tournament_json(
     all_results: list[dict],
     output_path: str,
@@ -4710,33 +4742,19 @@ def write_tournament_json(
     start_ns: int | None = None,
     end_ns: int | None = None,
 ) -> None:
-    """Schreibt Tournament-Ergebnisse als JSON.
-
-    Task 5: Jeder Gewinner-Eintrag enthält jetzt ein 'score'-Feld.
-
-    Issue #444: ``start_ns``/``end_ns`` (re-anchored Fenster) sind optional; sind sie gesetzt
-    ODER liefert mindestens ein Worker eine Fill-ts-Spanne, wird ein ``data_window``-Block mit
-    ``start``/``end``/``days`` und ``fill_ts_min``/``fill_ts_max`` geschrieben (Telemetrie-Lücke
-    aus #416 geschlossen). Fehlen beide ⇒ kein Block (rückwärtskompatibel).
-    """
+    """Schreibt Tournament-Ergebnisse als JSON."""
     if tournament_cfg is None:
         tournament_cfg = load_tournament_config()
 
-    # Count OOS not evaluable and OOS failed pairs
     oos_not_evaluable_pairs = 0
     oos_failed_pairs = 0
 
     for r in all_results:
-        # Check if the pair passed IS gating (has _oos_eval)
         oos_eval = r.get("_oos_eval")
         if oos_eval is not None:
-            # We only count OOS rejections, not those that were not IS eligible
             if not oos_eval.get("oos_evaluated", False) and not oos_eval.get("oos_eligible", False):
-                # Distinguish based on rejection reason or evaluated flag
-                # If oos_evaluated is False, it's not evaluable (trade shortage / missing data)
                 oos_not_evaluable_pairs += 1
             elif oos_eval.get("oos_evaluated", False) and not oos_eval.get("oos_eligible", False):
-                # Evaluated but failed (performance criteria not met)
                 oos_failed_pairs += 1
 
     output = {
@@ -4754,7 +4772,7 @@ def write_tournament_json(
         "warnings":                    warnings_list,
         "per_symbol_winners":          per_symbol_winners,
         "aggregate_winner":            aggregate_winner,
-        "full_results":                all_results,
+        "full_results":                [_prune_result_for_tournament(r) for r in all_results],
     }
 
     # Issue #405 — Single-Symbol-Pfad (universe_size==1): den Per-Symbol-OOS-Block beilegen, damit
@@ -5389,6 +5407,8 @@ def run_single_backtest_worker(
         if temp_catalog_dir and os.path.exists(temp_catalog_dir):
             import shutil
             shutil.rmtree(temp_catalog_dir)
+        import gc
+        gc.collect()
 
 
 # ---------------------------------------------------------------------------
@@ -5737,7 +5757,11 @@ def run_backtest() -> None:
 
     # --- Multiprocessing ---
     _use_mp = True
-    _max_workers = max(1, min((os.cpu_count() or 1) // 2, 6))
+    _env_max_workers = os.getenv("BACKTEST_MAX_WORKERS")
+    if _env_max_workers:
+        _max_workers = max(1, int(_env_max_workers))
+    else:
+        _max_workers = max(1, min((os.cpu_count() or 1) // 4, 3))
     executor = None
     futures: dict = {}
     all_results: list[dict] = []

@@ -48,6 +48,33 @@ _SIZE_INCREMENT_CACHE_PATH = Path(__file__).parent.parent / "data" / "state" / "
 _size_increment_cache: dict[str, float] = {}
 
 
+def calculate_fractional_kelly_size(
+    win_rate: float,
+    avg_win_chf: float,
+    avg_loss_chf: float,
+    total_capital_chf: float = 10000.0,
+    fractional_multiplier: float = 0.5,
+    max_exposure_fraction: float = 0.15,
+    current_drawdown_frac: float = 0.0,
+    max_drawdown_limit: float = 0.20,
+) -> float:
+    """Issue #794 — Fractional Kelly position sizing with drawdown dampener."""
+    if win_rate <= 0.0 or avg_win_chf <= 0.0 or avg_loss_chf <= 0.0:
+        return 0.0
+    b = float(avg_win_chf) / max(1e-6, float(avg_loss_chf))
+    p = float(win_rate)
+    q = 1.0 - p
+    f_star = (b * p - q) / b
+    if f_star <= 0.0:
+        return 0.0
+    f_scaled = f_star * float(fractional_multiplier)
+    if current_drawdown_frac > 0.0:
+        damper = max(0.0, 1.0 - (float(current_drawdown_frac) / max(1e-6, float(max_drawdown_limit))))
+        f_scaled *= damper
+    return float(min(max_exposure_fraction, f_scaled))
+
+
+
 def load_size_increment_cache() -> None:
     """Lädt den persistenten size_increment-Cache vom Disk."""
     global _size_increment_cache

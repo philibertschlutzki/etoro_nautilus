@@ -209,6 +209,22 @@ _ANY_ARM_CALIBRATION = {
 }
 
 
+def calculate_continuous_time_decay_penalty(
+    holding_time_hours: float,
+    t_soft_hours: float = 6.0,
+    t_max_hours: float = 24.0,
+    penalty_at_max: float = 0.20,
+) -> float:
+    """Issue #795 — Continuous exponential time decay penalty."""
+    import math
+    if holding_time_hours <= t_soft_hours:
+        return 1.0
+    if holding_time_hours >= t_max_hours:
+        return float(penalty_at_max)
+    k = -math.log(float(penalty_at_max)) / max(1e-6, float(t_max_hours) - float(t_soft_hours))
+    return float(math.exp(-k * (float(holding_time_hours) - float(t_soft_hours))))
+
+
 def check_any_arm_reachability(tournament_cfg: dict | None) -> list[str]:
     """Issue #633 — warnt (WARNING-Log, KEIN Abbruch — Zero-Hardcoding-Diagnose statt Hard-Fail, weil
     die wahre Erreichbarkeit strategie-/symbolabhängig ist), wenn eine ``eligible_requires_any``-
