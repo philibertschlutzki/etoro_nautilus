@@ -148,7 +148,12 @@ class LiveCircuitBreakerWatchdog:
 
     def _read_equity(self) -> float | None:
         try:
-            equity_by_currency = self._node.portfolio.equity(self._venue)
+            from nautilus_trader.model.identifiers import Venue
+            venue_arg = (
+                Venue(self._venue) if isinstance(self._venue, str)
+                else (self._venue or Venue("ETORO"))
+            )
+            equity_by_currency = self._node.portfolio.equity(venue_arg)
         except Exception:
             logger.exception("[LiveCircuitBreaker] Equity-Abfrage fehlgeschlagen (uebersprungen).")
             return None
