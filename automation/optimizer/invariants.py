@@ -20,6 +20,7 @@ import logging
 import math
 import statistics
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
@@ -1529,6 +1530,21 @@ def check_adaptive_diagnostic_rate(
         if codes & _ADAPTIVE_DIAGNOSTIC_CODES:
             n_adaptive += 1
     rate = n_adaptive / n_trials_informative
+    # Issue #1033 (Katalog #866, Pitfall #356) — ``n_adaptive`` zaehlt hoechstens EINMAL je Trial
+    # (Set-Schnitt oben) und kann daher ``n_trials_informative`` (dieselben Trials) strukturell
+    # nicht ueberschreiten; ``rate > 1.0`` ist kein gueltiger Beobachtungswert, sondern ein Beweis,
+    # dass Zaehler und Nenner NICHT dieselbe Grundgesamtheit messen (z. B. ``trials`` enthaelt
+    # Duplikate oder ``n_trials_informative`` stammt aus einer anderen Kohorte) — eigene FAIL-
+    # Meldung statt einer unplausiblen Prozentzahl.
+    if rate > 1.0:
+        return InvariantResult(
+            name="check_adaptive_diagnostic_rate",
+            passed=False,
+            expected="Zaehler/Nenner kommensurabel (rate <= 1.0)",
+            actual=round(rate, 4),
+            detail=f"{n_adaptive}/{n_trials_informative} — Zaehler/Nenner nicht kommensurabel "
+                   "(Rate > 1.0 ist kein gueltiger Beobachtungswert, #1033).",
+        )
     passed = rate <= max_rate
     return InvariantResult(
         name="check_adaptive_diagnostic_rate",
@@ -1575,6 +1591,18 @@ def check_inference_diagnostics_concentration(
                 affected += 1
                 break
     fraction = (affected / n_trials_informative) if n_trials_informative > 0 else 0.0
+    # Issue #1033 (Katalog #866, Pitfall #356) — ``affected`` zaehlt hoechstens einmal je Trial
+    # (der ``break`` oben); ``fraction > 1.0`` beweist eine Zaehler/Nenner-Inkommensurabilitaet
+    # (siehe check_adaptive_diagnostic_rate-Kommentar), keinen gueltigen Beobachtungswert.
+    if fraction > 1.0:
+        return InvariantResult(
+            name="check_inference_diagnostics_concentration",
+            passed=False,
+            expected="Zaehler/Nenner kommensurabel (fraction <= 1.0)",
+            actual=round(fraction, 4),
+            detail=f"{affected}/{n_trials_informative} — Zaehler/Nenner nicht kommensurabel "
+                   "(Rate > 1.0 ist kein gueltiger Beobachtungswert, #1033).",
+        )
     passed = fraction <= guard_dominance_threshold
     return InvariantResult(
         name="check_inference_diagnostics_concentration",
@@ -1985,6 +2013,293 @@ def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5
     )
 
 
+def check_report_cohort_coherence(
+    study_records: list[dict], *, wallclock_s: float | None,
+    tolerance_s: float = 300.0,
+) -> InvariantResult:
+    """Issue #1023 (Katalog #866) Akzeptanzkriterium 2 — Regressionswaechter gegen eine erneute
+    Vermischung fremder Laeufe im Report (siehe ``report._build_report``s ``run_id``-Filter): fuer
+    JEDEN erzeugten Report muss gelten ``max(study_started_at_utc) − min(study_started_at_utc) <
+    wallclock_s`` (plus ``tolerance_s`` Slack fuer Preflight/Dispatch-Overhead vor der ersten und
+    Retention/Report-Schreibzeit nach der letzten Study) — eine Study, deren Startzeitstempel ausserhalb
+    der Sweep-Laufzeit selbst liegt, kann nicht Teil DIESES Laufs sein, unabhaengig davon, ob sie
+    einen ``run_id``-Stempel traegt (z. B. eine Uhr-Drift oder ein manuell verschobener Timestamp).
+
+    ``study_records`` ist die bereits ``run_id``-gefilterte ``studies_out``-Liste (#1023 Fix Punkt
+    1) — diese Invariante ist die zweite, unabhaengige Verteidigungslinie GEGEN denselben
+    Fehlerklasse, nicht deren einzige."""
+    timestamps = []
+    for r in study_records:
+        raw = r.get("study_started_at_utc")
+        if not raw:
+            continue
+        try:
+            timestamps.append(datetime.fromisoformat(raw))
+        except (TypeError, ValueError):
+            continue
+    if len(timestamps) < 2 or wallclock_s is None or wallclock_s <= 0:
+        return InvariantResult(
+            name="check_report_cohort_coherence",
+            passed=True,
+            expected=f"< wallclock_s + {tolerance_s}s",
+            actual=None,
+            detail="Weniger als 2 Studies mit study_started_at_utc oder kein wallclock_s — nicht anwendbar.",
+            severity="blocking",
+        )
+    span_s = (max(timestamps) - min(timestamps)).total_seconds()
+    budget_s = wallclock_s + tolerance_s
+    passed = span_s < budget_s
+    return InvariantResult(
+        name="check_report_cohort_coherence",
+        passed=passed,
+        expected=f"< {budget_s:.1f}s (wallclock_s={wallclock_s:.1f} + {tolerance_s:.0f}s Slack)",
+        actual=round(span_s, 1),
+        detail=("OK" if passed else
+                f"study_started_at_utc-Spannweite={span_s:.1f}s >= {budget_s:.1f}s — mindestens "
+                "eine Study liegt ausserhalb der Sweep-Laufzeit (#1023-Fehlerklasse: Report enthaelt "
+                "Studies eines anderen Laufs)."),
+        severity="blocking",
+    )
+
+
+def check_expectancy_definition_coherence(
+    study_records: list[dict], *, max_relative_gap: float = 0.5, min_trades: int = 10,
+) -> InvariantResult:
+    """Issue #1031 (Katalog #866) — ``holdout_expectancy`` (Mittel von Quotienten,
+    ``mean(pnl_i/notional_i)``) und ``holdout_expectancy_capital_weighted`` (Σpnl/Σnotional, gegen
+    Nennerausreisser robust) messen denselben zugrundeliegenden Per-Trade-Edge — eine grosse
+    relative Luecke zwischen beiden ist die Signatur eines einzelnen Round-Trips mit degeneriertem
+    Nenner (oder einer ueber eine Preis-Sprungstelle gehaltenen Position), der den Mittelwert der
+    Quotienten dominiert (beobachtet: expectancy=0,52 vs. implizit ~0,03 auf den drei TSLA-
+    Kandidaten des Katalogs — Faktor 16).
+
+    Nur Studies mit ``holdout_total_trades >= min_trades`` und definierten beiden Feldern werden
+    geprüft (kleine Kohorten sind statistisch zu verrauscht, um diese Diagnose sinnvoll zu tragen)."""
+    with_data = [
+        r for r in study_records
+        if r.get("holdout_expectancy") is not None
+        and r.get("holdout_expectancy_capital_weighted") is not None
+        and (r.get("holdout_total_trades") or 0) >= min_trades
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_expectancy_definition_coherence",
+            passed=True,
+            expected=f"|expectancy - expectancy_capital_weighted| / max(|expectancy|, 1e-6) <= {max_relative_gap}",
+            actual=None,
+            detail=f"Keine Studies mit >= {min_trades} Holdout-Trades und beiden Expectancy-Feldern — nicht anwendbar.",
+        )
+    offenders: dict[str, float] = {}
+    for r in with_data:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        expectancy = float(r["holdout_expectancy"])
+        capital_weighted = float(r["holdout_expectancy_capital_weighted"])
+        gap = abs(expectancy - capital_weighted) / max(abs(expectancy), 1e-6)
+        if gap > max_relative_gap:
+            offenders[key] = round(gap, 4)
+    passed = not offenders
+    return InvariantResult(
+        name="check_expectancy_definition_coherence",
+        passed=passed,
+        expected=f"<= {max_relative_gap}",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies: expectancy und expectancy_capital_weighted "
+                f"divergieren relativ um mehr als {max_relative_gap} — mindestens ein Round-Trip mit "
+                "degeneriertem Notional dominiert den Mittelwert der Quotienten (#1031)."),
+    )
+
+
+def check_open_position_at_data_end(
+    study_records: list[dict], *, max_fraction: float = 0.02,
+) -> InvariantResult:
+    """Issue #1037 (Katalog #866) — ein Round-Trip, dessen Position am Ende der verfuegbaren
+    Backtest-Daten noch offen war (``backtest_runner._finalize_round_trip``s ``is_data_end_
+    fallback``, ``ExitReason.DATA_END``), ist keine echte Handelsentscheidung, sondern ein Artefakt
+    des Datenendes — eine Position, die potenziell ueber eine Sprungstelle/mehrere Tage gehalten
+    wird, mit entsprechend unrealistischen Per-Trade-Returns (dieselbe Konstellation wie die
+    bimodale Haltedauerverteilung des Katalogs: kleiner Median, riesiges Maximum). FAIL, wenn mehr
+    als ``max_fraction`` der Round-Trips einer Study auf diese Weise finalisiert wurden."""
+    # Issue #1037 — ``n_round_trips_data_end`` ist ueber DIESELBE ``trial_attrs``-Summe abgeleitet
+    # wie ``oos_total_trades_with_exit_telemetry`` (report._study_record, Issue #919) — beide
+    # zaehlen ausschliesslich Trials mit Order-Tag-Exit-Telemetrie. ``holdout_total_trades`` ist
+    # eine ANDERE Population (der einzelne, spaetere Holdout-Backtest) und waere ein
+    # Nenner-Kategorienfehler (analog #1033/Pitfall #356).
+    with_data = [
+        r for r in study_records
+        if r.get("n_round_trips_data_end") is not None and r.get("oos_total_trades_with_exit_telemetry")
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_open_position_at_data_end",
+            passed=True,
+            expected=f"<= {max_fraction:.0%} der Round-Trips via DATA_END finalisiert",
+            actual=None,
+            detail="Keine Studies mit n_round_trips_data_end/oos_total_trades_with_exit_telemetry — nicht anwendbar.",
+            severity="high",
+        )
+    offenders: dict[str, float] = {}
+    for r in with_data:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        total = r["oos_total_trades_with_exit_telemetry"]
+        fraction = r["n_round_trips_data_end"] / total if total else 0.0
+        if fraction > max_fraction:
+            offenders[key] = round(fraction, 4)
+    passed = not offenders
+    return InvariantResult(
+        name="check_open_position_at_data_end",
+        passed=passed,
+        expected=f"<= {max_fraction:.0%} der Round-Trips via DATA_END finalisiert",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies: mehr als {max_fraction:.0%} der Round-Trips "
+                "wurden am Datenende zwangsweise finalisiert (Position nie flat geworden), keine "
+                "echte Handelsentscheidung (#1037)."),
+    )
+
+
+def check_sizing_identity_coherence(
+    study_records: list[dict], *, max_relative_gap: float = 0.35,
+    min_trades: int = 10, min_abs_expectancy: float = 1e-4,
+) -> InvariantResult:
+    """Issue #1028 (Katalog #866) — Sizing-Identität als stehender Kohärenztest (Pitfall #354): bei
+    fixem, ungehebeltem Sizing (``trade_amount_pct``, gleich für JEDE Strategie) und
+    nicht-überlappenden Positionen MUSS gelten
+    ``f_implied = ln(1 + total_return) / (n · expectancy) · 100 ≈ trade_amount_pct``
+    (``expectancy``/``total_return`` als Bruchteile, ``trade_amount_pct``/``f_implied`` in Prozent
+    — siehe Referenzrechnung: Donchian/ADBE, n=32, expectancy=0,0071, TR=3,3 % ⇒ f_implied=14,3 %
+    gegen konfigurierte 15 %). Eine grosse Abweichung ist die Signatur einer Datenanomalie in der
+    zugrundeliegenden Preisreihe (Split-/Adjustierungsgrenze, Snapshot-Naht) — beobachtet: die drei
+    TSLA-Kandidaten des Katalogs mit f_implied = 0,93 %/1,02 %/7,82 % gegen konfigurierte 15 %
+    (Faktor 2–16), während 65 von 71 übrigen Studies desselben Laufs einen Median von 14,25 %
+    trugen (Code dadurch entlastet — die Divergenz liegt in der Datenlage, nicht im Sizing-Pfad).
+
+    Nur Studies mit ``n >= min_trades`` und ``|expectancy| >= min_abs_expectancy`` werden geprüft
+    (kleine Nenner nahe Null sind Divisionsartefakte ohne Information, keine echten Kandidaten)."""
+    with_data = [
+        r for r in study_records
+        if (r.get("holdout_total_trades") or 0) >= min_trades
+        and r.get("holdout_expectancy") is not None
+        and abs(r["holdout_expectancy"]) >= min_abs_expectancy
+        and r.get("holdout_total_return") is not None
+        and r.get("trade_amount_pct")
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_sizing_identity_coherence",
+            passed=True,
+            expected=f"|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+            actual=None,
+            detail="Keine Studies mit Holdout-Trades/Expectancy/trade_amount_pct — nicht anwendbar.",
+            severity="blocking",
+        )
+    offenders: dict[str, dict] = {}
+    for r in with_data:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        n = r["holdout_total_trades"]
+        expectancy = float(r["holdout_expectancy"])
+        total_return = float(r["holdout_total_return"])
+        trade_amount_pct = float(r["trade_amount_pct"])
+        try:
+            f_implied = (math.log(1.0 + total_return) / (n * expectancy)) * 100.0
+        except (ValueError, ZeroDivisionError):
+            continue
+        gap = abs(f_implied - trade_amount_pct) / trade_amount_pct
+        if gap > max_relative_gap:
+            offenders[key] = {"f_implied_pct": round(f_implied, 4), "trade_amount_pct": trade_amount_pct}
+    passed = not offenders
+    return InvariantResult(
+        name="check_sizing_identity_coherence",
+        passed=passed,
+        expected=f"|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+        actual=offenders if offenders else None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies: der aus (total_return, expectancy, n) implizierte "
+                f"Sizing-Anteil weicht relativ um mehr als {max_relative_gap} vom konfigurierten "
+                f"trade_amount_pct ab: {offenders} — Signatur einer Datenanomalie in der "
+                "zugrundeliegenden Preisreihe, nicht des Sizing-Pfads (#1028)."),
+    )
+
+
+def check_atr_scale_homogeneity(
+    study_records: list[dict], *, max_ratio: float = 6.0,
+) -> InvariantResult:
+    """Issue #1028 (Katalog #866) — ATR in bps ist skaleninvariant gegenüber einer reinen
+    multiplikativen Preisadjustierung: über die Strategien EINES Symbols hinweg (dieselbe
+    Preisreihe, dasselbe Fenster) sollte ``atr_median_bps`` innerhalb einer engen Bandbreite
+    streuen. Ein grosser Faktor zwischen ``max``/``min`` je Symbol ist die Signatur einer
+    Sprungstelle (Split-/Adjustierungsgrenze oder Snapshot-Naht) im ATR-Fenster einer oder mehrerer
+    Strategien-Studies auf diesem Symbol — beobachtet: TSLA mit 18,2–366,2 bps (Faktor 20) gegen
+    2–59 bps auf allen übrigen Symbolen des Katalog-Referenzlaufs."""
+    by_symbol: dict[str, list[float]] = {}
+    for r in study_records:
+        atr = r.get("atr_median_bps")
+        symbol = r.get("symbol")
+        if atr and symbol:
+            by_symbol.setdefault(symbol, []).append(float(atr))
+    candidates = {sym: vals for sym, vals in by_symbol.items() if len(vals) >= 2}
+    if not candidates:
+        return InvariantResult(
+            name="check_atr_scale_homogeneity",
+            passed=True,
+            expected=f"max(atr_median_bps)/min(atr_median_bps) <= {max_ratio} je Symbol",
+            actual=None,
+            detail="Kein Symbol mit >= 2 Strategien-Studies und atr_median_bps — nicht anwendbar.",
+            severity="high",
+        )
+    offenders: dict[str, float] = {}
+    for sym, vals in candidates.items():
+        lo, hi = min(vals), max(vals)
+        if lo <= 0:
+            continue
+        ratio = hi / lo
+        if ratio > max_ratio:
+            offenders[sym] = round(ratio, 2)
+    passed = not offenders
+    return InvariantResult(
+        name="check_atr_scale_homogeneity",
+        passed=passed,
+        expected=f"max(atr_median_bps)/min(atr_median_bps) <= {max_ratio} je Symbol",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) mit einer ATR-Spannweite über {max_ratio}x zwischen "
+                f"Strategien: {offenders} — Signatur einer Sprungstelle in der Preisreihe (#1028)."),
+    )
+
+
+def check_worker_utilisation_plausible(
+    worker_utilisation: float | None, *, max_ratio: float = 1.0,
+) -> InvariantResult:
+    """Issue #1038 (Katalog #866) — ``report._worker_utilisation`` (Σ Study-Wallclock / (n_jobs ×
+    Sweep-Wallclock)) heisst "Auslastung", kann aber durch verschachtelte, studieneigene Worker-
+    Pools (``backtest_runner.py``) oder — vor #1023 — eingemischte Studies fremder Laeufe ueber
+    ``max_ratio`` (Default 1.0, physikalisch das Maximum einer echten Auslastung) hinaus wachsen.
+    Beobachtet: 151,8 %/246,5 %/332,9 % ueber drei Laeufe. Ein Wert ueber der Schwelle ist ein FAIL,
+    keine unkommentierte Anzeigezahl."""
+    if worker_utilisation is None:
+        return InvariantResult(
+            name="check_worker_utilisation_plausible",
+            passed=True,
+            expected=f"<= {max_ratio}",
+            actual=None,
+            detail="Kein worker_utilisation-Wert — nicht anwendbar.",
+        )
+    passed = worker_utilisation <= max_ratio
+    return InvariantResult(
+        name="check_worker_utilisation_plausible",
+        passed=passed,
+        expected=f"<= {max_ratio}",
+        actual=round(worker_utilisation, 4),
+        detail=("OK" if passed else
+                f"worker_utilisation={worker_utilisation:.4f} > {max_ratio} — Σ Study-Wallclock "
+                "ueberlappt sich (verschachtelte Worker-Pools und/oder eingemischte Studies eines "
+                "anderen Laufs, #1038-Fehlerklasse)."),
+    )
+
+
 def check_reward_term_variance(trials: list[dict], *, inert_ratio: float = 0.01) -> InvariantResult:
     """Verallgemeinerung von ``REWARD_TERM_INERT`` (run_optimization.py, Issue #621): statt einer
     einzelnen WARNING-Zeile pro inertem Term liefert diese Pruefung die VOLLSTAENDIGE Liste ueber
@@ -2208,11 +2523,26 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
 
 
 def check_holding_time_cap(study_records: list[dict], *,
-                           study_tolerance: float = 0.25) -> InvariantResult:
+                           study_tolerance: float = 0.25,
+                           hard_multiple: float = 3.0,
+                           max_bars_in_trade_cap: float = _MAX_BARS_IN_TRADE_CAP,
+                           timebox_execution_slack_bars: float = 3.0,
+                           bar_seconds: float = _BAR_SECONDS_DEFAULT) -> InvariantResult:
     """Issue #832 Fix Punkt 1 (Katalog #828-#835, GitHub-Issue #751) — Plausibilitätswächter gegen
     die #714/GR-01-Zeitbox: eine Study, deren Anteil zeitbox-verletzender TRADES
     ``study_tolerance`` überschreitet, hat einen Bug im Exit-Pfad (defekter Watchdog/Cancel-Pfad),
     keine tolerierbare Ausführungslatenz mehr.
+
+    Issue #1036 (Katalog #866) — ZWEITER, magnitudenbasierter Ast neben dem Anteils-Ast oben:
+    ``timebox_violating_trades_frac`` verdünnt eine EINZELNE, ökonomisch untragbare Position (z. B.
+    3991 h bei einer 24-Bar-Zeitbox) über einen gross gepoolten Round-Trip-Nenner (beobachtet:
+    128 347 Round-Trips ⇒ eine Verletzung um Faktor 166 verdünnt, 3 % statt eines Alarms) —
+    ``check_holding_time_cap`` stand auf PASS, während ``timebox_violation_intensity_p95``
+    telemetriert, aber nie GEGATET war. "Wie viele" (Anteil) und "wie schlimm" (Magnitude) sind
+    zwei verschiedene Fragen (Pitfall #358); dieser Ast beantwortet die zweite: JEDE Study mit
+    ``max_holding_time_s > hard_multiple · cap_s`` (``cap_s = (max_bars_in_trade_cap +
+    timebox_execution_slack_bars) · bar_seconds``, ``hard_multiple`` Default 3.0,
+    ``tournament.json['timebox_violation_hard_multiple']``) FAILt UNABHÄNGIG vom Anteil.
 
     Issue #971 (Katalog B, P0 HEADLINE, Pitfall #303/#304 in AGENTS.md) — konsumiert jetzt
     ``timebox_violating_trades_frac`` (TRADE-/Round-Trip-Ebene, ``report._study_record``) statt der
@@ -2233,54 +2563,91 @@ def check_holding_time_cap(study_records: list[dict], *,
     ``tournament.json['timebox_violation_study_tolerance']`` (#857) — beide Wächter beantworten
     jetzt exakt dieselbe Frage ("ist dieser Exit-Pfad strukturell defekt?") gegen dieselbe Referenz
     UND dieselbe Aggregationsebene (Trades, #903 Fix 2)."""
+    cap_s = (float(max_bars_in_trade_cap) + float(timebox_execution_slack_bars)) * float(bar_seconds)
+    hard_threshold_s = hard_multiple * cap_s
+    # Issue #1036 — der Magnituden-Ast konsumiert max_holding_time_s (report._study_record,
+    # bereits vorhanden seit #832) unabhängig von timebox_violating_trades_denominator — eine
+    # Study kann eine ökonomisch untragbare Einzelposition tragen, ohne dass der Anteils-Zähler
+    # (Round-Trip-Ebene) je verdrahtet war.
+    magnitude_offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": round(r["max_holding_time_s"] / cap_s, 2)
+        for r in study_records
+        if r.get("max_holding_time_s") is not None and r["max_holding_time_s"] > hard_threshold_s
+    }
+
     with_data = [r for r in study_records if r.get("timebox_violating_trades_denominator")]
-    if not with_data:
+    fraction_offenders = {
+        f"{r.get('strategy')}/{r.get('symbol')}": r.get("timebox_violating_trades_frac")
+        for r in with_data
+        if (r.get("timebox_violating_trades_frac") or 0.0) > study_tolerance
+    }
+
+    if not with_data and not magnitude_offenders:
         return InvariantResult(
             name="check_holding_time_cap",
             passed=True,
-            expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} je Study",
+            expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} UND "
+                     f"max_holding_time_s <= {hard_multiple}x cap je Study",
             actual=None,
             detail="Keine Studies mit Haltedauer-Telemetrie (Pre-#832-Report oder leere Kohorte) — "
                    "nicht anwendbar.",
             severity="blocking",
         )
-    offenders = {
-        f"{r.get('strategy')}/{r.get('symbol')}": r.get("timebox_violating_trades_frac")
-        for r in with_data
-        if (r.get("timebox_violating_trades_frac") or 0.0) > study_tolerance
-    }
-    passed = not offenders
+    passed = not fraction_offenders and not magnitude_offenders
     # Issue #971 Fix Punkt 2 — Herkunftspflicht für blockierende Invarianten: numerator/denominator/
     # numerator_definition/source_field je offending Study, damit die gemeldete Zahl aus der
     # Telemetrie nachrechenbar bleibt (statt wie zuvor eine unbelegte Rundungszahl zu sein).
-    provenance = {
-        "source_field": "timebox_violating_trades_frac",
-        "numerator_definition": (
-            "timebox_violating_trades_numerator = Anzahl OOS-Round-Trips (Trades) mit "
-            "holding_bars > max_bars_in_trade + timebox_execution_slack_bars, über alle Trials mit "
-            "OOS-Handelsaktivität dieser Study (unabhängig davon, ob der Trial nachträglich wegen "
-            "eben dieser Verletzung auf oos_evaluated=False umgestempelt wurde, #857)."),
-        "per_study": {
-            key: {
-                "numerator": r.get("timebox_violating_trades_numerator"),
-                "denominator": r.get("timebox_violating_trades_denominator"),
-            }
-            for r in with_data
-            if (key := f"{r.get('strategy')}/{r.get('symbol')}") in offenders
-        },
-    }
+    # ``actual``/``provenance['per_study']`` bleiben fuer den Anteils-Ast BIT-IDENTISCH zum Pre-
+    # #1036-Schema (bestehende Konsumenten lesen ``actual[key]`` als flachen Bruchwert); der neue
+    # Magnituden-Ast wird als EIGENER, zusaetzlicher provenance-Schluessel gefuehrt statt das
+    # bestehende Schema zu brechen.
+    provenance = None
+    if fraction_offenders or magnitude_offenders:
+        provenance = {
+            "source_field": "timebox_violating_trades_frac",
+            "numerator_definition": (
+                "timebox_violating_trades_numerator = Anzahl OOS-Round-Trips (Trades) mit "
+                "holding_bars > max_bars_in_trade + timebox_execution_slack_bars, über alle Trials "
+                "mit OOS-Handelsaktivität dieser Study (unabhängig davon, ob der Trial "
+                "nachträglich wegen eben dieser Verletzung auf oos_evaluated=False umgestempelt "
+                "wurde, #857)."),
+            "per_study": {
+                key: {
+                    "numerator": r.get("timebox_violating_trades_numerator"),
+                    "denominator": r.get("timebox_violating_trades_denominator"),
+                }
+                for r in with_data
+                if (key := f"{r.get('strategy')}/{r.get('symbol')}") in fraction_offenders
+            },
+            # Issue #1036 — zweiter, magnitudenbasierter Ast (Pitfall #358): eine Study kann eine
+            # ökonomisch untragbare Einzelposition tragen, ohne dass der gepoolte Anteils-Ast sie
+            # detektiert (siehe check_holding_time_cap-Docstring).
+            "magnitude_hard_multiple": hard_multiple,
+            "magnitude_cap_s": cap_s,
+            "magnitude_offenders": magnitude_offenders or None,
+        }
+    detail_parts = []
+    if fraction_offenders:
+        detail_parts.append(
+            f"Anteils-Ast: {len(fraction_offenders)} Study/Studies überschreiten den Zeitbox-"
+            f"Study-Toleranzwert ({study_tolerance}) auf TRADE-Ebene: {fraction_offenders} — Bug im "
+            "Exit-Pfad (HourlyStrategyBase erzwingt den Zeit-Exit nicht durchgängig), keine "
+            "tolerierbare Ausführungslatenz mehr.")
+    if magnitude_offenders:
+        detail_parts.append(
+            f"Magnituden-Ast (#1036): {len(magnitude_offenders)} Study/Studies mit einer "
+            f"Einzelposition > {hard_multiple}x der Zeitbox ({hard_threshold_s:.0f}s): "
+            f"{magnitude_offenders} (Vielfaches der Zeitbox je Study) — ökonomisch untragbar "
+            "unabhängig vom gepoolten Anteil (Pitfall #358).")
     return InvariantResult(
         name="check_holding_time_cap",
         passed=passed,
-        expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} je Study",
-        actual=offenders if offenders else None,
+        expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} UND "
+                 f"max_holding_time_s <= {hard_multiple}x cap je Study",
+        actual=fraction_offenders or None,
         severity="blocking",
-        provenance=provenance if offenders else None,
-        detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies überschreiten den Zeitbox-Study-Toleranzwert "
-                f"({study_tolerance}) auf TRADE-Ebene: {offenders} — Bug im Exit-Pfad "
-                "(HourlyStrategyBase erzwingt den Zeit-Exit nicht durchgängig), keine tolerierbare "
-                "Ausführungslatenz mehr. Numerator/Denominator je Study: siehe 'provenance'."),
+        provenance=provenance,
+        detail="OK" if passed else " ".join(detail_parts),
     )
 
 
@@ -2335,54 +2702,89 @@ def check_counter_partition_consistency(study_records: list[dict]) -> InvariantR
 
 
 def check_effective_stop_distance(study_records: list[dict], *,
-                                  min_ratio: float = 0.4) -> InvariantResult:
-    """Issue #897 Fix 3 — je Study wird der Median des realisierten Ø-Bruttoverlusts
-    (``oos_gross_loss_mean_bps``, #899-Telemetrie) gegen den konfigurierten Stop-Abstand
-    ``k_median · ATR_median`` (``atr_trailing_multiplier_median`` × ``atr_median_bps``) geprüft.
+                                  min_ratio: float = 0.4,
+                                  min_trailing_stop_exits: int = 30) -> InvariantResult:
+    """Issue #897 Fix 3 — je Study wird der Median des realisierten Ø-Bruttoverlusts gegen den
+    konfigurierten Stop-Abstand ``k_median · ATR_median`` (``atr_trailing_multiplier_median`` ×
+    ``atr_median_bps``) geprüft.
+
+    Issue #1035 (Katalog #866) — Root-Cause: der Zähler mass bislang über ALLE Verlust-Trades
+    (``oos_gross_loss_mean_bps``), nicht nur über nachweisliche Stop-Exits. Bei überwiegend
+    UNKNOWN-/TIME_BOX-Exits (vor #1034 häufig > 50 %) hat der Stop den grössten Teil der Trades nie
+    berührt — der Check FAILte auf der FALSCHEN Grundgesamtheit (0,09 statt der tatsächlichen
+    Stop-Exit-Quote; bestätigt Hypothese (a) aus #1008, entkräftet Hypothese (b) "ATR kollabiert").
+    Der Zähler ist jetzt ``oos_gross_loss_mean_bps_trailing_stop`` (NUR TRAILING_STOP-Exits, #1034
+    Voraussetzung: die Order-Tag-Klassifikation muss überhaupt Stop-Exits von anderen Ausgängen
+    unterscheiden können). Liegen weniger als ``min_trailing_stop_exits`` Stop-Exits vor, ist die
+    Stichprobe zu klein für ein Urteil — ``INCONCLUSIVE`` (impliziert ``passed=True``, aber vom
+    PASS unterscheidbar) statt eines FAILs auf einer Handvoll Beobachtungen.
 
     Fällt der Quotient unter ``min_ratio`` (Default 0.4, entspricht
     ``optimizer.json['stop_distance_min_ratio']``), reagiert der realisierte Stop-Verlust nicht
     (mehr) auf seinen eigenen Multiplikator — der Mechanismus ist keine kalibrierte Risikogrösse,
     sondern eine Breakeven-Klemme, die auf der Volatilitätsschätzung statt auf dem Preis-Extremum
-    rastet (Pitfall #285/#286 in AGENTS.md). Diese Invariante steht in
-    ``optimizer.json['fail_fast_invariants']`` und muss auf einem archivierten ``close_ratchet``-Lauf
-    FAILen und auf dem entsprechenden ``price_extreme``-Lauf PASSen (#897-Akzeptanzkriterium)."""
-    with_data = [
+    rastet (Pitfall #285/#286 in AGENTS.md)."""
+    candidates = [
         r for r in study_records
-        if r.get("oos_gross_loss_mean_bps") is not None
-        and r.get("atr_median_bps")
+        if r.get("atr_median_bps")
         and r.get("atr_trailing_multiplier_median") is not None
+        and (r.get("oos_gross_loss_mean_bps_trailing_stop") is not None
+             or r.get("oos_gross_loss_mean_bps") is not None)
     ]
-    if not with_data:
+    if not candidates:
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=True,
-            expected=f"Ø-Bruttoverlust / (k_median · ATR_median) >= {min_ratio} je Study",
+            expected=f"Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) >= {min_ratio} je Study",
             actual=None,
             detail="Keine Studies mit Exit-Telemetrie (Issue #899) — nicht auswertbar.",
             severity="high",
         )
     offenders: dict[str, float] = {}
-    for r in with_data:
+    inconclusive_studies: dict[str, int] = {}
+    with_data: list[dict] = []
+    for r in candidates:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
+        n_stop_exits = int(r.get("oos_n_trailing_stop_losses") or 0)
+        loss_bps = r.get("oos_gross_loss_mean_bps_trailing_stop")
+        if loss_bps is None or n_stop_exits < min_trailing_stop_exits:
+            # Issue #1035 — auch OHNE #1034/#1035-Telemetrie (Legacy-Report, nur das ungefilterte
+            # oos_gross_loss_mean_bps) ist die Grundgesamtheit unbekannt/unbelegt: INCONCLUSIVE
+            # statt eines FAILs auf einer nicht nachweislich richtigen Zahl.
+            inconclusive_studies[key] = n_stop_exits
+            continue
+        with_data.append(r)
         configured_distance_bps = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
         if configured_distance_bps <= 0:
             continue
-        ratio = float(r["oos_gross_loss_mean_bps"]) / configured_distance_bps
+        ratio = float(loss_bps) / configured_distance_bps
         if ratio < min_ratio:
             offenders[key] = round(ratio, 4)
     passed = not offenders
+    if not with_data:
+        return InvariantResult(
+            name="check_effective_stop_distance",
+            passed=True,
+            expected=f"Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) >= {min_ratio} je Study",
+            actual=inconclusive_studies if inconclusive_studies else None,
+            severity="high",
+            detail=f"Keine Study mit >= {min_trailing_stop_exits} nachweislichen TRAILING_STOP-"
+                   "Exits (#1034 Voraussetzung) — INCONCLUSIVE statt eines Urteils auf zu kleiner "
+                   "Stichprobe.",
+            inconclusive=True,
+        )
     return InvariantResult(
         name="check_effective_stop_distance",
         passed=passed,
-        expected=f"Ø-Bruttoverlust / (k_median · ATR_median) >= {min_ratio} je Study",
+        expected=f"Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) >= {min_ratio} je Study",
         actual=offenders if offenders else None,
         severity="high",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies unterschreiten das Verhältnis Ø-Bruttoverlust / "
-                f"konfigurierter Stop-Abstand ({min_ratio}): {offenders} — der Stop reagiert nicht "
-                "auf seinen eigenen Multiplikator (Pitfall #286) und rastet vermutlich auf der "
-                "ATR-Schätzung statt auf dem Preis-Extremum (Pitfall #285, Issue #897)."),
+                f"{len(offenders)} Study/Studies unterschreiten das Verhältnis Ø-Bruttoverlust "
+                f"(Stop-Exits) / konfigurierter Stop-Abstand ({min_ratio}): {offenders} — der Stop "
+                "reagiert nicht auf seinen eigenen Multiplikator (Pitfall #286) und rastet "
+                "vermutlich auf der ATR-Schätzung statt auf dem Preis-Extremum (Pitfall #285, "
+                "Issue #897)."),
     )
 
 

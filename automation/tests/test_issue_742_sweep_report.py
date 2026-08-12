@@ -142,6 +142,125 @@ def test_second_process_reconstructs_same_report_from_sqlite_and_proposals(wired
     assert standalone_data["run_id"] != live_data["run_id"]
 
 
+def test_foreign_run_study_excluded_from_report(tmp_path, monkeypatch):
+    """Issue #1023 (Katalog #866) — Regressionstest mit synthetischem Store aus zwei Laeufen: eine
+    Study, die vor dem Laufbeginn dieses Sweeps zuletzt optimiert wurde (``study_started_at_utc``
+    weit VOR dem ``started_at_utc`` dieses Reports), gehoert zu einem fremden Lauf und darf NICHT
+    im Report auftauchen — beobachtete Symptomatik: 98 von 112 Studies eines Ein-Symbol-Laufs
+    trugen ``study_started_at_utc`` vom Vortag."""
+    sweep_dir = tmp_path / "sweep"
+    sweep_dir.mkdir()
+
+    old_study_name = "study_OldStrat_OLD_ETORO"
+    old_storage_url = f"sqlite:///{sweep_dir / 'old_study.db'}"
+    old_study = _make_study(old_storage_url, old_study_name)
+    old_study.set_user_attr("study_started_at_utc", "2026-08-11T16:19:34.000+00:00")
+
+    new_study_name = "study_TestStrat_A_ETORO"
+    new_storage_url = f"sqlite:///{sweep_dir / 'new_study.db'}"
+    new_study = _make_study(new_storage_url, new_study_name)
+    new_study.set_user_attr("study_started_at_utc", "2026-08-12T04:19:21.000+00:00")
+
+    def _resolve(*, study_name, base_cfg=None):
+        return old_storage_url if study_name == old_study_name else new_storage_url
+
+    monkeypatch.setattr(report, "resolve_storage", _resolve)
+
+    old_proposal = {**_proposal(), "strategy": "OldStrat", "symbol": "OLD.ETORO"}
+    new_proposal = _proposal()
+
+    reports_dir = tmp_path / "reports"
+    out_path = report.generate_sweep_report(
+        [old_proposal, new_proposal], run_id="run_new",
+        started_at_utc="2026-08-12T04:19:20.000+00:00",
+        wallclock_s=2880, cli_args={"strategies": "TestStrat"}, reports_dir=reports_dir,
+    )
+    data = json.loads(out_path.read_text("utf-8"))
+
+    symbols_in_report = {s["symbol"] for s in data["studies"]}
+    assert symbols_in_report == {"A.ETORO"}
+    assert "OLD.ETORO" not in symbols_in_report
+
+    assert len(data["studies_excluded_foreign_run"]) == 1
+    excluded = data["studies_excluded_foreign_run"][0]
+    assert excluded["symbol"] == "OLD.ETORO"
+    assert excluded["reason"] == "study_started_before_this_run"
+
+    cohort_check = next(
+        c for c in data["invariant_checks"] if c["name"] == "check_report_cohort_coherence")
+    assert cohort_check["passed"] is True
+
+
+def test_all_studies_foreign_run_fails_loud_instead_of_empty_report(tmp_path, monkeypatch):
+    """Issue #1023 Akzeptanzkriterium 2 — ist NACH dem Filter keine Study mehr uebrig, obwohl
+    Proposals uebergeben wurden, ist das ein Programmierfehler des Aufrufers (falscher run_id/
+    started_at_utc), kein leerer Report."""
+    sweep_dir = tmp_path / "sweep"
+    sweep_dir.mkdir()
+    storage_url = f"sqlite:///{sweep_dir / 'study.db'}"
+    study = _make_study(storage_url, "study_TestStrat_A_ETORO")
+    study.set_user_attr("study_started_at_utc", "2026-08-11T16:19:34.000+00:00")
+    monkeypatch.setattr(report, "resolve_storage", lambda *, study_name, base_cfg=None: storage_url)
+
+    with pytest.raises(RuntimeError, match=r"\[#1023\]"):
+        report.generate_sweep_report(
+            [_proposal()], run_id="run_new",
+            started_at_utc="2026-08-12T04:19:20.000+00:00",
+            wallclock_s=2880, cli_args={}, reports_dir=tmp_path / "reports",
+        )
+
+
+def test_holdout_metrics_fall_back_to_global_route_when_symbol_route_empty(wired_storage):
+    """Issue #1030 (Katalog #866) — ``confirm_per_symbol_promotion`` liefert fuer
+    HOLDOUT_NO_ELIGIBLE_TRIALS-Ablehnungen mit versuchtem globalem Default ``metrics_symbol={}``
+    UND ``metrics_global=_metrics_dict(m_global)`` (ein echter, wenn auch abgelehnter Backtest lief
+    auf dem globalen Vektor). Vor dem Fix brach JEDES holdout_*-Feld (inkl.
+    holdout_profit_factor_raw) still auf None ab, weil report.py nur ``holdout['symbol']`` las."""
+    proposal = {
+        "strategy": "TestStrat",
+        "symbol": "A.ETORO",
+        "status": "REJECTED_ON_HOLDOUT",
+        "holdout_reject_detail": "REJECT_NO_EDGE_OVER_GLOBAL",
+        "is_rejection_detail": "REJECT_NO_EDGE_OVER_GLOBAL",
+        "holdout": {
+            "symbol": {},
+            "global": {
+                "oos_total_return": 0.02,
+                "oos_expectancy": 0.001,
+                "oos_win_rate": 0.5,
+                "oos_profit_factor": 15.0,
+                "oos_profit_factor_censored": True,
+                "oos_profit_factor_raw": 27.3,
+            },
+        },
+    }
+    out_path = report.generate_sweep_report(
+        [proposal], run_id="testrun_global_fallback", started_at_utc="2026-07-19T00:00:00.000+00:00",
+        wallclock_s=42, cli_args={}, reports_dir=wired_storage / "reports",
+    )
+    data = json.loads(out_path.read_text("utf-8"))
+    rec = data["studies"][0]
+    assert rec["holdout_route"] == "global"
+    assert rec["holdout_profit_factor_raw"] == 27.3
+    assert rec["holdout_profit_factor_censored"] is True
+    assert rec["holdout_total_return"] == 0.02
+
+
+def test_holdout_metrics_prefer_symbol_route_when_present(wired_storage):
+    """Eine vorhandene Symbol-Route hat weiterhin Vorrang vor der globalen — der Fallback greift
+    NUR, wenn die Symbol-Route wirklich leer ist."""
+    proposal = _proposal()
+    proposal["holdout"]["global"] = {"oos_total_return": 0.99}
+    out_path = report.generate_sweep_report(
+        [proposal], run_id="testrun_symbol_route", started_at_utc="2026-07-19T00:00:00.000+00:00",
+        wallclock_s=42, cli_args={}, reports_dir=wired_storage / "reports",
+    )
+    data = json.loads(out_path.read_text("utf-8"))
+    rec = data["studies"][0]
+    assert rec["holdout_route"] == "symbol"
+    assert rec["holdout_total_return"] != 0.99
+
+
 def test_generate_report_for_run_ignores_non_symbol_proposals(wired_storage):
     """proposal_{strategy}.json (kein 'symbol'-Feld, export_no_viable_proposal/export_proposal)
     muss von der Standalone-Discovery uebersprungen werden."""

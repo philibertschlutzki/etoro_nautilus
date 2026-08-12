@@ -21,7 +21,7 @@ from automation.strategies.hourly_strategy_base import HourlyStrategyConfig
 from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig, ExitReason
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
@@ -116,7 +116,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             if pos.side == PositionSide.LONG:
                 return
             self._reversal_in_progress = True
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return
@@ -142,7 +142,7 @@ class DynamicBreakoutStrategy(HourlyStrategyBase):
             if pos.side == PositionSide.SHORT:
                 return
             self._reversal_in_progress = True
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
             return

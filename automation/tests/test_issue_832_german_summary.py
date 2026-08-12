@@ -128,7 +128,10 @@ def test_deployable_candidate_appears_in_section_2_1_table():
     report = _minimal_report(studies=[
         {"strategy": "S", "symbol": "A.ETORO", "promotion_outcome": "READY_FOR_PR",
          "holdout_total_return": 0.05, "holdout_expectancy": 0.002, "holdout_win_rate": 0.6,
-         "holdout_profit_factor": 1.4, "holdout_total_trades": 40},
+         "holdout_profit_factor": 1.4, "holdout_total_trades": 40,
+         # Issue #1029 (Katalog #866) — Abschnitt 1 zaehlt "deploybar" jetzt ausschliesslich ueber
+         # deployment_decision.admitted, nicht mehr ueber den Sweep-Promotionsstatus allein.
+         "deployment_decision": {"admitted": True}},
     ])
     report["cross_study"]["promotion_outcome_counts"] = {"READY_FOR_PR": 1}
     text = summary_de.generate_german_summary(report)
@@ -137,15 +140,37 @@ def test_deployable_candidate_appears_in_section_2_1_table():
     assert "5.0 %" in text
 
 
+def test_promotion_without_admitted_deployment_decision_is_not_deployable_in_section_1():
+    """Issue #1029 (Katalog #866) — Root-Cause: Abschnitt 1 zaehlte READY_FOR_PR/PROMOTE_GLOBAL_
+    DEFAULT als "Promotion(en)" ohne deployment_decision.admitted zu pruefen; auf einem Lauf mit
+    ``snapshot_drift=false``-Kandidaten meldete der Kopfsatz "N Promotion(en)", waehrend Abschnitt
+    2.1 dieselben Kandidaten explizit "noch NICHT deploybar" auswies. Abschnitt 1 muss die
+    Sweep-Promotionszahl UND die tatsaechlich deploybare Zahl getrennt nennen."""
+    report = _minimal_report(studies=[
+        {"strategy": "S", "symbol": "A.ETORO", "promotion_outcome": "READY_FOR_PR",
+         "holdout_total_return": 0.05,
+         "deployment_decision": {"admitted": False, "blocking_clause": "snapshot_drift"}},
+    ])
+    report["cross_study"]["promotion_outcome_counts"] = {"READY_FOR_PR": 1}
+    text = summary_de.generate_german_summary(report)
+    section_1 = text.split("## 2")[0]
+    assert "1 Sweep-Promotion(en)" in section_1
+    assert "0 deploybar" in section_1
+    assert "kein deploybares Ergebnis aus diesem Lauf" in section_1
+
+
 def test_promote_global_default_counts_as_deployable():
     """#783 — PROMOTE_GLOBAL_DEFAULT ist eine echte Promotion, keine Ablehnung."""
     report = _minimal_report(studies=[
         {"strategy": "S", "symbol": "A.ETORO", "promotion_outcome": "PROMOTE_GLOBAL_DEFAULT",
-         "holdout_total_return": 0.01},
+         "holdout_total_return": 0.01, "deployment_decision": {"admitted": True}},
     ])
     report["cross_study"]["promotion_outcome_counts"] = {"PROMOTE_GLOBAL_DEFAULT": 1}
     text = summary_de.generate_german_summary(report)
-    assert "1 Promotion(en)" in text
+    # Issue #1029 (Katalog #866) — Abschnitt 1 nennt jetzt Sweep-Promotionen UND deploybare Zahl
+    # getrennt statt einer einzelnen, mehrdeutigen "Promotion(en)"-Zahl.
+    assert "1 Sweep-Promotion(en)" in text
+    assert "1 deploybar" in text
 
 
 def test_longest_trades_section_lists_the_longest_holding_studies():

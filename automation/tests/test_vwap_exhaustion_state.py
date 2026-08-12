@@ -11,6 +11,7 @@ import pytest
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.enums import PositionSide
 
+from automation.strategies.hourly_strategy_base import ExitReason
 from automation.strategies.vwap_exhaustion import VwapExhaustionConfig, VwapExhaustionStrategy
 
 
@@ -80,9 +81,13 @@ def test_vwap_exhaustion_early_return_no_state_mutation():
         assert strategy.bars_since_last_signal == 9999
 
         # Szenario 3: Flip-Close (Gegenposition)
+        # Issue #1034 (Katalog #866) — ein Signalwechsel-Close traegt jetzt exit_kind=
+        # ExitReason.SIGNAL_REVERSAL (Order-Tag-Klassifikation), damit backtest_runner ihn nicht
+        # mehr als UNKNOWN zaehlt.
         mock_cache.positions_open.return_value = [short_pos]
         strategy._on_buy_signal(bar)
-        strategy._close_position_base.assert_called_once_with(short_pos)
+        strategy._close_position_base.assert_called_once_with(
+            short_pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
         assert strategy.current_signal is None
         assert strategy.bars_since_last_signal == 9999
 
@@ -90,7 +95,8 @@ def test_vwap_exhaustion_early_return_no_state_mutation():
 
         mock_cache.positions_open.return_value = [long_pos]
         strategy._on_sell_signal(bar)
-        strategy._close_position_base.assert_called_once_with(long_pos)
+        strategy._close_position_base.assert_called_once_with(
+            long_pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
         assert strategy.current_signal is None
         assert strategy.bars_since_last_signal == 9999
 

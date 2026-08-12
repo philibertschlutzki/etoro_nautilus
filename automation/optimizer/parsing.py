@@ -42,6 +42,15 @@ class TournamentMetrics:
     # verlieren (Pitfall #342). Defaults sind rueckwaertskompatibel (Legacy-JSONs ohne die Keys).
     oos_profit_factor_censored: bool = False
     oos_profit_factor_raw: float | None = None
+    # Issue #1031 (Katalog #866) — additiv zu ``oos_expectancy`` (die weiterhin unveraendert
+    # gecappte/-definierte Zahl, Zero-Regression): eine gegen Nennerausreisser robuste
+    # kapitalgewichtete Variante plus Winsorisierungs-/Ausreisser-Telemetrie (siehe
+    # ``backtest_runner._calculate_stats``-Docstring). Defaults rueckwaertskompatibel (Legacy-JSONs
+    # ohne die Keys).
+    oos_expectancy_capital_weighted: float | None = None
+    oos_expectancy_winsorized: float | None = None
+    oos_expectancy_outlier_count: int = 0
+    oos_expectancy_notional_degenerate_count: int = 0
     # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
     # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
     is_best_total_return: float = 0.0
@@ -171,6 +180,10 @@ class TournamentMetrics:
     oos_exit_reason_histogram: dict | None = None
     oos_max_holding_bars: float | None = None
     oos_gross_loss_mean_bps: float | None = None
+    # Issue #1035 (Katalog #866) — dieselbe Groesse, aber NUR ueber nachweisliche TRAILING_STOP-
+    # Exits (siehe backtest_runner._aggregate_exit_telemetry-Docstring).
+    oos_gross_loss_mean_bps_trailing_stop: float | None = None
+    oos_n_trailing_stop_losses: int = 0
     oos_gross_win_mean_bps: float | None = None
     oos_atr_median_bps: float | None = None
     oos_atr_min_bps: float | None = None
@@ -286,6 +299,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_exit_reason_histogram = oos_metrics.get("exit_reason_histogram")
     oos_max_holding_bars = oos_metrics.get("max_holding_bars")
     oos_gross_loss_mean_bps = oos_metrics.get("gross_loss_mean_bps")
+    # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
+    oos_gross_loss_mean_bps_trailing_stop = oos_metrics.get("gross_loss_mean_bps_trailing_stop")
+    oos_n_trailing_stop_losses = oos_metrics.get("n_trailing_stop_losses")
     oos_gross_win_mean_bps = oos_metrics.get("gross_win_mean_bps")
     oos_atr_median_bps = oos_metrics.get("atr_median_bps")
     oos_atr_min_bps = oos_metrics.get("atr_min_bps")
@@ -296,6 +312,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #401: evaluable Reward-Fallback fuer Zero-Loss/Sub-Threshold-Sortino.
     oos_total_return = oos_metrics.get("total_return")
     oos_expectancy = oos_metrics.get("expectancy")
+    # Issue #1031 (Katalog #866) — siehe TournamentMetrics-Docstring.
+    oos_expectancy_capital_weighted = oos_metrics.get("expectancy_capital_weighted")
+    oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
+    oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
+    oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
     # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.
     oos_win_rate = oos_metrics.get("win_rate")
     oos_profit_factor = oos_metrics.get("profit_factor")
@@ -369,6 +390,17 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # genau, arithmetisch unmoeglich) und von JEDEM nachgelagerten Konsumenten als echte
         # Beobachtung behandelt wurde (Pitfall #305 in AGENTS.md).
         oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else None,
+        # Issue #1031 (Katalog #866) — siehe TournamentMetrics-Docstring.
+        oos_expectancy_capital_weighted=(
+            float(oos_expectancy_capital_weighted)
+            if oos_expectancy_capital_weighted is not None else None),
+        oos_expectancy_winsorized=(
+            float(oos_expectancy_winsorized) if oos_expectancy_winsorized is not None else None),
+        oos_expectancy_outlier_count=(
+            int(oos_expectancy_outlier_count) if oos_expectancy_outlier_count is not None else 0),
+        oos_expectancy_notional_degenerate_count=(
+            int(oos_expectancy_notional_degenerate_count)
+            if oos_expectancy_notional_degenerate_count is not None else 0),
         # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else None,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,
@@ -429,6 +461,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_exit_reason_histogram=dict(oos_exit_reason_histogram) if oos_exit_reason_histogram else None,
         oos_max_holding_bars=float(oos_max_holding_bars) if oos_max_holding_bars is not None else None,
         oos_gross_loss_mean_bps=float(oos_gross_loss_mean_bps) if oos_gross_loss_mean_bps is not None else None,
+        # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
+        oos_gross_loss_mean_bps_trailing_stop=(
+            float(oos_gross_loss_mean_bps_trailing_stop)
+            if oos_gross_loss_mean_bps_trailing_stop is not None else None),
+        oos_n_trailing_stop_losses=(
+            int(oos_n_trailing_stop_losses) if oos_n_trailing_stop_losses is not None else 0),
         oos_gross_win_mean_bps=float(oos_gross_win_mean_bps) if oos_gross_win_mean_bps is not None else None,
         oos_atr_median_bps=float(oos_atr_median_bps) if oos_atr_median_bps is not None else None,
         oos_atr_min_bps=float(oos_atr_min_bps) if oos_atr_min_bps is not None else None,

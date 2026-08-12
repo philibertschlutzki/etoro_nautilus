@@ -17,7 +17,7 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import BollingerBands, KeltnerChannel
 
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig, ExitReason
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
@@ -100,7 +100,7 @@ class SqueezeBreakoutStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None
             return
         if self.cache.orders_open(instrument_id=self.instrument_id):
@@ -124,7 +124,7 @@ class SqueezeBreakoutStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None
             return
         if self.cache.orders_open(instrument_id=self.instrument_id):

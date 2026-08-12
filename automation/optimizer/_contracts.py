@@ -238,3 +238,16 @@ _register_inference_code(
                 "der gecappte/gemeldete Wert trägt keine Information (#1004).",
     nullifies_metrics=(),
 )
+# Issue #1031 (Katalog #866) — ``backtest_runner._calculate_stats``: ein einzelner Round-Trip mit
+# Notional < 5% des Median-Notionals dieser Study speist weder ``expectancy_winsorized`` noch
+# ``expectancy_outlier_count`` (Divisionsartefakt ohne Information, siehe Fix-Docstring dort).
+# ANDERS als die ``prune``-Codes oben markiert dies NICHT den ganzen Trial als nicht messbar —
+# ``expectancy`` selbst bleibt unverändert gültig (Zero-Regression auf bestehende Gate-/Reward-
+# Konsumstellen), nur EIN einzelner Trade wird aus der robusten Teilstatistik ausgeschlossen.
+_register_inference_code(
+    "EXPECTANCY_NOTIONAL_DEGENERATE", failure_policy="telemetry_only", severity="medium",
+    description="notional < 5% des Median-Notionals der Study — Trade traegt keine Information zu "
+                "expectancy_winsorized/expectancy_outlier_count bei, expectancy selbst bleibt "
+                "unveraendert gueltig (#1031).",
+    nullifies_metrics=(),
+)

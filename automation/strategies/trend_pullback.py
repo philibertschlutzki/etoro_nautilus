@@ -22,7 +22,7 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig, ExitReason
 from automation.momentum_ls_allocator import MomentumLSAllocator
 from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_trader.indicators import RelativeStrengthIndex
@@ -95,7 +95,7 @@ class TrendPullbackStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None  # Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -117,7 +117,7 @@ class TrendPullbackStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None  # Signal-State zurücksetzen — verhindert Flat-Lock auf nächster Bar
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:

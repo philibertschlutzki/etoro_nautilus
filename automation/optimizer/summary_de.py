@@ -38,6 +38,10 @@ _RUN_STATUS_LABELS_DE = {
     "aborted_wallclock": "abgebrochen (Laufzeit-Budget überschritten, #828)",
     "aborted_signal": "abgebrochen (SIGINT/SIGTERM)",
     "aborted_error": "abgebrochen (unerwartete Exception)",
+    # Issue #1024 (Katalog #866) Fix Punkt 4 — ``sweep.py:2891`` setzt diesen Status seit #939, aber
+    # dieses Mapping fehlte: der Wert erschien als roher englischer String in einem sonst
+    # deutschsprachigen Bericht (Fallback ``_RUN_STATUS_LABELS_DE.get(status, status)``).
+    "completed_with_quarantine": "abgeschlossen mit Quarantäne (#939 — mindestens ein Symbol fehlgeschlagen)",
 }
 
 # Issue #850 — Floor für den excess_per_exposure-Nenner (Abschnitt 2.3): eine exposure_fraction
@@ -99,7 +103,21 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
     studies = _studies(report)
     n_studies = len(studies)
     counts = (report.get("cross_study") or {}).get("promotion_outcome_counts") or {}
-    n_deployable = sum(int(v) for k, v in counts.items() if k in _DEPLOYABLE_STATUSES)
+    # Issue #1029 (Katalog #866) — Root-Cause: dieser Satz zaehlte bislang NUR
+    # ``promotion_outcome_counts`` (READY_FOR_PR/PROMOTE_GLOBAL_DEFAULT, eine reine Sweep-Selektions-
+    # Zahl) und nannte das Ergebnis "Promotion(en)", OHNE ``deployment_decision.admitted`` zu pruefen
+    # — genau die Klausel, die Abschnitt 2.1 (Deployment-Spalte) UND ``check_promotion_deployment_
+    # coherence`` bereits kennen. Auf einem Lauf mit ``snapshot_drift=false``-Kandidaten meldete der
+    # Kopfsatz "3 Promotion(en)"/"5 Promotion(en)", waehrend Abschnitt 2.1 explizit "noch NICHT
+    # deploybar" ausweist und der Invarianten-Check FAILt — der Satz, den ein Leser zuerst liest, mass
+    # eine ANDERE Groesse als die Tabelle darunter. ``n_promotions_sweep`` (die alte Zahl) und
+    # ``n_deployable`` (= admitted is True) werden jetzt GETRENNT genannt.
+    n_promotions_sweep = sum(int(v) for k, v in counts.items() if k in _DEPLOYABLE_STATUSES)
+    n_deployable = sum(
+        1 for r in studies
+        if r.get("promotion_outcome") in _DEPLOYABLE_STATUSES
+        and (r.get("deployment_decision") or {}).get("admitted") is True
+    )
     run_status = report.get("run_status", "complete")
     status_note = ""
     if run_status != "complete":
@@ -110,13 +128,15 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
         )
     if n_deployable == 0:
         sentence = (
-            f"{n_studies} Studies, 0 Promotionen — kein Parametervektor hat die Holdout-Validierung "
-            "bestanden. Es gibt kein deploybares Ergebnis aus diesem Lauf."
+            f"{n_studies} Studies, {n_promotions_sweep} Sweep-Promotion(en), **0 deploybar** — "
+            "kein Kandidat hat sowohl die Holdout-Validierung als auch das Deployment-Gate "
+            "(``deployment_gate.evaluate_deployment_eligibility``) bestanden. Es gibt kein "
+            "deploybares Ergebnis aus diesem Lauf."
         )
     else:
         sentence = (
-            f"{n_studies} Studies, {n_deployable} Promotion(en) (READY_FOR_PR/PROMOTE_GLOBAL_DEFAULT) — "
-            "siehe Abschnitt 2 für die Details je Kandidat."
+            f"{n_studies} Studies, {n_promotions_sweep} Sweep-Promotion(en), {n_deployable} "
+            "deploybar — siehe Abschnitt 2 für die Details je Kandidat."
         )
     # Issue #849 Punkt 4 — blockierende Invarianten-FAILs (severity='blocking', z. B.
     # check_holding_time_cap/check_required_config_keys) muessen bereits HIER namentlich auftauchen,
@@ -489,11 +509,20 @@ def _section_5_anomalies(report: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_german_summary(report: dict) -> str:
+def generate_german_summary(report: dict, *, report_sha256: str | None = None) -> str:
     """Issue #832 — baut den vollständigen deutschsprachigen Abschlussbericht AUSSCHLIESSLICH aus
-    ``report`` (dem bereits erzeugten #742-Report-Dict). Reine Funktion, kein I/O."""
+    ``report`` (dem bereits erzeugten #742-Report-Dict). Reine Funktion, kein I/O.
+
+    Issue #1024 (Katalog #866) — ``report_sha256`` (Default ``None``, bit-identisch zum
+    Pre-Fix-Verhalten): der SHA-256-Hash der Report-JSON-DATEI, aus der dieser Text erzeugt wurde.
+    Im Header eingebettet, macht er eine spaetere Divergenz zwischen committeter ``.md`` und
+    committetem ``.json`` DIREKT nachweisbar (Root-Cause #1024: die beiden Artefakte des
+    ``34b99e6e``-Laufs beschrieben nachweislich verschiedene Daten — 219 Diff-Zeilen, inklusive
+    Vorzeichenwechsel beim TSLA-Buy&Hold — ohne dass ein Leser das am Text selbst erkennen konnte)."""
     run_id = report.get("run_id", "unbekannt")
     header = f"# Sweep-Zusammenfassung {run_id}\n"
+    if report_sha256:
+        header += f"<!-- report_sha256: {report_sha256} -->\n"
     sections = [
         _section_1_result_in_one_sentence(report),
         _section_2_monetary_result(report),
@@ -504,10 +533,15 @@ def generate_german_summary(report: dict) -> str:
     return header + "\n\n" + "\n\n".join(sections) + "\n"
 
 
-def write_german_summary(report: dict, *, logs_dir: Path | None = None) -> Path:
+def write_german_summary(
+    report: dict, *, logs_dir: Path | None = None, report_sha256: str | None = None,
+) -> Path:
     """Issue #832 Fix Punkt 2 — schreibt ``logs/zusammenfassung_<run_id>.md``. Fail-open: ein
     Schreibfehler wird geloggt, aber propagiert NICHT (der Aufrufer, sweep.main(), darf den Sweep
-    nie deswegen als fehlgeschlagen behandeln — analog Champion-Store/Retention)."""
+    nie deswegen als fehlgeschlagen behandeln — analog Champion-Store/Retention).
+
+    Issue #1024 (Katalog #866) — ``report_sha256`` wird unveraendert an ``generate_german_summary``
+    durchgereicht (siehe dortiger Docstring)."""
     if logs_dir is None:
         from automation.optimizer.trial_config import config_dir
         logs_dir = config_dir().parent.parent / "logs"
@@ -515,18 +549,25 @@ def write_german_summary(report: dict, *, logs_dir: Path | None = None) -> Path:
     logs_dir.mkdir(parents=True, exist_ok=True)
     run_id = report.get("run_id", "unbekannt")
     out_path = logs_dir / f"zusammenfassung_{run_id}.md"
-    out_path.write_text(generate_german_summary(report), encoding="utf-8")
+    out_path.write_text(generate_german_summary(report, report_sha256=report_sha256), encoding="utf-8")
     return out_path
 
 
 def write_german_summary_for_report_path(report_path: Path, *, logs_dir: Path | None = None) -> Path | None:
     """Issue #832 Fix Punkt 2 — Aufruf-Wrapper für ``sweep.main()``: liest das gerade geschriebene
     #742-Report-JSON von der Platte und erzeugt daraus die Zusammenfassung. Fail-open (``None``
-    bei jedem Lese-/Schreibfehler) — non-fatal, analog dem Report-Block selbst."""
+    bei jedem Lese-/Schreibfehler) — non-fatal, analog dem Report-Block selbst.
+
+    Issue #1024 (Katalog #866) Fix Punkt 1 — stempelt den SHA-256 der GENAU GELESENEN Report-Datei
+    in den ``.md``-Header (``generate_german_summary``s ``report_sha256``), damit eine spaetere
+    Regeneration die Prüfsumme vor jedem inhaltlichen Diff prüfen kann."""
     import json
+    from automation.optimizer.manifest import sha256_file
     try:
-        report = json.loads(Path(report_path).read_text("utf-8"))
-        return write_german_summary(report, logs_dir=logs_dir)
+        report_path = Path(report_path)
+        report = json.loads(report_path.read_text("utf-8"))
+        return write_german_summary(
+            report, logs_dir=logs_dir, report_sha256=sha256_file(report_path))
     except Exception:
         _log.warning(
             "[#832] Deutsche Zusammenfassung konnte nicht erzeugt werden (non-fatal).", exc_info=True)

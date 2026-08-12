@@ -52,10 +52,25 @@ def test_stop_reason_budget_exhausted_when_full_budget_completed():
     assert result["budget_executed_fraction"] == 1.0
 
 
-def test_stop_reason_exception_when_short_of_budget_without_plateau_flag():
+def test_stop_reason_unknown_incomplete_when_short_of_budget_without_plateau_or_exception():
+    """Issue #1026 (Katalog #866) — ohne einen tatsaechlich gezaehlten
+    ``n_trials_exception``-Stempel behauptet die Funktion keine Absturzursache mehr; sie faellt auf
+    die ehrliche Restkategorie ``UNKNOWN_INCOMPLETE`` zurueck (vorher faelschlich ``EXCEPTION``)."""
     result = ro.compute_budget_execution(
         [object()] * 40, n_trials_budget=100, n_startup_trials=16, study_user_attrs={})
+    assert result["stop_reason"] == "UNKNOWN_INCOMPLETE"
+
+
+def test_stop_reason_exception_only_when_exceptions_were_actually_counted():
+    """Issue #1026 (Katalog #866) — ``EXCEPTION`` wird nur gemeldet, wenn
+    ``study_user_attrs['n_trials_exception'] > 0`` (von ``_optimize_symbol_impl`` tatsaechlich
+    gezaehlte, von ``study.optimize(..., catch=...)`` gefangene Exceptions)."""
+    result = ro.compute_budget_execution(
+        [object()] * 40, n_trials_budget=100, n_startup_trials=16,
+        study_user_attrs={"n_trials_exception": 3, "exception_types": {"OSError": 3}})
     assert result["stop_reason"] == "EXCEPTION"
+    assert result["n_trials_exception"] == 3
+    assert result["exception_types"] == {"OSError": 3}
 
 
 # ── invariants.check_budget_execution: sweep-weite Median-Schwelle ──────────────────────────────
@@ -116,7 +131,9 @@ def test_study_record_carries_budget_execution_fields():
     assert record["n_trials_completed"] == 20
     assert record["n_trials_total_study"] == 20
     assert record["budget_executed_fraction"] == 0.2
-    assert record["stop_reason"] == "EXCEPTION"
+    # Issue #1026 (Katalog #866) — kein n_trials_exception-Stempel ⇒ UNKNOWN_INCOMPLETE, nicht mehr
+    # die unbelegte EXCEPTION-Restkategorie.
+    assert record["stop_reason"] == "UNKNOWN_INCOMPLETE"
     assert "n_modelled_trials_completed" in record
 
 

@@ -2008,7 +2008,12 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                                 deflation_n_family=deflation_n_family_value,
                                 deflation_family_period_returns=family_returns_map.get(symbol),
                                 deflation_n_family_excluded_no_statistic=(
-                                    (n_family_excluded_map or {}).get(symbol)))
+                                    (n_family_excluded_map or {}).get(symbol)),
+                                # Issue #1027 (Katalog #866) — dieselbe run_id, die den #799-
+                                # Checkpoint und den #742-Report treibt, damit die PROMOTE_GLOBAL_
+                                # DEFAULT-Budget-Vorbedingung dieselbe Study-Kohorte sieht wie Report
+                                # und Invariante.
+                                run_id=run_id)
             proposal_path = export_symbol_proposal(study, strategy, symbol, promotion)
             # Issue #703 — Champion-Store: persistiert den Ebene-1-Suchanker für den NÄCHSTEN
             # Sweep-Lauf, unmittelbar NACH dem Proposal-Export. Rein additiv (ändert weder die

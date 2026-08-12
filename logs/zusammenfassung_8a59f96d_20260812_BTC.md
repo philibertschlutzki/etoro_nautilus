@@ -1,9 +1,10 @@
 # Sweep-Zusammenfassung 8a59f96d_20260812_BTC
+<!-- report_sha256: 091935512a081abfad3e3c9e62d18d1280c66919a71954bcbd9f322fad7d3e56 -->
 
 
 ## 1. Ergebnis in einem Satz
 
-1 Studies, 0 Promotionen — kein Parametervektor hat die Holdout-Validierung bestanden. Es gibt kein deploybares Ergebnis aus diesem Lauf.
+1 Studies, 0 Sweep-Promotion(en), **0 deploybar** — kein Kandidat hat sowohl die Holdout-Validierung als auch das Deployment-Gate (``deployment_gate.evaluate_deployment_eligibility``) bestanden. Es gibt kein deploybares Ergebnis aus diesem Lauf.
 
 ## 2. Monetäres Ergebnis
 
