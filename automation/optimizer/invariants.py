@@ -2035,6 +2035,54 @@ def check_report_cohort_coherence(
     )
 
 
+def check_expectancy_definition_coherence(
+    study_records: list[dict], *, max_relative_gap: float = 0.5, min_trades: int = 10,
+) -> InvariantResult:
+    """Issue #1031 (Katalog #866) — ``holdout_expectancy`` (Mittel von Quotienten,
+    ``mean(pnl_i/notional_i)``) und ``holdout_expectancy_capital_weighted`` (Σpnl/Σnotional, gegen
+    Nennerausreisser robust) messen denselben zugrundeliegenden Per-Trade-Edge — eine grosse
+    relative Luecke zwischen beiden ist die Signatur eines einzelnen Round-Trips mit degeneriertem
+    Nenner (oder einer ueber eine Preis-Sprungstelle gehaltenen Position), der den Mittelwert der
+    Quotienten dominiert (beobachtet: expectancy=0,52 vs. implizit ~0,03 auf den drei TSLA-
+    Kandidaten des Katalogs — Faktor 16).
+
+    Nur Studies mit ``holdout_total_trades >= min_trades`` und definierten beiden Feldern werden
+    geprüft (kleine Kohorten sind statistisch zu verrauscht, um diese Diagnose sinnvoll zu tragen)."""
+    with_data = [
+        r for r in study_records
+        if r.get("holdout_expectancy") is not None
+        and r.get("holdout_expectancy_capital_weighted") is not None
+        and (r.get("holdout_total_trades") or 0) >= min_trades
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_expectancy_definition_coherence",
+            passed=True,
+            expected=f"|expectancy - expectancy_capital_weighted| / max(|expectancy|, 1e-6) <= {max_relative_gap}",
+            actual=None,
+            detail=f"Keine Studies mit >= {min_trades} Holdout-Trades und beiden Expectancy-Feldern — nicht anwendbar.",
+        )
+    offenders: dict[str, float] = {}
+    for r in with_data:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        expectancy = float(r["holdout_expectancy"])
+        capital_weighted = float(r["holdout_expectancy_capital_weighted"])
+        gap = abs(expectancy - capital_weighted) / max(abs(expectancy), 1e-6)
+        if gap > max_relative_gap:
+            offenders[key] = round(gap, 4)
+    passed = not offenders
+    return InvariantResult(
+        name="check_expectancy_definition_coherence",
+        passed=passed,
+        expected=f"<= {max_relative_gap}",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies: expectancy und expectancy_capital_weighted "
+                f"divergieren relativ um mehr als {max_relative_gap} — mindestens ein Round-Trip mit "
+                "degeneriertem Notional dominiert den Mittelwert der Quotienten (#1031)."),
+    )
+
+
 def check_worker_utilisation_plausible(
     worker_utilisation: float | None, *, max_ratio: float = 1.0,
 ) -> InvariantResult:

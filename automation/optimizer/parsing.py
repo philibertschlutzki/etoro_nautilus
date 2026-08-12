@@ -42,6 +42,15 @@ class TournamentMetrics:
     # verlieren (Pitfall #342). Defaults sind rueckwaertskompatibel (Legacy-JSONs ohne die Keys).
     oos_profit_factor_censored: bool = False
     oos_profit_factor_raw: float | None = None
+    # Issue #1031 (Katalog #866) — additiv zu ``oos_expectancy`` (die weiterhin unveraendert
+    # gecappte/-definierte Zahl, Zero-Regression): eine gegen Nennerausreisser robuste
+    # kapitalgewichtete Variante plus Winsorisierungs-/Ausreisser-Telemetrie (siehe
+    # ``backtest_runner._calculate_stats``-Docstring). Defaults rueckwaertskompatibel (Legacy-JSONs
+    # ohne die Keys).
+    oos_expectancy_capital_weighted: float | None = None
+    oos_expectancy_winsorized: float | None = None
+    oos_expectancy_outlier_count: int = 0
+    oos_expectancy_notional_degenerate_count: int = 0
     # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
     # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
     is_best_total_return: float = 0.0
@@ -296,6 +305,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     # Issue #401: evaluable Reward-Fallback fuer Zero-Loss/Sub-Threshold-Sortino.
     oos_total_return = oos_metrics.get("total_return")
     oos_expectancy = oos_metrics.get("expectancy")
+    # Issue #1031 (Katalog #866) — siehe TournamentMetrics-Docstring.
+    oos_expectancy_capital_weighted = oos_metrics.get("expectancy_capital_weighted")
+    oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
+    oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
+    oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
     # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.
     oos_win_rate = oos_metrics.get("win_rate")
     oos_profit_factor = oos_metrics.get("profit_factor")
@@ -369,6 +383,17 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # genau, arithmetisch unmoeglich) und von JEDEM nachgelagerten Konsumenten als echte
         # Beobachtung behandelt wurde (Pitfall #305 in AGENTS.md).
         oos_expectancy=float(oos_expectancy) if oos_expectancy is not None else None,
+        # Issue #1031 (Katalog #866) — siehe TournamentMetrics-Docstring.
+        oos_expectancy_capital_weighted=(
+            float(oos_expectancy_capital_weighted)
+            if oos_expectancy_capital_weighted is not None else None),
+        oos_expectancy_winsorized=(
+            float(oos_expectancy_winsorized) if oos_expectancy_winsorized is not None else None),
+        oos_expectancy_outlier_count=(
+            int(oos_expectancy_outlier_count) if oos_expectancy_outlier_count is not None else 0),
+        oos_expectancy_notional_degenerate_count=(
+            int(oos_expectancy_notional_degenerate_count)
+            if oos_expectancy_notional_degenerate_count is not None else 0),
         # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else None,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,

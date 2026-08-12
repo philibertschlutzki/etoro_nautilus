@@ -2775,9 +2775,65 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     # sobald eine längen-kongruente notional_list vorliegt. Trades mit nicht-positivem Notional
     # (defensiv) werden übersprungen. Fehlt die Liste ⇒ Legacy-Pfad (Normierung auf starting_capital),
     # bit-identisch für alle Direkt-Unit-Calls von _calculate_stats.
+    #
+    # Issue #1031 (Katalog #866) — ``expectancy`` (``mean(pnl_i/notional_i)``) ist ein Mittel von
+    # Quotienten OHNE Nennerboden und ohne Winsorisierung: ein einzelner Round-Trip mit degeneriertem
+    # Nenner (oder ueber eine Preis-Sprungstelle gehaltene Position) verschiebt den Mittelwert ueber
+    # Hunderte Trades beliebig weit (beobachtet: expectancy=0,52 bei implizitem f=0,93 % gegen
+    # konfigurierte 15 % — Faktor 16). ``expectancy`` selbst bleibt UNVERAENDERT (Zero-Regression auf
+    # jede kalibrierte Schwelle/jeden Reward-Gradienten, der sie heute konsumiert); die neue
+    # Information ist additiv:
+    #   - ``expectancy_capital_weighted`` = Σpnl/Σnotional — ein Summenquotient ist gegen einen
+    #     einzelnen kleinen Nenner unempfindlich (jeder Trade traegt nur mit seinem tatsaechlichen
+    #     Notional zur Summe bei, nicht mit dem Kehrwert eines evtl. degenerierten Nenners) und ist
+    #     zusaetzlich kohaerent zu ``total_return`` (dieselbe Kapitalbasis).
+    #   - Nennerboden ``nz >= 0,05 · median(notional_list)``: Trades darunter speisen weder
+    #     ``expectancy_winsorized`` noch ``expectancy_outlier_count`` und werden als
+    #     ``EXPECTANCY_NOTIONAL_DEGENERATE`` gezaehlt/diagnostiziert.
+    #   - ``expectancy_winsorized``: dieselben 5/95-Grenzen wie ``fold_winsorize_lower/upper``
+    #     (``_read_fold_winsorize``), auf die Nennerboden-gefilterte Per-Trade-Return-Liste.
+    #   - ``expectancy_outlier_count``: Trades mit ``|pnl/notional| > 10 · median(|pnl/notional|)``
+    #     innerhalb derselben gefilterten Liste.
+    expectancy_capital_weighted = None
+    expectancy_winsorized = None
+    expectancy_outlier_count = 0
+    expectancy_notional_degenerate_count = 0
     if notional_list is not None and len(notional_list) == len(pnl_list):
         per_trade = [v / nz for v, nz in zip(pnl_list, notional_list) if nz and nz > 0.0]
         expectancy = statistics.mean(per_trade) if per_trade else 0.0
+
+        _positive_notionals = [nz for nz in notional_list if nz and nz > 0.0]
+        _median_notional = statistics.median(_positive_notionals) if _positive_notionals else 0.0
+        _notional_floor = 0.05 * _median_notional
+        _pnl_floored, _notional_floored, _per_trade_floored = [], [], []
+        for v, nz in zip(pnl_list, notional_list):
+            if not nz or nz <= 0.0:
+                continue
+            if nz < _notional_floor:
+                expectancy_notional_degenerate_count += 1
+                _inference_diagnostics.append({
+                    "code": "EXPECTANCY_NOTIONAL_DEGENERATE",
+                    "detail": f"notional={nz!r} < 5% des Median-Notionals ({_notional_floor!r}) — "
+                             "Trade traegt keine Information zu expectancy_winsorized/"
+                             "expectancy_outlier_count bei (#1031).",
+                    "value": nz,
+                })
+                continue
+            _pnl_floored.append(v)
+            _notional_floored.append(nz)
+            _per_trade_floored.append(v / nz)
+
+        if _notional_floored:
+            expectancy_capital_weighted = sum(_pnl_floored) / sum(_notional_floored)
+        _w_lo, _w_hi = _read_fold_winsorize()
+        _winsorized_returns = _winsorize(_per_trade_floored, _w_lo, _w_hi)
+        expectancy_winsorized = (
+            statistics.mean(_winsorized_returns) if _winsorized_returns else None)
+        if _per_trade_floored:
+            _median_abs_return = statistics.median(abs(r) for r in _per_trade_floored)
+            _outlier_threshold = 10.0 * _median_abs_return
+            expectancy_outlier_count = sum(
+                1 for r in _per_trade_floored if _outlier_threshold > 0 and abs(r) > _outlier_threshold)
     else:
         rets = [v / starting_capital for v in pnl_list]
         expectancy = statistics.mean(rets) if rets else 0.0
@@ -3386,6 +3442,13 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "max_drawdown":  float(max_dd),
         "total_return":  float(total_return),
         "expectancy":    float(expectancy),
+        # Issue #1031 (Katalog #866) — siehe Docstring am Berechnungsblock oben.
+        "expectancy_capital_weighted": (
+            float(expectancy_capital_weighted) if expectancy_capital_weighted is not None else None),
+        "expectancy_winsorized": (
+            float(expectancy_winsorized) if expectancy_winsorized is not None else None),
+        "expectancy_outlier_count": int(expectancy_outlier_count),
+        "expectancy_notional_degenerate_count": int(expectancy_notional_degenerate_count),
         "dd_excess":     float(dd_excess),
         "avg_holding_time_s": float(avg_hold),
         "median_holding_time_s": float(med_hold),
@@ -3635,6 +3698,36 @@ RoundTripRecord = tuple[float, int, float, float]
 NotionalRecord = tuple[float, int]
 
 
+def _round_trip_notional_peak(matches: list["FillMatchRecord"]) -> float:
+    """Issue #1032 (Katalog #866) — Spitzenbestand des GLEICHZEITIG offenen Kapitals waehrend eines
+    Round-Trips, im Unterschied zu ``rt_notional`` (Summe der Entry-Notionale ALLER FIFO-Matches
+    dieses Round-Trips, die Kostenbasis). Fuer eine Position, die innerhalb eines Round-Trips
+    mehrfach auf-/abgebaut wird (Pyramidisierung, Teilausstieg + Nachkauf), zaehlt ``rt_notional``
+    jede Wiederaufnahme erneut, obwohl dasselbe Kapital recycelt wird — das tatsaechliche maximale
+    Exposure ist strikt kleiner als diese Summe.
+
+    Sweep-Line ueber (Entry-Notional bei ``exit_ts − holding_ns``, negiertes Notional bei
+    ``exit_ts``) je Match; bei gleichem Zeitstempel werden Entries VOR Exits verarbeitet (maximiert
+    den Spitzenbestand bei simultanen Fills statt ihn zufaellig zu unterschaetzen).
+
+    Beispiel (Kauf 100 → Verkauf 30 → Kauf 50 → Verkauf 120, ein Round-Trip mit zwei FIFO-Matches
+    ueber 30 bzw. 70 Einheiten des ersten Kaufs plus einem Match ueber 50 Einheiten des zweiten
+    Kaufs): der Spitzenbestand ist das Maximum ueber die Zeit, strikt kleiner als die Summe aller
+    Entry-Notionale (``rt_notional``)."""
+    events: list[tuple[int, float]] = []
+    for _pnl, exit_ts, holding_ns, _qty, notional in matches:
+        entry_ts = exit_ts - holding_ns
+        events.append((entry_ts, notional))
+        events.append((exit_ts, -notional))
+    events.sort(key=lambda e: (e[0], -e[1]))
+    running = 0.0
+    peak = 0.0
+    for _ts, delta in events:
+        running += delta
+        peak = max(peak, running)
+    return peak
+
+
 class MetricsLevel(TypedDict):
     """Metriken *einer* Aggregationsebene des Dual-Reporting-Schemas (Issue #508).
 
@@ -3727,6 +3820,9 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #899 — Exit-Telemetrie je Round-Trip (exit_reason/ATR der SCHLIESSENDEN Order),
         # parallel zu rt_pnls_with_ts/rt_notionals_with_ts (gleicher Index, gleiche Länge).
         rt_exit_meta: list[dict] = []
+        # Issue #1032 (Katalog #866) — Spitzenbestand des gleichzeitig offenen Kapitals je Round-
+        # Trip (siehe _round_trip_notional_peak-Docstring), parallel zu rt_notionals_with_ts.
+        rt_notional_peaks: list[float] = []
 
         def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None) -> None:
             """Aggregiert die FIFO-Matches EINER zusammenhängenden Position (Position-Open
@@ -3748,9 +3844,13 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 rt_holding_ns = sum(m[2] * m[3] for m in matches) / total_qty
             else:
                 rt_holding_ns = matches[-1][2]
+            # Issue #1032 (Katalog #866) — ``rt_notional`` bleibt UNVERAENDERT (Kostenbasis-
+            # Definition, Zero-Regression); ``rt_notional_peak`` (siehe Docstring dort) ist additiv.
+            rt_notional_peak = _round_trip_notional_peak(matches)
             rt_notional = sum(m[4] for m in matches)
             rt_pnls_with_ts.append((rt_pnl, rt_exit_ts, rt_holding_ns, total_qty))
             rt_notionals_with_ts.append((rt_notional, rt_exit_ts))
+            rt_notional_peaks.append(rt_notional_peak)
 
             closing_order_id = order_ids[-1] if order_ids else None
             meta = order_exit_meta.get(closing_order_id, {}) if closing_order_id else {}
@@ -4135,6 +4235,30 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
         is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta)
+
+        # Issue #1032 (Katalog #866) — Spitzenbestand-Telemetrie je Ebene, dieselbe IS/OOS-
+        # Fold-Aufteilung wie ``_split_and_stats`` (hier separat, da ``rt_notional_peaks`` kein
+        # ``_calculate_stats``-Eingang ist, sondern additive Round-Trip-Rohtelemetrie).
+        _is_notional_peaks, _oos_notional_peaks = [], []
+        for _rt_idx, (_pnl, _ts, _ht, _rt_qty) in enumerate(rt_pnls_with_ts):
+            _peak = rt_notional_peaks[_rt_idx] if _rt_idx < len(rt_notional_peaks) else None
+            if _peak is None:
+                continue
+            if _wf:
+                _is_oos = any(s <= _ts < e for _, s, e in fold_boundaries)
+                _is_in_sample = _is_start_ns <= _ts < is_end_ns
+            else:
+                _is_oos, _is_in_sample = False, True
+            if _is_oos:
+                _oos_notional_peaks.append(_peak)
+            elif _is_in_sample:
+                _is_notional_peaks.append(_peak)
+        if _is_notional_peaks:
+            is_metrics["median_position_notional_peak"] = statistics.median(_is_notional_peaks)
+            is_metrics["max_position_notional_peak"] = max(_is_notional_peaks)
+        if _oos_notional_peaks:
+            oos_metrics["median_position_notional_peak"] = statistics.median(_oos_notional_peaks)
+            oos_metrics["max_position_notional_peak"] = max(_oos_notional_peaks)
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)

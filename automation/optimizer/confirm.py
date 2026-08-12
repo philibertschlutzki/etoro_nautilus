@@ -519,6 +519,13 @@ def _metrics_dict(m) -> dict:
         # Aufrufer/Tests übergeben ein minimales Metrics-Double ohne diese Felder.
         "oos_total_return": getattr(m, "oos_total_return", None),
         "oos_expectancy": getattr(m, "oos_expectancy", None),
+        # Issue #1031 (Katalog #866) — additive, nennerausreisser-robuste Expectancy-Telemetrie
+        # neben dem (weiterhin unveraendert definierten) oos_expectancy.
+        "oos_expectancy_capital_weighted": getattr(m, "oos_expectancy_capital_weighted", None),
+        "oos_expectancy_winsorized": getattr(m, "oos_expectancy_winsorized", None),
+        "oos_expectancy_outlier_count": getattr(m, "oos_expectancy_outlier_count", 0),
+        "oos_expectancy_notional_degenerate_count": getattr(
+            m, "oos_expectancy_notional_degenerate_count", 0),
         "oos_win_rate": getattr(m, "oos_win_rate", None),
         "oos_profit_factor": getattr(m, "oos_profit_factor", None),
         # Issue #1004 (Katalog #858) — Zensur-Telemetrie neben dem (weiterhin gecappten) Wert.

@@ -800,6 +800,13 @@ def _study_record(proposal: dict, study,
         # summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ohne zweiten Datenzugriff.
         "holdout_total_return": holdout_metrics.get("oos_total_return"),
         "holdout_expectancy": holdout_metrics.get("oos_expectancy"),
+        # Issue #1031 (Katalog #866) — additive, nennerausreisser-robuste Expectancy-Telemetrie
+        # (siehe backtest_runner._calculate_stats-Docstring); holdout_expectancy bleibt unveraendert.
+        "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),
+        "holdout_expectancy_winsorized": holdout_metrics.get("oos_expectancy_winsorized"),
+        "holdout_expectancy_outlier_count": holdout_metrics.get("oos_expectancy_outlier_count") or 0,
+        "holdout_expectancy_notional_degenerate_count": (
+            holdout_metrics.get("oos_expectancy_notional_degenerate_count") or 0),
         "holdout_win_rate": holdout_metrics.get("oos_win_rate"),
         "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
         # Issue #1004 (Katalog #858) — Zensur-Telemetrie fuer summary_de.py Abschnitt 2.1 (kein
@@ -1419,6 +1426,9 @@ def _build_report(
         studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s)
     all_checks.append((
         "global", _inv.check_worker_utilisation_plausible(_worker_utilisation_value)))
+
+    # Issue #1031 (Katalog #866) — Kohaerenz zwischen expectancy und expectancy_capital_weighted.
+    all_checks.append(("global", _inv.check_expectancy_definition_coherence(studies_out)))
 
     # Issue #776 — sweep-weite Gate-Kollinearitaets-Konsolidierungs-Invariante (konsumiert den
     # #679-Alarm ueber alle Studies statt ihn stumm bleiben zu lassen).
