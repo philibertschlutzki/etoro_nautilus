@@ -428,7 +428,7 @@ def phase2_data_acquisition(
                         api_key=api_key,
                         user_key=user_key,
                         etoro_id_to_symbol=insufficient_ids,
-                        months=12,
+                        months=15,
                         start_ns=start_ns,
                     )
                 )
