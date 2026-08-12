@@ -1530,6 +1530,21 @@ def check_adaptive_diagnostic_rate(
         if codes & _ADAPTIVE_DIAGNOSTIC_CODES:
             n_adaptive += 1
     rate = n_adaptive / n_trials_informative
+    # Issue #1033 (Katalog #866, Pitfall #356) — ``n_adaptive`` zaehlt hoechstens EINMAL je Trial
+    # (Set-Schnitt oben) und kann daher ``n_trials_informative`` (dieselben Trials) strukturell
+    # nicht ueberschreiten; ``rate > 1.0`` ist kein gueltiger Beobachtungswert, sondern ein Beweis,
+    # dass Zaehler und Nenner NICHT dieselbe Grundgesamtheit messen (z. B. ``trials`` enthaelt
+    # Duplikate oder ``n_trials_informative`` stammt aus einer anderen Kohorte) — eigene FAIL-
+    # Meldung statt einer unplausiblen Prozentzahl.
+    if rate > 1.0:
+        return InvariantResult(
+            name="check_adaptive_diagnostic_rate",
+            passed=False,
+            expected="Zaehler/Nenner kommensurabel (rate <= 1.0)",
+            actual=round(rate, 4),
+            detail=f"{n_adaptive}/{n_trials_informative} — Zaehler/Nenner nicht kommensurabel "
+                   "(Rate > 1.0 ist kein gueltiger Beobachtungswert, #1033).",
+        )
     passed = rate <= max_rate
     return InvariantResult(
         name="check_adaptive_diagnostic_rate",
@@ -1576,6 +1591,18 @@ def check_inference_diagnostics_concentration(
                 affected += 1
                 break
     fraction = (affected / n_trials_informative) if n_trials_informative > 0 else 0.0
+    # Issue #1033 (Katalog #866, Pitfall #356) — ``affected`` zaehlt hoechstens einmal je Trial
+    # (der ``break`` oben); ``fraction > 1.0`` beweist eine Zaehler/Nenner-Inkommensurabilitaet
+    # (siehe check_adaptive_diagnostic_rate-Kommentar), keinen gueltigen Beobachtungswert.
+    if fraction > 1.0:
+        return InvariantResult(
+            name="check_inference_diagnostics_concentration",
+            passed=False,
+            expected="Zaehler/Nenner kommensurabel (fraction <= 1.0)",
+            actual=round(fraction, 4),
+            detail=f"{affected}/{n_trials_informative} — Zaehler/Nenner nicht kommensurabel "
+                   "(Rate > 1.0 ist kein gueltiger Beobachtungswert, #1033).",
+        )
     passed = fraction <= guard_dominance_threshold
     return InvariantResult(
         name="check_inference_diagnostics_concentration",

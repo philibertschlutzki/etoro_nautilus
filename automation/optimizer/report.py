@@ -360,6 +360,15 @@ def _study_record(proposal: dict, study,
     # der Subprozess eine Invariante verletzt hat (siehe run_optimization._reemit_inference_
     # diagnostics für die Live-Emission je Trial).
     inference_diagnostics_by_code: dict[str, int] = {}
+    # Issue #1033 (Katalog #866) — der obige Zaehler ist ein Zaehler von EREIGNISSEN (mehrere je
+    # Trial moeglich, z. B. je Fold); ``check_inference_diagnostics_concentration``/``check_
+    # adaptive_diagnostic_rate`` teilen ihn NICHT durch Ereignisse, sondern zaehlen distinkte
+    # TRIALS je Code (ein Trial zaehlt hoechstens einmal) — sonst waere die resultierende "Rate"
+    # gegen ihre eigene Schwelle nicht kalibrierbar (eine Rate, die 1,0 ueberschreiten kann, ist
+    # keine Rate, Pitfall #356). Diese Aggregation macht die TRIAL-Variante zusaetzlich als
+    # eigenstaendiges Report-Feld sichtbar (Intensitaets-Telemetrie bleibt die Ereignis-Variante
+    # oben).
+    inference_diagnostics_trials_by_code: dict[str, int] = {}
     # Issue #901 — je Study die beobachteten guard_reference_source-Werte aus SORTINO_GUARD_TRIPPED/
     # SORTINO_GUARD_REFERENCE_UNAVAILABLE-Diagnosen, Eingangsgrösse für
     # invariants.check_guard_reference_coherence unter reference_mode=='family_median'.
@@ -371,14 +380,19 @@ def _study_record(proposal: dict, study,
     # bitweise reproduzierbar (Pitfall #307 in AGENTS.md).
     guard_reference_values: list[float] = []
     for a in trial_attrs:
+        _codes_this_trial: set[str] = set()
         for diag in a.get("inference_diagnostics") or ():
             code = diag.get("code") if isinstance(diag, dict) else None
             if code:
                 inference_diagnostics_by_code[code] = inference_diagnostics_by_code.get(code, 0) + 1
+                _codes_this_trial.add(code)
             if isinstance(diag, dict) and diag.get("guard_reference_source") is not None:
                 guard_reference_sources.append(diag["guard_reference_source"])
             if isinstance(diag, dict) and diag.get("guard_reference_value") is not None:
                 guard_reference_values.append(diag["guard_reference_value"])
+        for code in _codes_this_trial:
+            inference_diagnostics_trials_by_code[code] = (
+                inference_diagnostics_trials_by_code.get(code, 0) + 1)
 
     # Issue #832 Fix Punkt 1 — je-Study-Aggregat der Haltedauer (Sekunden): das MAXIMUM über alle
     # oos_evaluated Trials (Rohmaterial für summary_de.py Abschnitt 4 "Trades mit der längsten
@@ -680,6 +694,10 @@ def _study_record(proposal: dict, study,
         # Normalfall). Macht eine Subprozess-Invariantenverletzung im #742-Report sichtbar, ohne ein
         # Trial-Verzeichnis zu öffnen oder trial_dir/logs/ zu lesen.
         "inference_diagnostics_by_code": inference_diagnostics_by_code,
+        # Issue #1033 (Katalog #866) — distinkte-Trials-Variante desselben Codes (siehe oben);
+        # dieselbe Quelle, die check_inference_diagnostics_concentration/check_adaptive_diagnostic_
+        # rate als Zaehler verwenden.
+        "inference_diagnostics_trials_by_code": inference_diagnostics_trials_by_code,
         # Issue #976 — Rohmaterial für invariants.check_window_unreachable_rate.
         "is_rejection_detail_counts": is_rejection_detail_counts,
         # Issue #901 — Rohmaterial für invariants.check_guard_reference_coherence.
