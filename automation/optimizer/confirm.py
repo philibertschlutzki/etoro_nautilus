@@ -118,17 +118,24 @@ def _stratify_cohort_by_n_periods(cohort_sr_np_pairs, anchor_n_periods, *, n_str
     return stratum_sr, anchor_stratum, stratum_n_periods
 
 
-def _holdout_bootstrap_ci_passes(metrics, *, confidence: float = 0.95) -> tuple[bool, float | None]:
+def _holdout_bootstrap_ci_passes(metrics, *, confidence: float = 0.95) -> tuple[bool | None, float | None]:
     """Issue #619 — Stationary-Bootstrap-CI auf dem per-Perioden-Sortino des Holdout (Politis/Romano).
 
     Statt des Punktschätzers (``oos_sortino > 0``) prüft das Gate die UNTERE CI-Grenze
     (``ci_lower(sortino) > 0``) — die statistisch saubere Version dessen, was ``deflated_selection``
     heuristisch approximiert, und auf 21 Trades EHRLICH (das CI wird breit sein — genau die Information).
-    Rückgabe ``(passes, ci_lower)``; ``passes=True`` bei zu wenigen Returns (< 5, CI nicht schätzbar ⇒
-    kein zusätzliches Veto, das ``oos_sortino``-Punkt-Gate bleibt allein maßgeblich)."""
+    Rückgabe ``(passes, ci_lower)``.
+
+    Issue #1005 (Katalog #858, Pitfall #343) — ``passes=None`` bei zu wenigen Returns (< 5, CI nicht
+    schätzbar). VORHER lieferte diese Funktion ``True`` in diesem Fall ("kein Zusatz-Veto"); in einer
+    KONJUNKTIVEN Verwendung (Aufrufer prüft ``if holdout_passed and ...``) ist das unproblematisch, weil
+    das ``oos_sortino``-Punkt-Gate bereits vorher bestand. In einer DISJUNKTIVEN Bestätigung
+    (``dsr_or_robust_pair``, confirm_on_holdout weiter unten) macht ``True`` eine NICHT SCHÄTZBARE
+    Prüfung fälschlich zu einer BESTANDENEN — ``None`` ist keine bestandene Prüfung (bool(None) is
+    False), jeder Aufrufer behandelt sie explizit als nicht bestanden."""
     rets = list(getattr(metrics, "oos_period_returns", ()) or ())
     if len(rets) < 5:
-        return True, None
+        return None, None
     from automation.optimizer.bootstrap import bootstrap_ci, sortino_statistic, ci_lower_bound_passes
     _, lo, _ = bootstrap_ci(rets, lambda a: sortino_statistic(a, mar=0.0, annualization=1.0),
                             confidence=confidence, seed=42)
@@ -514,6 +521,9 @@ def _metrics_dict(m) -> dict:
         "oos_expectancy": getattr(m, "oos_expectancy", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),
         "oos_profit_factor": getattr(m, "oos_profit_factor", None),
+        # Issue #1004 (Katalog #858) — Zensur-Telemetrie neben dem (weiterhin gecappten) Wert.
+        "oos_profit_factor_censored": bool(getattr(m, "oos_profit_factor_censored", False)),
+        "oos_profit_factor_raw": getattr(m, "oos_profit_factor_raw", None),
         "oos_buyhold_return": getattr(m, "oos_buyhold_return", None),
         "oos_excess_return": getattr(m, "oos_excess_return", None),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
@@ -601,7 +611,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                  catalog_newest_ns: int | None = None,
                                  deflation_n_family: int | None = None,
                                  deflation_family_period_returns: list | None = None,
-                                 deflation_n_family_excluded_no_statistic: dict | None = None) -> dict:
+                                 deflation_n_family_excluded_no_statistic: dict | None = None,
+                                 study_invariant_results: list[dict] | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
@@ -648,7 +659,21 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     unten).
 
     status ∈ {'READY_FOR_PR', 'REJECTED_NO_EDGE_OVER_GLOBAL', 'REJECTED_ON_HOLDOUT'}.
-    """
+
+    ``study_invariant_results`` (Issue #1007, Katalog #858) — vorberechnete ``InvariantResult.
+    to_dict()``-Einträge (``name``/``passed``/``severity``/...), deren Scope DIESE Study betrifft.
+    VOR diesem Fix waren Invarianten ein reiner Report-Nachlauf (``report.generate_sweep_report``)
+    UND ein Sweep-Abbruchkriterium (``fail_fast_invariants``), aber KEIN Eingang in diese Funktion —
+    eine Study konnte gleichzeitig als informationsfrei (``severity='blocking'``-FAIL) markiert UND
+    als Gewinner exportiert werden. Jeder Eintrag mit ``severity == 'blocking'`` und
+    ``passed is False`` löst ``REJECT_STUDY_INVARIANT_BLOCKING`` aus — ein unbedingter Hard-Stop wie
+    ``REJECT_HOLDOUT_GATE`` (kein Ersatzpfad, auch nicht ``promotion_correction_mode=
+    'dsr_or_robust_pair'``, kann ihn unterlaufen). Scope-Regel (wie bei ``fail_fast_invariants``/
+    ``build_probe_report`` bereits etabliert — ``InvariantResult`` selbst trägt kein eigenes
+    ``scope``-Feld): der AUFRUFER filtert die Liste auf das, was für DIESE Study gilt — eine
+    global-scoped Invariante (z. B. ``check_config_key_registry``) betrifft jede Study des Laufs,
+    sofern ihre ``detail``-Meldung nicht selbst eine engere Teilmenge benennt. ``None``/leer (Default,
+    Legacy-Aufrufer/Unit-Tests) ⇒ bit-identisches Verhalten zu vorher (kein Zusatz-Veto)."""
     # Issue #773 — eine Study, deren #756-Renditeserien-Identitaet (run_optimization.check_
     # study_coherence_violation_rate) fail-loud verletzt wurde, wird NICHT promotet — der
     # Kohaerenz-Defekt kontaminiert den gesamten Deflations-/Bootstrap-/PBO-Pfad (#771), ein
@@ -1064,6 +1089,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     deflation_heterogeneous = False
     deflation_stratum_id = None
     deflation_stratum_n = None
+    # Issue #1013 (Katalog #858, Fix Punkt 2) — die Ratio INNERHALB des gewählten Stratums (nicht
+    # der vollen, heterogenen Kohorte). Ohne dieses Feld ist die 'per_stratum'-Politik nicht
+    # prüfbar: invariants.check_family_n_periods_homogeneity muss nachrechnen können, ob das
+    # Stratum selbst kommensurabel ist, nicht nur, dass die volle Kohorte es nicht war.
+    deflation_stratum_n_periods_ratio = None
     deflation_sr0 = deflation_dsr = deflation_dsr_z = None
     # Issue #757/#758 — welche Inferenzmethode die DSR tatsächlich lieferte ("stationary_bootstrap"
     # im Regelfall; "sharpe_formula_fallback" nur bei < 5 persistierten Perioden-Returns, siehe
@@ -1295,6 +1325,24 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             strategy, symbol, getattr(promoted_m_symbol, "oos_n_periods", None),
         )
 
+    # Issue #1007 (Katalog #858) — eine Study kann bislang gleichzeitig als informationsfrei
+    # (severity='blocking'-Invariante FAIL, z. B. check_selection_statistic_availability,
+    # check_guard_reference_stability) markiert UND als Gewinner exportiert werden, weil Invarianten
+    # bislang ein reiner Report-Nachlauf sind, kein Eingang in diese Entscheidung. Unbedingter
+    # Hard-Stop wie REJECT_HOLDOUT_GATE — KEIN Ersatzpfad (auch nicht dsr_or_robust_pair, siehe
+    # unten) darf ihn unterlaufen, deshalb hier VOR jeder DSR/PBO/Boundary-Verzweigung geprüft.
+    blocking_invariant_names = sorted({
+        str(r.get("name")) for r in (study_invariant_results or [])
+        if r.get("severity") == "blocking" and r.get("passed") is False and r.get("name")
+    })
+    if holdout_passed and blocking_invariant_names:
+        holdout_passed = False
+        holdout_reject_detail = "REJECT_STUDY_INVARIANT_BLOCKING"
+        logging.getLogger("optimizer").warning(
+            "[#1007] %s/%s: blockierende Invariante(n) %s ⇒ REJECT_STUDY_INVARIANT_BLOCKING "
+            "(kein Ersatzpfad).", strategy, symbol, blocking_invariant_names,
+        )
+
     # Issue #865 (Pitfall #277) — die Heterogenitäts-Politik wird JETZT angewendet, VOR der DSR-
     # Berechnung/-Entscheidung unten — nicht erst an der Export-Kohärenzgrenze (die dortige #845-
     # Prüfung kam bislang zu spät: die Promotion hatte die DSR bereits aus der inkommensurablen
@@ -1314,6 +1362,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 _stratum_var = _st_stratum.pvariance([float(s) for s in _stratum_sr])
                 _stratum_t = (int(_st_stratum.median(_stratum_n_periods))
                               if _stratum_n_periods else deflation_t_periods)
+                # Issue #1013 Fix Punkt 2 — Ratio INNERHALB des Stratums, dieselbe max/min-
+                # Definition wie ``deflation_n_periods_ratio`` auf der vollen Kohorte oben.
+                if _stratum_n_periods and min(_stratum_n_periods) > 0:
+                    deflation_stratum_n_periods_ratio = max(_stratum_n_periods) / min(_stratum_n_periods)
                 (deflation_sr0, deflation_used_var_floor, deflation_lambda,
                  deflation_theoretical_var_source) = sr0_multiple_testing_robust(
                     _stratum_var, deflation_n_effective,
@@ -1368,6 +1420,16 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # der untere CI-Wert unabhaengig vom Gate-Ausgang persistierbar ist (deployment_gate.py braucht
     # den Rohwert, nicht nur den daraus abgeleiteten Pass/Fail-Effekt auf ``holdout_passed``).
     ci_lo = None
+
+    # Issue #1005 (Katalog #858) — vorab initialisiert, damit der ``dsr_or_robust_pair``-Ersatzpfad
+    # (unten) auditierbar bleibt, AUCH wenn er nie betreten wird (Route bleibt None) oder das
+    # promotete Symbol den Pfad gar nicht erreicht (Export-Block unten liest diese Variablen
+    # unbedingt).
+    promotion_correction_route = None
+    promotion_correction_pbo_ok = None
+    promotion_correction_ci_lower = None
+    promotion_correction_n_period_returns = None
+    promotion_correction_alpha_effective = None
 
     # Issue #618/#636 — DSR-BERECHNUNG von der Pass-Kette ENTKOPPELT: vorher lief dieser Block nur
     # ``if holdout_passed and ...`` — aber JEDE Strategie scheiterte an einem FRÜHEREN Holdout-Gate
@@ -1491,18 +1553,53 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             and not holdout_passed
             and holdout_reject_detail in ("REJECT_HOLDOUT_DSR_DROP", "REJECT_HOLDOUT_BOOTSTRAP_CI")):
         dsr_ok = deflation_dsr is not None and deflation_dsr >= deflation_confidence
+        # Issue #1005 (Katalog #858, Pitfall #343) — Fail-closed: ``study_pbo is None`` (PBO nicht
+        # schätzbar, z. B. < ``pbo_min_configs``) ist KEINE bestandene Prüfung. Der frühere
+        # ``not pbo_overfit`` konflationierte "PBO ≤ 0.5" mit "PBO unbekannt" — beide Fälle liessen
+        # ``robust_pair_ok=True`` zu, obwohl im zweiten Fall keinerlei Evidenz vorliegt. ``pbo_overfit``
+        # selbst (Zeile oben) bleibt unverändert — dieser Fix betrifft ausschliesslich die ERSATZ-
+        # Bestätigung, nicht das allgemeine PBO-Veto.
+        pbo_ok = bool(study_pbo is not None and study_pbo <= 0.5)
+        n_period_returns_recheck = len(
+            list(getattr(promoted_m_symbol, "oos_period_returns", ()) or ()))
         ci_ok_recheck = True
+        ci_lo_recheck = None
+        alpha_effective = None
         if bool(tournament_cfg.get("holdout_bootstrap_ci", False)):
-            ci_ok_recheck, _ = _holdout_bootstrap_ci_passes(
-                promoted_m_symbol, confidence=deflation_confidence)
-        robust_pair_ok = (not pbo_overfit) and ci_ok_recheck
+            # Issue #1005 Fix 3 — ``robust_pair`` ersetzt die DSR (eine bereits multiplizitäts-
+            # korrigierte Grösse über N durchsuchte Trials) durch PBO+Bootstrap-CI. Damit dieser
+            # Ersatz selbst multiplizitätskorrigiert ist (Pitfall #344 — "ein Ersatz für eine
+            # Multiplizitätskorrektur muss selbst multiplizitätskorrigiert sein"), wird die CI nicht
+            # auf ``1 − α``, sondern auf ``1 − α/N_eff`` gezogen (Bonferroni über die deklusterte
+            # Familiengrösse, dieselbe ``pbo_n_configs``, die ``_study_pbo`` bereits über
+            # ``cpcv.cluster_effective_configs`` berechnet hat).
+            n_eff_configs = max(1, int(pbo_telemetry.get("pbo_n_configs") or 1))
+            alpha_base = 1.0 - deflation_confidence
+            alpha_effective = alpha_base / n_eff_configs
+            confidence_effective = 1.0 - alpha_effective
+            ci_ok_recheck, ci_lo_recheck = _holdout_bootstrap_ci_passes(
+                promoted_m_symbol, confidence=confidence_effective)
+        # Issue #1005 Fix 2 — ``_holdout_bootstrap_ci_passes`` liefert bei zu wenigen Returns jetzt
+        # ``(None, None)``; ``pbo_ok and None`` ist ``None``, ``bool(None)`` ist ``False`` — eine
+        # nicht schätzbare CI fällt hier korrekt als "nicht bestanden", nicht mehr als
+        # stillschweigend bestanden.
+        robust_pair_ok = bool(pbo_ok and ci_ok_recheck)
+        promotion_correction_pbo_ok = pbo_ok
+        promotion_correction_ci_lower = ci_lo_recheck
+        promotion_correction_n_period_returns = n_period_returns_recheck
+        promotion_correction_alpha_effective = alpha_effective
+        if dsr_ok:
+            promotion_correction_route = "dsr"
+        elif robust_pair_ok:
+            promotion_correction_route = "robust_pair"
         if dsr_ok or robust_pair_ok:
             holdout_passed = True
             holdout_reject_detail = None
             logging.getLogger("optimizer").info(
-                f"[#659] {symbol}: promotion_correction_mode=dsr_or_robust_pair — unabhängige "
-                f"Bestätigung ersetzt die Konjunktion (dsr_ok={dsr_ok}, pbo_ok={not pbo_overfit}, "
-                f"ci_ok={ci_ok_recheck}) ⇒ Holdout-Gate reinstated."
+                f"[#659/#1005] {symbol}: promotion_correction_mode=dsr_or_robust_pair — Route="
+                f"{promotion_correction_route} (dsr_ok={dsr_ok}, pbo={study_pbo}, pbo_ok={pbo_ok}, "
+                f"ci_ok={ci_ok_recheck}, ci_lower={ci_lo_recheck}, "
+                f"alpha_effective={alpha_effective}) ⇒ Holdout-Gate reinstated."
             )
 
     # Issue #622 — Randlösungs-Veto: klebt der Gewinner an > 30 % der Suchraumgrenzen, ist die Lösung
@@ -1693,6 +1790,26 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     best_result["metrics_symbol"]["pbo_n_configs_effective"] = pbo_telemetry.get("pbo_n_configs")
     if study_pbo is not None:
         best_result["metrics_symbol"]["pbo_threshold"] = 0.5
+    # Issue #1005 (Katalog #858, Fix-Item 4) — jede Promotion protokolliert, WELCHER Zweig des
+    # ``dsr_or_robust_pair``-Ersatzpfads getragen hat (``None`` ausserhalb dieses Modus oder wenn der
+    # Ersatzpfad nie betreten wurde, weil die Konjunktion bereits bestand). Ohne dieses Feld ist eine
+    # über den Ersatzpfad reinstated Promotion nicht auditierbar.
+    if promotion_correction_route is not None:
+        best_result["metrics_symbol"]["promotion_correction_route"] = promotion_correction_route
+        best_result["metrics_symbol"]["promotion_correction_pbo_ok"] = promotion_correction_pbo_ok
+        best_result["metrics_symbol"]["promotion_correction_ci_lower"] = promotion_correction_ci_lower
+        best_result["metrics_symbol"]["promotion_correction_n_period_returns"] = (
+            promotion_correction_n_period_returns)
+        best_result["metrics_symbol"]["promotion_correction_alpha_effective"] = (
+            promotion_correction_alpha_effective)
+    # Issue #1007 (Katalog #858) — die Namen der blockierenden Invarianten exportiert, WENN der
+    # Aufrufer ``study_invariant_results`` tatsaechlich uebergeben hat (auch als leere Liste — "0
+    # blockierende Invarianten" ist ein gueltiges Ergebnis). Ist das Feld ABWESEND (Aufrufer hat gar
+    # nichts uebergeben, z. B. der Sweep-Dispatch VOR einer kuenftigen Live-Verdrahtung), MUSS
+    # deployment_gate.py das als "nicht ueberprueft" lesen (fail-closed, dieselbe Konvention wie
+    # jede andere Klausel dieses Moduls) statt es mit "geprueft und sauber" zu verwechseln.
+    if study_invariant_results is not None:
+        best_result["metrics_symbol"]["blocking_invariant_names"] = blocking_invariant_names
     # Issue #697 — sichtbar machen, falls die Konjunktion trotz #697-Konsolidierung noch ein von der
     # LIVE-Kohorte als redundant markiertes Gate enthält (Regelfall: leere Liste).
     if unconsolidated_gates:
@@ -1793,6 +1910,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     if deflation_stratum_id is not None:
         best_result["metrics_symbol"]["deflation_stratum_id"] = deflation_stratum_id
         best_result["metrics_symbol"]["deflation_stratum_n"] = deflation_stratum_n
+        # Issue #1013 (Katalog #858, Fix Punkt 2) — ohne dieses Feld ist NICHT prüfbar, ob das
+        # gewählte Stratum selbst kommensurabel ist (invariants.check_family_n_periods_homogeneity).
+        if deflation_stratum_n_periods_ratio is not None:
+            best_result["metrics_symbol"]["deflation_stratum_n_periods_ratio"] = (
+                deflation_stratum_n_periods_ratio)
 
     return best_result
 

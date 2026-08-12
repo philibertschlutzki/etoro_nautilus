@@ -46,6 +46,12 @@ DEPLOYMENT_CLAUSES: tuple[str, ...] = (
     "bootstrap_ci",
     "r_edge",
     "snapshot_drift",
+    # Issue #1007 (Katalog #858, Fix Punkt 2) — neunte Klausel: eine Study, die eine
+    # ``severity='blocking'``-Invariante verletzt (z. B. check_selection_statistic_availability,
+    # check_guard_reference_stability), darf nicht kapitalwirksam werden, auch wenn sie
+    # ``READY_FOR_PR`` und alle anderen acht Klauseln besteht — sonst ist die Studypopulation zwar
+    # als informationsfrei markiert, wird aber trotzdem deployt.
+    "study_invariants_clean",
 )
 
 # Issue #993 Akzeptanzkriterium — dieselbe #663-Default-Schwelle wie confirm._study_pbo
@@ -174,6 +180,23 @@ def _clause_snapshot_drift(record: Mapping[str, Any] | None, *, current_snapshot
     return promoted_snapshot == current_snapshot_sha256
 
 
+def _clause_study_invariants_clean(record: Mapping[str, Any] | None) -> bool | None:
+    """Issue #1007 (Katalog #858) — ``blocking_invariant_names`` (confirm.py, seit diesem Fix
+    additiv in ``metrics_symbol``/dem Proposal-Export gestempelt, WENN ``confirm_per_symbol_
+    promotion`` tatsaechlich ``study_invariant_results`` erhielt) ist eine leere Liste ⇒ sauber
+    (``True``); eine nicht-leere Liste ⇒ mindestens eine blockierende Invariante ⇒ ``False``.
+    Das Feld ABWESEND (Aufrufer hat nie ueberprueft, z. B. ein Promotion-Record aus der Zeit vor
+    diesem Fix oder ein Sweep-Dispatch ohne Live-Verdrahtung der Invarianten-Vorberechnung) ⇒
+    ``None`` — fail-closed wie jede andere Klausel: "nicht ueberprueft" ist KEINE bestandene
+    Pruefung (dieselbe Regel wie ``dsr``/``psr``/``pbo``/``bootstrap_ci`` oben)."""
+    if not record:
+        return None
+    names = record.get("blocking_invariant_names")
+    if names is None:
+        return None
+    return len(names) == 0
+
+
 def evaluate_deployment_eligibility(
     pair,
     promotion_records: Mapping[Any, Mapping[str, Any]],
@@ -218,6 +241,7 @@ def evaluate_deployment_eligibility(
         "bootstrap_ci": _clause_bootstrap_ci(record),
         "r_edge": _clause_r_edge(record),
         "snapshot_drift": _clause_snapshot_drift(record, current_snapshot_sha256=current_snapshot_sha256),
+        "study_invariants_clean": _clause_study_invariants_clean(record),
     }
 
     # Fail-closed: ``None`` (nicht auswertbar) zaehlt NICHT als erfuellt.
@@ -254,6 +278,7 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "holdout_ci_lower_sortino": holdout_symbol.get("holdout_ci_lower_sortino"),
         "pbo": holdout_symbol.get("pbo"),
         "pbo_n_configs": holdout_symbol.get("pbo_n_configs"),
+        "blocking_invariant_names": holdout_symbol.get("blocking_invariant_names"),
         "run_id": run_id,
     }
 

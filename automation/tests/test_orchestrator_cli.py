@@ -47,6 +47,10 @@ def test_phase5_no_deploy_early_exit(tmp_path, monkeypatch, caplog):
         "holdout": {"symbol": {
             "deflated_dsr": 0.97, "oos_psr": 0.80, "holdout_ci_lower_sortino": 0.05,
             "pbo": 0.30, "pbo_n_configs": 40,
+            # Issue #1007 (Katalog #858) — neunte deployment_gate-Klausel 'study_invariants_clean'
+            # ist fail-closed bei fehlendem Feld; [] == "geprueft, keine blockierende Invariante",
+            # noetig, damit dieses Fixture weiterhin ALLE neun Klauseln besteht.
+            "blocking_invariant_names": [],
         }, "global": {}},
     }
     (optimizer_dir / "proposal_SmaCrossoverStrategy_AAA.ETORO.json").write_text(

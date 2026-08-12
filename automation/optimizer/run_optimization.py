@@ -276,7 +276,8 @@ _STOP_REASONS = frozenset({
 
 def compute_budget_execution(trials: list, *, n_trials_budget: int | None,
                              n_startup_trials: int | None,
-                             study_user_attrs: dict | None = None) -> dict:
+                             study_user_attrs: dict | None = None,
+                             run_id: str | None = None) -> dict:
     """Issue #770 — der Budget-Ausfuehrungsgrad als ERSTKLASSIGE, EINMALIG berechnete Study-Kennzahl,
     gemeinsam genutzt von ``_emit_study_summary`` (Live-Event) UND ``report._study_record``
     (persistierter Report) — dieselbe Zahl an beiden Stellen statt zweier potenziell divergierender
@@ -287,13 +288,32 @@ def compute_budget_execution(trials: list, *, n_trials_budget: int | None,
     die #768-Luecke (44,2 % statt 100 %) blieb nach dem #753-Merge deshalb unbemerkt (das Symptom
     "Study wurde frueh gestoppt" sah nach beabsichtigtem Verhalten aus).
 
-    Rueckgabe: ``{n_trials_budgeted, n_trials_completed, budget_executed_fraction, stop_reason,
-    n_modelled_trials_completed}``. ``budget_executed_fraction`` ist ``None``, wenn kein Budget
-    bekannt ist (z. B. globaler Pfad/Legacy-Tests ohne ``n_trials_budget``-User-Attr) — kein
-    stiller Default, der eine Luecke verdeckt."""
+    Issue #1015 (Katalog #858, Fix Punkt 1) — Root-Cause eines ZWEITEN, entgegengesetzten Defekts:
+    ``trials`` ist typischerweise ``study.trials`` — die GESAMTE SQLite-Historie der Study, nicht
+    nur die dieses ``sweep.run_per_symbol_sweep``-Laufs. Wurde eine Study zwischen zwei Läufen
+    NICHT gepurged (z. B. weil ``reward_semantics_version``/etc. unverändert blieben), zählt
+    ``n_completed`` Trials VORANGEGANGENER Läufe mit — beobachtet wurde eine Median-
+    Budgetausführung von 362,1 % (7280 von 1940 Trials) bei Faktor-3,92-Diskrepanzen zwischen
+    ``n_trials``/den plateau-/gate-Zählern. ``run_id`` (Default ``None``, bit-identisch zum
+    Pre-Fix-Verhalten): wenn gesetzt, werden ausschliesslich Trials gezählt, deren
+    ``user_attrs['run_id']`` diesem Wert entspricht (der Stempel, den ``make_symbol_objective``
+    seit #1015 setzt — Legacy-Trials ohne den Stempel fallen dabei ersatzlos heraus, nicht
+    fälschlich als "dieser Lauf" mit). ``n_trials_total_study`` bleibt UNABHÄNGIG davon die volle
+    Study-Zählung — eine grosse Lücke zwischen beiden Zahlen macht eine ungepurgte Study sichtbar,
+    statt sie stillschweigend in ``budget_executed_fraction`` zu verstecken.
+
+    Rueckgabe: ``{n_trials_budgeted, n_trials_completed, n_trials_total_study,
+    budget_executed_fraction, stop_reason, n_modelled_trials_completed}``.
+    ``budget_executed_fraction`` ist ``None``, wenn kein Budget bekannt ist (z. B. globaler Pfad/
+    Legacy-Tests ohne ``n_trials_budget``-User-Attr) — kein stiller Default, der eine Luecke
+    verdeckt."""
     attrs = study_user_attrs or {}
-    n_completed = len(trials)
-    n_modelled = len(_modelled_trials(trials, int(n_startup_trials) if n_startup_trials is not None else 0))
+    n_trials_total_study = len(trials)
+    run_trials = trials
+    if run_id is not None:
+        run_trials = [t for t in trials if getattr(t, "user_attrs", {}).get("run_id") == run_id]
+    n_completed = len(run_trials)
+    n_modelled = len(_modelled_trials(run_trials, int(n_startup_trials) if n_startup_trials is not None else 0))
     budgeted = None
     if n_trials_budget is not None:
         try:
@@ -316,6 +336,7 @@ def compute_budget_execution(trials: list, *, n_trials_budget: int | None,
     return {
         "n_trials_budgeted": budgeted,
         "n_trials_completed": n_completed,
+        "n_trials_total_study": n_trials_total_study,
         "budget_executed_fraction": round(fraction, 4) if fraction is not None else None,
         "stop_reason": stop_reason,
         "n_modelled_trials_completed": n_modelled,
@@ -2159,7 +2180,7 @@ def _boundary_hit_directions(study, strategy: str | None) -> dict[str, str] | No
 
 
 def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | None = None,
-                        n_startup_trials: int | None = None) -> None:
+                        n_startup_trials: int | None = None, run_id: str | None = None) -> None:
     """Issue #415 — Per-Study-Timing-/Evaluierbarkeits-Summary nach ``study.optimize``.
 
     Defensiv gegen Test-Doubles (``DummyStudy`` ohne ``trials``/``best_value``): jeder Zugriff ist
@@ -2334,7 +2355,7 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
     # #770-Block): die [#640]-Meldung braucht ihn jetzt direkt als Ausloesebedingung.
     budget_execution = compute_budget_execution(
         trials, n_trials_budget=_study_user_attrs.get("n_trials_budget"),
-        n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs)
+        n_startup_trials=n_startup_trials, study_user_attrs=_study_user_attrs, run_id=run_id)
 
     # Issue #930 (Pitfall #303) — die Ausloesebedingung war `gradient_signal is None`, ein PROXY
     # fuer "Basisbudget nicht ausgeschoepft" aus der Zeit, als der Fruehstopp bei
@@ -2648,6 +2669,11 @@ def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | Non
         # compute_budget_execution-Docstring).
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
+        # Issue #1015 (Katalog #858, Fix Punkt 1) — die volle Study-SQLite-Historie (alle Läufe,
+        # gepurged oder nicht) als separate Telemetrie neben ``n_trials_completed`` (nur DIESER
+        # Lauf, sofern ``run_id`` gesetzt war); eine grosse Lücke zwischen beiden Zahlen macht eine
+        # ungepurgte Study sichtbar.
+        "n_trials_total_study": budget_execution["n_trials_total_study"],
         "budget_executed_fraction": budget_execution["budget_executed_fraction"],
         # Issue #983 Fix Punkt 3 Akzeptanzkriterium — die wallclock_budget_policy='degrade'-Kürzung
         # (#931) darf niemals stillschweigend geschehen: IMMER vorhanden (1.0 = kein Degrade), damit
@@ -2829,7 +2855,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
                           *, run_backtest=run_backtest, build_trial=build_trial,
                           catalog_newest_ns: int | None = None,
                           catalog_span_days: float | None = None,
-                          study_config_dir: Path | None = None):
+                          study_config_dir: Path | None = None,
+                          run_id: str | None = None):
     """Wie make_objective, aber single-symbol: build_trial(instruments=[symbol]) und
        compute_reward(universe_size=1, sampled, global_params, strategy) (Per-Symbol-Reward
        mit param_pen Richtung global_params, A4.3).
@@ -2840,8 +2867,20 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
 
        Issue #796 — ``study_config_dir`` (siehe ``make_objective``-Docstring): ``None`` (Default)
        reproduziert das Alt-Verhalten bit-identisch (Config-Kopie je Trial); ``_optimize_symbol_impl``
-       friert die Study-Config einmal ein und reicht den Pfad hier durch."""
+       friert die Study-Config einmal ein und reicht den Pfad hier durch.
+
+       Issue #1015 (Katalog #858, Fix Punkt 1) — ``run_id`` (Default ``None``, bit-identisch zum
+       Pre-Fix-Verhalten): wird bei GESETZTEM Wert als ``trial.user_attrs['run_id']`` gestempelt,
+       BEVOR irgendein anderer Codepfad diesen Trial ablehnen/pruning kann — jeder Trial dieser
+       Study trägt damit nachvollziehbar, aus welchem ``sweep.run_per_symbol_sweep``-Lauf er
+       stammt. ``run_optimization.compute_budget_execution`` liest dieses Feld, um
+       ``budget_executed_fraction`` auf die TATSÄCHLICH dieses Laufs zugehörigen Trials zu
+       beschränken, statt die Study-SQLite-Historie mehrerer Läufe zu vermischen (#858 Katalog-
+       Symptom: budget_executed_fraction=362 % durch Trials VORANGEGANGENER Läufe derselben
+       Study)."""
     def objective(trial):
+        if run_id is not None:
+            trial.set_user_attr("run_id", run_id)
         # Issue #669 — symbol-spezifische Suchraum-Bounds-Überschreibungen (opt-in, leer per
         # Default) NUR im Per-Symbol-Pfad; der globale Multi-Symbol-Pfad (make_objective) bleibt
         # ohne Symbol-Kontext bei den universellen Default-Bounds.
@@ -3209,7 +3248,7 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
 
 def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
                     *, storage: str | None = None, catalog_newest_ns: int | None = None,
-                    catalog_span_days: float | None = None):
+                    catalog_span_days: float | None = None, run_id: str | None = None):
     """Single-Symbol-Variante von `optimize`: eigene benannte SQLite-Study unter
        {WORK}/sweep/study_{strategy}_{_sanitize(symbol)}.db, Manifest mit instruments=[symbol]
        (universe_size==1 ⇒ Per-Symbol-Reward), Warm-Start am globalen Optimum (Gate 2 via
@@ -3222,19 +3261,25 @@ def optimize_symbol(strategy: str, symbol: str, n_trials: int | None = None,
        ``__enter__()`` VOR und das ``__exit__()`` NACH ~150 Zeilen Setup, sodass jede Exception in
        diesem Fenster (z. B. ``ENOSPC`` waehrend ``create_study``) das Exit uebersprang: der
        ContextVar blieb im Worker-Thread gesetzt und der naechste, andere Study im selben Thread
-       erbte das ``[strategy/symbol]``-Log-Praefix der abgestuerzten Study."""
+       erbte das ``[strategy/symbol]``-Log-Praefix der abgestuerzten Study.
+
+       Issue #1015 (Katalog #858, Fix Punkt 1) — ``run_id`` (Default ``None``, bit-identisch zum
+       Pre-Fix-Verhalten) wird an jeden in dieser Study neu erzeugten Trial durchgereicht (siehe
+       ``make_symbol_objective``-Docstring); ``sweep.run_per_symbol_sweep`` übergibt seinen
+       eigenen ``run_id`` (denselben, der bereits den #799-Checkpoint treibt)."""
     study_name = f"study_{strategy}_{_sanitize(symbol)}"
     with bind_study_context(strategy=strategy, symbol=symbol, study_name=study_name):
         return _optimize_symbol_impl(
             strategy, symbol, n_trials,
             storage=storage, catalog_newest_ns=catalog_newest_ns,
-            catalog_span_days=catalog_span_days, study_name=study_name,
+            catalog_span_days=catalog_span_days, study_name=study_name, run_id=run_id,
         )
 
 
 def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = None,
                     *, storage: str | None = None, catalog_newest_ns: int | None = None,
-                    catalog_span_days: float | None = None, study_name: str):
+                    catalog_span_days: float | None = None, study_name: str,
+                    run_id: str | None = None):
     """Issue #800 — unveraenderter Koerper von ``optimize_symbol`` (eine Einrueckungsebene, keine
        Logikaenderung ausser der jetzt von aussen uebergebenen ``study_name`` und dem entfernten
        manuellen Context-Enter/Exit, siehe ``optimize_symbol``-Docstring)."""
@@ -3463,6 +3508,7 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
         catalog_newest_ns=catalog_newest_ns,
         catalog_span_days=catalog_span_days,
         study_config_dir=study_config_dir,
+        run_id=run_id,
     )
     # Issue #409 — Fail-Loud-Guard: warnt, sobald nach n_startup_trials alle Trials am
     # Unevaluable-Floor kleben (Pitfall #75). Config einmalig gebunden (kein Per-Trial-IO).
@@ -3481,7 +3527,7 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
                        callbacks=[floor_guard, retention_callback, disk_guard_cb, coherence_guard_cb])
         # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
         _emit_study_summary(study, symbol, study_t0, strategy=strategy,
-                           n_startup_trials=n_startup_trials)
+                           n_startup_trials=n_startup_trials, run_id=run_id)
         # Issue #773 — Kohaerenz-Invariante fail-loud statt eines reinen Report-Nachtrags.
         # Issue #803 — Sicherheitsnetz fuer den Fall, dass der periodische Callback (alle 32 Trials)
         # keine exakte Intervallgrenze traf, BEVOR das Budget erschoepft war; hat der Callback die

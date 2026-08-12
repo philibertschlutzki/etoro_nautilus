@@ -2724,12 +2724,45 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
     sortino_numeric_guard = _read_sortino_numeric_guard()
 
     # Floor `gross_loss` at EPSILON implicitly to protect against division-by-zero, but logic captures it via count.
+    # Issue #1004 (Katalog #858, Pitfall #342) — ``profit_factor_cap`` klemmt den Wert bei einer
+    # Konfigurations-Konstante (``tournament.json['profit_factor_cap']``); der geklemmte Wert wurde
+    # bislang identisch als "der" Profit-Faktor gemeldet — sowohl im Bericht als auch an jede
+    # Gate-/Reward-Konsumstelle, die ihn liest. Ein Cap ist eine Zensur, kein Messwert (Pitfall #342):
+    # ``profit_factor_censored`` markiert JEDEN Fall, in dem der gemeldete Wert nicht der wahre
+    # (unbeschränkte) Quotient ist — sowohl weil der Cap band ALS AUCH weil der Nenner degeneriert
+    # war (``gross_loss`` positiv, aber unterhalb ``DENOMINATOR_FLOOR`` — der wahre PF ist dann
+    # numerisch beliebig gross und JEDE gemeldete Zahl trägt effektiv null Information).
+    # ``profit_factor`` selbst bleibt bewusst UNVERÄNDERT (weiterhin gecappt) — dieselbe Zahl, die
+    # Gate/Scoring/Reward heute konsumieren (Zero-Regression auf jede kalibrierte Schwelle/jeden
+    # Reward-Gradienten); die neue Information (roh + Zensur-Flag) ist rein additiv. Downstream darf
+    # keine Promotion auf einem zensierten Wert beruhen (siehe
+    # ``invariants.check_censored_statistic_in_decision``, #1004 Fix Punkt 4).
+    profit_factor_censored = False
+    profit_factor_raw = None
     if gross_loss <= 0.0:
         profit_factor = None
     elif losses_count < 2 and n < 50:
         profit_factor = None
     else:
-        profit_factor = min(gross_profit / max(gross_loss, DENOMINATOR_FLOOR), profit_factor_cap)
+        denominator_degenerate = gross_loss < DENOMINATOR_FLOOR
+        profit_factor_raw = gross_profit / max(gross_loss, DENOMINATOR_FLOOR)
+        profit_factor = min(profit_factor_raw, profit_factor_cap)
+        profit_factor_censored = denominator_degenerate or profit_factor_raw > profit_factor_cap
+        if denominator_degenerate:
+            # Issue #1004 Fix Punkt 3 — ``gross_loss`` ist positiv, aber numerisch nicht von Null
+            # unterscheidbar: der wahre PF ist nach oben unbeschraenkt, der Nenner selbst ist die
+            # oekonomisch wichtige Information (der Verlustpfad wurde im Backtest praktisch nicht
+            # realisiert), nicht der geglaettete Quotient. failure_policy='prune' (Registry-Eintrag
+            # unten) behandelt einen solchen Trial wie jede andere strukturell nicht messbare
+            # Grösse (analog EQUITY_NONPOSITIVE/SORTINO_GUARD_TRIPPED) — TPE lernt "nicht messbar",
+            # nicht "maximal schlecht".
+            _inference_diagnostics.append({
+                "code": "PROFIT_FACTOR_DENOMINATOR_DEGENERATE",
+                "detail": f"gross_loss={gross_loss!r} < DENOMINATOR_FLOOR={DENOMINATOR_FLOOR!r} "
+                         f"(gross_profit={gross_profit!r}) — Profit-Faktor numerisch unbeschraenkt, "
+                         f"gemeldeter Wert traegt keine Information.",
+                "value": gross_loss,
+            })
 
     win_rate = wins / n if n > 0 else 0.0
 
@@ -3296,6 +3329,10 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         "total_trades":  n,
         "win_rate":      float(win_rate),
         "profit_factor": float(profit_factor) if profit_factor is not None else None,
+        # Issue #1004 (Katalog #858) — additive Zensur-Telemetrie neben dem unveränderten,
+        # weiterhin gecappten ``profit_factor`` (siehe Kommentar an der Berechnungsstelle oben).
+        "profit_factor_censored": bool(profit_factor_censored),
+        "profit_factor_raw": float(profit_factor_raw) if profit_factor_raw is not None else None,
         "sortino_ratio": float(sortino) if sortino is not None else None,
         # Issue #614 / #630 — PSR + psr_z (Reward-/Gate-Grösse) + per-Perioden-/annualisierter Sortino + T + Momente
         # (Telemetrie). ``psr`` ∈ [0,1] oder None (undefiniert/Guard). ``sortino_annualized`` == sortino_ratio.

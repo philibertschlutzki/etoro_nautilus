@@ -54,6 +54,20 @@ def _fmt_num(x: float | None, *, digits: int = 4) -> str:
     return f"{x:.{digits}f}" if isinstance(x, (int, float)) else "k. A."
 
 
+def _fmt_profit_factor(r: dict, *, digits: int = 2) -> str:
+    """Issue #1004 (Katalog #858, Pitfall #342) — ``holdout_profit_factor`` ist gecappt
+    (``tournament.json['profit_factor_cap']``); ein zensierter Wert wird NIE als glatte Zahl
+    angezeigt (das war der Bug: ein Cap ist eine Zensur, kein Messwert), sondern mit ``≥``-Präfix
+    ausgewiesen — ``holdout_profit_factor_raw`` (falls vorhanden) macht die Grössenordnung des
+    tatsächlichen, unbeschränkten Quotienten sichtbar."""
+    val = r.get("holdout_profit_factor")
+    if not isinstance(val, (int, float)):
+        return "k. A."
+    if not r.get("holdout_profit_factor_censored"):
+        return f"{val:.{digits}f}"
+    return f"≥{val:.{digits}f}*"
+
+
 def _fmt_hours(seconds: float | None) -> str:
     return f"{seconds / 3600.0:.2f} h" if seconds is not None else "k. A."
 
@@ -107,15 +121,23 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
     # Issue #849 Punkt 4 — blockierende Invarianten-FAILs (severity='blocking', z. B.
     # check_holding_time_cap/check_required_config_keys) muessen bereits HIER namentlich auftauchen,
     # nicht erst in Sektion 5 (vorher: hinter 304 Meldungen ueber inerte Reward-Terme verborgen).
-    blocking_fails = sorted({
-        _check_name(c) for c in (report.get("invariant_checks") or [])
-        if not c.get("passed", True) and c.get("severity") == "blocking"
-    })
+    # Issue #1016 (Katalog #858, Fix Punkt 3) — zusaetzlich die Zahl der BETROFFENEN Studies je
+    # blockierendem Check (distincte 'scope'-Werte, report.py stempelt "{strategy}/{symbol}" für
+    # study-lokale Checks bzw. "global" für laufweite) — eine Namensliste allein beantwortet nicht,
+    # ob EIN Ausreisser oder die halbe Kohorte betroffen ist.
+    _blocking_scopes: dict[str, set[str]] = {}
+    for c in (report.get("invariant_checks") or []):
+        if not c.get("passed", True) and c.get("severity") == "blocking":
+            _blocking_scopes.setdefault(_check_name(c), set()).add(c.get("scope") or "global")
     blocking_note = ""
-    if blocking_fails:
+    if _blocking_scopes:
+        _blocking_parts = [
+            f"{name} ({len(scopes)} Study/Studies)" if scopes != {"global"} else name
+            for name, scopes in sorted(_blocking_scopes.items())
+        ]
         blocking_note = (
-            f" **BLOCKIERENDE Invarianten-FAIL(s):** {', '.join(blocking_fails)} — siehe Abschnitt "
-            "5.1 für Details."
+            f" **BLOCKIERENDE Invarianten-FAIL(s):** {', '.join(_blocking_parts)} — siehe "
+            "Abschnitt 5.1 für Details."
         )
     return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note + blocking_note
 
@@ -126,25 +148,63 @@ def _section_2_monetary_result(report: dict) -> str:
     n_deployable = sum(int(v) for k, v in counts.items() if k in _DEPLOYABLE_STATUSES)
     lines = ["## 2. Monetäres Ergebnis", ""]
 
-    # 2.1 Deploybar
-    lines.append("### 2.1 Deploybar (Status READY_FOR_PR / PROMOTE_GLOBAL_DEFAULT)")
+    # 2.1 Promotionskandidaten — Issue #1006 (Katalog #858): "Deploybar" behauptete bislang eine
+    # Eigenschaft, die deployment_gate.evaluate_deployment_eligibility NIE geprüft hatte (acht,
+    # seit #1007 neun Klauseln, u. a. DSR UNBEDINGT — genau die Klausel, die
+    # promotion_correction_mode='dsr_or_robust_pair' im Sweep ersetzbar macht). Ein
+    # READY_FOR_PR/PROMOTE_GLOBAL_DEFAULT-Kandidat ist ab jetzt NUR noch "Promotionskandidat",
+    # niemals implizit "Deploybar" — die Deployment-Spalte macht das explizite Urteil sichtbar.
+    lines.append(
+        "### 2.1 Promotionskandidaten (Status READY_FOR_PR / PROMOTE_GLOBAL_DEFAULT) — "
+        "noch NICHT deploybar"
+    )
     lines.append("")
     deployable = [r for r in studies if r.get("promotion_outcome") in _DEPLOYABLE_STATUSES]
     if not deployable:
+        # Bei 0 Promotionskandidaten ist "kein deploybares Ergebnis" akkurat (keine implizite
+        # Behauptung, nur eine leere Menge) — der #1006-Bug betraf ausschliesslich die Zeile
+        # darunter, die tatsaechliche Kandidaten unbedingt als "Deploybar" bezeichnete.
         lines.append(
             "**Kein deploybares Ergebnis aus diesem Lauf.** Kein Kandidat hat die Holdout-"
             "Validierung bestanden — alle folgenden Zahlen in Abschnitt 2.2 sind ABGELEHNTE, "
             "NICHT handelbare Kandidaten."
         )
     else:
-        lines.append("| Strategie | Symbol | Holdout-Return | Expectancy | Win-Rate | Profit-Faktor | Trades |")
-        lines.append("|---|---|---:|---:|---:|---:|---:|")
+        lines.append(
+            "Diese Kandidaten haben die Holdout-Validierung des Sweeps bestanden. Das ist NICHT "
+            "dasselbe wie Deploybarkeit — die letzte Spalte zeigt das tatsächliche Urteil von "
+            "``deployment_gate.evaluate_deployment_eligibility`` (dieselbe Funktion, die vor jedem "
+            "Live-Kapitaleinsatz entscheidet)."
+        )
+        lines.append("")
+        lines.append(
+            "| Strategie | Symbol | Holdout-Return | Expectancy | Win-Rate | Profit-Faktor | "
+            "Trades | Deployment-Urteil |"
+        )
+        lines.append("|---|---|---:|---:|---:|---:|---:|---|")
+        any_censored = False
         for r in deployable:
+            any_censored = any_censored or bool(r.get("holdout_profit_factor_censored"))
+            decision = r.get("deployment_decision") or {}
+            if decision.get("admitted") is True:
+                deploy_verdict = "**deploybar**"
+            elif decision:
+                deploy_verdict = f"abgelehnt ({decision.get('blocking_clause') or 'k. A.'})"
+            else:
+                deploy_verdict = "nicht bewertet"
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
                 f"{_fmt_num(r.get('holdout_expectancy'))} | {_fmt_pct(r.get('holdout_win_rate'))} | "
-                f"{_fmt_num(r.get('holdout_profit_factor'), digits=2)} | "
-                f"{r.get('holdout_total_trades', 'k. A.')} |"
+                f"{_fmt_profit_factor(r)} | "
+                f"{r.get('holdout_total_trades', 'k. A.')} | {deploy_verdict} |"
+            )
+        if any_censored:
+            # Issue #1004 (Pitfall #342) — ein Cap ist eine Zensur, kein Messwert: ``≥15.00`` heisst
+            # "der Nenner war degeneriert oder der Cap band", NICHT "der Profit-Faktor ist 15,00".
+            lines.append(
+                "\n*`≥`-Werte sind gecappt/zensiert (`tournament.json['profit_factor_cap']` oder "
+                "ein numerisch degenerierter Bruttoverlust-Nenner) — der tatsächliche Profit-Faktor "
+                "ist unbekannt und liegt darüber, siehe #1004."
             )
     lines.append("")
 

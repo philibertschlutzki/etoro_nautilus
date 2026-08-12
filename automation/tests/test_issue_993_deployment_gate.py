@@ -44,6 +44,9 @@ def _passing_record(**overrides) -> dict:
         "holdout_ci_lower_sortino": 0.05,
         "pbo": 0.30,
         "pbo_n_configs": 40,
+        # Issue #1007 (Katalog #858) — neunte Klausel ``study_invariants_clean``: [] == "geprueft,
+        # keine blockierende Invariante".
+        "blocking_invariant_names": [],
         "run_id": "run_abc123",
     }
     record.update(overrides)
@@ -189,6 +192,12 @@ _CLAUSE_VARIANTS = {
         "fail": {"data_snapshot_sha256": "stale" * 8},
         "none": {"data_snapshot_sha256": None},
     },
+    # Issue #1007 (Katalog #858) — neunte Klausel.
+    "study_invariants_clean": {
+        "pass": {"blocking_invariant_names": []},
+        "fail": {"blocking_invariant_names": ["check_selection_statistic_availability"]},
+        "none": {"blocking_invariant_names": None},
+    },
 }
 
 
@@ -261,6 +270,7 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
                 "holdout_ci_lower_sortino": 0.02,
                 "pbo": 0.2,
                 "pbo_n_configs": 30,
+                "blocking_invariant_names": [],
             },
             "global": {},
         },
@@ -272,6 +282,7 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
     assert record["holdout_ci_lower_sortino"] == 0.02
     assert record["pbo"] == 0.2
     assert record["pbo_n_configs"] == 30
+    assert record["blocking_invariant_names"] == []
     assert record["data_snapshot_sha256"] == _SNAPSHOT
     assert record["run_id"] == "run_xyz"
 

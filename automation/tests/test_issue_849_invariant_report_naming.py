@@ -138,6 +138,36 @@ def test_blocking_fail_named_in_section_1():
     assert "check_reward_term_variance" not in section_1
 
 
+def test_blocking_fail_section_1_counts_affected_studies():
+    """Issue #1016 (Katalog #858, Fix Punkt 3) — eine Namensliste allein beantwortet nicht, ob ein
+    einzelner Ausreisser oder die halbe Kohorte betroffen ist; die study-scoped Klausel zaehlt
+    distincte 'scope'-Werte."""
+    checks = [
+        inv.InvariantResult(
+            name="check_family_n_periods_homogeneity", passed=False, expected=4.0, actual=45.0,
+            detail="heterogen.", severity="blocking",
+        ).to_dict() | {"scope": "S/A.ETORO"},
+        inv.InvariantResult(
+            name="check_family_n_periods_homogeneity", passed=False, expected=4.0, actual=50.0,
+            detail="heterogen.", severity="blocking",
+        ).to_dict() | {"scope": "S/B.ETORO"},
+        inv.InvariantResult(
+            name="check_family_n_periods_homogeneity", passed=False, expected=4.0, actual=52.0,
+            detail="heterogen.", severity="blocking",
+        ).to_dict() | {"scope": "S/B.ETORO"},  # zweiter FAIL desselben Scopes -> nicht doppelt gezaehlt
+        inv.InvariantResult(
+            name="check_holding_time_cap", passed=False, expected=0, actual=664,
+            detail="Zeitbox.", severity="blocking",
+        ).to_dict() | {"scope": "global"},
+    ]
+    report = _minimal_report(invariant_checks=checks)
+    section_1 = summary_de.generate_german_summary(report).split("## 2.")[0]
+    assert "check_family_n_periods_homogeneity (2 Study/Studies)" in section_1
+    # Ein global-scoped Check traegt keine irrefuehrende "(1 Study/Studies)"-Zaehlung.
+    assert "check_holding_time_cap (" not in section_1
+    assert "check_holding_time_cap" in section_1
+
+
 def test_no_blocking_fails_omits_the_note_in_section_1():
     checks = [
         inv.InvariantResult(

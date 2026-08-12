@@ -251,6 +251,18 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
     (tournament.json, Default 4.0) überschreitet — dieser Wächter prüft, dass diese Unterdrückung
     tatsächlich griff (kein ``deflated_dsr``/``deflation_dsr_z`` trotz überschrittener Ratio).
 
+    Issue #1013 (Katalog #858, Pitfall #345) — VORHER prüfte dieser Wächter hart die Semantik von
+    ``deflation_heterogeneity_policy='suppress_dsr'`` (Kohorte heterogen ⇒ NIE ein DSR-Signal),
+    UNABHÄNGIG davon, welche Politik tatsächlich konfiguriert ist. Unter dem seit #865 aktiven
+    ``'per_stratum'``-Default berechnet die Politik SR₀/DSR ABSICHTLICH auf dem (kommensurablen)
+    Stratum des promoteten Trials neu und BEHÄLT ein DSR-Signal — das ist ihr dokumentierter Zweck
+    (confirm.py, ``_stratify_cohort_by_n_periods``), keine fehlgeschlagene Suppression. Unter der
+    ausgelieferten Konfiguration FAILte dieser Wächter also GENAU DANN, wenn die Politik korrekt
+    arbeitete — vier garantierte False Positives (severity 'high') in jedem Lauf. Der Wächter
+    konsumiert jetzt ``deflation_heterogeneity_policy`` und prüft je Politik die JEWEILS zutreffende
+    Semantik (Pitfall #345 — "eine Invariante, die eine Politik-Konstante ignoriert, ist unter der
+    falschen Politik invertiert").
+
     ``holdout_metrics`` ist derselbe Export-Dict wie bei ``check_sr0_coherence``
     (``proposal['holdout']['symbol']``). ``deflation_n_periods_ratio is None`` ⇒ keine Kohorte mit
     >= 2 Mitgliedern mit bekanntem ``oos_n_periods`` (nicht anwendbar, PASS)."""
@@ -267,17 +279,66 @@ def check_family_n_periods_homogeneity(holdout_metrics: dict, *, max_ratio: floa
     exceeded = ratio > max_ratio
     has_dsr_signal = (holdout_metrics.get("deflated_dsr") is not None
                        or holdout_metrics.get("deflation_dsr_z") is not None)
-    passed = not (exceeded and has_dsr_signal)
+    if not exceeded:
+        return InvariantResult(
+            name="check_family_n_periods_homogeneity",
+            passed=True,
+            expected=f"<= {max_ratio}",
+            actual=ratio,
+            severity="high",
+            detail="OK (Kohorte kommensurabel, keine Suppression erwartet).",
+        )
+    # Issue #1013 — konsumiert die tatsächlich konfigurierte Politik; fehlt sie im Export (Legacy-
+    # Proposal vor #865 oder ein Test-Fixture), gilt derselbe Default wie confirm.py selbst
+    # (``tournament_cfg.get('deflation_heterogeneity_policy', 'per_stratum')``).
+    policy = holdout_metrics.get("deflation_heterogeneity_policy", "per_stratum")
+    if policy in ("suppress_dsr", "reject"):
+        passed = not has_dsr_signal
+        expected = f"policy={policy!r}: kein deflated_dsr/deflation_dsr_z bei ratio > {max_ratio}"
+        detail = ("OK" if passed else
+                   f"deflation_n_periods_ratio={ratio:.3g} > max_ratio={max_ratio}, policy="
+                   f"{policy!r}, aber deflated_dsr/deflation_dsr_z sind trotzdem gesetzt — die "
+                   "#845-Heterogenitäts-Suppression hat nicht gegriffen.")
+    elif policy == "per_stratum":
+        if not has_dsr_signal:
+            # Das gewählte Stratum hatte < 2 Mitglieder ⇒ Fallback auf suppress_dsr-Verhalten
+            # (confirm.py) — korrekt, kein Reject-Grund.
+            passed = True
+            expected = "policy='per_stratum': DSR-Signal ODER Stratum < 2 Mitglieder (Fallback)"
+            detail = "OK (Stratum < 2 Mitglieder — korrekter Fallback auf Suppression)."
+        else:
+            stratum_id = holdout_metrics.get("deflation_stratum_id")
+            stratum_n = holdout_metrics.get("deflation_stratum_n")
+            stratum_ratio = holdout_metrics.get("deflation_stratum_n_periods_ratio")
+            passed = (
+                stratum_id is not None and stratum_n is not None and stratum_n >= 2
+                and stratum_ratio is not None and stratum_ratio <= max_ratio
+            )
+            expected = (
+                f"policy='per_stratum': deflation_stratum_id/deflation_stratum_n gesetzt, "
+                f"deflation_stratum_n >= 2, deflation_stratum_n_periods_ratio <= {max_ratio}")
+            detail = ("OK (DSR korrekt auf einem kommensurablen Stratum neu berechnet)." if passed
+                       else f"deflation_n_periods_ratio={ratio:.3g} > max_ratio={max_ratio}, "
+                            f"policy='per_stratum', aber stratum_id={stratum_id!r}, "
+                            f"stratum_n={stratum_n!r}, stratum_n_periods_ratio={stratum_ratio!r} "
+                            f"belegen KEINE kommensurable Stratifizierung — das DSR-Signal steht "
+                            f"auf einer ungeprüften Grundlage.")
+    else:
+        # Unbekannte Politik: confirm.py selbst bricht dann bereits fail-loud ab (Katalog-
+        # ValueError); dieser Wächter bleibt defensiv statt eine dritte Semantik zu raten.
+        passed = False
+        expected = "deflation_heterogeneity_policy ∈ {'suppress_dsr', 'reject', 'per_stratum'}"
+        detail = f"Unbekannte Politik {policy!r} — nicht auswertbar."
     return InvariantResult(
         name="check_family_n_periods_homogeneity",
         passed=passed,
-        expected=f"<= {max_ratio} ODER kein deflated_dsr/deflation_dsr_z",
-        actual=ratio,
+        expected=expected,
+        actual={"deflation_n_periods_ratio": ratio, "deflation_heterogeneity_policy": policy,
+                "has_dsr_signal": has_dsr_signal,
+                "deflation_stratum_n_periods_ratio": holdout_metrics.get(
+                    "deflation_stratum_n_periods_ratio")},
         severity="high",
-        detail=("OK" if passed else
-                f"deflation_n_periods_ratio={ratio:.3g} > max_ratio={max_ratio}, aber "
-                "deflated_dsr/deflation_dsr_z sind trotzdem gesetzt — die #845-Heterogenitäts-"
-                "Suppression hat nicht gegriffen."),
+        detail=detail,
     )
 
 
@@ -1068,6 +1129,92 @@ def check_promotion_inference_coverage(proposal: dict, record: dict) -> Invarian
         actual={"status": status, "holdout_reject_detail": holdout_detail,
                 "promotion_applied": applied},
         detail="OK" if passed else reason,
+    )
+
+
+_CENSORED_STATISTIC_FLAG_SUFFIX = "_censored"
+
+
+def check_censored_statistic_in_decision(proposal: dict, holdout_metrics: dict) -> InvariantResult:
+    """Issue #1004 (Katalog #858, Fix Punkt 4, Pitfall #342). Ein Cap ist eine Zensur, kein Wert:
+    ``backtest_runner._calculate_stats`` stempelt seit #1004 ``profit_factor_censored`` (und
+    perspektivisch jedes weitere ``*_censored``-Flag), sobald der gemeldete Wert nicht der wahre
+    (unbeschränkte) Punktschätzer ist — entweder weil ``profit_factor_cap`` band oder weil der
+    Nenner numerisch degeneriert war (``PROFIT_FACTOR_DENOMINATOR_DEGENERATE``). Keine Promotion
+    darf auf einer Kennzahl beruhen, deren zugehöriges ``*_censored``-Flag gesetzt ist — severity
+    'blocking', denn eine zensierte Zahl trägt keine Information, mit der eine Kapitalentscheidung
+    begründet werden könnte (im Unterschied zu #1007, das eine STUDY wegen einer verletzten
+    Invariante ablehnt: hier ist die Zahl selbst, auf der die Entscheidung beruht, unzuverlässig).
+
+    ``proposal``: der vollständige exportierte Proposal-Dict (``status`` auf oberster Ebene).
+    ``holdout_metrics``: ``proposal['holdout']['symbol']`` (dieselbe Quelle wie jeder andere
+    Check dieser Datei, der ``holdout_metrics`` konsumiert, z. B. ``check_sr0_coherence``)."""
+    status = proposal.get("status")
+    promote = status in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
+    censored_fields = sorted(
+        k for k, v in (holdout_metrics or {}).items()
+        if k.endswith(_CENSORED_STATISTIC_FLAG_SUFFIX) and v is True
+    )
+    if not promote:
+        return InvariantResult(
+            name="check_censored_statistic_in_decision",
+            passed=True,
+            expected="Keine *_censored-Flags bei promote=True",
+            actual={"status": status, "censored_fields": censored_fields},
+            detail="Nicht anwendbar (status ist keine Promotion).",
+        )
+    passed = not censored_fields
+    return InvariantResult(
+        name="check_censored_statistic_in_decision",
+        passed=passed,
+        expected="Keine *_censored-Flags bei promote=True",
+        actual={"status": status, "censored_fields": censored_fields},
+        severity="blocking",
+        detail=("OK" if passed else
+                f"Promotion (status={status!r}) beruht auf zensierter/gecappter Kennzahl: "
+                f"{', '.join(censored_fields)} — der wahre Wert ist unbekannt (#1004)."),
+    )
+
+
+def check_promotion_deployment_coherence(proposal: dict, deployment_decision: dict | None) -> InvariantResult:
+    """Issue #1006 (Katalog #858, Fix Punkt 3). Zwei Selektionssysteme mit unterschiedlicher
+    Strenge (Wiederkehr des #993-Musters, hier mit vertauschten Vorzeichen: der Sweep ist der
+    SCHWÄCHERE Pfad) — ``deployment_gate.evaluate_deployment_eligibility`` prüft acht (seit #1007
+    neun) Klauseln, u. a. DSR UNBEDINGT (``_clause_dsr``, kein Ersatzpfad), während der Sweep
+    selbst über ``promotion_correction_mode='dsr_or_robust_pair'`` einen DSR-Miss ersetzen kann.
+    Ein Kandidat, der im Sweep ``READY_FOR_PR``/``PROMOTE_GLOBAL_DEFAULT`` wird, aber die
+    Deployment-Grenze ablehnt, ist KEIN Fehler an sich — aber er MUSS sichtbar sein
+    (``summary_de.py`` Abschnitt 2.1 darf niemals "Deploybar" ohne ein begleitendes
+    ``DeploymentDecision``-Objekt behaupten), nicht implizit unter derselben Statuszeile
+    verschwinden. severity='high' (nicht 'blocking'): die Study selbst bleibt ein valider
+    Sweep-Gewinner, nur (noch) nicht kapitalwirksam.
+
+    ``deployment_decision``: ``deployment_gate.DeploymentDecision.to_dict()`` oder ``None``
+    (Aufrufer konnte/musste keine Bewertung durchführen, z. B. weil ``proposal`` kein
+    Promotionskandidat ist — dann ist diese Prüfung nicht anwendbar)."""
+    status = proposal.get("status")
+    promote = status in ("READY_FOR_PR", "PROMOTE_GLOBAL_DEFAULT")
+    if not promote:
+        return InvariantResult(
+            name="check_promotion_deployment_coherence",
+            passed=True,
+            expected="deployment_decision.admitted == True bei promote=True",
+            actual={"status": status, "deployment_decision": deployment_decision},
+            detail="Nicht anwendbar (status ist keine Promotion).",
+        )
+    admitted = (deployment_decision or {}).get("admitted")
+    blocking_clause = (deployment_decision or {}).get("blocking_clause")
+    passed = admitted is True
+    return InvariantResult(
+        name="check_promotion_deployment_coherence",
+        passed=passed,
+        expected="deployment_decision.admitted == True bei promote=True",
+        actual={"status": status, "admitted": admitted, "blocking_clause": blocking_clause},
+        severity="high",
+        detail=("OK" if passed else
+                f"Promotion (status={status!r}) besteht die Deployment-Grenze nicht "
+                f"(blocking_clause={blocking_clause!r}) — der Kandidat ist ein Sweep-Gewinner, "
+                "aber laut deployment_gate.evaluate_deployment_eligibility NICHT deploybar (#1006)."),
     )
 
 

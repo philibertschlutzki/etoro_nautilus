@@ -223,3 +223,18 @@ _register_inference_code(
                 "#967) — der einzige Code dieser Registry mit dieser asymmetrischen Konsequenz.",
     nullifies_metrics=("oos_psr",),
 )
+# Issue #1004 (Katalog #858, Fix Punkt 3, Pitfall #342) — ``backtest_runner._calculate_stats``:
+# ``gross_loss`` ist positiv, aber unterhalb ``DENOMINATOR_FLOOR`` (praktisch verlustfrei). Der
+# Quotient gross_profit/gross_loss ist dann numerisch unbeschränkt; ``min(..., profit_factor_cap)``
+# glättet ihn zu einer Konstante, die keine Information mehr trägt — dieselbe Konsequenz wie ein
+# strukturell nicht messbarer Sortino (SORTINO_GUARD_TRIPPED u. a.): 'prune' statt eines stillen,
+# irreführend präzisen Zahlenwerts. ``profit_factor`` selbst bleibt in den Metriken bestehen
+# (weiterhin gecappt, Zero-Regression auf bestehende Gate-/Reward-Konsumstellen) — dieser Code
+# markiert nur, dass er NICHT als vertrauenswürdiger Punktschätzer taugt (``profit_factor_censored``,
+# ``profit_factor_raw``).
+_register_inference_code(
+    "PROFIT_FACTOR_DENOMINATOR_DEGENERATE", failure_policy="prune", severity="high",
+    description="gross_loss > 0, aber < DENOMINATOR_FLOOR — profit_factor numerisch unbeschränkt, "
+                "der gecappte/gemeldete Wert trägt keine Information (#1004).",
+    nullifies_metrics=(),
+)
