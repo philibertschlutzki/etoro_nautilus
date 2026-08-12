@@ -10,7 +10,7 @@
       "TSLA.ETORO": {
         "macd_signal_period": 12,
         "macd_fast": 11,
-        "macd_slow": 32,
+        "macd_slow": 26,
         "sma_period": 50,
         "bb_period": 36,
         "bb_std_dev": 1.1444078311492731,
@@ -31,42 +31,42 @@
     },
     "FlashCrashReversalStrategy": {
       "TSLA.ETORO": {
-        "bb_period": 26,
-        "bb_std_dev": 2.93923791296597,
-        "rsi_period": 9,
-        "rsi_oversold": 29,
-        "atr_period": 15,
-        "cooldown_bars": 7,
-        "atr_trailing_multiplier": 2.903874570367733,
-        "max_bars_in_trade": 12,
+        "bb_period": 36,
+        "bb_std_dev": 2.6958585101236014,
+        "rsi_period": 7,
+        "rsi_oversold": 12,
+        "atr_period": 12,
+        "cooldown_bars": 2,
+        "atr_trailing_multiplier": 1.9628319238121152,
+        "max_bars_in_trade": 13,
         "dyn_tp_enabled": true,
-        "dyn_tp_lambda": 2.825545642492335,
-        "dyn_tp_gamma": 2.7548340241546487
+        "dyn_tp_lambda": 2.9413294729267934,
+        "dyn_tp_gamma": 3.421578282933296
       }
     },
     "VwapExhaustionStrategy": {
       "TSLA.ETORO": {
-        "vwap_period": 10,
-        "deviation_threshold": 0.012386192023038171,
-        "cooldown_bars": 6,
-        "atr_trailing_multiplier": 1.4933216723431884,
-        "max_bars_in_trade": 14,
+        "vwap_period": 11,
+        "deviation_threshold": 0.013354321416225567,
+        "cooldown_bars": 3,
+        "atr_trailing_multiplier": 1.6140964923493881,
+        "max_bars_in_trade": 13,
         "dyn_tp_enabled": true,
-        "dyn_tp_lambda": 0.9148807921482988,
-        "dyn_tp_gamma": 1.5868324093320574
+        "dyn_tp_lambda": 1.1304177853615907,
+        "dyn_tp_gamma": 1.791024351062942
       }
     },
     "MeanReversionStrategy": {
       "TSLA.ETORO": {
-        "keltner_period": 24,
-        "keltner_atr_period": 35,
-        "keltner_multiplier": 2.350920775540494,
-        "cooldown_bars": 8,
-        "atr_trailing_multiplier": 0.8440045308307595,
+        "keltner_period": 28,
+        "keltner_atr_period": 31,
+        "keltner_multiplier": 3.220551176899244,
+        "cooldown_bars": 7,
+        "atr_trailing_multiplier": 1.7080766659368891,
         "max_bars_in_trade": 18,
         "dyn_tp_enabled": true,
-        "dyn_tp_lambda": 0.10076700232185404,
-        "dyn_tp_gamma": 2.0827110051038344
+        "dyn_tp_lambda": 0.3257339720058995,
+        "dyn_tp_gamma": 3.9280370966067037
       }
     }
   }
