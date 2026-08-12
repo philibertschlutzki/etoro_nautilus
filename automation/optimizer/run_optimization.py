@@ -9,6 +9,7 @@ import time
 import warnings
 import optuna
 import sqlalchemy.exc
+from collections import Counter
 from functools import partial
 from pathlib import Path
 
@@ -35,7 +36,7 @@ from automation.optimizer import disk_guard
 from automation.optimizer import wallclock_guard
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
-from automation.log_manager import emit_execution_event, bind_study_context
+from automation.log_manager import emit_execution_event, bind_study_context, default_run_id
 
 STORAGE = f"sqlite:///{WORK / 'studies.db'}"
 
@@ -270,7 +271,7 @@ def _best_completed_trial_number(trials: list, *, direction: str = "maximize") -
 
 _STOP_REASONS = frozenset({
     "BUDGET_EXHAUSTED", "STRUCTURAL_ZERO_ELIGIBLE", "STRUCTURAL_ALL_UNEVALUABLE",
-    "NO_GRADIENT_SIGNAL", "EXCEPTION",
+    "NO_GRADIENT_SIGNAL", "EXCEPTION", "UNKNOWN_INCOMPLETE",
 })
 
 
@@ -302,8 +303,26 @@ def compute_budget_execution(trials: list, *, n_trials_budget: int | None,
     Study-Zählung — eine grosse Lücke zwischen beiden Zahlen macht eine ungepurgte Study sichtbar,
     statt sie stillschweigend in ``budget_executed_fraction`` zu verstecken.
 
+    Issue #1027 (Katalog #866) — Root-Cause: der #1015-Fix fuehrte ``run_id`` ein, erreichte aber nur
+    2 von 5 Aufrufstellen (Report + Live-Event); die drei entscheidungstragenden Aufrufer (Promotion-
+    Route ``global_default_on_symbol`` in ``confirm.py``, Denylist-/Bounds-Override-Rueckschrieb in
+    ``run_optimization.py``) blieben ungefiltert und erhielten damit eine ANDERE Zahl derselben
+    Kennzahl als Bericht/Invariante fuer dieselbe Study. ``budget_executed_fraction_all_runs`` macht
+    die ungefilterte Zahl an JEDER Aufrufstelle EXPLIZIT verfuegbar, statt sie ueber einen weggelassenen
+    ``run_id``-Parameter versehentlich zu erben — ein Aufrufer, der die All-Runs-Semantik tatsaechlich
+    braucht, waehlt sie jetzt bewusst, statt sie stillschweigend zu bekommen.
+
+    Issue #1026 (Katalog #866) — ``stop_reason == 'EXCEPTION'`` war bislang der ``else``-Zweig dieser
+    Fallunterscheidung: JEDE Study, die weder ein Plateau-Flag noch ihr volles Budget zeigte, wurde
+    als abgestuerzt gemeldet — auch eine Study, die ihr Budget EXAKT ausgefuehrt hatte, aber (durch
+    den #1025-Defekt) keinen ``run_id``-Stempel auf ihren Trials trug. ``EXCEPTION`` wird jetzt nur
+    noch gemeldet, wenn ``study_user_attrs['n_trials_exception']`` (von ``_optimize_symbol_impl``
+    tatsaechlich gezaehlte, von ``study.optimize(..., catch=...)`` gefangene Exceptions) > 0 ist;
+    andernfalls ``UNKNOWN_INCOMPLETE`` — eine ehrliche Restkategorie statt einer behaupteten Ursache.
+
     Rueckgabe: ``{n_trials_budgeted, n_trials_completed, n_trials_total_study,
-    budget_executed_fraction, stop_reason, n_modelled_trials_completed}``.
+    budget_executed_fraction, budget_executed_fraction_all_runs, stop_reason,
+    n_modelled_trials_completed, n_trials_exception, exception_types}``.
     ``budget_executed_fraction`` ist ``None``, wenn kein Budget bekannt ist (z. B. globaler Pfad/
     Legacy-Tests ohne ``n_trials_budget``-User-Attr) — kein stiller Default, der eine Luecke
     verdeckt."""
@@ -313,6 +332,7 @@ def compute_budget_execution(trials: list, *, n_trials_budget: int | None,
     if run_id is not None:
         run_trials = [t for t in trials if getattr(t, "user_attrs", {}).get("run_id") == run_id]
     n_completed = len(run_trials)
+    n_completed_all_runs = len(trials)
     n_modelled = len(_modelled_trials(run_trials, int(n_startup_trials) if n_startup_trials is not None else 0))
     budgeted = None
     if n_trials_budget is not None:
@@ -321,25 +341,35 @@ def compute_budget_execution(trials: list, *, n_trials_budget: int | None,
         except (TypeError, ValueError):
             budgeted = None
     fraction = (n_completed / budgeted) if budgeted else None
+    fraction_all_runs = (n_completed_all_runs / budgeted) if budgeted else None
+    n_trials_exception = int(attrs.get("n_trials_exception") or 0)
+    exception_types = attrs.get("exception_types") or {}
     if attrs.get("floor_plateau_warned"):
         stop_reason = "STRUCTURAL_ALL_UNEVALUABLE"
     elif attrs.get("zero_eligible_plateau_warned"):
         stop_reason = "STRUCTURAL_ZERO_ELIGIBLE"
     elif budgeted is None or n_completed >= budgeted:
         stop_reason = "BUDGET_EXHAUSTED"
-    else:
-        # Issue #770 — weder ein Plateau-Flag noch das volle Budget: der Sweep-Worker warf eine
-        # Exception (durch ``study.optimize(..., catch=(...))`` abgefangen), BEVOR das Budget
-        # ausgeschoepft war. Die einzige derzeit verdrahtete Alternativursache; NO_GRADIENT_SIGNAL
-        # bleibt ein deklarierter Zukunfts-Wert (kein Codepfad stoppt heute allein deswegen).
+    elif n_trials_exception > 0:
+        # Issue #1026 — nur EIN Codepfad zaehlt tatsaechlich gefangene Exceptions
+        # (``_optimize_symbol_impl``); nur diese Zaehlung darf die Ursachenbehauptung tragen.
         stop_reason = "EXCEPTION"
+    else:
+        # Issue #1026 — weder ein Plateau-Flag noch das volle Budget noch eine gezaehlte Exception:
+        # die Study wurde nicht im laufenden Prozess dieses Laufs zu Ende gefuehrt (z. B. ``run_id``
+        # fehlt auf ihren Trials, #1025). Ehrliche Restkategorie statt einer unbelegten Ursache.
+        stop_reason = "UNKNOWN_INCOMPLETE"
     return {
         "n_trials_budgeted": budgeted,
         "n_trials_completed": n_completed,
         "n_trials_total_study": n_trials_total_study,
         "budget_executed_fraction": round(fraction, 4) if fraction is not None else None,
+        "budget_executed_fraction_all_runs": (
+            round(fraction_all_runs, 4) if fraction_all_runs is not None else None),
         "stop_reason": stop_reason,
         "n_modelled_trials_completed": n_modelled,
+        "n_trials_exception": n_trials_exception,
+        "exception_types": dict(exception_types),
     }
 
 
@@ -461,7 +491,8 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                            n_startup_trials: int | None = None, eps: float = 1e-6,
                            logger: logging.Logger | None = None,
                            stop_on_plateau: bool = False,
-                           strategy: str | None = None, symbol: str | None = None) -> None:
+                           strategy: str | None = None, symbol: str | None = None,
+                           run_id: str | None = None) -> None:
     """Issue #409/#413/#456 (P1/P2) — Guard gegen den Unevaluable-Floor-Kollaps (Pitfall #75).
 
     Optuna-Callback (Signatur ``(study, trial)``; ``weights``/``n_startup_trials``/``logger``/
@@ -675,7 +706,8 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     # bestaetigt wurde (aus dem Vorlauf-Cache-Eintrag, VOR diesem Lauf).
                     _budget_execution_for_diagnosis = compute_budget_execution(
                         completed, n_trials_budget=_n_trials_budget,
-                        n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs)
+                        n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs,
+                        run_id=run_id)
                     rec = recommend_diagnosis_action(
                         strategy, symbol, diagnosis,
                         has_existing_override=has_existing_search_space_override(strategy, symbol),
@@ -931,7 +963,8 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     _prior_quality = load_diagnosed_pairs_cache().get((strategy, symbol))
                     _budget_execution_for_quality = compute_budget_execution(
                         completed, n_trials_budget=_n_trials_budget,
-                        n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs)
+                        n_startup_trials=n_startup_trials, study_user_attrs=study.user_attrs,
+                        run_id=run_id)
                     rec = recommend_diagnosis_action(
                         strategy, symbol, {"binding_cause": binding_cause,
                                            "median_oos_trades": median_oos_trades,
@@ -3282,7 +3315,20 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
                     run_id: str | None = None):
     """Issue #800 — unveraenderter Koerper von ``optimize_symbol`` (eine Einrueckungsebene, keine
        Logikaenderung ausser der jetzt von aussen uebergebenen ``study_name`` und dem entfernten
-       manuellen Context-Enter/Exit, siehe ``optimize_symbol``-Docstring)."""
+       manuellen Context-Enter/Exit, siehe ``optimize_symbol``-Docstring).
+
+       Issue #1025 (Katalog #866) — Root-Cause: ``make_symbol_objective`` stempelt
+       ``trial.user_attrs['run_id']`` nur, wenn ``run_id is not None``; erreichte der Parameter
+       diese Funktion NICHT (Direktaufruf ausserhalb von ``sweep.run_per_symbol_sweep``, das einzige
+       Alt-Verhalten, das der ``None``-Default hier zulassen wollte), blieb JEDER Trial dieser Study
+       ungestempelt — ``compute_budget_execution``s ``run_id``-Filter fand dann fuer die GESAMTE
+       Study keinen Treffer (``n_trials_completed == 0``), obwohl die Study ihr Budget exakt
+       ausgefuehrt hatte. Ein hier selbst erzeugter Fallback (``default_run_id()``, dieselbe Quelle
+       wie ``sweep.main()``) schliesst die Luecke am Study-Start selbst, statt sie stillschweigend
+       bis zum Report durchzureichen — bit-identisch fuer JEDEN Aufrufer, der bereits einen
+       ``run_id`` uebergibt (der Normalfall seit #1015)."""
+    if run_id is None:
+        run_id = default_run_id()
     study_t0 = time.perf_counter()  # Issue #415 — Per-Study-Wall-Clock
     cfg_dir = config_dir()
     conf_n_trials, n_startup_trials, seed = 100, 16, 42
@@ -3516,15 +3562,34 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     # Per-Symbol-Study früh beenden (spart ~84 nutzlose Trials, ~30 min pro Floor-Symbol).
     floor_guard = partial(floor_plateau_callback, weights=opt_data,
                           n_startup_trials=n_startup_trials, stop_on_plateau=True,
-                          strategy=strategy, symbol=symbol)
+                          strategy=strategy, symbol=symbol, run_id=run_id)
     disk_guard_cb = partial(disk_budget_callback, opt_data=opt_data)
     # Issue #803 — periodischer Fruehabbruch bei systematischer Kohaerenz-Verletzung (statt erst
     # nach dem vollen Budget zu urteilen, siehe check_study_coherence_violation_rate-Docstring).
     coherence_guard_cb = partial(coherence_violation_early_abort_callback, opt_data=opt_data)
+    # Issue #1026 (Katalog #866) — Root-Cause: ``compute_budget_execution`` leitete
+    # ``stop_reason == 'EXCEPTION'`` bislang als ``else``-Zweig ab (weder Plateau-Flag noch volles
+    # Budget), OHNE dass irgendein Codepfad eine tatsaechlich von ``study.optimize(..., catch=...)``
+    # gefangene Exception zaehlte — jede Study, die aus einem ANDEREN Grund (z. B. dem #1025-
+    # Stempel-Defekt) unter ihrem Budget blieb, wurde faelschlich als abgestuerzt gemeldet. Dieser
+    # Wrapper zaehlt NUR echte, von ``catch`` abgefangene Exceptions (er lässt sie unveraendert
+    # weiter propagieren, damit Optuna den Trial wie zuvor als FAIL markiert).
+    _catch_types = (json.JSONDecodeError, OSError)
+    _exception_counts: Counter = Counter()
+
+    def _objective_with_exception_tracking(trial):
+        try:
+            return objective(trial)
+        except _catch_types as _exc:
+            _exception_counts[type(_exc).__name__] += 1
+            raise
+
     try:
-        study.optimize(objective, n_trials=n_trials, n_jobs=1,
-                       catch=(json.JSONDecodeError, OSError),
+        study.optimize(_objective_with_exception_tracking, n_trials=n_trials, n_jobs=1,
+                       catch=_catch_types,
                        callbacks=[floor_guard, retention_callback, disk_guard_cb, coherence_guard_cb])
+        study.set_user_attr("n_trials_exception", sum(_exception_counts.values()))
+        study.set_user_attr("exception_types", dict(_exception_counts))
         # Issue #415 — Per-Study-Summary (Timing + Evaluierbarkeit) als strukturiertes Event.
         _emit_study_summary(study, symbol, study_t0, strategy=strategy,
                            n_startup_trials=n_startup_trials, run_id=run_id)

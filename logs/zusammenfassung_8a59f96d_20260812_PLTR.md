@@ -1,9 +1,10 @@
 # Sweep-Zusammenfassung 8a59f96d_20260812_PLTR
+<!-- report_sha256: b1f81e9fde934cbf8d4673152e5f323d19ee435256f52e2917b0e4badb670a36 -->
 
 
 ## 1. Ergebnis in einem Satz
 
-14 Studies, 1 Promotion(en) (READY_FOR_PR/PROMOTE_GLOBAL_DEFAULT) — siehe Abschnitt 2 für die Details je Kandidat. **BLOCKIERENDE Invarianten-FAIL(s):** check_selection_statistic_availability — siehe Abschnitt 5.1 für Details.
+14 Studies, 1 Sweep-Promotion(en), **0 deploybar** — kein Kandidat hat sowohl die Holdout-Validierung als auch das Deployment-Gate (``deployment_gate.evaluate_deployment_eligibility``) bestanden. Es gibt kein deploybares Ergebnis aus diesem Lauf. **BLOCKIERENDE Invarianten-FAIL(s):** check_selection_statistic_availability — siehe Abschnitt 5.1 für Details.
 
 ## 2. Monetäres Ergebnis
 

@@ -612,7 +612,8 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                  deflation_n_family: int | None = None,
                                  deflation_family_period_returns: list | None = None,
                                  deflation_n_family_excluded_no_statistic: dict | None = None,
-                                 study_invariant_results: list[dict] | None = None) -> dict:
+                                 study_invariant_results: list[dict] | None = None,
+                                 run_id: str | None = None) -> dict:
     """Gate 3 — das entscheidende Per-Symbol-Promotion-Gate.
 
     Ein instrument_override wird nur promotet, wenn der symbol-getunte Vektor auf dem
@@ -910,6 +911,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 n_trials_budget=_study_attrs.get("n_trials_budget"),
                 n_startup_trials=_study_attrs.get("n_startup_trials"),
                 study_user_attrs=_study_attrs,
+                # Issue #1027 (Katalog #866) — vorher fehlte ``run_id`` an dieser Aufrufstelle: die
+                # PROMOTE_GLOBAL_DEFAULT-Budget-Vorbedingung (unten, ``min_budget_for_global_default``)
+                # entschied auf der UNGEFILTERTEN Study-Historie, waehrend Report und Invariante
+                # (``report.py``/``run_optimization.py:2356``, beide seit #1015 gefiltert) eine ANDERE
+                # Zahl derselben Kennzahl sahen — exakt die Konstellation, die #670 verhindern sollte.
+                run_id=run_id,
             )
         except Exception:
             budget_execution = None

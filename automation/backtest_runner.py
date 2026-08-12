@@ -2747,7 +2747,12 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
         denominator_degenerate = gross_loss < DENOMINATOR_FLOOR
         profit_factor_raw = gross_profit / max(gross_loss, DENOMINATOR_FLOOR)
         profit_factor = min(profit_factor_raw, profit_factor_cap)
-        profit_factor_censored = denominator_degenerate or profit_factor_raw > profit_factor_cap
+        # Issue #1030 (Katalog #866) — ``>`` statt ``>=`` liess ``profit_factor_raw ==
+        # profit_factor_cap`` (der Wert liegt EXAKT auf der Zensurgrenze, min() klemmt ihn also
+        # tatsaechlich) als unzensiert durch: Report-Records mit ``holdout_profit_factor == 15.0``
+        # (== profit_factor_cap) UND ``profit_factor_censored == False`` sind eine in sich
+        # widersprüchliche Kombination (beobachtet im 34b99e6e-Report).
+        profit_factor_censored = denominator_degenerate or profit_factor_raw >= profit_factor_cap
         if denominator_degenerate:
             # Issue #1004 Fix Punkt 3 — ``gross_loss`` ist positiv, aber numerisch nicht von Null
             # unterscheidbar: der wahre PF ist nach oben unbeschraenkt, der Nenner selbst ist die

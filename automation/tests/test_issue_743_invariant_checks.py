@@ -332,3 +332,51 @@ def test_censored_statistic_generic_over_any_censored_suffix_field():
         {"status": "READY_FOR_PR"}, {"some_future_statistic_censored": True})
     assert result.passed is False
     assert result.actual["censored_fields"] == ["some_future_statistic_censored"]
+
+
+# ── Issue #1038 (Katalog #866): check_worker_utilisation_plausible ──────────────────────────────
+def test_worker_utilisation_plausible_passes_at_or_below_one():
+    assert inv.check_worker_utilisation_plausible(1.0).passed is True
+    assert inv.check_worker_utilisation_plausible(0.87).passed is True
+
+
+def test_worker_utilisation_plausible_fails_above_one():
+    """Beobachtete Werte aus Katalog #866: 151,8 %/246,5 %/332,9 % ueber drei Laeufe."""
+    result = inv.check_worker_utilisation_plausible(1.518)
+    assert result.passed is False
+    assert result.actual == 1.518
+
+
+def test_worker_utilisation_plausible_none_is_not_applicable():
+    result = inv.check_worker_utilisation_plausible(None)
+    assert result.passed is True
+    assert result.actual is None
+
+
+# ── Issue #1023 (Katalog #866): check_report_cohort_coherence ───────────────────────────────────
+def test_report_cohort_coherence_passes_when_all_studies_within_wallclock():
+    records = [
+        {"study_started_at_utc": "2026-08-12T04:19:20.000+00:00"},
+        {"study_started_at_utc": "2026-08-12T04:20:05.000+00:00"},
+    ]
+    result = inv.check_report_cohort_coherence(records, wallclock_s=2880.0)
+    assert result.passed is True
+
+
+def test_report_cohort_coherence_fails_when_a_study_predates_the_run():
+    """Beobachtete Symptomatik: 98 von 112 Studies eines Ein-Symbol-Laufs trugen
+    study_started_at_utc 9-12h vor dem Laufbeginn."""
+    records = [
+        {"study_started_at_utc": "2026-08-11T16:19:34.000+00:00"},
+        {"study_started_at_utc": "2026-08-12T04:19:21.000+00:00"},
+    ]
+    result = inv.check_report_cohort_coherence(records, wallclock_s=2880.0)
+    assert result.passed is False
+    assert result.severity == "blocking"
+
+
+def test_report_cohort_coherence_not_applicable_without_wallclock_or_timestamps():
+    assert inv.check_report_cohort_coherence([], wallclock_s=2880.0).passed is True
+    assert inv.check_report_cohort_coherence(
+        [{"study_started_at_utc": "2026-08-12T04:19:20.000+00:00"}], wallclock_s=None,
+    ).passed is True

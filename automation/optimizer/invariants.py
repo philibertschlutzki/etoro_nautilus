@@ -20,6 +20,7 @@ import logging
 import math
 import statistics
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
@@ -1982,6 +1983,85 @@ def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5
                 f"median(budget_executed_fraction)={median:.4f} < {min_median} ueber "
                 f"{len(fractions)} Studies — ein grosser Teil des konfigurierten Suchbudgets wird "
                 "nicht ausgefuehrt (#768/#769-Fehlerklasse)."),
+    )
+
+
+def check_report_cohort_coherence(
+    study_records: list[dict], *, wallclock_s: float | None,
+    tolerance_s: float = 300.0,
+) -> InvariantResult:
+    """Issue #1023 (Katalog #866) Akzeptanzkriterium 2 — Regressionswaechter gegen eine erneute
+    Vermischung fremder Laeufe im Report (siehe ``report._build_report``s ``run_id``-Filter): fuer
+    JEDEN erzeugten Report muss gelten ``max(study_started_at_utc) − min(study_started_at_utc) <
+    wallclock_s`` (plus ``tolerance_s`` Slack fuer Preflight/Dispatch-Overhead vor der ersten und
+    Retention/Report-Schreibzeit nach der letzten Study) — eine Study, deren Startzeitstempel ausserhalb
+    der Sweep-Laufzeit selbst liegt, kann nicht Teil DIESES Laufs sein, unabhaengig davon, ob sie
+    einen ``run_id``-Stempel traegt (z. B. eine Uhr-Drift oder ein manuell verschobener Timestamp).
+
+    ``study_records`` ist die bereits ``run_id``-gefilterte ``studies_out``-Liste (#1023 Fix Punkt
+    1) — diese Invariante ist die zweite, unabhaengige Verteidigungslinie GEGEN denselben
+    Fehlerklasse, nicht deren einzige."""
+    timestamps = []
+    for r in study_records:
+        raw = r.get("study_started_at_utc")
+        if not raw:
+            continue
+        try:
+            timestamps.append(datetime.fromisoformat(raw))
+        except (TypeError, ValueError):
+            continue
+    if len(timestamps) < 2 or wallclock_s is None or wallclock_s <= 0:
+        return InvariantResult(
+            name="check_report_cohort_coherence",
+            passed=True,
+            expected=f"< wallclock_s + {tolerance_s}s",
+            actual=None,
+            detail="Weniger als 2 Studies mit study_started_at_utc oder kein wallclock_s — nicht anwendbar.",
+            severity="blocking",
+        )
+    span_s = (max(timestamps) - min(timestamps)).total_seconds()
+    budget_s = wallclock_s + tolerance_s
+    passed = span_s < budget_s
+    return InvariantResult(
+        name="check_report_cohort_coherence",
+        passed=passed,
+        expected=f"< {budget_s:.1f}s (wallclock_s={wallclock_s:.1f} + {tolerance_s:.0f}s Slack)",
+        actual=round(span_s, 1),
+        detail=("OK" if passed else
+                f"study_started_at_utc-Spannweite={span_s:.1f}s >= {budget_s:.1f}s — mindestens "
+                "eine Study liegt ausserhalb der Sweep-Laufzeit (#1023-Fehlerklasse: Report enthaelt "
+                "Studies eines anderen Laufs)."),
+        severity="blocking",
+    )
+
+
+def check_worker_utilisation_plausible(
+    worker_utilisation: float | None, *, max_ratio: float = 1.0,
+) -> InvariantResult:
+    """Issue #1038 (Katalog #866) — ``report._worker_utilisation`` (Σ Study-Wallclock / (n_jobs ×
+    Sweep-Wallclock)) heisst "Auslastung", kann aber durch verschachtelte, studieneigene Worker-
+    Pools (``backtest_runner.py``) oder — vor #1023 — eingemischte Studies fremder Laeufe ueber
+    ``max_ratio`` (Default 1.0, physikalisch das Maximum einer echten Auslastung) hinaus wachsen.
+    Beobachtet: 151,8 %/246,5 %/332,9 % ueber drei Laeufe. Ein Wert ueber der Schwelle ist ein FAIL,
+    keine unkommentierte Anzeigezahl."""
+    if worker_utilisation is None:
+        return InvariantResult(
+            name="check_worker_utilisation_plausible",
+            passed=True,
+            expected=f"<= {max_ratio}",
+            actual=None,
+            detail="Kein worker_utilisation-Wert — nicht anwendbar.",
+        )
+    passed = worker_utilisation <= max_ratio
+    return InvariantResult(
+        name="check_worker_utilisation_plausible",
+        passed=passed,
+        expected=f"<= {max_ratio}",
+        actual=round(worker_utilisation, 4),
+        detail=("OK" if passed else
+                f"worker_utilisation={worker_utilisation:.4f} > {max_ratio} — Σ Study-Wallclock "
+                "ueberlappt sich (verschachtelte Worker-Pools und/oder eingemischte Studies eines "
+                "anderen Laufs, #1038-Fehlerklasse)."),
     )
 
 

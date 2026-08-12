@@ -479,7 +479,21 @@ def _study_record(proposal: dict, study,
         trials, n_trials_budget=study_user_attrs.get("n_trials_budget"),
         n_startup_trials=n_startup_for_report, study_user_attrs=study_user_attrs, run_id=run_id)
 
-    holdout_metrics = (proposal.get("holdout") or {}).get("symbol") or {}
+    # Issue #1030 (Katalog #866) — Root-Cause: fuer Proposals ohne symbolspezifische Holdout-Route
+    # (z. B. ``HOLDOUT_NO_ELIGIBLE_TRIALS``, bei der ein globaler Default-Vektor VERSUCHT, aber
+    # abgelehnt wurde, siehe ``confirm.confirm_per_symbol_promotion``s ``metrics_symbol={}``/
+    # ``metrics_global=_metrics_dict(m_global)``-Rueckgaben) ist ``holdout['symbol']`` ein leeres
+    # Dict — JEDES ``holdout_*``-Feld unten (inkl. ``holdout_profit_factor_raw``) brach dadurch
+    # still auf ``None`` ab, obwohl ein echter (wenn auch abgelehnter) globaler Holdout-Backtest
+    # gelaufen war und in ``holdout['global']`` liegt. Fallback nur, wenn die Symbol-Route
+    # WIRKLICH leer ist (kein stiller Vorrang vor einer echten Symbol-Route).
+    _holdout_symbol = (proposal.get("holdout") or {}).get("symbol") or {}
+    if _holdout_symbol:
+        holdout_metrics = _holdout_symbol
+        holdout_route = "symbol"
+    else:
+        holdout_metrics = (proposal.get("holdout") or {}).get("global") or {}
+        holdout_route = "global" if holdout_metrics else "none"
     decision_chain = _decision_chain(proposal, n_eligible=n_eligible)
     # Issue #1006 (Katalog #858, Fix Punkt 2) — "Deploybar" (summary_de.py Abschnitt 2.1) behauptete
     # bislang eine Eigenschaft, die deployment_gate.evaluate_deployment_eligibility NIE geprüft
@@ -580,6 +594,11 @@ def _study_record(proposal: dict, study,
         # Issue #917 Fix 4 — disjunkte Zerlegung der evaluierten, nicht-eligiblen Trials.
         "n_ineligible_measured": n_ineligible_measured,
         "backtest_ms_median": backtest_ms_median,
+        # Issue #1038 (Katalog #866) — Σ tatsaechlicher Backtest-CPU-Zeit dieser Study (Rohmaterial
+        # fuer report._worker_utilisation_backtest_ms): anders als study_wallclock_s (Wanduhrzeit,
+        # die verschachtelte Study-eigene Worker-Pools UND — vor #1023 — fremde Studies einschloss)
+        # ist dies additiv ueber echte Trial-Arbeit, unbeeinflusst von Ueberlappung.
+        "backtest_ms_sum": sum(_backtest_ms_values) if _backtest_ms_values else None,
         # Issue #983 — Rohmaterial für sweep._read_last_backtest_ms_mean des NÄCHSTEN Laufs: der
         # Wallclock-Preflight braucht den Mittelwert (rechtsschiefe Verteilung), nicht den Median.
         "backtest_ms_mean": study_user_attrs.get("backtest_ms_mean"),
@@ -773,6 +792,10 @@ def _study_record(proposal: dict, study,
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
         "holdout_gate_deltas": holdout_metrics.get("holdout_gate_deltas") or {},
         "holdout_binding_gate": holdout_metrics.get("holdout_binding_gate"),
+        # Issue #1030 (Katalog #866) — welche Route (siehe oben) die holdout_*-Felder speiste; macht
+        # eine "global"-Herkunft (Symbol-Route leer) im Report unterscheidbar von einer echten
+        # Symbol-Route, statt beide identisch als "die Holdout-Zahlen" zu behandeln.
+        "holdout_route": holdout_route,
         # Issue #832 Fix Punkt 2/3 — monetäre Holdout-Kennzahlen (confirm._metrics_dict), für
         # summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ohne zweiten Datenzugriff.
         "holdout_total_return": holdout_metrics.get("oos_total_return"),
@@ -1143,10 +1166,20 @@ def _symbol_barrier_wait(studies_out: list[dict[str, Any]]) -> dict[str, float]:
 
 def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
                         sweep_wallclock_s: float | None) -> float | None:
-    """Issue #851 — Σ Study-Wallclock / (n_jobs × Sweep-Wallclock): der Anteil der theoretisch
-    verfügbaren Worker-Zeit, der tatsächlich mit Study-Arbeit gefüllt war (1.0 = perfekte
-    Auslastung; auf einem seriellen Referenzlauf, n_jobs=1, ≈ 1.0 abzüglich Preflight-/Dispatch-
-    Overhead). None ohne n_jobs/sweep_wallclock_s ODER ohne eine einzige Study mit Wallclock-Daten."""
+    """Issue #851 — Σ Study-Wallclock / (n_jobs × Sweep-Wallclock).
+
+    Issue #1038 (Katalog #866) — trotz des Namens ist dies KEINE Auslastung im engeren Sinn (ein
+    Anteil, der niemals 1.0 uebersteigen kann): der Zaehler ueberlappt sich strukturell, wenn (a)
+    eine Study fremder Laeufe eingemischt war (vor #1023) — Σ Study-Wallclock zaehlte dann Sekunden
+    mehrfacher, GLEICHZEITIGER Laeufe zusammen, oder (b) jede Study selbst einen EIGENEN Worker-Pool
+    oeffnet (``backtest_runner.py``, ``_max_workers = max(1, min(cpu//2, 6))``) — Study-Wallclocks
+    verschiedener, parallel dispatchter Studies ueberlappen sich dann untereinander. Beobachtete
+    Werte: 151,8 %/246,5 %/332,9 % ueber drei Laeufe. Nach #1023 (fremde Studies ausgeschlossen)
+    bleibt Ursache (b) bestehen — ``check_worker_utilisation_plausible`` (invariants.py) meldet
+    jeden Wert > 1.0 als FAIL statt ihn unkommentiert anzuzeigen. ``_worker_utilisation_backtest_ms``
+    (unten) ist die zweite, ueberlappungsfreie Grösse fuer denselben Zweck.
+
+    None ohne n_jobs/sweep_wallclock_s ODER ohne eine einzige Study mit Wallclock-Daten."""
     if not n_jobs or n_jobs <= 0 or not sweep_wallclock_s or sweep_wallclock_s <= 0:
         return None
     total_study_wallclock = sum(
@@ -1154,6 +1187,22 @@ def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None
     if total_study_wallclock <= 0:
         return None
     return total_study_wallclock / (n_jobs * sweep_wallclock_s)
+
+
+def _worker_utilisation_backtest_ms(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
+                                    sweep_wallclock_s: float | None) -> float | None:
+    """Issue #1038 (Katalog #866) — Σ ``backtest_ms_sum`` (tatsaechliche, additive Backtest-CPU-Zeit
+    je Trial, ``_study_record``) / (n_jobs × Sweep-Wallclock). Anders als ``_worker_utilisation``
+    (Study-Wallclock, siehe dortiger Docstring) summiert dies echte Trial-Arbeit statt Wanduhrzeit
+    — verschachtelte Study-eigene Worker-Pools koennen diese Zahl NICHT ueber 1.0 durch reine
+    Ueberlappung treiben, da jede Millisekunde genau EINEM Trial zugeordnet ist."""
+    if not n_jobs or n_jobs <= 0 or not sweep_wallclock_s or sweep_wallclock_s <= 0:
+        return None
+    total_backtest_s = sum(
+        r["backtest_ms_sum"] for r in studies_out if r.get("backtest_ms_sum") is not None) / 1000.0
+    if total_backtest_s <= 0:
+        return None
+    return total_backtest_s / (n_jobs * sweep_wallclock_s)
 
 
 def _seed_source_distribution(studies_out: list[dict[str, Any]]) -> dict[str, int]:
@@ -1275,18 +1324,80 @@ def _build_report(
 
     studies_out: list[dict[str, Any]] = []
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
+    # Issue #1023 (Katalog #866) — Root-Cause: die Study-Auswahl enumerierte bislang JEDES an
+    # ``proposals`` haengende Proposal ungefiltert; ein WORK-Verzeichnis-Proposal, das aus einem
+    # frueheren Lauf stammt (z. B. ueber den #799-Checkpoint-Resume-Pfad wiederverwendet, siehe
+    # ``sweep.run_per_symbol_sweep``), zog dessen komplette Study — inklusive Trials von einem
+    # VORTAG — in DIESEN Report. Beobachtet: 98 von 112 Studies eines Ein-Symbol-Laufs trugen
+    # ``study_started_at_utc`` 9-12h vor dem Laufbeginn.
+    #
+    # Kriterium: ``study_started_at_utc`` (von ``_optimize_symbol_impl`` VOR jedem ``study.optimize``
+    # gestempelt, #851 — ueberschrieben bei JEDER tatsaechlichen Optimierung dieser Study, auch bei
+    # einem #799-Checkpoint-Resume INNERHALB desselben Laufs) muss innerhalb der Sweep-Laufzeit
+    # dieses Laufs liegen. Bewusst NICHT ueber den #1025-Trial-Stempel entschieden: eine Study mit
+    # ausschliesslich Legacy-Trials (vor #1015, kein run_id-Stempel), aber einem AKTUELLEN
+    # ``study_started_at_utc``, gehoert weiterhin zu diesem Lauf — nur eine Study, die in DIESEM
+    # Prozess nachweislich NICHT angefasst wurde, ist fremd. Fehlt ``study_started_at_utc`` oder der
+    # Lauf-``started_at_utc`` selbst, wird NICHT ausgeschlossen (fail-open auf fehlender Evidenz,
+    # analog jedem anderen ``None``-Fall in diesem Modul) — ``check_report_cohort_coherence``
+    # (invariants.py) bleibt die zweite, unabhaengige Verteidigungslinie.
+    studies_excluded_foreign_run: list[dict[str, Any]] = []
+    _run_started_dt = None
+    if started_at_utc:
+        try:
+            _run_started_dt = datetime.fromisoformat(started_at_utc)
+        except (TypeError, ValueError):
+            _run_started_dt = None
+    _foreign_run_tolerance_s = 3600.0
+    # Issue #1039 (Katalog #866) — Folgefehler aus #1023: ``cross_study.n_family`` (DSR-
+    # Multiplizitaet, siehe unten) muss auf DERSELBEN gefilterten Kohorte laufen wie ``studies_out``,
+    # sonst aggregiert es weiterhin ueber die Vortags-Studies, obwohl der Report selbst sie nicht
+    # mehr auflistet.
+    filtered_proposals: list[dict[str, Any]] = []
     for proposal in proposals:
         study = _load_study_for_proposal(proposal)
+        _study_attrs = getattr(study, "user_attrs", None) or {} if study is not None else {}
+        _study_started_raw = _study_attrs.get("study_started_at_utc")
+        is_foreign_run = False
+        if _study_started_raw and _run_started_dt is not None:
+            try:
+                _study_started_dt = datetime.fromisoformat(_study_started_raw)
+                is_foreign_run = (
+                    (_run_started_dt - _study_started_dt).total_seconds() > _foreign_run_tolerance_s)
+            except (TypeError, ValueError):
+                is_foreign_run = False
+        if is_foreign_run:
+            study_trials = list(getattr(study, "trials", None) or [])
+            studies_excluded_foreign_run.append({
+                "strategy": proposal.get("strategy"),
+                "symbol": proposal.get("symbol"),
+                "study_started_at_utc": _study_started_raw,
+                "run_started_at_utc": started_at_utc,
+                "n_trials_total_study": len(study_trials),
+                "reason": "study_started_before_this_run",
+            })
+            continue
         record, checks = _study_record(
             proposal, study, tournament_cfg,
             guard_dominance_threshold=float(
                 optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)),
             symbol_bar_quality_cache=_symbol_bar_quality_cache, run_id=run_id)
         studies_out.append(record)
+        filtered_proposals.append(proposal)
         study_label = f"{record['strategy']}/{record['symbol']}"
         all_checks.extend((study_label, c) for c in checks)
         # Issue #791 — REJECT_SELECTION_PBO erfordert eine dokumentierte Promotions-Inferenz.
         all_checks.append((study_label, _inv.check_promotion_inference_coverage(proposal, record)))
+
+    # Issue #1023 Akzeptanzkriterium 2 — ist die gefilterte Menge leer, WAEHREND der Store nicht
+    # leer war (jedes Proposal wurde als fremder Lauf ausgeschlossen), ist das kein leerer, sondern
+    # ein FALSCHER Report: fail-loud statt eines irrefuehrenden "0 Studies"-Artefakts.
+    if proposals and not studies_out and studies_excluded_foreign_run:
+        raise RuntimeError(
+            f"[#1023] generate_sweep_report(run_id={run_id!r}): alle {len(studies_excluded_foreign_run)} "
+            "referenzierten Studies wurden VOR dem Laufbeginn dieses Sweeps gestartet (fremder Lauf) "
+            "— kein Report geschrieben statt eines Berichts ueber eine fremde Kohorte."
+        )
 
     n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
 
@@ -1297,6 +1408,17 @@ def _build_report(
     min_median_budget_execution = float(optimizer_cfg.get("min_median_budget_execution", 0.5))
     budget_check = _inv.check_budget_execution(studies_out, min_median=min_median_budget_execution)
     all_checks.append(("global", budget_check))
+
+    # Issue #1023 (Katalog #866) Akzeptanzkriterium 2 — zweite, unabhaengige Verteidigungslinie
+    # gegen fremde Studies im Report (siehe der run_id-Filter oben).
+    all_checks.append(("global", _inv.check_report_cohort_coherence(studies_out, wallclock_s=wallclock_s)))
+
+    # Issue #1038 (Katalog #866) — vorab berechnet (statt erst im Report-Dict unten), damit die
+    # Invariante denselben Wert prueft, der auch angezeigt wird (eine Kennzahl, eine Quelle).
+    _worker_utilisation_value = _worker_utilisation(
+        studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s)
+    all_checks.append((
+        "global", _inv.check_worker_utilisation_plausible(_worker_utilisation_value)))
 
     # Issue #776 — sweep-weite Gate-Kollinearitaets-Konsolidierungs-Invariante (konsumiert den
     # #679-Alarm ueber alle Studies statt ihn stumm bleiben zu lassen).
@@ -1485,8 +1607,12 @@ def _build_report(
         # weitere" kollabiert (Akzeptanzkriterium #849-5, Bericht bleibt bei >= 500 FAILs kompakt).
         "summary_max_details_per_check": int(optimizer_cfg.get("summary_max_details_per_check", 5)),
         "studies": studies_out,
+        # Issue #1023 (Katalog #866) Fix Punkt 1 — Studies, deren komplette Trial-Historie zu einem
+        # ANDEREN run_id gehoert, werden NICHT stillschweigend in ``studies`` aufgenommen, sondern
+        # hier mit Grund gelistet — sichtbar statt verschwunden.
+        "studies_excluded_foreign_run": studies_excluded_foreign_run,
         "cross_study": {
-            "n_family": _family_n_from_proposals(proposals),
+            "n_family": _family_n_from_proposals(filtered_proposals),
             # Issue #770 — Budget-Ausfuehrungsgrad-Verteilung ueber alle Studies (Median + p10, wie
             # im Katalog gefordert: die 44,2%/52,6%-Luecken dieses Katalogs waren nur ueber externe
             # Log-Rekonstruktion sichtbar).
@@ -1536,7 +1662,11 @@ def _build_report(
             # 3.2/3.4); dieselben Felder speisen das #843-LPT-Scheduling (Katalog B).
             "wallclock_by_strategy": _wallclock_by_strategy(studies_out),
             "symbol_barrier_wait_s": _symbol_barrier_wait(studies_out),
-            "worker_utilisation": _worker_utilisation(
+            "worker_utilisation": _worker_utilisation_value,
+            # Issue #1038 (Katalog #866) — zweite, ueberlappungsfreie Auslastungs-Groesse (siehe
+            # _worker_utilisation_backtest_ms-Docstring): Σ echte Backtest-CPU-Zeit statt Σ Study-
+            # Wanduhrzeit, kann durch verschachtelte Worker-Pools nicht ueber 1.0 getrieben werden.
+            "worker_utilisation_backtest_ms": _worker_utilisation_backtest_ms(
                 studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s),
             # Issue #853 — {seed_source_value: n_studies}, dieselbe Verteilung, die
             # check_champion_seed_coverage prüft.
