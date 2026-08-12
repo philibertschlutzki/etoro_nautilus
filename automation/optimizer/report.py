@@ -82,6 +82,34 @@ def _load_json(path: Path) -> dict | None:
         return None
 
 
+def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, float]:
+    """Issue #1028 (Katalog #866) — der EFFEKTIVE ``trade_amount_pct`` je Strategie
+    (``strategy_defaults.json``, ``strategies.json[params]`` hat Vorrang, siehe
+    ``strategy_defaults.json['_schema']``), Rohmaterial für
+    ``invariants.check_sizing_identity_coherence``. Bewusst vereinfacht gegenüber
+    ``resolve.resolve_params`` (kein Instrument-/Champion-Seed-/Sampled-Overlay): die Sizing-
+    Identität prüft die STRATEGIEWEITE Konfigurationskonstante, nicht ein per-Symbol gesampeltes
+    Sizing (``spaces.py`` sampelt ``trade_amount_pct`` nicht, siehe Katalog-B-1). Kein Caching
+    (im Gegensatz zu den ``_read_*``-Helfern in backtest_runner.py): wird genau EINMAL je
+    ``_build_report``-Aufruf gelesen, nicht je Trial — der Perf-Vorteil eines Prozess-globalen
+    Caches wäre hier vernachlässigbar, ein zwischen ``config_dir()``-Wechseln (Tests) veraltender
+    Cache aber ein echtes Korrektheitsrisiko."""
+    cfg_dir = base_cfg or config_dir()
+    out: dict[str, float] = {}
+    defaults = _load_json(cfg_dir / "strategy_defaults.json") or {}
+    for strat, params in defaults.items():
+        if isinstance(params, dict) and params.get("trade_amount_pct") is not None:
+            out[strat] = params["trade_amount_pct"]
+    strategies_cfg = _load_json(cfg_dir / "strategies.json") or {}
+    for entry in strategies_cfg.get("strategies") or []:
+        if not isinstance(entry, dict):
+            continue
+        override = (entry.get("params") or {}).get("trade_amount_pct")
+        if override is not None:
+            out[entry.get("strategy_class")] = override
+    return out
+
+
 def _gradient_tau(base_cfg: Path | None = None) -> float:
     """Dieselbe Config-Quelle/Default wie ``run_optimization._emit_study_summary``."""
     tau = 1e-3
@@ -598,6 +626,7 @@ def _study_record(proposal: dict, study,
     # Straf-Term-Kalibrierung (#951) explizit GEGEN reward_std_feasible kalibriert werden kann,
     # statt gegen ein vom Failure-Zweig verzerrtes Gesamtmass.
     _reward_std_total, _reward_std_feasible, _ = _inv._reward_std_total_and_feasible(trial_attrs)
+    _study_exit_reason_histogram = _sum_exit_reason_histograms(trial_attrs)
 
     record = {
         "symbol": proposal.get("symbol"),
@@ -753,6 +782,14 @@ def _study_record(proposal: dict, study,
         # des realisierten Ø-Bruttoverlusts (bps) und der ATR-Telemetrie über die Trials dieser
         # Study (#899). None, wenn keine Exit-Telemetrie vorliegt (Pre-#899-JSON/kein Trade).
         "oos_gross_loss_mean_bps": _median_of_trial_field(trial_attrs, "oos_gross_loss_mean_bps"),
+        # Issue #1035 (Katalog #866) — dieselbe Groesse, aber NUR ueber nachweisliche TRAILING_
+        # STOP-Exits, plus die zugrunde liegende Stichprobengroesse (Summe ueber alle Trials) —
+        # Rohmaterial fuer invariants.check_effective_stop_distance (INCONCLUSIVE bei < 30 Stop-
+        # Exits statt eines FAILs auf der falschen Grundgesamtheit, #1008/#1035).
+        "oos_gross_loss_mean_bps_trailing_stop": _median_of_trial_field(
+            trial_attrs, "oos_gross_loss_mean_bps_trailing_stop"),
+        "oos_n_trailing_stop_losses": sum(
+            int(a.get("oos_n_trailing_stop_losses") or 0) for a in trial_attrs),
         "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
@@ -762,7 +799,13 @@ def _study_record(proposal: dict, study,
         # Issue #919 — je Study aufsummiertes Exit-Reason-Histogramm (aus Order-Tags, #899) +
         # Median der je-Trial-Median-Haltedauer (Bars). Rohmaterial für
         # invariants.check_exit_reason_coverage.
-        "exit_reason_histogram": _sum_exit_reason_histograms(trial_attrs),
+        "exit_reason_histogram": _study_exit_reason_histogram,
+        # Issue #1037 (Katalog #866) — bequemer direkter Zugriff auf denselben Wert wie
+        # exit_reason_histogram['DATA_END']: Round-Trips, die backtest_runner._finalize_round_trip
+        # am Ende der verfuegbaren Daten zwangsweise finalisiert hat (Position nie flat geworden),
+        # nicht ueber eine echte Handelsentscheidung. Rohmaterial fuer
+        # invariants.check_open_position_at_data_end.
+        "n_round_trips_data_end": _study_exit_reason_histogram.get("DATA_END", 0),
         "median_bars_held": _median_of_trial_field(trial_attrs, "oos_median_bars_held"),
         # Issue #919 — Summe der Round-Trips über GENAU die Trials, die auch ein
         # exit_reason_histogram beitrugen (Apples-to-apples für check_exit_reason_coverage; ein
@@ -1346,6 +1389,9 @@ def _build_report(
     # Issue #923 — einmal je Report-Lauf gelesen (nicht je Study — dieselbe Datei, kein
     # Symbol-Scope beim Lesen selbst nötig).
     _symbol_bar_quality_cache = read_symbol_bar_quality_cache(WORK)
+    # Issue #1028 (Katalog #866) — einmal je Report-Lauf gelesen; Rohmaterial für
+    # invariants.check_sizing_identity_coherence.
+    _trade_amount_pct_map = _trade_amount_pct_by_strategy()
 
     studies_out: list[dict[str, Any]] = []
     all_checks: list[tuple[str, _inv.InvariantResult]] = []
@@ -1407,6 +1453,8 @@ def _build_report(
             guard_dominance_threshold=float(
                 optimizer_cfg.get("sortino_guard_trip_fraction_warn", 0.10)),
             symbol_bar_quality_cache=_symbol_bar_quality_cache, run_id=run_id)
+        # Issue #1028 (Katalog #866) — Rohmaterial für invariants.check_sizing_identity_coherence.
+        record["trade_amount_pct"] = _trade_amount_pct_map.get(record.get("strategy"))
         studies_out.append(record)
         filtered_proposals.append(proposal)
         study_label = f"{record['strategy']}/{record['symbol']}"
@@ -1447,6 +1495,14 @@ def _build_report(
 
     # Issue #1031 (Katalog #866) — Kohaerenz zwischen expectancy und expectancy_capital_weighted.
     all_checks.append(("global", _inv.check_expectancy_definition_coherence(studies_out)))
+
+    # Issue #1037 (Katalog #866) — Round-Trips, die am Datenende zwangsweise finalisiert wurden.
+    all_checks.append(("global", _inv.check_open_position_at_data_end(studies_out)))
+
+    # Issue #1028 (Katalog #866) — Sizing-Identität + ATR-Skalenhomogenität (Datenintegritäts-
+    # Wächter gegen die TSLA-Signatur des Katalogs; siehe jeweiliger Docstring).
+    all_checks.append(("global", _inv.check_sizing_identity_coherence(studies_out)))
+    all_checks.append(("global", _inv.check_atr_scale_homogeneity(studies_out)))
 
     # Issue #776 — sweep-weite Gate-Kollinearitaets-Konsolidierungs-Invariante (konsumiert den
     # #679-Alarm ueber alle Studies statt ihn stumm bleiben zu lassen).
@@ -1495,8 +1551,11 @@ def _build_report(
     # (dieselbe Schwelle, die #857 fuer die Study-Ebene-Konsequenz in confirm.py verwendet) — ein
     # Treffer ist ein Bug im Exit-Pfad.
     _timebox_study_tolerance = float(tournament_cfg.get("timebox_violation_study_tolerance", 0.25))
+    # Issue #1036 (Katalog #866) — der Magnituden-Ast des Checks (siehe Docstring dort).
+    _timebox_hard_multiple = float(tournament_cfg.get("timebox_violation_hard_multiple", 3.0))
     holding_time_cap_check = _inv.check_holding_time_cap(
-        studies_out, study_tolerance=_timebox_study_tolerance)
+        studies_out, study_tolerance=_timebox_study_tolerance, hard_multiple=_timebox_hard_multiple,
+        timebox_execution_slack_bars=float(tournament_cfg.get("timebox_execution_slack_bars", 3.0)))
     all_checks.append(("global", holding_time_cap_check))
 
     # Issue #972 — Zero-Eligible-Plateau-Zähler-Widerspruch: n_evaluated + Zerlegung der entfernten

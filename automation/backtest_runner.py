@@ -3585,6 +3585,14 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     wins_bps: list[float] = []
     atr_medians: list[float] = []
     atr_mins: list[float] = []
+    # Issue #1035 (Katalog #866) — Root-Cause: der Zaehler unten (``losses_bps``) mittelt ueber
+    # ALLE Verlust-Trades, waehrend ``invariants.check_effective_stop_distance`` unterstellt, dass
+    # jeder Verlust ein Stop-Exit war. Bei ueberwiegend UNKNOWN-/TIME_BOX-Exits (vor #1034 haeufig
+    # > 50 %) hat der Stop den grossen Teil der Trades nie beruehrt — der Check maass die falsche
+    # Grundgesamtheit (bestaetigt Hypothese (a) aus #1008: "Invariante misst falsche
+    # Grundgesamtheit"). ``losses_bps_trailing_stop`` beschraenkt denselben Zaehler auf
+    # NACHWEISLICHE Stop-Exits.
+    losses_bps_trailing_stop: list[float] = []
     for m in meta_list or []:
         # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
         # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
@@ -3595,6 +3603,8 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         if pnl_bps is not None:
             if pnl_bps < 0:
                 losses_bps.append(abs(pnl_bps))
+                if reason == "TRAILING_STOP":
+                    losses_bps_trailing_stop.append(abs(pnl_bps))
             elif pnl_bps > 0:
                 wins_bps.append(pnl_bps)
         if m.get("atr_median_bps") is not None:
@@ -3607,6 +3617,17 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         "gross_win_mean_bps": statistics.mean(wins_bps) if wins_bps else None,
         "atr_median_bps": statistics.median(atr_medians) if atr_medians else None,
         "atr_min_bps": statistics.median(atr_mins) if atr_mins else None,
+        # Issue #1035 (Katalog #866) — dieselbe Groesse wie gross_loss_mean_bps, aber NUR ueber
+        # nachweisliche TRAILING_STOP-Exits; n_trailing_stop_losses macht die Stichprobengroesse
+        # explizit (invariants.check_effective_stop_distance erklaert sich unterhalb einer
+        # Mindestzahl fuer INCONCLUSIVE statt FAIL).
+        "gross_loss_mean_bps_trailing_stop": (
+            statistics.mean(losses_bps_trailing_stop) if losses_bps_trailing_stop else None),
+        "n_trailing_stop_losses": len(losses_bps_trailing_stop),
+        # Issue #1037 (Katalog #866) — bequemer direkter Zugriff auf denselben Wert wie
+        # exit_reason_histogram['DATA_END']; Rohmaterial fuer
+        # invariants.check_open_position_at_data_end.
+        "n_round_trips_data_end": histogram.get("DATA_END", 0),
     }
 
 
@@ -3824,7 +3845,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Trip (siehe _round_trip_notional_peak-Docstring), parallel zu rt_notionals_with_ts.
         rt_notional_peaks: list[float] = []
 
-        def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None) -> None:
+        def _finalize_round_trip(matches: list[FillMatchRecord], order_ids: list[str] | None = None,
+                                 *, is_data_end_fallback: bool = False) -> None:
             """Aggregiert die FIFO-Matches EINER zusammenhängenden Position (Position-Open
             → Flat) zu genau einem Round-Trip (Issue #508). Die Round-Trip-PnL ist die Summe
             der Teil-Fill-PnLs (inkl. bereits allokierter Kosten); der Exit-Timestamp ist der
@@ -3834,7 +3856,17 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
             Issue #899 — ``order_ids`` (parallel zu ``matches``) liefert die client_order_id der
             SCHLIESSENDEN Order (letztes Element, chronologisch); ihre Tags (exit_reason/ATR)
-            werden über ``order_exit_meta`` aufgelöst und als Round-Trip-Telemetrie mitgeführt."""
+            werden über ``order_exit_meta`` aufgelöst und als Round-Trip-Telemetrie mitgeführt.
+
+            Issue #1037 (Katalog #866) — ``is_data_end_fallback=True`` (nur vom Aufruf am Ende der
+            Instrument-Fill-Schleife, ``current_rt`` bei Datenende nicht leer) markiert diesen
+            Round-Trip als ``ExitReason.DATA_END`` STATT den letzten ``order_ids``-Eintrag (eine
+            ENTRY-, keine Exit-Order — es gab nie einen schliessenden Fill) fälschlich über
+            ``order_exit_meta`` aufzuloesen. Root-Cause: eine Position, die nie flat wurde,
+            akkumuliert Matches bis zum Datenende und wird HIER zu einem Round-Trip mit der vollen
+            Zeitspanne finalisiert (#1037-Symptom: ``median_bars_held`` klein, ``max_holding``
+            riesig — bimodale Haltedauerverteilung mit einem zweiten Modus zwei Groessenordnungen
+            ueber der Zeitbox, siehe backtest_runner-Docstring)."""
             if not matches:
                 return
             rt_pnl = sum(m[0] for m in matches)
@@ -3856,7 +3888,7 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             meta = order_exit_meta.get(closing_order_id, {}) if closing_order_id else {}
             pnl_bps = (rt_pnl / rt_notional * 10_000.0) if rt_notional > 1e-12 else None
             rt_exit_meta.append({
-                "exit_reason": meta.get("exit_reason"),
+                "exit_reason": "DATA_END" if is_data_end_fallback else meta.get("exit_reason"),
                 "atr_median_bps": meta.get("atr_median_bps"),
                 "atr_min_bps": meta.get("atr_min_bps"),
                 "pnl_bps": pnl_bps,
@@ -3959,9 +3991,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
             # Position am Datenende noch offen (Teil-Fills realisiert, aber nie flat): die
             # realisierte Teilmenge bildet einen (offenen) Round-Trip — bewahrt die Invariante
-            # Σ Round-Trip-PnL == Σ Match-PnL.
+            # Σ Round-Trip-PnL == Σ Match-PnL. Issue #1037 — als DATA_END markiert (keine echte
+            # Handelsentscheidung).
             if current_rt:
-                _finalize_round_trip(current_rt, current_rt_order_ids)
+                _finalize_round_trip(current_rt, current_rt_order_ids, is_data_end_fallback=True)
 
 
 

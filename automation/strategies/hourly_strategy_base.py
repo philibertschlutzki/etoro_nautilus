@@ -58,6 +58,12 @@ class ExitReason(enum.Enum):
     # Issue #947 (Katalog B, P1) — harter Margin-Stop-out: das Konto wird zwangsliquidiert, BEVOR
     # das Eigenkapital rechnerisch vernichtet oder negativ wird (siehe _check_exits_and_update).
     EQUITY_STOPOUT = "EQUITY_STOPOUT"
+    # Issue #1037 (Katalog #866) — eine Position, die am Ende der verfuegbaren Backtest-Daten noch
+    # offen ist und von backtest_runner._finalize_round_trip zwangsweise zu EINEM Round-Trip
+    # finalisiert wird (keine echte Handelsentscheidung, sondern ein Artefakt des Datenendes; siehe
+    # dortigen Docstring). Nie von der Strategie selbst gesetzt (kein Order-Tag) — backtest_runner
+    # stempelt diesen Wert direkt in die Round-Trip-Exit-Telemetrie.
+    DATA_END = "DATA_END"
 
 
 class HourlyStrategyConfig(StrategyConfig, kw_only=True, frozen=True):
@@ -828,8 +834,20 @@ class HourlyStrategyBase(Strategy):
             return False
         return True
 
-    def _close_position_base(self, pos) -> None:
-        """Submits a market order to close the given position. Cancels pending limits first."""
+    def _close_position_base(self, pos, exit_kind: "ExitReason | None" = None) -> None:
+        """Submits a market order to close the given position. Cancels pending limits first.
+
+        Issue #1034 (Katalog #866) — ``exit_kind`` (optional, Default ``None`` = bit-identisches
+        Alt-Verhalten: kein Tag, sofern nicht bereits vorher gesetzt) klassifiziert den
+        resultierenden Markt-Close fuer ``_execute_market_close``s Order-Tag (EXIT_REASON:...,
+        Issue #899). Root-Cause #1034: JEDE konkrete Strategie ruft diese Methode fuer eine
+        Signal-Umkehr (Gegenposition schliessen, bevor neu eroeffnet wird) OHNE
+        ``self._exit_pending_kind`` zu setzen — der schliessende Order blieb dadurch ungetaggt und
+        zaehlte als UNKNOWN, obwohl die Ursache (Signalwechsel) bekannt war. Ein bereits gesetzter
+        ``self._exit_pending_kind`` (TRAILING_STOP/TIME_BOX/EQUITY_STOPOUT, von den Aufrufern in
+        DIESER Klasse VOR dem Aufruf gesetzt) wird NICHT ueberschrieben."""
+        if exit_kind is not None and self._exit_pending_kind is None:
+            self._exit_pending_kind = exit_kind
         open_orders = self.cache.orders_open(instrument_id=self.instrument_id)
         if open_orders:
             for order in open_orders:
@@ -933,12 +951,21 @@ class HourlyStrategyBase(Strategy):
                 return
         price = instrument.make_price(target)
         exit_side = OrderSide.SELL if self._dyn_tp_side == "LONG" else OrderSide.BUY
+        # Issue #1034 (Katalog #866) — dieselbe EXIT_REASON:/ATR_*_BPS:-Tag-Konvention wie
+        # _execute_market_close (#899). Root-Cause: die dyn-TP-Limit-Order trug bislang KEINE Tags
+        # ueberhaupt — ein hier gefuellter Order war fuer backtest_runner._build_order_exit_meta
+        # ununterscheidbar von jeder anderen ungetaggten Order und zaehlte als UNKNOWN.
+        tag_list = ["EXIT_REASON:PROFIT_TARGET"]
+        if self._position_atr_bps_readings:
+            tag_list.append(f"ATR_MEDIAN_BPS:{statistics.median(self._position_atr_bps_readings):.4f}")
+            tag_list.append(f"ATR_MIN_BPS:{min(self._position_atr_bps_readings):.4f}")
         order = self.order_factory.limit(
             instrument_id=self.instrument_id,
             order_side=exit_side,
             quantity=pos.quantity,
             price=price,
             time_in_force=TimeInForce.GTC,
+            tags=tag_list,
         )
         self._dyn_tp_order_id = order.client_order_id
         self._dyn_tp_price = target

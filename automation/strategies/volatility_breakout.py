@@ -4,7 +4,7 @@ from nautilus_trader.model.enums import OrderSide, PositionSide, TimeInForce
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.indicators import BollingerBands
 
-from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig
+from automation.strategies.hourly_strategy_base import HourlyStrategyBase, HourlyStrategyConfig, ExitReason
 from automation.momentum_ls_allocator import MomentumLSAllocator
 
 
@@ -66,7 +66,7 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.LONG:
                 return
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:
@@ -88,7 +88,7 @@ class VolatilityBreakoutPumpStrategy(HourlyStrategyBase):
             pos = positions[0]
             if pos.side == PositionSide.SHORT:
                 return
-            self._close_position_base(pos)
+            self._close_position_base(pos, exit_kind=ExitReason.SIGNAL_REVERSAL)
             self.current_signal = None
             return
         if len(self.cache.positions_open()) >= self.config.max_open_positions:

@@ -3005,6 +3005,11 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_median_bars_held", metrics.oos_median_bars_held)
         if metrics.oos_gross_loss_mean_bps is not None:
             trial.set_user_attr("oos_gross_loss_mean_bps", metrics.oos_gross_loss_mean_bps)
+        # Issue #1035 (Katalog #866) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_gross_loss_mean_bps_trailing_stop is not None:
+            trial.set_user_attr(
+                "oos_gross_loss_mean_bps_trailing_stop", metrics.oos_gross_loss_mean_bps_trailing_stop)
+        trial.set_user_attr("oos_n_trailing_stop_losses", metrics.oos_n_trailing_stop_losses)
         if metrics.oos_gross_win_mean_bps is not None:
             trial.set_user_attr("oos_gross_win_mean_bps", metrics.oos_gross_win_mean_bps)
         if metrics.oos_atr_median_bps is not None:
