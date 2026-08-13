@@ -641,18 +641,19 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
                             holdout_window_reach_target_ns: int | None = None,
                             logger: logging.Logger | None = None,
                             gate1_rejected_symbols: set[str] | None = None,
+                            stale_symbols: set[str] | None = None,
                             ) -> list[tuple[str, str, str]]:
     """Enumeriert (strategy, symbol, 'OK')-Tripel.
 
     1. Symbol-Liste = ``symbols`` or ``load_symbol_universe()``.
-    2. Tier: 'deployable' (nur Tier-A-Gewinner pro Strategie), 'refine' (Platzhalter, P3),
-       'all' (Kreuzprodukt strategies × Symbole).
+    2. Tier: 'deployable' (nur Tier-A-Gewinner pro Strategie, PLUS ``stale_symbols`` — siehe unten),
+       'refine' (Platzhalter, P3), 'all' (Kreuzprodukt strategies × Symbole).
     3. Gate 1: ``is_symbol_tunable(...)`` muss True sein.
     4. Issue #455 — OOS-Erreichbarkeits-Preflight: Erreicht der jüngste Tick eines Symbols
        (``latest_ts[symbol]``) die früheste OOS-Grenze (``oos_window_start_ns``) NICHT, wird das
        Symbol mit ``OOS_WINDOW_UNREACHABLE`` + WARN-Zeile übersprungen — VOR dem Sweep, statt 100
        strukturell nutzlose Trials zu fahren (Pitfall #82). **Vollständig fail-open**: fehlen
-       ``latest_ts`` oder ``oos_window_start_ns`` (Default ``None``), bleibt das Preflight aus und
+       ``latest_ts`` oder ``oos_window_start_ns`` (Default ``None``), bleibt das Verhalten aus und
        das Verhalten ist bit-identisch zum Ist-Zustand (beide Symbole behalten).
     Ausgeschlossene Paare sind NICHT enthalten.
 
@@ -664,7 +665,23 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
     ``covered_gate1`` (``symbol_coverage.mark_gate1_covered``) — es wurde nachweislich JEDEN Lauf
     geprüft, nur strukturell nie optimiert, und darf ``check_symbol_coverage`` nicht dauerhaft rot
     färben.
-    """
+
+    Issue #1040 (Katalog #866) — Root-Cause der stehenden Symbolrotation: unter ``tier='deployable'``
+    (dem CLI-Default) war ``candidate_syms`` bislang HART auf ``winners`` (bereits gewonnene Tier-A-
+    Paare, ``load_tier_a_winners()``) beschraenkt — ein Symbol OHNE existierenden Tier-A-Gewinn hatte
+    in DIESEM Modus buchstaeblich NIE ein einziges Paar in ``pairs``, unabhaengig davon, wie ``stale``
+    (``symbol_coverage.coverage_report``) es war. ``symbol_coverage.order_symbols`` (die eigentliche
+    Rotationslogik, ``least_recently_covered``) sortiert nur die Symbole, die es ueberhaupt zu sehen
+    bekommt — eine Kandidatenmenge, die strukturell auf ~15 wiederkehrende "Champion"-Symbole
+    verengt ist, bevor die Rotation ueberhaupt greift, macht die Rotation wirkungslos (beobachtet:
+    dieselben 8-10 Symbole in vier aufeinanderfolgenden Laeufen). ``stale_symbols`` (optional, Default
+    ``None`` ⇒ bit-identisches Alt-Verhalten) sind Symbole aus ``symbol_coverage.coverage_report()``
+    ueber der ``symbol_coverage_max_age_runs``-Schwelle (dieselbe Schwelle wie ``check_symbol_
+    coverage`` — EINE Schwelle statt einer zweiten, potenziell abweichenden Konfigurations-Kopie,
+    analog der #1027-Lektion "eine Kennzahl, eine Quelle") — sie werden unter ``tier='deployable'``
+    ZUSAETZLICH zu ``winners`` zugelassen, damit ein noch nie (oder lange nicht mehr) optimiertes
+    Symbol ueberhaupt eine Chance auf einen Tier-A-Gewinn bekommt, statt dauerhaft von der
+    Kandidatenmenge ausgeschlossen zu bleiben."""
     syms = symbols if symbols else load_symbol_universe()
     winners = load_tier_a_winners() if tier == "deployable" else {}
     log = logger or logging.getLogger("optimizer")
@@ -709,7 +726,12 @@ def enumerate_tunable_pairs(strategies: list[str], symbols: list[str] | None,
             continue
         if tier == "deployable":
             allowed = set(winners.get(strategy, []))
-            candidate_syms = [s for s in syms if s in allowed]
+            # Issue #1040 — ``stale_symbols`` (Symbole ueber der Coverage-Alters-Schwelle) sind
+            # ZUSAETZLICH zugelassen, nicht nur Tier-A-Gewinner: ohne diese Erweiterung kann ein
+            # Symbol ohne bestehenden Gewinn den 'deployable'-Kandidatenpool NIE betreten, egal wie
+            # veraltet seine Coverage ist — die Rotation (order_symbols) sortiert dann nur innerhalb
+            # derselben ~15 wiederkehrenden Symbole (siehe Docstring oben).
+            candidate_syms = [s for s in syms if s in allowed or (stale_symbols and s in stale_symbols)]
         elif tier == "refine":
             # Issue #623 — der frühere `candidate_syms = []`-Platzhalter lieferte STRUKTURELL 0 Paare,
             # ohne Fehler, ohne Warnung ('--tier refine' war ein stiller No-Op). Bis zur echten
@@ -1693,11 +1715,25 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # Coverage-Ledger als 'covered_gate1' markiert werden kann, statt für check_symbol_coverage
     # unsichtbar zu bleiben (es wird nachweislich JEDEN Lauf geprüft, nur nie optimiert).
     _gate1_rejected_symbols: set[str] = set()
+    # Issue #1040 (Katalog #866) — VOR der Paar-Enumeration (nicht erst beim spaeteren #841-Ledger-
+    # Block unten, der die Rotations-REIHENFOLGE der bereits enumerierten Paare bestimmt): welche
+    # Symbole unter ``tier='deployable'` ZUSAETZLICH zu Tier-A-Gewinnern als Kandidat zugelassen
+    # werden. Nur-lesend (kein ``start_new_run``/``write_coverage`` hier — der spaetere Block bleibt
+    # die alleinige Schreibstelle des Ledgers, siehe dessen #892-Kommentar); ein Lesefehler faellt
+    # fail-open auf ``stale_symbols=set()`` zurueck (bit-identisches Alt-Verhalten).
+    try:
+        _pre_coverage_ledger = symbol_coverage.load_coverage(path=WORK / "symbol_coverage.json")
+        _stale_max_age_runs = int(opt_data.get("symbol_coverage_max_age_runs", 3))
+        _stale_symbols = set(symbol_coverage.coverage_report(
+            _pre_coverage_ledger, syms, max_age_runs=_stale_max_age_runs)["stale_symbols"].keys())
+    except Exception:
+        _stale_symbols = set()
     pairs = enumerate_tunable_pairs(strategies, syms, tier=tier,
                                     available_bars=available_bars, config=config,
                                     latest_ts=latest_ts, start_ns=start_ns,
                                     holdout_window_reach_target_ns=holdout_window_reach_target_ns,
-                                    gate1_rejected_symbols=_gate1_rejected_symbols)
+                                    gate1_rejected_symbols=_gate1_rejected_symbols,
+                                    stale_symbols=_stale_symbols)
 
     # Issue #795 — Speicher-Preflight VOR dem ersten Trial: bricht mit einer konkreten
     # Handlungsempfehlung ab, wenn der GEPLANTE Lauf das Budget/den freien Platz übersteigen würde,

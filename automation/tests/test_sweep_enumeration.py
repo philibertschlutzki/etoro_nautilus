@@ -26,6 +26,35 @@ def test_enumeration_deployable_and_gate1(monkeypatch):
     assert pairs == [("SmaCrossoverStrategy", "A.ETORO", "OK")]  # B not deployable, C Gate-1 fail
 
 
+def test_enumeration_deployable_admits_stale_symbols_without_champion_entry(monkeypatch):
+    """Issue #1040 (Katalog #866) — Root-Cause der stehenden Symbolrotation: unter 'deployable'
+    (CLI-Default) war candidate_syms bislang HART auf Tier-A-Gewinner beschraenkt, sodass ein nie
+    (oder lange nicht mehr) optimiertes Symbol NIE einen Platz im Kandidatenpool bekam, egal wie
+    'stale' seine Coverage war. B.ETORO hat KEINEN Tier-A-Gewinn, ist aber als stale markiert -> es
+    MUSS trotzdem enumeriert werden (zusaetzlich zu, nicht statt, den Gewinnern)."""
+    monkeypatch.setattr(sweep, "load_symbol_universe", lambda *a, **k: ["A.ETORO", "B.ETORO", "C.ETORO"])
+    monkeypatch.setattr(sweep, "load_tier_a_winners", lambda *a, **k: {"SmaCrossoverStrategy": ["A.ETORO"]})
+    monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
+    bars = {"A.ETORO": 10_000, "B.ETORO": 10_000, "C.ETORO": 10_000}
+    pairs = sweep.enumerate_tunable_pairs(
+        ["SmaCrossoverStrategy"], None, tier="deployable", available_bars=bars, config=_GATE_CFG,
+        stale_symbols={"B.ETORO"})
+    assert pairs == [("SmaCrossoverStrategy", "A.ETORO", "OK"), ("SmaCrossoverStrategy", "B.ETORO", "OK")]
+    # C.ETORO ist weder Gewinner noch stale -> bleibt ausgeschlossen (kein pauschales 'all').
+    assert ("SmaCrossoverStrategy", "C.ETORO", "OK") not in pairs
+
+
+def test_enumeration_deployable_without_stale_symbols_arg_is_bit_identical(monkeypatch):
+    """``stale_symbols=None`` (Default) reproduziert das Alt-Verhalten unveraendert."""
+    monkeypatch.setattr(sweep, "load_symbol_universe", lambda *a, **k: ["A.ETORO", "B.ETORO"])
+    monkeypatch.setattr(sweep, "load_tier_a_winners", lambda *a, **k: {"SmaCrossoverStrategy": ["A.ETORO"]})
+    monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
+    bars = {"A.ETORO": 10_000, "B.ETORO": 10_000}
+    pairs = sweep.enumerate_tunable_pairs(["SmaCrossoverStrategy"], None,
+                                          tier="deployable", available_bars=bars, config=_GATE_CFG)
+    assert pairs == [("SmaCrossoverStrategy", "A.ETORO", "OK")]
+
+
 def test_enumeration_all_tier_is_cross_product(monkeypatch):
     monkeypatch.setattr(sweep, "n_params_for", lambda s: 2)
     bars = {"A.ETORO": 10_000, "B.ETORO": 10_000}

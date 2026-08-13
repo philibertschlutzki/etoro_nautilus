@@ -110,6 +110,19 @@ def _trade_amount_pct_by_strategy(base_cfg: Path | None = None) -> dict[str, flo
     return out
 
 
+def _max_symbol_exposure_fraction(base_cfg: Path | None = None) -> float | None:
+    """Issue #1042 (Katalog #866) E-2 — ``backtest.json['live_risk']['max_symbol_exposure_
+    fraction']``, dieselbe Konfigurationsquelle, aus der ``momentum_ls_run.py`` den
+    ``MomentumLSAllocator`` live konstruiert (siehe dessen Modul-Docstring). Rohmaterial für
+    ``invariants.check_sizing_parity_backtest_vs_allocator``. ``None`` ohne Datei/Schlüssel
+    (fail-open — der Check selbst behandelt ``None`` als "nicht anwendbar", keine stille
+    Default-Annahme über einen Live-Risikoparameter)."""
+    cfg_dir = base_cfg or config_dir()
+    data = _load_json(cfg_dir / "backtest.json") or {}
+    value = (data.get("live_risk") or {}).get("max_symbol_exposure_fraction")
+    return float(value) if value is not None else None
+
+
 def _gradient_tau(base_cfg: Path | None = None) -> float:
     """Dieselbe Config-Quelle/Default wie ``run_optimization._emit_study_summary``."""
     tau = 1e-3
@@ -868,6 +881,12 @@ def _study_record(proposal: dict, study,
         "holdout_expectancy_outlier_count": holdout_metrics.get("oos_expectancy_outlier_count") or 0,
         "holdout_expectancy_notional_degenerate_count": (
             holdout_metrics.get("oos_expectancy_notional_degenerate_count") or 0),
+        # Issue #1042 (Katalog #866) E-1/E-3 — Kosten-Stressband + CVaR/ES-Tail-Risiko, additiv
+        # neben den unveraenderten Basis-Kennzahlen (siehe backtest_runner-Docstrings).
+        "holdout_expectancy_cost_stress_1_5x": holdout_metrics.get("oos_expectancy_cost_stress_1_5x"),
+        "holdout_expectancy_cost_stress_2x": holdout_metrics.get("oos_expectancy_cost_stress_2x"),
+        "holdout_cvar_95": holdout_metrics.get("oos_cvar_95"),
+        "holdout_es_99": holdout_metrics.get("oos_es_99"),
         "holdout_win_rate": holdout_metrics.get("oos_win_rate"),
         "holdout_profit_factor": holdout_metrics.get("oos_profit_factor"),
         # Issue #1004 (Katalog #858) — Zensur-Telemetrie fuer summary_de.py Abschnitt 2.1 (kein
@@ -1503,6 +1522,12 @@ def _build_report(
     # Wächter gegen die TSLA-Signatur des Katalogs; siehe jeweiliger Docstring).
     all_checks.append(("global", _inv.check_sizing_identity_coherence(studies_out)))
     all_checks.append(("global", _inv.check_atr_scale_homogeneity(studies_out)))
+
+    # Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter: divergiert das im Backtest
+    # konfigurierte trade_amount_pct vom live tatsächlich gefahrenen MomentumLSAllocator-Deckel.
+    all_checks.append((
+        "global", _inv.check_sizing_parity_backtest_vs_allocator(
+            _trade_amount_pct_map, max_symbol_exposure_fraction=_max_symbol_exposure_fraction())))
 
     # Issue #776 — sweep-weite Gate-Kollinearitaets-Konsolidierungs-Invariante (konsumiert den
     # #679-Alarm ueber alle Studies statt ihn stumm bleiben zu lassen).

@@ -52,6 +52,11 @@ DEPLOYMENT_CLAUSES: tuple[str, ...] = (
     # ``READY_FOR_PR`` und alle anderen acht Klauseln besteht — sonst ist die Studypopulation zwar
     # als informationsfrei markiert, wird aber trotzdem deployt.
     "study_invariants_clean",
+    # Issue #1042 (Katalog #866, E-1) — zehnte Klausel: siehe _clause_cost_stress-Docstring. Bewusst
+    # ans Ende gestellt (Anzeige-/Auswertungsreihenfolge, keine Prioritaet) — ein Kandidat, der
+    # bereits an einer der neun bestehenden Klauseln scheitert, soll weiterhin DEREN Namen als
+    # blocking_clause tragen, nicht die neueste Ergaenzung.
+    "cost_stress",
 )
 
 # Issue #993 Akzeptanzkriterium — dieselbe #663-Default-Schwelle wie confirm._study_pbo
@@ -197,6 +202,23 @@ def _clause_study_invariants_clean(record: Mapping[str, Any] | None) -> bool | N
     return len(names) == 0
 
 
+def _clause_cost_stress(record: Mapping[str, Any] | None) -> bool | None:
+    """Issue #1042 (Katalog #866) E-1 — zehnte Klausel: bei einer Median-Holdout-Expectancy von
+    3,63 bps gegen 1 bps konfigurierter Kommission liegt das System am Break-even; ein Kandidat, der
+    unter DOPPELTER Kommission (``expectancy_cost_stress_2x``, additive Telemetrie aus
+    ``backtest_runner._expectancy_cost_stress``) keine positive kapitalgewichtete Expectancy mehr
+    trägt, hat keinen gegen realistische Kosten-Drift (Spread-Ausweitung, Slippage) robusten Edge.
+    ``None`` (Feld fehlt — ein Promotion-Record aus der Zeit vor diesem Fix, oder ein Backtest-Pfad
+    ohne ``notional_list``) ⇒ fail-closed, dieselbe Regel wie jede andere Klausel: "nicht geprüft"
+    ist KEINE bestandene Prüfung."""
+    if not record:
+        return None
+    value = record.get("expectancy_cost_stress_2x")
+    if value is None:
+        return None
+    return float(value) > 0.0
+
+
 def evaluate_deployment_eligibility(
     pair,
     promotion_records: Mapping[Any, Mapping[str, Any]],
@@ -242,6 +264,7 @@ def evaluate_deployment_eligibility(
         "r_edge": _clause_r_edge(record),
         "snapshot_drift": _clause_snapshot_drift(record, current_snapshot_sha256=current_snapshot_sha256),
         "study_invariants_clean": _clause_study_invariants_clean(record),
+        "cost_stress": _clause_cost_stress(record),
     }
 
     # Fail-closed: ``None`` (nicht auswertbar) zaehlt NICHT als erfuellt.
@@ -279,6 +302,8 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "pbo": holdout_symbol.get("pbo"),
         "pbo_n_configs": holdout_symbol.get("pbo_n_configs"),
         "blocking_invariant_names": holdout_symbol.get("blocking_invariant_names"),
+        # Issue #1042 (Katalog #866, E-1) — siehe _clause_cost_stress-Docstring.
+        "expectancy_cost_stress_2x": holdout_symbol.get("oos_expectancy_cost_stress_2x"),
         "run_id": run_id,
     }
 

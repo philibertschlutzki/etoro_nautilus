@@ -21,6 +21,9 @@ def _promoted_proposal(**holdout_symbol_overrides) -> dict:
         "pbo": 0.30,
         "pbo_n_configs": 40,
         "blocking_invariant_names": [],
+        # Issue #1042 (Katalog #866, E-1) — zehnte deployment_gate-Klausel 'cost_stress',
+        # fail-closed bei fehlendem Feld, analog 'blocking_invariant_names' oben (#1007).
+        "oos_expectancy_cost_stress_2x": 0.001,
     }
     holdout_symbol.update(holdout_symbol_overrides)
     return {

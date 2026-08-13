@@ -47,6 +47,9 @@ def _passing_record(**overrides) -> dict:
         # Issue #1007 (Katalog #858) — neunte Klausel ``study_invariants_clean``: [] == "geprueft,
         # keine blockierende Invariante".
         "blocking_invariant_names": [],
+        # Issue #1042 (Katalog #866, E-1) — zehnte Klausel ``cost_stress``: positive Expectancy
+        # unter doppelter Kommission.
+        "expectancy_cost_stress_2x": 0.001,
         "run_id": "run_abc123",
     }
     record.update(overrides)
@@ -198,6 +201,12 @@ _CLAUSE_VARIANTS = {
         "fail": {"blocking_invariant_names": ["check_selection_statistic_availability"]},
         "none": {"blocking_invariant_names": None},
     },
+    # Issue #1042 (Katalog #866, E-1) — zehnte Klausel.
+    "cost_stress": {
+        "pass": {"expectancy_cost_stress_2x": 0.001},
+        "fail": {"expectancy_cost_stress_2x": -0.001},
+        "none": {"expectancy_cost_stress_2x": None},
+    },
 }
 
 
@@ -271,6 +280,7 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
                 "pbo": 0.2,
                 "pbo_n_configs": 30,
                 "blocking_invariant_names": [],
+                "oos_expectancy_cost_stress_2x": 0.001,
             },
             "global": {},
         },
@@ -283,6 +293,7 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
     assert record["pbo"] == 0.2
     assert record["pbo_n_configs"] == 30
     assert record["blocking_invariant_names"] == []
+    assert record["expectancy_cost_stress_2x"] == 0.001
     assert record["data_snapshot_sha256"] == _SNAPSHOT
     assert record["run_id"] == "run_xyz"
 

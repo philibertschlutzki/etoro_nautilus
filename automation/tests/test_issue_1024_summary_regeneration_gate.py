@@ -29,10 +29,12 @@ _LOGS_DIR = Path(__file__).resolve().parents[2] / "logs"
 
 # Issue #1024 — bekannte, bislang ungeklärte Divergenz (siehe Moduldocstring). Jeder Eintrag hier
 # MUSS auf eine offene Root-Cause-Untersuchung verweisen, niemals eine stille Dauerausnahme sein.
-_KNOWN_DIVERGENT_PAIRS = {
-    "run_34b99e6e_20260812T041920057275.json": "Katalog #866 / Issue #1024 — Root-Cause offen, "
-        "keine SQLite-Study dieses Laufs im Repository verfuegbar.",
-}
+#
+# Der urspruengliche Eintrag (``run_34b99e6e_20260812T041920057275.json``, die #1024-Root-Cause-
+# Evidenz) wurde entfernt: die Datei ist aus ``logs/`` gelöscht (die #1023-Datenintegritaets-
+# Bereinigung hat den betroffenen Mehr-Lauf-Report ersetzt) — ``test_known_divergent_pairs_are_
+# still_committed`` haette sonst rot geschlagen (toter Ausnahme-Eintrag ohne zugehoerige Datei).
+_KNOWN_DIVERGENT_PAIRS: dict[str, str] = {}
 
 
 def _committed_run_json_files() -> list[Path]:

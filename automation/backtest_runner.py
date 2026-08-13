@@ -3386,6 +3386,26 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
                             f"aber total_return=0.0 bei sum(PnL)={sum_pnl}. "
                             f"Total Return sign und PnL sign müssen übereinstimmen.")
 
+    # Issue #1042 (Katalog #866) E-3 — CVaR/Expected-Shortfall aus DERSELBEN Perioden-Rendite-Serie
+    # (``_period_returns_list``, log-Returns aus der MtM-Equity-Kurve, #756/#801), die bereits den
+    # Holdout-Bootstrap-CI speist (#619) — keine zweite Renditedefinition. ``cvar_95`` = Mittelwert
+    # der schlechtesten 5 % Perioden, ``es_99`` = Mittelwert der schlechtesten 1 % (beide negativ =
+    # Verlust). ``max_drawdown`` (der heutige Risiko-Gate, #1042-Symptom: ``marginal_delta = 0`` über
+    # 16 002 Auswertungen — trennt nichts) trifft nur den EINEN schlimmsten Pfad; CVaR/ES nutzen die
+    # GESAMTE Tail-Verteilung. Mindeststichprobe 20 Perioden (analog anderer Perioden-Mindestgrössen
+    # in dieser Datei, z. B. ``sortino_min_periods_absolute``) — darunter ist ein 5-/1-%-Quantil
+    # nicht belastbar, ``None`` statt einer Scheinpräzision.
+    _MIN_PERIODS_FOR_TAIL_RISK = 20
+    cvar_95, es_99 = None, None
+    if len(_period_returns_list) >= _MIN_PERIODS_FOR_TAIL_RISK:
+        _rets_arr = np.array(_period_returns_list, dtype=float)
+        _p5 = np.percentile(_rets_arr, 5)
+        _p1 = np.percentile(_rets_arr, 1)
+        _tail_5 = _rets_arr[_rets_arr <= _p5]
+        _tail_1 = _rets_arr[_rets_arr <= _p1]
+        cvar_95 = float(_tail_5.mean()) if _tail_5.size > 0 else float(_p5)
+        es_99 = float(_tail_1.mean()) if _tail_1.size > 0 else float(_p1)
+
     return {
         "total_trades":  n,
         "win_rate":      float(win_rate),
@@ -3449,6 +3469,9 @@ def _calculate_stats(pnl_list: list[float], hold_list: list[tuple[int, float]], 
             float(expectancy_winsorized) if expectancy_winsorized is not None else None),
         "expectancy_outlier_count": int(expectancy_outlier_count),
         "expectancy_notional_degenerate_count": int(expectancy_notional_degenerate_count),
+        # Issue #1042 (Katalog #866) E-3 — siehe Docstring am Berechnungsblock oben.
+        "cvar_95": cvar_95,
+        "es_99": es_99,
         "dd_excess":     float(dd_excess),
         "avg_holding_time_s": float(avg_hold),
         "median_holding_time_s": float(med_hold),
@@ -3747,6 +3770,30 @@ def _round_trip_notional_peak(matches: list["FillMatchRecord"]) -> float:
         running += delta
         peak = max(peak, running)
     return peak
+
+
+def _expectancy_cost_stress(pnls_notionals: list[tuple[float, float]], *,
+                            commission_bps: float, multiplier: float) -> float | None:
+    """Issue #1042 (Katalog #866) E-1 — kapitalgewichtete Expectancy unter einem Kosten-Stress-
+    Szenario: ``multiplier``-fache Round-Trip-Kommission statt der im Backtest tatsaechlich
+    angewandten ``commission_bps``. Der Backtest hat die Kommission bereits EINMAL abgezogen; ein
+    Stress-Multiplikator ``s`` zieht zusaetzlich ``(s − 1) · commission_bps/10000 · notional`` je
+    Round-Trip ab, statt neu zu simulieren — eine reine Nachverarbeitung der bereits extrahierten
+    (PnL, Notional)-Paare. Denselben 5-%-Median-Notional-Nennerboden wie ``expectancy_capital_
+    weighted`` (#1031): ein einzelner Mikro-Trade darf die Kennzahl nicht dominieren. ``None`` ohne
+    positive Notionale (keine belastbare Grundlage)."""
+    positive = [nz for _, nz in pnls_notionals if nz and nz > 0.0]
+    if not positive:
+        return None
+    floor = 0.05 * statistics.median(positive)
+    extra_rate = (multiplier - 1.0) * (commission_bps / 10000.0)
+    stressed_pnl_sum, notional_sum = 0.0, 0.0
+    for pnl, nz in pnls_notionals:
+        if not nz or nz < floor:
+            continue
+        stressed_pnl_sum += pnl - extra_rate * nz
+        notional_sum += nz
+    return stressed_pnl_sum / notional_sum if notional_sum > 0.0 else None
 
 
 class MetricsLevel(TypedDict):
@@ -4292,6 +4339,39 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         if _oos_notional_peaks:
             oos_metrics["median_position_notional_peak"] = statistics.median(_oos_notional_peaks)
             oos_metrics["max_position_notional_peak"] = max(_oos_notional_peaks)
+
+        # Issue #1042 (Katalog #866) E-1 — Kosten-Stressband als additive Telemetrie, DIESELBE
+        # IS/OOS-Aufteilung wie die ``rt_notional_peaks``-Bloecke oben (kein zweiter
+        # ``_calculate_stats``-Eingang: die Stress-PnL ist eine reine Nachverarbeitung der bereits
+        # extrahierten Round-Trip-PnL/-Notional-Paare, kein neuer Backtest-Lauf). ``commission_bps``
+        # ist die bereits im Backtest angewandte Round-Trip-Kommission (EINMAL abgezogen); ein
+        # Stress-Multiplikator ``s`` zieht zusaetzlich ``(s-1) · commission_bps/10000 · notional`` je
+        # Round-Trip ab — ökonomisch: "wie waere die Expectancy, haette der Broker s-mal so viel
+        # Kommission verlangt". Bewusst OHNE Spread-Stress (nur die konfigurierte, bekannte Grösse
+        # ``commission_bps`` — ein Spread-Stress braeuchte eine zweite, hier nicht verfuegbare
+        # Modellannahme). Denselben 5%-Median-Notional-Nennerboden wie ``expectancy_capital_
+        # weighted`` (#1031) — ein einzelner Mikro-Trade darf die kapitalgewichtete Kennzahl nicht
+        # dominieren. Berechnung in der standalone, direkt testbaren ``_expectancy_cost_stress``
+        # (analog #1032s ``_round_trip_notional_peak``).
+        _is_pnl_notional, _oos_pnl_notional = [], []
+        for _rt_idx, (_pnl, _ts, _ht, _rt_qty) in enumerate(rt_pnls_with_ts):
+            _nz = rt_notionals_with_ts[_rt_idx][0] if _rt_idx < len(rt_notionals_with_ts) else None
+            if _nz is None:
+                continue
+            if _wf:
+                _is_oos = any(s <= _ts < e for _, s, e in fold_boundaries)
+                _is_in_sample = _is_start_ns <= _ts < is_end_ns
+            else:
+                _is_oos, _is_in_sample = False, True
+            if _is_oos:
+                _oos_pnl_notional.append((_pnl, _nz))
+            elif _is_in_sample:
+                _is_pnl_notional.append((_pnl, _nz))
+        for _level_metrics, _level_pnl_notional in ((is_metrics, _is_pnl_notional), (oos_metrics, _oos_pnl_notional)):
+            _level_metrics["expectancy_cost_stress_1_5x"] = _expectancy_cost_stress(
+                _level_pnl_notional, commission_bps=commission_bps, multiplier=1.5)
+            _level_metrics["expectancy_cost_stress_2x"] = _expectancy_cost_stress(
+                _level_pnl_notional, commission_bps=commission_bps, multiplier=2.0)
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)

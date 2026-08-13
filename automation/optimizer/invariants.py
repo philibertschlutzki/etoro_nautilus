@@ -2270,6 +2270,61 @@ def check_atr_scale_homogeneity(
     )
 
 
+def check_sizing_parity_backtest_vs_allocator(
+    trade_amount_pct_by_strategy: dict[str, float], *,
+    max_symbol_exposure_fraction: float | None, tolerance: float = 0.01,
+) -> InvariantResult:
+    """Issue #1042 (Katalog #866) E-2 — Sichtbarkeits-Wächter, KEIN Promotion-Gate. Der Backtest
+    setzt jede Position mit ``trade_amount_pct`` (``strategy_defaults.json``/``strategies.json``)
+    ohne Portfolio-Deckel; ``MomentumLSAllocator`` (#999, ``backtest.json['live_risk']
+    ['max_symbol_exposure_fraction']``) begrenzt dieselbe Position live zusätzlich auf einen
+    Gesamtdeckel (``max_total_exposure_fraction``) und einen Drawdown-Damper (``ψ(DD)``). Divergiert
+    das konfigurierte ``trade_amount_pct`` einer Strategie von ``max_symbol_exposure_fraction · 100``
+    um mehr als ``tolerance`` (relativ, Default 1 %), sind validierter (Backtest) und tatsächlich
+    ausgeführter (Live) Risikoprozess VERSCHIEDEN — jede aus dem Backtest abgeleitete Kennzahl
+    (Expectancy, CVaR, Drawdown, Sizing-Identität) bezieht sich auf ein anderes Sizing-Regime als das
+    live gefahrene.
+
+    Bewusst additive Telemetrie statt eines blockierenden Gates: eine vollständige Sizing-
+    Vereinheitlichung (den Backtest tatsächlich unter ``max_exposure_fraction`` laufen zu lassen)
+    würde jede historisch kalibrierte Schwelle/jeden Reward-Gradienten ändern und braucht einen
+    echten Re-Kalibrierungslauf gegen Marktdaten — ausserhalb des Scopes dieser additiven Prüfung
+    (dokumentierter Scope-Cut, analog #843/#845)."""
+    if max_symbol_exposure_fraction is None or not trade_amount_pct_by_strategy:
+        return InvariantResult(
+            name="check_sizing_parity_backtest_vs_allocator",
+            passed=True,
+            expected=None,
+            actual=None,
+            detail=("Kein max_symbol_exposure_fraction (backtest.json['live_risk']) oder keine "
+                    "trade_amount_pct-Daten — nicht anwendbar."),
+        )
+    allocator_pct = float(max_symbol_exposure_fraction) * 100.0
+    offenders: dict[str, dict] = {}
+    if allocator_pct > 0:
+        for strategy, pct in trade_amount_pct_by_strategy.items():
+            if pct is None:
+                continue
+            rel_diff = abs(float(pct) - allocator_pct) / allocator_pct
+            if rel_diff > tolerance:
+                offenders[strategy] = {
+                    "backtest_trade_amount_pct": round(float(pct), 4),
+                    "allocator_max_symbol_pct": round(allocator_pct, 4),
+                }
+    passed = not offenders
+    return InvariantResult(
+        name="check_sizing_parity_backtest_vs_allocator",
+        passed=passed,
+        expected=f"trade_amount_pct == {allocator_pct:.2f} % (±{tolerance * 100:.0f} %) je Strategie",
+        actual=offenders if offenders else None,
+        severity="medium",
+        detail=("OK" if passed else
+                f"{len(offenders)} Strategie(n) mit Sizing-Divergenz Backtest vs. "
+                f"MomentumLSAllocator: {offenders} — Backtest und Live sind unter verschiedenen "
+                "Risikoprozessen validiert bzw. ausgeführt (#1042 E-2)."),
+    )
+
+
 def check_worker_utilisation_plausible(
     worker_utilisation: float | None, *, max_ratio: float = 1.0,
 ) -> InvariantResult:
