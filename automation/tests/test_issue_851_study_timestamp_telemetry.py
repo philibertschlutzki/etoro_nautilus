@@ -178,6 +178,19 @@ def test_section_3_4_lists_symbol_barrier_wait_and_worker_utilisation():
     assert "42.0 %" in section_3_4
 
 
+def test_section_3_4_lists_worker_utilisation_backtest_ms_separately():
+    """Issue #1038 (Katalog #866) — die ueberlappungsfreie Backtest-CPU-Zeit-Auslastung wird
+    GETRENNT von der (strukturell > 100 % faehigen) Study-Wallclock-Groesse genannt."""
+    report = _minimal_report()
+    report["cross_study"]["worker_utilisation"] = 2.465
+    report["cross_study"]["worker_utilisation_backtest_ms"] = 0.81
+    text = summary_de.generate_german_summary(report)
+    section_3_4 = text.split("### 3.4")[1]
+    assert "246.5 %" in section_3_4
+    assert "81.0 %" in section_3_4
+    assert "Echte Worker-Auslastung" in section_3_4
+
+
 def test_section_3_2_and_3_4_degrade_gracefully_without_telemetry():
     """Pre-#851-Report (keine wallclock_by_strategy/symbol_barrier_wait_s-Keys) darf nicht
     crashen -- fail-open mit einem erklärenden Satz statt eines KeyError."""

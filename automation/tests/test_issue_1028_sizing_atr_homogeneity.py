@@ -8,6 +8,7 @@ import json
 
 from automation.optimizer import invariants as inv
 from automation.optimizer import report
+from automation.optimizer import summary_de as sd
 
 
 # ── invariants.check_sizing_identity_coherence ──────────────────────────────────────────────────
@@ -128,3 +129,94 @@ def test_trade_amount_pct_by_strategy_strategies_json_overrides_defaults(tmp_pat
 def test_trade_amount_pct_by_strategy_missing_files_returns_empty(tmp_path):
     result = report._trade_amount_pct_by_strategy(tmp_path)
     assert result == {}
+
+
+# ── report._max_symbol_exposure_fraction (Issue #1042 E-2) ──────────────────────────────────────
+def test_max_symbol_exposure_fraction_reads_live_risk_config(tmp_path):
+    (tmp_path / "backtest.json").write_text(json.dumps({
+        "live_risk": {"max_symbol_exposure_fraction": 0.10, "max_total_exposure_fraction": 0.6},
+    }), encoding="utf-8")
+    assert report._max_symbol_exposure_fraction(tmp_path) == 0.10
+
+
+def test_max_symbol_exposure_fraction_none_without_file(tmp_path):
+    assert report._max_symbol_exposure_fraction(tmp_path) is None
+
+
+def test_max_symbol_exposure_fraction_none_without_live_risk_key(tmp_path):
+    (tmp_path / "backtest.json").write_text(json.dumps({}), encoding="utf-8")
+    assert report._max_symbol_exposure_fraction(tmp_path) is None
+
+
+# ── summary_de: Sofortmassnahme 1 — Quarantäne statt Ablehnung in Abschnitt 2.1 ─────────────────────
+def _promotion_record(*, strategy, symbol, snapshot_drift):
+    return {
+        "strategy": strategy, "symbol": symbol, "promotion_outcome": "READY_FOR_PR",
+        "holdout_total_return": 0.05, "holdout_expectancy": 0.01, "holdout_win_rate": 0.5,
+        "holdout_total_trades": 40,
+        "deployment_decision": {
+            "admitted": False, "blocking_clause": "snapshot_drift",
+            "clause_results": {"snapshot_drift": snapshot_drift},
+        },
+    }
+
+
+def test_snapshot_drift_false_candidate_excluded_from_section_2_1_table():
+    report_dict = {
+        "run_id": "run1",
+        "studies": [
+            _promotion_record(strategy="FlashCrashReversalStrategy", symbol="TSLA.ETORO",
+                               snapshot_drift=False),
+            _promotion_record(strategy="DonchianRegimeBreakoutStrategy", symbol="ADBE.ETORO",
+                               snapshot_drift=True),
+        ],
+    }
+    text = sd.generate_german_summary(report_dict)
+    section_2_1 = text.split("### 2.1 ")[1].split("### 2.1b")[0]
+    assert "FlashCrashReversalStrategy" not in section_2_1
+    assert "TSLA.ETORO" not in section_2_1
+    assert "DonchianRegimeBreakoutStrategy" in section_2_1
+
+
+def test_snapshot_drift_false_candidate_listed_in_quarantine_section():
+    report_dict = {
+        "run_id": "run1",
+        "studies": [
+            _promotion_record(strategy="FlashCrashReversalStrategy", symbol="TSLA.ETORO",
+                               snapshot_drift=False),
+        ],
+    }
+    text = sd.generate_german_summary(report_dict)
+    quarantine_section = text.split("### 2.1b Quarantäne")[1].split("### 2.2")[0]
+    assert "FlashCrashReversalStrategy" in quarantine_section
+    assert "TSLA.ETORO" in quarantine_section
+
+
+def test_no_quarantine_section_entries_when_no_drift():
+    report_dict = {
+        "run_id": "run1",
+        "studies": [
+            _promotion_record(strategy="DonchianRegimeBreakoutStrategy", symbol="ADBE.ETORO",
+                               snapshot_drift=True),
+        ],
+    }
+    text = sd.generate_german_summary(report_dict)
+    quarantine_section = text.split("### 2.1b Quarantäne")[1].split("### 2.2")[0]
+    assert "Keine Kandidaten mit nachgewiesenem Datenstand-Bruch" in quarantine_section
+
+
+def test_snapshot_drift_none_stays_in_regular_table_not_quarantined():
+    """``None`` heisst 'nicht geprüft' (fehlender aktueller Snapshot-Hash), nicht 'Drift
+    nachgewiesen' — dieser Kandidat bleibt in der regulären Tabelle 2.1 (dort ggf. 'abgelehnt')."""
+    report_dict = {
+        "run_id": "run1",
+        "studies": [
+            _promotion_record(strategy="FlashCrashReversalStrategy", symbol="TSLA.ETORO",
+                               snapshot_drift=None),
+        ],
+    }
+    text = sd.generate_german_summary(report_dict)
+    section_2_1 = text.split("### 2.1 ")[1].split("### 2.1b")[0]
+    quarantine_section = text.split("### 2.1b Quarantäne")[1].split("### 2.2")[0]
+    assert "FlashCrashReversalStrategy" in section_2_1
+    assert "Keine Kandidaten mit nachgewiesenem Datenstand-Bruch" in quarantine_section

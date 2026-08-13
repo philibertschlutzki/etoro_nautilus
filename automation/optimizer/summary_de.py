@@ -162,6 +162,16 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
     return "## 1. Ergebnis in einem Satz\n\n" + sentence + status_note + blocking_note
 
 
+def _is_data_integrity_quarantined(r: dict) -> bool:
+    """Issue #1028 (Katalog #866) Sofortmassnahme 1 — ein Kandidat, dessen
+    ``deployment_decision.clause_results['snapshot_drift']`` explizit ``False`` ist (der promotete
+    Datenstand weicht nachweislich vom aktuellen Katalog-Snapshot ab), darf NIE in der
+    Promotionstabelle erscheinen — ``None``/fehlend ist NICHT dasselbe (nicht geprüft ≠ Drift
+    nachgewiesen) und bleibt in der regulären Tabelle."""
+    clause_results = ((r.get("deployment_decision") or {}).get("clause_results")) or {}
+    return clause_results.get("snapshot_drift") is False
+
+
 def _section_2_monetary_result(report: dict) -> str:
     studies = _studies(report)
     counts = (report.get("cross_study") or {}).get("promotion_outcome_counts") or {}
@@ -174,12 +184,20 @@ def _section_2_monetary_result(report: dict) -> str:
     # promotion_correction_mode='dsr_or_robust_pair' im Sweep ersetzbar macht). Ein
     # READY_FOR_PR/PROMOTE_GLOBAL_DEFAULT-Kandidat ist ab jetzt NUR noch "Promotionskandidat",
     # niemals implizit "Deploybar" — die Deployment-Spalte macht das explizite Urteil sichtbar.
+    #
+    # Issue #1028 (Katalog #866) Sofortmassnahme 1 — Kandidaten mit nachgewiesenem ``snapshot_drift
+    # = false`` (Datenstand-Inkohärenz, siehe ``_is_data_integrity_quarantined``) erscheinen NIE in
+    # dieser Tabelle, auch nicht als "abgelehnt" — sie wandern vollständig in Abschnitt 2.1b
+    # ("Quarantäne — Datenintegrität"), weil ihre gemeldeten Kennzahlen (Expectancy, Holdout-Return)
+    # selbst nicht vertrauenswürdig sind (arithmetisch unmögliche Sizing-Identität, siehe #1028).
     lines.append(
         "### 2.1 Promotionskandidaten (Status READY_FOR_PR / PROMOTE_GLOBAL_DEFAULT) — "
         "noch NICHT deploybar"
     )
     lines.append("")
-    deployable = [r for r in studies if r.get("promotion_outcome") in _DEPLOYABLE_STATUSES]
+    all_candidates = [r for r in studies if r.get("promotion_outcome") in _DEPLOYABLE_STATUSES]
+    quarantined = [r for r in all_candidates if _is_data_integrity_quarantined(r)]
+    deployable = [r for r in all_candidates if not _is_data_integrity_quarantined(r)]
     if not deployable:
         # Bei 0 Promotionskandidaten ist "kein deploybares Ergebnis" akkurat (keine implizite
         # Behauptung, nur eine leere Menge) — der #1006-Bug betraf ausschliesslich die Zeile
@@ -225,6 +243,35 @@ def _section_2_monetary_result(report: dict) -> str:
                 "\n*`≥`-Werte sind gecappt/zensiert (`tournament.json['profit_factor_cap']` oder "
                 "ein numerisch degenerierter Bruttoverlust-Nenner) — der tatsächliche Profit-Faktor "
                 "ist unbekannt und liegt darüber, siehe #1004."
+            )
+    lines.append("")
+
+    # 2.1b Quarantäne — Datenintegrität — Issue #1028 (Katalog #866) Sofortmassnahme 1. Getrennt von
+    # 2.1, NICHT als weitere Tabellenzeile mit "abgelehnt"-Urteil: die hier gelisteten Kandidaten
+    # haben einen nachgewiesenen Datenstand-Bruch (``snapshot_drift = false``), sodass ihre
+    # Kennzahlen selbst (Expectancy, Holdout-Return) nicht als Mess-, sondern als Artefaktwerte zu
+    # lesen sind — z. B. eine arithmetisch unmögliche Sizing-Identität
+    # (``check_sizing_identity_coherence``) oder eine anomale ATR-Skala
+    # (``check_atr_scale_homogeneity``).
+    lines.append("### 2.1b Quarantäne — Datenintegrität")
+    lines.append("")
+    if not quarantined:
+        lines.append("Keine Kandidaten mit nachgewiesenem Datenstand-Bruch in diesem Lauf.")
+    else:
+        lines.append(
+            "Diese Kandidaten hätten die Holdout-Validierung des Sweeps bestanden, tragen aber "
+            "einen nachgewiesenen Bruch zwischen dem promoteten Datenstand und dem aktuellen "
+            "Katalog-Snapshot (``deployment_decision.clause_results['snapshot_drift'] = false``, "
+            "#993). Ihre Kennzahlen sind NICHT belastbar — sie werden hier ausschliesslich zur "
+            "Nachvollziehbarkeit gelistet, nie als Promotions- oder Ablehnungskandidat."
+        )
+        lines.append("")
+        lines.append("| Strategie | Symbol | Promotion-Ausgang | Holdout-Return (nicht belastbar) |")
+        lines.append("|---|---|---|---:|")
+        for r in quarantined:
+            lines.append(
+                f"| {r.get('strategy')} | {r.get('symbol')} | {r.get('promotion_outcome') or 'k. A.'} | "
+                f"{_fmt_pct(r.get('holdout_total_return'))} |"
             )
     lines.append("")
 
@@ -404,10 +451,21 @@ def _section_3_duration(report: dict) -> str:
         )
         for symbol, wait_s in worst:
             lines.append(f"- {symbol}: {_fmt_hms_from_s(wait_s)}")
+    # Issue #1038 (Katalog #866) — zwei GETRENNTE Groessen statt einer einzigen "Auslastung": die
+    # Study-Wallclock-Variante kann strukturell > 100 % liegen (verschachtelte Worker-Pools je
+    # Study überlappen sich, siehe report._worker_utilisation-Docstring) und ist deshalb explizit
+    # als "über Kapazität", nicht als Auslastung, beschriftet; ``worker_utilisation_backtest_ms``
+    # (echte, ueberlappungsfreie Backtest-CPU-Zeit) ist die Grösse, die tatsächlich <= 100 % liegen
+    # sollte (``check_worker_utilisation_plausible``).
     worker_utilisation = (report.get("cross_study") or {}).get("worker_utilisation")
+    worker_utilisation_backtest_ms = (report.get("cross_study") or {}).get(
+        "worker_utilisation_backtest_ms")
     if worker_utilisation is not None:
-        lines.append(f"\nWorker-Auslastung (Σ Study-Wallclock / (n_jobs × Sweep-Wallclock)): "
-                     f"{_fmt_pct(worker_utilisation)}")
+        lines.append(f"\nStudy-Wallclock über Kapazität (Σ Study-Wallclock / (n_jobs × Sweep-"
+                     f"Wallclock); kann > 100 % liegen, siehe #1038): {_fmt_pct(worker_utilisation)}")
+    if worker_utilisation_backtest_ms is not None:
+        lines.append(f"Echte Worker-Auslastung (Σ Backtest-CPU-Zeit je Trial / (n_jobs × Sweep-"
+                     f"Wallclock)): {_fmt_pct(worker_utilisation_backtest_ms)}")
     return "\n".join(lines)
 
 

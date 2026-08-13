@@ -51,6 +51,13 @@ class TournamentMetrics:
     oos_expectancy_winsorized: float | None = None
     oos_expectancy_outlier_count: int = 0
     oos_expectancy_notional_degenerate_count: int = 0
+    # Issue #1042 (Katalog #866) E-1/E-3 — Kosten-Stressband (additive Telemetrie, siehe
+    # ``backtest_runner._expectancy_cost_stress``-Docstring) und CVaR/ES-Tail-Risiko (additive
+    # Telemetrie, siehe ``_calculate_stats``-Berechnungsblock). Defaults rueckwaertskompatibel.
+    oos_expectancy_cost_stress_1_5x: float | None = None
+    oos_expectancy_cost_stress_2x: float | None = None
+    oos_cvar_95: float | None = None
+    oos_es_99: float | None = None
     # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
     # Signal fuer unevaluable Trials (_gate_proximity). Defaults 0.0 ⇒ rueckwaertskompatibel.
     is_best_total_return: float = 0.0
@@ -317,6 +324,11 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
+    # Issue #1042 (Katalog #866) E-1/E-3 — siehe TournamentMetrics-Docstring.
+    oos_expectancy_cost_stress_1_5x = oos_metrics.get("expectancy_cost_stress_1_5x")
+    oos_expectancy_cost_stress_2x = oos_metrics.get("expectancy_cost_stress_2x")
+    oos_cvar_95 = oos_metrics.get("cvar_95")
+    oos_es_99 = oos_metrics.get("es_99")
     # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.
     oos_win_rate = oos_metrics.get("win_rate")
     oos_profit_factor = oos_metrics.get("profit_factor")
@@ -401,6 +413,15 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_expectancy_notional_degenerate_count=(
             int(oos_expectancy_notional_degenerate_count)
             if oos_expectancy_notional_degenerate_count is not None else 0),
+        # Issue #1042 (Katalog #866) E-1/E-3 — siehe TournamentMetrics-Docstring.
+        oos_expectancy_cost_stress_1_5x=(
+            float(oos_expectancy_cost_stress_1_5x)
+            if oos_expectancy_cost_stress_1_5x is not None else None),
+        oos_expectancy_cost_stress_2x=(
+            float(oos_expectancy_cost_stress_2x)
+            if oos_expectancy_cost_stress_2x is not None else None),
+        oos_cvar_95=float(oos_cvar_95) if oos_cvar_95 is not None else None,
+        oos_es_99=float(oos_es_99) if oos_es_99 is not None else None,
         # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).
         oos_win_rate=float(oos_win_rate) if oos_win_rate is not None else None,
         oos_profit_factor=float(oos_profit_factor) if oos_profit_factor is not None else None,

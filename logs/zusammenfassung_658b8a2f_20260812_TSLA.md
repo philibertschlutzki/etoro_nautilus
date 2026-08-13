@@ -1,4 +1,5 @@
 # Sweep-Zusammenfassung 658b8a2f_20260812_TSLA
+<!-- report_sha256: 8e8bb4db339e21118fc43b77e9446d73b4d1ea4843ccab862ef16f0765670a1a -->
 
 
 ## 1. Ergebnis in einem Satz
@@ -9,14 +10,16 @@
 
 ### 2.1 Promotionskandidaten (Status READY_FOR_PR / PROMOTE_GLOBAL_DEFAULT) — noch NICHT deploybar
 
-Diese Kandidaten haben die Holdout-Validierung des Sweeps bestanden. Das ist NICHT dasselbe wie Deploybarkeit — die letzte Spalte zeigt das tatsächliche Urteil von ``deployment_gate.evaluate_deployment_eligibility`` (dieselbe Funktion, die vor jedem Live-Kapitaleinsatz entscheidet).
+**Kein deploybares Ergebnis aus diesem Lauf.** Kein Kandidat hat die Holdout-Validierung bestanden — alle folgenden Zahlen in Abschnitt 2.2 sind ABGELEHNTE, NICHT handelbare Kandidaten.
 
-| Strategie | Symbol | Holdout-Return | Expectancy | Win-Rate | Profit-Faktor | Trades | Deployment-Urteil |
-|---|---|---:|---:|---:|---:|---:|---|
-| FlashCrashReversalStrategy | TSLA.ETORO | 115.0 % | 0.4613 | 93.9 % | ≥15.00* | 147 | abgelehnt (snapshot_drift) |
-| VwapExhaustionStrategy | TSLA.ETORO | 125.9 % | 0.5518 | 96.9 % | ≥15.00* | 129 | abgelehnt (snapshot_drift) |
+### 2.1b Quarantäne — Datenintegrität
 
-*`≥`-Werte sind gecappt/zensiert (`tournament.json['profit_factor_cap']` oder ein numerisch degenerierter Bruttoverlust-Nenner) — der tatsächliche Profit-Faktor ist unbekannt und liegt darüber, siehe #1004.
+Diese Kandidaten hätten die Holdout-Validierung des Sweeps bestanden, tragen aber einen nachgewiesenen Bruch zwischen dem promoteten Datenstand und dem aktuellen Katalog-Snapshot (``deployment_decision.clause_results['snapshot_drift'] = false``, #993). Ihre Kennzahlen sind NICHT belastbar — sie werden hier ausschliesslich zur Nachvollziehbarkeit gelistet, nie als Promotions- oder Ablehnungskandidat.
+
+| Strategie | Symbol | Promotion-Ausgang | Holdout-Return (nicht belastbar) |
+|---|---|---|---:|
+| FlashCrashReversalStrategy | TSLA.ETORO | READY_FOR_PR | 115.0 % |
+| VwapExhaustionStrategy | TSLA.ETORO | READY_FOR_PR | 125.9 % |
 
 ### 2.2 Bester abgelehnter Kandidat je Strategie (NICHT deploybar)
 

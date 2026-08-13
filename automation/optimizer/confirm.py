@@ -526,6 +526,12 @@ def _metrics_dict(m) -> dict:
         "oos_expectancy_outlier_count": getattr(m, "oos_expectancy_outlier_count", 0),
         "oos_expectancy_notional_degenerate_count": getattr(
             m, "oos_expectancy_notional_degenerate_count", 0),
+        # Issue #1042 (Katalog #866) E-1/E-3 — Kosten-Stressband + CVaR/ES-Tail-Risiko, additiv
+        # neben den unveraenderten Basis-Kennzahlen.
+        "oos_expectancy_cost_stress_1_5x": getattr(m, "oos_expectancy_cost_stress_1_5x", None),
+        "oos_expectancy_cost_stress_2x": getattr(m, "oos_expectancy_cost_stress_2x", None),
+        "oos_cvar_95": getattr(m, "oos_cvar_95", None),
+        "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),
         "oos_profit_factor": getattr(m, "oos_profit_factor", None),
         # Issue #1004 (Katalog #858) — Zensur-Telemetrie neben dem (weiterhin gecappten) Wert.

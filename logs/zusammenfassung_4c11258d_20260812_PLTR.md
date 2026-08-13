@@ -1,4 +1,5 @@
 # Sweep-Zusammenfassung 4c11258d_20260812_PLTR
+<!-- report_sha256: e9ac5892d20c588dbbb4ae7c5c135eb889712ac0c0c63031054ccfa370d1254e -->
 
 
 ## 1. Ergebnis in einem Satz
@@ -14,6 +15,10 @@ Diese Kandidaten haben die Holdout-Validierung des Sweeps bestanden. Das ist NIC
 | Strategie | Symbol | Holdout-Return | Expectancy | Win-Rate | Profit-Faktor | Trades | Deployment-Urteil |
 |---|---|---:|---:|---:|---:|---:|---|
 | DonchianRegimeBreakoutStrategy | PLTR.ETORO | 4.4 % | 0.0126 | 47.8 % | 3.16 | 23 | abgelehnt (status_ready_for_pr) |
+
+### 2.1b Quarantäne — Datenintegrität
+
+Keine Kandidaten mit nachgewiesenem Datenstand-Bruch in diesem Lauf.
 
 ### 2.2 Bester abgelehnter Kandidat je Strategie (NICHT deploybar)
 

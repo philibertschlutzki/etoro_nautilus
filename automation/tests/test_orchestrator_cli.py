@@ -49,8 +49,11 @@ def test_phase5_no_deploy_early_exit(tmp_path, monkeypatch, caplog):
             "pbo": 0.30, "pbo_n_configs": 40,
             # Issue #1007 (Katalog #858) — neunte deployment_gate-Klausel 'study_invariants_clean'
             # ist fail-closed bei fehlendem Feld; [] == "geprueft, keine blockierende Invariante",
-            # noetig, damit dieses Fixture weiterhin ALLE neun Klauseln besteht.
+            # noetig, damit dieses Fixture weiterhin ALLE zehn Klauseln besteht.
             "blocking_invariant_names": [],
+            # Issue #1042 (Katalog #866, E-1) — zehnte Klausel 'cost_stress', ebenfalls fail-closed
+            # bei fehlendem Feld.
+            "oos_expectancy_cost_stress_2x": 0.001,
         }, "global": {}},
     }
     (optimizer_dir / "proposal_SmaCrossoverStrategy_AAA.ETORO.json").write_text(

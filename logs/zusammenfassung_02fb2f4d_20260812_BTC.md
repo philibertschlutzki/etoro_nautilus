@@ -1,4 +1,5 @@
 # Sweep-Zusammenfassung 02fb2f4d_20260812_BTC
+<!-- report_sha256: 9985c782e12fda086dcc04e5916d3cd1ae4f5d42c826ebf265736e7b9e62a7bc -->
 
 
 ## 1. Ergebnis in einem Satz
@@ -10,6 +11,10 @@
 ### 2.1 Promotionskandidaten (Status READY_FOR_PR / PROMOTE_GLOBAL_DEFAULT) — noch NICHT deploybar
 
 **Kein deploybares Ergebnis aus diesem Lauf.** Kein Kandidat hat die Holdout-Validierung bestanden — alle folgenden Zahlen in Abschnitt 2.2 sind ABGELEHNTE, NICHT handelbare Kandidaten.
+
+### 2.1b Quarantäne — Datenintegrität
+
+Keine Kandidaten mit nachgewiesenem Datenstand-Bruch in diesem Lauf.
 
 ### 2.2 Bester abgelehnter Kandidat je Strategie (NICHT deploybar)
 

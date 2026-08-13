@@ -214,6 +214,42 @@ def test_sweep_default_policy_reorders_by_coverage_recency(monkeypatch, tmp_path
     assert order_seen == ["B.ETORO", "A.ETORO"]  # nie abgedeckt zuerst
 
 
+def test_sweep_deployable_tier_admits_stale_non_champion_symbol(monkeypatch, tmp_path):
+    """Issue #1040 (Katalog #866) — die eigentliche Root-Cause der stehenden Rotation: unter
+    tier='deployable' (CLI-Default) betrat ein Symbol OHNE Tier-A-Gewinn den Kandidatenpool NIE,
+    egal wie 'stale' seine Coverage war (order_symbols sortiert nur, was es ueberhaupt sieht). Hier:
+    B.ETORO hat KEINEN Champion-Eintrag, ist aber 4 Laeufe alt (> max_age_runs=3) -> muss trotzdem
+    optimiert werden. Anders als die Tests oben wird ``enumerate_tunable_pairs`` NICHT gemockt --
+    dieser Test deckt die echte Kandidatenauswahl ab, nicht nur die Rotations-Reihenfolge."""
+    from automation.optimizer import sweep
+
+    monkeypatch.setattr(sweep, "load_tier_a_winners", lambda *a, **k: {"SmaCrossoverStrategy": ["A.ETORO"]})
+    monkeypatch.setattr(sweep, "export_symbol_proposal",
+                        lambda study, s, sym, prom: tmp_path / f"proposal_{s}_{sym}.json")
+    monkeypatch.setattr(sweep, "load_global_best", lambda *a, **k: {})
+    monkeypatch.setattr(sweep, "count_available_bars", lambda *a, **k: {"A.ETORO": 10_000, "B.ETORO": 10_000})
+    monkeypatch.setattr(sweep, "_load_gate_config", lambda: _GATE_CFG)
+    monkeypatch.setattr(sweep, "WORK", tmp_path)
+    monkeypatch.setattr(sweep, "config_dir", lambda: tmp_path)
+    (tmp_path / "optimizer.json").write_text("{}", "utf-8")
+
+    # B.ETORO: zuletzt bei run_index=1 abgedeckt, jetzt 4 Laeufe her (age=4 > Default max_age_runs=3).
+    cov = sc.load_coverage(path=tmp_path / "symbol_coverage.json")
+    cov = sc.record_symbol_completion(cov, "B.ETORO", run_id="old-run", run_index=1,
+                                      completed_at_utc="2026-01-01T00:00:00Z")
+    cov["total_runs_started"] = 5
+    sc.write_coverage(cov, path=tmp_path / "symbol_coverage.json")
+
+    optimized = []
+    sweep.run_per_symbol_sweep(
+        ["SmaCrossoverStrategy"], ["A.ETORO", "B.ETORO"], tier="deployable", n_jobs=1, run_id="run-5",
+        optimize_symbol=lambda strategy, symbol, **k: optimized.append(symbol) or object(),
+        confirm=lambda *a, **k: {"promote": False, "status": "REJECTED", "symbol_params": {}},
+    )
+    assert "B.ETORO" in optimized  # stale, kein Champion-Eintrag -> trotzdem enumeriert
+    assert "A.ETORO" in optimized  # Champion bleibt weiterhin zugelassen
+
+
 def test_sweep_universe_policy_preserves_insertion_order(monkeypatch, tmp_path):
     from automation.optimizer import sweep
 
