@@ -42,13 +42,12 @@ _RUN_STATUS_LABELS_DE = {
     # dieses Mapping fehlte: der Wert erschien als roher englischer String in einem sonst
     # deutschsprachigen Bericht (Fallback ``_RUN_STATUS_LABELS_DE.get(status, status)``).
     "completed_with_quarantine": "abgeschlossen mit Quarantäne (#939 — mindestens ein Symbol fehlgeschlagen)",
+    "aborted_invariant": "abgebrochen (blockierende Invariante, echter Arbeitsabbruch)",
+    # Issue #1065 — getrennt von 'aborted_invariant': alle geplanten Symbole wurden VOLLSTÄNDIG
+    # gerechnet, der Lauf ist aber wegen mindestens einer blockierenden Invariante nicht
+    # entscheidungsfähig (siehe sweep.py, Downgrade-Regel bei symbols_completed >= symbols_planned).
+    "completed_invalid": "vollständig gerechnet, aber wegen blockierender Invarianten nicht entscheidungsfähig",
 }
-
-# Issue #850 — Floor für den excess_per_exposure-Nenner (Abschnitt 2.3): eine exposure_fraction
-# nahe 0 (kaum Marktzeit) darf den normierten Excess nicht gegen unendlich treiben — 1 % ist eine
-# reine Anzeige-Sicherung, kein kalibrierter Schwellenwert.
-_EXPOSURE_EPSILON = 0.01
-
 
 def _fmt_pct(x: float | None, *, digits: int = 1) -> str:
     return f"{x * 100:.{digits}f} %" if x is not None else "k. A."
@@ -119,12 +118,37 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
         and (r.get("deployment_decision") or {}).get("admitted") is True
     )
     run_status = report.get("run_status", "complete")
+    # Issue #1065 — Vollständigkeit (Abdeckung: symbols_completed/symbols_planned) und Gültigkeit
+    # (blockierende Invarianten) sind ZWEI getrennte Aussagen. Vor diesem Fix leitete dieser Satz
+    # "Lauf ist NICHT vollständig" allein aus ``run_status != 'complete'`` ab — ein Lauf, der ALLE
+    # geplanten Symbole/Trials tatsächlich fertig gerechnet hat, aber wegen einer blockierenden
+    # Invariante als ``aborted_invariant``/``completed_invalid`` endete, erhielt trotzdem eine
+    # Unvollständigkeits-Behauptung, die den (vollständigen) Zahlen darunter widersprach.
+    _symbols_completed_v = report.get("symbols_completed")
+    _symbols_planned_v = report.get("symbols_planned")
+    _coverage_incomplete = (
+        _symbols_completed_v is not None and _symbols_planned_v is not None
+        and _symbols_completed_v < _symbols_planned_v
+    )
     status_note = ""
-    if run_status != "complete":
+    if run_status != "complete" and _coverage_incomplete:
         status_note = (
             f" **Hinweis:** dieser Lauf ist NICHT vollständig ({_RUN_STATUS_LABELS_DE.get(run_status, run_status)}"
             f"; {report.get('symbols_completed', '?')}/{report.get('symbols_planned', '?')} Symbole"
             " abgeschlossen) — die folgenden Zahlen beziehen sich NUR auf die bereits abgeschlossene Kohorte."
+        )
+    elif run_status in ("aborted_invariant", "completed_invalid"):
+        # Vollständige Abdeckung (oder unbekannt, siehe unten), aber ein FAIL-Fast-Verdikt hat den
+        # Lauf als ungültig markiert — die blockierenden Checks werden unten (blocking_note)
+        # namentlich genannt, hier steht nur die Abdeckungs-Klarstellung.
+        _coverage_str = (
+            f"{_symbols_completed_v}/{_symbols_planned_v} Symbole"
+            if _symbols_completed_v is not None and _symbols_planned_v is not None
+            else "alle geplanten Symbole"
+        )
+        status_note = (
+            f" **Hinweis:** Vollständig gerechnet ({_coverage_str}), aber wegen blockierender "
+            "Invarianten nicht entscheidungsfähig — siehe unten."
         )
     if n_deployable == 0:
         sentence = (
@@ -215,13 +239,30 @@ def _section_2_monetary_result(report: dict) -> str:
             "Live-Kapitaleinsatz entscheidet)."
         )
         lines.append("")
+        # Issue #1073 (Katalog #866-2, Pitfall #?) — Root-Cause: ``holdout_expectancy_winsorized``
+        # (nennerausreisser-robust, #1031/#1042) wird telemetriert, aber weder gerankt noch
+        # gegatet — die Rangfolge sortierte implizit auf der ausreisser-EMPFINDLICHSTEN verfügbaren
+        # Grösse (Einfüge-/``holdout_total_return``-Reihenfolge). Beweis B-8 im #866-Katalog: der
+        # ERSTGELISTETE Kandidat (AdxAtr, +17,23 bps roh) hatte eine NEGATIVE winsorisierte
+        # Expectancy (−1,44 bps), getragen von 6 von 132 Trades. Sortierung jetzt nach der
+        # winsorisierten Expectancy (robuster Wert zuerst); ``holdout_total_return`` bleibt
+        # sichtbar, damit der Wechsel nachvollziehbar bleibt.
+        def _expectancy_rank_key(r: dict) -> float:
+            for field in ("holdout_expectancy_winsorized", "holdout_expectancy",
+                         "holdout_total_return"):
+                value = r.get(field)
+                if value is not None:
+                    return float(value)
+            return float("-inf")
+
+        deployable_ranked = sorted(deployable, key=_expectancy_rank_key, reverse=True)
         lines.append(
-            "| Strategie | Symbol | Holdout-Return | Expectancy | Win-Rate | Profit-Faktor | "
-            "Trades | Deployment-Urteil |"
+            "| Strategie | Symbol | Holdout-Return | Expectancy | Expectancy (winsorisiert) | "
+            "Ausreisser/Trades | Win-Rate | Profit-Faktor | Trades | Deployment-Urteil |"
         )
-        lines.append("|---|---|---:|---:|---:|---:|---:|---|")
+        lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---|")
         any_censored = False
-        for r in deployable:
+        for r in deployable_ranked:
             any_censored = any_censored or bool(r.get("holdout_profit_factor_censored"))
             decision = r.get("deployment_decision") or {}
             if decision.get("admitted") is True:
@@ -230,9 +271,20 @@ def _section_2_monetary_result(report: dict) -> str:
                 deploy_verdict = f"abgelehnt ({decision.get('blocking_clause') or 'k. A.'})"
             else:
                 deploy_verdict = "nicht bewertet"
+            winsorized = r.get("holdout_expectancy_winsorized")
+            outlier_count = r.get("holdout_expectancy_outlier_count") or 0
+            total_trades = r.get("holdout_total_trades")
+            outlier_frac = (
+                f"{outlier_count}/{total_trades}" if total_trades else f"{outlier_count}/k. A.")
+            sign_flip = (
+                winsorized is not None and r.get("holdout_expectancy") is not None
+                and (winsorized > 0) != (r.get("holdout_expectancy") > 0)
+            )
+            winsorized_cell = _fmt_num(winsorized) + (" ⚠ Vorzeichenwechsel" if sign_flip else "")
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
-                f"{_fmt_num(r.get('holdout_expectancy'))} | {_fmt_pct(r.get('holdout_win_rate'))} | "
+                f"{_fmt_num(r.get('holdout_expectancy'))} | {winsorized_cell} | {outlier_frac} | "
+                f"{_fmt_pct(r.get('holdout_win_rate'))} | "
                 f"{_fmt_profit_factor(r)} | "
                 f"{r.get('holdout_total_trades', 'k. A.')} | {deploy_verdict} |"
             )
@@ -320,18 +372,34 @@ def _section_2_monetary_result(report: dict) -> str:
     if not with_benchmark:
         lines.append("Keine Benchmark-Vergleichsdaten in diesem Lauf verfügbar.")
     else:
+        # Issue #1077 (Pitfall #376) — Root-Cause: ``excess / max(exposure, _EXPOSURE_EPSILON)``
+        # setzte einen ERFUNDENEN Nenner (1 %) ein, sobald ``exposure`` fehlte oder winzig war —
+        # der Kommentar an ``_EXPOSURE_EPSILON`` nannte das selbst ausdrücklich "reine Anzeige-
+        # Sicherung, kein kalibrierter Schwellenwert", die Zahl erschien aber UNGEKENNZEICHNET in
+        # einer Spalte, die als Qualitätsnormierung gelesen wird — und ordnete monoton nach
+        # WENIGER Handel (die grösste Zahl der Tabelle gehörte der Strategie mit 0 Trades). Fix:
+        # kein Ersatznenner. Eine Study mit fehlender/zu geringer Exposition (< 5 %) wandert in
+        # einen eigenen "nicht bewertbar"-Block statt eine erfundene Normierung in der regulären
+        # Rangfolge zu tragen.
+        _min_exposure_for_normalization = 0.05
+        normal_rows = []
+        not_evaluable_rows = []
+        for r in with_benchmark:
+            exposure = r.get("holdout_exposure_fraction")
+            if exposure is None or exposure < _min_exposure_for_normalization:
+                not_evaluable_rows.append(r)
+            else:
+                normal_rows.append(r)
         lines.append(
             "| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | "
             "Excess/Exposure | Vorzeichen |"
         )
         lines.append("|---|---|---:|---:|---:|---:|---:|---|")
-        for r in sorted(with_benchmark, key=lambda r: r.get("holdout_total_return") or 0.0, reverse=True):
+        for r in sorted(normal_rows, key=lambda r: r.get("holdout_total_return") or 0.0, reverse=True):
             excess = r["holdout_excess_return"]
             buyhold = r.get("holdout_buyhold_return")
             exposure = r.get("holdout_exposure_fraction")
-            excess_per_exposure = (
-                excess / max(exposure if exposure is not None else 0.0, _EXPOSURE_EPSILON)
-            )
+            excess_per_exposure = excess / exposure
             if buyhold is not None and buyhold < 0:
                 sign = "B&H negativ — Excess trivial positiv"
             elif excess > 0:
@@ -346,6 +414,26 @@ def _section_2_monetary_result(report: dict) -> str:
                 f"{_fmt_pct(excess_per_exposure)} | {sign} |"
             )
         lines.append("")
+        if not_evaluable_rows:
+            lines.append(
+                f"**Nicht bewertbar (Zeit im Markt < {_fmt_pct(_min_exposure_for_normalization)}, "
+                "keine sinnvolle Excess/Exposure-Normierung):**"
+            )
+            lines.append("")
+            lines.append("| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | Trades |")
+            lines.append("|---|---|---:|---:|---:|---:|---:|")
+            for r in sorted(not_evaluable_rows,
+                            key=lambda r: r.get("holdout_total_return") or 0.0, reverse=True):
+                exposure = r.get("holdout_exposure_fraction")
+                lines.append(
+                    f"| {r.get('strategy')} | {r.get('symbol')} | "
+                    f"{_fmt_pct(r.get('holdout_total_return'))} | "
+                    f"{_fmt_pct(r.get('holdout_buyhold_return'))} | "
+                    f"{_fmt_pct(r.get('holdout_excess_return'))} | "
+                    f"{_fmt_pct(exposure) if exposure is not None else 'k. A.'} | "
+                    f"{r.get('holdout_total_trades', 'k. A.')} |"
+                )
+            lines.append("")
         decomposition = (report.get("cross_study") or {}).get("excess_variance_decomposition")
         if decomposition and decomposition.get("symbol_share") is not None:
             lines.append(

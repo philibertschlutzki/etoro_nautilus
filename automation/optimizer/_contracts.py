@@ -20,6 +20,16 @@ from __future__ import annotations
 # suchen/prüfen als dieser Deckel.
 MAX_BARS_IN_TRADE_HARD_CAP = 24
 
+# Issue #1067 (Pitfall #372) — die GR-01-Zeitbox war bislang NUR nach oben verdrahtet
+# (``MAX_BARS_IN_TRADE_HARD_CAP``); seit der automatische Suchraum-Rückschrieb (#761/#763) auch
+# Untergrenzen absenkt, braucht dieselbe Invariante einen symmetrischen Wächter nach unten. Unter
+# dieser Bar-Anzahl ist eine 1h-Bar-Position (GR-01-Semantik: Trade schliesst nach ~1 Handelstag)
+# kein Zeitbox-Handel mehr, sondern Rauschen-Traden ohne Informationsgewinn (vgl. #908-Befund zu
+# AdxAtrMomentum). Bewusst <= dem niedrigsten KURATIERTEN Default-Suchraum-Boden, der heute über
+# ``spaces.sample_params`` existiert (FlashCrashReversal/VwapExhaustion: 6) — der Floor begrenzt
+# NUR den automatischen Rückschrieb, er verengt keinen bestehenden kuratierten Suchraum.
+MIN_BARS_IN_TRADE_FLOOR = 4
+
 # Issue #938 (Katalog A, Pitfall #294) — EINZIGER Konstruktor für den (Strategie, Symbol)-Paar-
 # Schlüssel. Vor diesem Fix baute jede Stelle (``invariants.py``, ``report.py``, ``confirm.py``,
 # ``sweep.py``) das ``f"{strategy}/{symbol}"``-Format unabhängig selbst nach — an GENAU einer

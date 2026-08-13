@@ -57,10 +57,22 @@ def test_boundary_hit_fraction_and_directions_agree_on_hit_count():
 
 # ── propose_bounds_from_boundary_hits: konkreter Vorschlag aus der Richtungsinformation ────────────
 def test_propose_bounds_widens_lower_bound_for_low_direction():
+    # Issue #1066 — die rohe Arithmetik (2.0 - 0.3*34.0 = -8.2) liegt ausserhalb des
+    # cooldown_bars-Domänenregisters (Untergrenze 1) und wird seither auf den Domänen-Randwert
+    # geklammert, statt negativ zu bleiben.
     proposals = propose_bounds_from_boundary_hits(
         {"cooldown_bars": "low"}, "TrendPullbackStrategy",
         current_bounds={"cooldown_bars": (2.0, 36.0)}, widen_fraction=0.3)
-    assert proposals == {"cooldown_bars": [round(2.0 - 0.3 * 34.0, 6), 36.0]}
+    assert proposals == {"cooldown_bars": [1, 36.0]}
+
+
+def test_propose_bounds_low_direction_unclamped_stays_exact_when_within_domain():
+    """Ein Vorschlag, der INNERHALB des Domänenregisters bleibt, ist bit-identisch zur
+    rohen Weitungs-Arithmetik (die Klammer greift nur bei einer tatsaechlichen Verletzung)."""
+    proposals = propose_bounds_from_boundary_hits(
+        {"cooldown_bars": "low"}, "TrendPullbackStrategy",
+        current_bounds={"cooldown_bars": (10.0, 20.0)}, widen_fraction=0.3)
+    assert proposals == {"cooldown_bars": [round(10.0 - 0.3 * 10.0, 6), 20.0]}
 
 
 def test_propose_bounds_widens_upper_bound_for_high_direction():

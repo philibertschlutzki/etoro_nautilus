@@ -987,6 +987,63 @@ def _read_last_study_wallclock_by_strategy() -> dict[str, float]:
         return {}
 
 
+def _apply_search_budget_proposal(*, work_dir: Path | None = None,
+                                  run_id: str | None = None) -> list[tuple[str, str]]:
+    """Issue #1082 Fix Punkt (a) (Katalog #866-2, Kohorte E) — liest ``cross_study[
+    'search_budget_proposal']`` aus dem JÜNGSTEN #742-Report (``report._search_budget_proposal_
+    section``, gespeist von ``check_objective_branch_coverage``-FAILs) und schreibt jedes gemeldete
+    Paar als ``'deprioritized'`` in den #681/#761-Diagnose-Cache (``record_diagnosed_pair``) — der
+    bestehende #830-Pfad (``run_optimization._apply_deprioritized_budget``) reduziert das Budget
+    dieses Paars dann automatisch im NÄCHSTEN Lauf, statt dasselbe Budget für einen überwiegend
+    zweigklippen-geführten Suchraum noch einmal zu verbrennen.
+
+    Überschreibt NIEMALS einen bestehenden Cache-Eintrag mit einer stärkeren Konsequenz
+    (``'denylist'``/``'search_space_override'``/``'quarantined_pending_simulation_review'``) — die
+    Branch-Coverage-Diagnose ist additiv/beobachtend (#992-Merge-Order-Konvention), keine
+    Eskalation über eine für dasselbe Paar bereits getroffene, stärkere Entscheidung. Leere Liste
+    bei keinem vorhandenen Report (erster Lauf) oder leerem Vorschlag — fail-open, ein Lesefehler
+    blockiert den Sweep nie. Rückgabe: die tatsächlich (neu) deprioritisierten (strategy,
+    symbol)-Paare, für Log/Telemetrie."""
+    try:
+        from automation.optimizer.report import REPORTS_DIR
+        if not REPORTS_DIR.exists():
+            return []
+        report_files = sorted(REPORTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        if not report_files:
+            return []
+        data = json.loads(report_files[-1].read_text("utf-8")) or {}
+        proposal = ((data.get("cross_study") or {}).get("search_budget_proposal")) or []
+    except Exception:
+        return []
+    if not proposal:
+        return []
+    try:
+        _cache = load_diagnosed_pairs_cache(work_dir=work_dir)
+    except Exception:
+        _cache = {}
+    applied: list[tuple[str, str]] = []
+    for entry in proposal:
+        strategy, symbol = entry.get("strategy"), entry.get("symbol")
+        if not strategy or not symbol:
+            continue
+        _prior = _cache.get((strategy, symbol))
+        if _prior and _prior.get("action") not in (None, "none", "deprioritized"):
+            continue
+        try:
+            record_diagnosed_pair({
+                "strategy": strategy, "symbol": symbol, "action": "deprioritized",
+                "binding_cause": "objective_branch_coverage_low",
+                "objective_branch_coverage_fraction": entry.get(
+                    "objective_branch_coverage_fraction"),
+            }, work_dir=work_dir, run_id=run_id)
+            applied.append((strategy, symbol))
+        except Exception:
+            logging.getLogger("optimizer").debug(
+                "[#1082] Suchbudget-Vorschlag-Rückschrieb für %s/%s fehlgeschlagen (non-fatal).",
+                strategy, symbol, exc_info=True)
+    return applied
+
+
 def _family_n_from_proposals(proposals) -> dict[str, int]:
     """Issue #625 — FAMILIENWEISE Multiple-Testing-Zahl je Symbol.
 
@@ -2214,6 +2271,17 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ist strategie-, nicht symbolspezifisch (Rohmaterial ist der Median über den letzten Report).
     _study_wallclock_by_strategy = _read_last_study_wallclock_by_strategy()
 
+    # Issue #1082 Fix Punkt (a) — EINMAL vor der Symbolschleife: Paare, deren
+    # check_objective_branch_coverage im JÜNGSTEN Report FAILte, werden 'deprioritized' (#830-Pfad)
+    # statt im selben Suchbudget wie bisher erneut evaluiert zu werden.
+    _search_budget_deprioritized = _apply_search_budget_proposal(run_id=run_id)
+    if _search_budget_deprioritized:
+        logging.getLogger("optimizer").info(
+            "[#1082] %d Paar(e) über check_objective_branch_coverage deprioritisiert (Suchbudget-"
+            "Vorschlag des letzten Laufs): %s", len(_search_budget_deprioritized),
+            sorted(_search_budget_deprioritized),
+        )
+
     proposals: list[Path] = []
     # Issue #933 (Pitfall #306) — kumulative Zähler für SWEEP_PROGRESS, je Symbol fortgeschrieben
     # (kein zweiter Scan über bereits verarbeitete Symbole nötig).
@@ -2419,7 +2487,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             try:
                 from automation.optimizer import report as _report_progress_mod
                 _symbol_probe = _report_progress_mod.build_probe_report(
-                    _this_symbol_proposals, run_id=run_id)
+                    _this_symbol_proposals, run_id=run_id, report_source="progress_symbol_probe")
                 for _chk in _symbol_probe.get("invariant_checks") or []:
                     emit_execution_event(
                         logging.getLogger("optimizer"), "INVARIANT_RESULT",
@@ -2469,6 +2537,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             _report_incremental_mod.generate_sweep_report(
                 proposals, run_id=run_id, run_status="in_progress",
                 symbols_completed=_symbols_done_progress, symbols_planned=_symbols_total_progress,
+                report_source="progress_incremental",
             )
         except Exception:
             logging.getLogger("optimizer").warning(
@@ -2523,7 +2592,8 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 # attribute 'get'`` — 0 von 32 erfolgreichen Aufrufen im Referenzlauf ``c00dc3c0``.
                 # ``build_probe_report`` ist der einzige externe Konsument von ``_build_report``
                 # neben ``generate_sweep_report`` selbst (Pitfall #269).
-                _probe_report = _report_probe_mod.build_probe_report(proposals, run_id=run_id)
+                _probe_report = _report_probe_mod.build_probe_report(
+                    proposals, run_id=run_id, report_source="fail_fast_probe")
                 _probe_invariant_checks = _probe_report.get("invariant_checks")
                 sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
                     _probe_invariant_checks, _fail_fast_invariants)
@@ -2971,6 +3041,19 @@ def main(argv: list[str] | None = None) -> list[Path]:
     except (OSError, ValueError):
         pass
 
+    # Issue #1065 (Pitfall #? — Vollständigkeit ≠ Gültigkeit) — ``run_status='aborted_invariant'``
+    # bedeutet "eine blockierende Invariante hat FAILt", NICHT "Arbeit wurde abgebrochen". Der
+    # Fail-Fast-Abbruch (Zeile ~2919) greift erst NACHDEM der letzte geplante Symbol-Durchlauf
+    # bereits vollständig abgeschlossen war (der `break` verhindert nur einen NICHT existierenden
+    # nächsten Symbol-Start) — in diesem Fall wurden 100 % der geplanten Arbeit tatsächlich
+    # gerechnet, nur als nicht entscheidungsfähig verworfen. ``aborted_invariant`` bleibt reserviert
+    # für den ECHTEN Abbruch (weniger Symbole abgeschlossen als geplant); vollständige Abdeckung
+    # trotz FAIL-Fast-Verdikt wird als eigener Status ``completed_invalid`` unterschieden, damit
+    # ``summary_de.py`` "vollständig, aber ungültig" von "abgebrochen, unvollständig" trennen kann.
+    if (run_status == "aborted_invariant" and symbols_completed is not None
+            and symbols_planned is not None and symbols_completed >= symbols_planned):
+        run_status = "completed_invalid"
+
     # Issue #742 — EIN aggregiertes Report-Artefakt am Ende des Laufs, atomar geschrieben. Darf den
     # Sweep NIE crashen (non-fatal, analog Champion-Store/Retention/Backfill an anderer Stelle).
     try:
@@ -3105,23 +3188,40 @@ def _offending_pairs_for_fail_fast_check(
     ``emit_execution_event``-Payload (``"offending_studies": _offending_pairs``) und löste #937s
     ``json.dumps``-``TypeError`` aus, weil ``json`` nur skalare Dict-Keys automatisch koerziert.
 
+    Issue #1063 — bevor auf den konservativen "Struktur unbekannt ⇒ global abbrechen"-Zweig
+    zurückgefallen wird, versucht dieser Parser ZUSÄTZLICH ``provenance['magnitude_offenders']``
+    (dieselbe Pair-Konvention, siehe ``check_holding_time_cap``s Magnituden-Ast, #1036) — ein Check,
+    der seine Offender (noch) nicht direkt in ``actual`` stempelt, aber sie strukturiert unter
+    ``provenance`` führt, ist damit ebenfalls auswertbar, statt die #1016-Breitenschwelle
+    (Pitfall #349) grundsätzlich ausser Kraft zu setzen. ``check_holding_time_cap`` selbst stempelt
+    seit #1063 beide Äste bereits direkt in ``actual`` (siehe dortiger Docstring) — dieser Fallback
+    ist die generelle Absicherung für JEDEN aktuellen/künftigen Fail-Fast-Check derselben Bauart.
+
     Rückgabe: ``({"strategy/symbol": wert, ...}, {symbol, ...})``."""
-    pairs: dict[str, object] = {}
-    symbols: set[str] = set()
-    for chk in invariant_checks or []:
-        if chk.get("name") != check_name:
-            continue
-        actual = chk.get("actual")
-        if not isinstance(actual, dict):
-            return {}, set()
+    def _parse(actual: object) -> tuple[dict[str, object], set[str]] | None:
+        if not isinstance(actual, dict) or not actual:
+            return None
+        pairs: dict[str, object] = {}
+        symbols: set[str] = set()
         for key, value in actual.items():
             if not isinstance(key, str) or "/" not in key:
-                return {}, set()
+                return None
             strategy, _, symbol = key.partition("/")
             pairs[pair_key(strategy, symbol)] = value
             symbols.add(symbol)
-        break
-    return pairs, symbols
+        return pairs, symbols
+
+    for chk in invariant_checks or []:
+        if chk.get("name") != check_name:
+            continue
+        parsed = _parse(chk.get("actual"))
+        if parsed is not None:
+            return parsed
+        parsed = _parse((chk.get("provenance") or {}).get("magnitude_offenders"))
+        if parsed is not None:
+            return parsed
+        return {}, set()
+    return {}, set()
 
 
 def _fail_fast_systemic_verdict(
