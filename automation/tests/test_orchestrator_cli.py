@@ -54,6 +54,10 @@ def test_phase5_no_deploy_early_exit(tmp_path, monkeypatch, caplog):
             # Issue #1042 (Katalog #866, E-1) — zehnte Klausel 'cost_stress', ebenfalls fail-closed
             # bei fehlendem Feld.
             "oos_expectancy_cost_stress_2x": 0.001,
+            # Issue #1073 (Katalog #866-2) — elfte Klausel 'expectancy_outlier_robust', ebenfalls
+            # fail-closed bei fehlendem Feld; positiv UND vorzeichengleich, damit dieses Fixture
+            # weiterhin ALLE elf Klauseln besteht.
+            "oos_expectancy": 12.5, "oos_expectancy_winsorized": 10.0,
         }, "global": {}},
     }
     (optimizer_dir / "proposal_SmaCrossoverStrategy_AAA.ETORO.json").write_text(
