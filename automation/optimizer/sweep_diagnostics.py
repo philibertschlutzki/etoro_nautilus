@@ -165,16 +165,19 @@ _FREQUENCY_DRIVING_PARAMS = (
 def _widen_bounds_toward(direction_by_param: dict[str, str],
                          current_bounds: dict[str, tuple[float, float]], *,
                          widen_fraction: float) -> dict[str, list[float]]:
-    """Issue #761/#763/#777 — gemeinsame Weitungs-Arithmetik: ``direction_by_param[param] == "low"``
-    senkt die Untergrenze um ``widen_fraction`` der aktuellen Spannweite ab (Obergrenze bleibt),
-    ``"high"`` hebt die Obergrenze an (Untergrenze bleibt). Parameter ohne bekannte Bounds werden
-    übersprungen (defensiv).
+    """Issue #761/#763/#777/#1066 — gemeinsame Weitungs-Arithmetik: ``direction_by_param[param] ==
+    "low"`` senkt die Untergrenze um ``widen_fraction`` der aktuellen Spannweite ab (Obergrenze
+    bleibt), ``"high"`` hebt die Obergrenze an (Untergrenze bleibt). Parameter ohne bekannte Bounds
+    werden übersprungen (defensiv).
 
-    Issue #777 — ``max_bars_in_trade`` bleibt HART durch die `#714`-Zeitbox-Obergrenze gedeckelt
-    (``spaces._MAX_BARS_IN_TRADE_CAP``, Single Source of Truth) — ein automatischer Bounds-
-    Vorschlag darf diese GR-01-Invariante nie überschreiben, egal wie stark der Boundary-Hit-/
-    Kollaps-Befund eine Weitung nahelegt."""
-    from automation.optimizer.spaces import _MAX_BARS_IN_TRADE_CAP
+    Issue #1066 (Pitfall #371) — JEDER Vorschlag wird nach der Weitung SYMMETRISCH gegen
+    ``spaces._PARAM_DOMAIN_REGISTRY`` geklammert (vorher nur ``max_bars_in_trade`` und nur nach
+    oben, siehe #777). Root-Cause #1066: ein Rückschrieb, der bei jedem Lauf um denselben Betrag
+    weitet, erreicht ohne Klammer nach ``k`` Anwendungen ``lo₀ − k·widen_fraction·span₀`` —
+    negative Perioden, negative Bar-Anzahlen, ein RSI-Schwellwert ausserhalb [0, 100]. Die Klammer
+    macht jede EINZELNE Anwendung bereits konvergent gegen ``min_admissible``/``max_admissible``,
+    unabhängig davon, wie oft sie wiederholt wird — es gibt keinen Divergenzpfad mehr."""
+    from automation.optimizer.spaces import _MAX_BARS_IN_TRADE_CAP, clamp_param_bounds
     proposals: dict[str, list[float]] = {}
     for param, direction in direction_by_param.items():
         if param not in current_bounds:
@@ -182,12 +185,14 @@ def _widen_bounds_toward(direction_by_param: dict[str, str],
         lo, hi = current_bounds[param]
         span = (hi - lo) or 1.0
         if direction == "low":
-            proposals[param] = [round(lo - widen_fraction * span, 6), hi]
+            new_lo, new_hi = round(lo - widen_fraction * span, 6), hi
         else:
             new_hi = round(hi + widen_fraction * span, 6)
             if param == "max_bars_in_trade":
                 new_hi = min(new_hi, float(_MAX_BARS_IN_TRADE_CAP))
-            proposals[param] = [lo, new_hi]
+            new_lo, new_hi = lo, new_hi
+        clamped_lo, clamped_hi = clamp_param_bounds(param, new_lo, new_hi)
+        proposals[param] = [clamped_lo, clamped_hi]
     return proposals
 
 
@@ -568,6 +573,11 @@ def recommend_diagnosis_action(strategy: str, symbol: str, diagnosis: dict, *,
 
 _DEFAULT_EXPIRES_AFTER_RUNS = 10
 
+# Issue #1066 Fix Punkt 3 — Deckel für die Anzahl aufeinanderfolgender Weitungs-Übernahmen je
+# (Strategie, Symbol, Parameter), unabhängig von der Domänenklammer (siehe record_diagnosed_pair-
+# Docstring).
+_MAX_WIDEN_APPLICATIONS = 2
+
 
 def _read_diagnostic_writeback_enabled() -> bool:
     """Issue #926 Fix 1 — ``optimizer.json['diagnostic_writeback_enabled']`` (Default ``True``).
@@ -663,7 +673,16 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     JEDER Rückschrieb unterdrückt (No-Op, gibt nur den Cache-Pfad zurück). Schutz gegen eine
     Diagnose, die auf einer durch #913 (0 % definierter oos_psr) verzerrten Kohorte lief — genau
     der Zustand, der diesen Lauf zu Strike 1 von 2 gemacht hätte, wäre der Schalter nicht gesetzt
-    gewesen."""
+    gewesen.
+
+    Issue #1066 Fix Punkt 3 (Pitfall #371) — ZUSÄTZLICH zur Domänenklammer (``_widen_bounds_toward``,
+    ``spaces.clamp_param_bounds``) trägt jeder ``'search_space_override'``-Eintrag jetzt
+    ``widen_applications`` (``{param: Anzahl bereits übernommener Weitungen IN FOLGE}``). Ab
+    ``_MAX_WIDEN_APPLICATIONS`` (Default 2) je Parameter wird ein NEUER, weiter geweiteter Vorschlag
+    NICHT mehr übernommen — der zuletzt gespeicherte ``proposed_bounds``-Wert für diesen Parameter
+    bleibt stehen (``n_runs_confirmed``/``runs_since_recorded`` laufen unabhängig davon weiter).
+    Zweite, unabhängige Sperre neben der Domänenklammer: selbst ein Parameter, dessen Domäne (noch)
+    nicht im Register steht, kann so nicht unbegrenzt oft nachgeweitet werden."""
     if not _read_diagnostic_writeback_enabled():
         return _diagnosed_pairs_cache_path(work_dir)
     if recommendation.get("binding_cause") in (None, "none", "no_data"):
@@ -674,15 +693,75 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     entry = dict(recommendation)
     entry.setdefault("expires_after_runs", _DEFAULT_EXPIRES_AFTER_RUNS)
     entry["runs_since_recorded"] = 0
-    if (prior and prior.get("action") == entry.get("action")
-            and prior.get("binding_cause") == entry.get("binding_cause")):
+    same_series = bool(
+        prior and prior.get("action") == entry.get("action")
+        and prior.get("binding_cause") == entry.get("binding_cause"))
+    if same_series:
         entry["n_runs_confirmed"] = int(prior.get("n_runs_confirmed", 1)) + 1
         entry["first_seen_run_id"] = prior.get("first_seen_run_id", run_id)
     else:
         entry["n_runs_confirmed"] = 1
         entry["first_seen_run_id"] = run_id
+    if entry.get("action") == "search_space_override" and entry.get("proposed_bounds"):
+        prior_widen_applications = (prior or {}).get("widen_applications", {}) if same_series else {}
+        prior_proposed_bounds = (prior or {}).get("proposed_bounds", {}) if same_series else {}
+        widen_applications = dict(prior_widen_applications)
+        new_proposed_bounds = dict(entry["proposed_bounds"])
+        for param, bound in entry["proposed_bounds"].items():
+            count = int(prior_widen_applications.get(param, 0))
+            if count >= _MAX_WIDEN_APPLICATIONS and param in prior_proposed_bounds:
+                new_proposed_bounds[param] = prior_proposed_bounds[param]
+            else:
+                widen_applications[param] = count + 1
+        entry["proposed_bounds"] = new_proposed_bounds
+        entry["widen_applications"] = widen_applications
     cache[key] = entry
     return _save_diagnosed_pairs_cache(cache, work_dir=work_dir)
+
+
+def migrate_search_space_override_cache(*, work_dir: Path | None = None) -> dict:
+    """Issue #1066 Fix Punkt 5 — EINMALIGE Migration eines VOR diesem Fix geschriebenen #761-Caches:
+    jeder ``proposed_bounds``-Eintrag wird gegen ``spaces._PARAM_DOMAIN_REGISTRY``
+    (``spaces.clamp_param_bounds``) geklammert. Ein Eintrag mit einer Untergrenze unterhalb der
+    Domäne (z. B. ``ema_period: [-325.0, 300]``, Beweis B-5 im #866-Katalog) wird auf den
+    zulässigen Bereich zurückgesetzt, statt weiter negativ gesampelt zu werden.
+
+    Idempotent (ein bereits geklammerter Cache bleibt unverändert) und sicher wiederholt aufrufbar
+    (z. B. als Vorlauf-Schritt vor jedem Sweep, analog ``purge_stale_studies``). Rückgabe:
+    ``{'entries_checked', 'entries_migrated', 'params_clamped'}`` — Telemetrie für den Aufrufer,
+    kein I/O ausser dem Cache selbst."""
+    from automation.optimizer.spaces import clamp_param_bounds
+
+    cache = load_diagnosed_pairs_cache(work_dir)
+    entries_migrated = 0
+    params_clamped: list[dict] = []
+    for entry in cache.values():
+        proposed = entry.get("proposed_bounds")
+        if not proposed:
+            continue
+        changed = False
+        new_proposed = {}
+        for param, bound in proposed.items():
+            if not bound or len(bound) != 2:
+                new_proposed[param] = bound
+                continue
+            clamped = list(clamp_param_bounds(param, bound[0], bound[1]))
+            if clamped != list(bound):
+                changed = True
+                params_clamped.append({
+                    "strategy": entry.get("strategy"), "symbol": entry.get("symbol"),
+                    "param": param, "before": list(bound), "after": clamped,
+                })
+            new_proposed[param] = clamped
+        if changed:
+            entry["proposed_bounds"] = new_proposed
+            entries_migrated += 1
+    if entries_migrated:
+        _save_diagnosed_pairs_cache(cache, work_dir=work_dir)
+    return {
+        "entries_checked": len(cache), "entries_migrated": entries_migrated,
+        "params_clamped": params_clamped,
+    }
 
 
 def age_diagnosed_pairs_cache(*, work_dir: Path | None = None) -> dict[tuple[str, str], dict]:

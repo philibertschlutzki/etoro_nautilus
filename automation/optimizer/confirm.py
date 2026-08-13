@@ -11,6 +11,7 @@ from automation.optimizer.manifest import WORK, catalog_fingerprint
 from automation.log_manager import emit_execution_event
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
+from automation.optimizer import reward as _reward
 
 # Issue #659 — gültige Werte für tournament.json['promotion_correction_mode']. "conjunction"
 # (Default, fehlt der Key) ist bit-identisch zum Pre-#659-Verhalten (DSR UND Bootstrap-CI UND PBO
@@ -550,14 +551,63 @@ def _metrics_dict(m) -> dict:
     }
 
 
-def _holdout_binding_gate(gate_deltas: dict | None) -> str | None:
+def _active_holdout_gate_deltas(gate_deltas: dict | None, tournament_cfg: dict | None) -> dict:
+    """Issue #1075 — filtert ein rohes ``holdout_gate_deltas``-Dict auf die aktuell AKTIVE
+    Gate-Menge (``reward._active_gate_collinearity_keys`` — dieselbe Laufzeit-Quelle wie #1074s
+    Binding-Attribution in ``report._split_near_miss_deltas``, KEINE zweite gepflegte Liste).
+    Deltas zu inaktiven/deaktivierten Gates bleiben im ROHEN ``holdout_gate_deltas`` als Telemetrie
+    erhalten, sind aber für die Attribution (``_holdout_binding_gate``/``_holdout_tightest_margin``)
+    nicht mehr sichtbar — dieselbe #790-Garantie wie bei der OOS-seitigen Binding-Attribution.
+
+    Fehlt ``tournament_cfg`` GANZ, oder trägt es keinen ``eligible_requires_all``-Schlüssel (Legacy-
+    /Test-Aufrufer, die die aktive Gate-Menge nicht kennen), bleibt der Filter WIRKUNGSLOS (jedes
+    numerische Delta gilt als aktiv) — bit-identisch zum Pre-#1075-Verhalten. Ein tatsächlich
+    KONFIGURIERTER (auch leerer) ``eligible_requires_all``-Schlüssel wird dagegen ernst genommen."""
+    if not gate_deltas:
+        return {}
+    numeric = {k: v for k, v in gate_deltas.items() if isinstance(v, (int, float))}
+    if tournament_cfg is None or "eligible_requires_all" not in tournament_cfg:
+        return numeric
+    active_keys = set(_reward._active_gate_collinearity_keys(tournament_cfg))
+    return {k: v for k, v in numeric.items() if k in active_keys}
+
+
+def _holdout_binding_gate(gate_deltas: dict | None, tournament_cfg: dict | None = None) -> str | None:
     """Issue #786 — das Gate mit dem NEGATIVSTEN normierten Delta (das am staerksten verfehlte) ueber
-    die tatsaechlich numerisch vorliegenden Eintraege von ``holdout_gate_deltas``. ``None`` bei
-    leerem/fehlendem Dict (kein Urteil moeglich)."""
-    numeric = {k: v for k, v in (gate_deltas or {}).items() if isinstance(v, (int, float))}
-    if not numeric:
+    die tatsaechlich numerisch vorliegenden, AKTIVEN Eintraege von ``holdout_gate_deltas``. ``None``
+    bei leerem/fehlendem Dict (kein Urteil moeglich).
+
+    Issue #1075 (Pitfall #375-Klasse, dieselbe Ursache wie #1074) — normiert die Deltas
+    (``reward.normalize_gate_deltas_for_binding``) VOR dem ``argmin``: ``oos_min_expectancy`` hat
+    die kleinsten natürlichen Einheiten und gewann vorher IMMER, unabhängig davon, ob der Holdout
+    tatsächlich an dieser Grösse scheiterte. Filtert zusätzlich auf die AKTIVE Gate-Menge
+    (``_active_holdout_gate_deltas``) — ein seit #697 deaktiviertes Gate (z. B.
+    ``oos_min_expectancy``, kein ``eligible_requires_all``-Mitglied mehr) kann nicht mehr
+    "binden"."""
+    active = _active_holdout_gate_deltas(gate_deltas, tournament_cfg)
+    if not active:
         return None
-    return min(numeric, key=lambda k: numeric[k])
+    normalized = _reward.normalize_gate_deltas_for_binding(active, tournament_cfg or {})
+    if not normalized:
+        return None
+    return min(normalized, key=lambda k: normalized[k])
+
+
+def _holdout_tightest_margin(gate_deltas: dict | None, tournament_cfg: dict | None = None) -> dict | None:
+    """Issue #1075 — die semantisch EHRLICHE Aussage für einen BESTANDENEN Holdout: kein Gate
+    "bindet" (nichts ist gescheitert), aber eines lag am nächsten an der Schwelle. Rückgabe
+    ``{'gate': ..., 'margin_normalized': ...}`` — das Gate mit dem KLEINSTEN normierten Delta ÜBER
+    ALLEN nicht-negativen (bestandenen) aktiven Deltas. ``None``, wenn keine aktiven,
+    numerisch positiven Deltas vorliegen (z. B. alles fehlt)."""
+    active = _active_holdout_gate_deltas(gate_deltas, tournament_cfg)
+    if not active:
+        return None
+    normalized = _reward.normalize_gate_deltas_for_binding(active, tournament_cfg or {})
+    passing = {k: v for k, v in normalized.items() if v >= 0.0}
+    if not passing:
+        return None
+    tightest = min(passing, key=lambda k: passing[k])
+    return {"gate": tightest, "margin_normalized": round(passing[tightest], 4)}
 
 
 def _holdout_metrics_for_params(strategy: str, symbol: str, params: dict,
@@ -1023,8 +1073,14 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 f"EXPLIZITE Entscheidung, EIGENER Status statt READY_FOR_PR)."
             )
             metrics_global_out = _metrics_dict(m_global)
-            metrics_global_out["holdout_binding_gate"] = _holdout_binding_gate(
-                metrics_global_out["holdout_gate_deltas"])
+            # Issue #1075 (Pitfall #375-Klasse) — dieser Zweig wird NUR erreicht, wenn der globale
+            # Default das Holdout-Gate bereits bestanden hat (global_default_promotable) — kein
+            # Gate hat "gebunden" (nichts ist gescheitert). holdout_binding_gate bleibt None;
+            # holdout_tightest_margin ist die semantisch ehrliche Aussage (welches Gate am
+            # nächsten an der Schwelle lag).
+            metrics_global_out["holdout_binding_gate"] = None
+            metrics_global_out["holdout_tightest_margin"] = _holdout_tightest_margin(
+                metrics_global_out["holdout_gate_deltas"], tournament_cfg)
             if g_sr0 is not None:
                 metrics_global_out["deflated_sr0"] = g_sr0
                 metrics_global_out["deflated_dsr"] = g_dsr
@@ -1777,8 +1833,17 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # Issue #786 — das bindende Holdout-Gate (negativstes normiertes Delta) fuer JEDE Study mit
     # einem erreichten Holdout-Lauf, nicht nur bei REJECT_HOLDOUT_GATE — macht die haeufigste
     # Ablehnungsursache des gesamten Systems (74,5% der Studies mit eligiblen Trials) attribuierbar.
-    best_result["metrics_symbol"]["holdout_binding_gate"] = _holdout_binding_gate(
-        best_result["metrics_symbol"]["holdout_gate_deltas"])
+    # Issue #1075 (Pitfall #375-Klasse) — NUR gesetzt, wenn die Holdout-Stufe TATSAECHLICH FAILt
+    # (holdout_passed is False): ein bestandener Holdout hat kein "bindendes" Gate (nichts ist
+    # gescheitert) — holdout_tightest_margin ersetzt es dann als ehrliche Aussage.
+    if holdout_passed:
+        best_result["metrics_symbol"]["holdout_binding_gate"] = None
+        best_result["metrics_symbol"]["holdout_tightest_margin"] = _holdout_tightest_margin(
+            best_result["metrics_symbol"]["holdout_gate_deltas"], tournament_cfg)
+    else:
+        best_result["metrics_symbol"]["holdout_binding_gate"] = _holdout_binding_gate(
+            best_result["metrics_symbol"]["holdout_gate_deltas"], tournament_cfg)
+        best_result["metrics_symbol"]["holdout_tightest_margin"] = None
 
     # Issue #668 — die explizite Any-Arm-Policy-Entscheidung im Winner-Eintrag, sobald sie eine
     # Wirkung hatte (Trials wurden gerettet oder wären ohne Policy gerettet worden) — sichtbar,

@@ -61,11 +61,38 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
     entry = (_load_search_space_overrides().get(strategy) or {}).get(symbol) or {}
     bound = entry.get(param)
     if bound and len(bound) == 2:
+        # Issue #1066 — eine kuratierte Überschreibung ist eine menschliche PR-Entscheidung
+        # (``search_space_overrides.json``); ein Wert ausserhalb des Domänenregisters ist ein
+        # Config-Fehler und wird FAIL-LOUD abgelehnt, statt negativ/degeneriert zu sampeln
+        # (Akzeptanzkriterium #1066/4).
+        if not is_bounds_admissible(param, bound[0], bound[1]):
+            raise ValueError(
+                f"SEARCH_SPACE_OVERRIDE_INADMISSIBLE: kuratierter Override "
+                f"{strategy}/{symbol}.{param}={bound!r} liegt ausserhalb des Domänenregisters "
+                f"{_PARAM_DOMAIN_REGISTRY.get(param)!r} — search_space_overrides.json korrigieren."
+            )
         return bound[0], bound[1]
     auto_entry = (_load_auto_proposed_bounds().get(strategy) or {}).get(symbol) or {}
     auto_bound = auto_entry.get(param)
     if auto_bound and len(auto_bound) == 2:
         import logging
+        # Issue #1066 — ein AUTOMATISCH vorgeschlagener Override (#761-Diagnose-Cache) kann von
+        # VOR diesem Fix geschriebenen, nicht geklammerten Einträgen stammen (Beweis B-5: negative
+        # ``ema_period``-Untergrenzen). Anders als bei der kuratierten Überschreibung ist das kein
+        # Grund, den Sweep abzubrechen — der Cache ist ein Selbstheilungsmechanismus, kein
+        # menschlich geprüfter Vertrag: der Eintrag wird verworfen (fällt auf die universellen
+        # Default-Bounds zurück) und laut protokolliert, statt negativ zu sampeln.
+        if not is_bounds_admissible(param, auto_bound[0], auto_bound[1]):
+            _dom = _PARAM_DOMAIN_REGISTRY.get(param)
+            logging.getLogger("optimizer").warning(
+                "[JSON_EVENT] " + _json.dumps({
+                    "event_type": "SEARCH_SPACE_OVERRIDE_INADMISSIBLE",
+                    "strategy": strategy, "symbol": symbol, "param": param,
+                    "rejected_bounds": [auto_bound[0], auto_bound[1]],
+                    "domain": [_dom[0], _dom[1]] if _dom else None,
+                    "default_bounds": [low, high],
+                }))
+            return low, high
         logging.getLogger("optimizer").info(
             "[JSON_EVENT] " + _json.dumps({
                 "event_type": "SEARCH_SPACE_AUTO_OVERRIDE",
@@ -81,6 +108,84 @@ def _bounds_for(strategy: str, symbol: str | None, param: str, low, high):
 # Source of Truth über einen Import statt einer eigenen Kopie des Literals, konsistent mit
 # ``hourly_strategy_base.MAX_BARS_IN_TRADE_HARD_CAP``/``invariants._MAX_BARS_IN_TRADE_CAP``.
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
+# Issue #1067 — die symmetrische Untergrenze zu ``_MAX_BARS_IN_TRADE_CAP`` (Single Source of Truth,
+# siehe _contracts.py-Docstring).
+from automation.optimizer._contracts import MIN_BARS_IN_TRADE_FLOOR as _MIN_BARS_IN_TRADE_FLOOR
+
+
+# Issue #1066 (Pitfall #371) — Domänenregister für JEDEN Parameter, den ein automatischer
+# Suchraum-Rückschrieb (``sweep_diagnostics._widen_bounds_toward``, Issue #761/#763) oder eine
+# kuratierte Überschreibung (``search_space_overrides.json``) erreichen kann. Jeder Eintrag
+# begrenzt SYMMETRISCH (Unter- UND Obergrenze) — vor diesem Fix klammerte nur
+# ``max_bars_in_trade`` nach oben (``_MAX_BARS_IN_TRADE_CAP``), jeder andere Parameter und jede
+# Untergrenze blieb frei. Ein akkumulierender Rückschrieb, der bei jedem Lauf um denselben Betrag
+# weitet, erreicht sonst nach k Läufen ``lo₀ − k·Δ`` — negative Perioden, negative Bar-Anzahlen,
+# ein RSI-Schwellwert unterhalb des Wertebereichs von RSI (Beweis B-5 im #866-Katalog).
+# ``(min_admissible, max_admissible, dtype)``. Grosszügig gegenüber den kuratierten Default-
+# Suchräumen (kein bestehender ``sample_params``-Bound wird durch dieses Register selbst
+# eingeschränkt) — es klammert nur, wohin eine AUTOMATISCHE Weitung/Überschreibung noch gehen darf.
+_PARAM_DOMAIN_REGISTRY: dict[str, tuple[float, float, type]] = {
+    "ema_period": (2, 400, int),
+    "sma_period": (2, 400, int),
+    "donchian_period": (2, 150, int),
+    "atr_period": (2, 60, int),
+    "rsi_period": (2, 60, int),
+    "rsi_oversold": (1.0, 49.0, float),
+    "rsi_overbought": (51.0, 99.0, float),
+    "cooldown_bars": (1, 96, int),
+    "keltner_period": (2, 100, int),
+    "keltner_atr_period": (2, 100, int),
+    "keltner_multiplier": (0.1, 10.0, float),
+    "adx_period": (2, 60, int),
+    "bb_period": (2, 100, int),
+    "vwap_period": (2, 150, int),
+    "or_bars": (1, 24, int),
+    "min_holding_time": (0, _MAX_BARS_IN_TRADE_CAP, int),
+    "min_squeeze_bars": (1, 96, int),
+    "price_breakout_period": (2, 150, int),
+    "squeeze_ratio": (0.1, 3.0, float),
+    "gap_threshold_pct": (0.0001, 0.5, float),
+    "deviation_threshold": (0.0001, 0.5, float),
+    "max_bars_in_trade": (_MIN_BARS_IN_TRADE_FLOOR, _MAX_BARS_IN_TRADE_CAP, int),
+}
+
+
+def clamp_param_bounds(param: str, lo: float, hi: float) -> tuple[float, float]:
+    """Issue #1066 — klammert ``(lo, hi)`` symmetrisch gegen ``_PARAM_DOMAIN_REGISTRY[param]``.
+    Parameter ohne Registereintrag sind unverändert (kein Zero-Hardcoding-Bruch für Parameter, die
+    heute keinen automatischen Rückschrieb erreichen können). Ein Wert, der bereits INNERHALB der
+    Domäne liegt, bleibt UNVERÄNDERT (kein Rundungs-/Typ-Zwang über ``dtype`` — das Register
+    dokumentiert nur die zulässige Spannweite, nicht die Präzision der Weitungs-Arithmetik) — nur
+    eine tatsächliche Grenzverletzung wird auf den jeweiligen Domänen-Randwert zurückgesetzt.
+    Kollabiert ``lo`` nach dem Klammern über ``hi``, wird auf den zulässigen Einzelpunkt
+    ``(min_admissible, min_admissible)`` zurückgesetzt (defensiv — sollte bei ``lo <= hi`` in der
+    Eingabe nie eintreten)."""
+    dom = _PARAM_DOMAIN_REGISTRY.get(param)
+    if dom is None:
+        return lo, hi
+    dom_lo, dom_hi, _dtype = dom
+    clamped_lo = max(lo, dom_lo)
+    clamped_hi = min(hi, dom_hi)
+    if clamped_lo > clamped_hi:
+        clamped_lo = clamped_hi = dom_lo
+    return clamped_lo, clamped_hi
+
+
+def is_bounds_admissible(param: str, lo: float, hi: float) -> bool:
+    """Issue #1066 — ``True``, wenn ``(lo, hi)`` innerhalb ``_PARAM_DOMAIN_REGISTRY[param]`` liegt
+    (oder der Parameter kein Registereintrag hat — dann ist jeder Wert per Definition zulässig).
+    Konsumiert von ``_bounds_for`` (Ablehnung eines Cache-/Config-Werts) UND
+    ``invariants.check_search_space_override_admissible`` (Report-Wächter über den gesamten
+    #761-Cache)."""
+    dom = _PARAM_DOMAIN_REGISTRY.get(param)
+    if dom is None:
+        return True
+    dom_lo, dom_hi, _dtype = dom
+    try:
+        lo_f, hi_f = float(lo), float(hi)
+    except (TypeError, ValueError):
+        return False
+    return lo_f <= hi_f and lo_f >= dom_lo and hi_f <= dom_hi
 
 
 def _dyn_tp_params(trial) -> dict:

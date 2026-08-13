@@ -728,17 +728,41 @@ def load_champion_entry(strategy: str, symbol: str, *, opt_data: dict) -> dict |
     return entry
 
 
+def _champion_store_has_any_entry() -> bool:
+    """Issue #1084 Fix Punkt 2 (Katalog #866-2, Kohorte E, Root-Cause c) — True, wenn WENIGSTENS
+    EIN Champion-Store-Eintrag existiert, für IRGENDEIN (Strategie, Symbol)-Paar. ``_champion_path``
+    ist PAAR-skopiert (eine Datei je Paar) — es gibt keinen einzigen kombinierten "Store", dessen
+    Leerheit eine einzelne Existenzprüfung beantworten könnte. ``load_champion_entry_with_reason``
+    nannte ``entry is None`` vorher UNBEDINGT ``'STORE_EMPTY'``, obwohl das für ein Paar ohne
+    eigenen Eintrag in einem sonst gefüllten Store (12 von 14 Paaren im #866-2-Referenzlauf) eine
+    Fehlbenennung ist — der Name suggeriert einen leeren Store, obwohl 2 andere Paare durchaus
+    Einträge tragen. Fail-open (``False``) bei einem Lesefehler — dieselbe Konvention wie überall
+    im Champion-Store."""
+    try:
+        return next(_champions_dir().glob("champion_*.json"), None) is not None
+    except OSError:
+        return False
+
+
 def load_champion_entry_with_reason(strategy: str, symbol: str, *,
                                     opt_data: dict) -> tuple[dict | None, str | None]:
     """Issue #910 Fix 2 — wie ``load_champion_entry``, aber unterscheidet die beiden Ursachen, die
     vorher beide als ``None`` (und stromabwärts als derselbe ``NO_ADMISSIBLE_ENTRY``-String)
-    kollabierten: ``'STORE_EMPTY'`` (kein Eintrag existiert — die Kette hat schlicht noch nie
-    geschrieben) vs. ``champion_is_admissible``s granularem Reason-Code (ein Eintrag EXISTIERT,
-    ist aber inadmissibel — z. B. ``'EMPTY_PARAMS'``/``'REJECT_HOLDOUT_GATE'``/...). Der Report
-    konnte vorher nicht sagen, ob die Kette nie startet oder ständig scheitert."""
+    kollabierten: ein Eintrag EXISTIERT, ist aber inadmissibel (``champion_is_admissible``s
+    granularer Reason-Code, z. B. ``'EMPTY_PARAMS'``/``'REJECT_HOLDOUT_GATE'``/...) vs. KEIN
+    Eintrag existiert für dieses Paar. Der Report konnte vorher nicht sagen, ob die Kette nie
+    startet oder ständig scheitert.
+
+    Issue #1084 Fix Punkt 2 — der zweite Fall (kein Eintrag) trägt seither ZWEI unterscheidbare
+    Reason-Codes statt des einen, pauschalen ``'STORE_EMPTY'``: ``'STORE_EMPTY'`` NUR, wenn der
+    Store insgesamt leer ist (``_champion_store_has_any_entry`` False — die Kette hat noch nie
+    für IRGENDEIN Paar geschrieben); ``'NO_ENTRY_FOR_PAIR'``, wenn der Store Einträge trägt, nur
+    keinen für DIESES Paar (der pair-skopierte Normalfall, solange nicht jedes Paar bereits einen
+    admissiblen Kandidaten hervorgebracht hat, siehe ``store_champion``-Docstring)."""
     entry = _read_entry(_champion_path(strategy, symbol))
     if entry is None:
-        return None, "STORE_EMPTY"
+        reason = "STORE_EMPTY" if not _champion_store_has_any_entry() else "NO_ENTRY_FOR_PAIR"
+        return None, reason
     ok, reason = champion_is_admissible(entry, opt_data)
     return (entry, None) if ok else (None, reason or "INADMISSIBLE")
 

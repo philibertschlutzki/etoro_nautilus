@@ -22,7 +22,7 @@ def test_config_without_min_expectancy_puts_it_in_soft_never_binding():
         "oos_min_trades": 0.5, "oos_max_drawdown": 0.1, "oos_min_psr": -0.05,
         "oos_min_expectancy": -0.30, "oos_min_profitable_folds_frac": -0.90,
     }
-    binding, soft, binding_gate = _split_near_miss_deltas(raw, cfg)
+    binding, soft, binding_gate, _binding_normalized = _split_near_miss_deltas(raw, cfg)
     assert "oos_min_expectancy" in soft
     assert "oos_min_expectancy" not in binding
     assert "oos_min_profitable_folds_frac" in soft
@@ -38,7 +38,7 @@ def test_binding_gate_is_always_a_key_from_requires_all_or_any():
         "oos_min_trades": 0.3, "oos_max_drawdown": 0.1, "oos_min_psr": 0.2,
         "oos_min_excess_return": -0.01, "oos_min_expectancy": -0.99, "any_condition": 0.4,
     }
-    binding, soft, binding_gate = _split_near_miss_deltas(raw, cfg)
+    binding, soft, binding_gate, _binding_normalized = _split_near_miss_deltas(raw, cfg)
     active_keys = {"oos_min_trades", "oos_max_drawdown", "oos_min_psr", "oos_min_excess_return",
                   "any_condition"}
     assert binding_gate in active_keys
@@ -47,7 +47,7 @@ def test_binding_gate_is_always_a_key_from_requires_all_or_any():
 
 def test_empty_raw_deltas_yields_empty_binding_and_soft():
     cfg = _cfg(["min_trades"])
-    binding, soft, binding_gate = _split_near_miss_deltas({}, cfg)
+    binding, soft, binding_gate, _binding_normalized = _split_near_miss_deltas({}, cfg)
     assert binding == {}
     assert soft == {}
     assert binding_gate is None
@@ -59,7 +59,7 @@ def test_disabled_gate_key_never_appears_in_binding_even_if_most_negative():
     cfg = _cfg(["min_trades", "oos_min_psr"], ["min_profit_factor"])
     raw = {"oos_min_trades": 0.1, "oos_min_psr": 0.05,
           "oos_min_profitable_folds_frac": -0.90, "oos_min_expectancy": -0.85}
-    binding, soft, binding_gate = _split_near_miss_deltas(raw, cfg)
+    binding, soft, binding_gate, _binding_normalized = _split_near_miss_deltas(raw, cfg)
     assert binding_gate in ("oos_min_trades", "oos_min_psr")
     assert "oos_min_profitable_folds_frac" not in binding
     assert "oos_min_expectancy" not in binding
@@ -81,7 +81,9 @@ def test_report_record_carries_split_structure(monkeypatch):
     tournament_cfg = _cfg(["min_trades"], ["min_profit_factor"])
     proposal = {"symbol": "X", "strategy": "Y"}
     record, _checks = _study_record(proposal, _S(), tournament_cfg)
-    assert set(record["near_miss_deltas"].keys()) == {"binding", "soft"}
+    # Issue #1074 — near_miss_deltas trägt seit diesem Fix zusätzlich "binding_normalized"
+    # (dimensionslos, die Grundlage für binding_gate) neben den unveränderten "binding"/"soft".
+    assert set(record["near_miss_deltas"].keys()) == {"binding", "soft", "binding_normalized"}
     assert "oos_min_expectancy" in record["near_miss_deltas"]["soft"]
     assert "oos_min_trades" in record["near_miss_deltas"]["binding"]
     assert record["binding_gate"] == "oos_min_trades"

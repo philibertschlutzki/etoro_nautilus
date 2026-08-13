@@ -879,6 +879,47 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     )
 
 
+def check_n_family_partition(n_family: dict[str, int],
+                             n_family_stage1: dict[str, dict[str, int]]) -> InvariantResult:
+    """Issue #1080 (Katalog #866-2) — ``n_family[symbol]`` (die familienweite Multiple-Testing-
+    Multiplizität, ``sweep._family_n_from_proposals``) muss GENAU der Summe ihrer eigenen Zerlegung
+    entsprechen: ``n_family[symbol] == Σ n_family_stage1[symbol][*]`` (die N1-Zahl JEDER Strategie
+    auf diesem Symbol, #826). Eine Lücke beweist, dass mindestens eine Study aus der Summe fehlt —
+    im #866-Katalog: ``n_family['TSLA.ETORO'] = 467`` gegen ``Σ n_selection_statistic_available =
+    1619`` (die seit #822 vorgeschriebene Grundgesamtheit) — TrendPullbackStrategy fehlte
+    vollständig im ``n_family_stage1``-Block (#1080 Fix: ``report._family_n_stages`` fällt jetzt auf
+    ``n_selection_statistic_available`` zurück, wenn ``n_family_stage1`` fehlt). Eine zu niedrig
+    angesetzte Familien-Multiplizität unterschätzt Φ⁻¹(1−1/n) und begünstigt JEDE Promotions-
+    entscheidung mit familienweiter Korrektur."""
+    symbols_with_data = {s for s in n_family if s in n_family_stage1}
+    if not symbols_with_data:
+        return InvariantResult(
+            name="check_n_family_partition",
+            passed=True,
+            expected="n_family[symbol] == Σ n_family_stage1[symbol][*]",
+            actual=None,
+            detail="Keine Symbole mit sowohl n_family als auch n_family_stage1 — nicht anwendbar.",
+        )
+    offenders: dict[str, dict[str, int]] = {}
+    for symbol in sorted(symbols_with_data):
+        total = int(n_family.get(symbol) or 0)
+        partition_sum = sum(n_family_stage1[symbol].values())
+        if total != partition_sum:
+            offenders[symbol] = {"n_family": total, "sum_n_family_stage1": partition_sum}
+    passed = not offenders
+    return InvariantResult(
+        name="check_n_family_partition",
+        passed=passed,
+        expected="n_family[symbol] == Σ n_family_stage1[symbol][*]",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) mit einer Lücke zwischen n_family und der Summe seiner "
+                f"eigenen Stage1-Zerlegung: {offenders} — mindestens eine Study fehlt in der Summe "
+                "(#1080)."),
+    )
+
+
 def check_deflation_cluster_coverage(holdout_metrics: dict, *, min_coverage: float = 0.9) -> InvariantResult:
     """Issue #813-Regressionswächter.
 
@@ -1562,26 +1603,40 @@ def check_adaptive_diagnostic_rate(
 def check_inference_diagnostics_concentration(
     trials: list[dict], *, n_trials_informative: int | None,
     guard_dominance_threshold: float = 0.10,
+    n_trials: int | None = None,
 ) -> InvariantResult:
     """Issue #886 (Pitfall #276) — ersetzt die reine Anwesenheits-Prüfung für die #863/#864
     "regulären dritten Ausgänge" (``SORTINO_GUARD_TRIPPED``/``SORTINO_INSUFFICIENT_DOWNSIDE``)
     durch eine KONZENTRATIONS-Prüfung: FAIL, wenn eine Study mehr als
-    ``guard_dominance_threshold`` ihrer INFORMATIVEN Trials (Issue #885 — ``n_trials_informative``,
-    NICHT die rohe Trial-Zahl) an den Inferenzpfad verliert. Das ist dieselbe Bedingung wie
-    ``run_optimization._emit_study_summary``s ``STUDY_GUARD_DOMINATED`` — dieser Check macht sie
-    zusätzlich zu einer MASCHINELL überprüfbaren #742-Report-Aussage (analog
+    ``guard_dominance_threshold`` ihrer Trials an den Inferenzpfad verliert. Das ist dieselbe
+    Bedingung wie ``run_optimization._emit_study_summary``s ``STUDY_GUARD_DOMINATED`` — dieser
+    Check macht sie zusätzlich zu einer MASCHINELL überprüfbaren #742-Report-Aussage (analog
     ``check_inference_diagnostics_absent``), nicht nur einer Live-Log-Zeile.
 
-    ``n_trials_informative is None`` (Legacy-Report ohne #885-Telemetrie) ⇒ nicht anwendbar
-    (PASS) — kein stiller Fallback auf eine potenziell falsche rohe Trial-Zahl."""
-    if n_trials_informative is None:
+    Issue #1078 (Katalog #866-2, Pitfall #356-Wiederkehr mit exakter Wurzel) — der Nenner ist seit
+    diesem Fix ``n_trials`` (die VOLLE Trial-Zahl dieser Study), NICHT mehr
+    ``n_trials_informative``. Root-Cause: der Zähler (``affected`` — Trials MIT einem
+    censoring-/adaptive-Code) und ``n_trials_informative`` (Trials OHNE einen solchen Code, per
+    Konstruktion) sind ZWEI DISJUNKTE Teilmengen derselben Grundgesamtheit — ein Zähler geteilt
+    durch die GEGENTEIL-Menge ist kein Anteil, sondern ein Verhältnis zwischen zwei
+    komplementären Gruppen (Beweis B-12 im #866-Katalog: Squeeze, 81 zensierte Trials gegen 56
+    informative — 81/56 = 1,4464, strukturell > 1 möglich). ``n_trials`` ist die kommensurable
+    Grundgesamtheit, der ``affected`` per Konstruktion nie überschreiten kann.
+
+    Rückwärtskompatibilität: fehlt ``n_trials`` (Legacy-/Test-Aufrufer), fällt der Nenner auf
+    ``n_trials_informative`` zurück (Pre-#1078-Verhalten, inklusive der #1033-Inkommensurabilitäts-
+    Prüfung als Sicherheitsnetz). ``n_trials_informative is None`` UND ``n_trials is None``
+    (Legacy-Report ohne #885-Telemetrie) ⇒ nicht anwendbar (PASS)."""
+    denominator = n_trials if n_trials is not None else n_trials_informative
+    if denominator is None:
         return InvariantResult(
             name="check_inference_diagnostics_concentration",
             passed=True,
-            expected=f"<= {guard_dominance_threshold:.0%} der informativen Trials mit "
+            expected=f"<= {guard_dominance_threshold:.0%} der Trials mit "
                      "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE",
             actual=None,
-            detail="n_trials_informative unbekannt (Pre-#885-Report) — nicht anwendbar.",
+            detail="Weder n_trials noch n_trials_informative bekannt (Pre-#885-Report) — nicht "
+                   "anwendbar.",
         )
     affected = 0
     for t in trials:
@@ -1590,24 +1645,25 @@ def check_inference_diagnostics_concentration(
             if code in _REGULAR_THIRD_OUTCOME_CODES:
                 affected += 1
                 break
-    fraction = (affected / n_trials_informative) if n_trials_informative > 0 else 0.0
-    # Issue #1033 (Katalog #866, Pitfall #356) — ``affected`` zaehlt hoechstens einmal je Trial
-    # (der ``break`` oben); ``fraction > 1.0`` beweist eine Zaehler/Nenner-Inkommensurabilitaet
-    # (siehe check_adaptive_diagnostic_rate-Kommentar), keinen gueltigen Beobachtungswert.
+    fraction = (affected / denominator) if denominator > 0 else 0.0
+    # Issue #1033 (Katalog #866, Pitfall #356) — Sicherheitsnetz für den Legacy-Nenner-Fallback
+    # (``n_trials`` nicht übergeben): ``fraction > 1.0`` beweist eine Zaehler/Nenner-
+    # Inkommensurabilitaet, keinen gueltigen Beobachtungswert. Mit dem #1078-Nenner (``n_trials``)
+    # kann dieser Zweig strukturell nicht mehr erreicht werden (affected <= n_trials immer).
     if fraction > 1.0:
         return InvariantResult(
             name="check_inference_diagnostics_concentration",
             passed=False,
             expected="Zaehler/Nenner kommensurabel (fraction <= 1.0)",
             actual=round(fraction, 4),
-            detail=f"{affected}/{n_trials_informative} — Zaehler/Nenner nicht kommensurabel "
+            detail=f"{affected}/{denominator} — Zaehler/Nenner nicht kommensurabel "
                    "(Rate > 1.0 ist kein gueltiger Beobachtungswert, #1033).",
         )
     passed = fraction <= guard_dominance_threshold
     return InvariantResult(
         name="check_inference_diagnostics_concentration",
         passed=passed,
-        expected=f"<= {guard_dominance_threshold:.0%} der informativen Trials mit "
+        expected=f"<= {guard_dominance_threshold:.0%} der Trials mit "
                  "SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE",
         actual=round(fraction, 4),
         detail=("OK" if passed else
@@ -1616,7 +1672,7 @@ def check_inference_diagnostics_concentration(
                 # ZENSIERTEN/IRREGULÄREN Ausgänge (SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_
                 # DOWNSIDE), nicht die regulären. Ein Leser, der nur diese Detail-Zeile liest (ohne
                 # das korrekte `expected`-Feld daneben), zog den umgekehrten Schluss.
-                f"{affected}/{n_trials_informative} informative Trials ({fraction:.1%}) wurden vom "
+                f"{affected}/{denominator} Trials ({fraction:.1%}) wurden vom "
                 "Inferenz-Wächter zensiert (SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE, "
                 "kein regulärer Ausgang) — die Suche ist faktisch zensiert (analog "
                 "STUDY_GUARD_DOMINATED, #823)."),
@@ -1636,7 +1692,18 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
     (Budget-Ausführung, Plateau-Anteile, Guard-Dominanz) tragfähig ist — eine Lücke oder
     Doppelzählung hier würde jede dieser Raten still verfälschen.
 
-    ``study_counts`` fehlen die #885-Zähler (Pre-#885-Report) ⇒ nicht anwendbar (PASS)."""
+    ``study_counts`` fehlen die #885-Zähler (Pre-#885-Report) ⇒ nicht anwendbar (PASS).
+
+    Issue #1079 (Pitfall #377) — ZWEITE, unabhängige Identität, wenn ``study_counts`` zusätzlich
+    ``n_evaluable`` trägt (``report._study_record``s trial_attrs-basierter Zähler, eine von
+    ``n_trials_informative`` VÖLLIG UNABHÄNGIG geführte Zählung): ``n_evaluable +
+    n_trials_pruned + n_trials_unevaluable + n_trials_failed == n_trials_total`` muss GENAUSO
+    gelten. Root-Cause #1079: vor der #1079-Quellkorrektur enthielt ``n_evaluable`` fälschlich auch
+    PRUNED-state Trials (deren ``user_attrs`` noch ein veraltetes ``oos_evaluated=True`` trugen) —
+    diese zweite Identität ist der Regressionswächter dagegen, unabhängig von der ersten (die
+    ausschliesslich über ``n_trials_informative`` rechnet und den PRUNED-Fehlalarm daher NICHT
+    sieht). Fehlt ``n_evaluable`` (Pre-#1079-Report) ⇒ nur die erste Identität zählt (bit-identisch
+    zum Pre-#1079-Verhalten)."""
     keys = ("n_trials_total", "n_trials_informative", "n_trials_pruned",
             "n_trials_unevaluable", "n_trials_failed")
     values = {k: study_counts.get(k) for k in keys}
@@ -1653,15 +1720,34 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
     parts_sum = (values["n_trials_informative"] + values["n_trials_pruned"]
                  + values["n_trials_unevaluable"] + values["n_trials_failed"])
     passed = parts_sum == total
+    detail_parts = []
+    if not passed:
+        detail_parts.append(
+            f"Zerlegung ({parts_sum}) != n_trials_total ({total}): {values} — die #885-"
+            "Trial-Kategorien sind nicht disjunkt/vollständig.")
+
+    n_evaluable = study_counts.get("n_evaluable")
+    if n_evaluable is not None:
+        evaluable_parts_sum = (
+            n_evaluable + values["n_trials_pruned"] + values["n_trials_unevaluable"]
+            + values["n_trials_failed"])
+        evaluable_passed = evaluable_parts_sum == total
+        passed = passed and evaluable_passed
+        values = {**values, "n_evaluable": n_evaluable}
+        if not evaluable_passed:
+            detail_parts.append(
+                f"Zweite Identität (#1079): n_evaluable + n_trials_pruned + n_trials_unevaluable + "
+                f"n_trials_failed ({evaluable_parts_sum}) != n_trials_total ({total}) — n_evaluable "
+                "ueberlappt mit einer der anderen Kategorien (z. B. PRUNED-Trials, Beweis B-13 im "
+                "#866-Katalog).")
+
     return InvariantResult(
         name="check_denominator_coherence",
         passed=passed,
         expected="n_trials_informative + n_trials_pruned + n_trials_unevaluable + "
-                 "n_trials_failed == n_trials_total",
+                 "n_trials_failed == n_trials_total (und n_evaluable analog, sofern vorhanden)",
         actual=values,
-        detail=("OK" if passed else
-                f"Zerlegung ({parts_sum}) != n_trials_total ({total}): {values} — die #885-"
-                "Trial-Kategorien sind nicht disjunkt/vollständig."),
+        detail="OK" if passed else " ".join(detail_parts),
     )
 
 
@@ -1898,6 +1984,7 @@ def gate_inventory_table(trials: list[dict], eligible_requires_all: list[str]) -
 
 def check_gate_marginal_contribution(
     study_records: list[dict], *, min_evaluated: int = 500,
+    gate_consolidation_protected: list[str] | None = None,
 ) -> InvariantResult:
     """Issue #970 (Katalog A, P1) — kein Gate ohne jeden marginalen Beitrag darf über eine
     ausreichend grosse Kohorte (``min_evaluated`` OOS-evaluierte Trials, aufsummiert über alle
@@ -1907,7 +1994,18 @@ def check_gate_marginal_contribution(
     jemals die Eligibility-Entscheidung zu ändern.
 
     ``study_records``: Liste mit ``gate_inventory`` (aus ``report._study_record``, Liste von
-    ``{gate, n_rejections, n_solo_rejections, marginal_delta, n_evaluated}``-Dicts)."""
+    ``{gate, n_rejections, n_solo_rejections, marginal_delta, n_evaluated}``-Dicts).
+
+    Issue #1076 (Katalog #866-2, Kohorte D) — ``gate_consolidation_protected``
+    (``tournament.json``, #810) wird jetzt KONSULTIERT: ein geschütztes Gate (``min_trades``/
+    ``max_drawdown`` — eine strukturelle Vorbedingung bzw. eine harte Risikogrenze, #776 explizit
+    behalten) erhält bei ``Σ marginal_delta == 0`` KEINE Entfernungsempfehlung, sondern eine
+    Neukalibrierungs-Empfehlung (die Schwelle selbst ist vermutlich zu lax kalibriert, nicht das
+    Gate selbst überflüssig — dieselbe Kategorienunterscheidung wie #811). Root-Cause #1076:
+    fünf Gate-Entfernungen (#677/#697/#776/#960/#848) wurden bereits auf der Marginal-Delta-
+    Evidenz dieses Checks vollzogen; ohne diese Unterscheidung würde eine sechste Empfehlung
+    ``eligible_requires_all`` auf ein einziges verbleibendes Gate reduzieren, selbst wenn
+    ``min_trades``/``max_drawdown`` betroffen wären."""
     totals: dict[str, dict[str, int]] = {}
     for r in study_records:
         for entry in r.get("gate_inventory") or []:
@@ -1925,11 +2023,22 @@ def check_gate_marginal_contribution(
             actual=None,
             detail="Keine Studies mit gate_inventory-Telemetrie — nicht anwendbar.",
         )
+    protected = set(gate_consolidation_protected or [])
     offenders = {
         gate: agg for gate, agg in totals.items()
         if agg["n_evaluated"] >= min_evaluated and agg["marginal_delta"] == 0
     }
     passed = not offenders
+    protected_offenders = sorted(g for g in offenders if g in protected)
+    removable_offenders = sorted(g for g in offenders if g not in protected)
+    detail_parts = []
+    if removable_offenders:
+        detail_parts.append(
+            f"Kandidat(en) für Entfernung aus eligible_requires_all: {removable_offenders}.")
+    if protected_offenders:
+        detail_parts.append(
+            f"GESCHÜTZT (gate_consolidation_protected) — Neukalibrierungs-, KEINE "
+            f"Entfernungsempfehlung: {protected_offenders} (#1076).")
     return InvariantResult(
         name="check_gate_marginal_contribution",
         passed=passed,
@@ -1937,8 +2046,70 @@ def check_gate_marginal_contribution(
         actual=offenders if offenders else None,
         detail=("OK" if passed else
                 f"{len(offenders)} Gate(s) ohne jeden marginalen Beitrag über eine ausreichend "
-                f"grosse Kohorte: {offenders} — Kandidat(en) für Entfernung aus "
-                "eligible_requires_all oder Neukalibrierung gegen die realisierte Verteilung."),
+                f"grosse Kohorte: {offenders} — " + " ".join(detail_parts)),
+    )
+
+
+def check_gate_inventory_coherence(study_records: list[dict]) -> InvariantResult:
+    """Issue #1076 (Katalog #866-2, Kohorte D) — Kreuzprüfung zwischen ``gate_inventory``
+    (``report.gate_inventory_table``, MEHRLABEL: zählt einen Trial einmal JE verletztem Gate) und
+    ``is_rejection_detail_counts`` (``run_optimization._classify_is_rejection_detail``,
+    EINLABEL: zählt einen Trial einmal unter seiner PRIMÄREN/ersten Ablehnungsursache).
+
+    Strukturelle Invariante: jeder Trial, dessen primäre Ursache Gate ``G`` ist
+    (``is_rejection_detail_counts['REJECT_OOS_' + G.upper()]``), verletzt ``G`` per Definition —
+    trägt also auch zu ``gate_inventory[G].n_rejections`` bei. Die MEHRLABEL-Zählung kann die
+    EINLABEL-Teilmenge folglich NIE unterschreiten: ``n_rejections[G] >= detail_count[G]`` gilt für
+    JEDE korrekte Implementierung, unabhängig von der Kohorte. Root-Cause #1076: ein Zähler, der
+    stattdessen z. B. den ``NONE``-Eimer (die BESTANDENEN Trials) statt des gate-spezifischen
+    Eimers liest, verletzt diese Ungleichung sofort und drastisch (Beweis B-10 im #866-Katalog:
+    OpeningRange — Inventar 98 vs. Detail-Zähler 1 wären konsistent, aber der beobachtete
+    Zähler traf zufällig ``n_eligible``; hier als Regressionswächter für JEDE künftige
+    Zähler-Implementierung, die dieselbe Ungleichung verletzen würde)."""
+    offenders: dict[str, dict[str, dict]] = {}
+    n_checked = 0
+    for r in study_records:
+        gate_inventory = r.get("gate_inventory") or []
+        detail_counts = r.get("is_rejection_detail_counts") or {}
+        if not gate_inventory or not detail_counts:
+            continue
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        for entry in gate_inventory:
+            gate = entry.get("gate")
+            if not gate:
+                continue
+            n_checked += 1
+            n_rejections = int(entry.get("n_rejections") or 0)
+            normalized = gate[4:] if gate.startswith("oos_") else gate
+            code = f"REJECT_OOS_{normalized.upper()}"
+            detail_count = int(detail_counts.get(code) or 0)
+            if n_rejections < detail_count:
+                offenders.setdefault(key, {})[gate] = {
+                    "n_rejections": n_rejections, "detail_count": detail_count, "code": code,
+                }
+    if n_checked == 0:
+        return InvariantResult(
+            name="check_gate_inventory_coherence",
+            passed=True,
+            expected="gate_inventory[g].n_rejections >= is_rejection_detail_counts['REJECT_OOS_'+g] "
+                     "je Study/Gate",
+            actual=None,
+            severity="high",
+            detail="Keine Studies mit gate_inventory UND is_rejection_detail_counts — "
+                   "nicht anwendbar.",
+        )
+    passed = not offenders
+    return InvariantResult(
+        name="check_gate_inventory_coherence",
+        passed=passed,
+        expected="gate_inventory[g].n_rejections >= is_rejection_detail_counts['REJECT_OOS_'+g] "
+                 "je Study/Gate",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit gate_inventory.n_rejections UNTER dem "
+                f"gate-spezifischen is_rejection_detail_counts-Wert: {offenders} — der Zähler "
+                "liest vermutlich den falschen Eimer (#1076, Beweis B-10 im #866-Katalog)."),
     )
 
 
@@ -2110,6 +2281,102 @@ def check_expectancy_definition_coherence(
     )
 
 
+def check_dust_round_trip_share(study_records: list[dict], *,
+                                max_share: float = 0.01) -> InvariantResult:
+    """Issue #1085 (Katalog #866-2, Kohorte D) — Dust-Round-Trips (Notional zwischen ~1e-14 und
+    ~1e-12, Fliesskomma-Residuen eines Netto-Exposure-Nulldurchgangs beim Scale-in/Scale-out) werden
+    als vollwertige Round-Trips gezählt (Beweis B-19 im #866-Katalog: 9205 von 330 083 gepoolten
+    Round-Trips, bis 11,80 % einer Study). Sie füllen JEDEN gepoolten Nenner, der auf Round-Trip-
+    Zählungen aufbaut (``oos_total_trades_with_exit_telemetry``, ``exit_reason_histogram`` — ein
+    Dust-Leg hat keinen echten Exit-Grund und erscheint als ``UNKNOWN``, siehe #1078 — sowie
+    ``timebox_violating_trades_denominator``).
+
+    ``dust_round_trips_filtered`` (Σ ``EXPECTANCY_NOTIONAL_DEGENERATE`` über die Trials dieser
+    Study, #1031) gegen ``oos_total_trades_with_exit_telemetry`` als Nenner. Severity ``high`` —
+    eine hohe Quote ist ein Datenqualitäts-/Extraktionsbefund, kein Promotions-Blocker per se."""
+    with_data = [
+        r for r in study_records
+        if r.get("dust_round_trips_filtered") is not None
+        and (r.get("oos_total_trades_with_exit_telemetry") or 0) > 0
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_dust_round_trip_share",
+            passed=True,
+            expected=f"dust_round_trips_filtered / oos_total_trades_with_exit_telemetry <= {max_share} je Study",
+            actual=None,
+            severity="high",
+            detail="Keine Studies mit Dust-Round-Trip-Telemetrie — nicht anwendbar.",
+        )
+    offenders: dict[str, float] = {}
+    for r in with_data:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        denom = int(r["oos_total_trades_with_exit_telemetry"])
+        share = round(int(r["dust_round_trips_filtered"]) / denom, 4)
+        if share > max_share:
+            offenders[key] = share
+    passed = not offenders
+    return InvariantResult(
+        name="check_dust_round_trip_share",
+        passed=passed,
+        expected=f"dust_round_trips_filtered / oos_total_trades_with_exit_telemetry <= {max_share} je Study",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit einem Dust-Round-Trip-Anteil > {max_share}: "
+                f"{offenders} — Fliesskomma-Residuen eines Netto-Exposure-Nulldurchgangs werden als "
+                "vollwertige Round-Trips gezählt und verdünnen jeden gepoolten Nenner (#1085)."),
+    )
+
+
+def check_expectancy_outlier_dependence(study_records: list[dict]) -> InvariantResult:
+    """Issue #1073 (Katalog #866-2, Kohorte D) — FAIL, wenn ``sign(holdout_expectancy_winsorized)
+    != sign(holdout_expectancy)`` (oder die winsorisierte Expectancy nicht-positiv wird, während
+    die rohe positiv ist) — das gesamte positive Ergebnis eines Kandidaten hängt dann an einer
+    kleinen Zahl extremer Trades, kein robuster Edge (Beweis B-8 im #866-Katalog: drei
+    Vorzeichenwechsel in einem Referenzlauf, darunter der ERSTGELISTETE Kandidat des Berichts —
+    AdxAtrMomentum +17,23 bps roh → −1,44 bps winsorisiert, getragen von 6 von 132 Trades).
+
+    Severity ``high`` (nicht ``blocking``) — reine Sichtbarkeits-/Rang-Diagnose; die tatsächliche
+    Konsequenz (Deployment-Blockade) trägt ``deployment_gate``s ``expectancy_outlier_robust``-
+    Klausel. Nur Studies mit BEIDEN Feldern definiert werden geprüft."""
+    with_data = [
+        r for r in study_records
+        if r.get("holdout_expectancy") is not None
+        and r.get("holdout_expectancy_winsorized") is not None
+    ]
+    if not with_data:
+        return InvariantResult(
+            name="check_expectancy_outlier_dependence",
+            passed=True,
+            expected="sign(holdout_expectancy_winsorized) == sign(holdout_expectancy) UND "
+                     "holdout_expectancy_winsorized > 0 (sofern holdout_expectancy > 0)",
+            actual=None,
+            severity="high",
+            detail="Keine Studies mit beiden Expectancy-Feldern — nicht anwendbar.",
+        )
+    offenders: dict[str, dict[str, float]] = {}
+    for r in with_data:
+        raw = float(r["holdout_expectancy"])
+        winsorized = float(r["holdout_expectancy_winsorized"])
+        if raw > 0.0 and winsorized <= 0.0:
+            key = f"{r.get('strategy')}/{r.get('symbol')}"
+            offenders[key] = {"holdout_expectancy": raw, "holdout_expectancy_winsorized": winsorized}
+    passed = not offenders
+    return InvariantResult(
+        name="check_expectancy_outlier_dependence",
+        passed=passed,
+        expected="sign(holdout_expectancy_winsorized) == sign(holdout_expectancy) UND "
+                 "holdout_expectancy_winsorized > 0 (sofern holdout_expectancy > 0)",
+        actual=offenders if offenders else None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit Vorzeichenwechsel zwischen roher und "
+                f"winsorisierter Expectancy: {offenders} — das positive Ergebnis hängt an einer "
+                "kleinen Zahl extremer Trades, kein robuster Edge (#1073)."),
+    )
+
+
 def check_open_position_at_data_end(
     study_records: list[dict], *, max_fraction: float = 0.02,
 ) -> InvariantResult:
@@ -2225,20 +2492,35 @@ def check_sizing_identity_coherence(
 
 def check_atr_scale_homogeneity(
     study_records: list[dict], *, max_ratio: float = 6.0,
+    atr_floor_bps_by_symbol: dict[str, float] | None = None,
+    floor_tolerance: float = 1e-6,
 ) -> InvariantResult:
     """Issue #1028 (Katalog #866) — ATR in bps ist skaleninvariant gegenüber einer reinen
     multiplikativen Preisadjustierung: über die Strategien EINES Symbols hinweg (dieselbe
     Preisreihe, dasselbe Fenster) sollte ``atr_median_bps`` innerhalb einer engen Bandbreite
-    streuen. Ein grosser Faktor zwischen ``max``/``min`` je Symbol ist die Signatur einer
+    streuen. Ein grosser Faktor zwischen ``max``/``min`` je Symbol ist EIN MÖGLICHES Symptom einer
     Sprungstelle (Split-/Adjustierungsgrenze oder Snapshot-Naht) im ATR-Fenster einer oder mehrerer
     Strategien-Studies auf diesem Symbol — beobachtet: TSLA mit 18,2–366,2 bps (Faktor 20) gegen
-    2–59 bps auf allen übrigen Symbolen des Katalog-Referenzlaufs."""
-    by_symbol: dict[str, list[float]] = {}
+    2–59 bps auf allen übrigen Symbolen des Katalog-Referenzlaufs.
+
+    Issue #1071 (Pitfall #380-Klasse, wörtliche Wiederkehr von #1028/#1052) — Root-Cause: die
+    Vor-#1071-Meldung BEHAUPTETE unbedingt "Signatur einer Sprungstelle in der Preisreihe", obwohl
+    der Check nur eine SPANNWEITE misst, keine Ursache. Mindestens drei Mechanismen erzeugen
+    dieselbe Spannweite: (a) eine echte Preis-Sprungstelle, (b) der NENNER liegt auf
+    ``atr_floor_bps_by_asset_class`` (der Floor ist eine KONFIGURIERTE Konstante, keine
+    Preis-Beobachtung — Beweis B-16 im #866-Katalog: DynamicBreakout exakt auf dem EQUITY-Floor
+    2.0), (c) eine Fremdkohorte. ``atr_floor_bps_by_symbol`` (vom Aufrufer aufgelöst, z. B.
+    ``backtest_runner.resolve_atr_floor_bps`` je Symbol/Asset-Klasse) macht (b) MESSBAR statt
+    geraten: jede Study, deren ``atr_median_bps`` bis auf ``floor_tolerance`` auf dem Floor ihres
+    Symbols liegt, wird als ``atr_floor_binding_studies`` ausgewiesen; die Meldung nennt den
+    Mechanismus, den sie tatsächlich gemessen hat, statt eine Ursache zu behaupten."""
+    by_symbol: dict[str, list[tuple[str, float]]] = {}
     for r in study_records:
         atr = r.get("atr_median_bps")
         symbol = r.get("symbol")
+        strategy = r.get("strategy")
         if atr and symbol:
-            by_symbol.setdefault(symbol, []).append(float(atr))
+            by_symbol.setdefault(symbol, []).append((strategy, float(atr)))
     candidates = {sym: vals for sym, vals in by_symbol.items() if len(vals) >= 2}
     if not candidates:
         return InvariantResult(
@@ -2250,23 +2532,43 @@ def check_atr_scale_homogeneity(
             severity="high",
         )
     offenders: dict[str, float] = {}
-    for sym, vals in candidates.items():
+    floor_binding_studies: list[str] = []
+    for sym, pairs in candidates.items():
+        vals = [v for _s, v in pairs]
         lo, hi = min(vals), max(vals)
         if lo <= 0:
             continue
         ratio = hi / lo
         if ratio > max_ratio:
             offenders[sym] = round(ratio, 2)
+            sym_floor = (atr_floor_bps_by_symbol or {}).get(sym)
+            if sym_floor is not None:
+                for strategy, val in pairs:
+                    if abs(val - sym_floor) <= floor_tolerance:
+                        floor_binding_studies.append(f"{strategy}/{sym}")
     passed = not offenders
+    if not passed and floor_binding_studies:
+        mechanism = (
+            f"Nenner an der Floor-Grenze ({len(floor_binding_studies)} Study/Studies: "
+            f"{sorted(floor_binding_studies)}) ⇒ Spannweite ist (mindestens teilweise) ein "
+            "Konfigurationsartefakt, keine nachgewiesene Preis-Sprungstelle.")
+    elif not passed:
+        mechanism = (
+            "Nenner NICHT an einer bekannten Floor-Grenze — Preis-Sprungstelle/Fremdkohorte-"
+            "Verdacht bleibt eine von mehreren möglichen Ursachen, nicht bestätigt.")
+    else:
+        mechanism = "OK"
     return InvariantResult(
         name="check_atr_scale_homogeneity",
         passed=passed,
         expected=f"max(atr_median_bps)/min(atr_median_bps) <= {max_ratio} je Symbol",
         actual=offenders if offenders else None,
         severity="high",
+        provenance=({"atr_floor_binding_studies": sorted(set(floor_binding_studies))}
+                    if floor_binding_studies else None),
         detail=("OK" if passed else
                 f"{len(offenders)} Symbol(e) mit einer ATR-Spannweite über {max_ratio}x zwischen "
-                f"Strategien: {offenders} — Signatur einer Sprungstelle in der Preisreihe (#1028)."),
+                f"Strategien: {offenders}. {mechanism} (#1028/#1071)"),
     )
 
 
@@ -2428,6 +2730,52 @@ def _reward_std_total_and_feasible(trials: list[dict]) -> tuple[float | None, fl
     return _rew_std(total_terms), _rew_std(feasible_terms), feasible_terms
 
 
+def _constraint_feasible_reward_terms(trials: list[dict]) -> list[dict]:
+    """Issue #1082 (Katalog #866-2, Kohorte E) — die per #612-Sampler-Constraint TATSAECHLICH
+    feasible Teilmenge (``oos_constraint_violations`` — JEDE Komponente <= 0, Optuna-Konvention),
+    im Unterschied zu ``_feasible_reward_terms`` (schliesst NUR den ``inference_failure_policy=
+    'prune'``-Pfad aus, #949). Root-Cause #1082: in 13 von 14 Studies des #866-2-Referenzlaufs war
+    ``reward_std_total == reward_std_feasible`` BIT-IDENTISCH, weil in diesen Läufen so gut wie nie
+    tatsächlich geprunt wurde — die #949-Kohorte war damit fast immer identisch mit der
+    Gesamtkohorte, obwohl gleichzeitig nur 2,8-9,4 % der Trials den ordnenden Reward-Zweig trugen
+    (``check_objective_branch_coverage``). Diese Funktion misst stattdessen die Kohorte, die der
+    TPE-Sampler selbst als feasible behandelt.
+
+    Trials OHNE Constraint-Telemetrie (Legacy-Report/Test-Fixture ohne ``oos_constraint_
+    violations``) werden AUSGESCHLOSSEN, nicht als feasible angenommen (anders als der
+    Default-Fallback in ``run_optimization._trial_constraint_violation``) — diese Kohorte soll
+    ausschliesslich NACHGEWIESEN feasible Trials tragen, kein Artefakt fehlender Telemetrie."""
+    out = []
+    for t in trials:
+        if t.get("oos_evaluated") is not True or not t.get("reward_terms"):
+            continue
+        cv = t.get("oos_constraint_violations")
+        if not cv:
+            continue
+        try:
+            feasible = all(float(c) <= 0.0 for c in cv)
+        except (TypeError, ValueError):
+            continue
+        if feasible:
+            out.append(t["reward_terms"])
+    return out
+
+
+def _reward_std_constraint_feasible(trials: list[dict]) -> float | None:
+    """Issue #1082 — ``reward_std`` über ``_constraint_feasible_reward_terms`` (< 2 Trials ⇒
+    ``None``, dieselbe Konvention wie ``_reward_std_total_and_feasible``)."""
+    terms = _constraint_feasible_reward_terms(trials)
+    if len(terms) < 2:
+        return None
+    vals = [
+        (t.get("base", 0.0) - t.get("divergence", 0.0) - t.get("dd_penalty", 0.0)
+         - t.get("param_pen", 0.0) - t.get("turnover", 0.0) - t.get("fold_dispersion", 0.0)
+         + t.get("tie_breaker", 0.0))
+        for t in terms
+    ]
+    return statistics.pstdev(vals)
+
+
 def check_reward_dynamic_range(trials: list[dict], *,
                                min_base_dominance_factor: float = 4.0,
                                min_reward_std_feasible: float = 0.05,
@@ -2489,6 +2837,30 @@ def check_reward_dynamic_range(trials: list[dict], *,
         failed_clauses.append(
             f"reward_std_total/reward_std_feasible={ratio:.2f} > {max_total_to_feasible_ratio} "
             "(Failure-Zweig dominiert die Basis)")
+    # Issue #1082 Fix Punkt (b) — reward_std_constraint_feasible ist die per #612-Sampler-Constraint
+    # NACHGEWIESEN feasible Teilmenge (siehe _constraint_feasible_reward_terms), eine STRENGERE
+    # Kohorte als reward_std_feasible (nur pruned-Ausschluss, #949). Root-Cause: reward_std_feasible
+    # entsprach in 13/14 Studies des #866-2-Referenzlaufs bit-identisch reward_std_total, weil kaum
+    # je ein Trial tatsaechlich geprunt wurde — der #949-Diagnosewert trug dort keine eigene
+    # Information. REWARD_FEASIBLE_PARTITION_DEGENERATE feuert, wenn WEDER reward_std_feasible NOCH
+    # die strengere constraint-basierte Kohorte einen messbaren Unterschied zu reward_std_total
+    # zeigen — rein informativ (aendert 'passed' NICHT, siehe #949-Regressionsschutz
+    # test_pruned_trials_never_cause_a_false_positive_dominance_failure_alone), macht die Degenerierte
+    # Partition aber im Report sichtbar statt sie unbeobachtet zu lassen.
+    reward_std_constraint_feasible = _reward_std_constraint_feasible(trials)
+    reward_feasible_partition_degenerate = (
+        reward_std_total is not None
+        and reward_std_feasible == reward_std_total
+        and (reward_std_constraint_feasible is None
+             or reward_std_constraint_feasible == reward_std_total)
+    )
+    detail = "OK" if passed else "; ".join(failed_clauses)
+    if reward_feasible_partition_degenerate:
+        detail = (detail + "; " if detail != "OK" else "") + (
+            "REWARD_FEASIBLE_PARTITION_DEGENERATE: reward_std_feasible unterscheidet sich NICHT "
+            "von reward_std_total (Pruning ist keine unterscheidende Ursache in dieser Study) — "
+            f"reward_std_constraint_feasible={reward_std_constraint_feasible!r} liefert ebenfalls "
+            "kein eigenes Signal (#1082).")
     return InvariantResult(
         name="check_reward_dynamic_range",
         passed=passed,
@@ -2496,9 +2868,13 @@ def check_reward_dynamic_range(trials: list[dict], *,
                  f"{min_reward_std_feasible} UND total/feasible <= {max_total_to_feasible_ratio}",
         actual={"reward_std_total": round(reward_std_total, 6) if reward_std_total is not None else None,
                "reward_std_feasible": round(reward_std_feasible, 6),
-               "max_term_std": round(max_term_std, 6)},
+               "max_term_std": round(max_term_std, 6),
+               "reward_std_constraint_feasible": (
+                   round(reward_std_constraint_feasible, 6)
+                   if reward_std_constraint_feasible is not None else None),
+               "reward_feasible_partition_degenerate": reward_feasible_partition_degenerate},
         severity="high",
-        detail="OK" if passed else "; ".join(failed_clauses),
+        detail=detail,
     )
 
 
@@ -2515,27 +2891,108 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
     zurückgeschrieben wurde (``written_back == 0``) — die reine Anwesenheit von Champions ohne
     JEDEN Writeback-Erfolg über potenziell viele Läufe hinweg ist der direkte Fingerabdruck einer
     unerreichbaren Ebene 2. ``champions_summary`` ist ``report._champions_summary()``'s
-    ``{'stored', 'admissible', 'corroborated', 'written_back', 'skipped_by_reason'}``-Dict."""
+    ``{'stored', 'admissible', 'corroborated', 'written_back', 'skipped_by_reason', 'attempts',
+    'max_corroboration_count'}``-Dict.
+
+    Issue #1084 Fix Punkt 1 (Katalog #866-2, Kohorte E) — vorher behauptete ein FAIL UNBEDINGT
+    dieselbe geratene Ursache ("#818-Regression: maybe_write_back ohne Produktions-Call-Site"),
+    selbst wenn Ebene 2 längst eine Call-Site hat und aus einem ganz anderen, tatsächlich
+    beobachteten Grund nicht schreibt (z. B. ein Korroborations-Deadlock, #1084 Root-Cause b — der
+    eigene Check ``check_champion_corroboration_reachable`` benennt DIESEN Fall gezielt). Der
+    ``detail``-Text meldet seither die BEOBACHTETE ``skipped_by_reason``-Verteilung; die
+    "keine Call-Site"-Diagnose gilt nur noch, wenn ``champions_summary['attempts'] == 0`` explizit
+    beobachtet wurde (kein einziger Schreibversuch) — ``attempts is None`` (Legacy-Aufrufer/Report-
+    only ohne ``studies_out``, siehe ``report._champions_summary``-Docstring) fällt auf die alte,
+    store-basierte Formulierung zurück (bit-identisches ``passed``-Verhalten in jedem Fall)."""
     stored = int(champions_summary.get("stored") or 0)
     written_back = int(champions_summary.get("written_back") or 0)
-    if stored == 0:
+    attempts = champions_summary.get("attempts")
+    skipped_by_reason = champions_summary.get("skipped_by_reason") or {}
+    if stored == 0 and not attempts:
         return InvariantResult(
             name="check_champion_writeback_reachability",
             passed=True,
-            expected="written_back > 0, sobald stored > 0",
-            actual={"stored": 0, "written_back": 0},
+            expected="written_back > 0, sobald stored > 0 oder ein Schreibversuch stattfand",
+            actual={"stored": 0, "written_back": 0, "attempts": attempts},
             detail="Kein Champion-Store-Eintrag — nicht anwendbar.",
         )
     passed = written_back > 0
+    if passed:
+        detail = "OK"
+    elif attempts == 0:
+        detail = ("0 Champion-Writeback-Versuche beobachtet — Ebene 2 (#706) hat KEINE "
+                  "Produktions-Call-Site erreicht.")
+    else:
+        reasons_text = ", ".join(
+            f"{v}x {k}" for k, v in sorted(skipped_by_reason.items(), key=lambda kv: -kv[1])
+        ) if skipped_by_reason else "unbekannt (keine skipped_by_reason-Telemetrie)"
+        cohort_text = f"{attempts} Versuche" if attempts is not None else f"{stored} Store-Eintraege"
+        detail = (f"{cohort_text}, 0 Writebacks — beobachtete Ursachen: {reasons_text} (#1084: "
+                  "die Ursache ist gemessen, nicht geraten).")
     return InvariantResult(
         name="check_champion_writeback_reachability",
         passed=passed,
-        expected="written_back > 0, sobald stored > 0",
-        actual={"stored": stored, "written_back": written_back},
+        expected="written_back > 0, sobald stored > 0 oder ein Schreibversuch stattfand",
+        actual={"stored": stored, "written_back": written_back, "attempts": attempts,
+               "skipped_by_reason": skipped_by_reason},
+        detail=detail,
+    )
+
+
+def check_champion_corroboration_reachable(
+    champions_summary: dict, *, total_runs_started: int | None,
+    corroboration_threshold: int = 2,
+) -> InvariantResult:
+    """Issue #1084 Fix Punkt 4 (Katalog #866-2, Kohorte E, Root-Cause b) — benennt den
+    TATSAECHLICHEN Blocker der Ebene-2-Kette (``champions.maybe_write_back``), statt ihn unter der
+    generischen ``check_champion_writeback_reachability``-Diagnose zu verstecken: Korroboration
+    verlangt ``lifecycle.corroboration_count >= champion_promote_after_runs`` (Default 2);
+    ``corroboration_count`` erhöht sich NUR bei einer NEUEN ``run_id`` (#821 — verschiedene Läufe,
+    nicht Schreibvorgänge innerhalb eines Laufs). Ein auf ``total_runs_started == 1``
+    zurückgesetztes Coverage-Ledger (#1064-Regression) kann diese Schwelle STRUKTURELL nie
+    erreichen, unabhängig davon, wie viele Champions gespeichert werden oder wie gut ihre Qualität
+    ist — Referenzlauf: 2 Einträge mit ``corroboration_count = 1`` gegen Schwelle 2, Ledger bei 1.
+
+    FAIL, wenn der HÖCHSTE beobachtete ``corroboration_count`` aller Store-Einträge UNTER der
+    Schwelle liegt UND ``total_runs_started == 1`` — beide Bedingungen zusammen, weil ein
+    niedriger ``max_corroboration_count`` allein auch schlicht "früh im normalen Zyklus" bedeuten
+    kann (z. B. Lauf 1 von vielen mit einem korrekt fortschreitenden Ledger); erst kombiniert mit
+    einem Ledger, das nie über Lauf 1 hinauskommt, ist es ein struktureller Deadlock statt eines
+    normalen Zwischenstands. PASST NACH dem #1064-Ledger-Fix, sobald ein zweiter Lauf gezählt wird
+    (``total_runs_started > 1``), auch wenn ``max_corroboration_count`` weiterhin unter der
+    Schwelle liegt (dann läuft die Korroboration einfach normal weiter).
+
+    ``champions_summary`` ist ``report._champions_summary()``'s Dict (``max_corroboration_count``,
+    seit #1084). Kein Store-Eintrag ⇒ nicht anwendbar (PASS). ``total_runs_started=None``
+    (Ledger nicht lesbar/Legacy-Aufrufer) ⇒ nicht anwendbar (PASS, keine Deadlock-Aussage ohne
+    das Ledger)."""
+    stored = int(champions_summary.get("stored") or 0)
+    max_corr = champions_summary.get("max_corroboration_count")
+    if stored == 0 or max_corr is None or total_runs_started is None:
+        return InvariantResult(
+            name="check_champion_corroboration_reachable",
+            passed=True,
+            expected=f"max(corroboration_count) >= {corroboration_threshold} ODER "
+                     "total_runs_started > 1",
+            actual=None,
+            detail=("Kein Champion-Store-Eintrag oder kein lesbares Coverage-Ledger — nicht "
+                    "anwendbar."),
+        )
+    deadlocked = max_corr < corroboration_threshold and total_runs_started == 1
+    passed = not deadlocked
+    return InvariantResult(
+        name="check_champion_corroboration_reachable",
+        passed=passed,
+        expected=f"max(corroboration_count) >= {corroboration_threshold} ODER "
+                 "total_runs_started > 1",
+        actual={"max_corroboration_count": max_corr, "total_runs_started": total_runs_started,
+               "corroboration_threshold": corroboration_threshold},
+        severity="high",
         detail=("OK" if passed else
-                f"{stored} Champion-Store-Eintraege, aber 0 Writebacks ueber den gesamten "
-                "Store-Stand — Ebene 2 (#706) ist vermutlich unerreichbar (#818-Regression: "
-                "maybe_write_back ohne Produktions-Call-Site)."),
+                f"max(corroboration_count)={max_corr} < {corroboration_threshold} UND "
+                "symbol_coverage.total_runs_started == 1 — Ebene 2 (#706) ist strukturell "
+                "unerreichbar, solange das Coverage-Ledger nie über Lauf 1 hinauskommt "
+                "(#1064-Zusammenhang), unabhängig von jeder Champion-Qualität."),
     )
 
 
@@ -2574,6 +3031,82 @@ def check_diagnosis_actionability(diagnosed_pairs: list[dict], *, min_count: int
                 f"{len(offenders)} (strategy, binding_cause)-Kombination(en) melden >= {min_count} "
                 f"Paare mit action=='none': {offenders} — vermutlich ein Evidenzschwellen-Deadlock "
                 "(Pitfall #258), analog #829."),
+    )
+
+
+def check_search_space_override_admissible(diagnosed_pairs: list[dict]) -> InvariantResult:
+    """Issue #1066 (Pitfall #371) — jeder ``proposed_bounds``-Eintrag im #761-Diagnose-Cache
+    (``sweep_diagnostics.load_diagnosed_pairs_cache``, hier als Liste ihrer Einträge übergeben)
+    liegt innerhalb ``spaces._PARAM_DOMAIN_REGISTRY``. FAILt für VOR diesem Fix geschriebene, nicht
+    geklammerte Einträge (z. B. ``ema_period: [-325.0, 300]``, Beweis B-5 im #866-Katalog) — PASST,
+    sobald ``sweep_diagnostics.migrate_search_space_override_cache`` gelaufen ist (die Klammer in
+    ``_widen_bounds_toward``/``spaces._bounds_for`` verhindert seither auch jeden NEUEN
+    inadmissiblen Eintrag)."""
+    from automation.optimizer.spaces import is_bounds_admissible
+
+    offenders: dict[str, dict] = {}
+    for entry in diagnosed_pairs or []:
+        proposed = entry.get("proposed_bounds")
+        if not proposed:
+            continue
+        strategy, symbol = entry.get("strategy"), entry.get("symbol")
+        bad_params = {}
+        for param, bound in proposed.items():
+            if not bound or len(bound) != 2:
+                continue
+            if not is_bounds_admissible(param, bound[0], bound[1]):
+                bad_params[param] = list(bound)
+        if bad_params:
+            offenders[f"{strategy}/{symbol}"] = bad_params
+    passed = not offenders
+    return InvariantResult(
+        name="check_search_space_override_admissible",
+        passed=passed,
+        expected="jede proposed_bounds-Untergrenze/Obergrenze innerhalb des Domänenregisters",
+        actual=offenders if offenders else None,
+        detail=("OK" if passed else
+                f"{len(offenders)} Paar(e) mit ausserhalb des Domänenregisters liegenden "
+                f"proposed_bounds: {offenders} — sweep_diagnostics.migrate_search_space_override_"
+                "cache() ausfuehren, bevor der naechste Sweep startet (#1066)."),
+        severity="blocking",
+    )
+
+
+def check_diagnosis_ledger_coherence(diagnosed_pairs: list[dict], *,
+                                     total_runs_started: int | None) -> InvariantResult:
+    """Issue #1068 — der #761-Diagnose-Cache (``n_runs_confirmed`` je Paar) und das Coverage-Ledger
+    (``symbol_coverage.total_runs_started``) sind zwei UNABHÄNGIG PERSISTIERTE Zähler über
+    denselben Lauf-Verlauf. Kein Paar kann öfter IN FOLGE bestätigt worden sein, als das Ledger
+    Läufe gesehen hat — ``max(n_runs_confirmed) > total_runs_started`` beweist, dass einer der
+    beiden Stores zurückgesetzt/verloren gegangen ist (im #866-Katalog: das Ledger, Beweis B-18/
+    #1064 — ``n_runs_confirmed=1`` bei fünf nachgewiesenen Weitungen, ``expires_after_runs=10``
+    gegen ein Ledger, das nie über 1 hinauskommt)."""
+    if total_runs_started is None:
+        return InvariantResult(
+            name="check_diagnosis_ledger_coherence", passed=True,
+            expected="max(n_runs_confirmed) <= total_runs_started",
+            actual=None, detail="total_runs_started nicht verfuegbar — nicht anwendbar.",
+            inconclusive=True,
+        )
+    max_confirmed = 0
+    worst_key = None
+    for entry in diagnosed_pairs or []:
+        n = int(entry.get("n_runs_confirmed") or 0)
+        if n > max_confirmed:
+            max_confirmed = n
+            worst_key = f"{entry.get('strategy')}/{entry.get('symbol')}"
+    passed = max_confirmed <= total_runs_started
+    return InvariantResult(
+        name="check_diagnosis_ledger_coherence",
+        passed=passed,
+        expected="max(n_runs_confirmed) <= total_runs_started",
+        actual={"max_n_runs_confirmed": max_confirmed, "total_runs_started": total_runs_started,
+                "pair": worst_key},
+        detail=("OK" if passed else
+                f"max(n_runs_confirmed)={max_confirmed} ({worst_key}) > "
+                f"total_runs_started={total_runs_started} — Diagnose-Cache oder Coverage-Ledger "
+                "ist zurueckgesetzt/verloren gegangen (#1068, vgl. #1064)."),
+        severity="high",
     )
 
 
@@ -2694,12 +3227,25 @@ def check_holding_time_cap(study_records: list[dict], *,
             f"Einzelposition > {hard_multiple}x der Zeitbox ({hard_threshold_s:.0f}s): "
             f"{magnitude_offenders} (Vielfaches der Zeitbox je Study) — ökonomisch untragbar "
             "unabhängig vom gepoolten Anteil (Pitfall #358).")
+    # Issue #1063 (Pitfall #370) — ``actual`` traegt seit diesem Fix BEIDE Aeste (nicht nur den
+    # Anteils-Ast) in der von ``sweep._offending_pairs_for_fail_fast_check`` erwarteten Pair-
+    # Konvention (``{"<strategy>/<symbol>": <wert>}``). Root-Cause #1063: vor diesem Fix war
+    # ``actual`` NUR der Anteils-Ast (``fraction_offenders or None``) — feuerte ausschliesslich der
+    # Magnituden-Ast (#1036), blieb ``actual=None``, obwohl der Check FAILt (``passed=False`` via
+    # ``magnitude_offenders``). Der Fail-Fast-Parser erwartet ein dict und faellt sonst auf den
+    # konservativen "Struktur unbekannt ⇒ global abbrechen"-Zweig, der
+    # ``fail_fast_min_offending_studies`` (#1016, Pitfall #349) NIE auswertet — genau die
+    # Ein-Symbol-Konfiguration, fuer die diese Schwelle gebaut wurde. Ein Study-Key, der in BEIDEN
+    # Aesten offendiert, behaelt den (interpretierbareren) Anteilswert; ein Key NUR im Magnituden-
+    # Ast traegt sein Vielfaches der Zeitbox.
+    combined_actual = dict(magnitude_offenders)
+    combined_actual.update(fraction_offenders)
     return InvariantResult(
         name="check_holding_time_cap",
         passed=passed,
         expected=f"Anteil zeitbox-verletzender Trades <= {study_tolerance} UND "
                  f"max_holding_time_s <= {hard_multiple}x cap je Study",
-        actual=fraction_offenders or None,
+        actual=combined_actual or None,
         severity="blocking",
         provenance=provenance,
         detail="OK" if passed else " ".join(detail_parts),
@@ -2758,6 +3304,7 @@ def check_counter_partition_consistency(study_records: list[dict]) -> InvariantR
 
 def check_effective_stop_distance(study_records: list[dict], *,
                                   min_ratio: float = 0.4,
+                                  max_ratio: float = 10.0,
                                   min_trailing_stop_exits: int = 30) -> InvariantResult:
     """Issue #897 Fix 3 — je Study wird der Median des realisierten Ø-Bruttoverlusts gegen den
     konfigurierten Stop-Abstand ``k_median · ATR_median`` (``atr_trailing_multiplier_median`` ×
@@ -2778,7 +3325,27 @@ def check_effective_stop_distance(study_records: list[dict], *,
     ``optimizer.json['stop_distance_min_ratio']``), reagiert der realisierte Stop-Verlust nicht
     (mehr) auf seinen eigenen Multiplikator — der Mechanismus ist keine kalibrierte Risikogrösse,
     sondern eine Breakeven-Klemme, die auf der Volatilitätsschätzung statt auf dem Preis-Extremum
-    rastet (Pitfall #285/#286 in AGENTS.md)."""
+    rastet (Pitfall #285/#286 in AGENTS.md).
+
+    Issue #1070 (Pitfall #369, zweite Wiederkehr nach #1055 ``check_reward_dynamic_range``) —
+    ZWEITE, symmetrische Schranke ``max_ratio`` (Default 10.0, entspricht
+    ``optimizer.json['stop_distance_max_ratio']``): ein Verhältnis, das WEIT ÜBER dem konfigurierten
+    Abstand liegt (Beweis B-3 im #866-Katalog: bis 36,66), ist genauso ein Beleg, dass der Stop
+    keine kalibrierte Risikogrösse ist — nur in der ANDEREN Richtung (der Stop begrenzt den Verlust
+    gar nicht, statt ihn zu früh zu kappen). Root-Cause: die Vor-#1070-Fassung prüfte ausschliesslich
+    ``ratio < min_ratio`` — bei ``ratio=36.66`` blieb ``passed=True``, ``actual=None`` (der Wert
+    erschien in KEINEM Artefakt), obwohl der Check in ``optimizer.json['fail_fast_invariants']``
+    steht. Dieselbe Fehlerklasse wie #1055 (dort: ``check_reward_dynamic_range`` prüfte nur "std zu
+    klein" und war auf eine BTC-Explosion blind) — die Regel "ein Verhältnis-Check braucht BEIDE
+    Schranken" gehört in AGENTS.md (Pitfall #369).
+
+    Issue #1070 Fix Punkt 2 — ``actual`` trägt seit diesem Fix IMMER die gemessenen Verhältnisse
+    ALLER Studies mit ausreichender Stop-Exit-Evidenz (nicht mehr nur die Offender) — der Wert ist
+    damit im Report sichtbar, UND ``sweep._offending_pairs_for_fail_fast_check`` kann ihn parsen
+    (#1063), auch wenn nur der obere Ast FAILt. Ein PASSender Check trägt ``actual`` trotzdem
+    (Fix Punkt 3): ``passed=True, actual=None`` bedeutet jetzt eindeutig "nichts gemessen"
+    (``n_studies_measured=0``), während ``passed=True, actual={...}`` "gemessen, nichts auffällig"
+    bedeutet — vorher waren beide Zustände identisch (``actual=None``)."""
     candidates = [
         r for r in study_records
         if r.get("atr_median_bps")
@@ -2790,12 +3357,16 @@ def check_effective_stop_distance(study_records: list[dict], *,
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=True,
-            expected=f"Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) >= {min_ratio} je Study",
+            expected=f"{min_ratio} <= Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
+                     f"<= {max_ratio} je Study",
             actual=None,
-            detail="Keine Studies mit Exit-Telemetrie (Issue #899) — nicht auswertbar.",
+            detail="Keine Studies mit Exit-Telemetrie (Issue #899) — nicht auswertbar "
+                   "(n_studies_measured=0).",
             severity="high",
         )
-    offenders: dict[str, float] = {}
+    offenders_low: dict[str, float] = {}
+    offenders_high: dict[str, float] = {}
+    all_ratios: dict[str, float] = {}
     inconclusive_studies: dict[str, int] = {}
     with_data: list[dict] = []
     for r in candidates:
@@ -2812,34 +3383,106 @@ def check_effective_stop_distance(study_records: list[dict], *,
         configured_distance_bps = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
         if configured_distance_bps <= 0:
             continue
-        ratio = float(loss_bps) / configured_distance_bps
+        ratio = round(float(loss_bps) / configured_distance_bps, 4)
+        all_ratios[key] = ratio
         if ratio < min_ratio:
-            offenders[key] = round(ratio, 4)
+            offenders_low[key] = ratio
+        elif ratio > max_ratio:
+            offenders_high[key] = ratio
+    offenders = {**offenders_low, **offenders_high}
     passed = not offenders
     if not with_data:
         return InvariantResult(
             name="check_effective_stop_distance",
             passed=True,
-            expected=f"Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) >= {min_ratio} je Study",
+            expected=f"{min_ratio} <= Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
+                     f"<= {max_ratio} je Study",
             actual=inconclusive_studies if inconclusive_studies else None,
             severity="high",
             detail=f"Keine Study mit >= {min_trailing_stop_exits} nachweislichen TRAILING_STOP-"
                    "Exits (#1034 Voraussetzung) — INCONCLUSIVE statt eines Urteils auf zu kleiner "
-                   "Stichprobe.",
+                   f"Stichprobe (n_studies_measured=0 von {len(candidates)} Kandidaten).",
             inconclusive=True,
         )
+    detail_parts = []
+    if offenders_low:
+        detail_parts.append(
+            f"{len(offenders_low)} Study/Studies UNTERSCHREITEN {min_ratio}: {offenders_low} — der "
+            "Stop reagiert nicht auf seinen eigenen Multiplikator (Pitfall #286) und rastet "
+            "vermutlich auf der ATR-Schätzung statt auf dem Preis-Extremum (Pitfall #285, #897).")
+    if offenders_high:
+        detail_parts.append(
+            f"{len(offenders_high)} Study/Studies ÜBERSCHREITEN {max_ratio}: {offenders_high} — der "
+            "realisierte Verlust ist von der konfigurierten Stopdistanz UNABHÄNGIG (der Stop "
+            "begrenzt den Verlust nicht, unabhängig vom Multiplikator, #1069/#1070).")
     return InvariantResult(
         name="check_effective_stop_distance",
         passed=passed,
-        expected=f"Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) >= {min_ratio} je Study",
-        actual=offenders if offenders else None,
+        expected=f"{min_ratio} <= Ø-Bruttoverlust (Stop-Exits) / (k_median · ATR_median) "
+                 f"<= {max_ratio} je Study",
+        actual=all_ratios,
+        severity="high",
+        detail=("OK (n_studies_measured=%d)" % len(with_data) if passed else " ".join(detail_parts)),
+    )
+
+
+def check_stop_cost_ratio(study_records: list[dict], *,
+                          round_trip_cost_bps_by_symbol: dict[str, float],
+                          min_stop_to_cost_ratio: float = 3.0) -> InvariantResult:
+    """Issue #1072 (Wiederkehr #1050/#1051) — der konfigurierte Stop-Abstand
+    (``k_median · ATR_median``, bps) muss mindestens ``min_stop_to_cost_ratio`` (Default 3.0,
+    ``tournament.json['min_stop_to_cost_ratio']``) mal die Round-Trip-Kosten (``c_rt``, bps) dieses
+    Symbols betragen. Root-Cause: die notwendige Bedingung ``E[MFE] > d + c_rt`` ist strukturell
+    verletzt, wenn die Stopdistanz selbst schon in der Grössenordnung der Kosten liegt — eine
+    Position kann den Stop nicht überleben, bevor die Kosten sie auffressen, UNABHÄNGIG vom Signal
+    (Beweis B-3/E-1 im #866-Katalog: DynamicBreakout mit ``d = 0,85 · c_rt``, HourlyMeanReversion
+    ``0,87 · c_rt`` — beide mit negativer Expectancy).
+
+    ``round_trip_cost_bps_by_symbol`` — vom Aufrufer aufgelöst (``backtest_runner._read_default_
+    round_trip_cost_bps``, dieselbe Auflösungskette wie das kostenrelative Expectancy-Gate, #684/
+    #775); ein Symbol ohne Eintrag wird übersprungen (INCONCLUSIVE für dieses Symbol, kein FAIL auf
+    einer unbekannten Kostenbasis)."""
+    candidates = [
+        r for r in study_records
+        if r.get("atr_median_bps") and r.get("atr_trailing_multiplier_median") is not None
+        and r.get("symbol") in (round_trip_cost_bps_by_symbol or {})
+    ]
+    if not candidates:
+        return InvariantResult(
+            name="check_stop_cost_ratio",
+            passed=True,
+            expected=f"atr_median_bps · atr_trailing_multiplier_median >= "
+                     f"{min_stop_to_cost_ratio} · c_rt je Study",
+            actual=None,
+            severity="high",
+            detail="Keine Study mit ATR-Telemetrie UND bekannter Kostenbasis (c_rt) — "
+                   "nicht auswertbar.",
+        )
+    offenders: dict[str, float] = {}
+    all_ratios: dict[str, float] = {}
+    for r in candidates:
+        key = f"{r.get('strategy')}/{r.get('symbol')}"
+        c_rt = round_trip_cost_bps_by_symbol[r["symbol"]]
+        if not c_rt or c_rt <= 0:
+            continue
+        configured_distance_bps = float(r["atr_trailing_multiplier_median"]) * float(r["atr_median_bps"])
+        ratio = round(configured_distance_bps / c_rt, 4)
+        all_ratios[key] = ratio
+        if ratio < min_stop_to_cost_ratio:
+            offenders[key] = ratio
+    passed = not offenders
+    return InvariantResult(
+        name="check_stop_cost_ratio",
+        passed=passed,
+        expected=f"atr_median_bps · atr_trailing_multiplier_median >= "
+                 f"{min_stop_to_cost_ratio} · c_rt je Study",
+        actual=all_ratios if all_ratios else None,
         severity="high",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies unterschreiten das Verhältnis Ø-Bruttoverlust "
-                f"(Stop-Exits) / konfigurierter Stop-Abstand ({min_ratio}): {offenders} — der Stop "
-                "reagiert nicht auf seinen eigenen Multiplikator (Pitfall #286) und rastet "
-                "vermutlich auf der ATR-Schätzung statt auf dem Preis-Extremum (Pitfall #285, "
-                "Issue #897)."),
+                f"{len(offenders)} Study/Studies mit einer Stopdistanz unter "
+                f"{min_stop_to_cost_ratio}x der Round-Trip-Kosten: {offenders} — die Position kann "
+                "den Stop strukturell nicht überleben, bevor die Kosten sie auffressen, "
+                "unabhängig vom Signal (#1072, Wiederkehr #1050/#1051)."),
     )
 
 
@@ -2860,23 +3503,30 @@ def check_n_periods_homogeneity(study_records: list[dict], *,
     der Kalibrierpunkt für ``deflation_max_n_periods_ratio``, dort heute 4.0). ``severity='high'``
     (nicht ``'blocking'``) — die Heterogenität selbst blockiert keine einzelne Study, sie ist ein
     Diagnosesignal für die #865-Kalibrierung."""
-    by_symbol: dict[str, list[float]] = {}
+    by_symbol: dict[str, list[tuple[str, float]]] = {}
     for r in study_records:
         symbol = r.get("symbol")
         median = r.get("oos_n_periods_median")
         if symbol is None or median is None:
             continue
-        by_symbol.setdefault(symbol, []).append(float(median))
+        by_symbol.setdefault(symbol, []).append((r.get("strategy"), float(median)))
     offenders: dict[str, float] = {}
-    for symbol, medians in by_symbol.items():
-        if len(medians) < 2:
+    # Issue #1071 — je offendierendem Symbol die Study mit dem MINIMUM (der Nenner der Ratio)
+    # namentlich ausweisen: eine degenerierte Study (z. B. #1079s geprunte-Trials-Kontamination)
+    # treibt die Spannweite, keine Preis-/Datenanomalie.
+    denominator_studies: dict[str, str] = {}
+    for symbol, pairs in by_symbol.items():
+        if len(pairs) < 2:
             continue
-        lo, hi = min(medians), max(medians)
+        vals = [v for _s, v in pairs]
+        lo, hi = min(vals), max(vals)
         if lo <= 0:
             continue
         ratio = hi / lo
         if ratio > max_ratio:
             offenders[symbol] = round(ratio, 2)
+            min_strategy = min(pairs, key=lambda p: p[1])[0]
+            denominator_studies[symbol] = f"{min_strategy}/{symbol}"
     passed = not offenders
     return InvariantResult(
         name="check_n_periods_homogeneity",
@@ -2884,8 +3534,11 @@ def check_n_periods_homogeneity(study_records: list[dict], *,
         expected=f"max(oos_n_periods_median) / min(oos_n_periods_median) <= {max_ratio} je Symbol",
         actual=offenders if offenders else None,
         severity="high",
+        provenance=({"denominator_studies": denominator_studies} if denominator_studies else None),
         detail=("OK" if passed else
                 f"{len(offenders)} Symbol(e) mit n_periods-Spannweite > {max_ratio}: {offenders} — "
+                f"Nenner-Study je Symbol: {denominator_studies} (vor einer Interpretation als "
+                "Datenanomalie erst prüfen, ob dieser Nenner selbst degeneriert ist, z. B. #1079) — "
                 "die #865-Heterogenitäts-Suppression (deflation_max_n_periods_ratio) greift "
                 "vermutlich für praktisch jede Familie dieses Symbols (Issue #923)."),
     )
@@ -3125,6 +3778,54 @@ def check_fail_fast_invariants_wired(invariant_check_names: list[str], *,
     )
 
 
+def check_fail_fast_actual_convention(invariant_checks: list[dict], *,
+                                      fail_fast_invariants: list[str] | None = None) -> InvariantResult:
+    """Issue #1063 (Pitfall #370) — Meta-Invariante: JEDER FAILende Check, der in
+    ``optimizer.json['fail_fast_invariants']`` steht, muss seine Offender in ``actual`` als
+    ``{"<strategy>/<symbol>": wert}`` stempeln (die Konvention, die
+    ``sweep._offending_pairs_for_fail_fast_check`` parst). Root-Cause #1063:
+    ``check_holding_time_cap`` FAILte über seinen Magnituden-Ast (#1036) mit
+    ``actual=None`` — der Parser fiel auf den konservativen "Struktur unbekannt ⇒ global
+    abbrechen"-Zweig, der die #1016-Breitenschwelle (Pitfall #349) NIE auswertete, exakt in der
+    Ein-Symbol-Konfiguration, für die sie gebaut wurde. Statt diesen stillen Konservativ-Abbruch
+    unbemerkt zu lassen, macht dieser Check die Vertragsverletzung selbst SICHTBAR.
+
+    Ein PASSender fail_fast-Check ist nie ein Offender (er hat nichts zu melden — ``actual=None``
+    ist dort die korrekte, erwartete Form). Nur eine FAILende Auswertung ohne die Pair-Konvention
+    zählt."""
+    configured = set(fail_fast_invariants or [])
+    if not configured:
+        return InvariantResult(
+            name="check_fail_fast_actual_convention", passed=True,
+            expected="jeder FAILende fail_fast_invariants-Check traegt actual={'strategy/symbol': wert}",
+            actual=None, detail="fail_fast_invariants leer/fehlt — nicht anwendbar.",
+        )
+    offenders = []
+    for chk in invariant_checks or []:
+        name = chk.get("name") or chk.get("check")
+        if name not in configured or chk.get("passed", True):
+            continue
+        actual = chk.get("actual")
+        conforms = (
+            isinstance(actual, dict) and bool(actual)
+            and all(isinstance(k, str) and "/" in k for k in actual))
+        if not conforms:
+            offenders.append(name)
+    passed = not offenders
+    return InvariantResult(
+        name="check_fail_fast_actual_convention",
+        passed=passed,
+        expected="jeder FAILende fail_fast_invariants-Check traegt actual={'strategy/symbol': wert}",
+        actual=offenders or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} FAILende(r) fail_fast-Check(s) ohne die actual-Pair-Konvention: "
+                f"{offenders} — sweep._offending_pairs_for_fail_fast_check faellt fuer diese auf "
+                "den Konservativ-Zweig zurueck (globaler Abbruch, Breitenschwelle wird nicht "
+                "ausgewertet, #1063)."),
+    )
+
+
 def check_required_config_keys(configs: dict[str, dict], required_keys_spec: dict) -> InvariantResult:
     """Issue #844 (Pitfall #267, 5. Wiederkehr nach #488/#753/#769/#805) — FAIL, wenn ein in
     ``required_keys_spec`` (``automation/config/_required_keys.json``) als ``required`` markierter
@@ -3248,14 +3949,34 @@ def check_symbol_coverage(coverage: dict, universe: list[str], *, max_age_runs: 
     )
 
 
-def check_coverage_ledger_continuity(total_runs_started: int, has_prior_reports: bool) -> InvariantResult:
+def check_coverage_ledger_continuity(total_runs_started: int, has_prior_reports: bool, *,
+                                     coverage_bootstrap_phase: bool = False) -> InvariantResult:
     """Issue #892 Fix Punkt 2 — FAIL (blocking), wenn ``total_runs_started == 1`` UND bereits
     MINDESTENS ein früherer Lauf-Report existiert (``data/optimizer/reports/run_*.json``): das
     Coverage-Ledger (``symbol_coverage.json``) wurde zwischen dem Vorlauf und diesem Lauf
     zurückgesetzt/verloren — ein Datenverlust (achte Wiederkehr von Pitfall #237: #794, #796,
     #797, #818, #831, #840, #856, hier), kein Normalzustand für einen Sweep, der nachweislich
     nicht der allererste ist. Reine Funktion — der Aufrufer (``report._build_report``) ermittelt
-    ``has_prior_reports`` aus dem Report-Verzeichnis."""
+    ``has_prior_reports`` aus dem Report-Verzeichnis.
+
+    Issue #1064 — ``coverage_bootstrap_phase`` (``symbol_coverage.coverage_report``s gleichnamiges
+    Feld, #892 Fix Punkt 4/Pitfall #287) macht den Check unbedingt PASS: während der Bootstrap-
+    Phase ist ``total_runs_started == 1`` der ERWARTETE Wert, kein Datenverlust — derselbe Begriff,
+    den ``check_symbol_coverage`` bereits für ``never_covered`` konsultiert. Root-Cause #1064:
+    dieser Check ignorierte die Bootstrap-Phase bislang vollständig, obwohl derselbe Report im
+    selben Lauf sie für eine strukturell verwandte Aussage ("145 Symbole noch nie abgedeckt")
+    bereits als "Telemetrie, kein FAIL" behandelte — zwei Checks über denselben Ledger-Zustand mit
+    widersprüchlicher Bootstrap-Semantik."""
+    if coverage_bootstrap_phase:
+        return InvariantResult(
+            name="check_coverage_ledger_continuity",
+            passed=True,
+            expected="total_runs_started > 1, sobald mindestens ein früherer Lauf-Report existiert",
+            actual=total_runs_started,
+            severity="blocking",
+            detail="Bootstrap-Phase (symbol_coverage.coverage_bootstrap_phase) — "
+                   "total_runs_started==1 ist hier der erwartete Wert, nicht anwendbar (#1064).",
+        )
     offending = bool(has_prior_reports) and int(total_runs_started) == 1
     return InvariantResult(
         name="check_coverage_ledger_continuity",

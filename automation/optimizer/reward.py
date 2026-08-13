@@ -1098,6 +1098,62 @@ def _normalized_gate_distances(
     return distances
 
 
+# Issue #1074 (Katalog #866-2, Wiederkehr #631 in neuer Umgebung) — Skalen-Referenz je Gate für
+# die BINDING-ATTRIBUTION (``report._split_near_miss_deltas``/``confirm._holdout_binding_gate``):
+# welcher ``tournament.json``-Schwellenwert die natürliche Einheit dieses Gate-Deltas trägt.
+# Bewusst GETRENNT von ``_normalized_gate_distances`` (das arbeitet auf der vollen
+# ``TournamentMetrics`` und braucht ``risk_dd_cap``/Regime-Fallunterscheidungen, die an der
+# Binding-Attributions-Konsumstelle — ein bereits kollabiertes ``{gate: delta}``-Near-Miss-Dict —
+# nicht mehr verfügbar sind) — dieselbe GRUNDIDEE (dividiere durch eine gate-spezifische Skala),
+# über die einfachere Eingangsgrösse.
+_BINDING_SCALE_THRESHOLD_KEY = {
+    "oos_min_trades": "min_trades",
+    "oos_min_total_return": "oos_min_total_return",
+    "oos_min_expectancy": "oos_min_expectancy",
+    "oos_max_drawdown": "max_drawdown",
+    "oos_min_win_rate": "oos_min_win_rate",
+    "oos_min_sortino": "oos_min_sortino",
+    "oos_min_psr": "oos_min_psr",
+    "oos_min_profit_factor": "oos_min_profit_factor",
+    # dieselbe Return-Einheiten-Skala wie in _normalized_gate_distances (excess_scale-Fallback).
+    "oos_min_excess_return": "oos_min_total_return",
+    "oos_min_profitable_folds_frac": "oos_min_profitable_folds_frac",
+}
+
+
+def normalize_gate_deltas_for_binding(raw_deltas: dict, tournament_cfg: dict | None) -> dict[str, float]:
+    """Issue #1074 (Pitfall #375-Klasse, Wiederkehr #631) — normiert ein ROHES
+    ``{gate: actual − threshold}``-Near-Miss-Dict (``backtest_runner``s ``oos_gate_deltas``,
+    NATIVE Einheiten je Gate — Trade-Anzahl, Drawdown-Bruchteil, Wahrscheinlichkeit …) auf eine
+    DIMENSIONSLOSE Grösse: ``delta_norm = delta / scale(gate)``.
+
+    Root-Cause #1074: ``argmin`` über die rohen Deltas ist ein Einheiten-Artefakt, keine
+    Attribution — ein grosskaliges Gate (``oos_min_trades``, Skala 10²) gewinnt NIE gegen ein
+    kleinskaliges (``oos_min_psr``, Skala 1), unabhängig davon, welches Gate ÖKONOMISCH
+    tatsächlich bindet (Beweis B-11 im #866-Katalog: ``oos_max_drawdown`` lag in 14/14 Studies im
+    engen Band 0,2626–0,2984 gegen ein 30-%-Gate — bindet NIRGENDS — wurde aber in 8/14 Studies
+    trotzdem als "das bindende Gate" ausgewiesen).
+
+    ``scale(gate)`` ist der Betrag des konfigurierten Schwellenwerts (``_BINDING_SCALE_THRESHOLD_
+    KEY``-Mapping); fehlt der Schwellenwert oder ist er ~0 (z. B. ein Bärenmarkt-Excess-Return-Ziel
+    von 0.0, oder schlicht kein ``tournament_cfg`` bekannt), fällt die Skala auf ``1.0`` zurück —
+    der Delta-Wert bleibt dann UNVERÄNDERT (Identität), statt eine Skala zu ERFINDEN, die die
+    relative Magnitude zwischen mehreren unbekannt-skalierten Gates künstlich einebnen würde
+    (bewusst NICHT ``|delta|`` als Fallback-Skala — das würde JEDES Delta auf ``±1`` kollabieren
+    und exakt die Information zerstören, die eine Attribution ohne Schwellenwert-Kenntnis noch
+    hat). Nicht-numerische Deltas werden übersprungen."""
+    tournament_cfg = tournament_cfg or {}
+    normalized: dict[str, float] = {}
+    for gate, delta in (raw_deltas or {}).items():
+        if not isinstance(delta, (int, float)):
+            continue
+        threshold_key = _BINDING_SCALE_THRESHOLD_KEY.get(gate, gate)
+        threshold = tournament_cfg.get(threshold_key)
+        scale = abs(float(threshold)) if threshold not in (None, 0) else 1.0
+        normalized[gate] = float(delta) / scale
+    return normalized
+
+
 def _constraint_distance_penalty(
     m: "TournamentMetrics",
     weights: dict,

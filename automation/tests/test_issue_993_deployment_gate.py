@@ -50,6 +50,10 @@ def _passing_record(**overrides) -> dict:
         # Issue #1042 (Katalog #866, E-1) — zehnte Klausel ``cost_stress``: positive Expectancy
         # unter doppelter Kommission.
         "expectancy_cost_stress_2x": 0.001,
+        # Issue #1073 (Katalog #866-2) — elfte Klausel ``expectancy_outlier_robust``: winsorisierte
+        # Expectancy bleibt positiv UND vorzeichengleich zur rohen Expectancy.
+        "holdout_expectancy": 0.05,
+        "holdout_expectancy_winsorized": 0.04,
         "run_id": "run_abc123",
     }
     record.update(overrides)
@@ -207,6 +211,12 @@ _CLAUSE_VARIANTS = {
         "fail": {"expectancy_cost_stress_2x": -0.001},
         "none": {"expectancy_cost_stress_2x": None},
     },
+    # Issue #1073 (Katalog #866-2) — elfte Klausel.
+    "expectancy_outlier_robust": {
+        "pass": {"holdout_expectancy": 0.05, "holdout_expectancy_winsorized": 0.04},
+        "fail": {"holdout_expectancy": 0.05, "holdout_expectancy_winsorized": -0.01},
+        "none": {"holdout_expectancy": None, "holdout_expectancy_winsorized": None},
+    },
 }
 
 
@@ -281,6 +291,8 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
                 "pbo_n_configs": 30,
                 "blocking_invariant_names": [],
                 "oos_expectancy_cost_stress_2x": 0.001,
+                "oos_expectancy": 0.05,
+                "oos_expectancy_winsorized": 0.04,
             },
             "global": {},
         },
@@ -294,6 +306,8 @@ def test_build_promotion_record_from_proposal_flattens_nested_holdout_metrics():
     assert record["pbo_n_configs"] == 30
     assert record["blocking_invariant_names"] == []
     assert record["expectancy_cost_stress_2x"] == 0.001
+    assert record["holdout_expectancy"] == 0.05
+    assert record["holdout_expectancy_winsorized"] == 0.04
     assert record["data_snapshot_sha256"] == _SNAPSHOT
     assert record["run_id"] == "run_xyz"
 

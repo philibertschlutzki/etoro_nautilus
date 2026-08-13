@@ -28,35 +28,35 @@ def test_cost_stress_2x_subtracts_one_additional_full_commission_charge():
     """commission_bps=100 (1 %) bereits im PnL abgezogen; 2x-Stress zieht GENAU EINE weitere
     volle Kommission ab (Multiplikator 2 = Basis + 1 zusaetzliche Einheit)."""
     pnls_notionals = [(10.0, 1000.0), (10.0, 1000.0)]
-    result = _expectancy_cost_stress(pnls_notionals, commission_bps=100.0, multiplier=2.0)
+    result = _expectancy_cost_stress(pnls_notionals, round_trip_cost_bps=100.0, multiplier=2.0)
     # Zusaetzlicher Abzug je Trade: 1.0 * (100/10000) * 1000 = 10.0 -> stressed pnl = 0.0
     assert abs(result - 0.0) < 1e-9
 
 
 def test_cost_stress_1_5x_subtracts_half_the_commission():
     pnls_notionals = [(10.0, 1000.0)]
-    result = _expectancy_cost_stress(pnls_notionals, commission_bps=100.0, multiplier=1.5)
+    result = _expectancy_cost_stress(pnls_notionals, round_trip_cost_bps=100.0, multiplier=1.5)
     # Zusaetzlicher Abzug: 0.5 * (100/10000) * 1000 = 5.0 -> stressed pnl = 5.0 / 1000 = 0.005
     assert abs(result - 0.005) < 1e-9
 
 
 def test_cost_stress_zero_commission_leaves_expectancy_unchanged():
     pnls_notionals = [(10.0, 1000.0), (-2.0, 1000.0)]
-    result = _expectancy_cost_stress(pnls_notionals, commission_bps=0.0, multiplier=2.0)
+    result = _expectancy_cost_stress(pnls_notionals, round_trip_cost_bps=0.0, multiplier=2.0)
     assert abs(result - (8.0 / 2000.0)) < 1e-9
 
 
 def test_cost_stress_applies_same_notional_floor_as_expectancy_capital_weighted():
     """Ein Mikro-Notional-Trade (< 5 % des Median) wird ausgeschlossen — dieselbe #1031-Regel."""
     pnls_notionals = [(10.0, 1000.0)] * 19 + [(500.0, 1.0)]
-    result = _expectancy_cost_stress(pnls_notionals, commission_bps=100.0, multiplier=2.0)
+    result = _expectancy_cost_stress(pnls_notionals, round_trip_cost_bps=100.0, multiplier=2.0)
     # Nur die 19 homogenen Trades zaehlen: stressed_pnl je Trade = 10 - 1*(0.01)*1000 = 0.0
     assert abs(result - 0.0) < 1e-9
 
 
 def test_cost_stress_none_without_positive_notionals():
-    assert _expectancy_cost_stress([], commission_bps=100.0, multiplier=2.0) is None
-    assert _expectancy_cost_stress([(10.0, 0.0)], commission_bps=100.0, multiplier=2.0) is None
+    assert _expectancy_cost_stress([], round_trip_cost_bps=100.0, multiplier=2.0) is None
+    assert _expectancy_cost_stress([(10.0, 0.0)], round_trip_cost_bps=100.0, multiplier=2.0) is None
 
 
 # ── E-3: cvar_95/es_99 (_calculate_stats, aus derselben Perioden-Rendite-Serie wie #619) ────────

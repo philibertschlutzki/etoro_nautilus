@@ -57,6 +57,9 @@ DEPLOYMENT_CLAUSES: tuple[str, ...] = (
     # bereits an einer der neun bestehenden Klauseln scheitert, soll weiterhin DEREN Namen als
     # blocking_clause tragen, nicht die neueste Ergaenzung.
     "cost_stress",
+    # Issue #1073 (Katalog #866-2) — elfte Klausel: siehe _clause_expectancy_outlier_robust-
+    # Docstring. Ebenfalls ans Ende gestellt (Anzeige-/Auswertungsreihenfolge, keine Prioritaet).
+    "expectancy_outlier_robust",
 )
 
 # Issue #993 Akzeptanzkriterium — dieselbe #663-Default-Schwelle wie confirm._study_pbo
@@ -205,18 +208,51 @@ def _clause_study_invariants_clean(record: Mapping[str, Any] | None) -> bool | N
 def _clause_cost_stress(record: Mapping[str, Any] | None) -> bool | None:
     """Issue #1042 (Katalog #866) E-1 — zehnte Klausel: bei einer Median-Holdout-Expectancy von
     3,63 bps gegen 1 bps konfigurierter Kommission liegt das System am Break-even; ein Kandidat, der
-    unter DOPPELTER Kommission (``expectancy_cost_stress_2x``, additive Telemetrie aus
-    ``backtest_runner._expectancy_cost_stress``) keine positive kapitalgewichtete Expectancy mehr
+    unter DOPPELTEN Round-Trip-Kosten (``expectancy_round_trip_cost_stress_2x``, additive Telemetrie
+    aus ``backtest_runner._expectancy_cost_stress``) keine positive kapitalgewichtete Expectancy mehr
     trägt, hat keinen gegen realistische Kosten-Drift (Spread-Ausweitung, Slippage) robusten Edge.
     ``None`` (Feld fehlt — ein Promotion-Record aus der Zeit vor diesem Fix, oder ein Backtest-Pfad
     ohne ``notional_list``) ⇒ fail-closed, dieselbe Regel wie jede andere Klausel: "nicht geprüft"
-    ist KEINE bestandene Prüfung."""
+    ist KEINE bestandene Prüfung.
+
+    Issue #1081 (Katalog #866-2) — liest bevorzugt den umbenannten Schlüssel
+    (``expectancy_round_trip_cost_stress_2x``, stresst seit diesem Fix die VOLLEN Round-Trip-Kosten
+    statt nur der Kommission, siehe ``backtest_runner._expectancy_cost_stress``-Docstring); der alte
+    Name (``expectancy_cost_stress_2x``) bleibt als Fallback für einen Übergangszeitraum — er trägt
+    seit #1081 denselben korrigierten Wert (Alias, kein zweiter Berechnungspfad)."""
     if not record:
         return None
-    value = record.get("expectancy_cost_stress_2x")
+    value = record.get("expectancy_round_trip_cost_stress_2x")
+    if value is None:
+        value = record.get("expectancy_cost_stress_2x")
     if value is None:
         return None
     return float(value) > 0.0
+
+
+def _clause_expectancy_outlier_robust(record: Mapping[str, Any] | None) -> bool | None:
+    """Issue #1073 (Katalog #866-2, Kohorte D) — elfte Klausel: eine positive Holdout-Expectancy,
+    die unter Winsorisierung (``holdout_expectancy_winsorized`` — derselbe 5-%-Median-Notional-
+    Ausreisserboden wie ``expectancy_capital_weighted``, #1031) das Vorzeichen wechselt oder
+    NICHT-positiv wird, verdankt ihr gesamtes positives Ergebnis einer kleinen Zahl extremer Trades
+    — kein robuster Edge. Beweis B-8 im #866-Katalog: der ERSTGELISTETE Kandidat eines Laufs
+    (AdxAtrMomentum, +17,23 bps roh) hatte ``holdout_expectancy_winsorized = −1,44`` bps, getragen
+    von 6 von 132 Trades.
+
+    Bedingung: ``sign(holdout_expectancy_winsorized) == sign(holdout_expectancy)`` UND
+    ``holdout_expectancy_winsorized > 0``. ``None`` (eine der beiden Grössen fehlt — Pre-#1031-
+    Record oder kein Trade) ⇒ fail-closed, dieselbe Regel wie jede andere Klausel: "nicht geprüft"
+    ist KEINE bestandene Prüfung."""
+    if not record:
+        return None
+    raw = record.get("holdout_expectancy")
+    winsorized = record.get("holdout_expectancy_winsorized")
+    if raw is None or winsorized is None:
+        return None
+    raw, winsorized = float(raw), float(winsorized)
+    if winsorized <= 0.0:
+        return False
+    return (raw > 0.0) == (winsorized > 0.0)
 
 
 def evaluate_deployment_eligibility(
@@ -265,6 +301,7 @@ def evaluate_deployment_eligibility(
         "snapshot_drift": _clause_snapshot_drift(record, current_snapshot_sha256=current_snapshot_sha256),
         "study_invariants_clean": _clause_study_invariants_clean(record),
         "cost_stress": _clause_cost_stress(record),
+        "expectancy_outlier_robust": _clause_expectancy_outlier_robust(record),
     }
 
     # Fail-closed: ``None`` (nicht auswertbar) zaehlt NICHT als erfuellt.
@@ -304,6 +341,9 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "blocking_invariant_names": holdout_symbol.get("blocking_invariant_names"),
         # Issue #1042 (Katalog #866, E-1) — siehe _clause_cost_stress-Docstring.
         "expectancy_cost_stress_2x": holdout_symbol.get("oos_expectancy_cost_stress_2x"),
+        # Issue #1073 (Katalog #866-2) — siehe _clause_expectancy_outlier_robust-Docstring.
+        "holdout_expectancy": holdout_symbol.get("oos_expectancy"),
+        "holdout_expectancy_winsorized": holdout_symbol.get("oos_expectancy_winsorized"),
         "run_id": run_id,
     }
 

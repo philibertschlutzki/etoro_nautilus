@@ -324,9 +324,18 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
-    # Issue #1042 (Katalog #866) E-1/E-3 — siehe TournamentMetrics-Docstring.
-    oos_expectancy_cost_stress_1_5x = oos_metrics.get("expectancy_cost_stress_1_5x")
-    oos_expectancy_cost_stress_2x = oos_metrics.get("expectancy_cost_stress_2x")
+    # Issue #1042 (Katalog #866) E-1/E-3 — siehe TournamentMetrics-Docstring. Issue #1081 (Katalog
+    # #866-2) — bevorzugt den umbenannten, kosten-VOLLSTAENDIGEN Schluessel
+    # (expectancy_round_trip_cost_stress_*, backtest_runner._expectancy_cost_stress); der alte Name
+    # bleibt als Fallback fuer Legacy-Reports, traegt seit #1081 aber denselben korrigierten Wert.
+    oos_expectancy_cost_stress_1_5x = (
+        oos_metrics.get("expectancy_round_trip_cost_stress_1_5x")
+        if oos_metrics.get("expectancy_round_trip_cost_stress_1_5x") is not None
+        else oos_metrics.get("expectancy_cost_stress_1_5x"))
+    oos_expectancy_cost_stress_2x = (
+        oos_metrics.get("expectancy_round_trip_cost_stress_2x")
+        if oos_metrics.get("expectancy_round_trip_cost_stress_2x") is not None
+        else oos_metrics.get("expectancy_cost_stress_2x"))
     oos_cvar_95 = oos_metrics.get("cvar_95")
     oos_es_99 = oos_metrics.get("es_99")
     # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.

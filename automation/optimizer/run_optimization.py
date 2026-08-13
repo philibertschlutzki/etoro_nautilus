@@ -3016,6 +3016,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_atr_median_bps", metrics.oos_atr_median_bps)
         if metrics.oos_atr_min_bps is not None:
             trial.set_user_attr("oos_atr_min_bps", metrics.oos_atr_min_bps)
+        # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als
+        # Trial-User-Attr gestempelt: report._study_record hatte dadurch keine Eingangsgrösse für
+        # eine study-weite Dust-Round-Trip-Quote (Rundungsartefakte mit Notional ~1e-13, siehe
+        # invariants.check_dust_round_trip_share-Docstring).
+        if metrics.oos_expectancy_notional_degenerate_count:
+            trial.set_user_attr(
+                "oos_expectancy_notional_degenerate_count",
+                metrics.oos_expectancy_notional_degenerate_count)
 
         _timebox_violated_this_trial = False
         if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:

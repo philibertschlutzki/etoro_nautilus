@@ -3773,20 +3773,30 @@ def _round_trip_notional_peak(matches: list["FillMatchRecord"]) -> float:
 
 
 def _expectancy_cost_stress(pnls_notionals: list[tuple[float, float]], *,
-                            commission_bps: float, multiplier: float) -> float | None:
+                            round_trip_cost_bps: float, multiplier: float) -> float | None:
     """Issue #1042 (Katalog #866) E-1 — kapitalgewichtete Expectancy unter einem Kosten-Stress-
-    Szenario: ``multiplier``-fache Round-Trip-Kommission statt der im Backtest tatsaechlich
-    angewandten ``commission_bps``. Der Backtest hat die Kommission bereits EINMAL abgezogen; ein
-    Stress-Multiplikator ``s`` zieht zusaetzlich ``(s − 1) · commission_bps/10000 · notional`` je
-    Round-Trip ab, statt neu zu simulieren — eine reine Nachverarbeitung der bereits extrahierten
-    (PnL, Notional)-Paare. Denselben 5-%-Median-Notional-Nennerboden wie ``expectancy_capital_
-    weighted`` (#1031): ein einzelner Mikro-Trade darf die Kennzahl nicht dominieren. ``None`` ohne
-    positive Notionale (keine belastbare Grundlage)."""
+    Szenario: ``multiplier``-fache Round-Trip-KOSTEN (Spread + Kommission, ``round_trip_cost_bps``
+    — c_rt) statt der im Backtest tatsaechlich angewandten Kosten. Der Backtest hat die Kosten
+    bereits EINMAL abgezogen; ein Stress-Multiplikator ``s`` zieht zusaetzlich
+    ``(s − 1) · round_trip_cost_bps/10000 · notional`` je Round-Trip ab, statt neu zu simulieren —
+    eine reine Nachverarbeitung der bereits extrahierten (PnL, Notional)-Paare. Denselben
+    5-%-Median-Notional-Nennerboden wie ``expectancy_capital_weighted`` (#1031): ein einzelner
+    Mikro-Trade darf die Kennzahl nicht dominieren. ``None`` ohne positive Notionale (keine
+    belastbare Grundlage).
+
+    Issue #1081 (Katalog #866-2) — Root-Cause: dieser Parameter hiess vorher ``commission_bps`` UND
+    wurde auch so befuellt (nur die Kommission, 1,0 bps) — der Spread (der GRÖSSERE Kostenblock,
+    75 % von c_rt bei EQUITY: 3,0 von 4,0 bps) blieb unangetastet. Der "2×-Kostenstress" erhoehte
+    die REALEN Round-Trip-Kosten dadurch nur um 25 % (4,0 → 5,0 bps), nicht um 100 % (→ 8,0 bps) —
+    obwohl ``deployment_gate._clause_cost_stress`` den Wert als Kosten-ROBUSTHEITSKLAUSEL konsumiert
+    und die Zusammenfassung ihn als vollen Kostenstress ausweist. Der Aufrufer übergibt jetzt den
+    vollen c_rt (``_read_default_round_trip_cost_bps``/``spread_bps + commission_bps``, dieselbe
+    Auflösungskette wie #775/#684), nicht mehr nur die Kommission."""
     positive = [nz for _, nz in pnls_notionals if nz and nz > 0.0]
     if not positive:
         return None
     floor = 0.05 * statistics.median(positive)
-    extra_rate = (multiplier - 1.0) * (commission_bps / 10000.0)
+    extra_rate = (multiplier - 1.0) * (round_trip_cost_bps / 10000.0)
     stressed_pnl_sum, notional_sum = 0.0, 0.0
     for pnl, nz in pnls_notionals:
         if not nz or nz < floor:
@@ -3813,7 +3823,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -4343,16 +4353,21 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
         # Issue #1042 (Katalog #866) E-1 — Kosten-Stressband als additive Telemetrie, DIESELBE
         # IS/OOS-Aufteilung wie die ``rt_notional_peaks``-Bloecke oben (kein zweiter
         # ``_calculate_stats``-Eingang: die Stress-PnL ist eine reine Nachverarbeitung der bereits
-        # extrahierten Round-Trip-PnL/-Notional-Paare, kein neuer Backtest-Lauf). ``commission_bps``
-        # ist die bereits im Backtest angewandte Round-Trip-Kommission (EINMAL abgezogen); ein
-        # Stress-Multiplikator ``s`` zieht zusaetzlich ``(s-1) · commission_bps/10000 · notional`` je
-        # Round-Trip ab — ökonomisch: "wie waere die Expectancy, haette der Broker s-mal so viel
-        # Kommission verlangt". Bewusst OHNE Spread-Stress (nur die konfigurierte, bekannte Grösse
-        # ``commission_bps`` — ein Spread-Stress braeuchte eine zweite, hier nicht verfuegbare
-        # Modellannahme). Denselben 5%-Median-Notional-Nennerboden wie ``expectancy_capital_
-        # weighted`` (#1031) — ein einzelner Mikro-Trade darf die kapitalgewichtete Kennzahl nicht
-        # dominieren. Berechnung in der standalone, direkt testbaren ``_expectancy_cost_stress``
-        # (analog #1032s ``_round_trip_notional_peak``).
+        # extrahierten Round-Trip-PnL/-Notional-Paare, kein neuer Backtest-Lauf). Issue #1081
+        # (Katalog #866-2) — ``round_trip_cost_bps`` (voller c_rt = Spread + Kommission, sofern vom
+        # Aufrufer übergeben; sonst Fallback ``commission_bps`` allein, Pre-#1081-Verhalten) ist die
+        # bereits im Backtest angewandte Round-Trip-KOSTENGRÖSSE (EINMAL abgezogen); ein
+        # Stress-Multiplikator ``s`` zieht zusaetzlich ``(s-1) · round_trip_cost_bps/10000 ·
+        # notional`` je Round-Trip ab — ökonomisch: "wie waere die Expectancy, haette der Broker
+        # s-mal so hohe Round-Trip-Kosten verlangt". Root-Cause #1081: VOR diesem Fix stresste dieser
+        # Block ausschliesslich ``commission_bps`` (1,0 bps bei EQUITY) — der Spread (3,0 bps, 75 %
+        # von c_rt) blieb unangetastet; ein "2×-Stress" erhoehte die realen Kosten damit nur um 25 %
+        # (4,0 → 5,0 bps), nicht um 100 % (→ 8,0 bps). Denselben 5%-Median-Notional-Nennerboden wie
+        # ``expectancy_capital_weighted`` (#1031) — ein einzelner Mikro-Trade darf die
+        # kapitalgewichtete Kennzahl nicht dominieren. Berechnung in der standalone, direkt
+        # testbaren ``_expectancy_cost_stress`` (analog #1032s ``_round_trip_notional_peak``).
+        _round_trip_cost_bps_for_stress = (
+            round_trip_cost_bps if round_trip_cost_bps is not None else commission_bps)
         _is_pnl_notional, _oos_pnl_notional = [], []
         for _rt_idx, (_pnl, _ts, _ht, _rt_qty) in enumerate(rt_pnls_with_ts):
             _nz = rt_notionals_with_ts[_rt_idx][0] if _rt_idx < len(rt_notionals_with_ts) else None
@@ -4368,10 +4383,18 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             elif _is_in_sample:
                 _is_pnl_notional.append((_pnl, _nz))
         for _level_metrics, _level_pnl_notional in ((is_metrics, _is_pnl_notional), (oos_metrics, _oos_pnl_notional)):
-            _level_metrics["expectancy_cost_stress_1_5x"] = _expectancy_cost_stress(
-                _level_pnl_notional, commission_bps=commission_bps, multiplier=1.5)
-            _level_metrics["expectancy_cost_stress_2x"] = _expectancy_cost_stress(
-                _level_pnl_notional, commission_bps=commission_bps, multiplier=2.0)
+            _stress_1_5x = _expectancy_cost_stress(
+                _level_pnl_notional, round_trip_cost_bps=_round_trip_cost_bps_for_stress, multiplier=1.5)
+            _stress_2x = _expectancy_cost_stress(
+                _level_pnl_notional, round_trip_cost_bps=_round_trip_cost_bps_for_stress, multiplier=2.0)
+            _level_metrics["expectancy_round_trip_cost_stress_1_5x"] = _stress_1_5x
+            _level_metrics["expectancy_round_trip_cost_stress_2x"] = _stress_2x
+            # Issue #1081 — Uebergangs-Alias (eine Sitzung lang): der alte Name blieb bestehen,
+            # traegt jetzt aber denselben, kosten-VOLLSTAENDIGEN Wert wie der neue Name (vorher nur
+            # die Kommission). Bestehende Konsumenten des alten Schluessels lesen automatisch den
+            # korrigierten Wert, bis sie auf den neuen Namen migriert sind.
+            _level_metrics["expectancy_cost_stress_1_5x"] = _stress_1_5x
+            _level_metrics["expectancy_cost_stress_2x"] = _stress_2x
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -5524,7 +5547,13 @@ def run_single_backtest_worker(
         # --- Metriken extrahieren ---
         walk_forward_dict = strat.get("_walk_forward_dict", None)
         try:
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"))
+            # Issue #1081 — voller Round-Trip-Kostensatz (Spread + Kommission, dieselbe #561-Formel
+            # wie round_trip_cost_bps unten) an extract_metrics durchgereicht, damit der
+            # Kostenstress-Block (#1042) die REALEN Kosten stresst, nicht nur die Kommission.
+            _round_trip_cost_bps_for_extract = (
+                float(spread_bps) + float(commission_bps)
+                if spread_bps is not None and commission_bps is not None else None)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
