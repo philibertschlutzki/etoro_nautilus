@@ -39,7 +39,8 @@ def _bar(ts_ns: int, close: float, high: float | None = None, low: float | None 
 @pytest.fixture
 def strategy_env():
     def _build(anchor: str = "price_extreme", atr_trailing_multiplier: float = 1.5,
-               atr_floor_bps: float = 2.0):
+               atr_floor_bps: float = 2.0, anchor_resolution: str = "close",
+               trailing_min_atr_frac: float = 0.5):
         config = Rsi2ReversionConfig(
             instrument_id="TSLA.ETORO",
             bar_type="TSLA.ETORO-1-HOUR-MID-INTERNAL",
@@ -48,6 +49,8 @@ def strategy_env():
             atr_trailing_multiplier=atr_trailing_multiplier,
             trailing_stop_anchor=anchor,
             atr_floor_bps=atr_floor_bps,
+            trailing_stop_anchor_resolution=anchor_resolution,
+            trailing_min_atr_frac=trailing_min_atr_frac,
         )
         strategy = Rsi2ReversionStrategy(config=config)
         strategy.submit_order = MagicMock()
@@ -120,20 +123,36 @@ def test_close_ratchet_locks_onto_atr_minimum_and_never_recovers():
     assert strategy._trailing_stop_price == pytest.approx(expected_stuck)
 
 
-def test_price_extreme_anchor_recovers_when_atr_normalises_again(strategy_env):
-    """Fix: under `price_extreme`, the stop is recomputed from the current ATR every bar (no
-    ratchet against a stale, ATR-driven stop value) — a single quiet bar does not permanently
-    tighten it."""
+def test_price_extreme_anchor_ratchets_and_does_not_recover_when_atr_normalises_again(strategy_env):
+    """Issue #1094 (Katalog #927) — REVIDIERT das #897-Verhalten: "price_extreme" ist jetzt
+    MONOTON (ein Stop, der nachgeben kann, ist keine Verlustobergrenze). Eine einzelne ruhige Bar
+    (ATR=5bps) darf den Stop trotzdem nicht auf den blossen Schlusskurs klemmen (Pitfall #285) —
+    das wird stattdessen ueber die trailing_min_atr_frac-Untergrenze (nicht ueber den Verzicht auf
+    Monotonie) verhindert: der Stop zieht sich auf der ruhigen Bar nach, bleibt aber danach stehen,
+    selbst wenn die ATR wieder auf 40bps steigt."""
     strategy = strategy_env(anchor="price_extreme", atr_trailing_multiplier=1.0)
-    _feed_atr_series(strategy, [40.0, 40.0, 5.0, 40.0, 40.0])
+    _feed_atr_series(strategy, [40.0, 40.0], price=100.0)
+    stop_before_quiet_bar = strategy._trailing_stop_price
+    assert stop_before_quiet_bar == pytest.approx(99.6)
 
-    expected_recovered = 100.0 - 1.0 * (40.0 / 10_000.0) * 100.0
-    assert strategy._trailing_stop_price == pytest.approx(expected_recovered)
+    _feed_atr_series(strategy, [5.0], price=100.0)
+    stop_after_quiet_bar = strategy._trailing_stop_price
+    # Nicht auf den Schlusskurs geklemmt (die #897-Pitfall-#285-Gefahr) UND nicht schlechter als
+    # zuvor (Monotonie).
+    assert stop_after_quiet_bar < 100.0
+    assert stop_after_quiet_bar >= stop_before_quiet_bar
+
+    _feed_atr_series(strategy, [40.0, 40.0], price=100.0)
+    stop_after_atr_recovers = strategy._trailing_stop_price
+    # Der Stop gibt NICHT nach, obwohl die ATR wieder auf 40bps steigt (Kernbehauptung #1094).
+    assert stop_after_atr_recovers == pytest.approx(stop_after_quiet_bar)
 
 
 def test_price_extreme_anchor_ratchets_on_price_not_volatility(strategy_env):
     """The stop must still tighten as price makes new highs (the mechanism it is supposed to
-    protect), independent of the ATR-anchor fix."""
+    protect), independent of the ATR-anchor fix. Issue #1092 (Katalog #925) — der Anker
+    verwendet per Default den SCHLUSSKURS (nicht bar.high), damit er auf derselben Aufloesung
+    wie der Ausloeser liegt."""
     strategy = strategy_env(anchor="price_extreme", atr_trailing_multiplier=1.0)
     strategy._exit_atr.value = 2.0  # 2.0 abs units
     strategy._check_exits_and_update(_bar(ts_ns=1_000 * _NS_PER_HOUR, close=100.0, high=100.0, low=100.0))
@@ -142,8 +161,19 @@ def test_price_extreme_anchor_ratchets_on_price_not_volatility(strategy_env):
 
     strategy._check_exits_and_update(_bar(ts_ns=1_001 * _NS_PER_HOUR, close=110.0, high=112.0, low=109.0))
     stop_2 = strategy._trailing_stop_price
-    assert stop_2 == pytest.approx(112.0 - 2.0)
+    assert stop_2 == pytest.approx(110.0 - 2.0)  # Anker = close (110), nicht high (112).
     assert stop_2 > stop_1
+
+
+def test_price_extreme_anchor_resolution_intrabar_reproduces_legacy_high_low_tracking(strategy_env):
+    """Issue #1092 (Katalog #925) — trailing_stop_anchor_resolution='intrabar' reproduziert das
+    Alt-Verhalten (Anker auf bar.high/bar.low) bit-identisch, fuer den A/B-Kalibrierlauf."""
+    strategy = strategy_env(anchor="price_extreme", atr_trailing_multiplier=1.0,
+                            anchor_resolution="intrabar")
+    strategy._exit_atr.value = 2.0
+    strategy._check_exits_and_update(_bar(ts_ns=1_000 * _NS_PER_HOUR, close=100.0, high=100.0, low=100.0))
+    strategy._check_exits_and_update(_bar(ts_ns=1_001 * _NS_PER_HOUR, close=110.0, high=112.0, low=109.0))
+    assert strategy._trailing_stop_price == pytest.approx(112.0 - 2.0)  # Anker = high (112).
 
 
 def test_atr_floor_prevents_zero_distance_stop(strategy_env):
@@ -169,7 +199,11 @@ def test_effective_atr_value_floors_zero(strategy_env):
     assert strategy._effective_atr_value(5.0, 100.0) == pytest.approx(5.0)
 
 
-def test_short_side_price_extreme_uses_low_and_recovers():
+def test_short_side_price_extreme_uses_close_and_never_loosens():
+    """Issue #1092/#1094 (Katalog #925/#927), SHORT-Spiegelbild von
+    test_price_extreme_anchor_ratchets_and_does_not_recover_when_atr_normalises_again: der Anker
+    verwendet per Default den Schlusskurs (nicht bar.low), und der Stop darf nach einer Verengung
+    NICHT mehr nachgeben (nicht-steigend statt zurueck auf den ATR-2.0-Abstand)."""
     with ExitStack() as stack:
         config = Rsi2ReversionConfig(
             instrument_id="TSLA.ETORO", bar_type="TSLA.ETORO-1-HOUR-MID-INTERNAL",
@@ -192,13 +226,32 @@ def test_short_side_price_extreme_uses_low_and_recovers():
 
         strategy._exit_atr.value = 2.0
         strategy._check_exits_and_update(_bar(ts_ns=1_000 * _NS_PER_HOUR, close=90.0, high=91.0, low=88.0))
-        assert strategy._trailing_stop_price == pytest.approx(88.0 + 2.0)
+        stop_1 = strategy._trailing_stop_price
+        assert stop_1 == pytest.approx(90.0 + 2.0)  # Anker = close (90), nicht low (88).
 
         strategy._exit_atr.value = 0.25
         strategy._check_exits_and_update(_bar(ts_ns=1_001 * _NS_PER_HOUR, close=90.0, high=91.0, low=90.0))
-        tight_stop = strategy._trailing_stop_price
-        assert tight_stop == pytest.approx(88.0 + 0.25)
+        stop_2 = strategy._trailing_stop_price
+        assert stop_2 <= stop_1  # SHORT: "besser" heisst niedriger.
 
         strategy._exit_atr.value = 2.0
         strategy._check_exits_and_update(_bar(ts_ns=1_002 * _NS_PER_HOUR, close=90.0, high=91.0, low=90.0))
-        assert strategy._trailing_stop_price == pytest.approx(88.0 + 2.0)  # recovered, not stuck
+        # Der Stop gibt NICHT nach, obwohl die ATR wieder auf 2.0 steigt (Kernbehauptung #1094).
+        assert strategy._trailing_stop_price == pytest.approx(stop_2)
+
+
+def test_ratchet_floored_atr_value_uses_background_ewma(strategy_env):
+    """Issue #1094 (Katalog #927) — trailing_min_atr_frac begrenzt den ATR-Anteil GENAU der
+    Ratsche nach unten, sobald eine Hintergrundschaetzung (_atr_ewma_long) existiert."""
+    strategy = strategy_env(anchor="price_extreme", trailing_min_atr_frac=0.5)
+    strategy._atr_ewma_long = 4.0
+    # ATR (2.0) liegt UNTER der Haelfte der Hintergrundschaetzung (0.5 * 4.0 = 2.0) -> gebunden.
+    assert strategy._ratchet_floored_atr_value(1.0, 100.0) == pytest.approx(2.0)
+    # ATR (5.0) liegt UEBER der Untergrenze -> unveraendert.
+    assert strategy._ratchet_floored_atr_value(5.0, 100.0) == pytest.approx(5.0)
+
+
+def test_ratchet_floored_atr_value_without_background_estimate_falls_back_to_effective_atr(strategy_env):
+    strategy = strategy_env(atr_floor_bps=2.0)
+    assert strategy._atr_ewma_long is None
+    assert strategy._ratchet_floored_atr_value(0.0, 100.0) == pytest.approx(0.02)

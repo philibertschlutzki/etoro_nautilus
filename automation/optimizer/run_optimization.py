@@ -20,7 +20,7 @@ from pathlib import Path
 # Rueckmeldung, vgl. Issue #401) bleiben bewusst erhalten (KEIN globales set_verbosity(ERROR),
 # um die Observability aus Issue #403 nicht zu untergraben).
 warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
-from automation.optimizer.manifest import WORK, catalog_fingerprint
+from automation.optimizer.manifest import WORK, catalog_fingerprint, git_commit
 from automation.optimizer.spaces import sample_params
 from automation.optimizer.trial_config import build_trial, config_dir, freeze_study_config, resolve_wf_settings
 from automation.optimizer.runner import run_backtest, BacktestRunError
@@ -679,7 +679,7 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     from automation.optimizer.sweep_diagnostics import (
                         recommend_diagnosis_action, record_diagnosed_pair,
                         has_existing_search_space_override, load_diagnosed_pairs_cache,
-                        propose_bounds_widening,
+                        propose_bounds_widening, study_fingerprint,
                     )
                     # Issue #699 — Eskalations-Check: wurde für dieses Paar bereits in einem
                     # VORHERIGEN Lauf 'search_space_override' empfohlen (und nichts hat sich seither
@@ -733,7 +733,15 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             (weights or {}).get("max_consecutive_structural_runs", 2)),
                         simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
-                    record_diagnosed_pair(rec)
+                    # Issue #1090 (Katalog #923) — Fingerprint DIESER Study-Beobachtung: dedupliziert
+                    # n_runs_confirmed gegen mehrfache record_diagnosed_pair-Aufrufe fuer denselben
+                    # realen Trial-Datensatz (z. B. Nebenprozesse auf demselben Store, #1086).
+                    rec["study_fingerprint"] = study_fingerprint(
+                        getattr(study, "study_name", None),
+                        study.user_attrs.get("study_started_at_utc"),
+                        _budget_execution_for_diagnosis["n_trials_completed"],
+                    )
+                    record_diagnosed_pair(rec, run_id=run_id)
                 except Exception:
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
 
@@ -980,7 +988,15 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             (weights or {}).get("max_consecutive_structural_runs", 2)),
                         simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
-                    record_diagnosed_pair(rec)
+                    # Issue #1090 (Katalog #923) — siehe Docstring des STRUCTURAL_ALL_UNEVALUABLE-
+                    # Zweigs oben: derselbe Fingerprint-Dedup gegen mehrfach gezaehlte Bestaetigungen.
+                    from automation.optimizer.sweep_diagnostics import study_fingerprint as _study_fp
+                    rec["study_fingerprint"] = _study_fp(
+                        getattr(study, "study_name", None),
+                        study.user_attrs.get("study_started_at_utc"),
+                        _budget_execution_for_quality["n_trials_completed"],
+                    )
+                    record_diagnosed_pair(rec, run_id=run_id)
                 except Exception:
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
 
@@ -3016,6 +3032,12 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_atr_median_bps", metrics.oos_atr_median_bps)
         if metrics.oos_atr_min_bps is not None:
             trial.set_user_attr("oos_atr_min_bps", metrics.oos_atr_min_bps)
+        # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_stop_exit_lag_bars_median is not None:
+            trial.set_user_attr(
+                "oos_stop_exit_lag_bars_median", metrics.oos_stop_exit_lag_bars_median)
+        # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
+        trial.set_user_attr("oos_n_losses", metrics.oos_n_losses)
         # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als
         # Trial-User-Attr gestempelt: report._study_record hatte dadurch keine Eingangsgrösse für
         # eine study-weite Dust-Round-Trip-Quote (Rundungsartefakte mit Notional ~1e-13, siehe
@@ -3167,6 +3189,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_total_return", metrics.oos_total_return)
             if metrics.oos_sortino is not None:
                 trial.set_user_attr("oos_sortino", metrics.oos_sortino)
+            # Issue #1100 (Katalog #933) — dieselbe oos_evaluated-Torwaechter-Konvention wie die
+            # fuenf Metriken oben (#788/#966): ein nie evaluierter Trial darf keine Buy&Hold-
+            # Benchmark-Beobachtung tragen. ``oos_buyhold_return`` ist bereits None-safe bis hierher
+            # durchgereicht (parsing.TournamentMetrics, siehe dortiger Feldkommentar) — dieser Guard
+            # verhindert, dass ein zukuenftiger Aufrufer den Key unconditional stempelt und damit
+            # #759/#788/#966s Sentinel-Kollaps-Fehlerklasse fuer dieses Feld reproduziert.
+            if metrics.oos_buyhold_return is not None:
+                trial.set_user_attr("oos_buyhold_return", metrics.oos_buyhold_return)
         # Issue #668 — die maschinenlesbaren Gate-Deltas je Trial (bereits im JSON_EVENT emittiert,
         # #554) zusätzlich als User-Attr persistiert: erlaubt confirm.py, die eligible_requires_any-
         # Klausel für BEREITS ABGESCHLOSSENE Trials retroaktiv unter einer angepassten Policy
@@ -3443,6 +3473,14 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     import datetime as _dt851
     study.set_user_attr("study_started_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
     study.set_user_attr("worker_id", threading.get_ident())
+    # Issue #1104 (Katalog #937) — der Commit, auf dem die SIMULATION tatsaechlich lief, gestempelt
+    # VOR dem ersten Trial (derselbe Zeitpunkt wie study_started_at_utc) — im Gegensatz zum
+    # REPORT-Commit (report.py's git_commit_report, zur Berichtszeit gelesen), der bei einer
+    # nachtraeglichen Report-Regenerierung (--report-only, generate_report_for_run) auf einem
+    # NEUEREN Checkout laufen kann. Root-Cause #1104: eine EINZIGE git_commit()-Lesung zur
+    # Berichtszeit vermischte beide Zeitpunkte unter demselben Feldnamen — ein Report ueber einen
+    # aelteren Lauf trug dadurch stillschweigend den REPORT-, nicht den SIMULATIONS-Commit.
+    study.set_user_attr("git_commit_simulation", git_commit())
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)

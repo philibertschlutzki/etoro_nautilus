@@ -175,6 +175,11 @@ def test_repeated_structural_collapse_no_longer_escalates_to_denylist_across_two
     ``n_startup_trials`` (16) zulässt — daher 48 statt der Pre-#769 20 Trials je Lauf."""
     monkeypatch.setattr("automation.optimizer.manifest.WORK", tmp_path)
     monkeypatch.setattr(ro, "config_dir", lambda: tmp_path)
+    # Issue #1090 (Katalog #923) — diagnostic_writeback_enabled ist seit diesem Fix in der
+    # ausgelieferten optimizer.json standardmaessig false; dieser Test prueft den Rueckschrieb-
+    # Pfad selbst, daher hier bewusst wieder aktiviert.
+    from automation.optimizer import sweep_diagnostics as _sd
+    monkeypatch.setattr(_sd, "_read_diagnostic_writeback_enabled", lambda: True)
 
     trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)]
     study1 = _FakeStudy(trials)
@@ -212,6 +217,11 @@ def test_adding_a_real_override_that_still_fails_yields_none_not_denylist(tmp_pa
     # trial_config statt der hier gepatchten ro.config_dir-Bindung zu nutzen — beide Patches sind
     # fuer eine end-to-end-Isolation dieses Pfads noetig.
     monkeypatch.setattr(trial_config, "config_dir", lambda: tmp_path)
+    # Issue #1090 (Katalog #923) — diagnostic_writeback_enabled ist seit diesem Fix standardmaessig
+    # false; dieser Test prueft explizit die Rueckschrieb-MECHANIK selbst und schaltet sie daher
+    # bewusst ein (tmp_path traegt sonst keine optimizer.json, die den Key ueberschreiben koennte).
+    (tmp_path / "optimizer.json").write_text(
+        json.dumps({"diagnostic_writeback_enabled": True}), "utf-8")
 
     trials = [_FakeTrial(-9.8, oos_evaluated=False, is_total_trades=3) for _ in range(48)]
     study1 = _FakeStudy(trials)

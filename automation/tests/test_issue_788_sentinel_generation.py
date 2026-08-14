@@ -97,9 +97,11 @@ def test_real_zero_observation_on_evaluated_trial_is_preserved():
 
 # ── Akzeptanzkriterium #788/2: check_metric_sentinel_absence prüft ALLE OOS-Metriken ──────────────
 def test_check_metric_sentinel_absence_covers_all_seven_metric_keys():
+    """Issue #1100 (Katalog #933) — ``oos_buyhold_return`` ist seither eine achte Instanz
+    derselben Sentinel-Familie (siebte Fehlerklassen-Instanz insgesamt, #759/#788/#966/#1100)."""
     assert set(_SENTINEL_GUARDED_METRIC_KEYS) == {
         "oos_win_rate", "oos_profit_factor", "oos_expectancy", "oos_total_return",
-        "oos_sortino", "oos_psr", "oos_sortino_period",
+        "oos_sortino", "oos_psr", "oos_sortino_period", "oos_buyhold_return",
     }
 
 

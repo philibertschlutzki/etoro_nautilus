@@ -161,13 +161,24 @@ class StructuredFormatter(logging.Formatter):
 
 def default_run_id() -> str:
     """Issue #740 — Default-``run_id`` für einen Einzel-Lauf (Sweep/Optimizer):
-    ``f"{git_commit()}_{timestamp}"``. Wiederverwendet ``manifest.git_commit()`` (Provenienz-
-    Primitive) statt eine zweite Git-Abfrage zu implementieren. Lazy-Import, damit ``log_manager``
-    (ein generisches, von ``automation.optimizer`` UNABHÄNGIGES Basismodul) nicht am Modul-Top-Level
-    von ``automation.optimizer`` abhängt."""
-    from automation.optimizer.manifest import git_commit
+    ``f"{token}_{timestamp}"``.
+
+    Issue #1104 (Katalog #937) — Root-Cause: der ``run_id``-Präfix war bislang ``git_commit()``,
+    zum LAUFSTART gelesen. Ein Report, der NACHTRÄGLICH (``--report-only``,
+    ``generate_report_for_run``) auf einem NEUEREN Checkout regeneriert wird, liest ``git_commit()``
+    zur BERICHTSZEIT erneut — die beiden Lesungen können auseinanderlaufen (Referenzsymptom:
+    ``run_3910e12b_…json`` trägt ``run_id``-Präfix ``3910e12b``, aber ``git_commit = 'b48024c4'``),
+    ohne dass aus dem Artefakt selbst hervorging, WELCHE der beiden Lesungen den ``run_id``-Präfix
+    stellte. ``run_id`` ist seither ein kollisionsfreier Zufallstoken (8 Hex-Zeichen aus
+    ``uuid.uuid4()``, dieselbe Länge wie ein Git-Short-Hash, aber OHNE jeden Commit-Bezug) — die
+    Simulations-/Report-Commit-Provenienz lebt seither EXPLIZIT in zwei eigenen Feldern
+    (``run_optimization.py``'s Study-User-Attr ``git_commit_simulation`` /
+    ``report.py``'s ``git_commit_report``, verglichen von ``invariants.check_commit_coherence``),
+    nicht mehr implizit und mehrdeutig im ``run_id``-Präfix."""
+    import uuid
+    token = uuid.uuid4().hex[:8]
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    return f"{git_commit()}_{ts}"
+    return f"{token}_{ts}"
 
 
 def setup_bot_logging(
@@ -413,7 +424,23 @@ def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
     ``[JSON_EVENT] {...}`` weiterhin innerhalb einer formatierten Zeile trägt — für Menschen/
     Terminal unverändert). Kein registrierter Sidecar-Pfad (Logger nie via ``setup_bot_logging``
     initialisiert, z. B. in ad-hoc-Tests) ⇒ stiller No-Op. Fail-open: ein Sidecar-Schreibfehler
-    darf den aufrufenden Trading-/Optimizer-Pfad nie crashen (analog Champion-Store/Retention)."""
+    darf den aufrufenden Trading-/Optimizer-Pfad nie crashen (analog Champion-Store/Retention).
+
+    Issue #1098 (Katalog #931) — Root-Cause: die Alt-Fassung öffnete die Datei ge-BUFFERT
+    (``open(..., "a")``) und rief ZWEI getrennte ``write()``-Aufrufe (Zeile, dann Newline). Unter
+    hoher Ereignisrate aus mehreren gleichzeitigen Worker-Threads (``run_per_symbol_sweep``s
+    ``ThreadPoolExecutor``, #400) verlor ``events.jsonl`` systematisch GENAU EIN Ereignis je Study
+    (12 von 14 TSLA-Studies, PLTR Δ −6, TSLA Δ −14 gegen ``Σ n_trials_completed`` — korreliert exakt
+    mit dem ``INFERENCE_DIAGNOSTIC``-Volumen). Diese Fassung schreibt STATTDESSEN zeilenatomar: EIN
+    ``os.write()``-Syscall auf einem mit ``O_APPEND`` geöffneten Deskriptor pro Zeile (Zeile +
+    Newline als EIN Bytes-Objekt) — POSIX garantiert, dass ein einzelner ``write()`` auf einem
+    ``O_APPEND``-Deskriptor unter dem Inode-Lock atomar an das aktuelle Dateiende geschrieben wird,
+    unabhängig davon, wie viele andere Threads/Prozesse gleichzeitig an dieselbe Datei anhängen —
+    zwei getrennte ``write()``-Aufrufe boten diese Garantie nicht (ein anderer Schreiber kann
+    zwischen ihnen interleaven). Kein Python-Puffer bleibt zwischen Aufrufen offen (jeder Aufruf
+    öffnet/schliesst den Deskriptor selbst), daher ist kein zusätzliches ``flush()`` hier nötig —
+    die Zeile ≤ PIPE_BUF-Praxisgrenze bleibt Voraussetzung (ein Event-Payload jenseits mehrerer KB
+    wäre ohnehin ein Telemetrie-Bug, nicht durch diesen Fix zu lösen)."""
     jsonl_path = _JSONL_SIDECAR_PATHS.get(logger_name)
     if jsonl_path is None:
         return
@@ -424,9 +451,12 @@ def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
         line = json.dumps(_sanitize_for_json(event), ensure_ascii=False, default=str,
                           sort_keys=True, allow_nan=False)
         jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(jsonl_path, "a", encoding="utf-8") as f:
-            f.write(line)
-            f.write("\n")
+        data = (line + "\n").encode("utf-8")
+        fd = os.open(str(jsonl_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
     except OSError:
         logging.getLogger("log_manager").warning(
             "[#741] JSONL-Sidecar-Schreiben fehlgeschlagen für %s", jsonl_path, exc_info=True
@@ -437,6 +467,18 @@ def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
         logging.getLogger("log_manager").warning(
             "[#937] JSONL-Sidecar-Serialisierung fehlgeschlagen für %s", jsonl_path, exc_info=True
         )
+
+
+def jsonl_sidecar_path(logger_name: str) -> Path | None:
+    """Issue #1098 (Katalog #931) — öffentlicher Read-Zugriff auf den für ``logger_name`` via
+    ``setup_bot_logging`` registrierten ``.events.jsonl``-Pfad (das Modul-Dict
+    ``_JSONL_SIDECAR_PATHS`` selbst bleibt privat). Für ``report._build_report``: um die
+    tatsächliche JSONL-Zeilenzahl des aktuellen Sweep-Laufs gegen ein ``EVENTS_MANIFEST``-Event
+    zu prüfen (``invariants.check_event_stream_completeness``), muss der Report-Pfad den Sidecar-
+    Pfad des ``optimizer``-Loggers auflösen können, ohne das Sidecar-Modul-Interna zu importieren.
+    ``None`` bei nie initialisiertem Logger (z. B. Report-Erzeugung ausserhalb eines echten
+    Sweep-Laufs, etwa in Tests) — Aufrufer müssen das behandeln."""
+    return _JSONL_SIDECAR_PATHS.get(logger_name)
 
 
 def emit_gate1_rejection(

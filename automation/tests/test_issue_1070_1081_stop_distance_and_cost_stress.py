@@ -23,6 +23,10 @@ def _record(strategy, symbol, *, atr_bps, k, loss_bps, n_stop_exits=50):
         "atr_median_bps": atr_bps, "atr_trailing_multiplier_median": k,
         "oos_gross_loss_mean_bps_trailing_stop": loss_bps,
         "oos_n_trailing_stop_losses": n_stop_exits,
+        # Issue #1097 (Katalog #930) — check_effective_stop_distance konsumiert seither
+        # ausschliesslich die gepoolte Grösse; fuer diese Einzel-Trial-Fixtures identisch zum
+        # medianbasierten Wert oben (keine echte Mehr-Trial-Poolung in diesen Tests).
+        "oos_gross_loss_mean_bps_trailing_stop_pooled": loss_bps,
     }
 
 

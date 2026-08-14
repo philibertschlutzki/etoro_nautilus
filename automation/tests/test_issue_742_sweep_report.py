@@ -84,7 +84,7 @@ def test_report_schema_and_atomic_write(wired_storage):
     assert data["run_id"] == "testrun1"
     assert data["wallclock_s"] == 42
     assert data["cli_args"]["strategies"] == "TestStrat"
-    assert "git_commit" in data and "tournament_config_sha256" in data
+    assert "git_commit_report" in data and "tournament_config_sha256" in data
 
     assert len(data["studies"]) == 1
     rec = data["studies"][0]

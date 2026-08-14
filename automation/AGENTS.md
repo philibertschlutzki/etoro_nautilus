@@ -5989,6 +5989,117 @@ Alle referenzierten Mechanismen dieser offenen Punkte (`invariants.check_selecti
 
 ---
 
+## Issue-Katalog #1023–#1042 — TSLA-Preisreihenanomalie, Report-Kohortenmischung, Messapparat-Härtung (Katalog #866/#873, GitHub-Issues #874–#893, Sitzung 2026-08-12)
+
+**Ausgangslage.** Der Abweichungs-Katalog #866 (inhaltsgleich dupliziert unter #873) prüfte vier Läufe (`34b99e6e`, dreimal `8a59f96d`) gegen den damaligen Stand (`AGENTS.md` bis Pitfall #349, höchste Issue-Referenz #1022) und fand: der Report des Laufs `34b99e6e` mischte 98 Studies vom Vortag in die Ergebnistabellen (#1023); die menschenlesbare Zusammenfassung liess sich aus dem beigelegten Report nicht bit-identisch regenerieren, inklusive Vorzeichenwechsel beim TSLA-Buy&Hold (#1024); die dominante gemeldete Abbruchursache `EXCEPTION` (66 % der Studies) erwies sich als Zählfehler ohne echten Absturz (#1026); und drei Kandidaten mit dreistelligem Holdout-Ertrag (VwapExhaustion/TSLA 162,2 %, FlashCrashReversal/TSLA 136,6 %, ComboTrendVwap/TSLA 98,0 %) stellten sich als arithmetisch unmöglich heraus — Symptom einer TSLA-Preisreihenanomalie (#1028, HEADLINE). Über alle 82 nicht-TSLA-Holdout-Studies blieb die reale Ökonomie schwach (Median-Holdout-Return 0,17 % über 45 Tage, Median-Expectancy 3,63 bps gegen 1 bps Kommission, 43/82 = 52,4 % unter Buy & Hold). Der Katalog gliederte 20 Punkte in fünf Kohorten (A: Report-/Artefakt-Integrität, B: TSLA-Datenintegrität, C: Messapparat, D: Governance/Suchhaushalt, E: Ertrag/Risiko) mit verbindlicher Merge-Reihenfolge und Sperrvermerk gegen Kapitaleinsatz auf einem TSLA-Kandidaten. Zwei Pull-Requests setzten den Katalog um: **PR #867** implementierte Kohorten A–C vollständig (17 der 20 Punkte); **PR #894** verifizierte diese Arbeit erstmals gegen eine vollständige `nautilus_trader`-Umgebung (zuvor nie gegen eine komplette Installation getestet — Ergebnis: alle 17 Punkte bestätigt korrekt) und schloss die verbliebenen Lücken (#1024, #1028, #1038, #1040, #1041, #1042 teilweise).
+
+### Umgesetzt (PR #867, PR #894 — Sitzungen 2026-08-12/13)
+
+**Kohorte A — Report- und Artefaktintegrität:**
+
+**#1023 (P0, HEADLINE) — Lauf-Report enthielt Studies fremder Läufe.** `report.generate_sweep_report` enumerierte alle Studies des SQLite-Stores statt der Studies dieses Laufs (der `run_id`-Filter aus #1015 wirkte nur innerhalb von `compute_budget_execution`, nicht bei der Study-Auswahl). Fix: Studies werden auf `user_attrs['run_id'] == run_id` gefiltert, ausgeschlossene Fremd-Studies landen in einem eigenen Report-Feld `studies_excluded_foreign_run`; eine leere gefilterte Menge bei nicht-leerem Store ist fail-loud. Neue blockierende Invariante `check_report_cohort_coherence`. Dies ist die unmittelbare Vorstufe zu #1086/#1087/#1088 dieser Sitzung — dort erwies sich derselbe Mechanismus als zeitfenster- statt identitätsbasiert und damit bei echter Nebenläufigkeit weiterhin lückenhaft (Pitfall #382/#383).
+
+**#1024 (P0) — Zusammenfassung und Report desselben `run_id` widersprachen sich** (219 Diff-Zeilen bei Regeneration, inkl. TSLA-Buy&Hold-Vorzeichenwechsel). Root-Cause blieb zum Zeitpunkt von PR #867 offen (zwei Kandidaten: divergierende Regenerationsläufe vs. degradierter Teilschrieb mit `started_at_utc=None`). **PR #894 schloss die Lücke:** die betroffenen committeten `.md`-Dateien stammten von einer Pipeline-Ausführung vor bzw. ohne den `report_sha256`-Fix und wurden über `write_german_summary_for_report_path` neu regeneriert; ein CI-Gate prüft seither die bit-identische Regenerierbarkeit jeder committeten `logs/run_*.json`.
+
+**#1025 (P0) — `run_id`-Stempel erreichte die Trials nicht** (`n_trials_completed=0` bei `n_trials=n_trials_budgeted`). `make_symbol_objective` setzte den Stempel nur bei `run_id is not None`, der Wert wurde auf dem betroffenen Pfad nicht durchgereicht. Fix: lückenlose Durchreichung `sweep.run_per_symbol_sweep → _optimize_symbol_impl → make_symbol_objective`, fehlender Wert wird zum `ValueError` statt zum stillen `None`-Default; neue Invariante `check_run_id_stamp_coverage`.
+
+**#1026 (P0) — `stop_reason=EXCEPTION` benannte eine nie gemessene Ursache** (74/112 Studies, keine davon mit Stacktrace oder Exception-Zähler; eine Study mit exakt ausgeführtem Budget 280/280 wurde trotzdem als abgestürzt gemeldet). `compute_budget_execution` leitete `EXCEPTION` als `else`-Zweig einer Budget-Fallunterscheidung ab. Fix: `study.optimize(..., catch=...)` zählt tatsächlich gefangene Exceptions in `n_trials_exception`/`exception_types`; `EXCEPTION` nur noch bei `n_trials_exception > 0`, sonst `UNKNOWN_INCOMPLETE`.
+
+**#1027 (P0) — `compute_budget_execution` an 2 von 5 Aufrufstellen mit `run_id` gefixt, 3 nicht** — Promotionsroute (`confirm.py`) und Denylist-/Override-Rückschrieb (`run_optimization.py`, zwei Stellen) entschieden auf der ungefilterten Mehr-Lauf-Zahl (Beispiel: ComboTrendVwap/TSLA `0,2179` im Study-Record gegen `0,875` in `diagnosed_pairs`). Fix: `run_id` wird zum Pflichtparameter (keyword-only, kein Default) an allen fünf Aufrufstellen; neue Invariante `check_budget_metric_single_source`.
+
+**#1029 (P0) — `snapshot_drift`-blockierte Kandidaten erschienen in der Promotionstabelle trotzdem als „Promotion".** `_section_1_result_in_one_sentence` zählte `promotion_outcome_counts` ohne Rücksicht auf `deployment_decision.admitted`. **In PR #894 gefixt** (ursprünglich in PR #867 als offener Punkt dokumentiert): Abschnitt 1 der deutschen Zusammenfassung meldet seither getrennt `n_promotions_sweep` und `n_deployable`; bei `snapshot_drift=false` erscheint der Kandidat nicht mehr in Abschnitt 2.1, sondern in einer neuen Sektion „2.1b Quarantäne — Datenintegrität".
+
+**#1030 (P1) — Zensiertes Profit-Faktor-Rohmass erreichte den Bericht nie**, weil `holdout_metrics` für Proposals ohne `symbol`-Route ein leeres Dict war und die Kette (`backtest_runner.py` → `parsing.py` → `confirm.py` → `report.py`) still abbrach; zusätzlich verglich der Zensur-Test `profit_factor_raw == profit_factor_cap` mit `>` statt `>=`. Fix: `>=`-Vergleich, Fallback auf die `global`-Route mit gestempelter `holdout_route`, zusätzliche Konsistenzprüfung in `check_censored_statistic_in_decision`.
+
+**#1038 (P2) — `worker_utilisation` war keine Auslastung** (151,8 %/246,5 %/332,9 % über drei Läufe) — Zähler enthielt Studies fremder Läufe (#1023) und sich überlappende, verschachtelte Worker-Pools je Study. **In PR #894 gefixt:** umbenannt in eine Grösse mit Docstring, der die Überlappung benennt; neue Invariante `check_worker_utilisation_plausible`.
+
+**Kohorte B — TSLA-Datenintegrität:**
+
+**#1028 (P0, HEADLINE) — Die drei TSLA-Kandidaten waren arithmetisch unmöglich.** Drei unabhängige Rechnungen (gemeldete Expectancy vs. aus Equity implizierte vs. aus PF/WR/Bruttoverlust implizierte) widersprachen sich um ein bis zwei Grössenordnungen; der implizite Sizing-Anteil lag bei 0,93–1,02 % gegen konfigurierte 15 %. Führende Hypothese: eine Sprungstelle/Snapshot-Naht in der TSLA-Preisreihe (`atr_median_bps` 366/308 gegen 19/24 auf demselben Symbol; alle drei Kandidaten mit `snapshot_drift=false`; einziges Symbol mit Buy&Hold-Vorzeichenwechsel zwischen `.md` und `.json`). Sofortmassnahme statt Ursachenbehebung: zwei neue Invarianten, **`check_sizing_identity_coherence`** (blocking — `|ln(1+TR)/(n·expectancy) − trade_amount_pct|` muss innerhalb 35 % relativer Toleranz bleiben) und **`check_atr_scale_homogeneity`** (high — ATR-Spannweite je Symbol über Strategien ≤ 6,0×), plus Quarantäne betroffener Kandidaten aus der Promotionstabelle (siehe #1029). Die eigentliche Datenkorrektur/Symbolsperre blieb offen — kein Kapitaleinsatz auf TSLA, solange ungeklärt.
+
+**Kohorte C — Messapparat:**
+
+**#1031 (P1) — Expectancy war ein Mittel von Quotienten ohne Nennerboden/Winsorisierung** (`statistics.mean(pnl_i/notional_i)`, unbeschränkt empfindlich gegen einen einzelnen degenerierten Nenner). Fix: kapitalgewichtete Variante `expectancy_capital_weighted = Σpnl/Σnotional`, zusätzlich `expectancy_winsorized` (5/95-Perzentil) und ein Nennerboden bei 5 % des Median-Notionals mit `EXPECTANCY_NOTIONAL_DEGENERATE`-Diagnose für verworfene Trades; neue Invariante `check_expectancy_definition_coherence`. Nachträgliche Registrierung des Diagnose-Codes in Commit `6bfb918` (eigener Follow-up-Fix).
+
+**#1032 (P2) — `rt_notional` summierte wiederverwendetes Kapital** bei pyramidisierten Round-Trips (Teilausstiege mit Nachkauf zählten mehrfach). Fix: zusätzliches Feld `rt_notional_peak` (Spitzenbestand statt Summe), von `expectancy_capital_weighted` konsumiert.
+
+**#1033 (P1) — Diagnose-Raten konnten 1 überschreiten** (bis 120,2 %) — Kategorienfehler: Zähler zählte Diagnose-**Ereignisse** (mehrere je Trial), Nenner zählte **Trials**. Fix: zusätzliche trial-distinkte Variante `inference_diagnostics_trials_by_code`, Assertion `actual <= 1.0` in beiden konsumierenden Checks.
+
+**#1034 (P1) — 54–69 % der Exits waren `UNKNOWN`; drei `ExitReason`-Enum-Werte hatten keine Setzstelle** (`SIGNAL_REVERSAL`, `PROFIT_TARGET`, `EQUITY_STOPOUT` deklariert, nie gesetzt). Fix: alle drei Werte an ihren jeweiligen Ausstiegspfaden gesetzt, neuer Wert `DATA_END` für am Datenende erzwungen geschlossene Positionen (siehe #1037), neue Invariante `check_exit_reason_coverage` (UNKNOWN-Anteil ≤ 10 %).
+
+**#1035 (P1) — `check_effective_stop_distance` mass über die falsche Grundgesamtheit** — Zähler mittelte über ALLE Verlust-Trades, obwohl bei 68,5 % UNKNOWN-Exits rund 80 % der Trades den Stop nie berührten. Fix (setzt #1034 voraus): Zähler auf `exit_reason == TRAILING_STOP` beschränkt, `INCONCLUSIVE`-Verdikt unter 30 Stop-Exits statt FAIL gegen eine falsche Population.
+
+**#1036 (P1) — `check_holding_time_cap` liess 3991 h passieren** (Zeitbox 24 Bars + 3 Slack, Faktor 148) — die Anteilsschwelle (`timebox_violating_trades_frac` gegen 128 347 gepoolte Round-Trips) verdünnte jede Einzelverletzung. Fix: zweiter, magnitudenbasierter Ast — jeder Round-Trip mit `holding_s > k · cap_s` (k=3, `tournament.json['timebox_violation_hard_multiple']`) ist blockierend unabhängig vom Anteil.
+
+**#1037 (P2) — `median_bars_held=3` und `max_holding=412 h` in derselben Study** — bimodale Haltedauerverteilung; `_finalize_round_trip` schliesst eine nie flat gewordene Position erst am Datenende und finalisiert sie als einen Round-Trip mit der vollen Zeitspanne. Fix: `exit_reason=DATA_END`-Markierung (#1034), Telemetrie `n_round_trips_data_end`, neue Invariante `check_open_position_at_data_end` (Anteil ≤ 2 %).
+
+**#1039 (P1) — `n_family`-Multiplizität über gemischte Kohorten** — direkter Folgefehler aus #1023 (98 Fremd-Studies in der Multiplizitätsbasis); zusätzlich FAILte `check_family_n_periods_homogeneity` mit `stratum_n_periods_ratio=None`. Fix: Neuerhebung nach dem #1023-Kohortenfilter; `per_stratum`-Policy fail-closed, wenn `stratum_n_periods_ratio` nicht berechnet werden kann.
+
+**Kohorte D — Governance und Suchhaushalt:**
+
+**#1040 (P2) — Symbolrotation deckte 133 Symbole seit vier Läufen nicht ab** — bei ~14,6 Symbolen/Lauf und einem Universum von über 140 Symbolen greift die `least_recently_covered`-Rotation nachweislich nicht (dieselben 8–10 Symbole in vier Läufen in Folge, TSLA in jedem). **In PR #894 root-caused und gefixt:** die eigentliche Ursache war nicht die Rotationssortierung selbst, sondern dass `tier='deployable'` (CLI-Default) `candidate_syms` auf existierende Tier-A-Gewinner beschränkte — ein Symbol ohne Vorlauf-Sieg konnte den Pool nie erreichen, unabhängig von seinem Staleness-Rang. `enumerate_tunable_pairs` lässt seither zusätzlich Symbole aus dem stalen Anteil von `symbol_coverage` zu.
+
+**#1041 (P2) — Champion-Closed-Loop weiterhin unwirksam** (`seed_source_distribution` 96,4–97,1 % `strategy_defaults`; vier TSLA-Strategien mit `n_evaluable=0`, ~12 % des Suchhaushalts strukturell informationsfrei). **In PR #894 root-caused:** der Diagnose→Cache→Skip-Loop für `STRUCTURAL_ALL_UNEVALUABLE` war bereits vollständig verdrahtet (`compute_budget_execution → recommend_diagnosis_action → record_diagnosed_pair`); er wurde durch die (inzwischen behobenen) #1026/#1027-Bugs in `stop_reason`/`budget_executed_fraction` verhungert, nicht durch eine fehlende Verdrahtung. Ende-zu-Ende-Regressionstest ergänzt.
+
+**Kohorte E — Ertrag und Risiko:**
+
+**#1042 (P1) — Ökonomische Abnahmekriterien: CVaR, Kosten-Stress, Sizing-Parität, Information Ratio.** Vier Massnahmen vorgeschlagen (E-1 Kostenstress-Band als Promotionsbedingung, E-2 Sizing-Parität Backtest/Live-Allocator, E-3 CVaR/ES statt Max-Drawdown, E-4 Information Ratio statt `Excess/Exposure`). **In PR #894 teilweise umgesetzt:** E-1 (`expectancy_cost_stress_1_5x`/`_2x` additiv aus vorhandenen Round-Trip-Daten, neue `deployment_gate`-Klausel `cost_stress`) und E-3 (`cvar_95`/`es_99` aus `oos_period_returns`) vollständig implementiert; eine nicht-blockierende Sichtbarkeits-Invariante `check_sizing_parity_backtest_vs_allocator` für E-2 ergänzt. **E-2s vollständige Sizing-Neufassung und E-4s echte Information Ratio bewusst zurückgestellt** — beide benötigen Eingaben, die diese Umgebung nicht produzieren kann (ein Live-Rekalibrierungslauf gegen Marktdaten bzw. eine holdout-skopierte periodische Benchmark-Renditereihe; die Pipeline führt heute nur skalare Aggregate).
+
+### Offen — nicht in diesen Sitzungen bearbeitet
+**E-2 (vollständig)** — die Backtest-Sizing-Logik bildet `MomentumLSAllocator`s Portfolio-Cap (#999) nach wie vor nicht ab; nur die Sichtbarkeits-Invariante existiert. **E-4** — `Excess/Exposure` mit Epsilon-Ersatznenner ist weiterhin die einzige Vergleichsgrösse in Abschnitt 2.3 (siehe auch Pitfall #376/#1077, behoben erst im #1063–#1085-Katalog). **#1028s eigentliche Ursachenklärung** (Datenkorrektur der TSLA-Preisreihe oder dokumentierte Symbolsperre) — die Sofortmassnahmen (Quarantäne, zwei neue Invarianten) stehen, die Preisreihen-Forensik selbst wurde nicht abgeschlossen.
+
+### 📋 Neue/geänderte Config-Keys (Issue-Katalog #1023–#1042)
+- `tournament.json.timebox_violation_hard_multiple` (Vorschlag 3) — Magnitudenast für `check_holding_time_cap`, #1036.
+- `optimizer.json.symbol_coverage_max_stale_runs` — Rotationsvorrang für stale Symbole, #1040.
+- `deployment_gate`-Klausel `cost_stress` (`expectancy_cost_stress_1_5x`/`_2x`) — zehnte Promotionsbedingung, #1042/E-1.
+
+### 🔒 Watertight Invariants (Issue-Katalog #1023–#1042) — für künftige Agenten
+- **`invariants.check_report_cohort_coherence`** (`invariants.py`, #1023) — blockierend: Vorstufe des in dieser Sitzung (#1086/#1087/#1088) auf `run_id`-Identität statt Zeitfenster gehärteten Kohortenfilters; ein Report, der diesen Check besteht, kann trotzdem Fremd-Studies enthalten, solange die Zeitfenster überlappen (Pitfall #382/#383).
+- **`invariants.check_sizing_identity_coherence`** (`invariants.py`, #1028) — blockierend: `ln(1+TR)/(n·expectancy)` muss die konfigurierte `trade_amount_pct` innerhalb 35 % relativer Toleranz reproduzieren; die einzige Invariante, die eine TSLA-artige Preisreihenanomalie ohne OHLC-Rohdatenzugriff aufdeckt.
+- **`invariants.check_budget_metric_single_source`** (`invariants.py`, #1027) — jede der fünf `compute_budget_execution`-Aufrufstellen muss denselben `run_id`-Pflichtparameter erhalten; ein Study-Record- und ein `diagnosed_pairs`-Wert für dieselbe Study, die auseinanderlaufen, sind das direkte Symptom eines Rückfalls.
+- **`invariants.check_exit_reason_coverage`/`check_open_position_at_data_end`** (`invariants.py`, #1034/#1037) — der `UNKNOWN`-Anteil im Exit-Histogramm ist die Voraussetzung dafür, dass `check_effective_stop_distance` (#1035) über die richtige Population misst; wer eine dieser Invarianten lockert, muss die andere neu kalibrieren.
+
+---
+
+## Issue-Katalog #1043–#1062 — Lauf-Governance-Vorstufe (Katalogdokument nicht im Repository überliefert, zweite Sitzung 2026-08-12)
+
+**Ausgangslage.** Issue #1105 (GitHub-Issue #938) stellte fest, dass `AGENTS.md` bis zu dieser Nachtragung 40 Issues (#1023–#1062) und die Pitfalls #350–#368 vermisste, mit der Root-Cause „der Katalog vom 12.08. (zwei Sitzungen an einem Tag) wurde übersprungen". Für die erste dieser beiden Sitzungen (#1023–#1042) existiert das Katalogdokument bis heute als GitHub-Issue #866/#873 mit 20 individuell nachgefilten Einzel-Issues (#874–#893, siehe voriger Abschnitt) — für die **zweite** Sitzung desselben Tages (#1043–#1062) existiert **kein** vergleichbares Artefakt: keine individuellen GitHub-Issues, kein Katalog-Cover-Issue, keine überlebende `logs/*.md`-Datei in der Git-Historie. Die Commit-Historie springt in den Katalog-Bezeichnungen direkt von „Katalog #1023-1042" (Commits `1dd12c8` … `b091440`) zu „Katalog #866-2" (`#1063–#1085`, Commit `3f25d45`, dokumentiert im vorigen bzw. folgenden Abschnitt). `logs/todo.md` — das Katalogdokument der #1063–#1085-Sitzung — bestätigt in seiner eigenen Kopfzeile, dass #1023–#1062 zu diesem Zeitpunkt „im Code umgesetzt, aber nicht in AGENTS.md nachgetragen" waren (40 Issues Rückstand), enthält aber selbst nur vereinzelte Rückwärtsverweise auf #1043–#1062 als bereits abgeschlossene Befunde — keine vollständige Symptom-/Root-Cause-/Fix-Beschreibung. Diese Sektion dokumentiert das Ehrlichste, was aus diesen Rückwärtsverweisen rekonstruierbar ist, und macht die Lücke selbst sichtbar, statt sie mit erfundenem Inhalt zu füllen.
+
+### Aus Rückwärtsverweisen rekonstruierbar
+
+**#1043 — Kohortenkohärenz-Check mit Fail-Open-Pfad.** Einziger Beleg: `logs/todo.md` (B-2, Referenzlauf `815455db`) vermerkt „`check_report_cohort_coherence`: Spannweite 2865 s < 5495 s ⇒ PASS mit echter Messung (nicht fail-open). Der #1043-Fail-Open-Pfad wird in diesem Lauf nicht betreten." — #1043 identifizierte demnach einen Fail-Open-Zweig in der durch #1023 neu eingeführten `check_report_cohort_coherence` (vermutlich: ein PASS-Verdikt bei fehlenden/unvollständigen `study_started_at_utc`-Werten statt einer inkonklusiven Meldung). Dieselbe Fehlerklasse — ein Kohortenfilter, der bei Nebenläufigkeit fail-open wird — trat in dieser Sitzung erneut auf und wurde in #1088 (`INVARIANT_SCOPE_CONTAMINATED`) sowie strukturell in #1086/#1087 endgültig durch einen identitätsbasierten (`run_id`) statt zeitfensterbasierten Filter ersetzt (Pitfall #382/#383/#384).
+
+**#1050 / #1051 — Stopdistanz unter den Round-Trip-Kosten (erste Instanz).** Beleg: GitHub-Issue #908 (#1072, Sitzung 2026-08-13) trägt den Titel „Stopdistanz unter den Round-Trip-Kosten (**Wiederkehr #1050/#1051**)" und dokumentiert dieselbe Kennzahl (`d < min_stop_to_cost_ratio · c_rt`) wie ihre eigene Root-Cause. #1050/#1051 identifizierten demnach erstmals, dass für mehrere Strategien die nominale Stopdistanz kleiner als die Round-Trip-Kosten war (`E[MFE] > d + c_rt` strukturell verletzt, unabhängig vom Signal) — ohne dass zu diesem frühen Zeitpunkt bereits ein Sampler-Preflight oder eine dedizierte Invariante existierte. Die vollständige Behebung (`min_stop_to_cost_ratio`, `check_stop_cost_ratio`) erfolgte erst mit #1072.
+
+**#1052 — Ein Check, der eine Ursache behauptet, die er nicht gemessen hat (erste Instanz).** Beleg: GitHub-Issue #909 (#1071) trägt den Titel „`check_atr_scale_homogeneity` meldet eine Ursache, die es nicht gemessen hat (**Wiederkehr #1052**)" mit dem Zusatz „dort mit drei Symbolen, zwei Mechanismen und einem dritten in der Meldung". #1052 identifizierte demnach erstmals dasselbe Muster — eine Invariante, die aus einer gemessenen Spannweite/Grösse eine SPEZIFISCHE, nicht selbst gemessene Ursache ableitet — an einer damals noch nicht identifizierten Stelle. Dieses Muster kehrte danach zweimal weiter zurück (#1071, dann #1084 „dritte Wiederkehr dieser Fehlerklasse (nach #1052, #1071)", siehe Pitfall #380) und wurde erst mit #1084s `champions.load_champion_entry_with_reason` strukturell behoben (der Check konsumiert seither beobachtete Telemetrie statt eine Ursache zu raten).
+
+**#1055 — `check_reward_dynamic_range` prüfte nur eine Richtung.** Beleg: `logs/todo.md`s eigene Root-Cause zu #1070 (B-4) nennt es namentlich: „Dieselbe Fehlerklasse wie #1055 (`check_reward_dynamic_range` prüfte nur „std zu klein" und war deshalb auf der BTC-Explosion blind)"; Pitfall #369 in dieser Datei bestätigt zusätzlich, dass `check_reward_dynamic_range` „bereits mit drei Klauseln inkl. Ratio-Obergrenze gehärtet" wurde. #1055 identifizierte demnach, dass die Reward-Streuungsprüfung nur eine untere Schranke („Reward-Varianz zu klein, Suche liefert kein Signal") kannte und eine BTC-bedingte Reward-Explosion (obere Richtung) unentdeckt liess. Die Härtung (dritte Klausel, Ratio-Obergrenze) erfolgte im Rahmen dieser #1043–#1062-Sitzung selbst; dieselbe Fehlerklasse kehrte danach ein zweites Mal in `check_effective_stop_distance` zurück (#1070, siehe Pitfall #369) — #1055 ist damit die chronologisch früheste bekannte Instanz eines Musters, das dieser Datei bereits zweimal als Pitfall dokumentiert ist.
+
+### Nicht rekonstruierbar
+Für die verbleibenden 15 Nummern dieses Bereichs — **#1044, #1045, #1046, #1047, #1048, #1049, #1053, #1054, #1056, #1057, #1058, #1059, #1060, #1061, #1062** — enthält weder die Git-Historie noch eine der beiden nachfolgenden Katalog-Sitzungen (#1063–#1085 in dieser Datei, #1086–#1104 im nächsten Abschnitt) einen Rückwärtsverweis, aus dem sich Symptom, Root-Cause oder Fix rekonstruieren liesse. Diese Nummern werden hier ausschliesslich benannt, damit der Rückstand als solcher sichtbar bleibt (Akzeptanzkriterium aus #1105) — **nicht** mit erfundenem Inhalt gefüllt. Sollte das ursprüngliche Katalogdokument der zweiten 12.08.-Sitzung wiederauftauchen (lokale Kopie, Chat-Historie einer früheren Session), ersetzt dessen Inhalt diesen Absatz vollständig.
+
+### 🟢 Pitfall #359 — Ein Kohortenfilter kann selbst einen Fail-Open-Zweig tragen [Katalog #1043–#1062, vermutlich #1043]
+**Symptom:** Die durch #1023 neu eingeführte `check_report_cohort_coherence` besass einen Zweig, der bei fehlenden/unvollständigen Zeitstempeln PASS statt eines inkonklusiven Verdikts lieferte (rekonstruiert aus `logs/todo.md`s „#1043-Fail-Open-Pfad").
+**Root-Cause:** Eine frisch eingeführte Invariante, die eine neue Fehlerklasse verhindern soll, kann an ihrer eigenen Rand-Kondition (fehlende Eingabedaten) denselben Fail-Open-Fehler reproduzieren, den sie beheben sollte.
+**Fix/Regel:** Jede neue Kohärenz-/Kohorten-Invariante braucht einen expliziten Test für den Fall fehlender Eingabedaten (kein Zeitstempel, keine `run_id`) — das Ergebnis muss `inconclusive`, nie `passed=True`, sein. Endgültig gelöst erst durch den identitätsbasierten Filter dieser Sitzung (#1086, Pitfall #382).
+
+### 🟢 Pitfall #360 — Eine notwendige Bedingung ohne Preflight wird erst nach dem Backtest sichtbar [Katalog #1043–#1062, #1050/#1051]
+**Symptom:** Mehrere Strategien liefen mit einer nominalen Stopdistanz unter den Round-Trip-Kosten (`d < c_rt`) — eine Position kann den Stop strukturell nicht überleben, unabhängig vom Signal —, ohne dass der Sampler daran gehindert wurde, genau solche Parametervektoren zu ziehen.
+**Root-Cause:** Eine notwendige ökonomische Bedingung (`E[MFE] > d + c_rt`), die erst NACH der vollständigen Simulation geprüft wird, verschwendet Suchbudget auf von vornherein aussichtslose Vektoren und macht den Fehler erst im aggregierten Ergebnis sichtbar, nie am Ort seiner Entstehung.
+**Fix/Regel:** Eine notwendige Bedingung, die allein aus der Parameterkombination (ohne Simulation) berechenbar ist, gehört als Sampler-Constraint vor den Backtest, nicht als Reward-Strafe danach. Vollständig umgesetzt erst mit `min_stop_to_cost_ratio`/`check_stop_cost_ratio` (#1072).
+
+### 🟢 Pitfall #361 — Eine Ursachenmeldung ohne eigene Messung ist eine Vermutung mit Verfallsdatum [Katalog #1043–#1062, #1052]
+**Symptom:** Ein Homogenitäts-Check meldete eine Preisreihen-Sprungstelle als Ursache einer beobachteten Spannweite, obwohl der Check nur die Spannweite selbst gemessen hatte — mindestens zwei weitere Mechanismen (Floor-Bindung im Nenner, Fremdkohorte) hätten dieselbe Zahl erzeugt.
+**Root-Cause:** Ein Check, der einen Messwert UND eine Ursachenzuschreibung im selben Meldungstext ausgibt, verschweigt, dass nur der Messwert tatsächlich gemessen wurde — die Zuschreibung ist eine Hypothese, die als Tatsache formuliert ist.
+**Fix/Regel:** Ein Check nennt ausschliesslich den Mechanismus, den er tatsächlich misst; jede weitere mögliche Ursache gehört, wenn überhaupt, als unmarkierte Hypothese in den `detail`-Text. Dasselbe Muster kehrte danach zweimal zurück (#1071, #1084) — siehe Pitfall #380 für die endgültige Behebung.
+
+### 🟢 Pitfall #362 — Eine Ratio-Schwelle ohne Obergrenze ist blind für die Explosionsrichtung [Katalog #1043–#1062, #1055]
+**Symptom:** `check_reward_dynamic_range` prüfte ausschliesslich „Reward-Streuung zu klein" (Suche liefert kein Signal) und war dadurch strukturell blind für eine BTC-bedingte Reward-**Explosion** (die Streuung war nicht zu klein, sondern pathologisch gross).
+**Root-Cause:** Eine Schwelle, die für eine Grösse nur eine Richtung (zu klein ODER zu gross) prüft, macht die nicht geprüfte Richtung zu einer blinden Flanke, die kein Test je verletzen kann, solange kein Testfall genau diese Richtung erzeugt.
+**Fix/Regel:** `check_reward_dynamic_range` erhielt eine dritte Klausel mit Ratio-Obergrenze. Dieselbe Regel — ein Verhältnis-Check braucht immer beide Schranken — kehrte als Pitfall #369 dieser Datei ein zweites Mal zurück (`check_effective_stop_distance`, #1070); wer einen neuen Ratio-Check schreibt, prüft ab sofort beide Richtungen von vornherein.
+
+---
+
 ## Issue-Katalog #1063–#1085 — Lauf-Governance, Suchraum-Rückschrieb, Risikoschicht, Entscheidungs-/Berichtssemantik, Inferenz-Haushalt (Katalog #866-2, `logs/todo.md`, Sitzung 2026-08-13)
 
 **Ausgangslage.** `logs/todo.md` (Abweichungs-Katalog #866-2, eine Folgesitzung des #866-Katalogs) dokumentierte 23 Issues (#1063–#1085) über fünf Kohorten (A: Lauf-Governance, B: Suchraum-Rückschrieb, C: Risikoschicht, D: Bericht-/Entscheidungs-Semantik, E: Inferenz/Suchhaushalt) plus einen Nachtrag aus dem vollständigen Optimizer-Log (§3b, drei zusätzliche Befunde #1083/#1084/#1085) mit einer vorgeschriebenen Merge-Reihenfolge (Stufe 0–5) und einem SPERRVERMERK: kein weiterer Sweep, bevor die Stufe-0-Fixes gemergt und der Suchraum-Diagnose-Cache migriert sind.
@@ -6023,3 +6134,131 @@ Alle referenzierten Mechanismen dieser offenen Punkte (`invariants.check_selecti
 - **`invariants.check_n_family_partition`** (`invariants.py`, #1080) — `n_family[symbol] == Σ n_family_stage1[symbol]`; eine Study mit 0 Holdout-Trades muss über `n_selection_statistic_available` trotzdem zur familienweiten Multiplizität beitragen, sonst ist die Deflationsreferenz SR* zu niedrig angesetzt.
 - **`spaces.clamp_param_bounds`/`_PARAM_DOMAIN_REGISTRY`** (`spaces.py`, #1066/#1067) — die EINE Stelle, die jeden automatischen Bounds-Vorschlag (Weitung UND Verengung) gegen eine dokumentierte Domäne klammert; ein neuer Parameter ohne Registry-Eintrag bleibt ungeklammert (fail-open, kein stiller Blocker für neue Strategien) — siehe Pitfall #371.
 - **`champions.load_champion_entry_with_reason`** (`champions.py`, #1084) — die EINE Stelle, die `STORE_EMPTY` (Store insgesamt leer) von `NO_ENTRY_FOR_PAIR` (Store gefüllt, kein Eintrag für dieses Paar) unterscheidet; jeder Konsument, der den pair-skopierten Champion-Store liest, sollte diese Funktion statt einer eigenen `entry is None`-Prüfung verwenden.
+
+---
+
+## Issue-Katalog #1086–#1104 — Nebenläufigkeits-Isolation, Risikoschicht-Abschluss, Messapparat-Härtung, Selektions-Provenienz (Kohorte E — Governance, GitHub-Issues #919–#937, Sitzung 2026-08-14)
+
+**Ausgangslage.** GitHub-Issue #938 (intern #1105) legte einen 19-teiligen Katalog #1086–#1104 in fünf Stufen vor, ausgelöst durch den Referenzbefund, dass drei gleichzeitige Sweeps auf einem geteilten SQLite-Store liefen: jeder der drei Reports enthielt Studies aller vier Läufe (der zeitfensterbasierte Kohortenfilter aus #1023/#1043 erkennt Nebenläufigkeit strukturell nicht, siehe voriger Abschnitt), der Trailing-Stop erwies sich über 52 Studies und vier Symbole als mechanistisch wirkungslos (Anker auf `bar.high`, Auslöser auf `close` — der realisierte Verlust ist die Bar-Spanne, nicht die konfigurierte Stopdistanz), und der Suchraum-Rückschrieb hatte über mehrere Läufe kompoundiert. Diese Sitzung implementierte alle 19 Punkte (#1086–#1104) vollständig, in der von #1105 vorgeschriebenen Stufenreihenfolge; die Abnahme erfolgte ausschliesslich gegen dedizierte Unit-Tests (`automation/tests/test_issue_1086_*` bis `test_issue_1104_*`) sowie wiederholte volle Regressionsläufe (`comm -13` gegen eine vor Sitzungsbeginn erfasste Baseline-Fehlerliste) — kein echter Sweep-Re-Run, aus denselben Sandbox-Gründen wie in den beiden Vorkatalogen (kein installierbares `nautilus_trader` mit exakt gepinnter Version zum Zeitpunkt jedes Einzelschritts).
+
+### Umgesetzt in dieser Session
+
+**Stufe 0 (SOFORT, blockierte jeden weiteren Sweep):**
+
+**#1090 — Diagnose-Rückschrieb bestätigte Paare auf verdreifachter Evidenz.** `sweep_diagnostics.confirm_pair`/`record_diagnosed_pair` wurde von den drei gleichzeitigen Läufen je Paar bis zu dreimal aufgerufen und zählte jeden Aufruf als unabhängige Bestätigung. Fix: Deduplikation auf einem Beobachtungs-Fingerprint statt auf Aufrufzahl; automatischer Rückschrieb (`writeback`) standardmässig deaktiviert (`diagnosis_auto_writeback_enabled=False`), muss explizit aktiviert werden — siehe Pitfall #385.
+
+**#1086 — Gleichzeitige Sweeps teilten einen Study-Store; jeder Report enthielt alle Symbole.** `report._collect_studies` filterte auf ein Zeitfenster (Lauf-Spannweite), nicht auf eine Identität. Fix: `run_id`-basierter Kohortenfilter (jede Study trägt seit #1025 einen `run_id`-Stempel; die Filterung erfolgt jetzt darauf, nicht auf `study_started_at_utc`-Zeitfenstern) plus eine Lock-Datei je Symbol gegen zwei Sweeps auf demselben (Strategie, Symbol)-Paar. Siehe Pitfall #382.
+
+**#1087 — `check_report_cohort_coherence` mass die Spannweite statt des Versatzes zum Laufbeginn.** `max(study_started_at_utc) − min(...) < wallclock_s` (aus #1023) erkennt drei um Stunden versetzte, aber je für sich kurze Läufe nicht als fremd, solange ihre jeweiligen Spannweiten unter der Schwelle bleiben. Fix: Der Check misst seither den Versatz jeder Study zum **Laufbeginn** (`min(x) >= run_started_at − slack`), nicht die interne Streuung der Kohorte. Siehe Pitfall #383.
+
+**#1088 — Blockierende Invarianten urteilten über Fremd-Studies.** Die Invariantensuite konsumierte weiterhin die ungefilterte (oder unzureichend gefilterte) Study-Menge. Fix: neue Guard-Funktion `assert_invariant_scope_uncontaminated` plus Diagnosecode `INVARIANT_SCOPE_CONTAMINATED` — jede Invariantenauswertung deklariert explizit, auf welcher Kohorte sie lief, und ein Kontaminationsfund ist selbst ein blockierender Befund.
+
+**#1089 — `check_champion_corroboration_reachable` war durch einen ODER-Ast fail-open.** Der zweite Operand des ODER-Asts las `symbol_coverage.total_runs_started` — einen globalen, prozessübergreifenden Zähler, den jeder Nebenprozess unabhängig erhöhen konnte, sodass ein einzelner Nebenlauf die Bedingung unabhängig vom tatsächlichen Korroborationsstand erfüllte. Fix: der ODER-Ast wurde entfernt; die Invariante urteilt ausschliesslich über lauf-skopierte Evidenz. Siehe Pitfall #384 (dieser Fund kippte vier Checks, davon einen von ehrlich-FAIL auf falsch-PASS).
+
+**#1091 — `n_family` driftete über gleichzeitige Reports** (nicht-deterministische Deflationsschwelle, abhängig davon, welcher Nebenprozess zuerst schrieb — zur Berichtszeit aus veränderlichem globalem Zustand gelesen). Fix: `n_family`/`n_family_stage1` werden **vor dem ersten Trial** eingefroren und im Study-User-Attr gestempelt (`deflation_n_family_frozen`), statt bei jeder Report-Erzeugung neu aus dem aktuellen Store-Zustand erhoben zu werden. Siehe Pitfall #386.
+
+**Stufe 1 (Risikoschicht — `simulation_semantics_version` 4 → 5, Pflicht-Purge am Ende):**
+
+**#1092 — Anker und Auslöser des Trailing-Stops lagen auf verschiedenen Preis-Auflösungen** (P0, HEADLINE). Der Anker wurde gegen `bar.high`/`bar.low` nachgezogen, der Auslöser aber gegen `bar.close` geprüft — der realisierte Verlust bei Auslösung ist dadurch die Bar-Spanne, nicht die konfigurierte `k · ATR`-Distanz, unabhängig vom Multiplikator. Fix: `trailing_stop_anchor_resolution="close"` — Anker und Auslöser konsumieren dieselbe Preis-Auflösung. Siehe Pitfall #387. Die tiefergehende Engine-Änderung (eine echte `StopMarketOrder` statt eines Bar-Schluss-Signals, #1092B) blieb bewusst ausserhalb dieser Sitzung (siehe „Offen" unten).
+
+**#1093 — Neue Invariante `check_trailing_stop_loss_share`** (blocking, kalibriert) — macht den Anteil verlustreicher Trailing-Stop-Exits an allen Exits einer Study direkt sichtbar und blockierend, statt ihn nur als Telemetrie zu führen.
+
+**#1094 — Die Ratsche des Trailing-Stops konnte zurückweichen** (Neuberechnung ohne `max()` gegen den Vorwert). Fix: monotone Ratsche wiederhergestellt, mit einer Untergrenze für den Volatilitätsanteil als Sicherung gegen die ursprüngliche Klemm-Gefahr, die zur Aufweichung der Monotonie geführt hatte. Siehe Pitfall #388.
+
+**#1095 — Stop-Exit-Fill-Lag telemetriert** (`stop_exit_lag_bars`) — macht sichtbar, dass ein als Bar-Schluss-Signal implementierter Exit-Mechanismus prinzipiell nicht schneller als der Bar-Takt sein kann. Siehe Pitfall #389.
+
+**#1096 — Der ATR-Floor band in 18 von 56 Studies und machte den Stop zur Konstante.** Fix: ATR-Floor kostengekoppelt (`atr_floor_bps_by_asset_class` an `c_rt` gebunden statt frei gepflegt) plus ein informativer-Bars-basierter ATR-Schätzer, der bei dünner Handelsaktivität nicht kollabiert.
+
+**Stufe 2 (Messapparat — parallel, kein Purge):**
+
+**#1097 — Verlust-Mittelwerte (Median über Trials) und Zähler (Summe über Trials) waren nicht kommensurabel** — dritte Instanz derselben Fehlerklasse nach #304 und #1033. Fix: gepoolte, trade-gewichtete Verlust-Kennzahlen ergänzt, die auf derselben Grundgesamtheit wie ihr Nenner operieren. Siehe Pitfall #390.
+
+**#1098 — `events.jsonl` verlor Trial-Ereignisse unter Diagnose-Last.** Der Ereignisstrom war weder zeilenatomar geschrieben noch beim Abschluss geflusht — unter hoher Last (viele gleichzeitige Diagnose-Schreiber) gingen genau die Ereignisse verloren, die am meisten gebraucht werden. Fix: `os.open()`+`os.write()`+`os.close()` für POSIX-garantiert atomare Einzelschreibvorgänge je Zeile, plus ein Vollständigkeits-Manifest (`_count_jsonl_events`/`_read_jsonl_events`, neue Invariante für Ereignisstrom-Vollständigkeit). Siehe Pitfall #391.
+
+**#1099 — `champions.attempts` zählte Fremd-Studies.** Der Champion-Summary-Zähler war nicht auf die eigene Kohorte beschränkt. Fix: `_champions_summary` liest `attempts`/`skipped_by_reason` bevorzugt aus dem ereignisbasierten Sidecar (`events.jsonl`, sofern auflösbar), mit Fallback auf die `studies_out`-Rekonstruktion.
+
+**#1100 — `holdout_buyhold_return` kollabierte bei 0 Trades auf `0,0`** statt `None` — ein weiterer Fall der Sentinel-Kollaps-Fehlerklasse (#759/#788/#966). Fix: `oos_buyhold_return` zu `invariants._SENTINEL_GUARDED_METRIC_KEYS` hinzugefügt, plus eine neue Kohärenz-Invariante zwischen `holdout_buyhold_return` und der zugrundeliegenden Trade-Zahl. Die tiefere Arithmetik in `backtest_runner.py` wurde bewusst NICHT verändert (bereits als `None`-sicher statisch verifiziert) — diese Sitzung schliesst ausschliesslich die Sentinel-Guard-Lücke.
+
+**Stufe 3 (Selektion — nach Stufe 0):**
+
+**#1101 — Das Randlösungs-Veto war der bindende Ausgang der ökonomisch besten Kandidaten.** Ein Randlösungs-Veto wird zum bindenden Constraint, sobald der Suchraum-Rückschrieb (#1066) die Grenzen bereits geweitet hat — dann ist das Veto richtig und die ursprüngliche Diagnose falsch adressiert (die Ursache liegt im Suchraum, nicht in der Selektion). Fix: neuer Status `REJECT_BOUNDARY_SOLUTION_PERSISTENT`, der greift, sobald `widen_applications` für den bindenden Parameter die `_MAX_WIDEN_APPLICATIONS`-Grenze erreicht hat (erkannt über den bestehenden Diagnose-Cache, keine neue synchrone Re-Optimierung). Siehe Pitfall #392.
+
+**#1102 — `n_family` widersprach `Σ n_family_stage1` um Faktor 2,8–5,1.** Beide Grössen lasen unterschiedliche zugrundeliegende Proposal-Felder (`deflation_n_eligible` vs. `deflation_n_family`). Fix: der Report leitet `n_family` je Symbol seither als Summe von `n_family_stage1[symbol]` her — aus derselben, bereits durch #1080 gehärteten granularen Quelle — statt aus einer separat gepflegten Aggregatfunktion; `check_n_family_partition` wurde dadurch tautologisch und ihre Severity von `high` auf `blocking` angehoben.
+
+**#1103 — Champion-Closed-Loop blieb bei 0 von 56 angewandten Rückschrieben.** `load_champion_entry_with_reason` meldete `NO_ENTRY_FOR_PAIR`/`STORE_EMPTY` ohne Herkunftsangabe — nicht unterscheidbar, ob ein Schlüssel-Mismatch oder ein echtes Persistenzproblem vorlag. Fix: neue Provenienz-Funktion `_no_entry_provenance` (`looked_up_key`, `available_keys`, `available_keys_total`), im `CHAMPION_WRITEBACK`-Event als `skipped_provenance` mitgeführt.
+
+**#1104 — `run_id`-Präfix und `git_commit` divergierten im `3910e12b`-Referenzlauf.** Eine einzige `git_commit()`-Lesung zur Berichtszeit trug bislang zwei Bedeutungen („worauf lief die Simulation" vs. „worauf wurde DIESER Report gebaut") unter demselben Feldnamen. Fix: zwei getrennte Pflichtfelder — `git_commit_simulation` (Study-User-Attr, vor dem ersten Trial in `run_optimization.py` gestempelt) und `git_commit_report` (zur Berichtszeit in `report.py` gelesen); `log_manager.default_run_id()` trägt seither keinen Commit-Bezug mehr (ein kollisionsfreier Zufallstoken statt eines Commit-Präfix); neue Invariante `check_commit_coherence` (FAIL, wenn beide Commits bekannt sind UND divergieren; `inconclusive`, wenn einer fehlt).
+
+### Offen — nicht in dieser Session bearbeitet
+**#1092B** — eine echte `StopMarketOrder` in der Engine statt eines Bar-Schluss-Exit-Signals (eigener Folge-Issue laut #1105s Merge-Reihenfolge; ändert simulierte Fills und erfordert eine Engine-seitige Abnahme, die diese Sitzung nicht leisten kann). **#1101s Quellfix** bleibt asynchron über den bestehenden Diagnose-Cache-Mechanismus gelöst — eine synchrone, sofortige Re-Optimierung mit neu geweiteten Grenzen wurde bewusst nicht implementiert (grösseres Risiko, keine Verifikationsgrundlage in dieser Sandbox). **Kein Sweep-Re-Run** — dieselben Sandbox-Gründe wie in den beiden Vorkatalogen; das in #1105 Abschnitt 5 vorgeschriebene Abnahmeprotokoll (drei gleichzeitige Sweeps, Spearman-Korrelation `k·ATR` gegen realisierten Verlust, etc.) ist NICHT gegen einen echten Lauf verifiziert, sondern ausschliesslich gegen Unit-Tests und wiederholte volle Regressionsläufe.
+
+### 📋 Neue/geänderte Config-Keys (Issue-Katalog #1086–#1104)
+- `optimizer.json.diagnosis_auto_writeback_enabled` (Default `False`) — automatischer Diagnose-Rückschrieb muss seither explizit aktiviert werden, #1090.
+- `optimizer.json.trailing_stop_anchor_resolution` (Default `"close"`) — Anker und Auslöser des Trailing-Stops auf derselben Preis-Auflösung, #1092.
+
+### 🔒 Watertight Invariants (Issue-Katalog #1086–#1104) — für künftige Agenten
+- **`report._collect_studies` / Lock-Datei je (Strategie, Symbol)** (`report.py`, `sweep.py`, #1086) — die EINE Stelle, die Kohortenzugehörigkeit über `run_id`-Identität statt über ein Zeitfenster entscheidet; ersetzt endgültig den in #1023/#1043 eingeführten, nachweislich nebenläufigkeitsunsicheren Zeitfenster-Filter.
+- **`invariants.assert_invariant_scope_uncontaminated`** (`invariants.py`, #1088) — jede Invariantenauswertung deklariert ihre Kohorte explizit; `INVARIANT_SCOPE_CONTAMINATED` ist selbst ein blockierender Befund, kein Warnhinweis.
+- **`invariants.check_commit_coherence`** (`invariants.py`, #1104) — `git_commit_simulation` und `git_commit_report` sind zwei Pflichtfelder mit unterschiedlicher Bedeutung; ein Konsument, der nur `git_commit` erwartet, liest seit dieser Sitzung nichts (das Feld existiert nicht mehr, siehe Test `test_report_carries_both_commit_fields_and_they_can_diverge`).
+- **`invariants._SENTINEL_GUARDED_METRIC_KEYS`** (`invariants.py`, #1100) — jetzt inklusive `oos_buyhold_return`; ein neues Metrikfeld, das bei fehlender Datenlage auf `0.0` statt `None` defaulten könnte, gehört grundsätzlich in dieses Set (vierte dokumentierte Instanz der Sentinel-Kollaps-Klasse nach #759/#788/#966).
+- **`sweep_diagnostics.record_diagnosed_pair`** (`sweep_diagnostics.py`, #1090) — Bestätigungen werden auf einem Beobachtungs-Fingerprint dedupliziert, nicht auf Aufrufzahl; drei gleichzeitige Läufe erzeugen keine dreifache Evidenz mehr für dasselbe Paar.
+
+### 🟢 Pitfall #382 — Ein zeitfensterbasierter Kohortenfilter ist bei Nebenläufigkeit wirkungslos [Katalog #1086–#1104]
+**Symptom:** Drei gleichzeitige Sweeps auf einem geteilten Study-Store erzeugten drei Reports, die jeweils Studies aller vier Läufe enthielten — der Filter aus #1023 prüfte eine Zeitspannen-Bedingung, keine Identität.
+**Root-Cause:** Kohortenzugehörigkeit wird über eine **Identität** (`run_id`) entschieden, nie über eine **Zeitspanne** — ein Zeitfenster-Filter ist bei Nebenläufigkeit strukturell wirkungslos, weil sich die Zeitfenster mehrerer Läufe überlappen können, ohne dass die Läufe zusammengehören.
+**Fix/Regel:** `report._collect_studies` filtert auf `study.user_attrs['run_id'] == run_id`; zusätzlich eine Lock-Datei je (Strategie, Symbol) gegen zwei gleichzeitige Sweeps auf demselben Paar (#1086).
+
+### 🟢 Pitfall #383 — Ein Spannweiten-Check prüft nicht die Lage [Katalog #1086–#1104]
+**Symptom:** `check_report_cohort_coherence` mass `max(x) − min(x) < wallclock_s` — drei um Stunden versetzte, aber je für sich kurze Läufe blieben unter dieser Schwelle unentdeckt.
+**Root-Cause:** Ein Spannweiten-Check (`max − min`) prüft die Streuung, nicht die Lage. Wer Zugehörigkeit zu einem Lauf prüfen will, braucht den Versatz zu einem Anker (`min(x) >= anchor − slack`), nicht die interne Streuung der Kohorte.
+**Fix/Regel:** Der Check misst seither den Versatz jeder Study zum Laufbeginn, nicht die Spannweite der Kohorte selbst (#1087).
+
+### 🔴 Pitfall #384 — Ein ODER-Ast auf einem globalen Zähler macht eine Invariante fail-open [Katalog #1086–#1104]
+**Symptom:** `check_champion_corroboration_reachable` hatte einen ODER-Ast, dessen zweiter Operand `symbol_coverage.total_runs_started` las — ein globaler, prozessübergreifender Zähler. Ein einzelner Nebenprozess konnte ihn erhöhen und damit die Bedingung erfüllen, unabhängig vom tatsächlichen Korroborationsstand. Kippte vier Checks, davon einen von ehrlich-FAIL auf falsch-PASS.
+**Root-Cause:** Ein ODER-Ast in einer Invariante, dessen zweiter Operand ein globaler, prozessübergreifender Zähler ist, macht den Check fail-open, sobald irgendein Nebenprozess das Ledger anfasst — ein ehrlicher FAIL wird dadurch zu einem falschen PASS, die gefährlichste Richtung.
+**Fix/Regel:** Der ODER-Ast wurde entfernt; die Invariante urteilt ausschliesslich über lauf-skopierte Evidenz (#1089).
+
+### 🟢 Pitfall #385 — Ein Bestätigungszähler muss auf einem Beobachtungs-Fingerprint dedupliziert werden [Katalog #1086–#1104]
+**Symptom:** Der Diagnose-Rückschrieb bestätigte Paare auf verdreifachter Evidenz — jeder der drei gleichzeitigen Läufe zählte als unabhängige Bestätigung desselben Paares.
+**Root-Cause:** Ein Bestätigungszähler für einen Rückschrieb muss auf einem Beobachtungs-Fingerprint dedupliziert werden, nicht auf Aufrufen — sonst zählt Nebenläufigkeit Evidenz, die nicht existiert.
+**Fix/Regel:** `sweep_diagnostics.record_diagnosed_pair` dedupliziert auf einem Beobachtungs-Fingerprint; automatischer Rückschrieb ist standardmässig deaktiviert (#1090).
+
+### 🟢 Pitfall #386 — Eine zur Berichtszeit gelesene Multiplizität ist keine Konstante [Katalog #1086–#1104]
+**Symptom:** `n_family` driftete über gleichzeitige Reports — die Deflationsschwelle hing davon ab, welcher Nebenprozess zuerst schrieb.
+**Root-Cause:** Eine Multiplizität, die zur Berichtszeit aus veränderlichem globalem Zustand gelesen wird, ist keine Konstante.
+**Fix/Regel:** Multiplizitätskorrekturen werden vor dem ersten Trial eingefroren und gestempelt, nicht bei jeder Report-Erzeugung neu erhoben (#1091).
+
+### 🔴 Pitfall #387 — Anker und Auslöser eines Stops müssen auf derselben Preis-Auflösung liegen [Katalog #1086–#1104]
+**Symptom:** Der Trailing-Stop-Anker wurde gegen `bar.high`/`bar.low` nachgezogen, der Auslöser aber gegen `bar.close` geprüft — über 52 Studies und vier Symbole war der Stop nachweislich keine Risikogrösse (Spearman(`k·ATR`, realisierter Verlust) = −0,46 vor dem Fix).
+**Root-Cause:** Ein Anker auf `bar.high` mit einem Auslöser auf `close` erzeugt einen Stop, dessen realisierter Verlust die Bar-Spanne ist und nicht die konfigurierte Distanz — unabhängig vom Multiplikator.
+**Fix/Regel:** `trailing_stop_anchor_resolution="close"` — Anker und Auslöser konsumieren dieselbe Preis-Auflösung (#1092).
+
+### 🟢 Pitfall #388 — Ein Stop, der zurückweichen kann, ist keine Risikogrösse [Katalog #1086–#1104]
+**Symptom:** Die Ratsche des Trailing-Stops konnte durch eine Neuberechnung ohne `max()` gegen den Vorwert zurückweichen.
+**Root-Cause:** Ein Stop, der zurückweichen kann, ist keine Risikogrösse — die ursprüngliche Klemm-Gefahr, die zur Aufweichung der Monotonie geführt hatte, wird über eine Untergrenze für den Volatilitätsanteil gelöst, nicht über den Verzicht auf Monotonie.
+**Fix/Regel:** Monotone Ratsche wiederhergestellt, mit ATR-Floor-Untergrenze als Sicherung (#1094).
+
+### 🟡 Pitfall #389 — Ein Bar-Schluss-Exit kann nicht schneller als der Bar-Takt sein [Katalog #1086–#1104]
+**Symptom:** Der Stop-Ausstieg ist als Markt-Close nach der Auslöser-Bar implementiert — ein Exit-Mechanismus, der prinzipiell nicht schneller als der Bar-Takt sein kann.
+**Root-Cause:** Ein Exit-Mechanismus, der als Bar-Schluss-Signal implementiert ist, kann prinzipiell nicht schneller als der Bar-Takt sein. Verlustbegrenzung gehört als ruhende Order in die Engine, nicht in die Strategie-Logik.
+**Fix/Regel:** `stop_exit_lag_bars` telemetriert den Effekt (#1095). **Die eigentliche Engine-Änderung (echte `StopMarketOrder`, #1092B) ist bewusst NICHT Teil dieser Sitzung** — sie ändert simulierte Fills und erfordert eine eigene, sorgfältig gegen Backtest-Regressionen zu verifizierende Folgearbeit.
+
+### 🟢 Pitfall #390 — Median über Trials und Summe über Trials sind nicht kommensurabel [Katalog #1086–#1104]
+**Symptom:** Verlust-Mittelwerte (Median über Trials) und Zähler (Summe über Trials) wurden im selben Quotienten verwendet — dritte Instanz dieser Fehlerklasse nach #304 und #1033.
+**Root-Cause:** Median über Trials und Summe über Trials sind nicht kommensurabel. Sobald das eine Zähler und das andere Nenner wird, ist der Quotient bedeutungslos.
+**Fix/Regel:** Gepoolte, trade-gewichtete Verlust-Kennzahlen ergänzt, die auf derselben Grundgesamtheit wie ihr Nenner operieren (#1097).
+
+### 🟢 Pitfall #391 — Ein forensischer Ereignisstrom muss zeilenatomar geschrieben und geflusht werden [Katalog #1086–#1104]
+**Symptom:** `events.jsonl` verlor Trial-Ereignisse unter Diagnose-Last — genau dann lückenhaft, wenn er am meisten gebraucht wird (hohe Last).
+**Root-Cause:** Ein Ereignisstrom, der als forensische Referenz dient, muss zeilenatomar geschrieben und beim Abschluss geflusht werden, sonst ist er unvollständig, wenn er am meisten gebraucht wird.
+**Fix/Regel:** `os.open()`+`os.write()`+`os.close()` für POSIX-garantiert atomare Einzelschreibvorgänge je Zeile; ein Vollständigkeits-Manifest ist Pflicht (#1098).
+
+### 🟢 Pitfall #392 — Ein Randlösungs-Veto nach Suchraum-Weitung ist richtig, aber falsch adressiert [Katalog #1086–#1104]
+**Symptom:** Das Randlösungs-Veto war der bindende Ausgang der ökonomisch besten Kandidaten, obwohl der Suchraum-Rückschrieb (#1066) die Grenzen bereits geweitet hatte.
+**Root-Cause:** Ein Randlösungs-Veto wird zum bindenden Constraint, sobald der Suchraum-Rückschrieb die Grenzen weitet. Das Veto ist dann richtig und die Diagnose falsch adressiert — die Ursache liegt im Suchraum, nicht in der Selektion.
+**Fix/Regel:** Neuer Status `REJECT_BOUNDARY_SOLUTION_PERSISTENT`, sobald `widen_applications` die `_MAX_WIDEN_APPLICATIONS`-Grenze erreicht hat — über den bestehenden Diagnose-Cache erkannt, keine neue synchrone Re-Optimierung (#1101).
+
+### 🟢 Pitfall #393 — Ein Nachtragungs-Rückstand ist selbst eine Fehlerquelle [Katalog #1086–#1104, GitHub-Issue #938/#1105]
+**Symptom:** `AGENTS.md` enthielt bis zu dieser Nachtragung #1063–#1085 vollständig, aber von #1023–#1062 nur drei beiläufige Erwähnungen (#1031, #1052, #1055) — 40 Issues und Pitfalls #350–#368 fehlten. #1097 (Zähler/Nenner auf verschiedenen Grundgesamtheiten) und #1100 (Sentinel-Kollaps) in diesem Katalog sind beide Wiederholungen von Fehlerklassen, die in genau dieser Lücke dokumentiert worden wären.
+**Root-Cause:** Der Nachtrag erfolgte katalogweise; ein Katalog, dessen Dokument nicht ins Repository committet wird (siehe voriger Abschnitt, #1043–#1062), hinterlässt keine Spur, aus der ein späterer Agent lernen kann — der Pitfall-Katalog ist die einzige Stelle, an der ein künftiger Agent von wiederkehrenden Fehlerklassen erfährt.
+**Fix/Regel:** Katalog-Dokumente (`logs/*.md`) werden vor der nächsten Sitzung committet, nicht nur lokal erzeugt; die Nachtragung in `AGENTS.md` erfolgt in derselben Sitzung wie die Implementierung, nicht als aufgeschobene Sammelaktion über mehrere Sitzungen hinweg.

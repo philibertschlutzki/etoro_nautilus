@@ -30,6 +30,14 @@ from automation.optimizer import sweep_diagnostics as sd
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP, MIN_BARS_IN_TRADE_FLOOR
 
 
+@pytest.fixture(autouse=True)
+def _enable_diagnostic_writeback(monkeypatch):
+    """Issue #1090 (Katalog #923) — siehe test_issue_681_diagnosis_closed_loop.py: dieses Modul
+    testet record_diagnosed_pair's Rueckschrieb-Mechanik selbst, unabhaengig vom seit #1090
+    standardmaessig deaktivierten Produktions-Sicherheitsschalter."""
+    monkeypatch.setattr(sd, "_read_diagnostic_writeback_enabled", lambda: True)
+
+
 # ── #1066: clamp_param_bounds / is_bounds_admissible ────────────────────────────────────────────
 def test_clamp_replaces_out_of_domain_lower_bound():
     lo, hi = spaces.clamp_param_bounds("ema_period", -325.0, 300)

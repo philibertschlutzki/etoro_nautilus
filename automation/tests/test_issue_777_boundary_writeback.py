@@ -32,6 +32,10 @@ def _cfg_dir(tmp_path, optimizer_extra=None):
         "penalty_overfit_weight": 0.5, "penalty_dd_weight": 8.0,
         "bonus_coverage_weight": 1.0, "evaluable_floor_epsilon": 0.001,
         "lambda_reg": 0.25,
+        # Issue #1090 (Katalog #923) — diagnostic_writeback_enabled ist seit diesem Fix in der
+        # ausgelieferten optimizer.json standardmaessig false; dieses Modul testet den
+        # Rueckschrieb-Pfad selbst, daher hier bewusst wieder aktiviert.
+        "diagnostic_writeback_enabled": True,
     }
     if optimizer_extra:
         opt_cfg.update(optimizer_extra)
@@ -232,6 +236,10 @@ def test_bounds_for_uses_cache_entry_written_via_boundary_writeback(tmp_path, mo
 
     monkeypatch.setattr(sd, "_diagnosed_pairs_cache_path",
                         lambda work_dir=None: tmp_path / "diagnosed_pairs_cache.json")
+    # Issue #1090 (Katalog #923) — diagnostic_writeback_enabled ist seit diesem Fix in der
+    # ausgelieferten optimizer.json standardmaessig false; dieser Test prueft den Rueckschrieb-
+    # Pfad selbst, daher hier bewusst wieder aktiviert.
+    monkeypatch.setattr(sd, "_read_diagnostic_writeback_enabled", lambda: True)
     sd.record_diagnosed_pair({
         "strategy": "TrendPullbackStrategy", "symbol": "TSLA.ETORO",
         "action": "search_space_override", "binding_cause": "boundary_solution",

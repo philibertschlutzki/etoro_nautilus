@@ -24,6 +24,7 @@ Korroborations-Deadlock direkt.
 import json
 from pathlib import Path
 
+from automation import log_manager
 from automation.optimizer import champions, invariants as inv, report, trial_config
 
 
@@ -47,6 +48,14 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(champions, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "config_dir", lambda: tmp_path)
+    # Issue #1099 (Katalog #932) — report._champions_summary bevorzugt seit #1099 ein live
+    # registriertes events.jsonl (log_manager._JSONL_SIDECAR_PATHS["optimizer"]) über die
+    # studies_out-Rekonstruktion; dieses Modul-Dict ist GLOBAL und überlebt zwischen Testdateien in
+    # DERSELBEN pytest-Session (jede Testdatei, die zuvor setup_bot_logging("optimizer", ...)
+    # aufgerufen hat, würde diese Tests sonst je nach Laufreihenfolge kontaminieren). Diese Tests
+    # prüfen explizit die #1084-Fallback-Rekonstruktion (kein live Ereignisstrom) — deshalb hier
+    # deterministisch zurückgesetzt statt sich auf die Testreihenfolge zu verlassen.
+    monkeypatch.delitem(log_manager._JSONL_SIDECAR_PATHS, "optimizer", raising=False)
 
 
 def _entry(strategy, symbol, *, corroboration_count=1, writeback_applied=False,
@@ -71,10 +80,14 @@ def _entry(strategy, symbol, *, corroboration_count=1, writeback_applied=False,
 # ── champions.load_champion_entry_with_reason — STORE_EMPTY vs NO_ENTRY_FOR_PAIR (Fix Punkt 2) ──
 def test_store_empty_when_no_pair_anywhere_has_an_entry(tmp_path, monkeypatch):
     _isolate(monkeypatch, tmp_path)
-    entry, reason = champions.load_champion_entry_with_reason(
+    entry, reason, provenance = champions.load_champion_entry_with_reason(
         "DonchianRegimeBreakoutStrategy", "TSLA.ETORO", opt_data=OPT_DATA)
     assert entry is None
     assert reason == "STORE_EMPTY"
+    # Issue #1103 (Katalog #936) — Provenienz auch fuer STORE_EMPTY gesetzt.
+    assert provenance["looked_up_key"] == "champion_DonchianRegimeBreakoutStrategy_TSLA_ETORO.json"
+    assert provenance["available_keys"] == []
+    assert provenance["available_keys_total"] == 0
 
 
 def test_no_entry_for_pair_when_other_pairs_have_entries(tmp_path, monkeypatch):
@@ -82,10 +95,14 @@ def test_no_entry_for_pair_when_other_pairs_have_entries(tmp_path, monkeypatch):
     champions._write_entry(
         tmp_path / "champions" / "champion_Rsi2ReversionStrategy_TSLA_ETORO.json",
         _entry("Rsi2ReversionStrategy", "TSLA.ETORO"))
-    entry, reason = champions.load_champion_entry_with_reason(
+    entry, reason, provenance = champions.load_champion_entry_with_reason(
         "DonchianRegimeBreakoutStrategy", "TSLA.ETORO", opt_data=OPT_DATA)
     assert entry is None
     assert reason == "NO_ENTRY_FOR_PAIR"
+    # Issue #1103 (Katalog #936) — der gesuchte Schluessel UND die tatsaechlich existierenden.
+    assert provenance["looked_up_key"] == "champion_DonchianRegimeBreakoutStrategy_TSLA_ETORO.json"
+    assert provenance["available_keys"] == ["champion_Rsi2ReversionStrategy_TSLA_ETORO.json"]
+    assert provenance["available_keys_total"] == 1
 
 
 # ── report._champions_summary(studies_out=...) — attempts statt Store-Eintraege (Fix Punkt 1/3) ──
@@ -167,21 +184,30 @@ def test_writeback_reachability_legacy_dict_without_attempts_key_stays_backward_
          "skipped_by_reason": {}}).passed is True
 
 
-# ── invariants.check_champion_corroboration_reachable — Fix Punkt 4 ─────────────────────────────
+# ── invariants.check_champion_corroboration_reachable — Fix Punkt 4, gehärtet #1089 (Katalog #922)
+# Issue #1089 — der frühere ODER-Ast (``... ODER total_runs_started > 1``) machte den Check
+# fälschlich gruen, sobald IRGENDEIN gleichzeitiger Sweep-Prozess das globale, prozessübergreifende
+# Ledger anfasste — unabhängig vom eigenen Symbol/Paar. Der ODER-Ast ist ERSATZLOS entfallen; der
+# Check prüft seither ausschliesslich ``max_corroboration_count >= corroboration_threshold``.
+# ``total_runs_started`` wird nur noch als ``provenance`` mitgeführt (siehe unten), nicht mehr in
+# ``actual`` und OHNE jeden Einfluss auf PASS/FAIL.
 def test_corroboration_reachable_fails_on_the_866_2_reference_deadlock():
     result = inv.check_champion_corroboration_reachable(
         {"stored": 2, "max_corroboration_count": 1}, total_runs_started=1,
         corroboration_threshold=2)
     assert result.passed is False
     assert result.actual["max_corroboration_count"] == 1
-    assert result.actual["total_runs_started"] == 1
+    assert result.provenance["total_runs_started"] == 1
 
 
-def test_corroboration_reachable_passes_once_a_second_run_is_counted():
+def test_corroboration_reachable_still_fails_when_a_sibling_process_bumps_total_runs_started():
+    """Issue #1089 Akzeptanzkriterium — der Check kann durch KEINEN Nebenprozess mehr gruen
+    werden: ein gestiegenes (aber falsch-skopiertes) ``total_runs_started`` darf ein FAIL nicht
+    mehr in ein PASS kippen, solange ``max_corroboration_count`` selbst unter der Schwelle bleibt."""
     result = inv.check_champion_corroboration_reachable(
-        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=2,
+        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=4,
         corroboration_threshold=2)
-    assert result.passed is True
+    assert result.passed is False
 
 
 def test_corroboration_reachable_passes_when_threshold_already_met():
@@ -191,8 +217,14 @@ def test_corroboration_reachable_passes_when_threshold_already_met():
     assert result.passed is True
 
 
-def test_corroboration_reachable_not_applicable_without_store_or_ledger():
+def test_corroboration_reachable_not_applicable_without_store():
     assert inv.check_champion_corroboration_reachable(
         {"stored": 0, "max_corroboration_count": None}, total_runs_started=1).passed is True
-    assert inv.check_champion_corroboration_reachable(
-        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=None).passed is True
+
+
+def test_corroboration_reachable_evaluates_even_without_a_readable_ledger():
+    """Issue #1089 — ``total_runs_started=None`` (Ledger nicht lesbar) ist seit dem Fix KEIN
+    Grund mehr, die Entscheidung auszusetzen: das Ledger ist nicht mehr Teil der Entscheidung."""
+    result = inv.check_champion_corroboration_reachable(
+        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=None)
+    assert result.passed is False

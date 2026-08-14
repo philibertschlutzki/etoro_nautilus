@@ -106,8 +106,24 @@ def test_momentum_ls_run_logger_stays_on_rotation_without_run_id(tmp_path):
         _teardown_logger("momentum_ls_run")
 
 
-def test_default_run_id_includes_git_commit_and_is_filesystem_safe():
+def test_default_run_id_is_filesystem_safe():
     run_id = default_run_id()
     assert "_" in run_id
     for forbidden in ("/", "\\", ":", " "):
         assert forbidden not in run_id
+
+
+def test_default_run_id_carries_no_commit_hash():
+    """Issue #1104 (Katalog #937) — Root-Cause: ``run_id`` trug bislang ``f"{git_commit()}_
+    {timestamp}"`` als Praefix. Ein Report, der NACHTRAEGLICH (--report-only) auf einem NEUEREN
+    Commit regeneriert wird, hatte dadurch einen ``run_id``-Praefix, der mit dem tatsaechlichen
+    ``git_commit`` des Reports auseinanderlief (3910e12b_… trug git_commit=b48024c4) --
+    ununterscheidbar davon, ob der Report auf einer ANDEREN Codeversion lief. ``run_id`` ist seither
+    ein kollisionsfreier Zufallstoken OHNE jeden Commit-Bezug; die Simulations-/Report-Commit-
+    Provenienz lebt seither explizit in ``git_commit_simulation``/``git_commit_report`` (siehe
+    ``report.py``/``invariants.check_commit_coherence``), nicht mehr implizit im ``run_id``-Praefix."""
+    from automation.optimizer.manifest import git_commit
+    run_id = default_run_id()
+    current_commit = git_commit()
+    if current_commit != "unknown":
+        assert current_commit not in run_id

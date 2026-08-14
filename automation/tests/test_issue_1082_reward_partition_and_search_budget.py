@@ -17,9 +17,21 @@ Konsequenz (``'denylist'``/``'search_space_override'``) zu überschreiben.
 """
 import json
 
+import pytest
+
 from automation.optimizer import invariants as inv
 from automation.optimizer import report as report_mod
 from automation.optimizer import sweep
+from automation.optimizer import sweep_diagnostics
+
+
+@pytest.fixture(autouse=True)
+def _enable_diagnostic_writeback(monkeypatch):
+    """Issue #1090 (Katalog #923) — siehe test_issue_681_diagnosis_closed_loop.py: dieses Modul
+    testet record_diagnosed_pair's Rueckschrieb-Mechanik selbst (ueber sweep._apply_search_budget_
+    proposal), unabhaengig vom seit #1090 standardmaessig deaktivierten Produktions-
+    Sicherheitsschalter."""
+    monkeypatch.setattr(sweep_diagnostics, "_read_diagnostic_writeback_enabled", lambda: True)
 
 
 def _term(base=1.0, **kw):

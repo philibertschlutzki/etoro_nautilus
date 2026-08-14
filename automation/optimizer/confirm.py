@@ -1698,6 +1698,49 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
             f"REJECTED_BOUNDARY_SOLUTION (Bounds prüfen ODER Reward-Konditionierung)"
         )
 
+    # Issue #1101 (Katalog #934) — Akzeptanzkriterium 1: der/die konkrete klemmende Parameter
+    # sichtbar machen (bislang trug nur die AGGREGIERTE ``boundary_hit_fraction`` den Report,
+    # nicht WELCHER Parameter dahinter steckt). ``boundary_parameter``/``boundary_side`` sind die
+    # deterministisch (alphabetisch) erste Eintragung aus ``boundary_directions`` — der volle Dict
+    # bleibt zusätzlich als ``boundary_directions`` erhalten, für Faelle mit mehr als einem
+    # klemmenden Parameter (bei ``boundary_unresolved`` typischerweise >= die Hälfte aller
+    # gesampelten Parameter).
+    boundary_parameter, boundary_side = (
+        sorted(boundary_directions.items())[0] if boundary_directions else (None, None))
+
+    # Issue #1101 (Katalog #934) — Akzeptanzkriterium 2: ``HOLD_BOUNDARY_UNRESOLVED`` darf nicht
+    # unbegrenzt bestehen bleiben. Root-Cause #934: das Veto selbst ist inhaltlich korrekt — die
+    # tatsächliche Ursache liegt im Suchraum, dessen Bounds-Rückschrieb (#761/#763/#1066) bereits
+    # existiert und den NÄCHSTEN Sweep-Lauf desselben Paars automatisch mit einem um
+    # ``bounds_widening_factor`` (Default 30 %) geweiteten Band für GENAU diesen Parameter startet
+    # (``spaces._load_auto_proposed_bounds`` liest denselben #761-Cache, in den unten
+    # ``record_diagnosed_pair`` schreibt). Der "gezielte Nachlauf" aus der Akzeptanzkriterium-
+    # Formulierung IST bereits dieser bestehende, asynchrone Mechanismus — was bislang fehlte, ist
+    # das SCHLIESSEN der Schleife: erkennen, dass ein Kandidat BEREITS unter bereits geweiteten
+    # Bounds für ``boundary_parameter`` evaluiert wurde (``widen_applications[boundary_parameter]
+    # >= sweep_diagnostics._MAX_WIDEN_APPLICATIONS``, dieselbe Sperre, die ``record_diagnosed_pair``
+    # bereits gegen unbegrenztes Nachweiten führt) und TROTZDEM erneut auf dem Rand landet — dann
+    # ist der Rand kein Suchraum-Artefakt mehr, sondern ein reproduziertes Optimum, und der
+    # Kandidat verlässt den unbestimmten HOLD-Zustand endgültig.
+    boundary_resolution_run_id = None
+    boundary_resolution_exhausted = False
+    if boundary_overfit and boundary_parameter is not None:
+        try:
+            from automation.optimizer.sweep_diagnostics import (
+                _MAX_WIDEN_APPLICATIONS, load_diagnosed_pairs_cache)
+            _prior_boundary_entry = load_diagnosed_pairs_cache().get((strategy, symbol))
+            if (_prior_boundary_entry
+                    and _prior_boundary_entry.get("binding_cause") == "boundary_solution"):
+                _prior_widen_count = int(
+                    (_prior_boundary_entry.get("widen_applications") or {}).get(
+                        boundary_parameter, 0))
+                if _prior_widen_count >= _MAX_WIDEN_APPLICATIONS:
+                    boundary_resolution_exhausted = True
+                    boundary_resolution_run_id = _prior_boundary_entry.get("first_seen_run_id")
+        except Exception:
+            boundary_resolution_exhausted = False
+            boundary_resolution_run_id = None
+
     # Issue #763 — >= 0.5 ist ein STÄRKERES Signal als der #622-Veto (die HÄLFTE der Gewinner-
     # Parameter klebt an der Grenze): statt eines terminalen REJECTED_BOUNDARY_SOLUTION erzeugt das
     # HOLD_BOUNDARY_UNRESOLVED — nur ein Re-Run mit ausgeweiteten Bounds kann entscheiden, ob der
@@ -1741,7 +1784,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                     "proposed_bounds": proposed_bounds,
                     "boundary_hit_fraction": boundary_frac,
                     "boundary_params": _boundary_params,
-                })
+                    # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — auch im #761-Cache-Eintrag
+                    # sichtbar (nicht nur im Proposal), damit report._boundary_solutions_section()
+                    # denselben klemmenden Parameter ausweisen kann.
+                    "boundary_parameter": boundary_parameter,
+                    "boundary_side": boundary_side,
+                }, run_id=run_id)
         except Exception:
             logging.getLogger("optimizer").warning(
                 f"[Boundary #763] {symbol}: proposed_bounds konnten nicht in den #761-Cache "
@@ -1777,6 +1825,13 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     if pbo_overfit:
         status = "REJECTED_SELECTION_OVERFIT"
         is_rejection_detail_override = "REJECT_SELECTION_PBO"
+    elif boundary_unresolved and boundary_resolution_exhausted:
+        # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — derselbe Randparameter klebt bereits
+        # NACH einer bereits geweiteten Bounds-Runde (siehe boundary_resolution_exhausted-Herleitung
+        # oben) erneut am Rand: kein Suchraum-Artefakt mehr, sondern ein reproduziertes Optimum.
+        # Terminaler Ausgang statt eines erneuten, potenziell endlosen HOLD.
+        status = "REJECT_BOUNDARY_SOLUTION_PERSISTENT"
+        is_rejection_detail_override = "REJECT_BOUNDARY_SOLUTION_PERSISTENT"
     elif boundary_unresolved:
         # Issue #763 — >= 0.5 ist STRIKT stärker als der #622-Veto (impliziert boundary_overfit=True)
         # und muss daher VOR der #622-Verzweigung geprüft werden: ein HOLD ist etwas anderes als ein
@@ -1830,6 +1885,18 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     best_result["metrics_symbol"]["oos_psr"] = getattr(promoted_m_symbol, "oos_psr", None)
     best_result["metrics_symbol"]["holdout_ci_lower_sortino"] = ci_lo
     best_result["metrics_symbol"]["boundary_hit_fraction"] = boundary_frac
+    # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — WELCHER Parameter (und in welche Richtung)
+    # den Rand-Anteil dominiert, statt nur der aggregierten Bruchzahl; boundary_directions bleibt
+    # zusätzlich als voller Dict erhalten (mehrere Parameter können gleichzeitig klemmen).
+    best_result["metrics_symbol"]["boundary_parameter"] = boundary_parameter
+    best_result["metrics_symbol"]["boundary_side"] = boundary_side
+    best_result["metrics_symbol"]["boundary_directions"] = dict(boundary_directions or {})
+    # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — sichtbar, ob DIESER Kandidat bereits unter
+    # einem geweiteten Suchraum fuer boundary_parameter evaluiert wurde (boundary_resolution_run_id
+    # verweist auf den Lauf, dessen Diagnose die Weitung ausloeste) und ob die Weitungs-Sperre
+    # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) bereits erreicht ist.
+    best_result["metrics_symbol"]["boundary_resolution_run_id"] = boundary_resolution_run_id
+    best_result["metrics_symbol"]["boundary_resolution_exhausted"] = boundary_resolution_exhausted
     # Issue #786 — das bindende Holdout-Gate (negativstes normiertes Delta) fuer JEDE Study mit
     # einem erreichten Holdout-Lauf, nicht nur bei REJECT_HOLDOUT_GATE — macht die haeufigste
     # Ablehnungsursache des gesamten Systems (74,5% der Studies mit eligiblen Trials) attribuierbar.
@@ -2019,6 +2086,9 @@ _CONFIRM_STAGE_REJECTIONS = frozenset({
     # Issue #763 — HOLD_BOUNDARY_UNRESOLVED ist ebenfalls eine Confirm-/Holdout-Pfad-Ursache (der
     # modale Per-Trial-IS-Grund erklärt nicht, warum die Promotion pausiert wurde).
     "HOLD_BOUNDARY_UNRESOLVED",
+    # Issue #1101 (Katalog #934) — der terminale Ausgang eines HOLD_BOUNDARY_UNRESOLVED-Kandidaten,
+    # der auch nach einer bereits geweiteten Bounds-Runde erneut auf dem Rand landet.
+    "REJECT_BOUNDARY_SOLUTION_PERSISTENT",
     # Issue #773 — die Study wurde VOR jedem Holdout-Backtest wegen einer verletzten
     # Renditeserien-Kohaerenz abgelehnt; der modale IS-Per-Trial-Grund erklaert diese Ursache nicht.
     "REJECT_COHERENCE_VIOLATION",
@@ -2132,6 +2202,14 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # Issue #993 — durchgereicht fuer die Deployment-Grenze (deployment_gate.py); siehe
         # confirm_per_symbol_promotion's ``data_snapshot_sha256``.
         "data_snapshot_sha256": promotion.get("data_snapshot_sha256"),
+        # Issue #1091 (Katalog #924) — die VOR dem ersten Trial dieses Symbols aus dem geplanten
+        # Budget eingefrorene familienweite Multiplizitaet (siehe ``sweep._family_n_frozen_from_
+        # studies``/``study.user_attrs['deflation_n_family_frozen']``). Anders als
+        # ``deflation_n_eligible`` (unten, im ``holdout``-Block) haengt dieser Wert NICHT davon ab,
+        # wie viele Studies dieses Symbols zum Lesezeitpunkt bereits ihr Proposal exportiert haben
+        # — jede Study derselben Symbol-Familie traegt DENSELBEN, bereits symbolweit summierten Wert.
+        "deflation_n_family_frozen": (getattr(study, "user_attrs", None) or {}).get(
+            "deflation_n_family_frozen"),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],

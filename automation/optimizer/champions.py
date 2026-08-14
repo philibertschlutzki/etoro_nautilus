@@ -724,7 +724,7 @@ def load_champion_entry(strategy: str, symbol: str, *, opt_data: dict) -> dict |
     """Issue #704 (P0) — liest + validiert (``champion_is_admissible``) den gespeicherten
     Champion. Gibt den VOLLEN Eintrag zurück (für #709-Study-Attr-Telemetrie);
     ``load_champion_seed`` extrahiert daraus nur ``params`` (Issue-Signatur, s. u.)."""
-    entry, _reason = load_champion_entry_with_reason(strategy, symbol, opt_data=opt_data)
+    entry, _reason, _provenance = load_champion_entry_with_reason(strategy, symbol, opt_data=opt_data)
     return entry
 
 
@@ -744,8 +744,36 @@ def _champion_store_has_any_entry() -> bool:
         return False
 
 
+_NO_ENTRY_PROVENANCE_MAX_KEYS = 10
+
+
+def _no_entry_provenance(strategy: str, symbol: str) -> dict:
+    """Issue #1103 (Katalog #936) — Rohmaterial für ``load_champion_entry_with_reason``s
+    ``NO_ENTRY_FOR_PAIR``/``STORE_EMPTY``-Provenienz: WELCHER Store-Schlüssel wurde gesucht
+    (``looked_up_key``, der Dateiname aus ``_champion_path``) und WELCHE Schlüssel existieren
+    tatsächlich (``available_keys``, alphabetisch, auf ``_NO_ENTRY_PROVENANCE_MAX_KEYS`` gekürzt —
+    ``available_keys_total`` trägt die volle Zahl, damit die Kürzung selbst sichtbar bleibt).
+
+    Root-Cause #936: 51 von 56 Studies im NVDA-Referenzlauf tragen ``NO_ENTRY_FOR_PAIR``, obwohl
+    ``champions.stored`` > 0 meldet — der Verdacht auf einen Schlüssel-Mismatch (Paar-skopierter
+    Lookup gegen einen abweichend benannten/global gemeinten Store-Eintrag) ist seit #1084 offen
+    und unbewiesen. Diese Provenienz macht den Verdacht das erste Mal NACHPRÜFBAR, statt eine
+    Vermutung zu bleiben. Fail-open (leere ``available_keys``) bei einem Lesefehler — dieselbe
+    Konvention wie überall im Champion-Store."""
+    looked_up_key = _champion_path(strategy, symbol).name
+    try:
+        available = sorted(p.name for p in _champions_dir().glob("champion_*.json"))
+    except OSError:
+        available = []
+    return {
+        "looked_up_key": looked_up_key,
+        "available_keys": available[:_NO_ENTRY_PROVENANCE_MAX_KEYS],
+        "available_keys_total": len(available),
+    }
+
+
 def load_champion_entry_with_reason(strategy: str, symbol: str, *,
-                                    opt_data: dict) -> tuple[dict | None, str | None]:
+                                    opt_data: dict) -> tuple[dict | None, str | None, dict | None]:
     """Issue #910 Fix 2 — wie ``load_champion_entry``, aber unterscheidet die beiden Ursachen, die
     vorher beide als ``None`` (und stromabwärts als derselbe ``NO_ADMISSIBLE_ENTRY``-String)
     kollabierten: ein Eintrag EXISTIERT, ist aber inadmissibel (``champion_is_admissible``s
@@ -758,13 +786,19 @@ def load_champion_entry_with_reason(strategy: str, symbol: str, *,
     Store insgesamt leer ist (``_champion_store_has_any_entry`` False — die Kette hat noch nie
     für IRGENDEIN Paar geschrieben); ``'NO_ENTRY_FOR_PAIR'``, wenn der Store Einträge trägt, nur
     keinen für DIESES Paar (der pair-skopierte Normalfall, solange nicht jedes Paar bereits einen
-    admissiblen Kandidaten hervorgebracht hat, siehe ``store_champion``-Docstring)."""
+    admissiblen Kandidaten hervorgebracht hat, siehe ``store_champion``-Docstring).
+
+    Issue #1103 (Katalog #936) — DRITTES Rückgabeelement ``provenance``: ``{looked_up_key,
+    available_keys, available_keys_total}`` (siehe ``_no_entry_provenance``), NUR gesetzt für
+    ``STORE_EMPTY``/``NO_ENTRY_FOR_PAIR`` (die beiden Fälle, in denen "welcher Schlüssel wurde
+    gesucht, welche existieren" die diagnostisch wertvolle Frage ist) — ``None`` in jedem anderen
+    Fall (ein existierender, aber inadmissibler Eintrag, oder ein admissibler Treffer)."""
     entry = _read_entry(_champion_path(strategy, symbol))
     if entry is None:
         reason = "STORE_EMPTY" if not _champion_store_has_any_entry() else "NO_ENTRY_FOR_PAIR"
-        return None, reason
+        return None, reason, _no_entry_provenance(strategy, symbol)
     ok, reason = champion_is_admissible(entry, opt_data)
-    return (entry, None) if ok else (None, reason or "INADMISSIBLE")
+    return (entry, None, None) if ok else (None, reason or "INADMISSIBLE", None)
 
 
 def load_champion_seed(strategy: str, symbol: str, base_cfg: Path | None = None, *,

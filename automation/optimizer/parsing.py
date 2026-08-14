@@ -194,6 +194,14 @@ class TournamentMetrics:
     oos_gross_win_mean_bps: float | None = None
     oos_atr_median_bps: float | None = None
     oos_atr_min_bps: float | None = None
+    # Issue #1095 (Katalog #928) — Median der Bars zwischen Trailing-Stop-Signal und tatsaechlichem
+    # Markt-Close-Fill (siehe backtest_runner._aggregate_exit_telemetry-Docstring); None ohne einen
+    # einzigen getaggten Stop-Exit dieses Trials.
+    oos_stop_exit_lag_bars_median: float | None = None
+    # Issue #1097 (Katalog #930) — Stichprobengroesse HINTER oos_gross_loss_mean_bps (ALLE
+    # Verlust-Trades dieses Trials, nicht nur Stop-Exits); Grundlage fuer den trade-gewichteten
+    # (statt medianbasierten) Study-Pool-Mittelwert, siehe report._pooled_mean_of_trial_field.
+    oos_n_losses: int = 0
     # Issue #903 — rohe Round-Trip-Haltedauern (Sekunden), Eingangsgrösse für die ROUND-TRIP-Ebene
     # von invariants.compute_trial_timebox_violations. Leeres Tuple ⇒ Pre-#899-JSON (rückwärts-
     # kompatibel; der Konsument fällt dann auf den Trial-Maximum-Punkt zurück).
@@ -312,6 +320,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_gross_win_mean_bps = oos_metrics.get("gross_win_mean_bps")
     oos_atr_median_bps = oos_metrics.get("atr_median_bps")
     oos_atr_min_bps = oos_metrics.get("atr_min_bps")
+    # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
+    oos_stop_exit_lag_bars_median = oos_metrics.get("stop_exit_lag_bars_median")
+    # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
+    oos_n_losses = oos_metrics.get("n_losses")
     oos_holding_times_s = oos_metrics.get("holding_times_s")
 
     oos_max_drawdown = oos_metrics.get("max_drawdown") or 0.0
@@ -500,6 +512,12 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_gross_win_mean_bps=float(oos_gross_win_mean_bps) if oos_gross_win_mean_bps is not None else None,
         oos_atr_median_bps=float(oos_atr_median_bps) if oos_atr_median_bps is not None else None,
         oos_atr_min_bps=float(oos_atr_min_bps) if oos_atr_min_bps is not None else None,
+        # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
+        oos_stop_exit_lag_bars_median=(
+            float(oos_stop_exit_lag_bars_median)
+            if oos_stop_exit_lag_bars_median is not None else None),
+        # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
+        oos_n_losses=int(oos_n_losses) if oos_n_losses is not None else 0,
         oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
     )
 

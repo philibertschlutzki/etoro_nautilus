@@ -13,6 +13,7 @@ import argparse
 import collections
 import json
 import logging
+import os
 import statistics
 import time
 from pathlib import Path
@@ -1058,6 +1059,17 @@ def _family_n_from_proposals(proposals) -> dict[str, int]:
     Proposal die JSON lesen (``deflation_n_eligible`` liegt unter ``holdout.symbol``). Ein bereits
     geparstes Dict wird defensiv ebenfalls akzeptiert (Test-Pfad). Fehlt der Schlüssel (Kohorte < 2
     eligible ⇒ keine Deflation), trägt das Proposal 0 bei.
+
+    Issue #1102 (Katalog #935) — ``deflation_n_eligible`` ist eine ENGERE, seit #784/#822 veraltete
+    Grundgesamtheit (nur Trials, die ALLE Eligibilitäts-Gates bestanden) als die TATSÄCHLICH an
+    ``confirm.py`` für die DSR-Multiplizitätskorrektur durchgereichte Zahl (``deflation_n_family``,
+    ``oos_selection_statistic_available``, #822) — beide Zahlen liefen um Faktor 2,8–5,1 auseinander
+    (#1102-Symptom). ``report.py``'s ``cross_study['n_family']`` verwendet diese Funktion daher NICHT
+    mehr (dort ist ``n_family[symbol]`` seither die Summe der eigenen ``n_family_stage1``-Zerlegung,
+    inkl. der #1080-Rückfallbehandlung für eine Study mit 0 Holdout-Trades). Diese Funktion bleibt
+    NUR noch als Rückwärtskompat-/reine Telemetriequelle für das ``sweep_completed``-Event erhalten
+    (keine Promotions-/Gate-Wirkung) — für JEDE Entscheidungs- oder Report-Kennzahl ist
+    ``report._family_n_stages`` die massgebliche Quelle.
     """
     family_n: dict[str, int] = {}
     for _p in (proposals or []):
@@ -1184,6 +1196,39 @@ def _family_n_per_study_from_studies(pairs, studies, *, tournament_cfg: dict | N
         # offen (derselbe Erschoepfungs-Mechanismus, nur an eine spaetere Stelle verschoben).
         _dispose_storage(getattr(study, "_etoro_rdb_storage", None))
     return per_study, symbol_fingerprints
+
+
+def _family_n_frozen_from_studies(pairs, studies) -> dict[str, int]:
+    """Issue #1091 (Katalog #924) — die familienweite Multiplizitaet, EINGEFROREN aus dem
+    GEPLANTEN Budget (``study.user_attrs['n_trials_budget']``, von ``_optimize_symbol_impl`` VOR
+    dem ersten Trial dieser Study gestempelt, #929 Fix 3), nicht aus tatsaechlich gezogenen/
+    eligiblen Trials.
+
+    Root-Cause #1091: ``report._family_n_from_proposals`` summiert ``deflation_n_eligible`` ueber
+    die BEREITS EXPORTIERTEN Proposals eines Symbols — ein Report, der VOR Abschluss ALLER
+    Strategien-Studies dieses Symbols gebaut wird (Zwischenreport/Fail-Fast-Probe, #1083), sieht
+    zwangslaeufig nur eine TEILMENGE und meldet eine kleinere Zahl als ein spaeterer Report
+    derselben Familie (280 → 321 → 434 ueber drei 18/67-Sekunden auseinanderliegende Lesungen,
+    #1091-Symptom). ``n_trials_budget`` ist dagegen ab Study-ERSTELLUNG bekannt (JEDE Study dieses
+    Symbols traegt ihn unabhaengig von den Geschwister-Strategien) — die Summe ist bit-identisch,
+    egal ob sie vor, waehrend oder nach den Trials gelesen wird.
+
+    ``pairs``/``studies`` sind wie bei ``_family_n_from_studies`` index-parallel; fehlt
+    ``n_trials_budget`` auf einer Study (Legacy/Test-Study ohne den Stempel), faellt NUR DIESE
+    Study auf ihre tatsaechliche Trial-Zahl zurueck (fail-open, keine Unterzaehlung durch eine
+    fehlende Legacy-Study)."""
+    family_n: dict[str, int] = {}
+    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+        if study is None:
+            continue
+        attrs = getattr(study, "user_attrs", None) or {}
+        budget = attrs.get("n_trials_budget")
+        if isinstance(budget, (int, float)) and not isinstance(budget, bool):
+            n = int(budget)
+        else:
+            n = len(getattr(study, "trials", None) or [])
+        family_n[symbol] = family_n.get(symbol, 0) + n
+    return family_n
 
 
 def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
@@ -1407,12 +1452,16 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
         # Code, z. B. 'EMPTY_PARAMS'/'REJECT_HOLDOUT_GATE') — vorher trugen beide Fälle denselben
         # 'NO_ADMISSIBLE_ENTRY'-String, und der Report konnte nicht sagen, ob die Kette nie startet
         # oder ständig scheitert.
-        entry, _no_entry_reason = champions.load_champion_entry_with_reason(
+        entry, _no_entry_reason, _no_entry_provenance = champions.load_champion_entry_with_reason(
             strategy, symbol, opt_data=opt_data)
         applied = False
         skipped_reason = _no_entry_reason or "STORE_EMPTY"
         advance_days = None
         corroboration_count = None
+        # Issue #1103 (Katalog #936) — WELCHER Store-Schlüssel gesucht wurde und welche tatsächlich
+        # existieren (``champions._no_entry_provenance``), NUR gesetzt fuer STORE_EMPTY/
+        # NO_ENTRY_FOR_PAIR (der Verdacht auf einen Schlüssel-Mismatch, seit #1084 offen).
+        skipped_provenance = _no_entry_provenance if entry is None else None
         if entry is not None:
             lifecycle = entry.get("lifecycle") or {}
             integrity = entry.get("integrity") or {}
@@ -1433,10 +1482,84 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
             "advance_days": advance_days,
             "applied": applied,
             "skipped_reason": None if applied else skipped_reason,
+            # Issue #1103 (Katalog #936) — {looked_up_key, available_keys, available_keys_total},
+            # NUR bei skipped_reason in {STORE_EMPTY, NO_ENTRY_FOR_PAIR} (siehe
+            # champions._no_entry_provenance-Docstring); None sonst (kein Lookup-Fehlschlag).
+            "skipped_provenance": None if applied else skipped_provenance,
         })
     except Exception:
         log.warning("[#818] %s/%s: Champion-Writeback fehlgeschlagen (non-fatal).",
                     strategy, symbol, exc_info=True)
+
+
+def _sweep_run_lock_path() -> Path:
+    """Issue #1086 (Katalog #919) — dieselbe ``{WORK}/sweep/``-Study-Store-Wurzel wie
+    ``run_optimization.resolve_storage``, siehe dort."""
+    return WORK / "sweep" / ".run.lock"
+
+
+def _acquire_sweep_run_lock(run_id: str) -> None:
+    """Verhindert, dass zwei UNABHAENGIGE Sweep-Prozesse (verschiedene ``run_id``) gleichzeitig
+    denselben ``{WORK}/sweep/``-Optuna-Store beschreiben. Root-Cause #1086: genau dieser Zustand
+    (drei zwischen 15:45 und 15:51 gestartete ``--symbols``-Prozesse gegen denselben Store) fuehrte
+    dazu, dass jeder Prozess im eigenen Report auch die Studies der ANDEREN Prozesse sah, sobald
+    einer der Prozesse ueber ``generate_report_for_run`` (Abbruch-/Standalone-Pfad) ALLE
+    ``proposal_*.json`` unter ``WORK`` entdeckte.
+
+    Ein Lauf mit DEMSELBEN ``run_id`` (der #799-Resume-Pfad) erneuert die Lock-Datei, statt sich
+    selbst auszusperren. Ein toter Halter (Prozess nicht mehr am Leben, ``os.kill(pid, 0)`` schlaegt
+    mit ``ProcessLookupError`` fehl) gilt als verwaist und wird uebernommen, statt den Store nach
+    einem Absturz dauerhaft zu blockieren."""
+    lock_path = _sweep_run_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.exists():
+        try:
+            holder = json.loads(lock_path.read_text("utf-8"))
+        except (OSError, ValueError):
+            holder = {}
+        holder_run_id = holder.get("run_id")
+        holder_pid = holder.get("pid")
+        if holder_run_id and holder_run_id != run_id:
+            holder_alive = True
+            if isinstance(holder_pid, int):
+                try:
+                    os.kill(holder_pid, 0)
+                except ProcessLookupError:
+                    holder_alive = False
+                except OSError:
+                    holder_alive = True
+            if holder_alive:
+                raise RuntimeError(
+                    "[SWEEP_CONCURRENT_RUN_DETECTED] "
+                    f"{lock_path} gehoert run_id={holder_run_id!r} (pid={holder_pid}) — ein "
+                    f"zweiter Sweep-Prozess (run_id={run_id!r}) darf denselben {{WORK}}/sweep/-"
+                    "Store nicht gleichzeitig beschreiben (Issue #1086). Starte den zweiten Lauf "
+                    "mit einem eigenen --work-dir (empfohlen), oder warte, bis der laufende Sweep "
+                    "abgeschlossen ist."
+                )
+            logging.getLogger("optimizer").warning(
+                "[#1086] Verwaiste Sweep-Lock-Datei von run_id=%s (pid=%s, Prozess nicht mehr "
+                "am Leben) fuer run_id=%s uebernommen.", holder_run_id, holder_pid, run_id,
+            )
+    write_json_atomic(lock_path, {
+        "run_id": run_id, "pid": os.getpid(),
+        "acquired_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+    })
+
+
+def _release_sweep_run_lock(run_id: str) -> None:
+    """Gibt die #1086-Lock-Datei frei, sofern sie noch DIESEM ``run_id`` gehoert — ein inzwischen
+    von einem anderen (Resume-)Lauf uebernommenes Lock wird NICHT vom vorherigen Halter geloescht."""
+    lock_path = _sweep_run_lock_path()
+    try:
+        holder = json.loads(lock_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return
+    if holder.get("run_id") == run_id:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
 
 
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
@@ -1958,6 +2081,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     if run_id is None:
         run_id = default_run_id()
 
+    # Issue #1086 (Katalog #919) — Lock gegen einen zweiten, gleichzeitigen Sweep-Prozess auf
+    # demselben ``{WORK}/sweep/``-Store (siehe ``_acquire_sweep_run_lock``-Docstring). Nur im
+    # echten Storage-Pfad (analog jedem anderen Preflight-Guard oben) — injizierte HI-7-Fakes
+    # beruehren keine SQLite-Datei und brauchen keinen Store-Lock.
+    if using_real_optimize:
+        _acquire_sweep_run_lock(run_id)
+
     # Issue #892 Fix Punkt 5 — ein Symbol, dessen Paare AUSSCHLIESSLICH an Gate 1 scheiterten (kein
     # einziges 'OK'-Paar in pairs_by_symbol), wird im Coverage-Ledger als 'covered_gate1' markiert
     # (mark_gate1_covered, zuvor Issue #841 Punkt 5 — implementiert, aber NULL Call-Sites) — es
@@ -2425,6 +2555,22 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
             symbol_n_family_stage1 = _family_n_stage1_from_studies(
                 symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+            # Issue #1091 (Katalog #924) — die budget-basierte, EINGEFRORENE Symbol-Multiplizität:
+            # bit-identisch, unabhängig davon, wie viele Proposals dieser Familie zum Lesezeitpunkt
+            # bereits existieren (siehe _family_n_frozen_from_studies-Docstring). Auf JEDE Study
+            # dieses Symbols gestempelt, damit auch ein spaeter unabhaengig (SQLite-Neuladen,
+            # generate_report_for_run) gelesenes Proposal denselben Wert traegt.
+            symbol_n_family_frozen = _family_n_frozen_from_studies(symbol_pairs, symbol_studies)
+            for _study in symbol_studies:
+                if _study is None:
+                    continue
+                try:
+                    _study.set_user_attr(
+                        "deflation_n_family_frozen", symbol_n_family_frozen.get(symbol, 0))
+                except Exception:
+                    logging.getLogger("optimizer").debug(
+                        "[#1091] %s: deflation_n_family_frozen-Stempel fehlgeschlagen (non-fatal).",
+                        symbol, exc_info=True)
 
             _proposals_before_this_symbol = len(proposals)
             for pair, study in zip(symbol_pairs, symbol_studies):
@@ -2774,6 +2920,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     mins, secs = divmod(int(wallclock_s), 60)
     print(f"✅ Sweep fertig: {len(pairs)} Paare, {n_strats} Strategien × {n_syms} Symbole, "
           f"n_jobs={n_jobs} ({n_jobs_source}), Gesamtlaufzeit {mins}m{secs:02d}s.")
+    # Issue #1086 (Katalog #919) — Lock-Freigabe am regulaeren Laufende. Der Abbruchpfad
+    # (Exception/SIGINT aus dieser Funktion) wird von ``main()``s ``finally``-Block abgedeckt.
+    if using_real_optimize:
+        _release_sweep_run_lock(run_id)
     return proposals
 
 
@@ -3019,6 +3169,12 @@ def main(argv: list[str] | None = None) -> list[Path]:
             "den bislang exportierten Proposals.", exc_info=True)
     finally:
         _signal.signal(_signal.SIGTERM, _prior_sigterm_handler)
+        # Issue #1086 (Katalog #919) — Sicherheitsnetz fuer den Abbruchpfad: bricht
+        # ``run_per_symbol_sweep`` per Exception/SIGINT MITTEN im Lauf ab, erreicht es seine
+        # eigene Lock-Freigabe (kurz vor ``return proposals``) nicht mehr. Idempotent (prueft den
+        # ``run_id``-Besitz), also unschaedlich, falls die Lock-Datei bereits regulaer freigegeben
+        # wurde oder nie erworben wurde (Fake-Pfad in Tests).
+        _release_sweep_run_lock(run_id)
 
     for p in proposals:
         print(p)

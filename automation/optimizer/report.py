@@ -10,9 +10,11 @@ Quellen zu GENAU EINER Datei ``data/optimizer/reports/run_<run_id>.json`` — de
 einzige Lese-Schritt einer künftigen Forensik-Sitzung.
 
 Wiederverwendung statt Doppel-Bau: ``manifest.git_commit``/``sha256_file`` für Provenienz,
-``sweep._family_n_from_proposals`` für die Cross-Study-Kennzahl, ``run_optimization.
-gradient_signal_arm``/``_sanitize``/``resolve_storage`` für die Study-Metriken/Storage-
-Auflösung, ``invariants.py`` (#743) für die mathematischen Regressionswächter.
+``run_optimization.gradient_signal_arm``/``_sanitize``/``resolve_storage`` für die
+Study-Metriken/Storage-Auflösung, ``invariants.py`` (#743) für die mathematischen
+Regressionswächter. Issue #1102 (Katalog #935) — die familienweite Cross-Study-Kennzahl
+(``cross_study['n_family']``) ist seither die Summe der eigenen ``_family_n_stages``-Zerlegung
+(EINE Quelle statt der vorher separat berechneten, veralteten ``sweep._family_n_from_proposals``).
 
 Zwei Aufrufpfade, EIN gemeinsamer Kern (``_build_report``), garantieren Determinismus:
   - ``generate_sweep_report`` — am Ende von ``sweep.main()``, mit den frisch geschriebenen
@@ -33,7 +35,7 @@ from typing import Any, Iterable
 
 import optuna
 
-from automation.log_manager import emit_execution_event
+from automation.log_manager import emit_execution_event, jsonl_sidecar_path
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
 from automation.optimizer import reward as _reward
@@ -43,7 +45,7 @@ from automation.optimizer.run_optimization import (
     _constraint_violation_progress, compute_budget_execution, _best_completed_value,
 )
 from automation.optimizer.sweep import (
-    _family_n_from_proposals, load_symbol_universe, read_symbol_bar_quality_cache,
+    load_symbol_universe, read_symbol_bar_quality_cache,
 )
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
@@ -67,6 +69,9 @@ _STAGE_FOR_REJECT_DETAIL = {
     "REJECT_SELECTION_PBO": "pbo",
     "REJECT_BOUNDARY_SOLUTION": "boundary",
     "HOLD_BOUNDARY_UNRESOLVED": "boundary",
+    # Issue #1101 (Katalog #934) — der terminale Ausgang eines HOLD_BOUNDARY_UNRESOLVED-Kandidaten
+    # nach einer bereits geweiteten, aber weiterhin erfolglosen Bounds-Runde.
+    "REJECT_BOUNDARY_SOLUTION_PERSISTENT": "boundary",
 }
 
 REPORT_SCHEMA_VERSION = 1
@@ -356,6 +361,102 @@ def _median_of_trial_field(trial_attrs: list[dict], field: str) -> float | None:
     (None-safe: fehlende/None-Werte werden übersprungen; leere Kohorte ⇒ None)."""
     values = [a[field] for a in (trial_attrs or []) if a.get(field) is not None]
     return statistics.median(values) if values else None
+
+
+def _pooled_mean_of_trial_field(
+    trial_attrs: list[dict], *, mean_field: str, count_field: str,
+) -> float | None:
+    """Issue #1097 (Katalog #930) — GEPOOLTER, trade-gewichteter Study-Mittelwert aus je-Trial
+    Mittelwert + Stichprobengrösse: Σ(mean_i · n_i) / Σ(n_i).
+
+    Root-Cause #1097: ``_median_of_trial_field`` bildet den MEDIAN der TRIAL-Mittelwerte — eine
+    Study-Kennzahl, die NICHT kommensurabel mit einer SUMME über dieselben Trials ist (z. B.
+    ``oos_n_trailing_stop_losses``, bereits als ``sum(...)`` gebildet). Die Teilmengen-Schranke
+    ``mean_alle >= (n_stop_losses/n_exits) · mean_stop`` (für nicht-negative Verluste zwingend
+    gültig) war deshalb in 12 von 56 Studies verletzt — nicht, weil die Simulation inkohärent war,
+    sondern weil zwei verschiedene Aggregationsarten (Median vs. Summe) über dieselbe Trial-Kohorte
+    als vergleichbar behandelt wurden (Wiederkehr von Pitfall #304).
+
+    Jeder Trial trägt seinen EIGENEN Mittelwert (``mean_field``) UND seine EIGENE Stichprobengrösse
+    (``count_field``, z. B. ``oos_n_losses``/``oos_n_trailing_stop_losses``) — beide je Trial bereits
+    korrekt (der Trial-Mittelwert selbst ist bereits über die Trades DIESES Trials gepoolt, siehe
+    ``backtest_runner._aggregate_exit_telemetry``). ``None``, wenn kein Trial beide Felder trägt
+    oder die Gesamtzahl 0 ist (kein stiller Default, der eine leere Kohorte verdeckt)."""
+    weighted_sum = 0.0
+    total_n = 0
+    for a in trial_attrs or []:
+        mean_val = a.get(mean_field)
+        n_val = a.get(count_field)
+        if mean_val is None or not isinstance(n_val, (int, float)) or isinstance(n_val, bool) or n_val <= 0:
+            continue
+        weighted_sum += float(mean_val) * float(n_val)
+        total_n += int(n_val)
+    if total_n <= 0:
+        return None
+    return weighted_sum / total_n
+
+
+def _count_jsonl_events(path: Path | None, event_types: set[str]) -> dict[str, int]:
+    """Issue #1098 (Katalog #931) — zählt je ``event_type`` in ``event_types`` die tatsächlich in
+    der ``.events.jsonl``-Sidecar-Datei unter ``path`` vorhandenen Zeilen (eine valide JSON-Zeile
+    je Ereignis, siehe ``log_manager._append_jsonl_sidecar``). Dient
+    ``invariants.check_event_stream_completeness`` als "actual"-Seite gegen das vom Sweep
+    geschriebene ``EVENTS_MANIFEST``-Ereignis (dessen ``expected_*``-Zahlen UNABHÄNGIG von dieser
+    Datei aus ``studies_out`` berechnet werden — kein Zirkelschluss).
+
+    Robust gegen einzelne defekte Zeilen (übersprungen statt die gesamte Zählung abzubrechen — ein
+    Betriebssystem-Crash mitten in einem ``os.write()`` kann theoretisch eine unvollständige letzte
+    Zeile hinterlassen, das darf die Zählung der VORHERIGEN, vollständigen Zeilen nicht verhindern).
+    ``path is None`` (Logger nie via ``setup_bot_logging`` initialisiert) oder die Datei existiert
+    nicht ⇒ alle Zählungen 0."""
+    counts = {et: 0 for et in event_types}
+    if path is None or not path.exists():
+        return counts
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                et = event.get("event_type")
+                if et in counts:
+                    counts[et] += 1
+    except OSError:
+        _log.warning("[#1098] events.jsonl (%s) nicht lesbar für die Vollständigkeitsprüfung.",
+                     path, exc_info=True)
+    return counts
+
+
+def _read_jsonl_events(path: Path | None, event_type: str) -> list[dict]:
+    """Issue #1099 (Katalog #932) — liest alle Zeilen mit ``event_type`` aus der ``.events.jsonl``-
+    Sidecar-Datei unter ``path`` und gibt ihre VOLLEN (bereits geparsten) Payloads zurück — im
+    Gegensatz zu ``_count_jsonl_events`` (das nur zählt) braucht ``_champions_summary`` hier den
+    ``skipped_reason``/``applied``-Inhalt jedes ``CHAMPION_WRITEBACK``-Ereignisses. Dieselbe
+    Robustheit wie ``_count_jsonl_events``: einzelne defekte Zeilen werden übersprungen,
+    ``path is None``/fehlende Datei ⇒ leere Liste."""
+    events: list[dict] = []
+    if path is None or not path.exists():
+        return events
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("event_type") == event_type:
+                    events.append(event)
+    except OSError:
+        _log.warning("[#1099] events.jsonl (%s) nicht lesbar für die Attempt-Rekonstruktion.",
+                     path, exc_info=True)
+    return events
 
 
 def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
@@ -817,6 +918,14 @@ def _study_record(proposal: dict, study,
         "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
         "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
         "worker_id": study_user_attrs.get("worker_id"),
+        # Issue #1104 (Katalog #937) — der Commit, auf dem DIESE Study tatsaechlich simuliert
+        # wurde (gestempelt vor dem ersten Trial, siehe run_optimization.py), unabhaengig vom
+        # REPORT-Commit (report._build_report's top-level git_commit_report).
+        "git_commit_simulation": study_user_attrs.get("git_commit_simulation"),
+        # Issue #1091 (Katalog #924) — die vor dem ersten Trial dieses Symbols eingefrorene
+        # familienweite Multiplizitaet (siehe sweep._family_n_frozen_from_studies); identisch
+        # ueber jede Study derselben Symbol-Familie und ueber jeden Lesezeitpunkt.
+        "deflation_n_family_frozen": study_user_attrs.get("deflation_n_family_frozen"),
         # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl.
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
@@ -901,12 +1010,27 @@ def _study_record(proposal: dict, study,
             trial_attrs, "oos_gross_loss_mean_bps_trailing_stop"),
         "oos_n_trailing_stop_losses": sum(
             int(a.get("oos_n_trailing_stop_losses") or 0) for a in trial_attrs),
+        # Issue #1097 (Katalog #930) — GEPOOLTE, trade-gewichtete Gegenstuecke zu den beiden
+        # medianbasierten Feldern oben: kommensurabel mit oos_n_losses/oos_n_trailing_stop_losses
+        # (beide SUMMEN ueber dieselbe Trial-Kohorte), siehe _pooled_mean_of_trial_field-Docstring.
+        # invariants.check_effective_stop_distance konsumiert AUSSCHLIESSLICH diese Felder; die
+        # Mediane oben bleiben als Robustheits-Telemetrie erhalten.
+        "oos_gross_loss_mean_bps_pooled": _pooled_mean_of_trial_field(
+            trial_attrs, mean_field="oos_gross_loss_mean_bps", count_field="oos_n_losses"),
+        "oos_gross_loss_mean_bps_trailing_stop_pooled": _pooled_mean_of_trial_field(
+            trial_attrs, mean_field="oos_gross_loss_mean_bps_trailing_stop",
+            count_field="oos_n_trailing_stop_losses"),
         # Issue #1085 (Katalog #866-2) — über alle Trials aufsummierte Dust-Round-Trips
         # (Notional < 5% des Median-Notionals dieser Study, Fliesskomma-Residuen eines Netto-
         # Exposure-Nulldurchgangs) — Rohmaterial für invariants.check_dust_round_trip_share.
         "dust_round_trips_filtered": sum(
             int(a.get("oos_expectancy_notional_degenerate_count") or 0) for a in trial_attrs),
         "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
+        # Issue #1095 (Katalog #928) — Median (über die Trials dieser Study) der je-Trial-Mediane
+        # der Bars zwischen Trailing-Stop-Signal und tatsaechlichem Markt-Close-Fill. Macht den in
+        # #1092/#1094 quantifizierten Fill-Verzoegerungs-Anteil auf Study-Ebene sichtbar.
+        "oos_stop_exit_lag_bars": _median_of_trial_field(
+            trial_attrs, "oos_stop_exit_lag_bars_median"),
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
         # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. None ⇒ kein Preflight in
@@ -1013,6 +1137,19 @@ def _study_record(proposal: dict, study,
         # Abschnitt 2.3 (Excess-Return vs. echtes Alpha) und cross_study.excess_variance_decomposition.
         "holdout_exposure_fraction": holdout_metrics.get("oos_exposure_fraction"),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
+        # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — WELCHER Parameter (und in welche
+        # Richtung) die Randlösung dominiert, siehe confirm.confirm_per_symbol_promotion. ``None``
+        # ohne jede Randlösung dieser Study (dieselbe Konvention wie boundary_hit_fraction).
+        "boundary_hit_fraction": holdout_metrics.get("boundary_hit_fraction"),
+        "boundary_parameter": holdout_metrics.get("boundary_parameter"),
+        "boundary_side": holdout_metrics.get("boundary_side"),
+        "boundary_directions": holdout_metrics.get("boundary_directions") or {},
+        # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — sichtbar, ob dieser Kandidat bereits
+        # unter geweiteten Bounds fuer boundary_parameter evaluiert wurde und die Weitungs-Sperre
+        # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) erreicht ist (⇒ terminaler
+        # REJECT_BOUNDARY_SOLUTION_PERSISTENT statt eines erneuten HOLD_BOUNDARY_UNRESOLVED).
+        "boundary_resolution_run_id": holdout_metrics.get("boundary_resolution_run_id"),
+        "boundary_resolution_exhausted": bool(holdout_metrics.get("boundary_resolution_exhausted")),
         # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
         # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
         # unter promotion_family_scope='per_strategy' identisch zu holdout_metrics.deflation_n_
@@ -1114,6 +1251,15 @@ def _boundary_solutions_section() -> list[dict[str, Any]]:
             "fraction": e.get("boundary_hit_fraction"),
             "params": e.get("boundary_params"),
             "proposed_bounds": e.get("proposed_bounds"),
+            # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — derselbe klemmende Parameter wie
+            # im Study-Record (siehe _study_record), hier zusaetzlich neben dem Bounds-Vorschlag.
+            "boundary_parameter": e.get("boundary_parameter"),
+            "boundary_side": e.get("boundary_side"),
+            # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — wie oft dieser Parameter bereits
+            # nachgeweitet wurde (sweep_diagnostics.record_diagnosed_pair), damit im Report
+            # nachvollziehbar ist, wie nah ein Kandidat an der Weitungs-Sperre
+            # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) steht.
+            "widen_applications": e.get("widen_applications") or {},
         }
         for e in _diagnosed_pairs_all() if e.get("binding_cause") == "boundary_solution"
     ]
@@ -1241,7 +1387,20 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     ``studies_out=None`` (Legacy-/Report-only-Aufrufer ohne diese Liste) lässt ``skipped_by_reason``
     auf der reinen Verzeichnis-Iteration (bit-identisch zum Pre-#1084-Verhalten); ``attempts``
     bleibt dann ``None`` (unbekannt, nicht 0 — ``check_champion_writeback_reachability`` behandelt
-    diese beiden Fälle unterschiedlich)."""
+    diese beiden Fälle unterschiedlich).
+
+    Issue #1099 (Katalog #932) — Root-Cause: die #1084-``studies_out``-Rekonstruktion (unten, jetzt
+    nur noch Fallback) zählt jedes (strategy, symbol)-Paar der STUDY-Kohorte als "Versuch" — bei
+    einem ``--report-only``-Report über eine inzwischen gewachsene/gealterte ``proposal_*.json``-
+    Menge (siehe ``generate_report_for_run``) lief diese Zahl (52/53/56 im #932-Referenzlauf) an
+    der tatsächlich je Lauf KONSTANTEN Versuchszahl (14, im Ereignisstrom nachweisbar) vorbei — die
+    Study-Liste ist die falsche Grundgesamtheit für "wie oft wurde ``maybe_write_back`` versucht".
+    ``sweep._attempt_champion_writeback`` emittiert GENAU EIN ``CHAMPION_WRITEBACK``-Ereignis je
+    tatsächlichem Versuch (auch bei Nicht-Erfolg, ``skipped_reason`` trägt den Grund) — bevorzugte
+    Quelle jetzt DIESER Ereignisstrom, ausgelesen über ``jsonl_sidecar_path``/``_read_jsonl_events``.
+    Nur auflösbar im SELBEN Prozess, der den Lauf tatsächlich ausgeführt hat (das Modul-Dict in
+    ``log_manager`` ist prozesslokal) — ein frischer ``--report-only``-Prozess fällt automatisch auf
+    die ``studies_out``-Rekonstruktion zurück (unverändertes Pre-#1099-Verhalten)."""
     import collections
     from automation.optimizer import champions as _champions_mod
 
@@ -1315,15 +1474,30 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
             skipped_by_reason["QUALITY_STALE" if stale else "NOT_CORROBORATED_OR_WINDOW_NOT_ADVANCED"] += 1
 
     attempts: int | None = None
-    if studies_out is not None:
-        # Issue #1084 Fix Punkt 1/3 — die ATTEMPT-skopierte Rekonstruktion: jedes (strategy,
-        # symbol)-Paar dieses Laufs, unabhängig davon, ob es einen Store-Eintrag hinterlassen hat.
-        # ``load_champion_entry_with_reason`` liest denselben, gerade oben iterierten Store-Stand
-        # nochmals GEZIELT je Paar — der zweite Durchlauf ist bewusst getrennt: die
-        # Verzeichnis-Iteration oben bleibt die reine "aktueller Store-Zustand"-Sicht (stored/
-        # admissible/corroborated/written_back/max_corroboration_count unverändert), diese
-        # Kohorte hier ersetzt ausschliesslich ``skipped_by_reason`` um die für #1084 fehlende
-        # Versuchs-Vollständigkeit.
+    # Issue #1099 (Katalog #932) — der Ereignis-Pfad ersetzt AUSSCHLIESSLICH die #1084-
+    # studies_out-Rekonstruktion (unten); ``studies_out is None`` bleibt der unveränderte Legacy-
+    # Vertrag (reine Verzeichnis-Iteration oben, ``attempts=None``, siehe Docstring) — in der
+    # Produktion ruft ausschliesslich ``_build_report`` diese Funktion auf, IMMER mit gesetztem
+    # ``studies_out``; ``studies_out=None`` ist ein reiner Test-/Legacy-Aufrufpfad.
+    _events_path = jsonl_sidecar_path(_log.name) if studies_out is not None else None
+    if _events_path is not None:
+        # Issue #1099 (Katalog #932) — bevorzugte Quelle: die tatsächlich emittierten
+        # CHAMPION_WRITEBACK-Ereignisse DIESES Laufs (siehe Docstring oben).
+        writeback_events = _read_jsonl_events(_events_path, "CHAMPION_WRITEBACK")
+        attempts = len(writeback_events)
+        skipped_by_reason = collections.Counter()
+        for ev in writeback_events:
+            if not ev.get("applied"):
+                skipped_by_reason[ev.get("skipped_reason") or "UNKNOWN"] += 1
+    elif studies_out is not None:
+        # Issue #1084 Fix Punkt 1/3 — Fallback für einen frischen Prozess ohne eigenen
+        # Ereignisstrom (z. B. ``--report-only``, siehe Docstring oben): die ATTEMPT-skopierte
+        # Rekonstruktion über jedes (strategy, symbol)-Paar dieses Laufs, unabhängig davon, ob es
+        # einen Store-Eintrag hinterlassen hat. ``load_champion_entry_with_reason`` liest denselben,
+        # gerade oben iterierten Store-Stand nochmals GEZIELT je Paar — der zweite Durchlauf ist
+        # bewusst getrennt: die Verzeichnis-Iteration oben bleibt die reine "aktueller
+        # Store-Zustand"-Sicht (stored/admissible/corroborated/written_back/max_corroboration_count
+        # unverändert), diese Kohorte hier ersetzt ausschliesslich ``skipped_by_reason``.
         skipped_by_reason = collections.Counter()
         pairs_seen: set[tuple[str, str]] = set()
         for r in studies_out:
@@ -1332,7 +1506,7 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
                 continue
             pairs_seen.add((strategy, symbol))
             try:
-                entry, reason = _champions_mod.load_champion_entry_with_reason(
+                entry, reason, _no_entry_provenance = _champions_mod.load_champion_entry_with_reason(
                     strategy, symbol, opt_data=opt_data)
             except Exception:
                 skipped_by_reason["ADMISSIBILITY_CHECK_ERROR"] += 1
@@ -1729,23 +1903,80 @@ def _build_report(
         study = _load_study_for_proposal(proposal)
         _study_attrs = getattr(study, "user_attrs", None) or {} if study is not None else {}
         _study_started_raw = _study_attrs.get("study_started_at_utc")
-        is_foreign_run = False
-        if _study_started_raw and _run_started_dt is not None:
-            try:
-                _study_started_dt = datetime.fromisoformat(_study_started_raw)
-                is_foreign_run = (
-                    (_run_started_dt - _study_started_dt).total_seconds() > _foreign_run_tolerance_s)
-            except (TypeError, ValueError):
-                is_foreign_run = False
+        study_trials = list(getattr(study, "trials", None) or [])
+        study_name = getattr(study, "study_name", None)
+
+        # Issue #1086 (Katalog #919) — PRIMAERER Kohorten-Filter: der ``run_id``-Stempel, den
+        # ``make_symbol_objective`` seit #1015 auf JEDEN Trial schreibt (sofern ``run_id``
+        # gesetzt wurde — der Normalfall seit #1015 fuer jeden ``sweep.run_per_symbol_sweep``-
+        # Lauf), macht die Zugehoerigkeit einer Study zu DIESEM Lauf direkt nachweisbar, statt sie
+        # ueber die STARTZEIT zu erraten. Root-Cause #1086: mehrere gleichzeitig laufende Sweeps
+        # (je ein Prozess pro ``--symbols``) teilen sich denselben ``{WORK}/sweep/``-Optuna-Store;
+        # ``generate_report_for_run`` (Abbruch-/Standalone-Pfad) entdeckt ALLE ``proposal_*.json``
+        # in ``WORK``, unabhaengig davon, welcher Prozess sie geschrieben hat. Die Zeitfenster-
+        # Heuristik aus #1023 (unten) allein reicht nicht: bei ueberlappenden Laeufen liegt die
+        # fremde Study-Startzeit oft INNERHALB der Toleranz des eigenen Laufs.
+        _own_run_trials = [
+            t for t in study_trials
+            if (getattr(t, "user_attrs", None) or {}).get("run_id") == run_id
+        ]
+        _foreign_run_trials = [
+            t for t in study_trials
+            if (getattr(t, "user_attrs", None) or {}).get("run_id") not in (None, run_id)
+        ]
+        _has_run_id_evidence = bool(_own_run_trials or _foreign_run_trials)
+
+        if _own_run_trials and _foreign_run_trials:
+            # Issue #1086 — eine Study, die SOWOHL Trials dieses Laufs ALS AUCH Trials eines
+            # anderen ``run_id`` traegt, wurde nachweislich von mindestens zwei Laeufen
+            # GLEICHZEITIG angefasst (die #1086-Lock-Datei in ``sweep.py`` verhindert genau das
+            # fuer kuenftige Laeufe) — eine studienweite Aggregation (n_trials_completed,
+            # Guard-Statistiken, ...) kann in diesem Zustand keinem der beiden Laeufe sauber
+            # zugeordnet werden. Fail-loud statt eines Urteils auf vermischter Evidenz.
+            _foreign_ids = sorted({
+                (getattr(t, "user_attrs", None) or {}).get("run_id") for t in _foreign_run_trials
+            })
+            raise RuntimeError(
+                f"[REPORT_COHORT_UNRESOLVABLE] Study '{study_name}' ({proposal.get('strategy')}/"
+                f"{proposal.get('symbol')}) traegt sowohl Trials von run_id={run_id!r} als auch "
+                f"von {_foreign_ids!r} — Kohorte nicht auflösbar (vermutlich gleichzeitiger "
+                "Zugriff zweier Sweep-Prozesse auf denselben Store ohne Lock-Datei, #1086)."
+            )
+
+        if _has_run_id_evidence:
+            is_foreign_run = not _own_run_trials
+        else:
+            # Issue #1023 (Katalog #866) — sekundaere, NACHGELAGERTE Pruefung: nur noch relevant,
+            # wenn KEIN Trial dieser Study ueberhaupt einen ``run_id``-Stempel traegt (Legacy-
+            # Study vor #1015, oder ein Aufrufer, der ``run_id=None`` an ``make_symbol_objective``
+            # uebergeben hat). Kriterium: ``study_started_at_utc`` (von ``_optimize_symbol_impl``
+            # VOR jedem ``study.optimize`` gestempelt, #851) muss innerhalb der Sweep-Laufzeit
+            # dieses Laufs liegen. Fehlt ``study_started_at_utc`` oder der Lauf-``started_at_utc``
+            # selbst, wird NICHT ausgeschlossen (fail-open auf fehlender Evidenz).
+            is_foreign_run = False
+            if _study_started_raw and _run_started_dt is not None:
+                try:
+                    _study_started_dt = datetime.fromisoformat(_study_started_raw)
+                    is_foreign_run = (
+                        (_run_started_dt - _study_started_dt).total_seconds()
+                        > _foreign_run_tolerance_s)
+                except (TypeError, ValueError):
+                    is_foreign_run = False
+
         if is_foreign_run:
-            study_trials = list(getattr(study, "trials", None) or [])
+            _run_id_found = None
+            if _foreign_run_trials:
+                _run_id_found = (getattr(_foreign_run_trials[0], "user_attrs", None) or {}).get(
+                    "run_id")
             studies_excluded_foreign_run.append({
+                "study_name": study_name,
                 "strategy": proposal.get("strategy"),
                 "symbol": proposal.get("symbol"),
+                "run_id_found": _run_id_found,
                 "study_started_at_utc": _study_started_raw,
                 "run_started_at_utc": started_at_utc,
                 "n_trials_total_study": len(study_trials),
-                "reason": "study_started_before_this_run",
+                "reason": "run_id_mismatch" if _run_id_found else "study_started_before_this_run",
             })
             continue
         record, checks = _study_record(
@@ -1755,6 +1986,10 @@ def _build_report(
             symbol_bar_quality_cache=_symbol_bar_quality_cache, run_id=run_id)
         # Issue #1028 (Katalog #866) — Rohmaterial für invariants.check_sizing_identity_coherence.
         record["trade_amount_pct"] = _trade_amount_pct_map.get(record.get("strategy"))
+        # Issue #1088 (Katalog #921) — nur gestempelt, wenn TATSAECHLICH ein Trial dieser Study den
+        # run_id-Nachweis traegt (der Legacy-/Zeitfenster-Fallback-Pfad ohne Nachweis bleibt
+        # None — fail-open, siehe ``assert_invariant_scope_uncontaminated``-Docstring).
+        record["run_id"] = run_id if _own_run_trials else None
         studies_out.append(record)
         filtered_proposals.append(proposal)
         study_label = f"{record['strategy']}/{record['symbol']}"
@@ -1772,10 +2007,50 @@ def _build_report(
             "— kein Report geschrieben statt eines Berichts ueber eine fremde Kohorte."
         )
 
+    # Issue #1088 (Katalog #921) — Sicherung VOR jedem einzelnen ``check_*`` unten: der #1086-Fix
+    # oben macht ``studies_out`` bereits strukturell einlaeufig, dieser Guard bricht trotzdem hart
+    # ab, statt (durch einen kuenftigen Aufrufer/Refactor) je ein Urteil auf einer vermischten
+    # Kohorte zu faellen.
+    _inv.assert_invariant_scope_uncontaminated(studies_out)
+
+    # Issue #1104 (Katalog #937) — der Commit, auf dem die STUDIES DIESES Laufs tatsaechlich
+    # simuliert wurden (vor dem ersten Trial jeder Study gestempelt, siehe run_optimization.py),
+    # reduziert auf EINEN Report-weiten Wert: der erste beobachtete nicht-None-Wert (alle Studies
+    # eines Laufs laufen unter demselben Checkout). ``None`` ohne jede Study mit dem #1104-Stempel
+    # (Legacy-Studies). Einmal berechnet, wiederverwendet fuer die Invariante hier UND das
+    # ``git_commit_simulation``-Feld im Report-Dict weiter unten (eine Kennzahl, eine Quelle).
+    _git_commit_simulation = next(
+        (r.get("git_commit_simulation") for r in studies_out if r.get("git_commit_simulation")),
+        None,
+    )
+    all_checks.append(("global", _inv.check_commit_coherence(_git_commit_simulation, git_commit())))
+
     n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
-    # Issue #1080 — einmal berechnet, wiederverwendet fuer die Invariante UNTEN und das
-    # cross_study['n_family']-Feld weiter unten (eine Kennzahl, eine Quelle).
-    _n_family_by_symbol = _family_n_from_proposals(filtered_proposals)
+    # Issue #1102 (Katalog #935) — Root-Cause: ``sweep._family_n_from_proposals`` summiert
+    # ``deflation_n_eligible`` (die ENGERE, seit #784/#822 veraltete Grundgesamtheit), waehrend
+    # ``n_family_stage1`` oben ``deflation_n_family`` (die #822-Grundgesamtheit
+    # ``oos_selection_statistic_available``, TATSAECHLICH an confirm.py fuer die DSR-Multiplizitaets-
+    # korrektur durchgereicht, samt der #1080-Rueckfall-Behandlung fuer eine Study mit 0
+    # Holdout-Trades) traegt — zwei UNABHAENGIG berechnete Zahlen fuer denselben Begriff liefen
+    # dadurch um Faktor 2,8-5,1 auseinander (ASML 622 vs. 1722), ``n_family`` war systematisch ZU
+    # KLEIN (Φ⁻¹(1-1/n) unterschaetzt SR*, begünstigt jede Promotion mit familienweiter Korrektur).
+    # GENAU EINE Quelle jetzt: ``n_family[symbol]`` ist die SUMME seiner eigenen
+    # ``n_family_stage1``-Zerlegung — tautologisch kohaerent mit ``check_n_family_partition``
+    # (seither ``severity='blocking'``, siehe dort) statt zwei parallel gepflegter Zaehlungen.
+    _n_family_by_symbol = {
+        symbol: sum(per_strategy.values()) for symbol, per_strategy in n_family_stage1.items()
+    }
+    # Issue #1091 — die EINGEFRORENE, budget-basierte Sicht (siehe
+    # sweep._family_n_frozen_from_studies-Docstring): jedes Proposal einer Symbol-Familie traegt
+    # bereits denselben, symbolweit summierten Wert — daher hier MAX statt Summe je Symbol (eine
+    # fehlende Study liefert 0 Beitrag, keine doppelte Zaehlung durch mehrere Proposals).
+    _n_family_frozen_by_symbol: dict[str, int] = {}
+    for _p in filtered_proposals:
+        _frozen = _p.get("deflation_n_family_frozen")
+        _sym = _p.get("symbol")
+        if _sym and isinstance(_frozen, (int, float)) and not isinstance(_frozen, bool):
+            _n_family_frozen_by_symbol[_sym] = max(
+                _n_family_frozen_by_symbol.get(_sym, 0), int(_frozen))
 
     registry_check = _inv.check_config_key_registry(tournament_cfg)
     all_checks.append(("global", registry_check))
@@ -1784,21 +2059,64 @@ def _build_report(
     # Stage1-Zerlegung entsprechen; eine Luecke beweist, dass mindestens eine Study fehlt.
     all_checks.append(("global", _inv.check_n_family_partition(_n_family_by_symbol, n_family_stage1)))
 
+    # Issue #1091 (Katalog #924) — neue Invariante: weicht die eingefrorene von der zur
+    # Berichtszeit beobachteten Zahl um mehr als 5 % ab, ist die Berichtskohorte unvollstaendig
+    # (ein Zwischenreport, oder eine erneute #1086-Kontamination).
+    all_checks.append((
+        "global", _inv.check_family_n_stability(_n_family_frozen_by_symbol, _n_family_by_symbol)))
+
+    # Issue #1100 (Katalog #933) — symbolweiter Kohaerenz-Waechter: holdout_buyhold_return ist
+    # eine reine Preisserien-Kennzahl DES SYMBOLS (PortfolioMonitor.get_benchmark_series), muss
+    # also ueber alle Studies desselben Symbols identisch sein, unabhaengig von
+    # holdout_total_trades — ein abweichender Nullwert bei 0 Holdout-Trades, waehrend eine
+    # Schwester-Study einen echten Marktwert traegt, beweist einen kollabierten Sentinel
+    # (#759/#788/#966-Fehlerklasse, siebte Instanz).
+    all_checks.append(("global", _inv.check_holdout_buyhold_return_coherence(studies_out)))
+
+    # Issue #1098 (Katalog #931) — Vollstaendigkeits-Wächter für die JSONL-Event-Sidecar (#741):
+    # ``expected_*`` wird HIER, UNABHAENGIG von der jsonl-Datei selbst, aus ``studies_out`` (der
+    # bereits fuer Report/Invarianten kanonischen Kohorte) berechnet und als EVENTS_MANIFEST-
+    # Ereignis geschrieben — NUR fuer ``report_source == 'final'`` (Zwischen-/Probe-Reports sehen
+    # strukturell eine Teilmenge der Studies, siehe #1083, ein Manifest darauf waere bedeutungslos
+    # und wuerde die jsonl-Datei mit irrefuehrenden Zwischenstaenden fluten). ``check_event_stream_
+    # completeness`` vergleicht das Manifest gegen die TATSAECHLICH gezaehlten jsonl-Zeilen
+    # (``_count_jsonl_events``) — ein Auseinanderlaufen beweist einen erneuten Ereignisverlust
+    # (#1098-Fehlerklasse: nicht-atomarer Zeilen-Append unter Nebenlaeufigkeit).
+    if report_source == "final":
+        _expected_trial_events = sum(int(r.get("n_trials_completed") or 0) for r in studies_out)
+        _expected_study_events = len(studies_out)
+        emit_execution_event(_log, "EVENTS_MANIFEST", {
+            "expected_trial_events": _expected_trial_events,
+            "expected_study_events": _expected_study_events,
+        })
+        _event_counts = _count_jsonl_events(
+            jsonl_sidecar_path(_log.name),
+            {"optimizer_trial_completed", "optimizer_study_completed"})
+        all_checks.append(("global", _inv.check_event_stream_completeness(
+            _expected_trial_events, _event_counts["optimizer_trial_completed"],
+            _expected_study_events, _event_counts["optimizer_study_completed"])))
+    else:
+        all_checks.append(("global", _inv.check_event_stream_completeness(None, 0, None, 0)))
+
     # Issue #770 — sweep-weite Budget-Ausfuehrungs-Invariante (siebter Check, siehe #743/#773).
     min_median_budget_execution = float(optimizer_cfg.get("min_median_budget_execution", 0.5))
     budget_check = _inv.check_budget_execution(studies_out, min_median=min_median_budget_execution)
     all_checks.append(("global", budget_check))
 
     # Issue #1023 (Katalog #866) Akzeptanzkriterium 2 — zweite, unabhaengige Verteidigungslinie
-    # gegen fremde Studies im Report (siehe der run_id-Filter oben).
-    all_checks.append(("global", _inv.check_report_cohort_coherence(studies_out, wallclock_s=wallclock_s)))
+    # gegen fremde Studies im Report (siehe der run_id-Filter oben). Issue #1087 (Katalog #920) —
+    # ``run_started_at_utc`` durchgereicht, damit die offset-basierten Klauseln (statt nur der
+    # blinden Spannweiten-Klausel) auswertbar sind.
+    all_checks.append(("global", _inv.check_report_cohort_coherence(
+        studies_out, wallclock_s=wallclock_s, run_started_at_utc=started_at_utc)))
 
     # Issue #1038 (Katalog #866) — vorab berechnet (statt erst im Report-Dict unten), damit die
     # Invariante denselben Wert prueft, der auch angezeigt wird (eine Kennzahl, eine Quelle).
     _worker_utilisation_value = _worker_utilisation(
         studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s)
     all_checks.append((
-        "global", _inv.check_worker_utilisation_plausible(_worker_utilisation_value)))
+        "global", _inv.check_worker_utilisation_plausible(
+            _worker_utilisation_value, n_studies=len(studies_out))))
 
     # Issue #1031 (Katalog #866) — Kohaerenz zwischen expectancy und expectancy_capital_weighted.
     all_checks.append(("global", _inv.check_expectancy_definition_coherence(studies_out)))
@@ -1860,6 +2178,17 @@ def _build_report(
         studies_out, round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
         min_stop_to_cost_ratio=min_stop_to_cost_ratio)))
 
+    # Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer #1092/#1094: der Trailing-Stop darf
+    # nicht der haeufigste, verlustreichste UND teuerste Ausgang einer Study sein.
+    all_checks.append(("global", _inv.check_trailing_stop_loss_share(
+        studies_out,
+        max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
+        max_mean_loss_ratio=float(optimizer_cfg.get("trailing_stop_max_mean_loss_ratio", 1.25)))))
+
+    # Issue #1097 (Katalog #930) — Teilmengen-Schranke zwischen gepoolten Verlust-Aggregaten;
+    # siehe check_loss_metric_commensurability-Docstring.
+    all_checks.append(("global", _inv.check_loss_metric_commensurability(studies_out)))
+
     # Issue #1068 — vorgezogen (war vorher erst bei check_diagnosis_ledger_coherence unten
     # gelesen): dieselbe Ledger-Zahl treibt seit #1084 zusätzlich check_champion_corroboration_
     # reachable (Champion-Block direkt darunter).
@@ -1874,10 +2203,26 @@ def _build_report(
     champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
     all_checks.append(("global", champion_writeback_check))
 
+    # Issue #1099 (Katalog #932) — Kalibrierungswaechter fuer den #1099-Fix selbst: eine UNABHAENGIG
+    # (ueber _count_jsonl_events statt _read_jsonl_events) erneut ausgezaehlte CHAMPION_WRITEBACK-
+    # Ereigniszahl muss exakt ``champions_summary['attempts']`` entsprechen — ein Wiederauftreten der
+    # #1099-Fehlerklasse (z. B. eine kuenftige Regression, die die studies_out-Rekonstruktion
+    # faelschlich wieder bevorzugt, obwohl ein Ereignisstrom verfuegbar waere) wird sichtbar statt
+    # eines erneut stillen Auseinanderlaufens.
+    _champion_events_path = jsonl_sidecar_path(_log.name)
+    all_checks.append(("global", _inv.check_champion_attempt_coherence(
+        champions_summary.get("attempts"),
+        _count_jsonl_events(_champion_events_path, {"CHAMPION_WRITEBACK"})["CHAMPION_WRITEBACK"]
+        if _champion_events_path is not None else None,
+    )))
+
     # Issue #1084 Fix Punkt 4 — sechzehnter Invarianten-Check: der Korroborations-Deadlock
-    # (Ebene 2 verlangt corroboration_count >= champion_promote_after_runs, das Ledger steht aber
-    # bei total_runs_started == 1) wird benannt, statt als generische "unerreichbar"-Diagnose
-    # unter check_champion_writeback_reachability zu verschwinden.
+    # (Ebene 2 verlangt corroboration_count >= champion_promote_after_runs) wird benannt, statt
+    # als generische "unerreichbar"-Diagnose unter check_champion_writeback_reachability zu
+    # verschwinden. Issue #1089 (Katalog #922) — ``total_runs_started`` (das globale, prozess-
+    # übergreifende Ledger) geht seit diesem Fix NUR NOCH als Provenance ein, nicht mehr in die
+    # PASS/FAIL-Entscheidung (siehe Docstring — der frühere ODER-Ast machte den Check unter
+    # gleichzeitigen Sweep-Prozessen faelschlich gruen).
     champion_corroboration_check = _inv.check_champion_corroboration_reachable(
         champions_summary, total_runs_started=_diagnosis_ledger_total_runs_started,
         corroboration_threshold=int(optimizer_cfg.get("champion_promote_after_runs", 2)))
@@ -2061,7 +2406,14 @@ def _build_report(
     report = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "run_id": run_id,
-        "git_commit": git_commit(),
+        # Issue #1104 (Katalog #937) — GETRENNTE Felder statt des vorherigen mehrdeutigen
+        # ``git_commit``: ``git_commit_simulation`` (wann die TRIALS liefen) vs.
+        # ``git_commit_report`` (wann DIESER Report gebaut wurde) — ein nachtraeglich regenerierter
+        # Report macht die Divergenz jetzt explizit sichtbar/pruefbar
+        # (``invariants.check_commit_coherence``), statt sie unter einem einzigen Feldnamen zu
+        # verstecken.
+        "git_commit_simulation": _git_commit_simulation,
+        "git_commit_report": git_commit(),
         "reward_semantics_version": optimizer_cfg.get("reward_semantics_version"),
         # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
         # im Nachhinein einer Installationsumgebung zuordenbar ist.
@@ -2097,7 +2449,15 @@ def _build_report(
         # hier mit Grund gelistet — sichtbar statt verschwunden.
         "studies_excluded_foreign_run": studies_excluded_foreign_run,
         "cross_study": {
-            "n_family": _n_family_by_symbol,
+            # Issue #1091 (Katalog #924) — {frozen, observed_at_report_time} statt eines nackten
+            # int je Symbol: "frozen" (budget-basiert, siehe sweep._family_n_frozen_from_studies)
+            # ist ueber mehrere Reports DESSELBEN Laufs bit-identisch; "observed_at_report_time"
+            # (die Alt-Zahl, #625) bleibt als Diagnose-Telemetrie erhalten — check_family_n_
+            # stability (invariants.py) vergleicht beide.
+            "n_family": {
+                "frozen": _n_family_frozen_by_symbol,
+                "observed_at_report_time": _n_family_by_symbol,
+            },
             # Issue #770 — Budget-Ausfuehrungsgrad-Verteilung ueber alle Studies (Median + p10, wie
             # im Katalog gefordert: die 44,2%/52,6%-Luecken dieses Katalogs waren nur ueber externe
             # Log-Rekonstruktion sichtbar).
