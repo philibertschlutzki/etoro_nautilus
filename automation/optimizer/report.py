@@ -67,6 +67,9 @@ _STAGE_FOR_REJECT_DETAIL = {
     "REJECT_SELECTION_PBO": "pbo",
     "REJECT_BOUNDARY_SOLUTION": "boundary",
     "HOLD_BOUNDARY_UNRESOLVED": "boundary",
+    # Issue #1101 (Katalog #934) — der terminale Ausgang eines HOLD_BOUNDARY_UNRESOLVED-Kandidaten
+    # nach einer bereits geweiteten, aber weiterhin erfolglosen Bounds-Runde.
+    "REJECT_BOUNDARY_SOLUTION_PERSISTENT": "boundary",
 }
 
 REPORT_SCHEMA_VERSION = 1
@@ -1128,6 +1131,19 @@ def _study_record(proposal: dict, study,
         # Abschnitt 2.3 (Excess-Return vs. echtes Alpha) und cross_study.excess_variance_decomposition.
         "holdout_exposure_fraction": holdout_metrics.get("oos_exposure_fraction"),
         "holdout_total_trades": holdout_metrics.get("oos_total_trades"),
+        # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — WELCHER Parameter (und in welche
+        # Richtung) die Randlösung dominiert, siehe confirm.confirm_per_symbol_promotion. ``None``
+        # ohne jede Randlösung dieser Study (dieselbe Konvention wie boundary_hit_fraction).
+        "boundary_hit_fraction": holdout_metrics.get("boundary_hit_fraction"),
+        "boundary_parameter": holdout_metrics.get("boundary_parameter"),
+        "boundary_side": holdout_metrics.get("boundary_side"),
+        "boundary_directions": holdout_metrics.get("boundary_directions") or {},
+        # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — sichtbar, ob dieser Kandidat bereits
+        # unter geweiteten Bounds fuer boundary_parameter evaluiert wurde und die Weitungs-Sperre
+        # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) erreicht ist (⇒ terminaler
+        # REJECT_BOUNDARY_SOLUTION_PERSISTENT statt eines erneuten HOLD_BOUNDARY_UNRESOLVED).
+        "boundary_resolution_run_id": holdout_metrics.get("boundary_resolution_run_id"),
+        "boundary_resolution_exhausted": bool(holdout_metrics.get("boundary_resolution_exhausted")),
         # Issue #826 Fix Punkt 2 — N1: die Multiplizität, die TATSÄCHLICH für diese EINE
         # (Strategie, Symbol)-Study an die Deflation ging (sweep._family_n_stage1_from_studies,
         # unter promotion_family_scope='per_strategy' identisch zu holdout_metrics.deflation_n_
@@ -1229,6 +1245,15 @@ def _boundary_solutions_section() -> list[dict[str, Any]]:
             "fraction": e.get("boundary_hit_fraction"),
             "params": e.get("boundary_params"),
             "proposed_bounds": e.get("proposed_bounds"),
+            # Issue #1101 (Katalog #934) Akzeptanzkriterium 1 — derselbe klemmende Parameter wie
+            # im Study-Record (siehe _study_record), hier zusaetzlich neben dem Bounds-Vorschlag.
+            "boundary_parameter": e.get("boundary_parameter"),
+            "boundary_side": e.get("boundary_side"),
+            # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — wie oft dieser Parameter bereits
+            # nachgeweitet wurde (sweep_diagnostics.record_diagnosed_pair), damit im Report
+            # nachvollziehbar ist, wie nah ein Kandidat an der Weitungs-Sperre
+            # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) steht.
+            "widen_applications": e.get("widen_applications") or {},
         }
         for e in _diagnosed_pairs_all() if e.get("binding_cause") == "boundary_solution"
     ]
