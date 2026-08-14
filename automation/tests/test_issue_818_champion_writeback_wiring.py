@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from automation import log_manager
 from automation.optimizer import champions, sweep, invariants, report, trial_config
 
 

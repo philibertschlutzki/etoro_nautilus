@@ -426,6 +426,34 @@ def _count_jsonl_events(path: Path | None, event_types: set[str]) -> dict[str, i
     return counts
 
 
+def _read_jsonl_events(path: Path | None, event_type: str) -> list[dict]:
+    """Issue #1099 (Katalog #932) — liest alle Zeilen mit ``event_type`` aus der ``.events.jsonl``-
+    Sidecar-Datei unter ``path`` und gibt ihre VOLLEN (bereits geparsten) Payloads zurück — im
+    Gegensatz zu ``_count_jsonl_events`` (das nur zählt) braucht ``_champions_summary`` hier den
+    ``skipped_reason``/``applied``-Inhalt jedes ``CHAMPION_WRITEBACK``-Ereignisses. Dieselbe
+    Robustheit wie ``_count_jsonl_events``: einzelne defekte Zeilen werden übersprungen,
+    ``path is None``/fehlende Datei ⇒ leere Liste."""
+    events: list[dict] = []
+    if path is None or not path.exists():
+        return events
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("event_type") == event_type:
+                    events.append(event)
+    except OSError:
+        _log.warning("[#1099] events.jsonl (%s) nicht lesbar für die Attempt-Rekonstruktion.",
+                     path, exc_info=True)
+    return events
+
+
 def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
     """Issue #919 — Anteil der Round-Trips mit ``exit_reason == 'TIME_BOX'`` (hourly_strategy_
     base.ExitReason) am je-Study aufsummierten Exit-Reason-Histogramm. ``None`` ohne jede
@@ -1328,7 +1356,20 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
     ``studies_out=None`` (Legacy-/Report-only-Aufrufer ohne diese Liste) lässt ``skipped_by_reason``
     auf der reinen Verzeichnis-Iteration (bit-identisch zum Pre-#1084-Verhalten); ``attempts``
     bleibt dann ``None`` (unbekannt, nicht 0 — ``check_champion_writeback_reachability`` behandelt
-    diese beiden Fälle unterschiedlich)."""
+    diese beiden Fälle unterschiedlich).
+
+    Issue #1099 (Katalog #932) — Root-Cause: die #1084-``studies_out``-Rekonstruktion (unten, jetzt
+    nur noch Fallback) zählt jedes (strategy, symbol)-Paar der STUDY-Kohorte als "Versuch" — bei
+    einem ``--report-only``-Report über eine inzwischen gewachsene/gealterte ``proposal_*.json``-
+    Menge (siehe ``generate_report_for_run``) lief diese Zahl (52/53/56 im #932-Referenzlauf) an
+    der tatsächlich je Lauf KONSTANTEN Versuchszahl (14, im Ereignisstrom nachweisbar) vorbei — die
+    Study-Liste ist die falsche Grundgesamtheit für "wie oft wurde ``maybe_write_back`` versucht".
+    ``sweep._attempt_champion_writeback`` emittiert GENAU EIN ``CHAMPION_WRITEBACK``-Ereignis je
+    tatsächlichem Versuch (auch bei Nicht-Erfolg, ``skipped_reason`` trägt den Grund) — bevorzugte
+    Quelle jetzt DIESER Ereignisstrom, ausgelesen über ``jsonl_sidecar_path``/``_read_jsonl_events``.
+    Nur auflösbar im SELBEN Prozess, der den Lauf tatsächlich ausgeführt hat (das Modul-Dict in
+    ``log_manager`` ist prozesslokal) — ein frischer ``--report-only``-Prozess fällt automatisch auf
+    die ``studies_out``-Rekonstruktion zurück (unverändertes Pre-#1099-Verhalten)."""
     import collections
     from automation.optimizer import champions as _champions_mod
 
@@ -1402,15 +1443,30 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
             skipped_by_reason["QUALITY_STALE" if stale else "NOT_CORROBORATED_OR_WINDOW_NOT_ADVANCED"] += 1
 
     attempts: int | None = None
-    if studies_out is not None:
-        # Issue #1084 Fix Punkt 1/3 — die ATTEMPT-skopierte Rekonstruktion: jedes (strategy,
-        # symbol)-Paar dieses Laufs, unabhängig davon, ob es einen Store-Eintrag hinterlassen hat.
-        # ``load_champion_entry_with_reason`` liest denselben, gerade oben iterierten Store-Stand
-        # nochmals GEZIELT je Paar — der zweite Durchlauf ist bewusst getrennt: die
-        # Verzeichnis-Iteration oben bleibt die reine "aktueller Store-Zustand"-Sicht (stored/
-        # admissible/corroborated/written_back/max_corroboration_count unverändert), diese
-        # Kohorte hier ersetzt ausschliesslich ``skipped_by_reason`` um die für #1084 fehlende
-        # Versuchs-Vollständigkeit.
+    # Issue #1099 (Katalog #932) — der Ereignis-Pfad ersetzt AUSSCHLIESSLICH die #1084-
+    # studies_out-Rekonstruktion (unten); ``studies_out is None`` bleibt der unveränderte Legacy-
+    # Vertrag (reine Verzeichnis-Iteration oben, ``attempts=None``, siehe Docstring) — in der
+    # Produktion ruft ausschliesslich ``_build_report`` diese Funktion auf, IMMER mit gesetztem
+    # ``studies_out``; ``studies_out=None`` ist ein reiner Test-/Legacy-Aufrufpfad.
+    _events_path = jsonl_sidecar_path(_log.name) if studies_out is not None else None
+    if _events_path is not None:
+        # Issue #1099 (Katalog #932) — bevorzugte Quelle: die tatsächlich emittierten
+        # CHAMPION_WRITEBACK-Ereignisse DIESES Laufs (siehe Docstring oben).
+        writeback_events = _read_jsonl_events(_events_path, "CHAMPION_WRITEBACK")
+        attempts = len(writeback_events)
+        skipped_by_reason = collections.Counter()
+        for ev in writeback_events:
+            if not ev.get("applied"):
+                skipped_by_reason[ev.get("skipped_reason") or "UNKNOWN"] += 1
+    elif studies_out is not None:
+        # Issue #1084 Fix Punkt 1/3 — Fallback für einen frischen Prozess ohne eigenen
+        # Ereignisstrom (z. B. ``--report-only``, siehe Docstring oben): die ATTEMPT-skopierte
+        # Rekonstruktion über jedes (strategy, symbol)-Paar dieses Laufs, unabhängig davon, ob es
+        # einen Store-Eintrag hinterlassen hat. ``load_champion_entry_with_reason`` liest denselben,
+        # gerade oben iterierten Store-Stand nochmals GEZIELT je Paar — der zweite Durchlauf ist
+        # bewusst getrennt: die Verzeichnis-Iteration oben bleibt die reine "aktueller
+        # Store-Zustand"-Sicht (stored/admissible/corroborated/written_back/max_corroboration_count
+        # unverändert), diese Kohorte hier ersetzt ausschliesslich ``skipped_by_reason``.
         skipped_by_reason = collections.Counter()
         pairs_seen: set[tuple[str, str]] = set()
         for r in studies_out:
@@ -2087,6 +2143,19 @@ def _build_report(
     champions_summary = _champions_summary(optimizer_cfg, studies_out=studies_out)
     champion_writeback_check = _inv.check_champion_writeback_reachability(champions_summary)
     all_checks.append(("global", champion_writeback_check))
+
+    # Issue #1099 (Katalog #932) — Kalibrierungswaechter fuer den #1099-Fix selbst: eine UNABHAENGIG
+    # (ueber _count_jsonl_events statt _read_jsonl_events) erneut ausgezaehlte CHAMPION_WRITEBACK-
+    # Ereigniszahl muss exakt ``champions_summary['attempts']`` entsprechen — ein Wiederauftreten der
+    # #1099-Fehlerklasse (z. B. eine kuenftige Regression, die die studies_out-Rekonstruktion
+    # faelschlich wieder bevorzugt, obwohl ein Ereignisstrom verfuegbar waere) wird sichtbar statt
+    # eines erneut stillen Auseinanderlaufens.
+    _champion_events_path = jsonl_sidecar_path(_log.name)
+    all_checks.append(("global", _inv.check_champion_attempt_coherence(
+        champions_summary.get("attempts"),
+        _count_jsonl_events(_champion_events_path, {"CHAMPION_WRITEBACK"})["CHAMPION_WRITEBACK"]
+        if _champion_events_path is not None else None,
+    )))
 
     # Issue #1084 Fix Punkt 4 — sechzehnter Invarianten-Check: der Korroborations-Deadlock
     # (Ebene 2 verlangt corroboration_count >= champion_promote_after_runs) wird benannt, statt

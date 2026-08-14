@@ -24,6 +24,7 @@ Korroborations-Deadlock direkt.
 import json
 from pathlib import Path
 
+from automation import log_manager
 from automation.optimizer import champions, invariants as inv, report, trial_config
 
 
@@ -47,6 +48,14 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr(champions, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "WORK", tmp_path)
     monkeypatch.setattr(trial_config, "config_dir", lambda: tmp_path)
+    # Issue #1099 (Katalog #932) — report._champions_summary bevorzugt seit #1099 ein live
+    # registriertes events.jsonl (log_manager._JSONL_SIDECAR_PATHS["optimizer"]) über die
+    # studies_out-Rekonstruktion; dieses Modul-Dict ist GLOBAL und überlebt zwischen Testdateien in
+    # DERSELBEN pytest-Session (jede Testdatei, die zuvor setup_bot_logging("optimizer", ...)
+    # aufgerufen hat, würde diese Tests sonst je nach Laufreihenfolge kontaminieren). Diese Tests
+    # prüfen explizit die #1084-Fallback-Rekonstruktion (kein live Ereignisstrom) — deshalb hier
+    # deterministisch zurückgesetzt statt sich auf die Testreihenfolge zu verlassen.
+    monkeypatch.delitem(log_manager._JSONL_SIDECAR_PATHS, "optimizer", raising=False)
 
 
 def _entry(strategy, symbol, *, corroboration_count=1, writeback_applied=False,

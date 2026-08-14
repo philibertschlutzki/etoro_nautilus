@@ -3264,6 +3264,52 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
     )
 
 
+def check_champion_attempt_coherence(
+    reported_attempts: int | None, actual_writeback_events: int | None,
+) -> InvariantResult:
+    """Issue #1099 (Katalog #932) — Kalibrierungswächter für den #1099-Fix: ``champions_summary
+    ['attempts']`` (``report._champions_summary``) muss der TATSÄCHLICHEN Anzahl emittierter
+    ``CHAMPION_WRITEBACK``-Ereignisse dieses Laufs entsprechen (``sweep._attempt_champion_writeback``
+    emittiert GENAU EIN Ereignis je Versuch, auch bei Nicht-Erfolg).
+
+    Root-Cause #1099: die #1084-``studies_out``-Rekonstruktion zählte jedes (strategy, symbol)-Paar
+    der STUDY-Kohorte als "Versuch" — bei einem ``--report-only``-Report über eine inzwischen
+    gewachsene ``proposal_*.json``-Menge lief diese Zahl (52/53/56 im #932-Referenzlauf) an der
+    tatsächlich je Lauf KONSTANTEN Versuchszahl (14, im Ereignisstrom nachweisbar) vorbei — die
+    Study-Liste ist die falsche Grundgesamtheit für "wie oft wurde ``maybe_write_back`` versucht".
+    ``report._champions_summary`` leitet ``attempts`` seither bevorzugt aus dem Ereignisstrom selbst
+    ab; dieser Wächter macht ein Wiederauftreten der #1099-Fehlerklasse (z. B. eine künftige
+    Regression, die die ``studies_out``-Rekonstruktion fälschlich wieder bevorzugt, obwohl ein
+    Ereignisstrom verfügbar wäre) sichtbar statt eines erneut stillen Auseinanderlaufens.
+
+    ``reported_attempts is None`` oder ``actual_writeback_events is None`` (kein Ereignisstrom
+    auflösbar — z. B. ein frischer ``--report-only``-Prozess ohne eigenen ``setup_bot_logging``-
+    Aufruf, siehe ``report._champions_summary``-Docstring) ⇒ ``inconclusive=True`` (kein Urteil ohne
+    Vergleichsgrundlage). severity ``high`` (Diagnose, kein Promotion-Gate)."""
+    if reported_attempts is None or actual_writeback_events is None:
+        return InvariantResult(
+            name="check_champion_attempt_coherence",
+            passed=True, inconclusive=True,
+            expected="champions.attempts == count(CHAMPION_WRITEBACK events)",
+            actual=None, severity="high",
+            detail="Kein Ereignisstrom auflösbar (Legacy-/--report-only-Prozess) — kein Urteil ohne "
+                   "Vergleichsgrundlage.",
+        )
+    passed = reported_attempts == actual_writeback_events
+    return InvariantResult(
+        name="check_champion_attempt_coherence",
+        passed=passed,
+        expected="champions.attempts == count(CHAMPION_WRITEBACK events)",
+        actual={"reported_attempts": reported_attempts,
+               "actual_writeback_events": actual_writeback_events},
+        severity="high",
+        detail=("OK" if passed else
+                f"champions.attempts ({reported_attempts}) weicht von der tatsächlichen "
+                f"CHAMPION_WRITEBACK-Ereigniszahl ({actual_writeback_events}) ab (#1099-Fehlerklasse: "
+                "die Study-Liste statt des Ereignisstroms als Versuchs-Grundgesamtheit)."),
+    )
+
+
 def check_champion_corroboration_reachable(
     champions_summary: dict, *, total_runs_started: int | None = None,
     runs_completed_for_pair: int | None = None,
