@@ -3189,6 +3189,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_total_return", metrics.oos_total_return)
             if metrics.oos_sortino is not None:
                 trial.set_user_attr("oos_sortino", metrics.oos_sortino)
+            # Issue #1100 (Katalog #933) — dieselbe oos_evaluated-Torwaechter-Konvention wie die
+            # fuenf Metriken oben (#788/#966): ein nie evaluierter Trial darf keine Buy&Hold-
+            # Benchmark-Beobachtung tragen. ``oos_buyhold_return`` ist bereits None-safe bis hierher
+            # durchgereicht (parsing.TournamentMetrics, siehe dortiger Feldkommentar) — dieser Guard
+            # verhindert, dass ein zukuenftiger Aufrufer den Key unconditional stempelt und damit
+            # #759/#788/#966s Sentinel-Kollaps-Fehlerklasse fuer dieses Feld reproduziert.
+            if metrics.oos_buyhold_return is not None:
+                trial.set_user_attr("oos_buyhold_return", metrics.oos_buyhold_return)
         # Issue #668 — die maschinenlesbaren Gate-Deltas je Trial (bereits im JSON_EVENT emittiert,
         # #554) zusätzlich als User-Attr persistiert: erlaubt confirm.py, die eligible_requires_any-
         # Klausel für BEREITS ABGESCHLOSSENE Trials retroaktiv unter einer angepassten Policy

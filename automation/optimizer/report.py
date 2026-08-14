@@ -2014,6 +2014,14 @@ def _build_report(
     all_checks.append((
         "global", _inv.check_family_n_stability(_n_family_frozen_by_symbol, _n_family_by_symbol)))
 
+    # Issue #1100 (Katalog #933) — symbolweiter Kohaerenz-Waechter: holdout_buyhold_return ist
+    # eine reine Preisserien-Kennzahl DES SYMBOLS (PortfolioMonitor.get_benchmark_series), muss
+    # also ueber alle Studies desselben Symbols identisch sein, unabhaengig von
+    # holdout_total_trades — ein abweichender Nullwert bei 0 Holdout-Trades, waehrend eine
+    # Schwester-Study einen echten Marktwert traegt, beweist einen kollabierten Sentinel
+    # (#759/#788/#966-Fehlerklasse, siebte Instanz).
+    all_checks.append(("global", _inv.check_holdout_buyhold_return_coherence(studies_out)))
+
     # Issue #1098 (Katalog #931) — Vollstaendigkeits-Wächter für die JSONL-Event-Sidecar (#741):
     # ``expected_*`` wird HIER, UNABHAENGIG von der jsonl-Datei selbst, aus ``studies_out`` (der
     # bereits fuer Report/Invarianten kanonischen Kohorte) berechnet und als EVENTS_MANIFEST-

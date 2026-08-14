@@ -1754,6 +1754,12 @@ def check_denominator_coherence(study_counts: dict) -> InvariantResult:
 _SENTINEL_GUARDED_METRIC_KEYS = (
     "oos_win_rate", "oos_profit_factor", "oos_expectancy", "oos_total_return",
     "oos_sortino", "oos_psr", "oos_sortino_period",
+    # Issue #1100 (Katalog #933, siebte Instanz derselben #759/#788/#966-Fehlerklasse) —
+    # ``oos_buyhold_return`` (auf Holdout-Ebene ``holdout_buyhold_return``, siehe
+    # ``check_holdout_buyhold_return_coherence`` fuer den spezifischeren, symbolweiten
+    # Kohaerenz-Wächter) gehoert in dieselbe Sentinel-Familie: ein nie evaluierter Trial darf
+    # KEINE Benchmark-Beobachtung tragen.
+    "oos_buyhold_return",
 )
 
 
@@ -1794,6 +1800,63 @@ def check_metric_sentinel_absence(trials: list[dict]) -> InvariantResult:
                 f"{len(violating)} Trial(s) mit einer OOS-Metrik-Beobachtung TROTZ "
                 "oos_evaluated=False — moeglicher Missing-Data-Sentinel-Kollaps (#759/#788-"
                 "Regression: None/0.0 faelschlich als echte Beobachtung gestempelt)."),
+    )
+
+
+def check_holdout_buyhold_return_coherence(study_records: list[dict]) -> InvariantResult:
+    """Issue #1100 (Katalog #933) — symbolweiter Kohärenz-Wächter, siebte Instanz derselben
+    #759/#788/#966-Sentinel-Kollaps-Fehlerklasse: ``holdout_buyhold_return`` (der Buy&Hold-
+    Benchmark-Return über das Holdout-Fenster, ``backtest_runner``s ``PortfolioMonitor.
+    get_benchmark_series`` — eine reine Preisserie DES SYMBOLS, unabhängig davon, ob/wie oft die
+    jeweilige Strategie tatsächlich handelte) MUSS für alle Studies DESSELBEN Symbols und
+    Holdout-Fensters IDENTISCH sein, unabhängig von ``holdout_total_trades``.
+
+    Symptom #1100: ``SqueezeBreakoutStrategy`` meldet in ASML/PLTR/NVDA ``holdout_buyhold_return
+    = 0.0``, während Schwester-Studies DESSELBEN Symbols (u. a. ``TrendPullbackStrategy`` — trotz
+    ebenfalls 0 Holdout-Trades) den korrekten, von 0 verschiedenen Wert tragen — ein Nullwert bei
+    ``holdout_total_trades == 0`` ist hier NICHT per se verdächtig (0 Trades ist bei mehreren
+    Strategien desselben Symbols beobachtet), aber ein Nullwert, der von der beobachteten
+    Symbol-Wahrheit (ein Schwester-Record trägt einen echten Wert) ABWEICHT, beweist einen
+    kollabierten Sentinel statt einer echten Marktbeobachtung.
+
+    FAIL (severity ``high``, reine Diagnose — kein Promotion-Gate) je Study, wenn
+    ``holdout_total_trades == 0 and holdout_buyhold_return == 0.0``, WÄHREND mindestens ein
+    anderer Study-Record desselben Symbols einen ``holdout_buyhold_return not in (None, 0.0)``
+    trägt. Symbole ohne jeden von 0 verschiedenen Schwester-Wert werden übersprungen (keine
+    Vergleichsgrundlage — ein Symbol, dessen Markt über das gesamte Holdout-Fenster tatsächlich
+    exakt seitwärts lief, ist nicht von diesem Wächter zu unterscheiden, aber auch kein
+    beobachtbarer Fehler)."""
+    by_symbol: dict[str, list[dict]] = {}
+    for r in study_records:
+        symbol = r.get("symbol")
+        if symbol:
+            by_symbol.setdefault(symbol, []).append(r)
+    offenders: dict[str, dict] = {}
+    for symbol, records in by_symbol.items():
+        sibling_values = sorted({
+            r["holdout_buyhold_return"] for r in records
+            if r.get("holdout_buyhold_return") not in (None, 0.0)
+        })
+        if not sibling_values:
+            continue
+        for r in records:
+            if r.get("holdout_total_trades") == 0 and r.get("holdout_buyhold_return") == 0.0:
+                offenders[f"{r.get('strategy')}/{symbol}"] = {
+                    "holdout_buyhold_return": 0.0,
+                    "sibling_holdout_buyhold_returns": sibling_values,
+                }
+    passed = not offenders
+    return InvariantResult(
+        name="check_holdout_buyhold_return_coherence",
+        passed=passed,
+        expected="holdout_buyhold_return == 0.0 bei holdout_total_trades == 0 nur ohne einen von "
+                 "0 verschiedenen Schwester-Wert desselben Symbols",
+        actual=offenders or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit holdout_buyhold_return=0.0 bei 0 Holdout-"
+                "Trades, obwohl eine Schwester-Study desselben Symbols einen echten "
+                "Marktwert trägt (#1100-Fehlerklasse: kollabierter Sentinel statt None)."),
     )
 
 
