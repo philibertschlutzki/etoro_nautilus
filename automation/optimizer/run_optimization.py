@@ -3036,6 +3036,8 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         if metrics.oos_stop_exit_lag_bars_median is not None:
             trial.set_user_attr(
                 "oos_stop_exit_lag_bars_median", metrics.oos_stop_exit_lag_bars_median)
+        # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
+        trial.set_user_attr("oos_n_losses", metrics.oos_n_losses)
         # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als
         # Trial-User-Attr gestempelt: report._study_record hatte dadurch keine Eingangsgrösse für
         # eine study-weite Dust-Round-Trip-Quote (Rundungsartefakte mit Notional ~1e-13, siehe

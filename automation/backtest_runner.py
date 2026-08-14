@@ -3695,6 +3695,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         "gross_loss_mean_bps_trailing_stop": (
             statistics.mean(losses_bps_trailing_stop) if losses_bps_trailing_stop else None),
         "n_trailing_stop_losses": len(losses_bps_trailing_stop),
+        # Issue #1097 (Katalog #930) — die Stichprobengroesse HINTER gross_loss_mean_bps (ALLE
+        # Verlust-Trades, nicht nur Stop-Exits): ohne diesen Zaehler kann report.py keinen
+        # trade-gewichteten (statt medianbasierten) Study-Mittelwert bilden, siehe
+        # report._pooled_mean_of_trial_field-Docstring.
+        "n_losses": len(losses_bps),
         # Issue #1037 (Katalog #866) — bequemer direkter Zugriff auf denselben Wert wie
         # exit_reason_histogram['DATA_END']; Rohmaterial fuer
         # invariants.check_open_position_at_data_end.

@@ -2222,6 +2222,57 @@ def assert_invariant_scope_uncontaminated(study_records: list[dict]) -> None:
         )
 
 
+def check_loss_metric_commensurability(study_records: list[dict]) -> InvariantResult:
+    """Issue #1097 (Katalog #930) — prüft die Teilmengen-Schranke, die für nicht-negative
+    Verluste ZWINGEND gilt: TRAILING_STOP-Verluste sind eine TEILMENGE aller Verlust-Trades
+    (jeder TRAILING_STOP-Exit mit ``pnl < 0`` zählt in BEIDEN Zählern, siehe
+    ``backtest_runner._aggregate_exit_telemetry``) — die Verlustsumme der Teilmenge kann die
+    Verlustsumme der Gesamtmenge nie übersteigen:
+
+        Σ(alle Verluste) >= Σ(Stop-Verluste)
+        ⟺ oos_gross_loss_mean_bps_pooled · oos_n_losses
+              >= oos_gross_loss_mean_bps_trailing_stop_pooled · oos_n_trailing_stop_losses
+
+    Root-Cause #1097: diese Schranke war in 12 von 56 Studies verletzt (Faktor bis 3,57), weil
+    ``report.py`` beide Seiten bislang aus INKOMMENSURABLEN Aggregationen bildete (Median der
+    Trial-Mittelwerte links, Summe der Trial-Zähler rechts, Pitfall #304) — keine reale
+    ökonomische Inkohärenz der Simulation, sondern ein Messartefakt. Mit den gepoolten Feldern
+    (``report._pooled_mean_of_trial_field``, beide Seiten trade-gewichtet über dieselbe
+    Trial-Kohorte) ist die Schranke eine mathematische Tautologie — ein FAIL hier bedeutet, dass
+    mindestens eine der beiden Zählungen selbst fehlerhaft ist (z. B. eine zukünftige Regression
+    in der Order-Tag-Klassifikation), nicht eine Kalibrierungsfrage."""
+    offenders: dict[str, dict] = {}
+    n_measured = 0
+    for r in study_records:
+        mean_all = r.get("oos_gross_loss_mean_bps_pooled")
+        mean_stop = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
+        n_all = r.get("oos_n_losses")
+        n_stop = r.get("oos_n_trailing_stop_losses")
+        if mean_all is None or mean_stop is None or not n_all or not n_stop:
+            continue
+        n_measured += 1
+        sum_all = float(mean_all) * float(n_all)
+        sum_stop = float(mean_stop) * float(n_stop)
+        # Kleine Fliesskomma-Toleranz (relative 1e-6) statt einer strikten Ungleichung.
+        if sum_all < sum_stop * (1.0 - 1e-6):
+            offenders[f"{r.get('strategy')}/{r.get('symbol')}"] = {
+                "sum_all_losses_bps": round(sum_all, 4),
+                "sum_trailing_stop_losses_bps": round(sum_stop, 4),
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_loss_metric_commensurability",
+        passed=passed,
+        expected="Σ(alle Verluste) >= Σ(Stop-Verluste) je Study (Teilmengen-Schranke)",
+        actual=offenders or None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} von {n_measured} gemessenen Studies verletzen die "
+                "Teilmengen-Schranke — mindestens eine der beiden Zaehlungen ist inkonsistent "
+                "(#1097-Fehlerklasse, Pitfall #304)."),
+    )
+
+
 def check_trailing_stop_loss_share(
     study_records: list[dict], *,
     max_loss_share: float = 0.60, max_mean_loss_ratio: float = 1.25,
@@ -3561,13 +3612,20 @@ def check_effective_stop_distance(study_records: list[dict], *,
     (#1063), auch wenn nur der obere Ast FAILt. Ein PASSender Check trägt ``actual`` trotzdem
     (Fix Punkt 3): ``passed=True, actual=None`` bedeutet jetzt eindeutig "nichts gemessen"
     (``n_studies_measured=0``), während ``passed=True, actual={...}`` "gemessen, nichts auffällig"
-    bedeutet — vorher waren beide Zustände identisch (``actual=None``)."""
+    bedeutet — vorher waren beide Zustände identisch (``actual=None``).
+
+    Issue #1097 (Katalog #930) — konsumiert seit diesem Fix AUSSCHLIESSLICH die GEPOOLTEN,
+    trade-gewichteten Felder (``oos_gross_loss_mean_bps_trailing_stop_pooled``/
+    ``oos_gross_loss_mean_bps_pooled``, ``report._pooled_mean_of_trial_field``), NICHT mehr die
+    medianbasierten ``oos_gross_loss_mean_bps_trailing_stop``/``oos_gross_loss_mean_bps`` — die
+    Stichprobengrösse ``oos_n_trailing_stop_losses`` (SUMME über Trials) ist nur mit einer ebenso
+    gepoolten (nicht medianbasierten) Mittelwert-Grösse kommensurabel (Pitfall #304)."""
     candidates = [
         r for r in study_records
         if r.get("atr_median_bps")
         and r.get("atr_trailing_multiplier_median") is not None
-        and (r.get("oos_gross_loss_mean_bps_trailing_stop") is not None
-             or r.get("oos_gross_loss_mean_bps") is not None)
+        and (r.get("oos_gross_loss_mean_bps_trailing_stop_pooled") is not None
+             or r.get("oos_gross_loss_mean_bps_pooled") is not None)
     ]
     if not candidates:
         return InvariantResult(
@@ -3588,7 +3646,7 @@ def check_effective_stop_distance(study_records: list[dict], *,
     for r in candidates:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
         n_stop_exits = int(r.get("oos_n_trailing_stop_losses") or 0)
-        loss_bps = r.get("oos_gross_loss_mean_bps_trailing_stop")
+        loss_bps = r.get("oos_gross_loss_mean_bps_trailing_stop_pooled")
         if loss_bps is None or n_stop_exits < min_trailing_stop_exits:
             # Issue #1035 — auch OHNE #1034/#1035-Telemetrie (Legacy-Report, nur das ungefilterte
             # oos_gross_loss_mean_bps) ist die Grundgesamtheit unbekannt/unbelegt: INCONCLUSIVE

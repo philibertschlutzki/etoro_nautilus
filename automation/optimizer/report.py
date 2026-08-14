@@ -358,6 +358,39 @@ def _median_of_trial_field(trial_attrs: list[dict], field: str) -> float | None:
     return statistics.median(values) if values else None
 
 
+def _pooled_mean_of_trial_field(
+    trial_attrs: list[dict], *, mean_field: str, count_field: str,
+) -> float | None:
+    """Issue #1097 (Katalog #930) — GEPOOLTER, trade-gewichteter Study-Mittelwert aus je-Trial
+    Mittelwert + Stichprobengrösse: Σ(mean_i · n_i) / Σ(n_i).
+
+    Root-Cause #1097: ``_median_of_trial_field`` bildet den MEDIAN der TRIAL-Mittelwerte — eine
+    Study-Kennzahl, die NICHT kommensurabel mit einer SUMME über dieselben Trials ist (z. B.
+    ``oos_n_trailing_stop_losses``, bereits als ``sum(...)`` gebildet). Die Teilmengen-Schranke
+    ``mean_alle >= (n_stop_losses/n_exits) · mean_stop`` (für nicht-negative Verluste zwingend
+    gültig) war deshalb in 12 von 56 Studies verletzt — nicht, weil die Simulation inkohärent war,
+    sondern weil zwei verschiedene Aggregationsarten (Median vs. Summe) über dieselbe Trial-Kohorte
+    als vergleichbar behandelt wurden (Wiederkehr von Pitfall #304).
+
+    Jeder Trial trägt seinen EIGENEN Mittelwert (``mean_field``) UND seine EIGENE Stichprobengrösse
+    (``count_field``, z. B. ``oos_n_losses``/``oos_n_trailing_stop_losses``) — beide je Trial bereits
+    korrekt (der Trial-Mittelwert selbst ist bereits über die Trades DIESES Trials gepoolt, siehe
+    ``backtest_runner._aggregate_exit_telemetry``). ``None``, wenn kein Trial beide Felder trägt
+    oder die Gesamtzahl 0 ist (kein stiller Default, der eine leere Kohorte verdeckt)."""
+    weighted_sum = 0.0
+    total_n = 0
+    for a in trial_attrs or []:
+        mean_val = a.get(mean_field)
+        n_val = a.get(count_field)
+        if mean_val is None or not isinstance(n_val, (int, float)) or isinstance(n_val, bool) or n_val <= 0:
+            continue
+        weighted_sum += float(mean_val) * float(n_val)
+        total_n += int(n_val)
+    if total_n <= 0:
+        return None
+    return weighted_sum / total_n
+
+
 def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
     """Issue #919 — Anteil der Round-Trips mit ``exit_reason == 'TIME_BOX'`` (hourly_strategy_
     base.ExitReason) am je-Study aufsummierten Exit-Reason-Histogramm. ``None`` ohne jede
@@ -905,6 +938,16 @@ def _study_record(proposal: dict, study,
             trial_attrs, "oos_gross_loss_mean_bps_trailing_stop"),
         "oos_n_trailing_stop_losses": sum(
             int(a.get("oos_n_trailing_stop_losses") or 0) for a in trial_attrs),
+        # Issue #1097 (Katalog #930) — GEPOOLTE, trade-gewichtete Gegenstuecke zu den beiden
+        # medianbasierten Feldern oben: kommensurabel mit oos_n_losses/oos_n_trailing_stop_losses
+        # (beide SUMMEN ueber dieselbe Trial-Kohorte), siehe _pooled_mean_of_trial_field-Docstring.
+        # invariants.check_effective_stop_distance konsumiert AUSSCHLIESSLICH diese Felder; die
+        # Mediane oben bleiben als Robustheits-Telemetrie erhalten.
+        "oos_gross_loss_mean_bps_pooled": _pooled_mean_of_trial_field(
+            trial_attrs, mean_field="oos_gross_loss_mean_bps", count_field="oos_n_losses"),
+        "oos_gross_loss_mean_bps_trailing_stop_pooled": _pooled_mean_of_trial_field(
+            trial_attrs, mean_field="oos_gross_loss_mean_bps_trailing_stop",
+            count_field="oos_n_trailing_stop_losses"),
         # Issue #1085 (Katalog #866-2) — über alle Trials aufsummierte Dust-Round-Trips
         # (Notional < 5% des Median-Notionals dieser Study, Fliesskomma-Residuen eines Netto-
         # Exposure-Nulldurchgangs) — Rohmaterial für invariants.check_dust_round_trip_share.
@@ -1966,6 +2009,10 @@ def _build_report(
         studies_out,
         max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
         max_mean_loss_ratio=float(optimizer_cfg.get("trailing_stop_max_mean_loss_ratio", 1.25)))))
+
+    # Issue #1097 (Katalog #930) — Teilmengen-Schranke zwischen gepoolten Verlust-Aggregaten;
+    # siehe check_loss_metric_commensurability-Docstring.
+    all_checks.append(("global", _inv.check_loss_metric_commensurability(studies_out)))
 
     # Issue #1068 — vorgezogen (war vorher erst bei check_diagnosis_ledger_coherence unten
     # gelesen): dieselbe Ledger-Zahl treibt seit #1084 zusätzlich check_champion_corroboration_
