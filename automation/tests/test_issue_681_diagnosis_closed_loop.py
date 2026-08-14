@@ -16,7 +16,10 @@ ausreichender Evidenz (siehe test_issue_778_denylist_evidence.py).
 """
 import json
 
+import pytest
+
 from automation.optimizer import sweep
+from automation.optimizer import sweep_diagnostics
 from automation.optimizer.sweep_diagnostics import (
     recommend_diagnosis_action,
     record_diagnosed_pair,
@@ -29,6 +32,15 @@ _GATE_CFG = {
     "walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4, "holdout_days": 45},
     "gate1_buffer_days": 30, "min_bars_per_param": 200, "min_oos_bars_per_fold": 500,
 }
+
+
+@pytest.fixture(autouse=True)
+def _enable_diagnostic_writeback(monkeypatch):
+    """Issue #1090 (Katalog #923) — ``diagnostic_writeback_enabled`` ist seit diesem Fix in der
+    ausgelieferten ``optimizer.json`` standardmaessig ``false`` (Sicherheits-Default gegen die
+    #1090-Kontamination). Dieses Modul testet ``record_diagnosed_pair``s Rueckschrieb-MECHANIK
+    selbst, unabhaengig vom Produktions-Sicherheitsschalter — daher hier bewusst wieder aktiviert."""
+    monkeypatch.setattr(sweep_diagnostics, "_read_diagnostic_writeback_enabled", lambda: True)
 
 
 # ── recommend_diagnosis_action: Fallunterscheidung nach binding_cause ───────────────────────────

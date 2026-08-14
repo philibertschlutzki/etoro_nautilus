@@ -13,10 +13,21 @@ Fix: ``'signal_sparse'``/``'hold_duration'`` (PARAMETERABHÄNGIG) eskaliert NIE 
 erhalten ``first_seen_run_id``/``n_runs_confirmed``; übersprungene Paare erscheinen im #742-Report
 als eigene Sektion mit Begründung und Evidenzstand.
 """
+import pytest
+
+from automation.optimizer import sweep_diagnostics
 from automation.optimizer.sweep_diagnostics import (
     recommend_diagnosis_action, record_diagnosed_pair, load_diagnosed_pairs_cache,
 )
 from automation.optimizer import report as _report
+
+
+@pytest.fixture(autouse=True)
+def _enable_diagnostic_writeback(monkeypatch):
+    """Issue #1090 (Katalog #923) — siehe test_issue_681_diagnosis_closed_loop.py: dieses Modul
+    testet record_diagnosed_pair's Rueckschrieb-Mechanik selbst, unabhaengig vom seit #1090
+    standardmaessig deaktivierten Produktions-Sicherheitsschalter."""
+    monkeypatch.setattr(sweep_diagnostics, "_read_diagnostic_writeback_enabled", lambda: True)
 
 
 # ── Akzeptanzkriterium #778/1: binding_cause = signal_sparse ⇒ nie Eskalation auf denylist ────────

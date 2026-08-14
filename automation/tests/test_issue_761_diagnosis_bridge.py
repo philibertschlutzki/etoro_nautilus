@@ -18,11 +18,20 @@ import json
 
 import pytest
 
+from automation.optimizer import sweep_diagnostics
 from automation.optimizer.sweep_diagnostics import (
     propose_bounds_widening, record_diagnosed_pair, load_diagnosed_pairs_cache,
     age_diagnosed_pairs_cache, is_diagnosed_pair_expired, recommend_diagnosis_action,
     _diagnosed_pairs_cache_path,
 )
+
+
+@pytest.fixture(autouse=True)
+def _enable_diagnostic_writeback(monkeypatch):
+    """Issue #1090 (Katalog #923) — siehe test_issue_681_diagnosis_closed_loop.py: dieses Modul
+    testet record_diagnosed_pair's Rueckschrieb-Mechanik selbst, unabhaengig vom seit #1090
+    standardmaessig deaktivierten Produktions-Sicherheitsschalter."""
+    monkeypatch.setattr(sweep_diagnostics, "_read_diagnostic_writeback_enabled", lambda: True)
 
 
 # ── propose_bounds_widening: Richtung aus der Trial-Kohorte ────────────────────────────────────────

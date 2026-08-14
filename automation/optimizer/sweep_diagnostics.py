@@ -580,11 +580,26 @@ _MAX_WIDEN_APPLICATIONS = 2
 
 
 def _read_diagnostic_writeback_enabled() -> bool:
-    """Issue #926 Fix 1 — ``optimizer.json['diagnostic_writeback_enabled']`` (Default ``True``).
-    Sofortmassnahme-Schalter für die Reparaturphase: auf ``False`` gestellt, unterdrückt
-    ``record_diagnosed_pair`` jeden Rückschrieb — verhindert, dass eine unter dem #913-Defekt
-    (0 % definierter oos_psr) gelaufene Diagnose funktionierende Strategien in die automatisch
-    gepflegte Denylist-Vorstufe schreibt."""
+    """Issue #926 Fix 1 — ``optimizer.json['diagnostic_writeback_enabled']`` (Fallback ``True``,
+    wenn KEINE ``optimizer.json`` gefunden wird — Legacy-/Unit-Test-Aufrufer ohne Config-Fixture
+    bleiben bit-identisch zum Pre-#1090-Verhalten). Sofortmassnahme-Schalter für die
+    Reparaturphase: auf ``False`` gestellt, unterdrückt ``record_diagnosed_pair`` jeden
+    Rückschrieb.
+
+    Issue #1090 (Katalog #923) Fix Punkt 2 — die AUSGELIEFERTE ``automation/config/optimizer.json``
+    setzt diesen Key jetzt EXPLIZIT auf ``false`` (war ``true``): Symptom #1090 — unter drei
+    gleichzeitigen Sweep-Prozessen auf demselben ``{WORK}``-Store (#1086) wurden
+    ``SqueezeBreakout/ASML``/``AdxAtrMomentum/ASML`` faelschlich auf
+    ``action='deprioritized'``/``n_runs_confirmed=3`` geschrieben, OHNE dass ein zusaetzlicher
+    realer ASML-Lauf stattfand; ein Paar erhielt ausserdem einen ``search_space_override``-
+    Eintrag mit ``binding_cause='boundary_solution'``, OBWOHL der #1066-Sperrvermerk den
+    Suchraum-Rueckschrieb bis zur Bounds-Klammer aussetzen sollte (zurueckgenommen, siehe
+    ``diagnosed_pairs_cache.json``). Der PRODUKTIONS-Rückschrieb bleibt damit AUS, bis #1066
+    (Bounds-Klammer) UND #1086 (Kohorten-Isolation) an einem echten Mehrprozess-Lauf abgenommen
+    sind — ein Operator, der ihn frueher braucht, setzt den Key explizit auf ``true`` (Runbook
+    #936). Der Python-Fallback bleibt bewusst ``True``, statt eine zweite Kopie desselben
+    Sicherheits-Defaults im Code zu pflegen — die AUSGELIEFERTE Config ist die einzige Quelle für
+    das Produktionsverhalten."""
     try:
         from automation.optimizer.trial_config import config_dir
         cfg_path = config_dir() / "optimizer.json"
@@ -639,6 +654,22 @@ def _save_diagnosed_pairs_cache(cache: dict[tuple[str, str], dict], *,
     return path
 
 
+def study_fingerprint(study_name: str | None, study_started_at_utc: str | None,
+                      n_trials_completed: int | None) -> str | None:
+    """Issue #1090 (Katalog #923) — deterministischer Fingerabdruck EINER Study-Beobachtung
+    (``SHA256(study_name|study_started_at_utc|n_trials_completed)``), Grundlage der Dedup-Prüfung
+    in ``record_diagnosed_pair``: dieselbe Study darf ``n_runs_confirmed`` nur EINMAL erhöhen,
+    unabhängig davon, wie oft ``record_diagnosed_pair`` für sie aufgerufen wird (z. B. durch
+    mehrere gleichzeitige Sweep-Prozesse auf demselben Store, #1086). ``None``, wenn eine der drei
+    Komponenten fehlt (Legacy-/Test-Aufrufer ohne Study-Kontext) — der Aufrufer fällt dann auf das
+    alte, ungedupte Zählverhalten zurück (fail-open auf fehlender Evidenz)."""
+    if not study_name or not study_started_at_utc or n_trials_completed is None:
+        return None
+    import hashlib
+    raw = f"{study_name}|{study_started_at_utc}|{n_trials_completed}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
                           run_id: str | None = None) -> Path:
     """Issue #681/#761 — schreibt/aktualisiert den (Symbol, Strategie)-Diagnose-Eintrag im
@@ -682,7 +713,18 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     NICHT mehr übernommen — der zuletzt gespeicherte ``proposed_bounds``-Wert für diesen Parameter
     bleibt stehen (``n_runs_confirmed``/``runs_since_recorded`` laufen unabhängig davon weiter).
     Zweite, unabhängige Sperre neben der Domänenklammer: selbst ein Parameter, dessen Domäne (noch)
-    nicht im Register steht, kann so nicht unbegrenzt oft nachgeweitet werden."""
+    nicht im Register steht, kann so nicht unbegrenzt oft nachgeweitet werden.
+
+    Issue #1090 (Katalog #923) Fix Punkt 1 — ``recommendation['study_fingerprint']`` (siehe
+    ``study_fingerprint()`` oben, SHA256 über ``study_name``/``study_started_at_utc``/
+    ``n_trials_completed``) dedupliziert ``n_runs_confirmed`` auf der zugrundeliegenden
+    BEOBACHTUNG, nicht auf dem Funktionsaufruf: Root-Cause #1090 — derselbe reale Trial-Datensatz
+    einer Study wurde unter mehreren gleichzeitigen Sweep-Prozessen (#1086, geteilter Store) mehr-
+    fach als Bestätigung gezählt (beobachtet: ``n_runs_confirmed=3`` bei EINEM tatsächlichen ASML-
+    Lauf, identische ``study_wallclock_s``). Trägt der neue UND der vorherige Eintrag denselben
+    ``study_fingerprint``, ist es dieselbe Beobachtung — ``n_runs_confirmed`` bleibt UNVERÄNDERT
+    (nicht 0, nicht neu gezählt). Fehlt der Fingerprint (``None``, Legacy-/Test-Aufrufer ohne
+    Study-Kontext) fällt die Zählung auf das alte, ungedupte Verhalten zurück."""
     if not _read_diagnostic_writeback_enabled():
         return _diagnosed_pairs_cache_path(work_dir)
     if recommendation.get("binding_cause") in (None, "none", "no_data"):
@@ -696,7 +738,16 @@ def record_diagnosed_pair(recommendation: dict, *, work_dir: Path | None = None,
     same_series = bool(
         prior and prior.get("action") == entry.get("action")
         and prior.get("binding_cause") == entry.get("binding_cause"))
-    if same_series:
+    new_fingerprint = entry.get("study_fingerprint")
+    is_duplicate_observation = bool(
+        same_series and new_fingerprint is not None
+        and new_fingerprint == (prior or {}).get("study_fingerprint"))
+    if is_duplicate_observation:
+        # Issue #1090 — dieselbe Study wurde bereits gezählt (z. B. ein Nebenprozess auf demselben
+        # Store, #1086) — n_runs_confirmed bleibt stehen, nur die Ablauf-Frist wird aufgefrischt.
+        entry["n_runs_confirmed"] = int(prior.get("n_runs_confirmed", 1))
+        entry["first_seen_run_id"] = prior.get("first_seen_run_id", run_id)
+    elif same_series:
         entry["n_runs_confirmed"] = int(prior.get("n_runs_confirmed", 1)) + 1
         entry["first_seen_run_id"] = prior.get("first_seen_run_id", run_id)
     else:

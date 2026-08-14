@@ -679,7 +679,7 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                     from automation.optimizer.sweep_diagnostics import (
                         recommend_diagnosis_action, record_diagnosed_pair,
                         has_existing_search_space_override, load_diagnosed_pairs_cache,
-                        propose_bounds_widening,
+                        propose_bounds_widening, study_fingerprint,
                     )
                     # Issue #699 — Eskalations-Check: wurde für dieses Paar bereits in einem
                     # VORHERIGEN Lauf 'search_space_override' empfohlen (und nichts hat sich seither
@@ -733,7 +733,15 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             (weights or {}).get("max_consecutive_structural_runs", 2)),
                         simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
-                    record_diagnosed_pair(rec)
+                    # Issue #1090 (Katalog #923) — Fingerprint DIESER Study-Beobachtung: dedupliziert
+                    # n_runs_confirmed gegen mehrfache record_diagnosed_pair-Aufrufe fuer denselben
+                    # realen Trial-Datensatz (z. B. Nebenprozesse auf demselben Store, #1086).
+                    rec["study_fingerprint"] = study_fingerprint(
+                        getattr(study, "study_name", None),
+                        study.user_attrs.get("study_started_at_utc"),
+                        _budget_execution_for_diagnosis["n_trials_completed"],
+                    )
+                    record_diagnosed_pair(rec, run_id=run_id)
                 except Exception:
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
 
@@ -980,7 +988,15 @@ def floor_plateau_callback(study, trial, *, weights: dict | None = None,
                             (weights or {}).get("max_consecutive_structural_runs", 2)),
                         simulation_semantics_version=(weights or {}).get("simulation_semantics_version"),
                     )
-                    record_diagnosed_pair(rec)
+                    # Issue #1090 (Katalog #923) — siehe Docstring des STRUCTURAL_ALL_UNEVALUABLE-
+                    # Zweigs oben: derselbe Fingerprint-Dedup gegen mehrfach gezaehlte Bestaetigungen.
+                    from automation.optimizer.sweep_diagnostics import study_fingerprint as _study_fp
+                    rec["study_fingerprint"] = _study_fp(
+                        getattr(study, "study_name", None),
+                        study.user_attrs.get("study_started_at_utc"),
+                        _budget_execution_for_quality["n_trials_completed"],
+                    )
+                    record_diagnosed_pair(rec, run_id=run_id)
                 except Exception:
                     logger.debug("Issue #681: diagnosis writeback fehlgeschlagen (non-fatal).", exc_info=True)
 

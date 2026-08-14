@@ -14,11 +14,22 @@ KORREKT berechneten (``run_id``-gefilterten) Werten und verifiziert, dass (a) da
 ausreichender Bestätigung tatsächlich als 'denylist' in den Auto-Cache geschrieben wird und (b)
 ``enumerate_tunable_pairs`` es im darauffolgenden (vierten) Lauf tatsächlich überspringt.
 """
+import pytest
+
 from automation.optimizer import run_optimization as ro
 from automation.optimizer import sweep
+from automation.optimizer import sweep_diagnostics
 from automation.optimizer.sweep_diagnostics import (
     recommend_diagnosis_action, record_diagnosed_pair, load_diagnosed_pairs_cache,
 )
+
+
+@pytest.fixture(autouse=True)
+def _enable_diagnostic_writeback(monkeypatch):
+    """Issue #1090 (Katalog #923) — siehe test_issue_681_diagnosis_closed_loop.py: dieses Modul
+    testet den Diagnose-Closed-Loop end-to-end, unabhaengig vom seit #1090 standardmaessig
+    deaktivierten Produktions-Sicherheitsschalter."""
+    monkeypatch.setattr(sweep_diagnostics, "_read_diagnostic_writeback_enabled", lambda: True)
 
 _GATE_CFG = {
     "walk_forward": {"is_window_days": 120, "oos_window_days": 30, "splits": 4, "holdout_days": 45},
