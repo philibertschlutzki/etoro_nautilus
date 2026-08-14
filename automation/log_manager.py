@@ -413,7 +413,23 @@ def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
     ``[JSON_EVENT] {...}`` weiterhin innerhalb einer formatierten Zeile trägt — für Menschen/
     Terminal unverändert). Kein registrierter Sidecar-Pfad (Logger nie via ``setup_bot_logging``
     initialisiert, z. B. in ad-hoc-Tests) ⇒ stiller No-Op. Fail-open: ein Sidecar-Schreibfehler
-    darf den aufrufenden Trading-/Optimizer-Pfad nie crashen (analog Champion-Store/Retention)."""
+    darf den aufrufenden Trading-/Optimizer-Pfad nie crashen (analog Champion-Store/Retention).
+
+    Issue #1098 (Katalog #931) — Root-Cause: die Alt-Fassung öffnete die Datei ge-BUFFERT
+    (``open(..., "a")``) und rief ZWEI getrennte ``write()``-Aufrufe (Zeile, dann Newline). Unter
+    hoher Ereignisrate aus mehreren gleichzeitigen Worker-Threads (``run_per_symbol_sweep``s
+    ``ThreadPoolExecutor``, #400) verlor ``events.jsonl`` systematisch GENAU EIN Ereignis je Study
+    (12 von 14 TSLA-Studies, PLTR Δ −6, TSLA Δ −14 gegen ``Σ n_trials_completed`` — korreliert exakt
+    mit dem ``INFERENCE_DIAGNOSTIC``-Volumen). Diese Fassung schreibt STATTDESSEN zeilenatomar: EIN
+    ``os.write()``-Syscall auf einem mit ``O_APPEND`` geöffneten Deskriptor pro Zeile (Zeile +
+    Newline als EIN Bytes-Objekt) — POSIX garantiert, dass ein einzelner ``write()`` auf einem
+    ``O_APPEND``-Deskriptor unter dem Inode-Lock atomar an das aktuelle Dateiende geschrieben wird,
+    unabhängig davon, wie viele andere Threads/Prozesse gleichzeitig an dieselbe Datei anhängen —
+    zwei getrennte ``write()``-Aufrufe boten diese Garantie nicht (ein anderer Schreiber kann
+    zwischen ihnen interleaven). Kein Python-Puffer bleibt zwischen Aufrufen offen (jeder Aufruf
+    öffnet/schliesst den Deskriptor selbst), daher ist kein zusätzliches ``flush()`` hier nötig —
+    die Zeile ≤ PIPE_BUF-Praxisgrenze bleibt Voraussetzung (ein Event-Payload jenseits mehrerer KB
+    wäre ohnehin ein Telemetrie-Bug, nicht durch diesen Fix zu lösen)."""
     jsonl_path = _JSONL_SIDECAR_PATHS.get(logger_name)
     if jsonl_path is None:
         return
@@ -424,9 +440,12 @@ def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
         line = json.dumps(_sanitize_for_json(event), ensure_ascii=False, default=str,
                           sort_keys=True, allow_nan=False)
         jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(jsonl_path, "a", encoding="utf-8") as f:
-            f.write(line)
-            f.write("\n")
+        data = (line + "\n").encode("utf-8")
+        fd = os.open(str(jsonl_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
     except OSError:
         logging.getLogger("log_manager").warning(
             "[#741] JSONL-Sidecar-Schreiben fehlgeschlagen für %s", jsonl_path, exc_info=True
@@ -437,6 +456,18 @@ def _append_jsonl_sidecar(logger_name: str, event: dict[str, Any]) -> None:
         logging.getLogger("log_manager").warning(
             "[#937] JSONL-Sidecar-Serialisierung fehlgeschlagen für %s", jsonl_path, exc_info=True
         )
+
+
+def jsonl_sidecar_path(logger_name: str) -> Path | None:
+    """Issue #1098 (Katalog #931) — öffentlicher Read-Zugriff auf den für ``logger_name`` via
+    ``setup_bot_logging`` registrierten ``.events.jsonl``-Pfad (das Modul-Dict
+    ``_JSONL_SIDECAR_PATHS`` selbst bleibt privat). Für ``report._build_report``: um die
+    tatsächliche JSONL-Zeilenzahl des aktuellen Sweep-Laufs gegen ein ``EVENTS_MANIFEST``-Event
+    zu prüfen (``invariants.check_event_stream_completeness``), muss der Report-Pfad den Sidecar-
+    Pfad des ``optimizer``-Loggers auflösen können, ohne das Sidecar-Modul-Interna zu importieren.
+    ``None`` bei nie initialisiertem Logger (z. B. Report-Erzeugung ausserhalb eines echten
+    Sweep-Laufs, etwa in Tests) — Aufrufer müssen das behandeln."""
+    return _JSONL_SIDECAR_PATHS.get(logger_name)
 
 
 def emit_gate1_rejection(

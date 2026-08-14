@@ -33,7 +33,7 @@ from typing import Any, Iterable
 
 import optuna
 
-from automation.log_manager import emit_execution_event
+from automation.log_manager import emit_execution_event, jsonl_sidecar_path
 from automation.optimizer import invariants as _inv
 from automation.optimizer import _contracts
 from automation.optimizer import reward as _reward
@@ -389,6 +389,41 @@ def _pooled_mean_of_trial_field(
     if total_n <= 0:
         return None
     return weighted_sum / total_n
+
+
+def _count_jsonl_events(path: Path | None, event_types: set[str]) -> dict[str, int]:
+    """Issue #1098 (Katalog #931) — zählt je ``event_type`` in ``event_types`` die tatsächlich in
+    der ``.events.jsonl``-Sidecar-Datei unter ``path`` vorhandenen Zeilen (eine valide JSON-Zeile
+    je Ereignis, siehe ``log_manager._append_jsonl_sidecar``). Dient
+    ``invariants.check_event_stream_completeness`` als "actual"-Seite gegen das vom Sweep
+    geschriebene ``EVENTS_MANIFEST``-Ereignis (dessen ``expected_*``-Zahlen UNABHÄNGIG von dieser
+    Datei aus ``studies_out`` berechnet werden — kein Zirkelschluss).
+
+    Robust gegen einzelne defekte Zeilen (übersprungen statt die gesamte Zählung abzubrechen — ein
+    Betriebssystem-Crash mitten in einem ``os.write()`` kann theoretisch eine unvollständige letzte
+    Zeile hinterlassen, das darf die Zählung der VORHERIGEN, vollständigen Zeilen nicht verhindern).
+    ``path is None`` (Logger nie via ``setup_bot_logging`` initialisiert) oder die Datei existiert
+    nicht ⇒ alle Zählungen 0."""
+    counts = {et: 0 for et in event_types}
+    if path is None or not path.exists():
+        return counts
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                et = event.get("event_type")
+                if et in counts:
+                    counts[et] += 1
+    except OSError:
+        _log.warning("[#1098] events.jsonl (%s) nicht lesbar für die Vollständigkeitsprüfung.",
+                     path, exc_info=True)
+    return counts
 
 
 def _time_box_exit_fraction(trial_attrs: list[dict]) -> float | None:
@@ -1922,6 +1957,31 @@ def _build_report(
     # (ein Zwischenreport, oder eine erneute #1086-Kontamination).
     all_checks.append((
         "global", _inv.check_family_n_stability(_n_family_frozen_by_symbol, _n_family_by_symbol)))
+
+    # Issue #1098 (Katalog #931) — Vollstaendigkeits-Wächter für die JSONL-Event-Sidecar (#741):
+    # ``expected_*`` wird HIER, UNABHAENGIG von der jsonl-Datei selbst, aus ``studies_out`` (der
+    # bereits fuer Report/Invarianten kanonischen Kohorte) berechnet und als EVENTS_MANIFEST-
+    # Ereignis geschrieben — NUR fuer ``report_source == 'final'`` (Zwischen-/Probe-Reports sehen
+    # strukturell eine Teilmenge der Studies, siehe #1083, ein Manifest darauf waere bedeutungslos
+    # und wuerde die jsonl-Datei mit irrefuehrenden Zwischenstaenden fluten). ``check_event_stream_
+    # completeness`` vergleicht das Manifest gegen die TATSAECHLICH gezaehlten jsonl-Zeilen
+    # (``_count_jsonl_events``) — ein Auseinanderlaufen beweist einen erneuten Ereignisverlust
+    # (#1098-Fehlerklasse: nicht-atomarer Zeilen-Append unter Nebenlaeufigkeit).
+    if report_source == "final":
+        _expected_trial_events = sum(int(r.get("n_trials_completed") or 0) for r in studies_out)
+        _expected_study_events = len(studies_out)
+        emit_execution_event(_log, "EVENTS_MANIFEST", {
+            "expected_trial_events": _expected_trial_events,
+            "expected_study_events": _expected_study_events,
+        })
+        _event_counts = _count_jsonl_events(
+            jsonl_sidecar_path(_log.name),
+            {"optimizer_trial_completed", "optimizer_study_completed"})
+        all_checks.append(("global", _inv.check_event_stream_completeness(
+            _expected_trial_events, _event_counts["optimizer_trial_completed"],
+            _expected_study_events, _event_counts["optimizer_study_completed"])))
+    else:
+        all_checks.append(("global", _inv.check_event_stream_completeness(None, 0, None, 0)))
 
     # Issue #770 — sweep-weite Budget-Ausfuehrungs-Invariante (siebter Check, siehe #743/#773).
     min_median_budget_execution = float(optimizer_cfg.get("min_median_budget_execution", 0.5))

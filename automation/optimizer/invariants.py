@@ -2370,6 +2370,67 @@ def check_family_n_stability(
     )
 
 
+def check_event_stream_completeness(
+    expected_trial_events: int | None, actual_trial_events: int,
+    expected_study_events: int | None, actual_study_events: int,
+    *, tolerance: int = 0,
+) -> InvariantResult:
+    """Issue #1098 (Katalog #931) — vergleicht das vom Sweep-Report am Laufende geschriebene
+    ``EVENTS_MANIFEST``-Ereignis (``expected_trial_events``/``expected_study_events``, aus
+    ``Σ n_trials_completed``/``len(studies_out)`` — UNABHAENGIG von ``events.jsonl`` selbst
+    berechnet, siehe ``report._build_report``) gegen die dort TATSAECHLICH gezaehlten
+    ``optimizer_trial_completed``/``optimizer_study_completed``-Zeilen
+    (``report._count_jsonl_events``).
+
+    Root-Cause #1098: ungepufferte, nicht-atomare Zeilen-Appends aus mehreren gleichzeitigen
+    Sweep-Worker-Threads (``ThreadPoolExecutor``, #400) liessen ``events.jsonl`` systematisch
+    Ereignisse verlieren — beobachtet als Δ zwischen Ereigniszahl und ``Σ n_trials_completed``
+    (ASML 1814/1814 Δ 0, NVDA 1940/1940 Δ 0, PLTR 1920/1926 Δ −6, TSLA 1910/1924 Δ −14; korreliert
+    exakt mit dem ``INFERENCE_DIAGNOSTIC``-Volumen; in 12 von 14 TSLA-Studies fehlte genau EIN
+    Ereignis). Der #1098-Fix in ``log_manager._append_jsonl_sidecar`` (ein atomarer ``os.write()``
+    je Zeile statt zweier getrennter, interleaving-anfaelliger ``write()``-Aufrufe) behebt die
+    Ursache; dieser Wächter macht ein Wiederauftreten (z. B. durch eine kuenftige Regression, die
+    erneut auf gepuffertes ``open(..., 'a')`` zurueckfaellt) SICHTBAR statt eines stillen
+    Datenverlusts.
+
+    ``expected_trial_events is None`` oder ``expected_study_events is None`` (kein EVENTS_MANIFEST-
+    Ereignis vorhanden — z. B. Zwischen-/Probe-Report vor #1083, oder ein Report ausserhalb eines
+    echten Sweep-Laufs) ⇒ ``inconclusive=True`` (kein Urteil ohne Vergleichsgrundlage, kein
+    stiller FAIL). severity ``high`` (Diagnose — kein Promotion-Gate, im Gegensatz zu
+    ``check_loss_metric_commensurability``/``check_trailing_stop_loss_share``)."""
+    if expected_trial_events is None or expected_study_events is None:
+        return InvariantResult(
+            name="check_event_stream_completeness",
+            passed=True, inconclusive=True,
+            expected="actual_trial_events == expected_trial_events UND actual_study_events == "
+                     "expected_study_events (aus EVENTS_MANIFEST)",
+            actual=None, severity="high",
+            detail="Kein EVENTS_MANIFEST-Ereignis vorhanden — kein Urteil ohne Vergleichsgrundlage "
+                   "(Zwischen-/Probe-Report oder Report ausserhalb eines Sweep-Laufs).",
+        )
+    delta_trial = actual_trial_events - expected_trial_events
+    delta_study = actual_study_events - expected_study_events
+    passed = abs(delta_trial) <= tolerance and abs(delta_study) <= tolerance
+    return InvariantResult(
+        name="check_event_stream_completeness",
+        passed=passed,
+        expected=f"delta_trial_events == 0 UND delta_study_events == 0 (Toleranz {tolerance})",
+        actual={
+            "expected_trial_events": expected_trial_events,
+            "actual_trial_events": actual_trial_events,
+            "delta_trial_events": delta_trial,
+            "expected_study_events": expected_study_events,
+            "actual_study_events": actual_study_events,
+            "delta_study_events": delta_study,
+        },
+        severity="high",
+        detail=("OK" if passed else
+                f"events.jsonl weicht um {delta_trial} Trial- und {delta_study} Study-Ereignis(se) "
+                "vom EVENTS_MANIFEST ab (#1098-Fehlerklasse: nicht-atomarer Zeilen-Append unter "
+                "Nebenlaeufigkeit)."),
+    )
+
+
 def check_report_cohort_coherence(
     study_records: list[dict], *, wallclock_s: float | None,
     run_started_at_utc: str | None = None,
