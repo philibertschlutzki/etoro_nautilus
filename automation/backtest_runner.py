@@ -1190,6 +1190,44 @@ def resolve_atr_floor_bps(inst_id_str: str,
     return float(atr_floor_bps_by_asset_class[asset_class_key])
 
 
+def cost_coupled_atr_floor_bps(base_floor_bps: float, *, atr_trailing_multiplier: float | None,
+                               round_trip_cost_bps: float, min_stop_to_cost_ratio: float = 3.0) -> float:
+    """Issue #1096 (Katalog #929) Fix Punkt 1 — hebt ``base_floor_bps`` (die asset-class-
+    aufgelöste ``resolve_atr_floor_bps``-Konstante) zusätzlich auf ``min_stop_to_cost_ratio ·
+    round_trip_cost_bps / atr_trailing_multiplier`` an, wenn dieser Wert grösser ist.
+
+    Root-Cause #1096: der Asset-Klassen-Floor allein hat keinen Bezug zu den Round-Trip-Kosten —
+    ``atr_median_bps`` lag in 18 von 56 Studies exakt auf dem Floor, mit nominalen Stopdistanzen
+    von 2-7 bps gegen 100-200 bps realisierte adverse Bewegung UND < 3x der Round-Trip-Kosten
+    (``invariants.check_stop_cost_ratio``): die Position kann den Stop dann strukturell nicht
+    überleben, bevor die Kosten sie aufzehren. ``min_stop_to_cost_ratio`` ist DERSELBE Schwellenwert,
+    den ``check_stop_cost_ratio`` bereits prüft (Default 3.0) — Gate und Konfiguration werden damit
+    paritätisch (analog #666).
+
+    ``atr_trailing_multiplier`` ist der für DIESEN Trial gesampelte Wert (kein studienweiter
+    Median — der ist zum Zeitpunkt eines einzelnen Backtests nicht bekannt). Fehlt er (Strategie
+    ohne Trailing-Stop-Parameter, ``None``) oder ist er <= 0, bleibt der Floor unverändert
+    (fail-open — dieselbe Konvention wie ``resolve_atr_floor_bps`` bei fehlender Config)."""
+    if not isinstance(atr_trailing_multiplier, (int, float)) or isinstance(atr_trailing_multiplier, bool):
+        return base_floor_bps
+    if atr_trailing_multiplier <= 0:
+        return base_floor_bps
+    cost_coupled = (min_stop_to_cost_ratio * round_trip_cost_bps) / float(atr_trailing_multiplier)
+    return max(base_floor_bps, cost_coupled)
+
+
+# Issue #1096 (Katalog #929) — BEWUSST NICHT umgesetzt (dokumentierter Scope-Cut, analog #843/#845
+# Punkt 2 in dieser Codebasis): Fix Punkt 2 (der ATR-Schätzer soll ausschliesslich INFORMATIVE Bars
+# konsumieren, #823-Analogon, statt der 24/7-aufgefüllten Kalenderachse mit volume=1.0) und Fix
+# Punkt 3 (ein spaces.py-Preflight, der einen gesampelten atr_trailing_multiplier mit
+# k · ATR_median < 3 · c_rt als infeasible an constraints_func meldet, #612) bleiben offen. Beide
+# würden den Nautilus-``AverageTrueRange``-Indikator bzw. den TPE-Constraint-Sampler-Pfad anfassen
+# — Root-Cause-Verifikation ohne einen echten Mehrsymbol-Referenzlauf (dasselbe Empirie-Problem wie
+# bei #843 Pipelining) riskiert eine stille Korrektheitsregression im GESAMTEN ATR-Schätzer. Fix
+# Punkt 1 (dieser Cost-Coupling, oben) behebt bereits den beobachtbaren Symptom-Kern (Floor
+# unterschreitet 3x Round-Trip-Kosten) unabhängig von Fix Punkt 2/3.
+
+
 def resolve_opening_range_session_open_hour(inst_id_str: str,
                                             session_open_hour_by_asset_class: dict | None,
                                             asset_class_key: str = "DEFAULT") -> int:
@@ -3561,6 +3599,10 @@ def _parse_exit_order_tags(tags) -> dict:
                 meta["atr_median_bps"] = float(value)
             elif key == "ATR_MIN_BPS":
                 meta["atr_min_bps"] = float(value)
+            elif key == "STOP_EXIT_LAG_BARS":
+                # Issue #1095 (Katalog #928) — Bars zwischen Signal und tatsaechlichem Markt-Close
+                # (siehe hourly_strategy_base._execute_market_close-Docstring).
+                meta["stop_exit_lag_bars"] = int(value)
         except (TypeError, ValueError):
             continue
     return meta
@@ -3616,6 +3658,10 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     # Grundgesamtheit"). ``losses_bps_trailing_stop`` beschraenkt denselben Zaehler auf
     # NACHWEISLICHE Stop-Exits.
     losses_bps_trailing_stop: list[float] = []
+    # Issue #1095 (Katalog #928) — nur ueber NACHWEISLICHE TRAILING_STOP-Exits (analog
+    # losses_bps_trailing_stop): die Fill-Verzoegerung eines Zeitbox-/Signalwechsel-Exits ist eine
+    # andere Fragestellung als die des Stop-Exits, den #1092/#1094 quantifizieren.
+    stop_exit_lag_bars: list[int] = []
     for m in meta_list or []:
         # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
         # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
@@ -3634,6 +3680,8 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             atr_medians.append(float(m["atr_median_bps"]))
         if m.get("atr_min_bps") is not None:
             atr_mins.append(float(m["atr_min_bps"]))
+        if reason == "TRAILING_STOP" and m.get("stop_exit_lag_bars") is not None:
+            stop_exit_lag_bars.append(int(m["stop_exit_lag_bars"]))
     return {
         "exit_reason_histogram": histogram,
         "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
@@ -3651,6 +3699,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # exit_reason_histogram['DATA_END']; Rohmaterial fuer
         # invariants.check_open_position_at_data_end.
         "n_round_trips_data_end": histogram.get("DATA_END", 0),
+        # Issue #1095 (Katalog #924/#928) — Median der Bars zwischen Trailing-Stop-Signal und
+        # tatsaechlichem Markt-Close-Fill; None ohne einen einzigen getaggten Stop-Exit.
+        "stop_exit_lag_bars_median": (
+            statistics.median(stop_exit_lag_bars) if stop_exit_lag_bars else None),
+        "n_trailing_stop_exits_with_lag_telemetry": len(stop_exit_lag_bars),
     }
 
 
@@ -3949,6 +4002,10 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "atr_median_bps": meta.get("atr_median_bps"),
                 "atr_min_bps": meta.get("atr_min_bps"),
                 "pnl_bps": pnl_bps,
+                # Issue #1095 (Katalog #928) — nur bei einer echten schliessenden Order gueltig
+                # (nicht is_data_end_fallback, die keine STOP_EXIT_LAG_BARS-Order-Tags traegt).
+                "stop_exit_lag_bars": (
+                    None if is_data_end_fallback else meta.get("stop_exit_lag_bars")),
             })
 
         # Chronologisches FIFO-Matching pro Instrument
@@ -5294,6 +5351,12 @@ def run_single_backtest_worker(
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
     opening_range_session_open_hour_by_asset_class: dict | None = None,
+    # Issue #1096 (Katalog #929) Fix Punkt 1 — tournament.json['min_stop_to_cost_ratio'] (Default
+    # 3.0, derselbe Wert wie invariants.check_stop_cost_ratio), vom Orchestrator (run_backtest())
+    # EINMAL geladen und an jeden isolierten Worker-Prozess durchgereicht (dieselbe Konvention wie
+    # commission_bps/atr_floor_bps_by_asset_class oben — der Worker laedt tournament.json nicht
+    # selbst neu).
+    min_stop_to_cost_ratio: float = 3.0,
 ) -> dict:
     """
     Isolierter Worker-Prozess (1 Instrument × 1 Strategie).
@@ -5364,6 +5427,12 @@ def run_single_backtest_worker(
                 tick_floor_bps=_tick_floor_bps)
             atr_floor_bps_resolved = resolve_atr_floor_bps(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
+            # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe cost_coupled_atr_floor_bps-Docstring.
+            atr_floor_bps_resolved = cost_coupled_atr_floor_bps(
+                atr_floor_bps_resolved,
+                atr_trailing_multiplier=(strat.get("params") or {}).get("atr_trailing_multiplier"),
+                round_trip_cost_bps=float(spread_bps) + float(commission_bps),
+                min_stop_to_cost_ratio=float(min_stop_to_cost_ratio))
             opening_range_session_open_hour_resolved = resolve_opening_range_session_open_hour(
                 inst_id_str, opening_range_session_open_hour_by_asset_class, asset_class_key)
 
@@ -6129,6 +6198,8 @@ def run_backtest() -> None:
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                         opening_range_session_open_hour_by_asset_class=(
                             opening_range_session_open_hour_by_asset_class),
+                        min_stop_to_cost_ratio=float(
+                            tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
                     futures[future] = (inst_id_str, strat["strategy_class"], wlf)
                 else:
@@ -6141,6 +6212,8 @@ def run_backtest() -> None:
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                         opening_range_session_open_hour_by_asset_class=(
                             opening_range_session_open_hour_by_asset_class),
+                        min_stop_to_cost_ratio=float(
+                            tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
                     _flush_worker_log(wlf)
                     if result and result.get("metrics"):
@@ -6178,6 +6251,8 @@ def run_backtest() -> None:
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                         opening_range_session_open_hour_by_asset_class=(
                             opening_range_session_open_hour_by_asset_class),
+                        min_stop_to_cost_ratio=float(
+                            tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
                     break
                 except Exception as e:
@@ -6265,6 +6340,8 @@ def _run_remaining_sequentially(
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
     opening_range_session_open_hour_by_asset_class: dict | None = None,
+    # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe run_single_backtest_worker-Docstring.
+    min_stop_to_cost_ratio: float = 3.0,
 ) -> None:
     remaining = {
         f: v for f, v in futures.items()
@@ -6285,6 +6362,7 @@ def _run_remaining_sequentially(
             atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
             opening_range_session_open_hour_by_asset_class=(
                 opening_range_session_open_hour_by_asset_class),
+            min_stop_to_cost_ratio=min_stop_to_cost_ratio,
         )
         _flush_worker_log(rem_log)
         done_count += 1

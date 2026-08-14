@@ -911,6 +911,11 @@ def _study_record(proposal: dict, study,
         "dust_round_trips_filtered": sum(
             int(a.get("oos_expectancy_notional_degenerate_count") or 0) for a in trial_attrs),
         "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
+        # Issue #1095 (Katalog #928) — Median (über die Trials dieser Study) der je-Trial-Mediane
+        # der Bars zwischen Trailing-Stop-Signal und tatsaechlichem Markt-Close-Fill. Macht den in
+        # #1092/#1094 quantifizierten Fill-Verzoegerungs-Anteil auf Study-Ebene sichtbar.
+        "oos_stop_exit_lag_bars": _median_of_trial_field(
+            trial_attrs, "oos_stop_exit_lag_bars_median"),
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
         # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. None ⇒ kein Preflight in
@@ -1954,6 +1959,13 @@ def _build_report(
     all_checks.append(("global", _inv.check_stop_cost_ratio(
         studies_out, round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
         min_stop_to_cost_ratio=min_stop_to_cost_ratio)))
+
+    # Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer #1092/#1094: der Trailing-Stop darf
+    # nicht der haeufigste, verlustreichste UND teuerste Ausgang einer Study sein.
+    all_checks.append(("global", _inv.check_trailing_stop_loss_share(
+        studies_out,
+        max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
+        max_mean_loss_ratio=float(optimizer_cfg.get("trailing_stop_max_mean_loss_ratio", 1.25)))))
 
     # Issue #1068 — vorgezogen (war vorher erst bei check_diagnosis_ledger_coherence unten
     # gelesen): dieselbe Ledger-Zahl treibt seit #1084 zusätzlich check_champion_corroboration_

@@ -3032,6 +3032,10 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr("oos_atr_median_bps", metrics.oos_atr_median_bps)
         if metrics.oos_atr_min_bps is not None:
             trial.set_user_attr("oos_atr_min_bps", metrics.oos_atr_min_bps)
+        # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_stop_exit_lag_bars_median is not None:
+            trial.set_user_attr(
+                "oos_stop_exit_lag_bars_median", metrics.oos_stop_exit_lag_bars_median)
         # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als
         # Trial-User-Attr gestempelt: report._study_record hatte dadurch keine Eingangsgrösse für
         # eine study-weite Dust-Round-Trip-Quote (Rundungsartefakte mit Notional ~1e-13, siehe

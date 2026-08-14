@@ -2222,6 +2222,62 @@ def assert_invariant_scope_uncontaminated(study_records: list[dict]) -> None:
         )
 
 
+def check_trailing_stop_loss_share(
+    study_records: list[dict], *,
+    max_loss_share: float = 0.60, max_mean_loss_ratio: float = 1.25,
+) -> InvariantResult:
+    """Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer die #1092/#1094-Fixes: der
+    Trailing-Stop ist im Referenzlauf ueber 1.084.300 Round-Trips der HAEUFIGSTE (43,74 % aller
+    Ausgaenge), verlustreichste (Median-Verlustquote 83,6 % ueber 54 Studies) und teuerste
+    (mittlerer Verlust 2,26x des Durchschnitts aller Ausgaenge) Ausgang — die Signatur eines
+    Stops, der auf einem Docht ratscht statt eine Verlustobergrenze durchzusetzen (#1092), und
+    der bei fallender Volatilitaet degeneriert nachgibt statt zu ratschen (#1094).
+
+    FAIL (severity ``blocking``) je Study, wenn EINE der beiden Bedingungen verletzt ist:
+      1. ``n_trailing_stop_losses / n_trailing_stop_exits > max_loss_share`` (Default 0.60)
+      2. ``mean_loss_trailing_stop / mean_loss_all > max_mean_loss_ratio`` (Default 1.25)
+
+    Beide Schwellen sind ``optimizer.json``-Keys (``trailing_stop_max_loss_share``/
+    ``trailing_stop_max_mean_loss_ratio``, Pitfall #369 — zweiseitig dokumentiert). Studies ohne
+    Trailing-Stop-Exit-Telemetrie (Pre-#899-JSON, kein Trade) werden uebersprungen (fail-open auf
+    fehlender Evidenz)."""
+    offenders: dict[str, dict] = {}
+    for r in study_records:
+        label = f"{r.get('strategy')}/{r.get('symbol')}"
+        n_ts_exits = (r.get("exit_reason_histogram") or {}).get("TRAILING_STOP", 0)
+        n_ts_losses = r.get("oos_n_trailing_stop_losses")
+        if not n_ts_exits or n_ts_losses is None:
+            continue
+        loss_share = n_ts_losses / n_ts_exits
+        violation = {}
+        if loss_share > max_loss_share:
+            violation["loss_share"] = round(loss_share, 4)
+        mean_loss_ts = r.get("oos_gross_loss_mean_bps_trailing_stop")
+        mean_loss_all = r.get("oos_gross_loss_mean_bps")
+        if mean_loss_ts is not None and mean_loss_all:
+            mean_loss_ratio = mean_loss_ts / mean_loss_all
+            if mean_loss_ratio > max_mean_loss_ratio:
+                violation["mean_loss_ratio"] = round(mean_loss_ratio, 4)
+        if violation:
+            offenders[label] = {
+                "n_trailing_stop_exits": n_ts_exits, "n_trailing_stop_losses": n_ts_losses,
+                **violation,
+            }
+    passed = not offenders
+    return InvariantResult(
+        name="check_trailing_stop_loss_share",
+        passed=passed,
+        expected=(f"n_trailing_stop_losses/n_trailing_stop_exits <= {max_loss_share} UND "
+                  f"mean_loss_trailing_stop/mean_loss_all <= {max_mean_loss_ratio} je Study"),
+        actual=offenders or None,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"{len(offenders)} Study/Studies mit einer Trailing-Stop-Verlustquote/-groesse "
+                "ausserhalb der Kalibrierungsschwelle (#1092/#1094-Fehlerklasse: der Stop ratscht "
+                "auf einem Docht statt eine Verlustobergrenze durchzusetzen)."),
+    )
+
+
 def check_family_n_stability(
     frozen_by_symbol: dict[str, int], observed_by_symbol: dict[str, int], *,
     max_relative_gap: float = 0.05,
