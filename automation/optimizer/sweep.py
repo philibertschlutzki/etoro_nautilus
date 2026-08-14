@@ -1059,6 +1059,17 @@ def _family_n_from_proposals(proposals) -> dict[str, int]:
     Proposal die JSON lesen (``deflation_n_eligible`` liegt unter ``holdout.symbol``). Ein bereits
     geparstes Dict wird defensiv ebenfalls akzeptiert (Test-Pfad). Fehlt der Schlüssel (Kohorte < 2
     eligible ⇒ keine Deflation), trägt das Proposal 0 bei.
+
+    Issue #1102 (Katalog #935) — ``deflation_n_eligible`` ist eine ENGERE, seit #784/#822 veraltete
+    Grundgesamtheit (nur Trials, die ALLE Eligibilitäts-Gates bestanden) als die TATSÄCHLICH an
+    ``confirm.py`` für die DSR-Multiplizitätskorrektur durchgereichte Zahl (``deflation_n_family``,
+    ``oos_selection_statistic_available``, #822) — beide Zahlen liefen um Faktor 2,8–5,1 auseinander
+    (#1102-Symptom). ``report.py``'s ``cross_study['n_family']`` verwendet diese Funktion daher NICHT
+    mehr (dort ist ``n_family[symbol]`` seither die Summe der eigenen ``n_family_stage1``-Zerlegung,
+    inkl. der #1080-Rückfallbehandlung für eine Study mit 0 Holdout-Trades). Diese Funktion bleibt
+    NUR noch als Rückwärtskompat-/reine Telemetriequelle für das ``sweep_completed``-Event erhalten
+    (keine Promotions-/Gate-Wirkung) — für JEDE Entscheidungs- oder Report-Kennzahl ist
+    ``report._family_n_stages`` die massgebliche Quelle.
     """
     family_n: dict[str, int] = {}
     for _p in (proposals or []):

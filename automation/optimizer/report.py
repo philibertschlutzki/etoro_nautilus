@@ -10,9 +10,11 @@ Quellen zu GENAU EINER Datei ``data/optimizer/reports/run_<run_id>.json`` — de
 einzige Lese-Schritt einer künftigen Forensik-Sitzung.
 
 Wiederverwendung statt Doppel-Bau: ``manifest.git_commit``/``sha256_file`` für Provenienz,
-``sweep._family_n_from_proposals`` für die Cross-Study-Kennzahl, ``run_optimization.
-gradient_signal_arm``/``_sanitize``/``resolve_storage`` für die Study-Metriken/Storage-
-Auflösung, ``invariants.py`` (#743) für die mathematischen Regressionswächter.
+``run_optimization.gradient_signal_arm``/``_sanitize``/``resolve_storage`` für die
+Study-Metriken/Storage-Auflösung, ``invariants.py`` (#743) für die mathematischen
+Regressionswächter. Issue #1102 (Katalog #935) — die familienweite Cross-Study-Kennzahl
+(``cross_study['n_family']``) ist seither die Summe der eigenen ``_family_n_stages``-Zerlegung
+(EINE Quelle statt der vorher separat berechneten, veralteten ``sweep._family_n_from_proposals``).
 
 Zwei Aufrufpfade, EIN gemeinsamer Kern (``_build_report``), garantieren Determinismus:
   - ``generate_sweep_report`` — am Ende von ``sweep.main()``, mit den frisch geschriebenen
@@ -43,7 +45,7 @@ from automation.optimizer.run_optimization import (
     _constraint_violation_progress, compute_budget_execution, _best_completed_value,
 )
 from automation.optimizer.sweep import (
-    _family_n_from_proposals, load_symbol_universe, read_symbol_bar_quality_cache,
+    load_symbol_universe, read_symbol_bar_quality_cache,
 )
 from automation.optimizer import symbol_coverage as _symbol_coverage
 from automation.optimizer.trial_config import config_dir
@@ -2008,12 +2010,20 @@ def _build_report(
     _inv.assert_invariant_scope_uncontaminated(studies_out)
 
     n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
-    # Issue #1080 — einmal berechnet, wiederverwendet fuer die Invariante UNTEN und das
-    # cross_study['n_family']-Feld weiter unten (eine Kennzahl, eine Quelle). Issue #1091
-    # (Katalog #924) — dies bleibt die "observed_at_report_time"-Sicht (haengt davon ab, wie viele
-    # Proposals dieser Familie zum Lesezeitpunkt bereits existieren); check_n_family_partition
-    # unten bleibt bewusst auf DIESER Sicht (unveraendertes #1080-Verhalten).
-    _n_family_by_symbol = _family_n_from_proposals(filtered_proposals)
+    # Issue #1102 (Katalog #935) — Root-Cause: ``sweep._family_n_from_proposals`` summiert
+    # ``deflation_n_eligible`` (die ENGERE, seit #784/#822 veraltete Grundgesamtheit), waehrend
+    # ``n_family_stage1`` oben ``deflation_n_family`` (die #822-Grundgesamtheit
+    # ``oos_selection_statistic_available``, TATSAECHLICH an confirm.py fuer die DSR-Multiplizitaets-
+    # korrektur durchgereicht, samt der #1080-Rueckfall-Behandlung fuer eine Study mit 0
+    # Holdout-Trades) traegt — zwei UNABHAENGIG berechnete Zahlen fuer denselben Begriff liefen
+    # dadurch um Faktor 2,8-5,1 auseinander (ASML 622 vs. 1722), ``n_family`` war systematisch ZU
+    # KLEIN (Φ⁻¹(1-1/n) unterschaetzt SR*, begünstigt jede Promotion mit familienweiter Korrektur).
+    # GENAU EINE Quelle jetzt: ``n_family[symbol]`` ist die SUMME seiner eigenen
+    # ``n_family_stage1``-Zerlegung — tautologisch kohaerent mit ``check_n_family_partition``
+    # (seither ``severity='blocking'``, siehe dort) statt zwei parallel gepflegter Zaehlungen.
+    _n_family_by_symbol = {
+        symbol: sum(per_strategy.values()) for symbol, per_strategy in n_family_stage1.items()
+    }
     # Issue #1091 — die EINGEFRORENE, budget-basierte Sicht (siehe
     # sweep._family_n_frozen_from_studies-Docstring): jedes Proposal einer Symbol-Familie traegt
     # bereits denselben, symbolweit summierten Wert — daher hier MAX statt Summe je Symbol (eine

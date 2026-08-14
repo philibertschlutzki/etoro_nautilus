@@ -882,15 +882,25 @@ def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
 def check_n_family_partition(n_family: dict[str, int],
                              n_family_stage1: dict[str, dict[str, int]]) -> InvariantResult:
     """Issue #1080 (Katalog #866-2) — ``n_family[symbol]`` (die familienweite Multiple-Testing-
-    Multiplizität, ``sweep._family_n_from_proposals``) muss GENAU der Summe ihrer eigenen Zerlegung
-    entsprechen: ``n_family[symbol] == Σ n_family_stage1[symbol][*]`` (die N1-Zahl JEDER Strategie
-    auf diesem Symbol, #826). Eine Lücke beweist, dass mindestens eine Study aus der Summe fehlt —
-    im #866-Katalog: ``n_family['TSLA.ETORO'] = 467`` gegen ``Σ n_selection_statistic_available =
-    1619`` (die seit #822 vorgeschriebene Grundgesamtheit) — TrendPullbackStrategy fehlte
-    vollständig im ``n_family_stage1``-Block (#1080 Fix: ``report._family_n_stages`` fällt jetzt auf
+    Multiplizität) muss GENAU der Summe ihrer eigenen Zerlegung entsprechen: ``n_family[symbol] ==
+    Σ n_family_stage1[symbol][*]`` (die N1-Zahl JEDER Strategie auf diesem Symbol, #826). Eine
+    Lücke beweist, dass mindestens eine Study aus der Summe fehlt — im #866-Katalog:
+    ``n_family['TSLA.ETORO'] = 467`` gegen ``Σ n_selection_statistic_available = 1619`` (die seit
+    #822 vorgeschriebene Grundgesamtheit) — TrendPullbackStrategy fehlte vollständig im
+    ``n_family_stage1``-Block (#1080 Fix: ``report._family_n_stages`` fällt jetzt auf
     ``n_selection_statistic_available`` zurück, wenn ``n_family_stage1`` fehlt). Eine zu niedrig
     angesetzte Familien-Multiplizität unterschätzt Φ⁻¹(1−1/n) und begünstigt JEDE Promotions-
-    entscheidung mit familienweiter Korrektur."""
+    entscheidung mit familienweiter Korrektur.
+
+    Issue #1102 (Katalog #935) — Root-Cause der ZURÜCKKEHRENDEN Lücke (Faktor 2,8–5,1 trotz des
+    #1080-Fixes): ``n_family[symbol]`` wurde bis zu diesem Fix aus einer ZWEITEN, unabhängig
+    berechneten Funktion (``sweep._family_n_from_proposals``, ``deflation_n_eligible`` — eine
+    engere, seit #784/#822 veraltete Grundgesamtheit) gespeist, statt aus der Summe der eigenen
+    ``n_family_stage1``-Zerlegung. ``report.py`` leitet ``n_family[symbol]`` seither DIREKT aus
+    ``Σ n_family_stage1[symbol][*]`` ab — die Schranke ist damit eine TAUTOLOGIE (kann nur noch
+    durch eine künftige Regression verletzt werden, die die getrennte Berechnung wieder einführt),
+    ``severity`` steht deshalb jetzt auf ``blocking`` (vorher ``high`` hätte JEDEN Lauf blockiert,
+    solange die beiden Zahlen strukturell divergierten)."""
     symbols_with_data = {s for s in n_family if s in n_family_stage1}
     if not symbols_with_data:
         return InvariantResult(
@@ -898,6 +908,7 @@ def check_n_family_partition(n_family: dict[str, int],
             passed=True,
             expected="n_family[symbol] == Σ n_family_stage1[symbol][*]",
             actual=None,
+            severity="blocking",
             detail="Keine Symbole mit sowohl n_family als auch n_family_stage1 — nicht anwendbar.",
         )
     offenders: dict[str, dict[str, int]] = {}
@@ -912,11 +923,11 @@ def check_n_family_partition(n_family: dict[str, int],
         passed=passed,
         expected="n_family[symbol] == Σ n_family_stage1[symbol][*]",
         actual=offenders if offenders else None,
-        severity="high",
+        severity="blocking",
         detail=("OK" if passed else
                 f"{len(offenders)} Symbol(e) mit einer Lücke zwischen n_family und der Summe seiner "
                 f"eigenen Stage1-Zerlegung: {offenders} — mindestens eine Study fehlt in der Summe "
-                "(#1080)."),
+                "(#1080/#1102)."),
     )
 
 
@@ -2398,7 +2409,9 @@ def check_family_n_stability(
 ) -> InvariantResult:
     """Issue #1091 (Katalog #924) — vergleicht die EINGEFRORENE (budget-basierte,
     ``sweep._family_n_frozen_from_studies``) gegen die zur BERICHTSZEIT beobachtete
-    (``report._family_n_from_proposals``, #625) familienweite Multiplizität je Symbol.
+    (Issue #1102/Katalog #935 — seither ``report._family_n_stages``s eigene
+    ``n_family_stage1``-Summe, nicht mehr das separat berechnete, veraltete
+    ``sweep._family_n_from_proposals``) familienweite Multiplizität je Symbol.
 
     Root-Cause #1091: ``observed_at_report_time`` haengt davon ab, wie viele Proposals einer
     Symbol-Familie zum Lesezeitpunkt bereits exportiert wurden — ein Zwischenreport (Progress-
