@@ -20,7 +20,7 @@ import logging
 import math
 import statistics
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from automation.optimizer._contracts import MAX_BARS_IN_TRADE_HARD_CAP as _MAX_BARS_IN_TRADE_CAP
@@ -2177,6 +2177,11 @@ def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5
         passed=passed,
         expected=f"median(budget_executed_fraction) >= {min_median}",
         actual=round(median, 4),
+        # Issue #1089 (Katalog #922) Fix Punkt 3 — nach dem #1086-Kohorten-Fix ist ``study_records``
+        # bereits strukturell einlaeufig; ``n_studies`` macht die Grundgesamtheit hinter dem Median
+        # trotzdem NACHVOLLZIEHBAR (bit-identisch bleibendes ``actual`` fuer bestehende Konsumenten,
+        # siehe test_issue_770_budget_execution.py).
+        provenance={"n_studies": len(fractions)},
         detail=("OK" if passed else
                 f"median(budget_executed_fraction)={median:.4f} < {min_median} ueber "
                 f"{len(fractions)} Studies — ein grosser Teil des konfigurierten Suchbudgets wird "
@@ -2184,52 +2189,157 @@ def check_budget_execution(study_records: list[dict], *, min_median: float = 0.5
     )
 
 
+def assert_invariant_scope_uncontaminated(study_records: list[dict]) -> None:
+    """Issue #1088 (Katalog #921) — die vom Issue beschriebene ``invariants.run_all``-Vorab-Pruefung:
+    bricht MIT ``INVARIANT_SCOPE_CONTAMINATED`` ab, bevor irgendein ``check_*`` unten ein Urteil auf
+    ``study_records`` faellt, falls diese NACHWEISLICH mehr als eine ``run_id`` tragen.
+
+    Symptom #1088: ``check_sizing_identity_coherence``/``check_holding_time_cap`` FAILten auf
+    Fremd-Studies (Combo/ASML, DynBreakout/TSLA, ...) eines NVDA-Laufs — keine davon war eine
+    NVDA-Study. Root-Cause: Folge von #1086 (kontaminierter Report, siehe ``report._build_report``s
+    ``run_id``-Filter) — die Invariantensuite urteilte auf ``study_records``, die aus MEHREREN
+    Laeufen stammten, und ``n_checks`` skalierte entsprechend (319 bei 14 Studies, 1159 bei 56).
+
+    Der #1086-Fix ist bereits NOTWENDIG UND HINREICHEND (mit sauberer Kohorte enthaelt
+    ``studies_out`` automatisch nur die eigene ``run_id``) — dieser Guard ist die ZUSAETZLICHE
+    Sicherung fuer jeden Aufrufer, der ``study_records`` NICHT ueber ``report._build_report``s
+    Filter bezieht (z. B. ein zukuenftiger Direktaufruf der Invarianten-Suite). Jeder Record OHNE
+    ``run_id``-Feld (Legacy-Pfad, #1086-Zeitfenster-Fallback) wird ignoriert — fail-open auf
+    fehlender Evidenz, analog jedem anderen ``None``-Fall in diesem Modul; nur ZWEI VERSCHIEDENE,
+    tatsaechlich GESETZTE ``run_id``-Werte gelten als Kontamination."""
+    distinct_run_ids = sorted({
+        r.get("run_id") for r in study_records if r.get("run_id")
+    })
+    if len(distinct_run_ids) > 1:
+        offenders = [
+            f"{r.get('strategy')}/{r.get('symbol')}={r.get('run_id')}"
+            for r in study_records if r.get("run_id")
+        ]
+        raise RuntimeError(
+            f"[INVARIANT_SCOPE_CONTAMINATED] study_records tragen {len(distinct_run_ids)} "
+            f"verschiedene run_id-Werte ({distinct_run_ids!r}) — die Invarianten-Suite urteilt "
+            "NICHT auf einer vermischten Kohorte. Betroffene Studies: " + ", ".join(offenders)
+        )
+
+
 def check_report_cohort_coherence(
     study_records: list[dict], *, wallclock_s: float | None,
+    run_started_at_utc: str | None = None,
     tolerance_s: float = 300.0,
+    cohort_slack_s: float = 60.0,
 ) -> InvariantResult:
     """Issue #1023 (Katalog #866) Akzeptanzkriterium 2 — Regressionswaechter gegen eine erneute
-    Vermischung fremder Laeufe im Report (siehe ``report._build_report``s ``run_id``-Filter): fuer
-    JEDEN erzeugten Report muss gelten ``max(study_started_at_utc) − min(study_started_at_utc) <
-    wallclock_s`` (plus ``tolerance_s`` Slack fuer Preflight/Dispatch-Overhead vor der ersten und
-    Retention/Report-Schreibzeit nach der letzten Study) — eine Study, deren Startzeitstempel ausserhalb
-    der Sweep-Laufzeit selbst liegt, kann nicht Teil DIESES Laufs sein, unabhaengig davon, ob sie
-    einen ``run_id``-Stempel traegt (z. B. eine Uhr-Drift oder ein manuell verschobener Timestamp).
+    Vermischung fremder Laeufe im Report (siehe ``report._build_report``s ``run_id``-Filter).
 
-    ``study_records`` ist die bereits ``run_id``-gefilterte ``studies_out``-Liste (#1023 Fix Punkt
-    1) — diese Invariante ist die zweite, unabhaengige Verteidigungslinie GEGEN denselben
-    Fehlerklasse, nicht deren einzige."""
-    timestamps = []
+    Issue #1087 (Katalog #920) — Root-Cause der urspruenglichen Fassung: sie bildete NUR
+    ``max(study_started) − min(study_started)`` (die SPANNWEITE der Vereinigung) gegen
+    ``wallclock_s + tolerance_s``. Bei ueberlappenden gleichzeitigen Laeufen ist diese Spannweite
+    strukturell BLIND fuer eine Vorlaufkohorte: drei kontaminierte Referenzreports bestanden diesen
+    Check trotz Studies, die 2469–2757 s VOR dem Laufbeginn gestartet wurden, weil die Spannweite
+    der VEREINIGUNG bei ueberlappenden Laeufen zwangslaeufig kleiner bleibt als die Summe der
+    Einzel-Wallclocks. Zwei zusaetzliche, JE EINZELN blockierende Bedingungen schliessen die Luecke:
+
+        min(study_started_at_utc) >= run_started_at_utc - cohort_slack_s   (Default 60s)
+        max(study_ended_at_utc)   <= run_started_at_utc + wallclock_s + cohort_slack_s
+
+    ``actual`` traegt beide Offsets (``earliest_offset_s`` — positiv, wenn die frueheste Study VOR
+    dem Laufbeginn gestartet wurde; ``latest_overrun_s`` — positiv, wenn die letzte Study NACH dem
+    erwarteten Laufende endete) plus die Namen der verletzenden Studies. Die urspruengliche
+    Spannweiten-Bedingung bleibt als DRITTE Klausel erhalten (faengt z. B. eine Uhr-Drift, die keine
+    der beiden Randbedingungen einzeln verletzt).
+
+    ``study_records`` ist die bereits ``run_id``-gefilterte ``studies_out``-Liste (#1023/#1086 Fix)
+    — diese Invariante ist die zweite, unabhaengige Verteidigungslinie GEGEN dieselbe Fehlerklasse,
+    nicht deren einzige."""
+    started_timestamps: list[tuple[str, datetime]] = []
+    ended_timestamps: list[tuple[str, datetime]] = []
     for r in study_records:
-        raw = r.get("study_started_at_utc")
-        if not raw:
-            continue
+        label = f"{r.get('strategy')}/{r.get('symbol')}"
+        raw_started = r.get("study_started_at_utc")
+        if raw_started:
+            try:
+                started_timestamps.append((label, datetime.fromisoformat(raw_started)))
+            except (TypeError, ValueError):
+                pass
+        raw_ended = r.get("study_ended_at_utc")
+        if raw_ended:
+            try:
+                ended_timestamps.append((label, datetime.fromisoformat(raw_ended)))
+            except (TypeError, ValueError):
+                pass
+
+    run_started_dt: datetime | None = None
+    if run_started_at_utc:
         try:
-            timestamps.append(datetime.fromisoformat(raw))
+            run_started_dt = datetime.fromisoformat(run_started_at_utc)
         except (TypeError, ValueError):
-            continue
-    if len(timestamps) < 2 or wallclock_s is None or wallclock_s <= 0:
+            run_started_dt = None
+
+    violations: list[str] = []
+    violating_studies: list[str] = []
+    earliest_offset_s: float | None = None
+    latest_overrun_s: float | None = None
+
+    # Klausel 1 — kein Study-Start vor dem Laufbeginn (ueber cohort_slack_s hinaus).
+    if started_timestamps and run_started_dt is not None:
+        earliest_label, earliest_dt = min(started_timestamps, key=lambda t: t[1])
+        earliest_offset_s = round((run_started_dt - earliest_dt).total_seconds(), 1)
+        if earliest_offset_s > cohort_slack_s:
+            violations.append(
+                f"{earliest_label} startete {earliest_offset_s:.1f}s VOR dem Laufbeginn "
+                f"(> {cohort_slack_s:.0f}s Slack)")
+            violating_studies.append(earliest_label)
+
+    # Klausel 2 — kein Study-Ende nach dem erwarteten Laufende (ueber cohort_slack_s hinaus).
+    if ended_timestamps and run_started_dt is not None and wallclock_s is not None and wallclock_s > 0:
+        latest_label, latest_dt = max(ended_timestamps, key=lambda t: t[1])
+        expected_end_dt = run_started_dt + timedelta(seconds=wallclock_s)
+        latest_overrun_s = round((latest_dt - expected_end_dt).total_seconds(), 1)
+        if latest_overrun_s > cohort_slack_s:
+            violations.append(
+                f"{latest_label} endete {latest_overrun_s:.1f}s NACH dem erwarteten Laufende "
+                f"(> {cohort_slack_s:.0f}s Slack)")
+            if latest_label not in violating_studies:
+                violating_studies.append(latest_label)
+
+    # Klausel 3 (Alt-Bedingung) — Spannweite der Vereinigung gegen wallclock_s + tolerance_s.
+    span_s: float | None = None
+    if len(started_timestamps) >= 2 and wallclock_s is not None and wallclock_s > 0:
+        _dts = [t[1] for t in started_timestamps]
+        span_s = round((max(_dts) - min(_dts)).total_seconds(), 1)
+        budget_s = wallclock_s + tolerance_s
+        if span_s >= budget_s:
+            violations.append(
+                f"study_started_at_utc-Spannweite={span_s:.1f}s >= {budget_s:.1f}s")
+
+    if earliest_offset_s is None and latest_overrun_s is None and span_s is None:
         return InvariantResult(
             name="check_report_cohort_coherence",
             passed=True,
-            expected=f"< wallclock_s + {tolerance_s}s",
+            expected=(f"min(study_started) >= run_started - {cohort_slack_s:.0f}s UND "
+                      f"max(study_ended) <= run_started + wallclock_s + {cohort_slack_s:.0f}s UND "
+                      f"Spannweite < wallclock_s + {tolerance_s:.0f}s"),
             actual=None,
-            detail="Weniger als 2 Studies mit study_started_at_utc oder kein wallclock_s — nicht anwendbar.",
+            detail="Keine der drei Bedingungen anwendbar (fehlende Zeitstempel/wallclock_s/run_started_at_utc).",
             severity="blocking",
         )
-    span_s = (max(timestamps) - min(timestamps)).total_seconds()
-    budget_s = wallclock_s + tolerance_s
-    passed = span_s < budget_s
+    passed = not violations
+    # Issue #971 Fix Punkt 2 (Pitfall #303) — Herkunftspflicht fuer blockierende Invarianten:
+    # die Namen der verletzenden Studies muessen im selben Event mitgeliefert werden (#1087
+    # Akzeptanzkriterium 3), sonst ist ein FAIL aus der Telemetrie nicht nachrechenbar.
+    provenance = {"violating_studies": violating_studies} if violating_studies else None
     return InvariantResult(
         name="check_report_cohort_coherence",
         passed=passed,
-        expected=f"< {budget_s:.1f}s (wallclock_s={wallclock_s:.1f} + {tolerance_s:.0f}s Slack)",
-        actual=round(span_s, 1),
+        expected=(f"earliest_offset_s <= {cohort_slack_s:.0f}s UND latest_overrun_s <= "
+                  f"{cohort_slack_s:.0f}s UND span_s < wallclock_s + {tolerance_s:.0f}s"),
+        actual={"earliest_offset_s": earliest_offset_s, "latest_overrun_s": latest_overrun_s,
+                "span_s": span_s},
         detail=("OK" if passed else
-                f"study_started_at_utc-Spannweite={span_s:.1f}s >= {budget_s:.1f}s — mindestens "
-                "eine Study liegt ausserhalb der Sweep-Laufzeit (#1023-Fehlerklasse: Report enthaelt "
-                "Studies eines anderen Laufs)."),
+                "Mindestens eine Study liegt ausserhalb der Sweep-Laufzeit (#1023/#1087-"
+                "Fehlerklasse: Report enthaelt Studies eines anderen Laufs): " + "; ".join(violations)),
         severity="blocking",
+        provenance=provenance,
     )
 
 
@@ -2629,13 +2739,18 @@ def check_sizing_parity_backtest_vs_allocator(
 
 def check_worker_utilisation_plausible(
     worker_utilisation: float | None, *, max_ratio: float = 1.0,
+    n_studies: int | None = None,
 ) -> InvariantResult:
     """Issue #1038 (Katalog #866) — ``report._worker_utilisation`` (Σ Study-Wallclock / (n_jobs ×
     Sweep-Wallclock)) heisst "Auslastung", kann aber durch verschachtelte, studieneigene Worker-
-    Pools (``backtest_runner.py``) oder — vor #1023 — eingemischte Studies fremder Laeufe ueber
+    Pools (``backtest_runner.py``) oder — vor #1023/#1086 — eingemischte Studies fremder Laeufe ueber
     ``max_ratio`` (Default 1.0, physikalisch das Maximum einer echten Auslastung) hinaus wachsen.
     Beobachtet: 151,8 %/246,5 %/332,9 % ueber drei Laeufe. Ein Wert ueber der Schwelle ist ein FAIL,
-    keine unkommentierte Anzeigezahl."""
+    keine unkommentierte Anzeigezahl.
+
+    Issue #1089 (Katalog #922) Fix Punkt 3 — ``n_studies`` (die Kohortengrösse hinter der Σ Study-
+    Wallclock) optional als ``provenance`` mitgefuehrt, damit ein FAIL/PASS nach dem #1086-Fix
+    nachvollziehbar bleibt (bit-identisches ``actual`` fuer bestehende Konsumenten)."""
     if worker_utilisation is None:
         return InvariantResult(
             name="check_worker_utilisation_plausible",
@@ -2650,6 +2765,7 @@ def check_worker_utilisation_plausible(
         passed=passed,
         expected=f"<= {max_ratio}",
         actual=round(worker_utilisation, 4),
+        provenance={"n_studies": n_studies} if n_studies is not None else None,
         detail=("OK" if passed else
                 f"worker_utilisation={worker_utilisation:.4f} > {max_ratio} — Σ Study-Wallclock "
                 "ueberlappt sich (verschachtelte Worker-Pools und/oder eingemischte Studies eines "
@@ -2940,59 +3056,62 @@ def check_champion_writeback_reachability(champions_summary: dict) -> InvariantR
 
 
 def check_champion_corroboration_reachable(
-    champions_summary: dict, *, total_runs_started: int | None,
+    champions_summary: dict, *, total_runs_started: int | None = None,
+    runs_completed_for_pair: int | None = None,
     corroboration_threshold: int = 2,
 ) -> InvariantResult:
-    """Issue #1084 Fix Punkt 4 (Katalog #866-2, Kohorte E, Root-Cause b) — benennt den
-    TATSAECHLICHEN Blocker der Ebene-2-Kette (``champions.maybe_write_back``), statt ihn unter der
-    generischen ``check_champion_writeback_reachability``-Diagnose zu verstecken: Korroboration
-    verlangt ``lifecycle.corroboration_count >= champion_promote_after_runs`` (Default 2);
-    ``corroboration_count`` erhöht sich NUR bei einer NEUEN ``run_id`` (#821 — verschiedene Läufe,
-    nicht Schreibvorgänge innerhalb eines Laufs). Ein auf ``total_runs_started == 1``
-    zurückgesetztes Coverage-Ledger (#1064-Regression) kann diese Schwelle STRUKTURELL nie
-    erreichen, unabhängig davon, wie viele Champions gespeichert werden oder wie gut ihre Qualität
-    ist — Referenzlauf: 2 Einträge mit ``corroboration_count = 1`` gegen Schwelle 2, Ledger bei 1.
+    """Issue #1084 Fix Punkt 4 (Katalog #866-2, Kohorte E, Root-Cause b), gehärtet #1089 (Katalog
+    #922) — benennt den TATSAECHLICHEN Blocker der Ebene-2-Kette (``champions.maybe_write_back``):
+    Korroboration verlangt ``lifecycle.corroboration_count >= champion_promote_after_runs``
+    (Default 2); ``corroboration_count`` erhöht sich NUR bei einer NEUEN ``run_id`` (#821 —
+    verschiedene Läufe, nicht Schreibvorgänge innerhalb eines Laufs).
 
-    FAIL, wenn der HÖCHSTE beobachtete ``corroboration_count`` aller Store-Einträge UNTER der
-    Schwelle liegt UND ``total_runs_started == 1`` — beide Bedingungen zusammen, weil ein
-    niedriger ``max_corroboration_count`` allein auch schlicht "früh im normalen Zyklus" bedeuten
-    kann (z. B. Lauf 1 von vielen mit einem korrekt fortschreitenden Ledger); erst kombiniert mit
-    einem Ledger, das nie über Lauf 1 hinauskommt, ist es ein struktureller Deadlock statt eines
-    normalen Zwischenstands. PASST NACH dem #1064-Ledger-Fix, sobald ein zweiter Lauf gezählt wird
-    (``total_runs_started > 1``), auch wenn ``max_corroboration_count`` weiterhin unter der
-    Schwelle liegt (dann läuft die Korroboration einfach normal weiter).
+    Issue #1089 Root-Cause — die Alt-Fassung besass einen ODER-Ast
+    (``max_corroboration_count >= threshold ODER total_runs_started > 1``), der PASS meldete,
+    sobald ``symbol_coverage.json['total_runs_started']`` > 1 war. Dieser Zähler ist GLOBAL und
+    PROZESSÜBERGREIFEND inkrementiert (jeder gleichzeitige Sweep-Prozess, unabhängig von SEINEM
+    eigenen Symbol, erhöht ihn) — unter drei gleichzeitigen #1086-Läufen genügte je EIN fremder
+    Prozessstart, um diesen Check auf JEDEM der drei Reports fälschlich gruen zu faerben, obwohl
+    ``max_corroboration_count`` in allen vieren bei 1 verharrte (Referenzlauf: der GEFÄHRLICHSTE
+    der vier gekippten Checks — ein ehrliches FAIL wurde zu einem falschen PASS). Der ODER-Ast
+    entfällt ERSATZLOS: der Check prüft ausschliesslich ``max_corroboration_count >=
+    corroboration_threshold`` — ein Wert, der bereits korrekt PAAR- und RUN_ID-skopiert ist
+    (``champions._bump_corroboration`` zählt DISTINKTE ``run_id``-Werte je Paar, unabhängig von
+    Nebenprozessen auf ANDEREN Paaren/Symbolen). ``total_runs_started``/``runs_completed_for_pair``
+    werden nur noch als ``provenance`` mitgeführt (Diagnose-Kontext), OHNE jeden Einfluss auf
+    PASS/FAIL — der Check kann dadurch durch KEINEN Nebenprozess mehr grün werden.
 
     ``champions_summary`` ist ``report._champions_summary()``'s Dict (``max_corroboration_count``,
-    seit #1084). Kein Store-Eintrag ⇒ nicht anwendbar (PASS). ``total_runs_started=None``
-    (Ledger nicht lesbar/Legacy-Aufrufer) ⇒ nicht anwendbar (PASS, keine Deadlock-Aussage ohne
-    das Ledger)."""
+    seit #1084). Kein Store-Eintrag ⇒ nicht anwendbar (PASS)."""
     stored = int(champions_summary.get("stored") or 0)
     max_corr = champions_summary.get("max_corroboration_count")
-    if stored == 0 or max_corr is None or total_runs_started is None:
+    if stored == 0 or max_corr is None:
         return InvariantResult(
             name="check_champion_corroboration_reachable",
             passed=True,
-            expected=f"max(corroboration_count) >= {corroboration_threshold} ODER "
-                     "total_runs_started > 1",
+            expected=f"max(corroboration_count) >= {corroboration_threshold}",
             actual=None,
-            detail=("Kein Champion-Store-Eintrag oder kein lesbares Coverage-Ledger — nicht "
-                    "anwendbar."),
+            detail="Kein Champion-Store-Eintrag — nicht anwendbar.",
+            severity="high",
         )
-    deadlocked = max_corr < corroboration_threshold and total_runs_started == 1
-    passed = not deadlocked
+    passed = max_corr >= corroboration_threshold
     return InvariantResult(
         name="check_champion_corroboration_reachable",
         passed=passed,
-        expected=f"max(corroboration_count) >= {corroboration_threshold} ODER "
-                 "total_runs_started > 1",
-        actual={"max_corroboration_count": max_corr, "total_runs_started": total_runs_started,
+        expected=f"max(corroboration_count) >= {corroboration_threshold}",
+        actual={"max_corroboration_count": max_corr,
                "corroboration_threshold": corroboration_threshold},
         severity="high",
+        provenance={
+            # Issue #1089 — rein informativ, GEHT NICHT in die PASS/FAIL-Entscheidung ein (siehe
+            # Docstring): ein Nebenprozess kann diese Zahlen bewegen, ohne den Check zu bestehen.
+            "total_runs_started": total_runs_started,
+            "runs_completed_for_pair": runs_completed_for_pair,
+        },
         detail=("OK" if passed else
-                f"max(corroboration_count)={max_corr} < {corroboration_threshold} UND "
-                "symbol_coverage.total_runs_started == 1 — Ebene 2 (#706) ist strukturell "
-                "unerreichbar, solange das Coverage-Ledger nie über Lauf 1 hinauskommt "
-                "(#1064-Zusammenhang), unabhängig von jeder Champion-Qualität."),
+                f"max(corroboration_count)={max_corr} < {corroboration_threshold} — Ebene 2 "
+                "(#706) ist auf der EIGENEN Kohorte strukturell noch unerreichbar. Kein "
+                "globaler/Nebenprozess-Zähler kann diesen Befund mehr entkraeften (#1089)."),
     )
 
 

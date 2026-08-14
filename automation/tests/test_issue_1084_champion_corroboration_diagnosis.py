@@ -167,21 +167,30 @@ def test_writeback_reachability_legacy_dict_without_attempts_key_stays_backward_
          "skipped_by_reason": {}}).passed is True
 
 
-# ── invariants.check_champion_corroboration_reachable — Fix Punkt 4 ─────────────────────────────
+# ── invariants.check_champion_corroboration_reachable — Fix Punkt 4, gehärtet #1089 (Katalog #922)
+# Issue #1089 — der frühere ODER-Ast (``... ODER total_runs_started > 1``) machte den Check
+# fälschlich gruen, sobald IRGENDEIN gleichzeitiger Sweep-Prozess das globale, prozessübergreifende
+# Ledger anfasste — unabhängig vom eigenen Symbol/Paar. Der ODER-Ast ist ERSATZLOS entfallen; der
+# Check prüft seither ausschliesslich ``max_corroboration_count >= corroboration_threshold``.
+# ``total_runs_started`` wird nur noch als ``provenance`` mitgeführt (siehe unten), nicht mehr in
+# ``actual`` und OHNE jeden Einfluss auf PASS/FAIL.
 def test_corroboration_reachable_fails_on_the_866_2_reference_deadlock():
     result = inv.check_champion_corroboration_reachable(
         {"stored": 2, "max_corroboration_count": 1}, total_runs_started=1,
         corroboration_threshold=2)
     assert result.passed is False
     assert result.actual["max_corroboration_count"] == 1
-    assert result.actual["total_runs_started"] == 1
+    assert result.provenance["total_runs_started"] == 1
 
 
-def test_corroboration_reachable_passes_once_a_second_run_is_counted():
+def test_corroboration_reachable_still_fails_when_a_sibling_process_bumps_total_runs_started():
+    """Issue #1089 Akzeptanzkriterium — der Check kann durch KEINEN Nebenprozess mehr gruen
+    werden: ein gestiegenes (aber falsch-skopiertes) ``total_runs_started`` darf ein FAIL nicht
+    mehr in ein PASS kippen, solange ``max_corroboration_count`` selbst unter der Schwelle bleibt."""
     result = inv.check_champion_corroboration_reachable(
-        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=2,
+        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=4,
         corroboration_threshold=2)
-    assert result.passed is True
+    assert result.passed is False
 
 
 def test_corroboration_reachable_passes_when_threshold_already_met():
@@ -191,8 +200,14 @@ def test_corroboration_reachable_passes_when_threshold_already_met():
     assert result.passed is True
 
 
-def test_corroboration_reachable_not_applicable_without_store_or_ledger():
+def test_corroboration_reachable_not_applicable_without_store():
     assert inv.check_champion_corroboration_reachable(
         {"stored": 0, "max_corroboration_count": None}, total_runs_started=1).passed is True
-    assert inv.check_champion_corroboration_reachable(
-        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=None).passed is True
+
+
+def test_corroboration_reachable_evaluates_even_without_a_readable_ledger():
+    """Issue #1089 — ``total_runs_started=None`` (Ledger nicht lesbar) ist seit dem Fix KEIN
+    Grund mehr, die Entscheidung auszusetzen: das Ledger ist nicht mehr Teil der Entscheidung."""
+    result = inv.check_champion_corroboration_reachable(
+        {"stored": 2, "max_corroboration_count": 1}, total_runs_started=None)
+    assert result.passed is False

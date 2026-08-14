@@ -1729,23 +1729,80 @@ def _build_report(
         study = _load_study_for_proposal(proposal)
         _study_attrs = getattr(study, "user_attrs", None) or {} if study is not None else {}
         _study_started_raw = _study_attrs.get("study_started_at_utc")
-        is_foreign_run = False
-        if _study_started_raw and _run_started_dt is not None:
-            try:
-                _study_started_dt = datetime.fromisoformat(_study_started_raw)
-                is_foreign_run = (
-                    (_run_started_dt - _study_started_dt).total_seconds() > _foreign_run_tolerance_s)
-            except (TypeError, ValueError):
-                is_foreign_run = False
+        study_trials = list(getattr(study, "trials", None) or [])
+        study_name = getattr(study, "study_name", None)
+
+        # Issue #1086 (Katalog #919) — PRIMAERER Kohorten-Filter: der ``run_id``-Stempel, den
+        # ``make_symbol_objective`` seit #1015 auf JEDEN Trial schreibt (sofern ``run_id``
+        # gesetzt wurde — der Normalfall seit #1015 fuer jeden ``sweep.run_per_symbol_sweep``-
+        # Lauf), macht die Zugehoerigkeit einer Study zu DIESEM Lauf direkt nachweisbar, statt sie
+        # ueber die STARTZEIT zu erraten. Root-Cause #1086: mehrere gleichzeitig laufende Sweeps
+        # (je ein Prozess pro ``--symbols``) teilen sich denselben ``{WORK}/sweep/``-Optuna-Store;
+        # ``generate_report_for_run`` (Abbruch-/Standalone-Pfad) entdeckt ALLE ``proposal_*.json``
+        # in ``WORK``, unabhaengig davon, welcher Prozess sie geschrieben hat. Die Zeitfenster-
+        # Heuristik aus #1023 (unten) allein reicht nicht: bei ueberlappenden Laeufen liegt die
+        # fremde Study-Startzeit oft INNERHALB der Toleranz des eigenen Laufs.
+        _own_run_trials = [
+            t for t in study_trials
+            if (getattr(t, "user_attrs", None) or {}).get("run_id") == run_id
+        ]
+        _foreign_run_trials = [
+            t for t in study_trials
+            if (getattr(t, "user_attrs", None) or {}).get("run_id") not in (None, run_id)
+        ]
+        _has_run_id_evidence = bool(_own_run_trials or _foreign_run_trials)
+
+        if _own_run_trials and _foreign_run_trials:
+            # Issue #1086 — eine Study, die SOWOHL Trials dieses Laufs ALS AUCH Trials eines
+            # anderen ``run_id`` traegt, wurde nachweislich von mindestens zwei Laeufen
+            # GLEICHZEITIG angefasst (die #1086-Lock-Datei in ``sweep.py`` verhindert genau das
+            # fuer kuenftige Laeufe) — eine studienweite Aggregation (n_trials_completed,
+            # Guard-Statistiken, ...) kann in diesem Zustand keinem der beiden Laeufe sauber
+            # zugeordnet werden. Fail-loud statt eines Urteils auf vermischter Evidenz.
+            _foreign_ids = sorted({
+                (getattr(t, "user_attrs", None) or {}).get("run_id") for t in _foreign_run_trials
+            })
+            raise RuntimeError(
+                f"[REPORT_COHORT_UNRESOLVABLE] Study '{study_name}' ({proposal.get('strategy')}/"
+                f"{proposal.get('symbol')}) traegt sowohl Trials von run_id={run_id!r} als auch "
+                f"von {_foreign_ids!r} — Kohorte nicht auflösbar (vermutlich gleichzeitiger "
+                "Zugriff zweier Sweep-Prozesse auf denselben Store ohne Lock-Datei, #1086)."
+            )
+
+        if _has_run_id_evidence:
+            is_foreign_run = not _own_run_trials
+        else:
+            # Issue #1023 (Katalog #866) — sekundaere, NACHGELAGERTE Pruefung: nur noch relevant,
+            # wenn KEIN Trial dieser Study ueberhaupt einen ``run_id``-Stempel traegt (Legacy-
+            # Study vor #1015, oder ein Aufrufer, der ``run_id=None`` an ``make_symbol_objective``
+            # uebergeben hat). Kriterium: ``study_started_at_utc`` (von ``_optimize_symbol_impl``
+            # VOR jedem ``study.optimize`` gestempelt, #851) muss innerhalb der Sweep-Laufzeit
+            # dieses Laufs liegen. Fehlt ``study_started_at_utc`` oder der Lauf-``started_at_utc``
+            # selbst, wird NICHT ausgeschlossen (fail-open auf fehlender Evidenz).
+            is_foreign_run = False
+            if _study_started_raw and _run_started_dt is not None:
+                try:
+                    _study_started_dt = datetime.fromisoformat(_study_started_raw)
+                    is_foreign_run = (
+                        (_run_started_dt - _study_started_dt).total_seconds()
+                        > _foreign_run_tolerance_s)
+                except (TypeError, ValueError):
+                    is_foreign_run = False
+
         if is_foreign_run:
-            study_trials = list(getattr(study, "trials", None) or [])
+            _run_id_found = None
+            if _foreign_run_trials:
+                _run_id_found = (getattr(_foreign_run_trials[0], "user_attrs", None) or {}).get(
+                    "run_id")
             studies_excluded_foreign_run.append({
+                "study_name": study_name,
                 "strategy": proposal.get("strategy"),
                 "symbol": proposal.get("symbol"),
+                "run_id_found": _run_id_found,
                 "study_started_at_utc": _study_started_raw,
                 "run_started_at_utc": started_at_utc,
                 "n_trials_total_study": len(study_trials),
-                "reason": "study_started_before_this_run",
+                "reason": "run_id_mismatch" if _run_id_found else "study_started_before_this_run",
             })
             continue
         record, checks = _study_record(
@@ -1755,6 +1812,10 @@ def _build_report(
             symbol_bar_quality_cache=_symbol_bar_quality_cache, run_id=run_id)
         # Issue #1028 (Katalog #866) — Rohmaterial für invariants.check_sizing_identity_coherence.
         record["trade_amount_pct"] = _trade_amount_pct_map.get(record.get("strategy"))
+        # Issue #1088 (Katalog #921) — nur gestempelt, wenn TATSAECHLICH ein Trial dieser Study den
+        # run_id-Nachweis traegt (der Legacy-/Zeitfenster-Fallback-Pfad ohne Nachweis bleibt
+        # None — fail-open, siehe ``assert_invariant_scope_uncontaminated``-Docstring).
+        record["run_id"] = run_id if _own_run_trials else None
         studies_out.append(record)
         filtered_proposals.append(proposal)
         study_label = f"{record['strategy']}/{record['symbol']}"
@@ -1771,6 +1832,12 @@ def _build_report(
             "referenzierten Studies wurden VOR dem Laufbeginn dieses Sweeps gestartet (fremder Lauf) "
             "— kein Report geschrieben statt eines Berichts ueber eine fremde Kohorte."
         )
+
+    # Issue #1088 (Katalog #921) — Sicherung VOR jedem einzelnen ``check_*`` unten: der #1086-Fix
+    # oben macht ``studies_out`` bereits strukturell einlaeufig, dieser Guard bricht trotzdem hart
+    # ab, statt (durch einen kuenftigen Aufrufer/Refactor) je ein Urteil auf einer vermischten
+    # Kohorte zu faellen.
+    _inv.assert_invariant_scope_uncontaminated(studies_out)
 
     n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
     # Issue #1080 — einmal berechnet, wiederverwendet fuer die Invariante UNTEN und das
@@ -1790,15 +1857,19 @@ def _build_report(
     all_checks.append(("global", budget_check))
 
     # Issue #1023 (Katalog #866) Akzeptanzkriterium 2 — zweite, unabhaengige Verteidigungslinie
-    # gegen fremde Studies im Report (siehe der run_id-Filter oben).
-    all_checks.append(("global", _inv.check_report_cohort_coherence(studies_out, wallclock_s=wallclock_s)))
+    # gegen fremde Studies im Report (siehe der run_id-Filter oben). Issue #1087 (Katalog #920) —
+    # ``run_started_at_utc`` durchgereicht, damit die offset-basierten Klauseln (statt nur der
+    # blinden Spannweiten-Klausel) auswertbar sind.
+    all_checks.append(("global", _inv.check_report_cohort_coherence(
+        studies_out, wallclock_s=wallclock_s, run_started_at_utc=started_at_utc)))
 
     # Issue #1038 (Katalog #866) — vorab berechnet (statt erst im Report-Dict unten), damit die
     # Invariante denselben Wert prueft, der auch angezeigt wird (eine Kennzahl, eine Quelle).
     _worker_utilisation_value = _worker_utilisation(
         studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s)
     all_checks.append((
-        "global", _inv.check_worker_utilisation_plausible(_worker_utilisation_value)))
+        "global", _inv.check_worker_utilisation_plausible(
+            _worker_utilisation_value, n_studies=len(studies_out))))
 
     # Issue #1031 (Katalog #866) — Kohaerenz zwischen expectancy und expectancy_capital_weighted.
     all_checks.append(("global", _inv.check_expectancy_definition_coherence(studies_out)))
@@ -1875,9 +1946,12 @@ def _build_report(
     all_checks.append(("global", champion_writeback_check))
 
     # Issue #1084 Fix Punkt 4 — sechzehnter Invarianten-Check: der Korroborations-Deadlock
-    # (Ebene 2 verlangt corroboration_count >= champion_promote_after_runs, das Ledger steht aber
-    # bei total_runs_started == 1) wird benannt, statt als generische "unerreichbar"-Diagnose
-    # unter check_champion_writeback_reachability zu verschwinden.
+    # (Ebene 2 verlangt corroboration_count >= champion_promote_after_runs) wird benannt, statt
+    # als generische "unerreichbar"-Diagnose unter check_champion_writeback_reachability zu
+    # verschwinden. Issue #1089 (Katalog #922) — ``total_runs_started`` (das globale, prozess-
+    # übergreifende Ledger) geht seit diesem Fix NUR NOCH als Provenance ein, nicht mehr in die
+    # PASS/FAIL-Entscheidung (siehe Docstring — der frühere ODER-Ast machte den Check unter
+    # gleichzeitigen Sweep-Prozessen faelschlich gruen).
     champion_corroboration_check = _inv.check_champion_corroboration_reachable(
         champions_summary, total_runs_started=_diagnosis_ledger_total_runs_started,
         corroboration_threshold=int(optimizer_cfg.get("champion_promote_after_runs", 2)))

@@ -13,6 +13,7 @@ import argparse
 import collections
 import json
 import logging
+import os
 import statistics
 import time
 from pathlib import Path
@@ -1439,6 +1440,76 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
                     strategy, symbol, exc_info=True)
 
 
+def _sweep_run_lock_path() -> Path:
+    """Issue #1086 (Katalog #919) — dieselbe ``{WORK}/sweep/``-Study-Store-Wurzel wie
+    ``run_optimization.resolve_storage``, siehe dort."""
+    return WORK / "sweep" / ".run.lock"
+
+
+def _acquire_sweep_run_lock(run_id: str) -> None:
+    """Verhindert, dass zwei UNABHAENGIGE Sweep-Prozesse (verschiedene ``run_id``) gleichzeitig
+    denselben ``{WORK}/sweep/``-Optuna-Store beschreiben. Root-Cause #1086: genau dieser Zustand
+    (drei zwischen 15:45 und 15:51 gestartete ``--symbols``-Prozesse gegen denselben Store) fuehrte
+    dazu, dass jeder Prozess im eigenen Report auch die Studies der ANDEREN Prozesse sah, sobald
+    einer der Prozesse ueber ``generate_report_for_run`` (Abbruch-/Standalone-Pfad) ALLE
+    ``proposal_*.json`` unter ``WORK`` entdeckte.
+
+    Ein Lauf mit DEMSELBEN ``run_id`` (der #799-Resume-Pfad) erneuert die Lock-Datei, statt sich
+    selbst auszusperren. Ein toter Halter (Prozess nicht mehr am Leben, ``os.kill(pid, 0)`` schlaegt
+    mit ``ProcessLookupError`` fehl) gilt als verwaist und wird uebernommen, statt den Store nach
+    einem Absturz dauerhaft zu blockieren."""
+    lock_path = _sweep_run_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.exists():
+        try:
+            holder = json.loads(lock_path.read_text("utf-8"))
+        except (OSError, ValueError):
+            holder = {}
+        holder_run_id = holder.get("run_id")
+        holder_pid = holder.get("pid")
+        if holder_run_id and holder_run_id != run_id:
+            holder_alive = True
+            if isinstance(holder_pid, int):
+                try:
+                    os.kill(holder_pid, 0)
+                except ProcessLookupError:
+                    holder_alive = False
+                except OSError:
+                    holder_alive = True
+            if holder_alive:
+                raise RuntimeError(
+                    "[SWEEP_CONCURRENT_RUN_DETECTED] "
+                    f"{lock_path} gehoert run_id={holder_run_id!r} (pid={holder_pid}) — ein "
+                    f"zweiter Sweep-Prozess (run_id={run_id!r}) darf denselben {{WORK}}/sweep/-"
+                    "Store nicht gleichzeitig beschreiben (Issue #1086). Starte den zweiten Lauf "
+                    "mit einem eigenen --work-dir (empfohlen), oder warte, bis der laufende Sweep "
+                    "abgeschlossen ist."
+                )
+            logging.getLogger("optimizer").warning(
+                "[#1086] Verwaiste Sweep-Lock-Datei von run_id=%s (pid=%s, Prozess nicht mehr "
+                "am Leben) fuer run_id=%s uebernommen.", holder_run_id, holder_pid, run_id,
+            )
+    write_json_atomic(lock_path, {
+        "run_id": run_id, "pid": os.getpid(),
+        "acquired_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+    })
+
+
+def _release_sweep_run_lock(run_id: str) -> None:
+    """Gibt die #1086-Lock-Datei frei, sofern sie noch DIESEM ``run_id`` gehoert — ein inzwischen
+    von einem anderen (Resume-)Lauf uebernommenes Lock wird NICHT vom vorherigen Halter geloescht."""
+    lock_path = _sweep_run_lock_path()
+    try:
+        holder = json.loads(lock_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return
+    if holder.get("run_id") == run_id:
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+
+
 def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None,
                          *, tier: str = "deployable", n_jobs: int = 1,
                          n_jobs_source: str = "DEFAULT",
@@ -1957,6 +2028,13 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # test_issue_799_per_symbol_transaction.py) UND nuetzlich fuer einen HI-7-Dry-Run.
     if run_id is None:
         run_id = default_run_id()
+
+    # Issue #1086 (Katalog #919) — Lock gegen einen zweiten, gleichzeitigen Sweep-Prozess auf
+    # demselben ``{WORK}/sweep/``-Store (siehe ``_acquire_sweep_run_lock``-Docstring). Nur im
+    # echten Storage-Pfad (analog jedem anderen Preflight-Guard oben) — injizierte HI-7-Fakes
+    # beruehren keine SQLite-Datei und brauchen keinen Store-Lock.
+    if using_real_optimize:
+        _acquire_sweep_run_lock(run_id)
 
     # Issue #892 Fix Punkt 5 — ein Symbol, dessen Paare AUSSCHLIESSLICH an Gate 1 scheiterten (kein
     # einziges 'OK'-Paar in pairs_by_symbol), wird im Coverage-Ledger als 'covered_gate1' markiert
@@ -2774,6 +2852,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     mins, secs = divmod(int(wallclock_s), 60)
     print(f"✅ Sweep fertig: {len(pairs)} Paare, {n_strats} Strategien × {n_syms} Symbole, "
           f"n_jobs={n_jobs} ({n_jobs_source}), Gesamtlaufzeit {mins}m{secs:02d}s.")
+    # Issue #1086 (Katalog #919) — Lock-Freigabe am regulaeren Laufende. Der Abbruchpfad
+    # (Exception/SIGINT aus dieser Funktion) wird von ``main()``s ``finally``-Block abgedeckt.
+    if using_real_optimize:
+        _release_sweep_run_lock(run_id)
     return proposals
 
 
@@ -3019,6 +3101,12 @@ def main(argv: list[str] | None = None) -> list[Path]:
             "den bislang exportierten Proposals.", exc_info=True)
     finally:
         _signal.signal(_signal.SIGTERM, _prior_sigterm_handler)
+        # Issue #1086 (Katalog #919) — Sicherheitsnetz fuer den Abbruchpfad: bricht
+        # ``run_per_symbol_sweep`` per Exception/SIGINT MITTEN im Lauf ab, erreicht es seine
+        # eigene Lock-Freigabe (kurz vor ``return proposals``) nicht mehr. Idempotent (prueft den
+        # ``run_id``-Besitz), also unschaedlich, falls die Lock-Datei bereits regulaer freigegeben
+        # wurde oder nie erworben wurde (Fake-Pfad in Tests).
+        _release_sweep_run_lock(run_id)
 
     for p in proposals:
         print(p)
