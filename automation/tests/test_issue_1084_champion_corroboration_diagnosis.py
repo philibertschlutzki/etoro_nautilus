@@ -80,10 +80,14 @@ def _entry(strategy, symbol, *, corroboration_count=1, writeback_applied=False,
 # ── champions.load_champion_entry_with_reason — STORE_EMPTY vs NO_ENTRY_FOR_PAIR (Fix Punkt 2) ──
 def test_store_empty_when_no_pair_anywhere_has_an_entry(tmp_path, monkeypatch):
     _isolate(monkeypatch, tmp_path)
-    entry, reason = champions.load_champion_entry_with_reason(
+    entry, reason, provenance = champions.load_champion_entry_with_reason(
         "DonchianRegimeBreakoutStrategy", "TSLA.ETORO", opt_data=OPT_DATA)
     assert entry is None
     assert reason == "STORE_EMPTY"
+    # Issue #1103 (Katalog #936) — Provenienz auch fuer STORE_EMPTY gesetzt.
+    assert provenance["looked_up_key"] == "champion_DonchianRegimeBreakoutStrategy_TSLA_ETORO.json"
+    assert provenance["available_keys"] == []
+    assert provenance["available_keys_total"] == 0
 
 
 def test_no_entry_for_pair_when_other_pairs_have_entries(tmp_path, monkeypatch):
@@ -91,10 +95,14 @@ def test_no_entry_for_pair_when_other_pairs_have_entries(tmp_path, monkeypatch):
     champions._write_entry(
         tmp_path / "champions" / "champion_Rsi2ReversionStrategy_TSLA_ETORO.json",
         _entry("Rsi2ReversionStrategy", "TSLA.ETORO"))
-    entry, reason = champions.load_champion_entry_with_reason(
+    entry, reason, provenance = champions.load_champion_entry_with_reason(
         "DonchianRegimeBreakoutStrategy", "TSLA.ETORO", opt_data=OPT_DATA)
     assert entry is None
     assert reason == "NO_ENTRY_FOR_PAIR"
+    # Issue #1103 (Katalog #936) — der gesuchte Schluessel UND die tatsaechlich existierenden.
+    assert provenance["looked_up_key"] == "champion_DonchianRegimeBreakoutStrategy_TSLA_ETORO.json"
+    assert provenance["available_keys"] == ["champion_Rsi2ReversionStrategy_TSLA_ETORO.json"]
+    assert provenance["available_keys_total"] == 1
 
 
 # ── report._champions_summary(studies_out=...) — attempts statt Store-Eintraege (Fix Punkt 1/3) ──

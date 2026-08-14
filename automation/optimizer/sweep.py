@@ -1452,12 +1452,16 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
         # Code, z. B. 'EMPTY_PARAMS'/'REJECT_HOLDOUT_GATE') — vorher trugen beide Fälle denselben
         # 'NO_ADMISSIBLE_ENTRY'-String, und der Report konnte nicht sagen, ob die Kette nie startet
         # oder ständig scheitert.
-        entry, _no_entry_reason = champions.load_champion_entry_with_reason(
+        entry, _no_entry_reason, _no_entry_provenance = champions.load_champion_entry_with_reason(
             strategy, symbol, opt_data=opt_data)
         applied = False
         skipped_reason = _no_entry_reason or "STORE_EMPTY"
         advance_days = None
         corroboration_count = None
+        # Issue #1103 (Katalog #936) — WELCHER Store-Schlüssel gesucht wurde und welche tatsächlich
+        # existieren (``champions._no_entry_provenance``), NUR gesetzt fuer STORE_EMPTY/
+        # NO_ENTRY_FOR_PAIR (der Verdacht auf einen Schlüssel-Mismatch, seit #1084 offen).
+        skipped_provenance = _no_entry_provenance if entry is None else None
         if entry is not None:
             lifecycle = entry.get("lifecycle") or {}
             integrity = entry.get("integrity") or {}
@@ -1478,6 +1482,10 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
             "advance_days": advance_days,
             "applied": applied,
             "skipped_reason": None if applied else skipped_reason,
+            # Issue #1103 (Katalog #936) — {looked_up_key, available_keys, available_keys_total},
+            # NUR bei skipped_reason in {STORE_EMPTY, NO_ENTRY_FOR_PAIR} (siehe
+            # champions._no_entry_provenance-Docstring); None sonst (kein Lookup-Fehlschlag).
+            "skipped_provenance": None if applied else skipped_provenance,
         })
     except Exception:
         log.warning("[#818] %s/%s: Champion-Writeback fehlgeschlagen (non-fatal).",

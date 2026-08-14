@@ -1502,7 +1502,7 @@ def _champions_summary(opt_data: dict, studies_out: list[dict[str, Any]] | None 
                 continue
             pairs_seen.add((strategy, symbol))
             try:
-                entry, reason = _champions_mod.load_champion_entry_with_reason(
+                entry, reason, _no_entry_provenance = _champions_mod.load_champion_entry_with_reason(
                     strategy, symbol, opt_data=opt_data)
             except Exception:
                 skipped_by_reason["ADMISSIBILITY_CHECK_ERROR"] += 1
