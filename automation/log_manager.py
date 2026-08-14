@@ -161,13 +161,24 @@ class StructuredFormatter(logging.Formatter):
 
 def default_run_id() -> str:
     """Issue #740 — Default-``run_id`` für einen Einzel-Lauf (Sweep/Optimizer):
-    ``f"{git_commit()}_{timestamp}"``. Wiederverwendet ``manifest.git_commit()`` (Provenienz-
-    Primitive) statt eine zweite Git-Abfrage zu implementieren. Lazy-Import, damit ``log_manager``
-    (ein generisches, von ``automation.optimizer`` UNABHÄNGIGES Basismodul) nicht am Modul-Top-Level
-    von ``automation.optimizer`` abhängt."""
-    from automation.optimizer.manifest import git_commit
+    ``f"{token}_{timestamp}"``.
+
+    Issue #1104 (Katalog #937) — Root-Cause: der ``run_id``-Präfix war bislang ``git_commit()``,
+    zum LAUFSTART gelesen. Ein Report, der NACHTRÄGLICH (``--report-only``,
+    ``generate_report_for_run``) auf einem NEUEREN Checkout regeneriert wird, liest ``git_commit()``
+    zur BERICHTSZEIT erneut — die beiden Lesungen können auseinanderlaufen (Referenzsymptom:
+    ``run_3910e12b_…json`` trägt ``run_id``-Präfix ``3910e12b``, aber ``git_commit = 'b48024c4'``),
+    ohne dass aus dem Artefakt selbst hervorging, WELCHE der beiden Lesungen den ``run_id``-Präfix
+    stellte. ``run_id`` ist seither ein kollisionsfreier Zufallstoken (8 Hex-Zeichen aus
+    ``uuid.uuid4()``, dieselbe Länge wie ein Git-Short-Hash, aber OHNE jeden Commit-Bezug) — die
+    Simulations-/Report-Commit-Provenienz lebt seither EXPLIZIT in zwei eigenen Feldern
+    (``run_optimization.py``'s Study-User-Attr ``git_commit_simulation`` /
+    ``report.py``'s ``git_commit_report``, verglichen von ``invariants.check_commit_coherence``),
+    nicht mehr implizit und mehrdeutig im ``run_id``-Präfix."""
+    import uuid
+    token = uuid.uuid4().hex[:8]
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    return f"{git_commit()}_{ts}"
+    return f"{token}_{ts}"
 
 
 def setup_bot_logging(

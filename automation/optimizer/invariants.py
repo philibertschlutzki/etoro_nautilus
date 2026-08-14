@@ -2507,6 +2507,52 @@ def check_event_stream_completeness(
     )
 
 
+def check_commit_coherence(
+    git_commit_simulation: str | None, git_commit_report: str | None,
+) -> InvariantResult:
+    """Issue #1104 (Katalog #937) — ``git_commit_simulation`` (der Commit, auf dem die TRIALS
+    tatsächlich liefen, vor dem ersten Trial jeder Study gestempelt, siehe run_optimization.py)
+    muss mit ``git_commit_report`` (der Commit, auf dem DIESER Report gebaut wurde, zur
+    Berichtszeit gelesen) übereinstimmen.
+
+    Root-Cause #1104: eine EINZIGE ``git_commit()``-Lesung zur Berichtszeit trug bislang beide
+    Bedeutungen unter demselben Feldnamen — ein Report, der NACHTRÄGLICH (``--report-only``,
+    ``generate_report_for_run``) auf einem NEUEREN Checkout regeneriert wird, hatte dadurch einen
+    ``git_commit``, der NICHT dem Commit entsprach, der die Trials tatsächlich erzeugt hat
+    (Referenzsymptom: ``run_3910e12b_…json`` mit ``run_id``-Präfix ``3910e12b``, aber
+    ``git_commit = 'b48024c4'``) — die ``invariant_checks`` DIESES Reports werden dann gegen eine
+    ANDERE Codeversion ausgewertet als die, die die Trials produzierte, ohne dass das Artefakt
+    selbst diese Diskrepanz auswies.
+
+    FAIL (severity ``high`` — Provenienz-/Nachvollziehbarkeitswächter, kein Promotion-Gate), wenn
+    BEIDE Commits bekannt sind UND divergieren. ``git_commit_simulation is None`` (Legacy-Study vor
+    #1104, trug den Stempel noch nicht) ⇒ ``inconclusive=True`` (kein Urteil ohne
+    Vergleichsgrundlage, kein stiller FAIL)."""
+    if git_commit_simulation is None or git_commit_report is None:
+        return InvariantResult(
+            name="check_commit_coherence",
+            passed=True, inconclusive=True,
+            expected="git_commit_simulation == git_commit_report",
+            actual=None, severity="high",
+            detail="git_commit_simulation fehlt (Legacy-Study vor #1104) — kein Urteil ohne "
+                   "Vergleichsgrundlage.",
+        )
+    passed = git_commit_simulation == git_commit_report
+    return InvariantResult(
+        name="check_commit_coherence",
+        passed=passed,
+        expected="git_commit_simulation == git_commit_report",
+        actual={"git_commit_simulation": git_commit_simulation,
+               "git_commit_report": git_commit_report},
+        severity="high",
+        detail=("OK" if passed else
+                f"git_commit_simulation ({git_commit_simulation}) != git_commit_report "
+                f"({git_commit_report}) — dieser Report wurde auf einer ANDEREN Codeversion "
+                "gebaut als die, die die Trials simulierte (#1104-Fehlerklasse: nachträgliche "
+                "Regenerierung auf einem neueren Checkout)."),
+    )
+
+
 def check_report_cohort_coherence(
     study_records: list[dict], *, wallclock_s: float | None,
     run_started_at_utc: str | None = None,

@@ -20,7 +20,7 @@ from pathlib import Path
 # Rueckmeldung, vgl. Issue #401) bleiben bewusst erhalten (KEIN globales set_verbosity(ERROR),
 # um die Observability aus Issue #403 nicht zu untergraben).
 warnings.filterwarnings("ignore", category=optuna.exceptions.ExperimentalWarning)
-from automation.optimizer.manifest import WORK, catalog_fingerprint
+from automation.optimizer.manifest import WORK, catalog_fingerprint, git_commit
 from automation.optimizer.spaces import sample_params
 from automation.optimizer.trial_config import build_trial, config_dir, freeze_study_config, resolve_wf_settings
 from automation.optimizer.runner import run_backtest, BacktestRunError
@@ -3473,6 +3473,14 @@ def _optimize_symbol_impl(strategy: str, symbol: str, n_trials: int | None = Non
     import datetime as _dt851
     study.set_user_attr("study_started_at_utc", _dt851.datetime.now(_dt851.timezone.utc).isoformat())
     study.set_user_attr("worker_id", threading.get_ident())
+    # Issue #1104 (Katalog #937) — der Commit, auf dem die SIMULATION tatsaechlich lief, gestempelt
+    # VOR dem ersten Trial (derselbe Zeitpunkt wie study_started_at_utc) — im Gegensatz zum
+    # REPORT-Commit (report.py's git_commit_report, zur Berichtszeit gelesen), der bei einer
+    # nachtraeglichen Report-Regenerierung (--report-only, generate_report_for_run) auf einem
+    # NEUEREN Checkout laufen kann. Root-Cause #1104: eine EINZIGE git_commit()-Lesung zur
+    # Berichtszeit vermischte beide Zeitpunkte unter demselben Feldnamen — ein Report ueber einen
+    # aelteren Lauf trug dadurch stillschweigend den REPORT-, nicht den SIMULATIONS-Commit.
+    study.set_user_attr("git_commit_simulation", git_commit())
 
     # Issue #410 — Reward-Semantik-Version pruefen/stempeln (Study-Hygiene gegen alte Floor-Trials).
     _check_reward_semantics_version(study, opt_data)

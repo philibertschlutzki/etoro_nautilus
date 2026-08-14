@@ -918,6 +918,10 @@ def _study_record(proposal: dict, study,
         "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
         "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
         "worker_id": study_user_attrs.get("worker_id"),
+        # Issue #1104 (Katalog #937) — der Commit, auf dem DIESE Study tatsaechlich simuliert
+        # wurde (gestempelt vor dem ersten Trial, siehe run_optimization.py), unabhaengig vom
+        # REPORT-Commit (report._build_report's top-level git_commit_report).
+        "git_commit_simulation": study_user_attrs.get("git_commit_simulation"),
         # Issue #1091 (Katalog #924) — die vor dem ersten Trial dieses Symbols eingefrorene
         # familienweite Multiplizitaet (siehe sweep._family_n_frozen_from_studies); identisch
         # ueber jede Study derselben Symbol-Familie und ueber jeden Lesezeitpunkt.
@@ -2009,6 +2013,18 @@ def _build_report(
     # Kohorte zu faellen.
     _inv.assert_invariant_scope_uncontaminated(studies_out)
 
+    # Issue #1104 (Katalog #937) — der Commit, auf dem die STUDIES DIESES Laufs tatsaechlich
+    # simuliert wurden (vor dem ersten Trial jeder Study gestempelt, siehe run_optimization.py),
+    # reduziert auf EINEN Report-weiten Wert: der erste beobachtete nicht-None-Wert (alle Studies
+    # eines Laufs laufen unter demselben Checkout). ``None`` ohne jede Study mit dem #1104-Stempel
+    # (Legacy-Studies). Einmal berechnet, wiederverwendet fuer die Invariante hier UND das
+    # ``git_commit_simulation``-Feld im Report-Dict weiter unten (eine Kennzahl, eine Quelle).
+    _git_commit_simulation = next(
+        (r.get("git_commit_simulation") for r in studies_out if r.get("git_commit_simulation")),
+        None,
+    )
+    all_checks.append(("global", _inv.check_commit_coherence(_git_commit_simulation, git_commit())))
+
     n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
     # Issue #1102 (Katalog #935) — Root-Cause: ``sweep._family_n_from_proposals`` summiert
     # ``deflation_n_eligible`` (die ENGERE, seit #784/#822 veraltete Grundgesamtheit), waehrend
@@ -2390,7 +2406,14 @@ def _build_report(
     report = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
         "run_id": run_id,
-        "git_commit": git_commit(),
+        # Issue #1104 (Katalog #937) — GETRENNTE Felder statt des vorherigen mehrdeutigen
+        # ``git_commit``: ``git_commit_simulation`` (wann die TRIALS liefen) vs.
+        # ``git_commit_report`` (wann DIESER Report gebaut wurde) — ein nachtraeglich regenerierter
+        # Report macht die Divergenz jetzt explizit sichtbar/pruefbar
+        # (``invariants.check_commit_coherence``), statt sie unter einem einzigen Feldnamen zu
+        # verstecken.
+        "git_commit_simulation": _git_commit_simulation,
+        "git_commit_report": git_commit(),
         "reward_semantics_version": optimizer_cfg.get("reward_semantics_version"),
         # Issue #802 — Bibliotheksversionen (pandas allen voran) in der Provenienz, damit ein Lauf
         # im Nachhinein einer Installationsumgebung zuordenbar ist.
