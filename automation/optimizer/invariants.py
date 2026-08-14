@@ -2222,6 +2222,47 @@ def assert_invariant_scope_uncontaminated(study_records: list[dict]) -> None:
         )
 
 
+def check_family_n_stability(
+    frozen_by_symbol: dict[str, int], observed_by_symbol: dict[str, int], *,
+    max_relative_gap: float = 0.05,
+) -> InvariantResult:
+    """Issue #1091 (Katalog #924) — vergleicht die EINGEFRORENE (budget-basierte,
+    ``sweep._family_n_frozen_from_studies``) gegen die zur BERICHTSZEIT beobachtete
+    (``report._family_n_from_proposals``, #625) familienweite Multiplizität je Symbol.
+
+    Root-Cause #1091: ``observed_at_report_time`` haengt davon ab, wie viele Proposals einer
+    Symbol-Familie zum Lesezeitpunkt bereits exportiert wurden — ein Zwischenreport (Progress-
+    Probe, Fail-Fast-Probe, #1083) sieht strukturell eine TEILMENGE und meldet eine kleinere Zahl
+    als der finale Report derselben Familie. ``frozen`` ist ab Symbol-Dispatch-Beginn bekannt und
+    bit-identisch ueber jeden Lesezeitpunkt.
+
+    FAIL (severity ``high``, reine Diagnose — kein Promotion-Gate), wenn fuer irgendein Symbol
+    ``|frozen - observed| / max(frozen, 1) > max_relative_gap`` (Default 5 %) — der Report ist
+    dann entweder ein Zwischenstand (harmlos, ``report_source != 'final'``) ODER die #1091-
+    Kohorten-Luecke ist zurueckgekehrt."""
+    offenders: dict[str, dict] = {}
+    for symbol, frozen in frozen_by_symbol.items():
+        observed = observed_by_symbol.get(symbol)
+        if observed is None or frozen <= 0:
+            continue
+        gap = abs(frozen - observed) / max(frozen, 1)
+        if gap > max_relative_gap:
+            offenders[symbol] = {"frozen": frozen, "observed_at_report_time": observed,
+                                 "relative_gap": round(gap, 4)}
+    passed = not offenders
+    return InvariantResult(
+        name="check_family_n_stability",
+        passed=passed,
+        expected=f"|frozen - observed_at_report_time| / frozen <= {max_relative_gap}",
+        actual=offenders or None,
+        severity="high",
+        detail=("OK" if passed else
+                f"{len(offenders)} Symbol(e) mit > {max_relative_gap:.0%} Abweichung zwischen "
+                "eingefrorener und beobachteter Familien-Multiplizitaet — Zwischenreport oder "
+                "#1091-Kohorten-Luecke."),
+    )
+
+
 def check_report_cohort_coherence(
     study_records: list[dict], *, wallclock_s: float | None,
     run_started_at_utc: str | None = None,

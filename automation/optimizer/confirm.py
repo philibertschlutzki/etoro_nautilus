@@ -2132,6 +2132,14 @@ def export_symbol_proposal(study, strategy: str, symbol: str, promotion: dict) -
         # Issue #993 — durchgereicht fuer die Deployment-Grenze (deployment_gate.py); siehe
         # confirm_per_symbol_promotion's ``data_snapshot_sha256``.
         "data_snapshot_sha256": promotion.get("data_snapshot_sha256"),
+        # Issue #1091 (Katalog #924) — die VOR dem ersten Trial dieses Symbols aus dem geplanten
+        # Budget eingefrorene familienweite Multiplizitaet (siehe ``sweep._family_n_frozen_from_
+        # studies``/``study.user_attrs['deflation_n_family_frozen']``). Anders als
+        # ``deflation_n_eligible`` (unten, im ``holdout``-Block) haengt dieser Wert NICHT davon ab,
+        # wie viele Studies dieses Symbols zum Lesezeitpunkt bereits ihr Proposal exportiert haben
+        # — jede Study derselben Symbol-Familie traegt DENSELBEN, bereits symbolweit summierten Wert.
+        "deflation_n_family_frozen": (getattr(study, "user_attrs", None) or {}).get(
+            "deflation_n_family_frozen"),
         "holdout": {
             "symbol": promotion["metrics_symbol"],
             "global": promotion["metrics_global"],

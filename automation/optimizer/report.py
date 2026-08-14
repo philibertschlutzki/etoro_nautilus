@@ -817,6 +817,10 @@ def _study_record(proposal: dict, study,
         "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
         "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
         "worker_id": study_user_attrs.get("worker_id"),
+        # Issue #1091 (Katalog #924) — die vor dem ersten Trial dieses Symbols eingefrorene
+        # familienweite Multiplizitaet (siehe sweep._family_n_frozen_from_studies); identisch
+        # ueber jede Study derselben Symbol-Familie und ueber jeden Lesezeitpunkt.
+        "deflation_n_family_frozen": study_user_attrs.get("deflation_n_family_frozen"),
         # Issue #770 — Budget-Ausfuehrungsgrad als erstklassige Study-Kennzahl.
         "n_trials_budgeted": budget_execution["n_trials_budgeted"],
         "n_trials_completed": budget_execution["n_trials_completed"],
@@ -1841,8 +1845,22 @@ def _build_report(
 
     n_family_stage1, n_family_stage2 = _family_n_stages(studies_out)
     # Issue #1080 — einmal berechnet, wiederverwendet fuer die Invariante UNTEN und das
-    # cross_study['n_family']-Feld weiter unten (eine Kennzahl, eine Quelle).
+    # cross_study['n_family']-Feld weiter unten (eine Kennzahl, eine Quelle). Issue #1091
+    # (Katalog #924) — dies bleibt die "observed_at_report_time"-Sicht (haengt davon ab, wie viele
+    # Proposals dieser Familie zum Lesezeitpunkt bereits existieren); check_n_family_partition
+    # unten bleibt bewusst auf DIESER Sicht (unveraendertes #1080-Verhalten).
     _n_family_by_symbol = _family_n_from_proposals(filtered_proposals)
+    # Issue #1091 — die EINGEFRORENE, budget-basierte Sicht (siehe
+    # sweep._family_n_frozen_from_studies-Docstring): jedes Proposal einer Symbol-Familie traegt
+    # bereits denselben, symbolweit summierten Wert — daher hier MAX statt Summe je Symbol (eine
+    # fehlende Study liefert 0 Beitrag, keine doppelte Zaehlung durch mehrere Proposals).
+    _n_family_frozen_by_symbol: dict[str, int] = {}
+    for _p in filtered_proposals:
+        _frozen = _p.get("deflation_n_family_frozen")
+        _sym = _p.get("symbol")
+        if _sym and isinstance(_frozen, (int, float)) and not isinstance(_frozen, bool):
+            _n_family_frozen_by_symbol[_sym] = max(
+                _n_family_frozen_by_symbol.get(_sym, 0), int(_frozen))
 
     registry_check = _inv.check_config_key_registry(tournament_cfg)
     all_checks.append(("global", registry_check))
@@ -1850,6 +1868,12 @@ def _build_report(
     # Issue #1080 (Katalog #866-2) — n_family[symbol] muss exakt der Summe seiner eigenen
     # Stage1-Zerlegung entsprechen; eine Luecke beweist, dass mindestens eine Study fehlt.
     all_checks.append(("global", _inv.check_n_family_partition(_n_family_by_symbol, n_family_stage1)))
+
+    # Issue #1091 (Katalog #924) — neue Invariante: weicht die eingefrorene von der zur
+    # Berichtszeit beobachteten Zahl um mehr als 5 % ab, ist die Berichtskohorte unvollstaendig
+    # (ein Zwischenreport, oder eine erneute #1086-Kontamination).
+    all_checks.append((
+        "global", _inv.check_family_n_stability(_n_family_frozen_by_symbol, _n_family_by_symbol)))
 
     # Issue #770 — sweep-weite Budget-Ausfuehrungs-Invariante (siebter Check, siehe #743/#773).
     min_median_budget_execution = float(optimizer_cfg.get("min_median_budget_execution", 0.5))
@@ -2171,7 +2195,15 @@ def _build_report(
         # hier mit Grund gelistet — sichtbar statt verschwunden.
         "studies_excluded_foreign_run": studies_excluded_foreign_run,
         "cross_study": {
-            "n_family": _n_family_by_symbol,
+            # Issue #1091 (Katalog #924) — {frozen, observed_at_report_time} statt eines nackten
+            # int je Symbol: "frozen" (budget-basiert, siehe sweep._family_n_frozen_from_studies)
+            # ist ueber mehrere Reports DESSELBEN Laufs bit-identisch; "observed_at_report_time"
+            # (die Alt-Zahl, #625) bleibt als Diagnose-Telemetrie erhalten — check_family_n_
+            # stability (invariants.py) vergleicht beide.
+            "n_family": {
+                "frozen": _n_family_frozen_by_symbol,
+                "observed_at_report_time": _n_family_by_symbol,
+            },
             # Issue #770 — Budget-Ausfuehrungsgrad-Verteilung ueber alle Studies (Median + p10, wie
             # im Katalog gefordert: die 44,2%/52,6%-Luecken dieses Katalogs waren nur ueber externe
             # Log-Rekonstruktion sichtbar).

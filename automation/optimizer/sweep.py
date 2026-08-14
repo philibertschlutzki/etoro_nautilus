@@ -1187,6 +1187,39 @@ def _family_n_per_study_from_studies(pairs, studies, *, tournament_cfg: dict | N
     return per_study, symbol_fingerprints
 
 
+def _family_n_frozen_from_studies(pairs, studies) -> dict[str, int]:
+    """Issue #1091 (Katalog #924) — die familienweite Multiplizitaet, EINGEFROREN aus dem
+    GEPLANTEN Budget (``study.user_attrs['n_trials_budget']``, von ``_optimize_symbol_impl`` VOR
+    dem ersten Trial dieser Study gestempelt, #929 Fix 3), nicht aus tatsaechlich gezogenen/
+    eligiblen Trials.
+
+    Root-Cause #1091: ``report._family_n_from_proposals`` summiert ``deflation_n_eligible`` ueber
+    die BEREITS EXPORTIERTEN Proposals eines Symbols — ein Report, der VOR Abschluss ALLER
+    Strategien-Studies dieses Symbols gebaut wird (Zwischenreport/Fail-Fast-Probe, #1083), sieht
+    zwangslaeufig nur eine TEILMENGE und meldet eine kleinere Zahl als ein spaeterer Report
+    derselben Familie (280 → 321 → 434 ueber drei 18/67-Sekunden auseinanderliegende Lesungen,
+    #1091-Symptom). ``n_trials_budget`` ist dagegen ab Study-ERSTELLUNG bekannt (JEDE Study dieses
+    Symbols traegt ihn unabhaengig von den Geschwister-Strategien) — die Summe ist bit-identisch,
+    egal ob sie vor, waehrend oder nach den Trials gelesen wird.
+
+    ``pairs``/``studies`` sind wie bei ``_family_n_from_studies`` index-parallel; fehlt
+    ``n_trials_budget`` auf einer Study (Legacy/Test-Study ohne den Stempel), faellt NUR DIESE
+    Study auf ihre tatsaechliche Trial-Zahl zurueck (fail-open, keine Unterzaehlung durch eine
+    fehlende Legacy-Study)."""
+    family_n: dict[str, int] = {}
+    for (_strategy, symbol, _reason), study in zip(pairs, studies):
+        if study is None:
+            continue
+        attrs = getattr(study, "user_attrs", None) or {}
+        budget = attrs.get("n_trials_budget")
+        if isinstance(budget, (int, float)) and not isinstance(budget, bool):
+            n = int(budget)
+        else:
+            n = len(getattr(study, "trials", None) or [])
+        family_n[symbol] = family_n.get(symbol, 0) + n
+    return family_n
+
+
 def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
                                   ) -> dict[tuple[str, str], int]:
     """Issue #826 Fix Punkt 1/2 — N1: die Multiple-Testing-Multiplizität EINER EINZELNEN Study
@@ -2503,6 +2536,22 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
             symbol_n_family_stage1 = _family_n_stage1_from_studies(
                 symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
+            # Issue #1091 (Katalog #924) — die budget-basierte, EINGEFRORENE Symbol-Multiplizität:
+            # bit-identisch, unabhängig davon, wie viele Proposals dieser Familie zum Lesezeitpunkt
+            # bereits existieren (siehe _family_n_frozen_from_studies-Docstring). Auf JEDE Study
+            # dieses Symbols gestempelt, damit auch ein spaeter unabhaengig (SQLite-Neuladen,
+            # generate_report_for_run) gelesenes Proposal denselben Wert traegt.
+            symbol_n_family_frozen = _family_n_frozen_from_studies(symbol_pairs, symbol_studies)
+            for _study in symbol_studies:
+                if _study is None:
+                    continue
+                try:
+                    _study.set_user_attr(
+                        "deflation_n_family_frozen", symbol_n_family_frozen.get(symbol, 0))
+                except Exception:
+                    logging.getLogger("optimizer").debug(
+                        "[#1091] %s: deflation_n_family_frozen-Stempel fehlgeschlagen (non-fatal).",
+                        symbol, exc_info=True)
 
             _proposals_before_this_symbol = len(proposals)
             for pair, study in zip(symbol_pairs, symbol_studies):
