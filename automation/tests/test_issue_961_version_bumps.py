@@ -21,8 +21,11 @@ def test_reward_semantics_version_is_23():
 
 
 def test_simulation_semantics_version_is_4():
+    """Issue #952/#1118 (Katalog #960) bumpte weiter auf 5 (siehe
+    test_issue_952_1118_simulation_version_bump.py) — dieser Test prueft weiterhin, dass v4 NICHT
+    UNTERSCHRITTEN wird (die #961-Bump-Historie bleibt gueltig), nicht mehr die exakte Gleichheit."""
     cfg = _load_optimizer_cfg()
-    assert cfg["simulation_semantics_version"] == 4
+    assert cfg["simulation_semantics_version"] >= 4
 
 
 def test_reward_schema_v22_names_its_actual_triggers():

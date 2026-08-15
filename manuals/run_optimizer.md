@@ -183,6 +183,64 @@ print("Proposal:", path)
 > **SQLite + Parallelität:** Bei `n_jobs > 4` gegen die lokale SQLite-DB drohen `database is locked`-Fehler. Für echte Parallelität auf eine PostgreSQL-`STORAGE`-URL wechseln (Abschnitt 9, Eintrag *database is locked*).
 > **Core-Budgetierung:** Jeder Trial startet selbst einen Backtest mit internem ProcessPool (bis `cpu//2` Worker). Halte `parallele_Trials × interne_Worker ≤ Kerne`, sonst überbuchst du die CPU.
 
+### 5.4 Paralleler Mehr-Symbol-Betrieb (`automation.optimizer.sweep`)
+
+Der produktive Einstieg für einen vollen Lauf ist **nicht** die Python-API aus 5.1–5.3, sondern die
+CLI in `automation/optimizer/sweep.py` (Ansatz 4, „Per-symbol micro-tuning sweep"):
+
+```bash
+python -m automation.optimizer.sweep --strategies all --symbols TSLA.ETORO --tier deployable
+```
+
+**Der Lock ist store-weit, nicht je Symbol (Issue #944/#1110).** `sweep.py` schützt genau EINEN
+Study-Store (`{OPTIMIZER_WORK_DIR}/sweep/`) mit genau EINER Lock-Datei
+(`{OPTIMIZER_WORK_DIR}/sweep/.run.lock`) gegen zwei gleichzeitige, unabhängige Sweep-Prozesse. Ein
+zweiter Prozess gegen **denselben** Store bricht mit `SWEEP_CONCURRENT_RUN_DETECTED` ab — auch dann,
+wenn er ein anderes Symbol optimiert. Diese Doku widersprach dem Code bis #1110: sie beschrieb
+fälschlich eine „Lock-Datei je Symbol" und lud damit zu genau dem Fehler ein, der zu einer
+Kohortenmischung dreier gleichzeitiger Läufe auf einem Store führte (#1086, siehe AGENTS.md
+Pitfall #382).
+
+**Nebenläufigkeit ist trotzdem wirtschaftlich sinnvoll, wenn sie isoliert läuft.** Ein Referenzlauf
+mit drei gleichzeitigen Ein-Symbol-Sweeps (`n_jobs=22` auf 24 Kernen je Prozess) erreichte 77,5 %
+aggregierte CPU-Auslastung und lieferte drei Symbole in ~50 Minuten statt sequenziell ~123 Minuten.
+Das Rezept dafür:
+
+1. **Je Symbol ein eigenes `OPTIMIZER_WORK_DIR`.** `manifest.WORK` wird beim Prozessstart aus dieser
+   Umgebungsvariable gelesen (Default `data/optimizer/`, falls nicht gesetzt) — sie muss deshalb
+   **vor** dem Start jedes Prozesses gesetzt sein, nicht nachträglich per CLI-Flag:
+
+   ```bash
+   OPTIMIZER_WORK_DIR=/data/optimizer_tsla python -m automation.optimizer.sweep \
+       --strategies all --symbols TSLA.ETORO --n-jobs 7 &
+   OPTIMIZER_WORK_DIR=/data/optimizer_nvda python -m automation.optimizer.sweep \
+       --strategies all --symbols NVDA.ETORO --n-jobs 7 &
+   OPTIMIZER_WORK_DIR=/data/optimizer_pltr python -m automation.optimizer.sweep \
+       --strategies all --symbols PLTR.ETORO --n-jobs 7 &
+   wait
+   ```
+
+   Jeder Prozess bekommt seinen eigenen Store, seinen eigenen Lock und — entscheidend für #1086 —
+   seine eigene, `run_id`-reine Kohorte im Report; die drei Reports werden danach getrennt
+   eingesammelt (kein gemeinsamer Report über alle drei Symbole).
+
+2. **`--n-jobs` explizit auf die Kernzahl je parallelem Sweep herunterrechnen.** Der Default
+   (`DEFAULT_CPU_MINUS_2`, `max(1, cpu_count() - 2)`, siehe `sweep.py`) ist auf einen **Alleinlauf**
+   kalibriert. Bei `n_parallel_sweeps` gleichzeitigen Prozessen auf einem Host:
+
+   ```bash
+   --n-jobs $((host_cpu / n_parallel_sweeps))
+   ```
+
+   Eine moderate Überzeichnung (Referenzlauf: Faktor 2,75×, `n_jobs=22` × 3 Prozesse auf 24 Kernen)
+   ist tolerierbar und war im Referenzlauf sogar durchsatzsteigernd — vollständig vermeiden lässt sie
+   sich nur mit dem exakten Bruch, der bei ungerader Kernzahl/Prozessanzahl ohnehin abrundet.
+
+3. **Reports getrennt einsammeln.** `python -m automation.optimizer.sweep --report-only RUN_ID`
+   (mit dem jeweiligen `--run-id`/`OPTIMIZER_WORK_DIR`-Paar) rekonstruiert den Report je Lauf aus den
+   bereits geschriebenen `proposal_*.json` — **nicht** über alle drei `OPTIMIZER_WORK_DIR` hinweg
+   gemeinsam aufrufen.
+
 ---
 
 ## 6. Was während des Laufs entsteht
@@ -401,6 +459,7 @@ def objective(trial):
 | `json.JSONDecodeError` | `parse_tournament` / Config-Reads | Trial bricht ab. | Betroffene JSON-Datei validieren (oft halb geschriebene `tournament_result.json` nach hartem Subprozess-Abbruch — dann ist der eigentliche Fehler upstream im Backtest). |
 | **Ganze Study stoppt beim ersten Fehler** | `study.optimize` ohne `catch=` | Optuna-Default. | Trial-Isolation aus 9.2 (`catch=(Exception,)` oder in-objective `try/except`). |
 | `command not found: python` / läuft mit falschem Interpreter | `run_backtest` (bare `python`) | Subprozess startet nicht/falsch → leeres Output → `FileNotFoundError`. | `python` im `PATH` auf den Projekt-Interpreter zeigen lassen oder Aufruf in `runner.py` auf `sys.executable` umstellen. |
+| `RuntimeError: [SWEEP_CONCURRENT_RUN_DETECTED]` | `sweep._acquire_sweep_run_lock` | Zweiter Sweep-Prozess gegen denselben `{OPTIMIZER_WORK_DIR}/sweep/`-Store abgewiesen (store-weiter Lock, Issue #944/#1110/#1086). | Für parallelen Mehr-Symbol-Betrieb je Symbol ein eigenes `OPTIMIZER_WORK_DIR` setzen (Abschnitt 5.4), sonst warten, bis der laufende Sweep fertig ist. |
 
 ### 9.4 Diagnose-Reihenfolge bei einem fehlgeschlagenen Trial
 

@@ -338,6 +338,13 @@ class HourlyStrategyBase(Strategy):
         # Position; Rohmaterial fuer die ATR_median/ATR_min-Exit-Telemetrie, die dem schliessenden
         # Markt-Close-Order als Tag mitgegeben wird (siehe _execute_market_close).
         self._position_atr_bps_readings: list[float] = []
+        # Issue #953/#1119 (Katalog #960) — je-Bar Bar-Spannen-Ablesungen ((high-low)/close, bps)
+        # waehrend der laufenden Position; Rohmaterial fuer die BAR_RANGE_MEDIAN_BPS-Exit-
+        # Telemetrie. Root-Cause-Hypothese #1119: der Stop ist ein Bar-Schluss-Signal (kein echter
+        # StopMarketOrder, #1092B), der Fill erfolgt fruehestens auf der FOLGE-Bar — der realisierte
+        # Verlust kann dadurch strukturell an die Bar-Spanne gebunden sein, unabhaengig von der
+        # konfigurierten Stopdistanz. Diese Serie macht das MESSBAR statt vermutet.
+        self._position_bar_range_bps_readings: list[float] = []
 
         self._profit_target_pct = getattr(config, "profit_target_pct", None)
         self._daily_trades: int = 0
@@ -772,6 +779,15 @@ class HourlyStrategyBase(Strategy):
                 self._effective_atr_value(self._exit_atr.value, close) / close * 10_000.0
             )
 
+        # Issue #953/#1119 (Katalog #960) — Bar-Spannen-Telemetrie je Bar (bps des Schlusskurses),
+        # Rohmaterial fuer den BAR_RANGE_MEDIAN_BPS-Tag des schliessenden Orders. Anders als die
+        # ATR-Ablesung oben (haengt an ``_exit_atr.initialized``) direkt aus ``bar.high``/
+        # ``bar.low`` — keine Indikator-Historie noetig, jede Bar traegt ihre eigene Spanne.
+        if close > 0:
+            self._position_bar_range_bps_readings.append(
+                (float(bar.high) - float(bar.low)) / close * 10_000.0
+            )
+
         # Update trailing stop.
         # Issue #1094 (Katalog #927) — REVIDIERT #897s Verzicht auf die Ratsche im "price_extreme"-
         # Zweig: beide Anker-Varianten ("price_extreme"/"close_ratchet") sind seit diesem Fix
@@ -948,6 +964,11 @@ class HourlyStrategyBase(Strategy):
             if self._position_atr_bps_readings:
                 tag_list.append(f"ATR_MEDIAN_BPS:{statistics.median(self._position_atr_bps_readings):.4f}")
                 tag_list.append(f"ATR_MIN_BPS:{min(self._position_atr_bps_readings):.4f}")
+            # Issue #953/#1119 (Katalog #960) — Median der Bar-Spannen dieser Position; siehe
+            # HourlyStrategyBase._position_bar_range_bps_readings-Docstring.
+            if self._position_bar_range_bps_readings:
+                tag_list.append(
+                    f"BAR_RANGE_MEDIAN_BPS:{statistics.median(self._position_bar_range_bps_readings):.4f}")
             # Issue #1095 (Katalog #928) — Bars zwischen Signal (self._exit_pending_bars=0 beim
             # Ausloesen des Exits, siehe _check_exits_and_update) und diesem tatsaechlichen Markt-
             # Close-Absetzen: 0, wenn derselbe Bar noch offene Orders stornieren + sofort schliessen
@@ -1040,6 +1061,10 @@ class HourlyStrategyBase(Strategy):
         if self._position_atr_bps_readings:
             tag_list.append(f"ATR_MEDIAN_BPS:{statistics.median(self._position_atr_bps_readings):.4f}")
             tag_list.append(f"ATR_MIN_BPS:{min(self._position_atr_bps_readings):.4f}")
+        # Issue #953/#1119 (Katalog #960) — siehe _execute_market_close, dieselbe Tag-Konvention.
+        if self._position_bar_range_bps_readings:
+            tag_list.append(
+                f"BAR_RANGE_MEDIAN_BPS:{statistics.median(self._position_bar_range_bps_readings):.4f}")
         order = self.order_factory.limit(
             instrument_id=self.instrument_id,
             order_side=exit_side,
@@ -1305,6 +1330,9 @@ class HourlyStrategyBase(Strategy):
         self._position_extreme = float(event.avg_px_open)
         # Issue #899 — ATR-Telemetrie-Puffer beginnt leer fuer jede neue Position.
         self._position_atr_bps_readings = []
+        # Issue #953/#1119 (Katalog #960) — Bar-Spannen-Telemetrie-Puffer beginnt leer fuer jede
+        # neue Position, analog dem ATR-Puffer oben.
+        self._position_bar_range_bps_readings = []
         # Issue #836 — eine neue Position beginnt garantiert ohne einen laufenden Exit-Versuch.
         self._exit_pending = None
         self._exit_pending_kind = None

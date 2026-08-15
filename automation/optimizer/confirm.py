@@ -527,6 +527,16 @@ def _metrics_dict(m) -> dict:
         "oos_expectancy_outlier_count": getattr(m, "oos_expectancy_outlier_count", 0),
         "oos_expectancy_notional_degenerate_count": getattr(
             m, "oos_expectancy_notional_degenerate_count", 0),
+        # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips, an der Round-Trip-QUELLE verworfen
+        # (siehe backtest_runner._filter_dust_round_trips), ersetzt das Feld oben als Rohmaterial.
+        "oos_dust_round_trips_filtered_count": getattr(
+            m, "oos_dust_round_trips_filtered_count", 0),
+        # Issue #948/#1114 (Katalog #960) — der EINE studienweite (gepoolte) Annualisierungsfaktor
+        # dieses Holdout-Laufs (sqrt(F) = oos_sortino_annualized / oos_sortino_period), Rohmaterial
+        # fuer invariants.check_annualization_commensurability (jetzt Symbol-uebergreifende
+        # Kommensurabilitaet statt der frueheren, trivialen Intra-Trial-Fold-Streuung).
+        "oos_sortino_period": getattr(m, "oos_sortino_period", None),
+        "oos_sortino_annualized": getattr(m, "oos_sortino_annualized", None),
         # Issue #1042 (Katalog #866) E-1/E-3 — Kosten-Stressband + CVaR/ES-Tail-Risiko, additiv
         # neben den unveraenderten Basis-Kennzahlen.
         "oos_expectancy_cost_stress_1_5x": getattr(m, "oos_expectancy_cost_stress_1_5x", None),

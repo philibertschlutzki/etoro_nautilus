@@ -3036,6 +3036,9 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
         if metrics.oos_stop_exit_lag_bars_median is not None:
             trial.set_user_attr(
                 "oos_stop_exit_lag_bars_median", metrics.oos_stop_exit_lag_bars_median)
+        # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
+        if metrics.oos_bar_range_median_bps is not None:
+            trial.set_user_attr("oos_bar_range_median_bps", metrics.oos_bar_range_median_bps)
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         trial.set_user_attr("oos_n_losses", metrics.oos_n_losses)
         # Issue #1085 (Katalog #866-2) — bislang nur in TournamentMetrics geparst, nie als
@@ -3046,6 +3049,14 @@ def make_symbol_objective(strategy: str, symbol: str, global_params: dict,
             trial.set_user_attr(
                 "oos_expectancy_notional_degenerate_count",
                 metrics.oos_expectancy_notional_degenerate_count)
+        # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips, jetzt AN DER QUELLE verworfen
+        # (``backtest_runner._filter_dust_round_trips``), statt nur an der Expectancy-Konsumstelle
+        # (Feld oben, seit diesem Fix strukturell 0). Ersetzt das Feld oben als Rohmaterial fuer
+        # report._study_record/invariants.check_dust_round_trip_share.
+        if metrics.oos_dust_round_trips_filtered_count:
+            trial.set_user_attr(
+                "oos_dust_round_trips_filtered_count",
+                metrics.oos_dust_round_trips_filtered_count)
 
         _timebox_violated_this_trial = False
         if metrics.oos_evaluated and metrics.oos_max_holding_time_s is not None:

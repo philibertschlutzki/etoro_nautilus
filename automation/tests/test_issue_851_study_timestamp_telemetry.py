@@ -10,8 +10,9 @@ Fix:
    ``study_ended_at_utc``/``study_wallclock_s``/``worker_id`` als Study-User-Attrs (auch bei
    vorzeitigem Abbruch, im ``finally:``-Block, #833-Stil).
 2. ``report.py`` leitet daraus ``wallclock_by_strategy`` (Median/p90 je Strategie),
-   ``symbol_barrier_wait_s`` (Symbol-Wallclock minus schnellste Study) und ``worker_utilisation``
-   (Σ Study-Wallclock / (n_jobs × Sweep-Wallclock)) ab.
+   ``symbol_barrier_wait_s`` (Symbol-Wallclock minus schnellste Study) und
+   ``worker_occupancy_wallclock`` (Σ Study-Wallclock / (n_jobs × Sweep-Wallclock), umbenannt von
+   ``worker_utilisation`` in #949/#1115, Katalog #960) ab.
 3. ``summary_de.py`` Abschnitte 3.2/3.4 nutzen die neuen Felder; die "nicht rekonstruierbar"-Texte
    entfallen.
 
@@ -27,7 +28,7 @@ in diesem Environment. Die STUDY-Ebene (``longest_holding_studies``) bleibt die 
 Akzeptanzkriterien:
 - AK-1: Abschnitt 3.2 gibt Median-Wallclock je Strategie aus; Abschnitt 3.4 nennt die
   Barriere-Wartezeit je Symbol.
-- AK-4: ``worker_utilisation`` wird berechnet.
+- AK-4: ``worker_occupancy_wallclock`` wird berechnet.
 """
 from pathlib import Path
 import json
@@ -35,7 +36,7 @@ import json
 from automation.optimizer import run_optimization as ro
 from automation.optimizer import trial_config
 from automation.optimizer.report import (
-    _wallclock_by_strategy, _symbol_barrier_wait, _worker_utilisation,
+    _wallclock_by_strategy, _symbol_barrier_wait, _worker_occupancy_wallclock,
 )
 from automation.optimizer import summary_de
 
@@ -111,25 +112,27 @@ def test_symbol_barrier_wait_empty_without_multi_study_symbols():
     assert _symbol_barrier_wait(studies) == {}
 
 
-# ── report._worker_utilisation (reine Funktion) ──────────────────────────────────────────────────
-def test_worker_utilisation_serial_reference_run_near_one():
+# ── report._worker_occupancy_wallclock (reine Funktion, vormals _worker_utilisation) ────────────────
+def test_worker_occupancy_wallclock_serial_reference_run_near_one():
     """Ein serieller Referenzlauf (n_jobs=1): Summe der Study-Wallclock ≈ Sweep-Wallclock ⇒
-    worker_utilisation ≈ 1.0 (Akzeptanzkriterium #851-AK-4)."""
+    worker_occupancy_wallclock ≈ 1.0 (Akzeptanzkriterium #851-AK-4)."""
     studies = [{"study_wallclock_s": 30.0}, {"study_wallclock_s": 20.0}, {"study_wallclock_s": 45.0}]
-    out = _worker_utilisation(studies, n_jobs=1, sweep_wallclock_s=95.0)
+    out = _worker_occupancy_wallclock(studies, n_jobs=1, sweep_wallclock_s=95.0)
     assert out == 1.0
 
 
-def test_worker_utilisation_scales_with_n_jobs():
+def test_worker_occupancy_wallclock_scales_with_n_jobs():
     studies = [{"study_wallclock_s": 100.0}]
-    out = _worker_utilisation(studies, n_jobs=4, sweep_wallclock_s=50.0)
+    out = _worker_occupancy_wallclock(studies, n_jobs=4, sweep_wallclock_s=50.0)
     assert out == 0.5  # 100 / (4*50)
 
 
-def test_worker_utilisation_none_without_data():
-    assert _worker_utilisation([], n_jobs=4, sweep_wallclock_s=50.0) is None
-    assert _worker_utilisation([{"study_wallclock_s": 10.0}], n_jobs=None, sweep_wallclock_s=50.0) is None
-    assert _worker_utilisation([{"study_wallclock_s": 10.0}], n_jobs=4, sweep_wallclock_s=None) is None
+def test_worker_occupancy_wallclock_none_without_data():
+    assert _worker_occupancy_wallclock([], n_jobs=4, sweep_wallclock_s=50.0) is None
+    assert _worker_occupancy_wallclock(
+        [{"study_wallclock_s": 10.0}], n_jobs=None, sweep_wallclock_s=50.0) is None
+    assert _worker_occupancy_wallclock(
+        [{"study_wallclock_s": 10.0}], n_jobs=4, sweep_wallclock_s=None) is None
 
 
 # ── summary_de.py Abschnitte 3.2/3.4 ──────────────────────────────────────────────────────────────
@@ -167,10 +170,10 @@ def test_section_3_2_lists_wallclock_by_strategy():
     assert "ComboTrendVwapStrategy" in section_3_2
 
 
-def test_section_3_4_lists_symbol_barrier_wait_and_worker_utilisation():
+def test_section_3_4_lists_symbol_barrier_wait_and_worker_occupancy_wallclock():
     report = _minimal_report()
     report["cross_study"]["symbol_barrier_wait_s"] = {"XOM.ETORO": 1170.0}
-    report["cross_study"]["worker_utilisation"] = 0.42
+    report["cross_study"]["worker_occupancy_wallclock"] = 0.42
     text = summary_de.generate_german_summary(report)
     section_3_4 = text.split("### 3.4")[1]
     assert "nicht rekonstruierbar" not in section_3_4
@@ -178,17 +181,19 @@ def test_section_3_4_lists_symbol_barrier_wait_and_worker_utilisation():
     assert "42.0 %" in section_3_4
 
 
-def test_section_3_4_lists_worker_utilisation_backtest_ms_separately():
-    """Issue #1038 (Katalog #866) — die ueberlappungsfreie Backtest-CPU-Zeit-Auslastung wird
-    GETRENNT von der (strukturell > 100 % faehigen) Study-Wallclock-Groesse genannt."""
+def test_section_3_4_lists_cpu_utilisation_backtest_separately():
+    """Issue #1038 (Katalog #866), umbenannt #949/#1115 — die ueberlappungsfreie Backtest-CPU-Zeit-
+    Auslastung wird GETRENNT von der (strukturell > 100 % faehigen) Study-Wallclock-Groesse genannt,
+    beide jetzt unter eindeutigen, verschiedenen Feldnamen statt beide implizit "Worker-Auslastung"
+    (B-6)."""
     report = _minimal_report()
-    report["cross_study"]["worker_utilisation"] = 2.465
-    report["cross_study"]["worker_utilisation_backtest_ms"] = 0.81
+    report["cross_study"]["worker_occupancy_wallclock"] = 2.465
+    report["cross_study"]["cpu_utilisation_backtest"] = 0.81
     text = summary_de.generate_german_summary(report)
     section_3_4 = text.split("### 3.4")[1]
     assert "246.5 %" in section_3_4
     assert "81.0 %" in section_3_4
-    assert "Echte Worker-Auslastung" in section_3_4
+    assert "Echte CPU-Auslastung" in section_3_4
 
 
 def test_section_3_2_and_3_4_degrade_gracefully_without_telemetry():

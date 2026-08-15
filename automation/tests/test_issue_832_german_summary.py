@@ -127,7 +127,7 @@ def test_zero_promotions_states_no_deployable_result_verbatim():
 def test_deployable_candidate_appears_in_section_2_1_table():
     report = _minimal_report(studies=[
         {"strategy": "S", "symbol": "A.ETORO", "promotion_outcome": "READY_FOR_PR",
-         "holdout_total_return": 0.05, "holdout_expectancy": 0.002, "holdout_win_rate": 0.6,
+         "holdout_total_return": 0.05, "holdout_expectancy_capital_weighted": 0.002, "holdout_win_rate": 0.6,
          "holdout_profit_factor": 1.4, "holdout_total_trades": 40,
          # Issue #1029 (Katalog #866) — Abschnitt 1 zaehlt "deploybar" jetzt ausschliesslich ueber
          # deployment_decision.admitted, nicht mehr ueber den Sweep-Promotionsstatus allein.

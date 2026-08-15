@@ -17,13 +17,21 @@ def test_issue_799_evaluate_soft_guard_penalty():
 
 
 def test_issue_799_objective_branch_coverage():
+    """Issue #955/#1121 (Katalog #960) — check_objective_branch_coverage misst seit diesem Fix den
+    Anteil ineligibler Trials mit definierter Selektionsstatistik, nicht mehr
+    reward_terms.branch=='per_symbol' (siehe dortiger Docstring)."""
     trials = [
-        {"reward_terms": {"branch": "per_symbol"}} for _ in range(25)
+        {"oos_evaluated": True, "oos_eligible": True,
+         "oos_selection_statistic_available": True} for _ in range(10)
     ] + [
-        {"reward_terms": {"branch": "failure"}} for _ in range(75)
+        {"oos_evaluated": True, "oos_eligible": False,
+         "oos_selection_statistic_available": True} for _ in range(25)
+    ] + [
+        {"oos_evaluated": True, "oos_eligible": False,
+         "oos_selection_statistic_available": False} for _ in range(75)
     ]
-    
-    # 25 / 100 = 25% >= 20%
-    res = check_objective_branch_coverage(trials, min_ordering_fraction=0.20)
+
+    # 25 / 100 ineligible Trials gemessen = 25% >= 20%
+    res = check_objective_branch_coverage(trials, min_measured_fraction=0.20)
     assert res.passed is True
     assert res.actual == 0.25

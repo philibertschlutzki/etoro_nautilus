@@ -7,7 +7,17 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-WORK = PROJECT_ROOT / "data" / "optimizer"
+
+# Issue #944/#1110 — konfigurierbare Study-Store-Wurzel. Die store-weite Sweep-Lock-Datei
+# (``sweep._sweep_run_lock_path`` → ``WORK/"sweep"/".run.lock"``) schuetzt genau EINEN ``WORK``-Baum
+# vor zwei gleichzeitigen, unabhaengigen Sweep-Prozessen — sie schuetzt NICHT vor zwei Prozessen mit
+# je EIGENEM ``WORK``. Fuer paralleler Mehr-Symbol-Betrieb (siehe manuals/run_optimizer.md,
+# Abschnitt „Paralleler Mehr-Symbol-Betrieb") setzt jeder Prozess ``OPTIMIZER_WORK_DIR`` VOR dem
+# Start auf ein eigenes Verzeichnis, danach werden die Reports getrennt eingesammelt. Da ``WORK``
+# an mehreren Stellen per ``from manifest import WORK`` beim Modul-Import gebunden wird, muss die
+# Umgebungsvariable vor dem Prozessstart gesetzt sein (nicht erst zur Laufzeit per CLI-Flag
+# umschaltbar).
+WORK = Path(os.environ.get("OPTIMIZER_WORK_DIR", str(PROJECT_ROOT / "data" / "optimizer")))
 
 def git_commit() -> str:
     """Returns the current git short hash, or 'unknown' if not available."""

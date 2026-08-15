@@ -14,7 +14,7 @@ import pytest
 from automation.optimizer import report
 
 
-def _make_study(storage_url: str, study_name: str, n: int = 5):
+def _make_study(storage_url: str, study_name: str, n: int = 5, *, run_id: str | None = None):
     study = optuna.create_study(study_name=study_name, storage=storage_url, direction="maximize",
                                 load_if_exists=True)
     for i in range(n):
@@ -29,6 +29,11 @@ def _make_study(storage_url: str, study_name: str, n: int = 5):
             "base": 1.0 + i, "divergence": 0.3 * i, "dd_penalty": 0.25 * i, "param_pen": 0.2 * i,
             "turnover": 0.3 * i, "fold_dispersion": 0.25 * i, "tie_breaker": 0.2 * i,
         })
+        # Issue #940/#1106 — die #1088-Identitaetspruefung (``check_report_cohort_coherence``)
+        # braucht einen run_id-Stempel auf JEDEM Trial, um eine Study eindeutig diesem Lauf
+        # zuzuordnen (siehe test_issue_1086_concurrent_run_isolation.py fuer dasselbe Muster).
+        if run_id is not None:
+            trial.set_user_attr("run_id", run_id)
         study.tell(trial, float(i))
     return study
 
@@ -158,7 +163,7 @@ def test_foreign_run_study_excluded_from_report(tmp_path, monkeypatch):
 
     new_study_name = "study_TestStrat_A_ETORO"
     new_storage_url = f"sqlite:///{sweep_dir / 'new_study.db'}"
-    new_study = _make_study(new_storage_url, new_study_name)
+    new_study = _make_study(new_storage_url, new_study_name, run_id="run_new")
     new_study.set_user_attr("study_started_at_utc", "2026-08-12T04:19:21.000+00:00")
 
     def _resolve(*, study_name, base_cfg=None):

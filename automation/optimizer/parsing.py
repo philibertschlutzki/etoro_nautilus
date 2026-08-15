@@ -51,6 +51,12 @@ class TournamentMetrics:
     oos_expectancy_winsorized: float | None = None
     oos_expectancy_outlier_count: int = 0
     oos_expectancy_notional_degenerate_count: int = 0
+    # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips (Notional < 5% des Median-Notionals),
+    # jetzt AN DER QUELLE verworfen (``backtest_runner._filter_dust_round_trips``, VOR jeder
+    # IS/OOS-Aufteilung), statt nur an der Expectancy-Konsumstelle (die vormalige ``oos_expectancy_
+    # notional_degenerate_count`` oben, seit diesem Fix strukturell 0, weil Dust die
+    # Expectancy-Berechnung nie mehr erreicht). Default rueckwaertskompatibel (Legacy-JSONs).
+    oos_dust_round_trips_filtered_count: int = 0
     # Issue #1042 (Katalog #866) E-1/E-3 — Kosten-Stressband (additive Telemetrie, siehe
     # ``backtest_runner._expectancy_cost_stress``-Docstring) und CVaR/ES-Tail-Risiko (additive
     # Telemetrie, siehe ``_calculate_stats``-Berechnungsblock). Defaults rueckwaertskompatibel.
@@ -198,6 +204,11 @@ class TournamentMetrics:
     # Markt-Close-Fill (siehe backtest_runner._aggregate_exit_telemetry-Docstring); None ohne einen
     # einzigen getaggten Stop-Exit dieses Trials.
     oos_stop_exit_lag_bars_median: float | None = None
+    # Issue #953/#1119 (Katalog #960) — Median der je-Position-Bar-Spannen-Mediane (bps, siehe
+    # backtest_runner._aggregate_exit_telemetry-Docstring); Referenzgroesse fuer
+    # invariants.check_stop_loss_vs_bar_range (Verlust = adverse Bewegung EINER Bar, nicht
+    # Stopdistanz + Ueberschiessen). None ohne eine einzige Position mit Bar-Spannen-Telemetrie.
+    oos_bar_range_median_bps: float | None = None
     # Issue #1097 (Katalog #930) — Stichprobengroesse HINTER oos_gross_loss_mean_bps (ALLE
     # Verlust-Trades dieses Trials, nicht nur Stop-Exits); Grundlage fuer den trade-gewichteten
     # (statt medianbasierten) Study-Pool-Mittelwert, siehe report._pooled_mean_of_trial_field.
@@ -209,8 +220,12 @@ class TournamentMetrics:
 
 def parse_tournament(path: Path) -> TournamentMetrics:
     """Liest aggregate_winner/oos_metrics typsicher (None-safe).
-       oos_sortino = Median von aggregate_winner.oos_fold_sortinos, falls vorhanden,
-       sonst oos_metrics.sortino_ratio. is_sortino_median = median_is_sortino bzw. median_sortino."""
+       Issue #948/#1114 (Katalog #960) — Docstring-Korrektur: oos_sortino ist seit #549/#589 der
+       GEPOOLTE ``oos_metrics.sortino_ratio`` (konkatenierte OOS-Equity-Kurve, kohaerent mit
+       total_return), NICHT der Median von ``oos_fold_sortinos`` (der fruehere Wortlaut hier war
+       seit #589 stale — ``oos_fold_sortinos`` bleibt reine Anzeige-Telemetrie, siehe Feld-
+       Docstring oben). is_sortino_median = median_is_sortino bzw. median_sortino (ein separates
+       Feld, keine Quelle von oos_sortino)."""
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
@@ -322,6 +337,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_atr_min_bps = oos_metrics.get("atr_min_bps")
     # Issue #1095 (Katalog #928) — siehe TournamentMetrics-Docstring.
     oos_stop_exit_lag_bars_median = oos_metrics.get("stop_exit_lag_bars_median")
+    # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
+    oos_bar_range_median_bps = oos_metrics.get("bar_range_median_bps")
     # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
     oos_n_losses = oos_metrics.get("n_losses")
     oos_holding_times_s = oos_metrics.get("holding_times_s")
@@ -336,6 +353,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_expectancy_winsorized = oos_metrics.get("expectancy_winsorized")
     oos_expectancy_outlier_count = oos_metrics.get("expectancy_outlier_count")
     oos_expectancy_notional_degenerate_count = oos_metrics.get("expectancy_notional_degenerate_count")
+    # Issue #946/#1112 (Katalog #960) — siehe TournamentMetrics-Docstring.
+    oos_dust_round_trips_filtered_count = oos_metrics.get("dust_round_trips_filtered_count")
     # Issue #1042 (Katalog #866) E-1/E-3 — siehe TournamentMetrics-Docstring. Issue #1081 (Katalog
     # #866-2) — bevorzugt den umbenannten, kosten-VOLLSTAENDIGEN Schluessel
     # (expectancy_round_trip_cost_stress_*, backtest_runner._expectancy_cost_stress); der alte Name
@@ -434,6 +453,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_expectancy_notional_degenerate_count=(
             int(oos_expectancy_notional_degenerate_count)
             if oos_expectancy_notional_degenerate_count is not None else 0),
+        # Issue #946/#1112 (Katalog #960) — siehe TournamentMetrics-Docstring.
+        oos_dust_round_trips_filtered_count=(
+            int(oos_dust_round_trips_filtered_count)
+            if oos_dust_round_trips_filtered_count is not None else 0),
         # Issue #1042 (Katalog #866) E-1/E-3 — siehe TournamentMetrics-Docstring.
         oos_expectancy_cost_stress_1_5x=(
             float(oos_expectancy_cost_stress_1_5x)
@@ -516,6 +539,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_stop_exit_lag_bars_median=(
             float(oos_stop_exit_lag_bars_median)
             if oos_stop_exit_lag_bars_median is not None else None),
+        # Issue #953/#1119 (Katalog #960) — siehe TournamentMetrics-Docstring.
+        oos_bar_range_median_bps=(
+            float(oos_bar_range_median_bps) if oos_bar_range_median_bps is not None else None),
         # Issue #1097 (Katalog #930) — siehe TournamentMetrics-Docstring.
         oos_n_losses=int(oos_n_losses) if oos_n_losses is not None else 0,
         oos_holding_times_s=tuple(oos_holding_times_s) if oos_holding_times_s else (),
