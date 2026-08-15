@@ -2319,6 +2319,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             deflation_n_family_value = (n_family_stage1_map or {}).get((strategy, symbol), 0)
             promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
                                 deflation_n_family=deflation_n_family_value,
+                                # Issue #957/#1123 (Katalog #960) — benennt im Artefakt, WELCHE der
+                                # (strukturell zwei moeglichen) Quellen die Deflationsschwelle
+                                # tatsaechlich gespeist hat: n_family_stage1_map[(strategy, symbol)]
+                                # (per-Study-Stage1-N, #826), NICHT die symbolweite Summe.
+                                deflation_n_family_source="n_family_stage1_per_strategy",
                                 deflation_family_period_returns=family_returns_map.get(symbol),
                                 deflation_n_family_excluded_no_statistic=(
                                     (n_family_excluded_map or {}).get(symbol)),

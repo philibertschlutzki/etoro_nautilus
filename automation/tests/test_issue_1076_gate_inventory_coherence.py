@@ -6,11 +6,16 @@ die Entfernung aus ``eligible_requires_all`` — auch für ``gate_consolidation_
 (``min_trades``/``max_drawdown``, #810), die #776 ausdrücklich behalten hat. Fix: geschützte Gates
 erhalten eine Neukalibrierungs- statt Entfernungsempfehlung.
 
-Neue Invariante ``check_gate_inventory_coherence``: ``gate_inventory[g].n_rejections`` (Mehrlabel-
-Zählung, ein Trial zählt je verletztem Gate) kann strukturell nie unter
-``is_rejection_detail_counts['REJECT_OOS_'+g]`` (Einlabel-Zählung, nur die PRIMÄRE Ursache) liegen
-— ein Zähler, der diese Ungleichung verletzt, liest vermutlich den falschen Eimer (Beweis B-10 im
-#866-Katalog).
+Issue #956/#1122 (Katalog #960) — die #1076-Invariante ``check_gate_inventory_coherence``
+(``gate_inventory[g].n_rejections`` kann strukturell nie unter
+``is_rejection_detail_counts['REJECT_OOS_'+g]`` liegen) wurde ENTFERNT: B-13 zeigte, dass
+``n_rejections`` trotz dieser Kreuzprüfung weiterhin invertiert blieb (0 statt 140 für
+``AdxAtrMomentumStrategy/NVDA.ETORO``s ``oos_min_psr``) — die Ungleichung allein verhinderte die
+falsche Konsequenz, korrigierte aber nicht die QUELLE. Der eigentliche Fix (``invariants.
+gate_inventory_table`` leitet ``n_rejections`` jetzt DIREKT aus ``is_rejection_detail_counts`` ab,
+siehe dortiger Docstring) macht die Kreuzprüfung zur Tautologie — sie ist damit ersatzlos entfallen
+(Akzeptanzkriterium #956: ``gate_inventory[g].n_rejections == is_rejection_detail_counts[code(g)]``
+für jede Study/jedes Gate).
 """
 from automation.optimizer import invariants as inv
 
@@ -53,42 +58,7 @@ def test_no_protected_list_behaves_as_before():
     assert "Kandidat(en) für Entfernung" in result.detail
 
 
-# ── check_gate_inventory_coherence ───────────────────────────────────────────────────────────────
-def test_gate_inventory_coherence_fails_when_n_rejections_undercounts_the_primary_reason_bucket():
-    records = [{
-        "strategy": "OpeningRangeBreakoutStrategy", "symbol": "TSLA.ETORO",
-        "gate_inventory": [{"gate": "oos_min_psr", "n_rejections": 98}],
-        # Der beobachtete #866-Katalog-Fall: die primaere-Ursache-Zaehlung ist NIEDRIGER als der
-        # Mehrlabel-Zaehler, ABER hier absichtlich hoeher konstruiert, um die Ungleichung zu
-        # verletzen (n_rejections=98 < detail_count=150 waere der klare Fehlalarm-Fall).
-        "is_rejection_detail_counts": {"REJECT_OOS_MIN_PSR": 150},
-    }]
-    result = inv.check_gate_inventory_coherence(records)
-    assert result.passed is False
-    assert "OpeningRangeBreakoutStrategy/TSLA.ETORO" in result.actual
-
-
-def test_gate_inventory_coherence_passes_when_n_rejections_dominates():
-    records = [{
-        "strategy": "S", "symbol": "X",
-        "gate_inventory": [{"gate": "oos_min_psr", "n_rejections": 98}],
-        "is_rejection_detail_counts": {"REJECT_OOS_MIN_PSR": 1},
-    }]
-    result = inv.check_gate_inventory_coherence(records)
-    assert result.passed is True
-
-
-def test_gate_inventory_coherence_normalizes_oos_prefixed_gate_names():
-    records = [{
-        "strategy": "S", "symbol": "X",
-        "gate_inventory": [{"gate": "min_trades", "n_rejections": 10}],
-        "is_rejection_detail_counts": {"REJECT_OOS_MIN_TRADES": 3},
-    }]
-    result = inv.check_gate_inventory_coherence(records)
-    assert result.passed is True
-
-
-def test_gate_inventory_coherence_not_applicable_without_telemetry():
-    result = inv.check_gate_inventory_coherence([{"strategy": "S", "symbol": "X"}])
-    assert result.passed is True
-    assert result.actual is None
+def test_check_gate_inventory_coherence_no_longer_exists():
+    """Issue #956/#1122 (Katalog #960) — die Kreuzpruefung wurde entfernt (siehe Datei-Docstring);
+    die Behebung an der QUELLE (gate_inventory_table) macht sie zur Tautologie."""
+    assert not hasattr(inv, "check_gate_inventory_coherence")

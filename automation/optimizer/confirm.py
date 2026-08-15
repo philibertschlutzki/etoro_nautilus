@@ -683,6 +683,7 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                                  *, run_backtest=run_backtest, build_trial=build_trial,
                                  catalog_newest_ns: int | None = None,
                                  deflation_n_family: int | None = None,
+                                 deflation_n_family_source: str | None = None,
                                  deflation_family_period_returns: list | None = None,
                                  deflation_n_family_excluded_no_statistic: dict | None = None,
                                  study_invariant_results: list[dict] | None = None,
@@ -718,6 +719,17 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     bit-identisch zum Pre-#695-Verhalten). Die
     #652-Invariante bleibt gewahrt: ``deflation_n_effective = max(deflation_n, deflation_n_family_
     effective)`` unterschreitet NIE das lokal bekannte per-Study-N.
+
+    ``deflation_n_family_source`` (Issue #957/#1123, Katalog #960) — ein vom AUFRUFER (``sweep.
+    _run_confirm_and_export``) mitgegebenes Label, welche Grösse ``deflation_n_family`` tatsächlich
+    ist (z. B. ``'n_family_stage1_per_strategy'`` — das per-Study-Stage1-N unter ``promotion_
+    family_scope='per_strategy'``, #826). Diese Funktion selbst kennt nur den Skalar, nicht dessen
+    Herkunft; Root-Cause #1123: mit zwei unabhängig berechneten Kandidaten für dieselbe Grösse
+    (``n_family[symbol]`` symbolweit vs. ``n_family_stage1[symbol][strategy]`` per Strategie) war
+    im Artefakt selbst nicht nachvollziehbar, WELCHE der beiden tatsächlich die Deflationsschwelle
+    gespeist hat — nur EINE speist sie (strukturell, siehe oben), aber das war bislang nur aus dem
+    Quelltext erkennbar, nicht aus dem Proposal. ``None`` (Legacy-/Test-Aufrufer) ⇒ kein Feld im
+    Artefakt (rückwärtskompatibel, kein erfundener Wert).
 
     **Verbindliche Design-Entscheidung:** Der Vergleichs-Score ist die *rohe* risikoadjustierte
     Performance — `compute_reward(..., universe_size=1)` OHNE `sampled`/`global_params` ⇒
@@ -1100,6 +1112,12 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                 # Issue #887 Fix Punkt 4 — ohne dieses Feld ist die Multiplizitaets-Entscheidung im
                 # Nachhinein nicht ueberpruefbar (#847-Klasse).
                 metrics_global_out["deflation_multiplicity_rationale"] = g_multiplicity_rationale
+                # Issue #957/#1123 (Katalog #960) — derselbe Feldname wie im symbol_eligible-Pfad
+                # (siehe deflation_n_family_source-Docstring); dieser Zweig liefert IMMER N=1,
+                # unabhaengig vom uebergebenen deflation_n_family (route='global_default',
+                # resolve_promotion_multiplicity), daher ein fester Literal statt des
+                # Aufrufer-Labels.
+                metrics_global_out["deflation_n_family_source"] = "global_default_n1"
             return {
                 "promote": True,
                 "status": "PROMOTE_GLOBAL_DEFAULT",
@@ -1693,14 +1711,20 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     # (vorher nur eine folgenlose #597-WARNING). Lazy-Import (run_optimization importiert confirm).
     boundary_frac = None
     boundary_directions = None
+    boundary_veto_evidence = None
     try:
         from automation.optimizer.run_optimization import (
-            _boundary_hit_fraction, _boundary_hit_directions)
+            _boundary_hit_fraction, _boundary_hit_directions, _boundary_veto_evidence)
         boundary_frac = _boundary_hit_fraction(study, strategy)
         boundary_directions = _boundary_hit_directions(study, strategy)
+        # Issue #958/#1124 (Katalog #960) — dieselbe 2%-Toleranz-Quelle wie boundary_frac/
+        # boundary_directions oben (_boundary_hit_analysis), diesmal mit der VOLLEN, benannten
+        # Evidenz je Parameter (sampled_value/active_bounds/default_bounds/distance_to_edge).
+        boundary_veto_evidence = _boundary_veto_evidence(study, strategy)
     except Exception:
         boundary_frac = None
         boundary_directions = None
+        boundary_veto_evidence = None
     boundary_overfit = bool(boundary_frac is not None and boundary_frac > 0.3)
     if boundary_overfit:
         logging.getLogger("optimizer").warning(
@@ -1799,6 +1823,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
                     # denselben klemmenden Parameter ausweisen kann.
                     "boundary_parameter": boundary_parameter,
                     "boundary_side": boundary_side,
+                    # Issue #958/#1124 (Katalog #960) — dieselbe volle Evidenz wie im Proposal
+                    # (siehe metrics_symbol['boundary_veto_evidence'] oben), auch im #761-Cache-
+                    # Eintrag, damit report._boundary_solutions_section() sie ausweisen kann.
+                    "boundary_veto_evidence": boundary_veto_evidence,
                 }, run_id=run_id)
         except Exception:
             logging.getLogger("optimizer").warning(
@@ -1901,6 +1929,10 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
     best_result["metrics_symbol"]["boundary_parameter"] = boundary_parameter
     best_result["metrics_symbol"]["boundary_side"] = boundary_side
     best_result["metrics_symbol"]["boundary_directions"] = dict(boundary_directions or {})
+    # Issue #958/#1124 (Katalog #960) — die volle, benannte Evidenz je klemmendem Parameter (siehe
+    # run_optimization._boundary_veto_evidence-Docstring); macht JEDE REJECTED_BOUNDARY_SOLUTION/
+    # HOLD_BOUNDARY_UNRESOLVED-Entscheidung im Artefakt selbst nachvollziehbar.
+    best_result["metrics_symbol"]["boundary_veto_evidence"] = boundary_veto_evidence
     # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — sichtbar, ob DIESER Kandidat bereits unter
     # einem geweiteten Suchraum fuer boundary_parameter evaluiert wurde (boundary_resolution_run_id
     # verweist auf den Lauf, dessen Diagnose die Weitung ausloeste) und ob die Weitungs-Sperre
@@ -2032,6 +2064,11 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         # Kandidat nachvollziehbar ist (Akzeptanzkriterium #652). ``deflation_n_family`` (Legacy-Name)
         # bleibt bit-identisch der roh übergebene Skalar (Rückwärtskompat, siehe test_issue_652).
         best_result["metrics_symbol"]["deflation_n_family"] = int(deflation_n_family or 0)
+        # Issue #957/#1123 (Katalog #960) — siehe deflation_n_family_source-Docstring: welche
+        # Quelle den obigen Skalar tatsächlich geliefert hat, EXPLIZIT im Artefakt statt nur aus
+        # dem Aufrufer-Quelltext erschliessbar.
+        if deflation_n_family_source is not None:
+            best_result["metrics_symbol"]["deflation_n_family_source"] = deflation_n_family_source
         # Issue #822 Fix Punkt 3 — wie viele familienweite Kandidaten aus der Zaehlung
         # AUSGESCHLOSSEN wurden, weil sie trotz ``oos_evaluated=True`` KEINE verwertbare
         # Selektions-Teststatistik trugen (``oos_selection_statistic_available=False``),

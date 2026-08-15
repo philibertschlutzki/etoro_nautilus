@@ -798,6 +798,10 @@ def _study_record(proposal: dict, study,
         # Issue #887 — der globale Default (route='global_default_on_symbol') nahm an der
         # Stufe-1-Selektion nicht teil; seine Deflation muss N=1 tragen, nicht deflation_n_family.
         _inv.check_promotion_multiplicity_route(proposal),
+        # Issue #958/#1124 (Katalog #960) — "Ohne Evidenz kein Veto": jeder REJECTED_BOUNDARY_
+        # SOLUTION/HOLD_BOUNDARY_UNRESOLVED-Ausgang muss einen benannten Parameter mit Wert und
+        # beiden Bandgrenzen tragen.
+        _inv.check_boundary_veto_has_evidence(proposal),
         # Issue #1004 (Katalog #858, Fix Punkt 4) — keine Promotion darf auf einer zensierten/
         # gecappten Kennzahl beruhen (z. B. profit_factor_censored durch profit_factor_cap oder
         # einen degenerierten Bruttoverlust-Nenner).
@@ -1140,8 +1144,12 @@ def _study_record(proposal: dict, study,
         "gate_collinearity_unconsolidated": gate_collinearity_unconsolidated,
         # Issue #970 (Katalog A, P1) — je Gate n_rejections/n_solo_rejections/marginal_delta über
         # die evaluierte Kohorte dieser Study (siehe invariants.gate_inventory_table-Docstring).
+        # Issue #956/#1122 (Katalog #960) — n_rejections wird seit diesem Fix DIREKT aus
+        # is_rejection_detail_counts (oben in dieser Funktion berechnet) abgeleitet, statt
+        # parallel und potenziell inkohärent aus oos_gate_deltas gepflegt zu werden.
         "gate_inventory": _inv.gate_inventory_table(
-            trial_attrs, (tournament_cfg or {}).get("eligible_requires_all") or []),
+            trial_attrs, (tournament_cfg or {}).get("eligible_requires_all") or [],
+            is_rejection_detail_counts=is_rejection_detail_counts),
         # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
         # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
@@ -1215,6 +1223,12 @@ def _study_record(proposal: dict, study,
         "boundary_parameter": holdout_metrics.get("boundary_parameter"),
         "boundary_side": holdout_metrics.get("boundary_side"),
         "boundary_directions": holdout_metrics.get("boundary_directions") or {},
+        # Issue #958/#1124 (Katalog #960) — die volle, benannte Evidenz je klemmendem Parameter
+        # ({sampled_value, active_bounds, default_bounds, distance_to_edge}), damit jede
+        # REJECTED_BOUNDARY_SOLUTION/HOLD_BOUNDARY_UNRESOLVED-Entscheidung im Artefakt selbst
+        # nachvollziehbar ist (siehe run_optimization._boundary_veto_evidence-Docstring). None ohne
+        # jede Randlösung dieser Study (dieselbe Konvention wie boundary_hit_fraction).
+        "boundary_veto_evidence": holdout_metrics.get("boundary_veto_evidence"),
         # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — sichtbar, ob dieser Kandidat bereits
         # unter geweiteten Bounds fuer boundary_parameter evaluiert wurde und die Weitungs-Sperre
         # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) erreicht ist (⇒ terminaler
@@ -1227,6 +1241,11 @@ def _study_record(proposal: dict, study,
         # family). NICHT mit dem (jetzt nicht mehr für die Deflation verwendeten) symbolweiten
         # cross_study['n_family'] verwechseln (#625, post-hoc Sweep-Telemetrie).
         "n_family_stage1": holdout_metrics.get("deflation_n_family"),
+        # Issue #957/#1123 (Katalog #960) — welche der (strukturell zwei moeglichen) Quellen
+        # n_family_stage1 oben tatsaechlich gespeist hat (siehe confirm.confirm_per_symbol_
+        # promotion's deflation_n_family_source-Docstring), im Report-Artefakt sichtbar statt nur
+        # aus dem Aufrufer-Quelltext erschliessbar.
+        "deflation_n_family_source": holdout_metrics.get("deflation_n_family_source"),
         # Issue #846 — gesetzt, wenn confirm.py die DSR-Berechnung fuer diese Study uebersprungen
         # (oder eine Kohaerenzverletzung zwischen deflated_sr0 und deflated_dsr/deflation_dsr_z an
         # der Export-Grenze unterdrueckt) hat: SMALL_COHORT (deflation_n < 2) oder NO_STATISTIC
@@ -1326,6 +1345,10 @@ def _boundary_solutions_section() -> list[dict[str, Any]]:
             # im Study-Record (siehe _study_record), hier zusaetzlich neben dem Bounds-Vorschlag.
             "boundary_parameter": e.get("boundary_parameter"),
             "boundary_side": e.get("boundary_side"),
+            # Issue #958/#1124 (Katalog #960) — die volle, benannte Evidenz je klemmendem
+            # Parameter ({sampled_value, active_bounds, default_bounds, distance_to_edge}, siehe
+            # run_optimization._boundary_veto_evidence-Docstring).
+            "boundary_veto_evidence": e.get("boundary_veto_evidence"),
             # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — wie oft dieser Parameter bereits
             # nachgeweitet wurde (sweep_diagnostics.record_diagnosed_pair), damit im Report
             # nachvollziehbar ist, wie nah ein Kandidat an der Weitungs-Sperre
@@ -2497,10 +2520,10 @@ def _build_report(
     all_checks.append(("global", _inv.check_gate_marginal_contribution(
         studies_out, gate_consolidation_protected=tournament_cfg.get("gate_consolidation_protected"))))
 
-    # Issue #1076 — Kreuzprüfung: gate_inventory.n_rejections darf nie unter dem gate-spezifischen
-    # is_rejection_detail_counts-Wert liegen (sonst liest der Zähler vermutlich den falschen Eimer,
-    # z. B. NONE statt des gate-spezifischen — Beweis B-10 im #866-Katalog).
-    all_checks.append(("global", _inv.check_gate_inventory_coherence(studies_out)))
+    # Issue #956/#1122 (Katalog #960) — check_gate_inventory_coherence (#1076) entfernt: seit
+    # gate_inventory_table die is_rejection_detail_counts-Zaehlung DIREKT uebernimmt (statt
+    # parallel aus oos_gate_deltas abzuleiten), ist n_rejections[g] == is_rejection_detail_counts[
+    # code(g)] per Konstruktion — die Kreuzpruefung waere jetzt eine Tautologie.
 
     # Issue #976 (Katalog B, P2) — Detektion überproportional vieler unerreichbarer OOS-Fenster
     # (zu weite Lookback-Bounds für die Datenlage).

@@ -895,6 +895,51 @@ def check_promotion_multiplicity_route(proposal: dict) -> InvariantResult:
     )
 
 
+def check_boundary_veto_has_evidence(proposal: dict) -> InvariantResult:
+    """Issue #958/#1124 (Katalog #960) — "Ohne Evidenz kein Veto": jeder
+    ``REJECTED_BOUNDARY_SOLUTION``/``HOLD_BOUNDARY_UNRESOLVED``-Ausgang muss mindestens einen
+    benannten Parameter mit Wert UND beiden Bandgrenzen tragen (``boundary_veto_evidence``, siehe
+    ``run_optimization._boundary_veto_evidence``-Docstring).
+
+    Root-Cause #1124: die zuvor einzige öffentlich sichtbare "Beweis"-Grösse
+    (``report.winner_outside_default_bounds``) verlangte eine STRIKTE Bounds-Verletzung, während
+    das Veto selbst bereits auf blosser Nähe (<= 2 % vom Rand) feuert — 5 von 6 beobachteten Vetos
+    trugen dadurch KEINEN sichtbaren Grund im Report (B-Beweis im #1124-Issue). Ein Veto OHNE
+    benannten Parameter ist seit diesem Fix ein blockierender TELEMETRIEFEHLER, kein legitimes
+    Urteil — strukturell sollte das nicht mehr vorkommen (``boundary_frac > 0`` impliziert per
+    Konstruktion mindestens einen Eintrag in ``boundary_veto_evidence``, siehe
+    ``_boundary_hit_analysis``-Docstring), dieser Check ist der Regressionswächter dagegen.
+
+    ``proposal``: der vollständige exportierte Proposal-Dict (``status`` auf der OBERSTEN Ebene,
+    ``boundary_veto_evidence`` in ``proposal['holdout']['symbol']``, derselbe Zugriffspfad wie
+    ``check_promotion_multiplicity_route``)."""
+    status = proposal.get("status")
+    expected = ("boundary_veto_evidence nicht-leer für REJECTED_BOUNDARY_SOLUTION/"
+                "HOLD_BOUNDARY_UNRESOLVED")
+    if status not in ("REJECTED_BOUNDARY_SOLUTION", "HOLD_BOUNDARY_UNRESOLVED"):
+        return InvariantResult(
+            name="check_boundary_veto_has_evidence",
+            passed=True,
+            expected=expected,
+            actual=None,
+            severity="blocking",
+            detail=f"status={status!r} — kein Randlösungs-Ausgang, nicht anwendbar.",
+        )
+    evidence = ((proposal.get("holdout") or {}).get("symbol") or {}).get("boundary_veto_evidence")
+    passed = bool(evidence)
+    return InvariantResult(
+        name="check_boundary_veto_has_evidence",
+        passed=passed,
+        expected=expected,
+        actual=evidence,
+        severity="blocking",
+        detail=("OK" if passed else
+                f"status={status!r} trägt KEINE boundary_veto_evidence — das Randlösungs-Veto "
+                "feuerte ohne einen benannten Parameter (#958/#1124), ein blockierender "
+                "Telemetriefehler."),
+    )
+
+
 def check_n_family_consistency(holdout_metrics: dict) -> InvariantResult:
     """Issue #652/#670-Regressionswächter.
 
@@ -2100,19 +2145,43 @@ def reward_term_variance_table(trials: list[dict]) -> list[dict[str, Any]]:
     return table
 
 
-def gate_inventory_table(trials: list[dict], eligible_requires_all: list[str]) -> list[dict[str, Any]]:
+def gate_inventory_table(
+    trials: list[dict], eligible_requires_all: list[str], *,
+    is_rejection_detail_counts: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     """Issue #970 (Katalog A, P1) — Gate-Inventur mit Entscheidungspflicht: die Selektion war im
     Referenzlauf 46cf5070 faktisch eine Ein-Statistik-Entscheidung (``oos_min_psr`` = 97.3% aller
     Ablehnungen, 62.7% aller evaluierten Trials solo), während 7 von 10 konfigurierten
     ``eligible_requires_all``-Gates in 2135 Evaluierungen KEIN einziges Mal ablehnten.
 
-    Je konfiguriertem Gate: ``n_rejections`` (Trials, deren ``oos_gate_deltas[gate] > 0`` — das
-    Gate verfehlt die Schwelle), ``n_solo_rejections`` (Trials, bei denen dieses Gate das EINZIGE
-    verletzte unter ``eligible_requires_all`` ist — ein Trial, der ausschliesslich an diesem Gate
-    scheitert), ``marginal_delta`` (``|eligible ohne dieses Gate| − |eligible mit allen Gates|`` —
-    wie viele zusätzliche Trials eligible wären, würde man dieses Gate aus der Konjunktion
-    entfernen; ``0`` heisst, das Gate trägt über die beobachtete Kohorte NICHTS zur Selektion bei,
-    ein Kandidat für Entfernung oder Neukalibrierung).
+    Je konfiguriertem Gate: ``n_rejections``, ``n_solo_rejections`` (Trials, bei denen dieses Gate
+    das EINZIGE verletzte unter ``eligible_requires_all`` ist), ``marginal_delta`` (``|eligible
+    ohne dieses Gate| − |eligible mit allen Gates|`` — wie viele zusätzliche Trials eligible wären,
+    würde man dieses Gate aus der Konjunktion entfernen; ``0`` heisst, das Gate trägt über die
+    beobachtete Kohorte NICHTS zur Selektion bei, ein Kandidat für Entfernung oder
+    Neukalibrierung).
+
+    Issue #956/#1122 (Katalog #960) — Root-Cause: ``n_rejections`` zählte VOR diesem Fix
+    unabhängig, wie oft ``oos_gate_deltas[gate] > 0`` war (MEHRLABEL: ein Trial zählt je verletztem
+    Gate) — dieselbe Grundgesamtheit wie ``marginal_delta``, aber NICHT dieselbe wie
+    ``is_rejection_detail_counts`` (EINLABEL: nur die PRIMÄRE Ablehnungsursache,
+    ``run_optimization._classify_is_rejection_detail``). B-13: ``AdxAtrMomentumStrategy/NVDA.
+    ETORO`` hatte ``n_rejections['oos_min_psr'] == 0`` bei ``is_rejection_detail_counts[
+    'REJECT_OOS_MIN_PSR'] == 140`` — das Gate, das JEDEN einzelnen Trial verwarf, wurde als
+    beitragslos geführt (``oos_gate_deltas`` trägt den Key ``'oos_min_psr'`` NUR, wenn ``oos_psr``
+    selbst definiert ist, siehe ``reward._normalized_gate_distances``-Docstring — ein struktureller
+    Blinder Fleck für genau die Fälle, in denen die Statistik am häufigsten fehlschlägt).
+
+    Fix: ``n_rejections`` wird — sofern ``is_rejection_detail_counts`` übergeben ist — DIREKT
+    daraus abgeleitet (``is_rejection_detail_counts['REJECT_OOS_' + gate_ohne_oos_praefix.upper()]``,
+    dieselbe Normierung wie die jetzt entfallende ``check_gate_inventory_coherence``), statt
+    parallel aus ``oos_gate_deltas`` gepflegt zu werden — EINE Quelle statt zwei, die
+    unterschiedliche Populationen zählen. ``n_solo_rejections``/``marginal_delta`` bleiben
+    zwingend MEHRLABEL (sie beantworten "wie viele Trials waren AUSSCHLIESSLICH an diesem Gate
+    gescheitert" bzw. "wie viele wären OHNE dieses Gate zusätzlich eligible" — Fragen, die
+    ``is_rejection_detail_counts`` als Einlabel-Zählung strukturell nicht beantworten kann).
+    ``is_rejection_detail_counts=None`` (Legacy-/Test-Aufrufer ohne dieses Argument) fällt auf die
+    ALTE, gate-delta-basierte Zählung zurück (rückwärtskompatibel).
 
     ``trials``: ``user_attrs``-artige Dicts mit ``oos_gate_deltas`` (dict Gate→Delta, ``> 0`` =
     verletzt, aus ``reward._normalized_gate_distances``/``_compute_oos_constraints``) UND
@@ -2123,7 +2192,7 @@ def gate_inventory_table(trials: list[dict], eligible_requires_all: list[str]) -
         return []
     table = []
     for gate in eligible_requires_all:
-        n_rejections = 0
+        n_rejections_from_deltas = 0
         n_solo = 0
         n_eligible_without_gate = 0
         n_eligible_with_all = 0
@@ -2131,13 +2200,19 @@ def gate_inventory_table(trials: list[dict], eligible_requires_all: list[str]) -
             deltas = t.get("oos_gate_deltas") or {}
             violated = {g for g in eligible_requires_all if float(deltas.get(g, 0.0) or 0.0) > 0.0}
             if gate in violated:
-                n_rejections += 1
+                n_rejections_from_deltas += 1
                 if violated == {gate}:
                     n_solo += 1
             if not violated:
                 n_eligible_with_all += 1
             if violated <= {gate}:
                 n_eligible_without_gate += 1
+        if is_rejection_detail_counts is not None:
+            normalized = gate[4:] if gate.startswith("oos_") else gate
+            code = f"REJECT_OOS_{normalized.upper()}"
+            n_rejections = int(is_rejection_detail_counts.get(code) or 0)
+        else:
+            n_rejections = n_rejections_from_deltas
         table.append({
             "gate": gate,
             "n_rejections": n_rejections,
@@ -2213,69 +2288,6 @@ def check_gate_marginal_contribution(
         detail=("OK" if passed else
                 f"{len(offenders)} Gate(s) ohne jeden marginalen Beitrag über eine ausreichend "
                 f"grosse Kohorte: {offenders} — " + " ".join(detail_parts)),
-    )
-
-
-def check_gate_inventory_coherence(study_records: list[dict]) -> InvariantResult:
-    """Issue #1076 (Katalog #866-2, Kohorte D) — Kreuzprüfung zwischen ``gate_inventory``
-    (``report.gate_inventory_table``, MEHRLABEL: zählt einen Trial einmal JE verletztem Gate) und
-    ``is_rejection_detail_counts`` (``run_optimization._classify_is_rejection_detail``,
-    EINLABEL: zählt einen Trial einmal unter seiner PRIMÄREN/ersten Ablehnungsursache).
-
-    Strukturelle Invariante: jeder Trial, dessen primäre Ursache Gate ``G`` ist
-    (``is_rejection_detail_counts['REJECT_OOS_' + G.upper()]``), verletzt ``G`` per Definition —
-    trägt also auch zu ``gate_inventory[G].n_rejections`` bei. Die MEHRLABEL-Zählung kann die
-    EINLABEL-Teilmenge folglich NIE unterschreiten: ``n_rejections[G] >= detail_count[G]`` gilt für
-    JEDE korrekte Implementierung, unabhängig von der Kohorte. Root-Cause #1076: ein Zähler, der
-    stattdessen z. B. den ``NONE``-Eimer (die BESTANDENEN Trials) statt des gate-spezifischen
-    Eimers liest, verletzt diese Ungleichung sofort und drastisch (Beweis B-10 im #866-Katalog:
-    OpeningRange — Inventar 98 vs. Detail-Zähler 1 wären konsistent, aber der beobachtete
-    Zähler traf zufällig ``n_eligible``; hier als Regressionswächter für JEDE künftige
-    Zähler-Implementierung, die dieselbe Ungleichung verletzen würde)."""
-    offenders: dict[str, dict[str, dict]] = {}
-    n_checked = 0
-    for r in study_records:
-        gate_inventory = r.get("gate_inventory") or []
-        detail_counts = r.get("is_rejection_detail_counts") or {}
-        if not gate_inventory or not detail_counts:
-            continue
-        key = f"{r.get('strategy')}/{r.get('symbol')}"
-        for entry in gate_inventory:
-            gate = entry.get("gate")
-            if not gate:
-                continue
-            n_checked += 1
-            n_rejections = int(entry.get("n_rejections") or 0)
-            normalized = gate[4:] if gate.startswith("oos_") else gate
-            code = f"REJECT_OOS_{normalized.upper()}"
-            detail_count = int(detail_counts.get(code) or 0)
-            if n_rejections < detail_count:
-                offenders.setdefault(key, {})[gate] = {
-                    "n_rejections": n_rejections, "detail_count": detail_count, "code": code,
-                }
-    if n_checked == 0:
-        return InvariantResult(
-            name="check_gate_inventory_coherence",
-            passed=True,
-            expected="gate_inventory[g].n_rejections >= is_rejection_detail_counts['REJECT_OOS_'+g] "
-                     "je Study/Gate",
-            actual=None,
-            severity="high",
-            detail="Keine Studies mit gate_inventory UND is_rejection_detail_counts — "
-                   "nicht anwendbar.",
-        )
-    passed = not offenders
-    return InvariantResult(
-        name="check_gate_inventory_coherence",
-        passed=passed,
-        expected="gate_inventory[g].n_rejections >= is_rejection_detail_counts['REJECT_OOS_'+g] "
-                 "je Study/Gate",
-        actual=offenders if offenders else None,
-        severity="high",
-        detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies mit gate_inventory.n_rejections UNTER dem "
-                f"gate-spezifischen is_rejection_detail_counts-Wert: {offenders} — der Zähler "
-                "liest vermutlich den falschen Eimer (#1076, Beweis B-10 im #866-Katalog)."),
     )
 
 

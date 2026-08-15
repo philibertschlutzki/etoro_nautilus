@@ -2168,11 +2168,21 @@ def study_shows_gradient_signal(rewards: list[float], evaluable_fraction: float,
     ) != "none"
 
 
-def _boundary_hit_analysis(study, strategy: str | None) -> tuple[dict[str, str], int] | None:
-    """Issue #597/#763 — gemeinsame Extraktion für ``_boundary_hit_fraction`` UND die
-    Richtungs-Diagnose ``_boundary_hit_directions``: liefert ``({param: "low"|"high"}`` je
-    Grenz-Parameter, Gesamtzahl numerischer Gewinner-Parameter)``, oder ``None`` wenn Strategie/
-    Bounds/Winner nicht verfügbar sind (defensiv)."""
+def _boundary_hit_analysis(study, strategy: str | None) -> tuple[dict[str, dict], int] | None:
+    """Issue #597/#763/#958 (Katalog #960, #1124) — gemeinsame Extraktion für
+    ``_boundary_hit_fraction``/``_boundary_hit_directions``/``_boundary_veto_evidence``: liefert
+    ``({param: {"direction", "sampled_value", "active_bounds", "default_bounds",
+    "distance_to_edge"}}`` je Grenz-Parameter, Gesamtzahl numerischer Gewinner-Parameter)``, oder
+    ``None`` wenn Strategie/Bounds/Winner nicht verfügbar sind (defensiv). EINE Quelle für ALLE
+    drei Konsumenten — vorher (Root-Cause #958/#1124 Kandidat (b)) verglich die einzige öffentlich
+    sichtbare "Beweis"-Grösse im Report (``report.winner_outside_default_bounds``) STRIKTE
+    Bounds-Verletzung (``value < lo or value > hi``), während dieses Veto bereits auf blosser NÄHE
+    (<= 2 % vom Rand) feuert — ein Gewinner bei ``norm=0.01`` löste das Veto aus, ohne je in
+    ``winner_outside_default_bounds`` zu erscheinen (5 von 6 beobachteten Vetos ohne sichtbaren
+    Grund im Report, B-Beweis im #1124-Issue). ``active_bounds`` ist die TATSÄCHLICHE
+    Sampling-Spanne DIESES Trials (``best_trial.distributions[param].low/.high`` — reflektiert
+    einen eventuell #761-geweiterten Suchraum), ``default_bounds`` bleibt die kuratierte Referenz
+    (``bounds.extract_numeric_bounds``); beide können divergieren (Root-Cause-Kandidat (a))."""
     if not strategy:
         return None
     try:
@@ -2185,20 +2195,31 @@ def _boundary_hit_analysis(study, strategy: str | None) -> tuple[dict[str, str],
     except Exception:
         return None
     params = getattr(best, "params", {}) or {}
+    distributions = getattr(best, "distributions", {}) or {}
     numeric = [(k, v) for k, v in params.items()
                if k in b and isinstance(v, (int, float)) and not isinstance(v, bool)]
     if not numeric:
         return None
-    directions: dict[str, str] = {}
+    evidence: dict[str, dict] = {}
     for k, v in numeric:
         lo, hi = b[k]
         span = (hi - lo) or 1.0
         norm = (float(v) - lo) / span
         if norm <= 0.02:
-            directions[k] = "low"
+            direction, distance_to_edge = "low", round(norm, 6)
         elif norm >= 0.98:
-            directions[k] = "high"
-    return directions, len(numeric)
+            direction, distance_to_edge = "high", round(1.0 - norm, 6)
+        else:
+            continue
+        dist = distributions.get(k)
+        evidence[k] = {
+            "direction": direction,
+            "sampled_value": v,
+            "active_bounds": [getattr(dist, "low", lo), getattr(dist, "high", hi)],
+            "default_bounds": [lo, hi],
+            "distance_to_edge": distance_to_edge,
+        }
+    return evidence, len(numeric)
 
 
 def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
@@ -2209,8 +2230,8 @@ def _boundary_hit_fraction(study, strategy: str | None) -> float | None:
     analysis = _boundary_hit_analysis(study, strategy)
     if analysis is None:
         return None
-    directions, total = analysis
-    return len(directions) / total
+    evidence, total = analysis
+    return len(evidence) / total
 
 
 def _boundary_hit_directions(study, strategy: str | None) -> dict[str, str] | None:
@@ -2224,8 +2245,24 @@ def _boundary_hit_directions(study, strategy: str | None) -> dict[str, str] | No
     analysis = _boundary_hit_analysis(study, strategy)
     if analysis is None:
         return None
-    directions, _total = analysis
-    return directions
+    evidence, _total = analysis
+    return {k: v["direction"] for k, v in evidence.items()}
+
+
+def _boundary_veto_evidence(study, strategy: str | None) -> dict[str, dict] | None:
+    """Issue #958/#1124 (Katalog #960) — die VOLLE, benannte Evidenz je klemmendem
+    Gewinner-Parameter (``{sampled_value, active_bounds, default_bounds, distance_to_edge}``,
+    dieselbe 2 %-Toleranz/Quelle wie ``_boundary_hit_fraction``/``_boundary_hit_directions``, siehe
+    ``_boundary_hit_analysis``-Docstring). Macht jede ``REJECTED_BOUNDARY_SOLUTION``/
+    ``HOLD_BOUNDARY_UNRESOLVED``-Entscheidung im Artefakt selbst nachvollziehbar, statt nur über
+    eine separate, enger geschnittene Telemetrie-Grösse (``winner_outside_default_bounds``)
+    erschliessbar zu sein. ``None``/leer unter denselben Bedingungen wie
+    ``_boundary_hit_fraction``."""
+    analysis = _boundary_hit_analysis(study, strategy)
+    if analysis is None:
+        return None
+    evidence, _total = analysis
+    return evidence or None
 
 
 def _emit_study_summary(study, symbol: str, study_t0: float, strategy: str | None = None,
