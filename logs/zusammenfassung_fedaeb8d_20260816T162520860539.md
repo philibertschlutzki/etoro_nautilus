@@ -1,0 +1,236 @@
+# Sweep-Zusammenfassung fedaeb8d_20260816T162520860539
+<!-- report_sha256: 7800da779221ef22a20e26a3b5a51dccd1a8e53cd5367fe8e17bef1bf64b1ef6 -->
+
+
+## 1. Ergebnis in einem Satz
+
+14 Studies, 0 Sweep-Promotion(en), **0 deploybar** — kein Kandidat hat sowohl die Holdout-Validierung als auch das Deployment-Gate (``deployment_gate.evaluate_deployment_eligibility``) bestanden. Es gibt kein deploybares Ergebnis aus diesem Lauf. **Hinweis:** Vollständig gerechnet (1/1 Symbole), aber wegen blockierender Invarianten (check_effective_stop_distance) nicht entscheidungsfähig — siehe unten. **BLOCKIERENDE Invarianten-FAIL(s):** check_sizing_identity_coherence, check_trailing_stop_loss_share — siehe Abschnitt 5.1 für Details.
+
+## 2. Monetäres Ergebnis
+
+### 2.1 Promotionskandidaten (Status READY_FOR_PR / PROMOTE_GLOBAL_DEFAULT) — noch NICHT deploybar
+
+**Kein deploybares Ergebnis aus diesem Lauf.** Kein Kandidat hat die Holdout-Validierung bestanden — alle folgenden Zahlen in Abschnitt 2.2 sind ABGELEHNTE, NICHT handelbare Kandidaten.
+
+### 2.1b Quarantäne — Datenintegrität
+
+Keine Kandidaten mit nachgewiesenem Datenstand-Bruch in diesem Lauf.
+
+### 2.2 Bester abgelehnter Kandidat je Strategie (NICHT deploybar)
+
+**Diese Kandidaten sind ausdrücklich NICHT deploybar** — der Backtest-Ertrag ist eine Simulationszahl, kein handelbares Ergebnis.
+
+| Strategie | Symbol | Holdout-Return (simuliert) | Ablehnungsgrund |
+|---|---|---:|---|
+| AdxAtrMomentumStrategy | TSLA.ETORO | 1.4 % | REJECTED_ON_HOLDOUT |
+| ComboTrendVwapStrategy | TSLA.ETORO | 1.7 % | REJECTED_SELECTION_OVERFIT |
+| DonchianRegimeBreakoutStrategy | TSLA.ETORO | -0.3 % | HOLD_BOUNDARY_UNRESOLVED |
+| DynamicBreakoutStrategy | TSLA.ETORO | 1.1 % | REJECTED_ON_HOLDOUT |
+| FlashCrashReversalStrategy | TSLA.ETORO | -1.5 % | REJECTED_ON_HOLDOUT |
+| HourlyMeanReversionStrategy | TSLA.ETORO | 0.3 % | REJECTED_ON_HOLDOUT |
+| MeanReversionStrategy | TSLA.ETORO | 0.3 % | REJECTED_ON_HOLDOUT |
+| OpeningRangeBreakoutStrategy | TSLA.ETORO | -0.6 % | REJECTED_ON_HOLDOUT |
+| Rsi2ReversionStrategy | TSLA.ETORO | 0.1 % | REJECTED_ON_HOLDOUT |
+| SmaCrossoverStrategy | TSLA.ETORO | -0.1 % | REJECTED_SELECTION_OVERFIT |
+| SqueezeBreakoutStrategy | TSLA.ETORO | -0.3 % | REJECTED_BOUNDARY_SOLUTION |
+| TrendPullbackStrategy | TSLA.ETORO | -0.8 % | REJECTED_ON_HOLDOUT |
+| VolatilityBreakoutPumpStrategy | TSLA.ETORO | -0.6 % | REJECTED_ON_HOLDOUT |
+| VwapExhaustionStrategy | TSLA.ETORO | -1.3 % | REJECTED_SELECTION_OVERFIT |
+
+### 2.3 Vergleich gegen Buy & Hold je Symbol
+
+| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | Excess/Exposure | Vorzeichen |
+|---|---|---:|---:|---:|---:|---:|---|
+| ComboTrendVwapStrategy | TSLA.ETORO | 1.7 % | -16.5 % | 18.1 % | 77.5 % | 23.4 % | B&H negativ — Excess trivial positiv |
+| AdxAtrMomentumStrategy | TSLA.ETORO | 1.4 % | -16.5 % | 17.8 % | 87.9 % | 20.3 % | B&H negativ — Excess trivial positiv |
+| DynamicBreakoutStrategy | TSLA.ETORO | 1.1 % | -16.5 % | 17.5 % | 20.8 % | 84.5 % | B&H negativ — Excess trivial positiv |
+| MeanReversionStrategy | TSLA.ETORO | 0.3 % | -16.5 % | 16.8 % | 23.4 % | 71.5 % | B&H negativ — Excess trivial positiv |
+| HourlyMeanReversionStrategy | TSLA.ETORO | 0.3 % | -16.5 % | 16.8 % | 35.5 % | 47.2 % | B&H negativ — Excess trivial positiv |
+| Rsi2ReversionStrategy | TSLA.ETORO | 0.1 % | -16.5 % | 16.6 % | 43.8 % | 37.8 % | B&H negativ — Excess trivial positiv |
+| SmaCrossoverStrategy | TSLA.ETORO | -0.1 % | -16.5 % | 16.4 % | 47.5 % | 34.5 % | B&H negativ — Excess trivial positiv |
+| DonchianRegimeBreakoutStrategy | TSLA.ETORO | -0.3 % | -16.5 % | 16.1 % | 14.6 % | 110.9 % | B&H negativ — Excess trivial positiv |
+| VolatilityBreakoutPumpStrategy | TSLA.ETORO | -0.6 % | -16.5 % | 15.9 % | 30.2 % | 52.5 % | B&H negativ — Excess trivial positiv |
+| OpeningRangeBreakoutStrategy | TSLA.ETORO | -0.6 % | -16.5 % | 15.8 % | 18.4 % | 86.2 % | B&H negativ — Excess trivial positiv |
+| TrendPullbackStrategy | TSLA.ETORO | -0.8 % | -16.5 % | 15.6 % | 44.9 % | 34.9 % | B&H negativ — Excess trivial positiv |
+| VwapExhaustionStrategy | TSLA.ETORO | -1.3 % | -16.5 % | 15.1 % | 29.7 % | 51.0 % | B&H negativ — Excess trivial positiv |
+| FlashCrashReversalStrategy | TSLA.ETORO | -1.5 % | -16.5 % | 14.9 % | 12.2 % | 121.9 % | B&H negativ — Excess trivial positiv |
+
+**Nicht bewertbar (Zeit im Markt < 5.0 %, keine sinnvolle Excess/Exposure-Normierung):**
+
+| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | Trades |
+|---|---|---:|---:|---:|---:|---:|
+| SqueezeBreakoutStrategy | TSLA.ETORO | -0.3 % | -16.5 % | 16.2 % | 2.1 % | 8 |
+
+
+### 2.4 Kostenbasis
+
+Alle oben genannten Zahlen sind **simulierte Backtest-Ergebnisse** über das Holdout-Fenster (45 Tage) unter dem im Lauf konfigurierten Kostenmodell (Spread + Kommission je Asset-Klasse, #774/#775) — kein garantiertes zukünftiges Ergebnis.
+
+## 3. Zeitdauer
+
+### 3.1 Gesamtlaufzeit
+
+- Start: 2026-08-16T16:25:20.860+00:00
+- Gesamtlaufzeit: 0.52 h
+- n_jobs: 22 (Quelle: DEFAULT_CPU_MINUS_2)
+- Lauf-Status: vollständig gerechnet, aber wegen blockierender Invarianten nicht entscheidungsfähig (kein Arbeitsabbruch)
+- Symbole: 1 von 1 abgeschlossen
+
+### 3.2 Laufzeit je Symbol/Strategie
+
+| Strategie | Median-Wallclock | p90-Wallclock | n Studies |
+|---|---:|---:|---:|
+| ComboTrendVwapStrategy | 0.42 h (1495 s) | 0.42 h (1495 s) | 1 |
+| AdxAtrMomentumStrategy | 0.30 h (1076 s) | 0.30 h (1076 s) | 1 |
+| Rsi2ReversionStrategy | 0.29 h (1037 s) | 0.29 h (1037 s) | 1 |
+| TrendPullbackStrategy | 0.28 h (1020 s) | 0.28 h (1020 s) | 1 |
+| FlashCrashReversalStrategy | 0.26 h (934 s) | 0.26 h (934 s) | 1 |
+| HourlyMeanReversionStrategy | 0.26 h (928 s) | 0.26 h (928 s) | 1 |
+| SqueezeBreakoutStrategy | 0.25 h (914 s) | 0.25 h (914 s) | 1 |
+| MeanReversionStrategy | 0.22 h (798 s) | 0.22 h (798 s) | 1 |
+| VwapExhaustionStrategy | 0.22 h (793 s) | 0.22 h (793 s) | 1 |
+| DynamicBreakoutStrategy | 0.21 h (751 s) | 0.21 h (751 s) | 1 |
+| DonchianRegimeBreakoutStrategy | 0.21 h (748 s) | 0.21 h (748 s) | 1 |
+| OpeningRangeBreakoutStrategy | 0.20 h (706 s) | 0.20 h (706 s) | 1 |
+| SmaCrossoverStrategy | 0.19 h (682 s) | 0.19 h (682 s) | 1 |
+| VolatilityBreakoutPumpStrategy | 0.18 h (639 s) | 0.18 h (639 s) | 1 |
+
+### 3.3 Gelaufene vs. budgetierte Trials
+
+- Median Budgetausführung: 100.0 % (p10: 100.0 %, n=14 Studies)
+- Trials gesamt: 1923 von 1940 budgetiert
+
+### 3.4 Verlorene Zeit: abgebrochene Studies
+
+- BUDGET_EXHAUSTED: 13 Studies
+- STRUCTURAL_ZERO_ELIGIBLE: 1 Studies
+
+Barriere-Wartezeit (Symbol-Wallclock minus schnellste Study) — die 1 Symbole mit der längsten Wartezeit:
+- TSLA.ETORO: 0.24 h (855 s)
+
+Study-Wallclock über Kapazität (worker_occupancy_wallclock = Σ Study-Wallclock / (n_jobs × Sweep-Wallclock); kann > 100 % liegen, siehe #1038): 30.4 %
+Echte CPU-Auslastung (cpu_utilisation_backtest = Σ Backtest-CPU-Zeit je Trial / (n_jobs × Sweep-Wallclock)): 22.1 %
+
+## 4. Trades mit der längsten Haltedauer
+
+**Scope-Hinweis:** diese Sektion listet die längste beobachtete Haltedauer JE STUDY (Strategie/Symbol, Maximum über alle OOS-evaluierten Trials), NICHT einzelne Trades mit Entry-/Exit-Zeitstempel — siehe Modul-Docstring für die Begründung dieser Scope-Entscheidung (Katalog #832 Fix Punkt 1).
+
+| Strategie | Symbol | Max. Haltedauer | P95 Haltedauer |
+|---|---|---:|---:|
+| VolatilityBreakoutPumpStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| SmaCrossoverStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| ComboTrendVwapStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| DonchianRegimeBreakoutStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| DynamicBreakoutStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| MeanReversionStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| Rsi2ReversionStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| OpeningRangeBreakoutStrategy | TSLA.ETORO | 24.00 h (86400 s) | 24.00 h (86400 s) |
+| VwapExhaustionStrategy | TSLA.ETORO | 18.00 h (64800 s) | 18.00 h (64800 s) |
+| HourlyMeanReversionStrategy | TSLA.ETORO | 18.00 h (64800 s) | 18.00 h (64800 s) |
+
+## 5. Auffälligkeiten
+
+### 5.1 Übersicht — Invarianten-FAILs (30)
+
+| Check | FAILs | betroffene Studies | Schweregrad |
+|---|---:|---:|---|
+| check_sizing_identity_coherence | 1 | 1 | blocking |
+| check_trailing_stop_loss_share | 1 | 1 | blocking |
+| check_champion_corroboration_reachable | 1 | 1 | high |
+| check_dust_round_trip_share | 1 | 1 | high |
+| check_effective_stop_distance | 1 | 1 | high |
+| check_expectancy_outlier_dependence | 1 | 1 | high |
+| check_family_n_stability | 1 | 1 | high |
+| check_n_periods_homogeneity | 1 | 1 | high |
+| check_search_made_progress | 1 | 1 | high |
+| check_trailing_stop_risk_calibration_acceptance | 1 | 1 | high |
+| check_reward_term_variance | 14 | 14 | medium |
+| check_champion_writeback_reachability | 1 | 1 | medium |
+| check_gate_marginal_contribution | 1 | 1 | medium |
+| check_inference_diagnostics_concentration | 1 | 1 | medium |
+| check_sizing_parity_backtest_vs_allocator | 1 | 1 | medium |
+| check_annualization_commensurability | 1 | 1 | low |
+| check_champion_seed_coverage | 1 | 1 | low |
+
+### 5.2 Details
+
+**check_sizing_identity_coherence**
+
+- (scope=global): 3 Study/Studies: der aus (total_return, expectancy, n) implizierte Sizing-Anteil weicht relativ um mehr als 0.35 vom konfigurierten trade_amount_pct ab: {'HourlyMeanReversionStrategy/TSLA.ETORO': {'f_implied_pct': 23.3672, 'trade_amount_pct': 15.0}, 'Rsi2ReversionStrategy/TSLA.ETORO': {'f_implied_pct': 2.7953, 'trade_amount_pct': 15.0}, 'TrendPullbackStrategy/TSLA.ETORO': {'f_implied_pct': 9.1933, 'trade_amount_pct': 15.0}} — Signatur einer Datenanomalie in der zugrundeliegenden Preisreihe, nicht des Sizing-Pfads (#1028).
+
+**check_trailing_stop_loss_share**
+
+- (scope=global): 14 Study/Studies mit einer Trailing-Stop-Verlustquote/-groesse ausserhalb der Kalibrierungsschwelle (#1092/#1094-Fehlerklasse: der Stop ratscht auf einem Docht statt eine Verlustobergrenze durchzusetzen).
+
+**check_champion_corroboration_reachable**
+
+- (scope=global): max(corroboration_count)=1 < 2 — Ebene 2 (#706) ist auf der EIGENEN Kohorte strukturell noch unerreichbar. Kein globaler/Nebenprozess-Zähler kann diesen Befund mehr entkraeften (#1089).
+
+**check_dust_round_trip_share**
+
+- (scope=global): 9 Study/Studies mit einem Dust-Round-Trip-Anteil > 0.01: {'AdxAtrMomentumStrategy/TSLA.ETORO': 0.0261, 'DonchianRegimeBreakoutStrategy/TSLA.ETORO': 0.0705, 'DynamicBreakoutStrategy/TSLA.ETORO': 0.0131, 'FlashCrashReversalStrategy/TSLA.ETORO': 0.0273, 'OpeningRangeBreakoutStrategy/TSLA.ETORO': 0.0158, 'Rsi2ReversionStrategy/TSLA.ETORO': 0.0874, 'SqueezeBreakoutStrategy/TSLA.ETORO': 0.1071, 'TrendPullbackStrategy/TSLA.ETORO': 0.0296, 'VwapExhaustionStrategy/TSLA.ETORO': 0.0544} — Fliesskomma-Residuen eines Netto-Exposure-Nulldurchgangs werden als vollwertige Round-Trips gezählt und verdünnen jeden gepoolten Nenner (#1085).
+
+**check_effective_stop_distance**
+
+- (scope=global): 3 Study/Studies ÜBERSCHREITEN 10.0: {'DynamicBreakoutStrategy/TSLA.ETORO': 14.5599, 'MeanReversionStrategy/TSLA.ETORO': 12.8007, 'VwapExhaustionStrategy/TSLA.ETORO': 12.3717} — der realisierte Verlust ist von der konfigurierten Stopdistanz UNABHÄNGIG (der Stop begrenzt den Verlust nicht, unabhängig vom Multiplikator, #1069/#1070).
+
+**check_expectancy_outlier_dependence**
+
+- (scope=global): 3 Study/Studies mit Vorzeichenwechsel zwischen roher und winsorisierter Expectancy: {'AdxAtrMomentumStrategy/TSLA.ETORO': {'holdout_expectancy_notional_weighted': 0.0007958523108163742, 'holdout_expectancy_winsorized': -0.000361009834876738}, 'DynamicBreakoutStrategy/TSLA.ETORO': {'holdout_expectancy_notional_weighted': 0.0018474976731563083, 'holdout_expectancy_winsorized': -0.00030361196589400965}, 'HourlyMeanReversionStrategy/TSLA.ETORO': {'holdout_expectancy_notional_weighted': 0.00015021863428018375, 'holdout_expectancy_winsorized': -0.0005124605903685508}} — das positive Ergebnis hängt an einer kleinen Zahl extremer Trades, kein robuster Edge (#1073).
+
+**check_family_n_stability**
+
+- (scope=global): 1 Symbol(e) mit > 5% Abweichung zwischen eingefrorener und beobachteter Familien-Multiplizitaet — Zwischenreport oder #1091-Kohorten-Luecke.
+
+**check_n_periods_homogeneity**
+
+- (scope=global): 1 Symbol(e) mit n_periods-Spannweite > 6.0: {'TSLA.ETORO': 77.65} — Nenner-Study je Symbol: {'TSLA.ETORO': 'SqueezeBreakoutStrategy/TSLA.ETORO'} (vor einer Interpretation als Datenanomalie erst prüfen, ob dieser Nenner selbst degeneriert ist, z. B. #1079) — die #865-Heterogenitäts-Suppression (deflation_max_n_periods_ratio) greift vermutlich für praktisch jede Familie dieses Symbols (Issue #923).
+
+**check_search_made_progress**
+
+- (scope=global): 1 Study/Studies mit stagnierender/wachsender Constraint-Verletzung bei 0 eligiblen Trials nach ausreichend modellierten Trials: {'AdxAtrMomentumStrategy/TSLA.ETORO': -0.032801} — der TPE-Sampler hat nachweislich keinen Gradienten gefunden.
+
+**check_trailing_stop_risk_calibration_acceptance**
+
+- (scope=global): Die #1092/#1094-Hypothese (Anker/Auslöser-Auflösung) ist WIDERLEGT — #953/#1119 (Ein-Bar-Ausführungslatenz) ist die verbleibende Erklärung: Spearman(k·ATR, Verlust)=-0.7967 < 0.3 — der realisierte Stop-Verlust reagiert nicht (hinreichend) positiv auf seinen eigenen Multiplikator. nur 38.5% der Studies (statt >= 80%) liegen mit realized_stop_loss_ratio in [0.8, 3.0]. TRAILING_STOP-Anteil=38.66% >= 35%.
+
+**check_reward_term_variance**
+
+- (scope=AdxAtrMomentumStrategy/TSLA.ETORO): Reward-Term(e) praktisch inert (std < 1.00% von reward_std=2.724160): ['param_pen', 'turnover', 'fold_dispersion'].
+- (scope=ComboTrendVwapStrategy/TSLA.ETORO): Reward-Term(e) praktisch inert (std < 1.00% von reward_std=2.577476): ['param_pen', 'turnover', 'fold_dispersion'].
+- (scope=DonchianRegimeBreakoutStrategy/TSLA.ETORO): Reward-Term(e) praktisch inert (std < 1.00% von reward_std=1.302832): ['param_pen', 'turnover', 'fold_dispersion'].
+- (scope=DynamicBreakoutStrategy/TSLA.ETORO): Reward-Term(e) praktisch inert (std < 1.00% von reward_std=2.537961): ['param_pen', 'turnover', 'fold_dispersion'].
+- (scope=FlashCrashReversalStrategy/TSLA.ETORO): Reward-Term(e) praktisch inert (std < 1.00% von reward_std=0.931538): ['param_pen', 'turnover', 'fold_dispersion'].
+- … und 9 weitere
+
+**check_champion_writeback_reachability**
+
+- (scope=global): 14 Versuche, 0 Writebacks — beobachtete Ursachen: 9x STORE_EMPTY, 4x NO_ENTRY_FOR_PAIR, 1x NOT_CORROBORATED_OR_WINDOW_NOT_ADVANCED (#1084: die Ursache ist gemessen, nicht geraten).
+
+**check_gate_marginal_contribution**
+
+- (scope=global): 2 Gate(s) ohne jeden marginalen Beitrag über eine ausreichend grosse Kohorte: {'min_trades': {'marginal_delta': 0, 'n_evaluated': 1893}, 'max_drawdown': {'marginal_delta': 0, 'n_evaluated': 1893}} — GESCHÜTZT (gate_consolidation_protected) — Neukalibrierungs-, KEINE Entfernungsempfehlung: ['max_drawdown', 'min_trades'] (#1076).
+
+**check_inference_diagnostics_concentration**
+
+- (scope=SqueezeBreakoutStrategy/TSLA.ETORO): 86/180 Trials (47.8%) wurden vom Inferenz-Wächter zensiert (SORTINO_GUARD_TRIPPED/SORTINO_INSUFFICIENT_DOWNSIDE, kein regulärer Ausgang) — die Suche ist faktisch zensiert (analog STUDY_GUARD_DOMINATED, #823).
+
+**check_sizing_parity_backtest_vs_allocator**
+
+- (scope=global): 15 Strategie(n) mit Sizing-Divergenz Backtest vs. MomentumLSAllocator: {'SmaCrossoverStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'MeanReversionStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'DynamicBreakoutStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'FlashCrashReversalStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'VolatilityBreakoutPumpStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'ComboTrendVwapStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'VwapExhaustionStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'HourlyMeanReversionStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'AdxAtrMomentumStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'TrendPullbackStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'SqueezeBreakoutStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'OpeningRangeBreakoutStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'DonchianRegimeBreakoutStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'Rsi2ReversionStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}, 'GapContinuationStrategy': {'backtest_trade_amount_pct': 15.0, 'allocator_max_symbol_pct': 10.0}} — Backtest und Live sind unter verschiedenen Risikoprozessen validiert bzw. ausgeführt (#1042 E-2).
+
+**check_annualization_commensurability**
+
+- (scope=global): 1/1 Symbole — schlechtestes TSLA.ETORO: sqrt(F)-Spannweite über dessen Studies beträgt Faktor 4.948 (> 1.05). Seit #948/#1114 misst dieser Check NICHT mehr die (erwartete, triviale) Intra-Trial-Fold-Streuung, sondern eine echte Handelszeitfenster-Verschiebung zwischen Studies desselben Symbols.
+
+**check_champion_seed_coverage**
+
+- (scope=global): strategy_defaults-Anteil=100.0% > 90% — der Champion-Store-Closed-Loop (#702) ist fuer diesen Lauf nachweislich unwirksam ({'strategy_defaults': 14}).
+
+### 5.3 Zusammenfassung
+
+- Guard-dominierte Studies (SORTINO_GUARD_TRIPPED-Mehrheit, #823): 0
+- Wirtschaftlich ruinierte Trials (EQUITY_NONPOSITIVE, #801/#825): 0
+- Randlösungen mit Bounds-Vorschlag (#831): 0
+- Automatisch denylistete Paare (#829/#830): 0
+- Budget-deprioritisierte Paare (#830): 0
