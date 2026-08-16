@@ -3603,6 +3603,12 @@ def _parse_exit_order_tags(tags) -> dict:
                 # Issue #1095 (Katalog #928) — Bars zwischen Signal und tatsaechlichem Markt-Close
                 # (siehe hourly_strategy_base._execute_market_close-Docstring).
                 meta["stop_exit_lag_bars"] = int(value)
+            elif key == "BAR_RANGE_MEDIAN_BPS":
+                # Issue #953/#1119 (Katalog #960) — Median der Bar-Spanne ((high-low)/close, bps)
+                # waehrend der Position offen war (siehe hourly_strategy_base._execute_market_close-
+                # Docstring); Referenzgroesse fuer invariants.check_stop_loss_vs_bar_range (Latenz-
+                # vs. Stop-getriebener Verlust).
+                meta["bar_range_median_bps"] = float(value)
         except (TypeError, ValueError):
             continue
     return meta
@@ -3662,6 +3668,11 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     # losses_bps_trailing_stop): die Fill-Verzoegerung eines Zeitbox-/Signalwechsel-Exits ist eine
     # andere Fragestellung als die des Stop-Exits, den #1092/#1094 quantifizieren.
     stop_exit_lag_bars: list[int] = []
+    # Issue #953/#1119 (Katalog #960) — UNBEDINGT (nicht auf TRAILING_STOP beschraenkt): die
+    # Bar-Spanne ist eine Marktdaten-Eigenschaft der Position-Haltedauer, keine Stop-spezifische
+    # Groesse — invariants.check_stop_loss_vs_bar_range vergleicht sie gegen den Stop-Verlust
+    # GENAU DESHALB als unabhaengige Referenz.
+    bar_range_medians: list[float] = []
     for m in meta_list or []:
         # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
         # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
@@ -3682,6 +3693,8 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             atr_mins.append(float(m["atr_min_bps"]))
         if reason == "TRAILING_STOP" and m.get("stop_exit_lag_bars") is not None:
             stop_exit_lag_bars.append(int(m["stop_exit_lag_bars"]))
+        if m.get("bar_range_median_bps") is not None:
+            bar_range_medians.append(float(m["bar_range_median_bps"]))
     return {
         "exit_reason_histogram": histogram,
         "gross_loss_mean_bps": statistics.mean(losses_bps) if losses_bps else None,
@@ -3709,6 +3722,12 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         "stop_exit_lag_bars_median": (
             statistics.median(stop_exit_lag_bars) if stop_exit_lag_bars else None),
         "n_trailing_stop_exits_with_lag_telemetry": len(stop_exit_lag_bars),
+        # Issue #953/#1119 (Katalog #960) — Median (ueber die Round-Trips dieses Trials) der
+        # je-Position-Bar-Spannen-Mediane (bps); Referenzgroesse fuer
+        # invariants.check_stop_loss_vs_bar_range (Verlust = adverse Bewegung EINER Bar vs.
+        # Verlust = Stopdistanz + Ueberschiessen).
+        "bar_range_median_bps": (
+            statistics.median(bar_range_medians) if bar_range_medians else None),
     }
 
 
@@ -3862,6 +3881,62 @@ def _expectancy_cost_stress(pnls_notionals: list[tuple[float, float]], *,
         stressed_pnl_sum += pnl - extra_rate * nz
         notional_sum += nz
     return stressed_pnl_sum / notional_sum if notional_sum > 0.0 else None
+
+
+def _filter_dust_round_trips(
+    rt_pnls_with_ts: list[RoundTripRecord],
+    rt_notionals_with_ts: list[NotionalRecord],
+    rt_notional_peaks: list[float],
+    rt_exit_meta: list[dict],
+    *, dust_notional_floor_frac: float = 0.05,
+) -> tuple[list[RoundTripRecord], list[NotionalRecord], list[float], list[dict],
+          list[NotionalRecord]]:
+    """Issue #946/#1112 (Katalog #960) — verwirft Round-Trips mit einem Notional unterhalb
+    ``dust_notional_floor_frac · median(notional)`` AN DER QUELLE (dem vollstaendigen Round-Trip-
+    Strom, ``extract_metrics``s ``rt_*_with_ts``-Listen, unmittelbar nach dem FIFO-Matching und VOR
+    jeder IS/OOS-/Fold-Aufteilung), statt — wie vor diesem Fix — nur an EINER Konsumstelle
+    (``_calculate_stats``s ``expectancy_capital_weighted``-Boden, #1031).
+
+    Root-Cause #1112: ein Leg mit Notional ~1e−13 (Fliesskomma-Residuum eines Netto-Exposure-
+    Nulldurchgangs, dieselbe Fehlerklasse wie #1085) blieb in JEDEM ANDEREN stromabwaerts
+    abgeleiteten Wert (``holdout_expectancy_notional_weighted`` — Mittel von Quotienten OHNE
+    eigenen Boden, siehe ``_calculate_stats``-Docstring — sowie Win-Rate, Profit-Faktor,
+    ``exit_reason_histogram``, Zeitbox-Nenner) und dominierte dort den Mittelwert (beobachtet:
+    SqueezeBreakout/PLTR, 1 von 8 Trades, ``holdout_expectancy_notional_weighted = -171,34`` bps
+    gegen ``holdout_expectancy_capital_weighted = -21,57`` bps). Filterung an der Quelle macht ALLE
+    vier parallelen Round-Trip-Listen (PnL/Notional/Notional-Spitze/Exit-Telemetrie, gleicher Index)
+    auf einen Schlag konsistent — jeder nachgelagerte Konsument sieht dieselbe bereinigte Menge,
+    ohne selbst einen Boden pflegen zu muessen.
+
+    Reine Funktion (keine Engine-/Optuna-Abhaengigkeit) — direkt unit-testbar, analog
+    ``_round_trip_notional_peak``/``_expectancy_cost_stress``. Rueckgabe: die vier gefilterten
+    Listen (dieselbe relative Reihenfolge, weiterhin index-parallel) plus die VERWORFENEN
+    ``(notional, exit_ts)``-Paare (damit der Aufrufer sie — wie jeden anderen Round-Trip — nach
+    IS/OOS klassifizieren kann, statt nur eine undifferenzierte Gesamtzahl zu erhalten). Weniger
+    als zwei positive Notionale ⇒ kein belastbarer Median, alle vier Listen unveraendert
+    zurueckgegeben (nichts verworfen)."""
+    positive_notionals = [nz for nz, _ts in rt_notionals_with_ts if nz and nz > 0.0]
+    if len(positive_notionals) < 2:
+        return rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta, []
+    floor = dust_notional_floor_frac * statistics.median(positive_notionals)
+    if floor <= 0.0:
+        return rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta, []
+    kept_pnls: list[RoundTripRecord] = []
+    kept_notionals: list[NotionalRecord] = []
+    kept_peaks: list[float] = []
+    kept_meta: list[dict] = []
+    discarded: list[NotionalRecord] = []
+    for i, (nz, ts) in enumerate(rt_notionals_with_ts):
+        if nz is not None and nz > 0.0 and nz < floor:
+            discarded.append((nz, ts))
+            continue
+        kept_pnls.append(rt_pnls_with_ts[i])
+        kept_notionals.append(rt_notionals_with_ts[i])
+        if i < len(rt_notional_peaks):
+            kept_peaks.append(rt_notional_peaks[i])
+        if i < len(rt_exit_meta):
+            kept_meta.append(rt_exit_meta[i])
+    return kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded
 
 
 class MetricsLevel(TypedDict):
@@ -4129,6 +4204,20 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             log_fn(f"[Metriken] FIFO-Extraktion: {len(rt_pnls_with_ts)} Round-Trips "
                    f"(aus {len(pnls_with_ts)} Fill-Matches) erfolgreich berechnet.")
 
+        # Issue #946/#1112 (Katalog #960) — Dust-Round-Trip-Boden AN DER QUELLE, VOR jeder IS/OOS-/
+        # Fold-Aufteilung und VOR jedem Konsumenten (``_calculate_stats``, ``_aggregate_exit_
+        # telemetry``, Kostenstress, Portfolio-/Fold-Metriken) — siehe ``_filter_dust_round_trips``-
+        # Docstring fuer die Root-Cause. Die vier parallelen Listen werden HIER, EINMAL, ersetzt;
+        # jeder spaetere Codepfad in dieser Funktion liest sie ausschliesslich ueber den Namen
+        # (kein Index/Referenz von VOR dieser Zeile bleibt in Gebrauch), die Filterung propagiert
+        # deshalb korrekt in JEDEN nachgelagerten Wert.
+        (rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta,
+         _dust_round_trips_discarded) = _filter_dust_round_trips(
+            rt_pnls_with_ts, rt_notionals_with_ts, rt_notional_peaks, rt_exit_meta)
+        if _dust_round_trips_discarded and log_fn:
+            log_fn(f"[Metriken] #946: {len(_dust_round_trips_discarded)} Dust-Round-Trip(s) "
+                   "(Notional < 5% des Median-Notionals) an der Quelle verworfen.")
+
         # Issue #448/#444 — beobachtete Fill-ts-Spanne (min/max der Round-Trip-Exit-ts über alle
         # Instrumente). Wird in die Worker-/Tournament-Telemetrie gehoben (data_window.fill_ts_*),
         # damit ein OOS-Domänen-Defekt (Fills außerhalb von [start_ns, end_ns]) ohne Ad-hoc-
@@ -4387,6 +4476,25 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
 
         # ── Primär: Round-Trip-Ebene (Gate-Eligibility & Walk-Forward-Validierung, #508) ─
         is_metrics, oos_metrics = _split_and_stats(rt_pnls_with_ts, rt_notionals_with_ts, exit_meta=rt_exit_meta)
+
+        # Issue #946/#1112 (Katalog #960) — die an der Quelle verworfenen Dust-Round-Trips (siehe
+        # oben) DIESELBE IS/OOS-Klassifikation wie jeder andere Round-Trip, damit
+        # ``dust_round_trips_filtered`` (report.py, Rohmaterial fuer
+        # ``invariants.check_dust_round_trip_share``) auf DERSELBEN Grundgesamtheit steht wie sein
+        # Nenner ``oos_total_trades_with_exit_telemetry``.
+        _is_dust_count, _oos_dust_count = 0, 0
+        for _nz, _ts in _dust_round_trips_discarded:
+            if _wf:
+                _is_oos = any(s <= _ts < e for _, s, e in fold_boundaries)
+                _is_in_sample = _is_start_ns <= _ts < is_end_ns
+            else:
+                _is_oos, _is_in_sample = False, True
+            if _is_oos:
+                _oos_dust_count += 1
+            elif _is_in_sample:
+                _is_dust_count += 1
+        is_metrics["dust_round_trips_filtered_count"] = _is_dust_count
+        oos_metrics["dust_round_trips_filtered_count"] = _oos_dust_count
 
         # Issue #1032 (Katalog #866) — Spitzenbestand-Telemetrie je Ebene, dieselbe IS/OOS-
         # Fold-Aufteilung wie ``_split_and_stats`` (hier separat, da ``rt_notional_peaks`` kein

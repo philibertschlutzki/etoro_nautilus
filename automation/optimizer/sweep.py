@@ -11,6 +11,7 @@ only through separate studies (each its own SQLite file via optimize_symbol), ne
 """
 import argparse
 import collections
+import fcntl
 import json
 import logging
 import os
@@ -58,6 +59,14 @@ from automation.log_manager import (
 # run_status='aborted_invariant' zu waehlen.
 sweep_fail_fast_invariant: str | None = None
 
+# Issue #941/#1107 (Katalog #960) — die ``invariant_checks``-Liste der #839-Fail-Fast-Probe (sofern
+# in diesem Lauf eine stattfand), analog ``sweep_fail_fast_invariant`` gesetzt. ``main()`` reicht sie
+# an den FINALEN ``generate_sweep_report``-Aufruf durch, damit
+# ``invariants.check_cohort_declaration_consistency`` die In-Process-Kohorte der Probe gegen die
+# Report-Scan-Kohorte desselben Laufs vergleichen kann (Root-Cause #1107: beide Pfade meldeten
+# denselben Check-Namen mit zwei verschiedenen, undeklarierten Grundgesamtheiten).
+sweep_fail_fast_probe_invariant_checks: list[dict] | None = None
+
 # Issue #877 — (Strategie, Symbol)-Paare, die WAEHREND dieses Laufs wegen eines Fail-Fast-Offenders
 # mit ZU GERINGER Symbol-Streuung quarantänisiert (statt den Sweep abzubrechen) wurden. main() liest
 # dies, um run_status='completed_with_quarantine' von 'complete' zu unterscheiden.
@@ -68,6 +77,20 @@ sweep_fail_fast_quarantined_pairs: list[tuple[str, str]] = []
 # beenden. main() liest dies, um run_status='completed_with_failures' von 'complete' zu
 # unterscheiden, analog sweep_fail_fast_quarantined_pairs.
 sweep_failed_symbols: list[str] = []
+
+# Issue #942/#1108 (Katalog #960) — In-Prozess-Spiegel DERSELBEN Werte, die ``_write_checkpoint()``
+# (innerhalb ``run_per_symbol_sweep``) auf die Platte schreibt (``sweep_progress.json``), bei JEDEM
+# Checkpoint-Schreiben aktualisiert. Root-Cause #1108: ``main()``s Symbol-Zaehler kamen bislang
+# AUSSCHLIESSLICH aus einem erneuten Lesen dieser Checkpoint-DATEI — ein stiller Fehlschlag dieses
+# Lesevorgangs (Datei fehlt/kaputt, ODER — im geteilten-Store-Betrieb vor #944 — ein
+# ``run_id``-Mismatch, weil ein ANDERER gleichzeitiger Prozess zuletzt geschrieben hat) liess
+# ``symbols_completed``/``symbols_planned``/``symbols_discovered``/``symbols_gate1_rejected`` auf
+# ``None`` fallen, obwohl die Arbeit tatsaechlich vollstaendig war (Report C: 14/14 Studies, aber
+# alle vier Zaehler ``null``). Dieser In-Prozess-Spiegel ist von Datei-I/O und fremden Prozessen
+# unabhaengig — ``main()`` bevorzugt ihn gegenueber der Checkpoint-Datei, sofern er fuer DIESEN
+# ``run_id`` gesetzt wurde (die Datei bleibt der einzige Weg fuer ``--report-only``/eine
+# standalone Rekonstruktion, die ``run_per_symbol_sweep`` nie im eigenen Prozess ausfuehrte).
+sweep_symbol_funnel: dict | None = None
 
 
 def load_symbol_universe(base_cfg: Path | None = None) -> list[str]:
@@ -1494,8 +1517,41 @@ def _attempt_champion_writeback(strategy: str, symbol: str, opt_data: dict) -> N
 
 def _sweep_run_lock_path() -> Path:
     """Issue #1086 (Katalog #919) — dieselbe ``{WORK}/sweep/``-Study-Store-Wurzel wie
-    ``run_optimization.resolve_storage``, siehe dort."""
+    ``run_optimization.resolve_storage``, siehe dort.
+
+    Dieser Lock ist STORE-WEIT (ein ``.run.lock`` je ``{WORK}/sweep/``), NICHT je Symbol oder je
+    (Strategie, Symbol)-Paar — siehe Issue #944/#1110 (die AGENTS.md-Beschreibung als
+    „Lock-Datei je Symbol\" war unzutreffend). Ein zweiter Sweep mit ANDEREM ``OPTIMIZER_WORK_DIR``
+    (siehe ``manifest.WORK``) ist von diesem Lock nicht betroffen; paralleler Mehr-Symbol-Betrieb
+    erfordert deshalb je Symbol ein eigenes ``OPTIMIZER_WORK_DIR`` (siehe
+    ``manuals/run_optimizer.md``, Abschnitt „Paralleler Mehr-Symbol-Betrieb\")."""
     return WORK / "sweep" / ".run.lock"
+
+
+# Issue #944/#1110 — in-Prozess-Zustand des von DIESEM Prozess gehaltenen Locks, je Lock-Pfad
+# (nicht nur je run_id, damit Tests/Aufrufer mit wechselndem ``WORK`` einander nicht beeinflussen).
+# Wert: {"fd": offener Dateideskriptor, "run_id": str}. Die eigentliche gegenseitige Ausschliessung
+# zwischen UNABHAENGIGEN Prozessen erfolgt ausschliesslich ueber ``fcntl.flock`` auf diesem fd
+# (kernel-atomar, kein TOCTOU-Fenster zwischen Existenzpruefung und Schreiben wie beim vorherigen
+# ``lock_path.exists()``-Ansatz) und wird vom Kernel automatisch freigegeben, sobald der haltende
+# Prozess endet (auch bei Absturz) — eine separate PID-Lebendigkeitspruefung fuer verwaiste Locks
+# ist damit nicht mehr noetig.
+_sweep_run_lock_state: dict[str, dict] = {}
+
+
+def _sweep_run_lock_payload(run_id: str) -> bytes:
+    return json.dumps({
+        "run_id": run_id, "pid": os.getpid(),
+        "acquired_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
+    }).encode("utf-8")
+
+
+def _write_sweep_run_lock_payload(fd: int, run_id: str) -> None:
+    payload = _sweep_run_lock_payload(run_id)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.ftruncate(fd, 0)
+    os.write(fd, payload)
+    os.fsync(fd)
 
 
 def _acquire_sweep_run_lock(run_id: str) -> None:
@@ -1506,51 +1562,79 @@ def _acquire_sweep_run_lock(run_id: str) -> None:
     einer der Prozesse ueber ``generate_report_for_run`` (Abbruch-/Standalone-Pfad) ALLE
     ``proposal_*.json`` unter ``WORK`` entdeckte.
 
-    Ein Lauf mit DEMSELBEN ``run_id`` (der #799-Resume-Pfad) erneuert die Lock-Datei, statt sich
-    selbst auszusperren. Ein toter Halter (Prozess nicht mehr am Leben, ``os.kill(pid, 0)`` schlaegt
-    mit ``ProcessLookupError`` fehl) gilt als verwaist und wird uebernommen, statt den Store nach
-    einem Absturz dauerhaft zu blockieren."""
+    Issue #944/#1110 (TOCTOU-Haertung): der vorherige Ansatz (``lock_path.exists()`` gefolgt von
+    einem separaten ``write_json_atomic``) hatte ein Zeitfenster zwischen Pruefung und Schreiben, in
+    dem zwei Prozesse beide die Abwesenheit des Locks sehen und beide den Erwerb fuer erfolgreich
+    halten koennen. Der Erwerb laeuft jetzt ausschliesslich ueber ``fcntl.flock(..., LOCK_EX |
+    LOCK_NB)`` auf einem offen gehaltenen Dateideskriptor — eine einzelne, kernel-atomare Operation.
+    Ein toter Halter blockiert den Store nicht mehr dauerhaft, weil der Kernel dessen ``flock`` beim
+    Prozessende (auch bei Absturz) automatisch freigibt; eine explizite PID-Lebendigkeitspruefung
+    entfaellt damit.
+
+    Ein Lauf mit DEMSELBEN ``run_id`` INNERHALB DESSELBEN Prozesses (der #799-Resume-Pfad, oder ein
+    erneuter Aufruf im selben Lauf) erneuert die Lock-Datei, statt sich selbst ueber ``flock`` gegen
+    die eigene, bereits gehaltene Sperre laufen zu lassen."""
     lock_path = _sweep_run_lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    if lock_path.exists():
+    key = str(lock_path)
+
+    held = _sweep_run_lock_state.get(key)
+    if held is not None:
+        if held["run_id"] == run_id:
+            _write_sweep_run_lock_payload(held["fd"], run_id)
+            return
+        raise RuntimeError(
+            "[SWEEP_CONCURRENT_RUN_DETECTED] "
+            f"{lock_path} wird von run_id={held['run_id']!r} in diesem Prozess gehalten — ein "
+            f"zweiter Sweep-Lauf (run_id={run_id!r}) darf denselben {{WORK}}/sweep/-Store nicht "
+            "gleichzeitig beschreiben (Issue #1086/#1110)."
+        )
+
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
         try:
             holder = json.loads(lock_path.read_text("utf-8"))
         except (OSError, ValueError):
             holder = {}
-        holder_run_id = holder.get("run_id")
-        holder_pid = holder.get("pid")
-        if holder_run_id and holder_run_id != run_id:
-            holder_alive = True
-            if isinstance(holder_pid, int):
-                try:
-                    os.kill(holder_pid, 0)
-                except ProcessLookupError:
-                    holder_alive = False
-                except OSError:
-                    holder_alive = True
-            if holder_alive:
-                raise RuntimeError(
-                    "[SWEEP_CONCURRENT_RUN_DETECTED] "
-                    f"{lock_path} gehoert run_id={holder_run_id!r} (pid={holder_pid}) — ein "
-                    f"zweiter Sweep-Prozess (run_id={run_id!r}) darf denselben {{WORK}}/sweep/-"
-                    "Store nicht gleichzeitig beschreiben (Issue #1086). Starte den zweiten Lauf "
-                    "mit einem eigenen --work-dir (empfohlen), oder warte, bis der laufende Sweep "
-                    "abgeschlossen ist."
-                )
-            logging.getLogger("optimizer").warning(
-                "[#1086] Verwaiste Sweep-Lock-Datei von run_id=%s (pid=%s, Prozess nicht mehr "
-                "am Leben) fuer run_id=%s uebernommen.", holder_run_id, holder_pid, run_id,
-            )
-    write_json_atomic(lock_path, {
-        "run_id": run_id, "pid": os.getpid(),
-        "acquired_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds"),
-    })
+        os.close(fd)
+        raise RuntimeError(
+            "[SWEEP_CONCURRENT_RUN_DETECTED] "
+            f"{lock_path} wird von run_id={holder.get('run_id')!r} (pid={holder.get('pid')}) "
+            f"gehalten — ein zweiter Sweep-Prozess (run_id={run_id!r}) darf denselben "
+            "{WORK}/sweep/-Store nicht gleichzeitig beschreiben (Issue #1086/#1110). Starte den "
+            "zweiten Lauf mit einem eigenen OPTIMIZER_WORK_DIR (empfohlen, siehe „Paralleler "
+            "Mehr-Symbol-Betrieb\" in manuals/run_optimizer.md), oder warte, bis der laufende "
+            "Sweep abgeschlossen ist."
+        ) from None
+    _write_sweep_run_lock_payload(fd, run_id)
+    _sweep_run_lock_state[key] = {"fd": fd, "run_id": run_id}
 
 
 def _release_sweep_run_lock(run_id: str) -> None:
     """Gibt die #1086-Lock-Datei frei, sofern sie noch DIESEM ``run_id`` gehoert — ein inzwischen
     von einem anderen (Resume-)Lauf uebernommenes Lock wird NICHT vom vorherigen Halter geloescht."""
     lock_path = _sweep_run_lock_path()
+    key = str(lock_path)
+    held = _sweep_run_lock_state.get(key)
+    if held is not None:
+        if held["run_id"] != run_id:
+            return
+        try:
+            fcntl.flock(held["fd"], fcntl.LOCK_UN)
+        except OSError:
+            pass
+        try:
+            os.close(held["fd"])
+        except OSError:
+            pass
+        del _sweep_run_lock_state[key]
+        try:
+            lock_path.unlink()
+        except OSError:
+            pass
+        return
     try:
         holder = json.loads(lock_path.read_text("utf-8"))
     except (OSError, ValueError):
@@ -2123,27 +2207,33 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     def _write_checkpoint() -> None:
         # Issue #799 — atomarer Fortschritts-Checkpoint (manifest.write_json_atomic, #742-Muster).
         # Fail-open: ein Schreibfehler darf einen erfolgreichen Sweep nie crashen.
+        global sweep_symbol_funnel
+        _checkpoint_payload = {
+            "run_id": run_id,
+            "completed_symbols": sorted(completed_symbols),
+            "failed_pairs": failed_pairs,
+            # Issue #833 Fix Punkt 3 — Gesamtzahl der fuer DIESEN Lauf geplanten Symbole, damit
+            # ein Abbruch-Report (sweep.main()) "symbols_completed / symbols_planned" ausweisen
+            # kann, OHNE die Enumeration ein zweites Mal auszufuehren.
+            "symbols_planned": len(pairs_by_symbol),
+            # Issue #942 (Katalog A) — Funnel-Transparenz: rohes Symbol-Universum DIESES Laufs
+            # und die Zahl der an Gate 1 abgelehnten Symbole, damit symbols_planned/
+            # symbols_discovered als erreichbare Coverage lesbar wird, statt nur die bereits
+            # gefilterte Endzahl zu zeigen.
+            "symbols_discovered": len(syms),
+            "symbols_gate1_rejected": len(_gate1_rejected_symbols),
+            # Issue #840 Punkt 5 — SHA-256 über Strategien + reward_semantics_version +
+            # simulation_semantics_version (#854); main() validiert dies gegen den aktuellen
+            # Stand, BEVOR ein --resume startet (sonst mischt der Resume Studies zweier
+            # Semantiken in dieselbe #652-Familie).
+            "strategies_fingerprint": _strategies_fingerprint(strategies, opt_data),
+        }
+        # Issue #942/#1108 — In-Prozess-Spiegel VOR dem Datei-Schreibversuch aktualisiert: bleibt
+        # auch dann korrekt, wenn der Schreibvorgang selbst fehlschlaegt (Disk voll etc.) — main()s
+        # Symbol-Zaehler haengen dann nicht mehr von einem erfolgreichen Datei-I/O ab.
+        sweep_symbol_funnel = _checkpoint_payload
         try:
-            write_json_atomic(checkpoint_path, {
-                "run_id": run_id,
-                "completed_symbols": sorted(completed_symbols),
-                "failed_pairs": failed_pairs,
-                # Issue #833 Fix Punkt 3 — Gesamtzahl der fuer DIESEN Lauf geplanten Symbole, damit
-                # ein Abbruch-Report (sweep.main()) "symbols_completed / symbols_planned" ausweisen
-                # kann, OHNE die Enumeration ein zweites Mal auszufuehren.
-                "symbols_planned": len(pairs_by_symbol),
-                # Issue #942 (Katalog A) — Funnel-Transparenz: rohes Symbol-Universum DIESES Laufs
-                # und die Zahl der an Gate 1 abgelehnten Symbole, damit symbols_planned/
-                # symbols_discovered als erreichbare Coverage lesbar wird, statt nur die bereits
-                # gefilterte Endzahl zu zeigen.
-                "symbols_discovered": len(syms),
-                "symbols_gate1_rejected": len(_gate1_rejected_symbols),
-                # Issue #840 Punkt 5 — SHA-256 über Strategien + reward_semantics_version +
-                # simulation_semantics_version (#854); main() validiert dies gegen den aktuellen
-                # Stand, BEVOR ein --resume startet (sonst mischt der Resume Studies zweier
-                # Semantiken in dieselbe #652-Familie).
-                "strategies_fingerprint": _strategies_fingerprint(strategies, opt_data),
-            })
+            write_json_atomic(checkpoint_path, _checkpoint_payload)
         except OSError:
             logging.getLogger("optimizer").warning(
                 "[#799] Sweep-Checkpoint konnte nicht geschrieben werden (non-fatal).", exc_info=True)
@@ -2229,6 +2319,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             deflation_n_family_value = (n_family_stage1_map or {}).get((strategy, symbol), 0)
             promotion = confirm(study, strategy, symbol, global_params, catalog_newest_ns=newest_ns,
                                 deflation_n_family=deflation_n_family_value,
+                                # Issue #957/#1123 (Katalog #960) — benennt im Artefakt, WELCHE der
+                                # (strukturell zwei moeglichen) Quellen die Deflationsschwelle
+                                # tatsaechlich gespeist hat: n_family_stage1_map[(strategy, symbol)]
+                                # (per-Study-Stage1-N, #826), NICHT die symbolweite Summe.
+                                deflation_n_family_source="n_family_stage1_per_strategy",
                                 deflation_family_period_returns=family_returns_map.get(symbol),
                                 deflation_n_family_excluded_no_statistic=(
                                     (n_family_excluded_map or {}).get(symbol)),
@@ -2313,6 +2408,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # ⇒ deaktiviert (bit-identisch zum Pre-#839-Verhalten).
     global sweep_fail_fast_invariant
     sweep_fail_fast_invariant = None
+    global sweep_fail_fast_probe_invariant_checks
+    sweep_fail_fast_probe_invariant_checks = None
+    global sweep_symbol_funnel
+    sweep_symbol_funnel = None
     # Issue #939 (Katalog A, Pitfall #299) — Fehler-Isolation je Symbol. Vor diesem Fix hatte die
     # Symbol-Schleife kein try/except: eine EINZELNE Exception in der Confirm/Export-Phase (z.B.
     # #937s Serialisierungsfehler, bevor der Sink selbst nie-werfend gemacht wurde) propagierte
@@ -2741,6 +2840,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 _probe_report = _report_probe_mod.build_probe_report(
                     proposals, run_id=run_id, report_source="fail_fast_probe")
                 _probe_invariant_checks = _probe_report.get("invariant_checks")
+                # Issue #941/#1107 — festgehalten fuer den FINALEN generate_sweep_report-Aufruf in
+                # main() (siehe dortige Verwendung von sweep_fail_fast_probe_invariant_checks):
+                # dieselbe In-Process-Kohorte, gegen die der Fail-Fast-Pfad tatsaechlich urteilte.
+                sweep_fail_fast_probe_invariant_checks = _probe_invariant_checks
                 sweep_fail_fast_invariant = _first_failing_fail_fast_invariant(
                     _probe_invariant_checks, _fail_fast_invariants)
                 _fail_fast_probe_errors = 0
@@ -3179,23 +3282,38 @@ def main(argv: list[str] | None = None) -> list[Path]:
     for p in proposals:
         print(p)
 
-    # Issue #833 Fix Punkt 3 — symbols_completed/symbols_planned aus dem #799-Checkpoint (die
-    # Enumeration wird NICHT ein zweites Mal ausgefuehrt); fail-open (None/None), falls der
-    # Checkpoint fehlt/kaputt ist oder der Sweep VOR dessen erstem Schreiben abbrach.
+    # Issue #833 Fix Punkt 3 — symbols_completed/symbols_planned aus dem #799-Checkpoint; fail-open
+    # (None/None), falls weder der In-Prozess-Spiegel noch die Checkpoint-Datei etwas hergeben.
+    #
+    # Issue #942/#1108 (Katalog #960) — PRIMAERE Quelle ist seither ``sweep_symbol_funnel`` (der
+    # In-Prozess-Spiegel, den ``_write_checkpoint()`` innerhalb ``run_per_symbol_sweep`` bei jedem
+    # Checkpoint aktualisiert): unabhaengig von Datei-I/O und von einem ``run_id``-Mismatch durch
+    # einen ANDEREN gleichzeitigen Prozess auf demselben Store. Die Checkpoint-DATEI bleibt Fallback
+    # fuer Aufrufer, die ``run_per_symbol_sweep`` nie im eigenen Prozess ausgefuehrt haben
+    # (``--report-only``/standalone Rekonstruktion) — Root-Cause #1108: eine reine Datei-Re-Lese OHNE
+    # diesen Spiegel liess alle vier Zaehler auf ``None`` fallen, sobald der Lesevorgang aus
+    # irgendeinem Grund fehlschlug, obwohl die Arbeit tatsaechlich vollstaendig war (Report C:
+    # 14/14 Studies, aber alle vier Zaehler ``null``).
     symbols_completed: int | None = None
     symbols_planned: int | None = None
     symbols_discovered: int | None = None
     symbols_gate1_rejected: int | None = None
-    try:
-        _checkpoint = json.loads((WORK / "sweep_progress.json").read_text("utf-8"))
-        if _checkpoint.get("run_id") == run_id:
-            symbols_completed = len(_checkpoint.get("completed_symbols") or [])
-            symbols_planned = _checkpoint.get("symbols_planned")
-            # Issue #942 — optional (aeltere Checkpoints ohne diese Felder bleiben lesbar).
-            symbols_discovered = _checkpoint.get("symbols_discovered")
-            symbols_gate1_rejected = _checkpoint.get("symbols_gate1_rejected")
-    except (OSError, ValueError):
-        pass
+    if sweep_symbol_funnel is not None and sweep_symbol_funnel.get("run_id") == run_id:
+        symbols_completed = len(sweep_symbol_funnel.get("completed_symbols") or [])
+        symbols_planned = sweep_symbol_funnel.get("symbols_planned")
+        symbols_discovered = sweep_symbol_funnel.get("symbols_discovered")
+        symbols_gate1_rejected = sweep_symbol_funnel.get("symbols_gate1_rejected")
+    else:
+        try:
+            _checkpoint = json.loads((WORK / "sweep_progress.json").read_text("utf-8"))
+            if _checkpoint.get("run_id") == run_id:
+                symbols_completed = len(_checkpoint.get("completed_symbols") or [])
+                symbols_planned = _checkpoint.get("symbols_planned")
+                # Issue #942 — optional (aeltere Checkpoints ohne diese Felder bleiben lesbar).
+                symbols_discovered = _checkpoint.get("symbols_discovered")
+                symbols_gate1_rejected = _checkpoint.get("symbols_gate1_rejected")
+        except (OSError, ValueError):
+            pass
 
     # Issue #1065 (Pitfall #? — Vollständigkeit ≠ Gültigkeit) — ``run_status='aborted_invariant'``
     # bedeutet "eine blockierende Invariante hat FAILt", NICHT "Arbeit wurde abgebrochen". Der
@@ -3223,6 +3341,16 @@ def main(argv: list[str] | None = None) -> list[Path]:
                     # Host zwischen zwei Laeufen wechselt (Reproduzierbarkeits-Telemetrie, #985 Fix 2).
                     "host_cpu_count": __import__("os").cpu_count()}
         _wallclock_s = round(time.perf_counter() - main_t0)
+        # Issue #941/#1107 — die In-Process-Kohorte der Fail-Fast-Probe (sofern eine stattfand),
+        # damit invariants.check_cohort_declaration_consistency sie gegen die Report-Scan-Kohorte
+        # DIESES finalen Artefakts vergleichen kann.
+        _prior_probe_checks = sweep_fail_fast_probe_invariant_checks
+        # Issue #942/#1108 (Katalog #960) — durchgereicht, damit ``_build_report`` daraus (zusammen
+        # mit ``symbols_completed``/``symbols_planned``) die drei orthogonalen Achsen
+        # (``work_completed``/``decision_admissible``/``fail_fast_triggered``) EINMAL, an EINER
+        # Stelle, fuer BEIDE Pfade (regulaerer Abschluss/Abbruch) ableitet — statt ``run_status``
+        # als einzige, ueberladene Wahrheit ueber zwei getrennte Code-Pfade zu setzen.
+        _fail_fast_triggered = sweep_fail_fast_invariant
         if run_status == "complete":
             report_path = _report.generate_sweep_report(
                 proposals, run_id=run_id, started_at_utc=started_at_utc,
@@ -3230,6 +3358,8 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_completed=symbols_completed, symbols_planned=symbols_planned,
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
+                prior_probe_invariant_checks=_prior_probe_checks,
+                fail_fast_triggered=_fail_fast_triggered,
             )
         else:
             # Issue #833 — die IN-MEMORY proposals-Liste kann bei einer Exception mitten im
@@ -3243,6 +3373,8 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_completed=symbols_completed, symbols_planned=symbols_planned,
                 symbols_discovered=symbols_discovered,
                 symbols_gate1_rejected=symbols_gate1_rejected,
+                prior_probe_invariant_checks=_prior_probe_checks,
+                fail_fast_triggered=_fail_fast_triggered,
             )
         # Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — ein Lauf mit mindestens einer
         # blockierenden Invarianten-FAIL darf nicht dasselbe Statuswort 'complete' tragen wie ein
@@ -3422,7 +3554,14 @@ def _downgrade_run_status_for_blocking_invariants(report_path) -> str:
     ein defektes Report-Artefakt darf den Lauf nicht zusätzlich verschlechtern).
 
     Rückgabe: der (ggf. korrigierte) ``run_status``-String, den der Aufrufer als neue Wahrheit
-    übernimmt."""
+    übernimmt.
+
+    Issue #942/#1108 (Katalog #960) — der bereits geschriebene Report traegt seit diesem Fix
+    zusaetzlich ``decision_admissible`` (in ``report._build_report`` aus DERSELBEN
+    ``invariant_checks``-Liste abgeleitet, die diese Funktion hier erneut liest) — beide Werte
+    sind IMMER konsistent (dieselbe Quelle), diese Funktion bleibt fuer die Rueckwaertskompatibilitaet
+    des ``run_status``-Strings bestehen, ist aber NICHT mehr die kanonische Wahrheit ueber
+    Zulaessigkeit; das ist seither ``decision_admissible``."""
     try:
         written_report = json.loads(Path(report_path).read_text("utf-8"))
         blocking_fails = [

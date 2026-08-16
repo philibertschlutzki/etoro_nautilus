@@ -239,13 +239,17 @@ def _clause_expectancy_outlier_robust(record: Mapping[str, Any] | None) -> bool 
     (AdxAtrMomentum, +17,23 bps roh) hatte ``holdout_expectancy_winsorized = −1,44`` bps, getragen
     von 6 von 132 Trades.
 
-    Bedingung: ``sign(holdout_expectancy_winsorized) == sign(holdout_expectancy)`` UND
-    ``holdout_expectancy_winsorized > 0``. ``None`` (eine der beiden Grössen fehlt — Pre-#1031-
+    Bedingung: ``sign(holdout_expectancy_winsorized) == sign(holdout_expectancy_notional_weighted)``
+    UND ``holdout_expectancy_winsorized > 0``. ``None`` (eine der beiden Grössen fehlt — Pre-#1031-
     Record oder kein Trade) ⇒ fail-closed, dieselbe Regel wie jede andere Klausel: "nicht geprüft"
-    ist KEINE bestandene Prüfung."""
+    ist KEINE bestandene Prüfung.
+
+    Issue #945/#1111 (Katalog #960) — Feldname ``holdout_expectancy_notional_weighted`` (vormals
+    ``holdout_expectancy``); unveraendertes Verhalten, nur der umbenannte Schluessel, siehe
+    ``report.py``s ``_study_record``-Docstring fuer die Root-Cause der Umbenennung."""
     if not record:
         return None
-    raw = record.get("holdout_expectancy")
+    raw = record.get("holdout_expectancy_notional_weighted")
     winsorized = record.get("holdout_expectancy_winsorized")
     if raw is None or winsorized is None:
         return None
@@ -341,8 +345,9 @@ def build_promotion_record_from_proposal(proposal: Mapping[str, Any], *, run_id:
         "blocking_invariant_names": holdout_symbol.get("blocking_invariant_names"),
         # Issue #1042 (Katalog #866, E-1) — siehe _clause_cost_stress-Docstring.
         "expectancy_cost_stress_2x": holdout_symbol.get("oos_expectancy_cost_stress_2x"),
-        # Issue #1073 (Katalog #866-2) — siehe _clause_expectancy_outlier_robust-Docstring.
-        "holdout_expectancy": holdout_symbol.get("oos_expectancy"),
+        # Issue #1073 (Katalog #866-2) — siehe _clause_expectancy_outlier_robust-Docstring. Issue
+        # #945/#1111 — umbenannt von "holdout_expectancy".
+        "holdout_expectancy_notional_weighted": holdout_symbol.get("oos_expectancy"),
         "holdout_expectancy_winsorized": holdout_symbol.get("oos_expectancy_winsorized"),
         "run_id": run_id,
     }

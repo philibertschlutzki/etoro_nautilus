@@ -49,6 +49,24 @@ _RUN_STATUS_LABELS_DE = {
     "completed_invalid": "vollständig gerechnet, aber wegen blockierender Invarianten nicht entscheidungsfähig",
 }
 
+def _run_status_label_de(report: dict) -> str:
+    """Issue #942/#1108 (Katalog #960) — die statische ``_RUN_STATUS_LABELS_DE``-Zuordnung allein
+    beschriftete ``run_status='aborted_invariant'`` UNBEDINGT als "echter Arbeitsabbruch", auch dann,
+    wenn ``work_completed`` (die #942-Achse, siehe ``report._build_report``) bereits bekannt und
+    wahr war — Root-Cause #1108: derselbe Report, der oben (Sektion 1) korrekt "vollständig
+    gerechnet, aber ungültig" sagte, zeigte hier trotzdem "echter Arbeitsabbruch" fuer denselben
+    Lauf. Wenn ``work_completed`` bekannt ist, entscheidet es NEBEN dem rohen ``run_status``-Label."""
+    run_status = report.get("run_status", "complete")
+    if report.get("work_completed") is True and report.get("decision_admissible") is False:
+        # ERSETZT das rohe Label (statt es zu ergaenzen): "abgebrochen ... echter Arbeitsabbruch"
+        # und die Korrektur im selben Satz waeren sich selbst widersprechende Text.
+        return (
+            "vollständig gerechnet, aber wegen blockierender Invarianten nicht "
+            "entscheidungsfähig (kein Arbeitsabbruch)"
+        )
+    return _RUN_STATUS_LABELS_DE.get(run_status, run_status)
+
+
 def _fmt_pct(x: float | None, *, digits: int = 1) -> str:
     return f"{x * 100:.{digits}f} %" if x is not None else "k. A."
 
@@ -118,12 +136,6 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
         and (r.get("deployment_decision") or {}).get("admitted") is True
     )
     run_status = report.get("run_status", "complete")
-    # Issue #1065 — Vollständigkeit (Abdeckung: symbols_completed/symbols_planned) und Gültigkeit
-    # (blockierende Invarianten) sind ZWEI getrennte Aussagen. Vor diesem Fix leitete dieser Satz
-    # "Lauf ist NICHT vollständig" allein aus ``run_status != 'complete'`` ab — ein Lauf, der ALLE
-    # geplanten Symbole/Trials tatsächlich fertig gerechnet hat, aber wegen einer blockierenden
-    # Invariante als ``aborted_invariant``/``completed_invalid`` endete, erhielt trotzdem eine
-    # Unvollständigkeits-Behauptung, die den (vollständigen) Zahlen darunter widersprach.
     _symbols_completed_v = report.get("symbols_completed")
     _symbols_planned_v = report.get("symbols_planned")
     _coverage_incomplete = (
@@ -131,25 +143,55 @@ def _section_1_result_in_one_sentence(report: dict) -> str:
         and _symbols_completed_v < _symbols_planned_v
     )
     status_note = ""
-    if run_status != "complete" and _coverage_incomplete:
+    # Issue #942/#1108 (Katalog #960) — die KANONISCHE Quelle fuer diesen Satz sind seither die drei
+    # orthogonalen Achsen (``report._build_report``, EINE Berechnung fuer JEDEN Erzeugungspfad),
+    # nicht mehr der ueberladene ``run_status``-String. Root-Cause #1108: derselbe Faktenstand
+    # (14/14 Studies, volles Budget, Fail-Fast-Abbruch NACH Abschluss der Arbeit) liess diesen Satz
+    # je nach Report-Pfad ENTWEDER "vollständig gerechnet" ODER "echter Arbeitsabbruch" sagen —
+    # ``work_completed`` entscheidet das jetzt EINDEUTIG, unabhaengig davon, welcher Pfad den
+    # Report erzeugte.
+    _work_completed = report.get("work_completed")
+    _decision_admissible = report.get("decision_admissible")
+    _fail_fast_triggered = report.get("fail_fast_triggered")
+    if _work_completed is False:
         status_note = (
             f" **Hinweis:** dieser Lauf ist NICHT vollständig ({_RUN_STATUS_LABELS_DE.get(run_status, run_status)}"
             f"; {report.get('symbols_completed', '?')}/{report.get('symbols_planned', '?')} Symbole"
             " abgeschlossen) — die folgenden Zahlen beziehen sich NUR auf die bereits abgeschlossene Kohorte."
         )
-    elif run_status in ("aborted_invariant", "completed_invalid"):
-        # Vollständige Abdeckung (oder unbekannt, siehe unten), aber ein FAIL-Fast-Verdikt hat den
-        # Lauf als ungültig markiert — die blockierenden Checks werden unten (blocking_note)
-        # namentlich genannt, hier steht nur die Abdeckungs-Klarstellung.
+    elif _work_completed is True and _decision_admissible is False:
+        # Vollständige Abdeckung, aber ein FAIL-Fast-Verdikt hat den Lauf als ungültig markiert —
+        # die blockierenden Checks werden unten (blocking_note) namentlich genannt, hier steht nur
+        # die Abdeckungs-Klarstellung. KEINE Formulierung, die einen Arbeitsabbruch behauptet.
         _coverage_str = (
             f"{_symbols_completed_v}/{_symbols_planned_v} Symbole"
             if _symbols_completed_v is not None and _symbols_planned_v is not None
             else "alle geplanten Symbole"
         )
+        _fail_fast_str = f" ({_fail_fast_triggered})" if _fail_fast_triggered else ""
         status_note = (
             f" **Hinweis:** Vollständig gerechnet ({_coverage_str}), aber wegen blockierender "
-            "Invarianten nicht entscheidungsfähig — siehe unten."
+            f"Invarianten{_fail_fast_str} nicht entscheidungsfähig — siehe unten."
         )
+    elif _work_completed is None:
+        # Legacy-Fallback: ein Report ohne die #942-Felder (aeltere Artefakte/Test-Fixtures) faellt
+        # auf die vorherige, ausschliesslich run_status/Coverage-basierte Heuristik zurueck.
+        if run_status != "complete" and _coverage_incomplete:
+            status_note = (
+                f" **Hinweis:** dieser Lauf ist NICHT vollständig ({_RUN_STATUS_LABELS_DE.get(run_status, run_status)}"
+                f"; {report.get('symbols_completed', '?')}/{report.get('symbols_planned', '?')} Symbole"
+                " abgeschlossen) — die folgenden Zahlen beziehen sich NUR auf die bereits abgeschlossene Kohorte."
+            )
+        elif run_status in ("aborted_invariant", "completed_invalid"):
+            _coverage_str = (
+                f"{_symbols_completed_v}/{_symbols_planned_v} Symbole"
+                if _symbols_completed_v is not None and _symbols_planned_v is not None
+                else "alle geplanten Symbole"
+            )
+            status_note = (
+                f" **Hinweis:** Vollständig gerechnet ({_coverage_str}), aber wegen blockierender "
+                "Invarianten nicht entscheidungsfähig — siehe unten."
+            )
     if n_deployable == 0:
         sentence = (
             f"{n_studies} Studies, {n_promotions_sweep} Sweep-Promotion(en), **0 deploybar** — "
@@ -247,8 +289,19 @@ def _section_2_monetary_result(report: dict) -> str:
         # Expectancy (−1,44 bps), getragen von 6 von 132 Trades. Sortierung jetzt nach der
         # winsorisierten Expectancy (robuster Wert zuerst); ``holdout_total_return`` bleibt
         # sichtbar, damit der Wechsel nachvollziehbar bleibt.
+        #
+        # Issue #945/#1111 (Katalog #960) — der Fallback (zweite Prioritaet, wenn keine
+        # winsorisierte Expectancy vorliegt) UND die angezeigte "Expectancy"-Spalte lesen seither
+        # ``holdout_expectancy_capital_weighted`` statt des vormaligen ``holdout_expectancy``
+        # (Mittel von Quotienten, KEIN Notional-Boden): der Kostenstress-Ladder
+        # (``holdout_expectancy_cost_stress_1_5x``/``_2x``) wird bereits aus
+        # ``holdout_expectancy_capital_weighted`` abgeleitet (``backtest_runner.
+        # _expectancy_cost_stress``, DIESELBE 5-%-Notional-Boden-Logik) — eine hier ANDERS
+        # definierte "Expectancy"-Spalte liess den "2×-Kostenstress" bei SqueezeBreakout/PLTR
+        # (Divergenz Faktor 7,9) faelschlich als Verbesserung um +145,76 bps erscheinen
+        # (Root-Cause, vierte Instanz der Klasse #304/#1033/#1097).
         def _expectancy_rank_key(r: dict) -> float:
-            for field in ("holdout_expectancy_winsorized", "holdout_expectancy",
+            for field in ("holdout_expectancy_winsorized", "holdout_expectancy_capital_weighted",
                          "holdout_total_return"):
                 value = r.get(field)
                 if value is not None:
@@ -257,8 +310,9 @@ def _section_2_monetary_result(report: dict) -> str:
 
         deployable_ranked = sorted(deployable, key=_expectancy_rank_key, reverse=True)
         lines.append(
-            "| Strategie | Symbol | Holdout-Return | Expectancy | Expectancy (winsorisiert) | "
-            "Ausreisser/Trades | Win-Rate | Profit-Faktor | Trades | Deployment-Urteil |"
+            "| Strategie | Symbol | Holdout-Return | Expectancy (kapitalgew.) | "
+            "Expectancy (winsorisiert) | Ausreisser/Trades | Win-Rate | Profit-Faktor | Trades | "
+            "Deployment-Urteil |"
         )
         lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---|")
         any_censored = False
@@ -272,18 +326,19 @@ def _section_2_monetary_result(report: dict) -> str:
             else:
                 deploy_verdict = "nicht bewertet"
             winsorized = r.get("holdout_expectancy_winsorized")
+            capital_weighted = r.get("holdout_expectancy_capital_weighted")
             outlier_count = r.get("holdout_expectancy_outlier_count") or 0
             total_trades = r.get("holdout_total_trades")
             outlier_frac = (
                 f"{outlier_count}/{total_trades}" if total_trades else f"{outlier_count}/k. A.")
             sign_flip = (
-                winsorized is not None and r.get("holdout_expectancy") is not None
-                and (winsorized > 0) != (r.get("holdout_expectancy") > 0)
+                winsorized is not None and capital_weighted is not None
+                and (winsorized > 0) != (capital_weighted > 0)
             )
             winsorized_cell = _fmt_num(winsorized) + (" ⚠ Vorzeichenwechsel" if sign_flip else "")
             lines.append(
                 f"| {r.get('strategy')} | {r.get('symbol')} | {_fmt_pct(r.get('holdout_total_return'))} | "
-                f"{_fmt_num(r.get('holdout_expectancy'))} | {winsorized_cell} | {outlier_frac} | "
+                f"{_fmt_num(capital_weighted)} | {winsorized_cell} | {outlier_frac} | "
                 f"{_fmt_pct(r.get('holdout_win_rate'))} | "
                 f"{_fmt_profit_factor(r)} | "
                 f"{r.get('holdout_total_trades', 'k. A.')} | {deploy_verdict} |"
@@ -467,7 +522,7 @@ def _section_3_duration(report: dict) -> str:
     lines.append(f"- Start: {report.get('started_at_utc') or 'k. A.'}")
     lines.append(f"- Gesamtlaufzeit: {_fmt_hours(report.get('wallclock_s'))}")
     lines.append(f"- n_jobs: {cli_args.get('n_jobs', 'k. A.')} (Quelle: {cli_args.get('n_jobs_source', 'k. A.')})")
-    lines.append(f"- Lauf-Status: {_RUN_STATUS_LABELS_DE.get(report.get('run_status', 'complete'), report.get('run_status'))}")
+    lines.append(f"- Lauf-Status: {_run_status_label_de(report)}")
     if report.get("symbols_planned") is not None:
         lines.append(
             f"- Symbole: {report.get('symbols_completed', 'k. A.')} von {report.get('symbols_planned', 'k. A.')} abgeschlossen"
@@ -539,21 +594,23 @@ def _section_3_duration(report: dict) -> str:
         )
         for symbol, wait_s in worst:
             lines.append(f"- {symbol}: {_fmt_hms_from_s(wait_s)}")
-    # Issue #1038 (Katalog #866) — zwei GETRENNTE Groessen statt einer einzigen "Auslastung": die
-    # Study-Wallclock-Variante kann strukturell > 100 % liegen (verschachtelte Worker-Pools je
-    # Study überlappen sich, siehe report._worker_utilisation-Docstring) und ist deshalb explizit
-    # als "über Kapazität", nicht als Auslastung, beschriftet; ``worker_utilisation_backtest_ms``
-    # (echte, ueberlappungsfreie Backtest-CPU-Zeit) ist die Grösse, die tatsächlich <= 100 % liegen
-    # sollte (``check_worker_utilisation_plausible``).
-    worker_utilisation = (report.get("cross_study") or {}).get("worker_utilisation")
-    worker_utilisation_backtest_ms = (report.get("cross_study") or {}).get(
-        "worker_utilisation_backtest_ms")
-    if worker_utilisation is not None:
-        lines.append(f"\nStudy-Wallclock über Kapazität (Σ Study-Wallclock / (n_jobs × Sweep-"
-                     f"Wallclock); kann > 100 % liegen, siehe #1038): {_fmt_pct(worker_utilisation)}")
-    if worker_utilisation_backtest_ms is not None:
-        lines.append(f"Echte Worker-Auslastung (Σ Backtest-CPU-Zeit je Trial / (n_jobs × Sweep-"
-                     f"Wallclock)): {_fmt_pct(worker_utilisation_backtest_ms)}")
+    # Issue #1038 (Katalog #866), umbenannt #949/#1115 (Katalog #960) — zwei GETRENNTE, eindeutig
+    # benannte Groessen (vormals ``worker_utilisation``/``worker_utilisation_backtest_ms``, beide
+    # implizit "Worker-Auslastung" genannt, B-6): ``worker_occupancy_wallclock`` kann strukturell
+    # > 100 % liegen (verschachtelte Worker-Pools je Study überlappen sich, siehe
+    # report._worker_occupancy_wallclock-Docstring) und ist deshalb explizit als "über Kapazität",
+    # nicht als Auslastung, beschriftet; ``cpu_utilisation_backtest`` (echte, ueberlappungsfreie
+    # Backtest-CPU-Zeit) ist die Grösse, die tatsächlich <= 100 % liegen sollte
+    # (``check_worker_utilisation_plausible`` prueft GENAU ``worker_occupancy_wallclock``).
+    worker_occupancy_wallclock = (report.get("cross_study") or {}).get("worker_occupancy_wallclock")
+    cpu_utilisation_backtest = (report.get("cross_study") or {}).get("cpu_utilisation_backtest")
+    if worker_occupancy_wallclock is not None:
+        lines.append(f"\nStudy-Wallclock über Kapazität (worker_occupancy_wallclock = Σ "
+                     f"Study-Wallclock / (n_jobs × Sweep-Wallclock); kann > 100 % liegen, siehe "
+                     f"#1038): {_fmt_pct(worker_occupancy_wallclock)}")
+    if cpu_utilisation_backtest is not None:
+        lines.append(f"Echte CPU-Auslastung (cpu_utilisation_backtest = Σ Backtest-CPU-Zeit je "
+                     f"Trial / (n_jobs × Sweep-Wallclock)): {_fmt_pct(cpu_utilisation_backtest)}")
     return "\n".join(lines)
 
 

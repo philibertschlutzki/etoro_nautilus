@@ -20,7 +20,7 @@ def test_sizing_identity_passes_when_implied_matches_configured():
     f_implied = (math.log(1.0 + total_return) / (n * expectancy)) * 100.0
     records = [{
         "strategy": "DonchianRegimeBreakoutStrategy", "symbol": "ADBE.ETORO",
-        "holdout_total_trades": n, "holdout_expectancy": expectancy,
+        "holdout_total_trades": n, "holdout_expectancy_notional_weighted": expectancy,
         "holdout_total_return": total_return, "trade_amount_pct": 15.0,
     }]
     result = inv.check_sizing_identity_coherence(records)
@@ -38,7 +38,7 @@ def test_sizing_identity_fails_on_tsla_style_divergence():
     total_return = math.exp((target_f_implied / 100.0) * n * expectancy) - 1.0
     records = [{
         "strategy": "SqueezeBreakoutStrategy", "symbol": "TSLA.ETORO",
-        "holdout_total_trades": n, "holdout_expectancy": expectancy,
+        "holdout_total_trades": n, "holdout_expectancy_notional_weighted": expectancy,
         "holdout_total_return": total_return, "trade_amount_pct": 15.0,
     }]
     result = inv.check_sizing_identity_coherence(records)
@@ -58,7 +58,7 @@ def test_sizing_identity_skips_small_denominators():
     Information, keine echten Kandidaten — dürfen nicht als Offender auftauchen."""
     records = [{
         "strategy": "S", "symbol": "A.ETORO",
-        "holdout_total_trades": 3, "holdout_expectancy": 1e-6,
+        "holdout_total_trades": 3, "holdout_expectancy_notional_weighted": 1e-6,
         "holdout_total_return": 5.0, "trade_amount_pct": 15.0,
     }]
     result = inv.check_sizing_identity_coherence(records)
@@ -152,7 +152,8 @@ def test_max_symbol_exposure_fraction_none_without_live_risk_key(tmp_path):
 def _promotion_record(*, strategy, symbol, snapshot_drift):
     return {
         "strategy": strategy, "symbol": symbol, "promotion_outcome": "READY_FOR_PR",
-        "holdout_total_return": 0.05, "holdout_expectancy": 0.01, "holdout_win_rate": 0.5,
+        "holdout_total_return": 0.05, "holdout_expectancy_capital_weighted": 0.01,
+        "holdout_win_rate": 0.5,
         "holdout_total_trades": 40,
         "deployment_decision": {
             "admitted": False, "blocking_clause": "snapshot_drift",

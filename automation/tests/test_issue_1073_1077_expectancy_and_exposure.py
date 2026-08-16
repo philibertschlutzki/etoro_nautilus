@@ -17,7 +17,7 @@ from automation.optimizer import summary_de
 def test_expectancy_outlier_dependence_fails_on_sign_flip():
     records = [{
         "strategy": "AdxAtrMomentumStrategy", "symbol": "TSLA.ETORO",
-        "holdout_expectancy": 17.23, "holdout_expectancy_winsorized": -1.44,
+        "holdout_expectancy_notional_weighted": 17.23, "holdout_expectancy_winsorized": -1.44,
     }]
     result = inv.check_expectancy_outlier_dependence(records)
     assert result.passed is False
@@ -27,7 +27,7 @@ def test_expectancy_outlier_dependence_fails_on_sign_flip():
 def test_expectancy_outlier_dependence_passes_when_signs_agree():
     records = [{
         "strategy": "DonchianRegimeBreakoutStrategy", "symbol": "TSLA.ETORO",
-        "holdout_expectancy": 11.35, "holdout_expectancy_winsorized": 16.58,
+        "holdout_expectancy_notional_weighted": 11.35, "holdout_expectancy_winsorized": 16.58,
     }]
     result = inv.check_expectancy_outlier_dependence(records)
     assert result.passed is True
@@ -37,13 +37,13 @@ def test_expectancy_outlier_dependence_three_offenders_reference_scenario():
     """Beweis B-8 im #866-Katalog: drei Vorzeichenwechsel in einem Referenzlauf."""
     records = [
         {"strategy": "AdxAtrMomentumStrategy", "symbol": "TSLA.ETORO",
-         "holdout_expectancy": 17.23, "holdout_expectancy_winsorized": -1.44},
+         "holdout_expectancy_notional_weighted": 17.23, "holdout_expectancy_winsorized": -1.44},
         {"strategy": "ComboTrendVwapStrategy", "symbol": "TSLA.ETORO",
-         "holdout_expectancy": 3.24, "holdout_expectancy_winsorized": -5.80},
+         "holdout_expectancy_notional_weighted": 3.24, "holdout_expectancy_winsorized": -5.80},
         {"strategy": "MeanReversionStrategy", "symbol": "TSLA.ETORO",
-         "holdout_expectancy": -54.76, "holdout_expectancy_winsorized": 0.26},
+         "holdout_expectancy_notional_weighted": -54.76, "holdout_expectancy_winsorized": 0.26},
         {"strategy": "Rsi2ReversionStrategy", "symbol": "TSLA.ETORO",
-         "holdout_expectancy": 15.77, "holdout_expectancy_winsorized": 15.92},
+         "holdout_expectancy_notional_weighted": 15.77, "holdout_expectancy_winsorized": 15.92},
     ]
     result = inv.check_expectancy_outlier_dependence(records)
     assert result.passed is False
@@ -77,11 +77,11 @@ def test_section_2_1_ranks_by_winsorized_expectancy_not_raw_return():
     studies = [
         {"strategy": "AdxAtrMomentumStrategy", "symbol": "TSLA.ETORO",
          "promotion_outcome": "READY_FOR_PR", "holdout_total_return": 0.036,
-         "holdout_expectancy": 17.23, "holdout_expectancy_winsorized": -1.44,
+         "holdout_expectancy_capital_weighted": 17.23, "holdout_expectancy_winsorized": -1.44,
          "holdout_expectancy_outlier_count": 6, "holdout_total_trades": 132},
         {"strategy": "DonchianRegimeBreakoutStrategy", "symbol": "TSLA.ETORO",
          "promotion_outcome": "READY_FOR_PR", "holdout_total_return": 0.004,
-         "holdout_expectancy": 11.35, "holdout_expectancy_winsorized": 16.58,
+         "holdout_expectancy_capital_weighted": 11.35, "holdout_expectancy_winsorized": 16.58,
          "holdout_expectancy_outlier_count": 0, "holdout_total_trades": 22},
     ]
     report = _minimal_report(studies=studies)

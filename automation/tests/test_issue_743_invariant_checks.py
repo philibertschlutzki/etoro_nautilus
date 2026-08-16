@@ -353,30 +353,33 @@ def test_worker_utilisation_plausible_none_is_not_applicable():
     assert result.actual is None
 
 
-# ── Issue #1023 (Katalog #866): check_report_cohort_coherence ───────────────────────────────────
-def test_report_cohort_coherence_passes_when_all_studies_within_wallclock():
+# ── Issue #1023 (Katalog #866): check_cohort_clock_drift (bis #1106 check_report_cohort_coherence)
+# Update #940/#1106 (Katalog #960): die Zeit-basierten Klauseln leben seit #1106 in
+# ``check_cohort_clock_drift`` (severity ``low``, reine Diagnose) — ``check_report_cohort_coherence``
+# urteilt seither ueber Kohorten-IDENTITAET, siehe test_issue_940_1106_identity_cohort.py.
+def test_cohort_clock_drift_passes_when_all_studies_within_wallclock():
     records = [
         {"study_started_at_utc": "2026-08-12T04:19:20.000+00:00"},
         {"study_started_at_utc": "2026-08-12T04:20:05.000+00:00"},
     ]
-    result = inv.check_report_cohort_coherence(records, wallclock_s=2880.0)
+    result = inv.check_cohort_clock_drift(records, wallclock_s=2880.0)
     assert result.passed is True
 
 
-def test_report_cohort_coherence_fails_when_a_study_predates_the_run():
+def test_cohort_clock_drift_fails_when_a_study_predates_the_run():
     """Beobachtete Symptomatik: 98 von 112 Studies eines Ein-Symbol-Laufs trugen
     study_started_at_utc 9-12h vor dem Laufbeginn."""
     records = [
         {"study_started_at_utc": "2026-08-11T16:19:34.000+00:00"},
         {"study_started_at_utc": "2026-08-12T04:19:21.000+00:00"},
     ]
-    result = inv.check_report_cohort_coherence(records, wallclock_s=2880.0)
+    result = inv.check_cohort_clock_drift(records, wallclock_s=2880.0)
     assert result.passed is False
-    assert result.severity == "blocking"
+    assert result.severity == "low"
 
 
-def test_report_cohort_coherence_not_applicable_without_wallclock_or_timestamps():
-    assert inv.check_report_cohort_coherence([], wallclock_s=2880.0).passed is True
-    assert inv.check_report_cohort_coherence(
+def test_cohort_clock_drift_not_applicable_without_wallclock_or_timestamps():
+    assert inv.check_cohort_clock_drift([], wallclock_s=2880.0).passed is True
+    assert inv.check_cohort_clock_drift(
         [{"study_started_at_utc": "2026-08-12T04:19:20.000+00:00"}], wallclock_s=None,
     ).passed is True

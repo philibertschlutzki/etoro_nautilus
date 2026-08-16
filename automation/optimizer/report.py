@@ -26,6 +26,7 @@ Zwei Aufrufpfade, EIN gemeinsamer Kern (``_build_report``), garantieren Determin
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import statistics
@@ -161,6 +162,45 @@ def _round_trip_cost_bps_by_symbol(symbols: Iterable[str]) -> dict[str, float]:
         except Exception:
             continue
     return out
+
+
+def _stamp_atr_floor_bps_derived(
+    studies_out: list[dict[str, Any]], *,
+    atr_floor_bps_by_symbol: dict[str, float],
+    round_trip_cost_bps_by_symbol: dict[str, float],
+    min_stop_to_cost_ratio: float,
+) -> None:
+    """Issue #951/#1117 (Katalog #960) — stempelt ``atr_floor_bps_derived`` (den per Study
+    COST-GEKOPPELTEN ATR-Floor, ``backtest_runner.cost_coupled_atr_floor_bps``, #1096 Fix Punkt 1)
+    in JEDEN ``studies_out``-Eintrag, mutiert in place.
+
+    Root-Cause: ``_atr_floor_bps_by_symbol`` (oben) löst NUR die statische, asset-class-aufgelöste
+    Konstante auf (``backtest_runner.resolve_atr_floor_bps``) — der tatsächlich SIMULIERTE Floor
+    (``run_single_backtest_worker``, dieselbe ``cost_coupled_atr_floor_bps``-Anhebung) hebt diese
+    Konstante zusätzlich auf ``min_stop_to_cost_ratio · c_rt / atr_trailing_multiplier`` an, wenn
+    das grösser ist — eine PRO-STUDY-Grösse (über ``atr_trailing_multiplier_median``), die die
+    reine Asset-Class-Konstante strukturell unterschätzt. Ohne dieses Feld erschien der Floor im
+    Report nur als KONFIGURIERTE Grösse (die Asset-Class-Konstante), nie als die tatsächlich
+    ABGELEITETE (Akzeptanzkriterium #951). ``None`` je Study, wenn eine der drei Eingangsgrössen
+    (Symbol-Floor, Kostenbasis, ``atr_trailing_multiplier_median``) fehlt — kein Rateergebnis auf
+    unvollständigen Eingaben."""
+    try:
+        from automation.backtest_runner import cost_coupled_atr_floor_bps
+    except Exception:
+        for r in studies_out:
+            r["atr_floor_bps_derived"] = None
+        return
+    for r in studies_out:
+        base_floor = atr_floor_bps_by_symbol.get(r.get("symbol"))
+        c_rt = round_trip_cost_bps_by_symbol.get(r.get("symbol"))
+        k_median = r.get("atr_trailing_multiplier_median")
+        if base_floor is None or c_rt is None or k_median is None:
+            r["atr_floor_bps_derived"] = None
+            continue
+        r["atr_floor_bps_derived"] = round(cost_coupled_atr_floor_bps(
+            float(base_floor), atr_trailing_multiplier=float(k_median),
+            round_trip_cost_bps=float(c_rt),
+            min_stop_to_cost_ratio=min_stop_to_cost_ratio), 4)
 
 
 def _max_symbol_exposure_fraction(base_cfg: Path | None = None) -> float | None:
@@ -758,6 +798,10 @@ def _study_record(proposal: dict, study,
         # Issue #887 — der globale Default (route='global_default_on_symbol') nahm an der
         # Stufe-1-Selektion nicht teil; seine Deflation muss N=1 tragen, nicht deflation_n_family.
         _inv.check_promotion_multiplicity_route(proposal),
+        # Issue #958/#1124 (Katalog #960) — "Ohne Evidenz kein Veto": jeder REJECTED_BOUNDARY_
+        # SOLUTION/HOLD_BOUNDARY_UNRESOLVED-Ausgang muss einen benannten Parameter mit Wert und
+        # beiden Bandgrenzen tragen.
+        _inv.check_boundary_veto_has_evidence(proposal),
         # Issue #1004 (Katalog #858, Fix Punkt 4) — keine Promotion darf auf einer zensierten/
         # gecappten Kennzahl beruhen (z. B. profit_factor_censored durch profit_factor_cap oder
         # einen degenerierten Bruttoverlust-Nenner).
@@ -777,9 +821,6 @@ def _study_record(proposal: dict, study,
         # Issue #756 — nach der Log-Return-Umstellung ist eine verbleibende Kohärenzverletzung ein
         # echter Bug, kein erwartetes Restrauschen mehr; harter Regressionswächter statt WARNING.
         _inv.check_log_return_coherence(trial_attrs),
-        # Issue #978 (Katalog C, P0) — der Annualisierungsfaktor muss innerhalb eines Trials über
-        # alle Folds kommensurabel bleiben (Pitfall #310).
-        _inv.check_annualization_commensurability(trial_attrs),
         # Issue #979 (Katalog C, P0) — der ordnende Reward-Zweig darf nicht auf einen winzigen
         # Bruchteil der Auswertungen kollabieren (Pitfall #124, doppelt kodierte Feasibility).
         _inv.check_objective_branch_coverage(trial_attrs),
@@ -850,7 +891,7 @@ def _study_record(proposal: dict, study,
         "n_ineligible_measured": n_ineligible_measured,
         "backtest_ms_median": backtest_ms_median,
         # Issue #1038 (Katalog #866) — Σ tatsaechlicher Backtest-CPU-Zeit dieser Study (Rohmaterial
-        # fuer report._worker_utilisation_backtest_ms): anders als study_wallclock_s (Wanduhrzeit,
+        # fuer report._cpu_utilisation_backtest): anders als study_wallclock_s (Wanduhrzeit,
         # die verschachtelte Study-eigene Worker-Pools UND — vor #1023 — fremde Studies einschloss)
         # ist dies additiv ueber echte Trial-Arbeit, unbeeinflusst von Ueberlappung.
         "backtest_ms_sum": sum(_backtest_ms_values) if _backtest_ms_values else None,
@@ -913,7 +954,7 @@ def _study_record(proposal: dict, study,
         # Issue #851 — Study-Zeitstempel-Telemetrie (run_optimization._optimize_symbol_impl setzt
         # diese User-Attrs vor/nach study.optimize, auch bei vorzeitigem Abbruch — #833-Stil).
         # Rohmaterial für summary_de.py Abschnitt 3.2/3.4 (Median-Wallclock je Strategie,
-        # Barriere-Wartezeit je Symbol) und report._worker_utilisation/_symbol_barrier_wait.
+        # Barriere-Wartezeit je Symbol) und report._worker_occupancy_wallclock/_symbol_barrier_wait.
         "study_started_at_utc": study_user_attrs.get("study_started_at_utc"),
         "study_ended_at_utc": study_user_attrs.get("study_ended_at_utc"),
         "study_wallclock_s": study_user_attrs.get("study_wallclock_s"),
@@ -1020,17 +1061,28 @@ def _study_record(proposal: dict, study,
         "oos_gross_loss_mean_bps_trailing_stop_pooled": _pooled_mean_of_trial_field(
             trial_attrs, mean_field="oos_gross_loss_mean_bps_trailing_stop",
             count_field="oos_n_trailing_stop_losses"),
-        # Issue #1085 (Katalog #866-2) — über alle Trials aufsummierte Dust-Round-Trips
-        # (Notional < 5% des Median-Notionals dieser Study, Fliesskomma-Residuen eines Netto-
-        # Exposure-Nulldurchgangs) — Rohmaterial für invariants.check_dust_round_trip_share.
+        # Issue #1085 (Katalog #866-2), Quelle umgestellt #946/#1112 (Katalog #960) — über alle
+        # Trials aufsummierte Dust-Round-Trips (Notional < 5% des Median-Notionals dieser Study,
+        # Fliesskomma-Residuen eines Netto-Exposure-Nulldurchgangs) — Rohmaterial für
+        # invariants.check_dust_round_trip_share. Liest seit #946 ``oos_dust_round_trips_filtered_
+        # count`` (an der Round-Trip-QUELLE verworfen, VOR jeder Statistik) statt der vormaligen
+        # ``oos_expectancy_notional_degenerate_count`` (nur an der Expectancy-Konsumstelle
+        # verworfen — strukturell 0 seit #946, weil Dust die Expectancy-Berechnung nie mehr
+        # erreicht).
         "dust_round_trips_filtered": sum(
-            int(a.get("oos_expectancy_notional_degenerate_count") or 0) for a in trial_attrs),
+            int(a.get("oos_dust_round_trips_filtered_count") or 0) for a in trial_attrs),
         "atr_median_bps": _median_of_trial_field(trial_attrs, "oos_atr_median_bps"),
         # Issue #1095 (Katalog #928) — Median (über die Trials dieser Study) der je-Trial-Mediane
         # der Bars zwischen Trailing-Stop-Signal und tatsaechlichem Markt-Close-Fill. Macht den in
         # #1092/#1094 quantifizierten Fill-Verzoegerungs-Anteil auf Study-Ebene sichtbar.
         "oos_stop_exit_lag_bars": _median_of_trial_field(
             trial_attrs, "oos_stop_exit_lag_bars_median"),
+        # Issue #953/#1119 (Katalog #960) — Median (über die Trials dieser Study) der je-Trial-
+        # Mediane der Bar-Spanne ((high-low)/close, bps) während offener Positionen; Referenzgrösse
+        # für invariants.check_stop_loss_vs_bar_range (Verlust = adverse Bewegung EINER Bar, nicht
+        # Stopdistanz + Überschiessen — Root-Cause-Hypothese #1119).
+        "bar_range_median_bps": _median_of_trial_field(
+            trial_attrs, "oos_bar_range_median_bps"),
         # Issue #923 Fix 1 — die #900-Preflight-Kennzahlen (frac_zero_true_range, atr_median_bps,
         # bar_coverage_ratio, median_delta_t_s) des SYMBOLS (nicht dieser Study — identisch für
         # jede Strategie auf demselben Symbol), aus dem Gate-1-Cache. None ⇒ kein Preflight in
@@ -1092,8 +1144,12 @@ def _study_record(proposal: dict, study,
         "gate_collinearity_unconsolidated": gate_collinearity_unconsolidated,
         # Issue #970 (Katalog A, P1) — je Gate n_rejections/n_solo_rejections/marginal_delta über
         # die evaluierte Kohorte dieser Study (siehe invariants.gate_inventory_table-Docstring).
+        # Issue #956/#1122 (Katalog #960) — n_rejections wird seit diesem Fix DIREKT aus
+        # is_rejection_detail_counts (oben in dieser Funktion berechnet) abgeleitet, statt
+        # parallel und potenziell inkohärent aus oos_gate_deltas gepflegt zu werden.
         "gate_inventory": _inv.gate_inventory_table(
-            trial_attrs, (tournament_cfg or {}).get("eligible_requires_all") or []),
+            trial_attrs, (tournament_cfg or {}).get("eligible_requires_all") or [],
+            is_rejection_detail_counts=is_rejection_detail_counts),
         # Issue #786 — das bindende HOLDOUT-Gate (negativstes normiertes Delta auf dem Holdout-
         # Fenster, NICHT den OOS-Folds — siehe confirm._holdout_binding_gate) + die zugrunde
         # liegenden Deltas, direkt aus dem Proposal uebernommen (von confirm.py gestempelt).
@@ -1110,14 +1166,37 @@ def _study_record(proposal: dict, study,
         # Issue #832 Fix Punkt 2/3 — monetäre Holdout-Kennzahlen (confirm._metrics_dict), für
         # summary_de.py Abschnitt 2 ("Monetäres Ergebnis") ohne zweiten Datenzugriff.
         "holdout_total_return": holdout_metrics.get("oos_total_return"),
-        "holdout_expectancy": holdout_metrics.get("oos_expectancy"),
-        # Issue #1031 (Katalog #866) — additive, nennerausreisser-robuste Expectancy-Telemetrie
-        # (siehe backtest_runner._calculate_stats-Docstring); holdout_expectancy bleibt unveraendert.
+        # Issue #945/#1111 (Katalog #960) — umbenannt von ``holdout_expectancy``: Root-Cause, vierte
+        # Instanz der Klasse #304/#1033/#1097 — der Kostenstress-Ladder
+        # (``holdout_expectancy_cost_stress_1_5x``/``_2x`` unten) wird aus
+        # ``holdout_expectancy_capital_weighted`` abgeleitet (siehe
+        # ``backtest_runner._expectancy_cost_stress``-Docstring, DIESELBE 5-%-Notional-Boden-Logik),
+        # waehrend vorher unter dem Namen "holdout_expectancy" berichtet/sortiert wurde (Mittel von
+        # Quotienten, KEIN Notional-Boden) — bei SqueezeBreakout/PLTR (Divergenz Faktor 7,9)
+        # erschien der "2×-Kostenstress" dadurch als Verbesserung um +145,76 bps. Reine Telemetrie
+        # seither (mathematisch weiterhin die korrekte Basis fuer die #1028-Sizing-Identitaet, siehe
+        # ``check_sizing_identity_coherence``) — KEIN Entscheidungs-/Sortier-/Gate-Konsument mehr.
+        "holdout_expectancy_notional_weighted": holdout_metrics.get("oos_expectancy"),
+        # Issue #945/#1111 — die KANONISCHE Grösse: dieselbe Basis, aus der die Kostenstress-Werte
+        # abgeleitet werden UND die seither berichtet/sortiert wird (summary_de.py Abschnitt 2.1).
         "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),
         "holdout_expectancy_winsorized": holdout_metrics.get("oos_expectancy_winsorized"),
         "holdout_expectancy_outlier_count": holdout_metrics.get("oos_expectancy_outlier_count") or 0,
         "holdout_expectancy_notional_degenerate_count": (
             holdout_metrics.get("oos_expectancy_notional_degenerate_count") or 0),
+        # Issue #946/#1112 (Katalog #960) — Dust-Round-Trips, an der Round-Trip-QUELLE verworfen
+        # (VOR jeder Statistik, siehe backtest_runner._filter_dust_round_trips), fuer die HOLDOUT-
+        # Bestaetigung. Das Feld oben bleibt strukturell 0 seit diesem Fix (Dust erreicht die
+        # Expectancy-Berechnung nicht mehr).
+        "holdout_dust_round_trips_filtered_count": (
+            holdout_metrics.get("oos_dust_round_trips_filtered_count") or 0),
+        # Issue #948/#1114 (Katalog #960) — der EINE studienweite (gepoolte) Annualisierungsfaktor
+        # (sqrt(F) = holdout_sortino_annualized / holdout_sortino_period), Rohmaterial fuer
+        # invariants.check_annualization_commensurability (misst seit diesem Fix die Streuung
+        # DIESES Faktors ueber Studies desselben Symbols, nicht mehr die triviale Intra-Trial-
+        # Fold-Streuung des ANNUALISIERTEN Sortino).
+        "holdout_sortino_period": holdout_metrics.get("oos_sortino_period"),
+        "holdout_sortino_annualized": holdout_metrics.get("oos_sortino_annualized"),
         # Issue #1042 (Katalog #866) E-1/E-3 — Kosten-Stressband + CVaR/ES-Tail-Risiko, additiv
         # neben den unveraenderten Basis-Kennzahlen (siehe backtest_runner-Docstrings).
         "holdout_expectancy_cost_stress_1_5x": holdout_metrics.get("oos_expectancy_cost_stress_1_5x"),
@@ -1144,6 +1223,12 @@ def _study_record(proposal: dict, study,
         "boundary_parameter": holdout_metrics.get("boundary_parameter"),
         "boundary_side": holdout_metrics.get("boundary_side"),
         "boundary_directions": holdout_metrics.get("boundary_directions") or {},
+        # Issue #958/#1124 (Katalog #960) — die volle, benannte Evidenz je klemmendem Parameter
+        # ({sampled_value, active_bounds, default_bounds, distance_to_edge}), damit jede
+        # REJECTED_BOUNDARY_SOLUTION/HOLD_BOUNDARY_UNRESOLVED-Entscheidung im Artefakt selbst
+        # nachvollziehbar ist (siehe run_optimization._boundary_veto_evidence-Docstring). None ohne
+        # jede Randlösung dieser Study (dieselbe Konvention wie boundary_hit_fraction).
+        "boundary_veto_evidence": holdout_metrics.get("boundary_veto_evidence"),
         # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — sichtbar, ob dieser Kandidat bereits
         # unter geweiteten Bounds fuer boundary_parameter evaluiert wurde und die Weitungs-Sperre
         # (sweep_diagnostics._MAX_WIDEN_APPLICATIONS) erreicht ist (⇒ terminaler
@@ -1156,6 +1241,11 @@ def _study_record(proposal: dict, study,
         # family). NICHT mit dem (jetzt nicht mehr für die Deflation verwendeten) symbolweiten
         # cross_study['n_family'] verwechseln (#625, post-hoc Sweep-Telemetrie).
         "n_family_stage1": holdout_metrics.get("deflation_n_family"),
+        # Issue #957/#1123 (Katalog #960) — welche der (strukturell zwei moeglichen) Quellen
+        # n_family_stage1 oben tatsaechlich gespeist hat (siehe confirm.confirm_per_symbol_
+        # promotion's deflation_n_family_source-Docstring), im Report-Artefakt sichtbar statt nur
+        # aus dem Aufrufer-Quelltext erschliessbar.
+        "deflation_n_family_source": holdout_metrics.get("deflation_n_family_source"),
         # Issue #846 — gesetzt, wenn confirm.py die DSR-Berechnung fuer diese Study uebersprungen
         # (oder eine Kohaerenzverletzung zwischen deflated_sr0 und deflated_dsr/deflation_dsr_z an
         # der Export-Grenze unterdrueckt) hat: SMALL_COHORT (deflation_n < 2) oder NO_STATISTIC
@@ -1255,6 +1345,10 @@ def _boundary_solutions_section() -> list[dict[str, Any]]:
             # im Study-Record (siehe _study_record), hier zusaetzlich neben dem Bounds-Vorschlag.
             "boundary_parameter": e.get("boundary_parameter"),
             "boundary_side": e.get("boundary_side"),
+            # Issue #958/#1124 (Katalog #960) — die volle, benannte Evidenz je klemmendem
+            # Parameter ({sampled_value, active_bounds, default_bounds, distance_to_edge}, siehe
+            # run_optimization._boundary_veto_evidence-Docstring).
+            "boundary_veto_evidence": e.get("boundary_veto_evidence"),
             # Issue #1101 (Katalog #934) Akzeptanzkriterium 2 — wie oft dieser Parameter bereits
             # nachgeweitet wurde (sweep_diagnostics.record_diagnosed_pair), damit im Report
             # nachvollziehbar ist, wie nah ein Kandidat an der Weitungs-Sperre
@@ -1269,15 +1363,18 @@ def _search_budget_proposal_section(
     all_checks: list[tuple[str, "_inv.InvariantResult"]],
 ) -> list[dict[str, Any]]:
     """Issue #1082 Fix Punkt (a) (Katalog #866-2, Kohorte E) — Studies, deren
-    ``check_objective_branch_coverage`` FAILt (der ordnende Reward-Zweig ``branch=='per_symbol'``
-    traegt unter der Schwelle des Suchbudgets, Referenzlauf: AdxAtr 4/140, Squeeze 5/180,
-    TrendPullback 8/140, DynamicBreakout 9/100, Rsi2 15/160), als eigene Report-Sektion — das
-    Rohmaterial fuer den Suchbudget-Vorschlag des NAECHSTEN Laufs. ``sweep._apply_search_budget_
-    proposal`` liest diese Sektion aus dem JUENGSTEN #742-Report (analog ``_read_last_study_
-    wallclock_by_strategy``) und schreibt jedes Paar ueber den bestehenden #830-``'deprioritized'``-
-    Pfad in den Diagnose-Cache — eine Study unter der Schwelle bekommt im naechsten Lauf NICHT
-    dasselbe Budget noch einmal (``run_optimization._apply_deprioritized_budget``), statt weiterhin
-    ungebremst Trials fuer einen ueberwiegend zweigklippen-gefuehrten Suchraum zu verbrennen."""
+    ``check_objective_branch_coverage`` FAILt, als eigene Report-Sektion — das Rohmaterial fuer den
+    Suchbudget-Vorschlag des NAECHSTEN Laufs. ``sweep._apply_search_budget_proposal`` liest diese
+    Sektion aus dem JUENGSTEN #742-Report (analog ``_read_last_study_wallclock_by_strategy``) und
+    schreibt jedes Paar ueber den bestehenden #830-``'deprioritized'``-Pfad in den Diagnose-Cache —
+    eine Study unter der Schwelle bekommt im naechsten Lauf NICHT dasselbe Budget noch einmal
+    (``run_optimization._apply_deprioritized_budget``).
+
+    Issue #955/#1121 (Katalog #960) — ``check_objective_branch_coverage`` misst seit diesem Fix den
+    Anteil ineligibler Trials mit definierter Selektionsstatistik (NICHT mehr
+    ``reward_terms.branch == 'per_symbol'``, das sich als blosse Umbenennung von ``p_eligible``
+    erwies, siehe dortiger Docstring) — dieselbe Konsequenz (Budget-Deprio via Check-NAME), eine
+    nicht mehr duplizierte Eingangsgrösse."""
     out = []
     for label, result in all_checks:
         if result.name != "check_objective_branch_coverage" or result.passed:
@@ -1664,22 +1761,29 @@ def _symbol_barrier_wait(studies_out: list[dict[str, Any]]) -> dict[str, float]:
     }
 
 
-def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
-                        sweep_wallclock_s: float | None) -> float | None:
-    """Issue #851 — Σ Study-Wallclock / (n_jobs × Sweep-Wallclock).
+def _worker_occupancy_wallclock(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
+                                sweep_wallclock_s: float | None) -> float | None:
+    """Issue #851, umbenannt #949/#1115 (Katalog #960) — Σ Study-Wallclock / (n_jobs ×
+    Sweep-Wallclock). Vormals ``_worker_utilisation`` — derselbe Name wie ``_cpu_utilisation_
+    backtest`` (unten) fuer zwei GRUNDVERSCHIEDENE Grössen fuehrte im Report-Dokument (§3) UND in
+    der zugehoerigen Invariante zu zwei Zahlen unter demselben Begriff "Worker-Auslastung"
+    (0,7583/1,1251/1,1360 hier gegen 60,2/89,6/90,5% dort, B-6) — Root-Cause #949.
 
-    Issue #1038 (Katalog #866) — trotz des Namens ist dies KEINE Auslastung im engeren Sinn (ein
-    Anteil, der niemals 1.0 uebersteigen kann): der Zaehler ueberlappt sich strukturell, wenn (a)
-    eine Study fremder Laeufe eingemischt war (vor #1023) — Σ Study-Wallclock zaehlte dann Sekunden
-    mehrfacher, GLEICHZEITIGER Laeufe zusammen, oder (b) jede Study selbst einen EIGENEN Worker-Pool
-    oeffnet (``backtest_runner.py``, ``_max_workers = max(1, min(cpu//2, 6))``) — Study-Wallclocks
-    verschiedener, parallel dispatchter Studies ueberlappen sich dann untereinander. Beobachtete
-    Werte: 151,8 %/246,5 %/332,9 % ueber drei Laeufe. Nach #1023 (fremde Studies ausgeschlossen)
-    bleibt Ursache (b) bestehen — ``check_worker_utilisation_plausible`` (invariants.py) meldet
-    jeden Wert > 1.0 als FAIL statt ihn unkommentiert anzuzeigen. ``_worker_utilisation_backtest_ms``
-    (unten) ist die zweite, ueberlappungsfreie Grösse fuer denselben Zweck.
+    Issue #1038 (Katalog #866) — trotz des (alten) Namens ist dies KEINE Auslastung im engeren Sinn
+    (ein Anteil, der niemals 1.0 uebersteigen kann): der Zaehler ueberlappt sich strukturell, wenn
+    (a) eine Study fremder Laeufe eingemischt war (vor #1023) — Σ Study-Wallclock zaehlte dann
+    Sekunden mehrfacher, GLEICHZEITIGER Laeufe zusammen, oder (b) jede Study selbst einen EIGENEN
+    Worker-Pool oeffnet (``backtest_runner.py``, ``_max_workers = max(1, min(cpu//2, 6))``) —
+    Study-Wallclocks verschiedener, parallel dispatchter Studies ueberlappen sich dann
+    untereinander. Beobachtete Werte: 151,8 %/246,5 %/332,9 % ueber drei Laeufe. Nach #1023 (fremde
+    Studies ausgeschlossen) bleibt Ursache (b) bestehen — ``check_worker_utilisation_plausible``
+    (invariants.py) meldet jeden Wert > 1.0 als FAIL statt ihn unkommentiert anzuzeigen.
+    ``_cpu_utilisation_backtest`` (unten) ist die zweite, ueberlappungsfreie Grösse fuer denselben
+    Zweck — beide tragen seit #949 GETRENNTE Namen, keine gemeinsame "Auslastung" mehr.
 
-    None ohne n_jobs/sweep_wallclock_s ODER ohne eine einzige Study mit Wallclock-Daten."""
+    ``studies_out`` ist bereits die #1086/#940 run_id-verifizierte Kohorte (kein separater Filter
+    hier noetig, siehe #949 Akzeptanzkriterium 1). None ohne n_jobs/sweep_wallclock_s ODER ohne eine
+    einzige Study mit Wallclock-Daten."""
     if not n_jobs or n_jobs <= 0 or not sweep_wallclock_s or sweep_wallclock_s <= 0:
         return None
     total_study_wallclock = sum(
@@ -1689,13 +1793,16 @@ def _worker_utilisation(studies_out: list[dict[str, Any]], *, n_jobs: int | None
     return total_study_wallclock / (n_jobs * sweep_wallclock_s)
 
 
-def _worker_utilisation_backtest_ms(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
-                                    sweep_wallclock_s: float | None) -> float | None:
-    """Issue #1038 (Katalog #866) — Σ ``backtest_ms_sum`` (tatsaechliche, additive Backtest-CPU-Zeit
-    je Trial, ``_study_record``) / (n_jobs × Sweep-Wallclock). Anders als ``_worker_utilisation``
-    (Study-Wallclock, siehe dortiger Docstring) summiert dies echte Trial-Arbeit statt Wanduhrzeit
-    — verschachtelte Study-eigene Worker-Pools koennen diese Zahl NICHT ueber 1.0 durch reine
-    Ueberlappung treiben, da jede Millisekunde genau EINEM Trial zugeordnet ist."""
+def _cpu_utilisation_backtest(studies_out: list[dict[str, Any]], *, n_jobs: int | None,
+                              sweep_wallclock_s: float | None) -> float | None:
+    """Issue #1038 (Katalog #866), umbenannt #949/#1115 (Katalog #960) — Σ ``backtest_ms_sum``
+    (tatsaechliche, additive Backtest-CPU-Zeit je Trial, ``_study_record``) / (n_jobs ×
+    Sweep-Wallclock). Vormals ``_worker_utilisation_backtest_ms``. Anders als
+    ``_worker_occupancy_wallclock`` (Study-Wallclock, siehe dortiger Docstring) summiert dies echte
+    Trial-Arbeit statt Wanduhrzeit — verschachtelte Study-eigene Worker-Pools koennen diese Zahl
+    NICHT ueber 1.0 durch reine Ueberlappung treiben, da jede Millisekunde genau EINEM Trial
+    zugeordnet ist. Das ist die Grösse, die tatsaechlich eine physikalische CPU-Auslastung im
+    engeren Sinn ist (<= 1.0)."""
     if not n_jobs or n_jobs <= 0 or not sweep_wallclock_s or sweep_wallclock_s <= 0:
         return None
     total_backtest_s = sum(
@@ -1810,6 +1917,30 @@ def build_probe_report(proposals: Iterable[Path | dict], *, run_id: str,
     )
 
 
+def _compute_decision_admissible(invariant_checks: list[dict]) -> bool:
+    """Issue #942/#1108 (Katalog #960) — eine der drei orthogonalen Achsen, die den vorher
+    ueberladenen ``run_status``-String ersetzen (siehe ``_build_report``-Docstring): ``False``
+    sobald mindestens eine ``severity='blocking'``-Invariante in ``invariant_checks`` FAILt.
+    Reine Funktion (kein Report-Kontext noetig) — dieselbe Definition, die vormals in
+    ``sweep._downgrade_run_status_for_blocking_invariants`` unabhaengig REKONSTRUIERT wurde,
+    JETZT die einzige Quelle."""
+    return not any(
+        c.get("severity") == "blocking" and not c.get("passed", True) for c in invariant_checks)
+
+
+def _compute_work_completed(
+    symbols_completed: int | None, symbols_planned: int | None,
+) -> bool | None:
+    """Issue #942/#1108 (Katalog #960) — die zweite orthogonale Achse: ``True``, wenn alle
+    geplanten Symbole abgeschlossen wurden, ``False`` bei einem echten Abbruch mit weniger
+    abgeschlossenen als geplanten Symbolen, ``None`` wenn unbekannt (weder Checkpoint noch
+    In-Prozess-Spiegel verfuegbar, siehe ``sweep.sweep_symbol_funnel``) — NIE stillschweigend als
+    ``False`` interpretiert (das waere eine falsche Behauptung, kein fehlender Messwert)."""
+    if symbols_completed is None or symbols_planned is None:
+        return None
+    return symbols_completed >= symbols_planned
+
+
 def _build_report(
     proposals: list[dict],
     *,
@@ -1823,7 +1954,20 @@ def _build_report(
     symbols_discovered: int | None = None,
     symbols_gate1_rejected: int | None = None,
     report_source: str = "final",
+    prior_probe_invariant_checks: list[dict] | None = None,
+    fail_fast_triggered: str | None = None,
 ) -> dict:
+    # Issue #942/#1108 (Katalog #960) — ``fail_fast_triggered`` (der Name der Fail-Fast-Invariante,
+    # die den Sweep abgebrochen hat, oder ``None``) treibt ZUSAMMEN mit den unten berechneten
+    # ``work_completed``/``decision_admissible`` die drei orthogonalen Achsen, die den bisher
+    # ueberladenen ``run_status``-String ersetzen (siehe dortige Feld-Docstrings unten). Root-Cause
+    # #1108: derselbe Faktenstand (14/14 Studies, volles Budget, Fail-Fast-Abbruch NACH Abschluss
+    # der Arbeit) ergab je nach Report-Erzeugungspfad ZWEI verschiedene ``run_status``-Werte
+    # (``completed_invalid`` vs. ``aborted_invariant``, LETZTERER faelschlich als "echter
+    # Arbeitsabbruch" gelesen) — die drei neuen Felder werden HIER, EINMAL, aus derselben Quelle
+    # (den bereits berechneten ``invariant_checks`` plus den durchgereichten Symbol-Zaehlern)
+    # abgeleitet, unabhaengig davon, welcher Pfad (regulaerer Abschluss oder Abbruch-Exception)
+    # ``_build_report`` letztlich aufruft.
     # Issue #1083 (Katalog #866-2, Kohorte "Stufe 1 Ergänzung", Pitfall #379) — ``_build_report``
     # wird pro Lauf an MEHREREN Call-Sites erneut ausgewertet (Symbol-Fortschritts-Probe,
     # Zwischenreport-Schreiber, Fail-Fast-Probe, finaler Artefakt-Schreiber, siehe ``sweep.py``).
@@ -2103,23 +2247,51 @@ def _build_report(
     budget_check = _inv.check_budget_execution(studies_out, min_median=min_median_budget_execution)
     all_checks.append(("global", budget_check))
 
-    # Issue #1023 (Katalog #866) Akzeptanzkriterium 2 — zweite, unabhaengige Verteidigungslinie
-    # gegen fremde Studies im Report (siehe der run_id-Filter oben). Issue #1087 (Katalog #920) —
-    # ``run_started_at_utc`` durchgereicht, damit die offset-basierten Klauseln (statt nur der
-    # blinden Spannweiten-Klausel) auswertbar sind.
-    all_checks.append(("global", _inv.check_report_cohort_coherence(
+    # Issue #940/#1106 (Katalog #960) — ``check_report_cohort_coherence`` urteilt seit diesem Fix
+    # ausschliesslich ueber Kohorten-IDENTITAET (``record['run_id'] == run_id``), nicht mehr ueber
+    # Zeit: die vorherige Zeitfassung war strukturell blind fuer einen zeitlich vollstaendig
+    # enthaltenen Nachbarlauf (B-3, siehe Docstring dort). Die ehemaligen drei Zeitklauseln laufen
+    # separat als reine Uhr-Drift-Diagnose (``check_cohort_clock_drift``, severity ``low``).
+    all_checks.append(("global", _inv.check_report_cohort_coherence(studies_out, run_id=run_id)))
+    all_checks.append(("global", _inv.check_cohort_clock_drift(
         studies_out, wallclock_s=wallclock_s, run_started_at_utc=started_at_utc)))
+    # Issue #940/#1106 Fix Punkt 3 — die ECHTE zweite Verteidigungslinie auf einer ANDEREN
+    # Evidenzachse (der forensische Ereignisstrom statt Trial-``user_attrs``); nur fuer
+    # ``report_source == 'final'`` ausgewertet, aus demselben Grund wie die #1098-Vollstaendigkeits-
+    # pruefung oben (Zwischen-/Probe-Reports sehen strukturell nur eine Teilmenge der Studies, ein
+    # Ereignisabgleich waere dort bedeutungslos).
+    if report_source == "final":
+        _own_study_completed_events = _read_jsonl_events(
+            jsonl_sidecar_path(_log.name), "optimizer_study_completed")
+        all_checks.append(("global", _inv.check_report_cohort_event_stream_coherence(
+            studies_out, run_id=run_id, study_completed_events=_own_study_completed_events)))
+    else:
+        all_checks.append(("global", _inv.check_report_cohort_event_stream_coherence(
+            studies_out, run_id=None, study_completed_events=None)))
 
-    # Issue #1038 (Katalog #866) — vorab berechnet (statt erst im Report-Dict unten), damit die
-    # Invariante denselben Wert prueft, der auch angezeigt wird (eine Kennzahl, eine Quelle).
-    _worker_utilisation_value = _worker_utilisation(
+    # Issue #1038 (Katalog #866), umbenannt #949/#1115 — vorab berechnet (statt erst im Report-Dict
+    # unten), damit die Invariante denselben Wert prueft, der auch angezeigt wird (eine Kennzahl,
+    # eine Quelle).
+    _worker_occupancy_wallclock_value = _worker_occupancy_wallclock(
         studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s)
     all_checks.append((
         "global", _inv.check_worker_utilisation_plausible(
-            _worker_utilisation_value, n_studies=len(studies_out))))
+            _worker_occupancy_wallclock_value, n_studies=len(studies_out))))
 
     # Issue #1031 (Katalog #866) — Kohaerenz zwischen expectancy und expectancy_capital_weighted.
     all_checks.append(("global", _inv.check_expectancy_definition_coherence(studies_out)))
+
+    # Issue #945/#1111 (Katalog #960) — blockierender Regressionswaechter: die Kostenstress-Leiter
+    # (abgeleitet aus holdout_expectancy_capital_weighted) muss monoton fallend und gleich gestuft
+    # gegenueber DERSELBEN Basis sein, gegen die sie berichtet wird.
+    all_checks.append(("global", _inv.check_cost_stress_monotonicity(studies_out)))
+
+    # Issue #948/#1114 (Katalog #960, ersetzt #978) — seit diesem Fix eine SWEEP-WEITE Diagnose
+    # (severity 'low'): die Streuung des EINEN studienweiten Annualisierungsfaktors ueber Studies
+    # DESSELBEN Symbols, statt der frueheren, trivialen Intra-Trial-Fold-Streuung (99,15% der
+    # Trials betroffen, B-10) — braucht deshalb ``studies_out`` (alle Studies des Sweeps), nicht
+    # mehr die Trials EINER einzelnen Study.
+    all_checks.append(("global", _inv.check_annualization_commensurability(studies_out)))
 
     # Issue #1073 (Katalog #866-2) — FAIL bei einem Vorzeichenwechsel zwischen roher und
     # winsorisierter Holdout-Expectancy (das positive Ergebnis haengt dann an wenigen Ausreissern).
@@ -2139,6 +2311,20 @@ def _build_report(
     # echte Sprungstelle) messbar, statt eine Ursache zu behaupten (siehe Docstring dort).
     _atr_floor_by_symbol = _atr_floor_bps_by_symbol(
         (r.get("symbol") for r in studies_out))
+    # Issue #951/#1117 (Katalog #960) — der Floor ist seit #1096 Fix Punkt 1 selbst
+    # COST-GEKOPPELT (backtest_runner.cost_coupled_atr_floor_bps) und variiert damit PRO STUDY
+    # (über atr_trailing_multiplier_median), nicht mehr nur pro Symbol/Asset-Klasse. Vorgezogen
+    # vor check_atr_scale_homogeneity (statt an seiner alten Stelle nahe check_stop_cost_ratio
+    # unten), weil die Homogenitäts-Prüfung diesen abgeleiteten Wert bereits als Floor-Referenz
+    # konsumiert (Akzeptanzkriterium #951: "Der Floor-Wert erscheint im Report als abgeleitete,
+    # nicht als konfigurierte Grösse").
+    _min_stop_to_cost_ratio = float(tournament_cfg.get("min_stop_to_cost_ratio", 3.0))
+    _round_trip_cost_bps_by_symbol_map = _round_trip_cost_bps_by_symbol(
+        (r.get("symbol") for r in studies_out))
+    _stamp_atr_floor_bps_derived(
+        studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol,
+        round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
+        min_stop_to_cost_ratio=_min_stop_to_cost_ratio)
     atr_scale_homogeneity_check = _inv.check_atr_scale_homogeneity(
         studies_out, atr_floor_bps_by_symbol=_atr_floor_by_symbol)
     all_checks.append(("global", atr_scale_homogeneity_check))
@@ -2170,13 +2356,12 @@ def _build_report(
 
     # Issue #1072 (Wiederkehr #1050/#1051) — die Stopdistanz muss ein Mindestvielfaches der
     # Round-Trip-Kosten betragen, sonst kann eine Position den Stop strukturell nicht überleben,
-    # bevor die Kosten sie auffressen.
-    min_stop_to_cost_ratio = float(tournament_cfg.get("min_stop_to_cost_ratio", 3.0))
-    _round_trip_cost_bps_by_symbol_map = _round_trip_cost_bps_by_symbol(
-        (r.get("symbol") for r in studies_out))
+    # bevor die Kosten sie auffressen. ``min_stop_to_cost_ratio``/``_round_trip_cost_bps_by_symbol_
+    # map`` bereits oben (Issue #951/#1117) für ``_stamp_atr_floor_bps_derived`` aufgelöst —
+    # dieselben Werte, wiederverwendet statt erneut gelesen.
     all_checks.append(("global", _inv.check_stop_cost_ratio(
         studies_out, round_trip_cost_bps_by_symbol=_round_trip_cost_bps_by_symbol_map,
-        min_stop_to_cost_ratio=min_stop_to_cost_ratio)))
+        min_stop_to_cost_ratio=_min_stop_to_cost_ratio)))
 
     # Issue #1093 (Katalog #926) — Kalibrierungswaechter fuer #1092/#1094: der Trailing-Stop darf
     # nicht der haeufigste, verlustreichste UND teuerste Ausgang einer Study sein.
@@ -2184,6 +2369,20 @@ def _build_report(
         studies_out,
         max_loss_share=float(optimizer_cfg.get("trailing_stop_max_loss_share", 0.60)),
         max_mean_loss_ratio=float(optimizer_cfg.get("trailing_stop_max_mean_loss_ratio", 1.25)))))
+
+    # Issue #950/#1116 (Katalog #960) — die verbindliche SWEEP-WEITE Abnahmemessung fuer die
+    # #1092/#1094-Hypothese (drei Kriterien: Spearman(k*ATR, realisierter Verlust) >= 0.3,
+    # realized_stop_loss_ratio in [0.8, 3.0] fuer >= 80% der Studies, gepoolter TRAILING_STOP-
+    # Anteil < 35%) — strenger als die permanente check_effective_stop_distance-Schranke und die
+    # per-Study check_trailing_stop_loss_share-Symptomschwelle oben, weil sie EIN holistisches
+    # Urteil ueber den gesamten Sweep faellt statt je Study einzeln zu urteilen.
+    all_checks.append(("global", _inv.check_trailing_stop_risk_calibration_acceptance(studies_out)))
+
+    # Issue #953/#1119 (Katalog #960) — blockierender Regressionswaechter gegen die konkurrierende
+    # Hypothese zu #950/#1092: ist der Stop-Verlust latenz- statt stopgetrieben (Verlust in
+    # derselben Groessenordnung wie EINE Bar-Spanne, UND gleichzeitig ein grosses Vielfaches der
+    # konfigurierten Stopdistanz), ist jede Stop-Parametrisierung wirkungslos.
+    all_checks.append(("global", _inv.check_stop_loss_vs_bar_range(studies_out)))
 
     # Issue #1097 (Katalog #930) — Teilmengen-Schranke zwischen gepoolten Verlust-Aggregaten;
     # siehe check_loss_metric_commensurability-Docstring.
@@ -2321,10 +2520,10 @@ def _build_report(
     all_checks.append(("global", _inv.check_gate_marginal_contribution(
         studies_out, gate_consolidation_protected=tournament_cfg.get("gate_consolidation_protected"))))
 
-    # Issue #1076 — Kreuzprüfung: gate_inventory.n_rejections darf nie unter dem gate-spezifischen
-    # is_rejection_detail_counts-Wert liegen (sonst liest der Zähler vermutlich den falschen Eimer,
-    # z. B. NONE statt des gate-spezifischen — Beweis B-10 im #866-Katalog).
-    all_checks.append(("global", _inv.check_gate_inventory_coherence(studies_out)))
+    # Issue #956/#1122 (Katalog #960) — check_gate_inventory_coherence (#1076) entfernt: seit
+    # gate_inventory_table die is_rejection_detail_counts-Zaehlung DIREKT uebernimmt (statt
+    # parallel aus oos_gate_deltas abzuleiten), ist n_rejections[g] == is_rejection_detail_counts[
+    # code(g)] per Konstruktion — die Kreuzpruefung waere jetzt eine Tautologie.
 
     # Issue #976 (Katalog B, P2) — Detektion überproportional vieler unerreichbarer OOS-Fenster
     # (zu weite Lookback-Bounds für die Datenlage).
@@ -2390,6 +2589,35 @@ def _build_report(
         _already_evaluated_dicts, fail_fast_invariants=optimizer_cfg.get("fail_fast_invariants"))
     all_checks.append(("global", fail_fast_actual_convention_check))
 
+    # Issue #941/#1107 (Katalog #960) — JEDER Eintrag in ``invariant_checks`` traegt am Ende die
+    # Population, die er tatsaechlich gesehen hat (``InvariantResult.cohort``-Docstring): ein Check,
+    # der derselbe Fail-Fast-Probe-Auswertung UND dem finalen Report unter demselben Namen begegnet,
+    # darf nicht mehr stillschweigend zwei verschiedene Grundgesamtheiten hinter einer Zahl
+    # verstecken (Root-Cause B-2: 12/13/13 Offender im Fail-Fast-Pfad gegen 25/38/38 im Report-Pfad
+    # fuer ``check_effective_stop_distance``, ohne Kohorten-Deklaration ununterscheidbar von einem
+    # echten Widerspruch). Nur Checks stempeln, die noch KEIN ``cohort`` selbst gesetzt haben
+    # (``dataclasses.replace`` auf dem frozen ``InvariantResult``).
+    _cohort_descriptor = _inv.build_cohort_descriptor(
+        studies_out, run_id=run_id, report_source=report_source)
+    all_checks = [
+        (label, result if result.cohort is not None
+         else dataclasses.replace(result, cohort=_cohort_descriptor))
+        for label, result in all_checks
+    ]
+
+    # Issue #941/#1107 Fix — die Nachlauf-Pruefung: vergleicht die soeben gestempelten Kohorten-
+    # Deklarationen gegen eine FRUEHERE In-Process-Probe DESSELBEN Laufs (``sweep.py``s Fail-Fast-
+    # Vorlauf, sofern einer stattfand — ``prior_probe_invariant_checks`` wird vom Aufrufer
+    # durchgereicht). Muss NACH der Kohorten-Stempelung stehen (braucht ``cohort`` auf jedem
+    # bereits ausgewerteten Check), deshalb selbst separat gestempelt statt in der Bulk-Liste oben.
+    cohort_consistency_check = dataclasses.replace(
+        _inv.check_cohort_declaration_consistency(
+            [c.to_dict() for _label, c in all_checks],
+            prior_probe_checks=prior_probe_invariant_checks),
+        cohort=_cohort_descriptor,
+    )
+    all_checks.append(("global", cohort_consistency_check))
+
     invariant_checks = []
     for label, result in all_checks:
         d = result.to_dict()
@@ -2402,6 +2630,12 @@ def _build_report(
                 # Issue #1083 — welche Auswertungswelle dieses Event traegt (siehe Docstring oben).
                 "report_source": report_source,
             }, level=logging.ERROR)
+
+    # Issue #942/#1108 (Katalog #960) — die drei orthogonalen Achsen, EINMAL hier aus der bereits
+    # vorliegenden Wahrheit abgeleitet (dieselbe Quelle fuer JEDEN Aufrufer/Pfad, siehe Docstring
+    # oben): kein zweites, unabhaengig gesetztes Statuswort mehr.
+    _decision_admissible = _compute_decision_admissible(invariant_checks)
+    _work_completed = _compute_work_completed(symbols_completed, symbols_planned)
 
     report = {
         "report_schema_version": REPORT_SCHEMA_VERSION,
@@ -2429,6 +2663,23 @@ def _build_report(
         # einer unvollstaendigen studies[]-Liste erschlossen werden zu muessen. Default 'complete'
         # (bit-identisch fuer jeden Aufrufer, der die drei neuen Kwargs nicht setzt).
         "run_status": run_status,
+        # Issue #942/#1108 (Katalog #960) — die drei orthogonalen Achsen, die ``run_status`` (oben,
+        # aus Rueckwaertskompatibilitaetsgruenden UNVERAENDERT erhalten) NICHT eindeutig genug
+        # ausdrueckt:
+        #   work_completed      — alle geplanten Symbole tatsaechlich abgeschlossen (None = unbekannt,
+        #                          weder Checkpoint noch In-Prozess-Spiegel verfuegbar).
+        #   decision_admissible — keine ``severity='blocking'``-Invariante FAILt in diesem Report.
+        #   fail_fast_triggered — Name der Fail-Fast-Invariante, die den Sweep abgebrochen hat, oder
+        #                          None (kein Fail-Fast-Abbruch in diesem Lauf).
+        # Root-Cause #1108: derselbe Faktenstand (14/14 Studies, volles Budget, Fail-Fast-Abbruch
+        # NACH Abschluss der Arbeit) ergab ``completed_invalid`` ("vollstaendig gerechnet") in zwei
+        # Reports und ``aborted_invariant`` ("echter Arbeitsabbruch") in einem dritten — dieselben
+        # Fakten, zwei sich WIDERSPRECHENDE Lesarten desselben ueberladenen Strings.
+        # ``summary_de.py`` formuliert seine Kern-Aussage aus DIESEN drei Feldern, nicht mehr aus
+        # ``run_status`` allein (siehe dortige Sektion 1).
+        "work_completed": _work_completed,
+        "decision_admissible": _decision_admissible,
+        "fail_fast_triggered": fail_fast_triggered,
         "symbols_completed": symbols_completed,
         "symbols_planned": symbols_planned,
         # Issue #942 (Katalog A) — Funnel-Transparenz: symbols_discovered (rohes Symbol-Universum
@@ -2518,11 +2769,18 @@ def _build_report(
             # 3.2/3.4); dieselben Felder speisen das #843-LPT-Scheduling (Katalog B).
             "wallclock_by_strategy": _wallclock_by_strategy(studies_out),
             "symbol_barrier_wait_s": _symbol_barrier_wait(studies_out),
-            "worker_utilisation": _worker_utilisation_value,
-            # Issue #1038 (Katalog #866) — zweite, ueberlappungsfreie Auslastungs-Groesse (siehe
-            # _worker_utilisation_backtest_ms-Docstring): Σ echte Backtest-CPU-Zeit statt Σ Study-
-            # Wanduhrzeit, kann durch verschachtelte Worker-Pools nicht ueber 1.0 getrieben werden.
-            "worker_utilisation_backtest_ms": _worker_utilisation_backtest_ms(
+            # Issue #949/#1115 (Katalog #960) — zwei GETRENNTE, eindeutig benannte Auslastungs-
+            # Groessen statt der vorherigen ``worker_utilisation``/``worker_utilisation_backtest_ms``
+            # (beide implizit "Worker-Auslastung" genannt, B-6: 0,7583/1,1251/1,1360 hier gegen
+            # 60,2/89,6/90,5% bei der jeweils anderen Groesse im selben Dokument):
+            #   worker_occupancy_wallclock = Σ Study-Wallclock / (n_jobs × Sweep-Wallclock)
+            #       — kann > 1.0 liegen (verschachtelte Worker-Pools/Ueberlappung), siehe
+            #       _worker_occupancy_wallclock-Docstring; check_worker_utilisation_plausible prueft
+            #       GENAU diese Groesse.
+            #   cpu_utilisation_backtest = Σ Backtest-CPU-Zeit je Trial / (n_jobs × Sweep-Wallclock)
+            #       — die ueberlappungsfreie, physikalisch <= 1.0 begrenzte Auslastung.
+            "worker_occupancy_wallclock": _worker_occupancy_wallclock_value,
+            "cpu_utilisation_backtest": _cpu_utilisation_backtest(
                 studies_out, n_jobs=(cli_args or {}).get("n_jobs"), sweep_wallclock_s=wallclock_s),
             # Issue #853 — {seed_source_value: n_studies}, dieselbe Verteilung, die
             # check_champion_seed_coverage prüft.
@@ -2550,6 +2808,8 @@ def generate_sweep_report(
     symbols_discovered: int | None = None,
     symbols_gate1_rejected: int | None = None,
     report_source: str = "final",
+    prior_probe_invariant_checks: list[dict] | None = None,
+    fail_fast_triggered: str | None = None,
 ) -> Path:
     """Baut + schreibt ATOMAR den Report für GENAU DIESEN Sweep-Lauf.
 
@@ -2577,6 +2837,8 @@ def generate_sweep_report(
         symbols_planned=symbols_planned,
         symbols_discovered=symbols_discovered,
         symbols_gate1_rejected=symbols_gate1_rejected,
+        prior_probe_invariant_checks=prior_probe_invariant_checks,
+        fail_fast_triggered=fail_fast_triggered,
     )
     out_dir = reports_dir or REPORTS_DIR
     out_path = Path(out_dir) / f"run_{run_id}.json"
@@ -2597,6 +2859,8 @@ def generate_report_for_run(
     symbols_planned: int | None = None,
     symbols_discovered: int | None = None,
     symbols_gate1_rejected: int | None = None,
+    prior_probe_invariant_checks: list[dict] | None = None,
+    fail_fast_triggered: str | None = None,
 ) -> Path:
     """Standalone/nachträgliche Rekonstruktion — KEINE laufende Sweep-Orchestrierung nötig.
 
@@ -2624,6 +2888,8 @@ def generate_report_for_run(
         symbols_planned=symbols_planned,
         symbols_discovered=symbols_discovered,
         symbols_gate1_rejected=symbols_gate1_rejected,
+        prior_probe_invariant_checks=prior_probe_invariant_checks,
+        fail_fast_triggered=fail_fast_triggered,
     )
 
 
