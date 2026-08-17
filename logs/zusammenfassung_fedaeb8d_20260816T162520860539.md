@@ -39,21 +39,21 @@ Keine Kandidaten mit nachgewiesenem Datenstand-Bruch in diesem Lauf.
 
 ### 2.3 Vergleich gegen Buy & Hold je Symbol
 
-| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | Excess/Exposure | Vorzeichen |
-|---|---|---:|---:|---:|---:|---:|---|
-| ComboTrendVwapStrategy | TSLA.ETORO | 1.7 % | -16.5 % | 18.1 % | 77.5 % | 23.4 % | B&H negativ — Excess trivial positiv |
-| AdxAtrMomentumStrategy | TSLA.ETORO | 1.4 % | -16.5 % | 17.8 % | 87.9 % | 20.3 % | B&H negativ — Excess trivial positiv |
-| DynamicBreakoutStrategy | TSLA.ETORO | 1.1 % | -16.5 % | 17.5 % | 20.8 % | 84.5 % | B&H negativ — Excess trivial positiv |
-| MeanReversionStrategy | TSLA.ETORO | 0.3 % | -16.5 % | 16.8 % | 23.4 % | 71.5 % | B&H negativ — Excess trivial positiv |
-| HourlyMeanReversionStrategy | TSLA.ETORO | 0.3 % | -16.5 % | 16.8 % | 35.5 % | 47.2 % | B&H negativ — Excess trivial positiv |
-| Rsi2ReversionStrategy | TSLA.ETORO | 0.1 % | -16.5 % | 16.6 % | 43.8 % | 37.8 % | B&H negativ — Excess trivial positiv |
-| SmaCrossoverStrategy | TSLA.ETORO | -0.1 % | -16.5 % | 16.4 % | 47.5 % | 34.5 % | B&H negativ — Excess trivial positiv |
-| DonchianRegimeBreakoutStrategy | TSLA.ETORO | -0.3 % | -16.5 % | 16.1 % | 14.6 % | 110.9 % | B&H negativ — Excess trivial positiv |
-| VolatilityBreakoutPumpStrategy | TSLA.ETORO | -0.6 % | -16.5 % | 15.9 % | 30.2 % | 52.5 % | B&H negativ — Excess trivial positiv |
-| OpeningRangeBreakoutStrategy | TSLA.ETORO | -0.6 % | -16.5 % | 15.8 % | 18.4 % | 86.2 % | B&H negativ — Excess trivial positiv |
-| TrendPullbackStrategy | TSLA.ETORO | -0.8 % | -16.5 % | 15.6 % | 44.9 % | 34.9 % | B&H negativ — Excess trivial positiv |
-| VwapExhaustionStrategy | TSLA.ETORO | -1.3 % | -16.5 % | 15.1 % | 29.7 % | 51.0 % | B&H negativ — Excess trivial positiv |
-| FlashCrashReversalStrategy | TSLA.ETORO | -1.5 % | -16.5 % | 14.9 % | 12.2 % | 121.9 % | B&H negativ — Excess trivial positiv |
+| Strategie | Symbol | Strategie-Return | Buy&Hold-Return | Excess | Zeit im Markt | Excess/Exposure | α | β | t(α) | Vorzeichen |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| FlashCrashReversalStrategy | TSLA.ETORO | -1.5 % | -16.5 % | 14.9 % | 12.2 % | 121.9 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| DonchianRegimeBreakoutStrategy | TSLA.ETORO | -0.3 % | -16.5 % | 16.1 % | 14.6 % | 110.9 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| OpeningRangeBreakoutStrategy | TSLA.ETORO | -0.6 % | -16.5 % | 15.8 % | 18.4 % | 86.2 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| DynamicBreakoutStrategy | TSLA.ETORO | 1.1 % | -16.5 % | 17.5 % | 20.8 % | 84.5 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| MeanReversionStrategy | TSLA.ETORO | 0.3 % | -16.5 % | 16.8 % | 23.4 % | 71.5 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| VolatilityBreakoutPumpStrategy | TSLA.ETORO | -0.6 % | -16.5 % | 15.9 % | 30.2 % | 52.5 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| VwapExhaustionStrategy | TSLA.ETORO | -1.3 % | -16.5 % | 15.1 % | 29.7 % | 51.0 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| HourlyMeanReversionStrategy | TSLA.ETORO | 0.3 % | -16.5 % | 16.8 % | 35.5 % | 47.2 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| Rsi2ReversionStrategy | TSLA.ETORO | 0.1 % | -16.5 % | 16.6 % | 43.8 % | 37.8 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| TrendPullbackStrategy | TSLA.ETORO | -0.8 % | -16.5 % | 15.6 % | 44.9 % | 34.9 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| SmaCrossoverStrategy | TSLA.ETORO | -0.1 % | -16.5 % | 16.4 % | 47.5 % | 34.5 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| ComboTrendVwapStrategy | TSLA.ETORO | 1.7 % | -16.5 % | 18.1 % | 77.5 % | 23.4 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
+| AdxAtrMomentumStrategy | TSLA.ETORO | 1.4 % | -16.5 % | 17.8 % | 87.9 % | 20.3 % | k. A. | k. A. | k. A. | B&H negativ — Excess trivial positiv |
 
 **Nicht bewertbar (Zeit im Markt < 5.0 %, keine sinnvolle Excess/Exposure-Normierung):**
 
