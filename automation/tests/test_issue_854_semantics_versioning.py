@@ -287,13 +287,18 @@ def test_store_champion_persists_simulation_semantics_version(tmp_path, monkeypa
     assert stored["integrity"]["simulation_semantics_version"] == 1
 
 
-def test_store_champion_quarantines_simulation_stale_existing_entry_when_candidate_inadmissible(
+def test_store_champion_does_not_quarantine_simulation_stale_entry_when_candidate_inadmissible(
         tmp_path, monkeypatch):
-    """AK-2, dieselbe Mechanik wie der bestehende params_schema_version-Mismatch-Pfad (#821): ein
-    bestehender Champion mit veralteter simulation_semantics_version wird nach _stale/
-    quarantaeniert, WENN der Nachfolge-Kandidat selbst inadmissibel ist (hier: unter dem
-    Qualitaets-Floor) -- sonst wuerde der Alt-Eintrag sonst still verloren gehen (weder aktiver
-    Store-Eintrag noch archiviert)."""
+    """Issue #990/#1144 (Katalog #986, Pitfall #412 in AGENTS.md) -- VORHER (siehe Git-Historie
+    dieses Tests) wurde ein bestehender Champion mit veralteter simulation_semantics_version nach
+    _stale/ quarantaeniert, sobald der Nachfolge-Kandidat selbst inadmissibel war -- das entfernte
+    die Datei aus WORK/champions/ und war eine der beiden Ursachen von STORE_EMPTY-Symptomen
+    (max_corroboration_count = 1 in 10/10 Studies, da JEDER Bump die Historie vernichtete). Fix:
+    ein simulation_semantics_version-Mismatch wird jetzt wie ein reward_semantics_version-Mismatch
+    behandelt (MIGRIEREN statt loeschen, siehe store_champion-Docstring) -- ist der neue Kandidat
+    selbst inadmissibel, bleibt der ALTE (noch nicht migrierte) Eintrag einfach unangetastet auf der
+    Platte liegen (weder quarantaeniert noch geloescht), verfuegbar fuer eine Migration bei einem
+    kuenftigen admissiblen Kandidaten."""
     from automation.optimizer import champions
 
     class _FakeOptunaStudy:
@@ -305,8 +310,8 @@ def test_store_champion_quarantines_simulation_stale_existing_entry_when_candida
     champions_dir = tmp_path / "champions"
     champions_dir.mkdir()
     stale_entry = _champion_entry(reward_version=19, simulation_version=0, r_symbol=2.0)
-    (champions_dir / "champion_SmaCrossoverStrategy_TSLA_ETORO.json").write_text(
-        json.dumps(stale_entry), "utf-8")
+    entry_path = champions_dir / "champion_SmaCrossoverStrategy_TSLA_ETORO.json"
+    entry_path.write_text(json.dumps(stale_entry), "utf-8")
 
     study = _FakeOptunaStudy()
     promotion = {
@@ -320,19 +325,22 @@ def test_store_champion_quarantines_simulation_stale_existing_entry_when_candida
         catalog_newest_ns=1000, opt_data=_OPT_DATA, run_id="run1")
 
     assert result is None
-    quarantine_dir = champions_dir / "_stale"
-    assert quarantine_dir.exists()
-    quarantined_files = list(quarantine_dir.glob("*.json"))
-    assert len(quarantined_files) == 1
-    quarantined = json.loads(quarantined_files[0].read_text("utf-8"))
-    assert quarantined["integrity"]["simulation_semantics_version"] == 0  # unveraendert archiviert
+    assert not (champions_dir / "_stale").exists()
+    # Der alte (unveraenderte) Eintrag bleibt AKTIV im Store -- kein STORE_EMPTY fuer dieses Paar.
+    assert entry_path.exists()
+    unchanged = json.loads(entry_path.read_text("utf-8"))
+    assert unchanged["integrity"]["simulation_semantics_version"] == 0
 
 
-def test_store_champion_replaces_simulation_stale_entry_without_quarantine_when_candidate_admissible(
+def test_store_champion_migrates_simulation_stale_entry_preserving_corroboration_when_candidate_admissible(
         tmp_path, monkeypatch):
-    """Ist der neue Kandidat trotz simulation_semantics_version-Mismatch admissibel, wird der
-    Store-Pfad einfach ueberschrieben (frischer Lifecycle) -- keine Quarantaene noetig, analog
-    #821s params_schema_version-Praezedenzfall."""
+    """Issue #990/#1144 (Katalog #986, Pitfall #412 in AGENTS.md) -- ist der neue Kandidat trotz
+    simulation_semantics_version-Mismatch admissibel, wird der Store-Pfad ueberschrieben, ABER die
+    Lifecycle-Historie (corroboration_count) MIGRIERT statt auf 1 zurueckzufallen (VORHER: 'frischer
+    Lifecycle' bei jedem Bump, Root-Cause von max_corroboration_count = 1 in 10/10 Studies). params/
+    quality kommen weiterhin IMMER vom frischen Kandidaten (#854s Kernargument bleibt gewahrt), nur
+    corroboration_count/first_seen_run ueberleben den Bump -- analog dem bereits existierenden
+    reward_semantics_version-Migrationspfad (#819)."""
     from automation.optimizer import champions
 
     class _FakeOptunaStudy:
@@ -362,8 +370,12 @@ def test_store_champion_replaces_simulation_stale_entry_without_quarantine_when_
     assert result is not None
     path = champions._champion_path("SmaCrossoverStrategy", "TSLA.ETORO")
     stored = json.loads(path.read_text("utf-8"))
-    assert stored["params"]["sma_period"] == 21
-    assert stored["lifecycle"]["corroboration_count"] == 1  # frischer Lifecycle (Simulations-Bruch)
+    assert stored["params"]["sma_period"] == 21  # frischer Kandidat, NICHT der alte Parametervektor
+    # corroboration_count 3 -> 4 (migriert, kein last_seen_run == run1 im Fixture -> _bump_corroboration
+    # zaehlt hoch), NICHT auf 1 zurueckgesetzt.
+    assert stored["lifecycle"]["corroboration_count"] == 4
+    assert stored["lifecycle"]["semantics_migrated_from"] == 0
+    assert stored["lifecycle"]["semantics_migrated_kind"] == "simulation_semantics_version"
     assert not (champions_dir / "_stale").exists()
 
 
