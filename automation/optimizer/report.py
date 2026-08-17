@@ -1285,6 +1285,12 @@ def _study_record(proposal: dict, study,
         # seither (mathematisch weiterhin die korrekte Basis fuer die #1028-Sizing-Identitaet, siehe
         # ``check_sizing_identity_coherence``) — KEIN Entscheidungs-/Sortier-/Gate-Konsument mehr.
         "holdout_expectancy_notional_weighted": holdout_metrics.get("oos_expectancy"),
+        # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-
+        # Anteil (rt_notional / equity_at_entry, Median), Rohmaterial fuer
+        # invariants.check_sizing_identity_coherence — ERSETZT dort den bisher AUSSCHLIESSLICH aus
+        # (holdout_total_return, holdout_expectancy_notional_weighted, holdout_total_trades)
+        # algebraisch implizierten Wert als primaeres Entscheidungskriterium, sofern verfuegbar.
+        "holdout_f_realized_median": holdout_metrics.get("oos_f_realized_median"),
         # Issue #945/#1111 — die KANONISCHE Grösse: dieselbe Basis, aus der die Kostenstress-Werte
         # abgeleitet werden UND die seither berichtet/sortiert wird (summary_de.py Abschnitt 2.1).
         "holdout_expectancy_capital_weighted": holdout_metrics.get("oos_expectancy_capital_weighted"),

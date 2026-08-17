@@ -547,6 +547,8 @@ def _metrics_dict(m) -> dict:
         # Issue #987/#1141 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
         "oos_expectancy_cost_stress_full_realism": getattr(
             m, "oos_expectancy_cost_stress_full_realism", None),
+        # Issue #989/#1143 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
+        "oos_f_realized_median": getattr(m, "oos_f_realized_median", None),
         "oos_cvar_95": getattr(m, "oos_cvar_95", None),
         "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),

@@ -3898,6 +3898,9 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
     # Groesse — invariants.check_stop_loss_vs_bar_range vergleicht sie gegen den Stop-Verlust
     # GENAU DESHALB als unabhaengige Referenz.
     bar_range_medians: list[float] = []
+    # Issue #989/#1143 (Katalog #986) — UNBEDINGT (nicht auf TRAILING_STOP beschraenkt): der
+    # DIREKT gemessene Sizing-Anteil je Round-Trip (siehe _finalize_round_trip-Kommentar).
+    f_realized_values: list[float] = []
     for m in meta_list or []:
         # Issue #899 Akzeptanzkriterium — jeder Round-Trip zaehlt in GENAU einen Bucket, auch ohne
         # aufloesbaren Exit-Tag (z. B. Profit-Target-Limit-Fill, am Datenende noch offene Position),
@@ -3928,6 +3931,8 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
             stop_exit_slippage_bps_values.append(float(m["stop_exit_slippage_bps"]))
         if m.get("bar_range_median_bps") is not None:
             bar_range_medians.append(float(m["bar_range_median_bps"]))
+        if m.get("f_realized") is not None:
+            f_realized_values.append(float(m["f_realized"]))
     _rt_notionals_sorted = sorted(rt_notionals)
     return {
         "exit_reason_histogram": histogram,
@@ -3988,6 +3993,12 @@ def _aggregate_exit_telemetry(meta_list: list[dict]) -> dict:
         # Verlust = Stopdistanz + Ueberschiessen).
         "bar_range_median_bps": (
             statistics.median(bar_range_medians) if bar_range_medians else None),
+        # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-
+        # Anteil (rt_notional / equity_at_entry, Median ueber alle Round-Trips dieser Ebene),
+        # Rohmaterial fuer invariants.check_sizing_identity_coherence (ersetzt dort die bisher
+        # AUSSCHLIESSLICH algebraisch implizierte Groesse als primaeres Entscheidungskriterium).
+        "f_realized_median": (
+            statistics.median(f_realized_values) if f_realized_values else None),
     }
 
 
@@ -4382,6 +4393,26 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Definition, Zero-Regression); ``rt_notional_peak`` (siehe Docstring dort) ist additiv.
             rt_notional_peak = _round_trip_notional_peak(matches)
             rt_notional = sum(m[4] for m in matches)
+            # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — ``f_realized`` DIREKT aus
+            # ``rt_notional / equity_at_entry`` gemessen, statt (wie bisher ausschliesslich in
+            # ``invariants.check_sizing_identity_coherence``) aus (total_return, expectancy, n)
+            # algebraisch zu IMPLIZIEREN. ``entry_ts`` ist die FRUEHESTE Leg-Eroeffnung dieses
+            # Round-Trips (``m[1] - m[2]`` = exit_ts - holding_ns je Leg = jeweilige Entry-Zeit;
+            # ``min(...)`` deckt Scale-ins ab). ``equity_at_entry`` ist eine NAEHERUNG
+            # (``mtm_series.asof`` — Bar-Aufloesung, letzter Bar-Schluss VOR/AN entry_ts, nicht die
+            # exakte Live-Balance, die ``hourly_strategy_base._compute_quantity`` beim Sizing sah;
+            # eine exakte Messung braeuchte einen neuen Entry-Order-Tag-Pfad, siehe AGENTS.md-Eintrag
+            # zu diesem Fix). ``None`` ohne ``mtm_series``/vor der ersten Bar (fail-open, additive
+            # Telemetrie).
+            f_realized = None
+            if mtm_series is not None and not mtm_series.empty:
+                try:
+                    _entry_ts = min(m[1] - m[2] for m in matches)
+                    _equity_at_entry = mtm_series.asof(pd.Timestamp(_entry_ts, unit="ns"))
+                    if _equity_at_entry is not None and not pd.isna(_equity_at_entry) and _equity_at_entry > 0:
+                        f_realized = rt_notional / float(_equity_at_entry)
+                except (ValueError, TypeError, KeyError):
+                    f_realized = None
             # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 1 — Finanzierungs-
             # kosten je GEHALTENEM Kalendertag (aufgerundet — "je gehaltenem Kalendertag" ist hier
             # als ceil(Haltedauer/24h) gelesen, eine dokumentierte Vereinfachung: die tatsaechliche
@@ -4428,6 +4459,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                 "stop_exit_slippage_bps": stop_exit_slippage_bps,
                 # Issue #987/#1141 — siehe Kommentar an der Berechnung oben.
                 "rt_financing_bps": rt_financing_bps,
+                # Issue #989/#1143 — siehe Kommentar an der Berechnung oben.
+                "f_realized": f_realized,
             })
 
         # Chronologisches FIFO-Matching pro Instrument

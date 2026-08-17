@@ -3329,20 +3329,39 @@ def check_sizing_identity_coherence(
     ``holdout_expectancy``, das MITTEL der Per-Trade-Quotienten), NICHT
     ``holdout_expectancy_capital_weighted``: die Sizing-Identitaet ``ln(1+TR) ≈ n · expectancy``
     gilt fuer den ARITHMETISCHEN Mittelwert der Per-Trade-Returns, nicht fuer einen Summenquotienten
-    — ein Wechsel auf die kapitalgewichtete Grösse wuerde die Identitaet selbst verletzen."""
+    — ein Wechsel auf die kapitalgewichtete Grösse wuerde die Identitaet selbst verletzen.
+
+    Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — ``f_implied`` ist eine algebraische
+    UMKEHRUNG der Identitaet, keine Messung: sie unterstellt, dass jede Abweichung von
+    ``trade_amount_pct`` eine Sizing-Anomalie ist, obwohl auch (a) variables Sizing durch
+    ``_compute_quantity``s Floor-Rundung auf ``size_precision``, (b) Kompoundierung ueber die
+    Holdout-Spanne bei hohem Exposure, oder (c) Dust-Round-Trips im ``n``-Zaehler die Identitaet
+    selbst verletzen koennen — DANN divergiert ``f_implied`` von ``trade_amount_pct``, OHNE dass das
+    tatsaechliche Sizing (die reale ``rt_notional``/Equity-Relation) je Round-Trip abweicht.
+    ``holdout_f_realized_median`` (``rt_notional / equity_at_entry`` DIREKT je Round-Trip gemessen,
+    siehe ``backtest_runner._finalize_round_trip``) ist das primaere Entscheidungskriterium, sofern
+    verfuegbar — sie umgeht (a)-(c) vollstaendig, weil sie nicht ueber die Identitaet zurueckrechnet,
+    sondern das reale Notional/Equity-Verhaeltnis direkt abliest. NUR wenn ``holdout_f_realized_
+    median`` fehlt (aeltere Report-JSONs ohne dieses Feld), faellt die Pruefung auf die algebraische
+    ``f_implied``-Berechnung zurueck (bit-identisch zum Pre-#989-Verhalten). ``actual`` traegt je
+    Offender ``"source": "measured"|"implied"``, damit ein Bericht sofort unterscheidet, ob die
+    Abweichung Sizing (measured) oder ein reiner Identitaets-/Metrik-Artefakt (implied) ist."""
     with_data = [
         r for r in study_records
         if (r.get("holdout_total_trades") or 0) >= min_trades
-        and r.get("holdout_expectancy_notional_weighted") is not None
-        and abs(r["holdout_expectancy_notional_weighted"]) >= min_abs_expectancy
-        and r.get("holdout_total_return") is not None
         and r.get("trade_amount_pct")
+        and (
+            r.get("holdout_f_realized_median") is not None
+            or (r.get("holdout_expectancy_notional_weighted") is not None
+                and abs(r["holdout_expectancy_notional_weighted"]) >= min_abs_expectancy
+                and r.get("holdout_total_return") is not None)
+        )
     ]
     if not with_data:
         return InvariantResult(
             name="check_sizing_identity_coherence",
             passed=True,
-            expected=f"|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+            expected=f"|f_realized_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
             actual=None,
             detail="Keine Studies mit Holdout-Trades/Expectancy/trade_amount_pct — nicht anwendbar.",
             severity="blocking",
@@ -3350,29 +3369,47 @@ def check_sizing_identity_coherence(
     offenders: dict[str, dict] = {}
     for r in with_data:
         key = f"{r.get('strategy')}/{r.get('symbol')}"
-        n = r["holdout_total_trades"]
-        expectancy = float(r["holdout_expectancy_notional_weighted"])
-        total_return = float(r["holdout_total_return"])
         trade_amount_pct = float(r["trade_amount_pct"])
-        try:
-            f_implied = (math.log(1.0 + total_return) / (n * expectancy)) * 100.0
-        except (ValueError, ZeroDivisionError):
-            continue
-        gap = abs(f_implied - trade_amount_pct) / trade_amount_pct
-        if gap > max_relative_gap:
-            offenders[key] = {"f_implied_pct": round(f_implied, 4), "trade_amount_pct": trade_amount_pct}
+        f_realized_median = r.get("holdout_f_realized_median")
+        if f_realized_median is not None:
+            # Issue #989/#1143 — DIREKT gemessen, primaeres Kriterium (siehe Docstring).
+            f_realized_pct = float(f_realized_median) * 100.0
+            gap = abs(f_realized_pct - trade_amount_pct) / trade_amount_pct
+            if gap > max_relative_gap:
+                offenders[key] = {
+                    "f_realized_pct": round(f_realized_pct, 4),
+                    "trade_amount_pct": trade_amount_pct,
+                    "source": "measured",
+                }
+        else:
+            # Fallback: algebraisch implizierte Berechnung (kein holdout_f_realized_median verfuegbar).
+            n = r["holdout_total_trades"]
+            expectancy = float(r["holdout_expectancy_notional_weighted"])
+            total_return = float(r["holdout_total_return"])
+            try:
+                f_implied = (math.log(1.0 + total_return) / (n * expectancy)) * 100.0
+            except (ValueError, ZeroDivisionError):
+                continue
+            gap = abs(f_implied - trade_amount_pct) / trade_amount_pct
+            if gap > max_relative_gap:
+                offenders[key] = {
+                    "f_implied_pct": round(f_implied, 4),
+                    "trade_amount_pct": trade_amount_pct,
+                    "source": "implied",
+                }
     passed = not offenders
     return InvariantResult(
         name="check_sizing_identity_coherence",
         passed=passed,
-        expected=f"|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
+        expected=f"|f_realized_median|f_implied - trade_amount_pct| / trade_amount_pct <= {max_relative_gap}",
         actual=offenders if offenders else None,
         severity="blocking",
         detail=("OK" if passed else
-                f"{len(offenders)} Study/Studies: der aus (total_return, expectancy, n) implizierte "
-                f"Sizing-Anteil weicht relativ um mehr als {max_relative_gap} vom konfigurierten "
-                f"trade_amount_pct ab: {offenders} — Signatur einer Datenanomalie in der "
-                "zugrundeliegenden Preisreihe, nicht des Sizing-Pfads (#1028)."),
+                f"{len(offenders)} Study/Studies: der (gemessene oder implizierte, siehe je "
+                f"Offender 'source') Sizing-Anteil weicht relativ um mehr als {max_relative_gap} vom "
+                f"konfigurierten trade_amount_pct ab: {offenders} — bei 'source': 'measured' eine "
+                "reale Sizing-Anomalie (#989/#1143); bei 'implied' moeglicherweise nur ein "
+                "Identitaets-/Metrik-Artefakt, keine reale Sizing-Abweichung (#1028)."),
     )
 
 

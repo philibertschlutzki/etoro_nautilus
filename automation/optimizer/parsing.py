@@ -241,6 +241,11 @@ class TournamentMetrics:
     # Issue #975/#1129 — der ROHE (ungefloorte) ATR-Median, Gegenstueck zu oos_atr_median_bps (dem
     # EFFEKTIVEN, ratschen-gefloorten Wert).
     oos_atr_raw_median_bps: float | None = None
+    # Issue #989/#1143 (Katalog #986, Pitfall #412 in AGENTS.md) — DIREKT gemessener Sizing-Anteil
+    # (rt_notional / equity_at_entry, Median), Rohmaterial fuer
+    # invariants.check_sizing_identity_coherence (siehe backtest_runner._aggregate_exit_telemetry-
+    # Docstring). None ohne mtm_series/fehlende Bars vor dem Entry (fail-open, additive Telemetrie).
+    oos_f_realized_median: float | None = None
     # Issue #976/#1130 — Absetzen-zu-Fill-Latenz (Bars) und Slippage (bps), NUR ueber nachweisliche
     # TRAILING_STOP-Exits mit vollstaendiger Order-/Fill-Telemetrie (siehe backtest_runner.
     # _aggregate_exit_telemetry-Docstring).
@@ -399,6 +404,8 @@ def parse_tournament(path: Path) -> TournamentMetrics:
     oos_atr_min_bps = oos_metrics.get("atr_min_bps")
     # Issue #975/#1129 — siehe TournamentMetrics-Docstring.
     oos_atr_raw_median_bps = oos_metrics.get("atr_raw_median_bps")
+    # Issue #989/#1143 — siehe TournamentMetrics-Docstring.
+    oos_f_realized_median = oos_metrics.get("f_realized_median")
     # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
     oos_stop_exit_fill_lag_bars_median = oos_metrics.get("stop_exit_fill_lag_bars_median")
     oos_stop_exit_slippage_bps_median = oos_metrics.get("stop_exit_slippage_bps_median")
@@ -635,6 +642,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         # Issue #975/#1129 — siehe TournamentMetrics-Docstring.
         oos_atr_raw_median_bps=(
             float(oos_atr_raw_median_bps) if oos_atr_raw_median_bps is not None else None),
+        # Issue #989/#1143 — siehe TournamentMetrics-Docstring.
+        oos_f_realized_median=(
+            float(oos_f_realized_median) if oos_f_realized_median is not None else None),
         # Issue #976/#1130 — siehe TournamentMetrics-Docstring.
         oos_stop_exit_fill_lag_bars_median=(
             float(oos_stop_exit_fill_lag_bars_median)
