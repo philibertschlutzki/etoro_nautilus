@@ -2240,7 +2240,15 @@ def _informative_annualization_factor_with_source(
             if symbol is not None:
                 _informative_annualization_factor_by_symbol_cache[symbol] = result
             return result
-    fallback_factor, fallback_source = _get_annualization_factor_with_source(mtm_series, symbol=symbol)
+    # Issue #986 Regressionsfix — ueber die seit #532 oeffentlich mockbare
+    # ``_get_annualization_factor()``, NICHT direkt ueber ``..._with_source`` aufgerufen: ein
+    # Aufrufer/Test, der NUR ``_get_annualization_factor`` patcht (die etablierte Schnittstelle,
+    # z. B. ``test_sortino_downside_deviation.py``), muss auch diesen Fallback-Pfad sehen. Beide
+    # Aufrufe berechnen in der unveraenderten Produktionsumgebung denselben Wert (derselbe
+    # deterministische Cache/dieselbe Eingabe) — nur unter einem Mock auf ``_get_annualization_
+    # factor`` divergieren sie bewusst (der Faktor folgt dem Mock, das Quell-Label bleibt real).
+    fallback_factor = _get_annualization_factor(mtm_series, symbol=symbol)
+    _, fallback_source = _get_annualization_factor_with_source(mtm_series, symbol=symbol)
     return fallback_factor, fallback_source
 
 
