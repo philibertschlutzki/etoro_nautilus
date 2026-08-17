@@ -62,6 +62,14 @@ class TournamentMetrics:
     # Telemetrie, siehe ``_calculate_stats``-Berechnungsblock). Defaults rueckwaertskompatibel.
     oos_expectancy_cost_stress_1_5x: float | None = None
     oos_expectancy_cost_stress_2x: float | None = None
+    # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 4 — sechste Kostenstress-
+    # Stufe: kapitalgewichtete Expectancy NACH vollem (nicht nur "extra", siehe
+    # ``backtest_runner._full_realism_expectancy``-Docstring) Abzug von Finanzierung (je gehaltenem
+    # Kalendertag) und Slippage (konstanter Aufschlag). Solange
+    # ``overnight_financing_bps_per_day_by_asset_class``/``slippage_bps_by_asset_class`` beide auf
+    # 0.0 stehen (der aktuelle backtest.json-Platzhalter-Default), ist der Wert numerisch identisch
+    # zu ``oos_expectancy_capital_weighted`` (kein zusaetzlicher Abzug).
+    oos_expectancy_cost_stress_full_realism: float | None = None
     oos_cvar_95: float | None = None
     oos_es_99: float | None = None
     # Issue #407: beste IS-Performance ueber alle full_results als kontinuierliches Gate-Naehe-
@@ -428,6 +436,9 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_metrics.get("expectancy_round_trip_cost_stress_2x")
         if oos_metrics.get("expectancy_round_trip_cost_stress_2x") is not None
         else oos_metrics.get("expectancy_cost_stress_2x"))
+    # Issue #987/#1141 — siehe TournamentMetrics-Docstring. Kein Legacy-Alias (neu eingeführt).
+    oos_expectancy_cost_stress_full_realism = oos_metrics.get(
+        "expectancy_round_trip_cost_stress_full_realism")
     oos_cvar_95 = oos_metrics.get("cvar_95")
     oos_es_99 = oos_metrics.get("es_99")
     # Issue #452: OOS-Win-Rate / Profit-Factor fuer die kontinuierliche Constraint-Distanz.
@@ -525,6 +536,10 @@ def parse_tournament(path: Path) -> TournamentMetrics:
         oos_expectancy_cost_stress_2x=(
             float(oos_expectancy_cost_stress_2x)
             if oos_expectancy_cost_stress_2x is not None else None),
+        # Issue #987/#1141 — siehe TournamentMetrics-Docstring.
+        oos_expectancy_cost_stress_full_realism=(
+            float(oos_expectancy_cost_stress_full_realism)
+            if oos_expectancy_cost_stress_full_realism is not None else None),
         oos_cvar_95=float(oos_cvar_95) if oos_cvar_95 is not None else None,
         oos_es_99=float(oos_es_99) if oos_es_99 is not None else None,
         # Issue #759 — None durchreichen statt auf 0.0 zu kollabieren (siehe Dataclass-Feld-Kommentar).

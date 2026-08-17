@@ -1313,6 +1313,11 @@ def _study_record(proposal: dict, study,
         # neben den unveraenderten Basis-Kennzahlen (siehe backtest_runner-Docstrings).
         "holdout_expectancy_cost_stress_1_5x": holdout_metrics.get("oos_expectancy_cost_stress_1_5x"),
         "holdout_expectancy_cost_stress_2x": holdout_metrics.get("oos_expectancy_cost_stress_2x"),
+        # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 4 — sechste Kosten-
+        # stress-Stufe (Finanzierung + Slippage voll abgezogen, siehe backtest_runner._full_realism_
+        # expectancy-Docstring); Akzeptanzkriterium: "die Expectancy unter full_realism ausgewiesen".
+        "holdout_expectancy_cost_stress_full_realism": holdout_metrics.get(
+            "oos_expectancy_cost_stress_full_realism"),
         "holdout_cvar_95": holdout_metrics.get("oos_cvar_95"),
         "holdout_es_99": holdout_metrics.get("oos_es_99"),
         "holdout_win_rate": holdout_metrics.get("oos_win_rate"),

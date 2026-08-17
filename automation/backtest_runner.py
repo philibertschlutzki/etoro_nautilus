@@ -1190,6 +1190,44 @@ def resolve_atr_floor_bps(inst_id_str: str,
     return float(atr_floor_bps_by_asset_class[asset_class_key])
 
 
+def resolve_financing_bps_per_day(inst_id_str: str,
+                                  financing_bps_per_day_by_asset_class: dict | None,
+                                  asset_class_key: str = "DEFAULT") -> float:
+    """Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 1 — asset-class-
+    aufgelöste Finanzierungskosten je gehaltenem Kalendertag (bps des Round-Trip-Notionals),
+    Auflösung analog ``resolve_atr_floor_bps``.
+
+    Anders als ``resolve_spread_bps``/``resolve_atr_floor_bps`` (etablierte, obligatorische
+    Kostenfelder — ein fehlender Asset-Class-Eintrag ist dort ein Konfigurationsfehler und wirft)
+    ist dies ein NEUES, additiv-optionales Kostenmodell: fehlende Config ODER ein unbekannter
+    ``asset_class_key`` liefert 0.0 (fail-open — kein Konfigurationsfehler), damit jeder
+    Aufrufer/Test, der diese Map nicht setzt, unverändert bit-identisch bleibt."""
+    if not financing_bps_per_day_by_asset_class:
+        return 0.0
+    if asset_class_key not in financing_bps_per_day_by_asset_class:
+        return 0.0
+    return float(financing_bps_per_day_by_asset_class[asset_class_key])
+
+
+def resolve_slippage_bps(inst_id_str: str,
+                         slippage_bps_by_asset_class: dict | None,
+                         asset_class_key: str = "DEFAULT") -> float:
+    """Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 2 — asset-class-
+    aufgelöster konstanter Slippage-Aufschlag (bps) auf Marktaufträge, Auflösung analog
+    ``resolve_financing_bps_per_day`` (fail-open: fehlende Config/unbekannte Asset-Class ⇒ 0.0,
+    kein Konfigurationsfehler — additiv-optionales Kostenmodell, siehe dortigen Docstring).
+
+    Dies ist die 'mindestens'-Variante aus der Issue (konstanter Aufschlag); die 'besser'-Variante
+    (Aufschlag proportional zur Bar-Spanne der Ausführungs-Bar) ist NICHT implementiert — siehe
+    AGENTS.md-Eintrag zu diesem Fix für die Begründung (zusätzliche Order-Tag-Plumbing für beide
+    Legs, in dieser Sitzung nicht mehr im Scope)."""
+    if not slippage_bps_by_asset_class:
+        return 0.0
+    if asset_class_key not in slippage_bps_by_asset_class:
+        return 0.0
+    return float(slippage_bps_by_asset_class[asset_class_key])
+
+
 def cost_coupled_atr_floor_bps(base_floor_bps: float, *, atr_trailing_multiplier: float | None,
                                round_trip_cost_bps: float, min_stop_to_cost_ratio: float = 3.0) -> float:
     """Issue #1096 (Katalog #929) Fix Punkt 1 — hebt ``base_floor_bps`` (die asset-class-
@@ -4105,6 +4143,42 @@ def _expectancy_cost_stress(pnls_notionals: list[tuple[float, float]], *,
     return stressed_pnl_sum / notional_sum if notional_sum > 0.0 else None
 
 
+def _full_realism_expectancy(
+    pnls_notionals_holding: list[tuple[float, float, float]], *,
+    financing_bps_per_day: float, slippage_bps: float,
+) -> float | None:
+    """Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 4 — sechste Kosten-
+    stress-Stufe ``full_realism``, analog ``_expectancy_cost_stress`` eine reine Nachverarbeitung
+    der bereits extrahierten (PnL, Notional, Haltedauer-ns)-Tripel, kein neuer Backtest-Lauf.
+
+    ANDERS als ``_expectancy_cost_stress`` (welches den bereits im Backtest angewandten
+    ``round_trip_cost_bps`` NUR zusaetzlich stresst, ``(multiplier-1)``-fach) sind Finanzierung
+    und Slippage in der primaeren Simulation NICHT enthalten (Fix-Punkte 1/2 dieser Issue liefern
+    sie ausschliesslich additiv/telemetrisch, siehe ``_finalize_round_trip``s ``rt_financing_bps``
+    und AGENTS.md-Eintrag zu diesem Fix) — dieser Aufschlag zieht daher den VOLLEN (nicht nur den
+    ``(multiplier-1)``-Anteil) Finanzierungs-/Slippage-Betrag ab, sonst waere ``full_realism`` mit
+    unveraendertem ``holdout_expectancy_capital_weighted`` identisch.
+
+    Finanzierung wird je Round-Trip ueber ``ceil(holding_ns / 1 Tag)`` Kalendertage berechnet
+    (dieselbe dokumentierte Vereinfachung wie ``_finalize_round_trip``). Denselben 5-%-Median-
+    Notional-Nennerboden wie ``_expectancy_cost_stress``/``expectancy_capital_weighted`` (#1031).
+    ``None`` ohne positive Notionale."""
+    positive = [nz for _, nz, _ in pnls_notionals_holding if nz and nz > 0.0]
+    if not positive:
+        return None
+    floor = 0.05 * statistics.median(positive)
+    slippage_rate = slippage_bps / 10000.0
+    stressed_pnl_sum, notional_sum = 0.0, 0.0
+    for pnl, nz, holding_ns in pnls_notionals_holding:
+        if not nz or nz < floor:
+            continue
+        days_held = math.ceil(holding_ns / 86_400_000_000_000) if holding_ns and holding_ns > 0 else 0
+        financing_amount = days_held * (financing_bps_per_day / 10000.0) * nz
+        stressed_pnl_sum += pnl - financing_amount - slippage_rate * nz
+        notional_sum += nz
+    return stressed_pnl_sum / notional_sum if notional_sum > 0.0 else None
+
+
 def _filter_dust_round_trips(
     rt_pnls_with_ts: list[RoundTripRecord],
     rt_notionals_with_ts: list[NotionalRecord],
@@ -4185,7 +4259,7 @@ class MetricsLevel(TypedDict):
     oos_metrics: dict[str, Any]  # Out-of-Sample
 
 
-def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None) -> dict:
+def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None, walk_forward_dict: dict | None = None, start_ns: int | None = None, commission_bps: float = 0.0, mtm_series: 'pd.Series | None' = None, benchmark_series: 'pd.Series | None' = None, family_median_n_periods: float | None = None, round_trip_cost_bps: float | None = None, symbol: str | None = None, financing_bps_per_day: float = 0.0, slippage_bps: float = 0.0) -> dict:
     """
     Extrahiert Tournament-Metriken.
 
@@ -4308,6 +4382,17 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # Definition, Zero-Regression); ``rt_notional_peak`` (siehe Docstring dort) ist additiv.
             rt_notional_peak = _round_trip_notional_peak(matches)
             rt_notional = sum(m[4] for m in matches)
+            # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 1 — Finanzierungs-
+            # kosten je GEHALTENEM Kalendertag (aufgerundet — "je gehaltenem Kalendertag" ist hier
+            # als ceil(Haltedauer/24h) gelesen, eine dokumentierte Vereinfachung: die tatsaechliche
+            # Anzahl ueberquerter Kalendertag-Grenzen braucht Wandzeit-Datumsarithmetik + eine
+            # Broker-Rollover-Konvention, die in dieser Codebasis nirgends etabliert ist). Rein
+            # additive Telemetrie (rt_financing_bps) plus Eingang fuer die 'full_realism'-Kosten-
+            # stress-Stufe (siehe extract_metrics-Aufrufer weiter unten) — NICHT von rt_pnl
+            # abgezogen (die primaere Simulation/total_return/sortino bleibt unveraendert, siehe
+            # AGENTS.md-Eintrag zu diesem Fix fuer die Begruendung).
+            _rt_days_held = math.ceil(rt_holding_ns / 86_400_000_000_000) if rt_holding_ns > 0 else 0
+            rt_financing_bps = _rt_days_held * financing_bps_per_day
             rt_pnls_with_ts.append((rt_pnl, rt_exit_ts, rt_holding_ns, total_qty))
             rt_notionals_with_ts.append((rt_notional, rt_exit_ts))
             rt_notional_peaks.append(rt_notional_peak)
@@ -4341,6 +4426,8 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
                     None if is_data_end_fallback else meta.get("stop_exit_lag_bars")),
                 "stop_exit_fill_lag_ns": stop_exit_fill_lag_ns,
                 "stop_exit_slippage_bps": stop_exit_slippage_bps,
+                # Issue #987/#1141 — siehe Kommentar an der Berechnung oben.
+                "rt_financing_bps": rt_financing_bps,
             })
 
         # Chronologisches FIFO-Matching pro Instrument
@@ -4849,6 +4936,32 @@ def extract_metrics(engine: BacktestEngine, starting_capital: float, log_fn=None
             # korrigierten Wert, bis sie auf den neuen Namen migriert sind.
             _level_metrics["expectancy_cost_stress_1_5x"] = _stress_1_5x
             _level_metrics["expectancy_cost_stress_2x"] = _stress_2x
+
+        # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 4 — sechste Kosten-
+        # stress-Stufe ``full_realism`` (Finanzierung + Slippage, siehe ``_full_realism_expectancy``-
+        # Docstring), DIESELBE IS/OOS-Aufteilung wie der Block oben, zusaetzlich mit Haltedauer
+        # (``_ht``, bereits aus ``rt_pnls_with_ts`` verfuegbar, hier erstmals mitgefuehrt statt nur
+        # PnL/Notional).
+        _is_pnl_notional_holding, _oos_pnl_notional_holding = [], []
+        for _rt_idx, (_pnl, _ts, _ht, _rt_qty) in enumerate(rt_pnls_with_ts):
+            _nz = rt_notionals_with_ts[_rt_idx][0] if _rt_idx < len(rt_notionals_with_ts) else None
+            if _nz is None:
+                continue
+            if _wf:
+                _is_oos = any(s <= _ts < e for _, s, e in fold_boundaries)
+                _is_in_sample = _is_start_ns <= _ts < is_end_ns
+            else:
+                _is_oos, _is_in_sample = False, True
+            if _is_oos:
+                _oos_pnl_notional_holding.append((_pnl, _nz, _ht))
+            elif _is_in_sample:
+                _is_pnl_notional_holding.append((_pnl, _nz, _ht))
+        for _level_metrics, _level_pnl_notional_holding in (
+                (is_metrics, _is_pnl_notional_holding), (oos_metrics, _oos_pnl_notional_holding)):
+            _stress_full_realism = _full_realism_expectancy(
+                _level_pnl_notional_holding,
+                financing_bps_per_day=financing_bps_per_day, slippage_bps=slippage_bps)
+            _level_metrics["expectancy_round_trip_cost_stress_full_realism"] = _stress_full_realism
 
         # Integrity Guard (Issue #528, Task 1.2 & 1.3)
         oos_total_trades = oos_metrics.get("total_trades", 0)
@@ -5755,6 +5868,13 @@ def run_single_backtest_worker(
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
     opening_range_session_open_hour_by_asset_class: dict | None = None,
+    # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) — asset-class-aufgelöste
+    # Finanzierungs-/Slippage-Kostensätze (resolve_financing_bps_per_day/resolve_slippage_bps),
+    # dieselbe EINMAL-im-Elternprozess-geladen-Konvention wie atr_floor_bps_by_asset_class oben.
+    # Wirken NUR in der 'full_realism'-Kostenstress-Stufe (extract_metrics), NICHT in der
+    # primaeren total_return/sortino-Berechnung — siehe AGENTS.md-Eintrag zu diesem Fix.
+    overnight_financing_bps_per_day_by_asset_class: dict | None = None,
+    slippage_bps_by_asset_class: dict | None = None,
     # Issue #1096 (Katalog #929) Fix Punkt 1 — tournament.json['min_stop_to_cost_ratio'] (Default
     # 3.0, derselbe Wert wie invariants.check_stop_cost_ratio), vom Orchestrator (run_backtest())
     # EINMAL geladen und an jeden isolierten Worker-Prozess durchgereicht (dieselbe Konvention wie
@@ -5803,12 +5923,15 @@ def run_single_backtest_worker(
             # fälschlich unrentabel macht.
             has_symbol_override = bool(spread_bps_by_symbol and inst_id_str in spread_bps_by_symbol)
             asset_class_key = "DEFAULT"
-            # Issue #924/#922 — die Asset-Class wird auch dann aufgelöst, wenn NUR
-            # atr_floor_bps_by_asset_class/opening_range_session_open_hour_by_asset_class
+            # Issue #924/#922/#987 (Katalog #986) — die Asset-Class wird auch dann aufgelöst, wenn
+            # NUR atr_floor_bps_by_asset_class/opening_range_session_open_hour_by_asset_class/
+            # overnight_financing_bps_per_day_by_asset_class/slippage_bps_by_asset_class
             # konfiguriert ist (ein Spread-Symbol-Override allein entbindet diese Auflösungen
             # nicht — dafür gibt es keinen Symbol-Override).
             if (spread_bps_by_asset_class or atr_floor_bps_by_asset_class
-                    or opening_range_session_open_hour_by_asset_class) and not has_symbol_override:
+                    or opening_range_session_open_hour_by_asset_class
+                    or overnight_financing_bps_per_day_by_asset_class
+                    or slippage_bps_by_asset_class) and not has_symbol_override:
                 asset_class_key = _resolve_asset_class_for_symbol(
                     inst_id_str, policy=_read_unknown_asset_class_policy())
 
@@ -5831,6 +5954,12 @@ def run_single_backtest_worker(
                 tick_floor_bps=_tick_floor_bps)
             atr_floor_bps_resolved = resolve_atr_floor_bps(
                 inst_id_str, atr_floor_bps_by_asset_class, asset_class_key)
+            # Issue #987/#1141 (Katalog #986) — dieselbe Asset-Class-Auflösung wie oben, fail-open
+            # (siehe resolve_financing_bps_per_day/resolve_slippage_bps-Docstrings).
+            financing_bps_per_day_resolved = resolve_financing_bps_per_day(
+                inst_id_str, overnight_financing_bps_per_day_by_asset_class, asset_class_key)
+            slippage_bps_resolved = resolve_slippage_bps(
+                inst_id_str, slippage_bps_by_asset_class, asset_class_key)
             # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe cost_coupled_atr_floor_bps-Docstring.
             atr_floor_bps_resolved = cost_coupled_atr_floor_bps(
                 atr_floor_bps_resolved,
@@ -5933,6 +6062,19 @@ def run_single_backtest_worker(
             engine = BacktestEngine(config=engine_config)
 
             # Task 4: Spread-Modeling — NautilusTrader füllt Buy@Ask, Sell@Bid per Default
+            #
+            # Issue #987/#1141 (Katalog #986, Pitfall #412 in AGENTS.md) Fix-Punkt 3 — Wartungs-
+            # margin/Margin-Call ist HIER bewusst NICHT implementiert (keine ``leverages=``, kein
+            # Margin-Call-/Zwangsliquidations-Mechanismus). Dies ist die DRITTE Wiederkehr derselben
+            # Scope-Grenze, die #825 und #947 bereits unabhängig zogen (siehe AGENTS.md-Einträge zu
+            # beiden): eine ECHTE Margin-Call-Simulation braucht einen Actor, der schliessende Orders
+            # einreicht — das veraendert den Fill-/PnL-Aggregationspfad an seiner riskantesten
+            # Stelle, und diese Sandbox hat keinen realen Marktdaten-Katalog, um eine solche
+            # Aenderung end-to-end zu verifizieren (kein ``nautilus_trader``-Import moeglich, Python
+            # 3.11 statt der erforderlichen 3.12+). Was stattdessen existiert: #947s Strategie-
+            # seitiger Equity-Stopout (``HourlyStrategyBase._ruined``/``ExitReason.EQUITY_STOPOUT``)
+            # und #825s ``liquidated_trials``-Telemetrie. Ein Kandidat fuer eine kuenftige Sitzung
+            # MIT echtem Marktdaten-Katalog, nicht fuer diesen Fix.
             engine.add_venue(
                 venue=Venue("ETORO"),
                 oms_type=OmsType.NETTING,
@@ -6026,7 +6168,7 @@ def run_single_backtest_worker(
             _round_trip_cost_bps_for_extract = (
                 float(spread_bps) + float(commission_bps)
                 if spread_bps is not None and commission_bps is not None else None)
-            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str)
+            extracted_data = extract_metrics(engine, start_capital, log_fn=wlog, walk_forward_dict=walk_forward_dict, start_ns=start_ns, commission_bps=commission_bps, mtm_series=mtm_monitor.get_equity_series(), benchmark_series=mtm_monitor.get_benchmark_series(), family_median_n_periods=strat.get("_family_median_n_periods"), round_trip_cost_bps=_round_trip_cost_bps_for_extract, symbol=inst_id_str, financing_bps_per_day=financing_bps_per_day_resolved, slippage_bps=slippage_bps_resolved)
         except Exception as e:
             wlog_err(f"Metrik-Extraktion fehlgeschlagen: {e}", exc=True)
             NULL = {
@@ -6253,6 +6395,12 @@ def run_backtest() -> None:
     spread_bps_by_symbol = backtest_global_cfg.get("spread_bps_by_symbol", {})
     # Issue #924 — asset-class-aufgelöste ATR-Trailing-Stop-Untergrenze (resolve_atr_floor_bps).
     atr_floor_bps_by_asset_class = backtest_global_cfg.get("atr_floor_bps_by_asset_class", {})
+    # Issue #987/#1141 (Katalog #986) — asset-class-aufgelöste Finanzierungs-/Slippage-Kostensätze
+    # (resolve_financing_bps_per_day/resolve_slippage_bps), analog atr_floor_bps_by_asset_class
+    # EINMAL im Elternprozess geladen und an jeden isolierten Worker durchgereicht.
+    overnight_financing_bps_per_day_by_asset_class = backtest_global_cfg.get(
+        "overnight_financing_bps_per_day_by_asset_class", {})
+    slippage_bps_by_asset_class = backtest_global_cfg.get("slippage_bps_by_asset_class", {})
     # Issue #922 — asset-class-aufgelöste Session-Öffnungsstunde für OpeningRangeBreakoutStrategy
     # (resolve_opening_range_session_open_hour).
     opening_range_session_open_hour_by_asset_class = backtest_global_cfg.get(
@@ -6602,6 +6750,9 @@ def run_backtest() -> None:
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                         opening_range_session_open_hour_by_asset_class=(
                             opening_range_session_open_hour_by_asset_class),
+                        overnight_financing_bps_per_day_by_asset_class=(
+                            overnight_financing_bps_per_day_by_asset_class),
+                        slippage_bps_by_asset_class=slippage_bps_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
@@ -6616,6 +6767,9 @@ def run_backtest() -> None:
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                         opening_range_session_open_hour_by_asset_class=(
                             opening_range_session_open_hour_by_asset_class),
+                        overnight_financing_bps_per_day_by_asset_class=(
+                            overnight_financing_bps_per_day_by_asset_class),
+                        slippage_bps_by_asset_class=slippage_bps_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
@@ -6655,6 +6809,9 @@ def run_backtest() -> None:
                         atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
                         opening_range_session_open_hour_by_asset_class=(
                             opening_range_session_open_hour_by_asset_class),
+                        overnight_financing_bps_per_day_by_asset_class=(
+                            overnight_financing_bps_per_day_by_asset_class),
+                        slippage_bps_by_asset_class=slippage_bps_by_asset_class,
                         min_stop_to_cost_ratio=float(
                             tournament_cfg.get("min_stop_to_cost_ratio", 3.0)),
                     )
@@ -6744,6 +6901,9 @@ def _run_remaining_sequentially(
     spread_bps_by_symbol: dict | None = None,
     atr_floor_bps_by_asset_class: dict | None = None,
     opening_range_session_open_hour_by_asset_class: dict | None = None,
+    # Issue #987/#1141 (Katalog #986) — siehe run_single_backtest_worker-Docstring.
+    overnight_financing_bps_per_day_by_asset_class: dict | None = None,
+    slippage_bps_by_asset_class: dict | None = None,
     # Issue #1096 (Katalog #929) Fix Punkt 1 — siehe run_single_backtest_worker-Docstring.
     min_stop_to_cost_ratio: float = 3.0,
 ) -> None:
@@ -6766,6 +6926,9 @@ def _run_remaining_sequentially(
             atr_floor_bps_by_asset_class=atr_floor_bps_by_asset_class,
             opening_range_session_open_hour_by_asset_class=(
                 opening_range_session_open_hour_by_asset_class),
+            overnight_financing_bps_per_day_by_asset_class=(
+                overnight_financing_bps_per_day_by_asset_class),
+            slippage_bps_by_asset_class=slippage_bps_by_asset_class,
             min_stop_to_cost_ratio=min_stop_to_cost_ratio,
         )
         _flush_worker_log(rem_log)
