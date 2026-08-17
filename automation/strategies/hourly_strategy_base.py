@@ -338,6 +338,12 @@ class HourlyStrategyBase(Strategy):
         # Position; Rohmaterial fuer die ATR_median/ATR_min-Exit-Telemetrie, die dem schliessenden
         # Markt-Close-Order als Tag mitgegeben wird (siehe _execute_market_close).
         self._position_atr_bps_readings: list[float] = []
+        # Issue #975/#1129 — die ROHE (ungefloorte) ATR-Ablesung, parallel zur effektiven oben.
+        # ``_position_atr_bps_readings`` misst den EFFEKTIVEN (via ``_effective_atr_value``/
+        # ``_ratchet_floored_atr_value`` gefloorten) Wert — denselben Wert, aus dem der Stop selbst
+        # gesetzt wird. Ein Vergleich von ``atr_median_bps`` gegen den Stop ist damit teilweise
+        # zirkulaer; diese Serie liefert den ungefloorten Referenzwert.
+        self._position_atr_raw_bps_readings: list[float] = []
         # Issue #953/#1119 (Katalog #960) — je-Bar Bar-Spannen-Ablesungen ((high-low)/close, bps)
         # waehrend der laufenden Position; Rohmaterial fuer die BAR_RANGE_MEDIAN_BPS-Exit-
         # Telemetrie. Root-Cause-Hypothese #1119: der Stop ist ein Bar-Schluss-Signal (kein echter
@@ -778,6 +784,11 @@ class HourlyStrategyBase(Strategy):
             self._position_atr_bps_readings.append(
                 self._effective_atr_value(self._exit_atr.value, close) / close * 10_000.0
             )
+            # Issue #975/#1129 — die ROHE Ablesung (ohne Floor/Ratsche), siehe
+            # _position_atr_raw_bps_readings-Docstring.
+            self._position_atr_raw_bps_readings.append(
+                float(self._exit_atr.value) / close * 10_000.0
+            )
 
         # Issue #953/#1119 (Katalog #960) — Bar-Spannen-Telemetrie je Bar (bps des Schlusskurses),
         # Rohmaterial fuer den BAR_RANGE_MEDIAN_BPS-Tag des schliessenden Orders. Anders als die
@@ -964,6 +975,11 @@ class HourlyStrategyBase(Strategy):
             if self._position_atr_bps_readings:
                 tag_list.append(f"ATR_MEDIAN_BPS:{statistics.median(self._position_atr_bps_readings):.4f}")
                 tag_list.append(f"ATR_MIN_BPS:{min(self._position_atr_bps_readings):.4f}")
+            # Issue #975/#1129 — Median der ROHEN (ungefloorten) ATR-Ablesungen, siehe
+            # _position_atr_raw_bps_readings-Docstring.
+            if self._position_atr_raw_bps_readings:
+                tag_list.append(
+                    f"ATR_RAW_MEDIAN_BPS:{statistics.median(self._position_atr_raw_bps_readings):.4f}")
             # Issue #953/#1119 (Katalog #960) — Median der Bar-Spannen dieser Position; siehe
             # HourlyStrategyBase._position_bar_range_bps_readings-Docstring.
             if self._position_bar_range_bps_readings:
@@ -976,6 +992,15 @@ class HourlyStrategyBase(Strategy):
             # #1094 quantifizierten Fill-Verzoegerungs-Anteil MESSBAR statt unsichtbar in
             # oos_gross_loss_mean_bps_trailing_stop aufzugehen.
             tag_list.append(f"STOP_EXIT_LAG_BARS:{self._exit_pending_bars}")
+            # Issue #976/#1130 — Absetzen-Zeitstempel + Stop-Referenzpreis, NUR fuer TRAILING_STOP
+            # (die einzige Exit-Art mit einem bekannten Referenzpreis): zusammen mit dem Fill-
+            # Zeitstempel/-Preis (backtest_runner._finalize_round_trip) ergeben sie
+            # stop_exit_fill_lag_ns/stop_exit_slippage_bps — die Absetzen-zu-Fill-Latenz und
+            # Slippage, die STOP_EXIT_LAG_BARS (Signal-zu-Absetzen) strukturell nicht erfasst.
+            if (self._exit_pending_kind == ExitReason.TRAILING_STOP
+                    and self._trailing_stop_price is not None):
+                tag_list.append(f"ORDER_SUBMIT_TS_NS:{self.clock.timestamp_ns()}")
+                tag_list.append(f"TRAILING_STOP_PRICE:{self._trailing_stop_price:.8f}")
             tags = tag_list
         order = self.order_factory.market(
             instrument_id=self.instrument_id,
@@ -1330,6 +1355,8 @@ class HourlyStrategyBase(Strategy):
         self._position_extreme = float(event.avg_px_open)
         # Issue #899 — ATR-Telemetrie-Puffer beginnt leer fuer jede neue Position.
         self._position_atr_bps_readings = []
+        # Issue #975/#1129 — Puffer der rohen ATR-Ablesungen, analog dem effektiven Puffer oben.
+        self._position_atr_raw_bps_readings = []
         # Issue #953/#1119 (Katalog #960) — Bar-Spannen-Telemetrie-Puffer beginnt leer fuer jede
         # neue Position, analog dem ATR-Puffer oben.
         self._position_bar_range_bps_readings = []

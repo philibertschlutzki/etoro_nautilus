@@ -11,6 +11,7 @@ only through separate studies (each its own SQLite file via optimize_symbol), ne
 """
 import argparse
 import collections
+import dataclasses
 import fcntl
 import json
 import logging
@@ -66,6 +67,14 @@ sweep_fail_fast_invariant: str | None = None
 # Report-Scan-Kohorte desselben Laufs vergleichen kann (Root-Cause #1107: beide Pfade meldeten
 # denselben Check-Namen mit zwei verschiedenen, undeklarierten Grundgesamtheiten).
 sweep_fail_fast_probe_invariant_checks: list[dict] | None = None
+
+# Issue #985/#1139 (Katalog #986) — die ``InvariantResult``-Objekte der Preflight-Checks
+# (``assert_required_config_keys_valid``/``assert_instrument_metadata_coherence``), die VOR dem
+# ersten Symbol liefen. Vorher gab es fuer einen BESTANDENEN Preflight keinen Nachweis im
+# Report-Artefakt — nur der stderr+Exit-Code-2-Pfad beim Scheitern. Von run_per_symbol_sweep
+# gesetzt, von main() gelesen und in den finalen ``generate_sweep_report``-Aufruf durchgereicht
+# (``phase="preflight"`` in ``run.json['invariant_checks']``).
+sweep_preflight_invariant_checks: list[dict] | None = None
 
 # Issue #877 — (Strategie, Symbol)-Paare, die WAEHREND dieses Laufs wegen eines Fail-Fast-Offenders
 # mit ZU GERINGER Symbol-Streuung quarantänisiert (statt den Sweep abzubrechen) wurden. main() liest
@@ -231,7 +240,7 @@ def assert_pandas_version_supported() -> None:
         )
 
 
-def assert_required_config_keys_valid() -> None:
+def assert_required_config_keys_valid() -> "_inv.InvariantResult | None":
     """Issue #844 (Pitfall #267, 5. Wiederkehr) — FAIL-LOUD beim Sweep-Start: jeder in
     ``automation/config/_required_keys.json`` als ``required`` markierte Key muss in seiner
     Config-Datei existieren, darf nicht ``null`` sein und keinen ``reject_values``-Eintrag tragen.
@@ -239,10 +248,16 @@ def assert_required_config_keys_valid() -> None:
     tatsächlich gesetzt — dieser Preflight verhindert, dass ein registrierter Key erneut still
     fehlen kann, statt den Defekt erst nach einem vollen Sweep-Lauf zu bemerken. Exit-Code 2
     (fail-loud), analog ``main()``'s ``--resume``-Validierung. Fehlt ``_required_keys.json``
-    selbst ⇒ No-Op (die Registry ist opt-in additiv, kein Pflichtartefakt)."""
+    selbst ⇒ No-Op (die Registry ist opt-in additiv, kein Pflichtartefakt).
+
+    Issue #985/#1139 (Katalog #986) — liefert seit diesem Fix das ``InvariantResult`` zurueck
+    (``None`` nur beim No-Op-Fall ohne ``_required_keys.json``), damit der Aufrufer es in
+    ``run.json['invariant_checks']`` aufnehmen kann (``phase='preflight'``) — vorher existierte der
+    Ausschluss-/Bestehens-Nachweis dieses Preflights NUR auf dem stderr-Fail-Fast-Pfad, nie im
+    Report-Artefakt eines erfolgreichen Laufs."""
     spec_path = config_dir() / "_required_keys.json"
     if not spec_path.exists():
-        return
+        return None
     try:
         spec = json.loads(spec_path.read_text("utf-8")) or {}
     except (OSError, ValueError) as e:
@@ -264,6 +279,7 @@ def assert_required_config_keys_valid() -> None:
         import sys as _sys
         print(f"❌ [#844] REQUIRED_CONFIG_KEYS_VIOLATION: {result.detail}", file=_sys.stderr)
         _sys.exit(2)
+    return result
 
 
 def assert_pinned_library_versions_valid() -> None:
@@ -289,13 +305,17 @@ def assert_pinned_library_versions_valid() -> None:
         _sys.exit(2)
 
 
-def assert_instrument_metadata_coherence() -> None:
+def assert_instrument_metadata_coherence() -> "_inv.InvariantResult | None":
     """Issue #920 — FAIL-LOUD beim Sweep-Start: ``instrument_map.json`` gegen sich selbst geprüft
     (``invariants.check_instrument_metadata_coherence``, Pitfall #298) — ein Instrument mit
     ``size_precision=8`` und ``asset_class='equity'`` (der #920-Defekt: 12 Krypto-Symbole lösten
     seit dem #898-Backfill auf den falschen, um Faktor 4 zu niedrigen Spread auf) bricht den
     Sweep-Start ab, statt 143 Symbole lang unbemerkt zu falschen simulierten Fill-Preisen zu
-    führen. Exit-Code 2, analog ``assert_pinned_library_versions_valid``."""
+    führen. Exit-Code 2, analog ``assert_pinned_library_versions_valid``.
+
+    Issue #985/#1139 (Katalog #986) — liefert seit diesem Fix das ``InvariantResult`` zurueck
+    (``None`` nur beim No-Op-Fall ohne Instrumente), damit der Aufrufer es in
+    ``run.json['invariant_checks']`` aufnehmen kann (``phase='preflight'``)."""
     from automation.optimizer import invariants as _inv
     instrument_map_path = config_dir() / "instrument_map.json"
     backtest_path = config_dir() / "backtest.json"
@@ -305,7 +325,7 @@ def assert_instrument_metadata_coherence() -> None:
     except (OSError, ValueError):
         instruments = {}
     if not instruments:
-        return
+        return None
     spread_by_asset_class = None
     try:
         if backtest_path.exists():
@@ -319,6 +339,7 @@ def assert_instrument_metadata_coherence() -> None:
         import sys as _sys
         print(f"❌ [#920] INSTRUMENT_METADATA_INCOHERENT: {result.detail}", file=_sys.stderr)
         _sys.exit(2)
+    return result
 
 
 def _assert_gate_reward_parity() -> None:
@@ -1254,6 +1275,23 @@ def _family_n_frozen_from_studies(pairs, studies) -> dict[str, int]:
     return family_n
 
 
+def _study_oos_n_periods_median(study) -> float | None:
+    """Issue #981/#1135 (Katalog #986) — Median von ``oos_n_periods`` ueber die Trials EINER
+    Study, VOR jeder Familien-/Report-Aggregation benoetigt (die Degenerations-Pruefung muss VOR
+    ``_family_n_stage1_from_studies`` laufen, um deren Ergebnis zu beeinflussen). Dieselbe
+    Rohgroesse wie ``report.py``s spaeter berechnetes ``oos_n_periods_median``, hier aber direkt
+    aus den Trial-``user_attrs`` (``run_optimization.py`` stempelt ``oos_n_periods`` je Trial).
+    ``None`` ohne einen einzigen Trial mit definiertem, positivem ``oos_n_periods``."""
+    trials = getattr(study, "trials", None) or []
+    values = [
+        float(v) for v in (getattr(t, "user_attrs", {}).get("oos_n_periods") for t in trials)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v
+    ]
+    if not values:
+        return None
+    return statistics.median(values)
+
+
 def _family_n_stage1_from_studies(pairs, studies, *, tournament_cfg: dict | None = None,
                                   ) -> dict[tuple[str, str], int]:
     """Issue #826 Fix Punkt 1/2 — N1: die Multiple-Testing-Multiplizität EINER EINZELNEN Study
@@ -1770,7 +1808,15 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     # HI-7-Fakes nutzen frei benannte Strategien und überspringen den Guard). (1) Jede aktive
     # Strategie MUSS einen Suchraum in spaces.py haben. (2) Gate- und Reward-Klauseln müssen
     # dieselbe eligible_requires_any-Menge sehen.
+    # Issue #985/#1139 (Katalog #986) — sammelt die Preflight-Check-Ergebnisse (als Dicts, analog
+    # ``sweep_fail_fast_probe_invariant_checks``) unten, damit sie in run.json['invariant_checks']
+    # (``phase="preflight"``) landen; vorher gab es nur den stderr-Fail-Fast-Pfad, keinen Nachweis
+    # im Report-Artefakt eines erfolgreichen Laufs. ``None`` (statt ``[]``), solange kein
+    # ``using_real_optimize``-Preflight lief (dieselbe "nicht gelaufen" vs. "gelaufen, 0 Ergebnisse"-
+    # Unterscheidung wie ``sweep_fail_fast_probe_invariant_checks``).
+    preflight_invariant_checks: list[dict] | None = None
     if using_real_optimize:
+        preflight_invariant_checks = []
         assert_strategy_space_parity(strategies)
         _assert_gate_reward_parity()
         # Issue #802 — pandas-Versions-Preflight (Zero-Hardcoding: Bereich stammt aus
@@ -1783,7 +1829,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #844 — Config-Key-Registry-Preflight (_required_keys.json): ein Key, der stillschweigend
         # fehlen und einen Mechanismus lautlos deaktivieren kann (Pitfall #267), bricht den Lauf jetzt
         # VOR dem ersten Symbol ab, statt erst nach vollem Durchlauf im Report aufzufallen.
-        assert_required_config_keys_valid()
+        _preflight_required_keys_result = assert_required_config_keys_valid()
+        if _preflight_required_keys_result is not None:
+            preflight_invariant_checks.append(
+                dataclasses.replace(_preflight_required_keys_result, phase="preflight").to_dict())
         # Issue #852 — Bibliotheksversions-Drift-Preflight (teilt den Preflight-Einstieg mit #844):
         # eine installierte Version ausserhalb des gepinnten Bereichs bricht VOR dem ersten Symbol ab.
         assert_pinned_library_versions_valid()
@@ -1797,7 +1846,10 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
         # Issue #920 — Instrument-Metadaten-Kohärenz (Pitfall #298): ein Symbol mit
         # size_precision>=6 und asset_class != 'crypto' bricht den Lauf ab, statt 143 Symbole
         # lang mit falschen simulierten Fill-Preisen zu laufen.
-        assert_instrument_metadata_coherence()
+        _preflight_instrument_metadata_result = assert_instrument_metadata_coherence()
+        if _preflight_instrument_metadata_result is not None:
+            preflight_invariant_checks.append(
+                dataclasses.replace(_preflight_instrument_metadata_result, phase="preflight").to_dict())
 
     syms = symbols if symbols is not None else load_symbol_universe()
     config = _load_gate_config()
@@ -2410,6 +2462,11 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
     sweep_fail_fast_invariant = None
     global sweep_fail_fast_probe_invariant_checks
     sweep_fail_fast_probe_invariant_checks = None
+    # Issue #985/#1139 — NICHT auf None zurueckgesetzt: der Preflight-Block lief bereits VOR
+    # diesem Reset-Abschnitt (weiter oben in dieser Funktion), ``preflight_invariant_checks``
+    # traegt bereits das reale Ergebnis dieses Aufrufs.
+    global sweep_preflight_invariant_checks
+    sweep_preflight_invariant_checks = preflight_invariant_checks
     global sweep_symbol_funnel
     sweep_symbol_funnel = None
     # Issue #939 (Katalog A, Pitfall #299) — Fehler-Isolation je Symbol. Vor diesem Fix hatte die
@@ -2654,22 +2711,59 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
             # confirm(...) durchgereichte Multiplizität unter promotion_family_scope='per_strategy'.
             symbol_n_family_stage1 = _family_n_stage1_from_studies(
                 symbol_pairs, symbol_studies, tournament_cfg=_tournament_cfg_for_family)
-            # Issue #1091 (Katalog #924) — die budget-basierte, EINGEFRORENE Symbol-Multiplizität:
-            # bit-identisch, unabhängig davon, wie viele Proposals dieser Familie zum Lesezeitpunkt
-            # bereits existieren (siehe _family_n_frozen_from_studies-Docstring). Auf JEDE Study
-            # dieses Symbols gestempelt, damit auch ein spaeter unabhaengig (SQLite-Neuladen,
-            # generate_report_for_run) gelesenes Proposal denselben Wert traegt.
-            symbol_n_family_frozen = _family_n_frozen_from_studies(symbol_pairs, symbol_studies)
-            for _study in symbol_studies:
+            # Issue #981/#1135 (Katalog #986) — eine Study mit strukturell zu wenigen OOS-Perioden
+            # (``oos_n_periods_median < min_oos_periods_for_family``) ist keine belastbare
+            # Stichprobe (der bereits existierende ``STRUCTURAL_ZERO_ELIGIBLE``-Stop-Grund hatte
+            # bislang keine Konsequenz) — sie zaehlt NICHT in ihrer eigenen Familien-Multiplizitaet
+            # (N1 auf 0, VOR dem #1131-Freeze-Stempel unten) und wird als ``family_membership=
+            # 'excluded_degenerate'`` markiert (report.py macht sie damit sichtbar, statt sie
+            # stillschweigend zu verwerfen; invariants.check_n_periods_homogeneity nimmt sie aus
+            # ihrem Nenner). Kein Effekt, wenn der Config-Key fehlt (rueckwaertskompatibel).
+            _min_oos_periods_for_family = _tournament_cfg_for_family.get("min_oos_periods_for_family")
+            if _min_oos_periods_for_family is not None:
+                for _pair, _study in zip(symbol_pairs, symbol_studies):
+                    if _study is None:
+                        continue
+                    _strategy_deg, _symbol_deg, _reason_deg = _pair
+                    _median_periods = _study_oos_n_periods_median(_study)
+                    if (_median_periods is not None
+                            and _median_periods < _min_oos_periods_for_family):
+                        symbol_n_family_stage1[(_strategy_deg, _symbol_deg)] = 0
+                        try:
+                            _study.set_user_attr("family_membership", "excluded_degenerate")
+                        except Exception:
+                            logging.getLogger("optimizer").debug(
+                                "[#1135] %s/%s: family_membership-Stempel fehlgeschlagen "
+                                "(non-fatal).", _strategy_deg, _symbol_deg, exc_info=True)
+            # Issue #977/#1131 (Katalog #986, Pitfall #408 in AGENTS.md) — die EINGEFRORENE
+            # Multiplizitaet wird seit diesem Fix PER STRATEGIE aus ``symbol_n_family_stage1``
+            # bezogen (derselben Quelle, die ``deflation_n_family_source`` bereits als
+            # ``'n_family_stage1_per_strategy'`` behauptet, siehe _run_confirm_and_export), NICHT
+            # MEHR aus der budgetierten, SYMBOL-weiten Summe (``_family_n_frozen_from_studies``,
+            # #1091). Root-Cause #1131: der eingefrorene Wert widersprach Scope-Konfiguration
+            # (``promotion_family_scope='per_strategy'``), Quellenlabel UND der tatsaechlich an
+            # confirm(...) durchgereichten Zahl (Faktor 7-14 zu gross, ``Φ⁻¹(1-1/N)`` dadurch ~34 %
+            # zu streng) — DREI Angaben fuer dieselbe Groesse, die auseinanderliefen, ohne dass eine
+            # Invariante das sah (siehe invariants.check_family_scope_coherence, #1138).
+            # ``symbol_n_family_stage1`` zaehlt bereits REALISIERTE (``oos_selection_statistic_
+            # available``-tragende) Trials, nicht das Budget (Default ``deflation_family_floor_
+            # mode='attempted'``) — das Einfrieren (#1091: EIN Stempelzeitpunkt, stabil unabhaengig
+            # vom spaeteren Lesezeitpunkt) bleibt erhalten, nur die Quelle ist jetzt korrekt
+            # skaliert. ``deflation_n_family_scope`` macht den Geltungsbereich selbst zusaetzlich
+            # als eigenes, gegen ``deflation_n_family_source`` pruefbares Feld sichtbar.
+            for _pair, _study in zip(symbol_pairs, symbol_studies):
                 if _study is None:
                     continue
+                _strategy_for_freeze = _pair[0]
                 try:
                     _study.set_user_attr(
-                        "deflation_n_family_frozen", symbol_n_family_frozen.get(symbol, 0))
+                        "deflation_n_family_frozen",
+                        symbol_n_family_stage1.get((_strategy_for_freeze, symbol), 0))
+                    _study.set_user_attr("deflation_n_family_scope", _family_scope)
                 except Exception:
                     logging.getLogger("optimizer").debug(
-                        "[#1091] %s: deflation_n_family_frozen-Stempel fehlgeschlagen (non-fatal).",
-                        symbol, exc_info=True)
+                        "[#1131] %s/%s: deflation_n_family_frozen-Stempel fehlgeschlagen "
+                        "(non-fatal).", _strategy_for_freeze, symbol, exc_info=True)
 
             _proposals_before_this_symbol = len(proposals)
             for pair, study in zip(symbol_pairs, symbol_studies):
@@ -2783,6 +2877,7 @@ def run_per_symbol_sweep(strategies: list[str], symbols: list[str] | None = None
                 proposals, run_id=run_id, run_status="in_progress",
                 symbols_completed=_symbols_done_progress, symbols_planned=_symbols_total_progress,
                 report_source="progress_incremental",
+                preflight_invariant_checks=preflight_invariant_checks,
             )
         except Exception:
             logging.getLogger("optimizer").warning(
@@ -3351,6 +3446,10 @@ def main(argv: list[str] | None = None) -> list[Path]:
         # Stelle, fuer BEIDE Pfade (regulaerer Abschluss/Abbruch) ableitet — statt ``run_status``
         # als einzige, ueberladene Wahrheit ueber zwei getrennte Code-Pfade zu setzen.
         _fail_fast_triggered = sweep_fail_fast_invariant
+        # Issue #985/#1139 (Katalog #986) — die Preflight-Check-Ergebnisse DIESES Laufs (sofern
+        # ``using_real_optimize``), analog ``_prior_probe_checks`` als globales Signal aus
+        # ``run_per_symbol_sweep`` durchgereicht.
+        _preflight_checks = sweep_preflight_invariant_checks
         if run_status == "complete":
             report_path = _report.generate_sweep_report(
                 proposals, run_id=run_id, started_at_utc=started_at_utc,
@@ -3360,6 +3459,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_gate1_rejected=symbols_gate1_rejected,
                 prior_probe_invariant_checks=_prior_probe_checks,
                 fail_fast_triggered=_fail_fast_triggered,
+                preflight_invariant_checks=_preflight_checks,
             )
         else:
             # Issue #833 — die IN-MEMORY proposals-Liste kann bei einer Exception mitten im
@@ -3375,6 +3475,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
                 symbols_gate1_rejected=symbols_gate1_rejected,
                 prior_probe_invariant_checks=_prior_probe_checks,
                 fail_fast_triggered=_fail_fast_triggered,
+                preflight_invariant_checks=_preflight_checks,
             )
         # Issue #1016 (Katalog #858, Fix Punkt 2, Pitfall #346) — ein Lauf mit mindestens einer
         # blockierenden Invarianten-FAIL darf nicht dasselbe Statuswort 'complete' tragen wie ein

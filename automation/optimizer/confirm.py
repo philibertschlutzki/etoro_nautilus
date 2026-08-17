@@ -537,10 +537,18 @@ def _metrics_dict(m) -> dict:
         # Kommensurabilitaet statt der frueheren, trivialen Intra-Trial-Fold-Streuung).
         "oos_sortino_period": getattr(m, "oos_sortino_period", None),
         "oos_sortino_annualized": getattr(m, "oos_sortino_annualized", None),
+        # Issue #980/#1134 (Katalog #986) — woher der obige Faktor tatsaechlich kam (siehe
+        # backtest_runner._get_annualization_factor_with_source-Docstring).
+        "oos_annualization_factor_source": getattr(m, "oos_annualization_factor_source", None),
         # Issue #1042 (Katalog #866) E-1/E-3 — Kosten-Stressband + CVaR/ES-Tail-Risiko, additiv
         # neben den unveraenderten Basis-Kennzahlen.
         "oos_expectancy_cost_stress_1_5x": getattr(m, "oos_expectancy_cost_stress_1_5x", None),
         "oos_expectancy_cost_stress_2x": getattr(m, "oos_expectancy_cost_stress_2x", None),
+        # Issue #987/#1141 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
+        "oos_expectancy_cost_stress_full_realism": getattr(
+            m, "oos_expectancy_cost_stress_full_realism", None),
+        # Issue #989/#1143 (Katalog #986) — siehe parsing.TournamentMetrics-Docstring.
+        "oos_f_realized_median": getattr(m, "oos_f_realized_median", None),
         "oos_cvar_95": getattr(m, "oos_cvar_95", None),
         "oos_es_99": getattr(m, "oos_es_99", None),
         "oos_win_rate": getattr(m, "oos_win_rate", None),
@@ -550,6 +558,10 @@ def _metrics_dict(m) -> dict:
         "oos_profit_factor_raw": getattr(m, "oos_profit_factor_raw", None),
         "oos_buyhold_return": getattr(m, "oos_buyhold_return", None),
         "oos_excess_return": getattr(m, "oos_excess_return", None),
+        # Issue #986/#1140 — α/β-Regressionskoeffizienten + t(α), siehe TournamentMetrics-Docstring.
+        "oos_alpha": getattr(m, "oos_alpha", None),
+        "oos_beta": getattr(m, "oos_beta", None),
+        "oos_alpha_tstat": getattr(m, "oos_alpha_tstat", None),
         # Issue #850 — Anteil der Holdout-Fenster-Zeit mit offener Position, damit summary_de.py
         # Abschnitt 2.3 einen Excess-Return gegen einen fallenden Benchmark von echtem Alpha
         # unterscheiden kann.
@@ -2097,6 +2109,19 @@ def confirm_per_symbol_promotion(study, strategy: str, symbol: str, global_param
         best_result["metrics_symbol"]["deflation_cluster_coverage"] = deflation_cluster_coverage
     if deflation_skipped_reason is not None:
         best_result["metrics_symbol"]["deflation_skipped_reason"] = deflation_skipped_reason
+    # Issue #978/#1132 (Katalog #986) — ``deflation_n_family_source`` ist FAIL-LOUD, WENN der
+    # Aufrufer ueberhaupt eine Quelle uebergeben hat: entweder das uebergebene Label (siehe oben)
+    # ODER ein expliziter ``SKIPPED_*``-Sentinel, NIE stillschweigend fehlend, sobald der Aufrufer
+    # eine Quelle beabsichtigt hat. Root-Cause #1132: die Stempelung oben lebt INNERHALB von ``if
+    # deflation_sr0 is not None:`` — eine uebersprungene Deflation (``SMALL_COHORT``/``NO_
+    # STATISTIC``/``N_PERIODS_HETEROGENEOUS``) liess das Feld komplett aus dem Artefakt aus, bis zu
+    # 10 von 14 Studies je Symbol (KRYS). Ein Legacy-Aufrufer, der GAR KEINE Quelle uebergibt
+    # (``deflation_n_family_source is None``), bleibt bewusst rueckwaertskompatibel OHNE
+    # erfundenes Feld (kein Fail-Loud auf eine Groesse, die der Aufrufer nie beanspruchte).
+    if deflation_n_family_source is not None and "deflation_n_family_source" not in best_result["metrics_symbol"]:
+        best_result["metrics_symbol"]["deflation_n_family_source"] = (
+            f"SKIPPED_{deflation_skipped_reason}" if deflation_skipped_reason is not None
+            else deflation_n_family_source)
     # Issue #845 — Ratio-Telemetrie unabhängig vom Ausgang exportiert (auch wenn sie NICHT die
     # Ausloeserin des Skips war), damit ein Operator die Kohärenz-Kohorten-Heterogenität jeder
     # Study auditieren kann, ohne die Rohdaten (Trial-User-Attrs) erneut laden zu müssen.

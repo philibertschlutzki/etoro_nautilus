@@ -76,11 +76,15 @@ def test_family_n_stability_passes_within_tolerance():
 
 
 def test_family_n_stability_fails_on_large_gap_matching_1091_symptom():
-    """Reproduziert das #1091-Symptom: 280/321/434 ueber drei Lesungen derselben Familie."""
+    """Reproduziert das #1091-Symptom: 280/321/434 ueber drei Lesungen derselben Familie.
+
+    Issue #979/#1133 — severity ist seit #977/#1131 (per-Strategie-Frozen-Quelle) 'blocking'
+    statt 'high': die Hochstufung war an #1131 gebunden (siehe check_family_n_stability-Docstring),
+    dessen Fix Voraussetzung dafuer war, dass eine Abweichung wieder ein echter Befund ist."""
     for observed in (280, 321):
         result = inv.check_family_n_stability({"NVDA.ETORO": 434}, {"NVDA.ETORO": observed})
         assert result.passed is False
-        assert result.severity == "high"
+        assert result.severity == "blocking"
         assert "NVDA.ETORO" in result.actual
 
 

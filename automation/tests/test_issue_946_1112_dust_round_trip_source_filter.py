@@ -35,7 +35,7 @@ def test_dust_leg_is_filtered_from_all_four_parallel_lists():
     rt_peaks = [1000.0] * 7 + [1e-13]
     rt_meta = [{"exit_reason": "TIME_BOX"} for _ in range(7)] + [{"exit_reason": "UNKNOWN"}]
 
-    kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded = _filter_dust_round_trips(
+    kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded, discarded_meta = _filter_dust_round_trips(
         rt_pnls, rt_notionals, rt_peaks, rt_meta)
 
     assert len(kept_pnls) == 7
@@ -43,6 +43,7 @@ def test_dust_leg_is_filtered_from_all_four_parallel_lists():
     assert len(kept_peaks) == 7
     assert len(kept_meta) == 7
     assert discarded == [(1e-13, 99)]
+    assert discarded_meta == [{"exit_reason": "UNKNOWN"}]
     # Der Dust-Leg (pnl=500, exit_ts=99) ist in KEINER der vier gefilterten Listen mehr enthalten.
     assert all(ts != 99 for _pnl, ts, _ht, _q in kept_pnls)
     assert all(reason.get("exit_reason") != "UNKNOWN" for reason in kept_meta)
@@ -54,7 +55,7 @@ def test_no_dust_below_floor_returns_lists_unchanged():
     rt_peaks = [1000.0] * 5
     rt_meta = [{"exit_reason": "TIME_BOX"} for _ in range(5)]
 
-    kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded = _filter_dust_round_trips(
+    kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded, discarded_meta = _filter_dust_round_trips(
         rt_pnls, rt_notionals, rt_peaks, rt_meta)
 
     assert kept_pnls == rt_pnls
@@ -65,7 +66,7 @@ def test_no_dust_below_floor_returns_lists_unchanged():
 def test_fewer_than_two_positive_notionals_is_a_no_op():
     rt_pnls = [_rt(10.0, 0, 3600, 1.0)]
     rt_notionals = [(1000.0, 0)]
-    kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded = _filter_dust_round_trips(
+    kept_pnls, kept_notionals, kept_peaks, kept_meta, discarded, discarded_meta = _filter_dust_round_trips(
         rt_pnls, rt_notionals, [1000.0], [{"exit_reason": "TIME_BOX"}])
     assert kept_pnls == rt_pnls
     assert discarded == []
@@ -79,7 +80,7 @@ def test_custom_floor_fraction_is_respected():
     rt_peaks = [1000.0, 1000.0, 200.0]
     rt_meta = [{}, {}, {}]
 
-    _, kept_notionals, _, _, discarded = _filter_dust_round_trips(
+    _, kept_notionals, _, _, discarded, _discarded_meta = _filter_dust_round_trips(
         rt_pnls, rt_notionals, rt_peaks, rt_meta, dust_notional_floor_frac=0.5)
 
     assert len(kept_notionals) == 2
@@ -93,8 +94,9 @@ def test_multiple_dust_legs_all_discarded_and_counted():
     rt_peaks = [1000.0] * 10 + [1e-12, 5e-13]
     rt_meta = [{} for _ in range(10)] + [{}, {}]
 
-    kept_pnls, _, _, _, discarded = _filter_dust_round_trips(
+    kept_pnls, _, _, _, discarded, discarded_meta = _filter_dust_round_trips(
         rt_pnls, rt_notionals, rt_peaks, rt_meta)
 
     assert len(kept_pnls) == 10
     assert len(discarded) == 2
+    assert len(discarded_meta) == 2

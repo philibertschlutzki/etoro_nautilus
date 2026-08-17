@@ -9,7 +9,16 @@ fail-loud abbrechen zu lassen — genau das im v11-Changelog referenzierte Runbo
 ("{WORK}/sweep/*.db löschen, NACHDEM alle Kohorte-Fixes gemergt sind").
 
 CLI:
-    python -m automation.optimizer.purge_stale_studies [--dry-run]
+    python -m automation.optimizer.purge_stale_studies [--dry-run] [--purge-scope {studies,champions,all}]
+
+Issue #990/#1144 (Katalog #986, Pitfall #412 in AGENTS.md) — ``--purge-scope`` (Default ``studies``,
+bit-identisch zum Pre-#990-Verhalten dieses Moduls): der Optuna-Study-Store (dieses Modul) und der
+Champion-Store (``champions.py``) sind UNABHÄNGIGE Speicher mit unterschiedlicher Lebensdauer — ein
+Study-Purge nach einem Semantik-Bump darf den Champion-Store (die einzige Korroborationsgelegenheit
+über mehrere Läufe hinweg) nicht mitreissen. ``champions``/``all`` quarantänieren zusätzlich (NIE
+löschen) Champion-Einträge, deren ``params_schema_version``/``simulation_semantics_version`` von der
+aktuellen Config abweicht UND die ohne diesen expliziten Aufruf nie von selbst migrieren würden
+(siehe ``champions.find_stale_champion_entries``/``quarantine_stale_champion_entries``).
 """
 from __future__ import annotations
 
@@ -175,24 +184,53 @@ def purge_stale_studies(*, sweep_dir: Path | None = None, current_version: int |
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Issue #686/#854 — Bulk-Purge aller SQLite-Studies mit stale "
-                    "reward_semantics_version ODER stale simulation_semantics_version.")
+        description="Issue #686/#854/#990 — Bulk-Purge aller SQLite-Studies mit stale "
+                    "reward_semantics_version ODER stale simulation_semantics_version, optional "
+                    "zusätzlich Champion-Store-Quarantäne (--purge-scope).")
     parser.add_argument("--dry-run", action="store_true", help="Nur melden, nichts löschen.")
+    # Issue #990/#1144 (Katalog #986) — Default 'studies' ist bit-identisch zum Pre-#990-Verhalten
+    # dieses Moduls (siehe Modul-Docstring: Study- und Champion-Store sind unabhängige Speicher).
+    parser.add_argument(
+        "--purge-scope", choices=["studies", "champions", "all"], default="studies",
+        help="'studies' (Default): nur der Optuna-SQLite-Store. 'champions': nur Quarantäne "
+             "stale Champion-Einträge (siehe champions.find_stale_champion_entries). 'all': beides.")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    # Issue #854 — der CLI-Einstieg ist der EINE Ort, der simulation_semantics_version aktiv aus
-    # der echten Config liest (siehe find_stale_study_dbs-Docstring: kein impliziter Fallback in
-    # der Bibliotheksfunktion selbst, um bestehende current_version-only-Aufrufer nicht zu
-    # überraschen).
-    stale = purge_stale_studies(
-        dry_run=args.dry_run,
-        current_simulation_version=_current_simulation_semantics_version())
-    if not stale:
-        print("Keine stale Studies gefunden — alles aktuell.")
-    else:
-        action = "würden" if args.dry_run else "wurden"
-        print(f"{len(stale)} stale Stud(y/ies) {action} verarbeitet.")
+    logger = logging.getLogger("optimizer")
+
+    stale_studies: list[dict] = []
+    stale_champions: list[dict] = []
+
+    if args.purge_scope in ("studies", "all"):
+        # Issue #854 — der CLI-Einstieg ist der EINE Ort, der simulation_semantics_version aktiv aus
+        # der echten Config liest (siehe find_stale_study_dbs-Docstring: kein impliziter Fallback in
+        # der Bibliotheksfunktion selbst, um bestehende current_version-only-Aufrufer nicht zu
+        # überraschen).
+        stale_studies = purge_stale_studies(
+            dry_run=args.dry_run,
+            current_simulation_version=_current_simulation_semantics_version())
+        if not stale_studies:
+            print("Keine stale Studies gefunden — alles aktuell.")
+        else:
+            action = "würden" if args.dry_run else "wurden"
+            print(f"{len(stale_studies)} stale Stud(y/ies) {action} verarbeitet.")
+
+    if args.purge_scope in ("champions", "all"):
+        from automation.optimizer import champions
+        opt_path = config_dir() / "optimizer.json"
+        try:
+            opt_data = json.loads(opt_path.read_text("utf-8")) if opt_path.exists() else {}
+        except (OSError, ValueError):
+            opt_data = {}
+        stale_champions = champions.quarantine_stale_champion_entries(
+            opt_data, dry_run=args.dry_run, logger=logger)
+        if not stale_champions:
+            print("Keine stale Champion-Einträge gefunden — alles aktuell.")
+        else:
+            action = "würden" if args.dry_run else "wurden"
+            print(f"{len(stale_champions)} stale Champion-Eintrag/-Einträge {action} quarantäniert.")
+
     return 0
 
 

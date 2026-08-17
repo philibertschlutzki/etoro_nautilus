@@ -197,6 +197,73 @@ def _quarantine_champion(strategy: str, symbol: str, path: Path, entry: dict, *,
     )
 
 
+def find_stale_champion_entries(opt_data: dict) -> list[dict]:
+    """Issue #990/#1144 (Katalog #986, Pitfall #412 in AGENTS.md) — Bulk-Scan aller
+    ``champions/champion_*.json`` auf Versions-Staleness, die OHNE einen weiteren
+    ``store_champion``-Aufruf fuer DASSELBE Paar nie von selbst heilt: ein
+    ``params_schema_version``- oder ``simulation_semantics_version``-Mismatch (NICHT ein reiner
+    ``reward_semantics_version``-Mismatch — der bleibt seed-faehig, #819, und wird von
+    ``store_champion`` seit #990/#1144 automatisch beim naechsten Schreibvorgang MIGRIERT statt
+    verworfen, siehe dortigen Docstring). Rein lesend, analog
+    ``purge_stale_studies.find_stale_study_dbs`` für den Optuna-Study-Store — Grundlage für
+    ``--purge-scope champions``/``all`` (``purge_stale_studies.main``). Rückgabe je stale Eintrag:
+    ``{'path', 'strategy', 'symbol', 'reason'}``."""
+    stale: list[dict] = []
+    for path in sorted(_champions_dir().glob("champion_*.json")):
+        entry = _read_entry(path)
+        if entry is None:
+            continue
+        strategy = entry.get("strategy")
+        symbol = entry.get("symbol")
+        integrity = entry.get("integrity") or {}
+        current_schema_version = _params_schema_version(strategy) if strategy else None
+        existing_schema_version = integrity.get("params_schema_version")
+        schema_mismatch = (
+            current_schema_version is not None and existing_schema_version is not None
+            and existing_schema_version != current_schema_version
+        )
+        simulation_mismatch = champion_simulation_stale(entry, opt_data)
+        if schema_mismatch or simulation_mismatch:
+            stale.append({
+                "path": str(path), "strategy": strategy, "symbol": symbol,
+                "reason": (
+                    "params_schema_version_mismatch" if schema_mismatch
+                    else "simulation_semantics_version_mismatch"),
+            })
+    return stale
+
+
+def quarantine_stale_champion_entries(
+    opt_data: dict, *, dry_run: bool = False, logger: logging.Logger | None = None,
+) -> list[dict]:
+    """Issue #990/#1144 (Katalog #986) — wendet ``_quarantine_champion`` BULK auf jeden von
+    ``find_stale_champion_entries`` gemeldeten Eintrag an (Verschieben nach ``_stale/``, KEIN
+    ``unlink`` — die Historie bleibt forensisch verfügbar, dieselbe Garantie wie der bestehende
+    Einzelfall-Pfad in ``store_champion``). ``dry_run=True`` meldet nur, quarantäniert nichts.
+
+    Manuelle, EXPLIZITE Operator-Aktion (``--purge-scope champions``/``all``) — ``store_champion``
+    selbst quarantäniert seit #990/#1144 NICHT mehr automatisch bei einem
+    ``simulation_semantics_version``-Mismatch (der wird migriert, siehe dortigen Docstring); diese
+    Funktion bleibt für Paare relevant, die auf absehbare Zeit KEINEN weiteren
+    ``store_champion``-Aufruf mehr erhalten (z. B. aus ``strategies.json``/dem Symbol-Universum
+    entfernt) und sonst dauerhaft inadmissibel im aktiven Store liegen blieben."""
+    logger = logger or logging.getLogger("optimizer")
+    stale = find_stale_champion_entries(opt_data)
+    for item in stale:
+        path = Path(item["path"])
+        if dry_run:
+            logger.info(
+                "[DRY-RUN] Würde Champion %s/%s quarantänieren (%s).",
+                item["strategy"], item["symbol"], item["reason"],
+            )
+            continue
+        entry = _read_entry(path)
+        if entry is None:
+            continue
+        _quarantine_champion(item["strategy"], item["symbol"], path, entry, reason=item["reason"])
+    return stale
+
+
 def _same_region(strategy: str, params_a: dict, params_b: dict, opt_data: dict) -> bool:
     """Issue #707 — Regionsgleichheit: dieselbe normierte, ``[0,1]``-skalierte Parameter-Distanz
     wie die A4.3-Shrinkage (``bounds.normalized_param_distance`` gegen die ``spaces.py``-Bandbreite
@@ -305,16 +372,25 @@ def champion_simulation_stale(entry: dict, opt_data: dict) -> bool:
     -Schema für die vollständige Abgrenzung reward/simulation/params_schema) unter einer ANDEREN
     Version gemessen wurde als der aktuellen Config.
 
-    ANDERS als ``champion_quality_stale`` (ein reiner ``reward_semantics_version``-Mismatch
-    entwertet NUR die Quality-Bewertung, der Parametervektor bleibt seed-fähig, #819): ein
-    ``simulation_semantics_version``-Mismatch entwertet den EINTRAG VOLLSTÄNDIG (params UND
-    quality) — die gemessenen Metriken (Haltedauern, Equity-Kurve, Trade-Zahlen), aus denen
+    Wie ``champion_quality_stale`` entwertet ein Mismatch die im STORE stehenden ``params``/
+    ``quality`` — die gemessenen Metriken (Haltedauern, Equity-Kurve, Trade-Zahlen), aus denen
     ``params`` als "bewährt" hervorging, wurden unter einem ANDEREN Handelsvertrag erhoben; der
-    Parametervektor selbst ist unter der neuen Simulation nicht mehr belegbar (dieselbe Argumentation
-    wie bei einem ``params_schema_version``-Mismatch — der SUCHRAUM hat sich geändert —, hier auf der
-    MESS-Ebene statt der Suchraum-Ebene). ``None``/fehlende Version auf einer der beiden Seiten
-    (Legacy-Eintrag vor #854, oder Config ohne den Key) ⇒ konservativ NICHT als Mismatch gewertet
-    (kein falscher Datenverlust durch ein Feld, das der Alt-Eintrag/die Alt-Config noch nicht kannte)."""
+    GESPEICHERTE Parametervektor ist unter der neuen Simulation nicht mehr belegbar. ``champion_
+    is_admissible`` (unten) schliesst einen so gestempelten STORE-Eintrag daher weiterhin von
+    Seeding/Writeback aus (``SIMULATION_SEMANTICS_MISMATCH``), bis ``store_champion`` ihn migriert
+    hat.
+
+    Issue #990/#1144 (Katalog #986, Pitfall #412 in AGENTS.md) — VORHER loeschte ``store_champion``
+    bei ``True`` den GESAMTEN Store-Eintrag inkl. Lifecycle-Historie (``max_corroboration_count = 1``
+    in 10/10 Studies, weil JEDER Bump die Korroborationskette neu startete). Seit diesem Fix
+    MIGRIERT ``store_champion`` stattdessen (siehe dortiger Docstring): die LIFECYCLE-Historie
+    (``corroboration_count``, ``first_seen_run``) ueberlebt, NUR ``params``/``quality`` werden durch
+    den frischen, unter der aktuellen Simulation neu bewerteten Kandidaten ersetzt — nie durch die
+    alten, ungueltig gewordenen Werte. Diese Funktion selbst (das Praedikat) ist unveraendert.
+
+    ``None``/fehlende Version auf einer der beiden Seiten (Legacy-Eintrag vor #854, oder Config ohne
+    den Key) ⇒ konservativ NICHT als Mismatch gewertet (kein falscher Datenverlust durch ein Feld,
+    das der Alt-Eintrag/die Alt-Config noch nicht kannte)."""
     integrity = entry.get("integrity") or {}
     current = opt_data.get("simulation_semantics_version")
     stored = integrity.get("simulation_semantics_version")
@@ -494,6 +570,8 @@ def _build_entry_from_promotion(study, strategy: str, symbol: str, promotion: di
             "writeback_applied": False,
             "snapshot_rollover_count": 0,
             "semantics_migrated_from": None,
+            # Issue #990/#1144 (Katalog #986) — additiv neben semantics_migrated_from.
+            "semantics_migrated_kind": None,
         },
     }
 
@@ -515,13 +593,19 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
     Schreibzeitstempel (der frühere ``_run_id()`` ist entfallen). Nur so zählt
     ``corroboration_count`` nachweisbar LÄUFE, nicht Schreibvorgänge.
 
-    Versions-Handling (Issue #819): ein ``reward_semantics_version``-Mismatch des gespeicherten
-    Eintrags gegen die aktuelle Config verwirft ihn NICHT mehr vollständig — ``params``,
-    ``corroboration_count`` und die übrige Lifecycle-Historie bleiben erhalten, NUR ``quality``
-    wird neu gesetzt (``lifecycle.semantics_migrated_from`` dokumentiert die alte Version). Ein
-    ``params_schema_version``-Mismatch (der SUCHRAUM selbst hat sich geändert) verwirft den
-    Eintrag weiterhin vollständig — ist der neue Kandidat dann selbst unzulässig, wird der alte
-    Eintrag nach ``_stale/`` quarantäniert statt still liegen zu bleiben (#821).
+    Versions-Handling (Issue #819, erweitert #990/#1144): ein ``reward_semantics_version``- ODER
+    ``simulation_semantics_version``-Mismatch des gespeicherten Eintrags gegen die aktuelle Config
+    verwirft ihn NICHT mehr vollständig — die LIFECYCLE-Historie (``corroboration_count``,
+    ``first_seen_run``, ``snapshot_rollover_count``) bleibt erhalten (``lifecycle.
+    semantics_migrated_from``/``semantics_migrated_kind`` dokumentieren die alte Version + welche
+    Versionsschranke ausschlaggebend war); ``params``/``quality`` werden dabei IMMER vom FRISCHEN,
+    unter der aktuellen Semantik neu bewerteten Kandidaten übernommen (nie die alten Werte) — bei
+    einem ``simulation_semantics_version``-Bump bleibt damit #854s Kernargument gewahrt (ein unter
+    der VORHERIGEN Simulation gemessener Parametervektor wird NIE unveraendert weiterverwendet, nur
+    seine Korroborations-Historie ueberlebt den Bump). Ein ``params_schema_version``-Mismatch (der
+    SUCHRAUM selbst hat sich geändert) verwirft den Eintrag weiterhin vollständig — ist der neue
+    Kandidat dann selbst unzulässig, wird der alte Eintrag nach ``_stale/`` quarantäniert statt
+    still liegen zu bleiben (#821).
 
     Merge-Logik gegen einen bestehenden, versions-kompatiblen Eintrag (Issue #703 Punkt 3 +
     #707/#708/#820):
@@ -555,6 +639,10 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
 
     quality_stale = False
     semantics_migrated_from = None
+    # Issue #990/#1144 (Katalog #986) — WELCHE Versionsschranke die Migration ausgeloest hat
+    # ("reward_semantics_version" | "simulation_semantics_version"), additiv neben dem bereits
+    # vorhandenen semantics_migrated_from (dessen ALTER Wert).
+    semantics_migrated_kind: str | None = None
     discarded_for_quarantine: dict | None = None
     quarantine_mismatch_kind = "params_schema_version_mismatch"
     if existing is not None:
@@ -572,19 +660,28 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
             and existing_schema_version is not None
             and existing_schema_version != params_schema_version
         )
-        # Issue #854 — dieselbe VOLLSTÄNDIGE Verwerfung wie beim Suchraum-Mismatch, jetzt auch für
-        # die SIMULATIONS-Semantik (siehe champion_simulation_stale-Docstring): die gemessenen
-        # Metriken, aus denen params als "bewährt" hervorging, wurden unter einem anderen
-        # Handelsvertrag erhoben.
+        # Issue #990/#1144 (Katalog #986, Pitfall #412 in AGENTS.md) — VORHER dieselbe
+        # VOLLSTAENDIGE Verwerfung wie beim Suchraum-Mismatch (Quarantaene, corroboration_count
+        # auf 1 zurueckgesetzt): ``max_corroboration_count = 1`` in 10/10 Studies, weil JEDER
+        # simulation_semantics_version-Bump die gesamte Korroborationshistorie vernichtete. Fix:
+        # wie ``version_mismatch`` unten behandelt (MIGRIEREN statt loeschen) — ``merged`` uebernimmt
+        # trotzdem die FRISCHEN ``params``/``quality`` DIESES Laufs (siehe ``elif quality_stale:``-
+        # Zweig unten, ``merged = candidate_entry``), NICHT die alten, unter der VORHERIGEN
+        # Simulation gemessenen Werte — #854s Kernargument ("der alte Parametervektor ist unter der
+        # neuen Simulation nicht mehr belegbar") bleibt damit vollstaendig gewahrt; nur die
+        # LIFECYCLE-Historie (corroboration_count, first_seen_run) ueberlebt den Bump, wie es der
+        # bereits vorhandene, aber bislang fuer simulation_semantics_version nie befuellte
+        # ``semantics_migrated_from``-Zaehler (report._champions_summary) von Anfang an vorsah.
         simulation_mismatch = champion_simulation_stale(existing, opt_data)
-        if schema_mismatch or simulation_mismatch:
+        if schema_mismatch:
             discarded_for_quarantine = existing
-            quarantine_mismatch_kind = (
-                "params_schema_version_mismatch" if schema_mismatch
-                else "simulation_semantics_version_mismatch")
             existing = None
-        elif version_mismatch:
-            semantics_migrated_from = existing_reward_version
+        elif version_mismatch or simulation_mismatch:
+            semantics_migrated_from = (
+                existing_integrity.get("simulation_semantics_version") if simulation_mismatch
+                else existing_reward_version)
+            semantics_migrated_kind = (
+                "simulation_semantics_version" if simulation_mismatch else "reward_semantics_version")
             quality_stale = True
 
     candidate_params = dict(promotion.get("symbol_params") or {})
@@ -643,6 +740,8 @@ def store_champion(study, strategy: str, symbol: str, promotion: dict, *,
             "first_seen_catalog_newest_ns", catalog_newest_ns)
         merged["lifecycle"]["degrade_streak"] = 0
         merged["lifecycle"]["semantics_migrated_from"] = semantics_migrated_from
+        # Issue #990/#1144 (Katalog #986) — additiv neben semantics_migrated_from.
+        merged["lifecycle"]["semantics_migrated_kind"] = semantics_migrated_kind
         merged["lifecycle"]["snapshot_rollover_count"] = int(
             prior_lifecycle.get("snapshot_rollover_count", 0) or 0)
         merged["lifecycle"]["writeback_applied"] = False  # quality neu -> re-validieren

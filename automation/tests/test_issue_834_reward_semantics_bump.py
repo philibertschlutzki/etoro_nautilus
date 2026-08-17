@@ -156,14 +156,56 @@ def test_purge_stale_studies_reads_current_version_from_optimizer_json():
 
 
 # ── Akzeptanzkriterium #834/3: Champion-Store übersteht den Purge, report zeigt die Migration ──────
-def test_purge_stale_studies_never_touches_the_champion_store(tmp_path):
-    """purge_stale_studies operiert AUSSCHLIESSLICH auf sweep_dir (WORK/sweep/*.db) + dessen
-    Eltern-Trial-Baeume -- der Champion-Store liegt unter einem voellig separaten Pfad
-    (data/optimizer/champions/) und wird von dieser Funktion nie referenziert."""
+def test_purge_stale_studies_function_never_touches_the_champion_store():
+    """purge_stale_studies() (die Bibliotheksfunktion, aufgerufen von --purge-scope studies/all)
+    operiert AUSSCHLIESSLICH auf sweep_dir (WORK/sweep/*.db) + dessen Eltern-Trial-Baeume -- der
+    Champion-Store liegt unter einem voellig separaten Pfad (data/optimizer/champions/) und wird
+    von DIESER Funktion nie referenziert.
+
+    Issue #990/#1144 (Katalog #986, Pitfall #412 in AGENTS.md) — das Modul selbst referenziert
+    ``champions`` seither BEWUSST (siehe test_purge_scope_champions_only_touches_champion_store
+    unten): ``main()``s neues ``--purge-scope {champions,all}`` quarantäniert EXPLIZIT stale
+    Champion-Einträge, als OPT-IN-Ergänzung zum weiterhin unveränderten Default
+    ``--purge-scope studies``. Diese Prüfung ist deshalb auf die FUNKTION verengt (statt das ganze
+    Modul auf die Abwesenheit des Substrings zu prüfen), um genau die ursprüngliche Garantie zu
+    erhalten: der SQLite-Study-Purge selbst berührt den Champion-Store nie."""
     import inspect
     from automation.optimizer import purge_stale_studies as pss
-    source = inspect.getsource(pss)
+    source = inspect.getsource(pss.purge_stale_studies)
     assert "champions" not in source.lower()
+
+
+def test_purge_scope_defaults_to_studies_only_and_never_calls_champions_quarantine(
+        tmp_path, monkeypatch):
+    """Issue #990/#1144 — der CLI-Default (kein --purge-scope) bleibt bit-identisch zum
+    Pre-#990-Verhalten: quarantine_stale_champion_entries wird NICHT aufgerufen."""
+    from automation.optimizer import purge_stale_studies as pss
+    from automation.optimizer import champions as champions_mod
+
+    monkeypatch.setattr(pss, "purge_stale_studies", lambda **kwargs: [])
+    called = []
+    monkeypatch.setattr(
+        champions_mod, "quarantine_stale_champion_entries",
+        lambda *a, **kw: called.append(True) or [])
+
+    pss.main([])
+    assert called == []
+
+
+def test_purge_scope_champions_only_touches_champion_store(tmp_path, monkeypatch):
+    """Issue #990/#1144 — ``--purge-scope champions`` ruft AUSSCHLIESSLICH die Champion-
+    Quarantäne auf, NICHT purge_stale_studies() (der SQLite-Study-Purge bleibt unberührt)."""
+    from automation.optimizer import purge_stale_studies as pss
+    from automation.optimizer import champions as champions_mod
+
+    studies_called = []
+    monkeypatch.setattr(
+        pss, "purge_stale_studies", lambda **kwargs: studies_called.append(True) or [])
+    monkeypatch.setattr(
+        champions_mod, "quarantine_stale_champion_entries", lambda *a, **kw: [])
+
+    pss.main(["--purge-scope", "champions"])
+    assert studies_called == []
 
 
 def test_champions_summary_reports_semantics_migrated_count(tmp_path, monkeypatch):
